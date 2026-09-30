@@ -3089,7 +3089,8 @@ export function buildOpenApiDocument(): Json {
         'authenticates via an automatically-set cookie. A feature that is off in the storage mode a very ' +
         'large scan is kept in answers 409 { error, code: "STORAGE_MODE", mode, feature } (every scan is ' +
         'kept in memory today, where nothing is off); a path in TreeMap\'s own spill folder in app-data is ' +
-        'refused by every endpoint that takes a path to trash, open, move or write, 403 { code: "SPILL_PATH" }.',
+        'refused by every endpoint that takes a path to trash, open, move or write, 403 { code: "SPILL_PATH" }; and no ' +
+        'request writes, moves or copies a file anywhere in app-data, 403 { code: "APP_DATA_PATH" }.',
     },
     servers: [{ url: '/' }],
     tags: [

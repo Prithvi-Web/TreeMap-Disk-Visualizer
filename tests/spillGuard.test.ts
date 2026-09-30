@@ -76,6 +76,9 @@ fs.writeFileSync(path.join(USER2, `\u017f${SPILL_DIR.slice(1)}`, 'theirs.txt'), 
 /** The spill folder's name with a long s (U+017F) for its first s, and for its second. */
 const LONG_S_FIRST = `\u017f${SPILL_DIR.slice(1)}`;
 const LONG_S_SECOND = SPILL_DIR.replace('sp', '\u017fp');
+/** A destination outside app-data that holds ſcan-spill, a link to the spill folder. */
+const SPILL_LINK_DEST = fileTempDir('treemap-spillGuard-linkdest-');
+fs.symlinkSync(SPILL, path.join(SPILL_LINK_DEST, LONG_S_FIRST), 'junction');
 const USER3 = path.join(HOME, 'user3');
 fs.mkdirSync(path.join(USER3, LONG_S_SECOND), { recursive: true });
 fs.writeFileSync(path.join(USER3, LONG_S_SECOND, 'ours.txt'), 'ours');
@@ -225,9 +228,17 @@ test('before the folder exists, a path to it in another case is refused by its n
   }
 });
 
-test('Windows spells the spill folder with trailing dots and spaces too', { skip: POSIX && 'Windows drops them from every name; POSIX keeps them as part of it' }, () => {
-  for (const p of [`${SPILL}.`, `${SPILL} `, `${SPILL}. .${path.sep}x`, `${SPILL} ${path.sep}inner`]) {
+test('Windows spells the spill folder with trailing dots and spaces too, and NTFS reads ı as i', { skip: POSIX && 'Windows drops them from every name; POSIX keeps them as part of it' }, () => {
+  const dotless = path.join(APP, SPILL_DIR.replace('i', '\u0131'));
+  for (const p of [`${SPILL}.`, `${SPILL} `, `${SPILL}. .${path.sep}x`, `${SPILL} ${path.sep}inner`, dotless, path.join(dotless, 'x')]) {
     assert.equal(isSpillPath(p), true, `${p} is in the spill folder`);
+  }
+  const away = `${SPILL}.away`;
+  fs.renameSync(SPILL, away); // and before it exists, by its name
+  try {
+    assert.equal(isSpillPath(path.join(dotless, 'x')), true, 'scan-spıll before the folder exists');
+  } finally {
+    fs.renameSync(away, SPILL);
   }
 });
 
@@ -438,25 +449,18 @@ test('beside the folder, a link to it is still a link and another folder is anot
   }
 });
 
-test('an offload never plans a copy into the spill folder: a folder named like it sent into app-data', async () => {
+test('an offload never plans a copy into the spill folder: through a link its destination holds under a name the volume folds', async () => {
   const users = await settledScan(USER);
-  const away = `${SPILL}.away`;
-  fs.renameSync(SPILL, away); // the folder absent, as on every machine before its first large scan
-  try {
-    assertSpillRefusal(
-      await request('POST', '/api/offload', { scanId: users.scanId, paths: [path.join(USER, SPILL_DIR)], dest: APP, dryRun: true }),
-      'user/scan-spill offloaded into app-data',
-    );
-  } finally {
-    fs.renameSync(away, SPILL);
-  }
-  if (FOLDS_LONG_S) {
-    const others = await settledScan(USER2);
-    assertSpillRefusal(
-      await request('POST', '/api/offload', { scanId: others.scanId, paths: [path.join(USER2, `\u017f${SPILL_DIR.slice(1)}`)], dest: APP, dryRun: true }),
-      'ſcan-spill offloaded into app-data, where that name is the spill folder',
-    );
-  }
+  // App-data itself is no destination at all (FG1): refused before a plan is made.
+  const intoAppData = await request('POST', '/api/offload', { scanId: users.scanId, paths: [path.join(USER, SPILL_DIR)], dest: APP, dryRun: true });
+  assert.deepEqual([intoAppData.status, intoAppData.body.code], [403, 'APP_DATA_PATH'], 'user/scan-spill offloaded into app-data');
+  if (!FOLDS_LONG_S) return; // elsewhere a planned name cannot reach a link under another name
+  // A destination outside app-data, holding ſcan-spill: a link to the spill folder. The plan names
+  // its copy scan-spill/mine.txt, which this volume reads as the link.
+  assertSpillRefusal(
+    await request('POST', '/api/offload', { scanId: users.scanId, paths: [path.join(USER, SPILL_DIR)], dest: SPILL_LINK_DEST, dryRun: true }),
+    'a planned copy that lands in the spill folder',
+  );
 });
 
 test('Autopilot pays the full spill check only for candidates under app-data', async () => {
@@ -548,17 +552,14 @@ test('before the folder exists, a name the file system may fold to it (ſ for s)
         `restoring into ${name}`,
       );
     }
-    // An offload target: a folder of the user's with that name, sent into app-data.
+    // An offload target: a folder of the user's with that name, sent into app-data. App-data is no
+    // destination at all now (FG1), so it is refused before its plan could name the look-alike.
     const others = await settledScan(USER2);
-    assertSpillRefusal(
-      await request('POST', '/api/offload', { scanId: others.scanId, paths: [path.join(USER2, LONG_S_FIRST)], dest: APP, dryRun: true }),
-      `${LONG_S_FIRST} offloaded into app-data`,
-    );
+    const first = await request('POST', '/api/offload', { scanId: others.scanId, paths: [path.join(USER2, LONG_S_FIRST)], dest: APP, dryRun: true });
+    assert.deepEqual([first.status, first.body.code], [403, 'APP_DATA_PATH'], `${LONG_S_FIRST} offloaded into app-data`);
     const thirds = await settledScan(USER3);
-    assertSpillRefusal(
-      await request('POST', '/api/offload', { scanId: thirds.scanId, paths: [path.join(USER3, LONG_S_SECOND)], dest: APP, dryRun: true }),
-      `${LONG_S_SECOND} offloaded into app-data`,
-    );
+    const second = await request('POST', '/api/offload', { scanId: thirds.scanId, paths: [path.join(USER3, LONG_S_SECOND)], dest: APP, dryRun: true });
+    assert.deepEqual([second.status, second.body.code], [403, 'APP_DATA_PATH'], `${LONG_S_SECOND} offloaded into app-data`);
     const made = fs.readdirSync(APP).filter((n) => n.normalize('NFKC').toLowerCase() === SPILL_DIR);
     assert.deepEqual(made, [], 'and nothing of that name was made');
   } finally {
@@ -683,7 +684,7 @@ test('a refusal from the delete itself is recorded as the run, so the policy wai
   }
 });
 
-test('the audit log records the offload plan\'s refusal of the spill folder, and not the path rule\'s', async () => {
+test('the audit log records the offload plan\'s refusal of the spill folder, and not the path rule\'s', { skip: !FOLDS_LONG_S && 'this volume does not fold ſ to s, so no planned name reaches the link' }, async () => {
   interface Entry { action: string; source: string; outcome: string; code?: string; paths: string[] }
   const offloads = async (): Promise<Entry[]> =>
     ((await request('GET', '/api/audit?limit=1000')).body.entries as Entry[]).filter((e) => e.action === 'offload.start');
@@ -691,19 +692,15 @@ test('the audit log records the offload plan\'s refusal of the spill folder, and
   // A path the request names, its destination: a path rule, decided before the endpoint runs.
   assertSpillRefusal(await request('POST', '/api/offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: SPILL, dryRun: true }), 'offloading into it');
   assert.match(await callTool('offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: SPILL, dryRun: true }), /^Error \(SPILL_PATH\): /);
+  const intoAppData = await request('POST', '/api/offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: APP, dryRun: true });
+  assert.equal(intoAppData.body.code, 'APP_DATA_PATH');
   assert.equal((await offloads()).length, before, 'a destination refused by the path rules is not recorded');
-  // A copy the plan would make under an allowed destination: a folder named like the spill
-  // folder, sent into app-data.
+  // A copy the plan would make under an allowed destination: through the link that destination
+  // holds under a name this volume folds.
   const users = await settledScan(USER);
   const named = path.join(USER, SPILL_DIR);
-  const away = `${SPILL}.away`;
-  fs.renameSync(SPILL, away);
-  try {
-    assertSpillRefusal(await request('POST', '/api/offload', { scanId: users.scanId, paths: [named], dest: APP, dryRun: true }), 'the plan, over HTTP');
-    assert.match(await callTool('offload', { scanId: users.scanId, paths: [named], dest: APP, dryRun: true }), /^Error \(SPILL_PATH\): /);
-  } finally {
-    fs.renameSync(away, SPILL);
-  }
+  assertSpillRefusal(await request('POST', '/api/offload', { scanId: users.scanId, paths: [named], dest: SPILL_LINK_DEST, dryRun: true }), 'the plan, over HTTP');
+  assert.match(await callTool('offload', { scanId: users.scanId, paths: [named], dest: SPILL_LINK_DEST, dryRun: true }), /^Error \(SPILL_PATH\): /);
   const after = await offloads();
   assert.equal(after.length, before + 2, 'the plan\'s refusal is recorded, once over each');
   assert.deepEqual(
@@ -712,6 +709,6 @@ test('the audit log records the offload plan\'s refusal of the spill folder, and
   );
   // And the manifest says so, both halves.
   const audit = String((await request('GET', '/api/capabilities')).body.safety.audit);
-  assert.match(audit, /SPILL_PATH on a path the request names .* is a path rule and not recorded/, audit);
-  assert.match(audit, /SPILL_PATH on a copy the offload plan would make is the plan's refusal and is recorded/, audit);
+  assert.match(audit, /SPILL_PATH or APP_DATA_PATH on a path the request names .* is a path rule and not recorded/, audit);
+  assert.match(audit, /either on a copy the offload plan would make is the plan's refusal and is recorded/, audit);
 });

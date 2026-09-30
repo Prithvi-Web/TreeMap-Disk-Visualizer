@@ -18,7 +18,7 @@ import { isInside } from '../utils/pathSanitizer';
 import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
-import { assertNotSpillPath } from '../middleware/pathGuard';
+import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -303,8 +303,13 @@ export async function prepareOffload(
   // Nothing is ever copied into TreeMap's own spill folder (Phase 4 §S.5.3): not at `dest`,
   // which the route refuses, and not at any target the plan makes under it. A selected folder
   // named like the spill folder, sent into app-data, would become it; one named in a way only
-  // the file system folds (ſ for s) would land in it (T17a's security review).
-  for (const copy of plan) assertNotSpillPath(copy.dest);
+  // the file system folds (ſ for s) would land in it (T17a's security review). Nor into app-data
+  // (FG1): `dest` is refused there by the route, and a link inside `dest` that a planned name
+  // reaches under a fold (ſtuff for stuff) is found here, where each target's folders are resolved.
+  for (const copy of plan) {
+    assertNotSpillPath(copy.dest);
+    assertNotAppDataPath(copy.dest);
+  }
   const bytesTotal = plan.reduce((s, p) => s + p.size, 0);
 
   // `null`, never `{ free: 0 }`. Substituting zero here tells the user

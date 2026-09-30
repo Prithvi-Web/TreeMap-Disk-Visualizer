@@ -21,7 +21,7 @@ import {
   diffSnapshots,
 } from '../services/snapshots';
 import { buildTreemap } from '../utils/treemap';
-import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot, assertNotSpillPath } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
@@ -355,6 +355,7 @@ insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsi
   }
   const dest = sanitizePath(to);
   assertNotSpillPath(dest); // nothing is ever written into TreeMap's own spill folder (§S.5.3)
+  assertNotAppDataPath(dest); // nor anywhere in app-data, whose files TreeMap trusts (FG1)
   // Both ends, not just the source: writing a file into a folder the user never
   // scanned is exactly the surprise the scanned-root rule exists to prevent.
   if (!insideAnyScanRoot(dest)) {
@@ -479,8 +480,12 @@ insightRouter.get('/compression/candidates', storageModeGate, async (req: Reques
  */
 insightRouter.post('/compression/encode', idempotency, guardBodyPaths, async (req: Request, res: Response) => {
   const { paths, confirm } = req.body as { paths: string[]; confirm?: boolean };
-  // TreeMap's own spill folder is never re-encoded or trashed (§S.5.3), whatever else is asked.
-  for (const p of paths) assertNotSpillPath(p);
+  // TreeMap's own spill folder is never re-encoded or trashed (§S.5.3), whatever else is asked;
+  // and an encode writes its new file where the original is, so never in app-data (FG1).
+  for (const p of paths) {
+    assertNotSpillPath(p);
+    assertNotAppDataPath(p);
+  }
   if (confirm !== true) {
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } — re-encoding is lossy and trashes the original');
   }

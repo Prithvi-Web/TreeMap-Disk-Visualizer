@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { promises as fsp } from 'fs';
 import os from 'os';
 import path from 'path';
-import { guardQueryPath, assertNotSpillPath } from '../middleware/pathGuard';
+import { guardQueryPath, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
@@ -144,7 +144,10 @@ systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request,
   // TreeMap's own spill folder is never written into, and nothing that lived there is recovered
   // (§S.5.3): refused before anything else, so before any privileged step.
   assertNotSpillPath(sanitizePath(body.path));
-  if (typeof body.destination === 'string' && body.destination.trim()) assertNotSpillPath(sanitizePath(body.destination));
+  if (typeof body.destination === 'string' && body.destination.trim()) {
+    assertNotSpillPath(sanitizePath(body.destination));
+    assertNotAppDataPath(sanitizePath(body.destination)); // nor into app-data (FG1); the default, beside the original, is checked where it is made
+  }
   try {
     const outcome = await restoreFromSnapshot({
       path: body.path,

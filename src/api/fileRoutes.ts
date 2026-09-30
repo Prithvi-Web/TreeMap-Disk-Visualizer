@@ -133,6 +133,9 @@ fileRouter.post('/files/terminal', guardBodyPath, requireInsideScanRoot, async (
   try {
     await openTerminal(target);
   } catch (err) {
+    // A refusal keeps its own status and code (the service's own check answers 403); only a
+    // terminal that could not be started is NO_TERMINAL.
+    if (err instanceof AppError) throw err;
     throw new AppError(500, 'NO_TERMINAL', err instanceof Error ? err.message : 'No terminal emulator found');
   }
   res.json({ opened: target });

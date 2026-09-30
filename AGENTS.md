@@ -332,6 +332,22 @@ read-what-you-saw) permission to act.
   its items being what it trashed. A leftover of a
   crash is removed by TreeMap itself at the next start, never through the
   Trash.
+- **TreeMap's own app-data folder is never a write destination.** It holds
+  the files TreeMap trusts — settings, the Autopilot policies and their
+  approval, the offload manifest, the Time Capsule, the spill folder — so no
+  request writes, moves or copies a file anywhere in it: a relocation's `to`,
+  an offload's `dest` and every copy its plan makes, a snapshot restore's
+  destination (given, or the default beside an original in app-data) and an
+  encode's paths (it writes where the original is) are refused with
+  `403 { code: "APP_DATA_PATH" }`, over HTTP and MCP. However the path is
+  spelled: a link in its parents, a link as its own last name (followed,
+  since a write goes where a link leads; a loop is refused), another case, a
+  name the file system folds (`ſ` for `s`, NTFS's `ı` for `i`), an 8.3 name —
+  and before the file or the folder exists. Reading app-data, and deleting
+  what a scan covers there, are unchanged. The offload reveal
+  (`POST /api/offload/reveal`) opens a copy only inside the destination its
+  manifest record names, both resolved; anything else is
+  `403 { code: "OUTSIDE_DEST_ROOT" }`.
 - **Storage modes (Phase 4).** A scan is kept in `memory` (every scan today),
   `spill` (rows in files on disk) or `aggregate` (a bounded summary, no row for
   every file). A feature that is off in the mode a scan is kept in answers
@@ -388,16 +404,16 @@ read-what-you-saw) permission to act.
   with its code, and a relocation whose move failed, as refused. A request
   refused before that is not recorded, because it never became an operation:
   by the path rules (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`,
-  `SPILL_PATH`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
+  `SPILL_PATH`, `APP_DATA_PATH`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
   field (`CONFIRM_REQUIRED`, `DEST_REQUIRED`), the rate limiter, or the
-  storage-mode gate (`STORAGE_MODE`). `SPILL_PATH` falls on both sides of
-  that line. On a path the request names — its `path` or `paths`, an
-  offload's `dest`, a relocation's `to`, a snapshot restore's path and
-  destination, an encode's paths — it is a path rule, and not recorded. On a
-  copy the offload plan would make under an allowed destination (a folder
-  named like the spill folder, sent into app-data) it is the plan's refusal,
-  and recorded: `offload.start`, `refused`, code `SPILL_PATH`, over HTTP and
-  MCP alike.
+  storage-mode gate (`STORAGE_MODE`). `SPILL_PATH` and `APP_DATA_PATH` fall
+  on both sides of that line. On a path the request names — its `path` or
+  `paths`, an offload's `dest`, a relocation's `to`, a snapshot restore's
+  path and destination, an encode's paths — each is a path rule, and not
+  recorded. On a copy the offload plan would make under an allowed
+  destination (one holding a link, under a name the volume folds, into the
+  spill folder or app-data) it is the plan's refusal, and recorded:
+  `offload.start`, `refused`, with its code, over HTTP and MCP alike.
   `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
   write the same log. Config writes differ by consequence: Autopilot policy
   saves and approvals DO audit (a standing instruction to delete is worth a

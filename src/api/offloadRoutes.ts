@@ -10,11 +10,11 @@ import {
   getOffloadEntry,
 } from '../services/offload';
 import { openPath } from '../services/cleaner';
-import { guardBodyPaths, requireInsideScanRoot, assertNotSpillPath } from '../middleware/pathGuard';
+import { guardBodyPaths, requireInsideScanRoot, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
 import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
-import { sanitizePath } from '../utils/pathSanitizer';
+import { liesInside, sanitizePath } from '../utils/pathSanitizer';
 import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
 import { FileNode, OffloadJob, OffloadStreamEvent, ScanResult } from '../models/types';
@@ -78,6 +78,7 @@ offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoo
   }
   const dest = sanitizePath(body.dest);
   assertNotSpillPath(dest); // nothing is ever copied into TreeMap's own spill folder (§S.5.3)
+  assertNotAppDataPath(dest); // nor anywhere in app-data, whose files TreeMap trusts (FG1)
   const dryRun = body.dryRun === true;
   const policy = await getPolicy();
   try {
@@ -152,6 +153,11 @@ offloadRouter.post('/offload/reveal', async (req: Request, res: Response) => {
   if (typeof id !== 'string') throw new AppError(400, 'ID_REQUIRED', 'Body must include "id"');
   const entry = await getOffloadEntry(id);
   if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'Unknown offload entry');
+  // The manifest vouches for a copy only inside the destination it was offloaded to, both resolved,
+  // so a record that was tampered with cannot point the reveal anywhere else (FG1).
+  if (!liesInside(entry.destRoot, entry.destPath)) {
+    throw new AppError(403, 'OUTSIDE_DEST_ROOT', 'That offload record names a place outside its own destination, so nothing was revealed');
+  }
   await openPath(entry.destPath, true, 'offloadCopy'); // on another drive, outside every scan: the manifest vouches for it
   res.json({ revealed: entry.destPath });
 });

@@ -200,11 +200,15 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
         'agent-policy.json (see GET /api/policy) can allowlist roots, protect paths forever, and cap bytes per operation; empty file = no restriction',
       audit:
         'Every destructive request that reaches its endpoint (real, dry-run, or refused there: policy, open files, the offload plan) is appended to an audit log; ' +
-        'one refused before that, by the path rules or the storage-mode gate, is not. SPILL_PATH on a path the request names (path, paths, dest, to, destination) ' +
-        'is a path rule and not recorded; SPILL_PATH on a copy the offload plan would make is the plan\'s refusal and is recorded (offload.start, refused) — ' +
-        'GET /api/audit reads it back',
+        'one refused before that, by the path rules or the storage-mode gate, is not. SPILL_PATH or APP_DATA_PATH on a path the request names (path, paths, ' +
+        'dest, to, destination) is a path rule and not recorded; either on a copy the offload plan would make is the plan\'s refusal and is recorded ' +
+        '(offload.start, refused) — GET /api/audit reads it back',
       idempotency:
         'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
+      appDataFolder:
+        "TreeMap's own app-data folder (settings, Autopilot policies, the offload manifest, the Time Capsule) is never where a request writes, moves " +
+        'or copies a file — a relocation\'s to, an offload\'s dest and its copies, a snapshot restore\'s destination, an encode: 403 APP_DATA_PATH, ' +
+        'however the path is spelled; reading it and deleting in it are unchanged',
       spillFolder:
         "TreeMap's own spill folder in app-data (the working files of very large scans) is refused by every endpoint and MCP tool " +
         'that trashes, opens, moves or writes a path: 403 SPILL_PATH, however the path is spelled',

@@ -3,6 +3,7 @@ import path from 'path';
 import { platform } from '../platform';
 import { capabilityState } from '../platform/capabilities';
 import { sanitizePath } from '../utils/pathSanitizer';
+import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
 import { moveToTrash } from './cleaner';
 import { AppError } from '../middleware/errorHandler';
 import type { SnapshotCandidate, SnapshotSearchResult, SnapshotRestoreOutcome } from '../models/types';
@@ -166,6 +167,10 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
   const destination = request.destination
     ? sanitizePath(request.destination)
     : defaultRestoreTarget(original);
+  // Where the copy is written, given or made here beside the original: never TreeMap's own spill
+  // folder nor anywhere in app-data (FG1). Before anything privileged, as every refusal here is.
+  assertNotSpillPath(destination);
+  assertNotAppDataPath(destination);
 
   // ENOENT is the only answer that means "nothing is there". Any other errno
   // — EACCES on the parent, ELOOP, EIO — means the question was not answered,

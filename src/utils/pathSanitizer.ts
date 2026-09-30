@@ -389,15 +389,68 @@ export function isInside(parent: string, child: string): boolean {
 }
 
 /**
- * A path as a case-insensitive volume compares it: lower-cased, and on Windows with each
- * name's trailing dots and spaces dropped as Win32 drops them (`win32Normalize`). Folded on
- * every platform, because realpath answers in the caller's spelling wherever it cannot read
- * the volume's own (a folder not made yet; any folder of a FAT or exFAT volume on Linux), so a
- * case-insensitive volume holding app-data is covered too; on a case-sensitive volume it also
- * refuses a path that reaches app-data only when case is ignored.
+ * A whole path as a case-insensitive volume compares it, for the Autopilot prefilter
+ * (`spillCandidateTest`): lower-cased, and on Windows with each name's trailing dots and spaces
+ * dropped as Win32 drops them (`win32Normalize`). The rules themselves compare name by name
+ * (`foldName`), which folds more than case.
  */
 function foldForCompare(p: string): string {
   return process.platform === 'win32' ? win32Normalize(p) : p.toLowerCase();
+}
+
+/**
+ * A name as a file system may read it: the compatibility forms folded (NFKC: `ſ`, U+017F, is `s`
+ * to default APFS, as to any volume that folds case by Unicode's tables), then case. On Windows the
+ * case fold is NTFS's own, upper then lower, so `ı` (U+0131), which NTFS upcases to `I` and NFKC
+ * and lower case leave alone, is `i`; and a trailing run of dots and spaces goes, as Win32 drops it.
+ * It folds some names no file system folds (the fullwidth letters, `ß` as `ss` on Windows), which
+ * only refuses more. Asked of ONE name, never a whole path: NFKC makes `／` a separator and `．．` a
+ * `..`.
+ */
+export function foldName(name: string, platform: NodeJS.Platform = process.platform): string {
+  const compatible = name.normalize('NFKC');
+  if (platform !== 'win32') return compatible.toLowerCase();
+  return compatible.toUpperCase().toLowerCase().replace(/[ .]+$/, '');
+}
+
+/** Whether a folder name is the spill folder's as a file system may read it (`foldName`). */
+export function isSpillFolderName(name: string, platform: NodeJS.Platform = process.platform): boolean {
+  return foldName(name, platform) === SPILL_DIR;
+}
+
+/** A path's names, its root first: `/`, `C:\`, or `\\server\share\`. */
+function namesOf(p: string): string[] {
+  const { root } = path.parse(p);
+  return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)];
+}
+
+/** App-data where it really is (every link resolved; a part not made yet as spelled), and its names folded. */
+let appDataMemo: { at: string; folded: string[] } | null = null;
+function appDataNames(): { at: string; folded: string[] } {
+  const at = stripDataVolume(canonDir(appDataDir()));
+  if (appDataMemo?.at !== at) appDataMemo = { at, folded: namesOf(at).map((name) => foldName(name)) };
+  return appDataMemo;
+}
+
+/**
+ * Where `p` lies in app-data: the names below it (none for app-data itself), or null when it is
+ * not app-data nor in it. Judged on where the path lives (`canonicalDirOf`: every link in its
+ * parents resolved, `..` and repeated separators gone, its last name and any part not made yet as
+ * spelled), name by name against app-data where it really is, each name read as a file system reads
+ * it (`foldName`) — so another case, `ſ` for `s`, NTFS's `ı`, a link in the parents, all land in
+ * app-data, before a folder is made as well as after. A path whose last name is app-data's own
+ * entry under a name no fold explains (an 8.3 short name on Windows) is asked by identity when it
+ * exists (lstat, so a link there stays a link).
+ */
+function namesBelowAppData(p: string): { where: string; appData: string; below: string[] } | null {
+  const { at, folded } = appDataNames();
+  const where = canonicalDirOf(p);
+  const names = namesOf(where);
+  if (names.length < folded.length) return null;
+  const own = folded.length - 1;
+  for (let i = 0; i < own; i++) if (foldName(names[i]) !== folded[i]) return null;
+  if (foldName(names[own]) === folded[own]) return { where, appData: at, below: names.slice(folded.length) };
+  return names.length === folded.length && sameEntry(where, at) ? { where, appData: at, below: [] } : null;
 }
 
 /**
@@ -405,43 +458,79 @@ function foldForCompare(p: string): string {
  * §S.5.3)? It holds the working files of very large scans, so no request may name a path
  * there to trash, open, move or write, and the Empty Folders view never offers it.
  *
- * Judged on where the path lives (`canonicalDirOf`: every link in its parents resolved, its
- * last name as spelled, `..` and repeated or trailing separators gone), below app-data where it
- * really is, compared as a case-insensitive volume compares paths. The first name below
- * app-data is then read as a file system reads a name (`isSpillFolderName`: case and the
- * compatibility forms folded), so another spelling of the folder is the folder — `x/../`,
- * another case, `ſ` for `s`, app-data reached through a link, Windows' trailing dots and
- * spaces — and it is refused by that name before the folder exists, when making the path would
- * make the folder. A link whose own path is elsewhere is not the folder (the scanned-root
- * rule's reading): trashing it removes the link, never what it leads to, and opening it
- * follows it as opening any link in a scanned root does.
+ * A path in app-data (`namesBelowAppData`: any spelling of app-data, links in the parents
+ * resolved) whose first name below it is the folder's as a file system reads names
+ * (`isSpillFolderName`) — so `x/../`, another case, `ſ` for `s`, Windows' trailing dots and spaces
+ * and NTFS's `ı` are the folder, and a look-alike is refused by its name before the folder exists,
+ * when making the path would make the folder. A link whose own path is elsewhere is not the folder
+ * (the scanned-root rule's reading): trashing it removes the link, never what it leads to, and
+ * opening it follows it as opening any link in a scanned root does.
  */
 export function isSpillPath(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
-  const spillAt = canonicalDirOf(path.join(appDataDir(), SPILL_DIR));
-  const where = canonicalDirOf(p);
-  const appData = foldForCompare(path.dirname(spillAt));
-  const inside = foldForCompare(where);
-  if (inside === appData || !isAtOrUnder(appData, inside)) return false;
-  const below = path.relative(appData, inside);
-  const name = below.split(path.sep)[0];
-  if (isSpillFolderName(name)) return true;
+  const at = namesBelowAppData(p);
+  if (at === null || at.below.length === 0) return false; // not in app-data, or app-data itself
+  if (isSpillFolderName(at.below[0])) return true;
   // A name no fold explains may still be the folder's: an 8.3 short name on Windows. Directly in
   // app-data, it is asked by identity when it exists (lstat, so a link there stays a link).
-  return name === below && sameEntry(where, spillAt);
+  return at.below.length === 1 && sameEntry(at.where, path.join(at.appData, SPILL_DIR));
+}
+
+/** Links a destination is followed through before it is refused as a doubt; the kernel's own limit is about as long. */
+const MAX_LINK_HOPS = 40;
+
+/**
+ * Is `p` TreeMap's own app-data folder or anything in it, as a place something would be WRITTEN
+ * (FG1)? App-data holds the files TreeMap trusts: its settings, the Autopilot policies and their
+ * approval, the offload manifest, the Time Capsule, the spill folder. So no request may make one
+ * of its files — as a relocation's destination, an offload's or any copy it plans, a snapshot
+ * restore's, an encode's — whatever the file is called and before it exists.
+ *
+ * Every spelling `namesBelowAppData` knows, and one more that only a write has: a write to a link
+ * goes where the link leads, so a path that is a link is judged by its target as well — followed
+ * link by link, a missing target included, and a chain longer than the kernel would follow is
+ * refused rather than guessed. Reading app-data and deleting in it are not asked here.
+ */
+export function isAppDataPath(p: string): boolean {
+  if (p.startsWith('cloud://')) return false;
+  let current = p;
+  for (let hop = 0; hop <= MAX_LINK_HOPS; hop++) {
+    if (namesBelowAppData(current) !== null) return true;
+    const next = linkTargetOf(current);
+    if (next === null) return false;
+    current = next;
+  }
+  return true; // a loop, or a chain no system follows: doubt refuses
+}
+
+/** Where the link at `p` leads (resolved from the folder the link really is in), or null when `p` is not a link. */
+function linkTargetOf(p: string): string | null {
+  try {
+    const st = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (st === undefined || !st.isSymbolicLink()) return null;
+    return path.resolve(canonDir(path.dirname(p)), fs.readlinkSync(p));
+  } catch {
+    return null; // unreadable: judged as spelled
+  }
 }
 
 /**
- * Whether a folder name is the spill folder's as a file system may read it: the compatibility
- * forms folded (NFKC: `ſ`, U+017F, is `s` to default APFS, as to any volume that folds case by
- * Unicode's tables) and then case, or on Windows `win32Normalize`'s case and trailing dots and
- * spaces. It folds some names no file system folds (the fullwidth letters), which only refuses
- * more inside app-data. Asked of ONE name, never a whole path: NFKC makes `／` a separator and
- * `．．` a `..`.
+ * Whether `p` lies strictly inside `folder`, both where they really are: every link in the folder
+ * resolved, and every link in p resolved too — its own last name included, when it exists — so a
+ * link inside the folder that leads out of it is outside, and so is `folder/..`; either path not
+ * absolute is not inside anything. Names are compared as the resolved paths spell them, never
+ * folded: this answers what may be opened, and a fold could only let more through.
  */
-export function isSpillFolderName(name: string): boolean {
-  const compatible = name.normalize('NFKC');
-  return (process.platform === 'win32' ? win32Normalize(compatible) : compatible.toLowerCase()) === SPILL_DIR;
+export function liesInside(folder: string, p: string): boolean {
+  if (!path.isAbsolute(folder) || !path.isAbsolute(p)) return false; // a relative one would be read from the working folder
+  const root = stripDataVolume(canonDir(folder));
+  let where: string;
+  try {
+    where = stripDataVolume(strip(fs.realpathSync.native(p)));
+  } catch {
+    where = canonicalDirOf(p);
+  }
+  return where !== root && isAtOrUnder(root, where);
 }
 
 /** Whether two paths name one existing entry: the same device and id, links not followed. */

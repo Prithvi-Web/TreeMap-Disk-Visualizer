@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, canonicalDirOf, isSpillPath } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, canonicalDirOf, isSpillPath, isAppDataPath } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
 import { isVirtualPath } from '../services/containerScanner';
@@ -192,6 +192,30 @@ export function spillPathRefusal(p: string): AppError | null {
 /** Throws `spillPathRefusal`'s 403 for a path in the spill folder: for services and the MCP tools. */
 export function assertNotSpillPath(p: string): void {
   const refusal = spillPathRefusal(p);
+  if (refusal) throw refusal;
+}
+
+/**
+ * The refusal for a WRITE destination in TreeMap's own app-data folder (`isAppDataPath`), or
+ * null (FG1). App-data holds the files TreeMap trusts — its settings, the Autopilot policies and
+ * their approval, the offload manifest the reveal route opens from, the Time Capsule — so no
+ * request makes a file there: not a relocation's `to`, an offload's `dest` or any copy its plan
+ * makes, a snapshot restore's destination, nor an encode (which writes where its original is).
+ * Reading app-data, and deleting what a scan covers, are not refused here.
+ */
+export function appDataPathRefusal(p: string): AppError | null {
+  if (!isAppDataPath(p)) return null;
+  return new AppError(
+    403,
+    'APP_DATA_PATH',
+    `"${p}" is in TreeMap's own app-data folder, where it keeps its settings and records. ` +
+      'No request writes, moves or copies a file there.',
+  );
+}
+
+/** Throws `appDataPathRefusal`'s 403 for a write destination in app-data: for routes, services and the MCP tools. */
+export function assertNotAppDataPath(p: string): void {
+  const refusal = appDataPathRefusal(p);
   if (refusal) throw refusal;
 }
 

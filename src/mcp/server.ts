@@ -20,7 +20,7 @@ import { prepareOffload, startOffload, getOffloadJob } from '../services/offload
 import { moveToTrash } from '../services/cleaner';
 import { checkOpenHandles, describeConflicts } from '../services/openHandleGuard';
 import { storeOf } from '../services/scanStore';
-import { insideAnyScanRoot, assertNotSpillPath } from '../middleware/pathGuard';
+import { insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
 import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
@@ -735,6 +735,7 @@ export function buildMcpServer(): McpServer {
         assertToolAvailable('offload', [scan], { scanId, paths });
         const dest = sanitizePath(rawDest);
         assertNotSpillPath(dest);
+        assertNotAppDataPath(dest);
         const policy = await getPolicy();
         const prepared = await (async () => {
           try {

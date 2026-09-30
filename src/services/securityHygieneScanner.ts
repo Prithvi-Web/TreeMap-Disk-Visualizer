@@ -2,7 +2,7 @@ import os from 'os';
 import path from 'path';
 import { ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
-import { insideAnyScanRoot, spillPathRefusal } from '../middleware/pathGuard';
+import { appDataPathRefusal, insideAnyScanRoot, spillPathRefusal } from '../middleware/pathGuard';
 
 /**
  * securityHygieneScanner — secrets in the wrong place (§C5).
@@ -403,6 +403,9 @@ export async function relocateSecret(from: string, to: string): Promise<Relocate
     const spill = spillPathRefusal(p);
     if (spill) throw new Error(spill.message);
   }
+  // Nothing is moved INTO app-data, whose files TreeMap trusts (FG1); moving one out is a delete.
+  const appData = appDataPathRefusal(to);
+  if (appData) throw new Error(appData.message);
   const fsp = await import('fs/promises');
   const src = await fsp.lstat(from);
   if (!src.isFile()) throw new Error('Only a file can be moved to a safer location');
