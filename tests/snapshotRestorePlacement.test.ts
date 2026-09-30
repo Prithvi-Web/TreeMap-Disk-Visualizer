@@ -9,10 +9,13 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-snapshotRestorePlacement-data-');
 
 import {
-  PLACEMENT_FUNCTIONS, RECOVER_SCRIPT, buildRecoveryScript, destinationFolderRefusal, recoverFromSnapshots, runAdminPrompt, setAdminPromptForTests,
+  PLACEMENT_FUNCTIONS, RECOVER_SCRIPT, buildRecoveryScript, destinationFolderRefusal, recoverFromSnapshots, restoreFolderRefusal, runAdminPrompt,
+  setAdminPromptForTests,
 } from '../src/platform/macos/snapshotRecover';
 import { copyOutOfSnapshot } from '../src/platform/snapshotCopy';
 import { LinuxProvider } from '../src/platform/linux';
+import { WindowsProvider } from '../src/platform/windows';
+import { setTrashStepForTests } from '../src/services/cleaner';
 import { platform } from '../src/platform';
 import { restoreFromSnapshot } from '../src/services/snapshotRecovery';
 import { AppError } from '../src/middleware/errorHandler';
@@ -44,13 +47,17 @@ function tmp(prefix: string): string {
   return fs.realpathSync(fileTempDir(prefix));
 }
 
-/** Runs the placement functions as this user: enter `destDir` as `owner`, then place `src` there as `name`. */
+/**
+ * Runs the placement functions as this user: enter `destDir` as `owner`, then place `src` there as
+ * `name`. A stand-in in `before` finds the destination folder as `$TM_DEST`: place_copy works from
+ * inside the folder it made (FG4d, review #3), so `./` there is not the destination.
+ */
 function place(destDir: string, name: string, src: string, opts: { owner?: number; before?: string; env?: NodeJS.ProcessEnv } = {}) {
   const driver = `${PLACEMENT_FUNCTIONS}\n${opts.before ?? ''}\nset -u\nenter_destination "$1" "$2"\nplace_copy "$3" "$4" "$2" "$5" && echo PLACED\n`;
   // This process's environment, so the child carries the test runner's guard
   // (childEnvCarriesGuard.test.ts), with the system's own commands first on PATH as root's are.
   const run = spawnSync('/bin/sh', ['-c', driver, 'sh', destDir, String(opts.owner ?? UID), src, name, String(GID)], {
-    encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', ...opts.env },
+    encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', TM_DEST: destDir, ...opts.env },
   });
   return { out: `${run.stdout}${run.stderr}`.trim(), status: run.status };
 }
@@ -117,7 +124,7 @@ test('a link planted just before the copy is never written through', { skip: !on
   const v = victim();
   // After every check, as the copy starts: cp is wrapped so a link to another file is at the
   // destination name first. The copy goes into place_copy's own folder, never to that name.
-  const before = 'cp() { ln -s "$TM_VICTIM" "./$TM_NAME"; command cp "$@"; }';
+  const before = 'cp() { ln -s "$TM_VICTIM" "$TM_DEST/$TM_NAME"; command cp "$@"; }';
   const { out } = place(dest, 'lost.txt', source(), { before, env: { TM_VICTIM: v.file, TM_NAME: 'lost.txt' } });
   assert.match(out, /^ERROR something appeared at the destination/);
   assert.equal(fs.readFileSync(v.file, 'utf8'), v.content, 'the file the link leads to is untouched');
@@ -129,7 +136,7 @@ test('a link that appears while the copy is made is never written through', { sk
   const dest = tmp('treemap-place-dest-');
   const v = victim();
   // As the copy finishes, a link to another file appears at the destination name.
-  const before = 'cp() { command cp "$@"; ln -s "$TM_VICTIM" "./$TM_NAME"; }';
+  const before = 'cp() { command cp "$@"; ln -s "$TM_VICTIM" "$TM_DEST/$TM_NAME"; }';
   const { out } = place(dest, 'lost.txt', source(), { before, env: { TM_VICTIM: v.file, TM_NAME: 'lost.txt' } });
   assert.match(out, /^ERROR something appeared at the destination/);
   assert.equal(fs.readFileSync(v.file, 'utf8'), v.content, 'the file the link leads to is untouched');
@@ -140,7 +147,7 @@ test('a link that appears while the copy is made is never written through', { sk
 test('a link to a folder that appears at the name is not moved into', { skip: !onMac }, () => {
   const dest = tmp('treemap-place-dest-');
   const elsewhere = tmp('treemap-place-elsewhere-');
-  const before = 'cp() { command cp "$@"; ln -s "$TM_VICTIM" "./$TM_NAME"; }';
+  const before = 'cp() { command cp "$@"; ln -s "$TM_VICTIM" "$TM_DEST/$TM_NAME"; }';
   const { out } = place(dest, 'lost.txt', source(), { before, env: { TM_VICTIM: elsewhere, TM_NAME: 'lost.txt' } });
   assert.match(out, /^ERROR something appeared at the destination/);
   assert.deepEqual(fs.readdirSync(elsewhere), [], 'nothing was moved into the folder the link leads to');
@@ -178,7 +185,7 @@ const beforePlacing = (command: 'link' | 'ln' | 'mv', plant: string): string =>
 
 test('a real folder that appears at a file\'s name just before it is placed receives nothing', { skip: !onMac }, () => {
   const dest = tmp('treemap-place-dest-');
-  const { out } = place(dest, 'lost.txt', source(), { before: beforePlacing('link', 'mkdir "./$TM_NAME"'), env: { TM_NAME: 'lost.txt' } });
+  const { out } = place(dest, 'lost.txt', source(), { before: beforePlacing('link', 'mkdir "$TM_DEST/$TM_NAME"'), env: { TM_NAME: 'lost.txt' } });
   assert.match(out, /^ERROR something appeared at the destination/);
   assert.notEqual(out, 'PLACED');
   assert.deepEqual(fs.readdirSync(path.join(dest, 'lost.txt')), [], 'nothing was put inside the folder');
@@ -187,7 +194,7 @@ test('a real folder that appears at a file\'s name just before it is placed rece
 
 test('a dangling link that appears at a file\'s name just before it is placed is not replaced', { skip: !onMac }, () => {
   const dest = tmp('treemap-place-dest-');
-  const { out } = place(dest, 'lost.txt', source(), { before: beforePlacing('link', 'ln -s ./gone "./$TM_NAME"'), env: { TM_NAME: 'lost.txt' } });
+  const { out } = place(dest, 'lost.txt', source(), { before: beforePlacing('link', 'ln -s ./gone "$TM_DEST/$TM_NAME"'), env: { TM_NAME: 'lost.txt' } });
   assert.match(out, /^ERROR something appeared at the destination/);
   assert.equal(fs.readlinkSync(path.join(dest, 'lost.txt')), './gone', 'the link is still there');
   assert.equal(fs.existsSync(path.join(dest, 'gone')), false, 'nothing made where it leads');
@@ -195,7 +202,7 @@ test('a dangling link that appears at a file\'s name just before it is placed is
 });
 
 test('a real folder that appears at the name while a file or a folder is copied is found before anything is placed', { skip: !onMac }, () => {
-  const plantAfterCopy = 'cp() { command cp "$@"; mkdir "./$TM_NAME"; }';
+  const plantAfterCopy = 'cp() { command cp "$@"; mkdir "$TM_DEST/$TM_NAME"; }';
   const file = tmp('treemap-place-dest-');
   const fromFile = place(file, 'lost.txt', source(), { before: plantAfterCopy, env: { TM_NAME: 'lost.txt' } });
   assert.match(fromFile.out, /^ERROR something appeared at the destination/);
@@ -217,7 +224,7 @@ test('a real folder that appears at a folder\'s name at the last moment is found
   fs.mkdirSync(path.join(srcDir, 'album'));
   fs.writeFileSync(path.join(srcDir, 'album', 'a.jpg'), 'jpeg');
   // Between the last check and the rename: mv then moves the copy inside what appeared.
-  const { out } = place(dest, 'album', path.join(srcDir, 'album'), { before: beforePlacing('mv', 'mkdir "./$TM_NAME"'), env: { TM_NAME: 'album' } });
+  const { out } = place(dest, 'album', path.join(srcDir, 'album'), { before: beforePlacing('mv', 'mkdir "$TM_DEST/$TM_NAME"'), env: { TM_NAME: 'album' } });
   assert.match(out, /^ERROR something appeared at the destination/);
   assert.match(out, /not in its place/);
   assert.equal(fs.readFileSync(path.join(dest, 'album', 'item', 'a.jpg'), 'utf8'), 'jpeg', 'the copy is where the message says, nothing was written over');
@@ -232,7 +239,7 @@ test('a link is restored as a link, and a real folder appearing at its name is f
   assert.deepEqual(fs.readdirSync(dest), ['lost.lnk']);
 
   const raced = tmp('treemap-place-dest-');
-  const { out } = place(raced, 'lost.lnk', path.join(srcDir, 'lost.lnk'), { before: beforePlacing('ln', 'mkdir "./$TM_NAME"'), env: { TM_NAME: 'lost.lnk' } });
+  const { out } = place(raced, 'lost.lnk', path.join(srcDir, 'lost.lnk'), { before: beforePlacing('ln', 'mkdir "$TM_DEST/$TM_NAME"'), env: { TM_NAME: 'lost.lnk' } });
   assert.match(out, /^ERROR something appeared at the destination/);
   assert.notEqual(out, 'PLACED');
 });
@@ -246,7 +253,89 @@ test('the copy is handed to the user, whole, before it is placed', { skip: !onMa
   assert.ok(fs.existsSync(log), 'chown was called for the copy');
   const [line, ...rest] = fs.readFileSync(log, 'utf8').trim().split('\n');
   assert.deepEqual(rest, [], 'once');
-  assert.match(line, new RegExp(`^-R ${String(UID)}:${String(GID)} \\./\\.treemap-restore\\.[A-Za-z0-9]+/item$`), line);
+  // The copy by its name inside the folder place_copy made and works in (FG4d, review #3), or by its path from the destination before.
+  assert.match(line, new RegExp(`^-R ${String(UID)}:${String(GID)} (\\./\\.treemap-restore\\.[A-Za-z0-9]+/|\\./)item$`), line);
+});
+
+/* ══════════════════ The folder the copy is made in (FG4d, review #3) ══════════════════ */
+
+/**
+ * place_copy's own folder, made with `mktemp -d` in a destination folder the user owns, used to be
+ * named again at every step: renamed aside and replaced by the user's own folder holding
+ * `item -> <any file>`, `cp -a` — as root — wrote through that link. Now it is entered by its
+ * physical path once made, must be the running account's and nobody else's to write in, and the
+ * copy is made and placed from inside it (`./item`, `../<name>`).
+ */
+test('a folder swapped in for the one the copy is made in is never written through', { skip: !onMac }, () => {
+  const dest = tmp('treemap-place-dest-');
+  const v = victim();
+  // As the copy starts: the folder place_copy made is renamed aside, and one holding a link to
+  // another file takes its name.
+  const before = 'cp() { s="$TM_DEST/${stage##*/}"; mv "$s" "$s.aside"; mkdir "$s"; ln -s "$TM_VICTIM" "$s/item"; command cp "$@"; }';
+  const { out } = place(dest, 'lost.txt', source(), { before, env: { TM_VICTIM: v.file } });
+  assert.equal(fs.readFileSync(v.file, 'utf8'), v.content, 'the file the planted link leads to is untouched');
+  assert.equal(out, 'PLACED', 'the copy went into the folder that was made for it, wherever that was moved');
+  assert.equal(fs.readFileSync(path.join(dest, 'lost.txt'), 'utf8'), 'recovered bytes');
+  assert.equal(fs.lstatSync(path.join(dest, 'lost.txt')).isFile(), true, 'a file, not the planted link');
+});
+
+test('a folder to copy into that is not the one mktemp made is refused before anything is copied', { skip: !onMac }, () => {
+  // Swapped between mktemp and entering it: not 0700 (a folder anyone made with the default
+  // umask), or not the running account's (root's, when the helper runs) — each is not ours.
+  const cases: Array<[string, string]> = [
+    ['open to others', 'mktemp() { d=$(command mktemp "$@") || return 1; chmod 755 "$d"; printf "%s\\n" "$d"; }'],
+    ['another account\'s', 'id() { echo 4242; }'],
+  ];
+  for (const [what, before] of cases) {
+    const dest = tmp('treemap-place-dest-');
+    const { out } = place(dest, 'lost.txt', source(), { before });
+    assert.match(out, /^ERROR the folder made to copy into was changed/, `${what}: ${out}`);
+    assert.equal(fs.existsSync(path.join(dest, 'lost.txt')), false, what);
+  }
+});
+
+/* ══════════════════ A copy that cannot be put in place, with its name still free (FG4d, review #7, #13, #18) ══════════════════ */
+
+test('a volume that holds no hard links still receives the file, moved into place and confirmed', { skip: !onMac }, () => {
+  // FAT and exFAT refuse link(2) with "Operation not supported", and nothing is at the name.
+  const dest = tmp('treemap-place-dest-');
+  const before = 'link() { echo "link: $2: Operation not supported" >&2; return 1; }';
+  const { out } = place(dest, 'lost.txt', source(), { before });
+  assert.equal(out, 'PLACED');
+  assert.equal(fs.readFileSync(path.join(dest, 'lost.txt'), 'utf8'), 'recovered bytes');
+  assert.deepEqual(fs.readdirSync(dest), ['lost.txt'], 'nothing left behind');
+});
+
+test('a copy that cannot be put in place is reported as that, not as a name that appeared', { skip: !onMac }, () => {
+  const dest = tmp('treemap-place-dest-');
+  const before = [
+    'link() { echo "link: $2: Operation not supported" >&2; return 1; }',
+    'mv() { echo "mv: rename $1 to $2: Operation not permitted" >&2; return 1; }',
+  ].join('\n');
+  const { out } = place(dest, 'lost.txt', source(), { before });
+  assert.doesNotMatch(out, /something appeared/);
+  assert.match(out, /^ERROR the copy could not be put in place \(link: .*Operation not supported\)/);
+  assert.deepEqual(fs.readdirSync(dest), [], 'nothing at the destination, and the folder made for the copy is gone');
+});
+
+test('a locked file (Finder\'s Locked, uchg) is restored, unlocked, and nothing is left behind', { skip: !onMac }, () => {
+  // cp -a keeps the lock, and a locked file can be neither linked, moved nor handed over — not by
+  // root either. The copy is unlocked before it is handed to the user and put in place.
+  const src = source();
+  const flags = (file: string): string => spawnSync('/usr/bin/stat', ['-f', '%Sf', file], { encoding: 'utf8', env: process.env }).stdout.trim();
+  const dest = tmp('treemap-place-dest-');
+  spawnSync('/usr/bin/chflags', ['uchg', src], { env: process.env });
+  try {
+    assert.match(flags(src), /uchg/, 'the source is locked');
+    const { out } = place(dest, 'lost.txt', src);
+    assert.equal(out, 'PLACED');
+    assert.equal(fs.readFileSync(path.join(dest, 'lost.txt'), 'utf8'), 'recovered bytes');
+    assert.doesNotMatch(flags(path.join(dest, 'lost.txt')), /uchg/, 'the restored copy is not locked');
+    assert.deepEqual(fs.readdirSync(dest), ['lost.txt'], 'the folder made for the copy is gone');
+  } finally {
+    // Whatever happened, nothing locked is left for the temp folders' removal to trip on.
+    spawnSync('/usr/bin/chflags', ['-R', 'nouchg', src, dest], { env: process.env });
+  }
 });
 
 /* ══════════════════ The prompt: stood in for, and refused under a test runner ══════════════════ */
@@ -534,13 +623,26 @@ test('each answer of the helper, and of the prompt, is its own 409 code', async 
     ['a dismissed prompt', async () => { throw new Error('0:12: execution error: User canceled. (-128)'); }, 'AUTHORIZATION_DECLINED'],
     ['a prompt that failed', async () => { throw new Error('0:5: execution error: The operation couldn\'t be completed. (1)'); }, 'RESTORE_FAILED'],
     ['a path with -128 in it', async () => { throw new Error('0:108: execution error: ERROR other users can change the destination folder /Volumes/USB-128GB/Photos (1)'); }, 'DESTINATION_FOLDER_REFUSED'],
+    // The helper's one folder refusal that names no folder: `cd -P` into it failed (FG4d, review #6, #16).
+    ['a folder root could not open', async () => 'ERROR the destination folder could not be opened\n', 'DESTINATION_FOLDER_REFUSED'],
+    // A snapshot that could not be mounted was not looked in (FG4d, review #5).
+    ['no snapshot mounted', async () => 'ERROR no snapshot could be mounted (mount_apfs: volume could not be mounted: Operation not permitted), so whether the snapshots hold that path is not known\n', 'RESTORE_FAILED'],
+    ['some snapshots not mounted', async () => 'ERROR 1 of the 2 snapshots could not be mounted (mount_apfs: Resource busy), and none of the others holds that path, so whether it can be recovered is not known\n', 'RESTORE_FAILED'],
+    // A placement that failed with the name free is not a name taken (FG4d, review #7).
+    ['a copy not put in place', async () => 'ERROR the copy could not be put in place (link: ../a.txt: Operation not supported), and nothing was written at the destination\n', 'RESTORE_FAILED'],
+    // Found only through a link out of the snapshot: the snapshot does not hold it (FG4d, review #12).
+    ['only through a link out', async () => 'ERROR that path leads out of the snapshot through a link in it, so it was not copied\n', 'NOT_IN_ANY_SNAPSHOT'],
   ];
   try {
     for (const [what, answer, code] of cases) {
       setAdminPromptForTests(answer);
       const original = path.join(tmp('treemap-place-codes-'), 'notes.txt');
-      await assert.rejects(restoreFromSnapshot({ path: original }),
-        (err: unknown) => err instanceof AppError && err.status === 409 && err.code === code, `${what} is ${code}`);
+      await assert.rejects(restoreFromSnapshot({ path: original }), (err: unknown) => {
+        assert.ok(err instanceof AppError && err.status === 409, `${what}: ${String(err)}`);
+        assert.equal(err.code, code, `${what} is ${code}: ${err.message}`);
+        if (what === 'only through a link out') assert.match(err.message, /only through a link that leads out of them/);
+        return true;
+      });
     }
   } finally {
     setAdminPromptForTests(null);
@@ -562,4 +664,151 @@ test('a destination taken when the copy ran answers 409 DESTINATION_OCCUPIED, as
     provider.listSnapshots = saved.list;
     provider.recoverFromSnapshots = saved.recover;
   }
+});
+
+/* ══════════════════ With overwrite, every refusal comes before the Trash (FG4d, review #4, #14) ══════════════════ */
+
+/** The provider answering as macOS does, whatever this machine is; `undo` puts it back. */
+function macProvider(): { undo: () => void } {
+  const provider = platform() as unknown as Record<'listSnapshots' | 'recoverFromSnapshots' | 'restoreFolderRefusal', unknown>;
+  const saved = { list: provider.listSnapshots, recover: provider.recoverFromSnapshots, folder: provider.restoreFolderRefusal };
+  provider.listSnapshots = async () => SNAPSHOTS;
+  provider.recoverFromSnapshots = (s: VolumeSnapshotRef[], o: string, d: string) => recoverFromSnapshots(s, o, d);
+  provider.restoreFolderRefusal = (dir: string) => restoreFolderRefusal(dir);
+  return {
+    undo: () => {
+      provider.listSnapshots = saved.list;
+      provider.recoverFromSnapshots = saved.recover;
+      provider.restoreFolderRefusal = saved.folder;
+    },
+  };
+}
+
+test('with overwrite, a destination folder others can change is refused before the file there is moved to the Trash', { skip: process.platform === 'win32' || UID === 0 }, async () => {
+  const dir = tmp('treemap-place-overwrite-');
+  const existing = path.join(dir, 'notes.txt');
+  fs.writeFileSync(existing, 'newer work');
+  fs.chmodSync(dir, 0o777);
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  let asked = 0;
+  setAdminPromptForTests(async () => { asked++; return 'NOTFOUND\n'; });
+  const mac = macProvider();
+  try {
+    await assert.rejects(restoreFromSnapshot({ path: path.join(dir, 'lost.txt'), destination: existing, overwrite: true }),
+      (err: unknown) => err instanceof AppError && err.status === 409 && err.code === 'DESTINATION_FOLDER_REFUSED');
+    assert.deepEqual(trashed, [], 'nothing was moved to the Trash for a restore that was refused');
+    assert.equal(asked, 0, 'and no password was asked for');
+    assert.equal(fs.readFileSync(existing, 'utf8'), 'newer work');
+  } finally {
+    mac.undo();
+    setAdminPromptForTests(null);
+    setTrashStepForTests(null);
+    fs.chmodSync(dir, 0o700);
+  }
+});
+
+test('with overwrite, a restore that stops after the Trash step says the replaced file is in the Trash', { skip: process.platform === 'win32' }, async () => {
+  const dir = tmp('treemap-place-overwrite-');
+  const existing = path.join(dir, 'notes.txt');
+  fs.writeFileSync(existing, 'newer work');
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  setAdminPromptForTests(async () => { throw new Error('0:12: execution error: User canceled. (-128)'); });
+  const mac = macProvider();
+  try {
+    await assert.rejects(restoreFromSnapshot({ path: path.join(dir, 'lost.txt'), destination: existing, overwrite: true }), (err: unknown) => {
+      assert.ok(err instanceof AppError && err.code === 'AUTHORIZATION_DECLINED', String(err));
+      assert.match(err.message, /had already been moved to the Trash/, err.message);
+      return true;
+    });
+    assert.deepEqual(trashed, [existing]);
+  } finally {
+    mac.undo();
+    setAdminPromptForTests(null);
+    setTrashStepForTests(null);
+  }
+});
+
+/* ══════════════════ Linux and Windows: a restore that failed says so (FG4d, review #8, #17) ══════════════════ */
+
+test('a Linux restore whose copy fails is a failed restore, saying what was left at the destination', { skip: process.platform === 'win32' || UID === 0 }, async () => {
+  const snap = tmp('treemap-btrfs-snap-');
+  const album = path.join(snap, 'home', 'me', 'album');
+  fs.mkdirSync(album, { recursive: true });
+  fs.writeFileSync(path.join(album, 'a.jpg'), 'readable');
+  fs.writeFileSync(path.join(album, 'b.jpg'), 'unreadable');
+  fs.writeFileSync(path.join(snap, 'home', 'me', 'locked.txt'), 'unreadable');
+  fs.chmodSync(path.join(album, 'b.jpg'), 0o000);
+  fs.chmodSync(path.join(snap, 'home', 'me', 'locked.txt'), 0o000);
+  const ref: VolumeSnapshotRef = { id: 'snap-1', name: 'snap-1', takenAt: 1, volume: '/', accessPath: snap };
+  const dir = tmp('treemap-btrfs-dest-');
+  try {
+    const folder = await new LinuxProvider().recoverFromSnapshots([ref], '/home/me/album', path.join(dir, 'album (recovered)'));
+    assert.equal(folder.restored, false);
+    assert.equal(folder.failed, true, JSON.stringify(folder));
+    assert.match(folder.reason ?? '', /EACCES/);
+    assert.match(folder.reason ?? '', /What was copied before it failed is at/, 'the half-made folder is named, not passed off as a restore');
+
+    const file = await new LinuxProvider().recoverFromSnapshots([ref], '/home/me/locked.txt', path.join(dir, 'locked (recovered).txt'));
+    assert.equal(file.failed, true, JSON.stringify(file));
+    assert.match(file.reason ?? '', /Nothing was left at the destination/);
+    assert.equal(fs.existsSync(path.join(dir, 'locked (recovered).txt')), false);
+
+    // Through the service: 409 RESTORE_FAILED, never a raw errno read as "not allowed to read".
+    const provider = platform() as unknown as Record<'listSnapshots' | 'recoverFromSnapshots', unknown>;
+    const saved = { list: provider.listSnapshots, recover: provider.recoverFromSnapshots };
+    provider.listSnapshots = async () => [ref];
+    provider.recoverFromSnapshots = (s: VolumeSnapshotRef[], o: string, d: string) => new LinuxProvider().recoverFromSnapshots(s, o, d);
+    try {
+      await assert.rejects(restoreFromSnapshot({ path: '/home/me/locked.txt', destination: path.join(dir, 'again.txt') }),
+        (err: unknown) => err instanceof AppError && err.status === 409 && err.code === 'RESTORE_FAILED');
+    } finally {
+      provider.listSnapshots = saved.list;
+      provider.recoverFromSnapshots = saved.recover;
+    }
+  } finally {
+    fs.chmodSync(path.join(album, 'b.jpg'), 0o644);
+    fs.chmodSync(path.join(snap, 'home', 'me', 'locked.txt'), 0o644);
+  }
+});
+
+test('a Linux snapshot that could not be looked in is not one that lacks the path', { skip: process.platform === 'win32' || UID === 0 }, async () => {
+  const snap = tmp('treemap-btrfs-snap-');
+  const home = path.join(snap, 'home');
+  fs.mkdirSync(path.join(home, 'me'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'me', 'notes.txt'), 'old notes');
+  fs.chmodSync(home, 0o000);
+  const ref: VolumeSnapshotRef = { id: 'snap-1', name: 'snap-1', takenAt: 1, volume: '/', accessPath: snap };
+  try {
+    const result = await new LinuxProvider().recoverFromSnapshots([ref], '/home/me/notes.txt', path.join(tmp('treemap-btrfs-dest-'), 'notes.txt'));
+    assert.equal(result.restored, false);
+    assert.equal(result.failed, true, JSON.stringify(result));
+    assert.match(result.reason ?? '', /None of the 1 btrfs snapshot could be opened \(EACCES/);
+  } finally {
+    fs.chmodSync(home, 0o755);
+  }
+});
+
+test('a Windows restore point that could not be opened is a failed restore, never "in no restore point"', async () => {
+  const snaps: VolumeSnapshotRef[] = [
+    { id: '{shadow-2}', name: 'b', takenAt: 2, volume: 'C:', accessPath: null },
+    { id: '{shadow-1}', name: 'a', takenAt: 1, volume: 'C:', accessPath: null },
+  ];
+  const dest = path.join(tmp('treemap-vss-dest-'), 'notes (recovered).txt');
+  // Nothing is started here: the two steps that would run PowerShell are stood in for.
+  const unfound = new WindowsProvider() as unknown as { deviceObjectFor: unknown; linkShadow: unknown; recoverFromSnapshots: WindowsProvider['recoverFromSnapshots'] };
+  unfound.deviceObjectFor = async () => null;
+  unfound.linkShadow = async () => { throw new Error('the stand-in: no link was expected'); };
+  const none = await unfound.recoverFromSnapshots(snaps, 'C:\\Users\\me\\notes.txt', dest);
+  assert.equal(none.failed, true, JSON.stringify(none));
+  assert.match(none.reason ?? '', /None of the 2 restore points could be opened/);
+
+  const denied = new WindowsProvider() as unknown as typeof unfound;
+  denied.deviceObjectFor = async () => '\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1';
+  denied.linkShadow = async () => { throw new Error('You do not have sufficient privilege to perform this operation.'); };
+  const refused = await denied.recoverFromSnapshots(snaps, 'C:\\Users\\me\\notes.txt', dest);
+  assert.equal(refused.failed, true, JSON.stringify(refused));
+  assert.match(refused.reason ?? '', /administrator rights/);
+  assert.equal(fs.existsSync(dest), false);
 });

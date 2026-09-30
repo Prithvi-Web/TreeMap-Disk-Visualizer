@@ -356,6 +356,11 @@ export abstract class BaseProvider implements PlatformProvider {
     return { restored: false, reason: 'This system has no filesystem snapshots TreeMap can read.' };
   }
 
+  /** Nothing refused: the copy is made as the user, who may write where they can. */
+  async restoreFolderRefusal(_dir: string): Promise<string | null> {
+    return null;
+  }
+
   async registerShellIntegration(): Promise<ShellIntegrationResult> {
     return { installed: false, targets: [], reason: 'Shell integration is not available on this system' };
   }

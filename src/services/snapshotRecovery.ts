@@ -177,11 +177,13 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
   // and `false` here is not a harmless default: a restore over a live file is
   // the failure this feature exists to prevent. This check is the early, friendly
   // answer; it is not the only one. The copy itself never writes through a name
-  // that is there by the time it runs (FG4, FG4c): on macOS the root helper
-  // copies into a folder of its own and places the copy with a call that fails
-  // whatever is at the name, confirmed by the copy's identity, in a destination
-  // folder no other account can change; on Linux and Windows the copy claims
-  // its name exclusively (platform/snapshotCopy.ts).
+  // that is there by the time it runs (FG4, FG4c, FG4d): on macOS the root helper
+  // copies into a folder of its own, works from inside it, places a file with a
+  // call that fails whatever is at the name and a folder or a link by a move
+  // that is then confirmed by the copy's identity (a folder appearing at the
+  // last moment is found, not prevented: RISKS R102), in a destination folder
+  // no other account can change; on Linux and Windows the copy claims its name
+  // exclusively (platform/snapshotCopy.ts).
   const occupied = await fsp.lstat(destination).then(() => true).catch((err: NodeJS.ErrnoException) => {
     // `meansAbsent`, not the wider stat predicate: a wrong "nothing is there"
     // ends in a root-privileged `cp -a` over a live file.
@@ -211,9 +213,15 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
   //
   // The trash step used to run first, so a `listSnapshots` that came back
   // empty left the user's file in the Trash and handed them `NO_SNAPSHOTS`
-  // as the explanation — for a restore that never started. The same window
-  // covered a declined password prompt below.
+  // as the explanation — for a restore that never started. The destination
+  // folder's own rule (macOS: the copy is made as administrator, so no other
+  // account may change the folder) was checked only inside the restore, after
+  // the trash step (FG4d, review #4, #14). A dismissed password prompt, or a
+  // restore that finds nothing, can only be known after it; the answer then
+  // says the replaced file is in the Trash.
   const provider = platform();
+  const folderRefusal = await provider.restoreFolderRefusal(path.dirname(destination));
+  if (folderRefusal) throw new AppError(409, 'DESTINATION_FOLDER_REFUSED', folderRefusal);
   const volume = volumeFor(original);
   let listFailed: string | null = null;
   const snapshots = await provider.listSnapshots(volume).catch((err: unknown) => {
@@ -237,6 +245,7 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     );
   }
 
+  let replacedToTrash = false;
   if (occupied && request.overwrite) {
     // The replaced file goes to the Trash rather than being unlinked. Nothing
     // in TreeMap hard-deletes, and this is the one spot in a *recovery*
@@ -254,10 +263,14 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
       throw new AppError(409, 'DESTINATION_NOT_CLEARED',
         `${destination} could not be moved to the Trash (${trashed.failed[0].reason}), so nothing was restored over it.`);
     }
+    replacedToTrash = true;
   }
 
   const result = await provider.recoverFromSnapshots(snapshots, original, destination);
   if (!result.restored) {
+    const trashNote = replacedToTrash
+      ? ` The file that was at ${destination} had already been moved to the Trash to make room, and is there still.`
+      : '';
     // A dismissed password prompt is an answer, not a fault — 409, and the UI
     // renders it neutrally.
     // A name at the destination when the copy ran (FG4) is the same refusal as one found before.
@@ -268,7 +281,7 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
         : result.destinationRefused ? 'DESTINATION_FOLDER_REFUSED'
           : result.failed ? 'RESTORE_FAILED'
             : 'NOT_IN_ANY_SNAPSHOT';
-    throw new AppError(409, code, result.reason ?? 'That path could not be recovered from any snapshot.');
+    throw new AppError(409, code, `${result.reason ?? 'That path could not be recovered from any snapshot.'}${trashNote}`);
   }
 
   const stat = await fsp.lstat(destination).catch(() => null);

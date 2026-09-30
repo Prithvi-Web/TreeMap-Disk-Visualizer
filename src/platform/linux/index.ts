@@ -11,7 +11,7 @@ import { volumeTopology, isRotational, queueDepth, topologyReason } from './topo
 import { downloadOrigin, provenanceAvailable, readDownloadOriginsLinux } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
-import { copyOutOfSnapshot, destinationTakenReason } from '../snapshotCopy';
+import { copyFailure, copyOutOfSnapshot, destinationTakenReason, unreadSnapshots } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
 import { readLastUsedLinux, probeLastUsedLinux } from './lastUsed';
 import { readBackupMembershipLinux, probeBackupMembershipLinux } from './backup';
@@ -37,7 +37,7 @@ import type {
   VolumeTopology,
   ZombieHandleInfo,
 } from '../types';
-import { meansGone } from '../../utils/errno';
+import { meansAbsent, meansGone } from '../../utils/errno';
 import { notifyWatchDelivery } from '../types';
 import { watchPath, type WatchLease } from '../watchRegistry';
 
@@ -337,19 +337,34 @@ export class LinuxProvider extends BaseProvider {
     destination: string,
   ): Promise<SnapshotRecoveryResult> {
     const ordered = [...snapshots].sort((a, b) => (b.takenAt ?? 0) - (a.takenAt ?? 0));
+    // A snapshot that could not be looked in is not one that lacks the path (FG4d, review #8, #17).
+    const unread: string[] = [];
     for (const snapshot of ordered) {
-      if (snapshot.accessPath === null) continue;
+      if (snapshot.accessPath === null) {
+        unread.push(`${snapshot.name} is not mounted where it can be read`);
+        continue;
+      }
       const source = path.join(snapshot.accessPath, relativeToVolume(originalPath, snapshot.volume));
-      const st = await fsp.lstat(source).catch(() => null);
-      if (!st) continue;
+      let found: fs.Stats;
+      try {
+        found = await fsp.lstat(source);
+      } catch (err) {
+        if (!meansAbsent(err)) unread.push(err instanceof Error ? err.message : String(err));
+        continue;
+      }
       await fsp.mkdir(path.dirname(destination), { recursive: true });
       // recursive handles a directory; a plain file takes the same call. Never over a name that
-      // is already there, however it got there (FG4).
-      if (!(await copyOutOfSnapshot(source, destination, { verbatimSymlinks: true }))) {
-        return { restored: false, destinationTaken: true, reason: destinationTakenReason(destination) };
+      // is already there, however it got there (FG4). A copy that fails is a failed restore.
+      try {
+        if (!(await copyOutOfSnapshot(source, destination, { verbatimSymlinks: true }))) {
+          return { restored: false, destinationTaken: true, reason: destinationTakenReason(destination) };
+        }
+      } catch (err) {
+        return copyFailure(err, destination);
       }
-      return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size };
+      return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: found.size };
     }
+    if (unread.length > 0) return unreadSnapshots(unread, ordered.length, 'btrfs snapshot');
     return {
       restored: false,
       reason: `None of the ${ordered.length} btrfs snapshot${ordered.length === 1 ? '' : 's'} on this system contain that path.`,

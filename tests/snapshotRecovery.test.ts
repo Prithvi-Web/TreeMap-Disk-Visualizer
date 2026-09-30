@@ -119,26 +119,48 @@ test('a dismissed password prompt is recognised as a decision, not a fault', () 
 /* ══════════════════ The helper itself, run for real (unprivileged) ══════════════════ */
 
 test('the privileged helper fails safe when it cannot mount, and leaks no mounts', { skip: process.platform !== 'darwin' }, async () => {
-  // Run as an ordinary user, every mount_apfs call fails. The helper must say
-  // NOTFOUND, exit 0, and leave no mount point behind — the trap is what stops
-  // a recovery feature becoming a disk-space leak.
+  // Run as an ordinary user, every mount_apfs call fails. The helper must say so — an ERROR, never
+  // NOTFOUND, which would tell the user the file is in no snapshot (FG4d, review #5) — exit 0, and
+  // leave no mount point behind: the trap is what stops a recovery feature becoming a disk-space
+  // leak. The real mount_apfs is run, through a wrapper that first writes down the mount point it
+  // is handed, so the check is of that folder — not a count of /tmp/treemap-snap-*, which another
+  // test file running the helper at the same time changes (FG4d, review #11). The wrapper also
+  // makes such a folder mid-run, as that other file would.
   const dir = await mkTmp();
+  const foreign = `/tmp/treemap-snap-foreign-${String(process.pid)}-${crypto.randomUUID().slice(0, 8)}`;
   try {
     const helper = path.join(dir, 'h.sh');
     await fsp.writeFile(helper, RECOVER_SCRIPT, { mode: 0o700 });
+    const bin = path.join(dir, 'bin');
+    await fsp.mkdir(bin);
+    await fsp.writeFile(path.join(bin, 'mount_apfs'), [
+      '#!/bin/sh',
+      'printf \'%s\\n\' "$4" >> "$TM_MOUNT_LOG"',
+      'mkdir -p "$TM_FOREIGN_MAKE"',
+      'exec /sbin/mount_apfs "$@"',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    const log = path.join(dir, 'mounts.log');
+    await fsp.writeFile(log, '');
 
-    const before = (await fsp.readdir('/tmp')).filter((n) => n.startsWith('treemap-snap-')).length;
     const { execFile } = await import('node:child_process');
     const stdout = await new Promise<string>((resolve, reject) => {
       execFile('/bin/sh', [helper, '/', 'etc/hosts', dir, 'out', String(os.userInfo().uid), String(os.userInfo().gid), 'com.apple.TimeMachine.does-not-exist'],
+        // This process's environment, with the wrapper first on PATH; only the wrapper reads TM_*.
+        { env: { ...process.env, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, TM_MOUNT_LOG: log, TM_FOREIGN_MAKE: foreign } },
         (err, out) => (err ? reject(err) : resolve(out)));
     });
-    const after = (await fsp.readdir('/tmp')).filter((n) => n.startsWith('treemap-snap-')).length;
+    const mounts = [...new Set((await fsp.readFile(log, 'utf8')).split('\n').filter(Boolean))];
 
-    assert.equal(stdout.trim(), 'NOTFOUND');
-    assert.equal(after, before, 'the trap cleaned up its mount point');
+    assert.match(stdout.trim(), /^ERROR no snapshot could be mounted \(/, 'the failed mount is the answer');
+    assert.notEqual(stdout.trim(), 'NOTFOUND');
+    assert.equal(mounts.length, 1, `the helper made one mount point: ${JSON.stringify(mounts)}`);
+    assert.match(mounts[0], /^\/tmp\/treemap-snap-/);
+    assert.equal(fs.existsSync(mounts[0]), false, 'the trap cleaned up its mount point');
+    assert.ok(fs.existsSync(foreign), 'and left another run\'s alone');
     assert.equal(fs.existsSync(path.join(dir, 'out')), false, 'and wrote nothing');
   } finally {
+    await fsp.rm(foreign, { recursive: true, force: true });
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });

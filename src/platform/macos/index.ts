@@ -10,7 +10,7 @@ import { openHandlesFor, zombieHandles } from './lsofGuard';
 import { downloadOrigin, readDownloadOriginsMac } from './provenance';
 import { volumeTopology } from './diskutil';
 import { listSnapshots as tmListSnapshots, mountSnapshot } from './tmutil';
-import { recoverFromSnapshots as macRecoverFromSnapshots } from './snapshotRecover';
+import { recoverFromSnapshots as macRecoverFromSnapshots, restoreFolderRefusal as macRestoreFolderRefusal } from './snapshotRecover';
 import { allocatedSize, placeholderInfo } from './allocation';
 import { readLastUsedMac, probeLastUsedMac } from './lastUsed';
 import { readBackupMembershipMac, probeBackupMembershipMac } from './backup';
@@ -171,6 +171,11 @@ export class MacOsProvider extends BaseProvider {
     destination: string,
   ): Promise<SnapshotRecoveryResult> {
     return macRecoverFromSnapshots(snapshots, originalPath, destination);
+  }
+
+  /** The copy is made as root: the folder must be the user's or root's, and nobody else's to change. */
+  override async restoreFolderRefusal(dir: string): Promise<string | null> {
+    return macRestoreFolderRefusal(dir);
   }
 
   /* ---------------- Drive health (C4) ---------------- */

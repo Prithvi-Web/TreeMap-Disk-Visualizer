@@ -536,8 +536,10 @@ Consequences encoded in the code:
   asked and answered.
 
 **Not executed:** the elevated branch itself, which needs a real password. The
-helper is verified unprivileged (every mount fails → `NOTFOUND`, exit 0, no
-leaked mount points, nothing written) and its argv quoting is unit-tested.
+helper is verified unprivileged (every mount fails → an `ERROR` saying no
+snapshot could be mounted, exit 0 — never `NOTFOUND`, which means every
+snapshot was mounted and none holds the path (FG4d); no leaked mount points,
+nothing written) and its argv quoting is unit-tested.
 
 ### `mdadm` is deliberately not shelled out to
 

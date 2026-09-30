@@ -1,5 +1,6 @@
 import fs, { promises as fsp } from 'fs';
 import path from 'path';
+import type { SnapshotRecoveryResult } from './types';
 
 /** What fs.cp answers when something is already at a name it was asked to create. */
 const TAKEN = new Set(['ERR_FS_CP_EEXIST', 'EEXIST', 'ERR_FS_CP_DIR_TO_NON_DIR', 'ERR_FS_CP_NON_DIR_TO_DIR']);
@@ -59,4 +60,33 @@ export async function copyOutOfSnapshot(source: string, destination: string, opt
 /** The reason a restore gives when its destination was taken. */
 export function destinationTakenReason(destination: string): string {
   return `Something is already at ${destination}, so nothing was restored over it. Choose another name, or move that file aside first.`;
+}
+
+/**
+ * A copy out of a snapshot that failed, as the restore's answer (FG4d, review #8, #17): failed —
+ * `409 RESTORE_FAILED` — with the error, and what it left at the destination. Thrown on, the
+ * errno reached the error handler as a 403 "not allowed to read" naming a link's target, a 500 or
+ * a 404, and a half-copied folder looked like a finished restore.
+ */
+export async function copyFailure(err: unknown, destination: string): Promise<SnapshotRecoveryResult> {
+  const message = err instanceof Error ? err.message : String(err);
+  const left = await fsp.lstat(destination).then(() => true, () => false);
+  return {
+    restored: false,
+    failed: true,
+    reason: `The copy out of the snapshot to ${destination} failed (${message}).${left
+      ? ` What was copied before it failed is at ${destination}; move it aside before trying again.`
+      : ' Nothing was left at the destination.'}`,
+  };
+}
+
+/**
+ * The answer when `unread` of `total` snapshots could not be looked in and the rest do not hold
+ * the path: failed, never "none of them hold it" — unknown is not absent (FG4d, review #8, #17).
+ */
+export function unreadSnapshots(unread: readonly string[], total: number, noun: string): SnapshotRecoveryResult {
+  const reason = unread.length === total
+    ? `None of the ${String(total)} ${noun}${total === 1 ? '' : 's'} could be opened (${unread[0]}), so whether they hold that path is not known. Nothing was changed.`
+    : `${String(unread.length)} of the ${String(total)} ${noun}s could not be opened (${unread[0]}), and none of the others holds that path, so whether it can be recovered is not known. Nothing was changed.`;
+  return { restored: false, failed: true, reason };
 }

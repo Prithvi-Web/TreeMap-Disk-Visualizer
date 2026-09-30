@@ -132,6 +132,14 @@ export interface PlatformProvider {
     destination: string,
   ): Promise<SnapshotRecoveryResult>;
 
+  /**
+   * Why a restored copy may not be written into the folder `dir`, or null. On macOS the copy is
+   * made as administrator, so the folder must be the user's or root's and no other account may
+   * change it; elsewhere nothing is refused here. Asked before anything is moved to the Trash or
+   * a password asked for (FG4d); a folder not there yet answers null and is checked when made.
+   */
+  restoreFolderRefusal(dir: string): Promise<string | null>;
+
   /* Shell integration (D2) — reversible from the same place it is installed */
   registerShellIntegration(): Promise<ShellIntegrationResult>;
   unregisterShellIntegration(): Promise<ShellIntegrationResult>;

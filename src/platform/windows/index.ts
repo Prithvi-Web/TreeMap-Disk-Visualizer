@@ -1,4 +1,4 @@
-import { promises as fsp, createReadStream } from 'fs';
+import { promises as fsp, createReadStream, type Stats } from 'fs';
 import path from 'path';
 import os from 'os';
 import { BaseProvider } from '../base';
@@ -11,9 +11,10 @@ import { volumeTopology } from './topology';
 import { fileFactsBatch, toPlaceholderInfo } from './attributes';
 import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
 import { relativeToVolume } from '../snapshotPaths';
-import { copyOutOfSnapshot, destinationTakenReason } from '../snapshotCopy';
+import { copyFailure, copyOutOfSnapshot, destinationTakenReason, unreadSnapshots } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
 import { runPowerShellJson } from './powershell';
+import { meansAbsent } from '../../utils/errno';
 import { readLastUsedWindows, probeLastUsedWindows } from './lastUsed';
 import { readBackupMembershipWindows, probeBackupMembershipWindows } from './backup';
 import { mapSmartctl, SmartctlJson } from '../macos';
@@ -226,44 +227,71 @@ export class WindowsProvider extends BaseProvider {
     const relative = relativeToVolume(originalPath, '');
     await fsp.mkdir(path.dirname(destination), { recursive: true });
 
+    // A restore point that could not be opened was not looked in: counted, never read as one that
+    // lacks the path, and a refusal for want of rights is a failed restore (FG4d, review #8, #17).
+    const unread: string[] = [];
     for (const snapshot of ordered) {
       const device = await this.deviceObjectFor(snapshot.id);
-      if (device === null) continue;
-      const linkDir = path.join(os.tmpdir(), `treemap-shadow-${Date.now().toString(36)}`);
-      try {
-        await runPowerShellJson<unknown>(
-          String.raw`cmd.exe /c mklink /d "$env:TREEMAP_LINK" "$env:TREEMAP_DEVICE\" | Out-Null; '{}'`,
-          { timeoutMs: 20_000, env: { TREEMAP_LINK: linkDir, TREEMAP_DEVICE: device } },
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        // Refused for want of rights, rather than because the file is absent.
-        if (/denied|privilege|elevat/i.test(message)) {
-          return {
-            restored: false,
-            reason: 'Reading a restore point needs administrator rights (or Developer Mode). Nothing was changed.',
-          };
-        }
+      if (device === null) {
+        unread.push(`restore point ${snapshot.id} was not found`);
         continue;
       }
-
+      const linkDir = path.join(os.tmpdir(), `treemap-shadow-${Date.now().toString(36)}`);
       try {
+        try {
+          await this.linkShadow(linkDir, device);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          // Refused for want of rights, rather than because the file is absent.
+          if (/denied|privilege|elevat/i.test(message)) {
+            return {
+              restored: false,
+              failed: true,
+              reason: 'Reading a restore point needs administrator rights (or Developer Mode). Nothing was changed.',
+            };
+          }
+          unread.push(message);
+          continue;
+        }
+        // `mklink` run through cmd can fail without an error: a link that is not there was not made.
+        if (!(await fsp.lstat(linkDir).then(() => true, () => false))) {
+          unread.push(`the link to restore point ${snapshot.id} was not made`);
+          continue;
+        }
         const source = path.join(linkDir, relative);
-        const st = await fsp.lstat(source).catch(() => null);
-        if (!st) continue;
+        let st: Stats;
+        try {
+          st = await fsp.lstat(source);
+        } catch (err) {
+          if (!meansAbsent(err)) unread.push(err instanceof Error ? err.message : String(err));
+          continue;
+        }
         // Never over a name that is already there, however it got there (FG4).
-        if (!(await copyOutOfSnapshot(source, destination))) {
-          return { restored: false, destinationTaken: true, reason: destinationTakenReason(destination) };
+        try {
+          if (!(await copyOutOfSnapshot(source, destination))) {
+            return { restored: false, destinationTaken: true, reason: destinationTakenReason(destination) };
+          }
+        } catch (err) {
+          return await copyFailure(err, destination);
         }
         return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size };
       } finally {
         await fsp.rm(linkDir, { force: true, recursive: false }).catch(() => {});
       }
     }
+    if (unread.length > 0) return unreadSnapshots(unread, ordered.length, 'restore point');
     return {
       restored: false,
       reason: `None of the ${ordered.length} restore point${ordered.length === 1 ? '' : 's'} on this PC contain that path.`,
     };
+  }
+
+  /** A directory link at `linkDir` to the shadow copy's device; a test stands in for it. */
+  private async linkShadow(linkDir: string, device: string): Promise<void> {
+    await runPowerShellJson<unknown>(
+      String.raw`cmd.exe /c mklink /d "$env:TREEMAP_LINK" "$env:TREEMAP_DEVICE\" | Out-Null; '{}'`,
+      { timeoutMs: 20_000, env: { TREEMAP_LINK: linkDir, TREEMAP_DEVICE: device } },
+    );
   }
 
   private async deviceObjectFor(shadowId: string): Promise<string | null> {

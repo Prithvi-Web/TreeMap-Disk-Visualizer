@@ -413,21 +413,33 @@ read-what-you-saw) permission to act.
   (`403 { code: "VIRTUAL_PATH" }`); act on the archive itself.
 - **Snapshot restores never write through an existing name.**
   `POST /api/system/snapshots/restore` checks its destination before the
-  administrator prompt, and the copy checks again when it runs: on macOS the
+  administrator prompt — and, with `overwrite: true`, before the file there is
+  moved to the Trash — and the copy checks again when it runs: on macOS the
   destination folder must belong to the user or root, and neither group nor
-  others may change it — checked before the prompt, and again by the root
-  helper, which enters the folder by its physical path — else
-  `409 DESTINATION_FOLDER_REFUSED`. The helper copies into a folder it makes
-  there, checks the name again, and places the copy with a call that fails
-  whatever is at the name (`link` for a file, `ln -P -h` for a link,
-  `mv -n -h` for a folder), confirming by the copy's own device and inode
-  that the name holds it; Linux and Windows claim the name exclusively too
-  (`symlink`, a non-recursive `mkdir`, an exclusive file copy). A name that
-  appears in between fails the restore and nothing is written over it —
-  answered `409 DESTINATION_OCCUPIED`, as when the name was there before. A
-  restore that failed is `409 RESTORE_FAILED`, never `NOT_IN_ANY_SNAPSHOT`.
-  No test ever raises the password prompt: under a test runner it refuses
-  (`setAdminPromptForTests` stands in).
+  others may change it, else `409 DESTINATION_FOLDER_REFUSED` (checked again by
+  the root helper, which enters the folder by its physical path). The helper
+  copies into a folder it makes there and works from inside it, so a folder
+  swapped in under that folder's name is never written to. It places a file
+  with `link`, which fails whatever is at the name (on a volume without hard
+  links, with `mv -n -h`), a link with `ln -P -h` and a folder with
+  `mv -n -h`; those two do not fail for a real folder that appears at the name
+  at the last moment — they put the copy inside it — which is found
+  afterwards by the copy's own device and inode and reported, not prevented
+  (docs/engine/RISKS.md R102). A locked (Finder "Locked") item is restored
+  unlocked. Linux and Windows claim the name exclusively (`symlink`, a
+  non-recursive `mkdir`, an exclusive file copy). A name that appears in
+  between fails the restore and nothing is written over it — answered
+  `409 DESTINATION_OCCUPIED`, as when the name was there before. A restore
+  that failed, or could not look in a snapshot, is `409 RESTORE_FAILED`,
+  never `NOT_IN_ANY_SNAPSHOT`: on macOS a prompt that failed, a helper error
+  (a copy that could not be made or put in place) or a snapshot that could
+  not be mounted; on Linux a snapshot that could not be read or a copy that
+  failed; on Windows a restore point that could not be opened (administrator
+  rights, a link not made) or a copy that failed. A failed copy says what it
+  left at the destination, and a restore with `overwrite` that stops after
+  the file there went to the Trash says that too. No test ever raises the
+  password prompt: under a test runner it refuses (`setAdminPromptForTests`
+  stands in).
 - **Git runs hardened, and only in a vetted repository.** A repository found
   under a scanned folder is not trusted: its own `.git/config` can name
   programs for git to start (`core.fsmonitor`, `filter.<x>.clean`, hooks…).

@@ -6,6 +6,7 @@ import type { VolumeSnapshotRef, SnapshotRecoveryResult } from '../types';
 import { relativeToVolume } from '../snapshotPaths';
 import { destinationTakenReason } from '../snapshotCopy';
 import { RealMachineRefusal, refuseUnderTestRunner } from '../../services/realMachineGuard';
+import { meansAbsent } from '../../utils/errno';
 
 /**
  * Recovering a deleted file from an APFS local snapshot (B4, macOS).
@@ -53,31 +54,46 @@ import { RealMachineRefusal, refuseUnderTestRunner } from '../../services/realMa
  * its physical path (`cd -P`) and works relative to it from then on, refuses a
  * folder another account could change (not owned by the user or root, or
  * writable by group or others — where names can be swapped), copies into a
- * folder it makes there itself (`mktemp -d`), and places the copy with a call
- * that fails whatever is at the name — then confirms, by the copy's own device
- * and inode, that the name holds it (FG4c: `mv -n -h` alone moved a copy inside
- * a folder that appeared at the name, and replaced a dangling link). The same
- * folder rule is checked here before the password is asked for (FG4c). Its
- * placement functions are exported and run in the tests as the user, against
- * folders made there; the whole script runs in tests/snapshotRootHelper.test.ts
- * with `mount_apfs` and `umount` stood in for.
+ * folder it makes there itself (`mktemp -d`) and works from inside it (FG4d),
+ * and places the copy: a file with `link`, which fails whatever is at the name;
+ * a link with `ln -P -h` and a folder with `mv -n -h`, which do not fail for a
+ * real folder that appears at the name at the last moment but put the copy
+ * inside it — that is found afterwards, not prevented: the name must hold the
+ * copy's own device and inode, or the restore is reported refused (FG4c: `mv -n
+ * -h` alone moved a copy inside a folder that appeared at the name, and
+ * replaced a dangling link; RISKS R102). The same folder rule is checked before
+ * the password is asked for — and before anything is moved to the Trash
+ * (restoreFolderRefusal, FG4c, FG4d). Its placement functions are exported and
+ * run in the tests as the user, against folders made there; the whole script
+ * runs in tests/snapshotRootHelper.test.ts with `mount_apfs` and `umount` stood
+ * in for.
  */
 
 /**
- * The two steps of the root script that touch the destination (FG4, FG4c), run in the tests as
- * the user. `enter_destination <folder> <uid>` makes the folder the working folder by its
+ * The two steps of the root script that touch the destination (FG4, FG4c, FG4d), run in the tests
+ * as the user. `enter_destination <folder> <uid>` makes the folder the working folder by its
  * physical path and refuses it unless it belongs to <uid> or root and neither group nor others
- * can write it. `place_copy <source> <name> <uid> <gid>` copies into a folder it makes in the
- * working folder, hands the copy to <uid>:<gid>, checks the name again, and places the copy at
- * <name>: a file with `link`, which fails whatever is at the name (a dangling link or a folder
- * included) and follows nothing; a link with `ln -P -h`; a folder with `mv -n -h`. `mv` and `ln`
- * put the copy INSIDE a folder that appears at the name at the last moment, so the name must
- * then hold the copy itself — the same device and inode — or it is reported (FG4c, review #9,
- * #4). It removes its own folder again, and prints an ERROR line when it fails. A refusal exits
- * 0: under `do shell script` a non-zero exit is an AppleScript error, not output (review #3).
+ * can write it. `place_copy <source> <name> <uid> <gid>` makes a folder of its own there
+ * (`mktemp -d`), enters it by its physical path and works from inside it — `./item` for the copy,
+ * `../<name>` for where it goes — so a folder swapped in under that folder's name later is never
+ * written to; the folder must be the running account's (root's, as the helper runs) and nobody
+ * else's to write in, and its parent must still be the destination folder (FG4d, review #3). It
+ * copies, unlocks the copy (a Finder-locked item can be neither handed over nor put in place, by
+ * root either: FG4d, review #18), hands it to <uid>:<gid>, checks the name again, and places it:
+ * a file with `link`, which fails whatever is at the name; a link with `ln -P -h`, a folder with
+ * `mv -n -h` — and a file with `mv -n -h` too where `link` fails with nothing at the name (a
+ * volume without hard links, FAT or exFAT: FG4d, review #13). `mv` and `ln` put the copy INSIDE a
+ * real folder that appears at the name at the last moment; that is not prevented but found
+ * afterwards, since the name must then hold the copy itself — the same device and inode — or it
+ * is reported (FG4c, review #9, #4; RISKS R102). A placement that failed with the name still free
+ * says why, in its own words, rather than that something appeared (FG4d, review #7). It removes
+ * its own folder again, and prints an ERROR line when it fails. A refusal exits 0: under `do
+ * shell script` a non-zero exit is an AppleScript error, not output (review #3).
  */
 export const PLACEMENT_FUNCTIONS = `
 stage=''
+in_stage=0
+dest_id=''
 enter_destination() {
   cd -P -- "$1" 2>/dev/null || { echo "ERROR the destination folder could not be opened"; exit 0; }
   here=$(pwd -P)
@@ -88,36 +104,63 @@ enter_destination() {
   if [ -n "$(find . -maxdepth 0 \\( -perm -020 -o -perm -002 \\) -print)" ]; then
     echo "ERROR other users can change the destination folder $here"; exit 0
   fi
+  dest_id=$(stat -f '%d:%i' .) || { echo "ERROR the destination folder $here could not be checked"; exit 0; }
+}
+leave_stage() {
+  if [ "$in_stage" = 1 ]; then
+    chflags -R nouchg,nouappnd . 2>/dev/null
+    rm -rf -- ./item 2>/dev/null
+    cd .. 2>/dev/null
+    in_stage=0
+  fi
+  if [ -n "$stage" ]; then rmdir -- "$stage" 2>/dev/null; fi
+  stage=''
 }
 place_copy() {
   if [ -e "./$2" ] || [ -L "./$2" ]; then
     echo "ERROR something already exists at the destination"; return 1
   fi
   stage=$(mktemp -d ./.treemap-restore.XXXXXX) || { stage=''; echo "ERROR could not make a folder to copy into"; return 1; }
-  if ! cp -a "$1" "$stage/item" 2>/dev/null; then
-    rm -rf -- "$stage"; stage=''
-    echo "ERROR the copy out of the snapshot failed"; return 1
+  cd -P -- "$stage" 2>/dev/null || { leave_stage; echo "ERROR the folder made to copy into could not be opened"; return 1; }
+  if [ "$(stat -f '%u:%Lp' .)" != "$(id -u):700" ] || [ "$(stat -f '%d:%i' ..)" != "$dest_id" ]; then
+    cd .. 2>/dev/null; rmdir -- "$stage" 2>/dev/null; stage=''
+    echo "ERROR the folder made to copy into was changed before anything was copied into it, so nothing was copied"; return 1
   fi
-  chown -R "$3:$4" "$stage/item" 2>/dev/null || true
-  copy_id=$(stat -f '%d:%i' "$stage/item") || { rm -rf -- "$stage"; stage=''; echo "ERROR the copy could not be checked"; return 1; }
-  if [ -e "./$2" ] || [ -L "./$2" ]; then
-    rm -rf -- "$stage"; stage=''
-    echo "ERROR something appeared at the destination while copying, and nothing was written over it"; return 1
+  in_stage=1
+  if ! cp -a "$1" ./item 2>/dev/null; then
+    leave_stage; echo "ERROR the copy out of the snapshot failed"; return 1
   fi
-  if [ -d "$stage/item" ] && [ ! -L "$stage/item" ]; then
-    mv -n -h "$stage/item" "./$2" 2>/dev/null
-  elif [ -L "$stage/item" ]; then
-    ln -P -h "$stage/item" "./$2" 2>/dev/null && rm -f -- "$stage/item"
+  chflags -R nouchg,nouappnd ./item 2>/dev/null || true
+  chown -R "$3:$4" ./item 2>/dev/null || true
+  copy_id=$(stat -f '%d:%i' ./item) || { leave_stage; echo "ERROR the copy could not be checked"; return 1; }
+  if [ "$(stat -f '%d:%i' ..)" != "$dest_id" ]; then
+    leave_stage; echo "ERROR the folder made to copy into was moved while copying, so the copy was not placed"; return 1
+  fi
+  if [ -e "../$2" ] || [ -L "../$2" ]; then
+    leave_stage; echo "ERROR something appeared at the destination while copying, and nothing was written over it"; return 1
+  fi
+  why=''
+  if [ -d ./item ] && [ ! -L ./item ]; then
+    why=$(mv -n -h ./item "../$2" 2>&1)
+  elif [ -L ./item ]; then
+    why=$(ln -P -h ./item "../$2" 2>&1) && rm -f -- ./item
   else
-    link "$stage/item" "./$2" 2>/dev/null && rm -f -- "$stage/item"
+    why=$(link ./item "../$2" 2>&1) && rm -f -- ./item
+    if [ -e ./item ] && [ ! -e "../$2" ] && [ ! -L "../$2" ]; then
+      mv -n -h ./item "../$2" 2>/dev/null || true
+    fi
   fi
-  if [ -e "$stage/item" ] || [ -L "$stage/item" ]; then
-    rm -rf -- "$stage"; stage=''
-    echo "ERROR something appeared at the destination while copying, and nothing was written over it"; return 1
+  if [ -e ./item ] || [ -L ./item ]; then
+    if [ -e "../$2" ] || [ -L "../$2" ]; then
+      leave_stage; echo "ERROR something appeared at the destination while copying, and nothing was written over it"; return 1
+    fi
+    why=$(printf '%s\\n' "$why" | head -n 1)
+    [ -n "$why" ] || why='no reason given'
+    leave_stage; echo "ERROR the copy could not be put in place ($why), and nothing was written at the destination"; return 1
   fi
-  rmdir -- "$stage" 2>/dev/null || true
-  stage=''
-  if [ "$(stat -f '%d:%i' "./$2" 2>/dev/null)" != "$copy_id" ]; then
+  placed_id=$(stat -f '%d:%i' "../$2" 2>/dev/null)
+  leave_stage
+  if [ "$placed_id" != "$copy_id" ]; then
     echo "ERROR something appeared at the destination while copying, and the copy is not in its place (it may be inside what appeared, as $2/item); nothing was written over it"; return 1
   fi
   return 0
@@ -150,7 +193,7 @@ export const RECOVER_SCRIPT = `#!/bin/sh
 #
 # Prints "FOUND <snapshot>", "NOTFOUND", or "ERROR <detail>", and exits 0 with any of them:
 # under do shell script a non-zero exit is an AppleScript error, and the line would never
-# reach TreeMap as an answer.
+# reach TreeMap as an answer. NOTFOUND means every snapshot was mounted and looked in.
 set -u
 
 volume=$1
@@ -181,13 +224,20 @@ mount_point=$(mktemp -d /tmp/treemap-snap-XXXXXX) || { echo "ERROR could not cre
 cleanup() {
   umount "$mount_point" 2>/dev/null || true
   rmdir "$mount_point" 2>/dev/null || true
-  if [ -n "$stage" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi
+  leave_stage
 }
 trap cleanup EXIT INT TERM
 
+# A snapshot that could not be mounted was not looked in: it is counted, with the
+# first reason, and never read as one that lacks the path (FG4d, review #5).
+total=$#
+unmounted=0
+first_failure=''
 outside=0
 for snapshot in "$@"; do
-  if ! mount_apfs -s "$snapshot" "$volume" "$mount_point" 2>/dev/null; then
+  if ! failure=$(mount_apfs -s "$snapshot" "$volume" "$mount_point" 2>&1 >/dev/null); then
+    unmounted=$((unmounted + 1))
+    if [ -z "$first_failure" ]; then first_failure=$(printf '%s\\n' "$failure" | head -n 1); fi
     continue
   fi
   if [ -e "$mount_point/$rel" ] || [ -L "$mount_point/$rel" ]; then
@@ -219,6 +269,15 @@ for snapshot in "$@"; do
   umount "$mount_point" 2>/dev/null || true
 done
 
+if [ "$unmounted" != 0 ]; then
+  if [ -z "$first_failure" ]; then first_failure='mount_apfs gave no reason'; fi
+  if [ "$unmounted" = "$total" ]; then
+    echo "ERROR no snapshot could be mounted ($first_failure), so whether the snapshots hold that path is not known"
+  else
+    echo "ERROR $unmounted of the $total snapshots could not be mounted ($first_failure), and none of the others holds that path, so whether it can be recovered is not known"
+  fi
+  exit 0
+fi
 if [ "$outside" = 1 ]; then
   echo "ERROR that path leads out of the snapshot through a link in it, so it was not copied"
   exit 0
@@ -318,8 +377,24 @@ export function destinationFolderRefusal(st: { uid: number; mode: number }, dir:
   return null;
 }
 
+/**
+ * The destination folder rule for `dir`, read from the folder itself, or null: null too when the
+ * folder is not there yet (the restore makes it, and checks it again once made). The restore
+ * service asks this before anything is moved to the Trash or a password asked for (FG4d, review
+ * #4, #14); `recoverFromSnapshots` asks again after making the folder. POSIX owners and modes:
+ * this module runs on a Mac; on Windows, where the tests also call it, stat has no such bits.
+ */
+export async function restoreFolderRefusal(dir: string): Promise<string | null> {
+  if (process.platform === 'win32') return null;
+  const st = await fsp.stat(dir).catch((err: NodeJS.ErrnoException) => {
+    if (meansAbsent(err)) return null;
+    throw err;
+  });
+  return st ? destinationFolderRefusal(st, dir, os.userInfo().uid) : null;
+}
+
 /** The helper's refusals of the destination folder itself (enter_destination). */
-const FOLDER_REFUSED = /^(the destination folder .* (belongs to another user|could not be (opened|checked))|other users can change the destination folder)/;
+const FOLDER_REFUSED = /^(the destination folder( .*)? (belongs to another user|could not be (opened|checked))|other users can change the destination folder)/;
 /** The helper's refusal of a name at the destination (place_copy, and the check before it). */
 const NAME_TAKEN = /^something (already exists|appeared) at the destination/;
 /** The helper found the path only through a link out of the snapshot. */
@@ -378,12 +453,10 @@ export async function recoverFromSnapshots(
   await fsp.mkdir(destinationDir, { recursive: true });
 
   // The folder rule the root helper applies when it runs, checked before the password is asked
-  // for (FG4c, review #24). POSIX owners and modes: this module runs on a Mac; on Windows, where
-  // the tests also call it, stat has no such bits to read.
-  if (process.platform !== 'win32') {
-    const refusal = destinationFolderRefusal(await fsp.stat(destinationDir), destinationDir, os.userInfo().uid);
-    if (refusal) return { restored: false, destinationRefused: true, reason: refusal };
-  }
+  // for (FG4c, review #24) — again, now that the folder is there: the service asked before it
+  // made it or moved anything to the Trash (FG4d).
+  const refusal = await restoreFolderRefusal(destinationDir);
+  if (refusal) return { restored: false, destinationRefused: true, reason: refusal };
 
   const helper = await writeHelper();
   let stdout: string;
