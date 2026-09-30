@@ -15,7 +15,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { planProtection, getCapsuleIndex, protectItems, capFor, planEviction, getCapsuleJob } from '../src/services/timeCapsule';
+import { planProtection, getCapsuleIndex, protectItems, capFor, planEviction, getCapsuleJob, capsuleAvailable } from '../src/services/timeCapsule';
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
 import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
@@ -334,6 +334,29 @@ test('the plan accumulates: later items are planned against a capsule the earlie
     );
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a portable session that saves nothing because its data folder was refused is not called read-only (FG4 review #23)', async () => {
+  // Since FG4 a portable session also saves nothing when the drive is writable but the TreeMap-Data
+  // folder beside the app is a link (or holds one): the capsule's sentence must be true of both.
+  const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-cartcommit-portable-base-'));
+  const elsewhere = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-cartcommit-portable-elsewhere-'));
+  fs.symlinkSync(elsewhere, path.join(base, 'TreeMap-Data'), 'junction');
+  try {
+    resetPortableMode();
+    const status = initPortableMode({ TREEMAP_PORTABLE: '1' } as NodeJS.ProcessEnv, base);
+    assert.equal(status.writable, false, `the session saves nothing (${status.reason})`);
+    assert.match(status.reason ?? '', /link/, 'because its data folder was refused, not because the drive is read-only');
+    const capsule = capsuleAvailable();
+    assert.equal(capsule.available, false);
+    assert.doesNotMatch(capsule.reason ?? '', /read-only/, `the drive is writable (${capsule.reason})`);
+    assert.match(capsule.reason ?? '', /saves nothing/, 'it says what is true in both cases');
+  } finally {
+    resetPortableMode();
+    initPortableMode({ TREEMAP_DATA_DIR: DATA_DIR } as NodeJS.ProcessEnv);
+    await fsp.rm(base, { recursive: true, force: true });
+    await fsp.rm(elsewhere, { recursive: true, force: true });
   }
 });
 

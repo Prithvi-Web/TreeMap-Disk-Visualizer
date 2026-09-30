@@ -136,17 +136,19 @@ export function capsuleRoot(): string {
 
 /**
  * The Time Capsule copies real file bytes somewhere before deleting them, and a
- * read-only portable session has nowhere of its own to put them. Keeping them
+ * portable session that saves nothing has nowhere of its own to put them — the
+ * drive is read-only, or (FG4) its TreeMap-Data folder was refused. Keeping them
  * on the host would be both a trace and a surprise — someone's files left on a
  * machine they were only troubleshooting. So the capsule is off, and callers
- * say so rather than silently protecting nothing.
+ * say so rather than silently protecting nothing — in words true of either cause
+ * (FG4 review #23).
  */
 export function capsuleAvailable(): { available: boolean; reason?: string } {
   if (isEphemeral()) {
     return {
       available: false,
       reason:
-        'This is a read-only portable session, so there is nowhere to keep a recoverable copy — and TreeMap will not leave your files on this computer. Deletions still go to the system Trash.',
+        'This portable session saves nothing, so there is nowhere to keep a recoverable copy — and TreeMap will not leave your files on this computer. Deletions still go to the system Trash.',
     };
   }
   return { available: true };
