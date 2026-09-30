@@ -32,6 +32,13 @@ import { HANG_GUARD_MS } from './fixtures/waitFor';
  * `took`, …) counts as one wherever it came from, since a figure measured by
  * the code under test is the same bound.
  *
+ * A count of sleeps is a deadline too: a loop that awaits a timer and gives
+ * up after `n` turns while waiting for something else is `Date.now() + n·d`
+ * written another way ("a fixed 100 looks 100 ms apart gave up after 10 s on
+ * a loaded machine", commit 298d752). It is a bound unless n·d reaches the
+ * hang guard; a count of sleeps with nothing else to wait for is a pause, and
+ * a count of attempts with no sleep between them is a count.
+ *
  * A clock can also end a test without being read: a race against a timer
  * (`Promise.race([work, sleep(2000)])`), a timer whose callback rejects or
  * throws (`setTimeout(() => reject(…), 10_000)`), a
@@ -358,7 +365,18 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
     const value = numericValue(node);
     return value !== null && value < HANG_GUARD_MS;
   };
-  /** The delay of a timer promise — `new Promise(… setTimeout(…, d) …)` or `sleep(d)`, through `.then`/`.catch`/`.finally` and a variable — or null. */
+  /** `expr`, or — when it is one of `fn`'s parameters — what `call` passes for it (its default when nothing is passed). */
+  const argumentFor = (fn: FunctionNode, call: ts.CallExpression, expr: ts.Expression): ts.Expression => {
+    const decl = ts.isIdentifier(expr) ? symbolOf(expr)?.valueDeclaration : undefined;
+    const index = decl && ts.isParameter(decl) ? fn.parameters.indexOf(decl) : -1;
+    if (index < 0) return expr;
+    return call.arguments[index] ?? fn.parameters[index].initializer ?? expr;
+  };
+  /**
+   * The delay of a timer promise — `new Promise(… setTimeout(…, d) …)`, `sleep(d)`, or a local
+   * helper that returns one (`const tick = () => new Promise(…)`, its delay a parameter or not) —
+   * through `.then`/`.catch`/`.finally` and a variable, or null.
+   */
   const timerDelayOf = (node: ts.Expression, depth = 0): ts.Expression | null => {
     if (depth > 8) return null;
     if (ts.isParenthesizedExpression(node) || ts.isAwaitExpression(node) || ts.isAsExpression(node)) return timerDelayOf(node.expression, depth + 1);
@@ -366,6 +384,13 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
       return timerDelayOf(node.expression.expression, depth + 1);
     }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && /^(?:sleep|delay)$/i.test(node.expression.text)) return node.arguments[0] ?? null;
+    if (ts.isCallExpression(node)) {
+      const fn = declaredFunction(checker, node.expression);
+      for (const returned of fn ? returnExpressions(fn) : []) {
+        const delay = timerDelayOf(returned, depth + 1);
+        if (delay) return argumentFor(fn!, node, delay);
+      }
+    }
     if (ts.isNewExpression(node) && squash(node.expression) === 'Promise') {
       let delay: ts.Expression | null = null;
       const find = (at: ts.Node): void => {
@@ -400,6 +425,112 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
       if (imported === 'waitFor' || imported === 'withinHangGuard') guardWaits.set(element.name.text, imported);
     }
   }
+
+  const unwrap = (node: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(node) ? unwrap(node.expression) : node);
+  /** The parts of a condition joined by `&&` and `||`. */
+  const partsOf = (node: ts.Expression): ts.Expression[] => {
+    const at = unwrap(node);
+    if (ts.isBinaryExpression(at) && (at.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || at.operatorToken.kind === ts.SyntaxKind.BarBarToken)) {
+      return [...partsOf(at.left), ...partsOf(at.right)];
+    }
+    return [at];
+  };
+  /** Walks `root` without entering the functions it defines; `visitNode` answers false to stop descending. */
+  const walkOwn = (root: ts.Node, visitNode: (node: ts.Node) => boolean | void): void => {
+    const walk = (node: ts.Node): void => {
+      if (node !== root && ts.isFunctionLike(node)) return;
+      if (visitNode(node) !== false) ts.forEachChild(node, walk);
+    };
+    walk(root);
+  };
+  /** The names a loop steps by one — `i++`, `--left`, `writes += 1` — anywhere in it. */
+  const countersOf = (loop: ts.IterationStatement): Set<ts.Symbol> => {
+    const out = new Set<ts.Symbol>();
+    const step = (target: ts.Expression): void => {
+      const symbol = ts.isIdentifier(unwrap(target)) ? symbolOf(unwrap(target)) : undefined;
+      if (symbol) out.add(symbol);
+    };
+    walkOwn(loop, (node) => {
+      if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
+        && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) step(node.operand);
+      if (ts.isBinaryExpression(node) && (node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken || node.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken)
+        && numericValue(node.right) !== null) step(node.left);
+    });
+    return out;
+  };
+  /** `i < 200`, `++tries > 50`, `200 > i`: one of `counters` compared with the count it runs to — or null. */
+  const countIn = (part: ts.Expression, counters: Set<ts.Symbol>): { counter: ts.Expression; limit: ts.Expression } | null => {
+    if (!ts.isBinaryExpression(part) || !RELATIONAL.has(part.operatorToken.kind)) return null;
+    const counterOf = (side: ts.Expression): ts.Expression | null => {
+      let at = unwrap(side);
+      if (ts.isPrefixUnaryExpression(at) || ts.isPostfixUnaryExpression(at)) at = unwrap(at.operand);
+      const symbol = ts.isIdentifier(at) ? symbolOf(at) : undefined;
+      return symbol && counters.has(symbol) ? at : null;
+    };
+    const left = counterOf(part.left);
+    if (left) return { counter: left, limit: part.right };
+    const right = counterOf(part.right);
+    return right ? { counter: right, limit: part.left } : null;
+  };
+  /** Each way out of `loop`'s body — a break of this loop, a return, a throw — with the `if` condition guarding it (null when none does). */
+  const exitsOf = (loop: ts.IterationStatement): Array<ts.Expression | null> => {
+    const label = ts.isLabeledStatement(loop.parent) ? loop.parent.label.text : null;
+    const out: Array<ts.Expression | null> = [];
+    const walk = (node: ts.Node, guard: ts.Expression | null, nested: boolean): void => {
+      if (ts.isFunctionLike(node)) return;
+      if (ts.isBreakStatement(node) && (node.label ? node.label.text === label : !nested)) out.push(guard);
+      if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) out.push(guard);
+      if (ts.isIfStatement(node)) {
+        walk(node.thenStatement, node.expression, nested);
+        if (node.elseStatement) walk(node.elseStatement, node.expression, nested);
+        return;
+      }
+      const inner = nested || ts.isIterationStatement(node, false) || ts.isSwitchStatement(node);
+      ts.forEachChild(node, (child) => walk(child, guard, inner));
+    };
+    walk(loop.statement, null, false);
+    return out;
+  };
+  /**
+   * A loop that sleeps on a timer and gives up after a count, while waiting
+   * for something else (its other way out): `n` sleeps of `d` ms is a
+   * deadline of n·d ms, the same bound as `Date.now() + n·d` — "a fixed 100
+   * looks 100 ms apart gave up after 10 s on a loaded machine" (commit
+   * 298d752). A bound when n·d is shorter than the hang guard, or when the
+   * file does not fix n or d. A count of sleeps with no other way out is a
+   * pause, and a count of attempts with no sleep between them is a count.
+   */
+  const isCountedWait = (loop: ts.IterationStatement): boolean => {
+    if (ts.isForOfStatement(loop) || ts.isForInStatement(loop)) return false;
+    const sleeps: ts.Expression[] = [];
+    walkOwn(loop, (node) => {
+      const delay = ts.isAwaitExpression(node) ? timerDelayOf(node.expression) : null;
+      if (delay) sleeps.push(delay);
+    });
+    const counters = countersOf(loop);
+    if (sleeps.length === 0 || counters.size === 0) return false;
+    const condition = ts.isForStatement(loop) ? loop.condition : (loop as ts.WhileStatement | ts.DoStatement).expression;
+    const counts: Array<{ counter: ts.Expression; limit: ts.Expression }> = [];
+    let waitsForMore = false;
+    for (const guard of [...(condition ? partsOf(condition) : []), ...exitsOf(loop)]) {
+      if (guard === null) { waitsForMore = true; continue; }
+      for (const part of partsOf(guard)) {
+        if (part.kind === ts.SyntaxKind.TrueKeyword) continue;
+        const count = countIn(part, counters);
+        if (count) counts.push(count);
+        else waitsForMore = true;
+      }
+    }
+    if (counts.length === 0 || !waitsForMore) return false;
+    const steps = counts.map(({ counter, limit }) => {
+      const to = numericValue(limit);
+      return to === null ? null : Math.abs(to - (numericValue(counter) ?? 0));
+    });
+    const delays = sleeps.map((delay) => numericValue(delay));
+    if (steps.includes(null) || delays.includes(null)) return true;
+    const perStep = (delays as number[]).reduce((sum, d) => sum + d, 0);
+    return Math.min(...(steps as number[])) * perStep < HANG_GUARD_MS;
+  };
 
   const found: Bound[] = [];
   const report = (node: ts.Node): void => {
@@ -450,6 +581,8 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
       if (guard === 'waitFor' && node.arguments.length === 4 && shortOfGuard(node.arguments[3])) report(node);
       if (guard === 'withinHangGuard' && shortOfGuard(node.arguments[2])) report(node);
     }
+    // A count of sleeps that gives up: n sleeps of d ms is a deadline of n·d ms.
+    if (ts.isIterationStatement(node, false) && isCountedWait(node)) report(node);
     // A `timeout:` option on a call — a child process, a test — shorter than the hang guard.
     if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === 'timeout'
       && ts.isObjectLiteralExpression(node.parent) && (ts.isCallExpression(node.parent.parent) || ts.isNewExpression(node.parent.parent))
@@ -540,6 +673,13 @@ test('a wall-clock bound is seen however the time was taken, and wherever the bo
     "test('x', { timeout: 5_000 }, () => {});",
     // tests/autopilot.test.ts:558 and timeCapsule.test.ts:302 until 30 Sep 2026: no race, the timer rejects on its own.
     "await new Promise<void>((resolve, reject) => {\n  child.stdout.once('data', () => resolve());\n  setTimeout(() => reject(new Error('child never signalled')), 10_000).unref();\n});",
+    // A count of sleeps is a deadline: 100 looks 100 ms apart is ten seconds (tests/discoverability.test.ts:186 until 30 Sep 2026).
+    'let stats: any;\nfor (let i = 0; i < 100; i++) {\n  stats = await req(port, "GET", "/stats");\n  if (stats.body.status !== "running") break;\n  await new Promise((r) => setTimeout(r, 100));\n}\nassert.equal(stats.body.status, "complete");',
+    'for (let i = 0; i < 200 && getJob(id).status === "running"; i++) {\n  await new Promise((r) => setTimeout(r, 25));\n}\nassert.equal(getJob(id).status, "error");',
+    'async function settled(): Promise<Body> {\n  for (let i = 0; i < 200; i++) {\n    const r = await get("/job");\n    if (r.status === 200) return r.body;\n    await sleep(25);\n  }\n  return assert.fail("the job never completed");\n}',
+    'let i = 0;\nwhile (i++ < 100 && !done()) await sleep(20);\nassert.ok(done());',
+    'let tries = 0;\nwhile (!done()) {\n  if (++tries > 50) throw new Error("never settled");\n  await sleep(10);\n}',
+    'const tick = () => new Promise((r) => setTimeout(r, 25));\nlet n = 0;\ndo { await tick(); } while (!ready() && ++n < 40);',
   ]) assert.equal(boundsIn(code).length, 1, code);
 });
 
@@ -565,6 +705,12 @@ test('a clock reading that is only reported, seeded, handed to the code or put i
     'await new Promise((r) => setTimeout(r, 200));\nconst out = await runText("x", [], { timeoutMs: 50 });',
     // The same name, bound to the clock in one function and to a response in another.
     'function a() { const started = Date.now(); return started; }\nfunction b() { const started = { status: 202 }; assert.ok(started.status < 300); }',
+    // A count that is not a wait: a fixed pause, attempts with no sleep between, turns of the event loop,
+    // and a count of sleeps as long as the hang guard.
+    'for (let i = 0; i < 3; i++) await sleep(10);',
+    'for (let i = 0; i < 100; i++) {\n  if (await probe()) break;\n}',
+    'for (let i = 0; i < 5 && !done(); i++) await new Promise((r) => setImmediate(r));',
+    'for (let i = 0; i < HANG_GUARD_MS / 10 && !done(); i++) await sleep(10);',
   ]) assert.deepEqual(boundsIn(code), [], code);
 });
 

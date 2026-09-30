@@ -9,6 +9,7 @@ import { Readable } from 'node:stream';
 import { execFileSync } from 'node:child_process';
 
 isolatedDataDir('treemap-previewAbortFd-data-');
+import { waitFor } from './fixtures/waitFor';
 
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';
@@ -168,10 +169,8 @@ test('an aborted image preview closes the descriptor it opened', async () => {
     }
     assert.equal(track.opened.length, ABORTS, 'every aborted preview opened exactly one read stream');
 
-    // Closing is asynchronous — allow a couple of turns for the close to land.
-    for (let i = 0; i < 20 && track.opened.some((s) => !s.closed); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    // Closing is asynchronous: wait for every close to land, bounded only by the hang guard.
+    await waitFor(() => track.opened.every((s) => s.closed), 'every aborted preview closing its read stream', 25);
     const stillOpen = track.opened.filter((s) => !s.closed).length;
     assert.equal(stillOpen, 0, `${stillOpen} of ${ABORTS} aborted previews left their file descriptor open`);
 
@@ -199,9 +198,7 @@ test('a completed image preview still sends the same bytes, headers and status',
 
     // The success path must close its descriptor too — the fix must not turn
     // "leaks on abort" into "leaks on success" by holding the stream open.
-    for (let i = 0; i < 20 && track.opened.some((s) => !s.closed); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await waitFor(() => track.opened.every((s) => s.closed), 'a completed preview closing its read stream', 25);
     assert.equal(track.opened.filter((s) => !s.closed).length, 0, 'a completed preview closes its descriptor');
   } finally {
     track.restore();

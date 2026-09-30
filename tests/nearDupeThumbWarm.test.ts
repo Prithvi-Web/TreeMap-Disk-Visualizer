@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 isolatedDataDir('treemap-nearDupeThumbWarm-data-');
+import { waitFor } from './fixtures/waitFor';
 
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';
@@ -95,13 +96,17 @@ function get(port: number, url: string): Promise<{ status: number; body: string 
 }
 
 async function nearDupes(port: number, scanId: string): Promise<{ clusters: Array<{ files: Array<{ path: string }> }> }> {
-  for (let i = 0; i < 200; i++) {
+  let body = '';
+  await waitFor(async () => {
     const r = await get(port, `/api/near-duplicates?scanId=${scanId}&threshold=4`);
-    if (r.status === 200) return JSON.parse(r.body);
+    if (r.status === 200) {
+      body = r.body;
+      return true;
+    }
     assert.equal(r.status, 202, `polling the job: ${r.status} ${r.body.slice(0, 120)}`);
-    await new Promise((res) => setTimeout(res, 25));
-  }
-  return assert.fail('the near-duplicate job never completed');
+    return false;
+  }, 'the near-duplicate job completing', 25);
+  return JSON.parse(body);
 }
 
 test('the clustered files are thumbnailed in the background as soon as the job completes', { skip: !sharpAvailable }, async () => {

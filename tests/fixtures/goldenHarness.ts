@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
+import { waitFor } from './waitFor';
 
 /**
  * Golden-response harness for the packed-store rewrite.
@@ -277,13 +278,11 @@ export async function captureGolden(
     if (started.status !== 202) throw new Error(`scan refused: ${JSON.stringify(started.body)}`);
     const scanId = (started.body as { scanId: string }).scanId;
 
-    let result: Reply;
-    for (let i = 0; ; i++) {
+    let result!: Reply;
+    await waitFor(async () => {
       result = await request(port, 'GET', `/api/scan/${scanId}/result`);
-      if (result.status === 200 && (result.body as { status: string }).status === 'complete') break;
-      if (i > 200) throw new Error(`scan never completed: ${JSON.stringify(result.body)}`);
-      await new Promise((r) => setTimeout(r, 50));
-    }
+      return result.status === 200 && (result.body as { status: string }).status === 'complete';
+    }, 'the golden scan completing', 50);
 
     const enc = encodeURIComponent;
     const codePath = path.join(treeRoot, 'code');

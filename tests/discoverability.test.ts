@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-disco-test-');
+import { waitFor } from './fixtures/waitFor';
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
@@ -183,11 +184,10 @@ test('spec matches reality: POST /api/scan round-trip and stats', async () => {
 
     const scanId = started.body.scanId as string;
     let stats: any;
-    for (let i = 0; i < 100; i++) {
+    await waitFor(async () => {
       stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
-      if (stats.body.status !== 'running') break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
+      return stats.body.status !== 'running';
+    }, 'the scan settling', 100);
     assert.equal(stats.body.status, 'complete');
     assertMatchesSpec(doc, '/api/scan/{scanId}/stats', 'get', '200', stats.body);
 

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-platformCommands-data-');
+import { waitFor } from './fixtures/waitFor';
 
 import { emptyTrashCommands } from '../src/services/trash';
 import { execFile, execFileSync } from 'node:child_process';
@@ -225,7 +226,7 @@ test('a terminal starts in its folder: the way a folder reaches a Windows termin
       args: ['-e', 'require("fs").writeFileSync(process.argv[1], process.cwd())', file],
       cwd: dir,
     });
-    for (let i = 0; i < 100 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => fs.existsSync(file), 'the terminal\'s child writing where it started', 20);
     assert.equal(fs.realpathSync(fs.readFileSync(file, 'utf8')), fs.realpathSync(dir));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

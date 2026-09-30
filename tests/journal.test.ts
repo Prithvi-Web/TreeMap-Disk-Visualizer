@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('tm-journal-');
+import { waitFor } from './fixtures/waitFor';
 process.env.TREEMAP_NO_GDU = '1';
 
 import { AppEntry, AuditEntry, SnapshotTreeNode, Snapshot } from '../src/models/types';
@@ -359,10 +360,7 @@ test('recordScanJournal turns a scan-vs-snapshot delta into an attributed entry'
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-journal-scan-'));
   fs.writeFileSync(path.join(fixture, 'small.txt'), 'hello');
   const { scanId } = await startScan(fixture);
-  for (let i = 0; i < 200; i++) {
-    if (getScan(scanId)?.status !== 'running') break;
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  await waitFor(() => getScan(scanId)?.status !== 'running', 'the scan settling', 50);
   const scan = getScan(scanId);
   assert.ok(scan && scan.status === 'complete');
   const store = storeOf(scan);
@@ -398,10 +396,7 @@ test('a scan that changed nothing significant writes nothing', async () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-journal-still-'));
   fs.writeFileSync(path.join(fixture, 'small.txt'), 'hello');
   const { scanId } = await startScan(fixture);
-  for (let i = 0; i < 200; i++) {
-    if (getScan(scanId)?.status !== 'running') break;
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  await waitFor(() => getScan(scanId)?.status !== 'running', 'the scan settling', 50);
   const scan = getScan(scanId);
   assert.ok(scan && scan.status === 'complete');
   const store = storeOf(scan);

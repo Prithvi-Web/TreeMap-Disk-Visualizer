@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
-import { withinHangGuard } from './fixtures/waitFor';
+import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { openFileEnumerationsDuring } from './fixtures/openFileEnumerations';
 isolatedDataDir('treemap-openHandleGuard-data-');
 
@@ -235,10 +235,7 @@ test('a file held open by another process is found through the service', { skip:
     }
     // The kill is asynchronous; give the kernel a moment to reap the fd rather
     // than asserting on a race.
-    for (let i = 0; i < 20; i++) {
-      if ((await checkOpenHandles([target])).conflicts.length === 0) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    await waitFor(async () => (await checkOpenHandles([target])).conflicts.length === 0, 'the killed holder\'s descriptor being reaped', 100);
     assert.deepEqual((await checkOpenHandles([target])).conflicts, [], 'closing the file clears the warning');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });

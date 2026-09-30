@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-offloadDrop-data-');
+import { waitFor } from './fixtures/waitFor';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -151,9 +152,7 @@ test('a verify failure rolls back completely — destination cleaned, originals 
   try {
     const prepared = await prepareOffload(scan, paths, dest);
     const job = await startOffload(scan, paths, dest, prepared);
-    for (let i = 0; i < 200 && getOffloadJob(job.jobId)!.status === 'running'; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await waitFor(() => getOffloadJob(job.jobId)!.status !== 'running', 'the offload job settling', 25);
     const done = getOffloadJob(job.jobId)!;
     assert.equal(done.status, 'error', 'a verify mismatch fails the job');
     assert.match(done.error ?? '', /Verification failed/, 'and says why');
