@@ -264,10 +264,11 @@ OpenAPI 3 spec).
      session, where it writes, and what it cannot do. **When `writable` is
      false nothing is persisted anywhere at all** — not on the drive, and
      emphatically not on the host. A `TreeMap-Data` folder beside the app
-     that is a link, or holds a link or anything but a plain file or folder
-     at its top level, is not used — someone else may have prepared the
-     drive, and every writer uses fixed names there: `writable: false`, with
-     the reason naming it.
+     that is a link, or holds a link, a hard-linked file or anything but a
+     plain file or folder at its top level, is not used — someone else may
+     have prepared the drive, and every writer uses fixed names there:
+     `writable: false`, with the reason naming it (`writable: false` says
+     nothing is saved, not that the drive is read-only; `reason` says why).
    - `GET /api/fleet`, `/api/fleet/peers`, `/api/fleet/peers/{id}/summary` —
      other TreeMaps on the LAN. **Off by default.** Peers exchange summaries
      only (volume figures, last scan root/time/size); file trees, Security

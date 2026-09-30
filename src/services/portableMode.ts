@@ -172,8 +172,22 @@ export function portableDataDirRefusal(dir: string): string | null {
     if (!entry.isFile() && !entry.isDirectory()) {
       return `The ${PORTABLE_DATA_DIRNAME} folder beside the app holds ${name}, which is not an ordinary file or folder. ${KEEPS_NOTHING}`;
     }
+    // A hard link reads as an ordinary file, and a write through its name changes the other file
+    // it also is (FG4c, review #6). A file TreeMap wrote itself has one name.
+    if (entry.isFile() && hardLinked(path.join(dir, entry.name))) {
+      return `The ${PORTABLE_DATA_DIRNAME} folder beside the app holds ${name}, which is also another file on this drive (a hard link), so saving to it would change that file too. ${KEEPS_NOTHING}`;
+    }
   }
   return null;
+}
+
+/** Whether `file` has more than one name; a file that cannot be looked at counts as one that has. */
+function hardLinked(file: string): boolean {
+  try {
+    return fs.lstatSync(file).nlink > 1;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -188,7 +202,9 @@ export function degradedCapabilities(platform: NodeJS.Platform = process.platfor
   if (!writable) {
     out.push({
       key: 'liveIndex',
-      reason: 'The instant-search index needs somewhere to write, and this drive is read-only. Searching still works on the folder you just scanned.',
+      // Neutral about why: a read-only drive, a full one, or a TreeMap-Data folder that was refused —
+      // the status's own reason says which (FG4c, review #23).
+      reason: 'The instant-search index needs somewhere to write, and nothing is saved in this session. Searching still works on the folder you just scanned.',
     });
     out.push({
       key: 'scanHistory',

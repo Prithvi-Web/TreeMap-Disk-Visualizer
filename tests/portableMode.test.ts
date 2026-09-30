@@ -416,3 +416,49 @@ test('a TreeMap-Data of ordinary files and folders is used as before', () => {
   assert.equal(status.writable, true, status.reason);
   assert.equal(e.TREEMAP_DATA_DIR, data);
 });
+
+/* ─────────────── A hard link, and what a refused folder is called (FG4c) ─────────────── */
+
+test('a hard link at the top of TreeMap-Data refuses the folder, and the file it shares is untouched', (t) => {
+  // A hard link is an ordinary file to readdir, and every writer truncates or appends through a
+  // fixed name: settings JSON written to `settings.json.tmp` would land in whatever other file on
+  // the drive that name is also (review #6).
+  for (const name of ['settings.json.tmp', 'audit.jsonl']) {
+    const base = portableBase();
+    const data = path.join(base, PORTABLE_DATA_DIRNAME);
+    fs.mkdirSync(data);
+    const victim = path.join(base, 'Taxes.pdf');
+    fs.writeFileSync(victim, 'PRECIOUS USER DATA');
+    try {
+      fs.linkSync(victim, path.join(data, name));
+    } catch {
+      t.skip('this file system cannot hold a hard link');
+      return;
+    }
+    const e = env();
+    resetPortableMode();
+    const status = initPortableMode(e, base);
+    assert.equal(status.writable, false, name);
+    assert.equal(e.TREEMAP_DATA_DIR, undefined, name);
+    assert.ok((status.reason ?? '').includes(name), `the reason names ${name}: ${status.reason}`);
+    assert.match(status.reason ?? '', /also another file/, 'and says what it is');
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'PRECIOUS USER DATA');
+  }
+});
+
+test('a refused TreeMap-Data is not called a read-only drive', () => {
+  // The drive is writable; its data folder was refused. What the session cannot do says so
+  // without claiming the drive is read-only — the reason above it gives the cause (review #23).
+  const base = portableBase();
+  const data = path.join(base, PORTABLE_DATA_DIRNAME);
+  fs.mkdirSync(data);
+  fs.symlinkSync(path.join(tmp(), 'elsewhere'), path.join(data, 'audit.jsonl'), 'file');
+  const e = env();
+  resetPortableMode();
+  const status = initPortableMode(e, base);
+  assert.equal(status.writable, false);
+  assert.match(status.reason ?? '', /holds a link/);
+  const readOnly = status.degraded.filter((d) => /read-only/.test(d.reason));
+  assert.deepEqual(readOnly, [], 'no sentence says the drive is read-only');
+  assert.ok(status.degraded.some((d) => d.key === 'liveIndex' && /nothing is saved/.test(d.reason)), JSON.stringify(status.degraded));
+});
