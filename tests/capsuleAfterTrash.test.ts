@@ -11,6 +11,8 @@ import { getCapsuleJob, setDiscardFaultForTests, type DiscardStep } from '../src
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
+import { platform } from '../src/platform';
+import { invalidateCapabilities } from '../src/platform/capabilities';
 import { waitFor } from './fixtures/waitFor';
 
 /**
@@ -74,6 +76,45 @@ async function withFault<T>(step: DiscardStep | null, fn: () => Promise<T>): Pro
 
 const sorted = (list: string[]): string[] => [...list].sort();
 
+/**
+ * Runs `fn` with the open-file check (B2) answering `answer`: 'clear' (checked, nothing open) or
+ * 'fails' (the probe could not run). An Autopilot run is unattended, and an unattended delete moves
+ * nothing when the check could not run — so a test that means to trash through Autopilot must say
+ * what the check answers, or it depends on the machine. On GitHub's Windows runner (CI run
+ * 36663542819) the real check (Restart Manager) came back "couldn't check": the cart commits here, a
+ * person's delete, went ahead on that answer as B2 documents, while every Autopilot run was refused
+ * whole (OPEN_HANDLE_UNCHECKED) before its trash step and recorded as blocked.
+ */
+async function withOpenFileCheck<T>(answer: 'clear' | 'fails', fn: () => Promise<T>): Promise<T> {
+  const provider = platform() as unknown as {
+    getOpenHandlesBatch: (paths: string[]) => Promise<unknown>;
+    probeOpenHandleGuard: () => Promise<unknown>;
+  };
+  const batch = provider.getOpenHandlesBatch.bind(provider);
+  const probe = provider.probeOpenHandleGuard.bind(provider);
+  provider.getOpenHandlesBatch = answer === 'fails'
+    ? () => Promise.reject(new Error('the probe did not answer (a test)'))
+    : () => Promise.resolve({ handles: [], complete: true });
+  provider.probeOpenHandleGuard = () => Promise.resolve({ available: true, mechanism: 'test' });
+  invalidateCapabilities();
+  try {
+    return await fn();
+  } finally {
+    provider.getOpenHandlesBatch = batch;
+    provider.probeOpenHandleGuard = probe;
+    invalidateCapabilities();
+  }
+}
+
+/** Saves and approves a live policy over `dir`, and runs it once. */
+async function runOver(dir: string, id: string): Promise<Awaited<ReturnType<typeof runPolicy>>> {
+  await savePolicies([{ id, name: 'three files', path: dir, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
+  await approvePolicy(id);
+  const policy = (await listPolicies()).find((p) => p.id === id);
+  assert.ok(policy);
+  return runPolicy(policy);
+}
+
 test('without a failure, the copy of the refused item is discarded and nothing is said', async () => {
   const { gone, held } = threeFiles('cart-none');
   const { value: result } = await withFault(null, () => commitCart([...gone, held]));
@@ -109,13 +150,8 @@ for (const step of STEPS) {
 
   test(`a failure at the ${step} step after the trash step: Autopilot records the run it made, and its undo puts that back`, async () => {
     const { dir, gone, held } = threeFiles(`autopilot-${step}`);
-    const id = `after-trash-${step}`;
     try {
-      await savePolicies([{ id, name: 'three files', path: dir, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
-      await approvePolicy(id);
-      const policy = (await listPolicies()).find((p) => p.id === id);
-      assert.ok(policy);
-      const { value: run } = await withFault(step, () => runPolicy(policy));
+      const { value: run } = await withOpenFileCheck('clear', () => withFault(step, () => runOver(dir, `after-trash-${step}`)));
       assert.equal(run.status, 'completed', run.blockedReason);
       assert.deepEqual(sorted(run.items.map((i) => i.path)), sorted(gone), 'its items are what it trashed');
       assert.ok(run.bytesDeleted > 0, 'and their bytes');
