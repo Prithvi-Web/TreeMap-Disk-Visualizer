@@ -1,7 +1,7 @@
-import { execFile } from 'child_process';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import type { GitRecoverability } from './recoverabilityTypes';
+import { runGit, userExcludesArgs, vetRepository, type GitCall, type VettedRepo, type VetOptions } from './gitSafe';
 
 /**
  * "Does a copy of this exist in a git remote?" (v4 §1.2a)
@@ -36,53 +36,30 @@ import type { GitRecoverability } from './recoverabilityTypes';
  *
  * ── Safety ──
  *
- * Every invocation uses `execFile` with an argv array, `--porcelain`/`-z`
- * forms only, a timeout, and `-C <sanitized repo root>`. **No argument is ever
- * derived from user input other than the already-sanitized path**, and paths
- * reach `check-ignore` on stdin rather than as arguments, so a path beginning
- * with `-` cannot become a flag.
+ * Every invocation goes through gitSafe.ts: an argv array, `--porcelain`/`-z`
+ * forms only, a timeout, `-C <sanitized repo root>`, GIT_HARDENING and an
+ * environment built from scratch. **No argument is ever derived from user
+ * input other than the already-sanitized path**, and paths reach
+ * `check-ignore` on stdin rather than as arguments, so a path beginning with
+ * `-` cannot become a flag.
+ *
+ * **Nothing that reads the work tree runs before the repository is vetted**
+ * (FG4, gitSafe.vetRepository): a repository's own settings can name programs
+ * for `status` to start, and TreeMap reads repositories under folders someone
+ * else may have filled. A repository that fails the vetting is `unknown`, with
+ * the reason, and nothing else is asked of it. `status` never recurses into a
+ * submodule (`--ignore-submodules=dirty`), so a clean repository holding one
+ * is `unknown` too — its contents were not read. The user's own ignore file
+ * is passed explicitly, since the user's settings are not read by the calls.
  *
  * A repository whose `git` invocation fails is reported unavailable **for that
  * repository**, never for the provider — one broken repo must not blank the
  * column for every other.
  */
 
-const GIT_TIMEOUT_MS = 10_000;
-const MAX_BUFFER = 8 * 1024 * 1024;
-
-function git(
-  args: string[],
-  opts: { stdin?: string; exitOneIsEmpty?: boolean } = {},
-): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
-  const { stdin, exitOneIsEmpty = false } = opts;
-  return new Promise((resolve) => {
-    const child = execFile(
-      'git',
-      args,
-      { timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true },
-      (err, stdout) => {
-        if (err) {
-          // `check-ignore` exits 1 to mean "nothing matched" — a normal answer.
-          //
-          // **Scoped to that one command on purpose.** Applying it everywhere
-          // made a `git status` that exits 1 read as a clean, empty worktree:
-          // no dirty files, nothing untracked, and with a remote and ahead=0
-          // that produces `fullyPushed: true` and a confident "deleting this
-          // costs one git clone" for a repo whose state was never actually
-          // read. A failure must look like a failure.
-          const code = (err as { code?: unknown }).code;
-          if (exitOneIsEmpty && code === 1 && typeof stdout === 'string') { resolve({ ok: true, stdout }); return; }
-          resolve({ ok: false, error: err instanceof Error ? err.message.split('\n')[0] : String(err) });
-          return;
-        }
-        resolve({ ok: true, stdout: stdout ?? '' });
-      },
-    );
-    if (stdin !== undefined) {
-      child.stdin?.on('error', () => { /* git exited early; the callback reports it */ });
-      child.stdin?.end(stdin);
-    }
-  });
+/** git in the vetted repository at `root`, never looking above it. */
+function git(root: string, args: string[], opts: GitCall = {}) {
+  return runGit(['-C', root, ...args], { ...opts, repoRoot: root });
 }
 
 /**
@@ -195,13 +172,65 @@ export function parseAheadBehind(stdout: string): { behind: number; ahead: numbe
   return { behind: Number(m[1]), ahead: Number(m[2]) };
 }
 
-/** Everything one repository can say, read in a single pass. */
-export async function readRepoState(repoRoot: string): Promise<GitRecoverability | { error: string }> {
-  const remotes = await git(['-C', repoRoot, 'remote']);
+/** How a caller hands over a repository it has already vetted, or says how to vet one. */
+export interface RepoReadOptions extends VetOptions {
+  vetted?: VettedRepo;
+}
+
+/** A repository's state; or why git could not read it (`error`); or why it was not read, or cannot be vouched for (`unknown`). */
+export type RepoState = GitRecoverability | { error: string } | { unknown: string };
+
+/** The vetted repository at `root`: the one handed over, or vetted here. */
+async function vetted(root: string, opts: RepoReadOptions): Promise<{ repo: VettedRepo } | { error: string } | { unknown: string }> {
+  if (opts.vetted) return { repo: opts.vetted };
+  const vetting = await vetRepository(root, opts);
+  if (vetting.ok) return { repo: vetting.repo };
+  return vetting.kind === 'error' ? { error: vetting.reason } : { unknown: vetting.reason };
+}
+
+/** The gitlink mode, at the start of an `ls-files --stage -z` record: a submodule or a nested repository. */
+const GITLINK = '160000 ';
+
+/**
+ * Whether the index of `root` holds a gitlink: a submodule, registered or not. Read as a
+ * stream and stopped at the first one, so a large index costs no memory; null when git fails.
+ */
+async function holdsGitlink(root: string): Promise<boolean | null> {
+  let head = '';
+  let found = false;
+  const onStdout = (chunk: string): boolean => {
+    let i = 0;
+    while (i < chunk.length) {
+      const nul = chunk.indexOf('\0', i);
+      const end = nul === -1 ? chunk.length : nul;
+      if (head.length < GITLINK.length) head += chunk.slice(i, Math.min(end, i + GITLINK.length - head.length));
+      if (head === GITLINK) found = true;
+      if (found || nul === -1) break;
+      head = '';
+      i = nul + 1;
+    }
+    return found;
+  };
+  const run = await git(root, ['ls-files', '--stage', '-z'], { onStdout });
+  return run.ok ? found : null;
+}
+
+/**
+ * Everything one repository can say, read in a single pass — after it is
+ * vetted, and never before.
+ */
+export async function readRepoState(repoRoot: string, opts: RepoReadOptions = {}): Promise<RepoState> {
+  const vet = await vetted(repoRoot, opts);
+  if (!('repo' in vet)) return vet;
+  const root = vet.repo.root;
+  const remotes = await git(root, ['remote']);
   if (!remotes.ok) return { error: remotes.error };
   const hasRemote = remotes.stdout.trim().length > 0;
 
-  const status = await git(['-C', repoRoot, 'status', '--porcelain=v1', '-z', '--untracked-files=normal']);
+  const status = await runGit(
+    [...(await userExcludesArgs()), '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=normal', '--ignore-submodules=dirty'],
+    { repoRoot: root },
+  );
   if (!status.ok) return { error: status.error };
   const { dirtyFiles, untracked } = parsePorcelainStatus(status.stdout);
 
@@ -209,11 +238,33 @@ export async function readRepoState(repoRoot: string): Promise<GitRecoverability
   // the scan's own sizes, and a second stat of every untracked file in a large
   // repo is exactly the kind of cost §2.5 budgets against. The count travels
   // instead, and the composite reports bytes only where the scan supplies them.
+  //
+  // "Pushed" is measured against a remote-tracking branch only: an upstream
+  // that is another local branch (`branch.<name>.remote = .`) has ahead 0 while
+  // nothing ever left this machine, so there `ahead` stays null (FG4 review).
   let ahead: number | null = null;
-  const revlist = await git(['-C', repoRoot, 'rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
-  if (revlist.ok) {
-    const counts = parseAheadBehind(revlist.stdout);
-    ahead = counts ? counts.ahead : null;
+  const upstream = await git(root, ['rev-parse', '--symbolic-full-name', '@{upstream}']);
+  if (upstream.ok && upstream.stdout.startsWith('refs/remotes/')) {
+    const revlist = await git(root, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
+    if (revlist.ok) {
+      const counts = parseAheadBehind(revlist.stdout);
+      ahead = counts ? counts.ahead : null;
+    }
+  }
+
+  // Every clause matters. No remote: nothing to clone from. ahead null: no
+  // upstream, so "pushed" is not even defined. Anything dirty or untracked:
+  // the worktree holds content the remote has never seen.
+  const fullyPushed = hasRemote && ahead === 0 && dirtyFiles === 0 && untracked.length === 0;
+  if (fullyPushed) {
+    // `status` did not look inside submodules (it would run git in each, under
+    // settings nobody vetted), so a clean answer does not cover them: a clone
+    // brings a submodule back only if its own commits were pushed too.
+    const gitlink = await holdsGitlink(root);
+    if (gitlink === null) return { error: 'git could not list the files it tracks' };
+    if (gitlink) {
+      return { unknown: `${root} holds a submodule or another project inside it, which TreeMap does not look into, so whether everything here is pushed is unknown.` };
+    }
   }
 
   return {
@@ -224,10 +275,7 @@ export async function readRepoState(repoRoot: string): Promise<GitRecoverability
     dirtyFiles,
     untrackedFiles: untracked.length,
     untrackedBytes: 0,
-    // Every clause matters. No remote: nothing to clone from. ahead null: no
-    // upstream, so "pushed" is not even defined. Anything dirty or untracked:
-    // the worktree holds content the remote has never seen.
-    fullyPushed: hasRemote && ahead === 0 && dirtyFiles === 0 && untracked.length === 0,
+    fullyPushed,
     pathTracked: true,
   };
 }
@@ -239,11 +287,15 @@ export async function readRepoState(repoRoot: string): Promise<GitRecoverability
  * keeps one invocation per repo regardless of batch size, and a path
  * beginning with `-` cannot be read as a flag.
  */
-export async function ignoredPaths(repoRoot: string, paths: string[]): Promise<Set<string> | null> {
+export async function ignoredPaths(repoRoot: string, paths: string[], opts: RepoReadOptions = {}): Promise<Set<string> | null> {
   if (paths.length === 0) return new Set();
-  const result = await git(
-    ['-C', repoRoot, 'check-ignore', '-z', '--stdin'],
-    { stdin: paths.join('\0') + '\0', exitOneIsEmpty: true },
+  const vet = await vetted(repoRoot, opts);
+  // Refused or unreadable: unknown, exactly as a failed check-ignore is.
+  if (!('repo' in vet)) return null;
+  const root = vet.repo.root;
+  const result = await runGit(
+    [...(await userExcludesArgs()), '-C', root, 'check-ignore', '-z', '--stdin'],
+    { repoRoot: root, stdin: paths.join('\0') + '\0', exitOneIsEmpty: true },
   );
   // A FAILURE IS NOT "nothing is ignored".
   //

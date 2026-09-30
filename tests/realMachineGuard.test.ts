@@ -22,6 +22,8 @@ import { purgeSnapshots, setSnapshotPurgeStepForTests } from '../src/services/sn
 import { trashCloudPaths } from '../src/services/cloud/cloudScan';
 import { PROVIDERS } from '../src/services/cloud/providers';
 import { runGitGc, setGitGcStepForTests } from '../src/services/gitScanner';
+import { GIT_HARDENING } from '../src/services/gitSafe';
+import { commandsOf, recordGit } from './fixtures/gitRecorder';
 import { createScanRecord } from '../src/services/diskScanner';
 import { saveTokens } from '../src/services/cloud/oauth';
 import { updateSettings } from '../src/services/settings';
@@ -428,19 +430,32 @@ test('git gc refuses under a test runner before git is started', async () => {
 });
 
 test('with setGitGcStepForTests in place, git gc goes to the stand-in', async () => {
+  // The stand-in replaces the gc, not the checks before it (FG4): they look at the .git folder
+  // and ask git where the repository keeps its data and what it sets. The recorder answers those
+  // two reads as a plain repository would, so no git is started here either.
   const repo = repoInsideAScan();
+  fs.mkdirSync(path.join(repo, '.git'));
+  const top = fs.realpathSync.native(repo);
+  const git = recordGit((sub) => {
+    if (sub[0] === 'rev-parse') return { stdout: `${top}\n${path.join(top, '.git')}\n.git\n` };
+    if (sub[0] === 'config') return { stdout: 'file:.git/config\0core.bare\nfalse\0' };
+    return { code: 128, stderr: 'the recorder: only the vetting reads were expected' };
+  });
   const asked: string[] = [];
-  setGitGcStepForTests(async (r) => {
-    asked.push(r);
+  setGitGcStepForTests(async (plan) => {
+    asked.push(plan.repo);
     return { stdout: 'packed', stderr: '' };
   });
   try {
-    const run = await disarmed(() => runGitGc(repo));
+    // The checks look at the repository where it really is (FG4 review), so that is the folder allowed.
+    const run = await disarmed(() => runGitGc(repo), fs.realpathSync.native(path.dirname(repo)));
     assert.deepEqual(run.outcome, { ok: true, output: 'packed' }, describe(run.outcome));
     assert.deepEqual(asked, [sanitizePath(repo)], 'the stand-in was asked, once, about the repository');
-    assert.deepEqual(run.calls, [], 'and git never was');
+    assert.deepEqual(run.calls, [], 'and nothing was started');
+    assert.deepEqual(commandsOf(git.calls), ['rev-parse', 'config'], 'git was only asked, through the recorder, where the repository is and what it sets');
   } finally {
     setGitGcStepForTests(null);
+    git.restore();
   }
   assert.deepEqual(takeRealMachineRefusalsForTests(), []);
 });
@@ -642,15 +657,48 @@ test("outside a test runner, trashing a cloud file goes ahead for every provider
 });
 
 test('outside a test runner, git gc goes ahead: to git, which the disarmed machine does not start', () => {
+  // Since FG4 a gc runs only on a `.git` folder that is really there (the folder here has one,
+  // empty: no repository, were git ever started), and first asks git where the repository keeps
+  // its data and what it sets (gitSafe.vetRepository); only a repository whose answers pass is
+  // gc'd. So the door is shown twice. On the machine as it is, going ahead is reaching git for
+  // that first, hardened read, which the disarmed machine refuses to start — and nothing past it
+  // runs. With git's two reads answered as a plain repository would (the recorder, in the
+  // child), it is reaching the gc itself — the step that refuses under a test runner — and
+  // handing git the gc, which again nothing starts.
   const root = fileTempDir('treemap-guard-door-gc-');
   const repo = path.join(root, 'repo');
-  fs.mkdirSync(repo);
-  const child = childAtTheDoor({
-    imports: [`import { runGitGc } from ${SRC_MODULE('services/gitScanner')};`, `import { createScanRecord } from ${SRC_MODULE('services/diskScanner')};`],
-    setup: [`createScanRecord(${JSON.stringify(root)});`],
-    act: `return runGitGc(${JSON.stringify(repo)});`,
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const real = fs.realpathSync.native(repo);
+  const imports = [`import { runGitGc } from ${SRC_MODULE('services/gitScanner')};`, `import { createScanRecord } from ${SRC_MODULE('services/diskScanner')};`];
+  const setup = [`createScanRecord(${JSON.stringify(root)});`];
+
+  const onTheMachine = childAtTheDoor({ imports, setup, act: `return runGitGc(${JSON.stringify(repo)});` });
+  const first = assertWentAhead('git gc', onTheMachine);
+  const where = ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'];
+  // On Windows the hooks folder is a name made per process, so the child's is not this one's.
+  const nowhere = (line: string): string => line.replace(/(core\.hooksPath=).*?( -c )/, '$1<nowhere>$2');
+  assert.deepEqual(first.calls.map(nowhere), [nowhere(`spawn git ${[...GIT_HARDENING, '-C', real, ...where].join(' ')}`)],
+    'git was asked where the repository is, hardened, and nothing else');
+  assert.deepEqual(first.value, { ok: false, error: 'the machine is disarmed: git was not started', refused: true }, "and the answer is git's not running");
+
+  const answered = childAtTheDoor({
+    imports: [...imports, `import { recordGit, subcommand } from ${JSON.stringify(path.join(__dirname, 'fixtures', 'gitRecorder'))};`],
+    setup,
+    act: [
+      'const rec = recordGit((sub) => {',
+      `  if (sub[0] === 'rev-parse') return { stdout: ${JSON.stringify(`${real}\n${path.join(real, '.git')}\n.git\n`)} };`,
+      "  if (sub[0] === 'config') return { stdout: 'file:.git/config\\0core.bare\\nfalse\\0' };",
+      "  return { code: 128, stderr: 'the machine is disarmed: git was not started' };",
+      '});',
+      `const result = await runGitGc(${JSON.stringify(repo)});`,
+      'rec.restore();',
+      'return { result, git: rec.calls.map((c) => subcommand(c.args)) };',
+    ].join('\n'),
   });
-  const { value, calls } = assertWentAhead('git gc', child);
-  assert.deepEqual(calls, [`spawn git -C ${sanitizePath(repo)} gc --aggressive --prune=now`], 'git was asked to gc the repository, and nothing else');
-  assert.deepEqual(value, { ok: false, error: 'the machine is disarmed: git was not started' }, "and the answer is git's not running");
+  const second = assertWentAhead('git gc, its reads answered', answered);
+  const { result, git } = second.value as { result: unknown; git: string[][] };
+  assert.deepEqual(git.map((sub) => sub[0]), ['rev-parse', 'config', 'gc'], 'past the vetting, git is handed the gc');
+  assert.deepEqual(git[2], ['gc', '--aggressive', '--prune=2.weeks.ago']);
+  assert.deepEqual(second.calls, [], 'and nothing was started');
+  assert.deepEqual(result, { ok: false, error: 'the machine is disarmed: git was not started' }, 'a gc git could not run, not a refusal');
 });

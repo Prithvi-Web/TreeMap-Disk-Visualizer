@@ -4,6 +4,8 @@ import { getScan } from '../diskScanner';
 import { storeOf } from '../scanStore';
 import { cloudResidency } from '../placeholderResolver';
 import { ignoredPaths, readRepoState, repoRootFor } from '../gitRecoverability';
+import { vetRepository } from '../gitSafe';
+import { insideAnyScanRoot } from '../../middleware/pathGuard';
 import { composeRecoverability } from '../recoverability';
 import type {
   BackupRecoverability, CloudRecoverability, GitRecoverability, RecoverabilityFact,
@@ -25,6 +27,12 @@ import { FactBatch, FactProvider } from './types';
  * paths from one project is one `git status` and one `git check-ignore`, not
  * four thousand subprocesses. That grouping is the difference between this
  * provider fitting §2.5's 400 ms budget and being unusable.
+ *
+ * Each repository is vetted first (FG4, gitSafe.vetRepository): its settings
+ * against an allow-list, and its git data inside a scanned folder when a
+ * `.git` file, link or `commondir` keeps it elsewhere. A repository that fails
+ * is unavailable for that repository, with the reason, and nothing else is run
+ * in it.
  */
 
 const MAX_REPOS_PER_BATCH = 64;
@@ -95,7 +103,17 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
 
       for (const [root, repoPaths] of pathsByRepo) {
         if (signal.aborted) break;
-        const state = await readRepoState(root);
+        const vetting = await vetRepository(root, { insideScannedRoot: insideAnyScanRoot });
+        if (!vetting.ok) {
+          const reason = vetting.kind === 'refused' ? vetting.reason : `Git could not read the project at ${root} (${vetting.reason}).`;
+          for (const p of repoPaths) gitUnavailableByPath.set(p, reason);
+          continue;
+        }
+        const state = await readRepoState(root, { vetted: vetting.repo });
+        if ('unknown' in state) {
+          for (const p of repoPaths) gitUnavailableByPath.set(p, state.unknown);
+          continue;
+        }
         if ('error' in state) {
           // Unavailable for THIS repository only. §1.2a is explicit that a
           // broken repo must not blank the signal for every other one.
@@ -108,7 +126,7 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
         // so a repo full of node_modules reports clean and `fullyPushed` comes
         // back true. Without this, the UI would say deleting 4 GB of ignored
         // build output "costs one git clone".
-        const ignored = await ignoredPaths(root, repoPaths);
+        const ignored = await ignoredPaths(root, repoPaths, { vetted: vetting.repo });
         if (ignored === null) {
           // check-ignore failed. Treating that as "nothing is ignored" would
           // reintroduce the very claim this pass exists to prevent, so the

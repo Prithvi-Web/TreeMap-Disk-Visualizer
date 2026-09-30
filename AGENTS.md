@@ -164,7 +164,11 @@ OpenAPI 3 spec).
      while the other two still answer. Note a file that git *ignores* is
      `none` even inside a fully-pushed repo — `git status --porcelain` omits
      ignored files, so the repo reports clean while the remote has never held
-     them.
+     them. **Git is asked nothing about a repository before it is vetted**
+     (see *Git runs hardened* below): a repository whose settings could start
+     a program, or whose git data sits outside every scanned folder, is
+     unavailable for that repo with the reason, and so is a clean repository
+     holding a submodule, which TreeMap does not look inside.
      **`reclaimScore`** answers "how safe and worthwhile is this to delete?"
      as `{ score: 0-100, components[], confidence, missing[], coverage }`.
      Nothing new is scanned: it composes the scan tree, `lastUsed`,
@@ -392,6 +396,32 @@ read-what-you-saw) permission to act.
   filesystem — their deletes go to the provider's own trash via
   `POST /api/cloud/trash`. Entries *inside* archives are listings, not files
   (`403 { code: "VIRTUAL_PATH" }`); act on the archive itself.
+- **Git runs hardened, and only in a vetted repository.** A repository found
+  under a scanned folder is not trusted: its own `.git/config` can name
+  programs for git to start (`core.fsmonitor`, `filter.<x>.clean`, hooks…).
+  Every git call TreeMap makes carries `-c core.fsmonitor=false
+  -c core.hooksPath=<nowhere> -c core.pager=cat -c core.untrackedCache=false
+  -c credential.helper= -c protocol.allow=never` and an environment built
+  from scratch (no inherited `GIT_*`, no system or global settings, no
+  optional locks, no prompts, no lazy fetch; the user's own global ignore
+  file is passed explicitly). Before anything reads a work tree, the
+  repository is vetted: git's own parser lists every setting without
+  following includes, and anything not on an allow-list of settings that
+  cannot start a program — any `include`, `filter`, `diff`/`merge` driver,
+  `alias`, `core.worktree`, a non-boolean `core.fsmonitor`, a partial clone's
+  promisor settings… — refuses it. Where a `.git` file, a `.git` link or a
+  `commondir` points is read by TreeMap itself before git is started: a
+  network share, or a folder outside every scan, refuses the repository and
+  git never runs. `status` never recurses into submodules, and "pushed" is
+  measured only against a remote-tracking upstream.
+  `POST /api/git/gc` follows the path to where the repository really is,
+  which must be inside a scanned folder, and runs only on a `.git` that is a
+  real folder, with no `commondir` and no link or special file anywhere
+  inside it, vetted, told its git dir (`--git-dir`), and prunes only what
+  has been unreachable for two weeks (`--prune=2.weeks.ago`, git's own
+  default); anything else answers `{ ok: false, error, refused: true }` with
+  the reason, runs nothing, and is audited as `refused` (a gc git ran and
+  failed is audited as `error`).
 - **Uniform errors.** Every failure is `{ "error": string, "code": string }`
   with a stable code. Rate limit: 10 req/s sustained per client (bursts to
   20), then `429 { code: "RATE_LIMITED" }`. Status polls

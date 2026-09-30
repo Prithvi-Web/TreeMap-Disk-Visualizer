@@ -557,7 +557,10 @@ insightRouter.post('/git/gc', idempotency, guardBodyPath, requireInsideScanRoot,
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to run git gc');
   }
   const result = await runGitGc(repoPath);
-  await appendAudit({ action: 'git.gc', source: 'http', tokenId: tokenIdFor('http'), paths: [repoPath], bytes: null, dryRun: false, outcome: 'ok' });
+  // A gc its own checks refused (FG4: a .git that points elsewhere, settings that could start a
+  // program) is recorded as refused, one git ran and failed as an error — never either as done.
+  const outcome = result.ok ? 'ok' : result.refused ? 'refused' : 'error';
+  await appendAudit({ action: 'git.gc', source: 'http', tokenId: tokenIdFor('http'), paths: [repoPath], bytes: null, dryRun: false, outcome });
   res.json(result);
 });
 

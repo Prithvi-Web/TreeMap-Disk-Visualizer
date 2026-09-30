@@ -1,5 +1,5 @@
 import { platform } from './index';
-import { commandExists } from './exec';
+import { runGit } from '../services/gitSafe';
 import type { Capabilities, CapabilityState } from './types';
 
 /**
@@ -125,11 +125,11 @@ async function detect(): Promise<Capabilities> {
  * Is `git` usable for reading repository state (v4 §1.2a)?
  *
  * Not a per-OS mechanism — git is git — so it is probed here rather than
- * through the platform provider. Only ever invoked with `--porcelain` forms
- * and a sanitized path; see services/gitScanner.ts.
+ * through the platform provider. Like every git call, through gitSafe.ts:
+ * hardened, in an environment built from scratch (FG4).
  */
 async function probeGitStatus(): Promise<CapabilityState> {
-  const present = await commandExists('git', ['--version']);
+  const present = (await runGit(['--version'], { timeoutMs: 5_000 })).ok;
   if (!present) {
     return {
       available: false,

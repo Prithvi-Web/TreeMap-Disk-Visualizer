@@ -197,8 +197,17 @@ test('every writer in the app resolves through the one redirected helper', () =>
        *                     write: it contains no write/mkdir/rename/unlink call
        *                     at all, which the assertion below re-checks so the
        *                     exemption cannot quietly become wrong.
+       *  - gitSafe.ts       sets XDG_CONFIG_HOME in git's environment, to point git
+       *                     AWAY from the user's settings (FG4). It builds no path
+       *                     TreeMap writes, and writes nothing — re-checked below.
        */
       if (entry.name === 'storage.ts' || entry.name === 'portableMode.ts') continue;
+      if (entry.name === 'gitSafe.ts') {
+        const noWrites = fs.readFileSync(full, 'utf8');
+        assert.doesNotMatch(noWrites, /writeFile|mkdir|appendFile|createWriteStream|\brename\(|\bunlink\(|appDataDir/,
+          'gitSafe is exempt only because it never writes — that is no longer true');
+        continue;
+      }
       if (entry.name === 'appAttribution.ts') {
         const readOnly = fs.readFileSync(full, 'utf8');
         assert.doesNotMatch(readOnly, /writeFile|mkdir|appendFile|createWriteStream|\brename\(|\bunlink\(/,

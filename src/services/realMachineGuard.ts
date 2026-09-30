@@ -6,7 +6,7 @@ import { AppError } from '../middleware/errorHandler';
  * Finder, the Recycle Bin, gio), emptying the Trash and listing it
  * (trash.ts), deleting Time Machine's local snapshots (snapshotAccounting.ts),
  * moving a cloud file to its provider's trash (cloud/cloudScan.ts) and
- * `git gc --prune=now` (gitScanner.ts).
+ * `git gc`, which prunes for good (gitScanner.ts).
  *
  * Under a test runner each of them refuses — throws, before any call to the
  * operating system — unless the test put its stand-in in place of the real
