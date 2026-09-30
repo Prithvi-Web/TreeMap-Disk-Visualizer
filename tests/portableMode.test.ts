@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -334,4 +335,84 @@ test('the write probe never writes through a name already in the folder', () => 
   assert.equal(fs.readFileSync(victim, 'utf8'), 'PRECIOUS USER DATA', 'the file the planted name leads to is untouched');
   assert.ok(fs.lstatSync(planted).isSymbolicLink(), 'the planted name is left as it was');
   assert.deepEqual(fs.readdirSync(dir), [path.basename(planted)], 'and the probe leaves nothing of its own');
+});
+
+/* ─────────────── A TreeMap-Data someone else prepared (FG4 #5) ─────────────── */
+
+/**
+ * The drive TreeMap runs from may have been prepared by someone else, and every app-data writer
+ * uses fixed names in TreeMap-Data (`settings.json.tmp`, `audit.jsonl`, `journal.jsonl`…) with
+ * calls that follow a link at that name. So a TreeMap-Data that is itself a link, or that holds a
+ * link or anything but a plain file or folder at its top level, is not used: the session is
+ * reported not writable, with the reason, and keeps nothing — as on a read-only drive.
+ */
+function portableBase(): string {
+  const base = tmp();
+  fs.writeFileSync(path.join(base, PORTABLE_MARKER), 'x');
+  return base;
+}
+
+test('a TreeMap-Data that is a link is refused, and nothing is pointed anywhere', () => {
+  const base = portableBase();
+  const elsewhere = tmp();
+  fs.symlinkSync(elsewhere, path.join(base, PORTABLE_DATA_DIRNAME), 'dir');
+  const e = env();
+  resetPortableMode();
+  const status = initPortableMode(e, base);
+  assert.equal(status.writable, false);
+  assert.equal(status.dataDir, null);
+  assert.equal(e.TREEMAP_DATA_DIR, undefined, 'no writer is pointed at the folder the link leads to');
+  assert.match(status.reason ?? '', /is a link/);
+  assert.match(status.reason ?? '', /writes nothing to this computer/, 'restating the guarantee');
+  assert.deepEqual(fs.readdirSync(elsewhere), [], 'not even the write probe went there');
+});
+
+test('a link planted at the top of TreeMap-Data refuses the folder, naming it, and what it leads to is untouched', () => {
+  for (const name of ['settings.json.tmp', 'audit.jsonl', 'journal.jsonl']) {
+    const base = portableBase();
+    const data = path.join(base, PORTABLE_DATA_DIRNAME);
+    fs.mkdirSync(data);
+    fs.writeFileSync(path.join(data, 'settings.json'), '{}');
+    const victim = path.join(tmp(), 'report.doc');
+    fs.writeFileSync(victim, 'PRECIOUS USER DATA');
+    fs.symlinkSync(victim, path.join(data, name), 'file');
+    const e = env();
+    resetPortableMode();
+    const status = initPortableMode(e, base);
+    assert.equal(status.writable, false, name);
+    assert.equal(e.TREEMAP_DATA_DIR, undefined, name);
+    assert.ok((status.reason ?? '').includes(name), `the reason names ${name}: ${status.reason}`);
+    assert.match(status.reason ?? '', /holds a link/, 'and says what it is');
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'PRECIOUS USER DATA');
+  }
+});
+
+test('a special file at the top of TreeMap-Data refuses the folder', { skip: process.platform === 'win32' }, async () => {
+  const base = portableBase();
+  const data = path.join(base, PORTABLE_DATA_DIRNAME);
+  fs.mkdirSync(data);
+  const server = net.createServer();
+  await new Promise<void>((resolve) => server.listen(path.join(data, 's'), resolve));
+  try {
+    const e = env();
+    resetPortableMode();
+    const status = initPortableMode(e, base);
+    assert.equal(status.writable, false);
+    assert.equal(e.TREEMAP_DATA_DIR, undefined);
+    assert.match(status.reason ?? '', /not an ordinary file or folder/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('a TreeMap-Data of ordinary files and folders is used as before', () => {
+  const base = portableBase();
+  const data = path.join(base, PORTABLE_DATA_DIRNAME);
+  fs.mkdirSync(path.join(data, 'timecapsule'), { recursive: true });
+  fs.writeFileSync(path.join(data, 'settings.json'), '{}');
+  const e = env();
+  resetPortableMode();
+  const status = initPortableMode(e, base);
+  assert.equal(status.writable, true, status.reason);
+  assert.equal(e.TREEMAP_DATA_DIR, data);
 });

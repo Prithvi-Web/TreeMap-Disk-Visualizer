@@ -129,6 +129,53 @@ export function probeWritable(dir: string): { writable: boolean; reason?: string
   }
 }
 
+const KEEPS_NOTHING = 'This session keeps nothing, and writes nothing to this computer either.';
+
+/** A name for a sentence: control characters shown as `?`. */
+function shownName(name: string): string {
+  return name.replace(/[\u0000-\u001f\u007f]/g, '?');
+}
+
+/**
+ * Why a TreeMap-Data folder someone else may have prepared must not be used, or null (FG4 #5).
+ *
+ * Every app-data writer resolves into this folder and writes fixed names there
+ * (`settings.json.tmp`, `audit.jsonl`, `journal.jsonl(.tmp)`, `<name>.corrupt`…) with calls that
+ * follow a link at that name. So the folder is refused when it is itself a link (or a junction),
+ * or when anything at its top level is a link or anything but a plain file or folder. A folder
+ * not there yet is fine: the probe makes it, fresh.
+ */
+export function portableDataDirRefusal(dir: string): string | null {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(dir);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return null;
+    return `The ${PORTABLE_DATA_DIRNAME} folder beside the app could not be checked (${code ?? 'unknown error'}). ${KEEPS_NOTHING}`;
+  }
+  if (st.isSymbolicLink()) {
+    return `The ${PORTABLE_DATA_DIRNAME} folder beside the app is a link to somewhere else, so saving there could write anywhere on this computer. ${KEEPS_NOTHING}`;
+  }
+  if (!st.isDirectory()) return null; // not a folder at all: making it fails, and the probe says so
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    return `The ${PORTABLE_DATA_DIRNAME} folder beside the app could not be read (${(err as NodeJS.ErrnoException).code ?? 'unknown error'}). ${KEEPS_NOTHING}`;
+  }
+  for (const entry of entries) {
+    const name = shownName(entry.name);
+    if (entry.isSymbolicLink()) {
+      return `The ${PORTABLE_DATA_DIRNAME} folder beside the app holds a link, ${name}, which could send TreeMap's saves somewhere else on this computer. ${KEEPS_NOTHING}`;
+    }
+    if (!entry.isFile() && !entry.isDirectory()) {
+      return `The ${PORTABLE_DATA_DIRNAME} folder beside the app holds ${name}, which is not an ordinary file or folder. ${KEEPS_NOTHING}`;
+    }
+  }
+  return null;
+}
+
 /**
  * What a portable session cannot do, stated per capability.
  *
@@ -208,7 +255,9 @@ export function initPortableMode(env: NodeJS.ProcessEnv = process.env, baseDir =
   }
 
   const target = path.join(baseDir, PORTABLE_DATA_DIRNAME);
-  const probe = probeWritable(target);
+  // A folder prepared by someone else is checked before anything is written into it (FG4 #5).
+  const planted = portableDataDirRefusal(target);
+  const probe = planted ? { writable: false, reason: planted } : probeWritable(target);
   if (probe.writable) {
     env.TREEMAP_DATA_DIR = target;
   }

@@ -263,7 +263,11 @@ OpenAPI 3 spec).
    - `GET /api/platform/portable` — whether this is a no-trace portable
      session, where it writes, and what it cannot do. **When `writable` is
      false nothing is persisted anywhere at all** — not on the drive, and
-     emphatically not on the host.
+     emphatically not on the host. A `TreeMap-Data` folder beside the app
+     that is a link, or holds a link or anything but a plain file or folder
+     at its top level, is not used — someone else may have prepared the
+     drive, and every writer uses fixed names there: `writable: false`, with
+     the reason naming it.
    - `GET /api/fleet`, `/api/fleet/peers`, `/api/fleet/peers/{id}/summary` —
      other TreeMaps on the LAN. **Off by default.** Peers exchange summaries
      only (volume figures, last scan root/time/size); file trees, Security
