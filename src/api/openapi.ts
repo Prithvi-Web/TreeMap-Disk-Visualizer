@@ -1982,9 +1982,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           {
             dryRun: bool('Always true'),
             wouldRestore: arr(obj({ id: str(), name: str(), originalPath: str(), destPath: str(), size: int() }, ['id', 'name', 'originalPath', 'destPath', 'size'])),
+            refused: arr(opaque('{ id, name, originalPath, reason } — a record the real run would refuse before writing (not of the shape TreeMap writes, into app-data or the spill folder, or its copy outside its destination), and why; its fields as the record holds them')),
             bytesTotal: int(),
           },
-          ['dryRun', 'wouldRestore', 'bytesTotal'],
+          ['dryRun', 'wouldRestore', 'refused', 'bytesTotal'],
         ),
       ),
       '202': jsonResponse('Job started', obj({ jobId: str() }, ['jobId'])),

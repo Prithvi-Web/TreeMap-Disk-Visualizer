@@ -359,7 +359,9 @@ read-what-you-saw) permission to act.
   app-data (and any record not of the shape TreeMap writes), the offload's
   record on the destination is written under a fresh name and renamed into
   place — never through a name already there — and an encode writes in a
-  private folder it made. Nor does a record TreeMap keeps lead anywhere it
+  private folder it made; nothing restores from that record on the drive or
+  follows it, so every entry already in it is carried as it stands, and one
+  that cannot be read whole is renamed aside, never replaced. Nor does a record TreeMap keeps lead anywhere it
   would not have written: a Time Capsule entry whose id is not one TreeMap
   gives is never made a path (forgetting it, or its expiry, removes nothing
   on disk), and a restore of it — or of an entry whose original place, or
@@ -405,7 +407,9 @@ read-what-you-saw) permission to act.
   and return the **exact manifest** — affected paths and bytes — while acting
   on nothing. A dry run
   passes through every validation a real run would (path guards, policy,
-  offload planning), so "dry run succeeded" genuinely means "the real run
+  offload planning, and for an offload restore each record's shape — the
+  records the real run would refuse are listed in `refused[]` with their
+  reasons), so "dry run succeeded" genuinely means "the real run
   would act". **Always dry-run, show the user, then act.**
 - **Policy.** The human can create `agent-policy.json` in the app-data
   directory (`GET /api/policy` shows the resolved policy and the file path):

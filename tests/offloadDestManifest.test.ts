@@ -9,7 +9,10 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 const APP = isolatedDataDir('treemap-offloadDestManifest-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
+import { execFileSync } from 'node:child_process';
+
 import { createApp } from '../src/server';
+import { SPILL_DIR } from '../src/services/spillSweep';
 import { startScan } from '../src/services/diskScanner';
 import { getOffloadJob } from '../src/services/offload';
 import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cleaner';
@@ -164,38 +167,121 @@ test('a record whose own name is a link or a second name is refused, and never r
   }
 });
 
-test('the drive\'s record keeps only entries of that destination, and says how many it dropped', async () => {
-  const dest = destination('crafted');
+test('the drive\'s record keeps every entry it already holds, verbatim — another mount\'s spelling included — and none of it reaches the local record (FG3b)', async () => {
+  // Nothing in TreeMap reads the drive's record back: it is written, never followed. So an entry
+  // written while the drive was mounted elsewhere (another drive letter, "/Volumes/X 1", another
+  // machine) is kept as it stands, and so is anything else in it, rather than dropped for good.
+  const dest = destination('verbatim');
   const inside = path.join(dest, 'kept.txt');
   fs.writeFileSync(inside, 'an earlier copy');
   const good = { id: 'earlier', name: 'kept.txt', originalPath: path.join(SCANNED, 'kept.txt'), destPath: inside, destRoot: dest, size: 1, hash: 'h', offloadedAt: 1 };
-  fs.writeFileSync(path.join(dest, DEST_MANIFEST), JSON.stringify({
-    entries: [
-      good,
-      { ...good, id: 'hosts', destRoot: '/', destPath: '/etc/hosts' },
-      { ...good, id: 'elsewhere', destPath: IMPORTANT },
-      { ...good, id: 'not-text', destPath: 5 },
-      { ...good, id: 'relative', originalPath: 'relative/x' },
-      'not an entry',
-    ],
+  const earlier: unknown[] = [
+    good,
+    { ...good, id: 'remounted', destRoot: '/Volumes/Old Name/Archive', destPath: '/Volumes/Old Name/Archive/kept.txt' },
+    { ...good, id: 'other-letter', destRoot: 'E:\\Archive', destPath: 'E:\\Archive\\w.mov' },
+    { ...good, id: 'hosts', destRoot: '/', destPath: '/etc/hosts' },
+    { ...good, id: 'elsewhere', destPath: IMPORTANT },
+    { ...good, id: 'not-text', destPath: 5 },
+    { ...good, id: 7, destRoot: ['/x'] },
+    { ...good, id: 'relative', originalPath: 'relative/x' },
+    'not an entry',
+    null,
+  ];
+  fs.writeFileSync(path.join(dest, DEST_MANIFEST), JSON.stringify({ entries: earlier }));
+  const job = await offloadOne(dest);
+  assert.equal(job.status, 'complete', job.error);
+  assert.equal(job.error, undefined, 'nothing to report');
+  const after = (JSON.parse(read(path.join(dest, DEST_MANIFEST))) as { entries: unknown[] }).entries;
+  assert.deepEqual(after.slice(0, earlier.length), earlier, 'every earlier entry, as it was');
+  assert.equal(after.length, earlier.length + 1, 'and the new one');
+  const local = JSON.parse(read(path.join(APP, 'offload-manifest.json'))) as { entries: { id: unknown }[] };
+  assert.deepEqual(local.entries.filter((e) => ['earlier', 'remounted', 'other-letter', 'hosts', 'elsewhere', 7].includes(e.id as string)), [], 'none of it is taken into the local record');
+});
+
+test('merging the drive\'s record does no file system work per entry: 5,000 entries are carried with no look at any of them (FG3b)', async () => {
+  // Counted, not timed: every realpath and lstat the server makes while the offload runs.
+  const dest = destination('many');
+  const many = Array.from({ length: 5_000 }, (_, i) => ({
+    id: `e-${i}`, name: 'x', originalPath: path.join(SCANNED, `gone-${i}.txt`), destRoot: dest,
+    destPath: path.join(dest, `missing-${i}`, 'deeper', 'x.txt'), size: 1, hash: 'h', offloadedAt: 1,
   }));
-  const logged: string[] = [];
-  const log = console.error;
-  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); };
+  fs.writeFileSync(path.join(dest, DEST_MANIFEST), JSON.stringify({ entries: many }));
+  // The module objects every file of the server shares, written through views that let them be:
+  // each realpath, lstat and stat, synchronous or not.
+  type Look = (...args: unknown[]) => unknown;
+  const sync = fs as unknown as { lstatSync: Look; statSync: Look; realpathSync: { native: Look } };
+  const promised = fs.promises as unknown as { lstat: Look; stat: Look; realpath: Look };
+  const real = { native: sync.realpathSync.native, lstatSync: sync.lstatSync, statSync: sync.statSync, lstat: promised.lstat, stat: promised.stat, realpath: promised.realpath };
+  let looks = 0;
+  const counted = (fn: Look): Look => (...args: unknown[]) => { looks++; return fn(...args); };
+  sync.realpathSync.native = counted(real.native);
+  sync.lstatSync = counted(real.lstatSync);
+  sync.statSync = counted(real.statSync);
+  promised.lstat = counted(real.lstat);
+  promised.stat = counted(real.stat);
+  promised.realpath = counted(real.realpath);
   let job: OffloadJob;
   try {
     job = await offloadOne(dest);
   } finally {
-    console.error = log;
+    sync.realpathSync.native = real.native;
+    sync.lstatSync = real.lstatSync;
+    sync.statSync = real.statSync;
+    promised.lstat = real.lstat;
+    promised.stat = real.stat;
+    promised.realpath = real.realpath;
   }
   assert.equal(job.status, 'complete', job.error);
-  const ids = driveEntries(dest).map((e) => e.id);
-  assert.equal(ids.length, 2, `the earlier entry and the new one (${ids.join(', ')})`);
-  assert.ok(ids.includes('earlier'));
-  assert.ok(logged.some((line) => /5 entries .* dropped/.test(line)), `the drop is counted (${logged.join(' | ')})`);
-  // And nothing of the drive's reaches the local record.
-  const local = JSON.parse(read(path.join(APP, 'offload-manifest.json'))) as { entries: { id: string }[] };
-  assert.deepEqual(local.entries.filter((e) => ['earlier', 'hosts', 'elsewhere'].includes(e.id)), []);
+  assert.ok(looks < 1_000, `${looks} looks for a record of ${many.length} entries: none of them per entry`);
+  assert.equal((JSON.parse(read(path.join(dest, DEST_MANIFEST))) as { entries: unknown[] }).entries.length, many.length + 1, 'every entry kept, and the new one');
+});
+
+test('a record on the drive that cannot be read whole is never replaced: it is kept beside the new one, and the job says so (FG3b)', async () => {
+  const cases: [string, (record: string) => void, RegExp][] = [
+    ['larger than a record TreeMap reads', (record) => { fs.writeFileSync(record, ''); fs.truncateSync(record, 33 * 1024 * 1024); }, /larger than/],
+    ['not JSON', (record) => fs.writeFileSync(record, 'not json at all'), /not JSON/],
+    ['not a list of entries', (record) => fs.writeFileSync(record, JSON.stringify({ entries: 'none' })), /not a list of entries/],
+  ];
+  for (const [what, plant, why] of cases) {
+    const dest = destination('unreadable');
+    const record = path.join(dest, DEST_MANIFEST);
+    plant(record);
+    const was = fs.readFileSync(record);
+    const job = await offloadOne(dest);
+    assert.equal(job.status, 'complete', `${what}: ${job.error ?? ''}`);
+    assert.match(job.error ?? '', why, `${what}: the job says why (${job.error})`);
+    const aside = fs.readdirSync(dest).filter((n) => n.startsWith(`${DEST_MANIFEST.replace(/\.json$/, '')}.`) && n !== DEST_MANIFEST);
+    assert.equal(aside.length, 1, `${what}: the earlier record is kept beside (${fs.readdirSync(dest).join(', ')})`);
+    assert.ok(fs.readFileSync(path.join(dest, aside[0])).equals(was), `${what}: byte for byte`);
+    assert.ok((job.error ?? '').includes(aside[0]), `${what}: and the job names where`);
+    assert.equal(driveEntries(dest).length, 1, `${what}: the new record lists the copy made there`);
+  }
+});
+
+test('a record that is there but cannot be opened is never replaced (FG3b)', { skip: process.platform === 'win32' ? 'Windows ignores a file\'s mode bits' : process.getuid?.() === 0 ? 'root may open any file' : false }, async () => {
+  const dest = destination('unopenable');
+  const record = path.join(dest, DEST_MANIFEST);
+  fs.writeFileSync(record, JSON.stringify({ entries: [{ id: 'mine-alone' }] }));
+  fs.chmodSync(record, 0o000);
+  let job: OffloadJob;
+  try {
+    job = await offloadOne(dest);
+  } finally {
+    fs.chmodSync(record, 0o600);
+  }
+  assert.equal(job.status, 'complete');
+  assert.match(job.error ?? '', /record on the destination was not written: .* could not be opened/, `the job says so (${job.error})`);
+  assert.equal(read(record), JSON.stringify({ entries: [{ id: 'mine-alone' }] }), 'and the record is as it was');
+});
+
+test('a record whose name is not a file (a FIFO) is refused, never opened to wait on (FG3b)', { skip: process.platform === 'win32' ? 'no FIFOs on Windows' : false }, async () => {
+  const dest = destination('fifo');
+  const record = path.join(dest, DEST_MANIFEST);
+  execFileSync('mkfifo', [record]);
+  const job = await offloadOne(dest);
+  assert.equal(job.status, 'complete', 'the offload itself went through, and did not hang');
+  assert.match(job.error ?? '', /record on the destination was not written: .* is not a file/, `and says what it did not do (${job.error})`);
+  assert.ok(fs.lstatSync(record).isFIFO(), 'the name is left as it was');
 });
 
 /* ─────────────── 4. An offload restore ─────────────── */
@@ -208,11 +294,15 @@ test('an offload restore never writes into app-data, and holds a record to the s
   const hash = crypto.createHash('sha256').update(payload).digest('hex');
   const entry = { name: 'x', size: payload.length, hash, offloadedAt: 1, destRoot: dest, destPath: copy };
   const legitOriginal = path.join(SCANNED, 'restored-here.json');
+  const systemPlace = process.platform === 'win32' ? 'C:\\Windows\\System32\\treemap-restored.json' : '/dev/treemap-restored.json';
   const records = [
     { ...entry, id: 'into-app-data', originalPath: path.join(APP, 'autopilot.json') },
     { ...entry, id: 'copy-outside-its-destination', originalPath: path.join(SCANNED, 'a.json'), destPath: IMPORTANT },
     { ...entry, id: 'not-text', originalPath: 5 },
     { ...entry, id: 'relative', originalPath: 'relative/x.json' },
+    { ...entry, id: 'into-spill', originalPath: path.join(APP, SPILL_DIR, 'spilled.json') },
+    { ...entry, id: 'system-folder', originalPath: systemPlace },
+    { ...entry, id: 'respelled', originalPath: `${path.join(SCANNED, 'sub')}${path.sep}..${path.sep}respelled.json` },
     { ...entry, id: 'legit', originalPath: legitOriginal },
   ];
   const manifest = path.join(APP, 'offload-manifest.json');
@@ -231,7 +321,20 @@ test('an offload restore never writes into app-data, and holds a record to the s
     ['copy-outside-its-destination', /outside the destination it was offloaded to/],
     ['not-text', /not a record TreeMap wrote/],
     ['relative', /not a record TreeMap wrote/],
+    ['into-spill', /TreeMap's own spill folder/],
+    ['system-folder', /is a system folder TreeMap never writes/],
+    ['respelled', /not a record TreeMap wrote/],
   ];
+  // The dry run passes every record through the check the real run makes (FG3b): it lists only
+  // what the real run would restore, and each refusal with its reason.
+  const dry = await request('POST', '/api/offload/restore', { ids: records.map((r) => r.id), dryRun: true });
+  assert.equal(dry.status, 200, JSON.stringify(dry.body));
+  assert.deepEqual(dry.body.wouldRestore.map((e: { id: string }) => e.id), ['legit'], 'only the record of the right shape would be restored');
+  assert.equal(dry.body.bytesTotal, payload.length);
+  for (const [id, why] of expectations) {
+    const refusal = (dry.body.refused as { id: string; reason: string }[]).find((r) => r.id === id);
+    assert.match(refusal?.reason ?? '', why, `the dry run names ${id}'s refusal (${JSON.stringify(dry.body.refused)})`);
+  }
   for (const [id, why] of expectations) {
     const job = await restore(id);
     assert.equal(job.status, 'error', id);

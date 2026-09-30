@@ -16,6 +16,7 @@ import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
 import { isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
+import { describeFsError, meansAbsent } from '../utils/errno';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
@@ -78,7 +79,7 @@ async function saveManifest(store: ManifestStore): Promise<void> {
   await writeJsonFile(MANIFEST_FILE, store);
 }
 
-/** The largest record on a drive this reads; anything bigger is not one TreeMap wrote. */
+/** The largest record on a drive this reads whole; a larger one is kept as it is, beside a new one. */
 const MAX_DEST_MANIFEST_BYTES = 32 * 1024 * 1024;
 
 /**
@@ -87,8 +88,12 @@ const MAX_DEST_MANIFEST_BYTES = 32 * 1024 * 1024;
  * `O_NOFOLLOW` too where the platform has it (not Windows, where O_EXCL alone refuses a link).
  */
 const EXCLUSIVE_NEW_FILE = fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0);
-/** Reading a file without following a link at its own name, where the platform can say so. */
-const READ_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+/**
+ * Reading a file without following a link at its own name, where the platform can say so, and
+ * without waiting on a FIFO swapped in after the name was looked at (`O_NONBLOCK`; a regular file
+ * reads as ever).
+ */
+const READ_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
 
 /** Why a name on the drive is not a plain file of one name, as a sentence, or null when it is (or is absent). */
 function notPlainFile(st: fs.Stats | fs.BigIntStats | undefined, file: string): string | null {
@@ -99,85 +104,110 @@ function notPlainFile(st: fs.Stats | fs.BigIntStats | undefined, file: string): 
   return null;
 }
 
-/**
- * The entries of the drive's record that belong to `destRoot`, and how many were not. The drive may
- * have been prepared by someone else, so nothing in it is taken on trust: an entry is kept only when
- * it is an object whose id is text, whose original place is an absolute path, and whose copy lies
- * inside this destination (`liesInside`: both resolved, links followed).
- */
-export function driveEntriesOf(raw: unknown, destRoot: string): { entries: OffloadEntry[]; dropped: number } {
-  const listed = raw !== null && typeof raw === 'object' && Array.isArray((raw as { entries?: unknown }).entries)
-    ? ((raw as { entries: unknown[] }).entries)
-    : [];
-  const entries: OffloadEntry[] = [];
-  for (const candidate of listed) {
-    const e = candidate as Partial<OffloadEntry> | null;
-    const ok = e !== null && typeof e === 'object'
-      && typeof e.id === 'string' && e.id.length > 0
-      && typeof e.originalPath === 'string' && path.isAbsolute(e.originalPath)
-      && typeof e.destRoot === 'string'
-      && typeof e.destPath === 'string' && liesInside(destRoot, e.destPath);
-    if (ok) entries.push(e as OffloadEntry);
+/** The record on the drive, as read: its entries and any other fields, verbatim — or why it cannot be read whole. */
+type DriveRecord = { fields: Record<string, unknown>; entries: unknown[] } | { unreadable: string };
+
+/** Reads the open record whole, or says why not. Never throws. */
+async function readDriveRecord(handle: fsp.FileHandle, size: number): Promise<DriveRecord> {
+  if (size > MAX_DEST_MANIFEST_BYTES) return { unreadable: `it is larger than ${formatBytes(MAX_DEST_MANIFEST_BYTES)}` };
+  let text: string;
+  try {
+    text = await handle.readFile('utf8');
+  } catch (err) {
+    return { unreadable: describeFsError(err) };
   }
-  return { entries, dropped: listed.length - entries.length };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { unreadable: 'it is not JSON' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray((parsed as { entries?: unknown }).entries)) {
+    return { unreadable: 'it is not a list of entries' };
+  }
+  const { entries, ...fields } = parsed as { entries: unknown[] } & Record<string, unknown>;
+  return { fields, entries };
 }
 
 /**
  * Merge this destination's entries into the record on the drive itself, and answer a sentence when
- * it was not written for a reason the person should hear, or null.
+ * there is something the person should hear, or null.
  *
  * The drive is a folder someone else may have prepared (a shared or second-hand drive), so the
  * write never reopens a name that already exists there (FG3): the new record goes to a temp made
  * exclusively under a random name (`EXCLUSIVE_NEW_FILE`), is flushed, and is renamed onto the
  * record's name — a rename replaces a link at the destination, it never writes through one. The
  * record's own name must be absent or a plain file of one name; anything else (a link, a second
- * name for another file) is refused and never read, since reading it would follow it. The entries
- * already there are merged only when they are of this destination (`driveEntriesOf`).
+ * name for another file, a FIFO) is refused and never read, since reading it would follow it.
+ *
+ * Nothing in TreeMap reads this record back — restores read the app-data manifest — so nothing in
+ * it is followed, and nothing in it is dropped (FG3b): every entry already there is carried as it
+ * stands, one of this destination's replaced only by its own newer self (the same id), with no look
+ * at the disk per entry. An entry written while the drive was mounted under another name, or by
+ * another machine, is kept. A record that cannot be read whole — too large, unreadable, not JSON,
+ * not a list of entries — is never replaced: it is renamed aside, under a new name beside the new
+ * record, and the answer says so.
  */
 async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): Promise<string | null> {
   const file = path.join(destRoot, DEST_MANIFEST);
+  const notWritten = (why: string): string => `The record on the destination was not written: ${why}, and TreeMap does not replace what it did not make.`;
   let tmpPath: string | null = null;
+  /** Set once a record that could not be read whole has been renamed aside: its new name, and why. */
+  let aside: { name: string; why: string } | null = null;
+  const asideNote = (then: string): string | null => (aside === null ? null
+    : `The record already on the destination could not be read whole (${aside.why}), so it was kept as it is, as ${aside.name}${then}`);
   try {
     const refused = notPlainFile(await fsp.lstat(file).catch(() => undefined), file);
-    if (refused) return `The record on the destination was not written: ${refused}, and TreeMap does not replace what it did not make.`;
-    let existing: OffloadEntry[] = [];
-    const handle = await fsp.open(file, READ_NO_FOLLOW).catch(() => null);
+    if (refused) return notWritten(refused);
+    let record: DriveRecord = { fields: {}, entries: [] };
+    let handle: fsp.FileHandle | null = null;
+    try {
+      handle = await fsp.open(file, READ_NO_FOLLOW);
+    } catch (err) {
+      // Absent: the first record on this drive. Anything else (a link swapped in, no permission)
+      // is a record that is there and could not be read, which is never replaced.
+      if (!meansAbsent(err)) return notWritten(`${file} could not be opened (${describeFsError(err)})`);
+    }
     if (handle) {
       try {
         const st = await handle.stat();
         const changed = notPlainFile(st, file);
-        if (changed) return `The record on the destination was not written: ${changed}, and TreeMap does not replace what it did not make.`;
-        if (st.size <= MAX_DEST_MANIFEST_BYTES) {
-          const kept = driveEntriesOf(JSON.parse(await handle.readFile('utf8')) as unknown, destRoot);
-          existing = kept.entries;
-          if (kept.dropped > 0) {
-            console.error(`[treemap] the record on ${destRoot}: ${formatCount(kept.dropped)} entries that were not of this destination were dropped`);
-          }
-        }
-      } catch {
-        /* unreadable: start fresh */
+        if (changed) return notWritten(changed);
+        record = await readDriveRecord(handle, st.size);
       } finally {
         await handle.close();
       }
     }
-    const mine = allEntries.filter((e) => e.destRoot === destRoot);
-    const byId = new Map(existing.map((e) => [e.id, e]));
-    for (const e of mine) byId.set(e.id, e);
+    if ('unreadable' in record) {
+      const name = `${DEST_MANIFEST.replace(/\.json$/, '')}.unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.json`;
+      await fsp.rename(file, path.join(destRoot, name));
+      aside = { name, why: record.unreadable };
+      record = { fields: {}, entries: [] };
+    }
+    const mine = new Map(allEntries.filter((e) => e.destRoot === destRoot).map((e) => [e.id, e]));
+    const merged = record.entries.map((e) => {
+      const id = e !== null && typeof e === 'object' ? (e as { id?: unknown }).id : undefined;
+      const newer = typeof id === 'string' ? mine.get(id) : undefined;
+      if (newer === undefined) return e;
+      mine.delete(newer.id);
+      return newer;
+    });
+    merged.push(...mine.values());
     tmpPath = path.join(destRoot, `.${DEST_MANIFEST}.${crypto.randomUUID()}.tmp`);
     const out = await fsp.open(tmpPath, EXCLUSIVE_NEW_FILE, 0o644);
     try {
-      await out.writeFile(JSON.stringify({ entries: [...byId.values()] }, null, 2), 'utf8');
+      await out.writeFile(JSON.stringify({ ...record.fields, entries: merged }, null, 2), 'utf8');
       await out.sync();
     } finally {
       await out.close();
     }
     await fsp.rename(tmpPath, file);
     tmpPath = null;
-    return null;
+    return asideNote(', beside a new one.');
   } catch (err) {
     // The app-data manifest is authoritative; the drive copy is best-effort.
     console.error('[treemap] destination manifest write failed:', err);
-    return null;
+    return asideNote(`; a new one could not be written (${describeFsError(err)}).`);
   } finally {
     if (tmpPath) await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
   }

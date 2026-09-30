@@ -8,6 +8,7 @@ import {
   cancelOffloadJob,
   getOffloadIndex,
   getOffloadEntry,
+  restoreRefusal,
 } from '../services/offload';
 import { openPath } from '../services/cleaner';
 import { guardBodyPaths, requireInsideScanRoot, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
@@ -114,7 +115,9 @@ offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoo
 /**
  * POST /api/offload/restore { ids: [], dryRun? } → 202 { jobId }
  * With dryRun: true, lists exactly which entries would be restored (and
- * where to) without copying anything. Honors an Idempotency-Key header.
+ * where to) without copying anything, and each record the real run would
+ * refuse (`restoreRefusal`), with its reason (FG3b). Honors an
+ * Idempotency-Key header.
  */
 offloadRouter.post('/offload/restore', idempotency, async (req: Request, res: Response) => {
   const { ids, dryRun } = req.body as { ids?: unknown; dryRun?: unknown };
@@ -125,15 +128,25 @@ offloadRouter.post('/offload/restore', idempotency, async (req: Request, res: Re
 
   if (dryRun === true) {
     const entries = [];
+    // The check the real run makes of each record before it writes (FG3b): what the dry run lists
+    // passes it. What only the run itself can find — something now at the place, a copy missing or
+    // changed — still fails that entry then. A check that throws refuses the entry, as the run does.
+    const refused = [];
     for (const id of ids as string[]) {
       const entry = await getOffloadEntry(id);
-      if (entry && !entry.restoredAt) {
-        entries.push({ id: entry.id, name: entry.name, originalPath: entry.originalPath, destPath: entry.destPath, size: entry.size });
+      if (!entry || entry.restoredAt) continue;
+      let reason: string | null;
+      try {
+        reason = restoreRefusal(entry);
+      } catch (err) {
+        reason = err instanceof Error ? err.message : String(err);
       }
+      if (reason) refused.push({ id: entry.id, name: entry.name, originalPath: entry.originalPath, reason });
+      else entries.push({ id: entry.id, name: entry.name, originalPath: entry.originalPath, destPath: entry.destPath, size: entry.size });
     }
     const bytesTotal = entries.reduce((sum, e) => sum + e.size, 0);
     await appendAudit({ action: 'offload.restore', source: 'http', tokenId: tokenIdFor('http'), paths: entries.map((e) => e.originalPath), bytes: bytesTotal, dryRun: true, outcome: 'ok' });
-    res.json({ dryRun: true, wouldRestore: entries, bytesTotal });
+    res.json({ dryRun: true, wouldRestore: entries, refused, bytesTotal });
     return;
   }
 
