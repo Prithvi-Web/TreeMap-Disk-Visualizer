@@ -11,7 +11,7 @@ import {
   MediaProbe, MediaTools, encodeOne, encoderFor, estimateFor, expectedRatio,
   isWorthEncoding, setMediaTools, shortlistFromScan, verifyEncode, MIN_CANDIDATE_BYTES,
 } from '../src/services/compressionAdvisor';
-import { setTrashStepForTests } from '../src/services/cleaner';
+import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { FileNode } from '../src/models/types';
 
 /**
@@ -47,9 +47,24 @@ process.on('exit', () => {
  * succeeds put a holiday.mp4 into the machine's real Trash on every run.
  */
 const standInTrash = tmp();
-setTrashStepForTests(async (p) => {
+const intoStandInTrash = (p: string): void => {
   fs.renameSync(p, path.join(standInTrash, `${path.basename(path.dirname(p))}-${path.basename(p)}`));
+};
+/** What the stand-in Trash step does instead, for the one test that sets it; null moves the file. */
+let trashStepOfThisTest: ((p: string) => void) | null = null;
+setTrashStepForTests(async (p) => {
+  if (trashStepOfThisTest) trashStepOfThisTest(p);
+  else intoStandInTrash(p);
 });
+afterEach(() => { trashStepOfThisTest = null; });
+
+/** The re-encoded file left in its private folder beside `dir`'s original, or null when none is. */
+function keptEncode(dir: string): string | null {
+  const folder = fs.readdirSync(dir).find((n) => n.startsWith('.treemap-encode-'));
+  if (!folder) return null;
+  const inside = fs.readdirSync(path.join(dir, folder));
+  return inside.length === 1 ? path.join(dir, folder, inside[0]) : null;
+}
 
 function probe(over: Partial<MediaProbe> = {}): MediaProbe {
   return { durationSeconds: 60, videoCodec: 'h264', width: 1920, height: 1080, bitrateBps: 8e6, frameCount: 1440, ...over };
@@ -302,6 +317,93 @@ test('a folder that cannot take the private folder is a failure of that file, no
     fs.chmodSync(dir, 0o700);
   }
   assert.equal(fs.statSync(file).size, 1000, 'the original is untouched');
+});
+
+/* ─────────────── FG3b: a trash step that reported a failure is judged by the disk ─────────────── */
+
+test('a trash step that moves the original and then reports failure: judged by the disk, the encode takes its place', async () => {
+  const dir = tmp();
+  const file = original(dir, 1000);
+  setMediaTools(fakeTools());
+  trashStepOfThisTest = (p) => {
+    intoStandInTrash(p);
+    throw new Error('osascript: Finder got an error (a test)');
+  };
+  const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
+  assert.equal(outcome.ok, true, outcome.error);
+  assert.equal(fs.statSync(file).size, 400, 'the re-encoded file is at the original\'s path');
+  assert.ok(fs.existsSync(path.join(standInTrash, `${path.basename(dir)}-holiday.mp4`)), 'and the original is in the Trash');
+  assert.deepEqual(fs.readdirSync(dir), ['holiday.mp4'], 'nothing is left beside it');
+});
+
+test('a trash step stopped at its time limit, the original still in place: the encode is kept beside it, and the error says where', async () => {
+  const dir = tmp();
+  const file = original(dir, 1000);
+  setMediaTools(fakeTools());
+  trashStepOfThisTest = () => {
+    throw new CommandStopped('osascript was stopped at its time limit (a test)');
+  };
+  const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
+  assert.equal(outcome.ok, false);
+  const kept = keptEncode(dir);
+  assert.ok(kept, 'the re-encoded file was kept: the Trash may still take the original');
+  assert.equal(fs.statSync(kept).size, 400);
+  assert.ok(outcome.error?.includes(kept), `the error says where it is (${outcome.error})`);
+  assert.doesNotMatch(outcome.error ?? '', /^Kept the original/, 'and does not claim the original was kept');
+  assert.equal(fs.statSync(file).size, 1000, 'the original is where it was');
+});
+
+test('a trash step that reports failure after another file took the original\'s place: nothing is renamed over it, and the encode is kept', async () => {
+  const dir = tmp();
+  const file = original(dir, 1000);
+  setMediaTools(fakeTools());
+  trashStepOfThisTest = (p) => {
+    intoStandInTrash(p);
+    fs.writeFileSync(p, 'another file, made after the trash step moved the original');
+    throw new Error('the Trash reported a failure (a test)');
+  };
+  const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
+  assert.equal(outcome.ok, false);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'another file, made after the trash step moved the original', 'the other file is untouched');
+  const kept = keptEncode(dir);
+  assert.ok(kept && outcome.error?.includes(kept), `the encode is kept, and the error says where (${outcome.error})`);
+});
+
+test('an original deleted while it encodes is not brought back as the encode: nothing known stood there when its turn came (FG3b review)', async () => {
+  const dir = tmp();
+  const file = original(dir, 1000);
+  setMediaTools({
+    ...fakeTools(),
+    async encode(input, output) {
+      fs.unlinkSync(input); // the person deleted it meanwhile
+      fs.writeFileSync(output, Buffer.alloc(400));
+    },
+  });
+  const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
+  assert.equal(outcome.ok, false);
+  assert.ok(!fs.existsSync(file), 'the deleted file stays deleted');
+  const kept = keptEncode(dir);
+  assert.ok(kept && outcome.error?.includes(kept), `the encode is kept, and the error says where (${outcome.error})`);
+});
+
+test('the original is in the Trash but the encode cannot be renamed into place: the encode is kept, and the error says where', async () => {
+  const dir = tmp();
+  const file = original(dir, 1000);
+  setMediaTools(fakeTools());
+  trashStepOfThisTest = (p) => {
+    intoStandInTrash(p);
+    // Something takes the name at once, so the rename into place fails.
+    fs.mkdirSync(p);
+    fs.writeFileSync(path.join(p, 'occupant.txt'), 'x');
+  };
+  const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error ?? '', /The original is in the Trash/);
+  const kept = keptEncode(dir);
+  assert.ok(kept, 'the private folder holding the only re-encoded copy is kept');
+  assert.equal(fs.statSync(kept).size, 400);
+  assert.ok(outcome.error?.includes(kept), `the error says where it is (${outcome.error})`);
+  assert.ok(fs.existsSync(path.join(standInTrash, `${path.basename(dir)}-holiday.mp4`)), 'and the original is in the Trash');
 });
 
 test('progress is reported while a file encodes', async () => {

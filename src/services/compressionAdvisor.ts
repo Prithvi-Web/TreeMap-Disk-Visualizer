@@ -10,6 +10,7 @@ import { getCapabilities } from '../platform/capabilities';
 import { moveToTrash } from './cleaner';
 import { sseSend } from '../utils/sse';
 import { describeFsError } from '../utils/errno';
+import { ABSENT, afterReportedFailure, identityOf } from '../utils/placeIdentity';
 
 const exec = promisify(execFile);
 
@@ -425,10 +426,38 @@ export async function encodeOne(
     if (!verdict.ok) return { ...base, newBytes, error: `Kept the original — ${verdict.reason}.` };
 
     // Only now is anything of the user's touched, and it goes to the Trash.
+    const placeBefore = await identityOf(file);
     const trashed = await moveToTrash([file]);
     if (!trashed.deleted.includes(file)) {
-      const why = trashed.failed.find((f) => f.path === file)?.reason || 'the original could not be moved to the Trash';
-      return { ...base, newBytes, error: `Kept the original — ${why}.` };
+      // A reported failure is judged by the disk, as the Time Capsule judges one (FG3b): the step can
+      // move the original and still report failure. Only the same original still in place, the step
+      // having ended on its own, is "kept"; the encode goes. Gone, with nothing in its place: the
+      // Trash took it after all, and the encode goes into its place below. Anything else — another
+      // file there now, a look that failed, a step stopped at its time limit — keeps the encode
+      // where it is, and says where both may be.
+      const failure = trashed.failed.find((f) => f.path === file);
+      const why = failure?.reason || 'the original could not be moved to the Trash';
+      const placeNow = await identityOf(file);
+      const verdict = afterReportedFailure(placeBefore, placeNow, failure?.stopped === true);
+      if (verdict === 'there') return { ...base, newBytes, error: `Kept the original — ${why}.` };
+      if (verdict === 'unsure') {
+        keepTempDir = true;
+        return {
+          ...base,
+          newBytes,
+          error: `The Trash reported: ${why}. TreeMap could not confirm whether the original is still at ${file}, ` +
+            `so the re-encoded file was kept at ${temp}. Look in the Trash before removing either. Nothing was lost.`,
+        };
+      }
+      if (placeNow !== ABSENT) {
+        keepTempDir = true;
+        return {
+          ...base,
+          newBytes,
+          error: `The original left ${file} (the Trash reported: ${why}), and another file stands there now, so the ` +
+            `re-encoded file was kept at ${temp} rather than put over it. Look in the Trash for the original. Nothing was lost.`,
+        };
+      }
     }
 
     try {
