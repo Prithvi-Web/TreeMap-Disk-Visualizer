@@ -98,20 +98,31 @@ test('on this machine, the probe agrees with the temp volume (FG3c #5)', async (
  * mappings — made with 'wx', so a name the volume already holds under another spelling fails
  * EEXIST and native realpath names the spelling it holds. No two names the volume reads as one may
  * have two keys (the early check would pass what the volume merges), and no key may join two names
- * the volume keeps apart (it would refuse a tree the volume holds). About 34,000 names; counted.
+ * the volume keeps apart (it would refuse a tree the volume holds). Counted.
+ *
+ * The blocks are the long-settled ones every finding's case lives in (Latin, Greek and its
+ * dialytika forms, Cyrillic, Armenian, ẞ, letterlike and enclosed letters, ligatures, fullwidth,
+ * mathematical letters): the candidates come from this Node's Unicode tables and the folding from
+ * the running macOS, so a script added to Unicode lately could set the two apart for reasons of
+ * version alone. Every code point, measured on the Mac this was written on, gave the same answer
+ * (FG3c STATUS, apfs-oracle).
  */
+const SETTLED_BLOCKS: [number, number][] = [
+  [0x20, 0x58f], [0x1e00, 0x1fff], [0x2100, 0x218f], [0x2460, 0x24ff], [0xfb00, 0xfb4f], [0xff00, 0xffef], [0x1d400, 0x1d7ff],
+];
 test('the APFS key agrees with this volume on every name with a case or form mapping (FG3c #5, #9)', {
   skip: process.platform === 'darwin' && FOLDS_CASE ? false : 'measured on a Mac volume that folds case',
 }, () => {
   const dir = fileTempDir('treemap-volumeNames-oracle-');
   const names = new Set<string>();
   const add = (core: string): void => { if (core.length > 0 && !core.includes('/') && !core.includes('\0')) names.add(`q${core}q`); };
-  for (let c = 0x20; c <= 0x10ffff; c++) {
-    if (c >= 0xd800 && c <= 0xdfff) continue;
-    const s = String.fromCodePoint(c);
-    if (s === '/' || s === ':' || s === '.') continue;
-    if (s.toLowerCase() === s && s.toUpperCase() === s && s.normalize('NFD') === s && s.normalize('NFKC') === s) continue;
-    for (const form of [s, apfsNameKey(s), s.toLowerCase(), s.toUpperCase(), s.normalize('NFD'), s.normalize('NFC'), s.normalize('NFKC')]) add(form);
+  for (const [from, to] of SETTLED_BLOCKS) {
+    for (let c = from; c <= to; c++) {
+      const s = String.fromCodePoint(c);
+      if (s === '/' || s === ':' || s === '.') continue;
+      if (s.toLowerCase() === s && s.toUpperCase() === s && s.normalize('NFD') === s && s.normalize('NFKC') === s) continue;
+      for (const form of [s, apfsNameKey(s), s.toLowerCase(), s.toUpperCase(), s.normalize('NFD'), s.normalize('NFC'), s.normalize('NFKC')]) add(form);
+    }
   }
   const root = new Map<string, string>();
   const find = (x: string): string => { let r = x; while (root.get(r) !== r) r = root.get(r) as string; return r; };
@@ -140,7 +151,7 @@ test('the APFS key agrees with this volume on every name with a case or form map
     classesOfKey.get(k)?.add(r);
   }
   const over = [...classesOfKey].filter(([, classes]) => classes.size > 1).map(([k, classes]) => `${k}: ${[...classes].join(' / ')}`);
-  assert.ok(names.size > 30_000, `${names.size} names measured`);
+  assert.ok(names.size > 4_000, `${names.size} names measured`);
   assert.deepEqual(under.slice(0, 5), [], `${under.length} names the volume reads as one have two keys`);
   assert.deepEqual(over.slice(0, 5), [], `${over.length} keys join names the volume keeps apart`);
 });

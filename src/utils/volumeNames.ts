@@ -19,9 +19,10 @@ const DOTLESS_I = 'ı';
  * each code point's case folded — the lower case of its upper case of its lower case, which is
  * Unicode's full case folding (ß, ẞ and ss are one name; ς and σ; ﬁ and fi) — except dotless ı.
  * Compatibility forms are NOT folded: APFS keeps `ｌｉｂ` and `lib`, `²` and `2`, apart. Measured on
- * this Mac's APFS over about 34,000 names — every code point with a case, normalization or
- * compatibility mapping, and those mappings: no two names the volume reads as one have two keys,
- * and no key joins two names it keeps apart (tests/volumeNames.test.ts). An HFS+ volume that folds
+ * APFS over about 34,000 names — every code point with a case, normalization or compatibility
+ * mapping, and those mappings: no two names the volume reads as one have two keys, and no key joins
+ * two names it keeps apart (FG3c; tests/volumeNames.test.ts re-measures the long-settled blocks on
+ * every Mac run). An HFS+ volume that folds
  * case folds by an older table, and is read with this one.
  */
 export function apfsNameKey(name: string): string {
