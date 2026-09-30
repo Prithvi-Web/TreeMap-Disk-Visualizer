@@ -27,8 +27,9 @@ use tm_walk::{
 /// wall-clock bound (macOS's `live` module). The scripted tests count instead.
 #[cfg(target_os = "macos")]
 const REACT_WITHIN: Duration = Duration::from_millis(200);
-/// How long a test waits for a walk to report `done` before giving up.
-const SETTLE: Duration = Duration::from_secs(10);
+/// How long a test waits for a walk to report `done` before giving up —
+/// a hang guard, never a measurement: the size of the TypeScript suite's HANG_GUARD_MS, so a busy machine only makes a failure slower to arrive, never a pass into one.
+const SETTLE: Duration = Duration::from_secs(120);
 /// Polling interval while waiting.
 const POLL: Duration = Duration::from_millis(5);
 
@@ -1349,8 +1350,9 @@ fn the_fast_path_in_the_stats_is_the_root_listing_path() -> TestResult {
 
 /// What the scripted `d7` panics with.
 const PANIC_MESSAGE: &str = "fixture panic: directory 7";
-/// How long a walk that ends in a fault may take to hand it over.
-const FAULT_WITHIN: Duration = Duration::from_secs(5);
+/// How long a walk that ends in a fault may take to hand it over: the hang
+/// guard, like SETTLE.
+const FAULT_WITHIN: Duration = SETTLE;
 
 /// A wide tree whose `d7` panics when listed, walked by two workers: the
 /// handle's `take()` outcome, bounded, and the tree for its counters.
@@ -1427,9 +1429,7 @@ fn a_worker_that_dies_outside_a_listing_is_reported_after_every_worker_is_joined
     let mut opts = options(Path::new("/fake"));
     opts.max_workers = 2;
     let handle = start_with(opts, pacer, tree.clone()).map_err(|e| e.to_string())?;
-    if !wait_until(Duration::from_secs(2), || {
-        tree.listed_paths().contains(&slow_abs)
-    }) {
+    if !wait_until(SETTLE, || tree.listed_paths().contains(&slow_abs)) {
         return Err("the surviving worker never reached `slow`".to_owned());
     }
     handle.cancel();
@@ -1513,13 +1513,11 @@ fn cancel_stops_a_listing_between_its_batches_and_the_heartbeat_advances_meanwhi
     let tree = Arc::new(tree);
     let handle = start_with(options(Path::new("/fake")), FakePacer::new(2), tree)
         .map_err(|e| e.to_string())?;
-    if !wait_until(Duration::from_secs(2), || handle.progress().heartbeat > 0) {
+    if !wait_until(SETTLE, || handle.progress().heartbeat > 0) {
         return Err("the heartbeat never advanced".to_owned());
     }
     let first = handle.progress().heartbeat;
-    if !wait_until(Duration::from_secs(2), || {
-        handle.progress().heartbeat > first
-    }) {
+    if !wait_until(SETTLE, || handle.progress().heartbeat > first) {
         return Err(format!("the heartbeat stopped at {first}"));
     }
     assert!(
@@ -1552,7 +1550,7 @@ fn a_cancel_that_interrupts_the_roots_own_listing_is_a_cancel_not_a_refused_root
     let tree = Arc::new(tree);
     let handle = start_with(options(Path::new("/fake")), FakePacer::new(2), tree)
         .map_err(|e| e.to_string())?;
-    if !wait_until(Duration::from_secs(2), || handle.progress().heartbeat > 0) {
+    if !wait_until(SETTLE, || handle.progress().heartbeat > 0) {
         return Err("the root's listing never started".to_owned());
     }
     handle.cancel();

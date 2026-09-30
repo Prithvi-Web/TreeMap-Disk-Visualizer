@@ -703,6 +703,10 @@ fn a_record_named_dot_or_dot_dot_is_skipped_as_the_listing_skips_its_own() -> Te
     Ok(())
 }
 
+/// How long a build may take to answer before a test calls it stuck —
+/// a hang guard, never a measurement: the size of the TypeScript suite's HANG_GUARD_MS, so a busy machine only makes a failure slower to arrive, never a pass into one.
+const HANG_GUARD_SECS: u64 = 120;
+
 /// Runs `f` on its own thread and waits at most `secs` for its answer, so a
 /// build that never ends fails the test instead of hanging the suite.
 fn within<T: Send + 'static>(
@@ -734,7 +738,7 @@ fn a_directory_named_twice_is_listed_once_and_refused_after() -> TestResult {
 #[test]
 fn a_cycle_of_directories_ends_in_a_refusal() -> TestResult {
     // 190 in the root, 191 in 190, and 190 named again inside 191.
-    let out = within(2, || {
+    let out = within(HANG_GUARD_SECS, || {
         let mut looped = dir(190, ROOT, "loop");
         looped.names.push(named(191, 1, WIN32, "back"));
         build(&table([root(), looped, dir(191, 190, "inner")]))

@@ -25,7 +25,7 @@ use tm_walk::{
 type TestResult = Result<(), String>;
 
 /// How long a hang guard waits before a test fails instead of hanging.
-const SETTLE: Duration = Duration::from_secs(20);
+const SETTLE: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(2);
 /// Folders under the root, and files in each.
 const FOLDERS: u32 = 12;

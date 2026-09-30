@@ -72,6 +72,10 @@ fn long_name(len: usize) -> String {
         .collect()
 }
 
+/// How long a parser may take to answer before a test calls it stuck —
+/// a hang guard, never a measurement: the size of the TypeScript suite's HANG_GUARD_MS, so a busy machine only makes a failure slower to arrive, never a pass into one.
+const HANG_GUARD_SECS: u64 = 120;
+
 /// Runs `f` on its own thread and waits at most `secs` for its answer, so a
 /// parser that never returns (an attribute that never advances) fails the
 /// test instead of hanging the suite.
@@ -193,7 +197,7 @@ fn a_record_not_in_use_is_returned_with_its_header_only() -> TestResult {
     assert!(r.names.is_empty(), "the stale name is not read");
     f.flags = IN_USE;
     let offset = f.attribute_offset(1);
-    let reason = bad_attribute_at(within(5, move || refusal(&f))??, offset)?;
+    let reason = bad_attribute_at(within(HANG_GUARD_SECS, move || refusal(&f))??, offset)?;
     assert!(
         reason.contains("zero"),
         "in use, the same bytes are refused: {reason}"
@@ -377,7 +381,7 @@ fn a_zero_length_attribute_is_refused() -> TestResult {
         .attr(resident(STANDARD_INFORMATION, "", 0, &std_info(1, 2, 3)))
         .attr(blob);
     let offset = f.attribute_offset(1);
-    let reason = bad_attribute_at(within(5, move || refusal(&f))??, offset)?;
+    let reason = bad_attribute_at(within(HANG_GUARD_SECS, move || refusal(&f))??, offset)?;
     assert!(reason.contains("zero"), "{reason}");
     Ok(())
 }

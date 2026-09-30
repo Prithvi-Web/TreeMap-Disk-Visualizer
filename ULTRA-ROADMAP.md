@@ -163,7 +163,7 @@ Left open from Phase 3:
 - T10's full `npm test` under 10 busy loops on mains power.
 - The `rustdoc -D warnings` failure at `tm-store/src/memory.rs:77`. It is fixed in the T13d batch (currently `f75e7b2` in its worktree; the id changes when the batch lands), not yet on main.
 - The boot sweep would keep a Docker PID-1 leftover forever.
-- Three live-disk tests still hold wall-clock bounds, which breaks "count, don't time".
+- Count, don't time: the TypeScript suite holds no wall-clock bound, and `tests/noWallClockBounds.test.ts` fails on a new one (TC1, 30 Sep). The Rust tests still hold some: the three live-disk tests in tm-walk (`walk.rs`, a cancel or a drop within 200 ms), and the governor's stop, stopped-throttle and tick-window checks, which TC1's survey lists.
 
 **Gate (T22):** the 100M synthetic scan peaks at ≤ 1.5 GB in spill and ≤ 400 MB in aggregate (every variant, plus the auto leg), and at ≤ 700 MB in spill at 10M. Memory mode stays ≤ 700 MB at 5M "in both runtimes". Every view answers with no main-thread native call over 1 ms, with the event-loop p99 recorded. Phase 3's digests are unchanged and the native golden legs are equal. Throughput is within 10 % of the Phase 3 baselines. The full `npm test` passes under 4 and 10 busy loops. CI is green on all four legs. "A miss is fixed before the commit, never relabelled."
 

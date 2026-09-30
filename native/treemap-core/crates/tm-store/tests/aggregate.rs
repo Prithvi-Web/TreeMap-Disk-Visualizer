@@ -424,7 +424,8 @@ fn a_cancelled_walk_leaves_nothing_open_and_the_root_never_closes() -> TestResul
         .map_err(|e| e.to_string())?;
     let started = std::time::Instant::now();
     while !holding.reached.load(AtomicOrdering::SeqCst) {
-        if started.elapsed() > std::time::Duration::from_secs(30) {
+        // A hang guard, never a measurement: the TypeScript suite's HANG_GUARD_MS.
+        if started.elapsed() > std::time::Duration::from_secs(120) {
             return Err("d05's listing never began".to_owned());
         }
         std::thread::yield_now();

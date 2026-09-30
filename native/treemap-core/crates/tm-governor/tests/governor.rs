@@ -34,8 +34,9 @@ fn serial() -> MutexGuard<'static, ()> {
 const CORES: u32 = 8;
 /// The governor's nominal tick.
 const TICK: Duration = Duration::from_millis(100);
-/// How long a condition may take to appear before a test gives up.
-const SETTLE: Duration = Duration::from_secs(3);
+/// How long a condition may take to appear before a test gives up —
+/// a hang guard, never a measurement: the size of the TypeScript suite's HANG_GUARD_MS, so a busy machine only makes a failure slower to arrive, never a pass into one.
+const SETTLE: Duration = Duration::from_secs(120);
 /// Ticks, beyond a worker change's, the loop may take to settle after a step in the share.
 const SETTLE_TICKS: u64 = 10;
 /// How long a test waits for ticks before it calls the tick thread stopped: a guard
@@ -357,9 +358,7 @@ fn pause_blocks_throttle_within_200_ms_and_resume_releases_it() {
 
     governor.resume();
     assert!(
-        wait_until(Duration::from_millis(500), || passes
-            .load(Ordering::Relaxed)
-            > at_400_ms),
+        wait_until(SETTLE, || passes.load(Ordering::Relaxed) > at_400_ms),
         "resume() releases throttle()"
     );
     assert!(!governor.snapshot().paused);

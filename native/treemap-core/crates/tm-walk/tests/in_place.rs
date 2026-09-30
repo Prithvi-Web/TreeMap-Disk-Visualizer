@@ -23,7 +23,7 @@ use tm_walk::{
 type TestResult = Result<(), String>;
 
 /// How long a hang guard waits before a test fails instead of hanging.
-const SETTLE: Duration = Duration::from_secs(20);
+const SETTLE: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(2);
 const WORKERS: [u32; 4] = [1, 2, 8, 64];
 

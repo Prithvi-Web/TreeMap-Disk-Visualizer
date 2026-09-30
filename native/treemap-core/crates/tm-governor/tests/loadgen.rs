@@ -16,7 +16,9 @@ use tm_governor::{
     Budget, FakeSampler, FakeSignals, Governor, Preset, SyntheticLoad, hold, platform_sampler,
 };
 
-const WITHIN: Duration = Duration::from_secs(2);
+/// How long a stop or a drop may take to return before a test calls it stuck —
+/// a hang guard, never a measurement: the size of the TypeScript suite's HANG_GUARD_MS, so a busy machine only makes a failure slower to arrive, never a pass into one.
+const WITHIN: Duration = Duration::from_secs(120);
 /// How long a test waits for workers to show CPU before it calls them stuck: a guard
 /// against hanging, not a measurement.
 const WORKERS_ALIVE: Duration = Duration::from_secs(60);
