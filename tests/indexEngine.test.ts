@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { promises as fsp } from 'node:fs';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -39,9 +40,14 @@ import {
   findNodeIdByPath,
   pathOfNode,
   FLAG,
+  FLUSH_MS,
+  MAX_CHANGE_ATTEMPTS,
+  setFlushTimersForTests,
 } from '../src/services/indexEngine';
+import { setWatchImplForTests, type WatchListener } from '../src/platform/watchRegistry';
 import type { FileNode } from '../src/models/types';
 import { awaitWatchLive, silentWatchReason, watchBrings } from './fixtures/watchReady';
+import { waitFor } from './fixtures/waitFor';
 
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-index-'));
 
@@ -116,10 +122,11 @@ function childReadsDuring<T>(fn: () => T): { result: T; queries: number; rows: n
  * How long is reported, never asserted. §A1's two-second acceptance figure
  * measures the machine as much as the index: a shared CI runner sits on
  * FSEvents callbacks for seconds under load (run #11 measured a miss on a
- * green codebase), so the figure is the bench harness's to hold, and here
- * the wait is bounded only by the shared hang guard (`watchBrings`). What
- * the engine controls of that latency — one flush, FLUSH_MS after the
- * event — lands or it does not.
+ * green codebase), so here the wait for the OS is bounded only by the
+ * shared hang guard (`watchBrings`). What the engine controls of that
+ * latency — one flush, FLUSH_MS after the event, and a retry's backoff — is
+ * counted below ("Live updates: what the engine controls"), on stand-in
+ * timers the test fires by hand.
  *
  * `fs.watch` can attach without error and then deliver nothing at all. That
  * is not a hypothesis: one traced full-suite run on this Mac caught a watcher
@@ -362,6 +369,133 @@ test('an external create, resize and delete each land without a rescan', async (
     ctx.baseline = watcherEventCount(dir) ?? ctx.baseline;
     await fsp.unlink(target);
     if (!(await assertLanded(() => getRoot(dir)!.totalSize === 1000, 'an external delete', ctx))) return;
+  } finally {
+    stopWatcher(dir);
+    deleteIndex(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/* ══════════════════ Live updates: what the engine controls ══════════════════ */
+
+/**
+ * §A1: "reflected within 2 seconds". Of those two seconds the engine's own
+ * part is the flush: a change is applied by ONE flush, FLUSH_MS after it,
+ * and a change the disk cannot answer is retried at FLUSH_MS, twice that,
+ * then four times that. The rest of the two seconds is the OS delivering the
+ * event, which the platform decides (and a busy runner has sat on FSEvents
+ * callbacks for seconds). So the engine may spend at most a quarter of them.
+ */
+const A1_LANDS_WITHIN_MS = 2_000;
+
+interface HeldFlush { ms: number; fire: () => void; fired: boolean; cleared: boolean }
+
+/**
+ * The index's watch and its flush timers, both driven by hand: the watch is
+ * a stand-in that reports what the test says changed (no OS event is waited
+ * for, on any platform), and every flush timer is held — its delay recorded,
+ * nothing waiting it out — until the test fires it. Counted, never timed.
+ */
+function handDriven(t: TestContext): { changed: (dir: string, name: string) => void; flushes: HeldFlush[]; pending: () => HeldFlush[]; fire: (flush: HeldFlush) => void } {
+  class StandInWatch extends EventEmitter {
+    close(): void {}
+  }
+  const listeners = new Map<string, WatchListener>();
+  setWatchImplForTests((target, _opts, listener) => {
+    listeners.set(target, listener);
+    return new StandInWatch();
+  });
+  const flushes: HeldFlush[] = [];
+  setFlushTimersForTests({
+    set: (fire, ms) => {
+      const held: HeldFlush = { ms, fire, fired: false, cleared: false };
+      flushes.push(held);
+      return held;
+    },
+    clear: (handle) => { (handle as HeldFlush).cleared = true; },
+  });
+  t.after(() => {
+    setWatchImplForTests(null);
+    setFlushTimersForTests(null);
+  });
+  return {
+    changed: (dir, name) => {
+      const listener = listeners.get(dir);
+      assert.ok(listener, `the index watches ${dir} through the registry`);
+      listener('change', name);
+    },
+    flushes,
+    pending: () => flushes.filter((f) => !f.fired && !f.cleared),
+    fire: (flush) => {
+      flush.fired = true;
+      flush.fire();
+    },
+  };
+}
+
+/** Every `lstat` of a path ending in `name` fails with EIO, through the object the engine calls, until the test ends. */
+function unreadable(t: TestContext, name: string): void {
+  const live = require('fs').promises as { lstat: (...args: unknown[]) => Promise<unknown> };
+  const original = live.lstat;
+  live.lstat = async (p: unknown, ...rest: unknown[]): Promise<unknown> => {
+    if (String(p).endsWith(name)) throw Object.assign(new Error('EIO: injected, lstat'), { code: 'EIO' });
+    return original(p, ...rest);
+  };
+  t.after(() => { live.lstat = original; });
+}
+
+test('a change is applied by one flush, FLUSH_MS after it — at most a quarter of §A1\'s two seconds', async (t) => {
+  assert.ok(FLUSH_MS * 4 <= A1_LANDS_WITHIN_MS, `the flush waits ${FLUSH_MS} ms, more than a quarter of the ${A1_LANDS_WITHIN_MS} ms §A1 allows`);
+  const drive = handDriven(t);
+  const dir = await mkTmp();
+  try {
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(1000));
+    await buildIndex(dir, { live: true });
+    const target = path.join(dir, 'new.bin');
+    const steps: Array<{ what: string; change: () => Promise<void>; total: number }> = [
+      { what: 'a create', change: () => fsp.writeFile(target, Buffer.alloc(5000)), total: 6000 },
+      { what: 'a resize', change: () => fsp.writeFile(target, Buffer.alloc(9000)), total: 10_000 },
+      { what: 'a delete', change: () => fsp.unlink(target), total: 1000 },
+    ];
+    for (const [i, step] of steps.entries()) {
+      await step.change();
+      drive.changed(dir, 'new.bin');
+      await waitFor(() => drive.flushes.length > i, `${step.what} reaching the engine`);
+      assert.deepEqual(drive.pending().map((f) => f.ms), [FLUSH_MS], `${step.what} schedules one flush, FLUSH_MS after it`);
+      drive.fire(drive.pending()[0]);
+      await waitFor(() => getRoot(dir)!.totalSize === step.total, `${step.what} landing once its flush ran`);
+      assert.equal(drive.flushes.length, i + 1, `${step.what} took one flush and asked for no other`);
+    }
+  } finally {
+    stopWatcher(dir);
+    deleteIndex(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a change the disk cannot answer is retried at FLUSH_MS, 2x, then 4x, and after MAX_CHANGE_ATTEMPTS flushes the root is stale', async (t) => {
+  const drive = handDriven(t);
+  const dir = await mkTmp();
+  try {
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(1000));
+    await buildIndex(dir, { live: true });
+    unreadable(t, 'stubborn.bin');
+    await fsp.writeFile(path.join(dir, 'stubborn.bin'), Buffer.alloc(7000));
+    drive.changed(dir, 'stubborn.bin');
+    const delays: number[] = [];
+    for (let flush = 1; flush <= MAX_CHANGE_ATTEMPTS; flush++) {
+      await waitFor(() => drive.pending().length > 0 || getRoot(dir)!.state === 'stale', `flush ${String(flush)} being scheduled`);
+      assert.equal(drive.pending().length, 1, `one flush at a time: flush ${String(flush)}`);
+      delays.push(drive.pending()[0].ms);
+      drive.fire(drive.pending()[0]);
+    }
+    await waitFor(() => getRoot(dir)!.state === 'stale' || drive.pending().length > 0, 'the last flush giving up or asking again');
+    // 400, 800, then 1,600 three times: about six seconds of patience, capped
+    // at 4x so the last retry is not twelve seconds after the change.
+    assert.deepEqual(delays, [1, 2, 4, 4, 4].map((k) => k * FLUSH_MS), 'the retries back off, and the backoff is capped at 4x');
+    assert.equal(drive.pending().length, 0, 'and nothing more is scheduled: the retries are bounded');
+    assert.equal(getRoot(dir)!.state, 'stale', 'the root says it may have missed a change');
+    assert.equal(getRoot(dir)!.totalSize, 1000, 'no number was invented for the file it could not read');
   } finally {
     stopWatcher(dir);
     deleteIndex(dir);

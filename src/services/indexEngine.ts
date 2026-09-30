@@ -784,8 +784,35 @@ function watchOwner(rootPath: string): string {
  */
 const staleReasons = new Map<string, string>();
 
-/** Changes are applied in bursts: a build writes thousands of events at once. */
-const FLUSH_MS = 400;
+/**
+ * Changes are applied in bursts: a build writes thousands of events at once.
+ * Exported for tests/indexEngine.test.ts, which holds it to §A1's two seconds
+ * by count: one change, one flush, this long after it.
+ */
+export const FLUSH_MS = 400;
+
+/**
+ * What a flush timer is set and cleared with: the real clock, unless a test
+ * brings its own to count the flushes a change schedules and the delay of
+ * each (tests/indexEngine.test.ts) — the part of §A1's latency the engine
+ * controls, counted instead of timed.
+ */
+export interface FlushTimers {
+  set: (flush: () => void, ms: number) => unknown;
+  clear: (handle: unknown) => void;
+}
+
+const REAL_FLUSH_TIMERS: FlushTimers = {
+  set: (flush, ms) => setTimeout(flush, ms),
+  clear: (handle) => clearTimeout(handle as NodeJS.Timeout),
+};
+
+let flushClock: FlushTimers = REAL_FLUSH_TIMERS;
+
+/** Tests only: set and clear flush timers through `timers`; null restores the real clock. */
+export function setFlushTimersForTests(timers: FlushTimers | null): void {
+  flushClock = timers ?? REAL_FLUSH_TIMERS;
+}
 
 /**
  * Is `p` the app's own state — the index database and its write-ahead log,
@@ -857,7 +884,7 @@ class UnresolvedParentError extends Error {
 }
 
 const pendingByRoot = new Map<string, Map<string, PendingChange>>();
-const flushTimers = new Map<string, NodeJS.Timeout>();
+const flushTimers = new Map<string, unknown>();
 
 /**
  * How many change events the OS has actually delivered for each watched root
@@ -957,8 +984,7 @@ function scheduleFlush(rootPath: string, attempts = 0): void {
   // outside what "live" should mean. 400, 800, then 1,600 ms three times —
   // about six seconds of patience in total.
   const level = Math.min(attempts, 2);
-  const existing = flushTimers.get(rootPath);
-  if (existing) {
+  if (flushTimers.has(rootPath)) {
     // A pending flush at a LOWER level does not hold. Returning early here is
     // what made the backoff a no-op in the scenario it was written for: under
     // EMFILE a fresh watcher event arrives with `attempts: 0`, asks for
@@ -967,13 +993,13 @@ function scheduleFlush(rootPath: string, attempts = 0): void {
     // that scan cost 756 ms of blocked event loop on a 20,000-event burst,
     // inside the `fs.watch` callback.
     if ((flushLevels.get(rootPath) ?? 0) >= level) return;
-    clearTimeout(existing);
+    flushClock.clear(flushTimers.get(rootPath));
   }
   const delay = FLUSH_MS * Math.pow(2, level);
   flushLevels.set(rootPath, level);
   flushTimers.set(
     rootPath,
-    setTimeout(() => {
+    flushClock.set(() => {
       flushLevels.delete(rootPath);
       flushTimers.delete(rootPath);
       // Caught here, and it has to be: this is a bare timer callback, so a
@@ -1127,9 +1153,8 @@ export function stopWatcher(rootPath: string): void {
     }
     watchers.delete(rootPath);
   }
-  const timer = flushTimers.get(rootPath);
-  if (timer) {
-    clearTimeout(timer);
+  if (flushTimers.has(rootPath)) {
+    flushClock.clear(flushTimers.get(rootPath));
     flushTimers.delete(rootPath);
   }
   flushLevels.delete(rootPath);
