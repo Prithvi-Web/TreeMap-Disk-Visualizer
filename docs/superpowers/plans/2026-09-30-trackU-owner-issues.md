@@ -11,7 +11,7 @@
 | Task | State | Evidence |
 | --- | --- | --- |
 | Plan written | 30 Sep 2026 | this file |
-| U-0 The diagnosis's instruments committed (`bench/trackU/`) | not started | |
+| U-0 The diagnosis's instruments committed (`bench/trackU/`) | done 30 Sep 2026 | `tests/trackUTools.test.ts` (5 tests); mutants: the sanitizer's regex dropped, query values logged, the stall window one sample late — each red |
 | U-1 No automatic index build above the threshold; none for an index that is already current; the build visible while it runs | not started | |
 | U-2 The scan watchdog: one poll in flight, `/stats` first, a grace for the complete frame, heartbeats the page can count | not started | |
 | U-3 The Full Disk Access button works in the desktop app (a named bridge call) | not started | |
