@@ -82,8 +82,11 @@
           <div class="index-badge" id="indexBadge" hidden role="status"></div>
           <!-- U-1: a background index build while it runs ("Indexing this
                folder… N items so far"), or why a folder was not indexed on
-               its own (more items than TreeMap indexes automatically). -->
-          <div class="index-line" id="indexLine" hidden role="status"></div>
+               its own (more items than TreeMap indexes automatically). Not a
+               live region: its count changes on every poll. #indexAnnounce
+               speaks it once each time the kind of line changes. -->
+          <div class="index-line" id="indexLine" hidden></div>
+          <div id="indexAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Scan progress"><div class="progress-fill"></div></div>
           <!-- a11y: a scan is a minutes-long process whose only report was a

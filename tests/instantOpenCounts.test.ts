@@ -90,7 +90,7 @@ async function runOpenFromIndex(body: IndexTreeBody) {
   const state: Record<string, unknown> = { scanId: 'a-previous-scan', root: null, scanStats: null };
   const finished: { stats?: Record<string, unknown> } = {};
   const fn = new Function(
-    'api', 'state', 'indexTree', 'finishScan', 'renderIndexBadge', 'performance', 'INSTANT_OPEN_NODES',
+    'api', 'state', 'indexTree', 'finishScan', 'renderIndexBadge', 'performance', 'INSTANT_OPEN_NODES', 'indexLineGen', 'renderIndexLine',
     `'use strict'; ${src} return openFromIndex;`,
   )(
     async () => body,
@@ -100,6 +100,8 @@ async function runOpenFromIndex(body: IndexTreeBody) {
     () => {},
     { now: () => 1000 },
     250000,
+    0,
+    () => {},
   ) as (p: string, info: unknown) => Promise<boolean>;
   const painted = await fn(String(body.path), { indexed: true, root: { state: 'ready', live: true } });
   return { painted, state, finished };

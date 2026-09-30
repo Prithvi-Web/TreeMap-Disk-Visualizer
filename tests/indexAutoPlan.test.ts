@@ -61,10 +61,13 @@ const formatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], '
 const formatDate = lift<(ms: number) => string>(['UI_LOCALE', 'DATE_FMT', 'dateMemo', 'formatDate'], 'formatDate');
 const escapeHtml = new Function(`'use strict'; ${braced('function escapeHtml(')} return escapeHtml;`)() as (s: string) => string;
 
-type El = { hidden: boolean; textContent: string; innerHTML: string; title: string; cls: Set<string>; classList: { toggle: (c: string, on?: boolean) => void; add: (c: string) => void } };
+type El = {
+  hidden: boolean; textContent: string; innerHTML: string; title: string; dataset: Record<string, string>; cls: Set<string>;
+  classList: { toggle: (c: string, on?: boolean) => void; add: (c: string) => void };
+};
 function el(): El {
   const e: El = {
-    hidden: true, textContent: '', innerHTML: '', title: '', cls: new Set(),
+    hidden: true, textContent: '', innerHTML: '', title: '', dataset: {}, cls: new Set(),
     classList: { toggle: (c, on) => { if (on ?? !e.cls.has(c)) e.cls.add(c); else e.cls.delete(c); }, add: (c) => { e.cls.add(c); } },
   };
   return e;
@@ -78,22 +81,29 @@ type Call = { url: string; method: string; body: Record<string, unknown> | null 
 
 type Harness = {
   build: (p: string, stats: unknown) => Promise<void>;
+  /** The page's openFromIndex, as a folder is opened from the saved index. */
+  open: (p: string) => Promise<boolean>;
   calls: Call[];
   posts: () => Call[];
+  polls: () => number;
   els: Record<string, El>;
   state: { root: { path: string } | null };
   slept: number[];
   lines: Array<{ polls: number; hidden: boolean; text: string }>;
   badges: unknown[];
+  /** Every sentence written to the screen reader's region (#indexAnnounce), in order. */
+  announced: string[];
 };
 
 /**
  * `buildIndexInBackground` with the functions it calls, as they ship, over a
  * stub `api` that answers `status` to the status request and the next of
- * `results` to each poll of the build job (then the last one for ever). The
+ * `results` to each poll of the build job (then the last one for ever); a
+ * result that is a function is called, so a test can hold a poll open. The
  * page's own `setTimeout` is replaced by one that records the delay and
  * resolves at once, so a ten-minute poll window runs in microseconds and is
- * counted in the page's own delays, never timed.
+ * counted in the page's own delays, never timed. `openFromIndex` shares the
+ * same scope, as it does in the page.
  */
 function harness(opts: { status: unknown; results?: unknown[]; rootPath?: string }): Harness {
   const src = [
@@ -102,14 +112,19 @@ function harness(opts: { status: unknown; results?: unknown[]; rootPath?: string
     braced('function indexAutoPlan('),
     braced('function renderIndexLine('),
     braced('async function indexStatusFor('),
+    braced('async function openFromIndex('),
     braced('async function buildIndexInBackground('),
   ].join('\n');
   const { $, els } = makeDom();
+  const announced: string[] = [];
+  const say = el();
+  Object.defineProperty(say, 'textContent', { get: () => announced.at(-1) ?? '', set: (v: string) => { announced.push(v); } });
+  els.indexAnnounce = say;
   const calls: Call[] = [];
   const slept: number[] = [];
   const badges: unknown[] = [];
   const lines: Harness['lines'] = [];
-  const state = { root: opts.rootPath === undefined ? null : { path: opts.rootPath } };
+  const state = { root: opts.rootPath === undefined ? null : { path: opts.rootPath } } as { root: { path: string } | null; scanId?: unknown; scanStats?: unknown };
   const results = opts.results ?? [{ status: 'complete', root: {} }];
   let polls = 0;
   const api = async (url: string, options?: { method?: string; body?: string }) => {
@@ -118,6 +133,10 @@ function harness(opts: { status: unknown; results?: unknown[]; rootPath?: string
       if (opts.status instanceof Error) throw opts.status;
       return opts.status;
     }
+    if (url.startsWith('/api/index/tree?path=')) {
+      const p = decodeURIComponent(url.slice('/api/index/tree?path='.length).split('&')[0]);
+      return { rootPath: p, path: p, root: { path: p, size: 1 }, fileCount: 1, dirCount: 0 };
+    }
     if (url === '/api/index/build') return { jobId: 'job-1', status: 'running' };
     if (url === '/api/index/job-1/result') {
       const e = els.indexLine;
@@ -125,17 +144,29 @@ function harness(opts: { status: unknown; results?: unknown[]; rootPath?: string
       const r = results[Math.min(polls, results.length - 1)];
       polls++;
       if (r instanceof Error) throw r;
-      return r;
+      return typeof r === 'function' ? (r as () => Promise<unknown>)() : r;
     }
     throw new Error(`unexpected request ${url}`);
   };
-  const build = new Function('$', 'api', 'state', 'formatCount', 'renderIndexBadge', 'setTimeout',
-    `'use strict'; ${src} return buildIndexInBackground;`)(
+  const page = new Function('$', 'api', 'state', 'formatCount', 'renderIndexBadge', 'setTimeout',
+    'indexTree', 'finishScan', 'performance', 'INSTANT_OPEN_NODES',
+    `'use strict'; ${src} return { buildIndexInBackground, openFromIndex };`)(
     $, api, state, formatCount, (info: unknown) => badges.push(info),
     (fn: () => void, ms: number) => { slept.push(ms); fn(); return 0; },
-  ) as (p: string, stats: unknown) => Promise<void>;
-  return { build, calls, posts: () => calls.filter((c) => c.method === 'POST'), els, state, slept, lines, badges };
+    () => {}, async () => {}, { now: () => 0 }, 250_000,
+  ) as { buildIndexInBackground: (p: string, stats: unknown) => Promise<void>; openFromIndex: (p: string, info: unknown) => Promise<boolean> };
+  return {
+    build: page.buildIndexInBackground,
+    open: (p: string) => page.openFromIndex(p, statusFor(p)),
+    calls,
+    posts: () => calls.filter((c) => c.method === 'POST'),
+    polls: () => polls,
+    els, state, slept, lines, badges, announced,
+  };
 }
+
+/** Lets every microtask the page queued run before the test looks. */
+const drain = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 const M = 1_000_000;
 const HOME_PROJECTS = '/Users/x/Projects';
@@ -250,6 +281,10 @@ test('the index line shows while a build runs, says "still indexing" after the p
   assert.equal(sleptBefore, 600_000, 'the line changes once the page has waited ten minutes, not before and not after');
   assert.ok(h.lines.slice(0, firstStill).every((l) => !l.text.startsWith('Still')), 'nothing said "still" before the window');
   assert.equal(h.lines.length, 1301, 'the page kept following the build past the window');
+  // Finding 14: past the window, every ten seconds — never a tight loop over a build that runs for an hour.
+  const after = h.slept.slice(firstStill - 1);
+  assert.equal(after.length, 100, 'one delay after each of the hundred polls past the window');
+  assert.ok(after.every((ms) => ms === 10_000), `each of them ten seconds: ${[...new Set(after)].join(', ')}`);
   assert.equal(h.els.indexLine.hidden, true, 'the line is cleared when the build settles');
   assert.equal(h.els.indexLine.textContent, '');
   assert.equal(h.badges.length, 1, 'and the badge is painted from the settled index');
@@ -308,6 +343,92 @@ test('the badge is painted for the folder on screen however the plan ends: offer
   const elsewhere = harness({ status: statusFor('/'), rootPath: '/Users/x/Elsewhere' });
   await elsewhere.build('/', scanStats(M + 1));
   assert.deepEqual(elsewhere.badges, [], 'a folder no longer on screen paints nothing');
+});
+
+/* ══════════════════ the line belongs to the folder on screen (findings 4, 8, 14) ══════════════════ */
+
+test('a build superseded by a newer one stops polling, and paints neither the line nor the badge (finding 14)', async () => {
+  for (const ending of ['still running', 'complete'] as const) {
+    let releaseOlder!: (v: unknown) => void;
+    let releaseNewer!: (v: unknown) => void;
+    const older = new Promise((resolve) => { releaseOlder = resolve; });
+    const newer = new Promise((resolve) => { releaseNewer = resolve; });
+    // Poll 0 is the older build's; polls 1 and 2 are the newer one's.
+    const h = harness({
+      status: statusFor(HOME_PROJECTS),
+      results: [() => older, { status: 'running', phase: 'enumerating', processed: 7000 }, () => newer, { status: 'complete', root: {} }],
+      rootPath: HOME_PROJECTS,
+    });
+    const first = h.build(HOME_PROJECTS, scanStats(50_000));
+    await drain();
+    const second = h.build(HOME_PROJECTS, scanStats(50_000));
+    await drain();
+    assert.equal(h.polls(), 3, `${ending}: each build has asked about the job`);
+    assert.equal(h.els.indexLine.textContent, 'Indexing this folder for instant opening — 7,000 items so far');
+    releaseOlder(ending === 'complete' ? { status: 'complete', root: {} } : { status: 'running', phase: 'enumerating', processed: 999 });
+    await first;
+    assert.equal(h.polls(), 3, `${ending}: the older build asks nothing more once a newer one owns the line`);
+    assert.equal(h.els.indexLine.textContent, 'Indexing this folder for instant opening — 7,000 items so far', `${ending}: and neither paints nor clears it`);
+    assert.equal(h.badges.length, 0, `${ending}: nor paints the badge`);
+    releaseNewer({ status: 'complete', root: {} });
+    await second;
+    assert.equal(h.els.indexLine.hidden, true, 'the newer build clears its own line');
+    assert.equal(h.badges.length, 1, 'and paints the badge once');
+  }
+});
+
+test('opening another folder from the saved index clears the line the last folder left (finding 4)', async () => {
+  let release!: (v: unknown) => void;
+  const held = new Promise((resolve) => { release = resolve; });
+  const h = harness({
+    status: statusFor(HOME_PROJECTS),
+    results: [{ status: 'running', phase: 'enumerating', processed: 2000 }, () => held, { status: 'running', phase: 'enumerating', processed: 3000 }, { status: 'complete', root: {} }],
+    rootPath: HOME_PROJECTS,
+  });
+  const building = h.build(HOME_PROJECTS, scanStats(50_000));
+  await drain();
+  assert.equal(h.els.indexLine.textContent, 'Indexing this folder for instant opening — 2,000 items so far');
+  // openFromIndex puts the other folder's tree on screen and runs finishScan
+  // with no scan id, which returns before it reaches the index build.
+  assert.equal(await h.open('/Users/x/Elsewhere'), true, 'the other folder opens from its index');
+  assert.equal(h.els.indexLine.hidden, true, 'the line about the last folder goes with its tree');
+  assert.equal(h.els.indexLine.textContent, '');
+  release({ status: 'running', phase: 'enumerating', processed: 2500 });
+  await building;
+  assert.equal(h.polls(), 2, 'the last folder\'s build is no longer followed from this screen');
+  assert.equal(h.els.indexLine.hidden, true, 'and does not bring its line back');
+});
+
+test('the line is not a live region: a screen reader hears each change of state once, never each count (finding 8)', async () => {
+  const markup = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'markup', '010-view-dashboard.html'), 'utf8');
+  const tag = (id: string): string => {
+    const m = new RegExp(`<div[^>]*id="${id}"[^>]*>`).exec(markup);
+    assert.ok(m, `#${id} is in the dashboard markup`);
+    return m[0];
+  };
+  assert.doesNotMatch(tag('indexLine'), /role=|aria-live/, '#indexLine is rewritten on every poll, so it announces nothing itself');
+  assert.match(tag('indexAnnounce'), /class="sr-only"/, 'the announcements have a region of their own, visually hidden');
+  assert.match(tag('indexAnnounce'), /role="status"/);
+  assert.match(tag('indexAnnounce'), /aria-live="polite"/);
+  assert.match(tag('indexAnnounce'), /aria-atomic="true"/);
+
+  const running = Array.from({ length: 1300 }, (_, i) => ({ status: 'running', phase: 'enumerating', processed: i * 1000 }));
+  const h = harness({ status: statusFor(HOME_PROJECTS), results: [...running, { status: 'complete', root: {} }], rootPath: HOME_PROJECTS });
+  await h.build(HOME_PROJECTS, scanStats(50_000));
+  assert.equal(h.lines.length, 1301, 'the line itself changed on every one of 1,301 polls');
+  assert.deepEqual(h.announced, ['Indexing this folder for instant opening', 'Still indexing in the background'],
+    'and was spoken twice: when the build began, and when it went on in the background');
+  // Two short builds in a row: the first ends while its line still says
+  // "Indexing", and the second, after the line cleared, is said again.
+  const twice = harness({ status: statusFor(HOME_PROJECTS), results: [{ status: 'complete', root: {} }], rootPath: HOME_PROJECTS });
+  await twice.build(HOME_PROJECTS, scanStats(50_000));
+  await twice.build(HOME_PROJECTS, scanStats(50_000));
+  assert.deepEqual(twice.announced, ['Indexing this folder for instant opening', 'Indexing this folder for instant opening'],
+    'a later build, after the line cleared, is said again');
+
+  const offer = harness({ status: statusFor('/'), rootPath: '/' });
+  await offer.build('/', scanStats(M + 1));
+  assert.deepEqual(offer.announced, ['Not indexed automatically — 1,000,001 items is more than TreeMap indexes on its own (up to 1,000,000).'], 'an offer is said once');
 });
 
 test('a line for a folder no longer on screen is not painted', async () => {
@@ -392,6 +513,28 @@ test('the empty-roots search note names the limit TreeMap indexes on its own', (
   assert.match(noteOf(M), /Nothing is indexed yet\./);
   assert.match(noteOf(M), /up to 1,000,000 items/, 'the limit, as the server gave it');
   assert.doesNotMatch(noteOf(null), /\d/, 'before the server has said, no number is invented');
+});
+
+test('the stale-results note in search promises a rescan only where one refreshes the index (finding 7)', () => {
+  const noteOf = (limit: number | null): string => {
+    const { $, els } = makeDom();
+    const panel = $('gsearchResults') as El & { querySelectorAll?: () => never[] };
+    panel.querySelectorAll = () => [];
+    const run = new Function('$', 'gsearch', 'escapeHtml', 'gsearchOpen', 'formatCount', 'indexAutoMaxEntries', 'chipFor', 'formatBytes',
+      `'use strict'; ${braced('function renderGsearch(')} return renderGsearch;`)(
+      $, { hits: [], selected: -1 }, escapeHtml, () => {}, formatCount, limit, () => '', (n: number) => `${n} B`) as (r: unknown) => void;
+    const hit = { name: 'a.zip', path: '/x/a.zip', parentPath: '/x', size: 1, type: 'file' };
+    run({ query: 'zip', hits: [hit], total: 1, countCapped: false, truncated: false, roots: ['/'], staleRoots: ['/'] });
+    const notes = [...els.gsearchResults.innerHTML.matchAll(/<div class="gsearch-note">([^<]*)<\/div>/g)].map((m) => m[1]);
+    assert.equal(notes.length, 1, 'one note under the hits: the stale one');
+    return notes[0];
+  };
+  // A stale whole-disk index is never rebuilt by a scan (U-1), so "scan again
+  // to refresh it" would be a promise its folder does not keep.
+  assert.doesNotMatch(noteOf(M), /scan again to refresh it/i);
+  assert.match(noteOf(M), /Some results come from an index that may be out of date\. Scanning a folder again refreshes its index, unless it holds more than TreeMap indexes on its own \(up to 1,000,000 items\)\./);
+  assert.match(noteOf(null), /unless it holds more than TreeMap indexes on its own\./, 'before the server has said, no number is invented');
+  assert.doesNotMatch(noteOf(null), /\d/);
 });
 
 /* ══════════════════ the server: the limit, the cap and the request ══════════════════ */

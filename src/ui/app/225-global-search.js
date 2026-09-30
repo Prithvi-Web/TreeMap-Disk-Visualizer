@@ -100,9 +100,14 @@ function renderGsearch(result) {
     html += `<div class="gsearch-note">Showing the ${formatCount(shown)} largest of ${total} matches.</div>`;
   }
   // Staleness is never hidden: a result from an index that stopped watching
-  // could name a file that has since moved (§A1's consistency guard).
+  // could name a file that has since moved (§A1's consistency guard). What
+  // refreshes it is said as it is: a scan rebuilds a folder's index only up
+  // to the limit (plan U-1), so a stale whole-disk index stays as it was, and
+  // "scan again to refresh it" would be a promise a scan does not keep
+  // (Track U review of U-1, finding 7).
   if (result.staleRoots && result.staleRoots.length) {
-    html += `<div class="gsearch-note">Some results come from an index that may be out of date — scan again to refresh it.</div>`;
+    const limit = typeof indexAutoMaxEntries === 'number' ? ` (up to ${formatCount(indexAutoMaxEntries)} items)` : '';
+    html += `<div class="gsearch-note">Some results come from an index that may be out of date. Scanning a folder again refreshes its index, unless it holds more than TreeMap indexes on its own${limit}.</div>`;
   }
 
   panel.innerHTML = html;

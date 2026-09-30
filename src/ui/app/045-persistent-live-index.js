@@ -98,21 +98,32 @@ function indexAutoPlan(stats, autoBuild, exactRoot, stoppedAtCap) {
  * `line` is null (clear it), or { kind: 'building' | 'background', processed },
  * { kind: 'offer', scanned, maxEntries } or { kind: 'stopped', reason } (a
  * build stopped at its cap, now or last time, in the server's sentence).
+ *
+ * The line is rewritten on every poll of a running build, so it is not a live
+ * region: a screen reader hears it through #indexAnnounce, once each time the
+ * kind of line changes, never once per count (Track U review of U-1, finding
+ * 8; the scan's own counter speaks once every ten seconds for the same reason).
  */
 function renderIndexLine(line) {
   const el = $('indexLine');
   if (!el) return;
-  if (!line) { el.hidden = true; el.textContent = ''; return; }
+  if (!line) { el.hidden = true; el.textContent = ''; el.dataset.kind = ''; return; }
   const soFar = typeof line.processed === 'number' ? ` — ${formatCount(line.processed)} items so far` : '';
-  el.textContent =
+  const sentence =
     line.kind === 'offer'
       ? `Not indexed automatically — ${formatCount(line.scanned)} items is more than TreeMap indexes on its own (up to ${formatCount(line.maxEntries)}).`
       : line.kind === 'stopped'
         ? `Not indexed automatically. ${line.reason}`
         : line.kind === 'background'
-          ? `Still indexing in the background${soFar}`
-          : `Indexing this folder for instant opening${soFar}`;
+          ? 'Still indexing in the background'
+          : 'Indexing this folder for instant opening';
+  el.textContent = sentence + soFar;
   el.hidden = false;
+  if (el.dataset.kind !== line.kind) {
+    el.dataset.kind = line.kind;
+    const say = $('indexAnnounce');
+    if (say) say.textContent = sentence;
+  }
 }
 
 /** Ask whether a folder can be served from the index. Never throws. */
@@ -150,6 +161,12 @@ async function openFromIndex(path, info) {
   // server actually performed — so a real scan still runs in the background to
   // unlock them. What the index buys is the instant paint.
   state.root = data.root;
+  // Another tree is on screen, and finishScan returns before the index build
+  // below for a tree with no scan behind it. Whatever #indexLine said was
+  // about the last folder, and a build of it still running no longer speaks
+  // for this screen (Track U review of U-1, finding 4).
+  indexLineGen++;
+  renderIndexLine(null);
   indexTree(data.root);
   // The index cannot grant a scanId, and the one sitting in state belongs to a
   // DIFFERENT scan — the last one, which may have been of another folder, or

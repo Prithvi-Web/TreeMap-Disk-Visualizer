@@ -3430,8 +3430,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <div class="index-badge" id="indexBadge" hidden role="status"></div>
           <!-- U-1: a background index build while it runs ("Indexing this
                folder… N items so far"), or why a folder was not indexed on
-               its own (more items than TreeMap indexes automatically). -->
-          <div class="index-line" id="indexLine" hidden role="status"></div>
+               its own (more items than TreeMap indexes automatically). Not a
+               live region: its count changes on every poll. #indexAnnounce
+               speaks it once each time the kind of line changes. -->
+          <div class="index-line" id="indexLine" hidden></div>
+          <div id="indexAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Scan progress"><div class="progress-fill"></div></div>
           <!-- a11y: a scan is a minutes-long process whose only report was a
@@ -8057,21 +8060,32 @@ function indexAutoPlan(stats, autoBuild, exactRoot, stoppedAtCap) {
  * `line` is null (clear it), or { kind: 'building' | 'background', processed },
  * { kind: 'offer', scanned, maxEntries } or { kind: 'stopped', reason } (a
  * build stopped at its cap, now or last time, in the server's sentence).
+ *
+ * The line is rewritten on every poll of a running build, so it is not a live
+ * region: a screen reader hears it through #indexAnnounce, once each time the
+ * kind of line changes, never once per count (Track U review of U-1, finding
+ * 8; the scan's own counter speaks once every ten seconds for the same reason).
  */
 function renderIndexLine(line) {
   const el = $('indexLine');
   if (!el) return;
-  if (!line) { el.hidden = true; el.textContent = ''; return; }
+  if (!line) { el.hidden = true; el.textContent = ''; el.dataset.kind = ''; return; }
   const soFar = typeof line.processed === 'number' ? ` — ${formatCount(line.processed)} items so far` : '';
-  el.textContent =
+  const sentence =
     line.kind === 'offer'
       ? `Not indexed automatically — ${formatCount(line.scanned)} items is more than TreeMap indexes on its own (up to ${formatCount(line.maxEntries)}).`
       : line.kind === 'stopped'
         ? `Not indexed automatically. ${line.reason}`
         : line.kind === 'background'
-          ? `Still indexing in the background${soFar}`
-          : `Indexing this folder for instant opening${soFar}`;
+          ? 'Still indexing in the background'
+          : 'Indexing this folder for instant opening';
+  el.textContent = sentence + soFar;
   el.hidden = false;
+  if (el.dataset.kind !== line.kind) {
+    el.dataset.kind = line.kind;
+    const say = $('indexAnnounce');
+    if (say) say.textContent = sentence;
+  }
 }
 
 /** Ask whether a folder can be served from the index. Never throws. */
@@ -8109,6 +8123,12 @@ async function openFromIndex(path, info) {
   // server actually performed — so a real scan still runs in the background to
   // unlock them. What the index buys is the instant paint.
   state.root = data.root;
+  // Another tree is on screen, and finishScan returns before the index build
+  // below for a tree with no scan behind it. Whatever #indexLine said was
+  // about the last folder, and a build of it still running no longer speaks
+  // for this screen (Track U review of U-1, finding 4).
+  indexLineGen++;
+  renderIndexLine(null);
   indexTree(data.root);
   // The index cannot grant a scanId, and the one sitting in state belongs to a
   // DIFFERENT scan — the last one, which may have been of another folder, or
@@ -31249,9 +31269,14 @@ function renderGsearch(result) {
     html += `<div class="gsearch-note">Showing the ${formatCount(shown)} largest of ${total} matches.</div>`;
   }
   // Staleness is never hidden: a result from an index that stopped watching
-  // could name a file that has since moved (§A1's consistency guard).
+  // could name a file that has since moved (§A1's consistency guard). What
+  // refreshes it is said as it is: a scan rebuilds a folder's index only up
+  // to the limit (plan U-1), so a stale whole-disk index stays as it was, and
+  // "scan again to refresh it" would be a promise a scan does not keep
+  // (Track U review of U-1, finding 7).
   if (result.staleRoots && result.staleRoots.length) {
-    html += `<div class="gsearch-note">Some results come from an index that may be out of date — scan again to refresh it.</div>`;
+    const limit = typeof indexAutoMaxEntries === 'number' ? ` (up to ${formatCount(indexAutoMaxEntries)} items)` : '';
+    html += `<div class="gsearch-note">Some results come from an index that may be out of date. Scanning a folder again refreshes its index, unless it holds more than TreeMap indexes on its own${limit}.</div>`;
   }
 
   panel.innerHTML = html;
