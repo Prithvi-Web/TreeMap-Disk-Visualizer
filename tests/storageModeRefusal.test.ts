@@ -12,7 +12,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createApp } from '../src/server';
 import { buildMcpServer } from '../src/mcp/server';
-import { startScan } from '../src/services/diskScanner';
+import { startScan, scanIdOf } from '../src/services/diskScanner';
 import { stopAllWatchers } from '../src/services/watcher';
 import { cancelAllDuplicateJobs } from '../src/services/duplicateFinder';
 import { cancelAllNearDupeJobs } from '../src/services/perceptualDupes';
@@ -413,6 +413,37 @@ test('the gate passes every memory-mode request before it looks anything up, and
     assert.equal(run('memory'), undefined, 'memory mode passes, whatever the table says');
     const err = run('spill');
     assert.ok(err instanceof Error && /GET \/api\/not-in-the-table/.test(err.message), `a large mode names the unclassified route (${String(err)})`);
+  } finally {
+    setStorageModeForTests('memory', scan);
+  }
+});
+
+test('a scan id that is no string is read without throwing, whatever the JSON, and memory mode answers as before', async () => {
+  // JSON can give an object whose toString is no function, in any depth of lists: String()
+  // throws on those; the reading must not, and gives no scan.
+  for (const odd of [{ toString: 1 }, [{ toString: 1 }], [[[{ toString: 1 }]]], { toString: 1, valueOf: 1 }]) {
+    assert.equal(scanIdOf(odd), '', JSON.stringify(odd));
+  }
+  // Every value that did not throw reads exactly as String() read it.
+  const same: [unknown, string][] = [['abc', 'abc'], [['abc'], 'abc'], [[['abc']], 'abc'], [123, '123'], [true, 'true'], [null, ''], [undefined, ''], [{}, '[object Object]'], [['a', 'b'], 'a,b']];
+  for (const [value, want] of same) assert.equal(scanIdOf(value), want, JSON.stringify(value));
+  // Over HTTP in memory mode: a body channel the route never reads cannot turn it into a 500.
+  const url = `/api/duplicates?scanId=${scan.scanId}`;
+  await waitFor(async () => (await request('GET', url)).status === 200, 'duplicate hashing of the fixture');
+  const odd = await request('GET', url, { scanId: { toString: 1 } });
+  assert.equal(odd.status, 200, `GET /api/duplicates answers as it does without the body (${JSON.stringify(odd.body).slice(0, 160)})`);
+  const query = await request('POST', '/api/query', { scanId: { toString: 1 }, q: 'size>0' });
+  assert.deepEqual([query.status, query.body.code], [400, 'SCAN_REQUIRED'], 'and POST /api/query refuses the id itself, as it always did');
+});
+
+test('the mount prefix is read as Express routes it: /API/duplicates is /api/duplicates', async () => {
+  try {
+    setStorageModeForTests('spill', scan);
+    const refused = await request('GET', `/API/duplicates?scanId=${scan.scanId}`);
+    assert.deepEqual([refused.status, refused.body.code], [409, 'STORAGE_MODE'], `refused, not a server fault (${JSON.stringify(refused.body).slice(0, 160)})`);
+    setStorageModeForTests('memory', scan);
+    const served = await request('GET', `/API/empty-folders?scanId=${scan.scanId}`);
+    assert.equal(served.status, 200, 'and in memory mode the handler answers');
   } finally {
     setStorageModeForTests('memory', scan);
   }

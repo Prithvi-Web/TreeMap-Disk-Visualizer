@@ -415,8 +415,42 @@ function foldForCompare(p: string): string {
  */
 export function isSpillPath(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
-  const spill = foldForCompare(canonicalDirOf(path.join(appDataDir(), SPILL_DIR)));
-  return isAtOrUnder(spill, foldForCompare(canonicalDirOf(p)));
+  const spillAt = canonicalDirOf(path.join(appDataDir(), SPILL_DIR));
+  const where = canonicalDirOf(p);
+  if (isAtOrUnder(foldForCompare(spillAt), foldForCompare(where))) return true;
+  // A path directly in app-data may be the folder itself under a name only the file system
+  // folds: ſ (U+017F) for s on default APFS, an 8.3 short name on Windows. Its parent is
+  // resolved and its own name is not, so it is asked by identity when it exists (lstat, so a
+  // link there stays a link); a name that does not exist is judged by the rule above alone.
+  return foldForCompare(path.dirname(where)) === foldForCompare(path.dirname(spillAt)) && sameEntry(where, spillAt);
+}
+
+/** Whether two paths name one existing entry: the same device and id, links not followed. */
+function sameEntry(a: string, b: string): boolean {
+  try {
+    const first = fs.lstatSync(a, { bigint: true, throwIfNoEntry: false });
+    if (first === undefined) return false;
+    const second = fs.lstatSync(b, { bigint: true, throwIfNoEntry: false });
+    return second !== undefined && first.dev === second.dev && first.ino === second.ino;
+  } catch {
+    return false; // unreadable: judged by its name alone
+  }
+}
+
+/**
+ * A cheap test over the paths a scan of `root` lists (the root joined with the names it found):
+ * false for every path that cannot be in the spill folder, true for one under app-data, which
+ * `isSpillPath` must still judge. Two canonicalisations when it is made, then string work per
+ * path, because the full check resolves each path's folders (tens of microseconds a path).
+ */
+export function spillCandidateTest(root: string): (p: string) => boolean {
+  const appData = foldForCompare(canonicalDirOf(appDataDir()));
+  const scanned = foldForCompare(canonicalDirOf(root));
+  if (isAtOrUnder(appData, scanned)) return () => true; // the scan lies in app-data
+  if (!isAtOrUnder(scanned, appData)) return () => false; // app-data lies outside the scan
+  // App-data as the scan spells it: the scan's own root, then app-data's place below it.
+  const listed = path.join(foldForCompare(root), path.relative(scanned, appData));
+  return (p) => isAtOrUnder(listed, foldForCompare(p));
 }
 
 /**

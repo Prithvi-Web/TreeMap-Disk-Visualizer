@@ -309,11 +309,14 @@ read-what-you-saw) permission to act.
   to trash, open, move or write refuses that folder and anything under it with
   `403 { code: "SPILL_PATH" }` — before the scanned-root rule, so scanning a
   home folder is no licence there — however the path is spelled (`..`, trailing
-  separators, another case, a link in its parents, Windows' trailing dots and
-  spaces). That covers every route above, `/api/files/open-handles`,
-  `/api/security/relocate` (both ends), the offload destination,
-  `/api/compression/encode` and `/api/system/snapshots/restore` (path and
-  destination). Facts about it still answer, since answering touches nothing;
+  separators, another case, a name only the file system folds such as `ſ` for
+  `s`, a link in its parents, Windows' trailing dots and spaces). A request's
+  `path` and every element of its `paths` are judged, whichever of the two its
+  route reads, and anything but a non-empty string is `400 PATH_INVALID`. That
+  covers every route above, `/api/files/open-handles`, `/api/security/relocate`
+  (both ends, checked again by the move itself), the offload destination and
+  every copy an offload plans under it, `/api/compression/encode` and
+  `/api/system/snapshots/restore` (path and destination). Facts about it still answer, since answering touches nothing;
   the Empty Folders view never offers it; Autopilot leaves it out of every run
   and says so in `skipped`; and the Trash pathway itself (`moveToTrash`, the
   Time Capsule's `protectAndTrash`) refuses it whatever asked. A leftover of a
@@ -367,9 +370,17 @@ read-what-you-saw) permission to act.
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" }`. An absent or empty file imposes nothing. The
   policy is deliberately not writable through the API.
-- **Audit.** Every destructive request that touches **files** — executed,
-  dry-run, or refused — is appended to `audit.jsonl` (timestamp, action,
-  source http/mcp, token id, paths, bytes, outcome).
+- **Audit.** Every destructive request that touches **files** and reaches
+  its endpoint — executed, dry-run, or refused there — is appended to
+  `audit.jsonl` (timestamp, action, source http/mcp, token id, paths, bytes,
+  outcome). The refusals recorded are the ones the endpoint itself decides:
+  the agent policy and its byte cap, an open file, the offload plan or a move
+  that failed, each with its code. A request refused before that is not
+  recorded, because it never became an operation: by the path rules
+  (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`, `SPILL_PATH`,
+  `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed field
+  (`CONFIRM_REQUIRED`, `DEST_REQUIRED`), the rate limiter, or the
+  storage-mode gate (`STORAGE_MODE`).
   `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
   write the same log. Config writes differ by consequence: Autopilot policy
   saves and approvals DO audit (a standing instruction to delete is worth a

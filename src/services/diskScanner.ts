@@ -257,9 +257,16 @@ function ensureEvictor(): void {
  * A scan id as a request carries it: whatever the value, read as `String(value ?? '')`. The
  * one reading every route uses (`requireScan`) and the storage-mode gate uses, so no spelling
  * of an id (a JSON array holding it, say) finds a scan in a handler that the gate did not see.
+ * Total: JSON can give an object whose `toString` is no function, at any depth of lists, and
+ * String() throws on it; that reads as no id at all (T17a's security review found the throw
+ * turning memory-mode requests into 500s).
  */
 export function scanIdOf(value: unknown): string {
-  return String(value ?? '');
+  try {
+    return String(value ?? '');
+  } catch {
+    return '';
+  }
 }
 
 /**

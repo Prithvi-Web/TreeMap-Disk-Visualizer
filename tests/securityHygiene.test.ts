@@ -15,6 +15,19 @@ import {
 } from '../src/services/securityHygieneScanner';
 import { compileIgnoreList } from '../src/utils/glob';
 import { FileNode } from '../src/models/types';
+import { startScan } from '../src/services/diskScanner';
+import { waitFor } from './fixtures/waitFor';
+
+/**
+ * Scans `dir`, as a relocation always follows a scan of the folder: `relocateSecret` checks
+ * both of its ends itself and moves nothing outside every scanned folder (T17a's security
+ * review), so these tests scan their temp folder the way the Security view's scan does.
+ */
+async function scanned(dir: string): Promise<void> {
+  const scan = await startScan(dir);
+  await waitFor(() => scan.status !== 'running', `the scan of ${dir}`);
+  assert.equal(scan.status, 'complete', scan.error);
+}
 
 /**
  * §C5 — secrets hygiene.
@@ -177,6 +190,7 @@ test('relocating moves the file, keeps its bytes and timestamp, and tightens its
     fs.mkdirSync(path.dirname(from), { recursive: true });
     fs.writeFileSync(from, 'PRIVATE KEY MATERIAL');
     const before = fs.statSync(from);
+    await scanned(dir);
 
     const result = await relocateSecret(from, to);
     assert.deepEqual(result, { moved: true, from, to });
@@ -201,6 +215,7 @@ test('an occupied destination aborts, and the original is left untouched', async
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.writeFileSync(from, 'NEW KEY');
     fs.writeFileSync(to, 'THE KEY I ACTUALLY USE');
+    await scanned(dir);
 
     await assert.rejects(relocateSecret(from, to), /already exists/);
     // The key that was already there is the one that matters here.
@@ -216,6 +231,7 @@ test('a directory is never treated as a secret to move', async () => {
   try {
     const from = path.join(dir, '.ssh');
     fs.mkdirSync(from, { recursive: true });
+    await scanned(dir);
     await assert.rejects(relocateSecret(from, path.join(dir, 'moved')), /Only a file/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

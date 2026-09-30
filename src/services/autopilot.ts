@@ -18,7 +18,7 @@ import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
 import { protectAndTrash, listCapsuleEntriesForRun, startCapsuleRestore } from './timeCapsule';
 import nodePath from 'path';
-import { isSpillPath, sanitizePath } from '../utils/pathSanitizer';
+import { isSpillPath, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
 import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
 import { formatBytes } from '../utils/formatBytes';
@@ -438,10 +438,13 @@ async function resolveCandidates(
 ): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
   // A policy over app-data would otherwise select what a crash left in the
   // spill folder (and on Windows a running scan's files, which have names).
+  // Only a candidate under app-data can be there, so only those pay the full
+  // check, which resolves each candidate's folders (T17a's security review).
+  const mayBeInSpill = spillCandidateTest(policy.path);
   const matched: Candidate[] = [];
   let inSpill = 0;
   for (const c of await matchCandidates(policy)) {
-    if (isSpillPath(c.path)) inSpill++;
+    if (mayBeInSpill(c.path) && spillCheck(c.path)) inSpill++;
     else matched.push(c);
   }
   const spillSkipped = inSpill === 0 ? [] : [{
@@ -476,6 +479,14 @@ async function resolveCandidates(
     reason: `Left alone — your note on ${root} pauses automatic cleanup around it (${n} matched item${n === 1 ? '' : 's'}).`,
   }));
   return { candidates, leftAlone: [...spillSkipped, ...noteSkipped] };
+}
+
+/** The full check of a candidate that may be in the spill folder: `isSpillPath`, or a test's stand-in. */
+let spillCheck: (p: string) => boolean = isSpillPath;
+
+/** Test seam: what Autopilot runs as the full spill-folder check (to count it); null restores `isSpillPath`. */
+export function setSpillCheckForTests(fn: ((p: string) => boolean) | null): void {
+  spillCheck = fn ?? isSpillPath;
 }
 
 /** Scan the policy's folder and resolve its match into raw candidates. */

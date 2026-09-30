@@ -198,7 +198,9 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
         'DELETE /api/files, POST /api/offload and POST /api/offload/restore accept dryRun: true — the exact manifest, nothing acted on',
       policy:
         'agent-policy.json (see GET /api/policy) can allowlist roots, protect paths forever, and cap bytes per operation; empty file = no restriction',
-      audit: 'Every destructive request (real, dry-run, refused) is appended to an audit log — GET /api/audit reads it back',
+      audit:
+        'Every destructive request that reaches its endpoint (real, dry-run, or refused there: policy, open files) is appended to an audit log; ' +
+        'one refused before that, by the path rules or the storage-mode gate, is not — GET /api/audit reads it back',
       idempotency:
         'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
       spillFolder:

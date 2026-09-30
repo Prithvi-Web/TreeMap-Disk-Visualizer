@@ -196,13 +196,34 @@ export function assertNotSpillPath(p: string): void {
 }
 
 /**
- * The scanned-root rule over a request's `path` / `paths`, in one place: a cloud path, a path
- * in TreeMap's own spill folder (when `refuseSpill`), a path outside every scanned root, an
- * entry inside an archive. Answers the first refusal, or null.
+ * Every path a request's body carries: its `path` when present, and each element of its
+ * `paths` when present, whichever of the two its route reads. Judging only one let the other
+ * through: a `paths: []` beside `path` used to stand in for it, so `/files/open`,
+ * `/files/terminal` and `/security/relocate` ran on a `path` no rule had judged (T17a's
+ * security review). Anything that is not a non-empty string is refused, 400 `PATH_INVALID`.
+ */
+function bodyPaths(req: Request): string[] | AppError {
+  const body = req.body as Record<string, unknown>;
+  const given: unknown[] = [];
+  if (body.path !== undefined) given.push(body.path);
+  if (body.paths !== undefined) {
+    if (!Array.isArray(body.paths)) return new AppError(400, 'PATH_INVALID', '"paths" must be a list of paths');
+    given.push(...body.paths);
+  }
+  for (const p of given) {
+    if (typeof p !== 'string' || p.length === 0) return new AppError(400, 'PATH_INVALID', 'Every path must be a non-empty string');
+  }
+  return given as string[];
+}
+
+/**
+ * The scanned-root rule over every path a request's body carries (`bodyPaths`), in one
+ * place: a cloud path, a path in TreeMap's own spill folder (when `refuseSpill`), a path
+ * outside every scanned root, an entry inside an archive. Answers the first refusal, or null.
  */
 function scanRootRefusal(req: Request, refuseSpill: boolean): AppError | null {
-  const body = req.body as { path?: string; paths?: string[] };
-  const candidates = body.paths ?? (body.path !== undefined ? [body.path] : []);
+  const candidates = bodyPaths(req);
+  if (candidates instanceof AppError) return candidates;
   for (const p of candidates) {
     // Cloud entries never touch this filesystem — their deletes go through
     // POST /api/cloud/trash to the provider's own trash.

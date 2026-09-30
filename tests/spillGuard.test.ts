@@ -5,7 +5,12 @@ import http from 'node:http';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
-const APP = isolatedDataDir('treemap-spillGuard-data-');
+// App-data sits one level down in this file's own temp folder, so a folder that holds it (as a
+// home folder holds ~/Library/Application Support) can be scanned beside it.
+const HOME = isolatedDataDir('treemap-spillGuard-home-');
+const APP = path.join(HOME, 'app-data');
+fs.mkdirSync(APP);
+process.env.TREEMAP_DATA_DIR = APP;
 process.env.TREEMAP_NO_GDU = '1';
 
 import type { Request, Response } from 'express';
@@ -20,6 +25,8 @@ import { requireInsideScanRoot, requireInsideScanRootToRead } from '../src/middl
 import { ENDPOINTS } from '../src/api/openapi';
 import { moveToTrash } from '../src/services/cleaner';
 import { protectAndTrash } from '../src/services/timeCapsule';
+import { relocateSecret } from '../src/services/securityHygieneScanner';
+import { setSpillCheckForTests } from '../src/services/autopilot';
 import { AppError } from '../src/middleware/errorHandler';
 import { isSpillPath } from '../src/utils/pathSanitizer';
 import { SPILL_DIR } from '../src/services/spillSweep';
@@ -51,6 +58,27 @@ const OCCUPIED = path.join(APP, 'other', 'occupied.txt');
 fs.writeFileSync(OCCUPIED, 'something already here');
 const DEST = fileTempDir('treemap-spillGuard-dest-');
 const POSIX = process.platform !== 'win32';
+/** The user's own folders beside app-data: twenty files in twenty folders, and one folder named like the spill folder. */
+const USER = path.join(HOME, 'user');
+for (let i = 0; i < 20; i++) {
+  fs.mkdirSync(path.join(USER, `f${i}`), { recursive: true });
+  fs.writeFileSync(path.join(USER, `f${i}`, 'file.txt'), `file ${i}`);
+}
+fs.mkdirSync(path.join(USER, SPILL_DIR));
+fs.writeFileSync(path.join(USER, SPILL_DIR, 'mine.txt'), 'mine');
+/** Whether this volume folds ſ (U+017F) to s, as default APFS does: then `ſcan-spill` beside it is the spill folder itself. */
+const FOLDS_LONG_S = fs.existsSync(path.join(APP, `\u017f${SPILL_DIR.slice(1)}`));
+const LONG_S_SPILL = path.join(APP, `\u017f${SPILL_DIR.slice(1)}`);
+const USER2 = path.join(HOME, 'user2');
+fs.mkdirSync(path.join(USER2, `\u017f${SPILL_DIR.slice(1)}`), { recursive: true });
+fs.writeFileSync(path.join(USER2, `\u017f${SPILL_DIR.slice(1)}`, 'theirs.txt'), 'theirs');
+
+async function settledScan(root: string): Promise<ScanResult> {
+  const started = await startScan(root);
+  await waitFor(() => started.status !== 'running', `the scan of ${root}`);
+  assert.equal(started.status, 'complete', started.error);
+  return started;
+}
 
 const trashed: string[] = [];
 let server: http.Server;
@@ -178,6 +206,18 @@ test('the spill folder and everything under it is recognised, however the path i
   for (const p of outside) assert.equal(isSpillPath(p), false, `${p} is not in the spill folder`);
 });
 
+test('before the folder exists, a path to it in another case is refused by its name', () => {
+  const away = `${SPILL}.away`;
+  fs.renameSync(SPILL, away); // as on every machine before its first large scan
+  try {
+    for (const p of [path.join(APP, SPILL_DIR.toUpperCase(), 'x'), path.join(APP, 'Scan-Spill'), path.join(APP, SPILL_DIR, 'not-yet')]) {
+      assert.equal(isSpillPath(p), true, `${p} is in the spill folder, which does not exist yet`);
+    }
+  } finally {
+    fs.renameSync(away, SPILL);
+  }
+});
+
 test('Windows spells the spill folder with trailing dots and spaces too', { skip: POSIX && 'Windows drops them from every name; POSIX keeps them as part of it' }, () => {
   for (const p of [`${SPILL}.`, `${SPILL} `, `${SPILL}. .${path.sep}x`, `${SPILL} ${path.sep}inner`]) {
     assert.equal(isSpillPath(p), true, `${p} is in the spill folder`);
@@ -276,6 +316,8 @@ test('the routes that check a path themselves refuse it too: preview, encode, a 
   assertSpillRefusal(await request('POST', '/api/compression/encode', { paths: [LEFTOVER] }), 'POST /api/compression/encode');
   assertSpillRefusal(await request('POST', '/api/security/relocate', { path: OTHER_FILE, to: path.join(SPILL, 'moved.txt'), confirm: true }), 'relocating into it');
   assertSpillRefusal(await request('POST', '/api/offload', { scanId: id, paths: [OTHER_FILE], dest: SPILL, dryRun: true }), 'offloading into it');
+  // A destination in it that does not exist yet is refused as the spill folder, not as a missing folder.
+  assertSpillRefusal(await request('POST', '/api/offload', { scanId: id, paths: [OTHER_FILE], dest: path.join(SPILL, 'not-yet'), dryRun: true }), 'offloading into a folder not made yet');
   // The destination is checked before anything privileged (snapshotRecovery.ts), and so is this.
   assertSpillRefusal(await request('POST', '/api/system/snapshots/restore', { path: LEFTOVER, destination: OCCUPIED }), 'recovering a file that lived in it');
   assertSpillRefusal(await request('POST', '/api/system/snapshots/restore', { path: OTHER_FILE, destination: SPILL }), 'recovering into it');
@@ -293,6 +335,7 @@ test('the MCP tools refuse it the same way', async () => {
   assert.match(await callTool('trash_paths', { paths: [INNER], dryRun: true }), /^Error \(SPILL_PATH\): /);
   assert.match(await callTool('offload', { scanId: scan.scanId, paths: [INNER], dest: DEST, dryRun: true }), /^Error \(SPILL_PATH\): /);
   assert.match(await callTool('offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: SPILL, dryRun: true }), /^Error \(SPILL_PATH\): /);
+  assert.match(await callTool('offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: path.join(SPILL, 'not-yet'), dryRun: true }), /^Error \(SPILL_PATH\): /);
 });
 
 /* ─────────────── Autopilot and the trash itself ─────────────── */
@@ -320,6 +363,120 @@ test('the trash itself refuses the spill folder, behind every entry point: moveT
   await assert.rejects(protectAndTrash([{ path: INNER }]), refused, 'protectAndTrash refuses before copying anything');
   assert.deepEqual(trashed, [], 'nothing reached the trash step');
   assert.ok(fs.existsSync(OTHER_FILE), 'the user file in the same batch stayed');
+});
+
+/* ─────────────── The security review round ─────────────── */
+
+test('a paths beside path cannot stand in for it: the guard judges both, and refuses what is not a path', async () => {
+  // Outside every scan and missing, so a handler reached by mistake could open nothing.
+  const outside = path.join(DEST, 'missing.txt');
+  const routes: [string, Record<string, unknown>][] = [
+    ['/api/files/open', {}],
+    ['/api/files/terminal', {}],
+    // No confirm: a relocation or a gc that got past the guard would answer 400 CONFIRM_REQUIRED.
+    ['/api/security/relocate', { to: path.join(APP, 'other', 'moved') }],
+    ['/api/git/gc', {}],
+    ['/api/container/expand', { scanId: scan.scanId }],
+  ];
+  for (const [url, extra] of routes) {
+    const a = await request('POST', url, { ...extra, path: outside, paths: [] });
+    assert.deepEqual([a.status, a.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${url}, an outside path beside paths: []`);
+    const b = await request('POST', url, { ...extra, path: LEFTOVER, paths: [] });
+    assert.deepEqual([b.status, b.body.code], [403, 'SPILL_PATH'], `${url}, a spill path beside paths: []`);
+  }
+  // Every element of paths is judged too, and anything but a path is refused. The path given is a
+  // file, so Open Terminal would answer without launching anything even if it were reached.
+  const element = await request('POST', '/api/files/terminal', { path: OTHER_FILE, paths: [LEFTOVER] });
+  assert.deepEqual([element.status, element.body.code], [403, 'SPILL_PATH'], 'an element of paths');
+  const number = await request('POST', '/api/files/terminal', { path: OTHER_FILE, paths: [42] });
+  assert.deepEqual([number.status, number.body.code], [400, 'PATH_INVALID'], 'a number in paths');
+  const text = await request('POST', '/api/files/terminal', { path: OTHER_FILE, paths: 'x' });
+  assert.deepEqual([text.status, text.body.code], [400, 'PATH_INVALID'], 'paths that is not a list');
+  const beside = await request('DELETE', '/api/files', { paths: [OTHER_FILE], path: outside, dryRun: true });
+  assert.deepEqual([beside.status, beside.body.code], [403, 'OUTSIDE_SCAN_ROOT'], 'a path beside paths is judged as well');
+  // A clean body still reaches its handler.
+  const clean = await request('POST', '/api/files/terminal', { path: OTHER_FILE });
+  assert.deepEqual([clean.status, clean.body.code], [400, 'NOT_A_DIRECTORY'], 'Open Terminal on a file');
+});
+
+test('relocateSecret checks both ends itself: inside a scanned root, and never the spill folder', async () => {
+  const outsideSecret = path.join(DEST, 'id_rsa');
+  fs.writeFileSync(outsideSecret, 'a key');
+  await assert.rejects(relocateSecret(outsideSecret, path.join(APP, 'other', 'keys', 'id_rsa')), /outside every scanned folder/);
+  assert.ok(fs.existsSync(outsideSecret), 'the file outside every scan stayed');
+  const insideSecret = path.join(APP, 'other', 'secret.pem');
+  fs.writeFileSync(insideSecret, 'a key');
+  await assert.rejects(relocateSecret(insideSecret, path.join(DEST, 'secret.pem')), /outside every scanned folder/);
+  await assert.rejects(relocateSecret(insideSecret, path.join(SPILL, 'secret.pem')), new RegExp(`TreeMap's own ${SPILL_DIR} folder`));
+  assert.ok(fs.existsSync(insideSecret), 'and the one inside stayed where it was');
+});
+
+test('the folder itself under a name only the file system folds (ſ for s on APFS) is the folder', { skip: !FOLDS_LONG_S && 'this volume does not fold ſ to s (it is case-sensitive), so ſcan-spill beside app-data is another folder' }, async () => {
+  assert.equal(fs.statSync(LONG_S_SPILL).ino, fs.statSync(SPILL).ino, 'the same folder, by inode');
+  assert.equal(isSpillPath(LONG_S_SPILL), true);
+  assertSpillRefusal(await request('DELETE', '/api/files', { paths: [LONG_S_SPILL], dryRun: true }), 'DELETE /api/files');
+  assertSpillRefusal(await request('POST', '/api/cart/commit', { paths: [LONG_S_SPILL], dryRun: true }), 'the cart commit');
+  assertSpillRefusal(await request('POST', '/api/offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: LONG_S_SPILL, dryRun: true }), 'an offload into it');
+});
+
+test('beside the folder, a link to it is still a link and another folder is another folder', () => {
+  const link = path.join(APP, 'to-spill');
+  fs.symlinkSync(SPILL, link, 'junction');
+  try {
+    assert.equal(isSpillPath(link), false, 'removing the link removes the link, never the folder');
+    assert.equal(isSpillPath(path.join(APP, 'other')), false);
+    assert.equal(isSpillPath(path.join(APP, 'empty-one')), false);
+  } finally {
+    fs.unlinkSync(link);
+  }
+});
+
+test('an offload never plans a copy into the spill folder: a folder named like it sent into app-data', async () => {
+  const users = await settledScan(USER);
+  const away = `${SPILL}.away`;
+  fs.renameSync(SPILL, away); // the folder absent, as on every machine before its first large scan
+  try {
+    assertSpillRefusal(
+      await request('POST', '/api/offload', { scanId: users.scanId, paths: [path.join(USER, SPILL_DIR)], dest: APP, dryRun: true }),
+      'user/scan-spill offloaded into app-data',
+    );
+  } finally {
+    fs.renameSync(away, SPILL);
+  }
+  if (FOLDS_LONG_S) {
+    const others = await settledScan(USER2);
+    assertSpillRefusal(
+      await request('POST', '/api/offload', { scanId: others.scanId, paths: [path.join(USER2, `\u017f${SPILL_DIR.slice(1)}`)], dest: APP, dryRun: true }),
+      'ſcan-spill offloaded into app-data, where that name is the spill folder',
+    );
+  }
+});
+
+test('Autopilot pays the full spill check only for candidates under app-data', async () => {
+  let full = 0;
+  setSpillCheckForTests((p) => {
+    full++;
+    return isSpillPath(p);
+  });
+  const left = path.join(SPILL, '4245-1790656308811-3f2b1c4e-8a7d-4b6c-9e1f-0123456789ab-flags');
+  try {
+    const beside = await request('POST', '/api/autopilot/simulate', { policy: { path: USER, match: { kind: 'custom', minBytes: 1 } } });
+    assert.equal(beside.status, 200, JSON.stringify(beside.body).slice(0, 200));
+    assert.ok(beside.body.items.length >= 20, `a folder beside app-data matched its files (${beside.body.items.length})`);
+    assert.equal(full, 0, 'and cost no full check at all');
+    full = 0;
+    fs.writeFileSync(left, 'what a crash left');
+    const holding = await request('POST', '/api/autopilot/simulate', { policy: { path: HOME, match: { kind: 'custom', minBytes: 1 } } });
+    assert.equal(holding.status, 200, JSON.stringify(holding.body).slice(0, 200));
+    const items = (holding.body.items as { path: string }[]).map((i) => i.path);
+    assert.ok(items.filter((p) => p.startsWith(USER + path.sep)).length >= 20, 'a folder holding app-data matched the user\'s files');
+    const underApp = items.filter((p) => p.startsWith(APP + path.sep)).length;
+    assert.equal(full, underApp + 1, 'one full check per candidate under app-data, the leftover included, and none for the rest');
+    assert.ok((holding.body.skipped as { path: string }[]).some((sk) => sk.path === SPILL), 'and the leftover is still left alone');
+  } finally {
+    setSpillCheckForTests(null);
+    fs.rmSync(left, { force: true });
+  }
 });
 
 /* ─────────────── Empty Folders ─────────────── */

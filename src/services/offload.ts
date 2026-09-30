@@ -18,6 +18,7 @@ import { isInside } from '../utils/pathSanitizer';
 import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
+import { assertNotSpillPath } from '../middleware/pathGuard';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -299,6 +300,11 @@ export async function prepareOffload(
   if (plan.length > MAX_FILES_PER_JOB) {
     throw new AppError(400, 'TOO_MANY_FILES', `That's ${formatCount(plan.length)} files — offload at most ${formatCount(MAX_FILES_PER_JOB)} at a time`);
   }
+  // Nothing is ever copied into TreeMap's own spill folder (Phase 4 §S.5.3): not at `dest`,
+  // which the route refuses, and not at any target the plan makes under it. A selected folder
+  // named like the spill folder, sent into app-data, would become it; one named in a way only
+  // the file system folds (ſ for s) would land in it (T17a's security review).
+  for (const copy of plan) assertNotSpillPath(copy.dest);
   const bytesTotal = plan.reduce((s, p) => s + p.size, 0);
 
   // `null`, never `{ free: 0 }`. Substituting zero here tells the user

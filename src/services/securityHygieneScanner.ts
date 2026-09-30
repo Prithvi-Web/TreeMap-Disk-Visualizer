@@ -2,6 +2,7 @@ import os from 'os';
 import path from 'path';
 import { ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
+import { insideAnyScanRoot, spillPathRefusal } from '../middleware/pathGuard';
 
 /**
  * securityHygieneScanner — secrets in the wrong place (§C5).
@@ -394,6 +395,14 @@ export interface RelocateResult {
  * place.
  */
 export async function relocateSecret(from: string, to: string): Promise<RelocateResult> {
+  // Both ends, checked here as well as by the route: a service that renames a user's file does
+  // not take its caller's word that the path was judged (git gc re-checks the same way; T17a's
+  // security review found a request that reached this with its path unjudged).
+  for (const [end, p] of [['source', from], ['destination', to]] as const) {
+    if (!insideAnyScanRoot(p)) throw new Error(`The ${end} ${p} is outside every scanned folder, so nothing was moved`);
+    const spill = spillPathRefusal(p);
+    if (spill) throw new Error(spill.message);
+  }
   const fsp = await import('fs/promises');
   const src = await fsp.lstat(from);
   if (!src.isFile()) throw new Error('Only a file can be moved to a safer location');

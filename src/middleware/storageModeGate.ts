@@ -35,10 +35,14 @@ function scanIdsOf(req: Request): string[] {
   return [...new Set(candidates.map(scanIdOf).filter((id) => id.length > 0))];
 }
 
-/** The route Express matched, in the table's spelling; HEAD is served by the GET route. */
+/**
+ * The route Express matched, in the table's spelling. HEAD is served by the GET route, and the
+ * mount prefix is matched without regard to case (`/API/duplicates` reaches the `/api` router),
+ * so it is read in lower case; the route's own path is its declaration, already the table's.
+ */
 function routeKeyOf(req: Request): string {
   const method = req.method === 'HEAD' ? 'GET' : req.method;
-  return `${method} ${req.baseUrl}${(req.route as { path: string }).path}`;
+  return `${method} ${req.baseUrl.toLowerCase()}${(req.route as { path: string }).path}`;
 }
 
 export function storageModeGate(req: Request, _res: Response, next: NextFunction): void {
