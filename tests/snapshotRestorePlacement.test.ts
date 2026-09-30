@@ -9,7 +9,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-snapshotRestorePlacement-data-');
 
 import {
-  PLACEMENT_FUNCTIONS, RECOVER_SCRIPT, buildRecoveryScript, recoverFromSnapshots, runAdminPrompt, setAdminPromptForTests,
+  PLACEMENT_FUNCTIONS, RECOVER_SCRIPT, buildRecoveryScript, destinationFolderRefusal, recoverFromSnapshots, runAdminPrompt, setAdminPromptForTests,
 } from '../src/platform/macos/snapshotRecover';
 import { copyOutOfSnapshot } from '../src/platform/snapshotCopy';
 import { LinuxProvider } from '../src/platform/linux';
@@ -26,7 +26,8 @@ import type { VolumeSnapshotRef } from '../src/platform/types';
  * checked once, before a prompt that can stay open for minutes; `cp -a` onto a link planted in
  * between wrote, as root, wherever the link led. Now the root script enters the destination
  * folder by its physical path, refuses one that another account could change, copies into a
- * folder it makes there, and renames the copy into place with `mv -n -h`, confirming it moved.
+ * folder it makes there, and places the copy with a call that fails whatever is at the name,
+ * confirming by the copy's identity that the name holds it (FG4c).
  *
  * The script's placement functions are the text run as root, and they are run here as this user
  * against folders made here — no prompt, no mount, no root. The prompt itself is stood in for
@@ -163,6 +164,91 @@ test('a folder that belongs to another account is refused', { skip: !onMac }, ()
   assert.deepEqual(fs.readdirSync(dest), []);
 });
 
+/* ══════════════════ A folder or a dangling link at the name (FG4c, review #9, #4) ══════════════════ */
+
+/**
+ * `mv -n -h` is not an exclusive rename: a real folder at the name makes it move the copy inside
+ * it (and report nothing wrong), and a dangling link reads as absent and is replaced. So a file
+ * is placed with `link`, which fails whatever is at the name, a symlink with `ln -P -h`, a folder
+ * with `mv -n -h`; the name is checked again just before, and afterwards the name must hold the
+ * copy itself (same device and inode).
+ */
+const beforePlacing = (command: 'link' | 'ln' | 'mv', plant: string): string =>
+  `${command}() { ${plant}; command ${command} "$@"; }`;
+
+test('a real folder that appears at a file\'s name just before it is placed receives nothing', { skip: !onMac }, () => {
+  const dest = tmp('treemap-place-dest-');
+  const { out } = place(dest, 'lost.txt', source(), { before: beforePlacing('link', 'mkdir "./$TM_NAME"'), env: { TM_NAME: 'lost.txt' } });
+  assert.match(out, /^ERROR something appeared at the destination/);
+  assert.notEqual(out, 'PLACED');
+  assert.deepEqual(fs.readdirSync(path.join(dest, 'lost.txt')), [], 'nothing was put inside the folder');
+  assert.deepEqual(fs.readdirSync(dest), ['lost.txt'], 'and the copy made for the move is gone');
+});
+
+test('a dangling link that appears at a file\'s name just before it is placed is not replaced', { skip: !onMac }, () => {
+  const dest = tmp('treemap-place-dest-');
+  const { out } = place(dest, 'lost.txt', source(), { before: beforePlacing('link', 'ln -s ./gone "./$TM_NAME"'), env: { TM_NAME: 'lost.txt' } });
+  assert.match(out, /^ERROR something appeared at the destination/);
+  assert.equal(fs.readlinkSync(path.join(dest, 'lost.txt')), './gone', 'the link is still there');
+  assert.equal(fs.existsSync(path.join(dest, 'gone')), false, 'nothing made where it leads');
+  assert.deepEqual(fs.readdirSync(dest), ['lost.txt']);
+});
+
+test('a real folder that appears at the name while a file or a folder is copied is found before anything is placed', { skip: !onMac }, () => {
+  const plantAfterCopy = 'cp() { command cp "$@"; mkdir "./$TM_NAME"; }';
+  const file = tmp('treemap-place-dest-');
+  const fromFile = place(file, 'lost.txt', source(), { before: plantAfterCopy, env: { TM_NAME: 'lost.txt' } });
+  assert.match(fromFile.out, /^ERROR something appeared at the destination/);
+  assert.deepEqual(fs.readdirSync(path.join(file, 'lost.txt')), []);
+
+  const folder = tmp('treemap-place-dest-');
+  const srcDir = tmp('treemap-place-srcdir-');
+  fs.mkdirSync(path.join(srcDir, 'album'));
+  fs.writeFileSync(path.join(srcDir, 'album', 'a.jpg'), 'jpeg');
+  const fromFolder = place(folder, 'album', path.join(srcDir, 'album'), { before: plantAfterCopy, env: { TM_NAME: 'album' } });
+  assert.match(fromFolder.out, /^ERROR something appeared at the destination/);
+  assert.deepEqual(fs.readdirSync(path.join(folder, 'album')), [], 'the folder that appeared was not moved into');
+  assert.deepEqual(fs.readdirSync(folder), ['album']);
+});
+
+test('a real folder that appears at a folder\'s name at the last moment is found by the copy\'s identity, not reported placed', { skip: !onMac }, () => {
+  const dest = tmp('treemap-place-dest-');
+  const srcDir = tmp('treemap-place-srcdir-');
+  fs.mkdirSync(path.join(srcDir, 'album'));
+  fs.writeFileSync(path.join(srcDir, 'album', 'a.jpg'), 'jpeg');
+  // Between the last check and the rename: mv then moves the copy inside what appeared.
+  const { out } = place(dest, 'album', path.join(srcDir, 'album'), { before: beforePlacing('mv', 'mkdir "./$TM_NAME"'), env: { TM_NAME: 'album' } });
+  assert.match(out, /^ERROR something appeared at the destination/);
+  assert.match(out, /not in its place/);
+  assert.equal(fs.readFileSync(path.join(dest, 'album', 'item', 'a.jpg'), 'utf8'), 'jpeg', 'the copy is where the message says, nothing was written over');
+});
+
+test('a link is restored as a link, and a real folder appearing at its name is found by the copy\'s identity', { skip: !onMac }, () => {
+  const srcDir = tmp('treemap-place-srclink-');
+  fs.symlinkSync('../somewhere/else', path.join(srcDir, 'lost.lnk'));
+  const dest = tmp('treemap-place-dest-');
+  assert.equal(place(dest, 'lost.lnk', path.join(srcDir, 'lost.lnk')).out, 'PLACED');
+  assert.equal(fs.readlinkSync(path.join(dest, 'lost.lnk')), '../somewhere/else', 'the link itself, not what it leads to');
+  assert.deepEqual(fs.readdirSync(dest), ['lost.lnk']);
+
+  const raced = tmp('treemap-place-dest-');
+  const { out } = place(raced, 'lost.lnk', path.join(srcDir, 'lost.lnk'), { before: beforePlacing('ln', 'mkdir "./$TM_NAME"'), env: { TM_NAME: 'lost.lnk' } });
+  assert.match(out, /^ERROR something appeared at the destination/);
+  assert.notEqual(out, 'PLACED');
+});
+
+test('the copy is handed to the user, whole, before it is placed', { skip: !onMac }, () => {
+  // As root the copy would otherwise stay root's; run here as the user, chown is recorded (review #11).
+  const dest = tmp('treemap-place-dest-');
+  const log = path.join(tmp('treemap-place-log-'), 'chown.log');
+  const { out } = place(dest, 'lost.txt', source(), { before: 'chown() { echo "$@" >> "$TM_LOG"; command chown "$@"; }', env: { TM_LOG: log } });
+  assert.equal(out, 'PLACED');
+  assert.ok(fs.existsSync(log), 'chown was called for the copy');
+  const [line, ...rest] = fs.readFileSync(log, 'utf8').trim().split('\n');
+  assert.deepEqual(rest, [], 'once');
+  assert.match(line, new RegExp(`^-R ${String(UID)}:${String(GID)} \\./\\.treemap-restore\\.[A-Za-z0-9]+/item$`), line);
+});
+
 /* ══════════════════ The prompt: stood in for, and refused under a test runner ══════════════════ */
 
 const SNAPSHOTS: VolumeSnapshotRef[] = [
@@ -270,6 +356,86 @@ test('the no-overwrite copy refuses a file, a link and a dangling link at its de
   assert.equal(fs.readFileSync(fresh, 'utf8'), 'from the snapshot');
 });
 
+/**
+ * A folder, a link, and a name of the other kind (FG4c, review #5, #19). `fs.cp`'s flags decide
+ * none of these the same way on every Node: Node 20 — CI's, Electron 31's, the Docker image's —
+ * merges a folder into one already there, `onLink` replaces a link at the destination whatever
+ * the flags say, and a folder onto a file throws rather than answering "taken".
+ */
+function snapshotFolder(): string {
+  const dir = tmp('treemap-copy-srcdir-');
+  const album = path.join(dir, 'album');
+  fs.mkdirSync(path.join(album, 'inner'), { recursive: true });
+  fs.writeFileSync(path.join(album, 'same.txt'), 'from the snapshot');
+  fs.writeFileSync(path.join(album, 'extra.txt'), 'only in the snapshot');
+  fs.writeFileSync(path.join(album, 'inner', 'deep.txt'), 'deep');
+  return album;
+}
+
+test('a folder is never merged into one already at its destination, on any Node', async () => {
+  const album = snapshotFolder();
+  const dir = tmp('treemap-copy-dest-');
+
+  const empty = path.join(dir, 'empty');
+  fs.mkdirSync(empty);
+  assert.equal(await copyOutOfSnapshot(album, empty), false, 'an empty folder there is taken');
+  assert.deepEqual(fs.readdirSync(empty), [], 'and nothing was put in it');
+
+  const busy = path.join(dir, 'busy');
+  fs.mkdirSync(busy);
+  fs.writeFileSync(path.join(busy, 'same.txt'), 'newer work');
+  assert.equal(await copyOutOfSnapshot(album, busy), false);
+  assert.deepEqual(fs.readdirSync(busy), ['same.txt'], 'nothing added beside it');
+  assert.equal(fs.readFileSync(path.join(busy, 'same.txt'), 'utf8'), 'newer work');
+
+  const fresh = path.join(dir, 'fresh');
+  assert.equal(await copyOutOfSnapshot(album, fresh), true);
+  assert.deepEqual(fs.readdirSync(fresh).sort(), ['extra.txt', 'inner', 'same.txt']);
+  assert.equal(fs.readFileSync(path.join(fresh, 'inner', 'deep.txt'), 'utf8'), 'deep');
+});
+
+test('a name of the other kind at the destination is "taken", not a failure', async () => {
+  const album = snapshotFolder();
+  const dir = tmp('treemap-copy-dest-');
+  const file = path.join(dir, 'a-file');
+  fs.writeFileSync(file, 'newer work');
+  assert.equal(await copyOutOfSnapshot(album, file), false, 'a folder onto a file');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'newer work');
+
+  const folder = path.join(dir, 'a-folder');
+  fs.mkdirSync(folder);
+  assert.equal(await copyOutOfSnapshot(path.join(album, 'same.txt'), folder), false, 'a file onto a folder');
+  assert.deepEqual(fs.readdirSync(folder), []);
+});
+
+test('a link is copied as a link, and never over a link already there', async (t) => {
+  const dir = tmp('treemap-copy-links-');
+  const snap = path.join(dir, 'snap');
+  fs.mkdirSync(snap);
+  fs.writeFileSync(path.join(snap, 'older-target'), 'what the older link led to');
+  try {
+    fs.symlinkSync('older-target', path.join(snap, 'lost.lnk'), 'file');
+    fs.symlinkSync('gone-target', path.join(snap, 'dangling.lnk'), 'file');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  const newer = path.join(dir, 'newer.lnk');
+  fs.symlinkSync('newer-target', newer, 'file');
+  assert.equal(await copyOutOfSnapshot(path.join(snap, 'lost.lnk'), newer, { verbatimSymlinks: true }), false,
+    'a link already there is taken (fs.cp would unlink it and make the older one)');
+  assert.equal(fs.readlinkSync(newer), 'newer-target', 'the newer link is still the newer one');
+  assert.equal(await copyOutOfSnapshot(path.join(snap, 'dangling.lnk'), newer, { verbatimSymlinks: true }), false,
+    'a dangling link from the snapshot too, answered rather than thrown');
+
+  const fresh = path.join(dir, 'fresh.lnk');
+  assert.equal(await copyOutOfSnapshot(path.join(snap, 'lost.lnk'), fresh, { verbatimSymlinks: true }), true);
+  assert.equal(fs.readlinkSync(fresh), 'older-target', 'the link as the snapshot holds it');
+  const freshDangling = path.join(dir, 'fresh-dangling.lnk');
+  assert.equal(await copyOutOfSnapshot(path.join(snap, 'dangling.lnk'), freshDangling, { verbatimSymlinks: true }), true);
+  assert.equal(fs.readlinkSync(freshDangling), 'gone-target');
+});
+
 test('a Linux restore onto a name that is already there fails with the reason, and writes nothing', async () => {
   const snap = tmp('treemap-btrfs-snap-');
   fs.mkdirSync(path.join(snap, 'home', 'me'), { recursive: true });
@@ -298,16 +464,88 @@ test('the Windows restore copies through the same no-overwrite copy', () => {
   assert.ok(!body.includes('fsp.cp('), 'and never a copy that overwrites');
 });
 
-test('the macOS helper refusing a name at the destination is reported as the destination taken', async () => {
-  const dest = path.join(tmp('treemap-place-prompt-'), 'a (recovered).txt');
-  setAdminPromptForTests(async () => 'ERROR something appeared at the destination while copying, and nothing was written over it\n');
+test('the macOS helper refusing a name at the destination is reported as the destination taken, however osascript hands it over', async () => {
+  // The helper prints its ERROR line and exits 0, so osascript passes it on as output
+  // (snapshotRootHelper.test.ts runs the helper whole). Were it to exit non-zero, osascript
+  // raises "execution error: <line> (<status>)" instead — the form every refusal took until
+  // FG4c (review #3) — and that is read as the same refusal, never as "could not be opened".
+  const line = 'ERROR something appeared at the destination while copying, and nothing was written over it';
+  const forms: Array<[string, () => Promise<string>]> = [
+    ['printed', async () => `${line}\n`],
+    ['raised', async () => { throw new Error(`0:121: execution error: ${line} (1)`); }],
+  ];
+  for (const [form, answer] of forms) {
+    const dest = path.join(tmp('treemap-place-prompt-'), 'a (recovered).txt');
+    setAdminPromptForTests(answer);
+    try {
+      const result = await recoverFromSnapshots(SNAPSHOTS, '/Users/me/a.txt', dest);
+      assert.equal(result.restored, false, form);
+      assert.equal(result.destinationTaken, true, `${form}: ${JSON.stringify(result)}`);
+      assert.match(result.reason ?? '', /nothing was restored over it/, form);
+    } finally {
+      setAdminPromptForTests(null);
+    }
+  }
+});
+
+/* ══════════════════ The destination folder, checked before the password (FG4c, review #24) ══════════════════ */
+
+test('the destination folder rule: the user\'s or root\'s, and neither group nor others can change it', () => {
+  const dir = '/Users/me/Documents';
+  assert.equal(destinationFolderRefusal({ uid: 501, mode: 0o40700 }, dir, 501), null, 'the user\'s own');
+  assert.equal(destinationFolderRefusal({ uid: 0, mode: 0o40755 }, dir, 501), null, 'root\'s, not writable by others');
+  assert.match(destinationFolderRefusal({ uid: 502, mode: 0o40700 }, dir, 501) ?? '', /belongs to another account/);
+  for (const mode of [0o40775, 0o40757, 0o40777, 0o41777]) {
+    assert.match(destinationFolderRefusal({ uid: 501, mode }, dir, 501) ?? '', /Other accounts on this Mac can change/, mode.toString(8));
+  }
+  assert.match(destinationFolderRefusal({ uid: 0, mode: 0o41777 }, '/Users/Shared', 501) ?? '', /Choose another destination/,
+    'a shared folder such as /Users/Shared, with the way forward');
+});
+
+test('a destination folder other accounts can change is refused before the password is asked for', { skip: process.platform === 'win32' || UID === 0 }, async () => {
+  const destDir = tmp('treemap-place-shared-');
+  fs.chmodSync(destDir, 0o777);
+  let asked = 0;
+  setAdminPromptForTests(async () => { asked++; return 'NOTFOUND\n'; });
   try {
-    const result = await recoverFromSnapshots(SNAPSHOTS, '/Users/me/a.txt', dest);
+    const result = await recoverFromSnapshots(SNAPSHOTS, '/Users/me/a.txt', path.join(destDir, 'a (recovered).txt'));
+    assert.equal(asked, 0, 'no password was asked for, only to be refused after it');
     assert.equal(result.restored, false);
-    assert.equal(result.destinationTaken, true);
-    assert.match(result.reason ?? '', /nothing was restored over it/);
+    assert.equal(result.destinationRefused, true, JSON.stringify(result));
+    assert.match(result.reason ?? '', /Other accounts on this Mac can change/);
   } finally {
     setAdminPromptForTests(null);
+    fs.chmodSync(destDir, 0o700);
+  }
+});
+
+test('each answer of the helper, and of the prompt, is its own 409 code', async () => {
+  const provider = platform() as unknown as Record<'listSnapshots' | 'recoverFromSnapshots', unknown>;
+  const saved = { list: provider.listSnapshots, recover: provider.recoverFromSnapshots };
+  provider.listSnapshots = async () => SNAPSHOTS;
+  // The macOS answers, whatever this machine is: the helper's words go through the module that reads them.
+  provider.recoverFromSnapshots = (s: VolumeSnapshotRef[], o: string, d: string) => recoverFromSnapshots(s, o, d);
+  const cases: Array<[string, () => Promise<string>, string]> = [
+    ['a name there', async () => 'ERROR something appeared at the destination while copying, and nothing was written over it\n', 'DESTINATION_OCCUPIED'],
+    ['a shared folder', async () => 'ERROR other users can change the destination folder /Users/Shared\n', 'DESTINATION_FOLDER_REFUSED'],
+    ['another account\'s folder', async () => 'ERROR the destination folder /Users/other belongs to another user\n', 'DESTINATION_FOLDER_REFUSED'],
+    ['a failed copy', async () => 'ERROR the copy out of the snapshot failed\n', 'RESTORE_FAILED'],
+    ['in no snapshot', async () => 'NOTFOUND\n', 'NOT_IN_ANY_SNAPSHOT'],
+    ['a dismissed prompt', async () => { throw new Error('0:12: execution error: User canceled. (-128)'); }, 'AUTHORIZATION_DECLINED'],
+    ['a prompt that failed', async () => { throw new Error('0:5: execution error: The operation couldn\'t be completed. (1)'); }, 'RESTORE_FAILED'],
+    ['a path with -128 in it', async () => { throw new Error('0:108: execution error: ERROR other users can change the destination folder /Volumes/USB-128GB/Photos (1)'); }, 'DESTINATION_FOLDER_REFUSED'],
+  ];
+  try {
+    for (const [what, answer, code] of cases) {
+      setAdminPromptForTests(answer);
+      const original = path.join(tmp('treemap-place-codes-'), 'notes.txt');
+      await assert.rejects(restoreFromSnapshot({ path: original }),
+        (err: unknown) => err instanceof AppError && err.status === 409 && err.code === code, `${what} is ${code}`);
+    }
+  } finally {
+    setAdminPromptForTests(null);
+    provider.listSnapshots = saved.list;
+    provider.recoverFromSnapshots = saved.recover;
   }
 });
 

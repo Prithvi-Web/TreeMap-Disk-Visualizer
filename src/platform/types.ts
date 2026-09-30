@@ -420,6 +420,13 @@ export interface SnapshotRecoveryResult {
   cancelled?: boolean;
   /** Nothing was restored because a name was at the destination when the copy ran (FG4). */
   destinationTaken?: boolean;
+  /**
+   * Nothing was restored because the destination folder may not receive a copy made as
+   * administrator: another account owns it, or others can change it (macOS, FG4c).
+   */
+  destinationRefused?: boolean;
+  /** Nothing was restored because the restore itself failed — not because no snapshot holds the path (FG4c). */
+  failed?: boolean;
 }
 
 /* ---------- Filesystem snapshots (B4) ---------- */

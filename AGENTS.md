@@ -402,15 +402,21 @@ read-what-you-saw) permission to act.
   (`403 { code: "VIRTUAL_PATH" }`); act on the archive itself.
 - **Snapshot restores never write through an existing name.**
   `POST /api/system/snapshots/restore` checks its destination before the
-  administrator prompt, and the copy checks again when it runs: the macOS
-  root helper enters the destination folder by its physical path, refuses it
-  unless it belongs to the user or root and neither group nor others can
-  write it, copies into a folder it makes there and renames with
-  `mv -n -h`, confirming the copy moved; Linux and Windows copy with
-  `force: false` + `errorOnExist`. A name that appears in between fails the
-  restore and nothing is written over it — answered `409 DESTINATION_OCCUPIED`, as when the name was there
-  before. No test ever raises the password prompt: under a test runner it
-  refuses (`setAdminPromptForTests` stands in).
+  administrator prompt, and the copy checks again when it runs: on macOS the
+  destination folder must belong to the user or root, and neither group nor
+  others may change it — checked before the prompt, and again by the root
+  helper, which enters the folder by its physical path — else
+  `409 DESTINATION_FOLDER_REFUSED`. The helper copies into a folder it makes
+  there, checks the name again, and places the copy with a call that fails
+  whatever is at the name (`link` for a file, `ln -P -h` for a link,
+  `mv -n -h` for a folder), confirming by the copy's own device and inode
+  that the name holds it; Linux and Windows claim the name exclusively too
+  (`symlink`, a non-recursive `mkdir`, an exclusive file copy). A name that
+  appears in between fails the restore and nothing is written over it —
+  answered `409 DESTINATION_OCCUPIED`, as when the name was there before. A
+  restore that failed is `409 RESTORE_FAILED`, never `NOT_IN_ANY_SNAPSHOT`.
+  No test ever raises the password prompt: under a test runner it refuses
+  (`setAdminPromptForTests` stands in).
 - **Git runs hardened, and only in a vetted repository.** A repository found
   under a scanned folder is not trusted: its own `.git/config` can name
   programs for git to start (`core.fsmonitor`, `filter.<x>.clean`, hooks…).

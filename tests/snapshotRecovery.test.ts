@@ -109,7 +109,11 @@ test('the helper’s output contract is exact', () => {
 test('a dismissed password prompt is recognised as a decision, not a fault', () => {
   assert.equal(isUserCancelled('User canceled. (-128)'), true);
   assert.equal(isUserCancelled('execution error: User cancelled. (-128)'), true);
+  assert.equal(isUserCancelled('0:12: execution error: L’utilisateur a annulé. (-128)'), true, 'by the error number, whatever the language');
   assert.equal(isUserCancelled('mount_apfs: Operation not permitted'), false);
+  // The number is AppleScript's, at the end — never a -128 inside a path the message quotes (FG4c, review #3).
+  assert.equal(isUserCancelled('0:108: execution error: ERROR other users can change the destination folder /Volumes/USB-128GB/Photos (1)'), false);
+  assert.equal(isUserCancelled('0:108: execution error: ERROR the destination folder /Users/x-128 belongs to another user (1)'), false);
 });
 
 /* ══════════════════ The helper itself, run for real (unprivileged) ══════════════════ */

@@ -2726,7 +2726,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         { restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()), sizeBytes: int() },
         ['restored', 'originalPath', 'restoredTo', 'fromSnapshotId', 'sizeBytes'],
       )),
-      '409': errorResponse('DESTINATION_OCCUPIED, DESTINATION_IS_FOLDER, DESTINATION_UNVERIFIABLE (the destination could not be checked, so nothing was written over it), DESTINATION_NOT_CLEARED (the file being replaced could not be moved to the Trash), NO_SNAPSHOTS, SNAPSHOTS_UNREADABLE (the snapshot list could not be read — NOT the same as there being none), NOT_IN_ANY_SNAPSHOT, or AUTHORIZATION_DECLINED when the password prompt was dismissed'),
+      '409': errorResponse('DESTINATION_OCCUPIED, DESTINATION_IS_FOLDER, DESTINATION_UNVERIFIABLE (the destination could not be checked, so nothing was written over it), DESTINATION_NOT_CLEARED (the file being replaced could not be moved to the Trash), NO_SNAPSHOTS, SNAPSHOTS_UNREADABLE (the snapshot list could not be read — NOT the same as there being none), NOT_IN_ANY_SNAPSHOT, DESTINATION_FOLDER_REFUSED (macOS: the destination folder belongs to another account or others can change it, so the copy made as administrator is not put there — checked before the password prompt), RESTORE_FAILED (the prompt or the copy failed — NOT the same as the path being in no snapshot), or AUTHORIZATION_DECLINED when the password prompt was dismissed'),
     },
   },
   {

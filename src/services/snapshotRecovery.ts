@@ -177,10 +177,11 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
   // and `false` here is not a harmless default: a restore over a live file is
   // the failure this feature exists to prevent. This check is the early, friendly
   // answer; it is not the only one. The copy itself never writes through a name
-  // that is there by the time it runs (FG4): on macOS the root helper copies
-  // into a folder of its own and renames with `mv -n -h`, in a destination folder
-  // no other account can change, and on Linux and Windows the copy refuses an
-  // existing name (platform/snapshotCopy.ts).
+  // that is there by the time it runs (FG4, FG4c): on macOS the root helper
+  // copies into a folder of its own and places the copy with a call that fails
+  // whatever is at the name, confirmed by the copy's identity, in a destination
+  // folder no other account can change; on Linux and Windows the copy claims
+  // its name exclusively (platform/snapshotCopy.ts).
   const occupied = await fsp.lstat(destination).then(() => true).catch((err: NodeJS.ErrnoException) => {
     // `meansAbsent`, not the wider stat predicate: a wrong "nothing is there"
     // ends in a root-privileged `cp -a` over a live file.
@@ -260,7 +261,13 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     // A dismissed password prompt is an answer, not a fault — 409, and the UI
     // renders it neutrally.
     // A name at the destination when the copy ran (FG4) is the same refusal as one found before.
-    const code = result.cancelled ? 'AUTHORIZATION_DECLINED' : result.destinationTaken ? 'DESTINATION_OCCUPIED' : 'NOT_IN_ANY_SNAPSHOT';
+    // A destination folder refused, and a restore that failed, are neither of them — nor a claim
+    // that no snapshot holds the path (FG4c).
+    const code = result.cancelled ? 'AUTHORIZATION_DECLINED'
+      : result.destinationTaken ? 'DESTINATION_OCCUPIED'
+        : result.destinationRefused ? 'DESTINATION_FOLDER_REFUSED'
+          : result.failed ? 'RESTORE_FAILED'
+            : 'NOT_IN_ANY_SNAPSHOT';
     throw new AppError(409, code, result.reason ?? 'That path could not be recovered from any snapshot.');
   }
 
