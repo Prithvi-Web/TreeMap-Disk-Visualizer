@@ -4,10 +4,21 @@
 // sampled inside that window: self time by function, and inclusive time by function (each function once per sample).
 const fs = require('fs');
 
+/**
+ * A frame as `function file:line`, naming only where the code lives: a node: builtin as it is, the
+ * app's dist/ and node_modules/ from there on, and anything else by its file name alone — a server run
+ * from source, or a preloaded instrument, has an absolute path in the owner's home here (U-0 review,
+ * finding 17).
+ */
 const label = (n) => {
   const cf = n.callFrame;
-  const file = (cf.url || '').replace(/^.*\/(dist|node_modules)\//, '$1/').replace(/^node:/, 'node:');
-  return `${cf.functionName || '(anon)'} ${file}${cf.url ? ':' + (cf.lineNumber + 1) : ''}`;
+  const url = cf.url || '';
+  const file = url.startsWith('node:')
+    ? url
+    : /\/(dist|node_modules)\//.test(url)
+      ? url.replace(/^.*\/(dist|node_modules)\//, '$1/')
+      : url.replace(/^.*[\\/]/, '');
+  return `${cf.functionName || '(anon)'} ${file}${url ? ':' + (cf.lineNumber + 1) : ''}`;
 };
 
 /**

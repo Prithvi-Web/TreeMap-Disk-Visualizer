@@ -32,6 +32,7 @@ type StallReport = { stall: EldLine; samples: number; self: Map<string, number>;
 const prof = require(path.join(TOOLS, 'prof.cjs')) as {
   attributeStalls: (profile: Profile, eld: EldLine[], minStallMs: number) => StallReport[];
 };
+type GduShards = { gduFailure: (e: { killed?: boolean; code?: unknown; signal?: unknown; message?: string }) => string };
 
 function scratch(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -96,6 +97,87 @@ test('run-api\'s sanitizer writes no path deeper than its top-level folder', () 
   assert.deepEqual(back.nested.examples, ['/private/…', '/Volumes/…']);
   assert.equal(back.rootPath, '/', 'the scanned root itself is not a folder name and stays');
   assert.equal(back.note, 'scanning /Users/…', 'a path inside a sentence is cut too, to the end of the string');
+});
+
+test('run-api\'s sanitizer cuts every absolute path to its top-level folder, whatever that folder is called (U-0 review, findings 13 and 16)', () => {
+  // The old sanitizer knew eighteen top-level names and let every other path
+  // through whole: /pkg on the owner's macOS 27, and every Linux or Windows
+  // layout. It cuts on structure now.
+  const cases: Array<[string, string]> = [
+    ['/pkg/inv/x/y', '/pkg/…'],
+    ['/nix/store/abc-openssl/lib', '/nix/…'],
+    ['/mnt/data/taxes/2025.pdf', '/mnt/…'],
+    ['/srv/secret-client/files', '/srv/…'],
+    ['/root/.ssh/id_rsa', '/root/…'],
+    ['/Data/Projects/acme/src', '/Data/…'],
+    ['/.Spotlight-V100/Store-V2/x', '/.Spotlight-V100/…'],
+    ['/Users2/alice/x', '/Users2/…'],
+    ['/Users/a/My "X" Dir/y', '/Users/…'],
+    ['C:\\Users\\alice\\Documents\\taxes.pdf', 'C:\\Users\\…'],
+    ['\\\\fileserver\\share\\alice\\x', '\\\\fileserver\\…'],
+    ['~/Documents/taxes/2025.pdf', '~/…'],
+    ['cannot read "/Users/alice/Library/x": denied', 'cannot read "/Users/…'],
+    ['Command failed: /opt/gdu/bin/gdu -n -x -o /Users/me/out/shard.json /Library', 'Command failed: /opt/…'],
+    ['at probe (file:///Users/me/app/src/x.ts:10:5)', 'at probe (file:///Users/…'],
+  ];
+  for (const [raw, cut] of cases) assert.equal(runApi.sanitize(raw), cut, `${raw} is written as its top-level folder only`);
+  for (const kept of ['/', '/pkg', '/Users/', 'src/services/x.ts', 'a sentence with no path']) {
+    assert.equal(runApi.sanitize(kept), kept, `${kept} names no folder below the top and is kept`);
+  }
+
+  // A saved body is walked value by value: a quote inside a path cannot
+  // break the JSON, and a path in any key or value is cut.
+  const body = {
+    refused: { examples: ['/Users/alice/Library/My "Quoted" Folder', '/mnt/usb/photos'] },
+    note: 'cannot read "/srv/secret/x": denied',
+    byPath: { '/pkg/inv/secret': 3 },
+    count: 7,
+    flag: true,
+    none: null,
+  };
+  assert.doesNotThrow(() => runApi.sanitizeJson(body), 'a quote inside a path cannot break the body it is saved in');
+  const out = runApi.sanitizeJson(body);
+  assert.deepEqual(out, {
+    refused: { examples: ['/Users/…', '/mnt/…'] },
+    note: 'cannot read "/srv/…',
+    byPath: { '/pkg/…': 3 },
+    count: 7,
+    flag: true,
+    none: null,
+  });
+  assert.equal(body.refused.examples[0], '/Users/alice/Library/My "Quoted" Folder', 'and the body it was given is left as it was');
+});
+
+test('gdu-shards records a failed gdu run as a phrase and its exit, never the command line (U-0 review, finding 17)', () => {
+  // execFile's message is "Command failed: <gdu> -n -x -o <outDir>/shard.json <dir>": the tool's path and the output folder's.
+  // Loaded here, not at the top: requiring it must not need a built worktree (WT) or start a run.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const gduShards = require(path.join(TOOLS, 'gdu-shards.cjs')) as GduShards;
+  const message = 'Command failed: /Users/someone/tools/gdu -n -x -o /Users/someone/out/shard.json /Library\nerror: nope';
+  assert.equal(gduShards.gduFailure({ killed: true, message }), 'timeout');
+  assert.equal(gduShards.gduFailure({ code: 3, message }), 'gdu failed (exit 3)');
+  assert.equal(gduShards.gduFailure({ code: null, signal: 'SIGSEGV', message }), 'gdu failed (signal SIGSEGV)');
+  assert.equal(gduShards.gduFailure({ code: 'ENOENT', message: 'spawn /Users/someone/tools/gdu ENOENT' }), 'gdu not found');
+  for (const e of [{ code: 3, message }, { code: 'ENOENT', message: 'spawn /Users/someone/tools/gdu ENOENT' }, { message }]) {
+    assert.doesNotMatch(gduShards.gduFailure(e), /someone|\//, 'no path from the message is kept');
+  }
+});
+
+test('prof names code outside dist/ and node_modules/ by its file name alone (U-0 review, finding 17)', () => {
+  const profile: Profile = {
+    nodes: [
+      { id: 1, callFrame: { functionName: '(root)', url: '', lineNumber: -1 }, children: [2, 3, 4] },
+      { id: 2, callFrame: { functionName: 'fromSource', url: 'file:///Users/someone/project/src/services/scan.ts', lineNumber: 9 } },
+      { id: 3, callFrame: { functionName: 'shipped', url: 'file:///Applications/TreeMap.app/Contents/Resources/app/dist/services/scan.js', lineNumber: 19 } },
+      { id: 4, callFrame: { functionName: 'builtin', url: 'node:internal/timers', lineNumber: 4 } },
+    ],
+    startTime: 0,
+    samples: [2, 3, 4],
+    timeDeltas: [100_000, 100_000, 100_000],
+  };
+  const eld: EldLine[] = [{ t: 10_000, kind: 'start' }, { t: 10_400, kind: 'stall', ms: 400, inflight: [] }];
+  const [r] = prof.attributeStalls(profile, eld, 50);
+  assert.deepEqual([...r.self.keys()].sort(), ['builtin node:internal/timers:5', 'fromSource scan.ts:10', 'shipped dist/services/scan.js:20']);
 });
 
 /* ══════════════ eld: query keys, never their values ══════════════ */

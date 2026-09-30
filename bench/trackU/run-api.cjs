@@ -9,9 +9,29 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const TOP = /\/(Users|Applications|Library|System|private|Volumes|opt|usr|bin|sbin|cores|etc|var|tmp|dev|Network|home|net)(\/[^"]*)?/g;
-const sanitize = (s) => String(s).replace(TOP, (_m, top, rest) => (rest ? `/${top}/…` : `/${top}`));
-const sanitizeJson = (o) => JSON.parse(sanitize(JSON.stringify(o)));
+/*
+ * Every absolute path is cut to its top-level folder, whatever that folder is called (U-0 review, findings
+ * 13 and 16: a list of eighteen known names let /pkg, /nix, /mnt and every Windows path through whole):
+ * a POSIX path (`/top/…`), a drive path (`C:\top\…`), a UNC path (`\\server\…`) and a home path (`~/…`).
+ * A path starts where a slash, drive or tilde follows the start of the string or anything but a name
+ * character, so `src/x.ts` is not one. Everything after the top-level folder is dropped, to the end of the
+ * string: a path may hold spaces and quotes, and nothing in a string says where such a path ends.
+ */
+const START = String.raw`(^|[^\w.~-])`;
+const CUTS = [
+  [new RegExp(`${START}\\/([^/]+)\\/[\\s\\S]+$`), (_m, before, top) => `${before}/${top}/…`],
+  [new RegExp(`${START}([A-Za-z]:\\\\)([^\\\\]+)\\\\[\\s\\S]+$`), (_m, before, drive, top) => `${before}${drive}${top}\\…`],
+  [new RegExp(`${START}\\\\\\\\([^\\\\]+)\\\\[\\s\\S]+$`), (_m, before, server) => `${before}\\\\${server}\\…`],
+  [new RegExp(`${START}~\\/[\\s\\S]+$`), (_m, before) => `${before}~/…`],
+];
+const sanitize = (s) => CUTS.reduce((text, [re, cut]) => text.replace(re, cut), String(s));
+/** A copy of `o` with every string in it (keys included) sanitized: walked, never cut as JSON text, so a quote cannot break it. */
+const sanitizeJson = (o) => {
+  if (typeof o === 'string') return sanitize(o);
+  if (Array.isArray(o)) return o.map(sanitizeJson);
+  if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).map(([k, v]) => [sanitize(k), sanitizeJson(v)]));
+  return o;
+};
 
 // Exported for tests/trackUTools.test.ts; everything below runs only when this file is the program.
 module.exports = { sanitize, sanitizeJson };
