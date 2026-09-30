@@ -130,6 +130,29 @@ async function readDriveRecord(handle: fsp.FileHandle, size: number): Promise<Dr
 }
 
 /**
+ * The record to write: the drive's entries as they stand, each of this destination's replaced by its
+ * own newer self (the same id), and the rest of this destination's added — as JSON, or null when
+ * JSON.stringify cannot write it back (nested past the depth it recurses through).
+ */
+function serializeRecord(record: { fields: Record<string, unknown>; entries: unknown[] }, allEntries: OffloadEntry[], destRoot: string): string | null {
+  const mine = new Map(allEntries.filter((e) => e.destRoot === destRoot).map((e) => [e.id, e]));
+  const merged = record.entries.map((e) => {
+    const id = e !== null && typeof e === 'object' ? (e as { id?: unknown }).id : undefined;
+    const newer = typeof id === 'string' ? mine.get(id) : undefined;
+    if (newer === undefined) return e;
+    mine.delete(newer.id);
+    return newer;
+  });
+  merged.push(...mine.values());
+  try {
+    return JSON.stringify({ ...record.fields, entries: merged }, null, 2);
+  } catch (err) {
+    if (err instanceof RangeError) return null;
+    throw err;
+  }
+}
+
+/**
  * Merge this destination's entries into the record on the drive itself, and answer a sentence when
  * there is something the person should hear, or null.
  *
@@ -178,25 +201,25 @@ async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): 
         await handle.close();
       }
     }
-    if ('unreadable' in record) {
+    const setAside = async (why: string): Promise<void> => {
       const name = `${DEST_MANIFEST.replace(/\.json$/, '')}.unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.json`;
       await fsp.rename(file, path.join(destRoot, name));
-      aside = { name, why: record.unreadable };
+      aside = { name, why };
       record = { fields: {}, entries: [] };
+    };
+    if ('unreadable' in record) await setAside(record.unreadable);
+    // Written out before anything is made on the drive (FG3c): a record JSON reads but cannot write
+    // back — nested past what JSON.stringify recurses through — is set aside like one it cannot read,
+    // rather than leaving the drive's record unwritten on every offload after.
+    let text = serializeRecord(record as { fields: Record<string, unknown>; entries: unknown[] }, allEntries, destRoot);
+    if (text === null) {
+      await setAside('it is nested too deeply to write back');
+      text = serializeRecord({ fields: {}, entries: [] }, allEntries, destRoot) as string;
     }
-    const mine = new Map(allEntries.filter((e) => e.destRoot === destRoot).map((e) => [e.id, e]));
-    const merged = record.entries.map((e) => {
-      const id = e !== null && typeof e === 'object' ? (e as { id?: unknown }).id : undefined;
-      const newer = typeof id === 'string' ? mine.get(id) : undefined;
-      if (newer === undefined) return e;
-      mine.delete(newer.id);
-      return newer;
-    });
-    merged.push(...mine.values());
     tmpPath = path.join(destRoot, `.${DEST_MANIFEST}.${crypto.randomUUID()}.tmp`);
     const out = await fsp.open(tmpPath, EXCLUSIVE_NEW_FILE, 0o644);
     try {
-      await out.writeFile(JSON.stringify({ ...record.fields, entries: merged }, null, 2), 'utf8');
+      await out.writeFile(text, 'utf8');
       await out.sync();
     } finally {
       await out.close();
@@ -205,9 +228,11 @@ async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): 
     tmpPath = null;
     return asideNote(', beside a new one.');
   } catch (err) {
-    // The app-data manifest is authoritative; the drive copy is best-effort.
+    // The app-data manifest is authoritative; the drive copy is best-effort — and a failure is
+    // still said (FG3c), whether or not a record was set aside first.
     console.error('[treemap] destination manifest write failed:', err);
-    return asideNote(`; a new one could not be written (${describeFsError(err)}).`);
+    return asideNote(`; a new one could not be written (${describeFsError(err)}).`)
+      ?? `The record on the destination could not be written (${describeFsError(err)}); the copies are in place, and TreeMap's own record of them is kept.`;
   } finally {
     if (tmpPath) await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
   }

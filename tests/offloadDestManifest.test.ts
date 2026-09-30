@@ -258,6 +258,53 @@ test('a record on the drive that cannot be read whole is never replaced: it is k
   }
 });
 
+/** A record whose entries JSON reads but cannot write back: nested past what JSON.stringify recurses through. */
+const DEEP = 50_000;
+const tooDeep = `{"entries":[${'['.repeat(DEEP)}${']'.repeat(DEEP)}]}`;
+const DEEP_THROWS = ((): boolean => {
+  try {
+    JSON.stringify(JSON.parse(tooDeep), null, 2);
+    return false;
+  } catch {
+    return true;
+  }
+})();
+
+test('a record whose entries cannot be written back is kept beside a new one, rather than freezing the drive\'s record (FG3c #8)', {
+  skip: DEEP_THROWS ? false : 'this runtime writes back a record nested that deep',
+}, async () => {
+  const dest = destination('too-deep');
+  const record = path.join(dest, DEST_MANIFEST);
+  fs.writeFileSync(record, tooDeep);
+  const was = fs.readFileSync(record);
+  const job = await offloadOne(dest);
+  assert.equal(job.status, 'complete', job.error);
+  const aside = fs.readdirSync(dest).filter((n) => n.startsWith(`${DEST_MANIFEST.replace(/\.json$/, '')}.`) && n !== DEST_MANIFEST);
+  assert.equal(aside.length, 1, `the earlier record is kept beside (${fs.readdirSync(dest).join(', ')})`);
+  assert.ok(fs.readFileSync(path.join(dest, aside[0])).equals(was), 'byte for byte');
+  assert.ok((job.error ?? '').includes(aside[0]), `and the job names where (${job.error})`);
+  assert.equal(driveEntries(dest).length, 1, 'the new record lists the copy made there');
+});
+
+test('a record that could not be written says so, even when nothing was set aside (FG3c #8)', async () => {
+  const dest = destination('no-space');
+  type Open = (...args: unknown[]) => Promise<unknown>;
+  const promised = fs.promises as unknown as { open: Open };
+  const realOpen = promised.open;
+  promised.open = (...args: unknown[]) => (/\.treemap-offload-manifest\.json\..*\.tmp$/.test(String(args[0]))
+    ? Promise.reject(Object.assign(new Error('ENOSPC: no space left on device, open'), { code: 'ENOSPC' }))
+    : realOpen(...args));
+  let job: OffloadJob;
+  try {
+    job = await offloadOne(dest);
+  } finally {
+    promised.open = realOpen;
+  }
+  assert.equal(job.status, 'complete', 'the copies are made, and the offload went through');
+  assert.match(job.error ?? '', /record on the destination/, `the job says the record was not written (${job.error})`);
+  assert.ok(!fs.existsSync(path.join(dest, DEST_MANIFEST)), 'and none was');
+});
+
 test('a record that is there but cannot be opened is never replaced (FG3b)', { skip: process.platform === 'win32' ? 'Windows ignores a file\'s mode bits' : process.getuid?.() === 0 ? 'root may open any file' : false }, async () => {
   const dest = destination('unopenable');
   const record = path.join(dest, DEST_MANIFEST);
