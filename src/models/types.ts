@@ -365,9 +365,9 @@ export interface CleanJob {
 export interface CleanResult {
   deleted: string[];
   /**
-   * `stopped`: the trash command was stopped before it answered (its time limit, or a signal), so
-   * the Trash may still finish the move after this answer — the path was not shown to be left in
-   * place (FG3b).
+   * `stopped`: the trash command was stopped before it answered (its time limit, or a signal on
+   * macOS and Linux), so the Trash may still finish the move after this answer — the path was not
+   * shown to be left in place (FG3b).
    */
   failed: { path: string; reason: string; stopped?: true }[];
 }

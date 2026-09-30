@@ -454,7 +454,7 @@ const schemas: Json = {
       failed: arr(obj({
         path: str(),
         reason: str(),
-        stopped: bool('Present (true) when the Trash command was stopped before it answered (its time limit, or a signal): the Trash may still finish the move after this answer'),
+        stopped: bool('Present (true) when the Trash command was stopped before it answered (its time limit, or a signal on macOS and Linux): the Trash may still finish the move after this answer'),
       }, ['path', 'reason'])),
     },
     ['deleted', 'failed'],

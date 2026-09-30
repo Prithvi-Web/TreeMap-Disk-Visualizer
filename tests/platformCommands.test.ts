@@ -5,7 +5,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-platformCommands-data-');
 
 import { emptyTrashCommands } from '../src/services/trash';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -167,15 +167,50 @@ test('a command gets its environment: the way a path reaches a Windows script', 
   await assert.rejects(check(), 'without the variable the child exits 3');
 });
 
-test('a command stopped at its time limit or by a signal says so, apart from one that failed on its own (FG3b)', async () => {
+/** What `runCommand` rejects with, or null when the command succeeded. */
+const outcomeOf = (cmd: { cmd: string; args: string[] }, timeoutMs?: number): Promise<unknown> =>
+  runCommand(cmd, timeoutMs).then(() => null, (err: unknown) => err);
+
+/** A child that ends itself as a signal from outside would; on Windows, through TerminateProcess. */
+const SELF_KILLED = { cmd: process.execPath, args: ['-e', 'process.kill(process.pid, "SIGKILL")'] };
+
+test('a command stopped at its time limit says so, apart from one that failed on its own (FG3b)', async () => {
   // osascript stopped at its limit may still have handed Finder the move, so the capsule keeps a
-  // copy it cannot vouch for: the caller must be able to tell this failure from a refusal.
-  const stopped = await runCommand({ cmd: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] }, 200).then(() => null, (err: unknown) => err);
+  // copy it cannot vouch for: the caller must be able to tell this failure from a refusal. Every
+  // platform: execFile stops the child through its own handle and says so (`killed`, and the
+  // signal it sent, which libuv records on Windows too for a child killed through its handle).
+  const stopped = await outcomeOf({ cmd: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] }, 200);
   assert.ok(stopped instanceof CommandStopped, `stopped at its limit: ${String(stopped)}`);
-  const signalled = await runCommand({ cmd: process.execPath, args: ['-e', 'process.kill(process.pid, "SIGKILL")'] }).then(() => null, (err: unknown) => err);
-  assert.ok(signalled instanceof CommandStopped, `ended by a signal from outside: ${String(signalled)}`);
-  const failed = await runCommand({ cmd: process.execPath, args: ['-e', 'process.exit(3)'] }).then(() => null, (err: unknown) => err);
+  const failed = await outcomeOf({ cmd: process.execPath, args: ['-e', 'process.exit(3)'] });
   assert.ok(failed instanceof Error && !(failed instanceof CommandStopped), `failed on its own: ${String(failed)}`);
+});
+
+test('a command ended by a signal from outside says so (FG3b)', {
+  skip: process.platform === 'win32'
+    ? 'Windows has no signals: a child ended from outside reports only an exit code (the next test pins what it reports)'
+    : false,
+}, async () => {
+  const signalled = await outcomeOf(SELF_KILLED);
+  assert.ok(signalled instanceof CommandStopped, `ended by a signal from outside: ${String(signalled)}`);
+});
+
+test('on Windows a command ended from outside reports exit code 1 and no signal, so it reads as a failure of its own (FG3c)', {
+  skip: process.platform === 'win32' ? false : 'what libuv reports on Windows; POSIX reports the signal (the test above)',
+}, async () => {
+  // libuv ends a process "by signal" on Windows with TerminateProcess(handle, 1), and records a
+  // signal only for a child the parent itself killed through its handle (uv_process_kill). So a
+  // child ended by anyone else (itself here, taskkill, a person) exits 1 with no signal, and
+  // execFile does not call it killed: runCommand cannot tell it from a failure there. Only the time
+  // limit (the first test of these) is told apart on Windows.
+  const reported = await new Promise<{ code: unknown; signal: unknown; killed: unknown }>((resolve) => {
+    execFile(SELF_KILLED.cmd, SELF_KILLED.args, (err) => {
+      const e = err as (Error & { code?: unknown; signal?: unknown; killed?: unknown }) | null;
+      resolve({ code: e?.code, signal: e?.signal, killed: e?.killed });
+    });
+  });
+  assert.deepEqual(reported, { code: 1, signal: null, killed: false }, 'what execFile reports for it');
+  const ended = await outcomeOf(SELF_KILLED);
+  assert.ok(ended instanceof Error && !(ended instanceof CommandStopped), `so runCommand calls it a failure: ${String(ended)}`);
 });
 
 test('a terminal starts in its folder: the way a folder reaches a Windows terminal', async () => {

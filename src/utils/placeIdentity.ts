@@ -34,9 +34,9 @@ export async function identityOf(p: string): Promise<Identity> {
  *   is untouched. The only verdict under which a caller may say so.
  * - `unsure` — anything else: nothing known stood there before the step (it went, or was never
  *   seen, before the step could move it — not the step's doing), a look that failed, or a step
- *   stopped before it answered (`stopped`: its time limit, or a signal), which may still be carried
- *   out after this look. A caller keeps whatever it would otherwise discard, and says it could not
- *   tell.
+ *   stopped before it answered (`stopped`: its time limit, or a signal on macOS and Linux), which
+ *   may still be carried out after this look. A caller keeps whatever it would otherwise discard,
+ *   and says it could not tell.
  */
 export function afterReportedFailure(before: Identity, now: Identity, stopped: boolean): 'gone' | 'there' | 'unsure' {
   if (typeof before !== 'string' || now === UNKNOWN) return 'unsure';

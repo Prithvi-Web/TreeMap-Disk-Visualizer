@@ -48,17 +48,20 @@ export interface PlatformCommand {
  */
 
 /**
- * A command stopped before it answered — at its time limit, or by a signal from outside — rather
- * than one that failed on its own. What it was asked to do may still happen: osascript stopped at
- * its limit has already handed Finder the move, and Finder can finish it afterwards (FG3b). A caller
- * that would act on "it did not happen" treats this as "not known".
+ * A command stopped before it answered — at its time limit, or (on macOS and Linux) by a signal
+ * from outside — rather than one that failed on its own. What it was asked to do may still happen:
+ * osascript stopped at its limit has already handed Finder the move, and Finder can finish it
+ * afterwards (FG3b). A caller that would act on "it did not happen" treats this as "not known".
  */
 export class CommandStopped extends Error {}
 
 /**
  * The error a finished command rejects with: `CommandStopped` when it did not end on its own —
- * execFile stopped it (`killed`, its time limit) or a signal ended it (`signal`: the out-of-memory
- * killer, a person) — and a plain Error when it exited with a failure.
+ * execFile stopped it (`killed`, its time limit, on every platform) or a signal ended it (`signal`:
+ * the out-of-memory killer, a person; macOS and Linux only) — and a plain Error when it exited with
+ * a failure. Windows has no signals: libuv ends a process there with TerminateProcess(handle, 1) and
+ * reports a signal only for a child this process killed itself, so a command ended by anyone else
+ * exits 1 with no signal and reads as a failure of its own (tests/platformCommands.test.ts, FG3c).
  */
 function commandError(err: Error & { killed?: boolean; signal?: NodeJS.Signals | null }, stderr: string): Error {
   const detail = (stderr || err.message || 'command failed').trim();
