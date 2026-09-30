@@ -256,11 +256,58 @@ test('the index line shows while a build runs, says "still indexing" after the p
 });
 
 test('a build that fails clears the line: indexing is an optimisation, never a requirement', async () => {
-  const h = harness({ status: statusFor(HOME_PROJECTS), results: [Object.assign(new Error('Stopped at 10 items'), { status: 500 })], rootPath: HOME_PROJECTS });
+  const h = harness({ status: statusFor(HOME_PROJECTS), results: [Object.assign(new Error('The folder could not be read.'), { status: 500, code: 'INDEX_BUILD_FAILED' })], rootPath: HOME_PROJECTS });
   await h.build(HOME_PROJECTS, scanStats(50_000));
   assert.equal(h.posts().length, 1);
   assert.equal(h.els.indexLine.hidden, true);
-  assert.equal(h.badges.length, 0);
+  // Finding 5: the badge above the line describes this folder, from a status asked after the failure.
+  assert.equal(h.badges.length, 1, 'the badge is painted again for the folder on screen');
+  assert.equal(h.calls.filter((c) => c.url.startsWith('/api/index/status')).length, 2, 'from a status asked once the build had ended');
+});
+
+/* ══════════════════ a build that stopped at the cap (Track U review of U-1) ══════════════════ */
+
+const STOP = 'Stopped at 1,000,000 items: more than TreeMap indexes on its own.';
+const stopped = (maxEntries = M) => ({ maxEntries, at: Date.UTC(2026, 8, 30), reason: `Stopped at ${maxEntries.toLocaleString('en-US')} items: more than TreeMap indexes on its own.` });
+
+test('a build that stops at its cap says so on the line, in the server\'s sentence, and the badge is painted again', async () => {
+  const capError = Object.assign(new Error(STOP), { status: 409, code: 'INDEX_CAP_REACHED', maxEntries: M });
+  const h = harness({ status: statusFor(HOME_PROJECTS), results: [{ status: 'running', phase: 'enumerating', processed: 5000 }, capError], rootPath: HOME_PROJECTS });
+  await h.build(HOME_PROJECTS, scanStats(900_000));
+  assert.equal(h.els.indexLine.hidden, false, 'the line stays, instead of vanishing with no word');
+  assert.equal(h.els.indexLine.textContent, `Not indexed automatically. ${STOP}`);
+  assert.equal(h.badges.length, 1, 'and the badge describes the folder as it now is');
+});
+
+test('a folder whose last capped build stopped at the cap is offered, not built again after the next scan', async () => {
+  const saved = { path: HOME_PROJECTS, state: 'stale', live: false, builtAt: 1, fileCount: 800_000, dirCount: 100_000 };
+  for (const [label, root] of [['no saved index', null], ['a stale saved index under the limit', saved]] as const) {
+    const h = harness({ status: { ...statusFor(HOME_PROJECTS, root), stoppedAtCap: stopped() }, rootPath: HOME_PROJECTS });
+    await h.build(HOME_PROJECTS, scanStats(900_000));
+    assert.equal(h.posts().length, 0, `${label}: the same doomed build is not started again`);
+    assert.equal(h.els.indexLine.textContent, `Not indexed automatically. ${STOP}`, `${label}: the line says why`);
+    assert.equal(h.badges.length, 1, `${label}: and the badge is painted for this folder`);
+  }
+  // A stop at a smaller cap says nothing about a larger one: the server's limit was raised since.
+  const raised = harness({ status: { ...statusFor(HOME_PROJECTS), stoppedAtCap: stopped(10) }, rootPath: HOME_PROJECTS });
+  await raised.build(HOME_PROJECTS, scanStats(900_000));
+  assert.equal(raised.posts().length, 1, 'a stop at ten items does not stop a build capped at a million');
+});
+
+test('the badge is painted for the folder on screen however the plan ends: offer, none, or no status at all', async () => {
+  const offer = harness({ status: statusFor('/'), rootPath: '/' });
+  await offer.build('/', scanStats(M + 1));
+  assert.deepEqual(offer.badges, [statusFor('/')], 'an offer paints this folder\'s badge — no index here, so none — instead of the last folder\'s');
+  const current = { path: HOME_PROJECTS, state: 'ready', live: true, builtAt: 1, fileCount: 1, dirCount: 1 };
+  const none = harness({ status: statusFor(HOME_PROJECTS, current), rootPath: HOME_PROJECTS });
+  await none.build(HOME_PROJECTS, scanStats(2));
+  assert.deepEqual(none.badges, [statusFor(HOME_PROJECTS, current)], 'nothing to build: the badge still describes this folder');
+  const unknown = harness({ status: new Error('no index service'), rootPath: HOME_PROJECTS });
+  await unknown.build(HOME_PROJECTS, scanStats(2));
+  assert.deepEqual(unknown.badges, [null], 'no status: no badge, rather than another folder\'s');
+  const elsewhere = harness({ status: statusFor('/'), rootPath: '/Users/x/Elsewhere' });
+  await elsewhere.build('/', scanStats(M + 1));
+  assert.deepEqual(elsewhere.badges, [], 'a folder no longer on screen paints nothing');
 });
 
 test('a line for a folder no longer on screen is not painted', async () => {
@@ -291,6 +338,16 @@ test('an exact root over the threshold reads "saved <date>; not refreshed automa
   assert.match(inside.innerHTML, /Scan again to refresh it\./);
   const under = badge({ path: HOME_PROJECTS, indexed: true, root: { ...oversized, path: HOME_PROJECTS, fileCount: 900, dirCount: 100 }, running: [], autoBuild: { maxEntries: M } });
   assert.match(under.innerHTML, /Scan again to refresh it\./, 'a stale root under the threshold keeps its sentence');
+});
+
+test('a saved index under the threshold whose folder stopped at the cap reads "not refreshed automatically" too', () => {
+  const builtAt = Date.UTC(2026, 8, 28, 12);
+  const saved = { path: HOME_PROJECTS, state: 'stale', live: false, builtAt, fileCount: 800_000, dirCount: 100_000 };
+  const b = badge({ path: HOME_PROJECTS, indexed: true, root: saved, running: [], autoBuild: { maxEntries: M }, stoppedAtCap: { maxEntries: M, at: 1, reason: 'x' } });
+  assert.match(b.innerHTML, /Saved Sep 28, 2026; not refreshed automatically\./, 'its next scan offers instead of rebuilding, so no scan will refresh it');
+  assert.doesNotMatch(b.innerHTML, /Scan again to refresh it/);
+  const raised = badge({ path: HOME_PROJECTS, indexed: true, root: saved, running: [], autoBuild: { maxEntries: M }, stoppedAtCap: { maxEntries: 10, at: 1, reason: 'x' } });
+  assert.match(raised.innerHTML, /Scan again to refresh it\./, 'a stop under a smaller cap than today\'s does not hold it back');
 });
 
 function allocationPanel(status: unknown) {
@@ -387,7 +444,7 @@ test('status?path= carries autoBuild.maxEntries equal to the exported constant, 
   try {
     const r = await call(base, 'GET', '/api/index/status?path=' + encodeURIComponent(dir));
     assert.equal(r.status, 200);
-    assert.deepEqual(Object.keys(r.json), ['path', 'indexed', 'root', 'running', 'autoBuild'], 'the four keys it had, in order, and one more at the end');
+    assert.deepEqual(Object.keys(r.json), ['path', 'indexed', 'root', 'running', 'autoBuild', 'stoppedAtCap'], 'the four keys it had, in order, then autoBuild and stoppedAtCap at the end');
     assert.equal(r.json.path, dir);
     assert.equal(r.json.indexed, true);
     assert.deepEqual(r.json.root, JSON.parse(JSON.stringify(rootFor(dir))), 'the root that serves the path, unchanged');
@@ -413,7 +470,8 @@ test('a build past its maxEntries stops, is cancelled with the sentence, and lea
     assert.equal(started.status, 202);
     const jobId = String(started.json.jobId);
     const settled = await settle(base, jobId);
-    assert.equal(settled.status, 500, 'the job did not complete');
+    assert.equal(settled.status, 409, 'the job did not complete, and did not fail either');
+    assert.equal(settled.json.code, 'INDEX_CAP_REACHED');
     assert.equal(settled.json.error, 'Stopped at 50 items: more than TreeMap indexes on its own.', 'and says why, in the sentence');
     const cancel = await call(base, 'POST', `/api/index/${jobId}/cancel`);
     assert.equal(cancel.json.status, 'cancelled', 'it ended cancelled, not failed');
@@ -431,7 +489,7 @@ test('a build of exactly maxEntries items completes; one more is stopped', async
   assert.equal(exact.state, 'ready', 'ten entries under a limit of ten is built');
   assert.equal(exact.fileCount + exact.dirCount, 10);
   await assert.rejects(buildIndex(dir, { live: false, maxEntries: 9 }), { message: 'Stopped at 9 items: more than TreeMap indexes on its own.' });
-  assert.equal(getRoot(dir), null, 'and the stopped build leaves nothing');
+  assert.deepEqual(getRoot(dir), exact, 'and the stopped build leaves the saved index exactly as it was');
 });
 
 test("maxEntries of 0, -1 or 'x' is refused with 400", async () => {

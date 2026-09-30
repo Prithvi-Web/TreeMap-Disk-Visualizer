@@ -11,6 +11,7 @@ import {
   INDEX_AUTO_MAX_ENTRIES,
   IndexCapReached,
   buildIndex,
+  capStopFor,
   deleteIndex,
   getRoot,
   listRoots,
@@ -55,6 +56,12 @@ interface BuildJob {
   cancelled: boolean;
   error?: string;
   result?: IndexedRoot;
+  /** The cap the build was started with; absent for an explicit, uncapped build. */
+  maxEntries?: number;
+  /** True when the build stopped at `maxEntries` — cancelled, not failed. */
+  capReached?: boolean;
+  /** Settles (never rejects) when the job has; a request queued behind it waits on this. */
+  settled?: Promise<void>;
 }
 
 const jobs = new Map<string, BuildJob>();
@@ -126,6 +133,72 @@ function autoBuild(): { maxEntries: number } {
 }
 
 /**
+ * Whether a running build started with cap `running` answers a request for
+ * cap `requested` (undefined is no cap): it does when it is capped no
+ * tighter. An uncapped build answers every request; a capped one never
+ * answers an uncapped request, which would otherwise end with the running
+ * build's cap and nothing written (Track U review of U-1, finding 3).
+ */
+function capCovers(running: number | undefined, requested: number | undefined): boolean {
+  return running === undefined || (requested !== undefined && running >= requested);
+}
+
+/** Tests only: while set, every job waits for this before its build starts. */
+let buildGateForTests: Promise<void> | null = null;
+
+/** Tests only: hold every index build that starts until `gate` settles; null lets them start at once. */
+export function holdIndexBuildsForTests(gate: Promise<void> | null): void {
+  buildGateForTests = gate;
+}
+
+/**
+ * Run one job to its end. Never rejects: a job waiting behind this one reads
+ * the outcome from the job, not from a rejection.
+ *
+ * A job queued behind `ahead` (a build of the same folder with a tighter cap)
+ * starts once that one has settled. If that one completed, the folder fitted
+ * under its cap, so it fits this job too: its index is this job's answer, and
+ * the folder is not walked a second time.
+ */
+async function runJob(job: BuildJob, ahead: BuildJob | undefined): Promise<void> {
+  const end = (status: BuildJob['status'], fields: Partial<BuildJob>): void => {
+    Object.assign(job, fields, { status, finishedAt: Date.now() });
+  };
+  try {
+    if (ahead?.settled) await ahead.settled;
+    if (buildGateForTests) await buildGateForTests;
+    if (job.cancelled) {
+      end('cancelled', { phase: 'error', error: 'cancelled' });
+      return;
+    }
+    if (ahead && ahead.status === 'complete' && ahead.result) {
+      end('complete', { phase: 'done', processed: ahead.processed, result: ahead.result });
+      return;
+    }
+    const root = await buildIndex(job.rootPath, {
+      ...(job.maxEntries === undefined ? {} : { maxEntries: job.maxEntries }),
+      isCancelled: () => job.cancelled,
+      onProgress: (p) => {
+        job.phase = p.phase;
+        job.processed = p.processed;
+        job.currentPath = p.currentPath;
+      },
+    });
+    end('complete', { phase: 'done', result: root });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    // A build stopped at its cap was not a failure: the folder is larger
+    // than TreeMap indexes on its own, and the sentence says so.
+    const capReached = err instanceof IndexCapReached;
+    end(message === 'cancelled' || capReached ? 'cancelled' : 'error', {
+      phase: 'error',
+      error: message,
+      ...(capReached ? { capReached: true } : {}),
+    });
+  }
+}
+
+/**
  * POST /api/index/build { path, maxEntries? } → 202 { jobId }
  *
  * Returns immediately; progress rides the SSE stream. Indexing a large volume
@@ -133,9 +206,16 @@ function autoBuild(): { maxEntries: number } {
  * request open for it.
  *
  * `maxEntries` (a positive whole number, anything else is 400) caps the build:
- * past it the walk stops, nothing is kept and the job ends `cancelled` with a
- * sentence saying so. The page sends the status's `autoBuild.maxEntries` with
- * every build it starts on its own; without it a build is not capped.
+ * past it the walk stops, the folder's saved index (if any) is left exactly as
+ * it was, the stop is remembered (the status's `stoppedAtCap`) and the job
+ * ends `cancelled` with a sentence saying so. The page sends the status's
+ * `autoBuild.maxEntries` with every build it starts on its own; without it a
+ * build is not capped.
+ *
+ * A request for a folder already being built joins that build when its cap
+ * is no tighter (`alreadyRunning: true`, with the cap it joined, null for
+ * none); otherwise it gets a job of its own that starts once that build has
+ * settled.
  */
 indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Response) => {
   reapJobs();
@@ -147,9 +227,10 @@ indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Respon
   // able to index its way around the restriction.
   assertScanAllowed(await getPolicy(), rootPath);
 
-  const existing = [...jobs.values()].find((j) => j.rootPath === rootPath && j.status === 'running');
-  if (existing) {
-    res.status(202).json({ jobId: existing.jobId, status: 'running', alreadyRunning: true });
+  const running = [...jobs.values()].filter((j) => j.rootPath === rootPath && j.status === 'running');
+  const joined = running.find((j) => capCovers(j.maxEntries, maxEntries));
+  if (joined) {
+    res.status(202).json({ jobId: joined.jobId, status: 'running', alreadyRunning: true, maxEntries: joined.maxEntries ?? null });
     return;
   }
 
@@ -162,34 +243,12 @@ indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Respon
     currentPath: rootPath,
     startedAt: Date.now(),
     cancelled: false,
+    ...(maxEntries === undefined ? {} : { maxEntries }),
   };
   jobs.set(job.jobId, job);
-
-  // Deliberately not awaited: the response goes out now.
-  void buildIndex(rootPath, {
-    ...(maxEntries === undefined ? {} : { maxEntries }),
-    isCancelled: () => job.cancelled,
-    onProgress: (p) => {
-      job.phase = p.phase;
-      job.processed = p.processed;
-      job.currentPath = p.currentPath;
-    },
-  })
-    .then((root) => {
-      job.status = 'complete';
-      job.phase = 'done';
-      job.result = root;
-      job.finishedAt = Date.now();
-    })
-    .catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      // A build stopped at its cap was not a failure: the folder is larger
-      // than TreeMap indexes on its own, and the sentence says so.
-      job.status = message === 'cancelled' || err instanceof IndexCapReached ? 'cancelled' : 'error';
-      job.phase = 'error';
-      job.error = message;
-      job.finishedAt = Date.now();
-    });
+  // Deliberately not awaited: the response goes out now. Queued behind the
+  // newest build of the same folder, which itself waits on any before it.
+  job.settled = runJob(job, running.at(-1));
 
   res.status(202).json({ jobId: job.jobId, status: 'running' });
 });
@@ -213,7 +272,12 @@ indexRouter.get('/index/:jobId/progress', (req: Request, res: Response) => {
     if (job.status === 'complete' && job.result) {
       sseSend(res, { type: 'complete', root: job.result });
     } else {
-      sseSend(res, { type: 'error', message: job.error ?? 'Index build failed' });
+      sseSend(res, {
+        type: 'error',
+        message: job.error ?? 'Index build failed',
+        // Stopped at its cap rather than failed: said in a code beside the sentence, as /result says it.
+        ...(job.capReached ? { code: 'INDEX_CAP_REACHED', maxEntries: job.maxEntries } : {}),
+      });
     }
     closeClient(client);
   };
@@ -258,12 +322,22 @@ indexRouter.get('/index/:jobId/progress', (req: Request, res: Response) => {
   req.on('close', () => closeClient(client));
 });
 
-/** GET /api/index/:jobId/result — 202 while running, 200 when done. */
+/**
+ * GET /api/index/:jobId/result — 202 while running, 200 when done.
+ *
+ * A build that stopped at its cap answers 409 INDEX_CAP_REACHED with the
+ * sentence and the cap: nothing failed, the folder holds more than the build
+ * may write. Anything else that did not complete (a failure, a cancel) is
+ * 500 INDEX_BUILD_FAILED, as it always was.
+ */
 indexRouter.get('/index/:jobId/result', (req: Request, res: Response) => {
   const job = requireJob(req.params.jobId);
   if (job.status === 'running') {
     res.status(202).json({ status: 'running', phase: job.phase, processed: job.processed, currentPath: job.currentPath });
     return;
+  }
+  if (job.capReached) {
+    throw new AppError(409, 'INDEX_CAP_REACHED', job.error ?? 'Stopped at its cap', { maxEntries: job.maxEntries });
   }
   if (job.status !== 'complete' || !job.result) {
     throw new AppError(500, 'INDEX_BUILD_FAILED', job.error ?? 'Index build failed');
@@ -284,7 +358,9 @@ indexRouter.post('/index/:jobId/cancel', (req: Request, res: Response) => {
  * With no `path`, every indexed root. With one, the root that would serve it —
  * which is what the Dashboard asks on load to decide between rendering
  * instantly and starting a scan. Both carry `autoBuild: { maxEntries }`, the
- * most items a folder may hold for the page to index it on its own.
+ * most items a folder may hold for the page to index it on its own; with a
+ * path, `stoppedAtCap` follows it: `{ maxEntries, at, reason }` when the last
+ * capped build of exactly that folder stopped at its cap, else null.
  *
  * A root's `live` says whether a watcher is attached now. `state: 'ready'`
  * alone does not: a watch that could not be established leaves a freshly
@@ -316,6 +392,10 @@ indexRouter.get('/index/status', guardQueryPath('path'), (req: Request, res: Res
       .map((j) => ({ jobId: j.jobId, phase: j.phase, processed: j.processed })),
     // After every earlier key, so each keeps its position (plan U-1).
     autoBuild: autoBuild(),
+    // Whether the last capped build of exactly this folder stopped at its
+    // cap, or null: the page then offers instead of building it again after
+    // every scan (Track U review of U-1).
+    stoppedAtCap: capStopFor(target),
   });
 });
 

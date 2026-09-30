@@ -2291,11 +2291,14 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     requestBody: jsonBody(obj({
       path: str('Absolute folder path'),
       maxEntries: int(
-        'Optional cap, a positive integer: past this many entries the walk stops, nothing is kept and the job ends cancelled with a sentence. The page sends GET /api/index/status\'s autoBuild.maxEntries with every build it starts on its own',
+        'Optional cap, a positive integer: past this many entries the walk stops, nothing it wrote is kept, the folder\'s saved index (if any) is left exactly as it was, the stop is remembered (GET /api/index/status?path=\'s stoppedAtCap) and the job ends cancelled with a sentence (GET /result answers 409 INDEX_CAP_REACHED). The page sends GET /api/index/status\'s autoBuild.maxEntries with every build it starts on its own',
       ),
     }, ['path'])),
     responses: {
-      '202': jsonResponse('Build started', obj({ jobId: str(), status: str("'running'") }, ['jobId'])),
+      '202': jsonResponse(
+        'Build started. A request for a folder already being built joins that build when its cap is no tighter (none covers any): alreadyRunning is then true and maxEntries is the cap it joined (null for none). Otherwise it gets a job of its own, which starts once that build has settled and, if that build completed, answers with its index',
+        obj({ jobId: str(), status: str("'running'"), alreadyRunning: bool(), maxEntries: nullable(int()) }, ['jobId']),
+      ),
       '400': errorResponse('MAX_ENTRIES_INVALID — maxEntries is not a positive integer'),
       '403': errorResponse('POLICY_ROOT_NOT_ALLOWED — outside the configured allowedRoots'),
     },
@@ -2307,7 +2310,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'index',
     destructive: false,
     parameters: [pathParam('jobId', 'Job id from POST /api/index/build')],
-    responses: { '200': sseResponse('progress / complete / error / shutdown frames') },
+    responses: { '200': sseResponse('progress / complete / error / shutdown frames. An error frame for a build stopped at its cap also carries code INDEX_CAP_REACHED and maxEntries') },
   },
   {
     method: 'get',
@@ -2320,6 +2323,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '200': jsonResponse('Index root', opaque('status, root')),
       '202': running202,
       '404': errorResponse('JOB_NOT_FOUND'),
+      '409': errorResponse('INDEX_CAP_REACHED — the build stopped at its maxEntries (carried in the body): the folder holds more than it may write. Nothing failed; the saved index, if any, is as it was'),
+      '500': errorResponse('INDEX_BUILD_FAILED — the build failed or was cancelled'),
     },
   },
   {
@@ -2342,7 +2347,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '200': jsonResponse(
         'Index status',
         opaque(
-          '{ roots[], dbPath, dbBytes, autoBuild } or, with ?path=, { path, indexed, root, running[], autoBuild }. autoBuild is { maxEntries }: the most items a folder may hold for TreeMap to index it on its own after a scan. A root is current when state is ready and live is true',
+          '{ roots[], dbPath, dbBytes, autoBuild } or, with ?path=, { path, indexed, root, running[], autoBuild, stoppedAtCap }. autoBuild is { maxEntries }: the most items a folder may hold for TreeMap to index it on its own after a scan. stoppedAtCap is { maxEntries, at, reason } when the last capped build of exactly that folder stopped at its cap (kept until a build of it completes or its index is deleted), else null. A root is current when state is ready and live is true',
         ),
       ),
     },

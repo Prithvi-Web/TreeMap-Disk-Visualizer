@@ -917,7 +917,7 @@ test('the background index build waits for the job before reporting its state', 
   assert.match(fn, /pending: 'return'/, 'taking each 202 body from the shared wrapper, not a thrown "still working"');
   const settled = fn.indexOf("r.status !== 'running') break;");
   assert.notEqual(settled, -1, 'the loop ends only on a status that is no longer running');
-  assert.ok(settled < fn.indexOf('renderIndexBadge('), 'and the badge is painted after it');
+  assert.ok(settled < fn.indexOf('badge(await indexStatusFor(path))'), 'and the badge is painted after it, from a status asked then');
 });
 
 test('the index badge respects reduced motion', () => {

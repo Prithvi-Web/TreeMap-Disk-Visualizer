@@ -211,6 +211,17 @@ function schemaSql(): string {
     -- B-tree to sort: measured 757 ms of walking, 449 ms with this. The
     -- existing idx_nodes_child is (parent_id, name) and cannot serve the sort.
     CREATE INDEX IF NOT EXISTS idx_nodes_child_size ON nodes(parent_id, size DESC);
+
+    -- Folders whose capped build stopped at its cap (Track U review of U-1):
+    -- the walk counted more than the build may write, so the page offers
+    -- instead of starting the same doomed build after every scan. A table of
+    -- its own, created where missing, so no schema_version bump (U-D4): an
+    -- older TreeMap opening this file ignores it.
+    CREATE TABLE IF NOT EXISTS cap_stops (
+      path        TEXT PRIMARY KEY,
+      max_entries INTEGER NOT NULL,
+      stopped_at  INTEGER NOT NULL
+    );
   `;
 }
 
@@ -341,11 +352,32 @@ export interface BuildOptions {
   /**
    * The most entries (the folder itself included) this build may write. Past
    * it the walk stops, what was written is discarded exactly as a cancel
-   * discards it, and the build rejects with `IndexCapReached`. The page sends
-   * `INDEX_AUTO_MAX_ENTRIES` with every build it starts on its own; absent,
-   * nothing is capped (an explicit build).
+   * discards it, the stop is remembered (`capStopFor`), and the build rejects
+   * with `IndexCapReached`. The page sends `INDEX_AUTO_MAX_ENTRIES` with every
+   * build it starts on its own; absent, nothing is capped (an explicit build).
+   *
+   * A capped build is written ASIDE: under a roots row of its own, at a path
+   * no folder can have, swapped in for the folder's saved index only once it
+   * has finished. Until then the saved root, its rows and its watcher are
+   * untouched, so a build that stops at its cap, is cancelled, fails or dies
+   * with the process leaves the saved index exactly as it was (the owner's
+   * rule, plan U-Q4: a saved index is never deleted automatically).
    */
   maxEntries?: number;
+}
+
+/**
+ * The start of the path a capped build's roots row holds while it is being
+ * written. Every indexed root is an absolute path (`/…`, `C:\…`, `\\…`), so
+ * no folder's path begins like this: `getRoot` and `rootFor` can never
+ * resolve to it, and `listRoots` and search leave it out.
+ */
+const ASIDE_PREFIX = 'building-aside:';
+let asideSeq = 0;
+
+/** Whether a roots row is a capped build still being written aside. */
+function isAside(rootPath: string): boolean {
+  return rootPath.startsWith(ASIDE_PREFIX);
 }
 
 /**
@@ -371,9 +403,34 @@ export const INDEX_AUTO_MAX_ENTRIES = 1_000_000;
  */
 export class IndexCapReached extends Error {
   constructor(readonly maxEntries: number) {
-    super(`Stopped at ${formatCount(maxEntries)} items: more than TreeMap indexes on its own.`);
+    super(capSentence(maxEntries));
     this.name = 'IndexCapReached';
   }
+}
+
+function capSentence(maxEntries: number): string {
+  return `Stopped at ${formatCount(maxEntries)} items: more than TreeMap indexes on its own.`;
+}
+
+/** A folder whose last capped build stopped at its cap: the cap, when, and the sentence the build ended with. */
+export interface CapStop {
+  maxEntries: number;
+  at: number;
+  reason: string;
+}
+
+/**
+ * Whether the last capped build of exactly `rootPath` stopped at its cap,
+ * or null. Kept in the index database, so a restart does not forget it, until
+ * a build of that folder completes (`rebuild`) or its index is deleted
+ * (`deleteIndex`). The page reads it from `GET /api/index/status?path=` and
+ * offers instead of starting the same doomed build after every scan.
+ */
+export function capStopFor(rootPath: string): CapStop | null {
+  const row = openIndex().prepare('SELECT max_entries, stopped_at FROM cap_stops WHERE path = ?').get(rootPath) as
+    | { max_entries: number; stopped_at: number }
+    | undefined;
+  return row ? { maxEntries: row.max_entries, at: row.stopped_at, reason: capSentence(row.max_entries) } : null;
 }
 
 /** How many rows to insert per transaction. */
@@ -415,24 +472,42 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   const handle = openIndex();
   const provider = platform();
 
-  stopWatcher(root); // a rebuild invalidates any watcher on the old rows
-  staleReasons.delete(root); // and whatever made the old rows stale
+  // A capped build is written aside (`BuildOptions.maxEntries`): the saved
+  // root keeps its rows, its watcher and its reason for being stale until
+  // this build has finished and is swapped in. An explicit build replaces it
+  // up front, as it always has (U-D3: an explicit build is unchanged).
+  const aside = opts.maxEntries !== undefined;
+  const buildPath = aside ? `${ASIDE_PREFIX}${process.pid}:${++asideSeq}:${root}` : root;
 
-  // Replace any previous index for this root atomically.
+  if (!aside) {
+    stopWatcher(root); // a rebuild invalidates any watcher on the old rows
+    staleReasons.delete(root); // and whatever made the old rows stale
+  }
+
+  // Replace any previous index for this root atomically — or, aside, leave it
+  // where it is. This is the transaction that inserts the build's 'building'
+  // row, where U-D6's id reservation belongs when U-15 lands.
   handle
     .transaction(() => {
-      const prior = handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number } | undefined;
-      if (prior) {
-        handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(prior.id);
-        handle.prepare('DELETE FROM roots WHERE id = ?').run(prior.id);
+      if (!aside) {
+        const prior = handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number } | undefined;
+        if (prior) {
+          handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(prior.id);
+          handle.prepare('DELETE FROM roots WHERE id = ?').run(prior.id);
+        }
       }
       handle
         .prepare("INSERT INTO roots (path, state, mechanism) VALUES (?, 'building', ?)")
-        .run(root, 'readdir + lstat');
+        .run(buildPath, 'readdir + lstat');
     })
     .call(null);
 
-  const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number }).id;
+  const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(buildPath) as { id: number }).id;
+  /** Drops what this build wrote — its rows, then its root — as a cancel always has. */
+  const discard = (): void => {
+    handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(rootId);
+    handle.prepare('DELETE FROM roots WHERE id = ?').run(rootId);
+  };
 
   const insert = handle.prepare(
     `INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
@@ -457,9 +532,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
 
   const insertMany = handle.transaction((batch: typeof pending) => {
     for (const item of batch) {
-      // Every insert is a true insert — the root's previous rows were deleted
-      // up front — so the returned rowid IS the node's id. That is what lets
-      // v3 drop the old per-batch read-back query entirely.
+      // Every insert is a true insert — the rows go under this build's own
+      // root, never over a previous one's — so the returned rowid IS the
+      // node's id. That is what lets v3 drop the old per-batch read-back
+      // query entirely.
       idByPath.set(item.path, Number(insert.run(item.row).lastInsertRowid));
     }
   });
@@ -551,20 +627,40 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     if (!capped) flush();
 
     if (capped || opts.isCancelled?.()) {
-      handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(rootId);
-      handle.prepare('DELETE FROM roots WHERE id = ?').run(rootId);
+      discard();
+      if (capped) rememberCapStop(handle, root, opts.maxEntries!);
       throw capped ? new IndexCapReached(opts.maxEntries!) : new Error('cancelled');
     }
 
     opts.onProgress?.({ phase: 'summing', processed, currentPath: root });
     const totalSize = rollUpSizes(handle, rootId);
 
+    if (aside) {
+      // The swap. The saved root's watcher goes first (on macOS its OS watch
+      // is held across this by `buildIndex`), then, in one transaction, the
+      // saved root and its rows go and this build takes the folder's path.
+      stopWatcher(root);
+      staleReasons.delete(root);
+    }
     handle
-      .prepare(
-        `UPDATE roots SET state = 'ready', built_at = ?, file_count = ?, dir_count = ?, total_size = ?, error = NULL
-         WHERE id = ?`,
-      )
-      .run(Date.now(), fileCount, dirCount, totalSize, rootId);
+      .transaction(() => {
+        if (aside) {
+          const prior = handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number } | undefined;
+          if (prior) {
+            handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(prior.id);
+            handle.prepare('DELETE FROM roots WHERE id = ?').run(prior.id);
+          }
+        }
+        handle
+          .prepare(
+            `UPDATE roots SET path = ?, state = 'ready', built_at = ?, file_count = ?, dir_count = ?, total_size = ?, error = NULL
+             WHERE id = ?`,
+          )
+          .run(root, Date.now(), fileCount, dirCount, totalSize, rootId);
+        // A build that finished is the answer to whether the folder fits.
+        handle.prepare('DELETE FROM cap_stops WHERE path = ?').run(root);
+      })
+      .call(null);
 
     opts.onProgress?.({ phase: 'done', processed, currentPath: root });
     if (opts.live !== false) startWatcher(root);
@@ -572,11 +668,37 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message !== 'cancelled' && !(err instanceof IndexCapReached)) {
-      handle.prepare("UPDATE roots SET state = 'error', error = ? WHERE id = ?").run(message, rootId);
+      if (aside) {
+        // Nothing half-written is kept, and the saved index stays the
+        // folder's. A database that has gone away (closed under the build, a
+        // process ending) leaves the row 'building', which the next open
+        // discards.
+        try {
+          discard();
+        } catch {
+          /* see above */
+        }
+      } else {
+        handle.prepare("UPDATE roots SET state = 'error', error = ? WHERE id = ?").run(message, rootId);
+      }
     }
     opts.onProgress?.({ phase: 'error', processed, currentPath: root });
     throw err;
   }
+}
+
+/**
+ * Remember that a capped build of `rootPath` stopped at `maxEntries`. The
+ * larger of two stops is kept: a walk past a million entries is also past a
+ * thousand, not the other way round.
+ */
+function rememberCapStop(handle: Database.Database, rootPath: string, maxEntries: number): void {
+  handle
+    .prepare(
+      `INSERT INTO cap_stops (path, max_entries, stopped_at) VALUES (?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET max_entries = MAX(max_entries, excluded.max_entries), stopped_at = excluded.stopped_at`,
+    )
+    .run(rootPath, maxEntries, Date.now());
 }
 
 /**
@@ -624,7 +746,8 @@ function rollUpSizes(handle: Database.Database, rootId: number): number {
 export function listRoots(): IndexedRoot[] {
   const handle = openIndex();
   const rows = handle.prepare('SELECT * FROM roots ORDER BY path').all() as Record<string, unknown>[];
-  return rows.map(toIndexedRoot);
+  // A capped build still being written aside is no folder's index yet.
+  return rows.filter((row) => !isAside(String(row.path))).map(toIndexedRoot);
 }
 
 export function getRoot(rootPath: string): IndexedRoot | null {
@@ -677,9 +800,12 @@ export function deleteIndex(rootPath?: string): number {
     removed = (handle.prepare('SELECT COUNT(*) c FROM roots').get() as { c: number }).c;
     handle.prepare('DELETE FROM nodes').run();
     handle.prepare('DELETE FROM roots').run();
+    handle.prepare('DELETE FROM cap_stops').run();
   } else {
     stopWatcher(rootPath);
     staleReasons.delete(rootPath);
+    // Deleting a folder's index starts it afresh: its next scan may build again.
+    handle.prepare('DELETE FROM cap_stops WHERE path = ?').run(rootPath);
     const row = handle.prepare('SELECT id FROM roots WHERE path = ?').get(rootPath) as { id: number } | undefined;
     if (!row) return 0;
     handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(row.id);
@@ -1823,8 +1949,11 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
     };
   }
 
-  const where: string[] = [];
-  const params: (string | number)[] = [];
+  // Never a row of a capped build still being written aside: it is no
+  // folder's index yet, and its rows would be found twice beside the saved
+  // index's, under a path no folder has.
+  const where: string[] = ['n.root_id NOT IN (SELECT id FROM roots WHERE substr(path, 1, ?) = ?)'];
+  const params: (string | number)[] = [ASIDE_PREFIX.length, ASIDE_PREFIX];
 
   if (parsed.kind === 'extension') {
     where.push('n.ext = ?', 'n.is_dir = 0');

@@ -21,11 +21,16 @@ function renderIndexBadge(info) {
   const why = info.root.state === 'stale' ? info.root.staleReason : '';
   // This folder's own index, holding more items than TreeMap indexes on its
   // own (plan U-1): a scan will not rebuild it, so "Scan again to refresh it"
-  // would promise what never happens. It says when it was saved instead.
+  // would promise what never happens. It says when it was saved instead. The
+  // same holds when the folder's last automatic build stopped at the cap (its
+  // walk counts what the scan's "don't scan" patterns skip): the next scan
+  // offers rather than rebuilds (Track U review of U-1).
   const max = info.autoBuild ? info.autoBuild.maxEntries : null;
-  const oversized = info.root.path === info.path && typeof max === 'number' &&
-    info.root.fileCount + info.root.dirCount > max;
-  const refresh = oversized
+  const own = info.root.path === info.path && typeof max === 'number';
+  const oversized = own && info.root.fileCount + info.root.dirCount > max;
+  const stop = info.stoppedAtCap;
+  const heldBack = own && !!stop && typeof stop.maxEntries === 'number' && stop.maxEntries >= max;
+  const refresh = oversized || heldBack
     ? (info.root.builtAt ? ' Saved ' + escapeHtml(formatDate(info.root.builtAt)) + '; not refreshed automatically.' : ' Not refreshed automatically.')
     : ' Scan again to refresh it.';
   el.classList.toggle('stale', stale);
@@ -60,11 +65,18 @@ let indexAutoMaxEntries = null;
  * An unknown count is never read as small: no stats, a null, missing or NaN
  * `scanned`, or no `autoBuild` at all is 'none'. A current index (ready, and
  * watched) is not rebuilt. Nor is this folder's own index when it holds more
- * than the limit: a rebuild deletes the old rows first and would then stop at
- * the limit, leaving nothing — the owner's saved index is never deleted
- * automatically.
+ * than the limit: a rebuild would stop at the limit, a whole walk for
+ * nothing (the server keeps the saved index; it is never deleted
+ * automatically).
+ *
+ * `stoppedAtCap` is the status's: the last capped build of exactly this
+ * folder stopped at its cap. Its walk counts what the scan's "don't scan"
+ * patterns skip, so the scan's own count can be under the limit while the
+ * walk is over it; building again would walk the same million entries and
+ * keep none. That is an offer, while the cap it stopped at is at least
+ * today's (a stop at a smaller cap says nothing about a larger one).
  */
-function indexAutoPlan(stats, autoBuild, exactRoot) {
+function indexAutoPlan(stats, autoBuild, exactRoot, stoppedAtCap) {
   const max = autoBuild ? autoBuild.maxEntries : undefined;
   if (typeof max !== 'number' || !Number.isFinite(max) || max < 1) return 'none';
   // Only a local scan: a cloud account has no filesystem to watch, and a
@@ -76,14 +88,16 @@ function indexAutoPlan(stats, autoBuild, exactRoot) {
   if (!small) return 'offer';
   if (exactRoot && exactRoot.fileCount + exactRoot.dirCount > max) return 'none';
   if (exactRoot && exactRoot.state === 'ready' && exactRoot.live === true) return 'none';
+  if (stoppedAtCap && typeof stoppedAtCap.maxEntries === 'number' && stoppedAtCap.maxEntries >= max) return 'offer';
   return 'build';
 }
 
 /**
  * The line under the index badge: a build that is running, one that outlived
  * the page's ten minutes of close polling, or why a folder was not indexed.
- * `line` is null (clear it), or { kind: 'building' | 'background', processed }
- * or { kind: 'offer', scanned, maxEntries }.
+ * `line` is null (clear it), or { kind: 'building' | 'background', processed },
+ * { kind: 'offer', scanned, maxEntries } or { kind: 'stopped', reason } (a
+ * build stopped at its cap, now or last time, in the server's sentence).
  */
 function renderIndexLine(line) {
   const el = $('indexLine');
@@ -93,9 +107,11 @@ function renderIndexLine(line) {
   el.textContent =
     line.kind === 'offer'
       ? `Not indexed automatically — ${formatCount(line.scanned)} items is more than TreeMap indexes on its own (up to ${formatCount(line.maxEntries)}).`
-      : line.kind === 'background'
-        ? `Still indexing in the background${soFar}`
-        : `Indexing this folder for instant opening${soFar}`;
+      : line.kind === 'stopped'
+        ? `Not indexed automatically. ${line.reason}`
+        : line.kind === 'background'
+          ? `Still indexing in the background${soFar}`
+          : `Indexing this folder for instant opening${soFar}`;
   el.hidden = false;
 }
 
@@ -183,7 +199,13 @@ async function openFromIndex(path, info) {
  * `stats` is the finished scan's (`scanned`, `engine`); the limit is the
  * server's, and the build request carries it, so the server stops a build
  * that walks past it (its walk does not honour the scan's "don't scan"
- * patterns, and the folder can grow meanwhile).
+ * patterns, and the folder can grow meanwhile). A stop keeps the saved index
+ * as it was, says so on the line, and is remembered by the server, so the
+ * next scan offers instead of building again.
+ *
+ * However it ends — built, offered, nothing to do, stopped, failed — the
+ * badge is painted again for this folder: until then it describes whatever
+ * was on screen before (Track U review of U-1, finding 5).
  */
 async function buildIndexInBackground(path, stats) {
   const gen = ++indexLineGen;
@@ -191,7 +213,9 @@ async function buildIndexInBackground(path, stats) {
   // else while a big index was building. The loaded tree's own root is the
   // test — `state.lastScan` carries timing, not a path.
   const onScreen = () => !!state.root && state.root.path === path;
-  const paint = (line) => { if (gen === indexLineGen && onScreen()) renderIndexLine(line); };
+  const ours = () => gen === indexLineGen && onScreen();
+  const paint = (line) => { if (ours()) renderIndexLine(line); };
+  const badge = (info) => { if (ours()) renderIndexBadge(info); };
   // A poll every half second for ten minutes; past that the build is said to
   // be running in the background, and followed every ten seconds until it
   // settles rather than dropped.
@@ -199,16 +223,19 @@ async function buildIndexInBackground(path, stats) {
   const WINDOW_MS = 600000;
   const BACKGROUND_POLL_MS = 10000;
   try {
-    if (!path || path.startsWith('cloud://')) { paint(null); return; }
+    if (!path || path.startsWith('cloud://')) { paint(null); badge(null); return; }
     const status = await indexStatusFor(path);
-    if (!status) { paint(null); return; }
+    if (!status) { paint(null); badge(null); return; }
     const exactRoot = status.root && status.root.path === path ? status.root : null;
-    const plan = indexAutoPlan(stats, status.autoBuild, exactRoot);
+    const plan = indexAutoPlan(stats, status.autoBuild, exactRoot, status.stoppedAtCap);
     if (plan === 'offer') {
-      paint({ kind: 'offer', scanned: stats.scanned, maxEntries: status.autoBuild.maxEntries });
+      paint(stats.scanned > status.autoBuild.maxEntries
+        ? { kind: 'offer', scanned: stats.scanned, maxEntries: status.autoBuild.maxEntries }
+        : { kind: 'stopped', reason: status.stoppedAtCap.reason });
+      badge(status);
       return;
     }
-    if (plan !== 'build') { paint(null); return; }
+    if (plan !== 'build') { paint(null); badge(status); return; }
     const started = await api('/api/index/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -228,11 +255,14 @@ async function buildIndexInBackground(path, stats) {
       await new Promise((resolve) => setTimeout(resolve, outlived ? BACKGROUND_POLL_MS : POLL_MS));
     }
     paint(null);
-    const info = await indexStatusFor(path);
-    if (info && onScreen()) renderIndexBadge(info);
-  } catch {
-    paint(null);
-    /* indexing is an optimisation, never a requirement — scanning still works */
+    badge(await indexStatusFor(path));
+  } catch (e) {
+    // Stopped at the cap: nothing failed, and the saved index (if any) is as
+    // it was — the line says why, in the server's sentence. Anything else:
+    // indexing is an optimisation, never a requirement, and scanning still
+    // works, so the line just clears.
+    paint(e && e.code === 'INDEX_CAP_REACHED' ? { kind: 'stopped', reason: e.message } : null);
+    badge(await indexStatusFor(path));
   }
 }
 
