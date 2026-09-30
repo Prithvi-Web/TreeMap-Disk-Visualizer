@@ -254,6 +254,59 @@ export async function sendFinalEvent(res: Response, scan: ScanResult): Promise<v
   }
 }
 
+/** The progress stream's timer period. */
+export const PROGRESS_TICK_MS = 150;
+
+/**
+ * Unchanged ticks after which the unchanged `progress` frame is sent again as
+ * a heartbeat (plan U-2): 14 × 150 ms ≈ 2.1 s, so two of them fit inside the
+ * 6 s after which the page's watchdog calls the stream quiet and asks the
+ * server itself. It used to be a `: keep-alive` comment every 10 s, which
+ * EventSource never hands to the page — so a scan whose count stood still (a
+ * second walk, the ingest, the first frame being built) looked stalled, and
+ * the watchdog fetched the whole 238.6 MB result every 3 s. The frame keeps
+ * its shape (P8-1): a heartbeat is the same frame again.
+ */
+export const HEARTBEAT_TICKS = 14;
+
+/** What one progress stream remembers between ticks. */
+export interface ProgressTickState {
+  /** The count last sent. */
+  lastScanned: number;
+  /** Ticks since a frame was last sent. */
+  quietTicks: number;
+}
+
+/**
+ * One tick of the progress stream, pure: whether to send the progress frame
+ * now, and the state to carry to the next tick. A frame goes out when the
+ * count moved, and again after HEARTBEAT_TICKS unchanged ticks; nothing goes
+ * out once the complete frame's first byte is written, however long that
+ * frame takes. `currentPath` is part of the frame; U-9 also sends a frame
+ * when it alone moves.
+ */
+export function progressTick(
+  state: ProgressTickState,
+  input: { scanned: number; currentPath: string; firstByteWritten: boolean },
+): { state: ProgressTickState; send: boolean } {
+  if (input.firstByteWritten) return { state, send: false };
+  if (input.scanned !== state.lastScanned) return { state: { lastScanned: input.scanned, quietTicks: 0 }, send: true };
+  const quietTicks = state.quietTicks + 1;
+  if (quietTicks >= HEARTBEAT_TICKS) return { state: { lastScanned: state.lastScanned, quietTicks: 0 }, send: true };
+  return { state: { lastScanned: state.lastScanned, quietTicks }, send: false };
+}
+
+let finalFrameHold: Promise<void> | null = null;
+
+/**
+ * Tests only: hold every progress stream's complete frame until `hold`
+ * settles, as if building it took that long — the seam that shows heartbeats
+ * continue until the frame's first byte. null lets frames go at once again.
+ */
+export function holdFinalFrameForTests(hold: Promise<void> | null): void {
+  finalFrameHold = hold;
+}
+
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */
 scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
@@ -266,37 +319,40 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   });
   res.flushHeaders();
 
-  let lastScanned = -1;
-  let lastBeat = Date.now();
+  let tick: ProgressTickState = { lastScanned: -1, quietTicks: 0 };
+  // Heartbeats go on until the complete frame's first byte, including while
+  // that frame is being built: the timer keeps running after the scan ends,
+  // and stops only when the frame starts. sendFinalEvent writes its first
+  // byte in the same turn it is called (its count pass is synchronous), so
+  // the flag flips just before the call; a build that yields (U-18) moves it
+  // to the first write.
+  let firstByteWritten = false;
 
   let finishing = false;
   const finish = (): void => {
     if (finishing) return;
     finishing = true;
-    clearInterval(timer);
-    void sendFinalEvent(res, scan).finally(() => closeClient(client));
+    void (async () => {
+      if (finalFrameHold) await finalFrameHold;
+      if (res.writableEnded || res.destroyed) return; // the client left, or the server is shutting down
+      firstByteWritten = true;
+      clearInterval(timer);
+      await sendFinalEvent(res, scan);
+    })().finally(() => closeClient(client));
   };
 
   const timer = setInterval(() => {
     try {
-      if (scan.status !== 'running') {
-        finish();
-        return;
-      }
-      if (scan.scanned !== lastScanned) {
-        lastScanned = scan.scanned;
-        sseSend(res, { type: 'progress', scanned: scan.scanned, currentPath: scan.currentPath });
-        lastBeat = Date.now();
-      } else if (Date.now() - lastBeat > 10_000) {
-        res.write(': keep-alive\n\n'); // comment frame, ignored by EventSource
-        lastBeat = Date.now();
-      }
+      if (scan.status !== 'running') finish();
+      const next = progressTick(tick, { scanned: scan.scanned, currentPath: scan.currentPath, firstByteWritten });
+      tick = next.state;
+      if (next.send) sseSend(res, { type: 'progress', scanned: scan.scanned, currentPath: scan.currentPath });
     } catch {
       // Nothing sits above a timer callback to catch a throw, so anything
       // escaping would kill the process. Drop this client instead.
       closeClient(client);
     }
-  }, 150);
+  }, PROGRESS_TICK_MS);
 
   const client: SseClient = { res, timer };
   sseClients.add(client);
@@ -304,7 +360,7 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   // Send an immediate first frame so the UI updates without waiting a tick.
   if (scan.status === 'running') {
     sseSend(res, { type: 'progress', scanned: scan.scanned, currentPath: scan.currentPath });
-    lastScanned = scan.scanned;
+    tick = { lastScanned: scan.scanned, quietTicks: 0 };
   } else {
     finish();
   }

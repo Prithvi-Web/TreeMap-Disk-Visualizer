@@ -22,7 +22,9 @@ OpenAPI 3 spec).
 
 1. **Scan.** `POST /api/scan` with `{ "path": "/absolute/dir" }` → `202 { scanId }`.
    Poll `GET /api/scan/{scanId}/stats` until `status` is `"complete"`
-   (or stream `GET /api/scan/{scanId}/progress`, Server-Sent Events).
+   (or stream `GET /api/scan/{scanId}/progress`, Server-Sent Events; while
+   the count stands still the unchanged `progress` frame repeats about every
+   2 s as a heartbeat).
    Agents can skip the polling: `POST /api/scan?wait=true&waitMs=55000`
    blocks until the scan settles and answers `200` with the stats inline
    (`202 { status: "running" }` if it outlives `waitMs`). Scans live in

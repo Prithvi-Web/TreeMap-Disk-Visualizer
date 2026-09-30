@@ -322,58 +322,116 @@ function followScanProgress(scanId, path, fast, t0) {
 
   const es = new EventSource(`/api/scan/${scanId}/progress`);
   state.es = es;
-  // Watchdog: SSE can stall silently through proxies (no error event, no
-  // frames). If the stream goes quiet mid-scan, poll the result directly.
+  // Watchdog (plan U-2): SSE can stall silently through proxies (no error
+  // event, no frames), and a server that is busy — a second walk, the
+  // ingest, the first frame being built — sends the unchanged progress frame
+  // again every ~2 s as a heartbeat. So a stream that has said nothing for
+  // QUIET_MS is asked about, with the small /stats, never the result: the
+  // result is the whole first frame (238.6 MB on the Track U disk), and
+  // asking for it every tick serialized it four and eight times over.
+  //  - One poll at a time. A /stats still out after IN_FLIGHT_TICKS ticks is
+  //    abandoned (aborted) and counts as nobody answering; a /result is given
+  //    RESULT_IN_FLIGHT_TICKS, because a frame that size takes longer than
+  //    fifteen seconds to build and send, and abandoning it would only ask
+  //    for it again.
+  //  - /stats "complete" while the stream is open counts one tick of
+  //    FRAME_GRACE_TICKS: the complete frame is on its way. Only after the
+  //    grace is /result fetched, once. "running" starts the grace again.
+  //  - A stream that has closed goes straight to /result: nothing else can
+  //    deliver it.
+  const QUIET_MS = 6000;
+  const IN_FLIGHT_TICKS = 5;
+  const RESULT_IN_FLIGHT_TICKS = 40;
+  const FRAME_GRACE_TICKS = 10;
+  const NO_ANSWER = 'Couldn’t reach TreeMap — its own server stopped answering. Check the app is still running, then try again.';
   let lastSseAt = performance.now();
   let finished = false;
   let lastAnnounced = 0; // seconds — the live region speaks once every ten
   // Consecutive polls nobody answered. A refused connection (status 0), an
-  // unreadable body or a proxy's 502–504 all mean the server is not there to
-  // finish this scan; five in a row — fifteen seconds of silence — ends the
+  // unreadable body, a proxy's 502–504 or a poll abandoned in flight all mean
+  // the server is not there to finish this scan; five in a row ends the
   // wait, because chrome that spins forever over a dead server is a lie.
   let dead = 0;
+  let poll = null; // { controller, ticks, limit } while a request is out
+  let completeTicks = 0;
+  const stop = () => { finished = true; clearInterval(watchdog); if (poll) poll.controller.abort(); closeEventSource(); };
+  const noAnswer = (message) => {
+    if (++dead >= 5 && !finished) { stop(); failScan(message); }
+  };
+  /**
+   * Completion from /result: the stream closed, or the grace passed. The
+   * counters are the /stats body already in hand when there is one — asked
+   * once, not again — and scanStatsFor's otherwise.
+   */
+  const completeFromResult = async (mine, statsBody) => {
+    mine.limit = RESULT_IN_FLIGHT_TICKS;
+    mine.ticks = 0;
+    const r = await api(`/api/scan/${scanId}/result`, { signal: mine.controller.signal });
+    dead = 0;
+    if (r.status === 'complete' && !finished) {
+      stop();
+      if (!isCloud) rememberScannedRoot(path);
+      if (fast) showFastRescanStat(scanId);
+      let stats;
+      if (statsBody) {
+        const { scanId: _scanId, status: _status, ...rest } = statsBody;
+        stats = rest;
+      } else {
+        stats = await scanStatsFor(scanId, r);
+      }
+      finishScan(r.root, performance.now() - t0, stats);
+    }
+  };
   const watchdog = setInterval(async () => {
     if (!state.scanning || finished) { clearInterval(watchdog); return; }
-    if (performance.now() - lastSseAt < 6000) return;
-    try {
-      const r = await api(`/api/scan/${scanId}/result`);
-      dead = 0;
-      if (r.status === 'complete' && !finished) {
-        finished = true;
-        clearInterval(watchdog);
-        closeEventSource();
-        if (!isCloud) rememberScannedRoot(path);
-        if (fast) showFastRescanStat(scanId);
-        finishScan(r.root, performance.now() - t0, await scanStatsFor(scanId, r));
+    if (poll) {
+      // Never a second request beside one in flight.
+      if (++poll.ticks >= poll.limit) {
+        poll.ticks = 0;
+        poll.controller.abort();
+        noAnswer(NO_ANSWER);
       }
+      return;
+    }
+    const open = state.es === es && es.readyState !== EventSource.CLOSED;
+    if (open && performance.now() - lastSseAt < QUIET_MS) return;
+    const mine = { controller: new AbortController(), ticks: 0, limit: IN_FLIGHT_TICKS };
+    poll = mine;
+    try {
+      if (!open) { await completeFromResult(mine, null); return; }
+      const s = await api(`/api/scan/${scanId}/stats`, { signal: mine.controller.signal });
+      dead = 0;
+      if (s.status === 'running') { completeTicks = 0; return; }
+      if (s.status === 'complete' && ++completeTicks <= FRAME_GRACE_TICKS) return; // the frame is on its way
+      // Complete past the grace, or failed: /result has the tree, or the
+      // failure's own sentence (a 500, handled below).
+      await completeFromResult(mine, s.status === 'complete' ? s : null);
     } catch (e) {
+      if (finished) return;
+      // Abandoned by the tick that counted it, or by Stop: nothing more to say.
+      if (e && e.name === 'AbortError') return;
       // 500: the scan itself failed server-side. 404: the scan record is
       // gone (evicted or the server restarted) — waiting longer can never
       // succeed, so stop the spinner instead of polling forever.
-      if ((e.status === 500 || e.status === 404) && !finished) {
-        finished = true;
-        clearInterval(watchdog);
-        closeEventSource();
+      if (e.status === 500 || e.status === 404) {
+        stop();
         failScan(e.status === 404 ? 'The scan expired — please run it again.' : e.message);
         return;
       }
       if (e.status === 0 || e.code === 'BAD_RESPONSE' || (e.status >= 502 && e.status <= 504)) {
-        if (++dead >= 5 && !finished) {
-          finished = true;
-          clearInterval(watchdog);
-          closeEventSource();
-          failScan(e.message); // api()'s own sentence: check the app is still running
-        }
+        noAnswer(e.message); // api()'s own sentence: check the app is still running
         return;
       }
       dead = 0;
       /* otherwise: still running or transient (a 429, a 202) — keep waiting */
+    } finally {
+      if (poll === mine) poll = null;
     }
   }, 3000);
   // Hand Stop the two things only this closure can settle. `finished` also
   // gates es.onmessage, so a frame already queued when Stop is pressed is
   // dropped rather than repainting a scan the user just ended.
-  state.abortScan = () => { finished = true; clearInterval(watchdog); };
+  state.abortScan = () => { finished = true; clearInterval(watchdog); if (poll) poll.controller.abort(); };
   es.onmessage = async (ev) => {
     lastSseAt = performance.now();
     if (finished) return;
@@ -395,9 +453,7 @@ function followScanProgress(scanId, path, fast, t0) {
       }
       $('progressTrack').setAttribute('aria-valuetext', `${formatCount(msg.scanned)} items scanned`);
     } else if (msg.type === 'complete') {
-      finished = true;
-      clearInterval(watchdog);
-      closeEventSource();
+      stop(); // and abandon a poll in flight: the frame is what it was waiting for
       let root = msg.root;
       let stats = msg.stats;
       if (!root) {
@@ -409,14 +465,10 @@ function followScanProgress(scanId, path, fast, t0) {
       if (fast) showFastRescanStat(scanId);
       finishScan(root, performance.now() - t0, stats);
     } else if (msg.type === 'error') {
-      finished = true;
-      clearInterval(watchdog);
-      closeEventSource();
+      stop();
       failScan(msg.message);
     } else if (msg.type === 'shutdown') {
-      finished = true;
-      clearInterval(watchdog);
-      closeEventSource();
+      stop();
       failScan('Server is shutting down');
     }
   };

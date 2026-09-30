@@ -964,7 +964,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/scan/{scanId}/progress',
-    summary: "SSE progress stream: frames of type 'progress', then one 'complete' (pruned tree + stats) or 'error'",
+    summary: "SSE progress stream: frames of type 'progress' (the unchanged frame repeats about every 2 s as a heartbeat while the count stands still), then one 'complete' (pruned tree + stats) or 'error'",
     tag: 'scan',
     destructive: false,
     parameters: [pathParam('scanId', 'Scan id')],
