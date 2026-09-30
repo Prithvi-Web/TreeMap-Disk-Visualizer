@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 isolatedDataDir('treemap-buildNative-data-');
 
 import { MFT_HELPER_FILE, mftHelperCandidates } from '../src/services/scan/nativeEngine';
@@ -311,7 +312,7 @@ test('without cargo on PATH the script exits non-zero with the rustup hint, and 
     const env: NodeJS.ProcessEnv = {};
     for (const [k, v] of Object.entries(process.env)) if (!/^path$/i.test(k)) env[k] = v;
     env.PATH = empty;
-    const r = spawnSync(process.execPath, [SCRIPT], { cwd: REPO, encoding: 'utf8', env, timeout: 60_000 });
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: REPO, encoding: 'utf8', env, timeout: HANG_GUARD_MS });
     assert.notEqual(r.status, 0, `exit ${r.status}: ${r.stdout}${r.stderr}`);
     assert.match(r.stderr, /cargo/);
     assert.match(r.stderr, /rustup\.rs/);

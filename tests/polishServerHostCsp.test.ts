@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 isolatedDataDir('treemap-polish-host-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -242,7 +243,7 @@ test('npm start with HOST=0.0.0.0 and no TREEMAP_TOKEN exits 2 before binding an
   delete env.TREEMAP_TOKEN;
   delete env.TREEMAP_INSECURE_BIND;
   const tsx = path.join(repo, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  const r = spawnSync(process.execPath, [tsx, path.join(repo, 'src', 'index.ts')], { env, cwd: repo, encoding: 'utf8', timeout: 90_000 });
+  const r = spawnSync(process.execPath, [tsx, path.join(repo, 'src', 'index.ts')], { env, cwd: repo, encoding: 'utf8', timeout: HANG_GUARD_MS });
   assert.equal(r.status, 2, `expected exit 2, got ${String(r.status)} (signal ${String(r.signal)})\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
   assert.match(r.stderr, /TREEMAP_TOKEN/);
   assert.doesNotMatch(r.stdout, /TreeMap running/, 'it never listened');

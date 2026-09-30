@@ -52,6 +52,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { HANG_GUARD_MS } from './waitFor';
 
 export type CaseResult<T extends object = Record<never, never>> =
   | ({ built: true } & T)
@@ -119,7 +120,8 @@ const SYMLINK_TARGET_BYTES = 4_321;
 const LONG_PATH_TARGET = 300;
 const LONG_PATH_COMPONENT = 40;
 const IMAGE_SIZE = '8m';
-const HDIUTIL_TIMEOUT_MS = 60_000;
+/** hdiutil can hang on a busy machine: it is ended by the hang guard, never by a shorter clock. */
+const HDIUTIL_TIMEOUT_MS = HANG_GUARD_MS;
 const DETACH_ATTEMPTS = 3;
 const DETACH_RETRY_MS = 500;
 export const FREEZE_BASE_SECONDS = 1_700_000_000;

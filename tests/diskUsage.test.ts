@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 isolatedDataDir('treemap-diskUsage-data-');
 
 import { diskUsage, fromStatfs, fromDf, windowsDiskUsageCommand } from '../src/services/diskUsage';
@@ -44,7 +45,7 @@ test('the syscall and the platform tool agree about the same volume', async (t) 
   const { execFile } = await import('node:child_process');
   const run = (cmd: string, args: string[]): Promise<string> =>
     new Promise((resolve, reject) => {
-      execFile(cmd, args, { timeout: 20_000, windowsHide: true }, (err, stdout, stderr) =>
+      execFile(cmd, args, { timeout: HANG_GUARD_MS, windowsHide: true }, (err, stdout, stderr) =>
         err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout),
       );
     });

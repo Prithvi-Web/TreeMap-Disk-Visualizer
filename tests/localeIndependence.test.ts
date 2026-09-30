@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 isolatedDataDir('treemap-localeIndependence-data-');
 
 import { formatCount as serverFormatCount, machineHourCycle, UI_LOCALE } from '../src/utils/formatCount';
@@ -167,7 +168,7 @@ test('under pt-BR, de-DE and ar-EG the shipped formatters still write 1,234,567 
     const tsx = path.join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs');
     const switched: string[] = [];
     for (const locale of ['pt_BR.UTF-8', 'de_DE.UTF-8', 'ar_EG.UTF-8']) {
-      const r = spawnSync(process.execPath, [tsx, child], { env: { ...process.env, LC_ALL: locale, LANG: locale }, encoding: 'utf8', timeout: 60_000 });
+      const r = spawnSync(process.execPath, [tsx, child], { env: { ...process.env, LC_ALL: locale, LANG: locale }, encoding: 'utf8', timeout: HANG_GUARD_MS });
       assert.equal(r.status, 0, `${locale}: ${r.stderr}`);
       const out = JSON.parse(r.stdout.trim().split('\n').pop()!) as Record<'locale' | 'machineCount' | 'machineDate' | 'page' | 'server' | 'pageDate', string>;
       assert.equal(out.page, '1,234,567', `${locale} (Node saw ${out.locale}): the page's count`);

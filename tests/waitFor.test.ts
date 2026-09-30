@@ -54,7 +54,12 @@ test('an answer that comes at the limit still counts', async () => {
 });
 
 test('a condition that throws fails the wait with that error, at once', async () => {
-  await assert.rejects(waitFor(() => { throw new Error('boom'); }, 'x', 1, 10_000), (err: unknown) => !(err instanceof HangGuardExpired) && /boom/.test((err as Error).message));
+  const { clock, slept } = steppedClock();
+  await assert.rejects(
+    waitFor(() => { throw new Error('boom'); }, 'x', 1, HANG_GUARD_MS, clock),
+    (err: unknown) => !(err instanceof HangGuardExpired) && /boom/.test((err as Error).message),
+  );
+  assert.deepEqual(slept, [], 'at once: not one wait before the error');
 });
 
 test('watchBrings answers false only when the hang guard ran out, so a silent watch is triaged, and a condition that throws still fails', async () => {
@@ -67,11 +72,21 @@ test('watchBrings answers false only when the hang guard ran out, so a silent wa
   await assert.rejects(watchBrings(() => { throw new Error('the index is closed'); }, 'x', steppedClock().clock), /the index is closed/);
 });
 
+/**
+ * The guard itself, run out on a 5 ms limit: the one real-clock limit shorter
+ * than HANG_GUARD_MS in the suite, and only to test the guard (named in
+ * tests/noWallClockBounds.test.ts). A promise that never settles can only
+ * end this way, so no machine is slow enough to change the answer.
+ */
+function guardRunsOutOn(promise: Promise<never>): Promise<never> {
+  return withinHangGuard(promise, 'a shard that never ends', 5);
+}
+
 test('withinHangGuard hands back what the promise settles with, and names a promise that never settles', async () => {
   assert.equal(await withinHangGuard(Promise.resolve(42), 'an answer'), 42);
   await assert.rejects(withinHangGuard(Promise.reject(new Error('the shard failed')), 'a failure'), /the shard failed/);
   await assert.rejects(
-    withinHangGuard(new Promise<never>(() => undefined), 'a shard that never ends', 5),
+    guardRunsOutOn(new Promise<never>(() => undefined)),
     (err: unknown) => err instanceof HangGuardExpired && /a shard that never ends did not happen within 5 ms/.test(err.message),
   );
 });

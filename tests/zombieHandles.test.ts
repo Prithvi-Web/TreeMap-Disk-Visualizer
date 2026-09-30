@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('tm-b5-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -89,12 +90,11 @@ async function holdOpenElsewhere(target: string): Promise<ChildProcess> {
     ['-e', 'const fs=require("fs");fs.openSync(process.argv[1],"r");console.log("open");setInterval(()=>{},1000);', target],
     { stdio: ['ignore', 'pipe', 'ignore'] },
   );
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error('the holder process never signalled that it opened the file')); }, 10_000);
-    child.stdout!.once('data', () => { clearTimeout(timer); resolve(); });
-    child.once('error', (err) => { clearTimeout(timer); reject(err); });
-    child.once('exit', () => { clearTimeout(timer); reject(new Error('the holder process exited early')); });
-  });
+  await withinHangGuard(new Promise<void>((resolve, reject) => {
+    child.stdout!.once('data', () => resolve());
+    child.once('error', (err) => reject(err));
+    child.once('exit', () => reject(new Error('the holder process exited early')));
+  }), 'the holder process signalling that it opened the file');
   return child;
 }
 

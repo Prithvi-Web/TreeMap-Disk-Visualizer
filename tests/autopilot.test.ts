@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 // app data. An Autopilot test that wrote to the real store would leave standing
 // instructions to delete the user's files.
 import { isolatedDataDir } from './fixtures/dataDir';
-import { waitFor } from './fixtures/waitFor';
+import { waitFor, withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('treemap-autopilot-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -552,11 +552,10 @@ async function holdOpenElsewhere(target: string): Promise<() => void> {
     `const fs=require('fs');const fd=fs.openSync(${JSON.stringify(target)},'r');` +
     `process.stdout.write('open');setInterval(()=>{},1000);`,
   ], { stdio: ['ignore', 'pipe', 'ignore'] });
-  await new Promise<void>((resolve, reject) => {
+  await withinHangGuard(new Promise<void>((resolve, reject) => {
     child.stdout.once('data', () => resolve());
     child.once('error', reject);
-    setTimeout(() => reject(new Error('child never signalled')), 10_000).unref();
-  });
+  }), 'the child signalling that it holds the file open');
   return () => child.kill('SIGKILL');
 }
 

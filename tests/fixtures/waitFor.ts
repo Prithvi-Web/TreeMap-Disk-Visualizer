@@ -34,7 +34,7 @@ export class HangGuardExpired extends Error {
  * Polls `done` every `pollMs` until it answers true. Fails, naming `what`,
  * once `limitMs` has passed without it; an error `done` throws fails the wait
  * at once. This is the one wait in the suite that may end by the clock, and
- * only to end a hang.
+ * only to end a hang (tests/noWallClockBounds.test.ts names it).
  */
 export async function waitFor(
   done: () => boolean | Promise<boolean>,

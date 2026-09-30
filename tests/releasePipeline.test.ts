@@ -5,6 +5,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 
 /**
  * The release pipeline, held to what it promises.
@@ -696,7 +697,7 @@ function sandbox(opts: { status?: string; response?: unknown; built?: string[]; 
 function runStep(name: string, sb: Sandbox, extraEnv: NodeJS.ProcessEnv = {}) {
   const file = path.join(sb.dir, 'step.sh');
   writeFileSync(file, script(step(name)));
-  const r = spawnSync('/bin/bash', [file], { cwd: sb.repo, env: { ...sb.env, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
+  const r = spawnSync('/bin/bash', [file], { cwd: sb.repo, env: { ...sb.env, ...extraEnv }, encoding: 'utf8', timeout: HANG_GUARD_MS });
   return { status: r.status, out: (r.stdout ?? '') + (r.stderr ?? ''), stdout: r.stdout ?? '', log: existsSync(sb.log) ? readFileSync(sb.log, 'utf8') : '' };
 }
 

@@ -22,7 +22,7 @@ import {
   startScan,
   SCAN_CANCELLED_MESSAGE,
 } from '../src/services/diskScanner';
-import { waitFor } from './fixtures/waitFor';
+import { waitFor, withinHangGuard } from './fixtures/waitFor';
 
 const ROOT = path.sep === '\\' ? 'C:\\root' : '/root';
 
@@ -301,30 +301,28 @@ test('the progress stream ends on cancellation instead of beating forever', asyn
   const { port, close } = await listen();
   try {
     const frames: string[] = [];
+    const stream: { request?: http.ClientRequest } = {};
     const ended = new Promise<void>((resolve, reject) => {
-      const r = http.get({ host: '127.0.0.1', port, path: `/api/scan/${scan.scanId}/progress` }, (res) => {
+      stream.request = http.get({ host: '127.0.0.1', port, path: `/api/scan/${scan.scanId}/progress` }, (res) => {
         res.setEncoding('utf8');
         res.on('data', (c: string) => { frames.push(c); });
-        res.on('end', () => { clearTimeout(bomb); resolve(); });
+        res.on('end', () => resolve());
       });
-      // Destroys the stream before rejecting: a stream still open holds
-      // server.close() open forever, so the regression this test exists to
-      // catch would hang the whole suite instead of failing it.
-      //
-      // Cleared on BOTH settle paths, and from inside this promise rather than
-      // the outer finally. Left armed it keeps the event loop alive for its
-      // full 8s after a PASSING run — measured, it added 8s to every run of
-      // this file.
-      const bomb = setTimeout(() => {
-        r.destroy();
-        reject(new Error('the progress stream never ended after a cancel'));
-      }, 8000);
-      r.on('error', (err) => { clearTimeout(bomb); reject(err); });
+      stream.request.on('error', (err) => reject(err));
     });
 
     await new Promise((r) => setTimeout(r, 250)); // let the first progress frame land
     cancelScan(scan.scanId);
-    await ended;
+    try {
+      // Bounded only by the hang guard, whose timer is cleared once the stream ends.
+      await withinHangGuard(ended, 'the progress stream ending after a cancel');
+    } catch (err) {
+      // Destroys the stream before failing: a stream still open holds
+      // server.close() open forever, so the regression this test exists to
+      // catch would hang the whole suite instead of failing it.
+      stream.request?.destroy();
+      throw err;
+    }
 
     const text = frames.join('');
     assert.match(text, /"type":"error"/, 'the stream signs off with an error frame');
