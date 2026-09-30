@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-scanProgress-data-');
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';
@@ -85,7 +86,8 @@ function collectEvents(
       res.on('error', reject);
     });
     req.on('error', reject);
-    req.setTimeout(5000, () => reject(new Error('progress stream never closed')));
+    // Idle for the hang guard, not for seconds: the server sends a keep-alive only after 10 s without progress.
+    req.setTimeout(HANG_GUARD_MS, () => reject(new Error('progress stream never closed')));
   });
 }
 

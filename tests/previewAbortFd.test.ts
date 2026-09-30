@@ -9,7 +9,7 @@ import { Readable } from 'node:stream';
 import { execFileSync } from 'node:child_process';
 
 isolatedDataDir('treemap-previewAbortFd-data-');
-import { waitFor } from './fixtures/waitFor';
+import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
 
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';
@@ -96,7 +96,8 @@ function abortAfterFirstChunk(port: number, url: string): Promise<void> {
     // The abort itself surfaces here as ECONNRESET/socket hang up; that is the
     // point of the test, not a failure.
     r.on('error', () => resolve());
-    r.setTimeout(5000, () => { r.destroy(); reject(new Error('preview request timed out')); });
+    // An idle socket is a hang only once the hang guard says so: a busy runner can sit on a response for seconds.
+    r.setTimeout(HANG_GUARD_MS, () => { r.destroy(); reject(new Error('preview request timed out')); });
     r.end();
   });
 }

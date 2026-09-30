@@ -40,14 +40,20 @@ import { HANG_GUARD_MS } from './fixtures/waitFor';
  * a count of attempts with no sleep between them is a count.
  *
  * A clock can also end a test without being read: a race against a timer
- * (`Promise.race([work, sleep(2000)])`), a timer whose callback rejects or
- * throws (`setTimeout(() => reject(…), 10_000)`), a
+ * (`Promise.race` or `Promise.any` over `[work, sleep(2000)]`, the array
+ * written in place or held first, the timer a `setTimeout` promise, `sleep`,
+ * `delay`, `node:timers/promises`' `setTimeout` or a local helper returning
+ * one), a timer whose callback rejects, throws, aborts or kills
+ * (`setTimeout(() => reject(…), 10_000)`, and a request's or a socket's own
+ * `req.setTimeout(5000, () => reject(…))`), `AbortSignal.timeout(ms)`, a
  * `waitFor` or `withinHangGuard` handed a limit on the real clock, or a
- * `timeout:` option on a child process or a test. Each of those is a bound
- * when its delay is shorter than the hang guard (HANG_GUARD_MS), and is
- * found by evaluating the delay: a literal, a const, a parameter's default,
- * arithmetic on them. A limit on a stepped clock of the test's own (the
- * fifth argument to `waitFor`) is a count, and is not a bound.
+ * `timeout:` option on a child process or a test, in place or held in a
+ * variable. Each of those is a bound when its delay is shorter than the hang
+ * guard (HANG_GUARD_MS), and is found by evaluating the delay: a literal, a
+ * const, a parameter's default, arithmetic on them — and when the delay is a
+ * local helper's parameter (`withTimeout(p, ms)`), at each call that hands it
+ * one. A limit on a stepped clock of the test's own (the fifth argument to
+ * `waitFor`) is a count, and is not a bound.
  *
  * What is NOT a bound: a reading reported (`t.diagnostic`, a message), a
  * reading handed to the code under test (`scanExpired(scan, Date.now())`),
@@ -365,6 +371,38 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
     const value = numericValue(node);
     return value !== null && value < HANG_GUARD_MS;
   };
+  /** `expr`'s declaration when it names a parameter of a function declared in this file. */
+  const parameterOf = (expr: ts.Expression): { fn: FunctionNode; index: number; decl: ts.ParameterDeclaration } | null => {
+    const decl = ts.isIdentifier(expr) ? symbolOf(expr)?.valueDeclaration : undefined;
+    if (!decl || !ts.isParameter(decl) || !ts.isFunctionLike(decl.parent) || !('body' in decl.parent)) return null;
+    const fn = decl.parent as FunctionNode;
+    return { fn, index: fn.parameters.indexOf(decl), decl };
+  };
+  /**
+   * Where a delay shorter than the hang guard is chosen: `site`, when the
+   * file fixes the delay there (a literal, a const, a parameter's default),
+   * and — when the delay is a parameter of a local helper
+   * (`withTimeout(p, ms)`) — every call that hands it a shorter one.
+   */
+  const shortSites = (delay: ts.Expression | null | undefined, site: ts.Node): ts.Node[] => {
+    if (!delay) return [];
+    const param = parameterOf(delay);
+    if (!param) return shortOfGuard(delay) ? [site] : [];
+    const out: ts.Node[] = shortOfGuard(param.decl.initializer) ? [site] : [];
+    for (const call of calls) {
+      if (declaredFunction(checker, call.expression) === param.fn && shortOfGuard(call.arguments[param.index])) out.push(call);
+    }
+    return out;
+  };
+  /** Names this file imports `setTimeout` from `node:timers/promises` by: a call is a sleep of its first argument. */
+  const promiseTimers = new Set<string>();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !/^(?:node:)?timers\/promises$/.test(statement.moduleSpecifier.text)) continue;
+    const named = statement.importClause?.namedBindings;
+    for (const element of named && ts.isNamedImports(named) ? named.elements : []) {
+      if ((element.propertyName ?? element.name).text === 'setTimeout') promiseTimers.add(element.name.text);
+    }
+  }
   /** `expr`, or — when it is one of `fn`'s parameters — what `call` passes for it (its default when nothing is passed). */
   const argumentFor = (fn: FunctionNode, call: ts.CallExpression, expr: ts.Expression): ts.Expression => {
     const decl = ts.isIdentifier(expr) ? symbolOf(expr)?.valueDeclaration : undefined;
@@ -383,7 +421,8 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ['then', 'catch', 'finally'].includes(node.expression.name.text)) {
       return timerDelayOf(node.expression.expression, depth + 1);
     }
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && /^(?:sleep|delay)$/i.test(node.expression.text)) return node.arguments[0] ?? null;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+      && (/^(?:sleep|delay)$/i.test(node.expression.text) || promiseTimers.has(node.expression.text))) return node.arguments[0] ?? null;
     if (ts.isCallExpression(node)) {
       const fn = declaredFunction(checker, node.expression);
       for (const returned of fn ? returnExpressions(fn) : []) {
@@ -533,7 +572,10 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
   };
 
   const found: Bound[] = [];
+  const reported = new Set<ts.Node>();
   const report = (node: ts.Node): void => {
+    if (reported.has(node)) return; // one helper call can be the site of two rules' short delay
+    reported.add(node);
     const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
     found.push({ file, line, fn: enclosingFunctionName(node), text: node.getText(source).replace(/\s+/g, ' ').slice(0, 140) });
   };
@@ -558,23 +600,32 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
       report(node.expression);
     }
     if ((ts.isWhileStatement(node) || ts.isDoStatement(node)) && kindOf(node.expression) === 'verdict') report(node.expression);
-    // A race against a timer shorter than the hang guard.
-    if (ts.isCallExpression(node) && squash(node.expression) === 'Promise.race' && node.arguments[0] && ts.isArrayLiteralExpression(node.arguments[0])
-      && node.arguments[0].elements.some((element) => shortOfGuard(timerDelayOf(element)))) {
-      report(node);
+    // A race against a timer shorter than the hang guard — its array written in place or held first.
+    if (ts.isCallExpression(node) && /^Promise\.(?:race|any)$/.test(squash(node.expression)) && node.arguments[0]) {
+      const held = ts.isIdentifier(node.arguments[0]) ? symbolOf(node.arguments[0])?.valueDeclaration : undefined;
+      const array = held && ts.isVariableDeclaration(held) && held.initializer ? held.initializer : node.arguments[0];
+      if (ts.isArrayLiteralExpression(array)) for (const element of array.elements) shortSites(timerDelayOf(element), node).forEach(report);
     }
-    // A timer whose callback fails the test — it rejects or throws — sooner than the hang guard.
-    if (ts.isCallExpression(node) && /^(?:globalThis\.)?setTimeout$/.test(squash(node.expression)) && shortOfGuard(node.arguments[1])) {
-      const callback = node.arguments[0];
-      let failsTest = false;
+    // A timer whose callback fails the test — it rejects or throws — or ends the work under test —
+    // it aborts or kills — sooner than the hang guard: `setTimeout(cb, ms)`, or a request's or a
+    // socket's own `x.setTimeout(ms, cb)`.
+    if (ts.isCallExpression(node) && (/^(?:globalThis\.)?setTimeout$/.test(squash(node.expression))
+      || (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'setTimeout'))) {
+      // `timers.setTimeout(cb, ms)` keeps the global's order; a request's or a socket's takes the delay first.
+      const first = node.arguments[0];
+      const callbackFirst = /^(?:globalThis\.)?setTimeout$/.test(squash(node.expression)) || (first !== undefined && (ts.isArrowFunction(first) || ts.isFunctionExpression(first)));
+      const [callback, delay] = callbackFirst ? [node.arguments[0], node.arguments[1]] : [node.arguments[1], node.arguments[0]];
+      let endsTest = false;
       const look = (at: ts.Node): void => {
-        if (failsTest) return;
-        if (ts.isThrowStatement(at) || (ts.isCallExpression(at) && /^(?:reject|fail|assert\.fail|t\.fail)$/.test(squash(at.expression)))) failsTest = true;
+        if (endsTest) return;
+        if (ts.isThrowStatement(at) || (ts.isCallExpression(at) && /^(?:reject|fail|assert\.fail|t\.fail|.+\.(?:abort|kill))$/.test(squash(at.expression)))) endsTest = true;
         else ts.forEachChild(at, look);
       };
       if (callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))) look(callback.body);
-      if (failsTest) report(node);
+      if (endsTest) shortSites(delay, node).forEach(report);
     }
+    // A signal that aborts the work on its own clock.
+    if (ts.isCallExpression(node) && squash(node.expression) === 'AbortSignal.timeout') shortSites(node.arguments[0], node).forEach(report);
     // The hang guard's waits handed a shorter limit on the real clock (a fifth argument to waitFor is a stepped clock: a count).
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const guard = guardWaits.get(node.expression.text);
@@ -583,11 +634,13 @@ function boundsInFile(source: ts.SourceFile, checker: ts.TypeChecker, file: stri
     }
     // A count of sleeps that gives up: n sleeps of d ms is a deadline of n·d ms.
     if (ts.isIterationStatement(node, false) && isCountedWait(node)) report(node);
-    // A `timeout:` option on a call — a child process, a test — shorter than the hang guard.
-    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === 'timeout'
-      && ts.isObjectLiteralExpression(node.parent) && (ts.isCallExpression(node.parent.parent) || ts.isNewExpression(node.parent.parent))
-      && shortOfGuard(node.initializer)) {
-      report(node);
+    // A `timeout:` option — on a call, a child process, a test, or held in a variable first — shorter than the hang guard.
+    if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) && ts.isIdentifier(node.name) && node.name.text === 'timeout'
+      && ts.isObjectLiteralExpression(node.parent)
+      && (ts.isCallExpression(node.parent.parent) || ts.isNewExpression(node.parent.parent) || ts.isVariableDeclaration(node.parent.parent))) {
+      const held = ts.isShorthandPropertyAssignment(node) ? checker.getShorthandAssignmentValueSymbol(node)?.valueDeclaration : undefined;
+      const value = ts.isPropertyAssignment(node) ? node.initializer : held && ts.isVariableDeclaration(held) ? held.initializer : undefined;
+      shortSites(value, node).forEach(report);
     }
     if (ts.isForStatement(node) && node.condition && kindOf(node.condition) === 'verdict') report(node.condition);
     ts.forEachChild(node, visit);
@@ -680,6 +733,22 @@ test('a wall-clock bound is seen however the time was taken, and wherever the bo
     'let i = 0;\nwhile (i++ < 100 && !done()) await sleep(20);\nassert.ok(done());',
     'let tries = 0;\nwhile (!done()) {\n  if (++tries > 50) throw new Error("never settled");\n  await sleep(10);\n}',
     'const tick = () => new Promise((r) => setTimeout(r, 25));\nlet n = 0;\ndo { await tick(); } while (!ready() && ++n < 40);',
+    // A timer's method form: an idle timeout on a request or a socket (tests/scanProgress.test.ts:88 until 30 Sep 2026).
+    'await new Promise((resolve, reject) => {\n  const req = http.get(url, (res) => res.on("end", resolve));\n  req.setTimeout(5000, () => reject(new Error("progress stream never closed")));\n});',
+    'await new Promise((resolve, reject) => {\n  const r = http.request(url, () => resolve(null));\n  r.setTimeout(5000, () => { r.destroy(); reject(new Error("preview request timed out")); });\n});',
+    // A clock that ends the work rather than the test: an abort, a kill, a signal that times out.
+    'const ac = new AbortController();\nsetTimeout(() => ac.abort(), 2000);\nawait scanAll({ signal: ac.signal });',
+    'const child = spawn(cmd);\nsetTimeout(() => child.kill(), 2000);\nassert.equal(await exitOf(child), 0);',
+    'await scanAll({ signal: AbortSignal.timeout(2000) });',
+    // A timer by another name, an array held first, Promise.any, and a delay handed to a helper.
+    'import { setTimeout as wait } from "node:timers/promises";\nassert.notEqual(await Promise.race([work(), wait(2000, "late")]), "late");',
+    'const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));\nassert.notEqual(await Promise.race([work(), pause(2000).then(() => "late")]), "late");',
+    'const contenders = [work(), sleep(2000).then(() => "late")];\nassert.notEqual(await Promise.race(contenders), "late");',
+    'assert.notEqual(await Promise.any([work(), sleep(2000).then(() => "late")]), "late");',
+    'function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {\n  return Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("hung")), ms))]);\n}\nawait withTimeout(work(), 2000);',
+    // A timeout option held in a variable, or written as a shorthand.
+    'const opts = { encoding: "utf8" as const, timeout: 5000 };\nspawnSync(cmd, [], opts);',
+    'const timeout = 5000;\nexecFileSync(cmd, [], { timeout });',
   ]) assert.equal(boundsIn(code).length, 1, code);
 });
 
@@ -711,6 +780,11 @@ test('a clock reading that is only reported, seeded, handed to the code or put i
     'for (let i = 0; i < 100; i++) {\n  if (await probe()) break;\n}',
     'for (let i = 0; i < 5 && !done(); i++) await new Promise((r) => setImmediate(r));',
     'for (let i = 0; i < HANG_GUARD_MS / 10 && !done(); i++) await sleep(10);',
+    // The same shapes at the hang guard, and a plain wait by another name.
+    'await new Promise((resolve, reject) => {\n  const req = http.get(url, (res) => res.on("end", resolve));\n  req.setTimeout(HANG_GUARD_MS, () => reject(new Error("hung")));\n});',
+    'const ac = new AbortController();\nsetTimeout(() => ac.abort(), HANG_GUARD_MS).unref();\nawait scanAll({ signal: AbortSignal.timeout(HANG_GUARD_MS) });',
+    'function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {\n  return Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("hung")), ms))]);\n}\nawait withTimeout(work(), HANG_GUARD_MS);',
+    'import { setTimeout as wait } from "node:timers/promises";\nawait wait(20);',
   ]) assert.deepEqual(boundsIn(code), [], code);
 });
 

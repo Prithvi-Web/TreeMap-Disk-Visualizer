@@ -123,8 +123,10 @@ test('a test file whose thread never yields is ended, and the line names the fil
 test('a test file that finishes is never kept waiting for its watchdog', () => {
   const dir = fileTempDir('treemap-watchdog-');
   // The limit is short enough that a watchdog that kept the process alive
-  // would end it well inside the hang guard, as a kill instead of an exit.
-  assertUntouched(runScript(dir, 'process.exitCode = 0;\n', ['--test-timeout=2000'], asTestFile()).r);
+  // would end it well inside the hang guard, as a kill instead of an exit —
+  // and long enough that no machine is too slow to start Node and exit
+  // inside it (2 s was: a busy runner can take that long to start a process).
+  assertUntouched(runScript(dir, 'process.exitCode = 0;\n', ['--test-timeout=60000'], asTestFile()).r);
 });
 
 test('a process no test runner started is never watched, whatever its flags say', () => {

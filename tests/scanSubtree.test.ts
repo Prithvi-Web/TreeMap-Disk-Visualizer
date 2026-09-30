@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-scanSubtree-data-');
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 
 import { createApp } from '../src/server';
 import { PRUNE_MAX_NODES } from '../src/api/scanRoutes';
@@ -127,7 +128,8 @@ function finalEvent(port: number, scanId: string, onFrame: (e: any) => void = ()
       res.on('end', () => resolve(last));
     });
     req.on('error', reject);
-    req.setTimeout(20_000, () => reject(new Error('stream never closed')));
+    // Idle for the hang guard, not for seconds: the server sends a keep-alive only after 10 s without progress.
+    req.setTimeout(HANG_GUARD_MS, () => reject(new Error('stream never closed')));
   });
 }
 
