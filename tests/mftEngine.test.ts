@@ -1,13 +1,12 @@
-import { after, test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 // Every write this file causes lands in a directory of its own, removed at the end.
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mft-engine-test-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
-after(() => fs.rmSync(DATA_DIR, { recursive: true, force: true }));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-mft-engine-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import type { MftExpected, MftLiveCheck, WalkResult } from '../native/index';

@@ -6,8 +6,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-scan-mft-mode-test-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
+import { isolatedDataDir } from './fixtures/dataDir';
+const DATA_DIR = isolatedDataDir('treemap-scan-mft-mode-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
@@ -34,7 +34,6 @@ fs.writeFileSync(path.join(ROOT, 'b.bin'), 'bb');
 after(() => {
   setMftWalkForTests(null);
   fs.rmSync(ROOT, { recursive: true, force: true });
-  fs.rmSync(DATA_DIR, { recursive: true, force: true });
 });
 
 async function asWindows<T>(fn: () => Promise<T>): Promise<T> {

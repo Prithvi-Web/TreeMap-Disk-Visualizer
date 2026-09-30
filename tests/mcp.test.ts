@@ -7,7 +7,8 @@ import path from 'node:path';
 // Isolate everything the MCP process would persist (snapshots, mtime caches,
 // settings) and force the deterministic walker engine before any import can
 // observe the environment.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-mcp-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

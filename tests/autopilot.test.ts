@@ -10,7 +10,8 @@ import { spawn } from 'node:child_process';
 // Isolate policies, run history, the capsule and settings from the user's real
 // app data. An Autopilot test that wrote to the real store would leave standing
 // instructions to delete the user's files.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-autopilot-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-autopilot-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import {

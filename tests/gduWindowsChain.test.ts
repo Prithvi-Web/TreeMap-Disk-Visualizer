@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-gdu-windows-chain-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-gdu-windows-chain-');
 delete process.env.TREEMAP_NO_GDU;
 
 import { startScan } from '../src/services/diskScanner';
@@ -29,7 +29,6 @@ after(() => {
   setNativeLoadOverrideForTests(null);
   resetNativeForTests();
   fs.rmSync(ROOT, { recursive: true, force: true });
-  fs.rmSync(DATA_DIR, { recursive: true, force: true });
 });
 
 async function done(scan: ScanResult): Promise<ScanResult> {

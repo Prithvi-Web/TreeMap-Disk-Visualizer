@@ -208,9 +208,14 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
   for (const p of paths) {
     try {
       // A path the platform's trash call would change is handed to no Trash step, a test's
-      // stand-in included (trashRefusal, RISKS R61).
+      // stand-in included (trashRefusal, RISKS R61). One that has gone since the scan reads as
+      // gone, as it did when the refusal sat inside the Trash step after its lstat: the lstat,
+      // which reaches the name exactly, comes first.
       const refusal = trashRefusal(p);
-      if (refusal) throw new TrashRefusal(refusal);
+      if (refusal) {
+        await fsp.lstat(p);
+        throw new TrashRefusal(refusal);
+      }
       await trashStep(p);
       deleted.push(p);
     } catch (err) {

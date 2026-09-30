@@ -39,6 +39,8 @@ const CARRIED_ELSEWHERE: Readonly<Record<string, string>> = {
     "this process's environment copied entry by entry, less PATH",
   'tests/realMachineGuard.test.ts: spawnSync(process.execPath, [TSX_CLI, script, missing, answered]':
     "childAsksTheTrash's parameter; the guard's own test hands each child the test's environment, or it with one or both of the two signals taken out on purpose, and checks the child still refuses — or, with neither and without the data-folder fixture, that it is production and goes ahead to a path that does not exist",
+  'tests/realMachineGuard.test.ts: spawnSync(process.execPath, [TSX_CLI, script, answered, own]':
+    "childAtTheDoor's environment, withNeither(): the guard's own test takes both signals out on purpose, to show every door goes ahead outside a test runner; the child disarms the machine itself (tests/fixtures/disarmedMachine.ts) and proves it before it reaches the door, with PATH an empty folder and HOME a folder of the test's own",
   "tests/releasePipeline.test.ts: spawnSync('/bin/bash', [file]":
     "the sandbox's environment, which sandbox() builds from ...process.env; the child is a release script, not the app",
   "tests/testFileWatchdog.test.ts: spawnSync(process.execPath, ['--require', runner.WATCHDOG":

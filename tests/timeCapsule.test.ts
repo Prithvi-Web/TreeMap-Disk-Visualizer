@@ -11,7 +11,8 @@ import { spawn } from 'node:child_process';
 // Without this the suite would protect files into the real Time Capsule and
 // rewrite the real settings.json — the mistake that once littered the user's
 // snapshots.json with test roots.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-capsule-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-capsule-test-');
 
 import {
   protectItems,

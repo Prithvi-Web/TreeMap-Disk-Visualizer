@@ -1,13 +1,12 @@
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-q2p-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-q2p-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import {
@@ -42,12 +41,9 @@ const AUTOPILOT_SRC = readFileSync(path.join(__dirname, '..', 'src', 'services',
  * typed by hand.
  */
 
-after(() => {
-  fs.rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-});
-
-const HOME = os.homedir();
-const SAFE_PATH = path.join(HOME, 'q2p-fixture');
+// The folder every policy here is for: one the fixture makes and removes. Until 30 Sep 2026 it
+// was `~/q2p-fixture` in the real home, removed with fsp.rm on every run (realHomeUntouched.test.ts).
+const SAFE_PATH = fileTempDir('treemap-q2p-fixture-');
 
 function promoted(overrides: Record<string, unknown> = {}): AutopilotPolicy {
   return normalizePolicy({
@@ -226,7 +222,6 @@ test('a query policy never trashes a directory unattended', () => {
 /* ══════════════ the first run really is a preview ══════════════ */
 
 test('the first run of a promoted policy deletes nothing and asks for approval', async () => {
-  await fsp.mkdir(SAFE_PATH, { recursive: true });
   const stale = path.join(SAFE_PATH, 'old.log');
   await fsp.writeFile(stale, Buffer.alloc(4096, 3));
   // Backdate it well past the query's 90-day threshold.
@@ -244,21 +239,17 @@ test('the first run of a promoted policy deletes nothing and asks for approval',
     assert.ok(fs.existsSync(stale), 'the file is still there');
     await savePolicies([]);
   } finally {
-    await fsp.rm(SAFE_PATH, { recursive: true, force: true });
+    // The folder stays, for the tests after this one, as it was before it.
+    await fsp.rm(stale, { force: true });
   }
 });
 
 test('simulating a promoted policy says why a real run would refuse', async () => {
-  await fsp.mkdir(SAFE_PATH, { recursive: true });
-  try {
-    const p = promoted();
-    const sim = await simulatePolicy(p);
-    assert.equal(sim.policyName, 'Old logs');
-    assert.match(sim.wouldBlockReason ?? '', /never run for real/i);
-    assert.equal(sim.bytesWouldDelete, 0);
-  } finally {
-    await fsp.rm(SAFE_PATH, { recursive: true, force: true });
-  }
+  const p = promoted();
+  const sim = await simulatePolicy(p);
+  assert.equal(sim.policyName, 'Old logs');
+  assert.match(sim.wouldBlockReason ?? '', /never run for real/i);
+  assert.equal(sim.bytesWouldDelete, 0);
 });
 
 /* ══════════════ the frontend half of the ladder ══════════════ */

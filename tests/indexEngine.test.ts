@@ -15,6 +15,9 @@ import path from 'node:path';
  * TreeMap data directory — which is exactly how junk roots ended up in a real
  * snapshots.json once before.
  */
+// Loaded for its effect: a plain run of this file is guarded too (src/services/realMachineGuard.ts).
+// The data folder is this file's own (tests/testDataIsolation.test.ts, OWN_DATA_DIR).
+import './fixtures/dataDir';
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-index-data-'));
 process.env.TREEMAP_DATA_DIR = DATA_DIR;
 

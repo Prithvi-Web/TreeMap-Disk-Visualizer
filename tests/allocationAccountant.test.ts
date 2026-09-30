@@ -15,6 +15,9 @@ import { execFileSync } from 'node:child_process';
  * the central fact this feature rests on — that a clone gets its own inode and
  * reports full allocation — is only observable against a real filesystem.
  */
+// Loaded for its effect: a plain run of this file is guarded too (src/services/realMachineGuard.ts).
+// The data folder is this file's own (tests/testDataIsolation.test.ts, OWN_DATA_DIR).
+import './fixtures/dataDir';
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-alloc-data-'));
 process.env.TREEMAP_DATA_DIR = DATA_DIR;
 

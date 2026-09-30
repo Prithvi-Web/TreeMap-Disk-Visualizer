@@ -17,9 +17,10 @@ import {
   underTestRunner,
 } from '../src/services/realMachineGuard';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
-import { emptyTrash, getTrashInfo } from '../src/services/trash';
+import { emptyTrash, emptyTrashCommands, getTrashInfo } from '../src/services/trash';
 import { purgeSnapshots, setSnapshotPurgeStepForTests } from '../src/services/snapshotAccounting';
 import { trashCloudPaths } from '../src/services/cloud/cloudScan';
+import { PROVIDERS } from '../src/services/cloud/providers';
 import { runGitGc, setGitGcStepForTests } from '../src/services/gitScanner';
 import { createScanRecord } from '../src/services/diskScanner';
 import { saveTokens } from '../src/services/cloud/oauth';
@@ -53,7 +54,9 @@ import type { FileNode, ScanResult } from '../src/models/types';
  * never happens. The Trash step is only ever asked about a path that does not
  * exist — in the children too, which no stub here can reach — so a missing
  * guard shows as the machine's own ENOENT rather than the guard's words; and
- * git gc only about a folder that is no repository.
+ * git gc only about a folder that is no repository. The children that show
+ * each other door going ahead outside a test runner disarm the machine
+ * themselves (tests/fixtures/disarmedMachine.ts), and prove it, first.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -76,8 +79,20 @@ const EMPTY_REFUSAL = "a test reached the machine's real Trash: emptying it — 
 const LIST_REFUSAL = "a test reached the machine's real Trash: listing it — point TREEMAP_TRASH_DIR at a folder the test owns";
 const GC_REFUSAL = (repo: string): string => `a test reached a real git gc, which prunes for good: ${repo} — use setGitGcStepForTests`;
 const PURGE_REFUSAL = "a test reached the machine's real Time Machine snapshots: deleting them — use setSnapshotPurgeStepForTests";
-const CLOUD_FILE = 'cloud://dropbox/a.txt';
-const CLOUD_REFUSAL = `a test reached Dropbox's real trash: ${CLOUD_FILE} — point TM_DROPBOX_API at a stand-in server`;
+
+/**
+ * Every provider whose trash the guard stands at, as it says it and as the stand-in contract names
+ * it (TM_<ID>_API, which providers.ts reads), and the one request that provider's trash sends. Written
+ * out rather than derived, so a guard that built the variable from anything but the id is caught.
+ */
+const CLOUD_PROVIDERS: Readonly<Record<string, { name: string; variable: string; request: { method: string; url: string; body: unknown } }>> = {
+  gdrive: { name: 'Google Drive', variable: 'TM_GDRIVE_API', request: { method: 'PATCH', url: '/files/id%3Aa', body: { trashed: true } } },
+  dropbox: { name: 'Dropbox', variable: 'TM_DROPBOX_API', request: { method: 'POST', url: '/files/delete_v2', body: { path: 'id:a' } } },
+  onedrive: { name: 'OneDrive', variable: 'TM_ONEDRIVE_API', request: { method: 'DELETE', url: '/me/drive/items/id%3Aa', body: null } },
+};
+const cloudFile = (id: string): string => `cloud://${id}/a.txt`;
+const CLOUD_REFUSAL = (id: string): string =>
+  `a test reached ${CLOUD_PROVIDERS[id].name}'s real trash: ${cloudFile(id)} — point ${CLOUD_PROVIDERS[id].variable} at a stand-in server`;
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
@@ -331,51 +346,66 @@ test('with setSnapshotPurgeStepForTests in place, a purge goes to the stand-in',
 
 /* ─────────────── A cloud provider's trash ─────────────── */
 
-/** A completed Dropbox scan holding one file, as trashCloudPaths reads one. */
-function dropboxScan(): ScanResult & { root: FileNode } {
-  const file: FileNode = { name: 'a.txt', path: CLOUD_FILE, size: 10, type: 'file', modifiedAt: 0, isHidden: false, cloudId: 'id:a' };
-  const root: FileNode = { name: 'Dropbox', path: 'cloud://dropbox', size: 10, type: 'dir', modifiedAt: 0, isHidden: false, children: [file] };
-  return { rootPath: 'cloud://dropbox', status: 'complete', root } as unknown as ScanResult & { root: FileNode };
+/** A completed scan of provider `id` holding one file, as trashCloudPaths reads one. */
+function cloudScan(id: string): ScanResult & { root: FileNode } {
+  const file: FileNode = { name: 'a.txt', path: cloudFile(id), size: 10, type: 'file', modifiedAt: 0, isHidden: false, cloudId: 'id:a' };
+  const root: FileNode = { name: CLOUD_PROVIDERS[id].name, path: `cloud://${id}`, size: 10, type: 'dir', modifiedAt: 0, isHidden: false, children: [file] };
+  return { rootPath: `cloud://${id}`, status: 'complete', root } as unknown as ScanResult & { root: FileNode };
 }
 
-test("trashing a cloud file refuses under a test runner before the provider's token is read or a request is sent", async () => {
-  const saved = process.env.TM_DROPBOX_API;
-  delete process.env.TM_DROPBOX_API;
+/** Runs `act` with every provider's stand-in variable unset but those in `set`, and puts them back after. */
+async function withCloudVariables<T>(set: Record<string, string>, act: () => Promise<T>): Promise<T> {
+  const saved = Object.values(CLOUD_PROVIDERS).map(({ variable }) => [variable, process.env[variable]] as const);
+  for (const [variable] of saved) delete process.env[variable];
+  Object.assign(process.env, set);
   try {
-    assertRefused(await disarmed(() => trashCloudPaths(dropboxScan(), [CLOUD_FILE])), CLOUD_REFUSAL);
+    return await act();
   } finally {
-    restoreEnv('TM_DROPBOX_API', saved);
+    for (const [variable, value] of saved) restoreEnv(variable, value);
   }
+}
+
+test('the guard stands at the trash of every cloud provider there is, each tested below', () => {
+  assert.deepEqual(Object.keys(PROVIDERS).sort(), Object.keys(CLOUD_PROVIDERS).sort());
+  for (const [id, { name }] of Object.entries(CLOUD_PROVIDERS)) assert.equal(PROVIDERS[id as keyof typeof PROVIDERS].name, name);
 });
 
-test('with TM_DROPBOX_API pointed at a stand-in server, a cloud trash goes there', async () => {
-  const requests: Array<{ method: string | undefined; url: string | undefined; auth: string | undefined; body: unknown }> = [];
-  const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (chunk: Buffer) => {
-      body += chunk.toString();
-    });
-    req.on('end', () => {
-      requests.push({ method: req.method, url: req.url, auth: req.headers.authorization, body: JSON.parse(body || 'null') as unknown });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{}');
+for (const [id, { variable, request }] of Object.entries(CLOUD_PROVIDERS)) {
+  test(`trashing a ${id} file refuses under a test runner, naming ${variable}, before the provider's token is read or a request is sent`, async () => {
+    await withCloudVariables({}, async () => {
+      assertRefused(await disarmed(() => trashCloudPaths(cloudScan(id), [cloudFile(id)])), CLOUD_REFUSAL(id));
     });
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const saved = process.env.TM_DROPBOX_API;
-  process.env.TM_DROPBOX_API = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
-  try {
-    await updateSettings({ cloud: { dropbox: { clientId: 'stand-in-client' } } });
-    await saveTokens('dropbox', { accessToken: 'stand-in-token', expiresAt: 0 });
-    const result = await trashCloudPaths(dropboxScan(), [CLOUD_FILE]);
-    assert.deepEqual(result, { deleted: [CLOUD_FILE], failed: [] });
-    assert.deepEqual(requests, [{ method: 'POST', url: '/files/delete_v2', auth: 'Bearer stand-in-token', body: { path: 'id:a' } }], 'the stand-in got the one request');
-  } finally {
-    restoreEnv('TM_DROPBOX_API', saved);
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
-  assert.deepEqual(takeRealMachineRefusalsForTests(), []);
-});
+
+  test(`with ${variable} pointed at a stand-in server, and no other provider's, a ${id} cloud trash goes there`, async () => {
+    const requests: Array<{ method: string | undefined; url: string | undefined; auth: string | undefined; body: unknown }> = [];
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        requests.push({ method: req.method, url: req.url, auth: req.headers.authorization, body: JSON.parse(body || 'null') as unknown });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const standIn = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
+      await withCloudVariables({ [variable]: standIn }, async () => {
+        await updateSettings({ cloud: { [id]: { clientId: 'stand-in-client' } } });
+        await saveTokens(id, { accessToken: 'stand-in-token', expiresAt: 0 });
+        const result = await trashCloudPaths(cloudScan(id), [cloudFile(id)]);
+        assert.deepEqual(result, { deleted: [cloudFile(id)], failed: [] });
+      });
+      assert.deepEqual(requests, [{ ...request, auth: 'Bearer stand-in-token' }], 'the stand-in got the one request');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    assert.deepEqual(takeRealMachineRefusalsForTests(), []);
+  });
+}
 
 /* ─────────────── git gc, which prunes for good ─────────────── */
 
@@ -471,7 +501,7 @@ test("a child a test starts refuses too — with the test's environment, with a 
   for (const [label, env] of cases) assertChildRefused(label, childAsksTheTrash(env));
 });
 
-test('a file run with neither signal — a plain tsx run, outside npm test — refuses once it loads the data-folder fixture, as every test file that loads the app does', () => {
+test('a file run with neither signal — a plain tsx run, outside npm test — refuses once it loads the data-folder fixture, as every test file that loads the app must (testDataIsolation.test.ts)', () => {
   // The control: the same child without the fixture is production, and its door goes ahead — to
   // the lstat of a path that does not exist, which fails there.
   const plain = childAsksTheTrash(withNeither());
@@ -480,4 +510,147 @@ test('a file run with neither signal — a plain tsx run, outside npm test — r
   assert.deepEqual(control.deleted, []);
   assert.deepEqual(control.failed.map((f) => f.path), [plain.missing], 'the door went ahead and failed on the missing path');
   assertChildRefused('a plain run that loads tests/fixtures/dataDir.ts', childAsksTheTrash(withNeither(), true));
+});
+
+/* ─────────────── Outside a test runner, every door goes ahead ─────────────── */
+
+/**
+ * Production parity for the doors past the Trash step, whose control is the
+ * plain child above: each door, in a fresh process with neither signal — as
+ * the real app runs it — goes ahead to the machine and answers as the machine
+ * lets it. Under a test runner a door that refused always looks exactly like
+ * the guard, so only a process outside one can tell them apart; and such a
+ * door would break Empty Trash, the Trash's size, the snapshot purge, a cloud
+ * file's trash or git gc for everyone.
+ *
+ * With the guard off nothing stands between a door and the machine but the
+ * child's own disarming (tests/fixtures/disarmedMachine.ts): every child
+ * process, every listing outside the child's own folder and every request is
+ * recorded and refused, and the child proves so before it reaches the door.
+ * Besides, PATH names an empty folder, HOME a folder of this file's own
+ * outside the child's (so a listing of its Trash is refused too), and the
+ * data folder is the child's, holding no cloud account.
+ */
+interface DoorAnswer {
+  value?: unknown;
+  error?: string;
+  notDisarmed?: string;
+  calls?: string[];
+}
+
+interface Door {
+  /** The door's own imports, from src/. */
+  imports: string[];
+  /** Statements run before the machine is disarmed. */
+  setup?: string[];
+  /** The body of an async function that goes through the door and returns its answer. */
+  act: string;
+}
+
+const SRC_MODULE = (rel: string): string => JSON.stringify(path.join(SRC, ...rel.split('/')));
+
+function childAtTheDoor(door: Door): { status: number | null; stderr: string; answer: DoorAnswer; home: string } {
+  const own = fileTempDir('treemap-guard-door-');
+  const home = fileTempDir('treemap-guard-door-home-');
+  const noCommands = fileTempDir('treemap-guard-door-no-commands-');
+  const data = path.join(own, 'data');
+  fs.mkdirSync(data);
+  const answered = path.join(own, 'answered.json');
+  const script = path.join(own, 'child.ts');
+  fs.writeFileSync(script, [
+    "import fs from 'node:fs';",
+    `import { disarmTheMachine } from ${JSON.stringify(path.join(__dirname, 'fixtures', 'disarmedMachine'))};`,
+    ...door.imports,
+    'const [answered, own] = process.argv.slice(2);',
+    ...(door.setup ?? []),
+    'void disarmTheMachine(own).then(async (calls) => {',
+    '  const write = (answer: object): void => fs.writeFileSync(answered, JSON.stringify({ ...answer, calls }));',
+    '  try {',
+    `    write({ value: await (async () => { ${door.act} })() });`,
+    '  } catch (err) {',
+    '    write({ error: `${(err as Error).name}: ${(err as Error).message}` });',
+    '  }',
+    '}, (err: Error) => fs.writeFileSync(answered, JSON.stringify({ notDisarmed: err.message })));',
+  ].join('\n'));
+  const env: NodeJS.ProcessEnv = withNeither();
+  for (const name of Object.keys(env)) if (name.toUpperCase() === 'PATH') delete env[name];
+  for (const name of ['TREEMAP_TRASH_DIR', 'XDG_DATA_HOME', ...Object.values(CLOUD_PROVIDERS).map((p) => p.variable)]) delete env[name];
+  Object.assign(env, { PATH: noCommands, HOME: home, USERPROFILE: home, TREEMAP_DATA_DIR: data });
+  const r = spawnSync(process.execPath, [TSX_CLI, script, answered, own], { env, encoding: 'utf8', timeout: 120_000 });
+  const answer = fs.existsSync(answered) ? (JSON.parse(fs.readFileSync(answered, 'utf8')) as DoorAnswer) : { error: `(nothing answered; stdout: ${r.stdout})` };
+  return { status: r.status, stderr: r.stderr, answer, home };
+}
+
+/** The child went through the door — no refusal, said or thrown — and ended well. */
+function assertWentAhead(label: string, child: ReturnType<typeof childAtTheDoor>): DoorAnswer & { calls: string[] } {
+  const { answer } = child;
+  assert.equal(answer.notDisarmed, undefined, `${label}: the child stopped before the door, its machine not disarmed: ${String(answer.notDisarmed)}`);
+  assert.doesNotMatch(child.stderr, /\[treemap\] REFUSED/, `${label}: outside a test runner nothing is refused: ${child.stderr}`);
+  assert.equal(answer.error, undefined, `${label}: the door answered, rather than throwing: ${String(answer.error)}`);
+  assert.equal(child.status, 0, `${label}: and the child ended well: ${child.stderr}`);
+  return { ...answer, calls: answer.calls ?? [] };
+}
+
+test('outside a test runner, listing the Trash goes ahead: to the listing, which the disarmed machine refuses', () => {
+  const child = childAtTheDoor({ imports: [`import { getTrashInfo } from ${SRC_MODULE('services/trash')};`], act: 'return getTrashInfo();' });
+  const { value, calls } = assertWentAhead('listing', child);
+  const firstTrash = process.platform === 'darwin' ? path.join(child.home, '.Trash')
+    : process.platform === 'win32' ? path.join('C:\\', '$Recycle.Bin')
+      : path.join(child.home, '.local', 'share', 'Trash', 'files');
+  assert.ok(calls.includes(`readdir ${firstTrash}`), `the Trash was listed, where this platform keeps it: ${JSON.stringify(calls)}`);
+  const info = value as { available: boolean; complete: boolean; itemCount: number };
+  assert.deepEqual([info.available, info.complete, info.itemCount], [true, false, 0], `and the answer says it could not read it: ${JSON.stringify(value)}`);
+});
+
+test("outside a test runner, emptying the Trash goes ahead: to the machine's own emptier, which the disarmed machine does not start", () => {
+  const child = childAtTheDoor({ imports: [`import { emptyTrash } from ${SRC_MODULE('services/trash')};`], act: 'return emptyTrash();' });
+  const { value, calls } = assertWentAhead('emptying', child);
+  const [{ cmd, args }] = emptyTrashCommands();
+  assert.ok(calls.includes(`spawn ${[cmd, ...args].join(' ')}`), `the emptier was asked for: ${JSON.stringify(calls)}`);
+  const result = value as { emptied: boolean; failed: Array<{ location: string }> };
+  assert.equal(result.emptied, false, JSON.stringify(value));
+  assert.equal(result.failed[0]?.location, cmd, `and the answer names it as what did not run: ${JSON.stringify(value)}`);
+});
+
+test("outside a test runner, deleting the machine's local snapshots goes ahead: to tmutil on a Mac, which the disarmed machine does not start, and to the platform's own answer elsewhere", () => {
+  const child = childAtTheDoor({ imports: [`import { purgeSnapshots } from ${SRC_MODULE('services/snapshotAccounting')};`], act: 'return purgeSnapshots();' });
+  const { value, calls } = assertWentAhead('purge', child);
+  if (process.platform === 'darwin') {
+    assert.deepEqual(calls, ['spawn tmutil listlocalsnapshots /'], 'tmutil was asked for the snapshots to delete');
+    assert.deepEqual(value, { ok: true, deleted: 0, failed: 0 }, 'and, told of none, deleted none');
+  } else {
+    assert.deepEqual(calls, []);
+    assert.deepEqual(value, { ok: false, deleted: 0, failed: 0, error: 'Purging snapshots is only supported on macOS' });
+  }
+});
+
+test("outside a test runner, trashing a cloud file goes ahead for every provider: to the provider's own answer, that no account of it is set up here", () => {
+  const act = [
+    'const answers: Record<string, string> = {};',
+    `for (const id of ${JSON.stringify(Object.keys(CLOUD_PROVIDERS))}) {`,
+    "  const file = { name: 'a.txt', path: `cloud://${id}/a.txt`, size: 10, type: 'file', modifiedAt: 0, isHidden: false, cloudId: 'id:a' };",
+    "  const root = { name: id, path: `cloud://${id}`, size: 10, type: 'dir', modifiedAt: 0, isHidden: false, children: [file] };",
+    "  const scan = { rootPath: `cloud://${id}`, status: 'complete', root } as unknown as Parameters<typeof trashCloudPaths>[0];",
+    '  answers[id] = await trashCloudPaths(scan, [file.path]).then((r) => JSON.stringify(r), (err: Error & { code?: string }) => `${err.code ?? err.name}: ${err.message}`);',
+    '}',
+    'return answers;',
+  ].join('\n');
+  const child = childAtTheDoor({ imports: [`import { trashCloudPaths } from ${SRC_MODULE('services/cloud/cloudScan')};`], act });
+  const { value, calls } = assertWentAhead('cloud trash', child);
+  assert.deepEqual(value, Object.fromEntries(Object.entries(CLOUD_PROVIDERS).map(([id, { name }]) => [id, `NO_CLIENT_ID: Add your ${name} app's client ID in Settings first`])));
+  assert.deepEqual(calls, [], 'no request was even attempted');
+});
+
+test('outside a test runner, git gc goes ahead: to git, which the disarmed machine does not start', () => {
+  const root = fileTempDir('treemap-guard-door-gc-');
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(repo);
+  const child = childAtTheDoor({
+    imports: [`import { runGitGc } from ${SRC_MODULE('services/gitScanner')};`, `import { createScanRecord } from ${SRC_MODULE('services/diskScanner')};`],
+    setup: [`createScanRecord(${JSON.stringify(root)});`],
+    act: `return runGitGc(${JSON.stringify(repo)});`,
+  });
+  const { value, calls } = assertWentAhead('git gc', child);
+  assert.deepEqual(calls, [`spawn git -C ${sanitizePath(repo)} gc --aggressive --prune=now`], 'git was asked to gc the repository, and nothing else');
+  assert.deepEqual(value, { ok: false, error: 'the machine is disarmed: git was not started' }, "and the answer is git's not running");
 });

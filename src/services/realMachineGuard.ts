@@ -26,7 +26,8 @@ import { AppError } from '../middleware/errorHandler';
  *    run inherits, children started with `...process.env` included;
  *    tests/fixtures/nestedRun.ts puts it into every nested run's environment,
  *    and tests/fixtures/dataDir.ts into the environment of every test file
- *    that loads it, however the file was started;
+ *    that loads it, however the file was started — every test file that
+ *    loads the app does (tests/testDataIsolation.test.ts);
  *  - NODE_TEST_CONTEXT, which node:test sets in the process it starts for a
  *    test file (`child-v8` on Node 20 and 24, through `npm test`, through
  *    `node --test <file>` and through `tsx --test <file>` alike).

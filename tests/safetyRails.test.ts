@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-rails-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-rails-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import express from 'express';
@@ -290,10 +291,5 @@ test('idempotency works end-to-end on the real DELETE /api/files route', async (
     await waitFor(() => allScans().every((s) => s.status !== 'running'), 'every scan this file started settling');
     await waitFor(() => pending().length === 0, 'the background saves landing');
     fs.rmSync(fixture, { recursive: true, force: true });
-    // maxRetries: Windows briefly holds locks on just-closed SQLite WAL and
-  // watcher handles, and a bare rmSync throws EBUSY into the after() hook —
-  // which node:test reports as the whole FILE failing (CI, first real
-  // Windows runs). Retrying is the documented cure and free elsewhere.
-  fs.rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

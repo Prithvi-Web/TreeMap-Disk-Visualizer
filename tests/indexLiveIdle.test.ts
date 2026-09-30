@@ -25,6 +25,9 @@ import path from 'node:path';
  * engine is imported, because `appDataDir()` reads the environment at call
  * time and the database is created inside it.
  */
+// Loaded for its effect: a plain run of this file is guarded too (src/services/realMachineGuard.ts).
+// The data folder is this file's own (tests/testDataIsolation.test.ts, OWN_DATA_DIR).
+import './fixtures/dataDir';
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-live-idle-'));
 const DATA_DIR = path.join(ROOT, 'Library', 'Application Support', 'TreeMap');
 fs.mkdirSync(DATA_DIR, { recursive: true });

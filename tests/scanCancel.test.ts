@@ -8,7 +8,8 @@ import path from 'node:path';
 // Isolate every cache/snapshot write from the user's real app data — a
 // cancelled scan must be provably unable to write one, and proving that
 // against the real directory would be proving nothing.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-cancel-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-cancel-test-');
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';

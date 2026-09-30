@@ -4,9 +4,10 @@
 // offers today), and `engine: 'walker'` in the settings file for the day the
 // forced-engine setting (Phase 3, W2) lands — both are set before any
 // service is imported, because the modules read them when loaded.
-process.env.TREEMAP_DATA_DIR = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'treemap-edge-data-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+const DATA_DIR = isolatedDataDir('treemap-edge-data-');
 process.env.TREEMAP_NO_GDU = '1';
-require('node:fs').writeFileSync(require('node:path').join(process.env.TREEMAP_DATA_DIR, 'settings.json'), JSON.stringify({ engine: 'walker' }));
+require('node:fs').writeFileSync(require('node:path').join(DATA_DIR, 'settings.json'), JSON.stringify({ engine: 'walker' }));
 
 import { test, before, after, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';

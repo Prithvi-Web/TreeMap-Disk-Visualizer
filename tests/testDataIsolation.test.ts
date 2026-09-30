@@ -86,16 +86,44 @@ test('the test child runs with the run\'s data folder, which is gone once the ch
  */
 const DEFAULT_DATA_DIR_ALLOWED: Readonly<Record<string, string>> = {};
 
+// node:test runs a file's after() hooks in the order they were registered, and the fixture registers
+// its removal as it loads, ahead of the file's own.
+const INDEX_CLOSES_FIRST = "closes its index — a SQLite database in the folder — before it removes the folder itself; the fixture's removal would run first, with the database still open, which Windows refuses";
+
+/**
+ * Test files that load the app's code and point TREEMAP_DATA_DIR at a folder
+ * they make and remove themselves — a top-level assignment rather than
+ * isolatedDataDir() — each with the reason. They load the fixture all the
+ * same (every file that loads the app's code does, below).
+ */
+const OWN_DATA_DIR: Readonly<Record<string, string>> = {
+  'allocationAccountant.test.ts': INDEX_CLOSES_FIRST,
+  'indexEngine.test.ts': INDEX_CLOSES_FIRST,
+  'indexSearch.test.ts': INDEX_CLOSES_FIRST,
+  'watcherTransientErrors.test.ts': INDEX_CLOSES_FIRST,
+  'indexLiveIdle.test.ts': 'its data folder sits inside the folder its live index watches, which is what it tests; isolatedDataDir() makes one directly under the temp folder',
+};
+
 /** A static import, a require or a dynamic import of the app's own code. */
 const LOADS_APP_CODE = /(?:\bfrom\s+|\brequire\(\s*|\bimport\(\s*)['"]\.\.\/src\//;
 /**
- * A line that starts in column 0 with the fixture's call (alone, as
+ * A line that starts in column 0 with the fixture's call: alone, as
  * `const X = isolatedDataDir(`, or as `if (!process.env.TREEMAP_DATA_DIR)
- * isolatedDataDir(`) or with an assignment to the variable itself. An
- * assignment inside a helper is indented, so it does not count: it points the
- * folder away for that helper's test only.
+ * isolatedDataDir(`. A call inside a helper is indented, so it does not count:
+ * it points the folder away for that helper's test only.
  */
-const POINTS_DATA_DIR = /^(?:(?:const|let)\s+\w+\s*=\s*|if\s*\(\s*!process\.env\.TREEMAP_DATA_DIR\s*\)\s*)?isolatedDataDir\(|^process\.env\.TREEMAP_DATA_DIR\s*=(?!=)/;
+const POINTS_DATA_DIR = /^(?:(?:const|let)\s+\w+\s*=\s*|if\s*\(\s*!process\.env\.TREEMAP_DATA_DIR\s*\)\s*)?isolatedDataDir\(/;
+/** A line that starts in column 0 with an assignment to the variable itself: only for OWN_DATA_DIR's files. */
+const ASSIGNS_DATA_DIR = /^process\.env\.TREEMAP_DATA_DIR\s*=(?!=)/;
+/**
+ * A line that starts in column 0 with an import of tests/fixtures/dataDir.ts:
+ * of its names, for its effect alone, or the closing line of an import that
+ * spans lines. Loading it is what tells the guard at the doors to the machine
+ * (src/services/realMachineGuard.ts) that this process runs tests, however it
+ * was started — a plain `npx tsx tests/x.test.ts` sets neither of the signals
+ * a test runner does.
+ */
+const LOADS_FIXTURE = /^(?:import\s+(?:[^'"]*\sfrom\s+)?|\}\s*from\s+)['"]\.\/fixtures\/dataDir(?:\.ts)?['"]/;
 /** Block comments at the start of a line that close on that line; the indent before them is kept. */
 const LEADING_BLOCK_COMMENTS = /^(\s*)(?:\/\*.*?\*\/\s*)+/;
 /**
@@ -114,15 +142,21 @@ function hasCodeLine(source: string, pattern: RegExp): boolean {
 
 const loadsAppCode = (source: string): boolean => hasCodeLine(source, LOADS_APP_CODE);
 const pointsDataDirAway = (source: string): boolean => hasCodeLine(source, POINTS_DATA_DIR);
+const assignsDataDir = (source: string): boolean => hasCodeLine(source, ASSIGNS_DATA_DIR);
+const loadsFixture = (source: string): boolean => hasCodeLine(source, LOADS_FIXTURE);
 
-test('only a statement at the top of a file points its data folder away; an assignment inside a helper does not', () => {
+test('only the fixture\'s call at the top of a file points its data folder away; one inside a helper, or an assignment, does not', () => {
   for (const topLevel of [
     "isolatedDataDir('treemap-x-data-');",
     "const DATA_DIR = isolatedDataDir('treemap-x-data-');",
     "if (!process.env.TREEMAP_DATA_DIR) isolatedDataDir('treemap-x-route-');",
-    'process.env.TREEMAP_DATA_DIR = DATA_DIR;',
     "/* for the whole file */ isolatedDataDir('treemap-x-data-');",
   ]) assert.equal(pointsDataDirAway(topLevel), true, topLevel);
+  // An assignment of its own is no longer enough (30 Sep 2026): it does not load the fixture, and
+  // the file ran unguarded when started plainly. It counts only for a file named in OWN_DATA_DIR.
+  assert.equal(pointsDataDirAway('process.env.TREEMAP_DATA_DIR = DATA_DIR;'), false, 'an assignment is not the fixture');
+  assert.equal(assignsDataDir('process.env.TREEMAP_DATA_DIR = DATA_DIR;'), true, 'though it is an assignment at the top of the file');
+  assert.equal(assignsDataDir('  process.env.TREEMAP_DATA_DIR = dir;'), false, 'and one inside a helper is not');
 
   // storageCorrupt.test.ts's helper before 24 Sep 2026, the only assignment
   // in that file: it pointed the folder away for one test, then assigned
@@ -186,15 +220,50 @@ test('every test file that loads the app\'s code points its data folder away fro
     ['trashInfo.test.ts', 'a dynamic import(), and nothing else'],
   ]) assert.ok(loadsApp.includes(name), `the pattern misses ${name}, which loads the app's code with ${form}`);
 
-  const unpointed = loadsApp.filter((name) =>
-    !pointsDataDirAway(fs.readFileSync(path.join(__dirname, name), 'utf8'))
-    && !Object.hasOwn(DEFAULT_DATA_DIR_ALLOWED, name));
-  assert.deepEqual(unpointed, [], `these files load the app's code without isolatedDataDir( or an assignment to process.env.TREEMAP_DATA_DIR at the top of the file: ${unpointed.join(', ')}`);
+  const unpointed = loadsApp.filter((name) => {
+    const source = fs.readFileSync(path.join(__dirname, name), 'utf8');
+    if (Object.hasOwn(OWN_DATA_DIR, name)) return !assignsDataDir(source);
+    return !pointsDataDirAway(source) && !Object.hasOwn(DEFAULT_DATA_DIR_ALLOWED, name);
+  });
+  assert.deepEqual(unpointed, [], `these files load the app's code without isolatedDataDir( at the top of the file (or, named in OWN_DATA_DIR, an assignment to process.env.TREEMAP_DATA_DIR there): ${unpointed.join(', ')}`);
 
   for (const [name, reason] of Object.entries(DEFAULT_DATA_DIR_ALLOWED)) {
     assert.ok(reason.trim().length > 0, `${name} is allowed the default data folder without a reason`);
     assert.ok(loadsApp.includes(name), `${name} is allowed the default data folder but does not load the app's code`);
   }
+  for (const [name, reason] of Object.entries(OWN_DATA_DIR)) {
+    assert.ok(reason.trim().length > 0, `${name} makes its own data folder without a reason`);
+    assert.ok(loadsApp.includes(name), `${name} is named in OWN_DATA_DIR but does not load the app's code`);
+    assert.equal(pointsDataDirAway(fs.readFileSync(path.join(__dirname, name), 'utf8')), false, `${name} calls isolatedDataDir( now, so it leaves OWN_DATA_DIR`);
+  }
+});
+
+test('the pattern for loading the data-folder fixture sees each form a file imports it in, and only at the top of the file', () => {
+  for (const line of [
+    "import { isolatedDataDir } from './fixtures/dataDir';",
+    "import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';",
+    "import './fixtures/dataDir';",
+    "} from './fixtures/dataDir';",
+  ]) assert.equal(loadsFixture(line), true, line);
+  for (const line of [
+    "// import './fixtures/dataDir';",
+    "  const { isolatedDataDir } = await import('./fixtures/dataDir');",
+    "import { waitFor } from './fixtures/waitFor';",
+    // A child's source held in a string, as realMachineGuard.test.ts writes one.
+    "    \"import './fixtures/dataDir';\",",
+  ]) assert.equal(loadsFixture(line), false, line);
+});
+
+test('every test file that loads the app\'s code loads the data-folder fixture, so the guard at the doors to the machine is armed however the file is started', () => {
+  // src/services/realMachineGuard.ts knows a test runner by TREEMAP_FORBID_REAL_TRASH (npm test) or
+  // NODE_TEST_CONTEXT (--test); a plain `npx tsx tests/x.test.ts` sets neither, and until 30 Sep 2026
+  // 18 files that loaded the app's code — cartCommit, autopilot and timeCapsule among them, which drive
+  // deletes — ran unguarded that way. tests/fixtures/dataDir.ts sets the variable as it loads.
+  const files = fs.readdirSync(__dirname).filter((name) => name.endsWith('.test.ts')).sort();
+  const loadsApp = files.filter((name) => loadsAppCode(fs.readFileSync(path.join(__dirname, name), 'utf8')));
+  assert.ok(loadsApp.length > 150, `the scan sees the files that load the app's code: ${String(loadsApp.length)}`);
+  const unguarded = loadsApp.filter((name) => !loadsFixture(fs.readFileSync(path.join(__dirname, name), 'utf8')));
+  assert.deepEqual(unguarded, [], `these files load the app's code without importing ./fixtures/dataDir at the top of the file, so a plain run of one is unguarded: ${unguarded.join(', ')}`);
 });
 
 /** A removal of the data folder through its environment variable, by `fs.rmSync`, `fs.rm` or `fsp.rm`. */

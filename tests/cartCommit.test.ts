@@ -9,8 +9,8 @@ import { readFileSync } from 'node:fs';
 
 // Isolate every capsule, settings and audit write from the user's real app
 // data — this suite really does protect files into a Time Capsule.
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-cartcommit-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
+import { isolatedDataDir } from './fixtures/dataDir';
+const DATA_DIR = isolatedDataDir('treemap-cartcommit-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
@@ -43,7 +43,6 @@ const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), '
 
 after(async () => {
   if (shared) await shared.close();
-  fs.rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 /**

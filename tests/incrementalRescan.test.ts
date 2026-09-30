@@ -1,10 +1,16 @@
-import { after, test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'node:fs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+
+// Isolate every cache/snapshot write from the user's real app data, before the app's code loads.
+// Scans in this suite would otherwise land in the real snapshots.json.
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-inc-test-');
+
 import { startScan, getScan, mtimesMatch } from '../src/services/diskScanner';
 import { FileNode, ScanResult } from '../src/models/types';
 import { settled, pending } from '../src/utils/backgroundWrites';
@@ -23,12 +29,6 @@ import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
  *  - in-place file edits stay unseen (the documented trade-off),
  *  - second-precision caches written by gdu scans still match (the tolerance).
  */
-
-// Isolate every cache/snapshot write from the user's real app data. Scans in
-// this suite would otherwise land in the real snapshots.json.
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-inc-test-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
-after(() => fs.rmSync(DATA_DIR, { recursive: true, force: true }));
 
 function cacheFileFor(rootPath: string): string {
   const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
