@@ -19,7 +19,8 @@ import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { meansAbsent } from '../utils/errno';
 import { assertNotSpillPath } from '../middleware/pathGuard';
-import { isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
+import { foldName, isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
+import { ABSENT, afterReportedFailure, identityOf, type Identity } from '../utils/placeIdentity';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -635,12 +636,29 @@ function failIfInjected(step: DiscardStep): void {
 
 export interface ProtectAndTrashResult {
   runId: string;
-  /** Every request, protected or not. */
+  /** Every request, protected or not — but one inside another that went to the Trash with it (`covered`). */
   outcomes: ProtectionOutcome[];
-  /** Paths that were protected and are now in the Trash. */
+  /** Paths that were protected and are now in the Trash (judged by the disk when the Trash reported otherwise). */
   trashed: string[];
-  /** Protected, but the Trash refused them; their capsule copies were dropped. */
+  /**
+   * Protected, then refused by the Trash, and the disk showed each still in place, untouched: their
+   * capsule copies were dropped.
+   */
   failedToTrash: { path: string; reason: string }[];
+  /**
+   * Protected, then reported as refused by the Trash, and the disk could not show where they are —
+   * the look failed, or the trash step was stopped at its time limit and may yet finish (FG3b). Their
+   * copies are KEPT, each marked so an undo puts it back only if its place is empty by then. Not in
+   * `trashed`, `failedToTrash` or `skipped`.
+   */
+  unverified: { path: string; reason: string }[];
+  /**
+   * Requests inside another request of the batch (FG3b): no copy or trash step of their own. `by`
+   * is the outermost request holding each, which is copied and trashed whole with it inside. When
+   * `by` is in `trashed` they are in the Trash with it; when `by` is unverified so are they; when
+   * `by` was not deleted they are in `skipped`, saying so.
+   */
+  covered: { path: string; by: string }[];
   /** Requests that were NOT deleted because they could not be protected. */
   skipped: ProtectionOutcome[];
   bytesProtected: number;
@@ -748,8 +766,10 @@ export async function planProtection(
   batch: string[],
   opts: { carryOver?: TimeCapsuleEntry[] } = {},
 ): Promise<ProtectionPlan> {
-  // Each path once, as protectAndTrash takes them (FG3), so the plan is the run's.
-  const paths = [...new Set(batch)];
+  // The batch as protectAndTrash takes it (FG3, FG3b): each path once, and a path inside another
+  // one of the batch planned with the item that holds it, so the plan is the run's.
+  const { top, covered } = collapseBatch(batch.map((p) => ({ path: p })));
+  const paths = top.map((r) => r.path);
   const capsule = capsuleAvailable();
   const store = await loadStore();
   const settings = await getSettings();
@@ -763,7 +783,7 @@ export async function planProtection(
   if (!capsule.available) {
     // Nothing would be protected, so nothing would be deleted. Every item says
     // so with the capsule's own reason rather than a per-item invention.
-    const items: ProtectionForecast[] = paths.map((path) => ({
+    const items: ProtectionForecast[] = [...paths, ...covered.map((c) => c.request.path)].map((path) => ({
       path, bytes: 0, willProtect: false, code: 'CAPSULE_UNAVAILABLE', detail: capsule.reason,
     }));
     return {
@@ -831,6 +851,17 @@ export async function planProtection(
     bytesProtected += walked.bytes;
     items.push({ path, bytes: walked.bytes, willProtect: true });
   }
+  // Each item inside another goes as that one goes, its bytes counted there.
+  const forecastOf = new Map(items.map((item) => [item.path, item]));
+  for (const { request, by } of covered) {
+    const holder = forecastOf.get(by);
+    items.push(holder?.willProtect
+      ? { path: request.path, bytes: 0, willProtect: true, detail: `It is inside ${by}, which is protected and deleted whole, with it.` }
+      : {
+        path: request.path, bytes: 0, willProtect: false, ...(holder?.code ? { code: holder.code } : {}),
+        detail: `It is inside ${by}, which will be left alone, so it will be too.`,
+      });
+  }
 
   return {
     available: true, items, bytesProtected, bytesSkipped, evicts,
@@ -854,27 +885,27 @@ export async function protectAndTrash(
   // Nothing in TreeMap's own spill folder is protected or trashed (Phase 4 §S.5.3): refused
   // before anything is copied, whatever selected it.
   for (const r of batch) assertNotSpillPath(r.path);
-  // One request per path (FG3). The same path twice made two copies, one trash and one failure,
-  // and the failure then discarded both copies of an item that was in the Trash.
-  const requests: ProtectionRequest[] = [];
-  const seen = new Set<string>();
-  for (const r of batch) {
-    if (seen.has(r.path)) continue;
-    seen.add(r.path);
-    requests.push(r);
-  }
+  // One request per path (FG3), and none inside another (FG3b). The same path twice made two
+  // copies, one trash and one failure, and the failure then discarded both copies of an item that
+  // was in the Trash. A folder and an item inside it made two copies, and the item's own trash step
+  // failed — its folder had taken it — so it was counted twice, and an undo that put the folder back
+  // then stopped on the item as "already exists".
+  const { top: requests, covered } = collapseBatch(batch);
   // Nowhere to keep a copy means nothing gets protected, and the caller must be
   // told before anything is deleted — not after.
   const capsule = capsuleAvailable();
   if (!capsule.available) {
-    const outcomes: ProtectionOutcome[] = requests.map((r) => ({
+    const outcomes: ProtectionOutcome[] = [...requests, ...covered.map((c) => c.request)].map((r) => ({
       path: r.path,
       protected: false,
       bytes: 0,
       reason: capsule.reason,
     }));
     // Nothing is deleted: `skipped` is every request, and the reason says why.
-    return { runId: '', outcomes, trashed: [], failedToTrash: [], skipped: outcomes, bytesProtected: 0, unavailableReason: capsule.reason };
+    return {
+      runId: '', outcomes, trashed: [], failedToTrash: [], unverified: [], covered: [], skipped: outcomes, bytesProtected: 0,
+      unavailableReason: capsule.reason,
+    };
   }
   const { runId, outcomes } = await protectItems(requests, context);
 
@@ -882,7 +913,8 @@ export async function protectAndTrash(
   const paths = protectedOutcomes.map((o) => o.path);
 
   let trashed: string[] = [];
-  let failedToTrash: { path: string; reason: string }[] = [];
+  let failedToTrash: { path: string; reason: string; stopped?: true }[] = [];
+  const unverified: { path: string; reason: string }[] = [];
   if (paths.length > 0) {
     // What stands at each path now, so a failure can be checked against the disk afterwards.
     const before = new Map<string, Identity>();
@@ -896,36 +928,46 @@ export async function protectAndTrash(
       // so every copy just made is holding space for a file that still exists.
       failedToTrash = paths.map((p) => ({ path: p, reason: err instanceof Error ? err.message : String(err) }));
     }
-    // A reported failure is judged by the disk (FG3): a trash step can move the file and still
-    // report failure (osascript killed at its timeout while Finder finishes). When nothing stands at
-    // the path now, or another file does where a known one stood before the trash step, the item
-    // is gone from its place: it is reported trashed and its copy kept for the undo — never
-    // discarded while the copy may be the only one. A look that failed proves nothing, so the
-    // refusal stands: could not look is not gone.
+    // A reported failure is judged by the disk (FG3, FG3b; `afterReportedFailure`): a trash step can
+    // move the file and still report failure (osascript stopped at its time limit while Finder
+    // finishes). Gone from its place: reported trashed, its copy kept for the undo. The same file
+    // still there, the step having ended on its own: the refusal stands and the copy is discarded.
+    // Anything else — a look that failed, a step stopped at its limit — shows neither, so the copy
+    // is kept (it may be the only one) and the item is reported as not confirmed: a copy is never
+    // discarded while it may be the only one, and an item is never called untouched unless the
+    // disk showed it.
     const stillThere: { path: string; reason: string }[] = [];
     for (const failure of failedToTrash) {
-      const was = before.get(failure.path);
       const now = await identityOf(failure.path);
-      const gone = now === ABSENT || (typeof was === 'string' && typeof now === 'string' && now !== was);
-      if (gone) trashed.push(failure.path);
-      else stillThere.push(failure);
+      const verdict = afterReportedFailure(before.get(failure.path) ?? ABSENT, now, failure.stopped === true);
+      if (verdict === 'gone') trashed.push(failure.path);
+      else if (verdict === 'there') stillThere.push({ path: failure.path, reason: failure.reason });
+      else unverified.push({ path: failure.path, reason: unverifiedSentence(failure.reason) });
     }
     failedToTrash = stillThere;
   }
 
   // Past the trash step nothing throws: what was trashed is the one fact the
   // caller must get back, with the run id an undo needs (FG1).
+  if (unverified.length > 0) {
+    const notConfirmed = new Set(unverified.map((u) => u.path));
+    const kept = protectedOutcomes.filter((o) => notConfirmed.has(o.path));
+    await markUnverified(kept);
+    await dropSupersededUnverified(kept);
+  }
   let cleanupError: string | undefined;
   if (failedToTrash.length > 0) {
-    const failedPaths = new Set(failedToTrash.map((f) => f.path));
-    const notDeleted = protectedOutcomes.filter((o) => failedPaths.has(o.path));
+    const refusedBecause = new Map(failedToTrash.map((f) => [f.path, f.reason]));
+    const notDeleted = protectedOutcomes.filter((o) => refusedBecause.has(o.path));
     const problem = await discardUnusedCopies(notDeleted);
     for (const outcome of notDeleted) {
+      // The Trash's own reason, per item (FG3b): the one thing a person can act on.
+      const refusal = `The Trash did not take it: ${refusedBecause.get(outcome.path)}. It is still in place, untouched`;
       outcome.protected = false;
       outcome.code = 'NOT_DELETED';
       outcome.detail = problem === null
-        ? 'It was copied, but the delete did not happen — so the copy was discarded and the original is untouched.'
-        : 'It was copied, but the delete did not happen, so the original is untouched. Discarding its copy did not finish, so the Time Capsule may still list it.';
+        ? `${refusal}, and its copy was discarded.`
+        : `${refusal}. Discarding its copy did not finish, so the Time Capsule may still list it.`;
     }
     if (problem !== null) {
       const items = `${formatCount(notDeleted.length)} item${notDeleted.length === 1 ? '' : 's'}`;
@@ -935,31 +977,116 @@ export async function protectAndTrash(
     }
   }
 
+  // Each request inside another went as that one went.
+  const trashedSet = new Set(trashed);
+  const unverifiedBecause = new Map(unverified.map((u) => [u.path, u.reason]));
+  const outcomeOf = new Map(outcomes.map((o) => [o.path, o]));
+  for (const { request, by } of covered) {
+    if (trashedSet.has(by)) continue; // in the Trash inside it, and protected by its copy
+    const holding = unverifiedBecause.get(by);
+    if (holding !== undefined) {
+      unverified.push({ path: request.path, reason: `It is inside ${by}. ${holding}` });
+      continue;
+    }
+    outcomes.push({
+      path: request.path, protected: false, bytes: 0, code: outcomeOf.get(by)?.code ?? 'NOT_DELETED',
+      detail: `It is inside ${by}, which was not deleted, so it was left in place too.`,
+    });
+  }
+
   const stillProtected = outcomes.filter((o) => o.protected);
   return {
     runId,
     outcomes,
     trashed,
     failedToTrash,
+    unverified,
+    covered: covered.map(({ request, by }) => ({ path: request.path, by })),
     skipped: outcomes.filter((o) => !o.protected),
     bytesProtected: stillProtected.reduce((sum, o) => sum + o.bytes, 0),
     ...(cleanupError ? { cleanupError } : {}),
   };
 }
 
-/** Nothing stands at a path; as `meansAbsent` reads an lstat's failure. */
-const ABSENT = Symbol('absent');
-/** A look at a path that failed for another reason (permissions, I/O): it says nothing either way. */
-const UNKNOWN = Symbol('unknown');
-type Identity = string | typeof ABSENT | typeof UNKNOWN;
+/** What a person is told about an item whose trash step reported a failure the disk could not confirm. */
+function unverifiedSentence(reason: string): string {
+  return `The Trash reported: ${reason}. TreeMap could not confirm whether it is still in place, so its Time Capsule copy was kept — an undo puts it back only if it is gone.`;
+}
 
-/** The device and id of what stands at `p` (links not followed), ABSENT when nothing does, UNKNOWN when it could not be looked at. */
-async function identityOf(p: string): Promise<Identity> {
+/**
+ * The batch as `protectAndTrash` and `planProtection` take it (FG3, FG3b): each path once (as it
+ * resolves, keeping the first spelling), and a path inside another path of the batch set apart in
+ * `covered` with the outermost one holding it — that item is copied and trashed whole, taking it
+ * along, so it gets no copy and no trash step of its own. Compared as the paths are spelled (a
+ * scan's own names); one spelled otherwise keeps its own trash step, judged by the disk.
+ */
+function collapseBatch<T extends { path: string }>(batch: T[]): { top: T[]; covered: { request: T; by: string }[] } {
+  const firstOf = new Map<string, T>();
+  for (const request of batch) {
+    const key = path.resolve(request.path);
+    if (!firstOf.has(key)) firstOf.set(key, request);
+  }
+  const top: T[] = [];
+  const covered: { request: T; by: string }[] = [];
+  for (const [key, request] of firstOf) {
+    let by: string | null = null;
+    for (let at = key, up = path.dirname(at); up !== at; at = up, up = path.dirname(up)) {
+      const holder = firstOf.get(up);
+      if (holder) by = holder.path; // keep climbing: the outermost one holds it
+    }
+    if (by === null) top.push(request);
+    else covered.push({ request, by });
+  }
+  return { top, covered };
+}
+
+/** Left in a copy's folder when its original's trash step could not be confirmed either way (FG3b). */
+const UNVERIFIED_MARK = 'unverified';
+
+/**
+ * Mark the copies of items whose trash step the disk could not confirm, in each copy's own folder:
+ * the copy is kept, and an undo puts it back only if its original place is empty by then
+ * (`listUndoableEntriesForRun`). After the trash step, so it never throws; a mark that could not be
+ * written is logged, and leaves an ordinary copy, which an undo treats as trashed.
+ */
+async function markUnverified(outcomes: ProtectionOutcome[]): Promise<void> {
+  for (const outcome of outcomes) {
+    if (typeof outcome.entryId !== 'string') continue;
+    await fsp.writeFile(
+      path.join(entryDir(outcome.entryId), UNVERIFIED_MARK),
+      'The Trash reported a failure the disk could not confirm; an undo puts this back only if its place is empty.\n',
+    ).catch((err: unknown) => {
+      console.error('[treemap] time capsule: a copy whose trash step could not be confirmed could not be marked:', err);
+    });
+  }
+}
+
+/**
+ * Drop older copies that this run's kept copies supersede (FG3b review): of the same original,
+ * still marked unverified, and byte for byte the same (the same digest). A trash step that keeps
+ * failing unconfirmed — an osascript that times out on every run — would otherwise keep one more
+ * copy of an unchanged file each time, and evict older undo copies to make room. Only identical
+ * content goes, so nothing is lost. After the trash step, so it never throws: a failure is logged,
+ * and leaves the older copies as they were.
+ */
+async function dropSupersededUnverified(kept: ProtectionOutcome[]): Promise<void> {
+  const keptIds = new Set(kept.map((o) => o.entryId).filter((id): id is string => typeof id === 'string'));
+  if (keptIds.size === 0) return;
   try {
-    const st = await fsp.lstat(p, { bigint: true });
-    return `${st.dev}:${st.ino}`;
+    const store = await loadStore();
+    const newestDigest = new Map(store.entries.filter((e) => keptIds.has(e.id)).map((e) => [e.originalPath, e.digest]));
+    const superseded = new Set<string>();
+    for (const e of store.entries) {
+      if (keptIds.has(e.id) || !e.hasPayload || e.restoredAt || !isEntryId(e.id)) continue;
+      if (newestDigest.get(e.originalPath) !== e.digest) continue;
+      if (await fsp.lstat(path.join(entryDir(e.id), UNVERIFIED_MARK)).then(() => true, () => false)) superseded.add(e.id);
+    }
+    if (superseded.size === 0) return;
+    store.entries = store.entries.filter((e) => !superseded.has(e.id));
+    await saveStore(store);
+    for (const id of superseded) await fsp.rm(entryDir(id), { recursive: true, force: true });
   } catch (err) {
-    return meansAbsent(err) ? ABSENT : UNKNOWN;
+    console.error('[treemap] time capsule: older unconfirmed copies of the same files could not be dropped:', err);
   }
 }
 
@@ -1323,12 +1450,31 @@ function isOneName(name: unknown): name is string {
 }
 
 /**
+ * A name as the volume a restore writes to compares it: folded where the platform's own volumes
+ * fold names, and exact elsewhere. Windows: NTFS's fold (`foldName`). macOS: APFS folds Unicode
+ * forms and case by Unicode's case folding, which lower case alone misses — `ς` and `σ`, `ß` and
+ * `ss`, are one name on APFS (measured on this Mac, FG3b) — so the compatibility forms are folded,
+ * then upper case, then lower. Folding more than a volume does only refuses more.
+ */
+function restoreNameKey(name: string): string {
+  if (process.platform === 'win32') return foldName(name);
+  if (process.platform === 'darwin') return name.normalize('NFKC').toUpperCase().toLowerCase();
+  return name;
+}
+
+/**
  * Why a restore will not follow an entry's manifest, as a phrase, or null (FG3). Each file is read
  * from `data/<name>/<rel>` and written to `<original place>/<rel>`, so the name must be one name and
  * each member's path relative, as `path.join` spells it, and made of names — never leading out of
  * the copy or out of the item.
+ *
+ * Nor past a link the manifest records (FG3, FG3b): capture records a link and never what lies past
+ * it. Compared as the volume compares names (`restoreNameKey`), so `A/x` is past a link `a` where
+ * `a` and `A` are one name, and linear in the members: each member's own folders are looked up in
+ * the set of links (`tally` counts the lookups), never every member against every link — a
+ * node_modules capture holds thousands of links among tens of thousands of members.
  */
-function manifestRefusal(manifest: EntryManifest): string | null {
+export function manifestRefusal(manifest: EntryManifest, tally: { lookups: number } = { lookups: 0 }): string | null {
   if (manifest === null || typeof manifest !== 'object' || !Array.isArray(manifest.members)) return 'it lists no members';
   if (!isOneName(manifest.name)) return 'its name is not one name';
   for (const member of manifest.members as unknown[]) {
@@ -1338,11 +1484,20 @@ function manifestRefusal(manifest: EntryManifest): string | null {
     const inside = rel === '' || (typeof rel === 'string' && path.normalize(rel) === rel && rel.split(path.sep).every(isOneName));
     if (!inside) return 'a member’s path leads out of the item';
   }
-  // Nor through a link the restore itself makes: capture records a link and never what lies past it.
   const members = manifest.members as ManifestMember[];
-  const links = members.filter((m) => m.kind === 'symlink').map((m) => m.rel);
-  const under = (rel: string, link: string): boolean => (link === '' ? rel !== '' : rel.startsWith(`${link}${path.sep}`));
-  if (members.some((m) => links.some((link) => under(m.rel, link)))) return 'a member lies past a link it records';
+  const links = new Set<string>();
+  for (const m of members) if (m.kind === 'symlink') links.add(m.rel.split(path.sep).map(restoreNameKey).join(path.sep));
+  if (links.size === 0) return null;
+  if (links.has('') && members.some((m) => m.rel !== '')) return 'a member lies past a link it records'; // the item itself is a link
+  for (const m of members) {
+    const names = m.rel.split(path.sep);
+    let folder = '';
+    for (let i = 0; i < names.length - 1; i++) {
+      folder = i === 0 ? restoreNameKey(names[0]) : `${folder}${path.sep}${restoreNameKey(names[i])}`;
+      tally.lookups++;
+      if (links.has(folder)) return 'a member lies past a link it records';
+    }
+  }
   return null;
 }
 
@@ -1362,16 +1517,20 @@ export async function listCapsuleEntriesForRun(runId: string): Promise<TimeCapsu
 /**
  * What an undo of one run puts back: its entries that still hold a copy and are not restored yet,
  * less any copy marked as never deleted (`discardUnusedCopies`). That original is still in place,
- * so there is nothing to put back, and a restore over it would be refused.
+ * so there is nothing to put back, and a restore over it would be refused. A copy marked as not
+ * confirmed (`markUnverified`, FG3b) is decided by the disk now: put back when nothing stands at
+ * its place — the Trash took it after all — and passed over otherwise, still in the Time Capsule.
  */
 export async function listUndoableEntriesForRun(runId: string): Promise<TimeCapsuleEntry[]> {
   const undoable: TimeCapsuleEntry[] = [];
+  const marked = (id: string, mark: string): Promise<boolean> => fsp.lstat(path.join(entryDir(id), mark)).then(() => true, () => false);
   for (const entry of await listCapsuleEntriesForRun(runId)) {
     if (!entry.hasPayload || entry.restoredAt) continue;
     // A record TreeMap did not make holds no copy of TreeMap's, and would refuse the whole undo (FG3).
     if (!isEntryId(entry.id)) continue;
-    const neverDeleted = await fsp.lstat(path.join(entryDir(entry.id), NOT_DELETED_MARK)).then(() => true, () => false);
-    if (!neverDeleted) undoable.push(entry);
+    if (await marked(entry.id, NOT_DELETED_MARK)) continue;
+    if (await marked(entry.id, UNVERIFIED_MARK) && (await identityOf(entry.originalPath)) !== ABSENT) continue;
+    undoable.push(entry);
   }
   return undoable;
 }
@@ -1516,9 +1675,15 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       dirsCreatedByThisRestore.push(dest);
     }
 
-    for (const member of manifest.members) {
+    // Files, then links, the deepest first (FG3b): a link is made only once every file and folder is
+    // in place, and before any link that could hold its folder — capture never records anything
+    // past a link — so nothing this restore makes, a link included, is made through a link it made,
+    // whatever the manifest's names fold to.
+    const files = manifest.members.filter((m) => m.kind !== 'dir' && m.kind !== 'symlink');
+    const depth = (m: ManifestMember): number => (m.rel === '' ? 0 : m.rel.split(path.sep).length);
+    const links = manifest.members.filter((m) => m.kind === 'symlink').sort((a, b) => depth(b) - depth(a));
+    for (const member of [...files, ...links]) {
       if (job.cancelled) throw new CopyCancelled();
-      if (member.kind === 'dir') continue;
 
       const from = path.join(dataRoot, member.rel === '' ? manifest.name : path.join(manifest.name, member.rel));
       const dest = member.rel === '' ? entry.originalPath : path.join(entry.originalPath, member.rel);

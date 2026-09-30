@@ -10,7 +10,7 @@ const APP = isolatedDataDir('treemap-capsuleRecords-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
-import { capsuleRoot, getCapsuleIndex, getCapsuleJob, pruneExpired, reconcileCapsule } from '../src/services/timeCapsule';
+import { capsuleRoot, getCapsuleIndex, getCapsuleJob, manifestRefusal, pruneExpired, reconcileCapsule } from '../src/services/timeCapsule';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -194,7 +194,7 @@ test('an undo passes over a record of its run that is not one TreeMap made, and 
 /* ─────────────── A restore writes only where capture would have ─────────────── */
 
 /** A capsule entry of TreeMap's shape, in the capsule, whose manifest the test writes. */
-function capsuleEntry(entry: Partial<TimeCapsuleEntry>, manifest: { name: string; members: unknown[] }, files: Record<string, string>): TimeCapsuleEntry {
+function capsuleEntry(entry: Partial<TimeCapsuleEntry>, manifest: { name: string; members?: unknown[] }, files: Record<string, string>): TimeCapsuleEntry {
   const made = record({ name: manifest.name, ...entry });
   const folder = path.join(capsuleRoot(), made.id);
   fs.mkdirSync(path.join(folder, 'data'), { recursive: true });
@@ -262,6 +262,100 @@ test('a restore refuses a record whose names or original place lead anywhere cap
     assert.ok(!fs.existsSync(wouldWrite), `${what}: nothing was written`);
   }
   assert.equal(fs.readFileSync(outside, 'utf8'), 'PRECIOUS USER DATA');
+});
+
+/** A system folder `sanitizePath` refuses on this platform, and a name in it. */
+const SYSTEM_PLACE = process.platform === 'win32' ? 'C:\\Windows\\System32\\treemap-capsuleRecords.txt' : '/dev/treemap-capsuleRecords.txt';
+
+test('a restore refuses, and says why, a record whose original place or manifest is not of a shape capture writes (FG3b)', async () => {
+  const content = 'restored';
+  const file = { rel: '', kind: 'file', size: content.length, hash: sha256(content) };
+  const cases: [string, TimeCapsuleEntry, RegExp][] = [
+    ['an original place that is not a full path (cloud://)',
+      capsuleEntry({ originalPath: 'cloud://gdrive/from-the-cloud.txt' }, { name: 'from-the-cloud.txt', members: [file] }, { 'from-the-cloud.txt': content }),
+      /its original place is not a full path/],
+    ['an original place that is not text',
+      capsuleEntry({ originalPath: 5 as unknown as string }, { name: 'five.txt', members: [file] }, { 'five.txt': content }),
+      /its original place is not a full path/],
+    ['an original place in a system folder',
+      capsuleEntry({ originalPath: SYSTEM_PLACE }, { name: path.basename(SYSTEM_PLACE), members: [file] }, { [path.basename(SYSTEM_PLACE)]: content }),
+      /is a system folder TreeMap never writes/],
+    ['a manifest that lists no members',
+      capsuleEntry({}, { name: 'x.txt' }, { 'x.txt': content }),
+      /it lists no members/],
+    ['a member of a kind capture never records',
+      capsuleEntry({}, { name: 'x.txt', members: [{ ...file, kind: 'device' }] }, { 'x.txt': content }),
+      /a member is not one TreeMap records/],
+    ['an item recorded as a link, with a member past it',
+      capsuleEntry({ kind: 'folder' }, {
+        name: 'linked',
+        members: [
+          { rel: '', kind: 'symlink', size: PLACE.length, hash: sha256(PLACE), target: PLACE },
+          { rel: 'through.txt', kind: 'file', size: content.length, hash: sha256(content) },
+        ],
+      }, { [path.join('linked', 'through.txt')]: content }),
+      /a member lies past a link it records/],
+  ];
+  for (const [what, entry, why] of cases) {
+    const answer = await request('POST', `/api/timecapsule/${entry.id}/restore`);
+    assert.deepEqual([answer.status, answer.body.code], [409, 'CAPSULE_RECORD_INVALID'], `${what}: ${JSON.stringify(answer.body)}`);
+    assert.match(answer.body.error, why, what);
+  }
+  assert.ok(!fs.existsSync(path.join(process.cwd(), 'cloud:')), 'nothing was written under the working folder');
+});
+
+test('a member past a link the restore makes is refused however its name is spelled, and nothing is written through the link (FG3b)', async () => {
+  // Default APFS and NTFS fold case, and APFS folds Unicode forms: `a` and `A`, `é` and `e` + U+0301,
+  // are one name there. Where the platform's volumes fold names the restore is refused up front; on
+  // every platform the link is made last, so nothing is written through it either way.
+  const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
+  const outside = fileTempDir('treemap-capsuleRecords-fold-outside-');
+  const escape = 'escaped';
+  // Measured on this Mac's APFS: `ς` and `σ`, and `ß` and `ss`, are one name there too — case folding
+  // that lower case alone does not give.
+  const variants: [string, string, string][] = [
+    ['another case', 'a', 'A'],
+    ['another Unicode form', '\u00e9', 'e\u0301'],
+    ['a final sigma', '\u03b1\u03c2', '\u03b1\u03c3'],
+    ['a sharp s', 'stra\u00dfe', 'strasse'],
+  ];
+  for (const [n, [what, link, spelled]] of variants.entries()) {
+    const folder = `fold-${n}`;
+    const through = `through-${n}.txt`;
+    const entry = capsuleEntry({ kind: 'folder', originalPath: path.join(PLACE, folder) }, {
+      name: folder,
+      members: [
+        { rel: link, kind: 'symlink', size: outside.length, hash: sha256(outside), target: outside },
+        { rel: path.join(spelled, through), kind: 'file', size: escape.length, hash: sha256(escape) },
+      ],
+    }, { [path.join(folder, spelled, through)]: escape });
+    const answer = await request('POST', `/api/timecapsule/${entry.id}/restore`);
+    if (FOLDS) {
+      assert.deepEqual([answer.status, answer.body.code], [409, 'CAPSULE_RECORD_INVALID'], `${what}: ${JSON.stringify(answer.body)}`);
+      assert.match(answer.body.error, /past a link/, what);
+    } else {
+      assert.equal(answer.status, 202, `${what}: ${JSON.stringify(answer.body)}`);
+      await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', `the restore (${what})`);
+    }
+    assert.ok(!fs.existsSync(path.join(outside, through)), `${what}: nothing was written through the link`);
+  }
+  assert.deepEqual(fs.readdirSync(outside), [], 'the folder the links lead to holds nothing new');
+});
+
+test('the check of a manifest against its links looks each member up by its own folders, never against every link (FG3b)', () => {
+  // A node_modules capture: its .bin links, and the files of its packages. Counted, not timed.
+  const links = 1_000;
+  const files = 20_000;
+  const members: unknown[] = [];
+  for (let i = 0; i < links; i++) members.push({ rel: path.join('.bin', `tool-${i}`), kind: 'symlink', size: 1, hash: 'h', target: `../pkg-${i}/cli.js` });
+  for (let i = 0; i < files; i++) members.push({ rel: path.join(`pkg-${i % 500}`, 'lib', `file-${i}.js`), kind: 'file', size: 1, hash: 'h' });
+  const manifest = (list: unknown[]) => ({ originalPath: path.join(PLACE, 'node_modules'), name: 'node_modules', members: list } as unknown as Parameters<typeof manifestRefusal>[0]);
+  const tally = { lookups: 0 };
+  assert.equal(manifestRefusal(manifest(members), tally), null, 'a manifest capture writes passes');
+  const deepest = 3; // no member here is more than three names deep
+  assert.ok(tally.lookups <= members.length * deepest, `${tally.lookups} lookups for ${members.length} members: linear in the members, not members times links`);
+  const tampered = [...members, { rel: path.join('.bin', `tool-${links - 1}`, 'through.txt'), kind: 'file', size: 1, hash: 'h' }];
+  assert.match(manifestRefusal(manifest(tampered)) ?? '', /past a link/, 'and a member past one of its links is still refused');
 });
 
 /* ─────────────── Autopilot's policy folder, read back from autopilot.json ─────────────── */

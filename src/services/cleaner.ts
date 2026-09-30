@@ -47,17 +47,31 @@ export interface PlatformCommand {
  * from the environment, a terminal starts in it.
  */
 
+/**
+ * A command stopped before it answered — at its time limit, or by a signal from outside — rather
+ * than one that failed on its own. What it was asked to do may still happen: osascript stopped at
+ * its limit has already handed Finder the move, and Finder can finish it afterwards (FG3b). A caller
+ * that would act on "it did not happen" treats this as "not known".
+ */
+export class CommandStopped extends Error {}
+
+/**
+ * The error a finished command rejects with: `CommandStopped` when it did not end on its own —
+ * execFile stopped it (`killed`, its time limit) or a signal ended it (`signal`: the out-of-memory
+ * killer, a person) — and a plain Error when it exited with a failure.
+ */
+function commandError(err: Error & { killed?: boolean; signal?: NodeJS.Signals | null }, stderr: string): Error {
+  const detail = (stderr || err.message || 'command failed').trim();
+  return err.killed === true || (err.signal !== undefined && err.signal !== null) ? new CommandStopped(detail) : new Error(detail);
+}
+
 /** Runs one command to its end; rejects with what it wrote to stderr. */
 export function runCommand({ cmd, args, env: extraEnv }: PlatformCommand, timeoutMs = 15000): Promise<void> {
   const env = extraEnv ? { ...process.env, ...extraEnv } : undefined;
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { timeout: timeoutMs, windowsHide: true, ...(env ? { env } : {}) }, (err, _stdout, stderr) => {
-      if (err) {
-        const detail = (stderr || err.message || 'command failed').trim();
-        reject(new Error(detail));
-      } else {
-        resolve();
-      }
+      if (err) reject(commandError(err, stderr));
+      else resolve();
     });
   });
 }
@@ -118,7 +132,7 @@ async function trashOne(p: string): Promise<void> {
           ['-NoProfile', '-NonInteractive', '-Command', ps],
           { timeout: 20000, windowsHide: true, env: { ...process.env, TREEMAP_TRASH_TARGET: p } },
           (err, _stdout, stderr) => {
-            if (err) reject(new Error((stderr || err.message).trim()));
+            if (err) reject(commandError(err, stderr));
             else resolve();
           }
         );
@@ -201,7 +215,7 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
   }
 
   const deleted: string[] = [];
-  const failed: { path: string; reason: string }[] = [];
+  const failed: CleanResult['failed'] = [];
 
   // Sequential on purpose: parallel osascript/powershell invocations are
   // flaky, and trash batches are small (UI sends chunks).
@@ -224,7 +238,11 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
       // The page prints `reason` in a toast, so it gets a sentence; the raw
       // text (errno, syscall, path) goes to the terminal where it is useful.
       console.warn(`[treemap] could not move to the Trash: ${p}:`, err instanceof Error ? err.message : err);
-      failed.push({ path: p, reason: err instanceof TrashRefusal ? err.message : describeFsError(err) });
+      if (err instanceof CommandStopped) {
+        failed.push({ path: p, reason: 'the Trash did not answer in time, and may still finish moving it', stopped: true });
+      } else {
+        failed.push({ path: p, reason: err instanceof TrashRefusal ? err.message : describeFsError(err) });
+      }
     }
   }
   return { deleted, failed };

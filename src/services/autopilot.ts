@@ -804,7 +804,10 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
   run.bytesDeleted = selected.filter((c) => trashed.has(c.path)).reduce((sum, c) => sum + c.bytes, 0);
   run.skipped = [
     ...run.skipped,
+    // Each with its own reason — for one the Trash refused, the Trash's (FG3b).
     ...result.skipped.map((s) => ({ path: s.path, reason: s.detail ?? 'It could not be protected, so it was left alone.' })),
+    // Not confirmed either way: its copy was kept, and the row says so rather than "untouched" (FG3b).
+    ...result.unverified.map((u) => ({ path: u.path, reason: u.reason })),
   ];
   if (run.items.length === 0) {
     run.status = 'blocked';
@@ -812,7 +815,9 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     // the usual one) is a different fact from not protected, and the refusal is the reason to give.
     run.blockedReason = result.failedToTrash.length > 0
       ? `Nothing was moved to the Trash: ${result.failedToTrash[0].reason}`
-      : 'Nothing could be safely protected, so nothing was deleted.';
+      : result.unverified.length > 0
+        ? `Nothing was confirmed as moved to the Trash. ${result.unverified[0].reason}`
+        : 'Nothing could be safely protected, so nothing was deleted.';
   }
   // After the trash step: the items above were trashed and can be undone, but
   // the copies of what the Trash refused were not all discarded (FG1).

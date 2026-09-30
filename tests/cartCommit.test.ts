@@ -20,7 +20,7 @@ import { initPortableMode, resetPortableMode } from '../src/services/portableMod
 import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
 import { peekScan } from '../src/services/diskScanner';
-import { setTrashStepForTests } from '../src/services/cleaner';
+import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { waitFor } from './fixtures/waitFor';
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -492,6 +492,31 @@ test('a retried commit with the same Idempotency-Key cannot run twice', async ()
     // The replay is the recorded response, not a second execution.
     assert.deepEqual(second.body, first.body);
   } finally {
+    await close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a commit whose trash step could not be confirmed is audited as partial, never as ok (FG3b review)', async () => {
+  const dir = await fixture('unconfirmed', 1, 1024);
+  const { port, close } = await listen();
+  // Stopped before it answered: the Trash may yet move it, so nothing is confirmed either way.
+  setTrashStepForTests(async () => { throw new CommandStopped('stopped at its time limit (a test)'); });
+  try {
+    const started = await req(port, 'POST', '/api/scan', { path: dir });
+    assert.equal(started.status, 202);
+    const scanId: string = started.body.scanId;
+    await waitFor(() => peekScan(scanId)?.status !== 'running', `scan ${scanId} settling`);
+    const file = path.join(dir, 'f0.bin');
+    const committed = await req(port, 'POST', '/api/cart/commit', { paths: [file] });
+    assert.equal(committed.status, 200, JSON.stringify(committed.body));
+    assert.deepEqual(committed.body.unverified.map((u: { path: string }) => u.path), [file]);
+    const audit = await req(port, 'GET', '/api/audit?limit=20');
+    const line = (audit.body.entries as { action: string; dryRun: boolean; outcome: string; code?: string }[])
+      .find((e) => e.action === 'cart.commit' && e.dryRun === false);
+    assert.deepEqual([line?.outcome, line?.code], ['error', 'PARTIAL_COMMIT'], JSON.stringify(line));
+  } finally {
+    setTrashStepForTests(null);
     await close();
     await fsp.rm(dir, { recursive: true, force: true });
   }

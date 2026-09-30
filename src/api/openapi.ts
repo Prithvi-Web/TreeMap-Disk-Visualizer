@@ -451,7 +451,11 @@ const schemas: Json = {
   CleanResult: obj(
     {
       deleted: arr(str(), 'Paths moved to the system Trash'),
-      failed: arr(obj({ path: str(), reason: str() }, ['path', 'reason'])),
+      failed: arr(obj({
+        path: str(),
+        reason: str(),
+        stopped: bool('Present (true) when the Trash command was stopped before it answered (its time limit, or a signal): the Trash may still finish the move after this answer'),
+      }, ['path', 'reason'])),
     },
     ['deleted', 'failed'],
     'Every delete is a move to the OS Trash — recoverable, never a hard delete',
@@ -2961,10 +2965,11 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             evicts: arr(opaque('{ id, name, originalPath, bytes } — older capsule copies that would be dropped to make room')),
             capsule: opaque('{ available, reason?, capBytes, usedBytes }'),
             openHandles: opaque("B2's preflight: what a program is holding open right now"),
-            trashed: arr(str(), 'Real run only'),
+            trashed: arr(str(), 'Real run only. An item staged inside another staged item is listed too: it went to the Trash inside it, and its bytes are counted once, there'),
             bytesFreed: int('Real run only'),
-            skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected')),
-            failedToTrash: arr(opaque('{ path, reason } — protected, then refused by the Trash; the copies were dropped')),
+            skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected, the Trash refused them, or the item holding them was not deleted')),
+            failedToTrash: arr(opaque("{ path, reason } — protected, then refused by the Trash, and still in place, untouched; the copies were dropped")),
+            unverified: arr(opaque('{ path, reason } — present when the Trash reported failing and the disk could not confirm either way (a look that failed, nothing known at the path before the trash step, or a trash command stopped before it answered): the copies were KEPT, and undo puts each back only if its place is empty by then')),
             capsuleUnavailable: str('Set when the capsule cannot run at all. Nothing was deleted'),
             cleanupError: str('Real run only: discarding the copies of what the Trash refused did not finish. Everything in trashed was trashed, and undo with runId puts it back'),
           },
@@ -2989,7 +2994,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         obj({ jobId: str(), entryCount: int(), bytesTotal: int() }, ['jobId', 'entryCount', 'bytesTotal']),
       ),
       '400': errorResponse('RUN_ID_REQUIRED'),
-      '409': errorResponse('CAPSULE_EMPTY — the copies are gone, so it cannot be undone'),
+      '409': errorResponse('CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — everything the commit copied is still in its place'),
     },
   },
 

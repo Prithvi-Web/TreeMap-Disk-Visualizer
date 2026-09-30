@@ -413,7 +413,7 @@ function cartManifestHtml(plan, missingFromScan) {
 async function cartExecuteCommit(paths, foreseen = []) {
   const btn = $('cartTrash');
   const label = btn.innerHTML;
-  const result = { dryRun: false, runId: null, trashed: [], bytesFreed: 0, skipped: [], failedToTrash: [] };
+  const result = { dryRun: false, runId: null, trashed: [], bytesFreed: 0, skipped: [], failedToTrash: [], unverified: [] };
   try {
     for (let i = 0; i < paths.length; i += CART_COMMIT_CHUNK) {
       const chunk = paths.slice(i, i + CART_COMMIT_CHUNK);
@@ -439,6 +439,7 @@ async function cartExecuteCommit(paths, foreseen = []) {
       result.bytesFreed += part.bytesFreed || 0;
       result.skipped.push(...(part.skipped || []));
       result.failedToTrash.push(...(part.failedToTrash || []));
+      result.unverified.push(...(part.unverified || []));
       if (part.capsuleUnavailable) result.capsuleUnavailable = part.capsuleUnavailable;
     }
   } catch (e) {
@@ -465,7 +466,8 @@ async function cartExecuteCommit(paths, foreseen = []) {
   saveCart();
   renderCart();
   refreshCartButtons();
-  cartLastRun = result.trashed && result.trashed.length ? result.runId : null;
+  // An unconfirmed item may be in the Trash after all, and the undo puts it back if it is.
+  cartLastRun = (result.trashed && result.trashed.length) || (result.unverified && result.unverified.length) ? result.runId : null;
   cartCommitSummary({
     ...result,
     skipped: [
@@ -487,10 +489,12 @@ function cartCommitSummary(result) {
   const trashed = result.trashed || [];
   const skipped = result.skipped || [];
   const failed = result.failedToTrash || [];
+  // The Trash reported failing, and the disk could not show either way: their copies were kept.
+  const unverified = result.unverified || [];
 
   let html = trashed.length
     ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} to the Trash — <b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b> recovered.`
-    : `<b>Nothing was deleted.</b>`;
+    : unverified.length ? `<b>Nothing was confirmed as moved to the Trash.</b>` : `<b>Nothing was deleted.</b>`;
   if (result.capsuleUnavailable) {
     html += `<div class="cart-mf-note">${escapeHtml(result.capsuleUnavailable)}</div>`;
   }
@@ -505,7 +509,10 @@ function cartCommitSummary(result) {
   if (failed.length) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). Those are untouched, and their copies were discarded.</div>`;
   }
-  if (trashed.length) {
+  if (unverified.length) {
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(unverified.length)} could not be confirmed as moved to the Trash: ${escapeHtml(unverified[0].reason)} ${unverified.length === 1 ? 'It stays' : 'They stay'} in your cart.</div>`;
+  }
+  if (trashed.length || unverified.length) {
     // The capsule verifies content byte for byte AND puts the recorded
     // timestamps back, so this is a whole-file restore rather than a copy made
     // today. It was not always: until the dates were recorded, an undo left
@@ -513,7 +520,7 @@ function cartCommitSummary(result) {
     // matching the very files it had just been used to find.
     html += `<div class="cart-mf-undo"><button class="btn" data-cart-undo="${escapeHtml(result.runId)}">` +
       `${icon('refresh', 14)}Undo this run</button>` +
-      `<span class="muted">Puts all ${formatCount(trashed.length)} back where they were, from the Time Capsule — ` +
+      `<span class="muted">${trashed.length ? `Puts all ${formatCount(trashed.length)} back where they were` : 'Puts back any of them the Trash has taken'}, from the Time Capsule — ` +
       `byte for byte, with their original dates.</span></div>`;
   }
 

@@ -108,11 +108,13 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
     throw err;
   }
 
+  // Partial whenever something asked was not done — or not confirmed done (FG3b).
+  const partial = result.skipped.length > 0 || result.failedToTrash.length > 0 || (result.unverified?.length ?? 0) > 0;
   await appendAudit({
     action: 'cart.commit', source: 'http', tokenId: tokenIdFor('http'),
     paths: result.trashed, bytes: result.bytesFreed, dryRun: false,
-    outcome: result.skipped.length === 0 && result.failedToTrash.length === 0 ? 'ok' : 'error',
-    ...(result.skipped.length > 0 || result.failedToTrash.length > 0 ? { code: 'PARTIAL_COMMIT' } : {}),
+    outcome: partial ? 'error' : 'ok',
+    ...(partial ? { code: 'PARTIAL_COMMIT' } : {}),
   });
   res.json(result);
 });

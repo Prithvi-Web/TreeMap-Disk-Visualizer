@@ -291,6 +291,17 @@ OpenAPI 3 spec).
      should discarding the capsule copies of items the Trash refused not
      finish, the response still carries `trashed` and `runId`, adds a
      `cleanupError` sentence, and the undo puts back exactly what was trashed.
+     A path inside another path of the same commit gets no copy of its own:
+     the item holding it is copied and trashed whole, the inner path is listed
+     in `trashed` with it and counted once, and one undo puts both back (or,
+     when the item holding it is not confirmed moved, it is in `unverified`
+     with it; when that item is not deleted, it is in `skipped`, saying so).
+     A failure the Trash reports is judged by the disk: an item gone from its
+     place is `trashed`, with its copy kept; one still in place is
+     `failedToTrash`, its copy dropped; and one the disk cannot show either way
+     — a look that failed, or a trash command stopped before it answered,
+     which may still finish — is in `unverified`, with its copy **kept**, and
+     the undo puts it back only if its place is empty by then.
 
 Never skip step 1: destructive endpoints refuse paths that are not inside a
 root this server has actually scanned. Scanning is what grants (scoped,

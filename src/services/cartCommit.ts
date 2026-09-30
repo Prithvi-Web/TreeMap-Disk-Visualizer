@@ -2,6 +2,7 @@ import { AppError } from '../middleware/errorHandler';
 import { checkOpenHandles, type OpenHandleReport } from './openHandleGuard';
 import { knownSizeOf } from './policy';
 import {
+  listCapsuleEntriesForRun,
   listUndoableEntriesForRun,
   planProtection,
   protectAndTrash,
@@ -103,12 +104,18 @@ export interface CartCommitResult {
   dryRun: false;
   /** Ties this batch to its Time Capsule copies; the id "Undo this run" takes. */
   runId: string;
+  /** In the Trash now, and put back by an undo — an item staged inside another staged item included, which went with it (FG3b). */
   trashed: string[];
   bytesFreed: number;
   /** Items that were not deleted, each with the reason it was left alone. */
   skipped: { path: string; code?: string; reason?: string }[];
-  /** Protected, then refused by the Trash; their copies were dropped. */
+  /** Protected, then refused by the Trash, and still in place, untouched; their copies were dropped. */
   failedToTrash: { path: string; reason: string }[];
+  /**
+   * Present when the Trash reported failing items the disk could not confirm either way (FG3b):
+   * their copies were kept, and an undo puts each back only if its place is empty by then.
+   */
+  unverified?: { path: string; reason: string }[];
   /** True when the capsule itself is unavailable. Nothing was deleted. */
   capsuleUnavailable?: string;
   /**
@@ -192,11 +199,14 @@ export async function commitCart(paths: string[], runId?: string): Promise<CartC
   const bytesFreed = result.outcomes
     .filter((o) => trashed.has(o.path))
     .reduce((sum, o) => sum + o.bytes, 0);
+  // An item staged inside another went to the Trash inside it (FG3b): listed, so it leaves the
+  // cart, and counted once, in the item that holds it.
+  const wentWith = result.covered.filter((c) => trashed.has(c.by)).map((c) => c.path);
 
   return {
     dryRun: false,
     runId: result.runId,
-    trashed: result.trashed,
+    trashed: [...result.trashed, ...wentWith],
     bytesFreed,
     skipped: result.skipped.map((o) => ({
       path: o.path,
@@ -204,6 +214,7 @@ export async function commitCart(paths: string[], runId?: string): Promise<CartC
       ...(o.detail ? { reason: o.detail } : {}),
     })),
     failedToTrash: result.failedToTrash,
+    ...(result.unverified.length > 0 ? { unverified: result.unverified } : {}),
     ...(result.unavailableReason ? { capsuleUnavailable: result.unavailableReason } : {}),
     ...(result.cleanupError ? { cleanupError: result.cleanupError } : {}),
   };
@@ -223,6 +234,12 @@ export async function undoCartRun(runId: string): Promise<{ jobId: string; entry
   }
   const entries = await listUndoableEntriesForRun(runId);
   if (entries.length === 0) {
+    // Copies still held but none to put back: everything the commit copied is still in its place —
+    // an item the Trash refused, or one whose trash step was not confirmed and has not gone (FG3b).
+    if ((await listCapsuleEntriesForRun(runId)).some((e) => e.hasPayload && !e.restoredAt)) {
+      throw new AppError(409, 'NOTHING_TO_UNDO',
+        'Everything that commit copied is still in its place, so there is nothing to put back. Its copies stay in the Time Capsule.');
+    }
     throw new AppError(409, 'CAPSULE_EMPTY',
       'The Time Capsule no longer holds the copies from that commit, so it cannot be undone. ' +
       'Copies are kept for a limited time and can be evicted to make room.');

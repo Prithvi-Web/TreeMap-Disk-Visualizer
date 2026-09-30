@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { launchTerminal, openCommand, runCommand, terminalCommands } from '../src/services/cleaner';
+import { CommandStopped, launchTerminal, openCommand, runCommand, terminalCommands } from '../src/services/cleaner';
 
 /**
  * Empty Trash and Open Terminal Here both shell out per platform. These tests
@@ -165,6 +165,17 @@ test('a command gets its environment: the way a path reaches a Windows script', 
   });
   await check({ TREEMAP_OPEN_TARGET: 'C:\\R&D\\x&second' });
   await assert.rejects(check(), 'without the variable the child exits 3');
+});
+
+test('a command stopped at its time limit or by a signal says so, apart from one that failed on its own (FG3b)', async () => {
+  // osascript stopped at its limit may still have handed Finder the move, so the capsule keeps a
+  // copy it cannot vouch for: the caller must be able to tell this failure from a refusal.
+  const stopped = await runCommand({ cmd: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] }, 200).then(() => null, (err: unknown) => err);
+  assert.ok(stopped instanceof CommandStopped, `stopped at its limit: ${String(stopped)}`);
+  const signalled = await runCommand({ cmd: process.execPath, args: ['-e', 'process.kill(process.pid, "SIGKILL")'] }).then(() => null, (err: unknown) => err);
+  assert.ok(signalled instanceof CommandStopped, `ended by a signal from outside: ${String(signalled)}`);
+  const failed = await runCommand({ cmd: process.execPath, args: ['-e', 'process.exit(3)'] }).then(() => null, (err: unknown) => err);
+  assert.ok(failed instanceof Error && !(failed instanceof CommandStopped), `failed on its own: ${String(failed)}`);
 });
 
 test('a terminal starts in its folder: the way a folder reaches a Windows terminal', async () => {
