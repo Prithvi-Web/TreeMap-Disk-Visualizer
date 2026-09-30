@@ -9,6 +9,7 @@ import { capabilityState } from '../platform/capabilities';
 import { getCapabilities } from '../platform/capabilities';
 import { moveToTrash } from './cleaner';
 import { sseSend } from '../utils/sse';
+import { describeFsError } from '../utils/errno';
 
 const exec = promisify(execFile);
 
@@ -358,9 +359,16 @@ export interface EncodeOutcome {
   error?: string;
 }
 
-/** A temp name beside the original, so promoting it is a same-directory rename. */
-function tempNameFor(file: string, seq: number): string {
-  return path.join(path.dirname(file), `.treemap-encode-${process.pid}-${seq}${path.extname(file) || '.mp4'}`);
+/**
+ * A private folder beside the original for the encode's output, made for this run (FG3). ffmpeg -y
+ * opens its output with O_TRUNC and follows a link there, and the temp's name beside the original
+ * used to be predictable (`.treemap-encode-<pid>-<seq>`), so a link planted at that name redirected
+ * the write to any file. `mkdtemp` makes the folder fresh, under a random name and with only its
+ * owner's permissions, so nothing can be planted in it; it sits beside the original, so promoting
+ * the result is still a rename on the same volume.
+ */
+function tempFolderFor(file: string): Promise<string> {
+  return fs.promises.mkdtemp(path.join(path.dirname(file), '.treemap-encode-'));
 }
 
 /**
@@ -386,60 +394,65 @@ export async function encodeOne(
   const base: EncodeOutcome = { path: file, ok: false, originalBytes, newBytes: 0, savedBytes: 0 };
 
   const before = await media.probe(file);
-  const temp = tempNameFor(file, seq);
-
-  const discard = async (): Promise<void> => {
-    // Removes only the file THIS function just created — never a user's.
-    await fs.promises.unlink(temp).catch(() => undefined);
-  };
-
+  let tempDir: string;
   try {
-    await media.encode(file, temp, encoder, before?.durationSeconds ?? null, onProgress, onSpawn);
+    tempDir = await tempFolderFor(file);
   } catch (err) {
-    await discard();
-    return { ...base, error: err instanceof Error ? err.message : String(err) };
+    // A folder that will not take one (read-only, full) fails this file, as the encoder's own
+    // failure to write there always did — not the whole batch.
+    return { ...base, error: `Kept the original — no folder for the re-encoded file could be made beside it (${describeFsError(err)}).` };
   }
-
-  let newBytes = 0;
-  try {
-    newBytes = (await fs.promises.stat(temp)).size;
-  } catch {
-    await discard();
-    return { ...base, error: 'the encoder produced no file' };
-  }
-
-  const after = await media.probe(temp);
-  const verdict = verifyEncode(before, after, originalBytes, newBytes);
-  if (!verdict.ok) {
-    await discard();
-    return { ...base, newBytes, error: `Kept the original — ${verdict.reason}.` };
-  }
-
-  // Only now is anything of the user's touched, and it goes to the Trash.
-  const trashed = await moveToTrash([file]);
-  if (!trashed.deleted.includes(file)) {
-    await discard();
-    const why = trashed.failed.find((f) => f.path === file)?.reason || 'the original could not be moved to the Trash';
-    return { ...base, newBytes, error: `Kept the original — ${why}.` };
-  }
+  const temp = path.join(tempDir, `encoded-${seq}${path.extname(file) || '.mp4'}`);
+  // The folder goes on every way out but one: when it holds the only re-encoded copy.
+  let keepTempDir = false;
 
   try {
-    await fs.promises.rename(temp, file);
-  } catch (err) {
-    // The original is in the Trash and the encode is beside it. Nothing is
-    // lost, but the user must be told exactly where both are.
-    return {
-      ...base,
-      newBytes,
-      error:
-        `The original is in the Trash and the re-encoded file is at ${temp}, because it could not be renamed into place ` +
-        `(${err instanceof Error ? err.message : String(err)}). Nothing was lost.`,
-    };
-  }
-  // A photo library that loses its dates is a disaster.
-  await fs.promises.utimes(file, original.atime, original.mtime).catch(() => undefined);
+    try {
+      await media.encode(file, temp, encoder, before?.durationSeconds ?? null, onProgress, onSpawn);
+    } catch (err) {
+      return { ...base, error: err instanceof Error ? err.message : String(err) };
+    }
 
-  return { path: file, ok: true, originalBytes, newBytes, savedBytes: originalBytes - newBytes };
+    let newBytes = 0;
+    try {
+      newBytes = (await fs.promises.stat(temp)).size;
+    } catch {
+      return { ...base, error: 'the encoder produced no file' };
+    }
+
+    const after = await media.probe(temp);
+    const verdict = verifyEncode(before, after, originalBytes, newBytes);
+    if (!verdict.ok) return { ...base, newBytes, error: `Kept the original — ${verdict.reason}.` };
+
+    // Only now is anything of the user's touched, and it goes to the Trash.
+    const trashed = await moveToTrash([file]);
+    if (!trashed.deleted.includes(file)) {
+      const why = trashed.failed.find((f) => f.path === file)?.reason || 'the original could not be moved to the Trash';
+      return { ...base, newBytes, error: `Kept the original — ${why}.` };
+    }
+
+    try {
+      await fs.promises.rename(temp, file);
+    } catch (err) {
+      // The original is in the Trash and the encode is in its folder beside it. Nothing is lost,
+      // but the user must be told exactly where both are.
+      keepTempDir = true;
+      return {
+        ...base,
+        newBytes,
+        error:
+          `The original is in the Trash and the re-encoded file is at ${temp}, because it could not be renamed into place ` +
+          `(${err instanceof Error ? err.message : String(err)}). Nothing was lost.`,
+      };
+    }
+    // A photo library that loses its dates is a disaster.
+    await fs.promises.utimes(file, original.atime, original.mtime).catch(() => undefined);
+
+    return { path: file, ok: true, originalBytes, newBytes, savedBytes: originalBytes - newBytes };
+  } finally {
+    // Removes only the folder THIS function just made, and what it wrote there — never a user's.
+    if (!keepTempDir) await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 /* ────────────────────────── the background job ────────────────────────── */

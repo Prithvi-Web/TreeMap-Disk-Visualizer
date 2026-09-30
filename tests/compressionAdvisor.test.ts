@@ -244,7 +244,64 @@ test('the original is never overwritten in place', async () => {
   });
   await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
   assert.equal(seen.length, 1);
-  assert.equal(path.dirname(seen[0]), dir, 'the temp file is beside the original, so promoting it is one rename');
+  assert.equal(path.dirname(path.dirname(seen[0])), dir, 'the temp file is in a folder beside the original, so promoting it is one rename');
+});
+
+test('the encoder writes in a private folder made for the run, so nothing planted beside the original is written through', async () => {
+  // ffmpeg -y opens its output with O_TRUNC and follows a link there. The temp's name beside the
+  // original used to be predictable (.treemap-encode-<pid>-<seq>), so a link planted at it made
+  // the encode overwrite whatever the link led to (FG3).
+  const dir = tmp();
+  const file = original(dir, 1000);
+  const elsewhere = path.join(tmp(), 'report.doc');
+  fs.writeFileSync(elsewhere, 'PRECIOUS USER DATA');
+  const planted = path.join(dir, `.treemap-encode-${process.pid}-0.mp4`);
+  fs.symlinkSync(elsewhere, planted, 'file');
+  const outputs: { path: string; folderMode: number; folderWasNew: boolean }[] = [];
+  const before = new Set(fs.readdirSync(dir));
+  setMediaTools({
+    ...fakeTools(),
+    async encode(_input, output) {
+      const folder = path.dirname(output);
+      outputs.push({ path: output, folderMode: fs.statSync(folder).mode & 0o777, folderWasNew: !before.has(path.basename(folder)) });
+      fs.writeFileSync(output, Buffer.alloc(400)); // as ffmpeg -y does: truncate, following a link
+    },
+  });
+  const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
+  assert.equal(outcome.ok, true, outcome.error);
+  assert.equal(fs.readFileSync(elsewhere, 'utf8'), 'PRECIOUS USER DATA', 'the file the planted link leads to is untouched');
+  assert.equal(outputs.length, 1);
+  assert.equal(path.dirname(path.dirname(outputs[0].path)), dir, 'the folder sits beside the original');
+  assert.match(path.basename(path.dirname(outputs[0].path)), /^\.treemap-encode-/);
+  assert.ok(outputs[0].folderWasNew, 'and was made for this run, so nothing could be planted in it');
+  if (process.platform !== 'win32') assert.equal(outputs[0].folderMode, 0o700, 'and is private to its owner');
+  const st = fs.lstatSync(file);
+  assert.ok(st.isFile() && !st.isSymbolicLink(), 'the video is a file of its own');
+  assert.equal(st.size, 400, 'the re-encoded one');
+  assert.deepEqual(fs.readdirSync(dir).sort(), [path.basename(planted), 'holiday.mp4'].sort(), 'the private folder is gone, the planted link left as it was');
+});
+
+const NO_CHMOD = process.platform === 'win32'
+  ? 'Windows ignores a folder\'s mode bits'
+  : process.getuid?.() === 0 ? 'root may write anywhere' : false;
+
+test('a folder that cannot take the private folder is a failure of that file, not of the batch', { skip: NO_CHMOD }, async () => {
+  // The private folder is made before the encoder runs; a folder that refuses it (read-only, full)
+  // must end as that file's outcome, as the encoder's own failure there always did.
+  const dir = tmp();
+  const file = original(dir, 1000);
+  let encoded = 0;
+  setMediaTools({ ...fakeTools(), async encode() { encoded++; } });
+  fs.chmodSync(dir, 0o500);
+  try {
+    const outcome = await encodeOne(file, 'hevc_videotoolbox', 0, () => undefined);
+    assert.equal(outcome.ok, false);
+    assert.match(outcome.error ?? '', /^Kept the original/, outcome.error);
+    assert.equal(encoded, 0, 'the encoder never ran');
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+  assert.equal(fs.statSync(file).size, 1000, 'the original is untouched');
 });
 
 test('progress is reported while a file encodes', async () => {
