@@ -11,6 +11,7 @@ import {
   MediaProbe, MediaTools, encodeOne, encoderFor, estimateFor, expectedRatio,
   isWorthEncoding, setMediaTools, shortlistFromScan, verifyEncode, MIN_CANDIDATE_BYTES,
 } from '../src/services/compressionAdvisor';
+import { setTrashStepForTests } from '../src/services/cleaner';
 import { FileNode } from '../src/models/types';
 
 /**
@@ -37,6 +38,17 @@ function tmp(): string {
 afterEach(() => setMediaTools(null));
 process.on('exit', () => {
   for (const r of roots) fs.rmSync(r, { recursive: true, force: true });
+});
+
+/**
+ * The Trash, for every test in this file, is a folder of the file's own: the
+ * Trash step (setTrashStepForTests) moves each original into it under its
+ * folder's name. From 28 Jul to 30 Sep 2026 the three tests below whose encode
+ * succeeds put a holiday.mp4 into the machine's real Trash on every run.
+ */
+const standInTrash = tmp();
+setTrashStepForTests(async (p) => {
+  fs.renameSync(p, path.join(standInTrash, `${path.basename(path.dirname(p))}-${path.basename(p)}`));
 });
 
 function probe(over: Partial<MediaProbe> = {}): MediaProbe {
@@ -161,6 +173,8 @@ test('a good encode replaces the original, which goes to the Trash, keeping its 
   assert.equal(fs.statSync(file).size, 400, 'the new file sits at the original path');
   assert.equal(Math.round(fs.statSync(file).mtimeMs), Math.round(before.mtimeMs), 'the date survives — "sort by date" depends on it');
   assert.deepEqual(fs.readdirSync(dir), ['holiday.mp4'], 'no temp file is left behind');
+  const inTrash = path.join(standInTrash, `${path.basename(dir)}-holiday.mp4`);
+  assert.ok(fs.existsSync(inTrash) && fs.readFileSync(inTrash).equals(Buffer.alloc(1000, 3)), 'and the original is in the Trash, byte for byte');
 });
 
 test('a failed encode leaves the original exactly where it was', async () => {

@@ -29,6 +29,7 @@ import {
   usedBytesOf,
 } from '../src/services/timeCapsule';
 import { updateSettings } from '../src/services/settings';
+import { setTrashStepForTests } from '../src/services/cleaner';
 import { TimeCapsuleEntry, TimeCapsuleJob } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
 
@@ -44,7 +45,10 @@ import { AppError } from '../src/middleware/errorHandler';
  *
  * The one test that does drive the production `protectAndTrash` all the way to
  * its delete step does so against a file held open by another process, so B2
- * refuses the delete: the whole sequence runs, and nothing is ever trashed.
+ * refuses the delete: the whole sequence runs, and nothing is ever trashed. Its
+ * Trash step is a recorder besides (setTrashStepForTests): when `lsof` misses
+ * the held file on a loaded machine the delete goes ahead, and until 30 Sep
+ * 2026 it would then have reached the machine's real Trash.
  */
 
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-b3-'));
@@ -305,6 +309,10 @@ test('when the Trash refuses, the capsule copy is discarded and the original is 
   // `moveToTrash` — and B2 stops the delete, so nothing is ever trashed.
   const dir = await mkTmp();
   let release: (() => void) | null = null;
+  const reached: string[] = [];
+  setTrashStepForTests(async (p) => {
+    reached.push(p);
+  });
   try {
     const target = await writeFile(path.join(dir, 'held-open.log'), 'x'.repeat(4096));
     release = await holdOpenElsewhere(target);
@@ -312,6 +320,7 @@ test('when the Trash refuses, the capsule copy is discarded and the original is 
     const before = (await entries()).length;
     const result = await protectAndTrash([{ path: target }]);
 
+    assert.deepEqual(reached, [], 'the Trash step was never reached');
     assert.deepEqual(result.trashed, [], 'the open file was not deleted');
     assert.equal(result.failedToTrash.length, 1);
     assert.equal(fs.existsSync(target), true, 'the original is exactly where it was');
@@ -325,6 +334,7 @@ test('when the Trash refuses, the capsule copy is discarded and the original is 
     assert.equal((await entries()).some((e) => e.originalPath === target), false);
   } finally {
     release?.();
+    setTrashStepForTests(null);
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });

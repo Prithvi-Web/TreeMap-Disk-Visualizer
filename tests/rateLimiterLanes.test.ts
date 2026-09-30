@@ -7,6 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 isolatedDataDir('treemap-rateLimiterLanes-data-');
+// A boot asks for the Trash's size (GET /api/trash/size), so the Trash is a folder of this file's
+// own: from 31 Aug to 30 Sep 2026 every run listed the machine's real one, names and sizes.
+process.env.TREEMAP_TRASH_DIR = fileTempDir('treemap-rateLimiterLanes-trash-');
 
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';

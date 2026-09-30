@@ -4,6 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { pending, settled } from '../../src/utils/backgroundWrites';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { FORBID_REAL_TRASH } = require('../../scripts/run-tests.js') as { FORBID_REAL_TRASH: string };
+
+// A file that loads this fixture is a test file however it was started — `npm test`, `--test`, or
+// a plain `npx tsx tests/x.test.ts`, which sets neither of the signals the guard knows a test
+// runner by — so it says so: in it, and in every child it starts from its own environment, the
+// doors to the machine's Trash refuse (src/services/realMachineGuard.ts). Production never loads it.
+process.env[FORBID_REAL_TRASH] = '1';
+
 /** How long a cleanup waits for the app's own background saves before it removes the folders anyway. */
 const SETTLE_LIMIT_MS = 10_000;
 

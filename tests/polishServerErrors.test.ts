@@ -16,7 +16,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { errorHandler, permissionDeniedMessage } from '../src/middleware/errorHandler';
 import { describeFsError } from '../src/utils/errno';
-import { moveToTrash } from '../src/services/cleaner';
+import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
 import { startScan, getScan, describeScanError } from '../src/services/diskScanner';
 
 /**
@@ -156,13 +156,25 @@ test('describeFsError turns an errno into a sentence a non-coder can act on', ()
 
 test('a failed Move to Trash reports why in plain words', async () => {
   const missing = path.join(fileTempDir('treemap-polish-trash-'), 'already-gone.txt');
-  const result = await moveToTrash([missing], { ignoreOpenHandles: true });
-  assert.equal(result.deleted.length, 0);
-  assert.equal(result.failed.length, 1);
-  assert.equal(result.failed[0].path, missing);
-  assert.doesNotMatch(result.failed[0].reason, /^E[A-Z]+:/, `raw errno leaked: ${result.failed[0].reason}`);
-  assert.doesNotMatch(result.failed[0].reason, /lstat/);
-  assert.match(result.failed[0].reason, /no longer there/);
+  // The Trash step is a stand-in that fails as the real one does first for a file that is gone:
+  // its lstat, with the machine's own ENOENT. Until 30 Sep 2026 this test drove the real step.
+  let asked = 0;
+  setTrashStepForTests(async (p) => {
+    asked++;
+    await fs.promises.lstat(p);
+  });
+  try {
+    const result = await moveToTrash([missing], { ignoreOpenHandles: true });
+    assert.equal(asked, 1, 'the Trash step was asked, and failed');
+    assert.equal(result.deleted.length, 0);
+    assert.equal(result.failed.length, 1);
+    assert.equal(result.failed[0].path, missing);
+    assert.doesNotMatch(result.failed[0].reason, /^E[A-Z]+:/, `raw errno leaked: ${result.failed[0].reason}`);
+    assert.doesNotMatch(result.failed[0].reason, /lstat/);
+    assert.match(result.failed[0].reason, /no longer there/);
+  } finally {
+    setTrashStepForTests(null);
+  }
 });
 
 /* ───────────────────────── a root that disappears ───────────────────────── */

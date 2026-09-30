@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { insideAnyScanRoot } from '../middleware/pathGuard';
 import { ScanStore, TreeSource, asStore, Flag } from './scanStore';
+import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
 
 const exec = promisify(execFile);
 
@@ -93,6 +94,32 @@ export interface GitGcResult {
   error?: string;
 }
 
+/** What git printed. */
+export interface GitGcOutput {
+  stdout: string;
+  stderr: string;
+}
+
+/** Runs `git gc --aggressive --prune=now` in `repo`, for real: unreachable objects are gone for good. */
+async function gcInRepo(repo: string): Promise<GitGcOutput> {
+  // Under a test runner git gc never runs for real: a test stands in for this step
+  // (setGitGcStepForTests; realMachineGuard.ts).
+  refuseUnderTestRunner(`a test reached a real git gc, which prunes for good: ${repo} — use setGitGcStepForTests`);
+  return exec('git', ['-C', repo, 'gc', '--aggressive', '--prune=now'], { timeout: 300000, maxBuffer: 8 * 1024 * 1024 });
+}
+
+/** The step that runs git gc; a test replaces it (setGitGcStepForTests). */
+let gcStep: (repo: string) => Promise<GitGcOutput> = gcInRepo;
+
+/**
+ * Test-only: run `step` in place of git gc, so a test can drive runGitGc
+ * without pruning anything; null restores the real one, which refuses under a
+ * test runner.
+ */
+export function setGitGcStepForTests(step: ((repo: string) => Promise<GitGcOutput>) | null): void {
+  gcStep = step ?? gcInRepo;
+}
+
 /** Run `git gc --aggressive --prune=now` in a repo inside a scanned root. */
 export async function runGitGc(repoPath: unknown): Promise<GitGcResult> {
   let safe: string;
@@ -105,13 +132,11 @@ export async function runGitGc(repoPath: unknown): Promise<GitGcResult> {
     return { ok: false, error: 'Repository is outside every scanned root' };
   }
   try {
-    const { stdout, stderr } = await exec(
-      'git',
-      ['-C', safe, 'gc', '--aggressive', '--prune=now'],
-      { timeout: 300000, maxBuffer: 8 * 1024 * 1024 }
-    );
+    const { stdout, stderr } = await gcStep(safe);
     return { ok: true, output: (stdout + stderr).trim() || 'Done.' };
   } catch (err) {
+    // A test that reached a real git gc is a failure of the test, never git's answer.
+    if (err instanceof RealMachineRefusal) throw err;
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

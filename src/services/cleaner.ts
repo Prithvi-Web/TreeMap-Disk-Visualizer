@@ -7,6 +7,7 @@ import { describeFsError } from '../utils/errno';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
 import { assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
+import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -90,10 +91,11 @@ export function trashRefusal(p: string, platform: NodeJS.Platform = process.plat
 }
 
 async function trashOne(p: string): Promise<void> {
+  // Under a test runner the machine's Trash is never reached: a test stands in for this step
+  // (setTrashStepForTests). Before anything else, the lstat below included (realMachineGuard.ts).
+  refuseUnderTestRunner(`a test reached the machine's real Trash: ${p} — use setTrashStepForTests`);
   // Confirm the path still exists (and learn file-vs-dir for Windows).
   const stat = await fsp.lstat(p); // throws ENOENT -> caught by caller
-  const refusal = trashRefusal(p);
-  if (refusal) throw new TrashRefusal(refusal);
 
   switch (process.platform) {
     case 'darwin': {
@@ -159,7 +161,8 @@ let trashStep: (p: string) => Promise<void> = trashOne;
 /**
  * Test-only: run `step` in place of the real Trash step, so a test can drive
  * every delete path without anything reaching the machine's Trash; null
- * restores the real one.
+ * restores the real one. Under a test runner the real one refuses
+ * (realMachineGuard.ts), so a test that reaches a delete must use this.
  */
 export function setTrashStepForTests(step: ((p: string) => Promise<void>) | null): void {
   trashStep = step ?? trashOne;
@@ -204,9 +207,15 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
   // flaky, and trash batches are small (UI sends chunks).
   for (const p of paths) {
     try {
+      // A path the platform's trash call would change is handed to no Trash step, a test's
+      // stand-in included (trashRefusal, RISKS R61).
+      const refusal = trashRefusal(p);
+      if (refusal) throw new TrashRefusal(refusal);
       await trashStep(p);
       deleted.push(p);
     } catch (err) {
+      // A test that reached the real Trash is a failure of the test, never one path's reason.
+      if (err instanceof RealMachineRefusal) throw err;
       // The page prints `reason` in a toast, so it gets a sentence; the raw
       // text (errno, syscall, path) goes to the terminal where it is useful.
       console.warn(`[treemap] could not move to the Trash: ${p}:`, err instanceof Error ? err.message : err);

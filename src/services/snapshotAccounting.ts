@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import { measureShadowStorage, normalizeVolume, type ShadowStorageFailure, type ShadowStorageMeasurement } from '../platform/windows/vss';
 import { reasonOf } from '../platform/exec';
 import type { PowerShellOptions } from '../platform/windows/powershell';
+import { refuseUnderTestRunner } from './realMachineGuard';
 
 const exec = promisify(execFile);
 
@@ -235,8 +236,11 @@ export interface PurgeResult {
   error?: string;
 }
 
-/** Delete local Time Machine snapshots (macOS only). Time Machine recreates them on the next backup. */
-export async function purgeSnapshots(): Promise<PurgeResult> {
+/** Delete local Time Machine snapshots (macOS only), for real. */
+async function purgeLocalSnapshots(): Promise<PurgeResult> {
+  // Under a test runner the machine's snapshots are never listed for deletion, let alone deleted:
+  // a test stands in for this step (setSnapshotPurgeStepForTests; realMachineGuard.ts).
+  refuseUnderTestRunner("a test reached the machine's real Time Machine snapshots: deleting them — use setSnapshotPurgeStepForTests");
   if (process.platform !== 'darwin') {
     return { ok: false, deleted: 0, failed: 0, error: 'Purging snapshots is only supported on macOS' };
   }
@@ -255,4 +259,21 @@ export async function purgeSnapshots(): Promise<PurgeResult> {
     }
   }
   return { ok: failed === 0, deleted, failed };
+}
+
+/** The step that purges; a test replaces it (setSnapshotPurgeStepForTests). */
+let purgeStep: () => Promise<PurgeResult> = purgeLocalSnapshots;
+
+/**
+ * Test-only: run `step` in place of deleting the machine's local snapshots, so
+ * a test can drive the purge without anything reaching Time Machine; null
+ * restores the real one, which refuses under a test runner.
+ */
+export function setSnapshotPurgeStepForTests(step: (() => Promise<PurgeResult>) | null): void {
+  purgeStep = step ?? purgeLocalSnapshots;
+}
+
+/** Delete local Time Machine snapshots (macOS only). Time Machine recreates them on the next backup. */
+export function purgeSnapshots(): Promise<PurgeResult> {
+  return purgeStep();
 }

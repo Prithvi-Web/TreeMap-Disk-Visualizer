@@ -3,6 +3,7 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
 import { meansAbsent, describeFsError } from '../utils/errno';
+import { refuseUnderTestRunner } from './realMachineGuard';
 
 /**
  * Trash accounting (Feature 8). Best-effort, read-only sizing of the system
@@ -121,6 +122,9 @@ export function trashDirOverride(): string | null {
 async function trashDirs(): Promise<string[]> {
   const override = trashDirOverride();
   if (override) return [override];
+  // Under a test runner the machine's Trash is not even listed — its names and sizes are the
+  // owner's — so a test points TREEMAP_TRASH_DIR at a folder of its own (realMachineGuard.ts).
+  refuseUnderTestRunner("a test reached the machine's real Trash: listing it — point TREEMAP_TRASH_DIR at a folder the test owns");
   const home = os.homedir();
   const dirs: string[] = [];
   if (process.platform === 'darwin') {
@@ -322,6 +326,11 @@ async function clearFreedesktopTrash(failed: EmptyTrashResult['failed']): Promis
  * failures report what actually happened.
  */
 export async function emptyTrash(): Promise<EmptyTrashResult> {
+  // Under a test runner the machine's Trash is never emptied, nor even read here: a test points
+  // TREEMAP_TRASH_DIR at a folder of its own (realMachineGuard.ts).
+  if (trashDirOverride() === null) {
+    refuseUnderTestRunner("a test reached the machine's real Trash: emptying it — point TREEMAP_TRASH_DIR at a folder the test owns");
+  }
   const before = await getTrashInfo();
   // `itemCount === 0` is only a reason to do nothing when the count is a
   // MEASUREMENT. When the sweep could not read the Trash — EPERM from a

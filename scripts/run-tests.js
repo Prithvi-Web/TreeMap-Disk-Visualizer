@@ -24,18 +24,29 @@ const WATCHDOG = path.join(__dirname, 'testFileWatchdog.cjs');
 const { ARMED } = require(WATCHDOG);
 
 /**
+ * Set to '1' in every run's environment, so every process of the run — each
+ * test file's, and every child one starts with `...process.env` or
+ * `nestedRunEnv()` — refuses to reach the machine's Trash, empty it, delete
+ * its snapshots or trash a cloud file (src/services/realMachineGuard.ts, which
+ * also knows a test file by NODE_TEST_CONTEXT). By 30 Sep 2026 tests had put
+ * nine files into the owner's real Trash on every full run for weeks.
+ */
+const FORBID_REAL_TRASH = 'TREEMAP_FORBID_REAL_TRASH';
+
+/**
  * The environment the test run gets. With no TREEMAP_DATA_DIR set, the run
  * gets a data folder of its own under the temp folder, removed by `cleanup`:
  * a test file that never pointed the app's data folder anywhere otherwise
  * saved every scan it ran into the owner's real one (on 24 Sep 2026, 719 of
  * the 2,605 snapshots in the owner's TreeMap history were the tests' own temp
  * folders). A folder the caller chose is used as it is and never removed.
+ * Either way the run forbids the real Trash (FORBID_REAL_TRASH).
  */
 function testEnvironment(env) {
-  if (env.TREEMAP_DATA_DIR) return { env: { ...env }, cleanup() {} };
+  if (env.TREEMAP_DATA_DIR) return { env: { ...env, [FORBID_REAL_TRASH]: '1' }, cleanup() {} };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'treemap-test-run-data-'));
   return {
-    env: { ...env, TREEMAP_DATA_DIR: dir },
+    env: { ...env, TREEMAP_DATA_DIR: dir, [FORBID_REAL_TRASH]: '1' },
     cleanup() {
       rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     },
@@ -84,6 +95,6 @@ function main() {
   process.exit(runTests({ files, argv: process.argv.slice(2), env: process.env, spawn: spawnSync }));
 }
 
-module.exports = { testEnvironment, runTests, WATCHDOG };
+module.exports = { testEnvironment, runTests, WATCHDOG, FORBID_REAL_TRASH };
 
 if (require.main === module) main();

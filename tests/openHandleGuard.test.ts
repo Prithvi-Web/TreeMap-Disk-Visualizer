@@ -10,7 +10,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-openHandleGuard-data-');
 
 import { checkOpenHandles, describeConflicts } from '../src/services/openHandleGuard';
-import { moveToTrash } from '../src/services/cleaner';
+import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
 import { AppError } from '../src/middleware/errorHandler';
 import { platform } from '../src/platform';
 import { intersectHandles, type LsofRecord } from '../src/platform/macos/lsofGuard';
@@ -313,6 +313,13 @@ test('an empty set is answered without touching the system', async () => {
 
 test('moveToTrash refuses the whole batch when something in it is open', { skip: !IS_UNIX }, async () => {
   const dir = await mkTmp();
+  // The Trash step is a recorder. B2 refuses before it; but when `lsof` misses
+  // the held file on a loaded machine the delete goes ahead, and until 30 Sep
+  // 2026 it would then have put both files into the machine's real Trash.
+  const reached: string[] = [];
+  setTrashStepForTests(async (p) => {
+    reached.push(p);
+  });
   try {
     const held = path.join(dir, 'held.bin');
     const free = path.join(dir, 'free.bin');
@@ -338,10 +345,12 @@ test('moveToTrash refuses the whole batch when something in it is open', { skip:
       // never agreed to.
       assert.ok(fs.existsSync(free), 'the free file is untouched');
       assert.ok(fs.existsSync(held), 'and so is the held one');
+      assert.deepEqual(reached, [], 'the Trash step was never reached');
     } finally {
       release();
     }
   } finally {
+    setTrashStepForTests(null);
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
@@ -386,21 +395,29 @@ test('an unknown answer does not block the delete', async () => {
 test('"delete anyway" skips the check entirely', { skip: !IS_MAC }, async () => {
   // The bypass has to be real, or the warning becomes a wall. Proven without
   // trashing anything: the guard is stubbed to a conflict that would refuse,
-  // and the call is made with the flag against a path that no longer exists —
-  // so it reaches the trash step (past the guard) and fails there instead.
+  // and the Trash step is a stand-in that records what reaches it — so the
+  // call made with the flag is seen to get past the guard to the Trash step.
+  // (Until 30 Sep 2026 it reached the machine's own Trash step, with a path
+  // that did not exist, and failed there.)
   const provider = platform() as unknown as { getOpenHandlesBatch: (p: string[]) => Promise<unknown> };
   const original = provider.getOpenHandlesBatch.bind(provider);
   provider.getOpenHandlesBatch = (paths: string[]) =>
     Promise.resolve({ handles: paths.map((p) => ({ path: p, pid: 999999, processName: 'Pretend' })), complete: true });
+  const reached: string[] = [];
+  setTrashStepForTests(async (p) => {
+    reached.push(p);
+  });
   const missing = path.join(os.tmpdir(), 'tm-b2-never-existed.bin');
   try {
     await assert.rejects(() => moveToTrash([missing]), /OPEN_HANDLE_CONFLICT|open right now/);
+    assert.deepEqual(reached, [], 'the conflict stopped the delete before the Trash step');
 
     const result = await moveToTrash([missing], { ignoreOpenHandles: true });
-    assert.deepEqual(result.deleted, [], 'nothing was trashed — the path does not exist');
-    assert.equal(result.failed.length, 1, 'it got past the guard and failed at the filesystem instead');
+    assert.deepEqual(reached, [missing], 'with the flag it got past the guard to the Trash step');
+    assert.deepEqual(result.deleted, [missing]);
   } finally {
     provider.getOpenHandlesBatch = original;
+    setTrashStepForTests(null);
   }
 });
 

@@ -6,6 +6,7 @@ import { providerById, tokenFor, cloudRootPath } from './providers';
 import { findNodeByPath } from '../../utils/treemap';
 import { AppError } from '../../middleware/errorHandler';
 import { buildStoreFromTree, ScanStore } from '../scanStore';
+import { refuseUnderTestRunner } from '../realMachineGuard';
 
 /**
  * cloud/cloudScan — a cloud listing that REGISTERS AS A SCAN. The record
@@ -68,6 +69,12 @@ export async function trashCloudPaths(
 ): Promise<{ deleted: string[]; failed: { path: string; reason: string }[] }> {
   const providerId = scan.rootPath.replace('cloud://', '');
   const provider = providerById(providerId);
+  // Under a test runner nothing reaches a provider's real trash, nor even its stored token: a test
+  // points the provider at a stand-in server (TM_<ID>_API, providers.ts; realMachineGuard.ts).
+  const apiVariable = `TM_${provider.id.toUpperCase()}_API`;
+  if (!process.env[apiVariable]) {
+    refuseUnderTestRunner(`a test reached ${provider.name}'s real trash: ${paths[0] ?? 'no path'} — point ${apiVariable} at a stand-in server`);
+  }
   const token = await tokenFor(provider);
 
   const deleted: string[] = [];
