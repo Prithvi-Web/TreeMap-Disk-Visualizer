@@ -11,6 +11,7 @@ import { volumeTopology, isRotational, queueDepth, topologyReason } from './topo
 import { downloadOrigin, provenanceAvailable, readDownloadOriginsLinux } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
+import { copyOutOfSnapshot, destinationTakenReason } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
 import { readLastUsedLinux, probeLastUsedLinux } from './lastUsed';
 import { readBackupMembershipLinux, probeBackupMembershipLinux } from './backup';
@@ -342,8 +343,11 @@ export class LinuxProvider extends BaseProvider {
       const st = await fsp.lstat(source).catch(() => null);
       if (!st) continue;
       await fsp.mkdir(path.dirname(destination), { recursive: true });
-      // recursive handles a directory; a plain file takes the same call.
-      await fsp.cp(source, destination, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+      // recursive handles a directory; a plain file takes the same call. Never over a name that
+      // is already there, however it got there (FG4).
+      if (!(await copyOutOfSnapshot(source, destination, { verbatimSymlinks: true }))) {
+        return { restored: false, destinationTaken: true, reason: destinationTakenReason(destination) };
+      }
       return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size };
     }
     return {

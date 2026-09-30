@@ -11,6 +11,7 @@ isolatedDataDir('treemap-snaprec-test-');
 
 import { relativeToVolume } from '../src/platform/snapshotPaths';
 import {
+  RECOVER_SCRIPT,
   buildRecoveryScript,
   parseRecoveryOutput,
   isUserCancelled,
@@ -69,12 +70,12 @@ test('the volume itself reduces to nothing, and is refused upstream', () => {
 /* ══════════════════ The privileged call, without ever making it ══════════════════ */
 
 test('every value reaches the helper as its own quoted argument', () => {
-  const script = buildRecoveryScript('/tmp/h.sh', '/', 'Users/me/a.txt', '/tmp/out.txt', 501, 20, ['snapA', 'snapB']);
+  const script = buildRecoveryScript('/tmp/h.sh', '/', 'Users/me/a.txt', '/tmp', 'out.txt', 501, 20, ['snapA', 'snapB']);
   assert.match(script, /^do shell script "\/bin\/sh " & /);
   assert.match(script, /with administrator privileges$/);
-  // Six quoted forms: script, volume, rel, dest, then each snapshot. uid/gid are
-  // numbers formatted by us, so they are not user input at all.
-  assert.equal((script.match(/quoted form of/g) || []).length, 6);
+  // Seven quoted forms: script, volume, rel, the destination folder and name, then each
+  // snapshot. uid/gid are numbers formatted by us, so they are not user input at all.
+  assert.equal((script.match(/quoted form of/g) || []).length, 7);
   assert.match(script, /"snapA"/);
   assert.match(script, /"snapB"/);
 });
@@ -83,7 +84,7 @@ test('a hostile filename stays data, never script', () => {
   // The whole reason the helper is a fixed file taking argv rather than an
   // interpolated command string.
   const nasty = 'Users/me/$(touch /tmp/pwned) "; rm -rf ~; echo ".txt';
-  const script = buildRecoveryScript('/tmp/h.sh', '/', nasty, '/tmp/out', 501, 20, ['snap']);
+  const script = buildRecoveryScript('/tmp/h.sh', '/', nasty, '/tmp', 'out', 501, 20, ['snap']);
   // Every embedded double quote is escaped, so the AppleScript literal cannot
   // be closed early; `quoted form of` then single-quotes it for the shell.
   const literal = script.slice(script.indexOf('quoted form of "'));
@@ -117,19 +118,15 @@ test('the privileged helper fails safe when it cannot mount, and leaks no mounts
   // Run as an ordinary user, every mount_apfs call fails. The helper must say
   // NOTFOUND, exit 0, and leave no mount point behind — the trap is what stops
   // a recovery feature becoming a disk-space leak.
-  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'macos', 'snapshotRecover.ts'), 'utf8');
-  const body = source.match(/const RECOVER_SCRIPT = `([\s\S]*?)`;/);
-  assert.ok(body, 'the embedded helper must be findable');
-
   const dir = await mkTmp();
   try {
     const helper = path.join(dir, 'h.sh');
-    await fsp.writeFile(helper, body![1], { mode: 0o700 });
+    await fsp.writeFile(helper, RECOVER_SCRIPT, { mode: 0o700 });
 
     const before = (await fsp.readdir('/tmp')).filter((n) => n.startsWith('treemap-snap-')).length;
     const { execFile } = await import('node:child_process');
     const stdout = await new Promise<string>((resolve, reject) => {
-      execFile('/bin/sh', [helper, '/', 'etc/hosts', path.join(dir, 'out'), String(os.userInfo().uid), String(os.userInfo().gid), 'com.apple.TimeMachine.does-not-exist'],
+      execFile('/bin/sh', [helper, '/', 'etc/hosts', dir, 'out', String(os.userInfo().uid), String(os.userInfo().gid), 'com.apple.TimeMachine.does-not-exist'],
         (err, out) => (err ? reject(err) : resolve(out)));
     });
     const after = (await fsp.readdir('/tmp')).filter((n) => n.startsWith('treemap-snap-')).length;

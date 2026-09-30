@@ -396,6 +396,17 @@ read-what-you-saw) permission to act.
   filesystem — their deletes go to the provider's own trash via
   `POST /api/cloud/trash`. Entries *inside* archives are listings, not files
   (`403 { code: "VIRTUAL_PATH" }`); act on the archive itself.
+- **Snapshot restores never write through an existing name.**
+  `POST /api/system/snapshots/restore` checks its destination before the
+  administrator prompt, and the copy checks again when it runs: the macOS
+  root helper enters the destination folder by its physical path, refuses it
+  unless it belongs to the user or root and neither group nor others can
+  write it, copies into a folder it makes there and renames with
+  `mv -n -h`, confirming the copy moved; Linux and Windows copy with
+  `force: false` + `errorOnExist`. A name that appears in between fails the
+  restore and nothing is written over it — answered `409 DESTINATION_OCCUPIED`, as when the name was there
+  before. No test ever raises the password prompt: under a test runner it
+  refuses (`setAdminPromptForTests` stands in).
 - **Git runs hardened, and only in a vetted repository.** A repository found
   under a scanned folder is not trusted: its own `.git/config` can name
   programs for git to start (`core.fsmonitor`, `filter.<x>.clean`, hooks…).

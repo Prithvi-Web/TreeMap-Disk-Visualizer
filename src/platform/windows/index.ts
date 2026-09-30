@@ -11,6 +11,7 @@ import { volumeTopology } from './topology';
 import { fileFactsBatch, toPlaceholderInfo } from './attributes';
 import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
 import { relativeToVolume } from '../snapshotPaths';
+import { copyOutOfSnapshot, destinationTakenReason } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
 import { runPowerShellJson } from './powershell';
 import { readLastUsedWindows, probeLastUsedWindows } from './lastUsed';
@@ -250,7 +251,10 @@ export class WindowsProvider extends BaseProvider {
         const source = path.join(linkDir, relative);
         const st = await fsp.lstat(source).catch(() => null);
         if (!st) continue;
-        await fsp.cp(source, destination, { recursive: true, preserveTimestamps: true });
+        // Never over a name that is already there, however it got there (FG4).
+        if (!(await copyOutOfSnapshot(source, destination))) {
+          return { restored: false, destinationTaken: true, reason: destinationTakenReason(destination) };
+        }
         return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size };
       } finally {
         await fsp.rm(linkDir, { force: true, recursive: false }).catch(() => {});

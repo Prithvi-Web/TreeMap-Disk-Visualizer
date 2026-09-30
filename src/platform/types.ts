@@ -418,6 +418,8 @@ export interface SnapshotRecoveryResult {
   /** Present when nothing was restored — always set in that case. */
   reason?: string;
   cancelled?: boolean;
+  /** Nothing was restored because a name was at the destination when the copy ran (FG4). */
+  destinationTaken?: boolean;
 }
 
 /* ---------- Filesystem snapshots (B4) ---------- */

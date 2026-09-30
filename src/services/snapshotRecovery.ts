@@ -174,11 +174,13 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
 
   // ENOENT is the only answer that means "nothing is there". Any other errno
   // — EACCES on the parent, ELOOP, EIO — means the question was not answered,
-  // and `false` here is not a harmless default: unlike the Time Capsule and
-  // offload paths, snapshot recovery does NOT go through `copyWithHash`'s
-  // `wx` flag. It ends in `cp -a` running as root on macOS, and `fsp.cp` with
-  // force on Linux and Windows. A wrong "nothing is there" is a privileged
-  // overwrite of a live file.
+  // and `false` here is not a harmless default: a restore over a live file is
+  // the failure this feature exists to prevent. This check is the early, friendly
+  // answer; it is not the only one. The copy itself never writes through a name
+  // that is there by the time it runs (FG4): on macOS the root helper copies
+  // into a folder of its own and renames with `mv -n -h`, in a destination folder
+  // no other account can change, and on Linux and Windows the copy refuses an
+  // existing name (platform/snapshotCopy.ts).
   const occupied = await fsp.lstat(destination).then(() => true).catch((err: NodeJS.ErrnoException) => {
     // `meansAbsent`, not the wider stat predicate: a wrong "nothing is there"
     // ends in a root-privileged `cp -a` over a live file.
@@ -257,8 +259,9 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
   if (!result.restored) {
     // A dismissed password prompt is an answer, not a fault — 409, and the UI
     // renders it neutrally.
-    throw new AppError(409, result.cancelled ? 'AUTHORIZATION_DECLINED' : 'NOT_IN_ANY_SNAPSHOT',
-      result.reason ?? 'That path could not be recovered from any snapshot.');
+    // A name at the destination when the copy ran (FG4) is the same refusal as one found before.
+    const code = result.cancelled ? 'AUTHORIZATION_DECLINED' : result.destinationTaken ? 'DESTINATION_OCCUPIED' : 'NOT_IN_ANY_SNAPSHOT';
+    throw new AppError(409, code, result.reason ?? 'That path could not be recovered from any snapshot.');
   }
 
   const stat = await fsp.lstat(destination).catch(() => null);
