@@ -29563,13 +29563,35 @@ async function restoreFromSnapshot(targetPath, host) {
     wireSnapshotActions(host);
     toast('Recovered from a system snapshot');
   } catch (e) {
-    // A dismissed password prompt is an answer, not a fault — shown neutrally.
+    // A folder the copy may not be written into as administrator (macOS: another account owns it,
+    // or others can change it) is refused the same way on every try, and this panel always
+    // recovers into that folder, beside the original. So no "Try again", and in place of the
+    // server's "choose another destination" — which only a caller that names one can follow —
+    // what this panel can and cannot do (FG4d, review #9, #19).
+    if (e.code === 'DESTINATION_FOLDER_REFUSED') {
+      host.innerHTML =
+        `<div class="snap-msg">${icon('alert', 13)} ${escapeHtml(snapFolderRefusedText(targetPath))}</div>`;
+      return;
+    }
+    // A dismissed password prompt is an answer, not a fault — shown neutrally. A restore that
+    // failed (RESTORE_FAILED: the prompt, the copy or a snapshot that could not be opened) may
+    // not fail again, so it keeps its retry, with the server's own account of what happened.
     const declined = e.code === 'AUTHORIZATION_DECLINED';
     host.innerHTML =
       `<div class="snap-msg">${icon(declined ? 'clock' : 'alert', 13)} ${escapeHtml(e.message)}</div>` +
       `<div class="snap-actions"><button class="pill" data-snap-restore="${escapeHtml(targetPath)}">Try again</button></div>`;
     wireSnapshotActions(host);
   }
+}
+
+/** What the panel says when the folder the copy would go into is refused: the folder, why, and what is left to do. */
+function snapFolderRefusedText(targetPath) {
+  const cut = Math.max(targetPath.lastIndexOf('/'), targetPath.lastIndexOf('\\'));
+  const folder = cut > 0 ? targetPath.slice(0, cut) : targetPath;
+  return `This panel puts a recovered copy beside the original, in ${folder}, and TreeMap will not write a copy made ` +
+    'as administrator there: another account owns that folder, or other accounts can change it. Trying again here ' +
+    'would be refused the same way. A program using TreeMap\'s API can recover it into a folder of yours instead, ' +
+    'by naming that folder as the destination.';
 }
 
 function wireSnapshotActions(scope) {

@@ -1747,6 +1747,25 @@ test('a declined password prompt is shown neutrally, not as a failure', () => {
   assert.match(fn, /declined \? 'clock' : 'alert'/, 'a decision gets a neutral icon, an error gets the alert');
 });
 
+test('a destination folder the copy may not go into is explained in words this panel can act on, with no retry', () => {
+  // This panel always recovers beside the original, into the same folder, so a refused folder is
+  // refused on every try, and "choose another destination" names what only a caller of the API
+  // can do (FG4d, review #9, #19). A restore that failed may not fail again, and keeps its retry.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function restoreFromSnapshot'), code.indexOf('function wireSnapshotActions'));
+  const at = fn.indexOf("e.code === 'DESTINATION_FOLDER_REFUSED'");
+  assert.ok(at !== -1, 'the folder refusal has its own branch');
+  const branch = fn.slice(at, fn.indexOf('return;', at));
+  assert.ok(!/data-snap-restore|Try again/.test(branch), `and it offers no retry: ${branch}`);
+  assert.match(branch, /snapFolderRefusedText\(targetPath\)/, 'its sentence is the panel\'s own, not the server\'s');
+  const text = fn.slice(fn.indexOf('function snapFolderRefusedText'));
+  assert.ok(text.length > 0 && !/choose another destination/i.test(text), 'never advice this panel cannot follow');
+  assert.match(text, /beside the original/, 'it says where this panel puts a copy');
+  assert.match(text, /refused the same way/, 'and that trying again here would not help');
+  const rest = fn.slice(fn.indexOf('const declined'));
+  assert.match(rest, /data-snap-restore="\$\{escapeHtml\(targetPath\)\}">Try again/, 'any other refusal or failure keeps its retry');
+});
+
 test('the snapshot panel implements the §3.5 states', () => {
   const code = appCode();
   assert.match(code, /Looking through this system.s snapshots/, 'loading');
