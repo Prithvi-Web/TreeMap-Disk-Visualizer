@@ -285,12 +285,34 @@ test('a folder to copy into that is not the one mktemp made is refused before an
   const cases: Array<[string, string]> = [
     ['open to others', 'mktemp() { d=$(command mktemp "$@") || return 1; chmod 755 "$d"; printf "%s\\n" "$d"; }'],
     ['another account\'s', 'id() { echo 4242; }'],
+    ['holding an item already', 'mktemp() { d=$(command mktemp "$@") || return 1; ln -s /nowhere "$d/item"; printf "%s\\n" "$d"; }'],
   ];
   for (const [what, before] of cases) {
     const dest = tmp('treemap-place-dest-');
     const { out } = place(dest, 'lost.txt', source(), { before });
     assert.match(out, /^ERROR the folder made to copy into was changed/, `${what}: ${out}`);
     assert.equal(fs.existsSync(path.join(dest, 'lost.txt')), false, what);
+  }
+});
+
+test('the folder the copy is made in keeps no access list inherited from the destination folder', { skip: !onMac }, () => {
+  // A folder the user owns can carry an inheritable access-list entry letting the user write in
+  // anything made inside it — the helper's own folder too, root's and 0700 though it is — and
+  // plant `item` there before the copy. The folder's access list is cleared, and must be empty.
+  const dest = tmp('treemap-place-dest-');
+  const me = os.userInfo().username;
+  const acl = spawnSync('/bin/chmod', ['+a', `user:${me} allow add_file,add_subdirectory,delete_child,file_inherit,directory_inherit`, dest],
+    { encoding: 'utf8', env: process.env });
+  assert.equal(acl.status, 0, acl.stderr);
+  try {
+    const log = path.join(tmp('treemap-place-log-'), 'acl.log');
+    const before = 'cp() { ls -led . >> "$TM_LOG"; command cp "$@"; }';
+    const { out } = place(dest, 'lost.txt', source(), { before, env: { TM_LOG: log } });
+    assert.equal(out, 'PLACED');
+    const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.deepEqual(lines.slice(1), [], `no access-list entry on the folder the copy was made in: ${lines.join(' | ')}`);
+  } finally {
+    spawnSync('/bin/chmod', ['-N', dest], { env: process.env });
   }
 });
 

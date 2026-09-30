@@ -77,7 +77,8 @@ import { meansAbsent } from '../../utils/errno';
  * (`mktemp -d`), enters it by its physical path and works from inside it — `./item` for the copy,
  * `../<name>` for where it goes — so a folder swapped in under that folder's name later is never
  * written to; the folder must be the running account's (root's, as the helper runs) and nobody
- * else's to write in, and its parent must still be the destination folder (FG4d, review #3). It
+ * else's to write in — its access list, which it would inherit from a destination folder the user
+ * owns, is cleared — empty, and its parent must still be the destination folder (FG4d, review #3). It
  * copies, unlocks the copy (a Finder-locked item can be neither handed over nor put in place, by
  * root either: FG4d, review #18), hands it to <uid>:<gid>, checks the name again, and places it:
  * a file with `link`, which fails whatever is at the name; a link with `ln -P -h`, a folder with
@@ -122,7 +123,8 @@ place_copy() {
   fi
   stage=$(mktemp -d ./.treemap-restore.XXXXXX) || { stage=''; echo "ERROR could not make a folder to copy into"; return 1; }
   cd -P -- "$stage" 2>/dev/null || { leave_stage; echo "ERROR the folder made to copy into could not be opened"; return 1; }
-  if [ "$(stat -f '%u:%Lp' .)" != "$(id -u):700" ] || [ "$(stat -f '%d:%i' ..)" != "$dest_id" ]; then
+  chmod -N . 2>/dev/null
+  if [ "$(stat -f '%u:%Lp' .)" != "$(id -u):700" ] || [ "$(stat -f '%d:%i' ..)" != "$dest_id" ] || [ -n "$(ls -led . 2>/dev/null | sed -n 2p)" ] || [ -e ./item ] || [ -L ./item ]; then
     cd .. 2>/dev/null; rmdir -- "$stage" 2>/dev/null; stage=''
     echo "ERROR the folder made to copy into was changed before anything was copied into it, so nothing was copied"; return 1
   fi
