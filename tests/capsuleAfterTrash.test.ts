@@ -7,9 +7,9 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleAfterTrash-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { getCapsuleJob, setDiscardFaultForTests, type DiscardStep } from '../src/services/timeCapsule';
+import { getCapsuleJob, listUndoableEntriesForRun, setDiscardFaultForTests, type DiscardStep } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
-import { commitCart, undoCartRun } from '../src/services/cartCommit';
+import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
 import { platform } from '../src/platform';
 import { invalidateCapabilities } from '../src/platform/capabilities';
@@ -34,7 +34,19 @@ let trashCalls = 0;
 before(() => {
   setTrashStepForTests(async (p) => {
     if (path.basename(p).startsWith('held')) throw new Error('the Trash refused it (a test)');
+    // Refused, and its folder can no longer be looked into (its permissions changed meanwhile).
+    if (path.basename(p).startsWith('locked')) {
+      fs.chmodSync(path.dirname(p), 0o000);
+      throw new Error('the Trash refused it (a test)');
+    }
     fs.renameSync(p, path.join(FAKE_TRASH, `${trashCalls++}-${path.basename(p)}`));
+    // An osascript killed at its timeout while Finder finishes: moved, then reported as failed.
+    if (path.basename(p).startsWith('slow')) throw new Error('osascript timed out after 15000 ms (a test)');
+    // Moved, another file made at the same name at once, then reported as failed.
+    if (path.basename(p).startsWith('swap')) {
+      fs.writeFileSync(p, 'another file, made after the trash step moved the first');
+      throw new Error('the Trash reported a failure (a test)');
+    }
   });
 });
 
@@ -169,3 +181,88 @@ for (const step of STEPS) {
     }
   });
 }
+
+/* ─────────────── FG3, item 5: a copy of an item that WAS trashed is kept ─────────────── */
+
+test('a trash step that moves a file and then reports failure: the item is counted as trashed, its copy kept, and undo puts it back', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-slow-');
+  const plain = path.join(dir, 'a.txt');
+  const slow = path.join(dir, 'slow.txt');
+  for (const p of [plain, slow]) fs.writeFileSync(p, `the content of ${path.basename(p)}`);
+  const result = await commitCart([plain, slow]);
+  assert.deepEqual(sorted(result.trashed), sorted([plain, slow]), 'judged by the disk: the file is gone from its place');
+  assert.deepEqual(result.failedToTrash, [], 'and not reported as left in place');
+  assert.ok(!fs.existsSync(slow));
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 2, 'its copy was kept');
+  await restored(job.jobId);
+  for (const p of [plain, slow]) assert.equal(fs.readFileSync(p, 'utf8'), `the content of ${path.basename(p)}`);
+});
+
+test('the same path twice in one batch is protected and trashed once, and undo puts it back', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-twice-');
+  const twice = path.join(dir, 'twice.txt');
+  fs.writeFileSync(twice, 'the content of twice.txt');
+  const result = await commitCart([twice, twice]);
+  assert.deepEqual(result.trashed, [twice], 'trashed once');
+  assert.deepEqual(result.failedToTrash, [], 'and not also reported as failing');
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 1, 'one copy, kept');
+  await restored(job.jobId);
+  assert.equal(fs.readFileSync(twice, 'utf8'), 'the content of twice.txt');
+});
+
+test('the dry run of a batch with the same path twice plans it once, as the real run does', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-twice-plan-');
+  const twice = path.join(dir, 'twice.txt');
+  fs.writeFileSync(twice, 'the content of twice.txt');
+  const plan = await planCartCommit([twice, twice]);
+  assert.deepEqual(plan.items.map((i) => i.path), [twice], 'one item');
+  assert.equal(plan.bytesWouldFree, fs.statSync(twice).size, 'counted once');
+});
+
+const NO_CHMOD = process.platform === 'win32'
+  ? 'Windows ignores a folder\'s mode bits'
+  : process.getuid?.() === 0 ? 'root may look into any folder' : false;
+
+test('a reported failure whose file can no longer be looked at stands: could not look is not gone', { skip: NO_CHMOD }, async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-locked-');
+  const locked = path.join(dir, 'locked.txt');
+  fs.writeFileSync(locked, 'the content of locked.txt');
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await commitCart([locked]);
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+  assert.deepEqual(result.trashed, [], 'not counted as trashed');
+  assert.deepEqual(result.failedToTrash.map((f) => f.path), [locked], 'the Trash\'s refusal stands');
+  assert.equal(fs.readFileSync(locked, 'utf8'), 'the content of locked.txt', 'and the file is where it was');
+});
+
+test('a reported failure where another file now stands at the path: the one copied was trashed, and its copy is kept', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-swap-');
+  const swapped = path.join(dir, 'swap.txt');
+  fs.writeFileSync(swapped, 'the content of swap.txt');
+  const result = await commitCart([swapped]);
+  assert.deepEqual(result.trashed, [swapped], 'judged by what stands there: not the file that was copied');
+  assert.deepEqual(result.failedToTrash, []);
+  const kept = await listUndoableEntriesForRun(result.runId);
+  assert.deepEqual(kept.map((e) => e.originalPath), [swapped], 'its copy is kept for an undo');
+});
+
+/* ─────────────── The Windows runner's failure, reproduced here ─────────────── */
+
+test('when the open-file check cannot run, an unattended run moves nothing, says why, and discards only copies of what stayed', async () => {
+  const { dir, gone, held } = threeFiles('autopilot-unchecked');
+  try {
+    const run = await withOpenFileCheck('fails', () => runOver(dir, 'unchecked'));
+    assert.equal(run.status, 'blocked');
+    assert.deepEqual([run.items, run.bytesDeleted], [[], 0], 'nothing was trashed');
+    assert.match(run.blockedReason ?? '', /couldn.t check whether these files are in use/, `and the run says why (${run.blockedReason})`);
+    for (const p of [...gone, held]) assert.ok(fs.existsSync(p), `${path.basename(p)} is where it was`);
+    assert.deepEqual(await listUndoableEntriesForRun(run.capsuleRunId ?? run.id), [], 'so its copies, of files still in place, were discarded');
+  } finally {
+    await savePolicies([]);
+  }
+});

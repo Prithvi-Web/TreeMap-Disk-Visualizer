@@ -2662,7 +2662,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '202': jsonResponse('Restore started', obj({ jobId: str() }, ['jobId'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
-      '409': errorResponse('PATH_OCCUPIED, ALREADY_RESTORED or PAYLOAD_GONE — restoring never overwrites what is there now'),
+      '409': errorResponse('PATH_OCCUPIED, ALREADY_RESTORED, PAYLOAD_GONE, MANIFEST_UNREADABLE or CAPSULE_RECORD_INVALID (the entry\'s id, its original place or its manifest\'s names are not what TreeMap records) — restoring never overwrites what is there now, and never follows a record TreeMap did not write'),
     },
   },
   {
@@ -2767,6 +2767,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '200': jsonResponse('The projection', opaque('items[], bytesMatched, bytesWouldDelete, skipped[], capBytes, wouldBlockReason?')),
       '400': errorResponse('POLICY_REQUIRED (neither "policyId" nor "policy"); for a "policy", every refusal a save would give it, judged against the stored policy of the same id as a save judges it: POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID, POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, PATH_INVALID, PATH_BLOCKED, POLICY_QUERY_INVALID, POLICY_QUERY_UNANSWERABLE'),
       '404': errorResponse('POLICY_NOT_FOUND'),
+      '409': errorResponse('POLICY_RECORD_INVALID — the stored policy\'s folder is not one TreeMap saved (autopilot.json was changed outside TreeMap), so nothing was scanned; save the policy again'),
     },
   },
   {

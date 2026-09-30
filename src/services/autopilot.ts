@@ -18,7 +18,7 @@ import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
 import { protectAndTrash, listUndoableEntriesForRun, startCapsuleRestore, type ProtectAndTrashResult } from './timeCapsule';
 import nodePath from 'path';
-import { isSpillPath, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
+import { isSpillPath, PathRejectedError, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
 import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
 import { formatBytes } from '../utils/formatBytes';
@@ -436,6 +436,7 @@ function waitForScan(scanId: string): Promise<void> {
 async function resolveCandidates(
   policy: AutopilotPolicy,
 ): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
+  assertSavedPolicyPath(policy.path);
   // A policy over app-data would otherwise select what a crash left in the
   // spill folder (and on Windows a running scan's files, which have names).
   // Only a candidate under app-data can be there, so only those pay the full
@@ -487,6 +488,25 @@ let spillCheck: (p: string) => boolean = isSpillPath;
 /** Test seam: what Autopilot runs as the full spill-folder check (to count it); null restores `isSpillPath`. */
 export function setSpillCheckForTests(fn: ((p: string) => boolean) | null): void {
   spillCheck = fn ?? isSpillPath;
+}
+
+/**
+ * The policy's folder, held to the shape `normalizePolicy` saves before anything scans it or deletes in
+ * it (FG3): policies are read back from autopilot.json, a file on disk, and are not re-validated on
+ * load. A saved folder is `sanitizePath`'s own answer, which it answers unchanged, and never a whole
+ * drive; anything else is a record TreeMap did not write, and the run stops before it scans.
+ */
+function assertSavedPolicyPath(p: unknown): void {
+  let saved: string | null = null;
+  try {
+    saved = typeof p === 'string' ? sanitizePath(p) : null;
+  } catch (err) {
+    if (!(err instanceof PathRejectedError)) throw err;
+  }
+  if (saved === null || saved !== p || nodePath.parse(saved).root === saved) {
+    throw new AppError(409, 'POLICY_RECORD_INVALID',
+      `This policy's folder (${String(p).slice(0, 200)}) is not one TreeMap saved, so it was not scanned and nothing was deleted. Save the policy again to fix it.`);
+  }
 }
 
 /** Scan the policy's folder and resolve its match into raw candidates. */
@@ -788,7 +808,11 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
   ];
   if (run.items.length === 0) {
     run.status = 'blocked';
-    run.blockedReason = 'Nothing could be safely protected, so nothing was deleted.';
+    // Protected but refused by the Trash (the open-file check that could not run, unattended, is
+    // the usual one) is a different fact from not protected, and the refusal is the reason to give.
+    run.blockedReason = result.failedToTrash.length > 0
+      ? `Nothing was moved to the Trash: ${result.failedToTrash[0].reason}`
+      : 'Nothing could be safely protected, so nothing was deleted.';
   }
   // After the trash step: the items above were trashed and can be undone, but
   // the copies of what the Trash refused were not all discarded (FG1).

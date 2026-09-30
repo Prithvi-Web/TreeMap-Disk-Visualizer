@@ -19,6 +19,7 @@ import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { meansAbsent } from '../utils/errno';
 import { assertNotSpillPath } from '../middleware/pathGuard';
+import { isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -148,7 +149,30 @@ export function capsuleAvailable(): { available: boolean; reason?: string } {
   return { available: true };
 }
 
+/**
+ * The shape of every id `capture` gives an entry (`crypto.randomUUID()`, since the capsule's first
+ * version), and so of every folder name TreeMap makes in the capsule.
+ */
+const ENTRY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Whether `id` is one TreeMap gives an entry: only such an id ever names a folder (FG3). */
+function isEntryId(id: unknown): id is string {
+  return typeof id === 'string' && ENTRY_ID.test(id);
+}
+
+/** Said of an index record TreeMap did not write, wherever one is refused. */
+const NOT_OURS = 'That Time Capsule record is not one TreeMap made';
+
+/**
+ * The folder of an entry's copy. The id comes from the index, a file on disk, and `rm -rf` is run on
+ * this path when an entry is forgotten, expires or is evicted — so an id that is not the shape TreeMap
+ * gives one is refused here, never joined: `../../../victim` once removed a folder outside app-data
+ * (FG3).
+ */
 function entryDir(id: string): string {
+  if (!isEntryId(id)) {
+    throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (its id is not one TreeMap gives), so nothing on disk is touched for it.`);
+  }
   return path.join(capsuleRoot(), id);
 }
 
@@ -317,11 +341,17 @@ export function planEviction(
   return { evict, fits: used + incomingBytes <= capBytes };
 }
 
-/** Delete an entry's payload and zero what it holds. The index record stays. */
-async function dropPayload(entry: TimeCapsuleEntry): Promise<void> {
-  await fsp.rm(entryDir(entry.id), { recursive: true, force: true });
+/**
+ * Delete an entry's payload and zero what it holds, answering the bytes that frees. The index record
+ * stays. A record whose id TreeMap did not give has no folder of TreeMap's, so nothing on disk is
+ * removed for it and nothing is freed; it is only zeroed.
+ */
+async function dropPayload(entry: TimeCapsuleEntry): Promise<number> {
+  const freed = isEntryId(entry.id) ? entry.heldBytes : 0;
+  if (isEntryId(entry.id)) await fsp.rm(entryDir(entry.id), { recursive: true, force: true });
   entry.heldBytes = 0;
   entry.hasPayload = false;
+  return freed;
 }
 
 /* ---------------- capture ---------------- */
@@ -715,9 +745,11 @@ export interface ProtectionPlan {
  * read once and mutated only in memory.
  */
 export async function planProtection(
-  paths: string[],
+  batch: string[],
   opts: { carryOver?: TimeCapsuleEntry[] } = {},
 ): Promise<ProtectionPlan> {
+  // Each path once, as protectAndTrash takes them (FG3), so the plan is the run's.
+  const paths = [...new Set(batch)];
   const capsule = capsuleAvailable();
   const store = await loadStore();
   const settings = await getSettings();
@@ -816,12 +848,21 @@ export async function planProtection(
  * deletion pathway (§10).
  */
 export async function protectAndTrash(
-  requests: ProtectionRequest[],
+  batch: ProtectionRequest[],
   context: { runId?: string; policyId?: string; unattended?: boolean } = {},
 ): Promise<ProtectAndTrashResult> {
   // Nothing in TreeMap's own spill folder is protected or trashed (Phase 4 §S.5.3): refused
   // before anything is copied, whatever selected it.
-  for (const r of requests) assertNotSpillPath(r.path);
+  for (const r of batch) assertNotSpillPath(r.path);
+  // One request per path (FG3). The same path twice made two copies, one trash and one failure,
+  // and the failure then discarded both copies of an item that was in the Trash.
+  const requests: ProtectionRequest[] = [];
+  const seen = new Set<string>();
+  for (const r of batch) {
+    if (seen.has(r.path)) continue;
+    seen.add(r.path);
+    requests.push(r);
+  }
   // Nowhere to keep a copy means nothing gets protected, and the caller must be
   // told before anything is deleted — not after.
   const capsule = capsuleAvailable();
@@ -843,6 +884,9 @@ export async function protectAndTrash(
   let trashed: string[] = [];
   let failedToTrash: { path: string; reason: string }[] = [];
   if (paths.length > 0) {
+    // What stands at each path now, so a failure can be checked against the disk afterwards.
+    const before = new Map<string, Identity>();
+    for (const p of paths) before.set(p, await identityOf(p));
     try {
       const result = await moveToTrash(paths, { unattended: context.unattended === true });
       trashed = result.deleted;
@@ -852,6 +896,21 @@ export async function protectAndTrash(
       // so every copy just made is holding space for a file that still exists.
       failedToTrash = paths.map((p) => ({ path: p, reason: err instanceof Error ? err.message : String(err) }));
     }
+    // A reported failure is judged by the disk (FG3): a trash step can move the file and still
+    // report failure (osascript killed at its timeout while Finder finishes). When nothing stands at
+    // the path now, or another file does where a known one stood before the trash step, the item
+    // is gone from its place: it is reported trashed and its copy kept for the undo — never
+    // discarded while the copy may be the only one. A look that failed proves nothing, so the
+    // refusal stands: could not look is not gone.
+    const stillThere: { path: string; reason: string }[] = [];
+    for (const failure of failedToTrash) {
+      const was = before.get(failure.path);
+      const now = await identityOf(failure.path);
+      const gone = now === ABSENT || (typeof was === 'string' && typeof now === 'string' && now !== was);
+      if (gone) trashed.push(failure.path);
+      else stillThere.push(failure);
+    }
+    failedToTrash = stillThere;
   }
 
   // Past the trash step nothing throws: what was trashed is the one fact the
@@ -886,6 +945,22 @@ export async function protectAndTrash(
     bytesProtected: stillProtected.reduce((sum, o) => sum + o.bytes, 0),
     ...(cleanupError ? { cleanupError } : {}),
   };
+}
+
+/** Nothing stands at a path; as `meansAbsent` reads an lstat's failure. */
+const ABSENT = Symbol('absent');
+/** A look at a path that failed for another reason (permissions, I/O): it says nothing either way. */
+const UNKNOWN = Symbol('unknown');
+type Identity = string | typeof ABSENT | typeof UNKNOWN;
+
+/** The device and id of what stands at `p` (links not followed), ABSENT when nothing does, UNKNOWN when it could not be looked at. */
+async function identityOf(p: string): Promise<Identity> {
+  try {
+    const st = await fsp.lstat(p, { bigint: true });
+    return `${st.dev}:${st.ino}`;
+  } catch (err) {
+    return meansAbsent(err) ? ABSENT : UNKNOWN;
+  }
 }
 
 /** Left in a copy's folder when the Trash refused its original, which was never deleted. */
@@ -994,8 +1069,7 @@ export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean
   const store = await loadStore();
   const entry = store.entries.find((e) => e.id === id);
   if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
-  const bytesFreed = entry.heldBytes;
-  await dropPayload(entry);
+  const bytesFreed = await dropPayload(entry);
   store.entries = store.entries.filter((e) => e.id !== id);
   await saveStore(store);
   return { deleted: true, bytesFreed };
@@ -1014,8 +1088,7 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
 
   let bytesFreed = 0;
   for (const entry of expired) {
-    bytesFreed += entry.heldBytes;
-    await dropPayload(entry);
+    bytesFreed += await dropPayload(entry);
     recordEvent(store, {
       at: now,
       kind: 'expired',
@@ -1118,6 +1191,22 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
   let entriesLost = 0;
   for (const entry of store.entries) {
     if (!entry.hasPayload) continue;
+    // A record whose id TreeMap did not give never had a folder of TreeMap's, so it holds no copy
+    // however the place its id spells looks — and that place is not looked at (FG3).
+    if (!isEntryId(entry.id)) {
+      entry.heldBytes = 0;
+      entry.hasPayload = false;
+      entriesLost++;
+      recordEvent(store, {
+        at: Date.now(),
+        kind: 'lost',
+        name: entry.name,
+        originalPath: entry.originalPath,
+        sizeBytes: entry.sizeBytes,
+        detail: `${NOT_OURS} (its id is not one TreeMap gives), so it holds no copy that could be restored.`,
+      });
+      continue;
+    }
     // "Could not stat it" is not "it is gone", and here the difference is
     // one-way: `hasPayload = false` is never revisited (the line above skips
     // such entries on every later sweep) and `startCapsuleRestore` refuses
@@ -1208,6 +1297,56 @@ async function readManifest(id: string): Promise<EntryManifest> {
 }
 
 /**
+ * Why a restore will not act on an index record, as a phrase, or null (FG3). The record is a file on
+ * disk and a restore turns it into paths: its id names the folder the copy is read from, and its
+ * original place is where the copy is written. Each is held to what capture records — an id TreeMap
+ * gives, and a full path that `sanitizePath` answers unchanged (so no `..` and no system folder),
+ * outside TreeMap's own spill folder. Not app-data: an undo puts back what TreeMap took from there.
+ */
+function recordRefusal(entry: TimeCapsuleEntry): string | null {
+  if (!isEntryId(entry.id)) return 'its id is not one TreeMap gives';
+  const original: unknown = entry.originalPath;
+  if (typeof original !== 'string' || !path.isAbsolute(original)) return 'its original place is not a full path';
+  try {
+    if (sanitizePath(original) !== original) return `its original place, ${original}, is not spelled as TreeMap records one`;
+  } catch (err) {
+    if (err instanceof PathRejectedError) return `its original place, ${original}, is a system folder TreeMap never writes`;
+    throw err;
+  }
+  if (isSpillPath(original)) return `its original place, ${original}, is in TreeMap's own spill folder`;
+  return null;
+}
+
+/** One name, as a folder lists it: what capture records for an item, and each step of a member's path. */
+function isOneName(name: unknown): name is string {
+  return typeof name === 'string' && name !== '' && name !== '.' && name !== '..' && !name.includes('\0') && path.basename(name) === name;
+}
+
+/**
+ * Why a restore will not follow an entry's manifest, as a phrase, or null (FG3). Each file is read
+ * from `data/<name>/<rel>` and written to `<original place>/<rel>`, so the name must be one name and
+ * each member's path relative, as `path.join` spells it, and made of names — never leading out of
+ * the copy or out of the item.
+ */
+function manifestRefusal(manifest: EntryManifest): string | null {
+  if (manifest === null || typeof manifest !== 'object' || !Array.isArray(manifest.members)) return 'it lists no members';
+  if (!isOneName(manifest.name)) return 'its name is not one name';
+  for (const member of manifest.members as unknown[]) {
+    const m = member as Partial<ManifestMember> | null;
+    if (m === null || typeof m !== 'object' || !['file', 'dir', 'symlink'].includes(String(m.kind))) return 'a member is not one TreeMap records';
+    const rel: unknown = m.rel;
+    const inside = rel === '' || (typeof rel === 'string' && path.normalize(rel) === rel && rel.split(path.sep).every(isOneName));
+    if (!inside) return 'a member’s path leads out of the item';
+  }
+  // Nor through a link the restore itself makes: capture records a link and never what lies past it.
+  const members = manifest.members as ManifestMember[];
+  const links = members.filter((m) => m.kind === 'symlink').map((m) => m.rel);
+  const under = (rel: string, link: string): boolean => (link === '' ? rel !== '' : rel.startsWith(`${link}${path.sep}`));
+  if (members.some((m) => links.some((link) => under(m.rel, link)))) return 'a member lies past a link it records';
+  return null;
+}
+
+/**
  * Copy an entry back to where it came from, re-verifying every byte.
  *
  * Refuses when something already occupies the original path: overwriting is
@@ -1229,6 +1368,8 @@ export async function listUndoableEntriesForRun(runId: string): Promise<TimeCaps
   const undoable: TimeCapsuleEntry[] = [];
   for (const entry of await listCapsuleEntriesForRun(runId)) {
     if (!entry.hasPayload || entry.restoredAt) continue;
+    // A record TreeMap did not make holds no copy of TreeMap's, and would refuse the whole undo (FG3).
+    if (!isEntryId(entry.id)) continue;
     const neverDeleted = await fsp.lstat(path.join(entryDir(entry.id), NOT_DELETED_MARK)).then(() => true, () => false);
     if (!neverDeleted) undoable.push(entry);
   }
@@ -1261,6 +1402,8 @@ export async function startCapsuleRestore(entryIds: string[]): Promise<TimeCapsu
     if (!entry.hasPayload) {
       throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
     }
+    const refused = recordRefusal(entry);
+    if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
     const occupied = await fsp.lstat(entry.originalPath).then(() => true).catch(() => false);
     if (occupied) {
       throw new AppError(409, 'PATH_OCCUPIED',
@@ -1269,6 +1412,11 @@ export async function startCapsuleRestore(entryIds: string[]): Promise<TimeCapsu
     const manifest = await readManifest(id).catch(() => null);
     if (!manifest) {
       throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
+    }
+    const stray = manifestRefusal(manifest);
+    if (stray) {
+      throw new AppError(409, 'CAPSULE_RECORD_INVALID',
+        `The record of what was captured for “${entry.name}” is not one TreeMap wrote (${stray}), so nothing was restored.`);
     }
     planned.push({ entry, manifest });
   }

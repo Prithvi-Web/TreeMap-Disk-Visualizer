@@ -335,18 +335,33 @@ read-what-you-saw) permission to act.
 - **TreeMap's own app-data folder is never a write destination.** It holds
   the files TreeMap trusts — settings, the Autopilot policies and their
   approval, the offload manifest, the Time Capsule, the spill folder — so no
-  request writes, moves or copies a file anywhere in it: a relocation's `to`,
-  an offload's `dest` and every copy its plan makes, a snapshot restore's
-  destination (given, or the default beside an original in app-data) and an
-  encode's paths (it writes where the original is) are refused with
+  request names a place in it that a file is written, moved or copied to: a
+  relocation's `to`, an offload's `dest` and every copy its plan makes, a
+  snapshot restore's destination (given, or the default beside an original in
+  app-data) and an encode's paths are refused with
   `403 { code: "APP_DATA_PATH" }`, over HTTP and MCP. However the path is
   spelled: a link in its parents, a link as its own last name (followed,
   since a write goes where a link leads; a loop is refused), another case, a
   name the file system folds (`ſ` for `s`, NTFS's `ı` for `i`), an 8.3 name —
-  and before the file or the folder exists. Reading app-data, and deleting
-  what a scan covers there, are unchanged. The offload reveal
-  (`POST /api/offload/reveal`) opens a copy only inside the destination its
-  manifest record names, both resolved; anything else is
+  and before the file or the folder exists. Nor does a record read from a
+  drive lead a write there: an offload restore refuses a recorded original in
+  app-data (and any record not of the shape TreeMap writes), the offload's
+  record on the destination is written under a fresh name and renamed into
+  place — never through a name already there — and an encode writes in a
+  private folder it made. Nor does a record TreeMap keeps lead anywhere it
+  would not have written: a Time Capsule entry whose id is not one TreeMap
+  gives is never made a path (forgetting it, or its expiry, removes nothing
+  on disk), and a restore of it — or of an entry whose original place, or
+  whose manifest's names, lead outside what capture records — answers
+  `409 { code: "CAPSULE_RECORD_INVALID" }`; an Autopilot policy whose folder
+  is not one TreeMap saved is a failed run (`POLICY_RECORD_INVALID`) before
+  anything is scanned. What a request does write in app-data is TreeMap's own
+  files under names it chose — settings, records, the Time Capsule's copies —
+  and the one file a request can have put back there is an item TreeMap
+  itself took from there, by an undo or a Time Capsule restore. Reading
+  app-data, and deleting what a scan covers there, are unchanged. The offload reveal (`POST /api/offload/reveal`) opens a copy only
+  inside the destination its manifest record names, both resolved; anything
+  else, a record whose paths are not text included, is
   `403 { code: "OUTSIDE_DEST_ROOT" }`.
 - **Storage modes (Phase 4).** A scan is kept in `memory` (every scan today),
   `spill` (rows in files on disk) or `aggregate` (a bounded summary, no row for
