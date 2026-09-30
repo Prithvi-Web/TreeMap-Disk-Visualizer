@@ -651,6 +651,7 @@ const schemas: Json = {
       source: { type: 'string', enum: ['http', 'mcp'] },
       tokenId: str("Short digest of the configured token, or 'local' when auth is off"),
       paths: arr(str()),
+      unverified: arr(str(), 'Paths whose trash step was not confirmed either way — the Trash may have moved them after the answer — named apart from paths, which for a cart commit lists only what was confirmed moved'),
       bytes: nullable(int('Known bytes involved, when the operation can tell')),
       dryRun: bool(),
       outcome: { type: 'string', enum: ['ok', 'refused', 'error'] },

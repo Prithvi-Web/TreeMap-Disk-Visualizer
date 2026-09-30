@@ -535,9 +535,13 @@ test('a commit whose trash step could not be confirmed is audited as partial, ne
     assert.equal(committed.status, 200, JSON.stringify(committed.body));
     assert.deepEqual(committed.body.unverified.map((u: { path: string }) => u.path), [file]);
     const audit = await req(port, 'GET', '/api/audit?limit=20');
-    const line = (audit.body.entries as { action: string; dryRun: boolean; outcome: string; code?: string }[])
+    const line = (audit.body.entries as { action: string; dryRun: boolean; outcome: string; code?: string; paths: string[]; unverified?: string[] }[])
       .find((e) => e.action === 'cart.commit' && e.dryRun === false);
     assert.deepEqual([line?.outcome, line?.code], ['error', 'PARTIAL_COMMIT'], JSON.stringify(line));
+    // The Trash may have moved it after the answer, so the log names it — apart from what was
+    // confirmed moved, which it may not be (FG3c #6, #15).
+    assert.deepEqual(line?.paths, [], 'nothing is logged as confirmed moved');
+    assert.deepEqual(line?.unverified, [file], 'and the unconfirmed item is named');
   } finally {
     setTrashStepForTests(null);
     await close();
@@ -624,6 +628,42 @@ test('an undo that passed over an unconfirmed item says so, rather than that eve
   assert.ok(partial.join(' | ').includes(reason), `the item's own sentence is shown (${partial.join(' | ')})`);
   const whole = await undoToasts({ jobId: 'j', entryCount: 2, bytesTotal: 10 });
   assert.match(whole.join(' | '), /Everything from that run is back — 2 items/, 'and a whole undo still says so');
+});
+
+/**
+ * `cartExecuteCommit` really evaluated, over two batches (a chunk of one path each): the first
+ * answers `first`, the second fails as a dropped connection does. What the person is told, the
+ * summary it shows, and the run its undo is offered for.
+ */
+async function commitWithAFailingSecondBatch(first: Record<string, unknown>): Promise<{ toasts: string[]; summaries: Record<string, unknown>[]; lastRun: unknown }> {
+  const src = slice('async function cartExecuteCommit', 'function cartCommitSummary');
+  const toasts: string[] = [];
+  const summaries: Record<string, unknown>[] = [];
+  const noop = (): void => undefined;
+  let calls = 0;
+  const make = new Function(
+    '$', 'api', 'CART_COMMIT_CHUNK', 'cartCommitKey', 'icon', 'REDUCED', 'formatCount', 'state',
+    'saveCart', 'renderCart', 'refreshCartButtons', 'toast', 'cartCommitSummary', 'rescan', 'CART_PAGE',
+    `let cartLastRun = null; let cartShown = 0; ${src}; return { run: cartExecuteCommit, lastRun: () => cartLastRun };`,
+  );
+  const ui = make(
+    () => ({ disabled: false, innerHTML: 'Delete' }),
+    () => (calls++ === 0 ? Promise.resolve(first) : Promise.reject(new Error('the server did not answer (a test)'))),
+    1, 'key', () => '', true, (n: number) => String(n), { cart: new Set(['/x/a', '/x/b']) },
+    noop, noop, noop, (message: string) => toasts.push(message), (result: Record<string, unknown>) => summaries.push(result), noop, 50,
+  ) as { run: (paths: string[]) => Promise<void>; lastRun: () => unknown };
+  await ui.run(['/x/a', '/x/b']);
+  return { toasts, summaries, lastRun: ui.lastRun() };
+}
+
+test('a cart commit stopped by a later batch never says nothing was deleted while an earlier one may have been (FG3c #12)', async () => {
+  const unverified = [{ path: '/x/a', reason: 'The Trash reported: stopped (a test). TreeMap could not confirm whether it is still in place.' }];
+  const unsure = await commitWithAFailingSecondBatch({ runId: 'run-1', trashed: [], bytesFreed: 0, skipped: [], failedToTrash: [], unverified });
+  assert.doesNotMatch(unsure.toasts.join(' | '), /Nothing was deleted/, `the Trash may have taken /x/a (${unsure.toasts.join(' | ')})`);
+  assert.deepEqual(unsure.summaries.map((r) => r.unverified), [unverified], 'the summary names what could not be confirmed');
+  assert.equal(unsure.lastRun, 'run-1', 'and the undo is offered for it');
+  const nothing = await commitWithAFailingSecondBatch({ runId: 'run-2', trashed: [], bytesFreed: 0, skipped: [], failedToTrash: [] });
+  assert.match(nothing.toasts.join(' | '), /Nothing was deleted/, 'where nothing was done or may have been, it still says so');
 });
 
 test('items the capsule could not protect are shown as left behind, never as deleted', () => {
@@ -820,7 +860,8 @@ test('a chunked commit that fails partway never claims nothing was deleted', () 
   // run they belong to. "Nothing was deleted" is the one sentence that must
   // not be sent when something was.
   const exec = slice('async function cartExecuteCommit', 'function cartCommitSummary');
-  assert.match(exec, /if \(result\.trashed\.length\) \{/);
+  // Or may have been: an item whose trash step was not confirmed (FG3c; evaluated in the test above).
+  assert.match(exec, /if \(result\.trashed\.length \|\| result\.unverified\.length\) \{/);
   assert.match(exec, /Stopped after/);
   assert.match(exec, /cartLastRun = result\.runId/, 'the partial run stays undoable');
 });

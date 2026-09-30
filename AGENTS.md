@@ -513,6 +513,8 @@ read-what-you-saw) permission to act.
   destination (one holding a link, under a name the volume folds, into the
   spill folder or app-data) it is the plan's refusal, and recorded:
   `offload.start`, `refused`, with its code, over HTTP and MCP alike.
+  A cart commit's line lists what was confirmed moved in `paths` and, apart,
+  anything whose trash step was not confirmed either way in `unverified`.
   `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
   write the same log. Config writes differ by consequence: Autopilot policy
   saves and approvals DO audit (a standing instruction to delete is worth a

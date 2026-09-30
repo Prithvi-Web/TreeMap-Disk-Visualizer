@@ -445,14 +445,17 @@ async function cartExecuteCommit(paths, foreseen = []) {
   } catch (e) {
     // Partial: earlier chunks may already have been deleted, and they are
     // recoverable through the run they belong to. Saying "nothing was deleted"
-    // when something was is the one message that must not be sent here.
-    if (result.trashed.length) {
+    // when something was — or may have been: an item whose trash step was not
+    // confirmed either way (FG3c) — is the one message that must not be sent here.
+    if (result.trashed.length || result.unverified.length) {
       (result.trashed || []).forEach((p) => state.cart.delete(p));
       saveCart(); renderCart(); refreshCartButtons();
       cartLastRun = result.runId;
-      toast(`Stopped after ${formatCount(result.trashed.length)} item${result.trashed.length === 1 ? '' : 's'}: ${e.message}`, 'error', 12000);
+      toast(result.trashed.length
+        ? `Stopped after ${formatCount(result.trashed.length)} item${result.trashed.length === 1 ? '' : 's'}: ${e.message}`
+        : `Stopped, with nothing confirmed as moved to the Trash: ${e.message}`, 'error', 12000);
       cartCommitSummary(result);
-      rescan();
+      if (result.trashed.length) rescan();
     } else {
       toast('Nothing was deleted: ' + e.message, 'error', 10000);
     }

@@ -1275,6 +1275,12 @@ export interface AuditEntry {
   /** Short digest of the configured token, or 'local' when auth is off. */
   tokenId: string;
   paths: string[];
+  /**
+   * Paths whose trash step was not confirmed either way — the Trash may have moved them after the
+   * answer (FG3b, FG3c) — named apart from `paths`, which for a cart commit lists only what was
+   * confirmed moved. Absent when there were none.
+   */
+  unverified?: string[];
   /** Known bytes involved, when the operation can tell. */
   bytes: number | null;
   dryRun: boolean;

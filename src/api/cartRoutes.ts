@@ -110,9 +110,13 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
 
   // Partial whenever something asked was not done — or not confirmed done (FG3b).
   const partial = result.skipped.length > 0 || result.failedToTrash.length > 0 || (result.unverified?.length ?? 0) > 0;
+  // An item not confirmed either way may be in the Trash after this answer, so the log names it too,
+  // apart from what was confirmed moved (FG3c).
+  const unverified = (result.unverified ?? []).map((u) => u.path);
   await appendAudit({
     action: 'cart.commit', source: 'http', tokenId: tokenIdFor('http'),
     paths: result.trashed, bytes: result.bytesFreed, dryRun: false,
+    ...(unverified.length > 0 ? { unverified } : {}),
     outcome: partial ? 'error' : 'ok',
     ...(partial ? { code: 'PARTIAL_COMMIT' } : {}),
   });
