@@ -63,6 +63,8 @@ type Drive = {
   statsFetched: number;
   es: () => FakeES;
   timerCleared: () => boolean;
+  /** The page's state, as Stop sees it: `state.abortScan()` is what the Stop button calls. */
+  state: Record<string, unknown>;
 };
 
 /** Lets every microtask the watchdog queued run (a stub answer, the awaits behind it) before the test looks. */
@@ -131,6 +133,7 @@ function drive(answer: (url: string, n: number) => Answer): Drive {
     get statsFetched() { return statsFetched; },
     es: () => es,
     timerCleared: () => cleared,
+    state,
   };
 }
 
@@ -260,6 +263,103 @@ test('a /result still arriving is not abandoned after five ticks: it carries the
   assert.equal(d.calls[0].signal!.aborted, false, 'a 238.6 MB tree can take longer than fifteen seconds to arrive');
 });
 
+test('a /result in flight is abandoned on its fortieth tick, and five abandoned end the scan (finding 12)', async () => {
+  const hung = drive(() => HANG);
+  hung.closeStream();
+  await hung.ticks(40); // one tick asks, thirty-nine wait
+  assert.equal(hung.calls[0].signal!.aborted, false, 'thirty-nine ticks in flight: still arriving');
+  await hung.tick();
+  assert.equal(hung.calls[0].signal!.aborted, true, 'the fortieth abandons it: a dead server never spins for ever');
+
+  const d = drive(() => ABORTABLE);
+  d.closeStream();
+  await d.ticks(204);
+  assert.deepEqual(d.failed, [], 'four abandoned downloads are still "transient"');
+  assert.equal(d.urls(RESULT).length, 5, 'one /result at a time, each given its forty ticks');
+  await d.tick();
+  assert.equal(d.failed.length, 1, 'the fifth ends the scan');
+  assert.match(d.failed[0], /stopped answering/);
+});
+
+test('a poll in flight is abandoned when Stop is pressed, and when the complete frame arrives (finding 11)', async () => {
+  // The tree is the whole first frame: downloading it beside the stream's own
+  // frame, or after the person has stopped the scan, is the serialization U-2
+  // exists to remove.
+  const stopped = drive(() => ABORTABLE);
+  stopped.closeStream();
+  await stopped.tick();
+  assert.equal(stopped.urls(RESULT).length, 1, 'a /result is downloading');
+  (stopped.state.abortScan as () => void)();
+  await settle();
+  assert.equal(stopped.calls[0].signal!.aborted, true, 'Stop abandons the download');
+  assert.deepEqual(stopped.failed, [], 'and says nothing: the person stopped it');
+
+  const framed = drive((url) => (url === STATS ? ABORTABLE : assert.fail(`unexpected ${url}`)));
+  await framed.ticks(2);
+  assert.equal(framed.urls(STATS).length, 1, 'a /stats is out');
+  await framed.message({ type: 'complete', root: { path: '/Users/x', size: 5 }, stats: { fileCount: 7 } });
+  assert.equal(framed.calls[0].signal!.aborted, true, 'the frame abandons the poll');
+  assert.equal(framed.finished.length, 1, 'and the scan finishes once, from the frame');
+});
+
+test('a poll answered with nothing readable counts toward the five, never as an answer (finding 2)', async () => {
+  // api() hands back null for a 2xx whose body could not be read. Taken as an
+  // answer it reset the count the tick had just added, so a server that sends
+  // headers and then nothing was asked again for ever.
+  const closed = drive(() => null);
+  closed.closeStream();
+  await closed.ticks(4);
+  assert.deepEqual(closed.failed, [], 'four empty /result answers are still "transient"');
+  await closed.tick();
+  assert.equal(closed.failed.length, 1, 'the fifth ends the scan');
+  assert.match(closed.failed[0], /stopped answering/);
+
+  const open = drive(() => null);
+  await open.ticks(5); // the first tick is not yet quiet
+  assert.deepEqual(open.failed, [], 'four empty /stats answers are still "transient"');
+  await open.tick();
+  assert.equal(open.failed.length, 1, 'the fifth ends the scan');
+});
+
+test('api() passes on an abort that lands while the body is arriving, as it does one before the headers (finding 2)', async () => {
+  const src = slice('async function api(url', '/**\n * The single place an error becomes');
+  type Api = (url: string, options: { signal: AbortSignal }) => Promise<unknown>;
+  const liftApi = (fetchStub: unknown): Api => new Function('fetch', 'setTimeout', `'use strict'; ${src} return api;`)(fetchStub, setTimeout) as Api;
+  /** A 200 whose body starts arriving and then fails with `fail()` once the request is aborted. */
+  const midBody = (fail: () => Error) => {
+    let reading!: () => void;
+    const started = new Promise<void>((resolve) => { reading = resolve; });
+    const api = liftApi((_url: string, options: { signal: AbortSignal }) => Promise.resolve({
+      status: 200,
+      ok: true,
+      text: () => {
+        reading();
+        return new Promise<string>((_resolve, reject) => options.signal.addEventListener('abort', () => reject(fail())));
+      },
+    }));
+    return { api, started };
+  };
+  const abortError = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+  for (const [label, fail] of [
+    ['the body read rejects with an AbortError', abortError],
+    ['the body read rejects some other way once aborted', () => new TypeError('terminated')],
+  ] as const) {
+    const { api, started } = midBody(fail);
+    const controller = new AbortController();
+    const pending = api('/api/scan/s1/result', { signal: controller.signal });
+    await started; // the headers are in; the body is arriving
+    controller.abort();
+    await assert.rejects(pending, { name: 'AbortError' }, `${label}: an abort, not an empty answer`);
+  }
+  // The browser abandoning the body itself (the app's signal untouched) is an abort too.
+  const dropped = liftApi(() => Promise.resolve({ status: 200, ok: true, text: () => Promise.reject(abortError()) }));
+  await assert.rejects(dropped('/api/scan/s1/result', { signal: new AbortController().signal }), { name: 'AbortError' },
+    'an AbortError from the body read is passed on as it is');
+  // A body lost without anyone aborting is still what it was: nothing to read.
+  const lost = liftApi(() => Promise.resolve({ status: 200, ok: true, text: () => Promise.reject(new TypeError('terminated')) }));
+  assert.equal(await lost('/api/scan/s1/result', { signal: new AbortController().signal }), null);
+});
+
 test('/stats 404 fails as expired; ten 429s count nothing toward dead', async () => {
   const gone = drive(() => httpError(404, 'SCAN_NOT_FOUND'));
   await gone.ticks(3);
@@ -283,6 +383,7 @@ test('a /stats "error" fetches /result for the message, and the scan fails with 
 test('the watchdog constants are the plan\'s: 5 ticks in flight, 10 ticks of grace, 6 s of quiet', () => {
   const src = slice('function followScanProgress(', 'async function startCloudScan(');
   assert.match(src, /const IN_FLIGHT_TICKS = 5;/);
+  assert.match(src, /const RESULT_IN_FLIGHT_TICKS = 40;/, 'the /result allowance, the one departure from the plan (U-2 review, finding 12)');
   assert.match(src, /const FRAME_GRACE_TICKS = 10;/);
   assert.match(src, /const QUIET_MS = 6000;/);
 });

@@ -405,6 +405,11 @@ function followScanProgress(scanId, path, fast, t0) {
   const noAnswer = (message) => {
     if (++dead >= 5 && !finished) { stop(); failScan(message); }
   };
+  // Only a body with a status is an answer. null — an empty 2xx, or a body
+  // that could not be read — is nobody answering: taken as an answer, it
+  // reset the count, and a server that sends headers and then nothing was
+  // asked again for ever (Track U review of U-2, finding 2).
+  const answered = (body) => !!body && typeof body.status === 'string';
   /**
    * Completion from /result: the stream closed, or the grace passed. The
    * counters are the /stats body already in hand when there is one — asked
@@ -414,6 +419,7 @@ function followScanProgress(scanId, path, fast, t0) {
     mine.limit = RESULT_IN_FLIGHT_TICKS;
     mine.ticks = 0;
     const r = await api(`/api/scan/${scanId}/result`, { signal: mine.controller.signal });
+    if (!answered(r)) { noAnswer(NO_ANSWER); return; }
     dead = 0;
     if (r.status === 'complete' && !finished) {
       stop();
@@ -447,6 +453,7 @@ function followScanProgress(scanId, path, fast, t0) {
     try {
       if (!open) { await completeFromResult(mine, null); return; }
       const s = await api(`/api/scan/${scanId}/stats`, { signal: mine.controller.signal });
+      if (!answered(s)) { noAnswer(NO_ANSWER); return; }
       dead = 0;
       if (s.status === 'running') { completeTicks = 0; return; }
       if (s.status === 'complete' && ++completeTicks <= FRAME_GRACE_TICKS) return; // the frame is on its way

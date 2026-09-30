@@ -941,7 +941,19 @@ async function api(url, options, opts = {}) {
     // "carried something that is not JSON". `res.json()` collapses both to a
     // throw, which is what let an unreadable answer pass as an empty one.
     let raw = '';
-    try { raw = await res.text(); } catch { /* body already gone */ }
+    try {
+      raw = await res.text();
+    } catch (bodyErr) {
+      // An abort that lands while the body is arriving — the app's own signal,
+      // or the browser's AbortError — is an abort, exactly as one before the
+      // headers: never an empty answer, which the scan watchdog would count as
+      // the server answering (Track U review of U-2, finding 2).
+      const isAbort = !!bodyErr && bodyErr.name === 'AbortError';
+      if (isAbort || (options && options.signal && options.signal.aborted)) {
+        throw isAbort ? bodyErr : Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+      }
+      /* body already gone */
+    }
     let body = null;
     let unreadable = false;
     if (raw) { try { body = JSON.parse(raw); } catch { unreadable = true; } }

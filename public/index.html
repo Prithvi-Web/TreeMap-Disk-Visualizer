@@ -5788,7 +5788,19 @@ async function api(url, options, opts = {}) {
     // "carried something that is not JSON". `res.json()` collapses both to a
     // throw, which is what let an unreadable answer pass as an empty one.
     let raw = '';
-    try { raw = await res.text(); } catch { /* body already gone */ }
+    try {
+      raw = await res.text();
+    } catch (bodyErr) {
+      // An abort that lands while the body is arriving — the app's own signal,
+      // or the browser's AbortError — is an abort, exactly as one before the
+      // headers: never an empty answer, which the scan watchdog would count as
+      // the server answering (Track U review of U-2, finding 2).
+      const isAbort = !!bodyErr && bodyErr.name === 'AbortError';
+      if (isAbort || (options && options.signal && options.signal.aborted)) {
+        throw isAbort ? bodyErr : Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+      }
+      /* body already gone */
+    }
     let body = null;
     let unreadable = false;
     if (raw) { try { body = JSON.parse(raw); } catch { unreadable = true; } }
@@ -8367,6 +8379,11 @@ function followScanProgress(scanId, path, fast, t0) {
   const noAnswer = (message) => {
     if (++dead >= 5 && !finished) { stop(); failScan(message); }
   };
+  // Only a body with a status is an answer. null — an empty 2xx, or a body
+  // that could not be read — is nobody answering: taken as an answer, it
+  // reset the count, and a server that sends headers and then nothing was
+  // asked again for ever (Track U review of U-2, finding 2).
+  const answered = (body) => !!body && typeof body.status === 'string';
   /**
    * Completion from /result: the stream closed, or the grace passed. The
    * counters are the /stats body already in hand when there is one — asked
@@ -8376,6 +8393,7 @@ function followScanProgress(scanId, path, fast, t0) {
     mine.limit = RESULT_IN_FLIGHT_TICKS;
     mine.ticks = 0;
     const r = await api(`/api/scan/${scanId}/result`, { signal: mine.controller.signal });
+    if (!answered(r)) { noAnswer(NO_ANSWER); return; }
     dead = 0;
     if (r.status === 'complete' && !finished) {
       stop();
@@ -8409,6 +8427,7 @@ function followScanProgress(scanId, path, fast, t0) {
     try {
       if (!open) { await completeFromResult(mine, null); return; }
       const s = await api(`/api/scan/${scanId}/stats`, { signal: mine.controller.signal });
+      if (!answered(s)) { noAnswer(NO_ANSWER); return; }
       dead = 0;
       if (s.status === 'running') { completeTicks = 0; return; }
       if (s.status === 'complete' && ++completeTicks <= FRAME_GRACE_TICKS) return; // the frame is on its way
