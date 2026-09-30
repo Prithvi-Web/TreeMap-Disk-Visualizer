@@ -265,21 +265,21 @@ test('an empty child list is empty, not a crash', () => {
   assert.equal(r.omitted, 0);
 });
 
-test('ten thousand equal children: no NaN, no overlap, and it finishes', () => {
+test('ten thousand equal children: no NaN, no overlap, and the retry stays inside its budget', () => {
   const values = new Array(10000).fill(1);
-  const started = Date.now();
   const r = circlePackChildren(values, 500, { maxCircles: 10000 });
-  const elapsed = Date.now() - started;
   assert.equal(r.circles.length, 10000);
-  assert.equal(r.unresolved, 0, 'the retry budget was never needed');
+  // The retry is the one unbounded thing in the algorithm (§6.2: a
+  // pathological input cannot hang the frame), and it is bounded by a count,
+  // not a clock: `budget` allows 64n + 256 retries, and `unresolved` counts
+  // every placement the budget cut short. Zero here is the whole guard; a
+  // bound on how long the packing took measured the machine.
+  assert.equal(r.unresolved, 0, 'the retry budget was never exhausted');
   for (const c of r.circles) {
     assert.ok(Number.isFinite(c.x) && Number.isFinite(c.y) && Number.isFinite(c.r),
       'no NaN coordinates on a degenerate input');
     assert.ok(Math.hypot(c.x, c.y) + c.r <= 500 + 1e-6, 'still inside the parent');
   }
-  // Not a benchmark — a guard on the one unbounded thing in the algorithm.
-  // §6.2 asks that a pathological input cannot hang the frame.
-  assert.ok(elapsed < 5000, `packing finished in ${elapsed} ms`);
 });
 
 test('the cap keeps the biggest and reports the rest', () => {

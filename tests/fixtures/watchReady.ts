@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { HANG_GUARD_MS, HangGuardExpired, waitFor, type WaitClock } from './waitFor';
 
 /** How many times the sentinel is rewritten before a watch is called silent, and how long each rewrite waits. */
 const SENTINEL_WRITES = 5;
@@ -57,6 +58,23 @@ export async function awaitWatchLive(sentinel: string, delivered: () => number |
     }
   }
   return { live: false, writes: SENTINEL_WRITES, waitedMs: Date.now() - started };
+}
+
+/**
+ * Waits for a change a live watch should bring about, bounded only by the
+ * shared hang guard: true once `predicate` holds, false when the guard ran out
+ * first — for the caller to triage by the watch's event count (a silent OS
+ * watch skips, a watch that spoke and changed nothing fails). How long the
+ * change took is never the verdict; a caller may report it.
+ */
+export async function watchBrings(predicate: () => boolean, what: string, clock?: WaitClock): Promise<boolean> {
+  try {
+    await waitFor(predicate, what, POLL_MS, HANG_GUARD_MS, clock);
+    return true;
+  } catch (err) {
+    if (err instanceof HangGuardExpired) return false;
+    throw err;
+  }
 }
 
 /** The skip message for a watch the handshake could not get a word out of — measured, not assumed. */

@@ -34,7 +34,7 @@ process.env.TREEMAP_DATA_DIR = DATA_DIR;
 
 import { buildIndex, getRoot, stopAllWatchers, closeIndex, deleteIndex, MAX_CHANGE_ATTEMPTS, watcherEventCount } from '../src/services/indexEngine';
 import { meansGone, meansAbsent } from '../src/utils/errno';
-import { awaitWatchLive, silentWatchReason } from './fixtures/watchReady';
+import { awaitWatchLive, silentWatchReason, watchBrings } from './fixtures/watchReady';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-transient-'));
@@ -59,14 +59,18 @@ const liveFs = require('fs').promises as typeof import('fs').promises;
  * behaviour under test: an unreadable path must never become a deletion, on
  * any platform, however many times it is asked about.
  */
-function failLstat(match: string, code: string, opts: { forMs?: number } = {}): { release: () => void; calls: () => number } {
+function failLstat(match: string, code: string, opts: { recoversAfterMs?: number } = {}): { release: () => void; calls: () => number } {
   // NOTE: every caller must release, and the tests below do it through
   // `t.after` rather than a `finally`. A wrapper left installed is wrapped by
   // the NEXT test's wrapper, so a later `release()` restores to the stale one
   // rather than to the real `lstat` — which turns one failing test into two
   // and hides the one that actually broke.
   const original = liveFs.lstat;
-  const until = opts.forMs === undefined ? Infinity : Date.now() + opts.forMs;
+  // The disk "recovers" when a timer fires: a stimulus on a schedule, never
+  // a bound — nothing here reads the clock or fails on it. The timer is due
+  // before any flush scheduled after it, so the window never outlasts one.
+  let failing = true;
+  const recovery = opts.recoversAfterMs === undefined ? null : setTimeout(() => { failing = false; }, opts.recoversAfterMs);
   let calls = 0;
   (liveFs as unknown as { lstat: unknown }).lstat = async (p: unknown, ...rest: unknown[]): Promise<unknown> => {
     if (String(p).endsWith(match)) {
@@ -77,7 +81,7 @@ function failLstat(match: string, code: string, opts: { forMs?: number } = {}): 
       // would fail for a reason that has nothing to do with the behaviour
       // under test.
       calls++;
-      if (Date.now() < until) {
+      if (failing) {
         const err: NodeJS.ErrnoException = new Error(`${code}: injected, lstat`);
         err.code = code;
         throw err;
@@ -87,6 +91,7 @@ function failLstat(match: string, code: string, opts: { forMs?: number } = {}): 
   };
   return {
     release: () => {
+      if (recovery) clearTimeout(recovery);
       (liveFs as unknown as { lstat: unknown }).lstat = original;
     },
     calls: () => calls,
@@ -140,15 +145,6 @@ async function watchLive(t: TestContext, dir: string, sentinel: string): Promise
   return ready.baseline;
 }
 
-/** Poll until the predicate holds, returning how long it took, or -1. */
-async function waitFor(predicate: () => boolean, timeoutMs = 12_000): Promise<number> {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (predicate()) return Date.now() - started;
-    await sleep(25);
-  }
-  return -1;
-}
 
 after(() => {
   stopAllWatchers();
@@ -285,9 +281,9 @@ test('a transient lstat failure does not delete a file that is still on disk', a
 
     // Wait for the engine to have actually ASKED — a fixed sleep would pass
     // on a slow runner before the watcher had done anything, proving nothing.
-    const asked = await waitFor(() => injected!.calls() > 0);
-    if (asked === -1 && !watchIsDelivering(t, dir, 'the change', baseline)) return;
-    assert.notEqual(asked, -1, 'the watcher noticed the change and tried to stat it');
+    const asked = await watchBrings(() => injected!.calls() > 0, 'the watcher asking about the changed file');
+    if (!asked && !watchIsDelivering(t, dir, 'the change', baseline)) return;
+    assert.ok(asked, 'the watcher noticed the change and tried to stat it');
 
     // Now let it keep failing across several flush intervals. Whatever the
     // engine does with an unreadable path, deleting the row is not among the
@@ -317,12 +313,12 @@ test('a transient lstat failure does not delete a file that is still on disk', a
     // window that outlasts them means no natural event can do the work, and
     // the only thing left that can is the engine's own retry.
     injected.release();
-    injected = failLstat(path.join('keep', 'big.bin'), 'EMFILE', { forMs: 1_000 });
+    injected = failLstat(path.join('keep', 'big.bin'), 'EMFILE', { recoversAfterMs: 1_000 });
     t.after(() => { injected?.release(); });
     await fsp.appendFile(path.join(dir, 'keep', 'big.bin'), Buffer.alloc(7_000, 3));
-    const landed = await waitFor(() => getRoot(dir)!.totalSize === 67_000);
-    if (landed === -1 && !watchIsDelivering(t, dir, 'the regrown file', baseline)) return;
-    assert.notEqual(landed, -1, 'the retry re-read the file once the disk answered, and the index caught up');
+    const landed = await watchBrings(() => getRoot(dir)!.totalSize === 67_000, 'the regrown file landing');
+    if (!landed && !watchIsDelivering(t, dir, 'the regrown file', baseline)) return;
+    assert.ok(landed, 'the retry re-read the file once the disk answered, and the index caught up');
   } finally {
     injected?.release();
     stopWatcherAndClean(dir);
@@ -349,18 +345,18 @@ test('a transient lstat failure delays a new file into the index, it does not lo
     // is not hypothetical: written that way, the test passed against the
     // unfixed engine, because a later natural event from the same `writeFile`
     // arrived after the release and did the insert.
-    const injected = failLstat('new.bin', 'EMFILE', { forMs: 1_000 });
+    const injected = failLstat('new.bin', 'EMFILE', { recoversAfterMs: 1_000 });
     t.after(() => { injected.release(); });
     await fsp.writeFile(path.join(dir, 'new.bin'), Buffer.alloc(5000));
 
-    const asked = await waitFor(() => injected.calls() > 0);
-    if (asked === -1 && !watchIsDelivering(t, dir, 'the new file', baseline)) return;
-    assert.notEqual(asked, -1, 'the watcher noticed the new file and tried to stat it');
+    const asked = await watchBrings(() => injected.calls() > 0, 'the watcher asking about the new file');
+    if (!asked && !watchIsDelivering(t, dir, 'the new file', baseline)) return;
+    assert.ok(asked, 'the watcher noticed the new file and tried to stat it');
     assert.equal(getRoot(dir)!.totalSize, 1000, 'nothing invented while the answer was unavailable');
 
-    const took = await waitFor(() => getRoot(dir)!.totalSize === 6000);
-    if (took === -1 && !watchIsDelivering(t, dir, 'the create', baseline)) return;
-    assert.notEqual(took, -1, 'the create landed once the disk answered, rather than never');
+    const took = await watchBrings(() => getRoot(dir)!.totalSize === 6000, 'the create landing');
+    if (!took && !watchIsDelivering(t, dir, 'the create', baseline)) return;
+    assert.ok(took, 'the create landed once the disk answered, rather than never');
   } finally {
     stopWatcherAndClean(dir);
   }
@@ -382,9 +378,9 @@ test('a change that never resolves marks the root stale rather than pretending',
     t.after(() => { injected.release(); });
     await fsp.writeFile(path.join(dir, 'stubborn.bin'), Buffer.alloc(7000));
 
-    const took = await waitFor(() => getRoot(dir)!.state === 'stale');
-    if (took === -1 && !watchIsDelivering(t, dir, 'the unresolvable change', baseline)) return;
-    assert.notEqual(took, -1, 'the retries are bounded and the root ends up stale');
+    const took = await watchBrings(() => getRoot(dir)!.state === 'stale', 'the root turning stale');
+    if (!took && !watchIsDelivering(t, dir, 'the unresolvable change', baseline)) return;
+    assert.ok(took, 'the retries are bounded and the root ends up stale');
     assert.match(getRoot(dir)!.staleReason ?? '', /could not be read/, 'and says why, in words the UI shows as they are');
     // More than the two a single pass costs — the watcher classifies the
     // event with one `lstat` and `applyPendingChanges` decides with another,
@@ -416,9 +412,9 @@ test('a real deletion is still applied, exactly as before', async (t) => {
     if (baseline === null) return;
 
     await fsp.unlink(path.join(dir, 'doomed.bin'));
-    const took = await waitFor(() => getRoot(dir)!.totalSize === 1000);
-    if (took === -1 && !watchIsDelivering(t, dir, 'the deletion', baseline)) return;
-    assert.notEqual(took, -1, 'ENOENT still means gone, and the row goes with it');
+    const took = await watchBrings(() => getRoot(dir)!.totalSize === 1000, 'the deletion landing');
+    if (!took && !watchIsDelivering(t, dir, 'the deletion', baseline)) return;
+    assert.ok(took, 'ENOENT still means gone, and the row goes with it');
     assert.equal(getRoot(dir)!.state, 'ready', 'an ordinary deletion does not make a root stale');
   } finally {
     stopWatcherAndClean(dir);

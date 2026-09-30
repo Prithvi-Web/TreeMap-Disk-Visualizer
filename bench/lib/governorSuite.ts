@@ -68,6 +68,8 @@ export interface GovernorOptions {
   label: string;
   /** Test hook: the loader's outcome, standing in for `loadNative()`. */
   native?: NativeOutcome;
+  /** Test hook: the clock the hold's wall time is measured by, standing in for `performance.now()`. */
+  now?: () => number;
 }
 
 type HoldFn = (targetPercent: number, seconds: number) => Promise<unknown>;
@@ -100,10 +102,11 @@ export async function runGovernor(opts: GovernorOptions): Promise<BenchResult> {
 
   // Auto mode off: the gate measures the preset asked for, not the one battery or thermal state would pick.
   api.configure({ preset: opts.preset, cpuPercent: null }, false);
+  const now = opts.now ?? ((): number => performance.now());
   const cpuBefore = process.cpuUsage();
-  const startedAt = performance.now();
+  const startedAt = now();
   const raw = await api.hold(targetPercent, opts.seconds);
-  const wallMs = performance.now() - startedAt;
+  const wallMs = now() - startedAt;
   const cpu = process.cpuUsage(cpuBefore);
   const report = parseHoldReport(raw, targetPercent);
 

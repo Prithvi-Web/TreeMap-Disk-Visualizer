@@ -13,7 +13,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { buildMcpServer } from '../src/mcp/server';
+import { buildMcpServer, setToolWaitClockForTests } from '../src/mcp/server';
 import { peekScan } from '../src/services/diskScanner';
 import { formatBytes } from '../src/utils/formatBytes';
 import { waitFor } from './fixtures/waitFor';
@@ -85,9 +85,10 @@ const CALL_WAIT_MS = 1_000;
  * Calls `name` until its answer is no longer "running", as an agent would,
  * and returns that answer; `next` turns a "running" answer into the next
  * call's arguments. Every "running" answer must have waited out the whole
- * waitMs it was given, or an agent would poll in a hot loop. That check is
- * one-sided and uses the clock the tool's own deadline uses: a busy machine
- * only makes a call longer, so load cannot fail it.
+ * waitMs it was given, or an agent would poll in a hot loop. That is counted,
+ * not timed: each call runs on a wait clock of the test's own, which moves
+ * only when the tool sleeps (and lets the real scan run a turn each time),
+ * so a "running" answer shows exactly the waits the tool made.
  */
 async function settle(
   name: string,
@@ -97,13 +98,27 @@ async function settle(
   let asking = args;
   let answer: Record<string, any> | undefined;
   await waitFor(async () => {
-    const askedAt = Date.now();
-    const r = await call(name, { ...asking, waitMs: CALL_WAIT_MS });
+    let clock = 0;
+    const waits: number[] = [];
+    setToolWaitClockForTests({
+      now: () => clock,
+      sleep: async (ms) => {
+        waits.push(ms);
+        clock += ms;
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+    });
+    let r: ToolReply;
+    try {
+      r = await call(name, { ...asking, waitMs: CALL_WAIT_MS });
+    } finally {
+      setToolWaitClockForTests(null);
+    }
     assert.ok(!r.isError, `${name}: ${JSON.stringify(r.content)}`);
     answer = r.structuredContent!;
     if (answer.status !== 'running') return true;
-    const waited = Date.now() - askedAt;
-    assert.ok(waited >= CALL_WAIT_MS, `${name} answered "running" after ${waited} ms of the ${CALL_WAIT_MS} ms it was given`);
+    const waited = waits.reduce((sum, ms) => sum + ms, 0);
+    assert.ok(waits.length > 0 && waited >= CALL_WAIT_MS, `${name} answered "running" after ${waits.length} wait(s), ${waited} ms of the ${CALL_WAIT_MS} ms it was given on its own clock`);
     asking = next(answer);
     return false;
   }, `${name} settling`);

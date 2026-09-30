@@ -41,55 +41,85 @@ import {
   FLAG,
 } from '../src/services/indexEngine';
 import type { FileNode } from '../src/models/types';
-import { awaitWatchLive, silentWatchReason } from './fixtures/watchReady';
+import { awaitWatchLive, silentWatchReason, watchBrings } from './fixtures/watchReady';
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-index-'));
 
-/**
- * Wait for a condition the live watcher should bring about.
- *
- * The ceiling is deliberately far above the 2-second acceptance budget the
- * caller asserts against. Filesystem event delivery is scheduling-sensitive —
- * on a machine busy compiling, macOS has been observed to sit on an FSEvents
- * callback for several seconds — so a tight ceiling turns "slow today" into
- * "never happened", which is the least useful failure a CI log can contain.
- * Measuring past the budget lets the assertion report the real latency.
- */
-/**
- * The ceiling, widened on CI for the same reason `WATCHER_BUDGET_MS` is.
- *
- * This is not the acceptance budget — that is asserted separately below. This
- * is only how long the test is willing to keep LOOKING before it reports
- * "never landed", and on a contended shared runner a ceiling that is too
- * tight turns "slow today" into a failure that names the wrong cause. The two
- * tests in this file that assert only `it landed at all` were left on the
- * bare 15 s when the budget was widened.
- */
-const WATCH_CEILING_MS = process.env.CI ? 30_000 : 15_000;
+/** The Node file-system calls that read or change the disk — what a scan is made of. */
+const DISK_CALLS = {
+  sync: ['readdirSync', 'opendirSync', 'statSync', 'lstatSync', 'fstatSync', 'existsSync', 'accessSync', 'readFileSync', 'openSync', 'readSync', 'realpathSync', 'mkdirSync', 'statfsSync'],
+  promises: ['readdir', 'opendir', 'stat', 'lstat', 'access', 'readFile', 'open', 'realpath', 'mkdir', 'statfs'],
+} as const;
 
-async function waitFor(predicate: () => boolean, timeoutMs = WATCH_CEILING_MS): Promise<number> {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (predicate()) return Date.now() - started;
-    await sleep(25);
+/** Every disk call `fn` made through Node's `fs` and `fs.promises`, by name, in order. */
+function diskCallsDuring<T>(fn: () => T): { result: T; calls: string[] } {
+  const calls: string[] = [];
+  const restore: Array<() => void> = [];
+  const wrap = (api: Record<string, unknown>, label: string, names: readonly string[]): void => {
+    for (const name of names) {
+      const original = api[name];
+      if (typeof original !== 'function') continue;
+      api[name] = function (this: unknown, ...args: unknown[]): unknown {
+        calls.push(`${label}.${name}`);
+        return (original as (...a: unknown[]) => unknown).apply(this, args);
+      };
+      restore.push(() => { api[name] = original; });
+    }
+  };
+  wrap(fs as unknown as Record<string, unknown>, 'fs', DISK_CALLS.sync);
+  wrap(fs.promises as unknown as Record<string, unknown>, 'fs.promises', DISK_CALLS.promises);
+  try {
+    return { result: fn(), calls };
+  } finally {
+    for (const undo of restore) undo();
   }
-  return -1;
 }
 
 /**
- * §A1's 2-second acceptance budget — enforced where wall-clock means
- * something. A shared CI runner sits on FSEvents callbacks for seconds under
- * load (run #11 measured a miss on a green codebase, the same lesson as the
- * A4 benchmark ceilings), so CI proves the MECHANISM with a wide ceiling
- * while real hardware keeps proving the real number. `waitFor` reports the
- * true latency in the failure message either way.
+ * Runs `fn` with `readTree`'s children statement counted: how many times it
+ * ran, how many rows it handed back, and how many times anything read a
+ * row's `size` — the frontier's comparisons among them, plus each node
+ * taking its own size. The statement is found by its SQL, and it must have
+ * run: a rewrite of the query fails here rather than counting nothing.
  */
-const WATCHER_BUDGET_MS = process.env.CI ? 10_000 : 2_000;
+function childReadsDuring<T>(fn: () => T): { result: T; queries: number; rows: number; sizeReads: number } {
+  const db = openIndex() as unknown as { prepare: (sql: string) => unknown };
+  const original = db.prepare;
+  const counts = { queries: 0, rows: 0, sizeReads: 0 };
+  db.prepare = function (this: unknown, sql: string) {
+    const statement = original.call(this, sql) as { all: (...args: unknown[]) => Record<string, unknown>[] };
+    if (!sql.trim().startsWith('SELECT * FROM nodes WHERE parent_id = ?')) return statement;
+    return {
+      all: (...args: unknown[]) => {
+        counts.queries++;
+        return statement.all(...args).map((row) => {
+          counts.rows++;
+          const size = row.size;
+          return Object.defineProperty({ ...row }, 'size', { enumerable: true, get: () => { counts.sizeReads++; return size; } });
+        });
+      },
+    };
+  } as typeof db.prepare;
+  try {
+    const result = fn();
+    assert.ok(counts.queries > 0, "readTree's children query never ran under its known SQL, so there is nothing to count");
+    return { result, ...counts };
+  } finally {
+    db.prepare = original;
+  }
+}
 
 /**
- * Assert a live update landed inside the acceptance budget, saying what it
- * took — and, when it did not, saying WHOSE fault that is.
+ * Assert a live update landed, saying how long it took — and, when it never
+ * did, saying WHOSE fault that is.
+ *
+ * How long is reported, never asserted. §A1's two-second acceptance figure
+ * measures the machine as much as the index: a shared CI runner sits on
+ * FSEvents callbacks for seconds under load (run #11 measured a miss on a
+ * green codebase), so the figure is the bench harness's to hold, and here
+ * the wait is bounded only by the shared hang guard (`watchBrings`). What
+ * the engine controls of that latency — one flush, FLUSH_MS after the
+ * event — lands or it does not.
  *
  * `fs.watch` can attach without error and then deliver nothing at all. That
  * is not a hypothesis: one traced full-suite run on this Mac caught a watcher
@@ -112,36 +142,36 @@ const WATCHER_BUDGET_MS = process.env.CI ? 10_000 : 2_000;
  * handshake (`watchLive`) had proved it could report at all: events before
  * that say nothing about the change under test.
  */
-function assertLanded(
-  elapsedMs: number,
+async function assertLanded(
+  predicate: () => boolean,
   what: string,
   ctx: { t: TestContext; dir: string; baseline: number },
-  budgetMs = WATCHER_BUDGET_MS,
-): boolean {
-  if (elapsedMs === -1) {
-    const now = watcherEventCount(ctx.dir);
-    if (now === null) {
-      // No watcher is attached at all, which is a different failure from
-      // either of the two below and must not be dressed up as one — the
-      // earlier version printed "the OS delivered null event(s)".
-      assert.fail(`${what} never landed, and no watcher is attached to ${ctx.dir} — the watch was never established or was stopped early.`);
-    }
-    const delivered = now - ctx.baseline;
-    if (delivered === 0) {
-      ctx.t.skip(
-        `the OS watch on ${ctx.dir} reported a rewrite made just before, then delivered no events at all in ` +
-        `${String(WATCH_CEILING_MS)}ms, so "${what}" could not be observed — a platform failure, not an index one. ` +
-        'See HANDOFF.md, "a watch that attaches and says nothing".',
-      );
-      return false;
-    }
-    assert.fail(
-      `${what} never landed in the index, and this IS a bug here: the OS delivered ` +
-      `${String(delivered)} event(s) for this root after it proved live, and none of them produced the change.`,
-    );
+): Promise<boolean> {
+  const started = performance.now();
+  if (await watchBrings(predicate, what)) {
+    ctx.t.diagnostic(`${what} landed ${(performance.now() - started).toFixed(0)} ms after the change`);
+    return true;
   }
-  assert.ok(elapsedMs < budgetMs, `${what} took ${String(elapsedMs)}ms, budget is ${String(budgetMs)}ms`);
-  return true;
+  const now = watcherEventCount(ctx.dir);
+  if (now === null) {
+    // No watcher is attached at all, which is a different failure from
+    // either of the two below and must not be dressed up as one — the
+    // earlier version printed "the OS delivered null event(s)".
+    assert.fail(`${what} never landed, and no watcher is attached to ${ctx.dir} — the watch was never established or was stopped early.`);
+  }
+  const delivered = now - ctx.baseline;
+  if (delivered === 0) {
+    ctx.t.skip(
+      `the OS watch on ${ctx.dir} reported a rewrite made just before, then delivered no events at all ` +
+      `before the hang guard ran out, so "${what}" could not be observed — a platform failure, not an index one. ` +
+      'See HANDOFF.md, "a watch that attaches and says nothing".',
+    );
+    return false;
+  }
+  assert.fail(
+    `${what} never landed in the index, and this IS a bug here: the OS delivered ` +
+    `${String(delivered)} event(s) for this root after it proved live, and none of them produced the change.`,
+  );
 }
 
 /**
@@ -273,11 +303,15 @@ test('symlinks are recorded as leaves and never followed into a loop', async () 
   }
 });
 
-/* ══════════════════════ Reopen speed (acceptance) ══════════════════════ */
+/* ══════════════════════ Reopen (acceptance) ══════════════════════ */
 
-test('reopening an indexed folder answers in well under 200ms', async () => {
+test('reopening an indexed folder reads the index, never the disk: one query per folder, each row once', async () => {
   // §A1 acceptance: "Second and later opens of an indexed folder render in
-  // under 200ms with no scan spinner."
+  // under 200ms with no scan spinner." The 200 ms is the bench harness's to
+  // measure: asserted here, it measured the runner. What makes it hold on
+  // any machine is asserted instead, by count — not one disk call (a disk
+  // call is a scan, and the spinner with it), one children query per
+  // folder, and every row read exactly once.
   const dir = await mkTmp();
   try {
     for (let i = 0; i < 40; i++) {
@@ -288,12 +322,13 @@ test('reopening an indexed folder answers in well under 200ms', async () => {
     }
     await buildIndex(dir, { live: false });
 
-    const started = Date.now();
-    const tree = readTree(dir)!;
-    const elapsed = Date.now() - started;
+    const reopened = diskCallsDuring(() => childReadsDuring(() => readTree(dir)!));
+    const { result: tree, queries, rows } = reopened.result;
 
     assert.equal(tree.nodes, 1041, 'the whole tree came back: 1 root + 40 dirs + 1000 files');
-    assert.ok(elapsed < 200, `reopen took ${String(elapsed)}ms, budget is 200ms`);
+    assert.deepEqual(reopened.calls, [], 'reopening read the disk: that is a scan, and the spinner §A1 rules out');
+    assert.equal(queries, 41, 'one children query per folder: the root and its 40');
+    assert.equal(rows, 1040, 'every row below the root read once — none twice, none fetched and thrown away');
   } finally {
     deleteIndex(dir);
     await fsp.rm(dir, { recursive: true, force: true });
@@ -302,7 +337,7 @@ test('reopening an indexed folder answers in well under 200ms', async () => {
 
 /* ══════════════════════ Live updates (acceptance) ══════════════════════ */
 
-test('an external create, resize and delete each land within 2 seconds', async (t) => {
+test('an external create, resize and delete each land without a rescan', async (t) => {
   // §A1 acceptance: "An external file create/delete/resize is reflected within
   // 2 seconds without a user-triggered rescan."
   const dir = await mkTmp();
@@ -317,16 +352,16 @@ test('an external create, resize and delete each land within 2 seconds', async (
     const target = path.join(dir, 'new.bin');
 
     await fsp.writeFile(target, Buffer.alloc(5000));
-    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 6000), 'an external create', ctx)) return;
+    if (!(await assertLanded(() => getRoot(dir)!.totalSize === 6000, 'an external create', ctx))) return;
 
     // Each change is triaged on the events that came after it.
     ctx.baseline = watcherEventCount(dir) ?? ctx.baseline;
     await fsp.writeFile(target, Buffer.alloc(9000));
-    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 10000), 'an external resize', ctx)) return;
+    if (!(await assertLanded(() => getRoot(dir)!.totalSize === 10000, 'an external resize', ctx))) return;
 
     ctx.baseline = watcherEventCount(dir) ?? ctx.baseline;
     await fsp.unlink(target);
-    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 1000), 'an external delete', ctx)) return;
+    if (!(await assertLanded(() => getRoot(dir)!.totalSize === 1000, 'an external delete', ctx))) return;
   } finally {
     stopWatcher(dir);
     deleteIndex(dir);
@@ -349,7 +384,7 @@ test('deleting a folder removes its whole subtree from the index', async (t) => 
     // Same triage as the acceptance test above: a watch that delivered
     // nothing at all is a platform silence, not a subtree bug, and saying so
     // is worth more than a failure that names the wrong thing.
-    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 1000), 'the folder deletion', { t, dir, baseline })) return;
+    if (!(await assertLanded(() => getRoot(dir)!.totalSize === 1000, 'the folder deletion', { t, dir, baseline }))) return;
 
     const db = openIndex();
     const rootId = getRoot(dir)!.id;
@@ -386,7 +421,7 @@ test('a path containing LIKE wildcards is deleted precisely, not by pattern', as
     // folder was removed", which is a claim about the disk — and the disk had
     // done its part. What can fail here is the watcher noticing, and whether
     // THAT is a bug depends on whether the OS said anything at all.
-    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 900), 'the wildcard-named folder’s removal', { t, dir, baseline })) return;
+    if (!(await assertLanded(() => getRoot(dir)!.totalSize === 900, 'the wildcard-named folder’s removal', { t, dir, baseline }))) return;
 
     const rootId = getRoot(dir)!.id;
     assert.equal(findNodeIdByPath(rootId, dir, path.join(dir, '100%_backup')), null, 'the wildcard-named folder is gone');
@@ -659,22 +694,17 @@ test('reading a tree stays sub-quadratic as directory count grows', async (t) =>
    * exists to make reopening instant; that made it slower than scanning.
    *
    * Asserting "under N milliseconds" would measure the CI runner, not the
-   * code (the lesson A4's benchmark taught). So this asserts the *shape* of
-   * the curve instead: grow the directory count and see what the cost does.
-   *
-   * The growth factor is 16x, and it has to be. At the 4x this used to test,
-   * restoring the sort-and-shift frontier measured 5.7x against the heap's
-   * 4.0x — under the old 9x ceiling, so the pin did not bite on the very bug
-   * it was written for. Per-row SQLite work dominates at that size and
-   * buries the quadratic term. Measured here, 400 → 6400 directories, the
-   * two curves separate by better than 2x with room to spare:
-   *
-   *                     idle              8 cores under 16 spinners
-   *     heap:           11.9 – 17.4x      12.8 – 20.8x
-   *     sort + shift:   44.3 – 50.9x      46.7 – 55.0x
-   *
-   * A 30x ceiling therefore sits ~1.5x above the worst linear reading and
-   * ~0.65x of the best quadratic one, in both conditions.
+   * code, and so did the CPU-time ratio that replaced it (400 → 6400
+   * directories, 12–21x for the heap, 44–55x for sort-and-shift, a 30x
+   * ceiling between them — CI once read 13.4x where an idle machine read
+   * 3.9x). So this counts the work itself: every read of a child row's
+   * `size`, which is what the frontier compares. A heap reads at most four
+   * sizes per level of the heap for a pop, two per level for a push, and a
+   * node reads its own size at most twice (its size, and a file's allocated
+   * size beside it) — so the count stays under
+   * `2·rows + 6·dirs·⌈log2(dirs + 1)⌉` at every size. Sort-and-shift re-reads
+   * the whole frontier on every pop, dirs² reads: 41 million at 6400
+   * directories against a bound of about half a million.
    */
   const build = async (dirs: number): Promise<string> => {
     const root = await mkTmp();
@@ -692,77 +722,29 @@ test('reading a tree stays sub-quadratic as directory count grows', async (t) =>
     return root;
   };
 
-  /**
-   * CPU time, not wall time — and a batch, not a single read.
-   *
-   * This test divides one measurement by another, so noise in the numerator
-   * moves the ratio by far more than the algorithmic difference it is looking
-   * for. On wall time that is fatal: the same 16-spinner load that leaves the
-   * CPU-time ratio at 12.8–20.8x drives the wall-time ratio to 18.6–27.2x on
-   * code whose curve is linear — a false failure of the most confusing kind,
-   * because the number it prints is exactly what a real regression prints.
-   * (CI has already produced one: 13.4x where an idle machine measures 3.9x.)
-   * `process.cpuUsage()` counts only time this process spent ON a core, so a
-   * busy neighbour costs it almost nothing.
-   *
-   * Batched because the clock is coarse: Windows updates process CPU time in
-   * ~15ms steps, and a single 400-directory read is ~4ms — it would quantize
-   * to 0 or to 15ms and the ratio would be fiction. Both batches below span
-   * ≳50ms of CPU on every platform, so the quantum is noise, not the signal.
-   */
-  const cpuPerRead = (root: string, reads: number): number => {
-    const before = process.cpuUsage();
-    for (let i = 0; i < reads; i++) readTree(root);
-    const spent = process.cpuUsage(before);
-    return (spent.user + spent.system) / 1000 / reads;
-  };
-
-  const small = await build(400);
-  const large = await build(6400);        // 16x the directories
-
-  // One discarded pass per side: it warms the page cache and the statement
-  // cache, which would otherwise land entirely on round 0's numerator.
-  cpuPerRead(small, 2);
-  cpuPerRead(large, 1);
-
-  /**
-   * The best of several PAIRED rounds, not the best of two independent runs.
-   *
-   * Taking the minimum of each size separately still divides two different
-   * moments: a machine that was quiet during the small reads and busy during
-   * the large ones produces a ratio neither sample supports. Worse, a minimum
-   * taken per side systematically favours the SHORT measurement — a 4ms read
-   * finds a quiet slot far more often than a 67ms one — which inflates the
-   * ratio precisely when the machine is loaded.
-   *
-   * So each round measures BOTH sizes back to back and forms its own ratio,
-   * and the verdict is the smallest of those: the round least contaminated by
-   * anything that is not the code. A quadratic frontier costs ≥44x in every
-   * round measured, loaded or idle, so the minimum cannot launder it — there
-   * is no quiet moment in which an O(n^2) walk becomes linear.
-   */
-  const ratios: number[] = [];
-  for (let round = 0; round < 3; round++) {
-    const perLarge = cpuPerRead(large, 2);
-    const perSmall = cpuPerRead(small, 12);
-    assert.ok(perSmall > 0, 'the small batch registered real CPU time — otherwise the ratio means nothing');
-    ratios.push(perLarge / perSmall);
+  const counts: string[] = [];
+  for (const dirs of [400, 6400]) {
+    const root = await build(dirs);
+    try {
+      const { result: tree, rows, sizeReads } = childReadsDuring(() => readTree(root)!);
+      assert.equal(tree.nodes, 1 + 2 * dirs, 'the whole tree came back: the root, each folder and its one file');
+      assert.equal(rows, 2 * dirs, 'every row below the root read once');
+      const bound = 2 * rows + 6 * dirs * Math.ceil(Math.log2(dirs + 1));
+      counts.push(`${String(dirs)} dirs: ${String(sizeReads)} size reads (bound ${String(bound)})`);
+      assert.ok(
+        sizeReads <= bound,
+        `${String(dirs)} directories cost ${String(sizeReads)} reads of a row's size, over the heap's ${String(bound)} — that curve is quadratic again`,
+      );
+      if (dirs === 6400) {
+        // And the ordering the heap exists to provide is still biggest-first.
+        const sizes = (tree.root.children ?? []).map((c) => c.size);
+        assert.deepEqual(sizes, [...sizes].sort((a, b) => b - a), 'children come back biggest-first');
+      }
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   }
-  const ratio = Math.min(...ratios);
-  t.diagnostic(`400 → 6400 dirs, 3 paired CPU-time rounds: ${ratios.map((r) => r.toFixed(1) + 'x').join(' · ')}`
-    + ` → best ${ratio.toFixed(1)}x (a heap measures ~12–21x, a sorted frontier ~44–55x)`);
-
-  assert.ok(ratio < 30, `16x the directories cost ${ratio.toFixed(1)}x the CPU — that curve is quadratic again`);
-
-  // And the ordering the heap exists to provide is still biggest-first.
-  const tree = readTree(large);
-  assert.ok(tree);
-  const kids = tree!.root.children ?? [];
-  const sizes = kids.map((c) => c.size);
-  assert.deepEqual(sizes, [...sizes].sort((a, b) => b - a), 'children come back biggest-first');
-
-  await fsp.rm(small, { recursive: true, force: true });
-  await fsp.rm(large, { recursive: true, force: true });
+  t.diagnostic(counts.join(' · '));
 });
 
 test('a withheld directory is never fetched, only counted past the budget', async () => {

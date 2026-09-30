@@ -9,6 +9,7 @@ import path from 'node:path';
 // Every write this file causes — settings, mtime caches, snapshots — lands in
 // a directory of its own, never in the owner's real app data.
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor, withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('treemap-budget-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -162,15 +163,13 @@ async function buildTree(dirs: number, filesPerDir: number, prefix: string): Pro
   return root;
 }
 
-async function settle(scanId: string, limitMs = 60_000): Promise<ScanResult> {
-  const t0 = Date.now();
-  for (;;) {
+async function settle(scanId: string): Promise<ScanResult> {
+  await waitFor(() => {
     const s = getScan(scanId);
     assert.ok(s, 'the scan record must exist');
-    if (s.status !== 'running') return s;
-    assert.ok(Date.now() - t0 < limitMs, `scan ${scanId} never settled`);
-    await sleep(20);
-  }
+    return s.status !== 'running';
+  }, `scan ${scanId} settling`, 20);
+  return getScan(scanId)!;
 }
 
 /* ───────────────────────────── the setting ───────────────────────────── */
@@ -434,19 +433,15 @@ async function fakeGdu(dir: string, holdMs: number): Promise<string> {
   return bin;
 }
 
-/** How long a test waits for a stand-in's file before it calls the stand-in stuck: a hang guard, not a measurement. */
-const STAND_IN_DEADLINE_MS = 60_000;
+/** How long a stand-in's work lasts unless the test releases it: longer than any test here waits for it. */
+const STAND_IN_WORK_MS = 60_000;
 
 /**
  * Resolves once the stand-in writing `out` has started its work (its
  * `.started` marker exists). A pause must land mid-work to test anything.
  */
 async function whenWorking(out: string): Promise<void> {
-  const t0 = Date.now();
-  while (!fs.existsSync(`${out}.started`)) {
-    assert.ok(Date.now() - t0 < STAND_IN_DEADLINE_MS, `the stand-in for ${out} never started its work`);
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await waitFor(() => fs.existsSync(`${out}.started`), `the stand-in for ${out} starting its work`, 5);
 }
 
 /** The stand-in's steps so far. */
@@ -520,16 +515,9 @@ test('pausing a running walker halts `scanned` within 200 ms and resuming lets i
   const total = 1 + 121 + 120 * 100 + 8_000;
   try {
     const scan = await startScan(root);
-    const t0 = Date.now();
-    while (scan.status === 'running' && scan.currentPath !== big) {
-      assert.ok(Date.now() - t0 < 20_000, 'the walker never reached the big folder');
-      await sleep(2);
-    }
+    await waitFor(() => scan.status !== 'running' || scan.currentPath === big, 'the walker reaching the big folder', 2);
     const atEntry = scan.scanned;
-    while (scan.status === 'running' && scan.scanned < atEntry + 300) {
-      assert.ok(Date.now() - t0 < 20_000, 'the walker never got into the big folder');
-      await sleep(2);
-    }
+    await waitFor(() => scan.status !== 'running' || scan.scanned >= atEntry + 300, 'the walker getting into the big folder', 2);
     assert.equal(scan.status, 'running', 'too fast to pause — the tree must be bigger');
 
     const outcome = pauseScan(scan);
@@ -549,11 +537,7 @@ test('pausing a running walker halts `scanned` within 200 ms and resuming lets i
     const resumed = resumeScan(scan);
     assert.equal(resumed.paused, false);
     assert.equal(isScanPaused(scan.scanId), false);
-    const t1 = Date.now();
-    while (scan.scanned === halted && scan.status === 'running') {
-      assert.ok(Date.now() - t1 < 5_000, 'scanned did not move after resume');
-      await sleep(5);
-    }
+    await waitFor(() => scan.scanned !== halted || scan.status !== 'running', '`scanned` moving again after resume', 5);
     const done = await settle(scan.scanId);
     assert.equal(done.status, 'complete');
     assert.equal(done.scanned, total, 'every folder and file was counted once');
@@ -577,10 +561,8 @@ test('cancelling a paused scan releases it: the walker does not wait forever', a
     assert.equal(isScanPaused(scan.scanId), false, 'a cancelled scan is not paused');
     assert.equal(scan.status, 'error');
     // The walker's promise must settle rather than hang on the pause gate.
-    const settledAt = Date.now();
-    const s = await settle(scan.scanId, 5_000);
+    const s = await settle(scan.scanId);
     assert.equal(s.status, 'error');
-    assert.ok(Date.now() - settledAt < 5_000);
   } finally {
     await updateSettings({ engineBudget: { preset: 'auto', cpuPercent: null } });
     await fsp.rm(root, { recursive: true, force: true });
@@ -627,7 +609,7 @@ test('a gdu scan is paused by stopping its shard, and on Windows the refusal is 
 test('a shard’s controls really stop the process: SIGSTOP shows as a stopped state, and the shard finishes after SIGCONT', { skip: isWindows && 'no SIGSTOP on Windows' }, async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-gdu-stop-'));
   // Work that only the test ends: a pause cannot land after it has finished.
-  const bin = await fakeGdu(root, STAND_IN_DEADLINE_MS);
+  const bin = await fakeGdu(root, STAND_IN_WORK_MS);
   const out = path.join(root, 'shard.json');
   let pid = 0;
   let controls: ShardControls | undefined;
@@ -641,12 +623,8 @@ test('a shard’s controls really stop the process: SIGSTOP shows as a stopped s
     await whenWorking(out); // paused mid-work, as a user pauses a scan
     assert.ok(pid > 0 && controls);
     controls.pause();
-    const t0 = Date.now();
-    let state = processState(pid);
-    while (!state.startsWith('T') && Date.now() - t0 < STAND_IN_DEADLINE_MS) {
-      await sleep(5);
-      state = processState(pid);
-    }
+    await waitFor(() => processState(pid).startsWith('T'), 'the paused stand-in reading as stopped (T)', 5);
+    const state = processState(pid);
     assert.match(state, /^T/, `the process state while paused should read T (stopped), got "${state}"`);
     // Stopped means no work: not one step while the pause lasts.
     const before = ticksOf(out);
@@ -655,7 +633,7 @@ test('a shard’s controls really stop the process: SIGSTOP shows as a stopped s
     assert.match(processState(pid), /^T/, 'and is still stopped');
     controls.resume();
     await fsp.writeFile(`${out}.release`, '');
-    const outcome = await Promise.race([shard, sleep(STAND_IN_DEADLINE_MS).then(() => 'still running')]);
+    const outcome = await withinHangGuard(shard, 'the shard finishing after SIGCONT');
     assert.equal(outcome, 'finished', 'the shard finished after SIGCONT');
     assert.ok(ticksOf(out) >= before, 'its steps are all there');
     assert.ok(fs.existsSync(out), 'and then wrote its result');
@@ -693,7 +671,7 @@ test('the six-hour evictor kills a paused gdu shard instead of leaving it stoppe
 
     scan.createdAt = Date.now() - 7 * 60 * 60 * 1000; // past the six-hour hard cap
     assert.deepEqual(evictExpiredScans(), [scan.scanId]);
-    const outcome = await Promise.race([shard, sleep(2000).then(() => 'still stopped')]);
+    const outcome = await withinHangGuard(shard, 'the eviction ending the stopped shard');
     assert.ok(outcome instanceof Error, `the eviction ends the stopped shard; the shard reported: ${String(outcome)}`);
     assert.equal(getScan(scan.scanId), undefined);
     assert.equal(isScanPaused(scan.scanId), false);
@@ -883,13 +861,9 @@ test('a scheduled scan runs Eco whatever the setting says', async () => {
       schedules: [{ id: 'budget-sched', path: root, intervalHours: 24, enabled: true }],
     });
     startScheduler();
-    let scan: ScanResult | undefined;
-    const t0 = Date.now();
-    while (!scan) {
-      scan = allScans().find((s) => s.rootPath === root && !before.has(s.scanId));
-      assert.ok(Date.now() - t0 < 10_000, 'the scheduler never started the due scan');
-      if (!scan) await sleep(20);
-    }
+    const due = (): ScanResult | undefined => allScans().find((s) => s.rootPath === root && !before.has(s.scanId));
+    await waitFor(() => due() !== undefined, 'the scheduler starting the due scan', 20);
+    const scan = due()!;
     assert.deepEqual(scan.budget, { preset: 'eco', effective: 'eco', source: 'node-shim' });
     const done = await settle(scan.scanId);
     assert.equal(done.status, 'complete');
@@ -923,35 +897,71 @@ function runChild(preset: string, tree: string): ChildRun {
   }
 }
 
-test('the walker under Eco keeps its process at or under 30% of the machine, and Turbo finishes sooner (20k entries, child process)', async () => {
+test('a real walk rests through the throttle after every batch under Eco, three parts rest to one of work, and never under Turbo (counted on the throttle\'s clock)', async () => {
+  // What keeps an Eco scan's process near a quarter of the machine is the
+  // walker resting through `throttleBatch` after every batch. That is
+  // counted here on the throttle's own clock, which moves one millisecond
+  // each time it is read — so every batch "works" at least a millisecond —
+  // and records each rest without sleeping it. The share of the machine
+  // those rests buy is a measurement of the machine, reported by the test
+  // below and never asserted.
+  useShim();
+  const dirs = 40;
+  const tree = await buildTree(dirs, 50, 'treemap-budget-rests-');
+  const restsUnder = async (preset: 'eco' | 'turbo'): Promise<number[]> => {
+    let now = 0;
+    const rests: number[] = [];
+    setThrottleClockForTests({ now: () => ++now, sleep: async (ms) => { rests.push(ms); } });
+    try {
+      await updateSettings({ engineBudget: { preset, cpuPercent: null } });
+      const done = await settle((await startScan(tree)).scanId);
+      assert.equal(done.status, 'complete', done.error);
+      assert.equal(done.scanned, 1 + dirs + dirs * 50, 'every entry counted');
+      return rests;
+    } finally {
+      setThrottleClockForTests(null);
+    }
+  };
+  try {
+    const eco = await restsUnder('eco');
+    const turbo = await restsUnder('turbo');
+    // At least one batch per folder, and a worker's first batch is free.
+    const ecoWorkers = shimWorkerCap('eco', os.cpus().length);
+    assert.ok(eco.length >= 1 + dirs - ecoWorkers,
+      `Eco rested ${eco.length} times over a walk of at least ${1 + dirs} batches on ${ecoWorkers} worker(s): it must rest after every batch but each worker's first`);
+    assert.deepEqual(eco.filter((ms) => !(ms >= 3 && ms % 3 === 0)), [],
+      'every Eco rest is three times the work before it (duty 0.25), and the work is at least one tick');
+    assert.deepEqual(turbo, [], 'Turbo never rests');
+  } finally {
+    await updateSettings({ engineBudget: { preset: 'auto', cpuPercent: null } });
+    await fsp.rm(tree, { recursive: true, force: true });
+  }
+});
+
+test('the walker under Eco and Turbo, each in a process of its own: both walk every entry, and the machine share each held is reported (20k entries, child process)', async (t) => {
   const cores = Math.max(1, os.cpus().length);
   const tree = await buildTree(200, 100, 'treemap-budget-share-');
   try {
-    runChild('turbo', tree); // warm the page cache so neither timed run pays for cold metadata
+    runChild('turbo', tree); // warm the page cache so neither run pays for cold metadata
     const eco = runChild('eco', tree);
     const turbo = runChild('turbo', tree);
     const load = os.loadavg()[0];
     const share = (r: ChildRun): number => r.cpuMs / (r.wallMs * cores);
     const busy = (r: ChildRun): number => r.cpuMs / r.wallMs;
-    const diag = `eco: share ${share(eco).toFixed(3)} (${busy(eco).toFixed(2)} cores busy, ${eco.wallMs.toFixed(0)} ms wall, ${eco.cpuMs.toFixed(0)} ms cpu) · ` +
+    // Reported, never asserted: a share of the machine and a wall time both
+    // measure the machine as much as the budget (measured on this Mac, 8
+    // cores: Eco 0.19 with 1.5 cores busy, Turbo 0.44 with 3.5; an Eco that
+    // never rested, 0.38). What the budget controls — the rests — is counted
+    // by the test above.
+    t.diagnostic(`eco: share ${share(eco).toFixed(3)} (${busy(eco).toFixed(2)} cores busy, ${eco.wallMs.toFixed(0)} ms wall, ${eco.cpuMs.toFixed(0)} ms cpu) · ` +
       `turbo: share ${share(turbo).toFixed(3)} (${busy(turbo).toFixed(2)} cores busy, ${turbo.wallMs.toFixed(0)} ms wall) · ` +
-      `${cores} cores, 1-minute load ${load.toFixed(2)}` +
-      (load > cores * 0.75 ? ' — the machine is busy with other work, which stretches wall time and can make Turbo look slower than it is' : '');
-
+      `${cores} cores, 1-minute load ${load.toFixed(2)}`);
     for (const r of [eco, turbo]) {
-      assert.equal(r.status, 'complete', diag);
-      assert.equal(r.scanned, 1 + 200 + 200 * 100, diag);
+      assert.equal(r.status, 'complete', r.preset);
+      assert.equal(r.scanned, 1 + 200 + 200 * 100, r.preset);
     }
     assert.deepEqual(eco.budget, { preset: 'eco', effective: 'eco', source: 'node-shim' });
-    assert.ok(eco.wallMs >= 100, `the Eco run must be long enough to measure: ${diag}`);
-    // The share is the whole process against the whole machine. Measured on
-    // this Mac (8 cores): Eco 0.19 with 1.5 cores busy, Turbo 0.44 with 3.5 —
-    // the walker's CPU is mostly the lstat storm in the 16-thread pool, so a
-    // wall-time duty of 0.25 does not read as 0.25 of one core, and no bound
-    // on "cores busy" would say anything true about the duty. An Eco that never
-    // rested measured 0.38 here, so the 0.30 bound is what the duty holds.
-    assert.ok(share(eco) <= 0.30, `Eco must stay at or under 30% of the machine: ${diag}`);
-    assert.ok(turbo.wallMs < eco.wallMs, `Turbo must finish sooner than Eco: ${diag}`);
+    assert.deepEqual(turbo.budget, { preset: 'turbo', effective: 'turbo', source: 'node-shim' });
   } finally {
     await fsp.rm(tree, { recursive: true, force: true });
   }

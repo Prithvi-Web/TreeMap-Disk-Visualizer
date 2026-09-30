@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
+import { HANG_GUARD_MS, HangGuardExpired, waitFor, withinHangGuard } from './fixtures/waitFor';
 import { KB, buildEdgeFixture, canLock, unlockAndRemove } from './fixtures/nativeEdge';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -154,6 +154,9 @@ async function buildWideTree(dirs: number, filesPerDir: number, prefix: string):
  * as UTF-8, the hard-link and refusal side tables sorted by node. The fake
  * module serves these columns, and the ingest test feeds them straight in.
  */
+/** The CPU every fake walk reports as its own. */
+const FAKE_WALK_CPU_SECONDS = 0.001;
+
 function columnsFromDisk(root: string, over: Partial<WalkResult['stats']> = {}, opts: { scramble?: boolean } = {}): WalkResult {
   const parent: number[] = [0];
   const names: Buffer[] = [Buffer.from(path.basename(root) || root, 'utf8')];
@@ -241,7 +244,7 @@ function columnsFromDisk(root: string, over: Partial<WalkResult['stats']> = {}, 
     refusalNode: Uint32Array.from(refusals.map((r) => r.node)),
     refusalWhy: Uint8Array.from(refusals.map((r) => r.why)),
     stats: {
-      dirsListed, entries: parent.length - 1, wallMs: 1, cpuSeconds: 0.001, fastPath: 'bulk', workersPeak: 1, climbSteps: 0,
+      dirsListed, entries: parent.length - 1, wallMs: 1, cpuSeconds: FAKE_WALK_CPU_SECONDS, fastPath: 'bulk', workersPeak: 1, climbSteps: 0,
       deniedEntries, unreadableEntries, dataless: 0, ...over,
     },
   };
@@ -363,15 +366,13 @@ function useNoNative(): void {
 
 /* ═══════════════════════ helpers ═══════════════════════ */
 
-async function settle(scanId: string, limitMs = 60_000): Promise<ScanResult> {
-  const t0 = Date.now();
-  for (;;) {
+async function settle(scanId: string): Promise<ScanResult> {
+  await waitFor(() => {
     const s = getScan(scanId);
     assert.ok(s, 'the scan record must exist');
-    if (s.status !== 'running') return s;
-    assert.ok(Date.now() - t0 < limitMs, `scan ${scanId} never settled`);
-    await sleep(10);
-  }
+    return s.status !== 'running';
+  }, `scan ${scanId} settling`);
+  return getScan(scanId)!;
 }
 
 async function scanWith(engine: EngineSetting, root: string, opts: { incremental?: boolean } = {}): Promise<ScanResult> {
@@ -456,23 +457,23 @@ function recordFor(root: string): { scan: ScanResult; store: PackedScanStore } {
 }
 
 /**
- * Waits for `walk` to end, for at most `ms`. A walk the engine never ends
- * (no stall detector, no cancel deadline) would hang the run: past the bound
- * the fake forgets its handles, so the loop's next poll throws and the walk
- * ends, and the caller asserts 'settled' — a failure, not a hang.
+ * Waits for `walk` to end, bounded only by the hang guard. A walk the engine
+ * never ends (no stall detector, no cancel deadline) would hang the run: once
+ * the guard runs out the fake forgets its handles, so the loop's next poll
+ * throws and the walk ends, and the caller asserts 'settled' — a failure,
+ * not a hang. What the engine did on the way (polls, the cancel, the take)
+ * is counted by the caller, on a fake clock where the deadline matters.
  */
-async function bounded(walk: Promise<void>, fake: { handles: Map<number, FakeHandle> }, ms = 10_000): Promise<'settled' | 'timed out'> {
-  // The guard's timer is cleared once the walk settles: left pending, a
-  // HANG_GUARD_MS guard would hold the test process open for two minutes.
-  let guard: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<'timed out'>((resolve) => { guard = setTimeout(() => resolve('timed out'), ms); });
-  const outcome = await Promise.race([walk.then(() => 'settled' as const, () => 'settled' as const), timedOut]);
-  clearTimeout(guard);
-  if (outcome === 'timed out') {
+async function bounded(walk: Promise<void>, fake: { handles: Map<number, FakeHandle> }): Promise<'settled' | 'timed out'> {
+  try {
+    await withinHangGuard(walk.then(() => undefined, () => undefined), 'the walk ending');
+    return 'settled';
+  } catch (err) {
+    if (!(err instanceof HangGuardExpired)) throw err;
     fake.handles.clear();
     await walk.catch(() => undefined);
+    return 'timed out';
   }
-  return outcome;
 }
 
 /* ═══════════════════ 1. the eligibility table ═══════════════════ */
@@ -925,7 +926,9 @@ test('Automatic picks the native engine when the module lists the root: engine n
     assert.equal(treeJson(scan), treeJson(legacy), 'the tree the API emits differs from the walker’s');
     assert.deepEqual(counters(scan), counters(legacy));
     assert.equal(typeof stats.cpuSeconds, 'number', 'the walk’s CPU plus the ingest’s');
-    assert.ok((stats.cpuSeconds ?? 0) >= 0.001, `cpuSeconds ${stats.cpuSeconds}`);
+    // The fake walk reports 0.001 s; the ingest's CPU is measured and never
+    // negative — so the sum is at least the walk's, on any machine.
+    assert.ok((stats.cpuSeconds ?? Number.NaN) - FAKE_WALK_CPU_SECONDS >= 0, `cpuSeconds ${stats.cpuSeconds} holds the walk's own ${FAKE_WALK_CPU_SECONDS} s`);
     assert.equal(stats.placeholdersSkipped, 0);
     assert.equal(stats.entriesPerSecond === null || stats.entriesPerSecond > 0, true);
     assert.deepEqual(fake.calls.probe, [root], 'one probe, of the root');
@@ -1111,19 +1114,28 @@ test('the poll loop waits 1, 2, 4, 8 ms, then NATIVE_POLL_MS and never longer, a
 });
 
 test('with the real clock the poll loop really waits between polls: it never spins', async () => {
-  // Seven waits of 1, 2, 4, 8, 10, 10 and 10 ms: 45 ms asked. A timer can
-  // fire up to 1 ms early against performance.now() (the loop's clock counts
-  // whole milliseconds), so at least 38 ms pass; a loop that spun would take
-  // a fraction of one.
+  // Seven waits of 1, 2, 4, 8, 10, 10 and 10 ms, each one a real timer set
+  // for its wait: counted as the timers the walk sets, never timed (a busy
+  // machine stretches a timer, and a fast one's clock reads it short). A
+  // loop that spun would set none.
   const { root, locked } = await buildEdgeFixture('treemap-native-wait-');
+  const realSetTimeout = globalThis.setTimeout;
   try {
     const { scan, store } = recordFor(root);
     const fake = useFakeNative({ steps: 8 });
-    const started = performance.now();
-    await runNativeWalk(scan, store, root, fake.module);
-    const took = performance.now() - started;
-    assert.ok(took >= 30, `seven waits asked for 45 ms took ${took.toFixed(1)} ms`);
+    const timers: number[] = [];
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      timers.push(ms ?? 0);
+      return realSetTimeout(fn, ms, ...args);
+    }) as typeof setTimeout;
+    try {
+      await runNativeWalk(scan, store, root, fake.module);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+    assert.deepEqual(timers, [1, 2, 4, 8, NATIVE_POLL_MS, NATIVE_POLL_MS, NATIVE_POLL_MS], 'one real timer for each of the seven waits between eight polls');
   } finally {
+    globalThis.setTimeout = realSetTimeout;
     await unlockAndRemove(root, locked);
   }
 });
@@ -1134,11 +1146,7 @@ test('pausing a native scan stops `scanned` within 200 ms and resuming finishes 
     const fake = useFakeNative({ steps: 400 }); // about four seconds of polls at NATIVE_POLL_MS, unless paused
     await updateSettings({ engine: 'native' });
     const scan = await startScan(root);
-    const t0 = Date.now();
-    while (scan.status === 'running' && scan.scanned < 3) {
-      assert.ok(Date.now() - t0 < 5_000, 'the native scan never started counting');
-      await sleep(5);
-    }
+    await waitFor(() => scan.status !== 'running' || scan.scanned >= 3, 'the native scan starting to count', 5);
     assert.equal(scan.status, 'running');
     const outcome = pauseScan(scan);
     assert.deepEqual({ paused: outcome.paused, supported: outcome.supported }, { paused: true, supported: true });
@@ -1171,11 +1179,7 @@ test('cancelling a native scan settles the record at once and releases the handl
     while (scan.status === 'running' && scan.scanned < 3) await sleep(5);
     assert.equal(cancelScan(scan.scanId), true);
     assert.equal(scan.status, 'error');
-    const t0 = Date.now();
-    while (fake.handles.size > 0) {
-      assert.ok(Date.now() - t0 < 2_000, 'the native handle was never released after the cancel');
-      await sleep(5);
-    }
+    await waitFor(() => fake.handles.size === 0, 'the native handle being released after the cancel', 5);
     assert.equal(fake.calls.cancel, 1);
     assert.equal(fake.calls.take, 1, 'taken once, to free it; the refusal that throws is what frees it');
     assert.throws(() => fake.module.scanTake(1), /no scan handle/, 'a second take says the handle is gone');
@@ -1222,7 +1226,7 @@ test('a cancelled walk that never reports done is abandoned at the cancel deadli
       },
     });
     const walk = runNativeWalk(scan, store, root, fake.module);
-    assert.equal(await bounded(walk, fake, 3_000), 'settled', 'runNativeWalk did not return within 3 s of a cancel the walk never answered');
+    assert.equal(await bounded(walk, fake), 'settled', 'runNativeWalk never returned after a cancel the walk never answered');
     await walk;
     assert.equal(fake.calls.cancel, 1);
     const after = fake.calls.log.slice(fake.calls.log.indexOf('cancel') + 1);
@@ -1246,7 +1250,7 @@ test('a walk that shows nothing new for the stall threshold is a stall: cancelle
     const { scan, store } = recordFor(root);
     const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
     const walk = runNativeWalk(scan, store, root, fake.module);
-    assert.equal(await bounded(walk, fake), 'settled', 'the wedged walk was never ended: no stall was detected within 10 s');
+    assert.equal(await bounded(walk, fake), 'settled', 'the wedged walk was never ended: no stall was detected');
     await assert.rejects(walk, (err: unknown) => {
       assert.equal((err as Error).message, `the native walk made no progress for 2.5 s at ${path.join(root, 'wedged-mount')}`);
       return true;
@@ -1295,11 +1299,7 @@ test('a paused walk is not a stall: the pause gate holds it past the threshold a
     assert.equal(pauseScan(scan).paused, true);
     const pausedAt = fake.calls.log.length;
     // Six polls a (fake) second apart while paused: 6 s without a new entry or heartbeat, past the 2.5 s threshold.
-    const t0 = Date.now();
-    while (fake.calls.log.length - pausedAt < 6) {
-      assert.ok(Date.now() - t0 < 5_000, 'the paused walk stopped being polled');
-      await sleep(5);
-    }
+    await waitFor(() => fake.calls.log.length - pausedAt >= 6, 'six polls of the paused walk', 5);
     assert.equal(scan.status, 'running');
     assert.equal(fake.calls.cancel, 0, 'a paused walk was cancelled as a stall');
     assert.equal(resumeScan(scan).paused, false);
@@ -1342,10 +1342,10 @@ test('a native walk that stalls falls back to the walker with the stall as the r
     const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
     await updateSettings({ engine: 'auto' });
     const scan = await startScan(root);
-    const t0 = Date.now();
-    while (scan.status === 'running' && Date.now() - t0 < 10_000) await sleep(10);
-    if (scan.status === 'running') fake.handles.clear(); // unblock the loop, so the failure below is a failure and not a hang
-    assert.notEqual(scan.status, 'running', 'the scan never left the wedged native walk: no stall was detected within 10 s');
+    const left = await waitFor(() => scan.status !== 'running', 'the scan leaving the wedged native walk', 10)
+      .then(() => true, (err: unknown) => { if (err instanceof HangGuardExpired) return false; throw err; });
+    if (!left) fake.handles.clear(); // unblock the loop, so the failure below is a failure and not a hang
+    assert.ok(left, 'the scan never left the wedged native walk: no stall was detected');
     await settle(scan.scanId);
     assert.equal(scan.status, 'complete', scan.error);
     assert.equal(scan.engine === 'walker' || scan.engine === 'turbo-walker', true, scan.engine);
@@ -1426,7 +1426,7 @@ test('a walk starved of CPU is not a stall: nothing new for over ten times the t
     // Polls 2-27 see nothing new: 26 fake seconds, over ten times the 2.5 s threshold.
     const fake = useFakeNative({ steps: 4, onPoll: (n) => { machine.tick(); freeze(fake, n, 2, 27); } });
     const walk = runNativeWalk(scan, store, root, fake.module);
-    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the starved walk never ended');
+    assert.equal(await bounded(walk, fake), 'settled', 'the starved walk never ended');
     await walk;
     assert.equal(fake.calls.cancel, 0, 'a walk waiting for CPU on a saturated machine was cancelled as a stall');
     assert.equal(fake.calls.log.filter((c) => c.startsWith('poll')).length, 30, 'one poll that moved, 26 that saw nothing new, then three to the end');
@@ -1448,7 +1448,7 @@ test('on a machine with CPU to spare, a walk that shows nothing new is a stall o
     const { scan, store } = recordFor(root);
     const fake = useFakeNative({ wedged: true, onPoll: machine.tick });
     const walk = runNativeWalk(scan, store, root, fake.module);
-    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the wedged walk on an idle machine was never ended: no stall was detected');
+    assert.equal(await bounded(walk, fake), 'settled', 'the wedged walk on an idle machine was never ended: no stall was detected');
     await assert.rejects(walk, (err: unknown) => {
       assert.equal((err as Error).message, `the native walk made no progress for 5.5 s at ${path.join(root, 'wedged-mount')} while the machine had CPU to spare`);
       return true;
@@ -1474,7 +1474,7 @@ test('the stall clock leaves out exactly the windows in which the machine was sa
     const { scan, store } = recordFor(root);
     const fake = useFakeNative({ wedged: true, onPoll: (n) => { machine.share = shareOf[n] ?? 0; machine.tick(); } });
     const walk = runNativeWalk(scan, store, root, fake.module);
-    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the wedged walk was never ended: no stall was detected');
+    assert.equal(await bounded(walk, fake), 'settled', 'the wedged walk was never ended: no stall was detected');
     await assert.rejects(walk, (err: unknown) => {
       assert.equal((err as Error).message, `the native walk made no progress for 2.5 s at ${path.join(root, 'wedged-mount')} while the machine had CPU to spare`);
       return true;
@@ -1519,7 +1519,7 @@ test('a machine that gives no usable reading counts every window, as the rule di
       const { scan, store } = recordFor(root);
       const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
       const walk = runNativeWalk(scan, store, root, fake.module);
-      assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', `${what}: the wedged walk was never ended`);
+      assert.equal(await bounded(walk, fake), 'settled', `${what}: the wedged walk was never ended`);
       await assert.rejects(walk, (err: unknown) => {
         assert.equal((err as Error).message, `the native walk made no progress for 2.5 s at ${path.join(root, 'wedged-mount')}`, what);
         return true;
@@ -1571,7 +1571,7 @@ test('a stall with any window the machine could not be read for claims nothing a
     const { scan, store } = recordFor(root);
     const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
     const walk = runNativeWalk(scan, store, root, fake.module);
-    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the wedged walk was never ended');
+    assert.equal(await bounded(walk, fake), 'settled', 'the wedged walk was never ended');
     await assert.rejects(walk, (err: unknown) => {
       assert.equal((err as Error).message, `the native walk made no progress for 3.5 s at ${path.join(root, 'wedged-mount')}`);
       return true;
@@ -1837,14 +1837,12 @@ test('real module: a forced native scan reports engine native, the platform’s 
     // on a platform whose listing is new this is the finding that matters.
     assert.equal(treeJson(native), treeJson(legacy), 'the native tree differs from the walker’s');
     assert.deepEqual(counters(native), counters(legacy), 'the native counters differ from the walker’s');
-    // Measured, never null: Windows' thread and process clocks count 15.6 ms
-    // ticks, so a walk of a few dozen entries there can honestly measure 0
-    // (the CI dry run of 23 Sep 2026); elsewhere it cannot.
-    const coarseClock = process.platform === 'win32';
-    assert.ok(
-      typeof stats.cpuSeconds === 'number' && (stats.cpuSeconds > 0 || (coarseClock && stats.cpuSeconds === 0)),
-      `cpuSeconds ${stats.cpuSeconds}`,
-    );
+    // Measured, never null — and never asserted above zero: Windows' thread
+    // and process clocks count 15.6 ms ticks, so a walk of a few dozen
+    // entries there honestly measures 0 (the CI dry run of 23 Sep 2026), and
+    // how much CPU a walk takes is the machine's figure, reported below.
+    assert.equal(typeof stats.cpuSeconds, 'number', `cpuSeconds ${stats.cpuSeconds}: measured, never null`);
+    assert.ok((stats.cpuSeconds ?? Number.NaN) >= 0, `cpuSeconds ${stats.cpuSeconds} is a duration`);
     assert.equal(stats.placeholdersSkipped, 0, 'nothing in the fixture is dataless');
     t.diagnostic(`real module on ${total} entries: native ${stats.entriesPerSecond} entries/s (cpu ${stats.cpuSeconds?.toFixed(4)} s) vs walker ${buildScanStats(legacy).entriesPerSecond} entries/s`);
   } finally {
@@ -1877,9 +1875,9 @@ test('real module: a forced native scan reports engine native, the platform’s 
  * tree, not a disk:
  * pause_stops_the_count_within_200ms_and_resume_continues_without_relisting
  * (native/treemap-core/crates/tm-walk/tests/walk.rs).
- * The 200 ms below is only a CPU sanity bound: the in-flight work, priced at
- * the walk's average CPU per entry, must fit in it. That is arithmetic on the
- * walk's own stats, not a measured pause.
+ * The 200 ms below is only reported: the in-flight work, priced at the
+ * walk's average CPU per entry, set beside it. CPU per entry is the
+ * machine's figure, so it is a diagnostic, never an assertion.
  *
  * With every core busy on 24 Sep 2026, the old form failed at its
  * `assert.equal(done.engine, 'native')` (HEAD line 1539) after 36 s, not at
@@ -1946,17 +1944,16 @@ test('real module: pausing a native scan reaches the walk before pauseScan retur
       seen.maxPausedEntries - atPause <= inFlight,
       `after the pause the walk counted ${seen.maxPausedEntries - atPause} more entries (${atPause} at the pause, ${seen.maxPausedEntries} at most in ${seen.pausedPolls} polls); ${stats.workersPeak} worker(s) may count ${inFlight}`,
     );
-    // A CPU sanity bound only, not the §8.5 wall-clock promise (tm-walk's
-    // pause test holds that): the in-flight work, priced at the walk's average
-    // CPU per entry, fits in PAUSE_PROMISE_MS of CPU.
+    // The in-flight work, priced at the walk's average CPU per entry, is
+    // reported against PAUSE_PROMISE_MS, never asserted: CPU per entry is
+    // the machine's figure. The count above (at most one check's worth of
+    // entries per worker after the pause) is what the walk controls, and
+    // tm-walk's pause test holds the §8.5 promise itself.
     const cpuSeconds = stats.cpuSeconds;
     assert.equal(typeof cpuSeconds, 'number', 'the walk measured its own CPU');
     const msPerEntry = ((cpuSeconds as number) * 1_000) / stats.entries;
     const inFlightWork = stats.workersPeak * (Math.max(dirs, filesPerDir) + PAUSE_CHECK_ENTRIES);
-    assert.ok(
-      inFlightWork * msPerEntry <= PAUSE_PROMISE_MS,
-      `finishing the largest listing and counting one check’s worth, ${stats.workersPeak} worker(s) over, is ${inFlightWork} entries at ${(msPerEntry * 1_000).toFixed(2)} µs of walk CPU each: ${(inFlightWork * msPerEntry).toFixed(1)} ms of CPU against ${PAUSE_PROMISE_MS} ms`,
-    );
+    t.diagnostic(`finishing the largest listing and counting one check’s worth, ${stats.workersPeak} worker(s) over, is ${inFlightWork} entries at ${(msPerEntry * 1_000).toFixed(2)} µs of walk CPU each: ${(inFlightWork * msPerEntry).toFixed(1)} ms of CPU against the ${PAUSE_PROMISE_MS} ms promise`);
     t.diagnostic(`real module, ${total} entries under Balanced: ${buildScanStats(done).entriesPerSecond} entries/s; paused at ${atPause}, at most ${seen.maxPausedEntries} over ${seen.pausedPolls} polls, ${seen.entriesAtStandstillPoll} from poll ${STANDSTILL_FROM_POLL} on (${stats.workersPeak} worker(s)); in-flight work ${(inFlightWork * msPerEntry).toFixed(2)} ms of walk CPU`);
   } finally {
     // A failure above can leave the scan paused, its engine polling it on a
@@ -1975,11 +1972,7 @@ test('real module: cancel releases the handle — take throws the cancellation, 
   try {
     const h = real.core.scanStart(root, { neverDescend: [], wantAtime: true });
     real.core.scanCancel(h);
-    const t0 = Date.now();
-    while (!real.core.scanPoll(h).done) {
-      assert.ok(Date.now() - t0 < 1_000, 'the cancelled walk never reported done within a second');
-      await sleep(5);
-    }
+    await waitFor(() => real.core.scanPoll(h).done, 'the cancelled walk reporting done', 5);
     assert.throws(() => real.core.scanTake(h), /cancelled/, 'a take once done throws the cancellation, and that frees the handle');
     assert.throws(() => real.core.scanTake(h), /handle/, 'the handle is gone');
     assert.throws(() => real.core.scanPoll(h), /handle/);
@@ -1989,7 +1982,7 @@ test('real module: cancel releases the handle — take throws the cancellation, 
     await updateSettings({ engine: 'native' });
     const scan = await startScan(root);
     assert.equal(cancelScan(scan.scanId), true);
-    const settled = await settle(scan.scanId, 5_000);
+    const settled = await settle(scan.scanId);
     assert.equal(settled.status, 'error');
     assert.equal(settled.engine, 'native');
   } finally {

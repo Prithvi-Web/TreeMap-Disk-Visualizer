@@ -5,7 +5,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-isoProjection-data-');
 
 import { squarify } from '../src/utils/treemap';
-import { lift, INDEX } from './fixtures/liftFrontend';
+import { lift, liftCounting, INDEX } from './fixtures/liftFrontend';
 
 /**
  * Disk City's projection and draw order (v4 §6.1).
@@ -274,16 +274,31 @@ test('the order is stable: the same layout sorts the same way twice', () => {
   assert.deepEqual(a.map((n) => `${n.x},${n.y}`), b.map((n) => `${n.x},${n.y}`));
 });
 
-test('ordering a Disk City-sized scene stays well inside the first-paint budget', () => {
+test('ordering a Disk City-sized scene tests each pair that overlaps on screen once, and no other pair', () => {
   // §2.5 allows 250 ms for a new canvas view's first paint, and the order is
   // computed once per layout — so it may use some of that, but not all of it.
+  // What decides whether it fits is how many pairs it tests: a uniform grid
+  // re-tested one big block against its neighbours once per shared cell and
+  // took 3.5 SECONDS at 4,000 blocks, and all pairs is eight million. The
+  // sweep tests exactly the pairs whose screen boxes overlap, each once — so
+  // that is asserted, by count against a brute-force oracle, never by clock.
   const scene = layout(4000);
-  const started = process.hrtime.bigint();
-  const { order, unresolved } = isoDepthOrder(scene);
-  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  const { fn: order4000, calls } = liftCounting<(bs: Block[]) => { order: Block[]; unresolved: number }>(
+    ['isoProject', 'isoBounds', 'isoBehind', 'isoDepthOrder'], 'isoDepthOrder', ['isoBehind'],
+  );
+  const { order, unresolved } = order4000(scene);
   assert.equal(order.length, scene.length);
   assert.equal(unresolved, 0);
-  assert.ok(ms < 120, `depth-sorting ${scene.length} blocks took ${ms.toFixed(1)} ms, which must leave room to draw them`);
+  const box = scene.map(isoBounds);
+  let overlapping = 0;
+  for (let i = 0; i < box.length; i++) {
+    for (let j = i + 1; j < box.length; j++) {
+      if (box[i].x0 < box[j].x1 && box[j].x0 < box[i].x1 && box[i].y0 < box[j].y1 && box[j].y0 < box[i].y1) overlapping++;
+    }
+  }
+  assert.ok(overlapping > 0, 'the scene overlaps itself somewhere, so the count has something to count');
+  assert.equal(calls.isoBehind, 2 * overlapping,
+    `the rule ran ${calls.isoBehind} times for ${overlapping} overlapping pairs of ${scene.length} blocks: each pair is asked both ways, once`);
 });
 
 /* ═══════════════════ shadows, and where the light is (§6.1) ═══════════════════

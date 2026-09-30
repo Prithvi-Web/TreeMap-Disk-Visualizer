@@ -256,7 +256,7 @@ test('searching with nothing indexed answers empty, not an error', async () => {
 
 /* ══════════════════════ The acceptance criterion ══════════════════════ */
 
-test('500,000 files: first results in under 100ms', async (t) => {
+test('500,000 files: an extension query seeks its index, a substring query scans once, and filters add no scan', async (t) => {
   // §A4 acceptance, measured rather than asserted by construction. Rows are
   // inserted directly: creating half a million real files would take far longer
   // than the query being measured and would exercise the same query path.
@@ -287,23 +287,51 @@ test('500,000 files: first results in under 100ms', async (t) => {
   })();
 
   /**
-   * The FASTEST of several runs, on a sub-millisecond clock.
-   *
-   * Two changes from the median-of-five on `Date.now()` this replaces, both
-   * of which matter for the ratio asserted at the end:
-   *
-   * `performance.now()` because the extension query costs about ONE
-   * millisecond, and `Date.now()` can only report it as 0, 1 or 2 — a
-   * quantised numerator makes a ratio meaningless before contention is even
-   * considered.
-   *
-   * The minimum because a ratio divides one measurement by another, so a
-   * single scheduler stall in the numerator moves it by far more than the
-   * algorithmic difference being measured — and a median of five needs only
-   * three disturbed samples. The minimum is the sample least contaminated by
-   * everything that is not the code, and an unused index cannot hide in it:
-   * a full scan of 500k rows does not become cheap because the machine went
-   * quiet.
+   * The query `searchIndex` would run for `q`, captured instead of run, and
+   * SQLite's plan for it: the machine-independent account of the work a
+   * query does. The hit query is found by its ORDER BY, and exactly one must
+   * have been prepared — a rewrite of it fails here rather than planning
+   * nothing. Nothing is executed, so a regression that made a query
+   * quadratic fails on its plan instead of running for hours.
+   */
+  const planOf = (q: string, opts = {}): string[] => {
+    const handle = db as unknown as { prepare: (sql: string) => unknown };
+    const original = handle.prepare;
+    const seen: { sql: string; args: unknown[] }[] = [];
+    handle.prepare = function (this: unknown, sql: string) {
+      if (!/ORDER BY n\.size DESC/.test(sql)) return original.call(this, sql);
+      return { all: (...args: unknown[]) => { seen.push({ sql, args }); return []; } };
+    } as typeof handle.prepare;
+    try {
+      searchIndex(q, opts);
+    } finally {
+      handle.prepare = original;
+    }
+    assert.equal(seen.length, 1, `searchIndex prepared one hit query for ${q}`);
+    return (db.prepare(`EXPLAIN QUERY PLAN ${seen[0].sql}`).all(...seen[0].args) as { detail: string }[]).map((row) => row.detail);
+  };
+  const extensionPlan = planOf('*.zip');
+  const substringPlan = planOf('holiday');
+  const filteredPlan = planOf('backup', { minSize: 1_000_000_000 });
+  const scans = (plan: string[]): string[] => plan.filter((step) => step.startsWith('SCAN'));
+
+  // An extension query is an index seek that reads its hits already in size
+  // order, so the first page costs the page: no table scan, and no sort of
+  // every match (a TEMP B-TREE would be one).
+  assert.deepEqual(scans(extensionPlan), [], `an extension query scanned a table — the ext index is not being used: ${extensionPlan.join(' | ')}`);
+  assert.ok(extensionPlan.some((step) => /^SEARCH n USING (?:COVERING )?INDEX idx_nodes_ext \(ext=\?\)/.test(step)), `the extension query seeks idx_nodes_ext: ${extensionPlan.join(' | ')}`);
+  assert.ok(!extensionPlan.some((step) => step.includes('TEMP B-TREE')), `the ext index hands hits back in size order, with nothing to sort: ${extensionPlan.join(' | ')}`);
+  // A substring query is one scan of the nodes and nothing more expensive;
+  // a filter narrows that scan, never adds another.
+  assert.deepEqual(scans(substringPlan), ['SCAN n'], `a substring query is a single scan of the nodes: ${substringPlan.join(' | ')}`);
+  assert.ok(!substringPlan.some((step) => step.includes('CORRELATED')), `no per-row subquery: ${substringPlan.join(' | ')}`);
+  assert.deepEqual(scans(filteredPlan), ['SCAN n'], `filters narrow the one scan, never add one: ${filteredPlan.join(' | ')}`);
+  assert.ok(!filteredPlan.some((step) => step.includes('CORRELATED')), `no per-row subquery: ${filteredPlan.join(' | ')}`);
+
+  /**
+   * For the log only: the fastest of several runs on a sub-millisecond
+   * clock (`Date.now()` reports a one-millisecond query as 0, 1 or 2), the
+   * sample least disturbed by everything that is not the code.
    */
   const measure = (q: string, opts = {}): number => {
     searchIndex(q, opts); // warm the page cache
@@ -320,8 +348,8 @@ test('500,000 files: first results in under 100ms', async (t) => {
   const substringMs = measure('holiday');
   const filteredMs = measure('backup', { minSize: 1_000_000_000 });
 
-  // The measured numbers are printed on every run, so a real regression is
-  // visible in the log even though the assertion below is deliberately loose.
+  // The measured numbers are printed on every run, so a slowdown is visible
+  // in the log.
   t.diagnostic(
     `500k files — extension ${extensionMs.toFixed(2)}ms, substring ${substringMs.toFixed(2)}ms, ` +
       `filtered ${filteredMs.toFixed(2)}ms (A4 target: 100ms on a quiet machine)`,
@@ -329,39 +357,14 @@ test('500,000 files: first results in under 100ms', async (t) => {
 
   assert.ok(searchIndex('*.zip').hits.length > 0, 'the corpus is actually searchable');
 
-  /* Two different things are being checked, and conflating them makes a flaky
-   * test that gets ignored.
-   *
-   * A4's target is 100ms, and this machine meets it comfortably — 1ms for an
-   * extension query, ~58ms for a substring scan. Those are the numbers reported
-   * as the feature's performance, measured on an idle machine.
-   *
-   * But asserting an absolute wall-clock figure in CI measures the *runner*,
-   * not the code: reproduced here, the same query took 121ms with two
-   * type-checks running alongside it. A test that fails because the machine was
-   * busy teaches nothing and trains people to re-run until green.
-   *
-   * So the assertion is set where only an algorithmic regression can trip it —
-   * dropping the ext index, or making the query O(n²) — while the diagnostic
-   * above carries the real figure. The extension query keeps a tight bound
-   * because it is an index seek: it is O(results), so no amount of CPU
-   * contention should push it near this, and if it does, the index is gone. */
-  // Ceilings sized for CI-grade shared runners, not this Mac: the first real
-  // macOS CI run tripped the old 250ms ext ceiling on a loaded runner while
-  // the algorithm was fine. These bounds only catch a complexity regression
-  // (an O(n²) query at 500k rows blows them by an order of magnitude); the
-  // machine-independent relationship assert below is the real invariant, and
-  // the diagnostic above carries the true figures every run.
-  assert.ok(extensionMs < 1200, `extension query took ${extensionMs.toFixed(2)}ms — the ext index is not being used`);
-  assert.ok(substringMs < 6000, `substring query took ${substringMs.toFixed(2)}ms — far beyond a single scan of 500k rows`);
-  assert.ok(filteredMs < 6000, `filtered query took ${filteredMs.toFixed(2)}ms — filters should narrow work, not add it`);
-
-  // The relationship between the two is machine-independent and is the real
-  // invariant: an indexed seek must beat a full scan by a wide margin.
-  assert.ok(
-    extensionMs * 4 < substringMs || extensionMs <= 10,
-    `an extension query (${extensionMs.toFixed(2)}ms) should be far faster than a substring scan (${substringMs.toFixed(2)}ms) — otherwise the ext index is not being used`,
-  );
+  /* The figures above are reported, never asserted. A4's target is 100ms,
+   * and this machine meets it comfortably — about 1ms for an extension query,
+   * ~58ms for a substring scan — but an absolute wall-clock figure measures
+   * the runner, not the code (the same query took 121ms with two type-checks
+   * running alongside it), and even a ratio of two timings flaked on shared
+   * runners. What only an algorithmic regression can change — dropping the
+   * ext index, a per-row subquery, a second scan — is asserted above, on the
+   * query plans. */
 
   deleteIndex();
 });

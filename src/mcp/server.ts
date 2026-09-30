@@ -77,7 +77,28 @@ const MAX_WAIT_MS = 600_000;
 /** Same batch cap as guardBodyPaths on the HTTP API. */
 const MAX_PATHS = 500;
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * How a tool waits on a running job: the wall clock and a timer, unless a
+ * test brings a clock of its own — so it can count the waits a "running"
+ * answer made instead of timing them.
+ */
+interface ToolWaitClock {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+const WALL_CLOCK: ToolWaitClock = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+let waitClock: ToolWaitClock = WALL_CLOCK;
+
+/** Test-only: a clock for the tools' waits; null restores the wall clock. */
+export function setToolWaitClockForTests(clock: ToolWaitClock | null): void {
+  waitClock = clock ?? WALL_CLOCK;
+}
+
+const sleep = (ms: number): Promise<void> => waitClock.sleep(ms);
+const toolNow = (): number => waitClock.now();
 
 /* ------------------------- result shaping ------------------------- */
 
@@ -296,8 +317,8 @@ export function buildMcpServer(): McpServer {
         } else {
           throw new AppError(400, 'PATH_REQUIRED', 'Provide "path" to start a scan or "scanId" to check one');
         }
-        const deadline = Date.now() + waitMs;
-        while (scan.status === 'running' && Date.now() < deadline) {
+        const deadline = toolNow() + waitMs;
+        while (scan.status === 'running' && toolNow() < deadline) {
           await sleep(POLL_MS);
         }
         if (scan.status === 'running') return ok(runningScanPayload(scan));
@@ -525,8 +546,8 @@ export function buildMcpServer(): McpServer {
         const scan = requireCompleteScanMcp(scanId);
         assertToolAvailable('find_duplicates', [scan], { scanId });
         const job = getDuplicateJob(scan, minSizeBytes);
-        const deadline = Date.now() + waitMs;
-        while (job.status === 'running' && Date.now() < deadline) {
+        const deadline = toolNow() + waitMs;
+        while (job.status === 'running' && toolNow() < deadline) {
           await sleep(POLL_MS);
         }
         if (job.status === 'running') {
@@ -721,8 +742,8 @@ export function buildMcpServer(): McpServer {
         if (jobId !== undefined) {
           const existing = getOffloadJob(jobId);
           if (!existing) throw new AppError(404, 'JOB_NOT_FOUND', 'Unknown or expired job id');
-          const deadline = Date.now() + waitMs;
-          while (existing.status === 'running' && Date.now() < deadline) {
+          const deadline = toolNow() + waitMs;
+          while (existing.status === 'running' && toolNow() < deadline) {
             await sleep(POLL_MS);
           }
           return ok(offloadJobPayload(existing));
@@ -764,8 +785,8 @@ export function buildMcpServer(): McpServer {
           });
         }
         const job = await startOffload(scan, paths, dest, prepared);
-        const deadline = Date.now() + waitMs;
-        while (job.status === 'running' && Date.now() < deadline) {
+        const deadline = toolNow() + waitMs;
+        while (job.status === 'running' && toolNow() < deadline) {
           await sleep(POLL_MS);
         }
         return ok(offloadJobPayload(job));

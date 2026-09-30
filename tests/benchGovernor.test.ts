@@ -41,13 +41,14 @@ function heldReport(overrides: Partial<HoldReport> = {}): HoldReport {
 /** Every call the suite makes on the module, in order. */
 interface Call { fn: 'governorConfigure' | 'governorHold'; args: unknown[] }
 
-function fakeNative(resolveWith: unknown, calls: Call[] = []): NativeOutcome {
+function fakeNative(resolveWith: unknown, calls: Call[] = [], during: () => void = () => {}): NativeOutcome {
   const module = {
     version: (): string => FAKE_VERSION,
     governorConfigure: (...args: unknown[]): void => { calls.push({ fn: 'governorConfigure', args }); },
     governorHold: async (...args: unknown[]): Promise<unknown> => {
       calls.push({ fn: 'governorHold', args });
       await new Promise((resolve) => setTimeout(resolve, FAKE_HOLD_MS));
+      during();
       return resolveWith;
     },
   };
@@ -61,7 +62,13 @@ const withTempDir = async (prefix: string, body: (dir: string) => Promise<void> 
 
 test('a hold the governor kept in band is a governor result: one run of samples, correctness from the band, the series in the notes', async () => {
   const calls: Call[] = [];
-  const result = await runGovernor({ preset: 'eco', seconds: 2, label: 'governor test', native: fakeNative(heldReport(), calls) });
+  // The hold's wall time is read from a clock of the test's own, which only
+  // the hold moves — by a span no arithmetic on `seconds` gives — so the run
+  // proves it carries the measured hold, counted, never timed.
+  const clock = { ms: 1_000 };
+  const HELD_MS = 2_345;
+  const native = fakeNative(heldReport(), calls, () => { clock.ms += HELD_MS; });
+  const result = await runGovernor({ preset: 'eco', seconds: 2, label: 'governor test', native, now: () => clock.ms });
   assert.equal(result.suite, 'governor');
   assert.equal(result.entriesUnit, 'samples');
   assert.equal(result.engine, 'tm-governor');
@@ -77,7 +84,7 @@ test('a hold the governor kept in band is a governor result: one run of samples,
   assert.deepEqual(result.budget, { requested: 'eco', effective: ['eco'] }, "the hold's target is checked against the eco ceiling with auto mode off, so eco is what it ran under");
   const run = result.runs[0];
   assert.equal(run.entries, 25, 'entries is the sample count');
-  assert.ok(run.wallMs >= FAKE_HOLD_MS / 2 && run.wallMs < 5_000, `wallMs ${run.wallMs} is the measured hold, not seconds × 1000 assumed`);
+  assert.equal(run.wallMs, HELD_MS, 'wallMs is the measured hold, not seconds × 1000 assumed');
   assert.ok(Number.isFinite(run.cpuSeconds) && run.cpuSeconds >= 0, `cpuSeconds ${run.cpuSeconds}`);
   assert.equal(run.selfCpuSeconds, run.cpuSeconds);
   assert.equal(run.bytesRead, null);

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { openFileEnumerationsDuring } from './fixtures/openFileEnumerations';
 isolatedDataDir('treemap-platform-data-');
 
 import { platform, platformNameOf } from '../src/platform';
@@ -592,10 +593,10 @@ test('B2: a batch check of 1,000 paths costs one pass, not a thousand', { skip: 
    *
    * The machine-independent claim underneath it is that the cost is FLAT in
    * the size of the set, because it is one enumeration either way — a
-   * per-path implementation would cost about a thousand times the one-path
-   * figure, not about one. That is what is asserted, in the same form
-   * `openHandleGuard.test.ts` already uses, with the real number recorded as
-   * a diagnostic so a regression in absolute cost is still visible.
+   * per-path implementation would run a thousand. That is what is asserted,
+   * by counting the `lsof` runs (a ratio of two timings measured the runner
+   * too), with the real figures recorded as a diagnostic so a regression in
+   * absolute cost is still visible.
    */
   const dir = await mkTmp();
   try {
@@ -605,19 +606,17 @@ test('B2: a batch check of 1,000 paths costs one pass, not a thousand', { skip: 
       await fsp.writeFile(p, 'x');
       paths.push(p);
     }
-    const t1 = Date.now();
-    await openHandlesFor([paths[0]]);
-    const one = Date.now() - t1;
+    const timed = async (batch: string[]): Promise<{ runs: number; ms: number }> => {
+      const started = performance.now();
+      const { runs } = await openFileEnumerationsDuring(() => openHandlesFor(batch));
+      return { runs, ms: performance.now() - started };
+    };
+    const one = await timed([paths[0]]);
+    const thousand = await timed(paths);
 
-    const t1000 = Date.now();
-    await openHandlesFor(paths);
-    const thousand = Date.now() - t1000;
-
-    t.diagnostic(`open-handle batch: 1 path ${String(one)}ms · 1,000 paths ${String(thousand)}ms`);
-    assert.ok(
-      thousand < Math.max(one * 10 + 250, 3000),
-      `a 1,000-path check must not scale with the batch (1: ${String(one)}ms, 1000: ${String(thousand)}ms)`,
-    );
+    t.diagnostic(`open-handle batch: 1 path ${one.ms.toFixed(0)}ms · 1,000 paths ${thousand.ms.toFixed(0)}ms`);
+    assert.equal(one.runs, 1, 'one path: one lsof');
+    assert.equal(thousand.runs, 1, 'a thousand paths: still one lsof, not one per path');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lift } from './fixtures/liftFrontend';
+import { lift, liftCounting } from './fixtures/liftFrontend';
 
 /**
  * The weighted centroidal Voronoi treemap (v4 §6.2).
@@ -48,6 +48,21 @@ const powerCells = lift<(s: { x: number; y: number; w: number }[], b: Pt[]) => P
   ['polyClip', 'powerCells'], 'powerCells',
 );
 const voronoiTreemap = lift<(v: number[], b: Pt[], o?: unknown) => VResult>(SOLVER, 'voronoiTreemap');
+/** The same solver, counting its half-plane clips: the whole construction is `polyClip` in a loop. */
+const counted = liftCounting<(v: number[], b: Pt[], o?: unknown) => VResult>(SOLVER, 'voronoiTreemap', ['polyClip']);
+/**
+ * One layout's work budget, in half-plane clips. `passBudget` caps the passes
+ * at about 6e6/n² and a pass over n cells costs n(n−1) clips, so a layout
+ * never does more than six million — measured at ~43 million a second on the
+ * owner's Mac, about 140 ms of §2.5's 250 ms first paint.
+ */
+const CLIP_BUDGET = 6_000_000;
+/** How many half-plane clips one layout of `values` costs. */
+function clipsFor(values: number[], opts?: unknown): { clips: number; result: VResult } {
+  counted.calls.polyClip = 0;
+  const result = counted.fn(values, PANEL, opts);
+  return { clips: counted.calls.polyClip, result };
+}
 
 const rect = (w: number, h: number): Pt[] => [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
 const PANEL = rect(1240, 700);
@@ -207,20 +222,29 @@ test('when it cannot get there in budget, what it REPORTS is still true', () => 
   }
 });
 
-test('one layout stays inside the first-paint budget it has to share', () => {
+test('one layout stays inside the work budget that fits the first paint it has to share', () => {
   // §2.5 gives a new canvas view 250 ms to first paint, and one Voronoi level
   // is only part of that — the nested levels and the drawing come out of the
   // same allowance. The cap that makes this hold is `passBudget`, which counts
   // WORK rather than passes: without it a real `node_modules` — ninety-odd
   // children of very similar size — spent 2.7 SECONDS here and still did not
-  // converge.
+  // converge. So the work is what is asserted, counted in half-plane clips,
+  // never timed: a bound in milliseconds measured the machine.
   for (const values of [zipf(96, 13), new Array(2000).fill(1),
     Array.from({ length: 400 }, (_, i) => ((i * 104729) % 499) + 1)]) {
-    const started = Date.now();
-    voronoiTreemap(values, PANEL);
-    const ms = Date.now() - started;
-    assert.ok(ms < 400, `one layout of ${values.length} children took ${ms} ms`);
+    const { clips } = clipsFor(values);
+    assert.ok(clips > 0 && clips <= CLIP_BUDGET, `one layout of ${values.length} children cost ${clips} half-plane clips, over the ${CLIP_BUDGET} that fit a first paint`);
   }
+  // The layouts the budget exists for: an impossible tolerance, first with
+  // every shrink retry it may take, then with one attempt whose own cap is
+  // far above the budget — which spends the whole allowance, and not a clip
+  // more. The count comes first, so a broken budget fails on it.
+  const retried = clipsFor(zipf(96, 13), { tolerance: 1e-12 });
+  assert.ok(retried.clips <= CLIP_BUDGET, `however many retries, one layout stops at the budget: ${retried.clips} half-plane clips, over ${CLIP_BUDGET}`);
+  const capped = clipsFor(zipf(96, 13), { tolerance: 1e-12, maxShrinks: 0, maxIterations: 100_000 });
+  assert.ok(capped.clips <= CLIP_BUDGET, `a caller's per-attempt cap does not lift the budget: ${capped.clips} half-plane clips, over ${CLIP_BUDGET}`);
+  assert.equal(capped.result.converged, false, 'ninety-six cells never meet an impossible tolerance');
+  assert.ok(capped.clips > CLIP_BUDGET / 2, `and it used the budget it had (${capped.clips} clips) rather than stopping early`);
 });
 
 test('the cells always tile the whole boundary, whatever was omitted', () => {
@@ -288,11 +312,9 @@ test('a list of nothing but zeroes draws nothing and says so', () => {
   assert.equal(r.converged, true);
 });
 
-test('ten thousand equal children: capped, exact, no NaN, and it finishes', () => {
+test('ten thousand equal children: capped, exact, no NaN, and inside the work budget', () => {
   const values = new Array(10000).fill(1);
-  const started = Date.now();
-  const r = voronoiTreemap(values, PANEL);
-  const elapsed = Date.now() - started;
+  const { clips, result: r } = clipsFor(values);
   assert.ok(r.cells.length <= 96, `the cap held (${r.cells.length} cells)`);
   assert.equal(r.omitted, 10000 - r.cells.length);
   assert.ok(r.converged, 'what it did draw, it drew truthfully');
@@ -301,7 +323,7 @@ test('ten thousand equal children: capped, exact, no NaN, and it finishes', () =
       assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y), 'no NaN coordinates');
     }
   }
-  assert.ok(elapsed < 5000, `finished in ${elapsed} ms`);
+  assert.ok(clips <= CLIP_BUDGET, `ten thousand children cost ${clips} half-plane clips, over the ${CLIP_BUDGET} that fit a first paint`);
 });
 
 test('a boundary with no area returns nothing rather than dividing by it', () => {

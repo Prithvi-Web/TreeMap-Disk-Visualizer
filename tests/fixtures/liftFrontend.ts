@@ -24,10 +24,32 @@ export const INDEX = readFileSync(
  * itself, rather than as an opaque ReferenceError inside an assertion.
  */
 export function lift<T>(names: string[], returns: string): T {
+  return new Function(`${liftedSource(names, [])}\nreturn ${returns};`)() as T;
+}
+
+/**
+ * `lift`, with a call counter at the top of each function named in `counted`:
+ * how many times the shipped code ran each one. Work counted, never timed —
+ * a layout that must fit a first paint is held to the work that fits it, on
+ * any machine. `calls` is live; zero an entry to count one run.
+ */
+export function liftCounting<T>(names: string[], returns: string, counted: string[]): { fn: T; calls: Record<string, number> } {
+  for (const name of counted) assert.ok(names.includes(name), `${name} is counted, so it must be one of the lifted functions`);
+  const calls: Record<string, number> = Object.fromEntries(counted.map((name) => [name, 0]));
+  const fn = new Function('__calls', `${liftedSource(names, counted)}\nreturn ${returns};`)(calls) as T;
+  return { fn, calls };
+}
+
+/** The lifted declarations, concatenated; each function in `counted` counts its own calls into `__calls`. */
+function liftedSource(names: string[], counted: readonly string[]): string {
   const parts: string[] = [];
   for (const name of names) {
     const start = INDEX.indexOf(`function ${name}(`);
-    if (start === -1) { parts.push(liftConst(name)); continue; }
+    if (start === -1) {
+      assert.ok(!counted.includes(name), `${name} is counted, so it must be a function`);
+      parts.push(liftConst(name));
+      continue;
+    }
     const open = INDEX.indexOf('{', start);
     let depth = 0;
     let end = open;
@@ -39,9 +61,11 @@ export function lift<T>(names: string[], returns: string): T {
       }
     }
     assert.ok(end > open, `function ${name} has a balanced body`);
-    parts.push(INDEX.slice(start, end));
+    parts.push(counted.includes(name)
+      ? `${INDEX.slice(start, open + 1)} __calls[${JSON.stringify(name)}]++;${INDEX.slice(open + 1, end)}`
+      : INDEX.slice(start, end));
   }
-  return new Function(`${parts.join('\n')}\nreturn ${returns};`)() as T;
+  return parts.join('\n');
 }
 
 /**

@@ -294,6 +294,11 @@ function assertUnavailableIsHonest(result: { available: boolean; reason?: string
 test('the provider either answers with a real date, or says why it cannot', async () => {
   const fixture = usedFixture();
   try {
+    // An access time no clock would give: a whole second, far from now and
+    // from the file's own mtime. Read back exactly, it proves the date is
+    // genuinely read from the file rather than made up or stamped "now".
+    const planted = new Date('2011-06-15T12:34:56.000Z');
+    fs.utimesSync(fixture.file, planted, fs.statSync(fixture.file).mtime);
     clearFactCache();
     const out = await computeFacts('scan-lu', [fixture.file], ['lastUsed'], new AbortController().signal);
     const result = out.lastUsed;
@@ -308,9 +313,11 @@ test('the provider either answers with a real date, or says why it cannot', asyn
     const fact = result.values[fixture.file] as { lastUsedMs: number | null; source: string; caveat?: string };
     assert.ok(fact, 'the fixture got an answer');
     assert.equal(typeof fact.lastUsedMs, 'number');
-    assert.ok(fact.lastUsedMs! > Date.now() - 60_000, 'the date is recent, so it is genuinely being read');
     // Whichever source answered, a non-Spotlight answer must carry its caveat.
-    if (fact.source === 'atime') assert.ok(fact.caveat, 'an access-time answer always states what it is');
+    if (fact.source === 'atime') {
+      assert.equal(fact.lastUsedMs, planted.getTime(), 'the access time on disk, read back exactly: it is genuinely being read');
+      assert.ok(fact.caveat, 'an access-time answer always states what it is');
+    }
     assert.ok(['spotlight', 'atime'].includes(fact.source), `unexpected source ${fact.source}`);
   } finally {
     fixture.cleanup();

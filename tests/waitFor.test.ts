@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HANG_GUARD_MS, waitFor, type WaitClock } from './fixtures/waitFor';
+import { HANG_GUARD_MS, HangGuardExpired, waitFor, withinHangGuard, type WaitClock } from './fixtures/waitFor';
+import { watchBrings } from './fixtures/watchReady';
 
 /**
  * The one wait every test uses for work to finish: a guard against hanging,
@@ -38,7 +39,7 @@ test('waitFor fails naming what it waited for once its limit runs out, and never
   let polls = 0;
   await assert.rejects(
     waitFor(() => { polls++; return false; }, 'the scan to finish', 5, 60, clock),
-    /the scan to finish did not happen within 60 ms/,
+    (err: unknown) => err instanceof HangGuardExpired && /the scan to finish did not happen within 60 ms/.test(err.message),
   );
   assert.equal(polls, 13, 'asked at 0, 5, … 60 ms on its clock: the thirteenth answer is the one at the limit');
   assert.deepEqual(slept, Array<number>(12).fill(5), 'a wait of pollMs between answers, and none after the last');
@@ -53,5 +54,24 @@ test('an answer that comes at the limit still counts', async () => {
 });
 
 test('a condition that throws fails the wait with that error, at once', async () => {
-  await assert.rejects(waitFor(() => { throw new Error('boom'); }, 'x', 1, 10_000), /boom/);
+  await assert.rejects(waitFor(() => { throw new Error('boom'); }, 'x', 1, 10_000), (err: unknown) => !(err instanceof HangGuardExpired) && /boom/.test((err as Error).message));
+});
+
+test('watchBrings answers false only when the hang guard ran out, so a silent watch is triaged, and a condition that throws still fails', async () => {
+  const { clock, slept } = steppedClock();
+  assert.equal(await watchBrings(() => false, 'a change that never lands', clock), false);
+  assert.equal(slept.reduce((sum, ms) => sum + ms, 0), HANG_GUARD_MS, 'it gave up at the hang guard and no sooner');
+  let polls = 0;
+  assert.equal(await watchBrings(() => ++polls === 3, 'a change that lands', steppedClock().clock), true);
+  assert.equal(polls, 3);
+  await assert.rejects(watchBrings(() => { throw new Error('the index is closed'); }, 'x', steppedClock().clock), /the index is closed/);
+});
+
+test('withinHangGuard hands back what the promise settles with, and names a promise that never settles', async () => {
+  assert.equal(await withinHangGuard(Promise.resolve(42), 'an answer'), 42);
+  await assert.rejects(withinHangGuard(Promise.reject(new Error('the shard failed')), 'a failure'), /the shard failed/);
+  await assert.rejects(
+    withinHangGuard(new Promise<never>(() => undefined), 'a shard that never ends', 5),
+    (err: unknown) => err instanceof HangGuardExpired && /a shard that never ends did not happen within 5 ms/.test(err.message),
+  );
 });

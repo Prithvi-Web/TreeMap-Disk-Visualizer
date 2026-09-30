@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { HangGuardExpired, withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('treemap-ergo-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -125,24 +126,18 @@ test('wait=true with waitMs=0 returns an honest 202 running you can poll', async
  * of the write legitimately disagree: Windows CI caught 0 then 1.
  *
  * `settled()` is the ledger those writes register with, so this is an answer
- * rather than a guess — no polling, no timeout, and if it ever hangs `pending()`
+ * rather than a guess — no polling, only the hang guard, and if it ever hangs `pending()`
  * names the write still running instead of leaving a bare timeout to debug.
  *
  * Settling BEFORE the first read is what keeps the equality assertion at full
  * strength: every field compared, nothing exempted to buy a green.
  */
 async function settleBackgroundWrites(): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  const giveUp = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`background writes never settled; still running: ${pending().join(', ') || '(none)'}`)),
-      20_000,
-    );
-  });
   try {
-    await Promise.race([settled(), giveUp]);
-  } finally {
-    clearTimeout(timer);
+    await withinHangGuard(settled(), 'the background writes settling');
+  } catch (err) {
+    if (!(err instanceof HangGuardExpired)) throw err;
+    throw new Error(`${err.message}; still running: ${pending().join(', ') || '(none)'}`);
   }
 }
 

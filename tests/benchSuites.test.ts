@@ -42,7 +42,8 @@ test('enumerate drives the real walker in a child process and every run agrees w
   assert.equal(result.runs.length, 3);
   for (const run of result.runs) {
     assert.equal(run.entries, manifest.files + manifest.dirs, 'every file and directory, the root included, is an entry');
-    assert.ok(run.cpuSeconds >= run.selfCpuSeconds, 'cpuSeconds is self plus children');
+    assert.equal(run.cpuSeconds, run.selfCpuSeconds + (run.childCpuSeconds ?? 0), 'cpuSeconds is self plus children');
+    assert.ok(run.childCpuSeconds === null || run.childCpuSeconds >= 0, 'and the children’s share is a duration, where the platform reports one');
     assert.ok(run.persistMs >= 0, 'the persistence that follows a scan is measured on its own');
     assert.equal(typeof run.bytesReadReason, 'string');
   }

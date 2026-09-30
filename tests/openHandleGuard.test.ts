@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { openFileEnumerationsDuring } from './fixtures/openFileEnumerations';
 isolatedDataDir('treemap-openHandleGuard-data-');
 
 import { checkOpenHandles, describeConflicts } from '../src/services/openHandleGuard';
@@ -272,9 +273,12 @@ test('deleting a FOLDER is blocked by a file open inside it', { skip: !IS_UNIX }
 });
 
 test('a 1,000-path batch costs one pass, and the real figure is recorded', { skip: !IS_UNIX }, async (t) => {
-  // §B2: "A 1,000-file batch check adds under a second." Asserted loosely and
-  // printed exactly — an absolute wall-clock assertion measures the CI runner,
-  // which is the lesson A4's benchmark taught this suite the hard way.
+  // §B2: "A 1,000-file batch check adds under a second." Printed exactly and
+  // never asserted — a wall-clock figure, or a ratio of two, measures the CI
+  // runner, which is the lesson A4's benchmark taught this suite the hard
+  // way. What makes the second hold on any machine is asserted instead, by
+  // count: one enumeration of every open file on the machine, whatever the
+  // size of the set.
   const dir = await mkTmp();
   try {
     const paths: string[] = [];
@@ -284,19 +288,17 @@ test('a 1,000-path batch costs one pass, and the real figure is recorded', { ski
       paths.push(p);
     }
 
-    const one = await checkOpenHandles([paths[0]]);
-    const thousand = await checkOpenHandles(paths);
-    t.diagnostic(`open-handle check: 1 path ${String(one.elapsedMs)}ms, 1,000 paths ${String(thousand.elapsedMs)}ms`);
+    const one = await openFileEnumerationsDuring(() => checkOpenHandles([paths[0]]));
+    const thousand = await openFileEnumerationsDuring(() => checkOpenHandles(paths));
+    t.diagnostic(`open-handle check: 1 path ${String(one.result.elapsedMs)}ms, 1,000 paths ${String(thousand.result.elapsedMs)}ms`);
 
-    assert.equal(thousand.checked, true);
-    assert.deepEqual(thousand.conflicts, []);
+    assert.equal(thousand.result.checked, true);
+    assert.deepEqual(thousand.result.conflicts, []);
     // The machine-independent invariant: cost is flat in the size of the set,
-    // because it is one enumeration either way. A per-path implementation would
-    // be ~1000× the single-path figure, not ~1×.
-    assert.ok(
-      thousand.elapsedMs < Math.max(one.elapsedMs * 10 + 250, 3000),
-      `a 1,000-path check must not scale with the batch (1: ${String(one.elapsedMs)}ms, 1000: ${String(thousand.elapsedMs)}ms)`,
-    );
+    // because it is one enumeration either way. A per-path implementation
+    // would run a thousand.
+    assert.equal(one.runs, 1, 'one path: one enumeration of the open files');
+    assert.equal(thousand.runs, 1, 'a thousand paths: still one enumeration, not one per path');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }
