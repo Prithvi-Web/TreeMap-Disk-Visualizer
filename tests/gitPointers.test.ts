@@ -364,3 +364,282 @@ test('a .git that is neither a file, a folder nor a link is refused before git i
   }
   assert.deepEqual(rec.calls, []);
 });
+
+/* ══════════════════ An alternates file that is not a plain file, on every platform (FG4d, review #10) ══════════════════ */
+
+/**
+ * Opens as Windows opens: there is no `O_NOFOLLOW` there, and `open` follows a link. Every path
+ * opened while `run` runs is recorded, and each open is made with that flag taken away — so what
+ * refuses a link here is what refuses it on Windows, and a link opened at all shows as a record.
+ */
+async function openingAsWindowsDoes<T>(run: () => Promise<T>): Promise<{ result: T; opened: string[] }> {
+  const promises = fs.promises as unknown as { open: (...args: unknown[]) => Promise<unknown> };
+  const open = promises.open;
+  const opened: string[] = [];
+  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+  promises.open = async (file: unknown, flags: unknown, ...rest: unknown[]) => {
+    opened.push(String(file));
+    return open.call(fs.promises, file, typeof flags === 'number' ? flags & ~noFollow : flags, ...rest);
+  };
+  try {
+    return { result: await run(), opened };
+  } finally {
+    promises.open = open;
+  }
+}
+
+test('an alternates file that is a link is refused by what it is, before it is opened — as on Windows, where open follows a link', async (t) => {
+  const root = fakeRepo();
+  const elsewhere = tmp('treemap-gitptr-altlink-win-');
+  // An empty plain file where the link leads: followed, it would read as "borrows nothing".
+  fs.writeFileSync(path.join(elsewhere, 'alternates'), '');
+  const file = path.join(root, '.git', 'objects', 'info', 'alternates');
+  try {
+    fs.symlinkSync(path.join(elsewhere, 'alternates'), file, 'file');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  const { result, opened } = await openingAsWindowsDoes(() => vetRecorded(root, under(root)));
+  assert.equal(!result.vetting.ok && result.vetting.kind, 'refused', JSON.stringify(result.vetting));
+  assert.match(!result.vetting.ok ? result.vetting.reason : '', /not a plain file/);
+  assert.deepEqual(opened.filter((p) => p === file), [], 'the link was never opened');
+  assert.deepEqual(result.calls, [], 'git was never started');
+});
+
+test('an alternates file that is a pipe is refused before it is opened', { skip: process.platform === 'win32' }, async () => {
+  const root = fakeRepo();
+  const file = path.join(root, '.git', 'objects', 'info', 'alternates');
+  execFileSync('mkfifo', [file], { env: process.env });
+  const { result, opened } = await openingAsWindowsDoes(() => vetRecorded(root, () => true));
+  assert.equal(!result.vetting.ok && result.vetting.kind, 'refused', JSON.stringify(result.vetting));
+  assert.match(!result.vetting.ok ? result.vetting.reason : '', /not a plain file/);
+  assert.deepEqual(opened.filter((p) => p === file), [], 'the pipe was never opened');
+  assert.deepEqual(result.calls, []);
+});
+
+/* ══════════════════ The bounds and the guards of the read-ahead (FG4d, review #12) ══════════════════ */
+
+test('alternates borrowed more than five folders deep refuse the repository', async () => {
+  const root = fakeRepo();
+  // objects → l1 → l2 → l3 → l4 → l5 → l6, every one inside the scan: git stops following at five.
+  const lenders = [1, 2, 3, 4, 5, 6].map((n) => path.join(root, `l${String(n)}`));
+  for (const lender of lenders) fs.mkdirSync(path.join(lender, 'info'), { recursive: true });
+  alternates(root, `${lenders[0]}\n`);
+  for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(lenders[i], 'info', 'alternates'), `${lenders[i + 1]}\n`);
+  const { vetting, calls } = await vetRecorded(root, under(root));
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.match(!vetting.ok ? vetting.reason : '', /more than 5 folders deep/);
+  assert.deepEqual(calls, []);
+});
+
+test('an alternates file longer than 64 KiB is not read, and refuses the repository', async () => {
+  const root = fakeRepo();
+  alternates(root, `${'#'.repeat(1023)}\n`.repeat(64) + '#\n');
+  const { vetting, calls } = await vetRecorded(root, under(root));
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.match(!vetting.ok ? vetting.reason : '', /too long/);
+  assert.deepEqual(calls, []);
+});
+
+test('text after a quoted alternates line, which git reads as a second entry, refuses the repository', async () => {
+  const root = fakeRepo();
+  const inside = path.join(root, 'shared', 'objects');
+  fs.mkdirSync(inside, { recursive: true });
+  const outside = tmp('treemap-gitptr-trailing-');
+  alternates(root, `"${inside.replace(/\\/g, '\\\\')}" ${outside}\n`);
+  const { vetting, calls } = await vetRecorded(root, under(root));
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.match(!vetting.ok ? vetting.reason : '', /cannot read as Git does/);
+  assert.deepEqual(calls, []);
+});
+
+test('a git folder with more than 10,000 entries at its top is not looked through, and refuses the repository', async () => {
+  const root = fakeRepo();
+  const dir = path.join(root, '.git');
+  for (let i = 0; i < 10_000; i++) fs.writeFileSync(path.join(dir, `e${String(i)}`), '');
+  const { vetting, calls } = await vetRecorded(root, under(root));
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.match(!vetting.ok ? vetting.reason : '', /too many entries/);
+  assert.deepEqual(calls, []);
+});
+
+test('a link at the top of the common folder a linked worktree shares is judged too', async (t) => {
+  const root = tmp('treemap-gitptr-wtlink-');
+  const common = path.join(root, 'main.git');
+  const admin = path.join(common, 'worktrees', 'wt');
+  fs.mkdirSync(admin, { recursive: true });
+  fs.mkdirSync(path.join(common, 'objects', 'info'), { recursive: true });
+  const work = path.join(root, 'wt');
+  fs.mkdirSync(work);
+  fs.writeFileSync(path.join(work, '.git'), `gitdir: ${admin}\n`);
+  fs.writeFileSync(path.join(admin, 'commondir'), '../..\n');
+  const elsewhere = tmp('treemap-gitptr-wtlink-elsewhere-');
+  try {
+    fs.symlinkSync(elsewhere, path.join(common, 'refs'), 'dir');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  const rec = recordGit(() => ({ code: 128, stderr: 'the recorder: no git call was expected' }));
+  try {
+    const vetting = await vetRepository(work, { insideScannedRoot: under(root) });
+    assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+    assert.ok((!vetting.ok ? vetting.reason : '').includes(elsewhere), !vetting.ok ? vetting.reason : '');
+  } finally {
+    rec.restore();
+  }
+  assert.deepEqual(rec.calls, []);
+});
+
+/* ══════════════════ A pointer file read exactly as git reads it (FG4d, review #1) ══════════════════ */
+
+/**
+ * Git keeps everything after `gitdir: ` in a `.git` file, and everything in a `commondir`, but for
+ * the trailing CR and LF: a leading or trailing space and a later line are part of the path. Each
+ * layout holds a clean folder under the trimmed name and, under the name git reads, one that
+ * borrows objects from outside every scan — TreeMap must judge the second.
+ */
+function decoyAndReal(parent: string, gitName: string): string {
+  fs.mkdirSync(path.join(parent, gitName.trim().split('\n')[0], 'objects', 'info'), { recursive: true });
+  const read = path.join(parent, gitName);
+  fs.mkdirSync(path.join(read, 'objects', 'info'), { recursive: true });
+  const outside = tmp('treemap-gitptr-exact-out-');
+  fs.writeFileSync(path.join(read, 'objects', 'info', 'alternates'), `${outside}\n`);
+  return outside;
+}
+
+async function vetNoGit(root: string, inside: (p: string) => boolean) {
+  const rec = recordGit(() => ({ code: 128, stderr: 'the recorder: no git call was expected' }));
+  try {
+    return { vetting: await vetRepository(root, { insideScannedRoot: inside }), calls: rec.calls };
+  } finally {
+    rec.restore();
+  }
+}
+
+test('a .git file is read as git reads it: leading and trailing spaces and later lines are part of the path', async () => {
+  // A name that ends in a space, or holds a newline, is not one Windows can make.
+  const names = process.platform === 'win32' ? [' real'] : [' real', 'real ', 'real\nsecond'];
+  for (const name of names) {
+    const root = tmp('treemap-gitptr-exact-');
+    const outside = decoyAndReal(root, name);
+    fs.writeFileSync(path.join(root, '.git'), `gitdir: ${name}\r\n`);
+    const { vetting, calls } = await vetNoGit(root, under(root));
+    assert.equal(!vetting.ok && vetting.kind, 'refused', `${JSON.stringify(name)}: ${JSON.stringify(vetting)}`);
+    assert.ok((!vetting.ok ? vetting.reason : '').includes(outside), `${JSON.stringify(name)}: the folder git reads is judged`);
+    assert.deepEqual(calls, [], JSON.stringify(name));
+  }
+});
+
+test('a commondir is read as git reads it: leading spaces and later lines are part of the path', async () => {
+  const names = process.platform === 'win32' ? [' other'] : [' other', 'other\nmore'];
+  for (const name of names) {
+    const root = tmp('treemap-gitptr-exactc-');
+    fs.mkdirSync(path.join(root, '.git', 'objects', 'info'), { recursive: true });
+    const outside = decoyAndReal(path.join(root, '.git'), name);
+    fs.writeFileSync(path.join(root, '.git', 'commondir'), `${name}\n`);
+    const { vetting, calls } = await vetNoGit(root, under(root));
+    assert.equal(!vetting.ok && vetting.kind, 'refused', `${JSON.stringify(name)}: ${JSON.stringify(vetting)}`);
+    assert.ok((!vetting.ok ? vetting.reason : '').includes(outside), `${JSON.stringify(name)}: the folder git reads is judged`);
+    assert.deepEqual(calls, [], JSON.stringify(name));
+  }
+});
+
+test('a .git file needs git\'s own `gitdir: ` prefix, space included', async () => {
+  const root = tmp('treemap-gitptr-prefix-');
+  fs.mkdirSync(path.join(root, 'real'));
+  fs.writeFileSync(path.join(root, '.git'), 'gitdir:real\n');
+  const { vetting, calls } = await vetNoGit(root, () => true);
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.match(!vetting.ok ? vetting.reason : '', /does not name a git folder/);
+  assert.deepEqual(calls, []);
+});
+
+test('where git says it works must be the folder TreeMap read ahead, or git goes no further', async () => {
+  const root = fakeRepo();
+  // Inside the scan, and not the .git TreeMap read: git's answer is not what was vetted.
+  const other = path.join(root, 'other.git');
+  fs.mkdirSync(other);
+  const rec = recordGit((sub) => {
+    if (sub[0] === 'rev-parse') return { stdout: `${root}\n${other}\n${other}\n` };
+    if (sub[0] === 'config') return { stdout: PLAIN };
+    return { code: 128, stderr: `the recorder: only the vetting was expected (${sub.join(' ')})` };
+  });
+  let vetting;
+  try {
+    vetting = await vetRepository(root, { insideScannedRoot: under(root) });
+  } finally {
+    rec.restore();
+  }
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.ok((!vetting.ok ? vetting.reason : '').includes(other), !vetting.ok ? vetting.reason : '');
+  assert.deepEqual(commandsOf(rec.calls), ['rev-parse'], 'asked where it works, and nothing after');
+});
+
+/* ══════════════════ Names read byte for byte (FG4d, review #2) ══════════════════ */
+
+test('a quoted alternates line holding a character outside the BMP names the folder git reads, not a lookalike', async (t) => {
+  const root = fakeRepo();
+  const objects = path.join(root, '.git', 'objects');
+  const outside = tmp('treemap-gitptr-emoji-');
+  try {
+    fs.symlinkSync(outside, path.join(objects, '\u{1F600}'), 'dir');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  // The name a code-unit-at-a-time decoding makes of it: two replacement characters, inside the scan.
+  fs.mkdirSync(path.join(objects, '��'));
+  alternates(root, '"\u{1F600}"\n');
+  const { vetting, calls } = await vetRecorded(root, under(root));
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.ok((!vetting.ok ? vetting.reason : '').includes(outside), `the link git follows is judged: ${!vetting.ok ? vetting.reason : ''}`);
+  assert.deepEqual(calls, []);
+});
+
+test('bytes that are not UTF-8, in an alternates line or its quoted escapes, refuse the repository rather than name a lookalike', async () => {
+  const cases: Array<[string, Buffer]> = [
+    ['a raw byte', Buffer.concat([Buffer.from('lookalike-'), Buffer.from([0xff]), Buffer.from('\n')])],
+    ['an escaped byte', Buffer.from('"lookalike-\\377"\n')],
+  ];
+  for (const [what, text] of cases) {
+    const root = fakeRepo();
+    // What a lossy decoding makes of either: a folder inside the scan.
+    fs.mkdirSync(path.join(root, '.git', 'objects', 'lookalike-�'));
+    fs.writeFileSync(path.join(root, '.git', 'objects', 'info', 'alternates'), text);
+    const { vetting, calls } = await vetRecorded(root, under(root));
+    assert.equal(!vetting.ok && vetting.kind, 'refused', `${what}: ${JSON.stringify(vetting)}`);
+    assert.match(!vetting.ok ? vetting.reason : '', /cannot read exactly/, what);
+    assert.deepEqual(calls, [], what);
+  }
+});
+
+test('a .git file whose path is not UTF-8 refuses the repository rather than name a lookalike', async () => {
+  const root = tmp('treemap-gitptr-bytes-');
+  fs.mkdirSync(path.join(root, 'lookalike-�', 'objects', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.git'), Buffer.concat([Buffer.from('gitdir: lookalike-'), Buffer.from([0xff]), Buffer.from('\n')]));
+  const { vetting, calls } = await vetNoGit(root, under(root));
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.match(!vetting.ok ? vetting.reason : '', /cannot read exactly/);
+  assert.deepEqual(calls, []);
+});
+
+test('a byte-order mark at the start of an alternates file is part of the first path, as git reads it', async (t) => {
+  const root = fakeRepo();
+  const objects = path.join(root, '.git', 'objects');
+  const outside = tmp('treemap-gitptr-bom-');
+  try {
+    fs.symlinkSync(outside, path.join(objects, '﻿lender'), 'dir');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  // What a decoder that drops the mark would judge instead: a plain folder inside the scan.
+  fs.mkdirSync(path.join(objects, 'lender'));
+  alternates(root, '﻿lender\n');
+  const { vetting, calls } = await vetRecorded(root, under(root));
+  assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
+  assert.ok((!vetting.ok ? vetting.reason : '').includes(outside), !vetting.ok ? vetting.reason : '');
+  assert.deepEqual(calls, []);
+});

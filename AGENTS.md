@@ -449,6 +449,14 @@ read-what-you-saw) permission to act.
   TreeMap itself before git is started, each resolved as the system
   resolves it (links first, then `..`): a network share, a folder outside
   every scan, or nothing at all refuses the repository and git never runs.
+  Each is read as git reads it — a pointer file whole, with only its
+  trailing line ends removed (leading and trailing spaces and later lines
+  are part of the path), a quoted `alternates` line by character — and
+  byte for byte: a name that is not UTF-8 refuses the repository rather
+  than be judged as a lookalike. An `alternates` file that is not a plain
+  file is refused by what it is before it is opened, on every system
+  (Windows has no `O_NOFOLLOW`). Git's own answer of where it keeps the
+  data must then be the folders TreeMap read, or nothing more is run.
   A repository another account owns is unknown with that reason (a
   `safe.directory` exception cannot help: no call reads your git settings).
   `status` never recurses into submodules, and "pushed" is

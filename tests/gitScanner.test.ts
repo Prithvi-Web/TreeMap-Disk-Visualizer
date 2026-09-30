@@ -286,8 +286,9 @@ test('a special file anywhere inside .git is refused, naming it', { skip: proces
 });
 
 test('git reporting the repository\'s common data anywhere but its own .git is refused, even inside a scan', async () => {
-  // The vetting accepts a git or common dir elsewhere when a scan covers it; gc does not, since it
-  // would prune that folder for every repository sharing it.
+  // gc would prune that folder for every repository sharing it. Since FG4d the vetting refuses this
+  // first, as soon as git answers: where git says it works must be the folders TreeMap read ahead
+  // (review #1), and this .git names no common folder. gc's own check behind it refuses the same.
   const { root, repo } = scannedRepo();
   const shared = path.join(root, 'shared.git');
   fs.mkdirSync(shared);
@@ -307,7 +308,7 @@ test('git reporting the repository\'s common data anywhere but its own .git is r
   assert.equal(outcome.result.refused, true);
   assert.ok((outcome.result.error ?? '').includes(shared), outcome.result.error);
   assert.deepEqual(outcome.plans, []);
-  assert.deepEqual(commandsOf(rec.calls), ['rev-parse', 'config'], 'the vetting passed; the gc check refused');
+  assert.deepEqual(commandsOf(rec.calls), ['rev-parse'], 'git was asked where it works, and nothing after');
 });
 
 test('a repository that borrows objects from another (objects/info/alternates) is not gc\'d', async () => {

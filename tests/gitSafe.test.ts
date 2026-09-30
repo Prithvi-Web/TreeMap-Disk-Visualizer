@@ -325,24 +325,42 @@ test('a folder git does not treat as a project of its own is refused', async () 
 });
 
 test('git data kept elsewhere is refused unless a scan covers where it is', async () => {
-  const root = fakeRepo();
+  // Git keeps its data elsewhere only where the repository says so — a `.git` file, a `commondir` —
+  // and git's answer must be the folder TreeMap read there (FG4d, review #1).
   const elsewhere = fakeRepo();
   const gitDir = path.join(elsewhere, '.git');
-  const outside = await vet(root, listing(), { gitDir, common: gitDir }, () => false);
+  const pointing = (): string => {
+    const root = tmp('treemap-gitsafe-repo-');
+    fs.writeFileSync(path.join(root, '.git'), `gitdir: ${gitDir}\n`);
+    return root;
+  };
+  const outsideRoot = pointing();
+  const outside = await vet(outsideRoot, listing(), { gitDir, common: gitDir }, () => false);
   assert.equal(!outside.result.ok && outside.result.kind, 'refused', 'a .git file or link pointing outside every scan');
   assert.match(!outside.result.ok ? outside.result.reason : '', /outside every folder you scanned/);
-  const byDefault = await vet(root, listing(), { gitDir, common: gitDir });
+  const defaultRoot = pointing();
+  const byDefault = await vet(defaultRoot, listing(), { gitDir, common: gitDir });
   assert.equal(byDefault.result.ok, false, 'with no way to tell, a redirect is refused');
-  const inside = await vet(root, listing(), { gitDir, common: gitDir }, (p) => p.startsWith(elsewhere));
-  assert.equal(inside.result.ok, true, 'the same redirect inside a scanned folder is read');
+  const insideRoot = pointing();
+  const inside = await vet(insideRoot, listing(), { gitDir, common: gitDir }, (p) => p.startsWith(elsewhere));
+  assert.equal(inside.result.ok, true, `the same redirect inside a scanned folder is read: ${JSON.stringify(inside.result)}`);
 
-  const common = await vet(root, listing(), { common: gitDir }, () => false);
+  const commonRoot = fakeRepo();
+  fs.writeFileSync(path.join(commonRoot, '.git', 'commondir'), `${gitDir}\n`);
+  const common = await vet(commonRoot, listing(), { common: gitDir }, () => false);
   assert.equal(!common.result.ok && common.result.kind, 'refused', 'a commondir pointing outside every scan');
 
   // The git dir alone elsewhere, its common dir the repository's own (review #18): each is judged.
-  const gitDirOnly = await vet(root, listing(), { gitDir }, (p) => p.startsWith(root));
+  const aloneRoot = pointing();
+  const gitDirOnly = await vet(aloneRoot, listing(), { gitDir }, (p) => p.startsWith(aloneRoot));
   assert.equal(!gitDirOnly.result.ok && gitDirOnly.result.kind, 'refused', `a git dir outside every scan: ${JSON.stringify(gitDirOnly.result)}`);
   assert.ok((!gitDirOnly.result.ok ? gitDirOnly.result.reason : '').includes(gitDir));
+
+  // Git answering a place the repository never named is refused whatever a scan covers.
+  const plain = fakeRepo();
+  const unnamed = await vet(plain, listing(), { gitDir, common: gitDir }, () => true);
+  assert.equal(!unnamed.result.ok && unnamed.result.kind, 'refused', JSON.stringify(unnamed.result));
+  assert.match(!unnamed.result.ok ? unnamed.result.reason : '', /not where TreeMap read ahead/);
 });
 
 test('a work tree kept elsewhere (core.worktree) is refused by where git says the project is', async () => {

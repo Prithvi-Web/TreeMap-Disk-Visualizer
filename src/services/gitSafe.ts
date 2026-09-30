@@ -250,9 +250,26 @@ export interface VetOptions {
   insideScannedRoot?: (p: string) => boolean;
 }
 
+/** UTF-8, strictly: a byte that is not UTF-8 is an error, and a leading BOM is kept as text. */
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+/**
+ * `bytes` as text, or null when they are not UTF-8. A lossy decoding turns what it cannot read
+ * into U+FFFD, and TreeMap would then judge a lookalike name rather than the one git and the
+ * system use (FG4d, review #2); so every name read ahead is read as bytes and must decode whole.
+ */
+function exactText(bytes: Uint8Array): string | null {
+  try {
+    return UTF8.decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/** Where `p` really is, spelled exactly; null when it is not there or its real name is not UTF-8. */
 async function real(p: string): Promise<string | null> {
   try {
-    return await fsp.realpath(p);
+    return exactText(await fsp.realpath(p, { encoding: 'buffer' }));
   } catch {
     return null;
   }
@@ -303,28 +320,67 @@ function isNetworkPath(p: string): boolean {
   return /^(\\\\|\/\/)/.test(p);
 }
 
-/** Opened without following a link and without waiting on a pipe; flags a platform lacks are 0. */
+/**
+ * Opened without following a link and without waiting on a pipe, where the platform has the flags;
+ * a platform that lacks one gets 0. Windows has neither, and there `open` follows a link — so what
+ * is opened is first judged by its `lstat` (FG4d, review #10), and these flags are the second layer,
+ * against a swap between the two.
+ */
 const POINTER_OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
 
-/** The first line of a pointer file (`.git`'s `gitdir: …`, a `commondir`), after `prefix`; at most 4 KiB read. */
-async function pointerTarget(file: string, prefix: string): Promise<string | null> {
+/** A `.git` file or `commondir` longer than this is not read, and the repository is refused. */
+const POINTER_LIMIT = 4096;
+
+/** A small file's bytes, or why they were not read: it is not a plain file, or is longer than `limit`. */
+async function smallFileBytes(file: string, limit: number): Promise<Buffer | 'not a file' | 'too long'> {
   const handle = await fsp.open(file, POINTER_OPEN_FLAGS);
   try {
-    if (!(await handle.stat()).isFile()) return null;
-    const buf = Buffer.alloc(4096);
+    const st = await handle.stat();
+    if (!st.isFile()) return 'not a file';
+    if (st.size > limit) return 'too long';
+    const buf = Buffer.alloc(st.size);
     const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
-    const line = buf.subarray(0, bytesRead).toString('utf8').split(/\r?\n/)[0] ?? '';
-    return line.startsWith(prefix) ? line.slice(prefix.length).trim() : null;
+    return buf.subarray(0, bytesRead);
   } finally {
     await handle.close();
   }
 }
 
+/** `bytes` up to the first NUL: git reads these files as C strings. */
+function cString(bytes: Buffer): Buffer {
+  const nul = bytes.indexOf(0);
+  return nul === -1 ? bytes : bytes.subarray(0, nul);
+}
+
+/**
+ * A pointer file's text as git reads it (FG4d, review #1): the whole file, with only its trailing
+ * CR and LF removed, then up to its first NUL. Leading and trailing spaces and any later line are
+ * part of the path — git's `read_gitfile_gently` and `get_common_dir_noenv` keep them, and a
+ * trimmed first line would have TreeMap judge a folder git never uses. Null when the file is not
+ * a plain file or too long; `undefined` when its bytes are not UTF-8.
+ */
+async function pointerText(file: string): Promise<string | null | undefined> {
+  const bytes = await smallFileBytes(file, POINTER_LIMIT);
+  if (typeof bytes === 'string') return null;
+  let end = bytes.length;
+  while (end > 0 && (bytes[end - 1] === 0x0a || bytes[end - 1] === 0x0d)) end -= 1;
+  return exactText(cString(bytes.subarray(0, end))) ?? undefined;
+}
+
+/** What a link holds, exactly; `undefined` when its bytes are not UTF-8. */
+async function linkText(link: string | Buffer): Promise<string | undefined> {
+  return exactText(await fsp.readlink(link, { encoding: 'buffer' })) ?? undefined;
+}
+
+/** The refusal of a pointer whose bytes TreeMap cannot read as the text git and the system use. */
+const inexact = (file: string): string =>
+  `${shown(file)} names a folder by bytes TreeMap cannot read exactly, so TreeMap did not run Git on it.`;
+
 /** Where a pointer leads, or why git must not be sent there. */
 type Leads = { to: string } | { refusal: string };
 
 /**
- * Where the pointer text `raw` (a `.git` file's `gitdir:`, a `.git` link, a `commondir`, an
+ * Where the pointer text `raw` (a `.git` file's `gitdir: `, a `.git` link, a `commondir`, an
  * `alternates` line, a link in the git folder), read relative to `base`, leads — resolved as git
  * and the operating system resolve it: links first, then `..`, by realpath on the text as it is
  * written. `path.resolve` would drop `..` before a link is followed, and so judge a place git
@@ -351,44 +407,34 @@ const ALTERNATES_LIMIT = 64 * 1024;
 /** A git folder with more top-level entries than this is not looked through, and the repository is refused. */
 const TOP_LEVEL_LIMIT = 10_000;
 
-/** A whole small file, opened without following a link or waiting on a pipe; null when it is not a plain file or is too long. */
-async function smallFile(file: string, limit: number): Promise<string | null> {
-  const handle = await fsp.open(file, POINTER_OPEN_FLAGS);
-  try {
-    const st = await handle.stat();
-    if (!st.isFile() || st.size > limit) return null;
-    const buf = Buffer.alloc(st.size);
-    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
-    return buf.subarray(0, bytesRead).toString('utf8');
-  } finally {
-    await handle.close();
-  }
-}
-
 const C_ESCAPES: Readonly<Record<string, number>> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"': 34 };
 
 /**
- * A line git reads as C-quoted (`"…"`, as `unquote_c_style` does): its text, or null when it is
- * not quoted that way — then git reads the line as it is. `trailing` is set when text follows the
- * closing quote, which git would read as a second entry.
+ * A line git reads as C-quoted (`"…"`, as `unquote_c_style` does): the bytes it names, or null
+ * when it is not quoted that way — then git reads the line as it is. Read a character at a time,
+ * never a UTF-16 unit at a time: a character outside the BMP is two units, and each alone would
+ * become U+FFFD (FG4d, review #2). `trailing` is set when text follows the closing quote, which git
+ * would read as a second entry.
  */
-function unquoteC(line: string): { text: string; trailing: boolean } | null {
-  const bytes: number[] = [];
+function unquoteC(line: string): { bytes: Buffer; trailing: boolean } | null {
+  const chars = Array.from(line);
+  const out: number[] = [];
   let i = 1;
-  while (i < line.length) {
-    const c = line[i];
-    if (c === '"') return { text: Buffer.from(bytes).toString('utf8'), trailing: i + 1 < line.length };
+  while (i < chars.length) {
+    const c = chars[i];
+    if (c === '"') return { bytes: Buffer.from(out), trailing: i + 1 < chars.length };
     if (c !== '\\') {
-      bytes.push(...Buffer.from(c, 'utf8'));
+      out.push(...Buffer.from(c, 'utf8'));
       i += 1;
       continue;
     }
-    const next = line[i + 1] ?? '';
+    const next = chars[i + 1] ?? '';
+    const octal = chars.slice(i + 1, i + 4).join('');
     if (next in C_ESCAPES) {
-      bytes.push(C_ESCAPES[next]);
+      out.push(C_ESCAPES[next]);
       i += 2;
-    } else if (/^[0-3][0-7][0-7]$/.test(line.slice(i + 1, i + 4))) {
-      bytes.push(parseInt(line.slice(i + 1, i + 4), 8));
+    } else if (/^[0-3][0-7][0-7]$/.test(octal)) {
+      out.push(parseInt(octal, 8));
       i += 4;
     } else {
       return null;
@@ -401,22 +447,31 @@ function unquoteC(line: string): { text: string; trailing: boolean } | null {
  * Why git must not read the object folders `objects` borrows (its `info/alternates`, and theirs in
  * turn, as git follows them), or null (FG4c, review #1). Git reads them during the first
  * `rev-parse`, before any setting is vetted; a line naming a folder outside every scan or a
- * network share refuses the repository, as a `.git` pointer does. Lines are git's: `#` starts a
- * comment, a blank line is skipped, a relative one is read from the objects folder.
+ * network share refuses the repository, as a `.git` pointer does. Lines are git's: the file is
+ * read up to its first NUL, `#` starts a comment, a blank line is skipped, a relative one is read
+ * from the objects folder. A file that is not plain — a link, a pipe, a junction — is refused by
+ * what `lstat` says it is, before it is opened, on every platform (FG4d, review #10).
  */
 async function alternatesRefusal(objects: string, opts: VetOptions, depth: number, seen: Set<string>): Promise<string | null> {
   if (seen.has(objects)) return null;
   seen.add(objects);
   const file = path.join(objects, 'info', 'alternates');
-  if (!(await fsp.lstat(file).catch(() => null))) return null;
+  const st = await fsp.lstat(file).catch(() => null);
+  if (!st) return null;
+  if (!st.isFile()) return `${shown(file)} is not a plain file, so TreeMap did not run Git on it.`;
   if (depth >= ALTERNATES_DEPTH) return `${shown(file)} borrows objects more than ${String(ALTERNATES_DEPTH)} folders deep, so TreeMap did not run Git on it.`;
-  const text = await smallFile(file, ALTERNATES_LIMIT);
-  if (text === null) return `${shown(file)} is not a plain file TreeMap can read whole, so TreeMap did not run Git on it.`;
+  const bytes = await smallFileBytes(file, ALTERNATES_LIMIT);
+  if (bytes === 'not a file') return `${shown(file)} is not a plain file, so TreeMap did not run Git on it.`;
+  if (bytes === 'too long') return `${shown(file)} is too long to read whole (more than ${String(ALTERNATES_LIMIT / 1024)} KiB), so TreeMap did not run Git on it.`;
+  const text = exactText(cString(bytes));
+  if (text === null) return inexact(file);
   for (const line of text.split('\n')) {
     if (line === '' || line.startsWith('#')) continue;
     const quoted = line.startsWith('"') ? unquoteC(line) : null;
     if (quoted?.trailing) return `${shown(file)} holds a line TreeMap cannot read as Git does, so TreeMap did not run Git on it.`;
-    const leads = await pointerLeads(quoted ? quoted.text : line, objects, opts);
+    const entry = quoted ? exactText(quoted.bytes) : line;
+    if (entry === null) return inexact(file);
+    const leads = await pointerLeads(entry, objects, opts);
     if ('refusal' in leads) return leads.refusal;
     const deeper = await alternatesRefusal(leads.to, opts, depth + 1, seen);
     if (deeper) return deeper;
@@ -427,19 +482,26 @@ async function alternatesRefusal(objects: string, opts: VetOptions, depth: numbe
 /**
  * Why git must not be sent where a link at the top of the git folder `dir` leads (a linked
  * `objects`, `refs`, `config`, `HEAD`…), or null: git follows each while it starts, before any
- * setting is vetted (FG4c). A link deeper inside is not looked for here (RISKS R115).
+ * setting is vetted (FG4c). A link deeper inside is not looked for here (RISKS R115). Names are
+ * read as bytes, so a link is read by the name it has, whatever that name decodes to.
  */
 async function topLevelLinkRefusal(dir: string, opts: VetOptions): Promise<string | null> {
   let count = 0;
-  for await (const entry of await fsp.opendir(dir)) {
+  const prefix = Buffer.from(`${dir}${path.sep}`);
+  for await (const entry of await fsp.opendir(dir, { encoding: 'buffer' } as unknown as fs.OpenDirOptions)) {
     if (++count > TOP_LEVEL_LIMIT) return `${shown(dir)} holds too many entries to check, so TreeMap did not run Git on it.`;
     if (!entry.isSymbolicLink()) continue;
-    const link = path.join(dir, entry.name);
-    const leads = await pointerLeads(await fsp.readlink(link), dir, opts);
+    const name = entry.name as unknown as Buffer;
+    const text = await linkText(Buffer.concat([prefix, name]));
+    if (text === undefined) return inexact(path.join(dir, name.toString('utf8')));
+    const leads = await pointerLeads(text, dir, opts);
     if ('refusal' in leads) return leads.refusal;
   }
   return null;
 }
+
+/** Where TreeMap read, before git started, that git will keep this repository's data. */
+interface ReadAhead { gitDir: string; commonDir: string }
 
 /**
  * Where `.git` at `root` points, read by TreeMap itself before git is started (FG4, FG4c): a
@@ -448,52 +510,67 @@ async function topLevelLinkRefusal(dir: string, opts: VetOptions): Promise<strin
  * the object folders either borrows (`objects/info/alternates`) can send git anywhere — a folder
  * no scan covers, a network share (on Windows, one that is sent the user's credentials), a pipe
  * that never answers. Each target must be a local path inside a scanned folder, or git is not
- * run at all.
+ * run at all. Answers the refusal, or the git folder and common folder it read (null: no `.git`).
  */
-async function pointerRefusal(root: string, opts: VetOptions): Promise<string | null> {
+async function pointerRefusal(root: string, opts: VetOptions): Promise<{ refusal: string } | ReadAhead | null> {
   const dotGit = path.join(root, '.git');
   const st = await fsp.lstat(dotGit).catch(() => null);
   if (!st) return null; // no .git: git itself answers "not a repository"
   let gitDir = dotGit;
   if (st.isSymbolicLink() || st.isFile()) {
-    const raw = st.isSymbolicLink() ? await fsp.readlink(dotGit) : await pointerTarget(dotGit, 'gitdir:');
-    if (raw === null || raw === '') return `${shown(dotGit)} is a file that does not name a git folder, so TreeMap did not run Git on it.`;
+    const text = st.isSymbolicLink() ? await linkText(dotGit) : await pointerText(dotGit);
+    if (text === undefined) return { refusal: inexact(dotGit) };
+    // Git's own prefix, its space included; what follows it is the path, whole (FG4d, review #1).
+    const raw = st.isSymbolicLink() ? text : text?.startsWith('gitdir: ') ? text.slice('gitdir: '.length) : null;
+    if (raw === null || raw === '') return { refusal: `${shown(dotGit)} is a file that does not name a git folder, so TreeMap did not run Git on it.` };
     const leads = await pointerLeads(raw, root, opts);
-    if ('refusal' in leads) return leads.refusal;
+    if ('refusal' in leads) return leads;
     gitDir = leads.to;
   } else if (!st.isDirectory()) {
-    return `${shown(dotGit)} is not a file or folder, so TreeMap did not run Git on it.`;
+    return { refusal: `${shown(dotGit)} is not a file or folder, so TreeMap did not run Git on it.` };
   }
   let commonDir = gitDir;
   const common = path.join(gitDir, 'commondir');
   const cst = await fsp.lstat(common).catch(() => null);
   if (cst) {
-    const raw = cst.isFile() ? await pointerTarget(common, '') : null;
-    if (raw === null || raw === '') return `${shown(common)} does not name a git folder, so TreeMap did not run Git on it.`;
+    const raw = cst.isFile() ? await pointerText(common) : null;
+    if (raw === undefined) return { refusal: inexact(common) };
+    if (raw === null || raw === '') return { refusal: `${shown(common)} does not name a git folder, so TreeMap did not run Git on it.` };
     const leads = await pointerLeads(raw, gitDir, opts);
-    if ('refusal' in leads) return leads.refusal;
+    if ('refusal' in leads) return leads;
     commonDir = leads.to;
   }
   const seen = new Set<string>();
   for (const dir of new Set([gitDir, commonDir])) {
     const why = (await topLevelLinkRefusal(dir, opts)) ?? (await alternatesRefusal(path.join(dir, 'objects'), opts, 0, seen));
-    if (why) return why;
+    if (why) return { refusal: why };
   }
-  return null;
+  return { gitDir, commonDir };
 }
 
 /**
  * Vets the repository at `root` before anything reads its work tree: where `.git` points, read
- * by TreeMap before git starts; where git says it keeps its data; and every setting it has. Runs
- * `rev-parse` and `config --list` only — neither starts a program whatever the repository says.
+ * by TreeMap before git starts; where git says it keeps its data, which must be the folders
+ * TreeMap read (FG4d, review #1); and every setting it has. Runs `rev-parse` and `config --list`
+ * only — neither starts a program whatever the repository says.
  */
 export async function vetRepository(root: string, opts: VetOptions = {}): Promise<RepoVetting> {
-  const pointer = await pointerRefusal(root, opts).catch((err: unknown) =>
-    `Where ${shown(root)}/.git points could not be read (${err instanceof Error ? err.message : String(err)}), so TreeMap did not run Git on it.`);
-  if (pointer) return refused(pointer);
+  const pointer = await pointerRefusal(root, opts).catch((err: unknown) => ({
+    refusal: `Where ${shown(root)}/.git points could not be read (${err instanceof Error ? err.message : String(err)}), so TreeMap did not run Git on it.`,
+  }));
+  if (pointer && 'refusal' in pointer) return refused(pointer.refusal);
   const where = await whereGitWorks(root);
   if (!where.ok) return where;
   const { gitDir, commonDir } = where.repo;
+  if (pointer) {
+    // What was read ahead is what git uses, or the read-ahead proved nothing about it.
+    const [readGit, readCommon] = await Promise.all([real(pointer.gitDir), real(pointer.commonDir)]);
+    for (const [used, read, named] of [[gitDir, readGit, pointer.gitDir], [commonDir, readCommon, pointer.commonDir]] as const) {
+      if (used !== read) {
+        return refused(`Git keeps this project's data at ${shown(used)}, not where TreeMap read ahead (${shown(read ?? named)}), so TreeMap did not run Git on it.`);
+      }
+    }
+  }
   const own = path.join((await real(root)) ?? root, '.git');
   for (const dir of new Set([gitDir, commonDir])) {
     if (dir === own) continue;
