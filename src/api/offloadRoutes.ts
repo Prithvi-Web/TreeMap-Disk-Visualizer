@@ -152,7 +152,7 @@ offloadRouter.post('/offload/reveal', async (req: Request, res: Response) => {
   if (typeof id !== 'string') throw new AppError(400, 'ID_REQUIRED', 'Body must include "id"');
   const entry = await getOffloadEntry(id);
   if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'Unknown offload entry');
-  await openPath(entry.destPath, true);
+  await openPath(entry.destPath, true, 'offloadCopy'); // on another drive, outside every scan: the manifest vouches for it
   res.json({ revealed: entry.destPath });
 });
 

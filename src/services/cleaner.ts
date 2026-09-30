@@ -6,7 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { describeFsError } from '../utils/errno';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
-import { assertNotSpillPath } from '../middleware/pathGuard';
+import { assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -288,15 +288,49 @@ export function launchTerminal({ cmd, args, cwd }: PlatformCommand): Promise<voi
 }
 
 /**
+ * Where a path to open comes from. `scanned`: a request naming a path, which must lie inside a
+ * scanned root. `offloadCopy`: a copy the offload manifest recorded on another drive, which no
+ * scan covers and the manifest vouches for.
+ */
+export type OpenScope = 'scanned' | 'offloadCopy';
+
+/**
+ * The service's own check before anything is started at `p`: never TreeMap's own spill folder,
+ * and for a `scanned` path inside a scanned root. The routes judge both already; a service that
+ * starts programs at a path does not take its caller's word that it was judged, as moveToTrash,
+ * relocateSecret and runGitGc do not (T17a's security review).
+ */
+function assertMayOpen(p: string, scope: OpenScope): void {
+  assertNotSpillPath(p);
+  if (scope === 'scanned' && !insideAnyScanRoot(p)) {
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `"${p}" is outside every scanned root — scan its folder first`);
+  }
+}
+
+/** How openPath and openTerminal start their program; a test replaces both (setLaunchStepForTests). */
+let openStep: (command: PlatformCommand) => Promise<void> = runCommand;
+let terminalStep: (command: PlatformCommand) => Promise<void> = launchTerminal;
+
+/**
+ * Test-only: run `step` in place of starting the program for openPath and openTerminal, so a test
+ * can drive both without anything opening on the machine; null restores the real ones.
+ */
+export function setLaunchStepForTests(step: ((command: PlatformCommand) => Promise<void>) | null): void {
+  openStep = step ?? runCommand;
+  terminalStep = step ?? launchTerminal;
+}
+
+/**
  * Open the platform's terminal at `dirPath` (Open Terminal Here). Tries each
  * candidate in order; one that is missing or exits nonzero falls through to
  * the next. All argv arrays, no shell.
  */
 export async function openTerminal(dirPath: string): Promise<void> {
+  assertMayOpen(dirPath, 'scanned');
   const errors: string[] = [];
   for (const command of terminalCommands(dirPath)) {
     try {
-      await launchTerminal(command);
+      await terminalStep(command);
       return;
     } catch (err) {
       errors.push(`${command.cmd}: ${err instanceof Error ? err.message : String(err)}`);
@@ -332,12 +366,15 @@ export function openCommand(p: string, reveal: boolean, platform: NodeJS.Platfor
 /**
  * Open a file/folder with the OS default handler.
  * With `reveal`, highlights the item in Finder/Explorer instead of opening it.
+ * `scope` says where the path comes from (`OpenScope`); a caller that does not
+ * say gets the strict one.
  */
-export async function openPath(p: string, reveal = false): Promise<void> {
+export async function openPath(p: string, reveal = false, scope: OpenScope = 'scanned'): Promise<void> {
+  assertMayOpen(p, scope);
   await fsp.lstat(p); // throws ENOENT for missing paths
 
   const command = openCommand(p, reveal);
-  const opened = runCommand(command);
+  const opened = openStep(command);
   if (command.cmd === 'explorer.exe') {
     await opened.catch(() => {
       /* explorer returns nonzero exit codes even on success */

@@ -310,16 +310,21 @@ read-what-you-saw) permission to act.
   `403 { code: "SPILL_PATH" }` — before the scanned-root rule, so scanning a
   home folder is no licence there — however the path is spelled (`..`, trailing
   separators, another case, a name only the file system folds such as `ſ` for
-  `s`, a link in its parents, Windows' trailing dots and spaces). A request's
+  `s`, a link in its parents, Windows' trailing dots and spaces). A name that
+  folds to the folder's is refused by that name even before the folder exists,
+  since making the path would make the folder. A request's
   `path` and every element of its `paths` are judged, whichever of the two its
   route reads, and anything but a non-empty string is `400 PATH_INVALID`. That
-  covers every route above, `/api/files/open-handles`, `/api/security/relocate`
+  covers every route above (Open and Open Terminal check again where they
+  start the program), `/api/files/open-handles`, `/api/security/relocate`
   (both ends, checked again by the move itself), the offload destination and
   every copy an offload plans under it, `/api/compression/encode` and
   `/api/system/snapshots/restore` (path and destination). Facts about it still answer, since answering touches nothing;
   the Empty Folders view never offers it; Autopilot leaves it out of every run
   and says so in `skipped`; and the Trash pathway itself (`moveToTrash`, the
-  Time Capsule's `protectAndTrash`) refuses it whatever asked. A leftover of a
+  Time Capsule's `protectAndTrash`) refuses it whatever asked. An Autopilot run
+  whose delete is refused there, or fails, is recorded as a `failed` run with
+  the reason, and the policy waits for its own schedule. A leftover of a
   crash is removed by TreeMap itself at the next start, never through the
   Trash.
 - **Storage modes (Phase 4).** A scan is kept in `memory` (every scan today),
@@ -374,13 +379,20 @@ read-what-you-saw) permission to act.
   its endpoint — executed, dry-run, or refused there — is appended to
   `audit.jsonl` (timestamp, action, source http/mcp, token id, paths, bytes,
   outcome). The refusals recorded are the ones the endpoint itself decides:
-  the agent policy and its byte cap, an open file, the offload plan or a move
-  that failed, each with its code. A request refused before that is not
-  recorded, because it never became an operation: by the path rules
-  (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`, `SPILL_PATH`,
-  `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed field
-  (`CONFIRM_REQUIRED`, `DEST_REQUIRED`), the rate limiter, or the
-  storage-mode gate (`STORAGE_MODE`).
+  the agent policy and its byte cap, an open file and the offload plan, each
+  with its code, and a relocation whose move failed, as refused. A request
+  refused before that is not recorded, because it never became an operation:
+  by the path rules (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`,
+  `SPILL_PATH`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
+  field (`CONFIRM_REQUIRED`, `DEST_REQUIRED`), the rate limiter, or the
+  storage-mode gate (`STORAGE_MODE`). `SPILL_PATH` falls on both sides of
+  that line. On a path the request names — its `path` or `paths`, an
+  offload's `dest`, a relocation's `to`, a snapshot restore's path and
+  destination, an encode's paths — it is a path rule, and not recorded. On a
+  copy the offload plan would make under an allowed destination (a folder
+  named like the spill folder, sent into app-data) it is the plan's refusal,
+  and recorded: `offload.start`, `refused`, code `SPILL_PATH`, over HTTP and
+  MCP alike.
   `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
   write the same log. Config writes differ by consequence: Autopilot policy
   saves and approvals DO audit (a standing instruction to delete is worth a

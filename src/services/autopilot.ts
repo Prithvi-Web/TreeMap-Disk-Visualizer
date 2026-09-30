@@ -16,7 +16,7 @@ import { executeAgainstScan, isOnlyHasBeenOpened, unanswerableFields } from './q
 import { getIgnoreMatchers } from './settings';
 import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
-import { protectAndTrash, listCapsuleEntriesForRun, startCapsuleRestore } from './timeCapsule';
+import { protectAndTrash, listCapsuleEntriesForRun, startCapsuleRestore, type ProtectAndTrashResult } from './timeCapsule';
 import nodePath from 'path';
 import { isSpillPath, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
@@ -756,12 +756,25 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
   // delete — and says so.
   run.mode = 'live';
   run.capsuleRunId = run.id;
-  const result = await protectAndTrash(
-    selected.map((c) => ({ path: c.path, reason: c.reason })),
-    // Nobody is watching: an open-file check that could not run stops the
-    // delete instead of waving it through (cleaner.ts, `unattended`).
-    { runId: run.id, policyId: policy.id, unattended: true },
-  );
+  let result: ProtectAndTrashResult;
+  try {
+    result = await protectAndTrash(
+      selected.map((c) => ({ path: c.path, reason: c.reason })),
+      // Nobody is watching: an open-file check that could not run stops the
+      // delete instead of waving it through (cleaner.ts, `unattended`).
+      { runId: run.id, policyId: policy.id, unattended: true },
+    );
+  } catch (err) {
+    // A refusal from the delete itself (the spill folder's backstop, a Time
+    // Capsule index that cannot be read, a write that failed) is this run's
+    // outcome and is recorded like any other failed run. Thrown past record(),
+    // it left the policy due, so the next 60-second tick ran it again — a full
+    // scan of its folder — and every tick after (T17a's security review).
+    run.status = 'failed';
+    run.items = [];
+    run.blockedReason = `The delete stopped: ${err instanceof Error ? err.message : String(err)}`;
+    return record();
+  }
 
   const trashed = new Set(result.trashed);
   run.items = selected.filter((c) => trashed.has(c.path)).map(toRunItem);

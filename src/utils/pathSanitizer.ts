@@ -391,10 +391,10 @@ export function isInside(parent: string, child: string): boolean {
 /**
  * A path as a case-insensitive volume compares it: lower-cased, and on Windows with each
  * name's trailing dots and spaces dropped as Win32 drops them (`win32Normalize`). Folded on
- * every platform, so a case-insensitive volume holding app-data on Linux (a FAT or exFAT
- * portable drive) is covered too; on a case-sensitive volume it also refuses a path that is
- * the spill folder's only when case is ignored (the folder beside it spelled in another
- * case, or app-data reached through a folder of its path spelled so).
+ * every platform, because realpath answers in the caller's spelling wherever it cannot read
+ * the volume's own (a folder not made yet; any folder of a FAT or exFAT volume on Linux), so a
+ * case-insensitive volume holding app-data is covered too; on a case-sensitive volume it also
+ * refuses a path that reaches app-data only when case is ignored.
  */
 function foldForCompare(p: string): string {
   return process.platform === 'win32' ? win32Normalize(p) : p.toLowerCase();
@@ -406,10 +406,13 @@ function foldForCompare(p: string): string {
  * there to trash, open, move or write, and the Empty Folders view never offers it.
  *
  * Judged on where the path lives (`canonicalDirOf`: every link in its parents resolved, its
- * last name as spelled, `..` and repeated or trailing separators gone), on both sides, and
- * compared as a case-insensitive volume compares names. So another spelling of the folder
- * is the folder: `x/../`, another case, app-data reached through a link, Windows' trailing
- * dots and spaces. A link whose own path is elsewhere is not the folder (the scanned-root
+ * last name as spelled, `..` and repeated or trailing separators gone), below app-data where it
+ * really is, compared as a case-insensitive volume compares paths. The first name below
+ * app-data is then read as a file system reads a name (`isSpillFolderName`: case and the
+ * compatibility forms folded), so another spelling of the folder is the folder — `x/../`,
+ * another case, `ſ` for `s`, app-data reached through a link, Windows' trailing dots and
+ * spaces — and it is refused by that name before the folder exists, when making the path would
+ * make the folder. A link whose own path is elsewhere is not the folder (the scanned-root
  * rule's reading): trashing it removes the link, never what it leads to, and opening it
  * follows it as opening any link in a scanned root does.
  */
@@ -417,12 +420,28 @@ export function isSpillPath(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
   const spillAt = canonicalDirOf(path.join(appDataDir(), SPILL_DIR));
   const where = canonicalDirOf(p);
-  if (isAtOrUnder(foldForCompare(spillAt), foldForCompare(where))) return true;
-  // A path directly in app-data may be the folder itself under a name only the file system
-  // folds: ſ (U+017F) for s on default APFS, an 8.3 short name on Windows. Its parent is
-  // resolved and its own name is not, so it is asked by identity when it exists (lstat, so a
-  // link there stays a link); a name that does not exist is judged by the rule above alone.
-  return foldForCompare(path.dirname(where)) === foldForCompare(path.dirname(spillAt)) && sameEntry(where, spillAt);
+  const appData = foldForCompare(path.dirname(spillAt));
+  const inside = foldForCompare(where);
+  if (inside === appData || !isAtOrUnder(appData, inside)) return false;
+  const below = path.relative(appData, inside);
+  const name = below.split(path.sep)[0];
+  if (isSpillFolderName(name)) return true;
+  // A name no fold explains may still be the folder's: an 8.3 short name on Windows. Directly in
+  // app-data, it is asked by identity when it exists (lstat, so a link there stays a link).
+  return name === below && sameEntry(where, spillAt);
+}
+
+/**
+ * Whether a folder name is the spill folder's as a file system may read it: the compatibility
+ * forms folded (NFKC: `ſ`, U+017F, is `s` to default APFS, as to any volume that folds case by
+ * Unicode's tables) and then case, or on Windows `win32Normalize`'s case and trailing dots and
+ * spaces. It folds some names no file system folds (the fullwidth letters), which only refuses
+ * more inside app-data. Asked of ONE name, never a whole path: NFKC makes `／` a separator and
+ * `．．` a `..`.
+ */
+export function isSpillFolderName(name: string): boolean {
+  const compatible = name.normalize('NFKC');
+  return (process.platform === 'win32' ? win32Normalize(compatible) : compatible.toLowerCase()) === SPILL_DIR;
 }
 
 /** Whether two paths name one existing entry: the same device and id, links not followed. */
@@ -439,18 +458,39 @@ function sameEntry(a: string, b: string): boolean {
 
 /**
  * A cheap test over the paths a scan of `root` lists (the root joined with the names it found):
- * false for every path that cannot be in the spill folder, true for one under app-data, which
- * `isSpillPath` must still judge. Two canonicalisations when it is made, then string work per
- * path, because the full check resolves each path's folders (tens of microseconds a path).
+ * false for every path that cannot be in the spill folder, true for one that may be, which
+ * `isSpillPath` must still judge. Made once per run from where the two folders really are —
+ * every link resolved, the last name included, so app-data reached through a link of its own
+ * (moved to a bigger volume) is found where it is — then string work per path, because the full
+ * check resolves each path's folders (tens of microseconds a path).
+ *
+ * On any doubt it passes every path on: a policy folder that is not an absolute path, either
+ * folder not resolved, the two on different volumes (a mount, a junction or a firmlink can join
+ * them where the strings do not). A doubt costs time, never a verdict.
  */
 export function spillCandidateTest(root: string): (p: string) => boolean {
-  const appData = foldForCompare(canonicalDirOf(appDataDir()));
-  const scanned = foldForCompare(canonicalDirOf(root));
+  if (!path.isAbsolute(root)) return () => true; // doubt: not a path a scan starts from
+  let appData: string;
+  let scanned: string;
+  try {
+    const appDataAt = realLocationOf(appDataDir());
+    const rootAt = realLocationOf(root);
+    if (fs.statSync(appDataAt, { bigint: true }).dev !== fs.statSync(rootAt, { bigint: true }).dev) return () => true; // doubt: two volumes
+    appData = foldForCompare(appDataAt);
+    scanned = foldForCompare(rootAt);
+  } catch {
+    return () => true; // doubt: a folder that could not be resolved
+  }
   if (isAtOrUnder(appData, scanned)) return () => true; // the scan lies in app-data
   if (!isAtOrUnder(scanned, appData)) return () => false; // app-data lies outside the scan
   // App-data as the scan spells it: the scan's own root, then app-data's place below it.
   const listed = path.join(foldForCompare(root), path.relative(scanned, appData));
   return (p) => isAtOrUnder(listed, foldForCompare(p));
+}
+
+/** Where a folder really is: every link resolved, its last name included, asked afresh (no memo). */
+function realLocationOf(p: string): string {
+  return stripDataVolume(strip(fs.realpathSync.native(p)));
 }
 
 /**

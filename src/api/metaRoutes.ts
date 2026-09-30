@@ -199,8 +199,10 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       policy:
         'agent-policy.json (see GET /api/policy) can allowlist roots, protect paths forever, and cap bytes per operation; empty file = no restriction',
       audit:
-        'Every destructive request that reaches its endpoint (real, dry-run, or refused there: policy, open files) is appended to an audit log; ' +
-        'one refused before that, by the path rules or the storage-mode gate, is not — GET /api/audit reads it back',
+        'Every destructive request that reaches its endpoint (real, dry-run, or refused there: policy, open files, the offload plan) is appended to an audit log; ' +
+        'one refused before that, by the path rules or the storage-mode gate, is not. SPILL_PATH on a path the request names (path, paths, dest, to, destination) ' +
+        'is a path rule and not recorded; SPILL_PATH on a copy the offload plan would make is the plan\'s refusal and is recorded (offload.start, refused) — ' +
+        'GET /api/audit reads it back',
       idempotency:
         'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
       spillFolder:

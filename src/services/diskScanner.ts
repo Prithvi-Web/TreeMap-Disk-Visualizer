@@ -22,8 +22,7 @@ import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBa
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
 import { newScanStorageMode } from './storageMode';
-import { SPILL_DIR } from './spillSweep';
-import { isSpillPath } from '../utils/pathSanitizer';
+import { isSpillFolderName, isSpillPath } from '../utils/pathSanitizer';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -1359,7 +1358,7 @@ function ownsItsContents(name: string): boolean {
  * already read) first, so the path check runs only for a folder that carries the name.
  */
 function isTreeMapSpillFolder(store: ScanStore, id: number, name: string): boolean {
-  return name.toLowerCase() === SPILL_DIR && store.isDir(id) && isSpillPath(store.path(id));
+  return isSpillFolderName(name) && store.isDir(id) && isSpillPath(store.path(id));
 }
 
 /**

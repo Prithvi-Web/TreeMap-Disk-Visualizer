@@ -23,10 +23,11 @@ import { setTrashStepForTests } from '../src/services/cleaner';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { requireInsideScanRoot, requireInsideScanRootToRead } from '../src/middleware/pathGuard';
 import { ENDPOINTS } from '../src/api/openapi';
-import { moveToTrash } from '../src/services/cleaner';
+import { moveToTrash, openPath, openTerminal, setLaunchStepForTests } from '../src/services/cleaner';
 import { protectAndTrash } from '../src/services/timeCapsule';
 import { relocateSecret } from '../src/services/securityHygieneScanner';
-import { setSpillCheckForTests } from '../src/services/autopilot';
+import { approvePolicy, listPolicies, runDuePolicies, savePolicies, setSpillCheckForTests } from '../src/services/autopilot';
+import { platform } from '../src/platform';
 import { AppError } from '../src/middleware/errorHandler';
 import { isSpillPath } from '../src/utils/pathSanitizer';
 import { SPILL_DIR } from '../src/services/spillSweep';
@@ -72,6 +73,12 @@ const LONG_S_SPILL = path.join(APP, `\u017f${SPILL_DIR.slice(1)}`);
 const USER2 = path.join(HOME, 'user2');
 fs.mkdirSync(path.join(USER2, `\u017f${SPILL_DIR.slice(1)}`), { recursive: true });
 fs.writeFileSync(path.join(USER2, `\u017f${SPILL_DIR.slice(1)}`, 'theirs.txt'), 'theirs');
+/** The spill folder's name with a long s (U+017F) for its first s, and for its second. */
+const LONG_S_FIRST = `\u017f${SPILL_DIR.slice(1)}`;
+const LONG_S_SECOND = SPILL_DIR.replace('sp', '\u017fp');
+const USER3 = path.join(HOME, 'user3');
+fs.mkdirSync(path.join(USER3, LONG_S_SECOND), { recursive: true });
+fs.writeFileSync(path.join(USER3, LONG_S_SECOND, 'ours.txt'), 'ours');
 
 async function settledScan(root: string): Promise<ScanResult> {
   const started = await startScan(root);
@@ -504,4 +511,198 @@ test('the skip reads the folder by where it is, whatever its case, and covers a 
   assert.deepEqual(collectEmptyFolders(tree, true).folders.map((f) => f.path), [path.join(APP, 'mine')]);
   const rooted = dir(SPILL_DIR, SPILL, [dir('inner', INNER)]);
   assert.deepEqual(collectEmptyFolders(rooted, true), { folders: [], totalCount: 0, truncated: false });
+});
+
+test('the skip knows the folder under a name the file system folds to it (ſ for s)', () => {
+  const tree = dir(path.basename(APP), APP, [
+    dir(LONG_S_FIRST, path.join(APP, LONG_S_FIRST), [dir('inner', path.join(APP, LONG_S_FIRST, 'inner'))]),
+    dir('mine', path.join(APP, 'mine')),
+  ]);
+  assert.deepEqual(collectEmptyFolders(tree, true).folders.map((f) => f.path), [path.join(APP, 'mine')]);
+});
+
+/* ─────────────── The second security review round ─────────────── */
+
+test('before the folder exists, a name the file system may fold to it (ſ for s) is refused by its name', async () => {
+  const away = `${SPILL}.away`;
+  fs.renameSync(SPILL, away); // absent, as on every machine before its first large scan
+  // A snapshot restore that got past its check would list the volume's snapshots next. None are
+  // offered here, so it would stop there, before anything privileged.
+  const provider = platform();
+  const listSnapshots = provider.listSnapshots;
+  provider.listSnapshots = async () => [];
+  try {
+    for (const name of [LONG_S_FIRST, LONG_S_SECOND]) {
+      for (const p of [path.join(APP, name), path.join(APP, name, 'x')]) {
+        assert.equal(isSpillPath(p), true, `${p} names the spill folder, which does not exist yet`);
+      }
+      // A relocation's destination. The source is a folder, so a move that got past the check
+      // would stop at "only a file can be moved", having made nothing.
+      assertSpillRefusal(
+        await request('POST', '/api/security/relocate', { path: path.join(APP, 'other'), to: path.join(APP, name, 'key'), confirm: true }),
+        `relocating into ${name}`,
+      );
+      assertSpillRefusal(await request('POST', '/api/system/snapshots/restore', { path: OTHER_FILE, destination: path.join(APP, name) }), `restoring as ${name}`);
+      assertSpillRefusal(
+        await request('POST', '/api/system/snapshots/restore', { path: OTHER_FILE, destination: path.join(APP, name, 'restored.txt') }),
+        `restoring into ${name}`,
+      );
+    }
+    // An offload target: a folder of the user's with that name, sent into app-data.
+    const others = await settledScan(USER2);
+    assertSpillRefusal(
+      await request('POST', '/api/offload', { scanId: others.scanId, paths: [path.join(USER2, LONG_S_FIRST)], dest: APP, dryRun: true }),
+      `${LONG_S_FIRST} offloaded into app-data`,
+    );
+    const thirds = await settledScan(USER3);
+    assertSpillRefusal(
+      await request('POST', '/api/offload', { scanId: thirds.scanId, paths: [path.join(USER3, LONG_S_SECOND)], dest: APP, dryRun: true }),
+      `${LONG_S_SECOND} offloaded into app-data`,
+    );
+    const made = fs.readdirSync(APP).filter((n) => n.normalize('NFKC').toLowerCase() === SPILL_DIR);
+    assert.deepEqual(made, [], 'and nothing of that name was made');
+  } finally {
+    provider.listSnapshots = listSnapshots;
+    fs.renameSync(away, SPILL);
+  }
+});
+
+test('before app-data itself exists, its own name in another case leads to the spill folder as well', () => {
+  // realpath answers a folder that does not exist yet (and, on Linux, any folder of a FAT or exFAT
+  // volume) as the caller spelled it, so the whole path is compared as a case-insensitive volume
+  // compares it, not only the spill folder's own name.
+  const saved = process.env.TREEMAP_DATA_DIR;
+  process.env.TREEMAP_DATA_DIR = path.join(HOME, 'app-data-to-come');
+  try {
+    assert.equal(isSpillPath(path.join(HOME, 'APP-DATA-TO-COME', SPILL_DIR, 'x')), true);
+    assert.equal(isSpillPath(path.join(HOME, 'APP-DATA-TO-COME', 'other', 'x')), false);
+  } finally {
+    process.env.TREEMAP_DATA_DIR = saved;
+  }
+});
+
+test('a second name for the folder that no fold explains is found by identity (a hard link stands in for a Windows short name)', () => {
+  // On Windows the folder also answers to an 8.3 short name (SCAN-S~1) that no fold of its name
+  // explains; it is found by device and inode. APFS gives a folder no second name, so a file made
+  // in the folder's place and hard-linked under another name stands in for it here.
+  const away = `${SPILL}.away`;
+  fs.renameSync(SPILL, away);
+  const second = path.join(APP, 'second-name');
+  const dotted = path.join(APP, '..second-name');
+  try {
+    fs.writeFileSync(SPILL, 'stands in for the folder');
+    fs.linkSync(SPILL, second);
+    fs.linkSync(SPILL, dotted);
+    assert.equal(isSpillPath(second), true, 'the same entry, by device and inode');
+    // A name that begins with two dots is a name in app-data, not a way out of it.
+    assert.equal(isSpillPath(dotted), true, 'the same entry under a name that begins with two dots');
+    assert.equal(isSpillPath(OTHER_FILE), false, 'while an entry of its own is not');
+  } finally {
+    fs.rmSync(dotted, { force: true });
+    fs.rmSync(second, { force: true });
+    fs.rmSync(SPILL, { force: true });
+    fs.renameSync(away, SPILL);
+  }
+});
+
+test('Open and Open Terminal check the path themselves: inside a scanned root, never the spill folder', async () => {
+  const launched: string[] = [];
+  setLaunchStepForTests(async (command) => {
+    launched.push(command.cmd);
+  });
+  const outside = fileTempDir('treemap-spillGuard-open-'); // exists, and no scan covers it
+  const outsideFile = path.join(outside, 'plain.txt');
+  fs.writeFileSync(outsideFile, 'x');
+  const refusedAs = (code: string) => (err: unknown): boolean => err instanceof AppError && err.code === code;
+  try {
+    await assert.rejects(openPath(outsideFile), refusedAs('OUTSIDE_SCAN_ROOT'), 'a file outside every scan is not opened');
+    await assert.rejects(openPath(outsideFile, true), refusedAs('OUTSIDE_SCAN_ROOT'), 'nor revealed');
+    await assert.rejects(openPath(INNER), refusedAs('SPILL_PATH'), 'a folder in the spill folder is not opened, inside a scanned root');
+    await assert.rejects(openTerminal(outside), refusedAs('OUTSIDE_SCAN_ROOT'), 'no terminal outside every scan');
+    await assert.rejects(openTerminal(INNER), refusedAs('SPILL_PATH'), 'nor in the spill folder');
+    // An offloaded copy lives on another drive, outside every scan, and the offload manifest
+    // vouches for it — but never in the spill folder.
+    await assert.rejects(openPath(INNER, true, 'offloadCopy'), refusedAs('SPILL_PATH'), 'a manifest copy in the spill folder is not revealed');
+    assert.deepEqual(launched, [], 'nothing was started');
+    await openPath(OTHER_FILE, true);
+    await openPath(outsideFile, true, 'offloadCopy');
+    await openTerminal(path.join(APP, 'other'));
+    assert.equal(launched.length, 3, `each one allowed started one program (${launched.join(', ')})`);
+    // The offload reveal opens a copy its manifest recorded: outside every scan, so it is judged
+    // in the manifest's scope, and never in the spill folder.
+    const entry = { originalPath: OTHER_FILE, size: 1, hash: '0'.repeat(64), offloadedAt: Date.now() };
+    fs.writeFileSync(path.join(APP, 'offload-manifest.json'), JSON.stringify({
+      entries: [
+        { ...entry, id: 'copy-outside', name: 'plain.txt', destPath: outsideFile, destRoot: outside },
+        { ...entry, id: 'copy-in-spill', name: 'inner', destPath: INNER, destRoot: SPILL },
+      ],
+      destinations: {},
+    }));
+    const revealed = await request('POST', '/api/offload/reveal', { id: 'copy-outside' });
+    assert.deepEqual([revealed.status, revealed.body.revealed], [200, outsideFile], JSON.stringify(revealed.body));
+    assertSpillRefusal(await request('POST', '/api/offload/reveal', { id: 'copy-in-spill' }), 'revealing a manifest copy in the spill folder');
+    assert.equal(launched.length, 4, `and the reveal started one (${launched.join(', ')})`);
+  } finally {
+    setLaunchStepForTests(null);
+    fs.rmSync(path.join(APP, 'offload-manifest.json'), { force: true });
+  }
+});
+
+test('a refusal from the delete itself is recorded as the run, so the policy waits for its own schedule', async () => {
+  // The full check stands aside here (the seam answers "not the folder"), so the leftover reaches
+  // protectAndTrash, whose backstop refuses the whole batch before copying anything: a refusal
+  // like any other the delete can raise. Unrecorded, the policy stayed due and ran again — a full
+  // scan of its folder — on every 60-second tick.
+  const left = path.join(SPILL, '4246-1790656308811-3f2b1c4e-8a7d-4b6c-9e1f-0123456789ab-sizes');
+  fs.writeFileSync(left, 'what a crash left');
+  setSpillCheckForTests(() => false);
+  try {
+    const [policy] = await savePolicies([{ id: 'refused', name: 'app-data', path: APP, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
+    await approvePolicy(policy.id);
+    const first = await runDuePolicies();
+    assert.equal(first.length, 1, 'the tick ran the policy and recorded its run');
+    assert.equal(first[0].status, 'failed', first[0].blockedReason);
+    assert.match(first[0].blockedReason ?? '', new RegExp(`TreeMap's own ${SPILL_DIR} folder`), 'with the refusal as its reason');
+    assert.deepEqual([first[0].items, first[0].bytesDeleted], [[], 0], 'and nothing deleted');
+    assert.ok((await listPolicies())[0].lastRunAt, 'so the policy is on its own schedule');
+    assert.deepEqual(await runDuePolicies(Date.now() + 60_000), [], 'a tick later it is not due, and does not run again');
+    assert.ok(fs.existsSync(left) && fs.existsSync(OTHER_FILE), 'nothing was deleted');
+  } finally {
+    setSpillCheckForTests(null);
+    await savePolicies([]);
+    fs.rmSync(left, { force: true });
+  }
+});
+
+test('the audit log records the offload plan\'s refusal of the spill folder, and not the path rule\'s', async () => {
+  interface Entry { action: string; source: string; outcome: string; code?: string; paths: string[] }
+  const offloads = async (): Promise<Entry[]> =>
+    ((await request('GET', '/api/audit?limit=1000')).body.entries as Entry[]).filter((e) => e.action === 'offload.start');
+  const before = (await offloads()).length;
+  // A path the request names, its destination: a path rule, decided before the endpoint runs.
+  assertSpillRefusal(await request('POST', '/api/offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: SPILL, dryRun: true }), 'offloading into it');
+  assert.match(await callTool('offload', { scanId: scan.scanId, paths: [OTHER_FILE], dest: SPILL, dryRun: true }), /^Error \(SPILL_PATH\): /);
+  assert.equal((await offloads()).length, before, 'a destination refused by the path rules is not recorded');
+  // A copy the plan would make under an allowed destination: a folder named like the spill
+  // folder, sent into app-data.
+  const users = await settledScan(USER);
+  const named = path.join(USER, SPILL_DIR);
+  const away = `${SPILL}.away`;
+  fs.renameSync(SPILL, away);
+  try {
+    assertSpillRefusal(await request('POST', '/api/offload', { scanId: users.scanId, paths: [named], dest: APP, dryRun: true }), 'the plan, over HTTP');
+    assert.match(await callTool('offload', { scanId: users.scanId, paths: [named], dest: APP, dryRun: true }), /^Error \(SPILL_PATH\): /);
+  } finally {
+    fs.renameSync(away, SPILL);
+  }
+  const after = await offloads();
+  assert.equal(after.length, before + 2, 'the plan\'s refusal is recorded, once over each');
+  assert.deepEqual(
+    after.slice(0, 2).map((e) => [e.source, e.outcome, e.code, e.paths]),
+    [['mcp', 'refused', 'SPILL_PATH', [named]], ['http', 'refused', 'SPILL_PATH', [named]]],
+  );
+  // And the manifest says so, both halves.
+  const audit = String((await request('GET', '/api/capabilities')).body.safety.audit);
+  assert.match(audit, /SPILL_PATH on a path the request names .* is a path rule and not recorded/, audit);
+  assert.match(audit, /SPILL_PATH on a copy the offload plan would make is the plan's refusal and is recorded/, audit);
 });
