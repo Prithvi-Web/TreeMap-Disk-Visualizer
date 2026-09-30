@@ -121,7 +121,7 @@ const sorted = (list: string[]): string[] => [...list].sort();
  * person's delete, went ahead on that answer as B2 documents, while every Autopilot run was refused
  * whole (OPEN_HANDLE_UNCHECKED) before its trash step and recorded as blocked.
  */
-async function withOpenFileCheck<T>(answer: 'clear' | 'fails', fn: () => Promise<T>): Promise<T> {
+async function withOpenFileCheck<T>(answer: 'clear' | 'fails' | 'open', fn: () => Promise<T>): Promise<T> {
   const provider = platform() as unknown as {
     getOpenHandlesBatch: (paths: string[]) => Promise<unknown>;
     probeOpenHandleGuard: () => Promise<unknown>;
@@ -130,7 +130,10 @@ async function withOpenFileCheck<T>(answer: 'clear' | 'fails', fn: () => Promise
   const probe = provider.probeOpenHandleGuard.bind(provider);
   provider.getOpenHandlesBatch = answer === 'fails'
     ? () => Promise.reject(new Error('the probe did not answer (a test)'))
-    : () => Promise.resolve({ handles: [], complete: true });
+    : answer === 'open'
+      // Another program has the first file of the batch open ('open', FG3c).
+      ? (paths: string[]) => Promise.resolve({ handles: [{ path: paths[0], pid: 1, processName: 'Preview' }], complete: true })
+      : () => Promise.resolve({ handles: [], complete: true });
   provider.probeOpenHandleGuard = () => Promise.resolve({ available: true, mechanism: 'test' });
   invalidateCapabilities();
   try {
@@ -817,9 +820,29 @@ test('when the open-file check cannot run, an unattended run moves nothing, says
     assert.match(run.blockedReason ?? '', /couldn.t check whether these files are in use/, `and the run says why (${run.blockedReason})`);
     for (const p of [...gone, held]) assert.ok(fs.existsSync(p), `${path.basename(p)} is where it was`);
     assert.deepEqual(await listUndoableEntriesForRun(run.capsuleRunId ?? run.id), [], 'so its copies, of files still in place, were discarded');
+    // TreeMap's own check stopped the batch, before the Trash was asked (FG3c #13).
+    for (const row of run.skipped) {
+      assert.doesNotMatch(row.reason, /The Trash did not take it/, `the Trash was never asked (${row.reason})`);
+      assert.match(row.reason, /TreeMap did not hand it to the Trash: TreeMap couldn.t check/, `the check's own sentence (${row.reason})`);
+      assert.doesNotMatch(row.reason, /\.\./, `one sentence, one full stop (${row.reason})`);
+    }
   } finally {
     await savePolicies([]);
   }
+});
+
+test('an item of a cart commit TreeMap held back because a program has a file open is not said to be refused by the Trash (FG3c #13)', async () => {
+  const { gone, held } = threeFiles('cart-open');
+  const result = await withOpenFileCheck('open', () => commitCart([...gone, held]));
+  assert.deepEqual(result.trashed, [], 'nothing was moved');
+  assert.equal(result.skipped.length, 3, JSON.stringify(result));
+  for (const row of result.skipped) {
+    assert.doesNotMatch(row.reason ?? '', /The Trash did not take it/, `the Trash was never asked (${row.reason})`);
+    assert.match(row.reason ?? '', /TreeMap did not hand it to the Trash: Preview has/, `the check's own sentence (${row.reason})`);
+    assert.doesNotMatch(row.reason ?? '', /\.\./, `one full stop (${row.reason})`);
+    assert.match(row.reason ?? '', /still in place, untouched/, 'and the disk showed it in place');
+  }
+  for (const p of [...gone, held]) assert.ok(fs.existsSync(p));
 });
 
 /**
