@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 const DATA_DIR = isolatedDataDir('treemap-scan-mft-mode-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -48,11 +49,7 @@ async function asWindows<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function done(scan: ScanResult): Promise<ScanResult> {
-  const deadline = Date.now() + 20_000;
-  while (scan.status === 'running') {
-    if (Date.now() > deadline) assert.fail('the scan did not settle');
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await waitFor(() => scan.status !== 'running', 'the scan settling', 5);
   await settled();
   return scan;
 }

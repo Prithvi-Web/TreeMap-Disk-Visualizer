@@ -7,6 +7,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-polish-numbers-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -219,10 +220,9 @@ test('the duplicate job says whether its reclaimable figure is an upper bound (A
   fs.writeFileSync(path.join(base, 'a.dat'), payload);
   fs.writeFileSync(path.join(base, 'b.dat'), payload);
   const scan = await startScan(base);
-  const deadline = Date.now() + 15_000;
-  while (getScan(scan.scanId)?.status === 'running' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+  await waitFor(() => getScan(scan.scanId)?.status !== 'running', 'the scan settling', 20);
   const job = getDuplicateJob(getScan(scan.scanId)!, 1024);
-  while (job.status === 'running' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+  await waitFor(() => job.status !== 'running', 'the duplicate job settling', 20);
   assert.equal(job.status, 'complete');
   assert.equal(job.totalReclaimable, 8192);
   assert.equal(job.reclaimableIsUpperBound, process.platform === 'darwin');

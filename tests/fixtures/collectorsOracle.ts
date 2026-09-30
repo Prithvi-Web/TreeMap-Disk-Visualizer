@@ -8,6 +8,7 @@ import { ingestColumns, rootName } from '../../src/services/scan/nativeEngine';
 import { statToInput } from '../../src/services/scan/nodeInput';
 import { BUCKETS, bucketFor } from '../../src/services/reclaimInputs';
 import { PackedScanStore } from '../../src/services/scanStore';
+import { waitFor } from './waitFor';
 
 /**
  * The collectors' oracle (Phase 4, task T12b): what `collectLargestFiles`,
@@ -78,11 +79,7 @@ export async function storeOf(core: Core, spec: Spec, index: number): Promise<{ 
       sizeSigma: spec.sizeSigmaMilli / 1e3,
     },
   });
-  const started = Date.now();
-  while (!core.scanPoll(handle).done) {
-    if (Date.now() - started > 120_000) throw new Error('the synthetic walk did not finish within 120 s');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+  await waitFor(() => core.scanPoll(handle).done, 'the synthetic walk finishing', 5);
   const cols = core.scanTake(handle);
   const scan = createScanRecord(root);
   const store = new PackedScanStore(root, path.sep, statToInput(rootName(root), true, 0, 0));

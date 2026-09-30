@@ -5,6 +5,7 @@
 // forced-engine setting (Phase 3, W2) lands — both are set before any
 // service is imported, because the modules read them when loaded.
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 const DATA_DIR = isolatedDataDir('treemap-edge-data-');
 process.env.TREEMAP_NO_GDU = '1';
 require('node:fs').writeFileSync(require('node:path').join(DATA_DIR, 'settings.json'), JSON.stringify({ engine: 'walker' }));
@@ -28,7 +29,6 @@ import { buildEdgeCases, freezeTimes, DIRECTORY_ATIME_ANCHOR_SECONDS, type EdgeC
  * cannot build is skipped with the fixture's reason, never asserted.
  */
 
-const WALK_DEADLINE_MS = 120_000;
 const SETTLE_POLL_MS = 10;
 const GiB = 1024 ** 3;
 /**
@@ -70,16 +70,14 @@ async function nextWholeSecond(): Promise<void> {
   while (Math.floor(Date.now() / 1000) === start) await sleep(SETTLE_POLL_MS);
 }
 
-/** The walk, settled — or a failure naming the deadline, which is what a followed symlink loop would look like. */
+/** The walk, settled — or the hang guard naming it, which is what a followed symlink loop would look like. */
 async function walked(root: string): Promise<ScanResult> {
   const s = await startScan(root);
-  const deadline = Date.now() + WALK_DEADLINE_MS;
-  while (s.status === 'running') {
-    if (Date.now() > deadline) {
-      cancelAllScans();
-      throw new Error(`the walk of ${root} did not finish in ${WALK_DEADLINE_MS / 1000} s`);
-    }
-    await sleep(SETTLE_POLL_MS);
+  try {
+    await waitFor(() => s.status !== 'running', `the walk of ${root} finishing`, SETTLE_POLL_MS);
+  } catch (err) {
+    cancelAllScans();
+    throw err;
   }
   return s;
 }

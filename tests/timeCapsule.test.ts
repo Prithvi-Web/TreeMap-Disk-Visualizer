@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 // rewrite the real settings.json — the mistake that once littered the user's
 // snapshots.json with test roots.
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-capsule-test-');
 
 import {
@@ -66,14 +67,12 @@ const sha = (buf: Buffer): string => crypto.createHash('sha256').update(buf).dig
 /** Run a restore to completion and hand back the finished job. */
 async function restoreAndWait(entryId: string): Promise<TimeCapsuleJob> {
   const job = await startCapsuleRestore([entryId]);
-  const deadline = Date.now() + 20_000;
-  for (;;) {
+  await waitFor(() => {
     const live = getCapsuleJob(job.jobId);
     assert.ok(live, 'the job record must exist');
-    if (live.status !== 'running') return live;
-    assert.ok(Date.now() < deadline, 'restore timed out');
-    await new Promise((r) => setTimeout(r, 25));
-  }
+    return live.status !== 'running';
+  }, `restore job ${job.jobId} settling`, 25);
+  return getCapsuleJob(job.jobId)!;
 }
 
 /** Every entry currently in the capsule index. */

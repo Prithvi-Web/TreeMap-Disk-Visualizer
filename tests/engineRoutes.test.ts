@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-engine-routes-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -323,11 +324,7 @@ test('POST /api/scan/:id/pause and /resume: a running walker pauses and resumes,
     assert.equal(started.status, 202);
     const scanId = started.body.scanId as string;
     const scan = getScan(scanId)!;
-    const t0 = Date.now();
-    while (scan.scanned < 500 && scan.status === 'running') {
-      assert.ok(Date.now() - t0 < 20_000);
-      await sleep(5);
-    }
+    await waitFor(() => scan.scanned >= 500 || scan.status !== 'running', 'the walker counting 500 entries', 5);
     assert.equal(scan.status, 'running');
 
     const paused = await req(port, 'POST', `/api/scan/${scanId}/pause`);
@@ -343,11 +340,7 @@ test('POST /api/scan/:id/pause and /resume: a running walker pauses and resumes,
     assert.equal(resumed.status, 200);
     assertMatchesSpec(doc, '/api/scan/{scanId}/resume', 'post', '200', resumed.body);
     assert.deepEqual(resumed.body, { scanId, status: 'running', paused: false, supported: true, source: 'node-shim' });
-    const t1 = Date.now();
-    while (scan.status === 'running') {
-      assert.ok(Date.now() - t1 < 60_000, 'never finished after resume');
-      await sleep(20);
-    }
+    await waitFor(() => scan.status !== 'running', 'the scan finishing after resume', 20);
     assert.equal(scan.status, 'complete');
 
     const late = await req(port, 'POST', `/api/scan/${scanId}/pause`);

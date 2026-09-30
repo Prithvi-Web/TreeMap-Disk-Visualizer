@@ -8,6 +8,7 @@ import type { TestContext } from 'node:test';
 import type * as NativeCore from '../native/index';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-nativeLoader-data-');
 
 import { loadNative, nativeCandidates, resetNativeForTests } from '../src/services/scan/native';
@@ -214,8 +215,6 @@ function scaledTarget(ceiling: number, snap: { thermal: string; interacting: boo
 /** Every scaling a hold's opening target can carry, for a ceiling. */
 const possibleTargets = (ceiling: number): number[] => [1, THERMAL_SERIOUS_SCALE, INTERACTION_SCALE, THERMAL_SERIOUS_SCALE * INTERACTION_SCALE].map((s) => ceiling * s);
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 test('the built module loads through the loader and version() is the handshake value package.json expects', (t) => {
   const real = loadReal(t);
   if (!real) return;
@@ -337,11 +336,15 @@ test('the module survives governorPause()/governorResume(), and a second hold wh
   assert.equal(version(), pkg.nativeVersion);
 
   const first = governorHold(SMOKE_PERCENT, 1);
-  const startedBy = Date.now() + 2_000;
-  while (governorSnapshot().budget.cpuPercent !== SMOKE_PERCENT) {
-    assert.ok(Date.now() < startedBy, 'the hold shows its override in the snapshot within two seconds');
-    await sleep(20);
-  }
+  // The override shows while the hold runs: seen before the hold settles,
+  // however slowly this machine gets round to looking (no clock decides it).
+  let holdSettled = false;
+  first.then(() => { holdSettled = true; }, () => { holdSettled = true; });
+  await waitFor(() => {
+    if (governorSnapshot().budget.cpuPercent === SMOKE_PERCENT) return true;
+    assert.ok(!holdSettled, 'the hold ended without ever showing its override in the snapshot');
+    return false;
+  }, 'the hold showing its override in the snapshot', 20);
   await assert.rejects(governorHold(SMOKE_PERCENT, 1), /already/);
   const report = await first;
   assert.ok(Math.abs(report.samples.length - SAMPLES_PER_SECOND) <= 1, `${report.samples.length} samples for 1 s`);

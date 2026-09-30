@@ -7,6 +7,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { Response } from 'express';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor as waitUntil } from './fixtures/waitFor';
 isolatedDataDir('treemap-compressionShutdown-data-');
 
 import {
@@ -53,12 +54,9 @@ process.on('exit', () => {
 });
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-async function waitFor(what: string, cond: () => boolean, ms = 2000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!cond()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await sleep(5);
-  }
+/** Waits for `cond`, bounded only by the shared hang guard: a wait, never a measurement. */
+async function waitFor(what: string, cond: () => boolean): Promise<void> {
+  await waitUntil(cond, what, 5);
 }
 
 function probe(over: Partial<MediaProbe> = {}): MediaProbe {

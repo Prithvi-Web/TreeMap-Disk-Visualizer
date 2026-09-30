@@ -7,6 +7,7 @@ import path from 'node:path';
 import type * as NativeCore from '../native/index';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-nativeMemoryDefault-data-');
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
@@ -110,14 +111,12 @@ function tree(t: TestContext, folders: number, files: number, pad = ''): string 
 async function scanned(root: string): Promise<ScanResult> {
   await updateSettings({ engine: 'native' });
   const record = await startScan(root);
-  const t0 = Date.now();
-  for (;;) {
+  await waitFor(() => {
     const scan = getScan(record.scanId);
     assert.ok(scan, 'the scan record');
-    if (scan.status !== 'running') return scan;
-    assert.ok(Date.now() - t0 < 60_000, 'the scan settled');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+    return scan.status !== 'running';
+  }, `the scan of ${root} settling`);
+  return getScan(record.scanId)!;
 }
 
 /**

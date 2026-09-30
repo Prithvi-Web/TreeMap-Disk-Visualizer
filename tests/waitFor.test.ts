@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
+import { HANG_GUARD_MS, waitFor, type WaitClock } from './fixtures/waitFor';
 
 /**
  * The one wait every test uses for work to finish: a guard against hanging,
@@ -22,10 +22,34 @@ test('waitFor resolves as soon as the condition holds, sync or async', async () 
   assert.equal(asyncCalls, 2);
 });
 
+/** A clock of the test's own: time passes only when waitFor waits, so its polls are counted, never timed. */
+function steppedClock(): { clock: WaitClock; slept: number[]; elapsed: () => number } {
+  let now = 1_000;
+  const slept: number[] = [];
+  return {
+    clock: { now: () => now, sleep: async (ms) => { slept.push(ms); now += ms; } },
+    slept,
+    elapsed: () => now - 1_000,
+  };
+}
+
 test('waitFor fails naming what it waited for once its limit runs out, and never earlier', async () => {
-  const started = Date.now();
-  await assert.rejects(waitFor(() => false, 'the scan to finish', 5, 60), /the scan to finish did not happen within 60 ms/);
-  assert.ok(Date.now() - started >= 60, 'not before the limit');
+  const { clock, slept, elapsed } = steppedClock();
+  let polls = 0;
+  await assert.rejects(
+    waitFor(() => { polls++; return false; }, 'the scan to finish', 5, 60, clock),
+    /the scan to finish did not happen within 60 ms/,
+  );
+  assert.equal(polls, 13, 'asked at 0, 5, … 60 ms on its clock: the thirteenth answer is the one at the limit');
+  assert.deepEqual(slept, Array<number>(12).fill(5), 'a wait of pollMs between answers, and none after the last');
+  assert.equal(elapsed(), 60, 'it gave up at the limit, not before it');
+});
+
+test('an answer that comes at the limit still counts', async () => {
+  const { clock } = steppedClock();
+  let polls = 0;
+  await waitFor(() => ++polls === 13, 'the thirteenth answer', 5, 60, clock);
+  assert.equal(polls, 13, 'the condition is asked before the limit is');
 });
 
 test('a condition that throws fails the wait with that error, at once', async () => {

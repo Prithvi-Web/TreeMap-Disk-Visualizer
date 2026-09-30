@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 // app data. An Autopilot test that wrote to the real store would leave standing
 // instructions to delete the user's files.
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-autopilot-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -621,13 +622,9 @@ test('a run is undone by putting every item back from the Time Capsule', async (
 
     // The restore is a job; wait it out.
     const { getCapsuleJob } = await import('../src/services/timeCapsule');
-    const deadline = Date.now() + 20_000;
-    for (;;) {
-      const job = getCapsuleJob(undo.jobId);
-      if (job && job.status !== 'running') { assert.equal(job.status, 'complete', job.error ?? ''); break; }
-      assert.ok(Date.now() < deadline, 'undo timed out');
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await waitFor(() => { const job = getCapsuleJob(undo.jobId); return job !== undefined && job.status !== 'running'; }, 'the undo job settling', 25);
+    const job = getCapsuleJob(undo.jobId);
+    assert.equal(job?.status, 'complete', job?.error ?? '');
 
     assert.ok(fs.existsSync(a), 'the first file is back');
     assert.ok(fs.existsSync(b), 'and so is the second');

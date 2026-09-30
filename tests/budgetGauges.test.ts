@@ -12,6 +12,7 @@ import path from 'path';
  * here can ever touch a real snapshots.json.
  */
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 const DATA_DIR = isolatedDataDir('tm-budget-gauges-');
 
 import { Snapshot, SnapshotTreeNode } from '../src/models/types';
@@ -288,13 +289,7 @@ test('GET /api/scan/:id/budget-gauges reports each in-scan budget with an honest
     const scan = await reqHttp(port, 'POST', '/api/scan', { path: fx });
     assert.ok(scan.status === 200 || scan.status === 202, JSON.stringify(scan.body));
     const scanId = scan.body.scanId;
-    const deadline = Date.now() + 10_000;
-    for (;;) {
-      const r = await reqHttp(port, 'GET', `/api/scan/${scanId}/result`);
-      if (r.status === 200) break;
-      assert.ok(Date.now() < deadline, 'fixture scan never completed');
-      await new Promise((res) => setTimeout(res, 50));
-    }
+    await waitFor(async () => (await reqHttp(port, 'GET', `/api/scan/${scanId}/result`)).status === 200, 'the fixture scan completing', 50);
 
     const g = await reqHttp(port, 'GET', `/api/scan/${scanId}/budget-gauges`);
     assert.equal(g.status, 200, JSON.stringify(g.body));
