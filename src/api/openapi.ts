@@ -2965,6 +2965,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected')),
             failedToTrash: arr(opaque('{ path, reason } — protected, then refused by the Trash; the copies were dropped')),
             capsuleUnavailable: str('Set when the capsule cannot run at all. Nothing was deleted'),
+            cleanupError: str('Real run only: discarding the copies of what the Trash refused did not finish. Everything in trashed was trashed, and undo with runId puts it back'),
           },
           ['dryRun'],
         ),

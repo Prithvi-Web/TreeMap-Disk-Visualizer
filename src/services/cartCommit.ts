@@ -2,7 +2,7 @@ import { AppError } from '../middleware/errorHandler';
 import { checkOpenHandles, type OpenHandleReport } from './openHandleGuard';
 import { knownSizeOf } from './policy';
 import {
-  listCapsuleEntriesForRun,
+  listUndoableEntriesForRun,
   planProtection,
   protectAndTrash,
   startCapsuleRestore,
@@ -111,6 +111,11 @@ export interface CartCommitResult {
   failedToTrash: { path: string; reason: string }[];
   /** True when the capsule itself is unavailable. Nothing was deleted. */
   capsuleUnavailable?: string;
+  /**
+   * Discarding the copies of what the Trash refused did not finish. Everything
+   * in `trashed` was trashed, and undo with `runId` puts it back.
+   */
+  cleanupError?: string;
 }
 
 /** Reject a badly-shaped request before anything walks the disk. */
@@ -200,6 +205,7 @@ export async function commitCart(paths: string[], runId?: string): Promise<CartC
     })),
     failedToTrash: result.failedToTrash,
     ...(result.unavailableReason ? { capsuleUnavailable: result.unavailableReason } : {}),
+    ...(result.cleanupError ? { cleanupError: result.cleanupError } : {}),
   };
 }
 
@@ -215,7 +221,7 @@ export async function undoCartRun(runId: string): Promise<{ jobId: string; entry
   if (typeof runId !== 'string' || !runId) {
     throw new AppError(400, 'RUN_ID_REQUIRED', 'Body must include the "runId" the commit returned');
   }
-  const entries = (await listCapsuleEntriesForRun(runId)).filter((e) => e.hasPayload && !e.restoredAt);
+  const entries = await listUndoableEntriesForRun(runId);
   if (entries.length === 0) {
     throw new AppError(409, 'CAPSULE_EMPTY',
       'The Time Capsule no longer holds the copies from that commit, so it cannot be undone. ' +

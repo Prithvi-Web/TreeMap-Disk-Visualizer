@@ -659,10 +659,19 @@ test('a refusal from the delete itself is recorded as the run, so the policy wai
   try {
     const [policy] = await savePolicies([{ id: 'refused', name: 'app-data', path: APP, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
     await approvePolicy(policy.id);
-    const first = await runDuePolicies();
+    const logged: string[] = [];
+    const log = console.error;
+    console.error = (...args: unknown[]) => { logged.push(args.map((a) => (a instanceof Error ? `${a.message}\n${a.stack ?? ''}` : String(a))).join(' ')); };
+    let first: Awaited<ReturnType<typeof runDuePolicies>>;
+    try {
+      first = await runDuePolicies();
+    } finally {
+      console.error = log;
+    }
     assert.equal(first.length, 1, 'the tick ran the policy and recorded its run');
     assert.equal(first[0].status, 'failed', first[0].blockedReason);
-    assert.match(first[0].blockedReason ?? '', new RegExp(`TreeMap's own ${SPILL_DIR} folder`), 'with the refusal as its reason');
+    assert.match(first[0].blockedReason ?? '', new RegExp(`^Nothing was deleted .*TreeMap's own ${SPILL_DIR} folder`), 'with the refusal as its reason');
+    assert.ok(logged.some((l) => l.includes('the delete for policy refused stopped') && /\n\s+at /.test(l)), `and the error, with its stack, in the server log (${logged.join(' | ').slice(0, 300)})`);
     assert.deepEqual([first[0].items, first[0].bytesDeleted], [[], 0], 'and nothing deleted');
     assert.ok((await listPolicies())[0].lastRunAt, 'so the policy is on its own schedule');
     assert.deepEqual(await runDuePolicies(Date.now() + 60_000), [], 'a tick later it is not due, and does not run again');

@@ -20,6 +20,7 @@ import { initPortableMode, resetPortableMode } from '../src/services/portableMod
 import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
 import { peekScan } from '../src/services/diskScanner';
+import { setTrashStepForTests } from '../src/services/cleaner';
 import { waitFor } from './fixtures/waitFor';
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -693,6 +694,10 @@ test('a chunked commit is ONE run, so undo puts the whole cart back', async () =
   // one click away. Before chunking, that cart could never be committed at
   // all — the route refused it outright.
   const dir = await fixture('chunked', 6, 1024);
+  // The only test here that reaches the trash step, so it stands in for the Trash: every file
+  // goes into a folder of its own, never the machine's Trash (this file's header promises so).
+  const trash = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-cart-trash-'));
+  setTrashStepForTests(async (p) => fsp.rename(p, path.join(trash, `${path.basename(path.dirname(p))}-${path.basename(p)}`)));
   try {
     const all = Array.from({ length: 6 }, (_, i) => path.join(dir, `f${i}.bin`));
     // Two "chunks" of three, the second continuing the first's run.
@@ -711,7 +716,9 @@ test('a chunked commit is ONE run, so undo puts the whole cart back', async () =
       assert.equal(fs.statSync(p).size, 1024);
     }
   } finally {
+    setTrashStepForTests(null);
     await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rm(trash, { recursive: true, force: true });
   }
 });
 

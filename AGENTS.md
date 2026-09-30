@@ -287,7 +287,10 @@ OpenAPI 3 spec).
      never deleted unprotected. `dryRun: true` returns that same verdict per
      path *before* anything happens, along with the older capsule copies that
      would be evicted to make room and B2's open-handle preflight. At most 500
-     paths per commit.
+     paths per commit. Nothing after the trash step can fail the request:
+     should discarding the capsule copies of items the Trash refused not
+     finish, the response still carries `trashed` and `runId`, adds a
+     `cleanupError` sentence, and the undo puts back exactly what was trashed.
 
 Never skip step 1: destructive endpoints refuse paths that are not inside a
 root this server has actually scanned. Scanning is what grants (scoped,
@@ -323,8 +326,10 @@ read-what-you-saw) permission to act.
   the Empty Folders view never offers it; Autopilot leaves it out of every run
   and says so in `skipped`; and the Trash pathway itself (`moveToTrash`, the
   Time Capsule's `protectAndTrash`) refuses it whatever asked. An Autopilot run
-  whose delete is refused there, or fails, is recorded as a `failed` run with
-  the reason, and the policy waits for its own schedule. A leftover of a
+  whose delete is refused there, or fails before anything is deleted, is
+  recorded as a `failed` run with the reason, and the policy waits for its own
+  schedule; a failure after the trash step is reported in the run's reason,
+  its items being what it trashed. A leftover of a
   crash is removed by TreeMap itself at the next start, never through the
   Trash.
 - **Storage modes (Phase 4).** A scan is kept in `memory` (every scan today),

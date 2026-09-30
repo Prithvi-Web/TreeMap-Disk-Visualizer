@@ -590,6 +590,19 @@ function digestOf(members: ManifestMember[]): string {
   return crypto.createHash('sha256').update(lines).digest('hex');
 }
 
+/** The steps of discarding the copies of items the Trash refused, after the trash step. */
+export type DiscardStep = 'load' | 'drop' | 'save';
+let discardFault: DiscardStep | null = null;
+
+/** Test-only: make one step of discarding unused copies fail, as a disk or a lock can; null clears it. */
+export function setDiscardFaultForTests(step: DiscardStep | null): void {
+  discardFault = step;
+}
+
+function failIfInjected(step: DiscardStep): void {
+  if (discardFault === step) throw new Error(`a failure injected at the ${step} step (a test)`);
+}
+
 export interface ProtectAndTrashResult {
   runId: string;
   /** Every request, protected or not. */
@@ -606,6 +619,12 @@ export interface ProtectAndTrashResult {
    * has nowhere to keep a recoverable copy. Nothing was deleted.
    */
   unavailableReason?: string;
+  /**
+   * Set when discarding the copies of items the Trash refused did not finish:
+   * a sentence for the person. It happens after the trash step, so it is
+   * reported here rather than thrown — `trashed` and `runId` are still true.
+   */
+  cleanupError?: string;
 }
 
 /**
@@ -835,21 +854,26 @@ export async function protectAndTrash(
     }
   }
 
+  // Past the trash step nothing throws: what was trashed is the one fact the
+  // caller must get back, with the run id an undo needs (FG1).
+  let cleanupError: string | undefined;
   if (failedToTrash.length > 0) {
-    const fresh = await loadStore();
     const failedPaths = new Set(failedToTrash.map((f) => f.path));
-    for (const outcome of protectedOutcomes) {
-      if (!failedPaths.has(outcome.path)) continue;
-      const entry = fresh.entries.find((e) => e.id === outcome.entryId);
-      if (entry) {
-        await dropPayload(entry);
-        fresh.entries = fresh.entries.filter((e) => e.id !== entry.id);
-      }
+    const notDeleted = protectedOutcomes.filter((o) => failedPaths.has(o.path));
+    const problem = await discardUnusedCopies(notDeleted);
+    for (const outcome of notDeleted) {
       outcome.protected = false;
       outcome.code = 'NOT_DELETED';
-      outcome.detail = 'It was copied, but the delete did not happen — so the copy was discarded and the original is untouched.';
+      outcome.detail = problem === null
+        ? 'It was copied, but the delete did not happen — so the copy was discarded and the original is untouched.'
+        : 'It was copied, but the delete did not happen, so the original is untouched. Discarding its copy did not finish, so the Time Capsule may still list it.';
     }
-    await saveStore(fresh);
+    if (problem !== null) {
+      const items = `${formatCount(notDeleted.length)} item${notDeleted.length === 1 ? '' : 's'}`;
+      cleanupError =
+        `Discarding the Time Capsule copies of the ${items} the Trash refused did not finish (${problem}), so the Time Capsule may still list them. ` +
+        'Everything listed as trashed was trashed, and can be put back.';
+    }
   }
 
   const stillProtected = outcomes.filter((o) => o.protected);
@@ -860,7 +884,67 @@ export async function protectAndTrash(
     failedToTrash,
     skipped: outcomes.filter((o) => !o.protected),
     bytesProtected: stillProtected.reduce((sum, o) => sum + o.bytes, 0),
+    ...(cleanupError ? { cleanupError } : {}),
   };
+}
+
+/** Left in a copy's folder when the Trash refused its original, which was never deleted. */
+const NOT_DELETED_MARK = 'not-deleted';
+
+/**
+ * Discard the Time Capsule copies of items the Trash refused: copied, never deleted, so each copy
+ * only holds space for a file that still exists. This runs after the trash step, where a throw
+ * would lose the only record of what was deleted and the run id an undo needs, so it never
+ * throws: it answers what went wrong in a few words, or null, and logs the detail.
+ *
+ * The order keeps an undo right whatever fails. Each copy is first marked as never deleted, in its
+ * own folder, which needs no index write; the index then drops the entries in one atomic write;
+ * only after that are the folders removed (one left behind is an orphan, which `reconcileCapsule`
+ * sweeps). An undo passes over a marked copy (`listUndoableEntriesForRun`), so an index that could
+ * not be read or written still leaves it putting back exactly what was trashed.
+ */
+async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<string | null> {
+  const ids = new Set(outcomes.map((o) => o.entryId).filter((id): id is string => typeof id === 'string'));
+  if (ids.size === 0) return null;
+  let problem: string | null = null;
+  const report = (step: string, err: unknown): void => {
+    problem ??= err instanceof Error ? err.message : String(err);
+    console.error(`[treemap] time capsule: discarding the copies of items the Trash refused did not finish (${step}):`, err);
+  };
+  for (const id of ids) {
+    // Insurance only, so a mark that could not be written is logged rather than reported: the
+    // steps below still discard the copy, and report if they cannot.
+    await fsp.writeFile(path.join(entryDir(id), NOT_DELETED_MARK), 'The Trash refused the original, so it was never deleted.\n').catch((err: unknown) => {
+      console.error('[treemap] time capsule: a copy of an item the Trash refused could not be marked:', err);
+    });
+  }
+  let store: CapsuleStore | null = null;
+  try {
+    failIfInjected('load');
+    store = await loadStore();
+  } catch (err) {
+    report('reading the index', err);
+  }
+  if (store !== null) {
+    store.entries = store.entries.filter((e) => !ids.has(e.id));
+    try {
+      failIfInjected('save');
+      await saveStore(store);
+    } catch (err) {
+      report('writing the index', err);
+      store = null;
+    }
+  }
+  if (store === null) return problem; // the entries stay, each marked, so its folder stays too
+  for (const id of ids) {
+    try {
+      failIfInjected('drop');
+      await fsp.rm(entryDir(id), { recursive: true, force: true });
+    } catch (err) {
+      report('removing a copy', err);
+    }
+  }
+  return problem;
 }
 
 /* ---------------- index (Time Capsule tab) ---------------- */
@@ -1134,6 +1218,21 @@ async function readManifest(id: string): Promise<EntryManifest> {
 export async function listCapsuleEntriesForRun(runId: string): Promise<TimeCapsuleEntry[]> {
   const store = await loadStore();
   return store.entries.filter((e) => e.runId === runId);
+}
+
+/**
+ * What an undo of one run puts back: its entries that still hold a copy and are not restored yet,
+ * less any copy marked as never deleted (`discardUnusedCopies`). That original is still in place,
+ * so there is nothing to put back, and a restore over it would be refused.
+ */
+export async function listUndoableEntriesForRun(runId: string): Promise<TimeCapsuleEntry[]> {
+  const undoable: TimeCapsuleEntry[] = [];
+  for (const entry of await listCapsuleEntriesForRun(runId)) {
+    if (!entry.hasPayload || entry.restoredAt) continue;
+    const neverDeleted = await fsp.lstat(path.join(entryDir(entry.id), NOT_DELETED_MARK)).then(() => true, () => false);
+    if (!neverDeleted) undoable.push(entry);
+  }
+  return undoable;
 }
 
 /**

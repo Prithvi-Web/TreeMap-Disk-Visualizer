@@ -16,7 +16,7 @@ import { executeAgainstScan, isOnlyHasBeenOpened, unanswerableFields } from './q
 import { getIgnoreMatchers } from './settings';
 import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
-import { protectAndTrash, listCapsuleEntriesForRun, startCapsuleRestore, type ProtectAndTrashResult } from './timeCapsule';
+import { protectAndTrash, listUndoableEntriesForRun, startCapsuleRestore, type ProtectAndTrashResult } from './timeCapsule';
 import nodePath from 'path';
 import { isSpillPath, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
@@ -766,13 +766,16 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     );
   } catch (err) {
     // A refusal from the delete itself (the spill folder's backstop, a Time
-    // Capsule index that cannot be read, a write that failed) is this run's
-    // outcome and is recorded like any other failed run. Thrown past record(),
-    // it left the policy due, so the next 60-second tick ran it again — a full
-    // scan of its folder — and every tick after (T17a's security review).
+    // Capsule index that cannot be read, a copy that could not be written) is
+    // this run's outcome and is recorded like any other failed run. Thrown past
+    // record(), it left the policy due, so the next 60-second tick ran it again —
+    // a full scan of its folder — and every tick after (T17a's security review).
+    // protectAndTrash throws only before its trash step (FG1), so nothing was
+    // deleted, and the record says so.
+    console.error(`[treemap] autopilot: the delete for policy ${policy.id} stopped before anything was deleted:`, err);
     run.status = 'failed';
     run.items = [];
-    run.blockedReason = `The delete stopped: ${err instanceof Error ? err.message : String(err)}`;
+    run.blockedReason = `Nothing was deleted — the delete stopped: ${err instanceof Error ? err.message : String(err)}`;
     return record();
   }
 
@@ -787,6 +790,9 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     run.status = 'blocked';
     run.blockedReason = 'Nothing could be safely protected, so nothing was deleted.';
   }
+  // After the trash step: the items above were trashed and can be undone, but
+  // the copies of what the Trash refused were not all discarded (FG1).
+  if (result.cleanupError) run.blockedReason = run.blockedReason ? `${run.blockedReason} ${result.cleanupError}` : result.cleanupError;
   return record();
 }
 
@@ -847,8 +853,7 @@ export async function undoRun(runId: string): Promise<{ jobId: string; entryCoun
   }
   if (run.undoneAt) throw new AppError(409, 'ALREADY_UNDONE', 'That run has already been undone');
 
-  const entries = (await listCapsuleEntriesForRun(run.capsuleRunId ?? run.id))
-    .filter((e) => e.hasPayload && !e.restoredAt);
+  const entries = await listUndoableEntriesForRun(run.capsuleRunId ?? run.id);
   if (entries.length === 0) {
     throw new AppError(409, 'CAPSULE_EMPTY',
       'The Time Capsule no longer holds the copies from that run, so it cannot be undone. ' +

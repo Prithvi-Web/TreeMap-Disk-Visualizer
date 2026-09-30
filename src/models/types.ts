@@ -1046,7 +1046,7 @@ export interface AutopilotRun {
   at: number;
   mode: AutopilotRunMode;
   status: AutopilotRunStatus;
-  /** Why nothing was deleted, when nothing was. */
+  /** Why nothing was deleted, when nothing was; or what did not finish after the delete. */
   blockedReason?: string;
   items: AutopilotRunItem[];
   /** Bytes the match totalled, before any cap. */
