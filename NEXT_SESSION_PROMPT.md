@@ -5,6 +5,26 @@ Copy everything below the line into a fresh session started in
 
 ---
 
+## LATEST (30 Sep 2026, session f4f5ece4) — RESUME HERE: read `ULTRA-ROADMAP.md` first
+
+**The roadmap is now one file, `ULTRA-ROADMAP.md` at the repo root.** It combines the master prompt's Phases 0–8 with everything the owner asked for on 29–30 Sep 2026, and its section "Starting the next session" holds the owner's paste-in prompt. Read it before anything below; everything under this block is older hand-over and background.
+
+**What the owner asked for this session (verbatim in the roadmap):** (1) "It wasn't able to scan my entire disk", (2) "it was scanning for a super long time", (3) "it started glitching and lagging" — fix every one; (4) switch from Electron to **Tauri** "because it is faster and light weight … so do it", "so that treemap takes lesser storage", "with typescript and rust and the usual app"; "keep going until there is absolutely 0 errors … blazing fast"; the Ultra Roadmap. **Decided:** Phase T (Tauri) is GO, alongside Phase 4 (OD14 asks the owner to confirm the overlap); **OD16 answered "yes turbo by default"** (scans the owner starts run at Turbo; scheduled scans stay Eco) — build it as a Track U task.
+
+**Pushed in push 1 (this commit's push):** `fbbbc75` FG2 — under a test runner nothing reaches the machine's real Trash (moves, empties, lists), snapshots, cloud trash or a real `git gc --prune=now` (`src/services/realMachineGuard.ts`); `ce7294a` FG2b — its review fixes (no test removes anything in the real home; every test file goes through the data-folder fixture); `703b98d` — the Windows CI fix (the Autopilot variants of `capsuleAfterTrash` never set the open-file check; root cause reproduced on the Mac); and the docs commit (this block, `ULTRA-ROADMAP.md`, `docs/superpowers/plans/2026-09-30-phaseT-tauri.md`, `docs/desktop/TAURI-FACTS.md`, `docs/engine/TRACK-U-DIAGNOSIS.md`). The owner was told every test file that reached their real Trash (holiday.mp4 since 28 Jul, f0–f5.bin 26 Aug → 29 Sep, held.bin once, the 27 Aug emptying) — see FG2's commit message.
+
+**In flight when this was written (worktrees under `/private/tmp/claude-501/-Users-prithvivinay-Desktop-Claude-Code-Treemap/129272e7-e460-477b-8714-fa3962c904d7/scratchpad/`; each has a `STATUS.md`; commits pinned as `refs/cands/*` in this repo survive a restart, uncommitted worktree changes do not; durable copies of briefs and rules in `~/.claude/projects/-Users-prithvivinay-Desktop-Claude-Code/treemap-scratch-tools/session-f4f5ece4/`):**
+- **FG3** security fixes, gated green on the pre-docs base: `847d096` offload, `3fd247b` compression, `c78a0bf` capsule (`refs/cands/FG3-*`). Their review (22 confirmed) is being fixed as **FG3b** in `wt-fg3b` (one regression: a folder and an item inside it in one delete gave two undo entries). Replay FG3 + FG3b onto push 1, gate, push 2.
+- **FG4** (`wt-fg4`): a pre-existing HIGH — `git status` etc. run unhardened in any repository under a scanned folder, so a planted repo's config can run commands as the user, reached by read-only reclaim scoring; plus gc redirect, snapshot-restore TOCTOU, portable data folder. **A safety classifier stopped the first attempt while it built planted-repo fixtures: never create a repo/config/.gitattributes/hook that names a command; prove the fix by vetting text fixtures + a spawn recorder (argv/env) only.**
+- **T13d** (hard-link log) done and reviewed-in-progress: `f75e7b2`, `c471a01`, `1451f04`, `29c3e42` on `d1def61` (`refs/cands/T13d-*`); lands in push 2; then `npm run build:native` in main (contract 0.6.0).
+- **T14** SpillSink in `wt-t14` (T14a `074cc7f`, T14b, T14c committed there; T14d next); must be replayed onto T13d's final shapes (LinkLogReport/RunLog/Records changed).
+- **Phase T prep** workflow in `wt-tprep` (T-6 `f021e8c` + review fixes; then T-7…T-12, T-4, T-5, T-1, each reviewed).
+- **Track U plan** being written from the diagnosis → `docs/superpowers/plans/2026-09-30-trackU-owner-issues.md` (commit it with push 2 or 3).
+
+**Standing rules added this session (in `RULES-COMMON.md`):** no helper launches Electron, the installed TreeMap.app or any downloaded bundle, and nothing works around Gatekeeper/XProtect (macOS showed the owner a "contains malware" dialog for a helper's extracted developer Electron); a watchdog kills any test process past 6 GiB (a cargo-mutants binary reached 43 GB); never list or read the Trash; any Tauri measurement build installs download and permission handlers (a spike web view saved two test files into `~/Downloads`). **Do not re-propose notarization** (the owner declined it on 26 Aug; memory `treemap-macos-gatekeeper`).
+
+---
+
 ## RESUME HERE — the 10-hour run (started 23 September 2026, ~05:40 UTC)
 
 **The owner's instruction, verbatim:** *"Do not stop at all for 10 hrs straight. And complete as much as possible in these 10 hrs. Follow the roadmap and keep testing and coding is a flawless workflow. Where everything is tested and the CI is also tested after each step. use the ECC and Gstack combo to code for 10 hrs straight. and then use the strategic compact and before compacting take note of everything so then after the compact is completed... no time is wasted. I need this to be done completly flawlessly."*
@@ -14,7 +34,7 @@ Copy everything below the line into a fresh session started in
 
 **This block is the live state. Update it after every task.** Everything below the next `---` is the older hand-over and is background. (Rewritten ~10:45 UTC; the earlier, longer version of this block is in git history — `git log -p NEXT_SESSION_PROMPT.md`.)
 
-### LATEST (29 Sep 2026, ~06:40 UTC, session 129272e7) — RESUME HERE
+### Earlier LATEST (29 Sep 2026, ~06:40 UTC, session 129272e7)
 
 **This session resumed after session 38ea1b2d stopped abruptly (27 Sep ~17:36 UTC, right after T12e's gate went green).** Everything it built was found intact; nothing was lost.
 - **The owner pushed `767d346` (T10 and its fixes). CI run 36524222262:** macOS, Linux and Linux pt-BR GREEN; Windows green but for R96's worker probe, which now said how it died: exit code 3221225477 (0xC0000005, an access violation) after its stderr "the worker thread answered 0.5.0; terminating it".
