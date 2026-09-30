@@ -2,9 +2,10 @@ import { AppError } from '../middleware/errorHandler';
 import { checkOpenHandles, type OpenHandleReport } from './openHandleGuard';
 import { knownSizeOf } from './policy';
 import {
-  listCapsuleEntriesForRun,
-  listUndoableEntriesForRun,
+  nothingToUndo,
+  passedOverOf,
   planProtection,
+  planUndoForRun,
   protectAndTrash,
   startCapsuleRestore,
   type ProtectionPlan,
@@ -228,22 +229,25 @@ export async function commitCart(paths: string[], runId?: string): Promise<CartC
  * the user unsure what came back. Same wording and same failure mode as
  * Autopilot's undo, because it is the same guarantee.
  */
-export async function undoCartRun(runId: string): Promise<{ jobId: string; entryCount: number; bytesTotal: number }> {
+export async function undoCartRun(runId: string): Promise<CartUndoResult> {
   if (typeof runId !== 'string' || !runId) {
     throw new AppError(400, 'RUN_ID_REQUIRED', 'Body must include the "runId" the commit returned');
   }
-  const entries = await listUndoableEntriesForRun(runId);
-  if (entries.length === 0) {
-    // Copies still held but none to put back: everything the commit copied is still in its place —
-    // an item the Trash refused, or one whose trash step was not confirmed and has not gone (FG3b).
-    if ((await listCapsuleEntriesForRun(runId)).some((e) => e.hasPayload && !e.restoredAt)) {
-      throw new AppError(409, 'NOTHING_TO_UNDO',
-        'Everything that commit copied is still in its place, so there is nothing to put back. Its copies stay in the Time Capsule.');
-    }
-    throw new AppError(409, 'CAPSULE_EMPTY',
-      'The Time Capsule no longer holds the copies from that commit, so it cannot be undone. ' +
-      'Copies are kept for a limited time and can be evicted to make room.');
-  }
-  const job: TimeCapsuleJob = await startCapsuleRestore(entries.map((e) => e.id));
-  return { jobId: job.jobId, entryCount: entries.length, bytesTotal: job.bytesTotal };
+  const plan = await planUndoForRun(runId);
+  // Nothing to put back now: the refusal says what the disk showed of each copy still held — the
+  // same file in its place, never deleted, another file there, or a place it could not look at
+  // (FG3c) — or that no copy is held at all.
+  if (plan.undoable.length === 0) throw nothingToUndo('commit', plan);
+  const job: TimeCapsuleJob = await startCapsuleRestore(plan.undoable.map((e) => e.id));
+  return { jobId: job.jobId, entryCount: plan.undoable.length, bytesTotal: job.bytesTotal, ...passedOverOf(plan) };
 }
+
+/** What an undo puts back, and each copy of an unconfirmed item it passed over, saying why (FG3c). */
+export interface CartUndoResult {
+  jobId: string;
+  entryCount: number;
+  bytesTotal: number;
+  /** Present when the undo passed over a copy a later undo may still put back, once its place is empty. */
+  passedOver?: { path: string; reason: string }[];
+}
+

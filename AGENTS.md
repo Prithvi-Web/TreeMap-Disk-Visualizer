@@ -310,7 +310,12 @@ OpenAPI 3 spec).
      `failedToTrash`, its copy dropped; and one the disk cannot show either way
      — a look that failed, or a trash command stopped before it answered,
      which may still finish — is in `unverified`, with its copy **kept**, and
-     the undo puts it back only if its place is empty by then.
+     the undo puts it back only if its place is empty by then. An undo that
+     passes over such a copy names it in `passedOver` with what the disk
+     showed (the same file still in its place, something else there, or a
+     place it could not look at — never "still in its place" otherwise), and a
+     later undo can still put it back. An Autopilot run lists these items in
+     `unverified` and stays undoable until they are put back.
 
 Never skip step 1: destructive endpoints refuse paths that are not inside a
 root this server has actually scanned. Scanning is what grants (scoped,

@@ -630,7 +630,8 @@ const schemas: Json = {
       bytesDeleted: int('What was actually removed; 0 for a dry run'),
       capsuleRunId: str('Ties this run’s deletions to their Time Capsule copies'),
       skipped: arr(obj({ path: str(), reason: str() }, ['path', 'reason'])),
-      undoneAt: int('Set once the run has been undone'),
+      unverified: arr(str(), 'Items of skipped whose trash step was not confirmed either way: their copies are kept, and an undo puts each back once its place is empty'),
+      undoneAt: int('Set once the run has been undone: everything an undo could put back was put back'),
     },
     ['id', 'policyId', 'policyName', 'at', 'mode', 'status', 'items', 'bytesMatched', 'bytesDeleted', 'skipped'],
   ),
@@ -2792,9 +2793,13 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     destructive: true,
     parameters: [pathParam('id', 'Run id'), idempotencyHeader],
     responses: {
-      '202': jsonResponse('Restore started', obj({ jobId: str(), entryCount: int() }, ['jobId', 'entryCount'])),
+      '202': jsonResponse('Restore started', obj({
+        jobId: str(),
+        entryCount: int(),
+        passedOver: arr(opaque('{ path, reason } — a copy of an unconfirmed item not put back yet (its place is not empty), saying what the disk showed; the run stays undoable for it')),
+      }, ['jobId', 'entryCount'])),
       '404': errorResponse('RUN_NOT_FOUND'),
-      '409': errorResponse('NOTHING_TO_UNDO, ALREADY_UNDONE or CAPSULE_EMPTY — refused rather than half-undone'),
+      '409': errorResponse('NOTHING_TO_UNDO (the sentence says what the disk showed of each copy still held), ALREADY_UNDONE or CAPSULE_EMPTY — refused rather than half-undone'),
     },
   },
   {
@@ -2992,10 +2997,15 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '202': jsonResponse(
         'Restore started; follow it on GET /api/timecapsule/jobs/{jobId}/progress',
-        obj({ jobId: str(), entryCount: int(), bytesTotal: int() }, ['jobId', 'entryCount', 'bytesTotal']),
+        obj({
+          jobId: str(),
+          entryCount: int(),
+          bytesTotal: int(),
+          passedOver: arr(opaque('{ path, reason } — a copy of an unconfirmed item not put back yet (its place is not empty), saying what the disk showed; a later undo can still put it back')),
+        }, ['jobId', 'entryCount', 'bytesTotal']),
       ),
       '400': errorResponse('RUN_ID_REQUIRED'),
-      '409': errorResponse('CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — everything the commit copied is still in its place'),
+      '409': errorResponse('CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — no copy it holds can be put back now, and the sentence says what the disk showed of each: the same file still in its place, never deleted, something else standing there, or a place that could not be looked at'),
     },
   },
 

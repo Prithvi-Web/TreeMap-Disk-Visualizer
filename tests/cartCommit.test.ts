@@ -568,6 +568,41 @@ test('the result summary offers a one-click undo of that run', () => {
   assert.match(undo, /\/api\/cart\/undo/);
 });
 
+/**
+ * `cartUndoRun` really evaluated: what the person is told when the restore completes, from the
+ * undo's own answer. Its collaborators are stand-ins; `watchJob` captures the completion handler.
+ */
+async function undoToasts(answer: Record<string, unknown>): Promise<string[]> {
+  const src = slice('async function cartUndoRun', '// Drawer + delegated row-button wiring.');
+  const toasts: string[] = [];
+  let watched: { onComplete: () => void } | null = null;
+  const make = new Function(
+    'api', 'closeModal', 'watchJob', 'toast', 'formatCount', 'rescan', 'renderCart', 'refreshCartButtons', 'cartLastRun',
+    `${src}; return cartUndoRun;`,
+  );
+  const cartUndoRun = make(
+    () => Promise.resolve(answer),
+    () => undefined,
+    (opts: { onComplete: () => void }) => { watched = opts; },
+    (message: string) => toasts.push(message),
+    (n: number) => String(n),
+    () => undefined, () => undefined, () => undefined, null,
+  ) as (runId: string) => Promise<void>;
+  await cartUndoRun('run-1');
+  assert.ok(watched, 'the restore is followed');
+  (watched as { onComplete: () => void }).onComplete();
+  return toasts;
+}
+
+test('an undo that passed over an unconfirmed item says so, rather than that everything is back (FG3c #2)', async () => {
+  const reason = 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+  const partial = await undoToasts({ jobId: 'j', entryCount: 1, bytesTotal: 10, passedOver: [{ path: '/x/late.txt', reason }] });
+  assert.doesNotMatch(partial.join(' | '), /Everything from that run is back/, 'one item was not put back');
+  assert.ok(partial.join(' | ').includes(reason), `the item's own sentence is shown (${partial.join(' | ')})`);
+  const whole = await undoToasts({ jobId: 'j', entryCount: 2, bytesTotal: 10 });
+  assert.match(whole.join(' | '), /Everything from that run is back — 2 items/, 'and a whole undo still says so');
+});
+
 test('items the capsule could not protect are shown as left behind, never as deleted', () => {
   const body = slice('function cartCommitSummary', 'async function cartUndoRun');
   assert.match(body, /skipped/, 'the summary reads the skipped list');

@@ -20,7 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 import { meansAbsent } from '../utils/errno';
 import { assertNotSpillPath } from '../middleware/pathGuard';
 import { foldName, isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
-import { ABSENT, afterReportedFailure, identityOf, type Identity } from '../utils/placeIdentity';
+import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from '../utils/placeIdentity';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -915,9 +915,10 @@ export async function protectAndTrash(
   let trashed: string[] = [];
   let failedToTrash: { path: string; reason: string; stopped?: true }[] = [];
   const unverified: { path: string; reason: string }[] = [];
+  // What stands at each path now, so a failure can be checked against the disk afterwards — and,
+  // for an item that stays unconfirmed, by an undo later (`markUnverified`).
+  const before = new Map<string, Identity>();
   if (paths.length > 0) {
-    // What stands at each path now, so a failure can be checked against the disk afterwards.
-    const before = new Map<string, Identity>();
     for (const p of paths) before.set(p, await identityOf(p));
     try {
       const result = await moveToTrash(paths, { unattended: context.unattended === true });
@@ -952,7 +953,7 @@ export async function protectAndTrash(
   if (unverified.length > 0) {
     const notConfirmed = new Set(unverified.map((u) => u.path));
     const kept = protectedOutcomes.filter((o) => notConfirmed.has(o.path));
-    await markUnverified(kept);
+    await markUnverified(kept, before);
     await dropSupersededUnverified(kept);
   }
   let cleanupError: string | undefined;
@@ -1046,18 +1047,50 @@ const UNVERIFIED_MARK = 'unverified';
 /**
  * Mark the copies of items whose trash step the disk could not confirm, in each copy's own folder:
  * the copy is kept, and an undo puts it back only if its original place is empty by then
- * (`listUndoableEntriesForRun`). After the trash step, so it never throws; a mark that could not be
- * written is logged, and leaves an ordinary copy, which an undo treats as trashed.
+ * (`planUndoForRun`). The mark holds what stood at the place just before the trash step
+ * (`before`, an `identityOf`, or null when nothing known stood there), so an undo that finds the
+ * place occupied can tell "the same file, still in its place" from anything else (FG3c). After the
+ * trash step, so it never throws; a mark that could not be written is logged, and leaves an
+ * ordinary copy, which an undo treats as trashed.
  */
-async function markUnverified(outcomes: ProtectionOutcome[]): Promise<void> {
+async function markUnverified(outcomes: ProtectionOutcome[], before: ReadonlyMap<string, Identity>): Promise<void> {
   for (const outcome of outcomes) {
     if (typeof outcome.entryId !== 'string') continue;
-    await fsp.writeFile(
-      path.join(entryDir(outcome.entryId), UNVERIFIED_MARK),
-      'The Trash reported a failure the disk could not confirm; an undo puts this back only if its place is empty.\n',
-    ).catch((err: unknown) => {
+    const was = before.get(outcome.path);
+    const mark: UnverifiedMark = {
+      note: 'The Trash reported a failure the disk could not confirm; an undo puts this back only if its place is empty.',
+      before: typeof was === 'string' ? was : null,
+    };
+    await fsp.writeFile(path.join(entryDir(outcome.entryId), UNVERIFIED_MARK), `${JSON.stringify(mark)}\n`).catch((err: unknown) => {
       console.error('[treemap] time capsule: a copy whose trash step could not be confirmed could not be marked:', err);
     });
+  }
+}
+
+/** What an unverified mark holds (FG3c). A mark from before FG3c is a bare sentence: `before` null. */
+interface UnverifiedMark {
+  note: string;
+  /** What stood at the item's place just before its trash step (`identityOf`), or null. */
+  before: string | null;
+}
+
+/**
+ * What a copy's unverified mark says stood at its place before the trash step, or null when the
+ * copy carries no mark. A mark there that cannot be read as one this build writes still marks the
+ * copy, with nothing known of what stood there (`before: null`).
+ */
+async function unverifiedMarkOf(id: string): Promise<Pick<UnverifiedMark, 'before'> | null> {
+  let text: string;
+  try {
+    text = await fsp.readFile(path.join(entryDir(id), UNVERIFIED_MARK), 'utf8');
+  } catch (err) {
+    return meansAbsent(err) ? null : { before: null };
+  }
+  try {
+    const was = (JSON.parse(text) as { before?: unknown } | null)?.before;
+    return { before: typeof was === 'string' ? was : null };
+  } catch {
+    return { before: null };
   }
 }
 
@@ -1515,24 +1548,118 @@ export async function listCapsuleEntriesForRun(runId: string): Promise<TimeCapsu
 }
 
 /**
- * What an undo of one run puts back: its entries that still hold a copy and are not restored yet,
- * less any copy marked as never deleted (`discardUnusedCopies`). That original is still in place,
- * so there is nothing to put back, and a restore over it would be refused. A copy marked as not
- * confirmed (`markUnverified`, FG3b) is decided by the disk now: put back when nothing stands at
- * its place — the Trash took it after all — and passed over otherwise, still in the Time Capsule.
+ * Why an undo passed over a copy it holds (FG3c), each only what the disk showed:
+ * - `never-deleted` — the Trash refused the item and the disk showed it untouched, at the commit;
+ * - `in-place` — its trash step was not confirmed, and the same file (`identityOf`, recorded just
+ *   before the step) stands at its place now;
+ * - `occupied` — its trash step was not confirmed, and something stands at its place that TreeMap
+ *   cannot show is the file it copied (another identity, or none was recorded);
+ * - `unknown` — its trash step was not confirmed, and its place could not be looked at now.
+ * Only the last three can still be put back by a later undo, once their place is empty.
  */
-export async function listUndoableEntriesForRun(runId: string): Promise<TimeCapsuleEntry[]> {
-  const undoable: TimeCapsuleEntry[] = [];
+export type PassedOverWhy = 'never-deleted' | 'in-place' | 'occupied' | 'unknown';
+
+export interface UndoPlan {
+  /** Copies an undo puts back now. */
+  undoable: TimeCapsuleEntry[];
+  /** Copies held but not put back, each with what the disk showed. */
+  passedOver: { entry: TimeCapsuleEntry; why: PassedOverWhy }[];
+}
+
+/**
+ * What an undo of one run does with each copy it holds: its entries that still hold a copy and are
+ * not restored yet. A copy marked as never deleted (`discardUnusedCopies`) is passed over: its
+ * original was never deleted, and a restore over it would be refused. A copy marked as not
+ * confirmed (`markUnverified`, FG3b) is decided by the disk now: put back when nothing stands at its
+ * place — the Trash took it after all — and passed over otherwise, still in the Time Capsule, with
+ * what the look showed (`PassedOverWhy`): never "still in its place" unless it is the same file.
+ */
+export async function planUndoForRun(runId: string): Promise<UndoPlan> {
+  const plan: UndoPlan = { undoable: [], passedOver: [] };
   const marked = (id: string, mark: string): Promise<boolean> => fsp.lstat(path.join(entryDir(id), mark)).then(() => true, () => false);
   for (const entry of await listCapsuleEntriesForRun(runId)) {
     if (!entry.hasPayload || entry.restoredAt) continue;
     // A record TreeMap did not make holds no copy of TreeMap's, and would refuse the whole undo (FG3).
     if (!isEntryId(entry.id)) continue;
-    if (await marked(entry.id, NOT_DELETED_MARK)) continue;
-    if (await marked(entry.id, UNVERIFIED_MARK) && (await identityOf(entry.originalPath)) !== ABSENT) continue;
-    undoable.push(entry);
+    if (await marked(entry.id, NOT_DELETED_MARK)) {
+      plan.passedOver.push({ entry, why: 'never-deleted' });
+      continue;
+    }
+    const mark = await unverifiedMarkOf(entry.id);
+    if (mark !== null) {
+      const now = await identityOf(entry.originalPath);
+      if (now !== ABSENT) {
+        const why: PassedOverWhy = now === UNKNOWN ? 'unknown' : mark.before !== null && now === mark.before ? 'in-place' : 'occupied';
+        plan.passedOver.push({ entry, why });
+        continue;
+      }
+    }
+    plan.undoable.push(entry);
   }
-  return undoable;
+  return plan;
+}
+
+/** The copies an undo of one run puts back now (`planUndoForRun`). */
+export async function listUndoableEntriesForRun(runId: string): Promise<TimeCapsuleEntry[]> {
+  return (await planUndoForRun(runId)).undoable;
+}
+
+/** Whether a later undo may still put this copy back: its trash step was not confirmed. */
+export function stillUndoable(why: PassedOverWhy): boolean {
+  return why !== 'never-deleted';
+}
+
+/**
+ * The copies of unconfirmed items an undo passed over, as rows for its answer — or nothing, when
+ * there are none. The copies a later undo may still put back, each saying what the disk showed.
+ */
+export function passedOverOf(plan: UndoPlan): { passedOver?: { path: string; reason: string }[] } {
+  const rows = plan.passedOver
+    .filter((p) => stillUndoable(p.why))
+    .map((p) => ({ path: p.entry.originalPath, reason: passedOverReason(p.why) }));
+  return rows.length > 0 ? { passedOver: rows } : {};
+}
+
+/** One passed-over copy, as a sentence about its item (FG3c). */
+export function passedOverReason(why: PassedOverWhy): string {
+  switch (why) {
+    case 'never-deleted': return 'The Trash refused it, so it was never deleted.';
+    case 'in-place': return 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+    case 'occupied':
+      return 'Something stands where it was that TreeMap cannot show is the item it copied — the original may be in the Trash. ' +
+        'An undo never overwrites, so its copy stays in the Time Capsule until its place is empty.';
+    case 'unknown': return 'Its place could not be looked at, so it was not put back; its copy stays in the Time Capsule.';
+  }
+}
+
+/**
+ * The refusal of an undo with nothing to put back now (FG3c): CAPSULE_EMPTY when the run holds no
+ * copy at all, and otherwise NOTHING_TO_UNDO, saying of each passed-over copy only what the disk
+ * showed — "still in its place" for the same file, and never for another file or a look that failed.
+ */
+export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError {
+  if (plan.passedOver.length === 0) {
+    return new AppError(409, 'CAPSULE_EMPTY',
+      `The Time Capsule no longer holds the copies from that ${noun}, so it cannot be undone. ` +
+      'Copies are kept for a limited time and can be evicted to make room.');
+  }
+  const count = (why: PassedOverWhy): number => plan.passedOver.filter((p) => p.why === why).length;
+  const items = (n: number): string => `${formatCount(n)} item${n === 1 ? '' : 's'}`;
+  const [inPlace, never, occupied, unknown] = (['in-place', 'never-deleted', 'occupied', 'unknown'] as const).map(count);
+  if (inPlace === plan.passedOver.length) {
+    return new AppError(409, 'NOTHING_TO_UNDO',
+      `Everything that ${noun} copied is still in its place, so there is nothing to put back. Its copies stay in the Time Capsule.`);
+  }
+  const parts: string[] = [];
+  if (inPlace > 0) parts.push(`${items(inPlace)} still in ${inPlace === 1 ? 'its' : 'their'} place`);
+  if (never > 0) parts.push(`${items(never)} the Trash refused, so never deleted`);
+  if (occupied > 0) {
+    parts.push(`${items(occupied)} where something now stands that TreeMap cannot show is what it copied — the original may be in the Trash`);
+  }
+  if (unknown > 0) parts.push(`${items(unknown)} whose place could not be looked at`);
+  return new AppError(409, 'NOTHING_TO_UNDO',
+    `Nothing from that ${noun} can be put back now: ${parts.join('; ')}. ` +
+    'An undo never overwrites what stands at an item\'s place, so the copies stay in the Time Capsule.');
 }
 
 /**

@@ -126,11 +126,14 @@ function renderAutopilotRuns(runs) {
     const needsApproval = r.status === 'awaiting-approval';
     const tint = needsApproval ? '#FF9F0A' : r.status === 'completed' && r.bytesDeleted > 0 ? '#30D158'
       : r.status === 'failed' ? '#FF453A' : '#8E8E93';
+    // Items whose trash step was not confirmed either way: the Trash may have taken them, so their
+    // copies were kept and the run's undo puts each back once its place is empty (FG3c).
+    const unconfirmed = (r.unverified || []).length;
     const headline = r.bytesDeleted > 0
       ? `Removed ${formatBytes(r.bytesDeleted)} across ${formatCount(r.items.length)} item${r.items.length === 1 ? '' : 's'}`
       : r.mode === 'dry-run'
         ? `Would remove ${formatBytes(r.bytesMatched)} across ${formatCount(r.items.length)} item${r.items.length === 1 ? '' : 's'}`
-        : 'Removed nothing';
+        : unconfirmed > 0 ? 'Nothing confirmed as removed' : 'Removed nothing';
     const items = r.items.slice(0, 8).map(i => `
       <div class="ap-run-item">
         <span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(i.name)}</span>
@@ -156,7 +159,7 @@ function renderAutopilotRuns(runs) {
         ${more}${skipped}
         <div class="ap-run-actions">
           ${needsApproval ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.policyId)}"><span data-icon="check"></span>Approve this policy</button>` : ''}
-          ${r.bytesDeleted > 0 && !r.undoneAt ? `<button class="btn" data-ap-undo="${escapeHtml(r.id)}"><span data-icon="refresh"></span>Undo this run</button>` : ''}
+          ${(r.bytesDeleted > 0 || unconfirmed > 0) && !r.undoneAt ? `<button class="btn" data-ap-undo="${escapeHtml(r.id)}"><span data-icon="refresh"></span>Undo this run</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -205,7 +208,14 @@ function undoAutopilotRun(runId) {
         footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
         cancelledMessage: 'Undo cancelled — nothing was left half-written',
         lostMessage: 'Lost the progress stream — reopen Autopilot for the result',
-        onComplete: () => { toast('Everything from that run is back'); loadAutopilot(); },
+        // One it passed over (its place is not empty yet) is named with what the disk showed (FG3c).
+        onComplete: () => {
+          const left = resp.passedOver || [];
+          toast(left.length
+            ? `Put back ${formatCount(resp.entryCount)} item${resp.entryCount === 1 ? '' : 's'}; ${formatCount(left.length)} not put back: ${left[0].reason}`
+            : 'Everything from that run is back', left.length ? 'error' : undefined, left.length ? 12000 : undefined);
+          loadAutopilot();
+        },
         onSettled: () => loadAutopilot(),
       });
     })

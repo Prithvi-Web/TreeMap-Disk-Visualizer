@@ -7,7 +7,6 @@ import {
   normalizePolicy,
   simulatePolicy,
   listRuns,
-  getRun,
   undoRun,
 } from '../services/autopilot';
 import { idempotency } from '../middleware/idempotency';
@@ -118,15 +117,16 @@ autopilotRouter.get('/autopilot/runs', async (req: Request, res: Response) => {
  */
 autopilotRouter.post('/autopilot/runs/:id/undo', idempotency, async (req: Request, res: Response) => {
   const id = String(req.params.id);
-  const run = await getRun(id);
   try {
-    const result = await undoRun(id);
+    // The audit names what this undo puts back — an undo can come after another that passed over a
+    // copy it could not put back yet (FG3c) — and the answer is the rest.
+    const { puttingBack, ...answer } = await undoRun(id);
     await appendAudit({
       action: 'autopilot.undo', source: 'http', tokenId: tokenIdFor('http'),
-      paths: run ? run.items.map((i) => i.path) : [], bytes: run?.bytesDeleted ?? null,
+      paths: puttingBack.paths, bytes: puttingBack.bytes,
       dryRun: false, outcome: 'ok',
     });
-    res.status(202).json(result);
+    res.status(202).json(answer);
   } catch (err) {
     if (err instanceof AppError) {
       await appendAudit({

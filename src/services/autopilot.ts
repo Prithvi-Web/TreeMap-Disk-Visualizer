@@ -16,7 +16,15 @@ import { executeAgainstScan, isOnlyHasBeenOpened, unanswerableFields } from './q
 import { getIgnoreMatchers } from './settings';
 import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
-import { protectAndTrash, listUndoableEntriesForRun, startCapsuleRestore, type ProtectAndTrashResult } from './timeCapsule';
+import {
+  nothingToUndo,
+  passedOverOf,
+  planUndoForRun,
+  protectAndTrash,
+  startCapsuleRestore,
+  stillUndoable,
+  type ProtectAndTrashResult,
+} from './timeCapsule';
 import nodePath from 'path';
 import { isSpillPath, PathRejectedError, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
@@ -810,14 +818,18 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     // Not confirmed either way: its copy was kept, and the row says so rather than "untouched" (FG3b).
     ...result.unverified.map((u) => ({ path: u.path, reason: u.reason })),
   ];
+  // Named apart as well (FG3c): the Trash may have taken them, so the run keeps an undo for them.
+  if (result.unverified.length > 0) run.unverified = result.unverified.map((u) => u.path);
   if (run.items.length === 0) {
     run.status = 'blocked';
-    // Protected but refused by the Trash (the open-file check that could not run, unattended, is
-    // the usual one) is a different fact from not protected, and the refusal is the reason to give.
-    run.blockedReason = result.failedToTrash.length > 0
-      ? `Nothing was moved to the Trash: ${result.failedToTrash[0].reason}`
-      : result.unverified.length > 0
-        ? `Nothing was confirmed as moved to the Trash. ${result.unverified[0].reason}`
+    // An item not confirmed either way may be in the Trash, so "nothing was moved" is said only
+    // when none is (FG3c). Protected but refused by the Trash (the open-file check that could not
+    // run, unattended, is the usual one) is a different fact from not protected, and the refusal
+    // is the reason to give.
+    run.blockedReason = result.unverified.length > 0
+      ? `Nothing was confirmed as moved to the Trash. ${result.unverified[0].reason}`
+      : result.failedToTrash.length > 0
+        ? `Nothing was moved to the Trash: ${result.failedToTrash[0].reason}`
         : 'Nothing could be safely protected, so nothing was deleted.';
   }
   // After the trash step: the items above were trashed and can be undone, but
@@ -873,27 +885,50 @@ export async function getRun(id: string): Promise<AutopilotRun | undefined> {
  * any other restore. Fails loudly when the capsule no longer holds the run —
  * past its retention window, or evicted — rather than reporting a partial
  * success that leaves the user unsure what came back.
+ *
+ * Decided by the copies the run holds, not by what it counted as deleted
+ * (FG3c): an item whose trash step was not confirmed has its copy kept and may
+ * be in the Trash, so a run of nothing else is not "did not delete anything",
+ * and an undo puts such a copy back once its place is empty. One that passes
+ * over such a copy (its place is not empty yet) names it and leaves the run
+ * undoable, so a later undo can still put it back.
  */
-export async function undoRun(runId: string): Promise<{ jobId: string; entryCount: number }> {
+export async function undoRun(runId: string): Promise<AutopilotUndo> {
   const store = await loadStore();
   const run = store.runs.find((r) => r.id === runId);
   if (!run) throw new AppError(404, 'RUN_NOT_FOUND', 'No such run');
-  if (run.mode !== 'live' || run.bytesDeleted === 0) {
-    throw new AppError(409, 'NOTHING_TO_UNDO', 'That run did not delete anything');
-  }
+  if (run.mode !== 'live') throw new AppError(409, 'NOTHING_TO_UNDO', 'That run did not delete anything');
   if (run.undoneAt) throw new AppError(409, 'ALREADY_UNDONE', 'That run has already been undone');
 
-  const entries = await listUndoableEntriesForRun(run.capsuleRunId ?? run.id);
-  if (entries.length === 0) {
-    throw new AppError(409, 'CAPSULE_EMPTY',
-      'The Time Capsule no longer holds the copies from that run, so it cannot be undone. ' +
-      'Copies are kept for a limited time and can be evicted to make room.');
+  const plan = await planUndoForRun(run.capsuleRunId ?? run.id);
+  if (plan.undoable.length === 0) {
+    // Nothing trashed, nothing unconfirmed and no copy held: the run deleted nothing.
+    if (plan.passedOver.length === 0 && run.bytesDeleted === 0 && !(run.unverified?.length)) {
+      throw new AppError(409, 'NOTHING_TO_UNDO', 'That run did not delete anything');
+    }
+    throw nothingToUndo('run', plan);
   }
 
-  const job = await startCapsuleRestore(entries.map((e) => e.id));
-  run.undoneAt = Date.now();
+  const job = await startCapsuleRestore(plan.undoable.map((e) => e.id));
+  // Undone only when no copy is left that a later undo could still put back.
+  if (!plan.passedOver.some((p) => stillUndoable(p.why))) run.undoneAt = Date.now();
   await saveStore(store);
-  return { jobId: job.jobId, entryCount: entries.length };
+  return {
+    jobId: job.jobId,
+    entryCount: plan.undoable.length,
+    ...passedOverOf(plan),
+    puttingBack: { paths: plan.undoable.map((e) => e.originalPath), bytes: job.bytesTotal },
+  };
+}
+
+/** What `undoRun` started. `puttingBack` is for the audit line, and is not part of the HTTP answer. */
+export interface AutopilotUndo {
+  jobId: string;
+  entryCount: number;
+  /** Copies of unconfirmed items it passed over, each saying why; a later undo may still put them back. */
+  passedOver?: { path: string; reason: string }[];
+  /** The places this undo restores, and their bytes: what it did, rather than what the run once deleted. */
+  puttingBack: { paths: string[]; bytes: number };
 }
 
 /* ---------------- the scheduled tick ---------------- */

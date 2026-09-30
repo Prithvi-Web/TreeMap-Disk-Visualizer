@@ -1594,6 +1594,60 @@ test('undo streams through the one shared progress dialog', () => {
   assert.match(fn, /cancelUrl/);
 });
 
+/** `renderAutopilotRuns` really evaluated for one run: what its row SAYS and OFFERS. */
+function autopilotRunRow(run: Record<string, unknown>): string {
+  const code = appCode();
+  const src = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotPolicy'));
+  assert.ok(src.length > 100 && src.length < 8000, `the renderAutopilotRuns slice is ${src.length} chars`);
+  const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
+  const make = new Function(
+    '$', 'formatBytes', 'formatCount', 'formatDate', 'escapeHtml', 'icon', 'AP_STATUS_LABEL',
+    `${src}; return renderAutopilotRuns;`,
+  );
+  make(() => host, (n: number) => `${n} B`, (n: number) => String(n), () => 'today', (s: unknown) => String(s), () => '', {})([run]);
+  return host.innerHTML;
+}
+
+test('a run whose items were not confirmed as trashed offers its undo, and does not say it removed nothing (FG3c #3)', () => {
+  const base = {
+    id: 'run-1', policyId: 'p', policyName: 'p', at: 0, mode: 'live', status: 'blocked', items: [], bytesMatched: 64, bytesDeleted: 0,
+    skipped: [{ path: '/x/late.bin', reason: 'The Trash reported: a test. TreeMap could not confirm whether it is still in place.' }],
+  };
+  const unconfirmed = autopilotRunRow({ ...base, unverified: ['/x/late.bin'] });
+  assert.match(unconfirmed, /data-ap-undo="run-1"/, 'the undo its row promises is offered');
+  assert.doesNotMatch(unconfirmed, /Removed nothing/, 'and it does not claim nothing was removed');
+  const nothing = autopilotRunRow(base);
+  assert.doesNotMatch(nothing, /data-ap-undo/, 'a run that deleted nothing offers no undo');
+  assert.match(nothing, /Removed nothing/);
+  assert.doesNotMatch(autopilotRunRow({ ...base, unverified: ['/x/late.bin'], undoneAt: 1 }), /data-ap-undo/, 'nor does one already undone');
+});
+
+test('an Autopilot undo that passed over an unconfirmed item says so, rather than that everything is back (FG3c #3)', async () => {
+  const code = appCode();
+  const src = code.slice(code.indexOf('function undoAutopilotRun'), code.indexOf('function deletePolicy'));
+  const run = async (answer: Record<string, unknown>): Promise<string[]> => {
+    const toasts: string[] = [];
+    let watched: { onComplete: () => void } | null = null;
+    const make = new Function('api', 'watchJob', 'toast', 'loadAutopilot', 'formatCount', `${src}; return undoAutopilotRun;`);
+    make(
+      () => Promise.resolve(answer),
+      (opts: { onComplete: () => void }) => { watched = opts; },
+      (message: string) => toasts.push(message),
+      () => undefined,
+      (n: number) => String(n),
+    )('run-1');
+    for (let i = 0; i < 10 && watched === null; i++) await new Promise((r) => setImmediate(r));
+    assert.ok(watched, 'the restore is followed');
+    (watched as { onComplete: () => void }).onComplete();
+    return toasts;
+  };
+  const reason = 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+  const partial = await run({ jobId: 'j', entryCount: 1, passedOver: [{ path: '/x/late.bin', reason }] });
+  assert.doesNotMatch(partial.join(' | '), /Everything from that run is back/, 'one item was not put back');
+  assert.ok(partial.join(' | ').includes(reason), `the item's own sentence is shown (${partial.join(' | ')})`);
+  assert.match((await run({ jobId: 'j', entryCount: 2 })).join(' | '), /Everything from that run is back/, 'and a whole undo still says so');
+});
+
 test('a run shows why each item was chosen, and what it left alone', () => {
   // §B1 wants the run record to carry what and why. On screen that means the
   // rule's own words beside every item, and the skipped list visible.

@@ -1062,7 +1062,13 @@ export interface AutopilotRun {
   capsuleRunId?: string;
   /** Selected but not deleted, each with the reason. */
   skipped: { path: string; reason: string }[];
-  /** Set once the run has been undone. */
+  /**
+   * Items of `skipped` whose trash step was not confirmed either way (FG3b, FG3c): the Trash may
+   * have taken them after all, so their copies are kept and an undo of this run puts each back once
+   * its place is empty. Absent when there were none.
+   */
+  unverified?: string[];
+  /** Set once the run has been undone: everything an undo could put back was put back. */
   undoneAt?: number;
 }
 

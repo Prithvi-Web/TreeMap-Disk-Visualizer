@@ -7,13 +7,17 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleAfterTrash-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { getCapsuleIndex, getCapsuleJob, listUndoableEntriesForRun, setDiscardFaultForTests, type DiscardStep } from '../src/services/timeCapsule';
+import { deleteCapsuleEntry, getCapsuleIndex, getCapsuleJob, listUndoableEntriesForRun, setDiscardFaultForTests, type DiscardStep } from '../src/services/timeCapsule';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
-import { approvePolicy, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
+import { approvePolicy, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
 import { platform } from '../src/platform';
 import { invalidateCapabilities } from '../src/platform/capabilities';
 import { waitFor } from './fixtures/waitFor';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
 
 /**
  * Follow-up FG1, item 2. After its trash step `protectAndTrash` discards the Time Capsule copies of
@@ -443,6 +447,196 @@ test('an Autopilot run whose trash step could not be confirmed says so, and does
     const row = run.skipped.find((s) => s.path === late);
     assert.match(row?.reason ?? '', /could not confirm/, `and so does its row (${row?.reason})`);
     assert.doesNotMatch(row?.reason ?? '', /untouched/);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+/* ─────────────── FG3c: an undo says what it knows of an unconfirmed item ─────────────── */
+
+/** Finder finishing the Apple event it already had: the item leaves its place for the stand-in Trash. */
+function finderFinishes(p: string): void {
+  fs.renameSync(p, path.join(FAKE_TRASH, `${trashCalls++}-${path.basename(p)}`));
+}
+
+/** The error `promise` rejects with, as the caller sees it. */
+async function refusalOf(promise: Promise<unknown>): Promise<{ code?: string; message?: string }> {
+  return promise.then(
+    (value) => assert.fail(`expected a refusal, got ${JSON.stringify(value)}`),
+    (err: { code?: string; message?: string }) => err,
+  );
+}
+
+test('an unconfirmed item whose place another file now holds is never called still in its place (FG3c #2)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-late-regen-');
+  const late = path.join(dir, 'late-regen.txt');
+  fs.writeFileSync(late, 'the content of late-regen.txt');
+  const result = await commitCart([late]);
+  assert.deepEqual((result.unverified ?? []).map((u) => u.path), [late]);
+  // Finder finishes the move, and something (a build, a cache) makes a new file at the same name.
+  finderFinishes(late);
+  fs.writeFileSync(late, 'regenerated');
+  const refused = await refusalOf(undoCartRun(result.runId));
+  assert.equal(refused.code, 'NOTHING_TO_UNDO');
+  assert.doesNotMatch(refused.message ?? '', /still in (its|their) place/, `the disk shows another file there, not the one copied (${refused.message})`);
+  assert.match(refused.message ?? '', /may be in the Trash/, `it says what is known (${refused.message})`);
+  assert.equal(fs.readFileSync(late, 'utf8'), 'regenerated', 'the new file is left as it is');
+  const kept = (await getCapsuleIndex()).entries.filter((e) => e.originalPath === late && e.hasPayload && !e.restoredAt);
+  assert.equal(kept.length, 1, 'and the copy is still held');
+});
+
+test('an unconfirmed item whose place cannot be looked at when the undo runs is not called in place either (FG3c #2)', { skip: NO_CHMOD }, async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-late-hidden-');
+  const late = path.join(dir, 'late-hidden.txt');
+  fs.writeFileSync(late, 'the content of late-hidden.txt');
+  const result = await commitCart([late]);
+  assert.deepEqual((result.unverified ?? []).map((u) => u.path), [late]);
+  fs.chmodSync(dir, 0o000);
+  let refused: { code?: string; message?: string };
+  try {
+    refused = await refusalOf(undoCartRun(result.runId));
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+  assert.equal(refused.code, 'NOTHING_TO_UNDO');
+  assert.doesNotMatch(refused.message ?? '', /still in (its|their) place/, `nothing was looked at (${refused.message})`);
+  assert.match(refused.message ?? '', /could not be looked at/, `it says so (${refused.message})`);
+});
+
+test('an undo that passes over an unconfirmed item still in its place puts back the rest, and names the one it left (FG3c #2)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-late-mixed-');
+  const plain = path.join(dir, 'a.txt');
+  const late = path.join(dir, 'late-mixed.txt');
+  for (const p of [plain, late]) fs.writeFileSync(p, `the content of ${path.basename(p)}`);
+  const result = await commitCart([plain, late]);
+  assert.deepEqual([result.trashed, (result.unverified ?? []).map((u) => u.path)], [[plain], [late]]);
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 1, 'the trashed item');
+  assert.deepEqual((job.passedOver ?? []).map((p) => p.path), [late], 'the one passed over is named');
+  assert.match(job.passedOver?.[0]?.reason ?? '', /still in its place/, `with what the disk showed (${job.passedOver?.[0]?.reason})`);
+  await restored(job.jobId);
+  assert.equal(fs.readFileSync(plain, 'utf8'), 'the content of a.txt');
+});
+
+test('an Autopilot run whose every item is unconfirmed is not refused as having deleted nothing, and its undo puts the item back once the Trash has taken it (FG3c #3, #11)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-late-undo-');
+  const late = path.join(dir, 'late-undo.bin');
+  fs.writeFileSync(late, Buffer.alloc(64, 1));
+  try {
+    const run = await withOpenFileCheck('clear', () => runOver(dir, 'late-undo'));
+    assert.deepEqual([run.status, run.bytesDeleted], ['blocked', 0]);
+    assert.deepEqual(run.unverified, [late], 'the run records what it could not confirm');
+    const early = await refusalOf(undoRun(run.id));
+    assert.equal(early.code, 'NOTHING_TO_UNDO');
+    assert.doesNotMatch(early.message ?? '', /did not delete anything/, `a copy is held for an item that may be in the Trash (${early.message})`);
+    assert.match(early.message ?? '', /still in its place/, `the disk shows the same file there (${early.message})`);
+    assert.equal((await getRun(run.id))?.undoneAt, undefined, 'a refused undo marks nothing');
+    finderFinishes(late);
+    const job = await undoRun(run.id);
+    assert.equal(job.entryCount, 1, 'the copy kept for it');
+    await restored(job.jobId);
+    assert.equal(fs.readFileSync(late).length, 64, 'it is back');
+    assert.ok((await getRun(run.id))?.undoneAt, 'and now the run is undone');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('an Autopilot run of unconfirmed items whose copies are gone says the copies are gone, never that it deleted nothing (FG3c #11)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-late-expired-');
+  const late = path.join(dir, 'late-expired.bin');
+  fs.writeFileSync(late, Buffer.alloc(64, 5));
+  try {
+    const run = await withOpenFileCheck('clear', () => runOver(dir, 'late-expired'));
+    assert.deepEqual(run.unverified, [late]);
+    finderFinishes(late);
+    // Retention or eviction takes the copy before anyone asks for the undo.
+    for (const e of (await getCapsuleIndex()).entries.filter((x) => x.runId === run.id)) await deleteCapsuleEntry(e.id);
+    const refused = await refusalOf(undoRun(run.id));
+    assert.equal(refused.code, 'CAPSULE_EMPTY', `the item may be in the Trash, and its copy is gone (${refused.message})`);
+    assert.doesNotMatch(refused.message ?? '', /did not delete anything/);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('an Autopilot undo that passes over an unconfirmed item leaves the run undoable, so a later undo puts it back (FG3c #3)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-late-later-');
+  const ok = path.join(dir, 'ok.bin');
+  const late = path.join(dir, 'late-later.bin');
+  for (const p of [ok, late]) fs.writeFileSync(p, Buffer.alloc(64, 2));
+  try {
+    const run = await withOpenFileCheck('clear', () => runOver(dir, 'late-later'));
+    assert.deepEqual([run.status, run.items.map((i) => i.path), run.unverified], ['completed', [ok], [late]]);
+    const first = await undoRun(run.id);
+    assert.equal(first.entryCount, 1, 'what it trashed');
+    assert.deepEqual((first.passedOver ?? []).map((p) => p.path), [late], 'and it names the one it passed over');
+    await restored(first.jobId);
+    assert.ok(fs.existsSync(ok));
+    assert.equal((await getRun(run.id))?.undoneAt, undefined, 'not undone while a copy it passed over is held');
+    finderFinishes(late);
+    const second = await undoRun(run.id);
+    assert.equal(second.entryCount, 1, 'the copy kept for the unconfirmed item');
+    await restored(second.jobId);
+    assert.equal(fs.readFileSync(late).length, 64, 'it is back');
+    assert.ok((await getRun(run.id))?.undoneAt, 'now the run is undone');
+    assert.equal((await refusalOf(undoRun(run.id))).code, 'ALREADY_UNDONE');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+/** One request to a fresh app on a free port, answered as JSON. */
+async function overHttp(method: string, url: string): Promise<{ status: number; body: any }> {
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}${url}`, { method });
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : null };
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+test('each Autopilot undo is audited with what it puts back, not what the run once trashed (FG3c #3)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-late-audit-');
+  const ok = path.join(dir, 'ok.bin');
+  const late = path.join(dir, 'late-audit.bin');
+  for (const p of [ok, late]) fs.writeFileSync(p, Buffer.alloc(64, 4));
+  try {
+    const run = await withOpenFileCheck('clear', () => runOver(dir, 'late-audit'));
+    const lastUndoLine = async (): Promise<{ paths: string[]; bytes: number | null }> => {
+      const audit = await overHttp('GET', '/api/audit?limit=5');
+      const line = (audit.body.entries as { action: string; paths: string[]; bytes: number | null }[]).find((e) => e.action === 'autopilot.undo');
+      assert.ok(line, 'the undo is audited');
+      return line;
+    };
+    const first = await overHttp('POST', `/api/autopilot/runs/${run.id}/undo`);
+    assert.equal(first.status, 202, JSON.stringify(first.body));
+    assert.equal(first.body.puttingBack, undefined, 'the audit\'s own list is not part of the answer');
+    await restored(first.body.jobId);
+    assert.deepEqual((await lastUndoLine()).paths, [ok], 'the first undo put back what was trashed');
+    finderFinishes(late);
+    const second = await overHttp('POST', `/api/autopilot/runs/${run.id}/undo`);
+    assert.equal(second.status, 202, JSON.stringify(second.body));
+    await restored(second.body.jobId);
+    const line = await lastUndoLine();
+    assert.deepEqual([line.paths, line.bytes], [[late], 64], 'the second, the copy it had passed over');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('an Autopilot run with one item refused and one unconfirmed does not say nothing was moved (FG3c #11)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-held-late-');
+  for (const n of ['held.bin', 'late-held.bin']) fs.writeFileSync(path.join(dir, n), Buffer.alloc(64, 3));
+  try {
+    const run = await withOpenFileCheck('clear', () => runOver(dir, 'held-late'));
+    assert.equal(run.status, 'blocked');
+    assert.doesNotMatch(run.blockedReason ?? '', /^Nothing was moved to the Trash/, `one may have been (${run.blockedReason})`);
+    assert.match(run.blockedReason ?? '', /Nothing was confirmed as moved to the Trash/);
   } finally {
     await savePolicies([]);
   }

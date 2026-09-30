@@ -560,8 +560,15 @@ async function cartUndoRun(runId) {
     cancelledMessage: 'Undo cancelled — nothing was left half-written',
     lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
     onComplete: () => {
-      toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
-      cartLastRun = null;
+      // A copy it passed over (an unconfirmed item whose place is not empty) is named with what the
+      // disk showed, and the undo stays offered for it (FG3c).
+      const left = job.passedOver || [];
+      if (left.length) {
+        toast(`Put back ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}; ${formatCount(left.length)} not put back: ${left[0].reason}`, 'error', 12000);
+      } else {
+        toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
+        cartLastRun = null;
+      }
       rescan();
     },
     onSettled: () => { renderCart(); refreshCartButtons(); },
