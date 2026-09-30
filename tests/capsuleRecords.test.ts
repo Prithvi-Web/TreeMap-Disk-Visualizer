@@ -12,7 +12,9 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { capsuleRoot, getCapsuleIndex, getCapsuleJob, manifestRefusal, pruneExpired, reconcileCapsule } from '../src/services/timeCapsule';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
-import { approvePolicy, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
+import { approvePolicy, assertSavedPolicyPath, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
+import { AppError } from '../src/middleware/errorHandler';
+import { sanitizePath } from '../src/utils/pathSanitizer';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { SPILL_DIR } from '../src/services/spillSweep';
@@ -382,4 +384,22 @@ test('an Autopilot policy whose folder is not one TreeMap saved does not run, an
   } finally {
     await savePolicies([]);
   }
+});
+
+test('a policy folder read back from autopilot.json is held to what TreeMap saves: respelled, a whole drive, a system folder or not text is refused (FG3b)', () => {
+  const dir = sanitizePath(fileTempDir('treemap-capsuleRecords-saved-'));
+  const cases: [string, unknown][] = [
+    ['a respelled folder', `${path.join(dir, 'sub')}${path.sep}..`],
+    ['a whole drive', path.parse(dir).root],
+    ['a system folder', SYSTEM_PLACE],
+    ['a value that is not text', 5],
+  ];
+  for (const [what, saved] of cases) {
+    assert.throws(
+      () => assertSavedPolicyPath(saved),
+      (err: unknown) => err instanceof AppError && err.code === 'POLICY_RECORD_INVALID' && /not one TreeMap saved/.test(err.message),
+      what,
+    );
+  }
+  assert.doesNotThrow(() => assertSavedPolicyPath(dir), 'the folder as TreeMap saves it');
 });

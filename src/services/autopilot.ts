@@ -495,8 +495,9 @@ export function setSpillCheckForTests(fn: ((p: string) => boolean) | null): void
  * it (FG3): policies are read back from autopilot.json, a file on disk, and are not re-validated on
  * load. A saved folder is `sanitizePath`'s own answer, which it answers unchanged, and never a whole
  * drive; anything else is a record TreeMap did not write, and the run stops before it scans.
+ * Exported for its tests, which ask it of a whole drive without a run that would scan one.
  */
-function assertSavedPolicyPath(p: unknown): void {
+export function assertSavedPolicyPath(p: unknown): void {
   let saved: string | null = null;
   try {
     saved = typeof p === 'string' ? sanitizePath(p) : null;
