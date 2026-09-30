@@ -309,3 +309,20 @@ test('every service that builds an app-data path of its own also honours ephemer
   scan(servicesDir);
   assert.deepEqual(missing, [], 'these write into the app-data directory without checking for a read-only portable session');
 });
+
+test('the write probe never writes through a name already in the folder', () => {
+  // Follow-up FG3: the portable drive is a folder someone else may have prepared, and the probe
+  // used to write a predictable name there (`.treemap-write-probe-<pid>`) with a plain write — so a
+  // link planted at that name had it truncate whatever the link led to. Now it makes a new name,
+  // exclusively.
+  const dir = tmp();
+  const victim = path.join(tmp(), 'report.doc');
+  fs.writeFileSync(victim, 'PRECIOUS USER DATA');
+  const planted = path.join(dir, `.treemap-write-probe-${process.pid}`);
+  fs.symlinkSync(victim, planted, 'file');
+  const probe = probeWritable(dir);
+  assert.equal(probe.writable, true, probe.reason);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'PRECIOUS USER DATA', 'the file the planted name leads to is untouched');
+  assert.ok(fs.lstatSync(planted).isSymbolicLink(), 'the planted name is left as it was');
+  assert.deepEqual(fs.readdirSync(dir), [path.basename(planted)], 'and the probe leaves nothing of its own');
+});

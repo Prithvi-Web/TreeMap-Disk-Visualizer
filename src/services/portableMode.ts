@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -107,10 +108,13 @@ export function portableSignal(env: NodeJS.ProcessEnv = process.env, baseDir = e
 
 /** Can we actually create the data directory here? Proven by writing, not guessed. */
 export function probeWritable(dir: string): { writable: boolean; reason?: string } {
-  const probe = path.join(dir, `.treemap-write-probe-${process.pid}`);
+  // A new name, created exclusively (FG3): the drive may have been prepared by someone else, and a
+  // plain write to a name already there (the probe's used to be `.treemap-write-probe-<pid>`) goes
+  // wherever a link at that name leads.
+  const probe = path.join(dir, `.treemap-write-probe-${crypto.randomUUID()}`);
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(probe, 'x');
+    fs.writeFileSync(probe, 'x', { flag: 'wx' });
     fs.unlinkSync(probe);
     return { writable: true };
   } catch (err) {

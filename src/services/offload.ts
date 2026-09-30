@@ -14,7 +14,7 @@ import { readJsonFile, writeJsonFile } from './storage';
 import { moveToTrash } from './cleaner';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
-import { isInside } from '../utils/pathSanitizer';
+import { isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
@@ -78,25 +78,133 @@ async function saveManifest(store: ManifestStore): Promise<void> {
   await writeJsonFile(MANIFEST_FILE, store);
 }
 
-/** Merge this destination's entries into the manifest copy on the drive itself. */
-async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): Promise<void> {
+/** The largest record on a drive this reads; anything bigger is not one TreeMap wrote. */
+const MAX_DEST_MANIFEST_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Opening a new file exclusively: created here or not at all, never an existing name — a link at the
+ * name fails with EEXIST rather than being followed, and so does a second name for another file.
+ * `O_NOFOLLOW` too where the platform has it (not Windows, where O_EXCL alone refuses a link).
+ */
+const EXCLUSIVE_NEW_FILE = fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0);
+/** Reading a file without following a link at its own name, where the platform can say so. */
+const READ_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+
+/** Why a name on the drive is not a plain file of one name, as a sentence, or null when it is (or is absent). */
+function notPlainFile(st: fs.Stats | fs.BigIntStats | undefined, file: string): string | null {
+  if (st === undefined) return null;
+  if (st.isSymbolicLink()) return `${file} is a link`;
+  if (!st.isFile()) return `${file} is not a file`;
+  if (Number(st.nlink) > 1) return `${file} is also another file's name (a hard link)`;
+  return null;
+}
+
+/**
+ * The entries of the drive's record that belong to `destRoot`, and how many were not. The drive may
+ * have been prepared by someone else, so nothing in it is taken on trust: an entry is kept only when
+ * it is an object whose id is text, whose original place is an absolute path, and whose copy lies
+ * inside this destination (`liesInside`: both resolved, links followed).
+ */
+export function driveEntriesOf(raw: unknown, destRoot: string): { entries: OffloadEntry[]; dropped: number } {
+  const listed = raw !== null && typeof raw === 'object' && Array.isArray((raw as { entries?: unknown }).entries)
+    ? ((raw as { entries: unknown[] }).entries)
+    : [];
+  const entries: OffloadEntry[] = [];
+  for (const candidate of listed) {
+    const e = candidate as Partial<OffloadEntry> | null;
+    const ok = e !== null && typeof e === 'object'
+      && typeof e.id === 'string' && e.id.length > 0
+      && typeof e.originalPath === 'string' && path.isAbsolute(e.originalPath)
+      && typeof e.destRoot === 'string'
+      && typeof e.destPath === 'string' && liesInside(destRoot, e.destPath);
+    if (ok) entries.push(e as OffloadEntry);
+  }
+  return { entries, dropped: listed.length - entries.length };
+}
+
+/**
+ * Merge this destination's entries into the record on the drive itself, and answer a sentence when
+ * it was not written for a reason the person should hear, or null.
+ *
+ * The drive is a folder someone else may have prepared (a shared or second-hand drive), so the
+ * write never reopens a name that already exists there (FG3): the new record goes to a temp made
+ * exclusively under a random name (`EXCLUSIVE_NEW_FILE`), is flushed, and is renamed onto the
+ * record's name — a rename replaces a link at the destination, it never writes through one. The
+ * record's own name must be absent or a plain file of one name; anything else (a link, a second
+ * name for another file) is refused and never read, since reading it would follow it. The entries
+ * already there are merged only when they are of this destination (`driveEntriesOf`).
+ */
+async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): Promise<string | null> {
+  const file = path.join(destRoot, DEST_MANIFEST);
+  let tmpPath: string | null = null;
   try {
-    const file = path.join(destRoot, DEST_MANIFEST);
+    const refused = notPlainFile(await fsp.lstat(file).catch(() => undefined), file);
+    if (refused) return `The record on the destination was not written: ${refused}, and TreeMap does not replace what it did not make.`;
     let existing: OffloadEntry[] = [];
-    try {
-      const raw = JSON.parse(await fsp.readFile(file, 'utf8')) as { entries?: OffloadEntry[] };
-      if (Array.isArray(raw.entries)) existing = raw.entries;
-    } catch { /* first write to this drive, or unreadable — start fresh */ }
+    const handle = await fsp.open(file, READ_NO_FOLLOW).catch(() => null);
+    if (handle) {
+      try {
+        const st = await handle.stat();
+        const changed = notPlainFile(st, file);
+        if (changed) return `The record on the destination was not written: ${changed}, and TreeMap does not replace what it did not make.`;
+        if (st.size <= MAX_DEST_MANIFEST_BYTES) {
+          const kept = driveEntriesOf(JSON.parse(await handle.readFile('utf8')) as unknown, destRoot);
+          existing = kept.entries;
+          if (kept.dropped > 0) {
+            console.error(`[treemap] the record on ${destRoot}: ${formatCount(kept.dropped)} entries that were not of this destination were dropped`);
+          }
+        }
+      } catch {
+        /* unreadable: start fresh */
+      } finally {
+        await handle.close();
+      }
+    }
     const mine = allEntries.filter((e) => e.destRoot === destRoot);
     const byId = new Map(existing.map((e) => [e.id, e]));
     for (const e of mine) byId.set(e.id, e);
-    const tmp = file + '.tmp';
-    await fsp.writeFile(tmp, JSON.stringify({ entries: [...byId.values()] }, null, 2), 'utf8');
-    await fsp.rename(tmp, file);
+    tmpPath = path.join(destRoot, `.${DEST_MANIFEST}.${crypto.randomUUID()}.tmp`);
+    const out = await fsp.open(tmpPath, EXCLUSIVE_NEW_FILE, 0o644);
+    try {
+      await out.writeFile(JSON.stringify({ entries: [...byId.values()] }, null, 2), 'utf8');
+      await out.sync();
+    } finally {
+      await out.close();
+    }
+    await fsp.rename(tmpPath, file);
+    tmpPath = null;
+    return null;
   } catch (err) {
     // The app-data manifest is authoritative; the drive copy is best-effort.
     console.error('[treemap] destination manifest write failed:', err);
+    return null;
+  } finally {
+    if (tmpPath) await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * Why a restore will not write where an offload record says, as a sentence, or null (FG3). A record
+ * is held to the shape TreeMap writes: its paths are text and absolute, its original place is one
+ * `sanitizePath` accepts, never TreeMap's own spill folder nor anywhere in app-data, and its copy lies
+ * inside the destination it was offloaded to.
+ */
+export function restoreRefusal(entry: OffloadEntry): string | null {
+  const { originalPath, destPath, destRoot } = entry as { originalPath: unknown; destPath: unknown; destRoot: unknown };
+  if (typeof originalPath !== 'string' || typeof destPath !== 'string' || typeof destRoot !== 'string'
+    || !path.isAbsolute(originalPath) || !path.isAbsolute(destPath)) {
+    return 'its record is not a record TreeMap wrote, so nothing was written';
+  }
+  try {
+    if (sanitizePath(originalPath) !== originalPath) return 'its record is not a record TreeMap wrote, so nothing was written';
+  } catch (err) {
+    if (err instanceof PathRejectedError) return `${originalPath} is a system folder TreeMap never writes`;
+    throw err;
+  }
+  if (isSpillPath(originalPath)) return `${originalPath} is in TreeMap's own spill folder, which TreeMap never writes`;
+  if (isAppDataPath(originalPath)) return `${originalPath} is in TreeMap's own app-data folder, where no restore writes`;
+  if (!liesInside(destRoot, destPath)) return 'its copy is outside the destination it was offloaded to';
+  return null;
 }
 
 /* ---------------- planning (pure — tested) ---------------- */
@@ -306,6 +414,8 @@ export async function prepareOffload(
   // the file system folds (ſ for s) would land in it (T17a's security review). Nor into app-data
   // (FG1): `dest` is refused there by the route, and a link inside `dest` that a planned name
   // reaches under a fold (ſtuff for stuff) is found here, where each target's folders are resolved.
+  // About 33 µs a target (measured), so about a third of a second at the MAX_FILES_PER_JOB cap: paid
+  // once, before anything is copied, which is where a refusal belongs.
   for (const copy of plan) {
     assertNotSpillPath(copy.dest);
     assertNotAppDataPath(copy.dest);
@@ -478,7 +588,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       }
       store.destinations[destDir] = { lastSeenAt: now };
       await saveManifest(store);
-      await writeDestManifest(destDir, store.entries);
+      const unwritten = await writeDestManifest(destDir, store.entries);
+      if (unwritten) job.error = job.error ? `${job.error} Also: ${unwritten}` : unwritten;
     } catch (err) {
       // The files are where they should be; only the record of them failed.
       // Say so precisely, because it is the record that Restore reads.
@@ -545,6 +656,9 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
   for (const entry of entries) {
     if (job.cancelled) break;
     try {
+      // The record says where to write; it is held to the shape TreeMap writes first (FG3).
+      const refused = restoreRefusal(entry);
+      if (refused) throw new Error(refused);
       job.phase = 'copying';
       job.currentPath = entry.destPath;
       const existing = await fsp.stat(entry.originalPath).catch(() => null);

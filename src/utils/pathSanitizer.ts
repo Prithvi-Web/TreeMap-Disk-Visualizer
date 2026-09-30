@@ -518,10 +518,11 @@ function linkTargetOf(p: string): string | null {
  * Whether `p` lies strictly inside `folder`, both where they really are: every link in the folder
  * resolved, and every link in p resolved too — its own last name included, when it exists — so a
  * link inside the folder that leads out of it is outside, and so is `folder/..`; either path not
- * absolute is not inside anything. Names are compared as the resolved paths spell them, never
+ * text, or not absolute, is not inside anything. Names are compared as the resolved paths spell them, never
  * folded: this answers what may be opened, and a fold could only let more through.
  */
-export function liesInside(folder: string, p: string): boolean {
+export function liesInside(folder: unknown, p: unknown): boolean {
+  if (typeof folder !== 'string' || typeof p !== 'string') return false; // a record that is not text names no place
   if (!path.isAbsolute(folder) || !path.isAbsolute(p)) return false; // a relative one would be read from the working folder
   const root = stripDataVolume(canonDir(folder));
   let where: string;
