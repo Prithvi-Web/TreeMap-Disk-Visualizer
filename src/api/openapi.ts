@@ -2971,7 +2971,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             evicts: arr(opaque('{ id, name, originalPath, bytes } — older capsule copies that would be dropped to make room')),
             capsule: opaque('{ available, reason?, capBytes, usedBytes }'),
             openHandles: opaque("B2's preflight: what a program is holding open right now"),
-            trashed: arr(str(), 'Real run only. An item staged inside another staged item is listed too: it went to the Trash inside it, and its bytes are counted once, there'),
+            trashed: arr(str(), 'Real run only. An item staged inside another staged item (by where each is on the disk) is listed too, once the disk no longer shows it: it went to the Trash inside it, and its bytes are counted once, there'),
             bytesFreed: int('Real run only'),
             skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected, the Trash refused them, or the item holding them was not deleted')),
             failedToTrash: arr(opaque("{ path, reason } — protected, then refused by the Trash, and still in place, untouched; the copies were dropped")),

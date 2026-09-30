@@ -200,9 +200,9 @@ export async function commitCart(paths: string[], runId?: string): Promise<CartC
   const bytesFreed = result.outcomes
     .filter((o) => trashed.has(o.path))
     .reduce((sum, o) => sum + o.bytes, 0);
-  // An item staged inside another went to the Trash inside it (FG3b): listed, so it leaves the
-  // cart, and counted once, in the item that holds it.
-  const wentWith = result.covered.filter((c) => trashed.has(c.by)).map((c) => c.path);
+  // An item staged inside another went to the Trash inside it (FG3b), as the disk shows (FG3c):
+  // listed, so it leaves the cart, and counted once, in the item that holds it.
+  const { wentWith } = result;
 
   return {
     dryRun: false,

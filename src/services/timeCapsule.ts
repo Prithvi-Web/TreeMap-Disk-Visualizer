@@ -21,6 +21,7 @@ import { meansAbsent } from '../utils/errno';
 import { assertNotSpillPath } from '../middleware/pathGuard';
 import { foldName, isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from '../utils/placeIdentity';
+import { collapseBatch, deepestFirst, shallowestFirst } from './capsuleBatch';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -653,12 +654,16 @@ export interface ProtectAndTrashResult {
    */
   unverified: { path: string; reason: string }[];
   /**
-   * Requests inside another request of the batch (FG3b): no copy or trash step of their own. `by`
-   * is the outermost request holding each, which is copied and trashed whole with it inside. When
-   * `by` is in `trashed` they are in the Trash with it; when `by` is unverified so are they; when
-   * `by` was not deleted they are in `skipped`, saying so.
+   * Requests inside another request of the batch (FG3b), by where each is on the disk (FG3c), or
+   * that request spelled another way: no copy or trash step of their own. `by` is the outermost
+   * request holding each, which is copied and trashed whole with it inside. When `by` is in
+   * `trashed` they are in `wentWith` (or, should the disk still show one at its place, in `skipped`
+   * saying so); when `by` is unverified so are they; when `by` was not deleted they are in
+   * `skipped`, saying so.
    */
   covered: { path: string; by: string }[];
+  /** Of `covered`, those in the Trash with the item holding them: the disk no longer shows them (FG3c). */
+  wentWith: string[];
   /** Requests that were NOT deleted because they could not be protected. */
   skipped: ProtectionOutcome[];
   bytesProtected: number;
@@ -766,9 +771,10 @@ export async function planProtection(
   batch: string[],
   opts: { carryOver?: TimeCapsuleEntry[] } = {},
 ): Promise<ProtectionPlan> {
-  // The batch as protectAndTrash takes it (FG3, FG3b): each path once, and a path inside another
-  // one of the batch planned with the item that holds it, so the plan is the run's.
-  const { top, covered } = collapseBatch(batch.map((p) => ({ path: p })));
+  // The batch as protectAndTrash takes it (FG3, FG3b, FG3c): each item once, and one inside another
+  // item of the batch — by where it is on the disk — planned with the item that holds it, so the
+  // plan is the run's.
+  const { top, covered } = await collapseBatch(batch.map((p) => ({ path: p })));
   const paths = top.map((r) => r.path);
   const capsule = capsuleAvailable();
   const store = await loadStore();
@@ -853,13 +859,14 @@ export async function planProtection(
   }
   // Each item inside another goes as that one goes, its bytes counted there.
   const forecastOf = new Map(items.map((item) => [item.path, item]));
-  for (const { request, by } of covered) {
+  for (const { request, by, same } of covered) {
     const holder = forecastOf.get(by);
+    const where = same ? `It is ${by}, spelled another way` : `It is inside ${by}`;
     items.push(holder?.willProtect
-      ? { path: request.path, bytes: 0, willProtect: true, detail: `It is inside ${by}, which is protected and deleted whole, with it.` }
+      ? { path: request.path, bytes: 0, willProtect: true, detail: `${where}, which is protected and deleted whole, with it.` }
       : {
         path: request.path, bytes: 0, willProtect: false, ...(holder?.code ? { code: holder.code } : {}),
-        detail: `It is inside ${by}, which will be left alone, so it will be too.`,
+        detail: `${where}, which will be left alone, so it will be too.`,
       });
   }
 
@@ -885,12 +892,14 @@ export async function protectAndTrash(
   // Nothing in TreeMap's own spill folder is protected or trashed (Phase 4 §S.5.3): refused
   // before anything is copied, whatever selected it.
   for (const r of batch) assertNotSpillPath(r.path);
-  // One request per path (FG3), and none inside another (FG3b). The same path twice made two
-  // copies, one trash and one failure, and the failure then discarded both copies of an item that
-  // was in the Trash. A folder and an item inside it made two copies, and the item's own trash step
-  // failed — its folder had taken it — so it was counted twice, and an undo that put the folder back
-  // then stopped on the item as "already exists".
-  const { top: requests, covered } = collapseBatch(batch);
+  // One request per item (FG3), and none inside another (FG3b), judged by where each is on the
+  // disk (FG3c, `collapseBatch`). The same path twice made two copies, one trash and one failure, and
+  // the failure then discarded both copies of an item that was in the Trash. A folder and an item
+  // inside it made two copies, and the item's own trash step failed — its folder had taken it — so
+  // it was counted twice, and an undo that put the folder back then stopped on the item as "already
+  // exists". Spelled apart (an alias of a folder, another case), they did so still; and a path
+  // through a link out of a folder was taken for part of it, and reported trashed while it stayed.
+  const { top: requests, covered, realPathOf } = await collapseBatch(batch);
   // Nowhere to keep a copy means nothing gets protected, and the caller must be
   // told before anything is deleted — not after.
   const capsule = capsuleAvailable();
@@ -903,14 +912,16 @@ export async function protectAndTrash(
     }));
     // Nothing is deleted: `skipped` is every request, and the reason says why.
     return {
-      runId: '', outcomes, trashed: [], failedToTrash: [], unverified: [], covered: [], skipped: outcomes, bytesProtected: 0,
+      runId: '', outcomes, trashed: [], failedToTrash: [], unverified: [], covered: [], wentWith: [], skipped: outcomes, bytesProtected: 0,
       unavailableReason: capsule.reason,
     };
   }
   const { runId, outcomes } = await protectItems(requests, context);
 
   const protectedOutcomes = outcomes.filter((o) => o.protected);
-  const paths = protectedOutcomes.map((o) => o.path);
+  // Deepest first (FG3c): an item spelled through a link inside another item is trashed before that
+  // item takes the link away.
+  const paths = deepestFirst(protectedOutcomes.map((o) => o.path));
 
   let trashed: string[] = [];
   let failedToTrash: { path: string; reason: string; stopped?: true }[] = [];
@@ -939,7 +950,9 @@ export async function protectAndTrash(
     // disk showed it.
     const stillThere: { path: string; reason: string }[] = [];
     for (const failure of failedToTrash) {
-      const now = await identityOf(failure.path);
+      // Looked at where the item is, not where its spelling now leads (FG3c): a path through a link
+      // that another item took to the Trash no longer reaches it, though it has not moved.
+      const now = await identityOf(realPathOf.get(failure.path) ?? failure.path);
       const verdict = afterReportedFailure(before.get(failure.path) ?? ABSENT, now, failure.stopped === true);
       if (verdict === 'gone') trashed.push(failure.path);
       else if (verdict === 'there') stillThere.push({ path: failure.path, reason: failure.reason });
@@ -978,20 +991,35 @@ export async function protectAndTrash(
     }
   }
 
-  // Each request inside another went as that one went.
+  // Each request inside another went as that one went — and one that went with it into the Trash
+  // is listed so only when the disk no longer shows it at its place (FG3c).
   const trashedSet = new Set(trashed);
   const unverifiedBecause = new Map(unverified.map((u) => [u.path, u.reason]));
   const outcomeOf = new Map(outcomes.map((o) => [o.path, o]));
-  for (const { request, by } of covered) {
-    if (trashedSet.has(by)) continue; // in the Trash inside it, and protected by its copy
+  const wentWith: string[] = [];
+  for (const { request, by, same } of covered) {
+    const where = same ? `It is ${by}, spelled another way` : `It is inside ${by}`;
+    if (trashedSet.has(by)) {
+      const now = await identityOf(request.path);
+      if (now === ABSENT) wentWith.push(request.path); // in the Trash with it, protected by its copy
+      else if (now === UNKNOWN) {
+        unverified.push({ path: request.path, reason: `${where}, which went to the Trash, but its place could not be looked at to confirm it went too. The copy of ${by} holds it.` });
+      } else {
+        outcomes.push({
+          path: request.path, protected: false, bytes: 0, code: 'NOT_DELETED',
+          detail: `${where}, which the Trash reported taking, but it is still where it was, so it was not deleted.`,
+        });
+      }
+      continue;
+    }
     const holding = unverifiedBecause.get(by);
     if (holding !== undefined) {
-      unverified.push({ path: request.path, reason: `It is inside ${by}. ${holding}` });
+      unverified.push({ path: request.path, reason: `${where}. ${holding}` });
       continue;
     }
     outcomes.push({
       path: request.path, protected: false, bytes: 0, code: outcomeOf.get(by)?.code ?? 'NOT_DELETED',
-      detail: `It is inside ${by}, which was not deleted, so it was left in place too.`,
+      detail: `${where}, which was not deleted, so it was left in place too.`,
     });
   }
 
@@ -1003,6 +1031,7 @@ export async function protectAndTrash(
     failedToTrash,
     unverified,
     covered: covered.map(({ request, by }) => ({ path: request.path, by })),
+    wentWith,
     skipped: outcomes.filter((o) => !o.protected),
     bytesProtected: stillProtected.reduce((sum, o) => sum + o.bytes, 0),
     ...(cleanupError ? { cleanupError } : {}),
@@ -1012,33 +1041,6 @@ export async function protectAndTrash(
 /** What a person is told about an item whose trash step reported a failure the disk could not confirm. */
 function unverifiedSentence(reason: string): string {
   return `The Trash reported: ${reason}. TreeMap could not confirm whether it is still in place, so its Time Capsule copy was kept — an undo puts it back only if it is gone.`;
-}
-
-/**
- * The batch as `protectAndTrash` and `planProtection` take it (FG3, FG3b): each path once (as it
- * resolves, keeping the first spelling), and a path inside another path of the batch set apart in
- * `covered` with the outermost one holding it — that item is copied and trashed whole, taking it
- * along, so it gets no copy and no trash step of its own. Compared as the paths are spelled (a
- * scan's own names); one spelled otherwise keeps its own trash step, judged by the disk.
- */
-function collapseBatch<T extends { path: string }>(batch: T[]): { top: T[]; covered: { request: T; by: string }[] } {
-  const firstOf = new Map<string, T>();
-  for (const request of batch) {
-    const key = path.resolve(request.path);
-    if (!firstOf.has(key)) firstOf.set(key, request);
-  }
-  const top: T[] = [];
-  const covered: { request: T; by: string }[] = [];
-  for (const [key, request] of firstOf) {
-    let by: string | null = null;
-    for (let at = key, up = path.dirname(at); up !== at; at = up, up = path.dirname(up)) {
-      const holder = firstOf.get(up);
-      if (holder) by = holder.path; // keep climbing: the outermost one holds it
-    }
-    if (by === null) top.push(request);
-    else covered.push({ request, by });
-  }
-  return { top, covered };
 }
 
 /** Left in a copy's folder when its original's trash step could not be confirmed either way (FG3b). */
@@ -1596,6 +1598,9 @@ export async function planUndoForRun(runId: string): Promise<UndoPlan> {
     }
     plan.undoable.push(entry);
   }
+  // Shallowest first (FG3c): an item reached through a folder or link another item of this undo
+  // puts back is restored after it, never into a folder made up on the way.
+  plan.undoable = shallowestFirst(plan.undoable);
   return plan;
 }
 

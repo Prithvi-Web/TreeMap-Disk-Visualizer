@@ -50,6 +50,14 @@ before(() => {
       fs.chmodSync(path.dirname(p), 0o000);
       throw new Error('the Trash reported a failure (a test)');
     }
+    // Reported as moved, and nothing moved: a Trash that says it took an item it did not (FG3c).
+    if (path.basename(p).startsWith('phantom')) return;
+    // Moved, and then the folder it was in can no longer be looked into, and reported as moved (FG3c).
+    if (path.basename(p).startsWith('sealed')) {
+      fs.renameSync(p, path.join(FAKE_TRASH, `${trashCalls++}-${path.basename(p)}`));
+      fs.chmodSync(path.dirname(p), 0o000);
+      return;
+    }
     // Refused, and its folder can no longer be looked into (its permissions changed meanwhile).
     if (path.basename(p).startsWith('locked')) {
       fs.chmodSync(path.dirname(p), 0o000);
@@ -378,6 +386,149 @@ test('the dry run of a folder and an item inside it counts the item once, in its
   assert.ok((plan.items.find((i) => i.path === beside)?.bytes ?? 0) > 0, 'the sibling\'s file is counted as itself, not as inside the folder');
 });
 
+/* ─────────────── FG3c: an item inside another is judged by where it is on the disk ─────────────── */
+
+/** Whether the temp volume reads `a` and `A` as one name (default APFS and NTFS do). */
+const FOLDS_CASE = ((): boolean => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-case-probe-');
+  fs.writeFileSync(path.join(dir, 'probe'), '');
+  return fs.existsSync(path.join(dir, 'PROBE'));
+})();
+
+/** A file's content as the tests write it. */
+const contentOf = (p: string): string => `the content of ${path.basename(p)}`;
+
+test('a folder and items inside it spelled through a link to its folder are one item: one copy, counted once, and the undo puts everything back (FG3c #1, #14)', async () => {
+  const real = fileTempDir('treemap-capsuleAfterTrash-respelled-');
+  const alias = path.join(fileTempDir('treemap-capsuleAfterTrash-respelled-alias-'), 'via');
+  fs.symlinkSync(real, alias, 'junction');
+  const proj = path.join(real, 'proj');
+  fs.mkdirSync(proj);
+  const inner = ['a.txt', 'b.txt'].map((n) => path.join(proj, n));
+  const other = path.join(real, 'zother.txt');
+  for (const p of [...inner, other]) fs.writeFileSync(p, contentOf(p));
+  const size = bytesOf([...inner, other]);
+  const sameFolder = path.join(alias, 'proj');
+  const inside = path.join(alias, 'proj', 'a.txt');
+  const batch = [proj, sameFolder, inside, other];
+  const plan = await planCartCommit(batch);
+  assert.equal(plan.bytesWouldFree, size, 'the dry run counts each byte once');
+  const result = await commitCart(batch);
+  assert.deepEqual(sorted(result.trashed), sorted(batch), 'each spelling is in the Trash, with its folder');
+  assert.equal(result.bytesFreed, size, 'counted once');
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 2, 'one copy for the folder, one for the file beside it');
+  await restored(job.jobId);
+  for (const p of [...inner, other]) assert.equal(fs.readFileSync(p, 'utf8'), contentOf(p));
+  assert.deepEqual(await listUndoableEntriesForRun(result.runId), [], 'and nothing is left undoable');
+});
+
+test('a folder and an item inside it spelled in another case are one item where the volume folds case (FG3c #14)', { skip: FOLDS_CASE ? false : 'this volume keeps a and A apart' }, async () => {
+  const { dir, inner } = project('recased');
+  const size = bytesOf(inner);
+  const upper = path.join(path.dirname(dir), 'PROJ', 'a.txt');
+  const plan = await planCartCommit([dir, upper]);
+  assert.equal(plan.bytesWouldFree, size, 'the dry run counts it once');
+  const result = await commitCart([dir, upper]);
+  assert.deepEqual(sorted(result.trashed), sorted([dir, upper]));
+  assert.equal(result.bytesFreed, size);
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 1, 'one copy, the folder\'s');
+  await restored(job.jobId);
+  for (const p of inner) assert.equal(fs.readFileSync(p, 'utf8'), contentOf(p));
+});
+
+for (const order of ['folder first', 'item first'] as const) {
+  test(`an item reached through a link inside a folder of the same batch is its own item: really trashed, and put back where it was (${order}) (FG3c #4, #7)`, async () => {
+    const root = fileTempDir(`treemap-capsuleAfterTrash-through-${order === 'folder first' ? 'a' : 'b'}-`);
+    const folder = path.join(root, 'A');
+    const elsewhere = path.join(root, 'B');
+    fs.mkdirSync(folder);
+    fs.mkdirSync(elsewhere);
+    const own = path.join(folder, 'a.txt');
+    const target = path.join(elsewhere, 'x.txt');
+    for (const p of [own, target]) fs.writeFileSync(p, contentOf(p));
+    fs.symlinkSync(elsewhere, path.join(folder, 'lnk'), 'junction');
+    const through = path.join(folder, 'lnk', 'x.txt');
+    const batch = order === 'folder first' ? [folder, through] : [through, folder];
+    const planned = (await planCartCommit(batch)).items.find((i) => i.path === through);
+    assert.ok(planned?.willDelete, 'it is planned');
+    assert.doesNotMatch(planned?.reason ?? '', /inside/, `not as inside the folder: the link leads out of it (${planned?.reason})`);
+    const result = await commitCart(batch);
+    assert.deepEqual(sorted(result.trashed), sorted(batch), JSON.stringify(result));
+    assert.ok(!fs.existsSync(target), 'the file the link leads to really went to the Trash');
+    const job = await undoCartRun(result.runId);
+    assert.equal(job.entryCount, 2, 'each has its own copy');
+    await restored(job.jobId);
+    assert.equal(fs.readFileSync(target, 'utf8'), contentOf(target), 'it is back where it was');
+    assert.ok(fs.lstatSync(path.join(folder, 'lnk')).isSymbolicLink(), 'and the link is a link again');
+    assert.equal(fs.readFileSync(own, 'utf8'), contentOf(own));
+  });
+}
+
+test('an item inside a link of the same batch is its own item: a link holds nothing, and trashing it takes only the link (FG3c #4, #14)', async () => {
+  const root = fileTempDir('treemap-capsuleAfterTrash-in-link-');
+  const real = path.join(root, 'real');
+  fs.mkdirSync(real);
+  const file = path.join(real, 'file.txt');
+  fs.writeFileSync(file, contentOf(file));
+  const link = path.join(root, 'link');
+  fs.symlinkSync(real, link, 'junction');
+  const through = path.join(link, 'file.txt');
+  const planned = (await planCartCommit([link, through])).items.find((i) => i.path === through);
+  assert.ok(planned?.willDelete);
+  assert.equal(planned?.bytes, fs.statSync(file).size, 'its own bytes: the link\'s copy does not hold them');
+  assert.doesNotMatch(planned?.reason ?? '', /inside/, planned?.reason);
+  const result = await commitCart([link, through]);
+  assert.deepEqual(sorted(result.trashed), sorted([link, through]));
+  assert.ok(!fs.existsSync(file), 'the file itself went to the Trash, not only the link to its folder');
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 2);
+  await restored(job.jobId);
+  assert.equal(fs.readFileSync(file, 'utf8'), contentOf(file));
+  assert.ok(fs.lstatSync(link).isSymbolicLink());
+});
+
+test('an item reached through a link out of a folder, that the Trash refused, is judged where it is — not gone because its folder went (FG3c #7)', async () => {
+  const root = fileTempDir('treemap-capsuleAfterTrash-through-held-');
+  const folder = path.join(root, 'A');
+  const elsewhere = path.join(root, 'B');
+  fs.mkdirSync(folder);
+  fs.mkdirSync(elsewhere);
+  const target = path.join(elsewhere, 'held-x.txt');
+  fs.writeFileSync(target, contentOf(target));
+  fs.writeFileSync(path.join(folder, 'a.txt'), 'the content of a.txt');
+  fs.symlinkSync(elsewhere, path.join(folder, 'lnk'), 'junction');
+  const through = path.join(folder, 'lnk', 'held-x.txt');
+  const result = await commitCart([folder, through]);
+  assert.deepEqual(result.trashed, [folder], `only the folder: the file the Trash refused is where it was (${JSON.stringify(result)})`);
+  assert.deepEqual(result.failedToTrash.map((f) => f.path), [through], 'and it is reported as refused');
+  assert.equal(fs.readFileSync(target, 'utf8'), contentOf(target));
+});
+
+test('the dry run names an item spelled another way as that item (FG3c #1)', async () => {
+  const real = fileTempDir('treemap-capsuleAfterTrash-respelled-plan-');
+  const alias = path.join(fileTempDir('treemap-capsuleAfterTrash-respelled-plan-alias-'), 'via');
+  fs.symlinkSync(real, alias, 'junction');
+  const proj = path.join(real, 'proj');
+  fs.mkdirSync(proj);
+  fs.writeFileSync(path.join(proj, 'a.txt'), 'the content of a.txt');
+  const again = path.join(alias, 'proj');
+  const plan = await planCartCommit([proj, again]);
+  const row = plan.items.find((i) => i.path === again);
+  assert.match(row?.reason ?? '', /spelled another way/, `it is the same folder (${row?.reason})`);
+  assert.equal(plan.bytesWouldFree, fs.statSync(path.join(proj, 'a.txt')).size, 'counted once');
+});
+
+test('an item inside a folder the Trash reported taking, but still in its place, is not listed as trashed (FG3c #4)', async () => {
+  const { dir, inner } = project('phantom', 'phantom-proj');
+  const result = await commitCart([dir, inner[0]]);
+  assert.deepEqual(result.trashed, [dir], 'the folder, as the Trash reported it');
+  const row = result.skipped.find((s) => s.path === inner[0]);
+  assert.ok(row, `the item is reported, not dropped (${JSON.stringify(result)})`);
+  assert.match(row?.reason ?? '', /still where it was/, `with what the disk showed (${row?.reason})`);
+});
+
 test('an item inside a folder whose trash step could not be confirmed is not confirmed either, and says so', async () => {
   const { dir, inner } = project('nested-late', 'late-proj');
   const result = await commitCart([dir, inner[0]]);
@@ -640,6 +791,19 @@ test('an Autopilot run with one item refused and one unconfirmed does not say no
   } finally {
     await savePolicies([]);
   }
+});
+
+test('an item inside a folder that went to the Trash, whose place can then not be looked at, is not confirmed (FG3c #4)', { skip: NO_CHMOD }, async () => {
+  const { dir, inner } = project('sealed', 'sealed-proj');
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await commitCart([dir, inner[0]]);
+  } finally {
+    fs.chmodSync(path.dirname(dir), 0o700);
+  }
+  assert.deepEqual(result.trashed, [dir], 'the folder went');
+  const row = (result.unverified ?? []).find((u) => u.path === inner[0]);
+  assert.match(row?.reason ?? '', /could not be looked at/, `the item is not called trashed without a look (${JSON.stringify(result)})`);
 });
 
 /* ─────────────── The Windows runner's failure, reproduced here ─────────────── */

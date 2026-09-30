@@ -381,6 +381,22 @@ export function canonicalDirOf(p: string): string {
   return stripDataVolume(path.join(canonDir(parent), path.basename(p)));
 }
 
+/**
+ * Where `p` is on the disk: every link resolved and each name as the volume stores it — the native
+ * realpath, so `proj/FOO.TXT` answers `…/Proj/Foo.txt` on a volume that folds case — on the Data
+ * volume's short spelling. Not memoised, unlike `canonDir`: it decides what one delete takes
+ * (FG3c). Null when it cannot be resolved (gone, or a folder above it cannot be looked into).
+ */
+export async function realPlaceOf(p: string): Promise<string | null> {
+  try {
+    return stripDataVolume(strip(await realpathNative(p)));
+  } catch {
+    return null;
+  }
+}
+const realpathNative = (p: string): Promise<string> =>
+  new Promise((resolve, reject) => fs.realpath.native(p, (err, out) => (err ? reject(err) : resolve(out))));
+
 /** True when `child` is `parent` itself or located anywhere beneath it. */
 export function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);

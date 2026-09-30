@@ -302,9 +302,14 @@ OpenAPI 3 spec).
      `cleanupError` sentence, and the undo puts back exactly what was trashed.
      A path inside another path of the same commit gets no copy of its own:
      the item holding it is copied and trashed whole, the inner path is listed
-     in `trashed` with it and counted once, and one undo puts both back (or,
-     when the item holding it is not confirmed moved, it is in `unverified`
-     with it; when that item is not deleted, it is in `skipped`, saying so).
+     in `trashed` with it — once the disk no longer shows it — and counted
+     once, and one undo puts both back (or, when the item holding it is not
+     confirmed moved, it is in `unverified` with it; when that item is not
+     deleted, it is in `skipped`, saying so). "Inside" is where each is on the
+     disk, not how it is spelled: another spelling of a folder (an alias,
+     another case where the volume folds case) is that folder, while a path
+     through a link out of a folder, a link itself, or anything on a volume
+     mounted inside it is its own item, with its own copy.
      A failure the Trash reports is judged by the disk: an item gone from its
      place is `trashed`, with its copy kept; one still in place is
      `failedToTrash`, its copy dropped; and one the disk cannot show either way
