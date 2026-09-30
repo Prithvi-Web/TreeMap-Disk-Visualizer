@@ -8,6 +8,8 @@ import { clampInt } from './scanRoutes';
 import { getPolicy, assertScanAllowed } from '../services/policy';
 import { sseSend } from '../utils/sse';
 import {
+  INDEX_AUTO_MAX_ENTRIES,
+  IndexCapReached,
   buildIndex,
   deleteIndex,
   getRoot,
@@ -115,15 +117,32 @@ export function cancelAllIndexJobs(): void {
 /* ------------------------------ routes ------------------------------ */
 
 /**
- * POST /api/index/build { path } → 202 { jobId }
+ * What `GET /api/index/status` says about building on its own (plan U-1): the
+ * most items a folder may hold for the page to index it after a scan. The
+ * page reads it from here rather than holding its own copy.
+ */
+function autoBuild(): { maxEntries: number } {
+  return { maxEntries: INDEX_AUTO_MAX_ENTRIES };
+}
+
+/**
+ * POST /api/index/build { path, maxEntries? } → 202 { jobId }
  *
  * Returns immediately; progress rides the SSE stream. Indexing a large volume
  * takes as long as a scan does, and §3.3 forbids making the client hold a
  * request open for it.
+ *
+ * `maxEntries` (a positive whole number, anything else is 400) caps the build:
+ * past it the walk stops, nothing is kept and the job ends `cancelled` with a
+ * sentence saying so. The page sends the status's `autoBuild.maxEntries` with
+ * every build it starts on its own; without it a build is not capped.
  */
 indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Response) => {
   reapJobs();
-  const { path: rootPath } = req.body as { path: string };
+  const { path: rootPath, maxEntries } = req.body as { path: string; maxEntries?: unknown };
+  if (maxEntries !== undefined && !(typeof maxEntries === 'number' && Number.isSafeInteger(maxEntries) && maxEntries > 0)) {
+    throw new AppError(400, 'MAX_ENTRIES_INVALID', 'maxEntries must be a whole number of items, 1 or more');
+  }
   // The same policy gate scanning uses: an allowlisted deployment must not be
   // able to index its way around the restriction.
   assertScanAllowed(await getPolicy(), rootPath);
@@ -148,6 +167,7 @@ indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Respon
 
   // Deliberately not awaited: the response goes out now.
   void buildIndex(rootPath, {
+    ...(maxEntries === undefined ? {} : { maxEntries }),
     isCancelled: () => job.cancelled,
     onProgress: (p) => {
       job.phase = p.phase;
@@ -163,7 +183,9 @@ indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Respon
     })
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
-      job.status = message === 'cancelled' ? 'cancelled' : 'error';
+      // A build stopped at its cap was not a failure: the folder is larger
+      // than TreeMap indexes on its own, and the sentence says so.
+      job.status = message === 'cancelled' || err instanceof IndexCapReached ? 'cancelled' : 'error';
       job.phase = 'error';
       job.error = message;
       job.finishedAt = Date.now();
@@ -261,7 +283,14 @@ indexRouter.post('/index/:jobId/cancel', (req: Request, res: Response) => {
  *
  * With no `path`, every indexed root. With one, the root that would serve it —
  * which is what the Dashboard asks on load to decide between rendering
- * instantly and starting a scan.
+ * instantly and starting a scan. Both carry `autoBuild: { maxEntries }`, the
+ * most items a folder may hold for the page to index it on its own.
+ *
+ * A root's `live` says whether a watcher is attached now. `state: 'ready'`
+ * alone does not: a watch that could not be established leaves a freshly
+ * built root 'ready' and unwatched, and a build with `live: false` attaches
+ * none. "Current" is both together, as the badge and the page's build plan
+ * read it.
  */
 indexRouter.get('/index/status', guardQueryPath('path'), (req: Request, res: Response) => {
   const target = req.query.path as string | undefined;
@@ -271,7 +300,7 @@ indexRouter.get('/index/status', guardQueryPath('path'), (req: Request, res: Res
     // without the user being able to see it is the kind of thing that turns
     // into a support complaint. `DELETE /api/index` is the answer, and this is
     // what tells them whether they need it.
-    res.json({ roots: listRoots(), dbPath: indexDbPathSafe(), dbBytes: indexDbBytes() });
+    res.json({ roots: listRoots(), dbPath: indexDbPathSafe(), dbBytes: indexDbBytes(), autoBuild: autoBuild() });
     return;
   }
   const root = rootFor(target);
@@ -285,6 +314,8 @@ indexRouter.get('/index/status', guardQueryPath('path'), (req: Request, res: Res
     running: [...jobs.values()]
       .filter((j) => j.status === 'running' && (target === j.rootPath || target.startsWith(j.rootPath + path.sep)))
       .map((j) => ({ jobId: j.jobId, phase: j.phase, processed: j.processed })),
+    // After every earlier key, so each keeps its position (plan U-1).
+    autoBuild: autoBuild(),
   });
 });
 

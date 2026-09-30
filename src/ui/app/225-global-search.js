@@ -57,7 +57,12 @@ function renderGsearch(result) {
     // broken when actually they simply haven't scanned anything yet.
     let note;
     if (!result.roots || result.roots.length === 0) {
-      note = 'Nothing is indexed yet. Scan a folder once and it becomes searchable instantly from then on.';
+      // The limit is the server's, as the last index status gave it (plan
+      // U-1): a folder larger than that is not indexed after a scan, and
+      // "scan a folder once" would be a promise a whole disk does not keep.
+      note = typeof indexAutoMaxEntries === 'number'
+        ? `Nothing is indexed yet. Scan a folder of up to ${formatCount(indexAutoMaxEntries)} items once and it becomes searchable instantly from then on.`
+        : 'Nothing is indexed yet. Scan a folder once and it becomes searchable instantly from then on — folders larger than TreeMap indexes on its own are left out.';
     } else {
       note = `No matches for “${result.query}”. Try part of a filename, or ${'*.zip'} for a file type.`;
     }

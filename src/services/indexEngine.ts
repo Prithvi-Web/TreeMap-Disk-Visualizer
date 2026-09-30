@@ -16,6 +16,7 @@ import { onWatchDelivery } from '../platform/types';
 import { holdWatchesOf, onWatchSetChange, watchesShareOneStream } from '../platform/watchRegistry';
 import type { FileNode } from '../models/types';
 import { meansAbsent, meansGone } from '../utils/errno';
+import { formatCount } from '../utils/formatCount';
 
 /**
  * IndexEngine (A1) — the persistent, live-updated file index.
@@ -337,6 +338,42 @@ export interface BuildOptions {
   isCancelled?: () => boolean;
   /** Attach a live watcher when the build completes. Default true. */
   live?: boolean;
+  /**
+   * The most entries (the folder itself included) this build may write. Past
+   * it the walk stops, what was written is discarded exactly as a cancel
+   * discards it, and the build rejects with `IndexCapReached`. The page sends
+   * `INDEX_AUTO_MAX_ENTRIES` with every build it starts on its own; absent,
+   * nothing is capped (an explicit build).
+   */
+  maxEntries?: number;
+}
+
+/**
+ * The most items a folder may hold for TreeMap to index it on its own after
+ * a scan (plan U-1; the owner's answer to U-Q2 and U-Q3, 30 Sep 2026). Above
+ * it the page does not start a build, and the server stops an automatic build
+ * that passes it: the walk that builds the index does not honour the scan's
+ * "don't scan" patterns, and the folder can grow between the scan and the
+ * build, so the page's count alone is not a bound (U-D3).
+ *
+ * Why a bound at all: after every scan of a whole disk the page rebuilt its
+ * index — 9.46M rows, 31 minutes with the event loop blocked 32 % of the
+ * time, stalls up to 111 s, a 3.76 GB heap and a 2.63 GB database
+ * (docs/engine/TRACK-U-DIAGNOSIS.md). The largest index recorded before that
+ * was a 1,013,072-node home folder at 209 MB.
+ */
+export const INDEX_AUTO_MAX_ENTRIES = 1_000_000;
+
+/**
+ * A build stopped at its `maxEntries`. The job it ran for ends cancelled, not
+ * failed — nothing went wrong, the folder is larger than TreeMap indexes on
+ * its own — and this sentence is what it reports.
+ */
+export class IndexCapReached extends Error {
+  constructor(readonly maxEntries: number) {
+    super(`Stopped at ${formatCount(maxEntries)} items: more than TreeMap indexes on its own.`);
+    this.name = 'IndexCapReached';
+  }
 }
 
 /** How many rows to insert per transaction. */
@@ -415,6 +452,8 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   let fileCount = 0;
   let dirCount = 0;
   let pending: { path: string; row: Record<string, unknown> }[] = [];
+  /** Set once the walk has passed `opts.maxEntries`: it stops, and the build is discarded. */
+  let capped = false;
 
   const insertMany = handle.transaction((batch: typeof pending) => {
     for (const item of batch) {
@@ -436,6 +475,12 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       isCancelled: opts.isCancelled,
       skip: (p) => neverDescend(p),
     })) {
+      // One entry more than the build may write: stop the walk here (leaving
+      // the loop ends the enumerator) rather than write it.
+      if (opts.maxEntries !== undefined && processed >= opts.maxEntries) {
+        capped = true;
+        break;
+      }
       const parentPath = entry.path === root ? null : path.dirname(entry.path);
       // A parent is always emitted before its children (fastEnumerate yields
       // directories first), but it may still be sitting in `pending`.
@@ -503,12 +548,12 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
         opts.onProgress?.({ phase: 'enumerating', processed, currentPath: entry.path });
       }
     }
-    flush();
+    if (!capped) flush();
 
-    if (opts.isCancelled?.()) {
+    if (capped || opts.isCancelled?.()) {
       handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(rootId);
       handle.prepare('DELETE FROM roots WHERE id = ?').run(rootId);
-      throw new Error('cancelled');
+      throw capped ? new IndexCapReached(opts.maxEntries!) : new Error('cancelled');
     }
 
     opts.onProgress?.({ phase: 'summing', processed, currentPath: root });
@@ -526,7 +571,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     return getRoot(root)!;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message !== 'cancelled') {
+    if (message !== 'cancelled' && !(err instanceof IndexCapReached)) {
       handle.prepare("UPDATE roots SET state = 'error', error = ? WHERE id = ?").run(message, rootId);
     }
     opts.onProgress?.({ phase: 'error', processed, currentPath: root });

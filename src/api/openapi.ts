@@ -2288,9 +2288,15 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Build (or rebuild) the persistent index for a folder — progress via SSE',
     tag: 'index',
     destructive: false,
-    requestBody: jsonBody(obj({ path: str('Absolute folder path') }, ['path'])),
+    requestBody: jsonBody(obj({
+      path: str('Absolute folder path'),
+      maxEntries: int(
+        'Optional cap, a positive integer: past this many entries the walk stops, nothing is kept and the job ends cancelled with a sentence. The page sends GET /api/index/status\'s autoBuild.maxEntries with every build it starts on its own',
+      ),
+    }, ['path'])),
     responses: {
       '202': jsonResponse('Build started', obj({ jobId: str(), status: str("'running'") }, ['jobId'])),
+      '400': errorResponse('MAX_ENTRIES_INVALID — maxEntries is not a positive integer'),
       '403': errorResponse('POLICY_ROOT_NOT_ALLOWED — outside the configured allowedRoots'),
     },
   },
@@ -2332,7 +2338,14 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'index',
     destructive: false,
     parameters: [queryParam('path', 'Optional folder to resolve against the index', str())],
-    responses: { '200': jsonResponse('Index status', opaque('roots[] or { indexed, root, running[] }')) },
+    responses: {
+      '200': jsonResponse(
+        'Index status',
+        opaque(
+          '{ roots[], dbPath, dbBytes, autoBuild } or, with ?path=, { path, indexed, root, running[], autoBuild }. autoBuild is { maxEntries }: the most items a folder may hold for TreeMap to index it on its own after a scan. A root is current when state is ready and live is true',
+        ),
+      ),
+    },
   },
   {
     method: 'get',

@@ -907,11 +907,17 @@ test('indexing is an optimisation: every failure path falls back to scanning', (
 
 test('the background index build waits for the job before reporting its state', () => {
   // POST /api/index/build answers 202 immediately; reading status straight
-  // afterwards describes an index that is still being written.
+  // afterwards describes an index that is still being written. Since U-1 the
+  // page follows the job itself, reading each 202's progress for #indexLine
+  // (tests/indexAutoPlan.test.ts executes it), and paints the badge only once
+  // the job has settled.
   const code = appCode();
   const fn = code.slice(code.indexOf('async function buildIndexInBackground'), code.indexOf('async function startScan(path'));
   assert.match(fn, /\/result/, 'it polls the job result');
-  assert.match(fn, /poll:\s*true/, 'through the shared wrapper 202 handling');
+  assert.match(fn, /pending: 'return'/, 'taking each 202 body from the shared wrapper, not a thrown "still working"');
+  const settled = fn.indexOf("r.status !== 'running') break;");
+  assert.notEqual(settled, -1, 'the loop ends only on a status that is no longer running');
+  assert.ok(settled < fn.indexOf('renderIndexBadge('), 'and the badge is painted after it');
 });
 
 test('the index badge respects reduced motion', () => {

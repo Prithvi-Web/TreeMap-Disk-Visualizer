@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | Plan written | 30 Sep 2026 | this file |
 | U-0 The diagnosis's instruments committed (`bench/trackU/`) | done 30 Sep 2026 | `tests/trackUTools.test.ts` (5 tests); mutants: the sanitizer's regex dropped, query values logged, the stall window one sample late — each red |
-| U-1 No automatic index build above the threshold; none for an index that is already current; the build visible while it runs | not started | |
+| U-1 No automatic index build above the threshold; none for an index that is already current; the build visible while it runs | done 30 Sep 2026 | `tests/indexAutoPlan.test.ts` (19 tests); the plan's 8 mutants and 6 more, each red. Step 0: `ready` does not imply a watcher; every root already carries `live`, so none was added |
 | U-2 The scan watchdog: one poll in flight, `/stats` first, a grace for the complete frame, heartbeats the page can count | not started | |
 | U-3 The Full Disk Access button works in the desktop app (a named bridge call) | not started | |
 | U-4 Empty Folders never offers a folder the scan did not or could not list | not started | |

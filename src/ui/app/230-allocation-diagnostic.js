@@ -18,13 +18,21 @@ async function renderAllocationDiagnostic() {
   try {
     a = await api('/api/allocation?path=' + encodeURIComponent(target));
   } catch (e) {
-    // The most likely reason by far is simply that the index has not been
-    // built yet — which is a state, not a failure, and says so.
-    host.innerHTML = `<span class="muted">${escapeHtml(
-      e.code === 'INDEX_NOT_BUILT'
+    // No index is a state, not a failure, and says so — but "still building"
+    // only when a build is actually running for it. A folder larger than
+    // TreeMap indexes on its own is never built after a scan (plan U-1), and
+    // "try again in a moment" would be waiting for nothing.
+    let message = e.message;
+    if (e.code === 'INDEX_NOT_BUILT') {
+      const s = await indexStatusFor(target);
+      const building = !!(s && Array.isArray(s.running) && s.running.length > 0);
+      const max = s && s.autoBuild ? s.autoBuild.maxEntries : null;
+      message = building
         ? 'TreeMap is still building its index of this folder. Try again in a moment.'
-        : e.message,
-    )}</span>`;
+        : 'TreeMap has not indexed this folder, and measuring what it really occupies on disk needs the index.' +
+          (typeof max === 'number' ? ` It indexes a folder of up to ${formatCount(max)} items on its own after scanning it.` : '');
+    }
+    host.innerHTML = `<span class="muted">${escapeHtml(message)}</span>`;
     return;
   }
 

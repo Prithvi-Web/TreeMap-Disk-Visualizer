@@ -19,13 +19,22 @@ function renderIndexBadge(info) {
   // change while it stays attached. Without a reason — an index that is only
   // not being watched — the badge says what it always said.
   const why = info.root.state === 'stale' ? info.root.staleReason : '';
+  // This folder's own index, holding more items than TreeMap indexes on its
+  // own (plan U-1): a scan will not rebuild it, so "Scan again to refresh it"
+  // would promise what never happens. It says when it was saved instead.
+  const max = info.autoBuild ? info.autoBuild.maxEntries : null;
+  const oversized = info.root.path === info.path && typeof max === 'number' &&
+    info.root.fileCount + info.root.dirCount > max;
+  const refresh = oversized
+    ? (info.root.builtAt ? ' Saved ' + escapeHtml(formatDate(info.root.builtAt)) + '; not refreshed automatically.' : ' Not refreshed automatically.')
+    : ' Scan again to refresh it.';
   el.classList.toggle('stale', stale);
   el.innerHTML =
     '<span class="dot"></span><span>' +
     (stale
       ? (why
-        ? 'Index may be out of date. ' + escapeHtml(why) + ' Scan again to refresh it.'
-        : 'Index may be out of date — it wasn’t watching while TreeMap was closed. Scan again to refresh it.')
+        ? 'Index may be out of date. ' + escapeHtml(why) + refresh
+        : 'Index may be out of date — it wasn’t watching while TreeMap was closed.' + refresh)
       : 'Index live — always current') +
     '</span>';
   el.title = stale
@@ -34,10 +43,70 @@ function renderIndexBadge(info) {
   el.hidden = false;
 }
 
+/** Bumped by each background build; a build whose number has passed stops following its job. */
+let indexLineGen = 0;
+/** The server's `autoBuild.maxEntries`, from the last status that carried it; null until one has. */
+let indexAutoMaxEntries = null;
+
+/**
+ * Whether a finished scan's folder is indexed now (plan U-1, U-D3):
+ * 'build', 'offer' (too many items — say so, build nothing) or 'none'.
+ *
+ * `autoBuild` is the server's (`GET /api/index/status`), never a number held
+ * here. `exactRoot` is the index of exactly this folder, or null: a root that
+ * merely CONTAINS it (a whole-disk index saved by 5.1.0) is not its index and
+ * must not stop it being indexed.
+ *
+ * An unknown count is never read as small: no stats, a null, missing or NaN
+ * `scanned`, or no `autoBuild` at all is 'none'. A current index (ready, and
+ * watched) is not rebuilt. Nor is this folder's own index when it holds more
+ * than the limit: a rebuild deletes the old rows first and would then stop at
+ * the limit, leaving nothing — the owner's saved index is never deleted
+ * automatically.
+ */
+function indexAutoPlan(stats, autoBuild, exactRoot) {
+  const max = autoBuild ? autoBuild.maxEntries : undefined;
+  if (typeof max !== 'number' || !Number.isFinite(max) || max < 1) return 'none';
+  // Only a local scan: a cloud account has no filesystem to watch, and a
+  // tree read from the index is not indexed again.
+  if (!stats || stats.engine === 'index' || stats.engine === 'cloud') return 'none';
+  const n = stats.scanned;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 'none';
+  const small = n <= max;
+  if (!small) return 'offer';
+  if (exactRoot && exactRoot.fileCount + exactRoot.dirCount > max) return 'none';
+  if (exactRoot && exactRoot.state === 'ready' && exactRoot.live === true) return 'none';
+  return 'build';
+}
+
+/**
+ * The line under the index badge: a build that is running, one that outlived
+ * the page's ten minutes of close polling, or why a folder was not indexed.
+ * `line` is null (clear it), or { kind: 'building' | 'background', processed }
+ * or { kind: 'offer', scanned, maxEntries }.
+ */
+function renderIndexLine(line) {
+  const el = $('indexLine');
+  if (!el) return;
+  if (!line) { el.hidden = true; el.textContent = ''; return; }
+  const soFar = typeof line.processed === 'number' ? ` — ${formatCount(line.processed)} items so far` : '';
+  el.textContent =
+    line.kind === 'offer'
+      ? `Not indexed automatically — ${formatCount(line.scanned)} items is more than TreeMap indexes on its own (up to ${formatCount(line.maxEntries)}).`
+      : line.kind === 'background'
+        ? `Still indexing in the background${soFar}`
+        : `Indexing this folder for instant opening${soFar}`;
+  el.hidden = false;
+}
+
 /** Ask whether a folder can be served from the index. Never throws. */
 async function indexStatusFor(path) {
   try {
-    return await api('/api/index/status?path=' + encodeURIComponent(path));
+    const info = await api('/api/index/status?path=' + encodeURIComponent(path));
+    // Kept for the sentences that name the limit without a status to hand
+    // (search's "nothing is indexed yet").
+    if (info && info.autoBuild && Number.isFinite(info.autoBuild.maxEntries)) indexAutoMaxEntries = info.autoBuild.maxEntries;
+    return info;
   } catch {
     return null; // no index service, no problem — scanning still works
   }
@@ -102,32 +171,67 @@ async function openFromIndex(path, info) {
 }
 
 /**
- * Build the index for a freshly-scanned root, in the background.
+ * Build the index for a freshly-scanned root, in the background — when
+ * TreeMap indexes a folder that size on its own (plan U-1).
  *
  * Fire-and-forget on purpose: this is what makes the *next* open instant, and
  * the user is already looking at their results. A failure is silent because
  * nothing they can see depends on it — scanning keeps working exactly as
- * before if indexing is unavailable.
+ * before if indexing is unavailable. What IS said, on #indexLine, is that a
+ * build is running and how far it has got, or why none was started.
+ *
+ * `stats` is the finished scan's (`scanned`, `engine`); the limit is the
+ * server's, and the build request carries it, so the server stops a build
+ * that walks past it (its walk does not honour the scan's "don't scan"
+ * patterns, and the folder can grow meanwhile).
  */
-async function buildIndexInBackground(path) {
+async function buildIndexInBackground(path, stats) {
+  const gen = ++indexLineGen;
+  // Only the folder on screen gets a line; they may have scanned somewhere
+  // else while a big index was building. The loaded tree's own root is the
+  // test — `state.lastScan` carries timing, not a path.
+  const onScreen = () => !!state.root && state.root.path === path;
+  const paint = (line) => { if (gen === indexLineGen && onScreen()) renderIndexLine(line); };
+  // A poll every half second for ten minutes; past that the build is said to
+  // be running in the background, and followed every ten seconds until it
+  // settles rather than dropped.
+  const POLL_MS = 500;
+  const WINDOW_MS = 600000;
+  const BACKGROUND_POLL_MS = 10000;
   try {
+    if (!path || path.startsWith('cloud://')) { paint(null); return; }
+    const status = await indexStatusFor(path);
+    if (!status) { paint(null); return; }
+    const exactRoot = status.root && status.root.path === path ? status.root : null;
+    const plan = indexAutoPlan(stats, status.autoBuild, exactRoot);
+    if (plan === 'offer') {
+      paint({ kind: 'offer', scanned: stats.scanned, maxEntries: status.autoBuild.maxEntries });
+      return;
+    }
+    if (plan !== 'build') { paint(null); return; }
     const started = await api('/api/index/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, maxEntries: status.autoBuild.maxEntries }),
     });
+    paint({ kind: 'building', processed: 0 });
     // The build endpoint answers 202 with a job id and returns immediately, so
     // asking for status now would read the index mid-build and paint a badge
-    // describing a state that is about to change. Wait for the job to settle
-    // first — this is exactly the 202 handling the shared wrapper provides.
-    await api(`/api/index/${started.jobId}/result`, undefined, { poll: true, pollMs: 500, pollTimeoutMs: 600000 });
-
+    // describing a state that is about to change. Follow the job until it
+    // settles first; each 202 carries how far it has got, for the line.
+    for (let polls = 0; ; polls++) {
+      const r = await api(`/api/index/${started.jobId}/result`, undefined, { pending: 'return' });
+      if (!r || r.status !== 'running') break;
+      if (gen !== indexLineGen) return; // a newer build owns the line now
+      const outlived = polls * POLL_MS >= WINDOW_MS;
+      paint({ kind: outlived ? 'background' : 'building', processed: r.processed });
+      await new Promise((resolve) => setTimeout(resolve, outlived ? BACKGROUND_POLL_MS : POLL_MS));
+    }
+    paint(null);
     const info = await indexStatusFor(path);
-    // Only paint if the user is still looking at this folder; they may have
-    // scanned somewhere else while a big index was building. The loaded tree's
-    // own root is the test — `state.lastScan` carries timing, not a path.
-    if (info && state.root && state.root.path === path) renderIndexBadge(info);
+    if (info && onScreen()) renderIndexBadge(info);
   } catch {
+    paint(null);
     /* indexing is an optimisation, never a requirement — scanning still works */
   }
 }
@@ -541,11 +645,11 @@ async function finishScan(root, durationMs, stats) {
   emit(TOPIC.scan, state.scanId);
   switchView(state.view);
   // A1: make the *next* open of this folder instant. Background, non-blocking,
-  // and only for real local scans — a cloud account has no filesystem to watch,
-  // and re-indexing what we just read from the index would be pointless work.
-  if (root.path && !root.path.startsWith('cloud://') && state.scanStats?.engine !== 'index') {
-    buildIndexInBackground(root.path);
-  }
+  // and only for real local scans of a size TreeMap indexes on its own —
+  // buildIndexInBackground decides (indexAutoPlan): a cloud account has no
+  // filesystem to watch, re-indexing what we just read from the index would
+  // be pointless work, and a whole disk is not indexed automatically (U-1).
+  if (root.path) buildIndexInBackground(root.path, state.scanStats);
   renderGrowthProjection();
   loadBudgets();
   // The snapshot (and its time-slider tree) is saved asynchronously after the
