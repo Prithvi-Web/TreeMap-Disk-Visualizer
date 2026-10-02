@@ -12,16 +12,18 @@
       <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
 
       <!-- Phase 2 §11.4 — the scanning budget. Four presets, saved the moment
-           one is picked: a budget is a dial, not a form. The endpoint ships
-           with the native engine, so a build without it says so in words
-           (see loadEngineBudget) rather than leaving a blank row. -->
+           one is picked: a budget is a dial, not a form. A server that cannot
+           answer says so in words (see loadEngineBudget) rather than leaving a
+           blank row. Automatic's sentence ships neutral: opening Settings
+           writes the platform's own (renderEngineBudgetHelp), since only a Mac
+           and Linux report their heat. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>Scanning budget</div>
       <div class="muted" style="margin-bottom:10px;">How much of this computer a scan is allowed to use. Picking one saves it straight away.</div>
       <div id="engineBudgetOptions" role="radiogroup" aria-label="Scanning budget">
         <label class="rule-row budget-row" for="engineBudget-auto">
           <input type="radio" name="engineBudget" id="engineBudget-auto" value="auto" checked>
           <span class="budget-name">Automatic</span>
-          <span class="muted budget-help">Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot</span>
+          <span class="muted budget-help" id="engineBudgetHelp-auto">Turbo for scans you start, never above Balanced for the rest; a step lower on battery</span>
         </label>
         <label class="rule-row budget-row" for="engineBudget-eco">
           <input type="radio" name="engineBudget" id="engineBudget-eco" value="eco">
@@ -36,7 +38,7 @@
         <label class="rule-row budget-row" for="engineBudget-turbo">
           <input type="radio" name="engineBudget" id="engineBudget-turbo" value="turbo">
           <span class="budget-name">Turbo</span>
-          <span class="muted budget-help">All of it; for when you are watching and want it now</span>
+          <span class="muted budget-help">Nearly all of it — a tenth is left so the computer stays usable; for when you are watching and want it now</span>
         </label>
       </div>
       <div class="muted" id="engineBudgetNote" role="status" aria-live="polite"></div>
@@ -48,12 +50,12 @@
            renderScanEngine shows it once /api/system says win32. The server
            refuses the value on every other platform. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="activity"></span>Scan engine</div>
-      <div class="muted" style="margin-bottom:10px;">Which engine reads the disk. Picking one saves it straight away and applies from the next scan; every engine counts the same files the same way.</div>
+      <div class="muted" style="margin-bottom:10px;">Which engine reads the disk. Picking one saves it straight away and applies from the next scan. The native engine and the built-in walker count the same files the same way; gdu shows a folder it may not open as empty.</div>
       <div id="scanEngineOptions" role="radiogroup" aria-label="Scan engine">
         <label class="rule-row budget-row" for="scanEngine-auto">
           <input type="radio" name="scanEngine" id="scanEngine-auto" value="auto" checked>
           <span class="budget-name">Automatic</span>
-          <span class="muted budget-help">TreeMap picks the fastest engine that is exactly as correct</span>
+          <span class="muted budget-help">TreeMap picks the fastest engine this scan can use; the Dashboard says which one ran and why</span>
         </label>
         <label class="rule-row budget-row" for="scanEngine-native">
           <input type="radio" name="scanEngine" id="scanEngine-native" value="native">
@@ -157,7 +159,7 @@
       <div id="cloudAccounts"></div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
-      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
+      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart Suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
       <div id="ignoreList"></div>
       <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
 

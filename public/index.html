@@ -4384,16 +4384,18 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
 
       <!-- Phase 2 §11.4 — the scanning budget. Four presets, saved the moment
-           one is picked: a budget is a dial, not a form. The endpoint ships
-           with the native engine, so a build without it says so in words
-           (see loadEngineBudget) rather than leaving a blank row. -->
+           one is picked: a budget is a dial, not a form. A server that cannot
+           answer says so in words (see loadEngineBudget) rather than leaving a
+           blank row. Automatic's sentence ships neutral: opening Settings
+           writes the platform's own (renderEngineBudgetHelp), since only a Mac
+           and Linux report their heat. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>Scanning budget</div>
       <div class="muted" style="margin-bottom:10px;">How much of this computer a scan is allowed to use. Picking one saves it straight away.</div>
       <div id="engineBudgetOptions" role="radiogroup" aria-label="Scanning budget">
         <label class="rule-row budget-row" for="engineBudget-auto">
           <input type="radio" name="engineBudget" id="engineBudget-auto" value="auto" checked>
           <span class="budget-name">Automatic</span>
-          <span class="muted budget-help">Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot</span>
+          <span class="muted budget-help" id="engineBudgetHelp-auto">Turbo for scans you start, never above Balanced for the rest; a step lower on battery</span>
         </label>
         <label class="rule-row budget-row" for="engineBudget-eco">
           <input type="radio" name="engineBudget" id="engineBudget-eco" value="eco">
@@ -4408,7 +4410,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <label class="rule-row budget-row" for="engineBudget-turbo">
           <input type="radio" name="engineBudget" id="engineBudget-turbo" value="turbo">
           <span class="budget-name">Turbo</span>
-          <span class="muted budget-help">All of it; for when you are watching and want it now</span>
+          <span class="muted budget-help">Nearly all of it — a tenth is left so the computer stays usable; for when you are watching and want it now</span>
         </label>
       </div>
       <div class="muted" id="engineBudgetNote" role="status" aria-live="polite"></div>
@@ -4420,12 +4422,12 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
            renderScanEngine shows it once /api/system says win32. The server
            refuses the value on every other platform. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="activity"></span>Scan engine</div>
-      <div class="muted" style="margin-bottom:10px;">Which engine reads the disk. Picking one saves it straight away and applies from the next scan; every engine counts the same files the same way.</div>
+      <div class="muted" style="margin-bottom:10px;">Which engine reads the disk. Picking one saves it straight away and applies from the next scan. The native engine and the built-in walker count the same files the same way; gdu shows a folder it may not open as empty.</div>
       <div id="scanEngineOptions" role="radiogroup" aria-label="Scan engine">
         <label class="rule-row budget-row" for="scanEngine-auto">
           <input type="radio" name="scanEngine" id="scanEngine-auto" value="auto" checked>
           <span class="budget-name">Automatic</span>
-          <span class="muted budget-help">TreeMap picks the fastest engine that is exactly as correct</span>
+          <span class="muted budget-help">TreeMap picks the fastest engine this scan can use; the Dashboard says which one ran and why</span>
         </label>
         <label class="rule-row budget-row" for="scanEngine-native">
           <input type="radio" name="scanEngine" id="scanEngine-native" value="native">
@@ -4529,7 +4531,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div id="cloudAccounts"></div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
-      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
+      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart Suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
       <div id="ignoreList"></div>
       <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
 
@@ -8843,20 +8845,29 @@ function renderDiskNotes() {
     // row states "scanned 0 items" and "0/s" as fact about a folder that plainly
     // holds files. There is nothing honest left to say, so the row says nothing.
     if (s.engine && s.durationMs > 0 && s.scanned != null) {
-      const label = { native: 'Native engine', 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
+      // The names Settings › Scan engine uses. The walker is one engine at any
+      // pool size: the desktop app always sizes the pool past 4, and "Turbo
+      // walker" then sat beside "budget: Eco".
+      const label = { native: 'Native engine', 'gdu-turbo': 'gdu', 'turbo-walker': 'Built-in walker', 'ntfs-mft': 'NTFS turbo', walker: 'Built-in walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
       // the fallback reason when something faster could not run.
       $('engineText').title = engineReasonTitle(s);
+      // Each hint is true of its own engine only: gdu shows a folder it was
+      // refused as an empty one (missingGigabytes.ts), and every scan carries
+      // ioThreads, so the I/O-thread hint is the walker's alone.
+      const walker = s.engine === 'walker' || s.engine === 'turbo-walker';
       $('engineHint').textContent = s.engine === 'native'
         ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'
         : s.engine === 'gdu-turbo'
-          ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
-          : s.ioThreads > 4
-            ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
-            : '';
+          ? 'A bundled gdu process per top-level folder — faster than the built-in walker, but a folder it may not open shows as empty instead of being counted.'
+          : s.engine === 'ntfs-mft'
+            ? "Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself."
+            : walker && s.ioThreads > 4
+              ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
+              : '';
       en.hidden = false;
     } else en.hidden = true;
   }
@@ -8999,7 +9010,9 @@ async function renderGrowthProjection() {
 
    Two sources of truth, in order. The server counts what it was refused
    while walking (`stats.refused`), which costs nothing and covers every
-   case. An older server sends no such field, and there the page asks one
+   engine but gdu: gdu shows a folder it may not open as an empty one, so a
+   gdu scan's count is 0 whatever was refused (the Missing GB view says that
+   count is unknown). An older server sends no such field, and there the page asks one
    question of its own: the folder picker's listing endpoint answers 403 for
    a path the OS is protecting, which is a definitive answer in a single
    call. Only a result that looks like a refusal is worth asking about — a
@@ -31822,6 +31835,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
   $('settingsStatus').textContent = '';
   void renderAllocationDiagnostic(); // A2 — independent of settings loading
+  renderEngineBudgetHelp();          // Automatic's sentence, in this platform's words
   void loadEngineBudget();           // Phase 2 — its own endpoint, its own failure mode
   try {
     settingsData = await api('/api/settings');
@@ -31855,9 +31869,11 @@ $('settingsBtn').addEventListener('click', async () => {
 const SCAN_ENGINES = ['auto', 'native', 'gdu', 'walker', 'ntfs-mft'];
 const SCAN_ENGINE_LABELS = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker', 'ntfs-mft': 'NTFS turbo' };
 /** The gdu row's sentence. On Windows gdu is never used (it reads every file id
-    as 0, RISKS R59), so there the row says so instead of promising it. */
+    as 0, RISKS R59), so there the row says so instead of promising it — and
+    says what choosing it does, since an Automatic scan there is the native
+    engine's, not the walker's. */
 const SCAN_ENGINE_GDU_HELP = 'the bundled gdu helper, one process per top-level folder';
-const SCAN_ENGINE_GDU_HELP_WINDOWS = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: scans there use the built-in walker';
+const SCAN_ENGINE_GDU_HELP_WINDOWS = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: choosing it there scans with the built-in walker';
 
 function scanEngineInputs() {
   return SCAN_ENGINES.map((e) => $(`scanEngine-${e}`)).filter(Boolean);
@@ -31907,12 +31923,34 @@ for (const input of scanEngineInputs()) {
 /* ── Scanning budget (Phase 2 §11.4) ──
    Four presets, saved the moment one is picked — a budget is a dial, not a
    form, so it does not wait for the Save button and does not ride on
-   PUT /api/settings. The endpoint ships with the native engine, so a build
-   without it answers 404: that is a state to show in the row, in words —
-   not a blank, and not an error toast. */
+   PUT /api/settings. The endpoint is always there (without the native module
+   the Node shim answers, and the line under the radios says it is
+   approximate); a server that answers 404 is one without the feature, and
+   that is a state to show in the row, in words — not a blank, and not an
+   error toast. */
 const ENGINE_BUDGET_PRESETS = ['auto', 'eco', 'balanced', 'turbo'];
 const ENGINE_BUDGET_UNAVAILABLE = 'Not available in this build';
 let engineBudget = null; // the server's last answer, or null when it has none
+
+/** Automatic's sentence. The heat clause is said only where the governor can
+    read the heat — a Mac reports it, Linux through its thermal zones, Windows
+    to no program at all (tm-governor's signals) — and before /api/system has
+    answered, or on an OS the table does not name, nothing is promised that
+    might not happen. */
+function engineBudgetAutoHelp() {
+  return platformWord({
+    darwin: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot',
+    win32: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery',
+    linux: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the computer runs hot',
+    other: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery',
+  });
+}
+
+/** Write Automatic's sentence for this platform; the markup ships the neutral one. */
+function renderEngineBudgetHelp() {
+  const help = $('engineBudgetHelp-auto');
+  if (help) help.textContent = engineBudgetAutoHelp();
+}
 
 function engineBudgetInputs() {
   return ENGINE_BUDGET_PRESETS.map((p) => $(`engineBudget-${p}`)).filter(Boolean);

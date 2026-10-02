@@ -885,16 +885,20 @@ export function refusedPermissionNote(denied: number, plat: NodeJS.Platform): st
 function unscannableLine(scan: ScanResult, plat: NodeJS.Platform): StatementLine {
   const engine = scan.engine ?? 'walker';
   if (!ENGINES_THAT_COUNT_REFUSALS.has(engine)) {
+    // Named as Settings › Scan engine names it, not by its id.
+    const engineName = engine === 'gdu-turbo' ? 'gdu' : engine;
     return {
       id: 'unscannable',
       label: 'Refused to the scan',
       bytes: null,
       available: false,
-      reason: `This scan was produced by the ${engine} engine, which reports a folder it was refused as an ordinary empty folder — so how many were refused, and how much they hold, cannot be known from it.`,
+      reason: `This scan was produced by the ${engineName} engine, which reports a folder it was refused as an ordinary empty folder — so how many were refused, and how much they hold, cannot be known from it.`,
       detail: 'Folders and files the operating system would not let this scan read.',
       count: null,
       notes: [
-        'A scan run by the built-in walker counts these exactly. Set TREEMAP_NO_GDU=1 to force it, at some cost in speed.',
+        // The one choice that counts them on every machine: under Automatic a
+        // build without the native module would pick gdu again.
+        'A scan by the native engine or the built-in walker counts these exactly: choose Built-in walker in Settings › Scan engine and scan again, at some cost in speed.',
       ],
       remedy: null,
     };

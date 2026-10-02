@@ -869,20 +869,29 @@ function renderDiskNotes() {
     // row states "scanned 0 items" and "0/s" as fact about a folder that plainly
     // holds files. There is nothing honest left to say, so the row says nothing.
     if (s.engine && s.durationMs > 0 && s.scanned != null) {
-      const label = { native: 'Native engine', 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
+      // The names Settings › Scan engine uses. The walker is one engine at any
+      // pool size: the desktop app always sizes the pool past 4, and "Turbo
+      // walker" then sat beside "budget: Eco".
+      const label = { native: 'Native engine', 'gdu-turbo': 'gdu', 'turbo-walker': 'Built-in walker', 'ntfs-mft': 'NTFS turbo', walker: 'Built-in walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
       // the fallback reason when something faster could not run.
       $('engineText').title = engineReasonTitle(s);
+      // Each hint is true of its own engine only: gdu shows a folder it was
+      // refused as an empty one (missingGigabytes.ts), and every scan carries
+      // ioThreads, so the I/O-thread hint is the walker's alone.
+      const walker = s.engine === 'walker' || s.engine === 'turbo-walker';
       $('engineHint').textContent = s.engine === 'native'
         ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'
         : s.engine === 'gdu-turbo'
-          ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
-          : s.ioThreads > 4
-            ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
-            : '';
+          ? 'A bundled gdu process per top-level folder — faster than the built-in walker, but a folder it may not open shows as empty instead of being counted.'
+          : s.engine === 'ntfs-mft'
+            ? "Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself."
+            : walker && s.ioThreads > 4
+              ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
+              : '';
       en.hidden = false;
     } else en.hidden = true;
   }
@@ -1025,7 +1034,9 @@ async function renderGrowthProjection() {
 
    Two sources of truth, in order. The server counts what it was refused
    while walking (`stats.refused`), which costs nothing and covers every
-   case. An older server sends no such field, and there the page asks one
+   engine but gdu: gdu shows a folder it may not open as an empty one, so a
+   gdu scan's count is 0 whatever was refused (the Missing GB view says that
+   count is unknown). An older server sends no such field, and there the page asks one
    question of its own: the folder picker's listing endpoint answers 403 for
    a path the OS is protecting, which is a definitive answer in a single
    call. Only a result that looks like a refusal is worth asking about — a

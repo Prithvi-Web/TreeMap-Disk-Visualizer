@@ -6,6 +6,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
   $('settingsStatus').textContent = '';
   void renderAllocationDiagnostic(); // A2 — independent of settings loading
+  renderEngineBudgetHelp();          // Automatic's sentence, in this platform's words
   void loadEngineBudget();           // Phase 2 — its own endpoint, its own failure mode
   try {
     settingsData = await api('/api/settings');
@@ -39,9 +40,11 @@ $('settingsBtn').addEventListener('click', async () => {
 const SCAN_ENGINES = ['auto', 'native', 'gdu', 'walker', 'ntfs-mft'];
 const SCAN_ENGINE_LABELS = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker', 'ntfs-mft': 'NTFS turbo' };
 /** The gdu row's sentence. On Windows gdu is never used (it reads every file id
-    as 0, RISKS R59), so there the row says so instead of promising it. */
+    as 0, RISKS R59), so there the row says so instead of promising it — and
+    says what choosing it does, since an Automatic scan there is the native
+    engine's, not the walker's. */
 const SCAN_ENGINE_GDU_HELP = 'the bundled gdu helper, one process per top-level folder';
-const SCAN_ENGINE_GDU_HELP_WINDOWS = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: scans there use the built-in walker';
+const SCAN_ENGINE_GDU_HELP_WINDOWS = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: choosing it there scans with the built-in walker';
 
 function scanEngineInputs() {
   return SCAN_ENGINES.map((e) => $(`scanEngine-${e}`)).filter(Boolean);
@@ -91,12 +94,34 @@ for (const input of scanEngineInputs()) {
 /* ── Scanning budget (Phase 2 §11.4) ──
    Four presets, saved the moment one is picked — a budget is a dial, not a
    form, so it does not wait for the Save button and does not ride on
-   PUT /api/settings. The endpoint ships with the native engine, so a build
-   without it answers 404: that is a state to show in the row, in words —
-   not a blank, and not an error toast. */
+   PUT /api/settings. The endpoint is always there (without the native module
+   the Node shim answers, and the line under the radios says it is
+   approximate); a server that answers 404 is one without the feature, and
+   that is a state to show in the row, in words — not a blank, and not an
+   error toast. */
 const ENGINE_BUDGET_PRESETS = ['auto', 'eco', 'balanced', 'turbo'];
 const ENGINE_BUDGET_UNAVAILABLE = 'Not available in this build';
 let engineBudget = null; // the server's last answer, or null when it has none
+
+/** Automatic's sentence. The heat clause is said only where the governor can
+    read the heat — a Mac reports it, Linux through its thermal zones, Windows
+    to no program at all (tm-governor's signals) — and before /api/system has
+    answered, or on an OS the table does not name, nothing is promised that
+    might not happen. */
+function engineBudgetAutoHelp() {
+  return platformWord({
+    darwin: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot',
+    win32: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery',
+    linux: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the computer runs hot',
+    other: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery',
+  });
+}
+
+/** Write Automatic's sentence for this platform; the markup ships the neutral one. */
+function renderEngineBudgetHelp() {
+  const help = $('engineBudgetHelp-auto');
+  if (help) help.textContent = engineBudgetAutoHelp();
+}
 
 function engineBudgetInputs() {
   return ENGINE_BUDGET_PRESETS.map((p) => $(`engineBudget-${p}`)).filter(Boolean);

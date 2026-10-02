@@ -24,11 +24,24 @@ const PRESETS = ['auto', 'eco', 'balanced', 'turbo'] as const;
 type Preset = (typeof PRESETS)[number];
 
 const LABELS: Record<Preset, string> = { auto: 'Automatic', eco: 'Eco', balanced: 'Balanced', turbo: 'Turbo' };
+/**
+ * Automatic's sentence names the heat rule only where the governor can read
+ * the heat: a Mac reports it, Linux through its thermal zones, and Windows to
+ * no program at all (tm-governor's signals.rs). The markup ships the neutral
+ * sentence; opening Settings swaps in the platform's own.
+ */
+const AUTO_WORDS = {
+  darwin: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot',
+  win32: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery',
+  linux: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the computer runs hot',
+  other: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery',
+} as const;
 const SENTENCES: Record<Preset, string> = {
-  auto: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot',
+  auto: AUTO_WORDS.other,
   eco: 'A quarter of the machine; scans take longer and stay out of your way',
   balanced: 'Half the machine; backs off while you are working',
-  turbo: 'All of it; for when you are watching and want it now',
+  // The governor's Turbo ceiling is 0.90 (tm-governor preset.rs, TURBO_CEILING).
+  turbo: 'Nearly all of it — a tenth is left so the computer stays usable; for when you are watching and want it now',
 };
 const UNAVAILABLE = 'Not available in this build';
 
@@ -155,11 +168,12 @@ test('Settings has a "Scanning budget" section: four labelled radios, Automatic 
     assert.equal(/\bchecked\b/.test(input![1]), p === 'auto', `${p} is ${p === 'auto' ? '' : 'not '}the default`);
     const row = new RegExp(
       `id="engineBudget-${p}"[^>]*>\\s*<span class="budget-name">${LABELS[p]}</span>\\s*` +
-      `<span class="muted budget-help">${escapeRe(SENTENCES[p])}</span>`,
+      `<span class="muted budget-help"(?: id="engineBudgetHelp-${p}")?>${escapeRe(SENTENCES[p])}</span>`,
     );
     assert.match(modal, row, `${LABELS[p]} carries its one plain sentence`);
     assert.match(modal, new RegExp(`<label[^>]*for="engineBudget-${p}"`), `${LABELS[p]} is a real label, so the sentence is clickable`);
   }
+  assert.match(modal, /<span class="muted budget-help" id="engineBudgetHelp-auto">/, 'the Automatic sentence carries the id the script rewrites per platform');
   assert.match(modal, /id="engineBudgetNote"/, 'a line under the radios says what is running now, or why nothing can be picked');
   const section = slice('Scanning budget</div>', 'Disk-full forecast');
   assert.doesNotMatch(section.replace(/<[^>]+>/g, ' '), /\bdirector(y|ies)\b|governor|shim|throttle|duty/i, 'plain words: folder, not directory; no engine jargon');
@@ -173,6 +187,43 @@ test('the section joins the ⌘K palette registry like the other Settings sectio
   assert.ok(row, 'Scanning budget is a registered section');
   assert.match(row![1], /eco/, 'typing a preset name finds it');
   assert.match(row![1], /turbo/);
+});
+
+/** The Automatic sentence, evaluated out of the page with `state` saying which OS this is (undefined: not answered yet). */
+function autoHelpFor(platform: string | undefined): { text: () => string; render: () => string } {
+  const src = [braced('function platformWord('), braced('function engineBudgetAutoHelp('), braced('function renderEngineBudgetHelp(')].join('\n');
+  const help = { textContent: 'whatever an earlier render left' };
+  const $ = (id: string) => (id === 'engineBudgetHelp-auto' ? help : null);
+  const state = platform === undefined ? { system: null } : { system: { platform } };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const fns = new Function('$', 'state', `'use strict'; ${src}\nreturn { engineBudgetAutoHelp, renderEngineBudgetHelp };`)($, state) as {
+    engineBudgetAutoHelp: () => string; renderEngineBudgetHelp: () => void;
+  };
+  return { text: fns.engineBudgetAutoHelp, render: () => { fns.renderEngineBudgetHelp(); return help.textContent; } };
+}
+
+test('Automatic names the heat rule only where the computer reports its heat: a Mac, Linux; never Windows', () => {
+  assert.equal(autoHelpFor('darwin').text(), AUTO_WORDS.darwin);
+  assert.equal(autoHelpFor('linux').text(), AUTO_WORDS.linux);
+  assert.equal(autoHelpFor('win32').text(), AUTO_WORDS.win32, 'Windows tells no program its thermal state, so nothing is promised about heat');
+  assert.equal(autoHelpFor(undefined).text(), AUTO_WORDS.other, 'before /api/system answers, nothing is a Mac');
+  assert.equal(autoHelpFor('freebsd').text(), AUTO_WORDS.other, 'an OS the table does not name gets the neutral sentence');
+  for (const p of ['win32', 'linux', 'freebsd', undefined]) {
+    assert.doesNotMatch(autoHelpFor(p).text(), /\bMac\b/, `${String(p)}: no Mac word`);
+  }
+  for (const p of ['win32', 'freebsd', undefined]) {
+    assert.doesNotMatch(autoHelpFor(p).text(), /hot|heat/i, `${String(p)}: no heat rule where no heat is read`);
+  }
+  for (const p of ['darwin', 'win32', 'linux', undefined]) {
+    assert.match(autoHelpFor(p).text(), /^Turbo for scans you start, never above Balanced for the rest; a step lower on battery/, `${String(p)}: the rule itself is the same everywhere`);
+  }
+});
+
+test('opening Settings writes the platform\'s Automatic sentence into its row', () => {
+  const opener = braced("$('settingsBtn').addEventListener('click', async () => {");
+  assert.match(opener, /renderEngineBudgetHelp\(\)/, 'the sheet says the platform\'s sentence each time it opens');
+  assert.equal(autoHelpFor('win32').render(), AUTO_WORDS.win32, 'the row is overwritten, whatever an earlier render left');
+  assert.equal(autoHelpFor('darwin').render(), AUTO_WORDS.darwin);
 });
 
 test('opening Settings reads the budget from its own endpoint, independent of /api/settings', () => {
@@ -295,7 +346,7 @@ test('the engine row prints the note after the engine name and rate', () => {
   };
   const withBudget = run({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 8, budget: { preset: 'auto', effective: 'balanced', source: 'native' } });
   assert.equal(withBudget.engineRow.hidden, false);
-  assert.match(withBudget.engineText.textContent, /Standard walker — scanned 1,234 items in 2\.0 s · 617\/s · budget: Balanced$/);
+  assert.match(withBudget.engineText.textContent, /Built-in walker — scanned 1,234 items in 2\.0 s · 617\/s · budget: Balanced$/);
   const without = run({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 8 });
   assert.doesNotMatch(without.engineText.textContent, /budget/, 'an older stats shape adds nothing');
 });

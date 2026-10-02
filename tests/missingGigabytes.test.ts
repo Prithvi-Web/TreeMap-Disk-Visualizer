@@ -560,7 +560,13 @@ test('an engine that cannot see refusals reports unknown, not zero', async () =>
   assert.equal(line.bytes, null);
   assert.equal(line.count, null, 'not 0 — the count itself is unknown');
   assert.equal(line.available, false);
-  assert.match(line.reason ?? '', /gdu-turbo engine/);
+  assert.match(line.reason ?? '', /^This scan was produced by the gdu engine, which reports a folder it was refused as an ordinary empty folder/);
+  assert.doesNotMatch(line.reason ?? '', /gdu-turbo/, 'the engine is named as Settings names it, not by its id');
+  assert.deepEqual(
+    line.notes,
+    ['A scan by the native engine or the built-in walker counts these exactly: choose Built-in walker in Settings › Scan engine and scan again, at some cost in speed.'],
+    'the control a person has is the Scan engine setting — not an environment variable the desktop app cannot take',
+  );
   assert.match(lineOf(s, 'unaccounted').detail, /Refused to the scan/, 'and it is named in the residual');
 });
 

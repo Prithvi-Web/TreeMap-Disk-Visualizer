@@ -254,8 +254,12 @@ type Row = { id: string; hidden: boolean };
 type Help = { id: string; textContent: string };
 
 const GDU_SENTENCE = 'the bundled gdu helper, one process per top-level folder';
-/** On Windows gdu is never used (RISKS R59: it reads every file id as 0), and its row says so instead of promising it. */
-const GDU_WINDOWS_SENTENCE = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: scans there use the built-in walker';
+/**
+ * On Windows gdu is never used (RISKS R59: it reads every file id as 0), and its row says so instead of promising it.
+ * What choosing it does there is the built-in walker (gduRuleFor refuses win32); an Automatic scan there is the
+ * native engine's, so the row must not say that every Windows scan is the walker's.
+ */
+const GDU_WINDOWS_SENTENCE = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: choosing it there scans with the built-in walker';
 
 function makeDom() {
   const els: Record<string, Radio | Row> = {};

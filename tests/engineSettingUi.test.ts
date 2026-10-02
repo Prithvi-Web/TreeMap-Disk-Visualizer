@@ -35,7 +35,7 @@ const ENGINES = ['auto', 'native', 'gdu', 'walker'] as const;
 type Engine = (typeof ENGINES)[number];
 const LABELS: Record<Engine, string> = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker' };
 const SENTENCES: Record<Engine, string> = {
-  auto: 'TreeMap picks the fastest engine that is exactly as correct',
+  auto: 'TreeMap picks the fastest engine this scan can use; the Dashboard says which one ran and why',
   native: 'the built-in fast engine, when this build has it',
   gdu: 'the bundled gdu helper, one process per top-level folder',
   walker: 'the original engine — slower, and the one every other engine is checked against',
@@ -296,23 +296,28 @@ test('the engine row’s hover title is the reason the engine ran, with the fall
   assert.equal(engineReasonTitle(null), '');
 });
 
+type RowEl = { hidden: boolean; textContent: string; title: string; innerHTML: string; dataset: Record<string, unknown>; classList: { add(): void; remove(): void; toggle(): void }; setAttribute(): void; closest(): null; querySelectorAll(): never[] };
+
+/** renderDiskNotes, run out of the page against these stats; the elements it wrote, by id. */
+function runEngineRow(scanStats: Record<string, unknown>): Record<string, RowEl> {
+  const src = slice('function renderDiskNotes()', 'async function renderCloudSafe');
+  const formatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
+  const els: Record<string, RowEl> = {};
+  const $ = (id: string) => (els[id] ??= { hidden: false, textContent: '', title: '', innerHTML: '', dataset: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, closest: () => null, querySelectorAll: () => [] });
+  const engineBudgetNote = lift<(s: unknown) => string>(['budgetPresetLabel', 'engineBudgetNote'], 'engineBudgetNote');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const fn = new Function('$', 'state', 'formatCount', 'formatBytes', 'fxTmPillBeamsSync', 'engineBudgetNote', 'engineReasonTitle', `'use strict'; ${src} return renderDiskNotes;`)(
+    $, { scanStats, treemap: { hideCloud: false } }, formatCount, (n: number) => n + ' B', () => {}, engineBudgetNote, engineReasonTitle,
+  ) as () => void;
+  fn();
+  return els;
+}
+
 test('the engine row names the native engine, sets the reason as its title, and keeps the Phase 2 note', () => {
   const src = slice('function renderDiskNotes()', 'async function renderCloudSafe');
   assert.match(src, /\$\('engineText'\)\.title = engineReasonTitle\(s\)/, 'the reason is on hover, not in the sentence');
   assert.match(src, /native: 'Native engine'/, 'the engine has a label');
-  const formatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
-  type El = { hidden: boolean; textContent: string; title: string; innerHTML: string; dataset: Record<string, unknown>; classList: { add(): void; remove(): void; toggle(): void }; setAttribute(): void; closest(): null; querySelectorAll(): never[] };
-  const run = (scanStats: Record<string, unknown>) => {
-    const els: Record<string, El> = {};
-    const $ = (id: string) => (els[id] ??= { hidden: false, textContent: '', title: '', innerHTML: '', dataset: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, closest: () => null, querySelectorAll: () => [] });
-    const engineBudgetNote = lift<(s: unknown) => string>(['budgetPresetLabel', 'engineBudgetNote'], 'engineBudgetNote');
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const fn = new Function('$', 'state', 'formatCount', 'formatBytes', 'fxTmPillBeamsSync', 'engineBudgetNote', 'engineReasonTitle', `'use strict'; ${src} return renderDiskNotes;`)(
-      $, { scanStats, treemap: { hideCloud: false } }, formatCount, (n: number) => n + ' B', () => {}, engineBudgetNote, engineReasonTitle,
-    ) as () => void;
-    fn();
-    return els;
-  };
+  const run = runEngineRow;
   const native = run({ engine: 'native', durationMs: 2000, scanned: 1234, ioThreads: 8, engineReason: 'the native engine was chosen: this build has it', fallbackReason: null, fastPath: 'bulk', budget: { preset: 'auto', effective: 'balanced', source: 'native' } });
   assert.equal(native.engineRow.hidden, false);
   assert.match(native.engineText.textContent, /^Native engine — scanned 1,234 items in 2\.0 s · 617\/s · budget: Balanced$/);
@@ -322,4 +327,55 @@ test('the engine row names the native engine, sets the reason as its title, and 
   assert.equal(fallen.engineText.title, 'the built-in walker ran — no native module for this platform');
   const older = run({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 8 });
   assert.equal(older.engineText.title, '', 'an older stats shape adds nothing');
+});
+
+/* ══════════════ 4. What the section and the row claim, held to the engines ══════════════ */
+
+/** A region's words, tags stripped and whitespace folded. */
+const words = (html: string) => html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+
+test('the Scan engine section claims equal counts only for the engines that count alike, and says what gdu does instead', () => {
+  // gdu emits a folder it may not open as an ordinary empty one and exits 0
+  // (missingGigabytes.ts, ENGINES_THAT_COUNT_REFUSALS), so "every engine
+  // counts the same files the same way" was false of one of the four.
+  const introHtml = /<span data-icon="activity"><\/span>Scan engine<\/div>\s*<div class="muted"[^>]*>([\s\S]*?)<\/div>/.exec(INDEX);
+  assert.ok(introHtml, 'the section opens with its one muted sentence');
+  const intro = words(introHtml[1]);
+  assert.doesNotMatch(intro, /every engine counts/i);
+  assert.match(intro, /^Which engine reads the disk\. Picking one saves it straight away and applies from the next scan\. The native engine and the built-in walker count the same files the same way; gdu shows a folder it may not open as empty\.$/);
+  assert.doesNotMatch(SENTENCES.auto, /exactly as correct/, 'Automatic picks gdu where the native engine cannot run, and gdu is not');
+});
+
+test('the engine row names each engine as Settings names it, and each hint is true of the engine that ran', () => {
+  const stats = (engine: string, ioThreads = 8) => ({ engine, durationMs: 2000, scanned: 1234, ioThreads });
+  const label = (engine: string) => runEngineRow(stats(engine)).engineText.textContent.split(' — ')[0];
+  assert.equal(label('native'), 'Native engine');
+  assert.equal(label('gdu-turbo'), 'gdu', 'Settings calls it gdu');
+  assert.equal(label('walker'), 'Built-in walker');
+  assert.equal(label('turbo-walker'), 'Built-in walker', 'the desktop app always sizes the pool past 4, so "Turbo walker" sat beside "budget: Eco"');
+  assert.equal(label('ntfs-mft'), 'NTFS turbo', 'Settings calls it NTFS turbo');
+  assert.equal(label('cloud'), 'Cloud metadata listing');
+
+  const gdu = runEngineRow(stats('gdu-turbo')).engineHint.textContent;
+  assert.doesNotMatch(gdu, /same counts/, 'gdu does not count a folder it was refused');
+  assert.match(gdu, /^A bundled gdu process per top-level folder — faster than the built-in walker, but a folder it may not open shows as empty instead of being counted\.$/);
+
+  const mft = runEngineRow(stats('ntfs-mft')).engineHint.textContent;
+  assert.doesNotMatch(mft, /I\/O threads/, 'an NTFS turbo scan does not take the walker\'s hint');
+  assert.match(mft, /^Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself\.$/);
+
+  assert.equal(runEngineRow(stats('cloud')).engineHint.textContent, '', 'a cloud listing reads no disk, so no I/O-thread claim');
+  assert.match(runEngineRow(stats('turbo-walker')).engineHint.textContent, /^8 parallel I\/O threads keep the disk saturated/, 'the walker keeps its own hint');
+  assert.match(runEngineRow(stats('walker', 16)).engineHint.textContent, /^16 parallel I\/O threads/);
+  assert.equal(runEngineRow(stats('walker', 4)).engineHint.textContent, '', 'and says nothing at the default pool');
+});
+
+test('the Ignore list says that a pattern that skips folders sends every scan to the built-in walker', () => {
+  // Any pattern scoped Don't scan or Both reaches every scan (getIgnoreMatchers
+  // takes no root), and any such pattern keeps the scan off the native engine
+  // and gdu (nativeRule, gduRuleFor). A new row defaults to Both.
+  const blurb = words(slice('Ignore list</div>', 'id="ignoreList"'));
+  assert.doesNotMatch(blurb, /faster scans/);
+  assert.match(blurb, /While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine\./);
+  assert.match(blurb, /Don't scan skips them entirely; Don't suggest keeps them out of Smart Suggestions only\./, 'the two scopes are still explained');
 });
