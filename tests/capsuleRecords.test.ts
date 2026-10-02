@@ -12,6 +12,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { cancelAllCapsuleJobs, capsuleRoot, getCapsuleIndex, getCapsuleJob, manifestRefusal, pruneExpired, reconcileCapsule } from '../src/services/timeCapsule';
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import { apfsNameKey } from '../src/utils/volumeNames';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, assertSavedPolicyPath, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 import { AppError } from '../src/middleware/errorHandler';
@@ -574,6 +575,22 @@ test('the check of a manifest against its links looks each member up by its own 
   assert.ok(tally.lookups <= members.length * deepest, `${tally.lookups} lookups for ${members.length} members: linear in the members, not members times links`);
   const tampered = [...members, { rel: path.join('.bin', `tool-${links - 1}`, 'through.txt'), kind: 'file', size: 1, hash: 'h' }];
   assert.match(manifestRefusal(manifest(tampered)) ?? '', /past a link/, 'and a member past one of its links is still refused');
+});
+
+test('the check of a manifest folds each name once, however many members its folders hold (FG3d #5)', () => {
+  // A capture of 50,000 members under three long accented folder names, and one link. The fold that
+  // follows Unicode code point by code point runs on the event loop that also serves the page.
+  const folders = ['\u00dcn\u00efc\u00f6d\u00e9-f\u00f6lder-'.repeat(10), '\u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac-'.repeat(12), '\u00e7\u00e0-et-l\u00e0-'.repeat(16)];
+  const members: unknown[] = [{ rel: path.join('bin', 'tool'), kind: 'symlink', size: 1, hash: 'h', target: '../x' }];
+  for (let i = 0; i < 50_000; i++) members.push({ rel: path.join(...folders, `file-${i}.txt`), kind: 'file', size: 1, hash: 'h' });
+  const manifest = { originalPath: path.join(PLACE, 'accented'), name: 'accented', members } as unknown as Parameters<typeof manifestRefusal>[0];
+  let folds = 0;
+  const counting = (name: string): string => { folds++; return apfsNameKey(name); };
+  assert.equal(manifestRefusal(manifest, undefined, counting), null, 'a manifest capture writes passes');
+  const distinct = new Set(['bin', 'tool', ...folders]).size;
+  assert.ok(folds <= distinct, `${folds} folds for ${distinct} distinct names: each name once, not once per member`);
+  const tampered = { ...manifest, members: [...members, { rel: path.join('BIN', 'TOOL', 'through.txt'), kind: 'file', size: 1, hash: 'h' }] } as unknown as Parameters<typeof manifestRefusal>[0];
+  assert.match(manifestRefusal(tampered, undefined, apfsNameKey) ?? '', /past a link/, 'and a member past the link, in another case, is still refused');
 });
 
 /* ─────────────── Autopilot's policy folder, read back from autopilot.json ─────────────── */

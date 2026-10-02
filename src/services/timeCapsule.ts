@@ -1512,7 +1512,10 @@ function isOneName(name: unknown): name is string {
  * the early refusal only: the restore makes links last, so nothing is written through one whatever
  * the names fold to. Linear in the members: each member's own folders are looked up in the set of
  * links (`tally` counts the lookups), never every member against every link — a node_modules
- * capture holds thousands of links among tens of thousands of members.
+ * capture holds thousands of links among tens of thousands of members. And each distinct name is
+ * folded once (FG3d #5): `keyOf` follows Unicode code point by code point, on the event loop that
+ * also serves the page, and 50,000 members under a few long folder names named those folders
+ * 150,000 times — seconds of stall for one restore.
  */
 export function manifestRefusal(
   manifest: EntryManifest,
@@ -1529,15 +1532,24 @@ export function manifestRefusal(
     if (!inside) return 'a member’s path leads out of the item';
   }
   const members = manifest.members as ManifestMember[];
+  const folded = new Map<string, string>();
+  const key = (name: string): string => {
+    let k = folded.get(name);
+    if (k === undefined) {
+      k = keyOf(name);
+      folded.set(name, k);
+    }
+    return k;
+  };
   const links = new Set<string>();
-  for (const m of members) if (m.kind === 'symlink') links.add(m.rel.split(path.sep).map(keyOf).join(path.sep));
+  for (const m of members) if (m.kind === 'symlink') links.add(m.rel.split(path.sep).map(key).join(path.sep));
   if (links.size === 0) return null;
   if (links.has('') && members.some((m) => m.rel !== '')) return 'a member lies past a link it records'; // the item itself is a link
   for (const m of members) {
     const names = m.rel.split(path.sep);
     let folder = '';
     for (let i = 0; i < names.length - 1; i++) {
-      folder = i === 0 ? keyOf(names[0]) : `${folder}${path.sep}${keyOf(names[i])}`;
+      folder = i === 0 ? key(names[0]) : `${folder}${path.sep}${key(names[i])}`;
       tally.lookups++;
       if (links.has(folder)) return 'a member lies past a link it records';
     }
