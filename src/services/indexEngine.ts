@@ -373,6 +373,8 @@ export interface BuildOptions {
  * resolve to it, and `listRoots` and search leave it out.
  */
 const ASIDE_PREFIX = 'building-aside:';
+/** The first string after every string that starts with ASIDE_PREFIX (`:` + 1 is `;`). */
+const ASIDE_PREFIX_END = `${ASIDE_PREFIX.slice(0, -1)}${String.fromCharCode(ASIDE_PREFIX.charCodeAt(ASIDE_PREFIX.length - 1) + 1)}`;
 let asideSeq = 0;
 
 /** Whether a roots row is a capped build still being written aside. */
@@ -1951,9 +1953,12 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
 
   // Never a row of a capped build still being written aside: it is no
   // folder's index yet, and its rows would be found twice beside the saved
-  // index's, under a path no folder has.
-  const where: string[] = ['n.root_id NOT IN (SELECT id FROM roots WHERE substr(path, 1, ?) = ?)'];
-  const params: (string | number)[] = [ASIDE_PREFIX.length, ASIDE_PREFIX];
+  // index's, under a path no folder has. The prefix is matched as a range,
+  // so SQLite seeks it in the unique index on roots.path instead of scanning
+  // the roots table: every path that starts with ASIDE_PREFIX sorts at or
+  // after it, and before ASIDE_PREFIX_END.
+  const where: string[] = ['n.root_id NOT IN (SELECT id FROM roots WHERE path >= ? AND path < ?)'];
+  const params: (string | number)[] = [ASIDE_PREFIX, ASIDE_PREFIX_END];
 
   if (parsed.kind === 'extension') {
     where.push('n.ext = ?', 'n.is_dir = 0');
