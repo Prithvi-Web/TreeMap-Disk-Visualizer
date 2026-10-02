@@ -16,16 +16,21 @@ import { collapseBatch, deepestFirst, shallowestFirst, type PlaceReader } from '
 
 const ROOT = path.resolve('/stand-in');
 
-/** A disk of real folders and files, each on a device; nothing is a link, and every name is as stored. */
-function diskOf(entries: Record<string, { dir: boolean; dev: number }>): PlaceReader {
+/**
+ * A disk of folders and files, each on a device, every name as stored — and links (`linkTo`), which
+ * the real disk's realpath follows to where they lead, as `stat` does, while `lstat` reads the link.
+ */
+function diskOf(entries: Record<string, { dir: boolean; dev: number; linkTo?: string }>): PlaceReader {
   const at = (p: string) => entries[path.resolve(p)];
+  const followed = (p: string) => (at(p)?.linkTo !== undefined ? path.resolve(at(p).linkTo as string) : path.resolve(p));
   return {
     lstat: async (p) => {
       const e = at(p);
-      return e ? { dev: BigInt(e.dev), ino: BigInt(Object.keys(entries).indexOf(path.resolve(p)) + 1), isSymbolicLink: () => false, isDirectory: () => e.dir } : null;
+      const isLink = e?.linkTo !== undefined;
+      return e ? { dev: BigInt(e.dev), ino: BigInt(Object.keys(entries).indexOf(path.resolve(p)) + 1), isSymbolicLink: () => isLink, isDirectory: () => e.dir && !isLink } : null;
     },
-    stat: async (p) => (at(p) ? { dev: BigInt(at(p).dev) } : null),
-    realPlaceOf: async (p) => (at(p) ? path.resolve(p) : null),
+    stat: async (p) => (at(followed(p)) ? { dev: BigInt(at(followed(p)).dev) } : null),
+    realPlaceOf: async (p) => (at(p) && at(followed(p)) ? followed(p) : null),
   };
 }
 
@@ -61,6 +66,22 @@ test('a folder on the mounted volume holds what is inside it there (FG3c #7)', a
   const { top, covered } = await collapseBatch([folder, inner, deep].map((p) => ({ path: p })), disk);
   assert.deepEqual(covered.map((c) => [c.request.path, c.by]), [[deep, inner]]);
   assert.deepEqual(top.map((r) => r.path), [folder, inner]);
+});
+
+test('a link and the folder it leads to are two items, whichever comes first: a link is itself the item, wherever it leads (FG3d #13)', async () => {
+  const real = path.join(ROOT, 'real');
+  const link = path.join(ROOT, 'link');
+  const disk = diskOf({
+    [ROOT]: { dir: true, dev: 1 },
+    [real]: { dir: true, dev: 1 },
+    [path.join(real, 'file.txt')]: { dir: false, dev: 1 },
+    [link]: { dir: false, dev: 1, linkTo: real },
+  });
+  for (const batch of [[link, real], [real, link]]) {
+    const { top, covered } = await collapseBatch(batch.map((p) => ({ path: p })), disk);
+    assert.deepEqual(top.map((r) => r.path), batch, `both are items of their own (${batch.map((p) => path.basename(p)).join(', ')})`);
+    assert.deepEqual(covered, [], 'neither goes with the other, nor is it the other spelled another way');
+  }
 });
 
 test('the trash step goes deepest first and the undo shallowest first, each otherwise in the order given (FG3c)', () => {

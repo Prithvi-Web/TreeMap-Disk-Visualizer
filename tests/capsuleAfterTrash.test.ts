@@ -492,6 +492,53 @@ test('an item inside a link of the same batch is its own item: a link holds noth
   assert.ok(fs.lstatSync(link).isSymbolicLink());
 });
 
+for (const order of ['link first', 'folder first'] as const) {
+  test(`a link and the folder it leads to, in one batch (${order}), are two items: each planned and trashed as itself, and both come back (FG3d #13)`, async () => {
+    const root = fileTempDir(`treemap-capsuleAfterTrash-link-and-target-${order === 'link first' ? 'a' : 'b'}-`);
+    const real = path.join(root, 'real');
+    fs.mkdirSync(real);
+    const file = path.join(real, 'file.txt');
+    fs.writeFileSync(file, contentOf(file));
+    const link = path.join(root, 'link');
+    fs.symlinkSync(real, link, 'junction');
+    const batch = order === 'link first' ? [link, real] : [real, link];
+    const plan = await planCartCommit(batch);
+    for (const p of batch) {
+      const row = plan.items.find((i) => i.path === p);
+      assert.ok(row?.willDelete, `${path.basename(p)} is planned (${JSON.stringify(row)})`);
+      assert.doesNotMatch(row?.reason ?? '', /spelled another way|inside/, `${path.basename(p)} is its own item (${row?.reason})`);
+    }
+    const result = await commitCart(batch);
+    assert.deepEqual(sorted(result.trashed), sorted(batch), JSON.stringify(result));
+    assert.ok(!fs.existsSync(real), 'the folder itself went to the Trash, not only the link to it');
+    assert.throws(() => fs.lstatSync(link), 'and so did the link');
+    const job = await undoCartRun(result.runId);
+    assert.equal(job.entryCount, 2, 'each has its own copy');
+    await restored(job.jobId);
+    assert.equal(fs.readFileSync(file, 'utf8'), contentOf(file), 'the folder is back with its file');
+    assert.ok(fs.lstatSync(link).isSymbolicLink(), 'and the link is a link again');
+  });
+}
+
+test('one link spelled in two cases is one item where the volume folds case: planned and copied once, as that link (FG3d #13)', { skip: FOLDS_CASE ? false : 'this volume keeps a and A apart' }, async () => {
+  const root = fileTempDir('treemap-capsuleAfterTrash-link-recased-');
+  const real = path.join(root, 'real');
+  fs.mkdirSync(real);
+  fs.writeFileSync(path.join(real, 'file.txt'), 'the content of file.txt');
+  const lnk = path.join(root, 'lnk');
+  fs.symlinkSync(real, lnk, 'junction');
+  const upper = path.join(root, 'LNK');
+  const row = (await planCartCommit([lnk, upper])).items.find((i) => i.path === upper);
+  assert.match(row?.reason ?? '', /spelled another way/, `it is the same link (${row?.reason})`);
+  const result = await commitCart([lnk, upper]);
+  assert.deepEqual(sorted(result.trashed), sorted([lnk, upper]), 'both spellings went, as one link');
+  assert.ok(fs.existsSync(path.join(real, 'file.txt')), 'and where it leads is untouched');
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 1, 'one copy, of the one link');
+  await restored(job.jobId);
+  assert.ok(fs.lstatSync(lnk).isSymbolicLink(), 'the link is back');
+});
+
 test('an item reached through a link out of a folder, that the Trash refused, is judged where it is — not gone because its folder went (FG3c #7)', async () => {
   const root = fileTempDir('treemap-capsuleAfterTrash-through-held-');
   const folder = path.join(root, 'A');
