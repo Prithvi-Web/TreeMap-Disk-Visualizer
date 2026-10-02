@@ -42,13 +42,18 @@ test('APFS: two keys for names APFS keeps apart — compatibility forms and dotl
   for (const [a, b] of different) assert.ok(apart(apfsNameKey, a, b), `${JSON.stringify(a)} and ${JSON.stringify(b)} are two names on APFS`);
 });
 
-test('NTFS: simple upper case — a and A, ς and σ, ı and I are one; ß and ss, é and e + U+0301 are not; a trailing dot or space goes (FG3c #5)', () => {
-  for (const [a, b] of [['a', 'A'], ['ς', 'σ'], ['ı', 'I'], ['name.', 'name'], ['name ', 'NAME']] as const) {
-    assert.ok(!apart(ntfsNameKey, a, b), `${JSON.stringify(a)} and ${JSON.stringify(b)}`);
+test('NTFS: a model that folds only what every NTFS table folds — the ASCII letters; every other pair, and a trailing dot or space, compared exactly (FG3c #5, FG3d #16)', () => {
+  for (const [a, b] of [['a', 'A'], ['Lib', 'LIB'], ['readme.md', 'README.MD'], ['q-z_0', 'Q-Z_0']] as const) {
+    assert.ok(!apart(ntfsNameKey, a, b), `${JSON.stringify(a)} and ${JSON.stringify(b)} are one name to every NTFS table`);
   }
-  for (const [a, b] of [['ß', 'ss'], ['é', 'é'], ['ｌ', 'l']] as const) {
-    assert.ok(apart(ntfsNameKey, a, b), `${JSON.stringify(a)} and ${JSON.stringify(b)}`);
-  }
+  // Pairs the table Windows 7 and later write keeps apart though Unicode upper-cases one to the
+  // other (ı, ς, ſ, µ); pairs it may join (é and É) are kept apart too: folding less than the
+  // volume is the safe side, since the restore makes links last. And Node reaches `name.` exactly.
+  const exact: [string, string][] = [
+    ['\u0131', 'I'], ['\u03c2', '\u03c3'], ['\u017f', 'S'], ['\u00b5', '\u03bc'], ['\u00e9', '\u00c9'], ['\u00df', 'ss'],
+    ['\u00e9', 'e\u0301'], ['\uff4c', 'l'], ['name.', 'name'], ['name ', 'NAME'],
+  ];
+  for (const [a, b] of exact) assert.ok(apart(ntfsNameKey, a, b), `${JSON.stringify(a)} and ${JSON.stringify(b)} are compared exactly`);
 });
 
 test('the key follows the platform and whether the destination folds case: case-sensitive keeps Lib and lib apart, and Linux compares exactly (FG3c #5)', () => {
@@ -56,7 +61,7 @@ test('the key follows the platform and whether the destination folds case: case-
   assert.ok(apart(nameKeyFor('darwin', false), 'Lib', 'lib'), 'a case-sensitive Mac volume');
   assert.ok(!apart(nameKeyFor('win32', true), 'Lib', 'lib'));
   assert.ok(apart(nameKeyFor('win32', false), 'Lib', 'lib'), 'a case-sensitive Windows folder');
-  assert.ok(!apart(nameKeyFor('win32', false), 'lib.', 'lib'), 'where Win32 drops a trailing dot, whatever the case rule');
+  assert.ok(apart(nameKeyFor('win32', false), 'lib.', 'lib'), 'a trailing dot is part of the name: Node reaches it exactly, as the restore does (FG3d #16)');
   assert.ok(apart(nameKeyFor('linux', true), 'Lib', 'lib'), 'Linux: exact; a folding mount relies on links being made last');
 });
 

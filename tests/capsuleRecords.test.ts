@@ -351,30 +351,35 @@ test('a record\u2019s real place is held to the shape capture writes, and a rest
   assert.ok(!fs.existsSync(asked), 'and nothing was written at the path it was asked for');
 });
 
-test('a member past a link the restore makes is refused early where the volume reads the two names as one, and nothing is written through the link either way (FG3b, FG3c)', async () => {
-  // What the destination's volume reads as one name (FG3c, measured on this Mac's APFS by
-  // tests/volumeNames.test.ts): a Mac volume that folds case folds Unicode forms and case by
-  // Unicode's full case folding — ς and σ, ß, ẞ and ss — but not compatibility forms (ｌｉｂ, lib) nor
-  // dotless ı; an NTFS folder that folds case uses simple upper case only; Linux compares exactly.
-  // Where the names are one, the restore is refused before anything is written; where they are two,
-  // it restores both. Either way the link is made last, so nothing is written through it.
+test('a member past a link the restore makes is refused where the volume reads the two names as one, a tree the volume holds is restored, and nothing is written through the link either way (FG3b, FG3c, FG3d #16)', async () => {
+  // What the destination's volume reads as one name, measured on it here rather than modelled
+  // (FG3d #16): a Mac volume that folds case folds Unicode forms and case by Unicode's full case
+  // folding — ς and σ, ß, ẞ and ss — but not compatibility forms (ｌｉｂ, lib) nor dotless ı; an NTFS
+  // folder that folds case by the $UpCase table on the volume; Linux compares exactly. Where the
+  // names are one, the restore is refused — before anything is written on a Mac, whose key is
+  // measured exact (tests/volumeNames.test.ts), or, where the key folds less than the volume (NTFS's
+  // folds only ASCII letters), when it makes the link, last, having written nothing through it.
+  // Where they are two, it restores both.
   const probe = fileTempDir('treemap-capsuleRecords-fold-probe-');
-  fs.writeFileSync(path.join(probe, 'probe'), '');
-  const folds = fs.existsSync(path.join(probe, 'PROBE'));
+  const oneNameHere = (a: string, b: string): boolean => {
+    const pair = fs.mkdtempSync(path.join(probe, 'pair-'));
+    fs.writeFileSync(path.join(pair, a), '');
+    return fs.existsSync(path.join(pair, b));
+  };
   const outside = fileTempDir('treemap-capsuleRecords-fold-outside-');
   const escape = 'escaped';
-  // [what, the link's name, the folder's name, one name on a folding Mac volume, on a folding NTFS folder]
-  const variants: [string, string, string, boolean, boolean][] = [
-    ['another case', 'a', 'A', true, true],
-    ['another Unicode form', '\u00e9', 'e\u0301', true, false],
-    ['a final sigma', '\u03b1\u03c2', '\u03b1\u03c3', true, true],
-    ['a sharp s', 'stra\u00dfe', 'strasse', true, false],
-    ['a capital sharp s', 'ss', '\u1e9e', true, false],
-    ['a fullwidth name', '\uff4c\uff49\uff42', 'lib', false, false],
-    ['a dotless i', '\u0131', 'I', false, true],
+  // [what, the link's name, the folder's name]
+  const variants: [string, string, string][] = [
+    ['another case', 'a', 'A'],
+    ['another Unicode form', '\u00e9', 'e\u0301'],
+    ['a final sigma', '\u03b1\u03c2', '\u03b1\u03c3'],
+    ['a sharp s', 'stra\u00dfe', 'strasse'],
+    ['a capital sharp s', 'ss', '\u1e9e'],
+    ['a fullwidth name', '\uff4c\uff49\uff42', 'lib'],
+    ['a dotless i', '\u0131', 'I'],
   ];
-  for (const [n, [what, link, spelled, onMac, onNtfs]] of variants.entries()) {
-    const oneName = folds && (process.platform === 'darwin' ? onMac : process.platform === 'win32' ? onNtfs : false);
+  for (const [n, [what, link, spelled]] of variants.entries()) {
+    const oneName = oneNameHere(link, spelled);
     const folder = `fold-${n}`;
     const through = `through-${n}.txt`;
     const entry = capsuleEntry({ kind: 'folder', originalPath: path.join(PLACE, folder) }, {
@@ -385,9 +390,17 @@ test('a member past a link the restore makes is refused early where the volume r
       ],
     }, { [path.join(folder, spelled, through)]: escape });
     const answer = await request('POST', `/api/timecapsule/${entry.id}/restore`);
-    if (oneName) {
-      assert.deepEqual([answer.status, answer.body.code], [409, 'CAPSULE_RECORD_INVALID'], `${what}: ${JSON.stringify(answer.body)}`);
+    if (oneName && answer.status === 409) {
+      assert.equal(answer.body.code, 'CAPSULE_RECORD_INVALID', `${what}: ${JSON.stringify(answer.body)}`);
       assert.match(answer.body.error, /past a link/, what);
+    } else if (oneName) {
+      assert.notEqual(process.platform, 'darwin', `${what}: on a Mac it is refused before anything is written (${JSON.stringify(answer.body)})`);
+      assert.equal(answer.status, 202, `${what}: ${JSON.stringify(answer.body)}`);
+      await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', `the restore (${what})`);
+      const job = getCapsuleJob(answer.body.jobId);
+      assert.equal(job?.status, 'error', `${what}: refused when it makes the link (${job?.error})`);
+      assert.match(job?.error ?? '', /capture never records that/, what);
+      assert.ok(!fs.existsSync(path.join(PLACE, folder)), `${what}: and nothing it wrote is left`);
     } else {
       assert.equal(answer.status, 202, `${what}: two names here, so it is not refused (${JSON.stringify(answer.body)})`);
       await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', `the restore (${what})`);

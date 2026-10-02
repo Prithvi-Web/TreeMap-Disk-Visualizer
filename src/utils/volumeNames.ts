@@ -32,32 +32,29 @@ export function apfsNameKey(name: string): string {
 }
 
 /**
- * A name as an NTFS folder that folds case compares it: each character upper-cased by the simple,
- * one-to-one mapping — NTFS's upcase table, which covers the Basic Multilingual Plane only — so ß
- * stays ß, ı is I, and nothing is normalized; and a trailing run of dots and spaces dropped, as
- * Win32 drops it. Modelled on NTFS's documented upcase table; not measured here.
+ * A name as an NTFS folder that folds case compares it — as far as is certain, which is a model,
+ * not a measurement (FG3d #16). NTFS compares names by the $UpCase table written onto each volume,
+ * and that table is not Unicode's upper case: the one Windows 7 and later write keeps ı, ς, ſ, µ
+ * and some 220 more apart from what Unicode upper-cases them to (the FG3c review rebuilt it from
+ * ntfs-3g's copy, whose hashes match Windows'; nothing here measures a volume). So only the ASCII
+ * letters are folded, which every such table folds: `lib` and `LIB` are one name. Every other pair
+ * is compared exactly — folding less than the volume, the safe side: a member past a link the
+ * volume reads as one name with a folder then passes this early check, and the restore, which
+ * makes links last, fails when it makes the link, having written nothing through it. Folding more
+ * would refuse a tree the volume holds. Nor is a trailing dot or space dropped: Node writes through
+ * `\\?\` paths, which Win32 does not trim, so to the restore `lib.` and `lib` are two names.
  */
 export function ntfsNameKey(name: string): string {
-  let upper = '';
-  for (const c of win32Trimmed(name)) {
-    const u = c.toUpperCase();
-    upper += c.length === 1 && u.length === 1 ? u : c;
-  }
-  return upper;
-}
-
-/** Win32 drops a trailing run of dots and spaces from a name, whatever the folder's case rule. */
-function win32Trimmed(name: string): string {
-  return name.replace(/[ .]+$/, '');
+  return name.replace(/[a-z]/g, (c) => c.toUpperCase());
 }
 
 /**
  * The key a restore compares names with: by platform, and whether the destination folds case.
  * Linux compares exactly: a case-insensitive mount there (vfat, exFAT, a casefolded ext4 folder)
- * relies on the restore making links last.
+ * relies on the restore making links last, as an NTFS folder does for all but the ASCII letters.
  */
 export function nameKeyFor(platform: NodeJS.Platform, foldsCase: boolean): (name: string) => string {
-  if (platform === 'win32') return foldsCase ? ntfsNameKey : win32Trimmed;
+  if (platform === 'win32' && foldsCase) return ntfsNameKey;
   if (platform === 'darwin' && foldsCase) return apfsNameKey;
   return (name) => name;
 }
