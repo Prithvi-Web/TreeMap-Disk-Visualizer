@@ -567,6 +567,64 @@ test('an item whose place cannot be looked at, inside a folder of the same batch
   }
 });
 
+/* ─────────────── FG3d #2, #3: an item reached through a link is put back, and judged, where it is ─────────────── */
+
+test('an item spelled through a link inside itself is put back at its own place, not under folders made up from the spelling (FG3d #2)', async () => {
+  const root = fileTempDir('treemap-capsuleAfterTrash-cyclic-');
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(proj);
+  const file = path.join(proj, 'f.txt');
+  fs.writeFileSync(file, contentOf(file));
+  fs.symlinkSync('..', path.join(proj, 'up'), 'junction');
+  const spelled = path.join(proj, 'up', 'proj'); // the folder itself, through its own link
+  const result = await commitCart([spelled]);
+  assert.deepEqual(result.trashed, [spelled], JSON.stringify(result));
+  assert.ok(!fs.existsSync(proj), 'the folder went to the Trash');
+  const job = await undoCartRun(result.runId);
+  await restored(job.jobId);
+  assert.equal(fs.readFileSync(file, 'utf8'), contentOf(file), 'its file is back at its own place');
+  assert.ok(fs.lstatSync(path.join(proj, 'up')).isSymbolicLink(), 'and its link is a link again, not a folder made up on the way');
+  assert.deepEqual(fs.readdirSync(root), ['proj'], 'nothing else was made beside it');
+});
+
+test('items spelled through links restore by where each is: a holder spelled through a link comes back before an item reached through its own link (FG3d #2)', async () => {
+  const root = fileTempDir('treemap-capsuleAfterTrash-spelled-holders-');
+  for (const dir of ['w', 'y', path.join('ext', 'ed')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
+  const g = path.join(root, 'ext', 'ed', 'g.txt');
+  fs.writeFileSync(g, contentOf(g));
+  fs.symlinkSync('..', path.join(root, 'w', 'toroot'), 'junction');
+  fs.symlinkSync(path.join('..', 'ext'), path.join(root, 'y', 'lnk'), 'junction');
+  const batch = [path.join(root, 'y', 'lnk', 'ed'), path.join(root, 'w', 'toroot', 'y'), path.join(root, 'w')];
+  const result = await commitCart(batch);
+  assert.deepEqual(sorted(result.trashed), sorted(batch), JSON.stringify(result));
+  const job = await undoCartRun(result.runId);
+  await restored(job.jobId);
+  assert.equal(fs.readFileSync(g, 'utf8'), contentOf(g), 'ed is back in ext, where it was');
+  assert.ok(fs.lstatSync(path.join(root, 'y', 'lnk')).isSymbolicLink(), 'y is back with its link');
+  assert.ok(fs.lstatSync(path.join(root, 'w', 'toroot')).isSymbolicLink(), 'and w with its');
+});
+
+test('an unconfirmed item reached through a link another item took to the Trash is judged where it is: still in its place, passed over, never an EEXIST (FG3d #3)', async () => {
+  const root = fileTempDir('treemap-capsuleAfterTrash-through-gone-link-');
+  const ext = path.join(root, 'ext');
+  fs.mkdirSync(ext);
+  const x = path.join(ext, 'late-x.txt'); // its trash step is stopped at its time limit, and it stays
+  fs.writeFileSync(x, contentOf(x));
+  const link = path.join(root, 'L');
+  fs.symlinkSync(ext, link, 'junction');
+  const through = path.join(link, 'late-x.txt');
+  const result = await commitCart([through, link]);
+  assert.deepEqual(result.trashed, [link], JSON.stringify(result));
+  assert.deepEqual((result.unverified ?? []).map((u) => u.path), [through]);
+  const job = await undoCartRun(result.runId);
+  assert.equal(job.entryCount, 1, `only the link is put back (${JSON.stringify(job)})`);
+  assert.deepEqual((job.passedOver ?? []).map((p) => [p.path, p.reason]),
+    [[through, 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.']]);
+  await restored(job.jobId);
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the link is back');
+  assert.equal(fs.readFileSync(x, 'utf8'), contentOf(x), 'and the file it leads to was never touched');
+});
+
 test('the dry run names an item spelled another way as that item (FG3c #1)', async () => {
   const real = fileTempDir('treemap-capsuleAfterTrash-respelled-plan-');
   const alias = path.join(fileTempDir('treemap-capsuleAfterTrash-respelled-plan-alias-'), 'via');

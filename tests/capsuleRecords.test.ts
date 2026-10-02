@@ -327,6 +327,30 @@ test('a restore refuses, and says why, a record whose original place or manifest
   assert.ok(!fs.existsSync(path.join(process.cwd(), 'cloud:')), 'nothing was written under the working folder');
 });
 
+test('a record\u2019s real place is held to the shape capture writes, and a restore writes there, not to the path it was asked for (FG3d #2)', async () => {
+  const content = 'restored where it was';
+  const file = { rel: '', kind: 'file', size: content.length, hash: sha256(content) };
+  const bad: [string, unknown, RegExp][] = [
+    ['a relative path', path.join('relative', 'x.txt'), /its real place is not a full path/],
+    ['a number', 12345, /its real place is not a full path/],
+    ['a system folder', SYSTEM_PLACE, /its real place, .* is a system folder/],
+    ['the spill folder', path.join(APP, SPILL_DIR, 'x.txt'), /its real place, .* is in TreeMap.s own spill folder/],
+  ];
+  for (const [what, realPath, why] of bad) {
+    const entry = capsuleEntry({ realPath: realPath as string }, { name: 'x.txt', members: [file] }, { 'x.txt': content });
+    const answer = await request('POST', `/api/timecapsule/${entry.id}/restore`);
+    assert.deepEqual([answer.status, answer.body.code], [409, 'CAPSULE_RECORD_INVALID'], `${what}: ${JSON.stringify(answer.body)}`);
+    assert.match(answer.body.error, why, what);
+  }
+  const asked = path.join(PLACE, 'asked-for.txt');
+  const realPlace = path.join(PLACE, 'where-it-was.txt');
+  const entry = capsuleEntry({ originalPath: asked, realPath: realPlace, name: 'asked-for.txt' }, { name: 'asked-for.txt', members: [file] }, { 'asked-for.txt': content });
+  const job = await restoreSettled(entry.id, 'a record with a real place');
+  assert.equal(job.status, 'complete', job.error);
+  assert.equal(fs.readFileSync(realPlace, 'utf8'), content, 'it is back where it was');
+  assert.ok(!fs.existsSync(asked), 'and nothing was written at the path it was asked for');
+});
+
 test('a member past a link the restore makes is refused early where the volume reads the two names as one, and nothing is written through the link either way (FG3b, FG3c)', async () => {
   // What the destination's volume reads as one name (FG3c, measured on this Mac's APFS by
   // tests/volumeNames.test.ts): a Mac volume that folds case folds Unicode forms and case by
@@ -500,8 +524,10 @@ test('an undo cancelled part-way through a file leaves nothing at its place, and
   fs.writeFileSync(report, bytes);
   const committed = await commitCart([report]);
   assert.deepEqual(committed.trashed, [report], JSON.stringify(committed));
+  // The undo writes where the file was on the disk (FG3d #2): on a Mac, /var is /private/var.
+  const reportAt = path.join(fs.realpathSync.native(PLACE), 'report.docx');
   const removeFault = setCopyFaultForTests((dest, read) => {
-    if (dest !== report || read <= CHUNK) return null;
+    if (dest !== reportAt || read <= CHUNK) return null;
     cancelAllCapsuleJobs();
     return null;
   });

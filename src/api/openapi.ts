@@ -524,7 +524,8 @@ const schemas: Json = {
     {
       id: str(),
       name: str('Basename'),
-      originalPath: str('Where it will be put back'),
+      originalPath: str('The path it was deleted by: where it will be put back, unless realPath says where that was'),
+      realPath: str('Present when the item was somewhere else on the disk than originalPath reads now — reached through a link, or written in another case: where it is put back, and where an undo looks for it'),
       kind: { type: 'string', enum: ['file', 'folder'] },
       sizeBytes: int('Size when captured; never changes'),
       heldBytes: int('Bytes held right now — 0 once restored or evicted'),

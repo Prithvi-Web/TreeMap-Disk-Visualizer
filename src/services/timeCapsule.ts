@@ -452,6 +452,13 @@ export interface ProtectionRequest {
   path: string;
   /** Why this was selected for deletion, in the rule's own words. */
   reason?: string;
+  /** Where it is on the disk, when the batch could place it (`collapseBatch`): kept with its copy. */
+  realPath?: string;
+}
+
+/** Where a restore writes an entry back to, and where an undo looks for it: where it was (FG3d #2, #3). */
+function restorePlaceOf(entry: TimeCapsuleEntry): string {
+  return entry.realPath ?? entry.originalPath;
 }
 
 export interface ProtectionOutcome {
@@ -595,6 +602,7 @@ async function capture(
       runId: context.runId,
       ...(context.policyId ? { policyId: context.policyId } : {}),
       ...(request.reason ? { reason: request.reason } : {}),
+      ...(request.realPath !== undefined && request.realPath !== original ? { realPath: request.realPath } : {}),
     };
     store.entries.push(entry);
     return { path: original, protected: true, entryId: id, bytes: walked.bytes };
@@ -919,7 +927,13 @@ export async function protectAndTrash(
       unavailableReason: capsule.reason,
     };
   }
-  const { runId, outcomes } = await protectItems(requests, context);
+  // Each copy keeps where its item is (FG3d #2, #3): reached through a link, a path's spelling may
+  // lead nowhere once another item of the batch is in the Trash, or lead through folders a restore
+  // would have to make up.
+  const { runId, outcomes } = await protectItems(requests.map((r) => {
+    const realPath = realPathOf.get(r.path);
+    return realPath === undefined ? r : { ...r, realPath };
+  }), context);
 
   const protectedOutcomes = outcomes.filter((o) => o.protected);
   // Deepest first (FG3c): an item spelled through a link inside another item is trashed before that
@@ -1482,15 +1496,22 @@ async function readManifest(id: string): Promise<EntryManifest> {
  */
 function recordRefusal(entry: TimeCapsuleEntry): string | null {
   if (!isEntryId(entry.id)) return 'its id is not one TreeMap gives';
-  const original: unknown = entry.originalPath;
-  if (typeof original !== 'string' || !path.isAbsolute(original)) return 'its original place is not a full path';
+  const original = placeRefusal('its original place', entry.originalPath);
+  if (original !== null) return original;
+  // Where it really was (FG3d #2, #3) is held to the same shape: a restore writes there.
+  return entry.realPath === undefined ? null : placeRefusal('its real place', entry.realPath);
+}
+
+/** Why a recorded place is not one capture writes, as a phrase, or null. */
+function placeRefusal(what: string, place: unknown): string | null {
+  if (typeof place !== 'string' || !path.isAbsolute(place)) return `${what} is not a full path`;
   try {
-    if (sanitizePath(original) !== original) return `its original place, ${original}, is not spelled as TreeMap records one`;
+    if (sanitizePath(place) !== place) return `${what}, ${place}, is not spelled as TreeMap records one`;
   } catch (err) {
-    if (err instanceof PathRejectedError) return `its original place, ${original}, is a system folder TreeMap never writes`;
+    if (err instanceof PathRejectedError) return `${what}, ${place}, is a system folder TreeMap never writes`;
     throw err;
   }
-  if (isSpillPath(original)) return `its original place, ${original}, is in TreeMap's own spill folder`;
+  if (isSpillPath(place)) return `${what}, ${place}, is in TreeMap's own spill folder`;
   return null;
 }
 
@@ -1610,7 +1631,8 @@ export async function planUndoForRun(runId: string): Promise<UndoPlan> {
     }
     const mark = await unverifiedMarkOf(entry.id);
     if (mark !== null) {
-      const now = await identityOf(entry.originalPath);
+      // Looked at where the item was, not where its spelling leads now (FG3d #3).
+      const now = await identityOf(restorePlaceOf(entry));
       if (now !== ABSENT) {
         const why: PassedOverWhy = now === UNKNOWN ? 'unknown' : mark.before !== null && now === mark.before ? 'in-place' : 'occupied';
         plan.passedOver.push({ entry, why });
@@ -1726,16 +1748,17 @@ export async function startCapsuleRestore(entryIds: string[], options: RestoreOp
     }
     const refused = recordRefusal(entry);
     if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
-    const occupied = await fsp.lstat(entry.originalPath).then(() => true).catch(() => false);
+    const place = restorePlaceOf(entry);
+    const occupied = await fsp.lstat(place).then(() => true).catch(() => false);
     if (occupied) {
       throw new AppError(409, 'PATH_OCCUPIED',
-        `Something already exists at ${entry.originalPath}. Move it aside first — restoring will never overwrite what is there now.`);
+        `Something already exists at ${place}. Move it aside first — restoring will never overwrite what is there now.`);
     }
     const manifest = await readManifest(id).catch(() => null);
     if (!manifest) {
       throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
     }
-    const stray = manifestRefusal(manifest, undefined, await restoreNameKeyFor(path.dirname(entry.originalPath)));
+    const stray = manifestRefusal(manifest, undefined, await restoreNameKeyFor(path.dirname(place)));
     if (stray) {
       throw new AppError(409, 'CAPSULE_RECORD_INVALID',
         `The record of what was captured for “${entry.name}” is not one TreeMap wrote (${stray}), so nothing was restored.`);
@@ -1840,6 +1863,8 @@ function leftBehindSentence(err: unknown, left: { at: string; why: string }[]): 
 
 async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest): Promise<void> {
   const dataRoot = payloadRoot(entry.id);
+  // Where it was (FG3d #2): its real place when capture recorded one, the path it was asked for otherwise.
+  const place = restorePlaceOf(entry);
   // Named for the invariant that makes removing them safe: every path in
   // these lists was created by THIS restore, moments ago. Nothing here ever
   // removes a file that existed before the restore started — the occupied-path
@@ -1859,16 +1884,16 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
   };
 
   try {
-    await makeParentOf(entry.originalPath);
+    await makeParentOf(place);
     // The item's own directory comes first, so a folder that held nothing at
     // all still comes back as a folder rather than as nothing.
     if (entry.kind === 'folder') {
-      await fsp.mkdir(entry.originalPath, { recursive: true });
-      dirsCreatedByThisRestore.push(entry.originalPath);
+      await fsp.mkdir(place, { recursive: true });
+      dirsCreatedByThisRestore.push(place);
     }
     // Then its subdirectories, so file writes never race their own parents.
     for (const member of manifest.members.filter((m) => m.kind === 'dir')) {
-      const dest = path.join(entry.originalPath, member.rel);
+      const dest = path.join(place, member.rel);
       await fsp.mkdir(dest, { recursive: true });
       dirsCreatedByThisRestore.push(dest);
     }
@@ -1884,7 +1909,7 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       if (job.cancelled) throw new CopyCancelled();
 
       const from = path.join(dataRoot, member.rel === '' ? manifest.name : path.join(manifest.name, member.rel));
-      const dest = member.rel === '' ? entry.originalPath : path.join(entry.originalPath, member.rel);
+      const dest = member.rel === '' ? place : path.join(place, member.rel);
       await makeParentOf(dest);
 
       if (member.kind === 'symlink') {
@@ -1923,11 +1948,11 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       .filter((m) => m.kind === 'dir')
       .sort((a, b) => b.rel.length - a.rel.length);
     for (const member of dirMembers) {
-      await applyRecordedTimes(path.join(entry.originalPath, member.rel), member);
+      await applyRecordedTimes(path.join(place, member.rel), member);
     }
     // The item's own folder is the shallowest of all, so it comes last.
     if (entry.kind === 'folder' && typeof manifest.rootMtimeMs === 'number') {
-      await applyRecordedTimes(entry.originalPath, {
+      await applyRecordedTimes(place, {
         rel: '', kind: 'dir', size: 0, hash: '',
         mtimeMs: manifest.rootMtimeMs, atimeMs: manifest.rootAtimeMs,
       });

@@ -214,7 +214,9 @@ export function deepestFirst(paths: string[]): string[] {
 /**
  * The order to restore items: shallowest spelling first (FG3c), so an item whose place is reached
  * through a folder or link that another item of the same undo puts back is restored after it —
- * never into a folder made up on the way. Stable otherwise.
+ * never into a folder made up on the way. Stable otherwise. An entry that records where it was
+ * (`realPath`, FG3d #2) is restored there, not through its spelling, so for it the order decides
+ * nothing: no two items of one batch are inside one another where they are.
  */
 export function shallowestFirst<T extends { originalPath: string }>(entries: T[]): T[] {
   return entries.map((e, i) => ({ e, i, d: depthOf(e.originalPath) })).sort((a, b) => a.d - b.d || a.i - b.i).map((x) => x.e);

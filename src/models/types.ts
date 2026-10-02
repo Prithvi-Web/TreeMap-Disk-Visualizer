@@ -828,6 +828,13 @@ export interface TimeCapsuleEntry {
   /** Basename, for search and display. */
   name: string;
   originalPath: string;
+  /**
+   * Where the item was on the disk when it was captured, when that differs from `originalPath`, the
+   * path as it was asked for — reached through a link, or written in another case (FG3d #2, #3):
+   * what a restore writes to, and what an undo looks at and orders by. Absent for an entry captured
+   * before it was recorded, and when the two agree.
+   */
+  realPath?: string;
   kind: TimeCapsuleKind;
   /** Size of the item when it was captured — never changes, so the panel can
    *  still say how big a restored or evicted item was. */

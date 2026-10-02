@@ -332,7 +332,11 @@ OpenAPI 3 spec).
      showed (the same file still in its place, something else there, or a
      place it could not look at — never "still in its place" otherwise), and a
      later undo can still put it back. An Autopilot run lists these items in
-     `unverified` and stays undoable until they are put back.
+     `unverified` and stays undoable until they are put back. Each copy
+     records where its item was on the disk (`realPath`, when the path it was
+     deleted by reached it through a link or in another case), and an undo
+     puts it back, and looks for it, there — never through a spelling that
+     leads nowhere once another item is in the Trash.
 
 Never skip step 1: destructive endpoints refuse paths that are not inside a
 root this server has actually scanned. Scanning is what grants (scoped,
