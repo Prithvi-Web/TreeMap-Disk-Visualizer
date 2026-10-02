@@ -68,6 +68,26 @@ test('a folder on the mounted volume holds what is inside it there (FG3c #7)', a
   assert.deepEqual(top.map((r) => r.path), [folder, inner]);
 });
 
+test('an item held by a folder that is itself held goes with the outermost item: a volume\u2019s root mounted inside a folder of the batch, and an item on it (FG3d #4)', async () => {
+  const folder = path.join(ROOT, 'A');
+  const mount = path.join(folder, 'mnt');
+  const sub = path.join(mount, 'sub');
+  const onMount = path.join(sub, 'x.txt');
+  const disk = diskOf({
+    [ROOT]: { dir: true, dev: 1 },
+    [folder]: { dir: true, dev: 1 },
+    [mount]: { dir: true, dev: 2 },
+    [sub]: { dir: true, dev: 2 },
+    [onMount]: { dir: false, dev: 2 },
+  });
+  const { top, covered } = await collapseBatch([folder, mount, onMount].map((p) => ({ path: p })), disk);
+  assert.deepEqual(top.map((r) => r.path), [folder]);
+  assert.deepEqual(covered.map((c) => [c.request.path, c.by]), [[mount, folder], [onMount, folder]],
+    'each names a request of top, the one whose copy and trash step take it');
+  const tops = new Set(top.map((r) => r.path));
+  for (const c of covered) assert.ok(tops.has(c.by), `${c.request.path} is held by ${c.by}, which is in top`);
+});
+
 test('a link and the folder it leads to are two items, whichever comes first: a link is itself the item, wherever it leads (FG3d #13)', async () => {
   const real = path.join(ROOT, 'real');
   const link = path.join(ROOT, 'link');

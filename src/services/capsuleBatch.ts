@@ -15,8 +15,10 @@ import { realPlaceOf } from '../utils/pathSanitizer';
  * volume that folds case, are one folder and an item in it — while `A/lnk/x`,
  * where `lnk` is a link out of `A`, is not in `A`, and trashing `A` would take only the link. Only a
  * real folder holds anything: a link is itself the item, wherever it leads. And a folder holds only
- * what is on its own device, so a volume mounted inside it is not taken for part of it. A request
- * the disk cannot place (gone, or unreadable) is its own item, judged by the disk when it is trashed.
+ * what is on its own device, so what is on a volume mounted inside it is not taken for part of it —
+ * unless the batch holds the volume's root too: that root is an entry of the folder and goes with
+ * it, taking what it holds along (FG3d #4). A request the disk cannot place (gone, or unreadable) is
+ * its own item, judged by the disk when it is trashed.
  */
 
 /** Where one request is on the disk. */
@@ -116,6 +118,18 @@ export async function collapseBatch<T extends { path: string }>(batch: T[], disk
     else if (outer !== null) collapsed.covered.push({ request, by: outer.path, same: false });
     else collapsed.covered.push({ request, by: first.path, same: true });
   }
+  // `by` is a request of `top` (FG3d #4). A holder can itself be held — a volume's root mounted
+  // inside a folder of the batch is that folder's entry, while what is on the volume is held by the
+  // root alone — and then what it holds goes as the item holding it goes. The chain climbs real
+  // folders, so it ends; the bound only makes that plain.
+  const tops = new Set(collapsed.top.map((r) => r.path));
+  const holderOf = new Map(collapsed.covered.map((c) => [c.request.path, c.by]));
+  const outermost = (by: string): string => {
+    let at = by;
+    for (let hops = 0; !tops.has(at) && holderOf.has(at) && hops <= holderOf.size; hops++) at = holderOf.get(at) as string;
+    return at;
+  };
+  collapsed.covered = collapsed.covered.map((c) => ({ ...c, by: outermost(c.by) }));
   return collapsed;
 }
 
