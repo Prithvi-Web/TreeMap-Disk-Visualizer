@@ -14,7 +14,7 @@ import { isEphemeral } from './portableMode';
 import { moveToTrash } from './cleaner';
 import { getSettings } from './settings';
 import { diskUsage } from './diskUsage';
-import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
+import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { meansAbsent } from '../utils/errno';
@@ -1787,6 +1787,22 @@ async function applyRecordedTimes(dest: string, member: ManifestMember): Promise
   await fsp.utimes(dest, atime, mtime).catch(() => {});
 }
 
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * A restore that stopped and could not remove everything it had made, as a sentence (FG3d #1): what
+ * stopped it, and the first thing left at the item's place, which a retry would find occupied.
+ */
+function leftBehindSentence(err: unknown, left: { at: string; why: string }[]): string {
+  const cause = err instanceof CopyLeftBehind ? err.cause : err;
+  const what = cause instanceof CopyCancelled ? 'The restore was cancelled' : `The restore stopped (${messageOf(cause)})`;
+  const more = left.length > 1 ? ` and ${formatCount(left.length - 1)} more thing${left.length === 2 ? '' : 's'} it had made` : '';
+  return `${what}, but what it had already made at ${left[0].at}${more} could not be removed (${left[0].why}). ` +
+    `Remove ${left.length === 1 ? 'it' : 'them'} before trying again; the copy stays in the Time Capsule.`;
+}
+
 async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest): Promise<void> {
   const dataRoot = payloadRoot(entry.id);
   // Named for the invariant that makes removing them safe: every path in
@@ -1886,19 +1902,30 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
     // entries, and only runRestoreAll knows when the last one is home.
   } catch (err) {
     // Leave nothing half-restored at the destination, and keep the capsule copy
-    // so the user can try again once they've fixed whatever failed.
+    // so the user can try again once they've fixed whatever failed. A file the
+    // copy had begun is gone already (copyWithHash removes what it made, FG3d #1);
+    // anything this restore made that could not be removed is named, and the job
+    // is then an error, never a cancel — the page says "nothing was left
+    // half-written" of a cancelled one.
     job.phase = 'rolling-back';
+    const left: { at: string; why: string }[] = err instanceof CopyLeftBehind ? [{ at: err.dest, why: err.why }] : [];
     for (const writtenByThisRestore_file of writtenByThisRestore.reverse()) {
-      await fsp.rm(writtenByThisRestore_file, { force: true }).catch(() => {});
+      await fsp.rm(writtenByThisRestore_file, { force: true }).catch((e: unknown) => {
+        left.push({ at: writtenByThisRestore_file, why: messageOf(e) });
+      });
     }
     for (const dirsCreatedByThisRestore_dir of [...dirsCreatedByThisRestore].sort((a, b) => b.length - a.length)) {
       // rmdir, not rm -r: it removes the directory only if it ended up empty,
-      // so anything that was not ours is left exactly where it is.
-      await fsp.rmdir(dirsCreatedByThisRestore_dir).catch(() => {});
+      // so anything that was not ours is left exactly where it is. One that still
+      // holds something is not named: whatever of ours it holds is named above.
+      await fsp.rmdir(dirsCreatedByThisRestore_dir).catch((e: NodeJS.ErrnoException) => {
+        if (!meansAbsent(e) && e.code !== 'ENOTEMPTY' && e.code !== 'EEXIST') left.push({ at: dirsCreatedByThisRestore_dir, why: messageOf(e) });
+      });
     }
 
-    job.status = err instanceof CopyCancelled || job.cancelled ? 'cancelled' : 'error';
-    if (job.status === 'error') job.error = err instanceof Error ? err.message : String(err);
+    const cancelled = left.length === 0 && (err instanceof CopyCancelled || job.cancelled);
+    job.status = cancelled ? 'cancelled' : 'error';
+    if (!cancelled) job.error = left.length === 0 ? messageOf(err) : leftBehindSentence(err, left);
     job.phase = 'done';
     job.finishedAt = Date.now();
     return;

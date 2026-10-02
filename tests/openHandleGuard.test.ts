@@ -507,6 +507,8 @@ test('nothing outside Cleaner removes a user file', async () => {
       'the directory link TreeMap made to a shadow copy, removed without recursion: the link, never what it points to',
     'src/platform/macos/tmutil.ts: rmdir(mountPoint':
       'its own mkdtemp’d mount point, after unmounting, without recursion: a snapshot that did not come off is never walked into',
+    'src/utils/copyVerify.ts: rm(dest':
+      'the file a copy made at its destination moments earlier, when the copy did not finish, and only while the disk still shows that same file (its device and id): never one that was there first — the exclusive open refused it — nor one put there since (FG3d #1)',
   };
   const offenders: string[] = [];
   const namedSeen = new Set<string>();

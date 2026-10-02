@@ -10,7 +10,8 @@ const APP = isolatedDataDir('treemap-capsuleRecords-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
-import { capsuleRoot, getCapsuleIndex, getCapsuleJob, manifestRefusal, pruneExpired, reconcileCapsule } from '../src/services/timeCapsule';
+import { cancelAllCapsuleJobs, capsuleRoot, getCapsuleIndex, getCapsuleJob, manifestRefusal, pruneExpired, reconcileCapsule } from '../src/services/timeCapsule';
+import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, assertSavedPolicyPath, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 import { AppError } from '../src/middleware/errorHandler';
@@ -388,6 +389,140 @@ test('a restore that fails part-way leaves nothing at its place, not even a fold
     await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', `attempt ${attempt}`);
     assert.match(getCapsuleJob(answer.body.jobId)?.error ?? '', /no longer matches/, `attempt ${attempt} fails on the copy, not on the place`);
     assert.ok(!fs.existsSync(place), `attempt ${attempt}: nothing is left at its place`);
+  }
+});
+
+/* ─────────────── A restore stopped part-way through a file (FG3d #1) ─────────────── */
+
+/** What a file read stream hands over at a time: a fault past it lands part-way through a file. */
+const CHUNK = 64 * 1024;
+const BIG = crypto.randomBytes(3 * CHUNK).toString('hex');
+const SMALL = 'a small file, put back before the big one';
+
+/** A file entry, or a folder entry holding a small file and then a big one, each in the capsule. */
+function partWayEntry(kind: 'file' | 'folder', name: string, parent = PLACE): { entry: TimeCapsuleEntry; place: string; bigAt: string } {
+  const place = path.join(parent, name);
+  if (kind === 'file') {
+    const entry = capsuleEntry({ originalPath: place, sizeBytes: BIG.length },
+      { name, members: [{ rel: '', kind: 'file', size: BIG.length, hash: sha256(BIG) }] }, { [name]: BIG });
+    return { entry, place, bigAt: place };
+  }
+  const bigRel = path.join('sub', 'big.txt');
+  const entry = capsuleEntry({ kind: 'folder', originalPath: place, sizeBytes: BIG.length + SMALL.length }, {
+    name,
+    members: [
+      { rel: 'small.txt', kind: 'file', size: SMALL.length, hash: sha256(SMALL) },
+      { rel: 'sub', kind: 'dir', size: 0, hash: '' },
+      { rel: bigRel, kind: 'file', size: BIG.length, hash: sha256(BIG) },
+    ],
+  }, { [path.join(name, 'small.txt')]: SMALL, [path.join(name, bigRel)]: BIG });
+  return { entry, place, bigAt: path.join(place, bigRel) };
+}
+
+/** Restore one entry through the route the Time Capsule tab uses, and hand back the settled job. */
+async function restoreSettled(id: string, what: string): Promise<{ status?: string; error?: string }> {
+  const answer = await request('POST', `/api/timecapsule/${id}/restore`);
+  assert.equal(answer.status, 202, `${what}: ${JSON.stringify(answer.body)}`);
+  await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', what);
+  return getCapsuleJob(answer.body.jobId) ?? {};
+}
+
+test('a restore that fails or is cancelled part-way through a file leaves nothing at its place, for a file and for a folder, and can be tried again (FG3d #1)', async () => {
+  for (const kind of ['file', 'folder'] as const) {
+    for (const how of ['fails', 'is cancelled'] as const) {
+      const what = `a ${kind} whose restore ${how}`;
+      const { entry, place, bigAt } = partWayEntry(kind, `part-way-${kind}-${how === 'fails' ? 'failed' : 'cancelled'}`);
+      let madeMidCopy = false;
+      const removeFault = setCopyFaultForTests((dest, read) => {
+        if (dest !== bigAt || read <= CHUNK) return null;
+        madeMidCopy = fs.existsSync(dest) && (kind === 'file' || fs.existsSync(path.join(place, 'small.txt')));
+        if (how === 'fails') return new Error('the disk stopped answering (a test)');
+        cancelAllCapsuleJobs();
+        return null;
+      });
+      let job: { status?: string; error?: string };
+      try {
+        job = await restoreSettled(entry.id, what);
+      } finally {
+        removeFault();
+      }
+      assert.equal(job.status, how === 'fails' ? 'error' : 'cancelled', `${what}: ${job.error}`);
+      assert.ok(madeMidCopy, `${what}: the restore had begun writing at its place when it stopped`);
+      // "nothing was left half-written", as the cancelled restore and both undos say.
+      assert.ok(!fs.existsSync(place), `${what}: nothing is left at its place`);
+
+      const again = await restoreSettled(entry.id, `${what}, tried again`);
+      assert.equal(again.status, 'complete', `${what}: it can be tried again, all the way (${again.error})`);
+      assert.equal(fs.readFileSync(bigAt, 'utf8'), BIG, `${what}: the retry puts it back whole`);
+      if (kind === 'folder') assert.equal(fs.readFileSync(path.join(place, 'small.txt'), 'utf8'), SMALL);
+    }
+  }
+});
+
+test('an undo cancelled part-way through a file leaves nothing at its place, and the next undo puts it back (FG3d #1)', async () => {
+  const report = path.join(PLACE, 'report.docx');
+  const bytes = crypto.randomBytes(3 * CHUNK + 11);
+  fs.writeFileSync(report, bytes);
+  const committed = await commitCart([report]);
+  assert.deepEqual(committed.trashed, [report], JSON.stringify(committed));
+  const removeFault = setCopyFaultForTests((dest, read) => {
+    if (dest !== report || read <= CHUNK) return null;
+    cancelAllCapsuleJobs();
+    return null;
+  });
+  let jobId = '';
+  try {
+    jobId = (await undoCartRun(committed.runId)).jobId;
+    await waitFor(() => getCapsuleJob(jobId)?.status !== 'running', 'the cancelled undo');
+  } finally {
+    removeFault();
+  }
+  assert.equal(getCapsuleJob(jobId)?.status, 'cancelled', getCapsuleJob(jobId)?.error);
+  assert.ok(!fs.existsSync(report), 'nothing half-written is left at its place');
+  const again = await undoCartRun(committed.runId);
+  await waitFor(() => getCapsuleJob(again.jobId)?.status !== 'running', 'the second undo');
+  assert.equal(getCapsuleJob(again.jobId)?.status, 'complete', getCapsuleJob(again.jobId)?.error);
+  assert.deepEqual(fs.readFileSync(report), bytes, 'the second undo puts it back byte for byte');
+});
+
+test('a stopped restore that cannot remove what it had made says so, and is never reported as cancelled with nothing left (FG3d #1)', {
+  skip: process.platform === 'win32' ? 'a folder’s mode does not stop a removal on Windows'
+    : process.getuid?.() === 0 ? 'running as root, a folder’s mode stops nothing' : false,
+}, async () => {
+  // Part-way through the big file, the folder that holds what the restore made stops taking
+  // removals: the part-copied file itself, a file put back before it, or a folder made on the way.
+  const cases = ['the part-copied file', 'a file put back before it', 'a folder made on the way'] as const;
+  for (const [n, left] of cases.entries()) {
+    const what = `a cancelled restore that cannot remove ${left}`;
+    const tmp = fileTempDir(`treemap-capsuleRecords-stuck-${n}-`);
+    const madeUp = path.join(tmp, 'made-up');
+    const { entry, place, bigAt } = left === 'a file put back before it'
+      ? partWayEntry('folder', `stuck-${n}`, tmp)
+      : partWayEntry('file', `stuck-${n}`, left === 'a folder made on the way' ? madeUp : tmp);
+    const locked = left === 'a file put back before it' ? place : tmp;
+    const stuck = left === 'the part-copied file' ? bigAt : left === 'a file put back before it' ? path.join(place, 'small.txt') : madeUp;
+    const removeFault = setCopyFaultForTests((dest, read) => {
+      if (dest !== bigAt || read <= CHUNK) return null;
+      fs.chmodSync(locked, 0o500);
+      cancelAllCapsuleJobs();
+      return null;
+    });
+    let job: { status?: string; error?: string };
+    try {
+      job = await restoreSettled(entry.id, what);
+    } finally {
+      removeFault();
+      fs.chmodSync(locked, 0o700);
+    }
+    assert.equal(job.status, 'error', `${what}: not "cancelled — nothing was left half-written" (${job.status})`);
+    assert.ok(fs.existsSync(stuck), `${what}: the case is the one under test — ${stuck} is still there`);
+    assert.ok((job.error ?? '').includes(stuck), `${what}: the sentence names what is left (${job.error})`);
+    assert.match(job.error ?? '', /could not be removed/, what);
+    // Removing it, as the sentence says, lets it be tried again.
+    fs.rmSync(left === 'a folder made on the way' ? madeUp : place, { recursive: true, force: true });
+    const again = await restoreSettled(entry.id, `${what}, tried again`);
+    assert.equal(again.status, 'complete', `${what}: tried again (${again.error})`);
+    assert.equal(fs.readFileSync(bigAt, 'utf8'), BIG);
   }
 });
 

@@ -2824,7 +2824,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/timecapsule/jobs/{jobId}/cancel',
-    summary: 'Cancel a running restore; anything already written is rolled back',
+    summary: 'Cancel a running restore; what it had begun writing is removed (items already put back stay), and one that cannot remove something it wrote ends as an error naming it, never as cancelled',
     tag: 'timecapsule',
     destructive: false,
     parameters: [pathParam('jobId', 'Id from POST /api/timecapsule/{id}/restore')],

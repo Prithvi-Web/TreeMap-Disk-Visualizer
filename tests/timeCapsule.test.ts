@@ -32,6 +32,7 @@ import {
 } from '../src/services/timeCapsule';
 import { updateSettings } from '../src/services/settings';
 import { setTrashStepForTests } from '../src/services/cleaner';
+import { copyWithHash, CopyCancelled, setCopyFaultForTests } from '../src/utils/copyVerify';
 import { TimeCapsuleEntry, TimeCapsuleJob } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
 
@@ -381,6 +382,80 @@ test('a payload corrupted in the capsule fails verification instead of restoring
     // The entry is still there so the user can see what happened and decide.
     const entry = await getCapsuleEntry(entryId);
     assert.ok(entry && !entry.restoredAt);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/* ══════════════════ A copy that does not finish (FG3d #1) ══════════════════ */
+
+/** What a file read stream hands over at a time: a fault past it lands part-way through a file. */
+const CHUNK = 64 * 1024;
+
+test('a copy that fails part-way, or is cancelled part-way, leaves nothing at its destination', async () => {
+  const dir = await mkTmp();
+  try {
+    const src = await writeFile(path.join(dir, 'source.bin'), crypto.randomBytes(3 * CHUNK + 5));
+    for (const how of ['fails', 'is cancelled'] as const) {
+      const dest = path.join(dir, `a copy that ${how}.bin`);
+      let cancelled = false;
+      let madeMidCopy = false;
+      const removeFault = setCopyFaultForTests((at, read) => {
+        if (at !== dest || read <= CHUNK) return null;
+        madeMidCopy = fs.existsSync(dest);
+        if (how === 'fails') return new Error('the disk stopped answering (a test)');
+        cancelled = true;
+        return null;
+      });
+      try {
+        await assert.rejects(
+          copyWithHash(src, dest, { isCancelled: () => cancelled }),
+          how === 'fails' ? /stopped answering/ : (err: unknown) => err instanceof CopyCancelled,
+        );
+      } finally {
+        removeFault();
+      }
+      assert.ok(madeMidCopy, `${how}: the copy had made its destination when it stopped`);
+      assert.equal(fs.existsSync(dest), false, `${how}: nothing is left at its destination`);
+    }
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a copy that does not finish never removes what it did not make: a file already there, or one put there while it ran', async () => {
+  const dir = await mkTmp();
+  try {
+    const src = await writeFile(path.join(dir, 'source.bin'), crypto.randomBytes(3 * CHUNK + 5));
+    // Already there: the exclusive open refuses, and the file is left exactly as it was.
+    const theirs = await writeFile(path.join(dir, 'theirs.txt'), 'someone else’s file\n');
+    await assert.rejects(copyWithHash(src, theirs), (err: NodeJS.ErrnoException) => err.code === 'EEXIST');
+    assert.equal(await fsp.readFile(theirs, 'utf8'), 'someone else’s file\n', 'a file already at the destination is untouched');
+    // Put there while the copy ran, once its own file was moved aside: what stands there is not its own.
+    const dest = path.join(dir, 'replaced.bin');
+    const removeFault = setCopyFaultForTests((at, read) => {
+      if (at !== dest || read <= CHUNK) return null;
+      fs.renameSync(dest, path.join(dir, 'moved-aside.bin'));
+      fs.writeFileSync(dest, 'put here while the copy ran\n');
+      return new Error('the disk stopped answering (a test)');
+    });
+    try {
+      await assert.rejects(copyWithHash(src, dest), /stopped answering/);
+    } finally {
+      removeFault();
+    }
+    assert.equal(await fsp.readFile(dest, 'utf8'), 'put here while the copy ran\n', 'a file put at the destination since is not taken for the copy’s own');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a copy whose source cannot be read makes nothing: it fails on the source before it opens the destination', async () => {
+  const dir = await mkTmp();
+  try {
+    const src = path.join(dir, 'gone.bin');
+    const dest = path.join(dir, 'no-such-folder', 'copy.bin'); // opening it would fail too, on its own path
+    await assert.rejects(copyWithHash(src, dest), (err: NodeJS.ErrnoException) => err.code === 'ENOENT' && err.path === src);
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }
