@@ -12,8 +12,9 @@ import { withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('tm-b5-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { groupZombies, appBundleOf, zombieReport, restartProcess } from '../src/services/zombieHandles';
+import { groupZombies, appBundleOf, zombieReport, restartProcess, executablePathsOf, PS_PIDS_PER_CALL } from '../src/services/zombieHandles';
 import { AppError } from '../src/middleware/errorHandler';
+import { runText, CommandFailedError } from '../src/platform/exec';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 
@@ -75,6 +76,95 @@ test('the .app bundle test matches path segments, not substrings', () => {
   assert.equal(appBundleOf('/usr/local/bin/node'), null, 'a plain binary is not a bundle');
   assert.equal(appBundleOf(null), null);
   assert.equal(appBundleOf('.app/x'), null, 'a path that starts at the marker has no bundle name');
+});
+
+/* ══════════════════ Track U U-5 — one `ps` for every held-space process ══════════════════ */
+
+type Call = { cmd: string; args: string[] };
+
+/** The pids one recorded `ps` call asked about. */
+const pidsAskedIn = (call: Call): number[] => call.args[call.args.indexOf('-p') + 1].split(',').map(Number);
+
+/**
+ * A stand-in for `ps -ww -o pid=,comm= -p <pids>`: answers the way macOS's
+ * does (the pid right-aligned, one space, then the whole path), for the pids
+ * it knows, and records every call.
+ */
+function fakePs(paths: ReadonlyMap<number, string>) {
+  const calls: Call[] = [];
+  const run = async (cmd: string, args: string[]): Promise<string> => {
+    const call = { cmd, args };
+    calls.push(call);
+    return pidsAskedIn(call).filter((pid) => paths.has(pid)).map((pid) => `${String(pid).padStart(5)} ${paths.get(pid)}\n`).join('');
+  };
+  return { run, calls };
+}
+
+/** One held handle for each pid: what the platform's lsof pass hands groupZombies. */
+const heldBy = (pids: number[]) => async () => pids.map((pid) => ({ pid, processName: `proc${pid}`, path: `/tmp/held-${pid}`, bytes: 1000 }));
+const range = (from: number, n: number): number[] => Array.from({ length: n }, (_, i) => from + i);
+
+test('fifty processes holding space cost exactly one ps, and each gets its own answer', async () => {
+  const pids = range(1000, 50);
+  const ps = fakePs(new Map([[1003, '/Applications/My App.app/Contents/MacOS/My App'], [1007, '/usr/local/bin/node']]));
+  const report = await zombieReport({ handles: heldBy(pids), run: ps.run, os: 'darwin' });
+  assert.equal(ps.calls.length, 1, 'one ps for the whole report, not one per process');
+  assert.equal(ps.calls[0].cmd, 'ps');
+  assert.deepEqual(ps.calls[0].args, ['-ww', '-o', 'pid=,comm=', '-p', pids.join(',')], 'every pid asked about in that one call, at full width');
+  assert.equal(report.processes.length, 50, 'every holder is still listed');
+  const bundle = (pid: number) => report.processes.find((p) => p.pid === pid)?.appBundle;
+  assert.equal(bundle(1003), '/Applications/My App.app', 'a path with spaces is read whole, not cut at its first space');
+  assert.equal(bundle(1007), null, 'a plain binary is not a bundle');
+  assert.equal(bundle(1004), null, 'a pid ps did not answer for is null, never a neighbour\'s answer');
+});
+
+test('executablePathsOf: a pid missing from the output is null, and 1,200 pids are asked in three calls of at most 500', async () => {
+  assert.equal(PS_PIDS_PER_CALL, 500);
+  const ps = fakePs(new Map([[7, '/bin/zsh']]));
+  const one = await executablePathsOf([7, 8], ps.run);
+  assert.equal(one.get(7), '/bin/zsh');
+  assert.equal(one.get(8), null, 'absent from the output: unknown, not an empty path');
+
+  const many = range(10_000, 1200);
+  const big = fakePs(new Map(many.map((pid) => [pid, `/opt/p${pid}/bin/p${pid}`])));
+  const paths = await executablePathsOf(many, big.run);
+  assert.equal(big.calls.length, 3, '1,200 pids: three calls');
+  assert.deepEqual(big.calls.map((c) => pidsAskedIn(c).length), [500, 500, 200], 'never more than 500 pids in one call');
+  assert.deepEqual(big.calls.flatMap(pidsAskedIn), many, 'each pid asked about once, in order');
+  assert.equal(paths.size, 1200, 'every pid answered');
+  assert.equal(paths.get(11_199), '/opt/p11199/bin/p11199', 'the last chunk is read too');
+});
+
+test('a ps that fails leaves every bundle unknown and the report still answers', async () => {
+  const pids = range(2000, 5);
+  const failures: Array<[string, () => Promise<string>]> = [
+    ['ps exits 1 when no pid matches (macOS)', async () => { throw new CommandFailedError('ps', 'ps exited with code 1', '', '', 1); }],
+    ['ps cannot be started at all', async () => { throw new Error('spawn ps ENOENT'); }],
+  ];
+  for (const [what, fail] of failures) {
+    let calls = 0;
+    const report = await zombieReport({ handles: heldBy(pids), run: async () => { calls++; return fail(); }, os: 'darwin' });
+    assert.equal(calls, 1, `${what}: asked once`);
+    assert.equal(report.processes.length, 5, `${what}: every holder is still reported`);
+    assert.ok(report.processes.every((p) => p.appBundle === null), `${what}: no bundle is guessed`);
+    assert.equal(report.totalBytes, 5000, `${what}: the held bytes are unaffected`);
+  }
+  // Only macOS has .app bundles: elsewhere nothing is asked at all.
+  let asked = 0;
+  await zombieReport({ handles: heldBy(pids), run: async () => { asked++; return ''; }, os: 'linux' });
+  assert.equal(asked, 0, 'no ps where the answer cannot be yes');
+});
+
+test('the real ps answers the batched form: this process by its executable, an exited one as unknown', { skip: !IS_UNIX }, async () => {
+  const gone = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+  await exited(gone);
+  const calls: string[][] = [];
+  const paths = await executablePathsOf([process.pid, gone.pid!], (cmd, args, opts) => { calls.push(args); return runText(cmd, args, opts); });
+  assert.equal(calls.length, 1, 'both pids in one real ps');
+  const mine = paths.get(process.pid);
+  assert.ok(typeof mine === 'string' && mine.length > 0, `ps named this process (got ${String(mine)})`);
+  assert.equal(path.basename(mine), NODE_NAME, 'by its executable');
+  assert.equal(paths.get(gone.pid!), null, 'an exited process is unknown');
 });
 
 /* ══════════════════ The acceptance criterion (unix) ══════════════════ */
@@ -171,6 +261,26 @@ test('restart refuses a pid whose process is not what the caller named', { skip:
   try {
     assert.equal(await appErrorCode(() => restartProcess(child.pid!, 'DefinitelyNotThisProcess')), 'PID_REUSED');
     assert.equal(child.exitCode, null, 'the mismatched process was left completely alone');
+  } finally {
+    child.kill('SIGKILL');
+    await exited(child);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('restart still asks ps about its one pid, right before it acts (U-5 batches only the report)', { skip: !IS_UNIX }, async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-b5-'));
+  const target = path.join(dir, 'held.bin');
+  await fsp.writeFile(target, 'x');
+  const child = await holdOpenElsewhere(target);
+  const calls: Call[] = [];
+  const counted = (cmd: string, args: string[], opts?: Parameters<typeof runText>[2]) => { calls.push({ cmd, args }); return runText(cmd, args, opts); };
+  try {
+    assert.equal(await appErrorCode(() => restartProcess(child.pid!, 'DefinitelyNotThisProcess', undefined, counted)), 'PID_REUSED');
+    assert.equal(calls.length, 1, 'one identity check');
+    assert.equal(calls[0].cmd, 'ps');
+    assert.deepEqual(pidsAskedIn(calls[0]), [child.pid], 'about that pid alone');
+    assert.equal(child.exitCode, null, 'the mismatched process was left alone');
   } finally {
     child.kill('SIGKILL');
     await exited(child);

@@ -280,6 +280,15 @@ shipped a confidently wrong answer.
    tolerates prefix matches only for names ≥ 9 characters, because older `lsof`
    builds truncate command names at 9 and Linux truncates at 15 — while a short
    name like `node` must match exactly (`nodemon` reusing its pid is realistic).
+   The held-space report asks about every holder in **one** call (Track U
+   U-5; it was one `ps` per process, a 0.68–1.9 s stall on every app open):
+   `ps -ww -o pid=,comm= -p <pid,pid,…>`, at most 500 pids a call. Each line is
+   the pid right-aligned, one space, then the path — which can itself contain
+   spaces, so it is read as everything after that one space, never split on
+   whitespace. Lines come back in pid order, an exited pid is simply missing,
+   and macOS `ps` exits 1 only when none of the listed pids is running
+   (measured); either way that pid's bundle is unknown, never guessed. The
+   restart's identity check still asks about its one pid, fresh, before acting.
    Two adjacent subtleties, both unit-tested: `process.kill(pid, 0)` throws
    `EPERM` for a *live* process owned by someone else (only `ESRCH` means gone),
    and the `.app` test matches the **first** `.app/` path segment so a Chrome

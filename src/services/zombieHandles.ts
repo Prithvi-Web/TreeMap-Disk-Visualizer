@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'timers/promises';
 import { platform } from '../platform';
-import { runText } from '../platform/exec';
+import { runText, RunOptions } from '../platform/exec';
+import type { ZombieHandleInfo } from '../platform/types';
 import { AppError } from '../middleware/errorHandler';
 
 /**
@@ -52,20 +53,54 @@ export interface ZombieReport {
   scannedAt: number;
 }
 
+/** Runs a command and resolves its stdout: `runText`'s shape, and the seam the tests count `ps` calls through. */
+export type CommandRunner = (cmd: string, args: string[], opts?: RunOptions) => Promise<string>;
+
+/** The most pids one `ps` call is asked about, so its argument list stays far inside any system's limit. */
+export const PS_PIDS_PER_CALL = 500;
+
+/** One line of `ps -o pid=,comm=`: the pid (right-aligned), ONE space, then the executable — spaces and all. */
+const PS_LINE = /^\s*(\d+)\s(.*)$/;
+
 /**
- * Where the process's executable lives, or null when that cannot be read.
+ * Where each process's executable lives, or null for a pid that cannot be
+ * read — one `ps` for up to PS_PIDS_PER_CALL pids at a time (Track U, U-5:
+ * the held-space report used to start one `ps` per process, a 0.68–1.9 s
+ * stall on every app open in the Track U diagnosis).
  *
  * `ps -o comm=` prints the full executable path on macOS (measured — unlike
  * Linux, where comm is the truncated 15-char name, which is why this is only
- * consulted for the .app test and never displayed as truth).
+ * consulted for the .app test and the restart's identity check, and never
+ * displayed as truth). `-ww` keeps a long path whole. A pid missing from the
+ * output is null; so is every pid of a call that fails, which includes
+ * macOS's exit 1 when no pid in the list is running — nothing is guessed.
  */
-async function executablePathOf(pid: number): Promise<string | null> {
-  try {
-    const out = (await runText('ps', ['-o', 'comm=', '-p', String(pid)], { timeoutMs: 5_000 })).trim();
-    return out.length > 0 ? out : null;
-  } catch {
-    return null;
+export async function executablePathsOf(pids: readonly number[], run: CommandRunner = runText): Promise<Map<number, string | null>> {
+  const paths = new Map<number, string | null>(pids.map((pid) => [pid, null]));
+  const asked = [...paths.keys()].filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+  for (let i = 0; i < asked.length; i += PS_PIDS_PER_CALL) {
+    const chunk = asked.slice(i, i + PS_PIDS_PER_CALL);
+    let out: string;
+    try {
+      out = await run('ps', ['-ww', '-o', 'pid=,comm=', '-p', chunk.join(',')], { timeoutMs: 5_000 });
+    } catch {
+      continue; // this chunk stays unknown; the rest are still asked
+    }
+    const wanted = new Set(chunk);
+    for (const line of out.split(/\r?\n/)) {
+      const m = PS_LINE.exec(line);
+      if (!m) continue;
+      const pid = Number(m[1]);
+      const executable = m[2].trimEnd();
+      if (wanted.has(pid) && executable.length > 0) paths.set(pid, executable);
+    }
   }
+  return paths;
+}
+
+/** One process's executable: the same `ps`, asked about that pid alone. */
+async function executablePathOf(pid: number, run: CommandRunner = runText): Promise<string | null> {
+  return (await executablePathsOf([pid], run)).get(pid) ?? null;
 }
 
 /**
@@ -115,18 +150,26 @@ export function groupZombies(handles: readonly { pid: number; processName: strin
   };
 }
 
-/** The per-process rollup of the platform's raw descriptor list. */
-export async function zombieReport(): Promise<ZombieReport> {
-  const grouped = groupZombies(await platform().getZombieHandles());
+/** What zombieReport reads the world through. Production passes nothing; the tests hand in each one. */
+export interface ZombieReportDeps {
+  /** The platform's raw descriptor list. */
+  handles?: () => Promise<ZombieHandleInfo[]>;
+  /** Runs `ps` for the .app test. */
+  run?: CommandRunner;
+  /** The OS the .app test is for: only macOS has .app bundles. */
+  os?: NodeJS.Platform;
+}
 
-  // The .app test is one `ps` per process, so only run it where the answer
-  // can be yes.
-  if (process.platform === 'darwin') {
-    await Promise.all(
-      grouped.processes.map(async (proc) => {
-        proc.appBundle = appBundleOf(await executablePathOf(proc.pid));
-      }),
-    );
+/** The per-process rollup of the platform's raw descriptor list. */
+export async function zombieReport(deps: ZombieReportDeps = {}): Promise<ZombieReport> {
+  const handles = deps.handles ?? (() => platform().getZombieHandles());
+  const grouped = groupZombies(await handles());
+
+  // The .app test: one `ps` for every process (U-5), and only where the
+  // answer can be yes.
+  if ((deps.os ?? process.platform) === 'darwin' && grouped.processes.length > 0) {
+    const paths = await executablePathsOf(grouped.processes.map((proc) => proc.pid), deps.run);
+    for (const proc of grouped.processes) proc.appBundle = appBundleOf(paths.get(proc.pid) ?? null);
   }
 
   return { ...grouped, scannedAt: Date.now() };
@@ -174,9 +217,15 @@ const TERMINATE_WAIT_MS = 5_000;
  * is confirmed — `open` on a still-running app would merely focus it.
  *
  * `waitMs` exists for tests, which prove the still-running path with a child
- * that traps SIGTERM and should not cost five real seconds doing it.
+ * that traps SIGTERM and should not cost five real seconds doing it; `run`
+ * lets them count the identity check's `ps` (one, about this pid alone).
  */
-export async function restartProcess(pid: number, expectedName: string, waitMs = TERMINATE_WAIT_MS): Promise<RestartResult> {
+export async function restartProcess(
+  pid: number,
+  expectedName: string,
+  waitMs = TERMINATE_WAIT_MS,
+  run: CommandRunner = runText,
+): Promise<RestartResult> {
   if (!Number.isInteger(pid) || pid <= 1) {
     throw new AppError(400, 'PID_INVALID', 'That is not a process TreeMap can restart');
   }
@@ -188,10 +237,11 @@ export async function restartProcess(pid: number, expectedName: string, waitMs =
     return { pid, processName: expectedName, terminated: true, relaunched: false, message: 'That program has already quit, so its held space is free.' };
   }
 
-  // Identity check against pid reuse or a stale panel. `ps -o comm=` works on
-  // macOS and Linux; when it cannot answer, refuse — acting on an unverified
-  // pid is how the wrong program gets quit.
-  const executable = await executablePathOf(pid);
+  // Identity check against pid reuse or a stale panel, asked fresh about this
+  // one pid — never read from the report. `ps -o comm=` works on macOS and
+  // Linux; when it cannot answer, refuse — acting on an unverified pid is how
+  // the wrong program gets quit.
+  const executable = await executablePathOf(pid, run);
   if (executable === null) {
     throw new AppError(409, 'PID_UNVERIFIED', 'Could not confirm which program that is right now — refresh the list and try again');
   }

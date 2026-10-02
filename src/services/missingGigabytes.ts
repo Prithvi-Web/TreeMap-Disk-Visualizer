@@ -200,12 +200,13 @@ export function liveSources(): StatementSources {
 /**
  * The held-space figures, without the part this page does not show.
  *
- * `zombieReport()` finishes by resolving each holder's `.app` bundle, which
- * costs **one `ps` per process** — and on this machine 305 processes are
- * holding a deleted file, so that is 305 subprocesses for a field the receipt
- * never prints. Measured: 568 ms with the enrichment, 226 ms without, and the
- * three numbers this line actually uses — total bytes, process count,
- * unknown-size count — came back identical both times.
+ * `zombieReport()` finishes by resolving each holder's `.app` bundle. That
+ * cost **one `ps` per process** when this was written — 305 processes were
+ * holding a deleted file on this machine, so 305 subprocesses for a field the
+ * receipt never prints (measured: 568 ms with the enrichment, 226 ms without,
+ * and the three numbers this line actually uses — total bytes, process count,
+ * unknown-size count — came back identical both times). Track U's U-5 made it
+ * one `ps` for up to 500 processes; it is still a subprocess for nothing here.
  *
  * The Held-space view still calls the full `zombieReport()`, because it names
  * the applications and genuinely needs them.
