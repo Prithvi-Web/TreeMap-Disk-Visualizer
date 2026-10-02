@@ -892,6 +892,28 @@ test('an item of a cart commit TreeMap held back because a program has a file op
   for (const p of [...gone, held]) assert.ok(fs.existsSync(p));
 });
 
+test('an item of a cart commit TreeMap itself does not hand to the Trash, a name Windows would trim, is not said to be refused by the Trash (FG3d #9)', async () => {
+  const dir = fileTempDir('treemap-capsuleAfterTrash-trimmed-');
+  const trimmed = path.join(dir, 'trailing.');
+  const ordinary = path.join(dir, 'ordinary.txt');
+  for (const p of [trimmed, ordinary]) fs.writeFileSync(p, contentOf(p));
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real);
+  Object.defineProperty(process, 'platform', { ...real, value: 'win32' });
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await withOpenFileCheck('clear', () => commitCart([trimmed, ordinary]));
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+  }
+  assert.deepEqual(result.trashed, [ordinary], JSON.stringify(result));
+  const row = result.skipped.find((s) => s.path === trimmed);
+  assert.doesNotMatch(row?.reason ?? '', /The Trash did not take it/, `the Trash was never asked (${row?.reason})`);
+  assert.match(row?.reason ?? '', /^TreeMap did not hand it to the Trash: Windows would trim/, row?.reason);
+  assert.match(row?.reason ?? '', /still in place, untouched, and its copy was discarded/, row?.reason);
+  assert.equal(fs.readFileSync(trimmed, 'utf8'), contentOf(trimmed), 'and it is');
+});
+
 /**
  * FG3b (review finding 22). The Autopilot variants above answer the open-file check themselves, so
  * that a runner whose check fails does not decide them; this one keeps the real check (Restart

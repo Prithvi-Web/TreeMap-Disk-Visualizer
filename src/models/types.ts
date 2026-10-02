@@ -394,9 +394,10 @@ export interface CleanResult {
   /**
    * `stopped`: the trash command was stopped before it answered (its time limit, or a signal on
    * macOS and Linux), so the Trash may still finish the move after this answer — the path was not
-   * shown to be left in place (FG3b).
+   * shown to be left in place (FG3b). `refused`: TreeMap itself did not hand the path to the Trash
+   * (a name Windows would trim, `trashRefusal`), so the Trash was never asked (FG3d #9).
    */
-  failed: { path: string; reason: string; stopped?: true }[];
+  failed: { path: string; reason: string; stopped?: true; refused?: true }[];
 }
 
 export interface SystemInfo {

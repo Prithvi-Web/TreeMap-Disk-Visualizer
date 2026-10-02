@@ -927,9 +927,11 @@ export async function protectAndTrash(
   const paths = deepestFirst(protectedOutcomes.map((o) => o.path));
 
   let trashed: string[] = [];
-  let failedToTrash: { path: string; reason: string; stopped?: true }[] = [];
+  let failedToTrash: { path: string; reason: string; stopped?: true; refused?: true }[] = [];
   /** Set when TreeMap's own open-file check refused the batch: the Trash was never asked. */
   let heldBackBeforeTrash = false;
+  /** Items TreeMap itself did not hand to the Trash, one by one (`refused`, FG3d #9). */
+  const refusedByTreeMap = new Set<string>();
   const unverified: { path: string; reason: string }[] = [];
   // What stands at each path now, so a failure can be checked against the disk afterwards — and,
   // for an item that stays unconfirmed, by an undo later (`markUnverified`).
@@ -956,6 +958,7 @@ export async function protectAndTrash(
     // discarded while it may be the only one, and an item is never called untouched unless the
     // disk showed it.
     const stillThere: { path: string; reason: string }[] = [];
+    for (const failure of failedToTrash) if (failure.refused) refusedByTreeMap.add(failure.path);
     for (const failure of failedToTrash) {
       // Looked at where the item is, not where its spelling now leads (FG3c): a path through a link
       // that another item took to the Trash no longer reaches it, though it has not moved.
@@ -982,11 +985,13 @@ export async function protectAndTrash(
     const notDeleted = protectedOutcomes.filter((o) => refusedBecause.has(o.path));
     const problem = await discardUnusedCopies(notDeleted);
     for (const outcome of notDeleted) {
-      // The Trash's own reason, per item (FG3b): the one thing a person can act on. Or TreeMap's own
-      // check's, when that held the batch back and the Trash was never asked (FG3c) — a sentence
-      // of its own, whose full stop is not doubled.
+      // The Trash's own reason, per item (FG3b): the one thing a person can act on. Or TreeMap's own,
+      // when the Trash was never asked: its check held the whole batch back (FG3c), or it refused
+      // this one item itself, a name Windows would trim (FG3d #9) — a sentence of its own, whose
+      // full stop is not doubled.
       const why = (refusedBecause.get(outcome.path) ?? '').replace(/[\s.]+$/, '');
-      const refusal = `${heldBackBeforeTrash ? 'TreeMap did not hand it to the Trash' : 'The Trash did not take it'}: ${why}. It is still in place, untouched`;
+      const byTreeMap = heldBackBeforeTrash || refusedByTreeMap.has(outcome.path);
+      const refusal = `${byTreeMap ? 'TreeMap did not hand it to the Trash' : 'The Trash did not take it'}: ${why}. It is still in place, untouched`;
       outcome.protected = false;
       outcome.code = 'NOT_DELETED';
       outcome.detail = problem === null

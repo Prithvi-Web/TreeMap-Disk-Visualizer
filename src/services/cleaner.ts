@@ -243,8 +243,10 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
       console.warn(`[treemap] could not move to the Trash: ${p}:`, err instanceof Error ? err.message : err);
       if (err instanceof CommandStopped) {
         failed.push({ path: p, reason: 'the Trash did not answer in time, and may still finish moving it', stopped: true });
+      } else if (err instanceof TrashRefusal) {
+        failed.push({ path: p, reason: err.message, refused: true });
       } else {
-        failed.push({ path: p, reason: err instanceof TrashRefusal ? err.message : describeFsError(err) });
+        failed.push({ path: p, reason: describeFsError(err) });
       }
     }
   }
