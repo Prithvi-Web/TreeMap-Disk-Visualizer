@@ -131,8 +131,11 @@ test('executablePathsOf: a pid missing from the output is null, and 1,200 pids a
   assert.equal(big.calls.length, 3, '1,200 pids: three calls');
   assert.deepEqual(big.calls.map((c) => pidsAskedIn(c).length), [500, 500, 200], 'never more than 500 pids in one call');
   assert.deepEqual(big.calls.flatMap(pidsAskedIn), many, 'each pid asked about once, in order');
-  assert.equal(paths.size, 1200, 'every pid answered');
-  assert.equal(paths.get(11_199), '/opt/p11199/bin/p11199', 'the last chunk is read too');
+  assert.equal(paths.size, 1200, 'one entry per pid asked');
+  // The map is seeded with null for every pid, so its size proves nothing about
+  // the answers: every pid of every chunk must carry the path ps printed for it.
+  const unread = many.filter((pid) => paths.get(pid) !== `/opt/p${pid}/bin/p${pid}`);
+  assert.deepEqual(unread, [], 'every chunk\'s answers are read, not only the last one\'s');
 });
 
 test('a ps that fails leaves every bundle unknown and the report still answers', async () => {
