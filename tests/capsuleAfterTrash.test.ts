@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleAfterTrash-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { deleteCapsuleEntry, getCapsuleIndex, getCapsuleJob, listUndoableEntriesForRun, setDiscardFaultForTests, type DiscardStep } from '../src/services/timeCapsule';
+import { deleteCapsuleEntry, getCapsuleIndex, getCapsuleJob, listUndoableEntriesForRun, setDiscardFaultForTests, setMemberLookFaultForTests, type DiscardStep } from '../src/services/timeCapsule';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
@@ -623,6 +623,54 @@ test('an unconfirmed item reached through a link another item took to the Trash 
   await restored(job.jobId);
   assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the link is back');
   assert.equal(fs.readFileSync(x, 'utf8'), contentOf(x), 'and the file it leads to was never touched');
+});
+
+/* ─────────────── FG3d: a folder holding a file whose look fails ─────────────── */
+
+test('a folder holding a file that cannot be looked at is not protected, so it is not deleted: the dry run and the commit leave it in place and say why (FG3d)', async () => {
+  const { dir, inner } = project('unlooked-member', 'unlooked-proj');
+  const [, unlooked] = inner;
+  // The look at b.txt fails as a disk that stops answering does; the rest of the folder reads fine.
+  const removeFault = setMemberLookFaultForTests((abs) => (abs === unlooked ? Object.assign(new Error('i/o error (a test)'), { code: 'EIO' }) : null));
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    const planned = (await planCartCommit([dir])).items.find((i) => i.path === dir);
+    assert.equal(planned?.willDelete, false, `the dry run would not delete it (${JSON.stringify(planned)})`);
+    assert.match(planned?.reason ?? '', /could not look at b\.txt, inside it \(the disk did not answer/, planned?.reason);
+    result = await commitCart([dir]);
+  } finally {
+    removeFault();
+  }
+  assert.deepEqual(result.trashed, [], `nothing went to the Trash (${JSON.stringify(result)})`);
+  const row = result.skipped.find((s) => s.path === dir);
+  assert.equal(row?.code, 'CAPSULE_UNREADABLE', JSON.stringify(result.skipped));
+  assert.match(row?.reason ?? '', /could not look at b\.txt, inside it/, row?.reason);
+  assert.match(row?.reason ?? '', /what cannot be protected is not deleted/, row?.reason);
+  for (const p of inner) assert.equal(fs.readFileSync(p, 'utf8'), contentOf(p), `${path.basename(p)} is where it was`);
+  assert.deepEqual(await listUndoableEntriesForRun(result.runId), [], 'no copy is held that an undo could call the whole folder');
+  const said = (await getCapsuleIndex()).events.find((e) => e.kind === 'unprotected' && e.originalPath === dir);
+  assert.match(said?.detail ?? '', /could not look at b\.txt/, 'and the Time Capsule tab says what it could not keep');
+});
+
+test('a file that goes between its folder\u2019s listing and the look at it is gone, not unreadable: the folder is still protected and deleted, and the undo puts back what was there (FG3d)', async () => {
+  const { dir, inner } = project('vanished-member', 'vanished-proj');
+  const [kept, vanished] = inner;
+  // Removed by something else after the folder was listed, before the walk looked at it.
+  const removeFault = setMemberLookFaultForTests((abs) => {
+    if (abs === vanished && fs.existsSync(vanished)) fs.rmSync(vanished);
+    return null;
+  });
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await commitCart([dir]);
+  } finally {
+    removeFault();
+  }
+  assert.deepEqual(result.trashed, [dir], JSON.stringify(result));
+  const job = await undoCartRun(result.runId);
+  await restored(job.jobId);
+  assert.equal(fs.readFileSync(kept, 'utf8'), contentOf(kept), 'what was there is back');
+  assert.ok(!fs.existsSync(vanished), 'and what had gone before the copy was made stays gone');
 });
 
 test('the dry run names an item spelled another way as that item (FG3c #1)', async () => {

@@ -1,4 +1,4 @@
-import { promises as fsp } from 'fs';
+import { promises as fsp, type Stats } from 'fs';
 import { formatCount } from '../utils/formatCount';
 import path from 'path';
 import crypto from 'crypto';
@@ -17,7 +17,7 @@ import { diskUsage } from './diskUsage';
 import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
-import { meansAbsent } from '../utils/errno';
+import { describeFsError, meansAbsent } from '../utils/errno';
 import { assertNotSpillPath } from '../middleware/pathGuard';
 import { isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from '../utils/placeIdentity';
@@ -382,6 +382,38 @@ interface WalkedMember {
  * virtualenvs) are full of them. Empty directories are recorded too, so a
  * restored tree has the same shape and not merely the same files.
  */
+/**
+ * Test-only: a failed look at one member of an item being walked (FG3d), as a volume having a bad
+ * moment answers it. No test can make one file's look fail on every OS while its folder stays
+ * readable. Answers the error that look fails with, or null to look at the disk. The suite's
+ * ForTests idiom: returns the function that removes it.
+ */
+let memberLookFaultForTests: ((abs: string) => Error | null) | null = null;
+export function setMemberLookFaultForTests(fault: (abs: string) => Error | null): () => void {
+  memberLookFaultForTests = fault;
+  return () => { memberLookFaultForTests = null; };
+}
+
+/**
+ * A member's own lstat, during a walk: null when nothing is there (`meansAbsent`) — it went between
+ * its folder's listing and this look, and there is nothing of it to protect. Any other failure says
+ * nothing either way, and a copy without that member is not a copy of the item, so it fails the
+ * walk: the item is not protected, and what is not protected is not deleted (FG3d). It was read as
+ * gone: the member got no copy, its folder was still copied and trashed whole with it inside, and an
+ * undo put the folder back without it and said everything was back.
+ */
+async function lstatMember(abs: string, rel: string): Promise<Stats | null> {
+  try {
+    const fault = memberLookFaultForTests?.(abs) ?? null;
+    if (fault !== null) throw fault;
+    return await fsp.lstat(abs);
+  } catch (err) {
+    if (meansAbsent(err)) return null;
+    throw new AppError(409, 'CAPSULE_UNREADABLE',
+      `TreeMap could not look at ${rel}, inside it (${describeFsError(err)}), so it cannot be protected whole, and what cannot be protected is not deleted.`);
+  }
+}
+
 async function walkItem(
   root: string,
   opts: { withDirTimes?: boolean } = {},
@@ -432,7 +464,7 @@ async function walkItem(
       } else if (dirent.isDirectory()) {
         queue.push({ abs, rel });
       } else if (dirent.isFile()) {
-        const st = await fsp.lstat(abs).catch(() => null);
+        const st = await lstatMember(abs, rel);
         if (!st) continue; // vanished mid-walk — nothing to protect
         members.push({ abs, rel, kind: 'file', size: st.size, mtimeMs: st.mtimeMs, atimeMs: st.atimeMs });
         bytes += st.size;

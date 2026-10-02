@@ -298,9 +298,10 @@ OpenAPI 3 spec).
      `DELETE /api/files`
      rather than a flag on it, because the two make different promises and
      `GET /api/capabilities` marks destructive endpoints one by one.
-     **The refusal that matters:** anything too large for the capsule to
-     protect is **left undeleted** and named in `skipped[]` with its reason —
-     never deleted unprotected. `dryRun: true` returns that same verdict per
+     **The refusal that matters:** anything the capsule cannot protect whole —
+     too large for it, or a folder holding a file that could not be looked at —
+     is **left undeleted** and named in `skipped[]` with its reason — never
+     deleted unprotected. `dryRun: true` returns that same verdict per
      path *before* anything happens, along with the older capsule copies that
      would be evicted to make room and B2's open-handle preflight. At most 500
      paths per commit. Nothing after the trash step can fail the request:
