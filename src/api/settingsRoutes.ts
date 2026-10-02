@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
 import { engineSettingRefusal, getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
 import { suppressedNoteRoots } from '../services/notes';
-import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { cleanupSuggestionsFor } from '../services/cleanupMemo';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { collectCloudPlaceholders, matchCustomRules, CustomRules } from '../services/scanQueries';
 import { storeOf } from '../services/scanStore';
@@ -119,9 +119,12 @@ settingsRouter.get('/cleanup/suggestions', storageModeGate, async (req: Request,
     res.json({ scanId: scan.scanId, groups: [], available: false, reason: err instanceof Error ? err.message : String(err) });
     return;
   }
+  // Walked in slices and once per scan version (U-16): the cost card, the tour
+  // and the Clean Up modal all ask the moment a scan lands.
+  const groups = await cleanupSuggestionsFor(storeOf(scan), ignore, catalog.catalog, noted);
   res.json({
     scanId: scan.scanId,
-    groups: collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog, undefined, noted),
+    groups,
     available: true,
     catalog: { schemaVersion: catalog.catalog.schemaVersion, packs: catalog.catalog.packs },
   });

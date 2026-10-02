@@ -730,7 +730,6 @@ async function finishScan(root, durationMs, stats) {
   // Painted. Now the expensive server-side walks, filling in behind it.
   void loadWhatsNew(); // "what's new" banner — fetches its snapshots behind the paint too
   void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint
-  void loadCostEstimate(); // C1
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
   // Painted from the index: there is no scan yet, so these three would be
@@ -743,7 +742,13 @@ async function finishScan(root, durationMs, stats) {
     switchView(state.view);
     return;
   }
-  await loadDashboardLists();
+  const lists = loadDashboardLists();
+  // C1. The card shows it is loading now, so a rescan never leaves the last
+  // scan's prices standing; its what-if asks for the cleanup suggestions, a
+  // walk of the whole tree, only once the three list walks have answered
+  // (U-16) — it used to start alongside them and compete for the server.
+  void loadCostEstimate(lists);
+  await lists;
   // Tell every view a new scan landed, then re-enter the current one. Views
   // repoint themselves at the new root in onScanChange, so switchView's mount
   // is the single load path — previously this called loadTreemap()/renderGrid()

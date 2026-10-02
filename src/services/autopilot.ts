@@ -8,7 +8,8 @@ import {
 } from '../models/types';
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { SPILL_DIR } from './spillSweep';
-import { collectCleanupSuggestions } from './cleanupRules';
+import { cleanupSuggestionsFor } from './cleanupMemo';
+import { loadRuleCatalog } from './rulePacks';
 import { matchCustomRules } from './scanQueries';
 import { parse } from './query/parse';
 import { isEmptyQuery } from './query/evaluate';
@@ -533,7 +534,10 @@ async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
 
   if (policy.match.kind === 'suggestion') {
     const ignore = await getIgnoreMatchers('suggest');
-    return selectCandidates(collectCleanupSuggestions(source, ignore), [], policy.match);
+    // Sliced, so a run on its timer never holds the app (U-16). Notes are
+    // applied by resolveCandidates, after the match, so none are passed here.
+    const groups = await cleanupSuggestionsFor(source, ignore, loadRuleCatalog(), []);
+    return selectCandidates(groups, [], policy.match);
   }
   if (policy.match.kind === 'query') {
     // Through `executeAgainstScan` — the same evaluator the query box and

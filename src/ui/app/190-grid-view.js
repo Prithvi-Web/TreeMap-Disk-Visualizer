@@ -252,7 +252,7 @@ function costMoney(usd, est) {
   return `${est.approximate ? '≈' : ''}${est.symbol}${shown}`;
 }
 
-async function loadCostEstimate() {
+async function loadCostEstimate(after) {
   const host = $('costBody');
   if (!host || !state.scanId) return;
   // First paint loads as labelled skeleton rows; a reload (currency change,
@@ -260,6 +260,15 @@ async function loadCostEstimate() {
   // them. Both painters below settle it.
   if (host.querySelector('.cost-row')) host.classList.add('fx-chart-loading');
   else host.innerHTML = skeletonRows(4, 22, 'Working out what keeping this online would cost…');
+  // U-16: the suggestions below are a walk of the whole tree. After a scan,
+  // finishScan hands over the dashboard lists' own walks, and the card asks
+  // only once those have answered rather than competing with them. A newer
+  // scan by then loads its own estimate.
+  if (after) {
+    const scanId = state.scanId;
+    try { await after; } catch { /* the lists report their own failure; the card still loads */ }
+    if (scanId !== state.scanId) return;
+  }
   // The what-if uses whatever the Clean Up rules already found to be
   // reclaimable, so the two features agree about the same bytes.
   let freeable = 0;

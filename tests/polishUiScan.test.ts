@@ -551,7 +551,8 @@ test('when all three answer, the state is filled and the renderers run once each
   assert.equal((h.state.bigFolders as unknown[]).length, 1);
   assert.match(h.els.statLargest.textContent, /a\.mov/);
   assert.deepEqual(h.rendered.filter((r) => !r.startsWith('veil')), ['files', 'folders', 'donut']);
-  assert.match(slice('async function finishScan', 'function renderDiskNotes()'), /await loadDashboardLists\(\)/, 'finishScan goes through the same door');
+  // U-16: finishScan hands the lists' promise to the cost card before awaiting it, so the card can wait for them.
+  assert.match(slice('async function finishScan', 'function renderDiskNotes()'), /const lists = loadDashboardLists\(\);[\s\S]*?await lists;/, 'finishScan goes through the same door, and waits for it');
 });
 
 test('an answer for a scan that has since been replaced is dropped', async () => {

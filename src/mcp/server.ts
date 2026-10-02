@@ -10,7 +10,7 @@ import {
 import { getDuplicateJob } from '../services/duplicateFinder';
 import { computeFacts } from '../services/facts';
 import type { ReclaimScoreFactValue } from '../services/facts';
-import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { cleanupSuggestionsFor } from '../services/cleanupMemo';
 import { suppressedNoteRoots } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
@@ -616,7 +616,8 @@ export function buildMcpServer(): McpServer {
         } catch (err) {
           return ok({ scanId, available: false, reason: err instanceof Error ? err.message : String(err), totalBytes: 0, groups: [] });
         }
-        const groups = collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog, undefined, noted);
+        // The same memoised, sliced walk the HTTP suggestions route answers from (U-16).
+        const groups = await cleanupSuggestionsFor(storeOf(scan), ignore, catalog.catalog, noted);
         const totalBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
         return ok({
           scanId,

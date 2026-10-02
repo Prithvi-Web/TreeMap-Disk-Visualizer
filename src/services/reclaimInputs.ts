@@ -1,8 +1,8 @@
 import path from 'path';
 import { getScan, onScanForgotten } from './diskScanner';
 import { storeOf, ScanStore } from './scanStore';
-import { collectCleanupSuggestions } from './cleanupRules';
-import { ruleCatalogStatus, Rule, RuleConfidence, matchReasonFor, ProjectDirRule } from './rulePacks';
+import { cleanupClaimsFor } from './cleanupMemo';
+import { ruleCatalogStatus, RuleConfidence, matchReasonFor, ProjectDirRule } from './rulePacks';
 import { getIgnoreMatchers } from './settings';
 
 /**
@@ -127,8 +127,9 @@ export async function computeRuleClaims(store: ScanStore): Promise<RuleClaims> {
   // still deserves a truthful "this rebuilds itself" in its breakdown; what
   // the note pauses is the surfaces that SUGGEST — Smart Suggestions, the
   // agent summary, MCP cleanup_suggestions and every Autopilot match.
-  collectCleanupSuggestions(store, ignore, catalog.catalog, (rule: Rule, nodePath: string) => {
-    if (rule.action === 'advice') return;
+  // The claims come from the cleanup memo (U-16): every non-advisory match,
+  // uncapped, in walk order, walked in slices and once per scan version.
+  for (const { rule, path: nodePath } of await cleanupClaimsFor(store, ignore, catalog.catalog)) {
     byPath.set(nodePath, {
       ruleId: rule.id,
       title: rule.title,
@@ -137,7 +138,7 @@ export async function computeRuleClaims(store: ScanStore): Promise<RuleClaims> {
       restoreCommand: (rule as ProjectDirRule).restoreCommand,
       claimedPath: nodePath,
     });
-  });
+  }
 
   return { byPath, available: true };
 }

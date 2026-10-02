@@ -6,7 +6,8 @@ import { readAudit } from '../services/audit';
 import { getPolicy, POLICY_FILE } from '../services/policy';
 import { appDataDir } from '../services/storage';
 import { collectLargestFiles, collectLargestFolders } from '../services/diskScanner';
-import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { cleanupSuggestionsFor } from '../services/cleanupMemo';
+import { loadRuleCatalog } from '../services/rulePacks';
 import { suppressedNoteRoots } from '../services/notes';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
@@ -92,7 +93,9 @@ metaRouter.get('/agent/summary', storageModeGate, async (req: Request, res: Resp
   // v4 §9.5 — the agent summary must not advertise reclaimable bytes the
   // suggestion surfaces themselves would refuse to show.
   const noted = await suppressedNoteRoots();
-  const groups = collectCleanupSuggestions(store, ignore, undefined, undefined, noted); // already sorted largest first
+  // loadRuleCatalog() throws on a malformed pack, as the matcher's default did.
+  // Through the memo (U-16): the same walk the suggestions route answers from.
+  const groups = await cleanupSuggestionsFor(store, ignore, loadRuleCatalog(), noted); // already sorted largest first
   const reclaimableBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
   const byCategoryMap = new Map<SuggestionCategory, { bytes: number; groupCount: number }>();
   for (const g of groups) {
