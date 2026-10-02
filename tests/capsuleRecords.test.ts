@@ -411,6 +411,21 @@ test('a restore that fails part-way leaves nothing at its place, not even a fold
   }
 });
 
+test('a restore that fails part-way removes only the folders it made: an empty folder that was there before it is kept (FG3d #14)', async () => {
+  const outer = fileTempDir('treemap-capsuleRecords-outer-empty-');
+  const place = path.join(outer, 'made-1', 'made-2', 'half-made');
+  const recorded = 'the content capture recorded';
+  const entry = capsuleEntry({ kind: 'folder', originalPath: place }, {
+    name: 'half-made',
+    members: [{ rel: path.join('sub', 'x.txt'), kind: 'file', size: recorded.length, hash: sha256(recorded) }],
+  }, { [path.join('half-made', 'sub', 'x.txt')]: 'not what capture recorded' });
+  const job = await restoreSettled(entry.id, 'a restore under an empty folder of the user\u2019s');
+  assert.match(job.error ?? '', /no longer matches/, 'it fails on the copy');
+  assert.ok(!fs.existsSync(path.join(outer, 'made-1')), 'the folders it made on the way are gone, its place with them');
+  assert.ok(fs.existsSync(outer), 'the empty folder that was there before the restore is kept');
+  assert.deepEqual(fs.readdirSync(outer), [], 'holding what it held: nothing');
+});
+
 /* ─────────────── A restore stopped part-way through a file (FG3d #1) ─────────────── */
 
 /** What a file read stream hands over at a time: a fault past it lands part-way through a file. */
