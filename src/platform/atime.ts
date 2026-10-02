@@ -56,6 +56,12 @@ export interface MountEntry {
   mountPoint: string;
   filesystem: string;
   options: string[];
+  /**
+   * What is mounted there, as the table names it: a device (`/dev/disk7s1`),
+   * a map (`map auto_home`), or — for a nullfs or bind mount — the folder it
+   * shows a second time. Absent only where a caller built an entry by hand.
+   */
+  source?: string;
 }
 
 /**
@@ -76,6 +82,7 @@ export function parseProcMounts(text: string): MountEntry[] {
       mountPoint: unescapeMountPoint(parts[1]),
       filesystem: parts[2],
       options: parts[3].split(','),
+      source: unescapeMountPoint(parts[0]),
     });
   }
   return entries;
@@ -160,24 +167,39 @@ export function atimeSupportFromOptions(options: string[]): AtimeSupport {
  * one of the handful of genuinely unstructured tools §2.3 allows, and it is
  * parsed into the same MountEntry shape so `mountForPath` is shared rather
  * than reimplemented per OS.
+ *
+ * A line is `<source> on <mount point> (<options>)`, and either side of that
+ * " on " may hold " on " itself: a nullfs mount's source is a folder path
+ * (`/Users/me/Disk on Desk on /private/var/… (nullfs, …)`), and a volume may
+ * be named so (`/dev/disk4s2 on /Volumes/Fun on Sunday (hfs, …)`). A mount
+ * point is always absolute, so the separator is the LAST " on " before the
+ * options that a `/` follows. Splitting at the first one read that nullfs
+ * line's mount point as `Desk on /private/var/…` (Track U, U-23).
  */
 export function parseBsdMount(text: string): MountEntry[] {
   const entries: MountEntry[] = [];
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    const onAt = trimmed.indexOf(' on ');
     const openParen = trimmed.lastIndexOf(' (');
-    if (onAt === -1 || openParen === -1 || openParen <= onAt) continue;
-    if (!trimmed.endsWith(')')) continue;
-    const mountPoint = trimmed.slice(onAt + 4, openParen);
+    if (openParen === -1 || !trimmed.endsWith(')')) continue;
+    const head = trimmed.slice(0, openParen);
+    let onAt = -1;
+    for (let at = head.lastIndexOf(' on '); at !== -1; at = at === 0 ? -1 : head.lastIndexOf(' on ', at - 1)) {
+      if (head.charAt(at + 4) === '/') {
+        onAt = at;
+        break;
+      }
+    }
+    if (onAt === -1) continue;
+    const mountPoint = head.slice(onAt + 4);
     const options = trimmed
       .slice(openParen + 2, -1)
       .split(',')
       .map((o) => o.trim())
       .filter(Boolean);
     // The first option is the filesystem type: "(apfs, local, journaled)".
-    entries.push({ mountPoint, filesystem: options[0] ?? 'unknown', options });
+    entries.push({ mountPoint, filesystem: options[0] ?? 'unknown', options, source: head.slice(0, onAt) });
   }
   return entries;
 }
