@@ -541,6 +541,52 @@ fn apply_to_current_thread_reports_what_it_did() {
     }
 }
 
+/// Track U, U-13: the auto base can move while a scan's workers already run (the last
+/// unattended scan ends while a person's scan goes on). `configure()` moves the profile's
+/// generation and each worker applies the new profile at its next `throttle()`; without that a
+/// worker that started under Balanced would keep the Utility class for the rest of the scan.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_running_worker_takes_turbos_class_when_the_auto_base_rises_and_utility_when_it_falls() {
+    use tm_governor::{Budget, FakeSampler, FakeSignals, Governor};
+    const QOS_CLASS_UTILITY: u32 = 0x11;
+    const QOS_CLASS_USER_INITIATED: u32 = 0x19;
+    let on_base = |auto_base: Preset| Budget {
+        preset: Preset::Balanced,
+        cpu_percent: None,
+        auto_base,
+    };
+    let mut sampler = FakeSampler::new(8);
+    sampler.push_cpu(0.0);
+    let governor = Governor::start(
+        on_base(Preset::Balanced),
+        true,
+        Box::new(sampler),
+        Box::new(FakeSignals::default()),
+    );
+    governor.throttle();
+    assert_eq!(
+        thread_state::read().0,
+        QOS_CLASS_UTILITY,
+        "a worker's first throttle() applies Balanced: Utility"
+    );
+    governor.configure(on_base(Preset::Turbo), true);
+    governor.throttle();
+    assert_eq!(
+        thread_state::read().0,
+        QOS_CLASS_USER_INITIATED,
+        "the base rising reaches the running worker at its next throttle(): User-initiated"
+    );
+    governor.configure(on_base(Preset::Balanced), true);
+    governor.throttle();
+    assert_eq!(
+        thread_state::read().0,
+        QOS_CLASS_UTILITY,
+        "and the base falling takes it back to Utility"
+    );
+    governor.stop();
+}
+
 #[test]
 fn signals_are_never_a_confident_guess() {
     let mut signals = platform_signals();

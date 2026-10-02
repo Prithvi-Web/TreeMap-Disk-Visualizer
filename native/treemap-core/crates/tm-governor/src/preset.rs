@@ -47,14 +47,30 @@ pub enum Preset {
     Turbo,
 }
 
-/// The budget as configured: a preset plus an optional numeric ceiling.
+/// What auto mode resolves to on a machine nothing presses on, unless the budget names
+/// another base: Balanced, the app's default.
+pub const DEFAULT_AUTO_BASE: Preset = Preset::Balanced;
+
+/// The budget as configured: a preset plus an optional numeric ceiling, and the base auto
+/// mode works from. An unknown key is refused rather than ignored: a misspelled `autoBase`
+/// would otherwise leave the base at its default without a word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Budget {
     /// The preset the rest of the profile comes from.
     pub preset: Preset,
     /// `1..=100` replaces the preset's ceiling; `None` keeps it.
     pub cpu_percent: Option<u8>,
+    /// What auto mode runs while nothing presses on the machine (Track U, U-13): Turbo
+    /// while a scan a person started runs, [`DEFAULT_AUTO_BASE`] otherwise, and when a
+    /// caller leaves it out. Read only in auto mode; a manual budget runs its own preset.
+    #[serde(default = "default_auto_base")]
+    pub auto_base: Preset,
+}
+
+/// Serde's default for [`Budget::auto_base`].
+fn default_auto_base() -> Preset {
+    DEFAULT_AUTO_BASE
 }
 
 /// Disk I/O priority class asked of the OS.
@@ -148,7 +164,8 @@ pub fn override_share(percent: u8) -> f64 {
 }
 
 impl Budget {
-    /// The profile this budget resolves to on a machine with `cores` cores.
+    /// The profile of the budget's own preset on a machine with `cores` cores: what a
+    /// manual budget runs. Auto mode resolves its preset first (`effective_preset`).
     pub fn profile(self, cores: u32) -> PresetProfile {
         profile(self.preset, cores, self.cpu_percent)
     }

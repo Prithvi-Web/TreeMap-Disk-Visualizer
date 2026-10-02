@@ -54,12 +54,20 @@ export interface NativeBudget {
   preset: NativePreset;
   /** 1..100 replaces the preset's ceiling; null or absent keeps it. */
   cpuPercent?: number | null;
+  /**
+   * What auto mode runs while nothing presses on the machine: 'balanced' when
+   * absent; the app sends 'turbo' while a scan a person started runs (Track U,
+   * U-13). Read only when `auto` is true. Contract 0.6.0.
+   */
+  autoBase?: NativePreset;
 }
 
-/** The budget as the snapshot reports it: `cpuPercent` is always present. */
+/** The budget as the snapshot reports it: `cpuPercent` and `autoBase` are always present. */
 export interface NativeBudgetInForce {
   preset: NativePreset;
   cpuPercent: number | null;
+  /** The auto base in force (contract 0.6.0). */
+  autoBase: NativePreset;
 }
 
 /** What the governor did to a worker thread when it last applied the profile (the Rust `EnforceReport`). */
@@ -123,9 +131,11 @@ export function version(): string;
 export function governorCapabilities(): NativeCapabilities;
 
 /**
- * Sets the budget live. `auto` makes it Balanced that flips to Eco on battery or
- * under serious heat. Throws, and keeps the budget in force, when `budget` is not
- * one of the three presets with `cpuPercent` a whole number 1..100 or null.
+ * Sets the budget live. `auto` makes it the auto base (`budget.autoBase`,
+ * Balanced when absent), one step lower on battery (Turbo to Balanced, Balanced to
+ * Eco) and Eco under serious or critical heat. Throws, and keeps the budget in
+ * force, when `budget` is not one of the three presets with `cpuPercent` a whole
+ * number 1..100 or null and `autoBase`, when present, one of the three presets.
  */
 export function governorConfigure(budget: NativeBudget, auto: boolean): void;
 

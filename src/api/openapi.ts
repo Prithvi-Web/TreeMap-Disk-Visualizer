@@ -206,7 +206,7 @@ const schemas: Json = {
   ScanBudget: obj(
     {
       preset: { type: 'string', enum: ['auto', 'eco', 'balanced', 'turbo'], description: 'The setting when the scan started; a scheduled scan records eco whatever the setting says' },
-      effective: { type: 'string', enum: ['eco', 'balanced', 'turbo'], description: 'What actually ran: auto resolves to balanced, or to eco on battery or when the machine is thermally serious' },
+      effective: { type: 'string', enum: ['eco', 'balanced', 'turbo'], description: 'What it started at: auto resolves to turbo for a scan a person started in the TreeMap window (interactive) and to balanced for any other, one step lower on battery and eco when the machine is thermally serious or worse; an interactive scan is held at balanced while an unattended scan runs' },
       source: { type: 'string', enum: ['native', 'node-shim'], description: 'Who held the budget: the native governor, or the best-effort Node shim' },
     },
     ['preset', 'effective', 'source'],
@@ -214,7 +214,7 @@ const schemas: Json = {
   ),
   EngineBudgetSetting: obj(
     {
-      preset: { type: 'string', enum: ['auto', 'eco', 'balanced', 'turbo'], description: 'auto is balanced, or eco on battery or heat when the native governor can tell; without it, balanced' },
+      preset: { type: 'string', enum: ['auto', 'eco', 'balanced', 'turbo'], description: 'auto is turbo while a scan a person started in the TreeMap window runs and no unattended scan does, balanced otherwise; one step lower on battery and eco under heat, when the native governor can tell (without it nothing reads the battery or the heat)' },
       cpuPercent: nullable(int("1–100 replaces the preset's CPU ceiling; null keeps the preset's own")),
     },
     ['preset', 'cpuPercent'],
@@ -244,7 +244,7 @@ const schemas: Json = {
       source: { type: 'string', enum: ['native', 'node-shim'] },
     },
     ['preset', 'targetShare', 'source'],
-    'What the setting resolves to right now',
+    'What the setting resolves to right now: the native governor\'s own preset and share while it holds the budget',
   ),
   EngineBudgetState: obj(
     {
@@ -922,7 +922,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         {
           path: str('Absolute directory path (a leading ~ expands to the home directory)'),
           incremental: bool('Reuse the on-disk mtime cache for a fast rescan (default false)'),
-          interactive: bool('A person started this scan in the TreeMap window (default false). Only such a scan may raise an administrator prompt: with the Scan engine setting ntfs-mft, a scan without it lists the folders and says why'),
+          interactive: bool('A person started this scan in the TreeMap window (default false). Only such a scan may raise an administrator prompt: with the Scan engine setting ntfs-mft, a scan without it lists the folders and says why. And only such a scan runs the Automatic budget at turbo; under Automatic any other never runs above balanced, and holds a person\'s scan at balanced while it runs. The server cannot check the claim, so an agent must leave it out'),
         },
         ['path'],
       ),

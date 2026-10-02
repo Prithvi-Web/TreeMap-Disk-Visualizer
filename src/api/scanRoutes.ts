@@ -61,8 +61,10 @@ export function buildScanStats(scan: ScanResult): ScanStats {
     vanishedDirs: scan.vanishedDirs ?? 0,
     expiresAt: scanExpiresAt(scan),
     // Phase 2 (D6): the budget the scan ran under, captured when it started;
-    // after every earlier key, so each keeps its position.
-    budget: scan.budget,
+    // after every earlier key, so each keeps its position. Its three keys
+    // only: the changes the record keeps (U-13) are not part of /stats (P8-1).
+    // A hand-assembled record without a budget answers as it always did.
+    budget: scan.budget && { preset: scan.budget.preset, effective: scan.budget.effective, source: scan.budget.source },
     // Phase 3 (D6): why the engine ran, how it listed, what fell back and what
     // it measured — after budget, in this order. A figure the engine did not
     // measure for this scan is null with the reason in engineReason; the

@@ -43,6 +43,7 @@ fn governor() -> Governor {
         Budget {
             preset: Preset::Turbo,
             cpu_percent: None,
+            auto_base: Preset::Balanced,
         },
         false,
         Box::new(FakeSampler::new(4)),
@@ -123,6 +124,7 @@ fn a_cancelled_worker_skips_the_duty_sleep() {
         Budget {
             preset: Preset::Eco,
             cpu_percent: None,
+            auto_base: Preset::Balanced,
         },
         false,
         Box::new(sampler),
@@ -224,6 +226,7 @@ fn a_hold_reports_how_idle_the_machine_was_over_its_last_half() {
             Budget {
                 preset: Preset::Balanced,
                 cpu_percent: None,
+                auto_base: Preset::Balanced,
             },
             false,
             Box::new(control),

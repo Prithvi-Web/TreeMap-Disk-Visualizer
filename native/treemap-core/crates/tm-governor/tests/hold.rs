@@ -123,6 +123,7 @@ fn run_gate(label: &str, preset: Preset, cpu_percent: Option<u8>, seconds: u32) 
         Budget {
             preset,
             cpu_percent,
+            auto_base: Preset::Balanced,
         },
         false,
         platform_sampler(),

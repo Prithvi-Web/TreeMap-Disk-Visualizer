@@ -4393,7 +4393,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <label class="rule-row budget-row" for="engineBudget-auto">
           <input type="radio" name="engineBudget" id="engineBudget-auto" value="auto" checked>
           <span class="budget-name">Automatic</span>
-          <span class="muted budget-help">Balanced, and Eco by itself on battery or when the Mac runs hot</span>
+          <span class="muted budget-help">Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot</span>
         </label>
         <label class="rule-row budget-row" for="engineBudget-eco">
           <input type="radio" name="engineBudget" id="engineBudget-eco" value="eco">
@@ -8860,9 +8860,12 @@ function renderDiskNotes() {
 }
 
 /* Phase 2 — the budget the scan ran under, when the stats say so. `effective`
-   is what actually ran (Automatic resolves to Balanced, or to Eco on battery),
-   which is the only honest thing to print beside a duration. Stats from a
-   build without the field add nothing rather than a guess. */
+   is what it started at (Automatic resolves to Turbo for a scan started here
+   and to Balanced for any other, a step lower on battery and Eco under heat).
+   A scan started here can be held a step lower part-way while an unattended
+   scan runs; /stats keeps the start (P8-1), and the record keeps the changes
+   for /live. Stats from a build without the field add nothing rather than a
+   guess. */
 function budgetPresetLabel(preset) {
   const s = String(preset || '');
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';

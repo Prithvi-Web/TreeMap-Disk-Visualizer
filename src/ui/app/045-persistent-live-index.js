@@ -886,9 +886,12 @@ function renderDiskNotes() {
 }
 
 /* Phase 2 — the budget the scan ran under, when the stats say so. `effective`
-   is what actually ran (Automatic resolves to Balanced, or to Eco on battery),
-   which is the only honest thing to print beside a duration. Stats from a
-   build without the field add nothing rather than a guess. */
+   is what it started at (Automatic resolves to Turbo for a scan started here
+   and to Balanced for any other, a step lower on battery and Eco under heat).
+   A scan started here can be held a step lower part-way while an unattended
+   scan runs; /stats keeps the start (P8-1), and the record keeps the changes
+   for /live. Stats from a build without the field add nothing rather than a
+   guess. */
 function budgetPresetLabel(preset) {
   const s = String(preset || '');
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';

@@ -1,9 +1,9 @@
 import os from 'node:os';
 import { loadNative, LoadOptions, NativeModule, NativeOutcome, setNativeLoadOverrideForTests } from './scan/native';
-import type { Mechanism, MechanismName, NativeBudget, NativeCapabilities, NativeSnapshot } from '../../native/index';
+import type { Mechanism, MechanismName, NativeBudget, NativeCapabilities, NativeSnapshot, NativeThermal } from '../../native/index';
 import { platform } from '../platform';
 import type { PlatformName } from '../platform/types';
-import type { BudgetPreset, BudgetSource, EffectiveBudgetPreset, EngineBudgetSetting, ScanBudget, ScanResult } from '../models/types';
+import type { BudgetPreset, BudgetSource, EffectiveBudgetPreset, EngineBudgetSetting, ScanBudget, ScanRecordBudget, ScanResult } from '../models/types';
 
 /**
  * The scanning budget — Eco, Balanced, Turbo, or Automatic — and how the app
@@ -27,11 +27,20 @@ import type { BudgetPreset, BudgetSource, EffectiveBudgetPreset, EngineBudgetSet
  * The setting is owned by settings.ts, which pushes it here on every load and
  * update (`applyEngineBudgetSetting`); nothing here imports settings, so the
  * walker, the gdu engine and the scheduler can import this module without a
- * cycle. Per-scan state (throttle timing, a forced preset, pause) lives in one
- * map keyed by scanId and is dropped when the scan settles.
+ * cycle. Per-scan state (throttle timing, a forced preset, pause, who started
+ * it) lives in one map keyed by scanId and is dropped when the scan settles.
+ *
+ * Automatic runs a base (Track U, U-13; the owner's answer to OD16): Turbo
+ * while a scan a person started in the window runs, Balanced otherwise — one
+ * step lower on battery, Eco under serious heat. The base is one value for the
+ * whole process, because the governor holds one budget for the whole process
+ * (see `autoBase`), and it reaches the governor as `autoBase`, so a person's
+ * scan follows every later change of the setting, battery or heat (P8-5).
  */
 
 export const BUDGET_PRESETS: readonly BudgetPreset[] = ['auto', 'eco', 'balanced', 'turbo'];
+/** The presets a budget resolves to: every one but Automatic. */
+const EFFECTIVE_PRESETS: readonly EffectiveBudgetPreset[] = ['eco', 'balanced', 'turbo'];
 export const DEFAULT_ENGINE_BUDGET: Readonly<EngineBudgetSetting> = { preset: 'auto', cpuPercent: null };
 
 /**
@@ -112,6 +121,24 @@ export function validateEngineBudget(raw: unknown, base: EngineBudgetSetting): B
 
 let current: EngineBudgetSetting = { ...DEFAULT_ENGINE_BUDGET };
 let governorConfigured = false;
+
+/** Automatic's base when no scan a person started is running, and whenever an unattended one is. */
+const RESTING_AUTO_BASE: EffectiveBudgetPreset = 'balanced';
+
+/**
+ * What Automatic runs while nothing presses on the machine (U-13): Turbo while
+ * a scan a person started in the window runs and no unattended scan does,
+ * Balanced otherwise. One value for the whole process, because the native
+ * governor holds one budget for the whole process: until Phase 5's per-job cap
+ * (P5-14) exists, a Turbo process raises every scan in it. So any unattended
+ * scan — a scheduled one, Autopilot's, another computer's, an agent's or an API
+ * call's — holds it at Balanced while it runs, whatever engine walks it (the
+ * walker and gdu read the governor's duty and workers too), and a person's
+ * scan beside it is lowered for that long and says so in its record. Unattended
+ * work is never raised (U-D15). Recomputed whenever a scan begins or is
+ * forgotten; the governor hears it only when it moves (`syncAutoBase`).
+ */
+let autoBase: EffectiveBudgetPreset = RESTING_AUTO_BASE;
 
 /**
  * settings.ts calls this on every load and update. With the native governor
@@ -222,8 +249,10 @@ function governor(): GovernorModule | null {
 
 function configureGovernor(native: GovernorModule): void {
   try {
+    // Under Automatic the governor runs `autoBase`, not `preset`; under an
+    // explicit preset the base is sent too, so the snapshot never shows a stale one.
     native.governorConfigure(
-      { preset: current.preset === 'auto' ? 'balanced' : current.preset, cpuPercent: current.cpuPercent },
+      { preset: current.preset === 'auto' ? 'balanced' : current.preset, cpuPercent: current.cpuPercent, autoBase },
       current.preset === 'auto',
     );
     governorConfigured = true;
@@ -250,6 +279,8 @@ export function snapshotShapeFault(value: unknown): string | null {
   for (const key of ['effective', 'thermal']) {
     if (typeof v[key] !== 'string') return `"${key}" is not a string`;
   }
+  // GET /api/engine/budget states this preset as its own answer (U-13).
+  if (!EFFECTIVE_PRESETS.includes(v.effective as EffectiveBudgetPreset)) return `"effective" is not one of ${EFFECTIVE_PRESETS.join(', ')}`;
   if (typeof v.paused !== 'boolean') return '"paused" is not a boolean';
   for (const key of ['onBattery', 'interacting']) {
     if (v[key] !== null && typeof v[key] !== 'boolean') return `"${key}" is neither a boolean nor null`;
@@ -321,17 +352,32 @@ const clampShare = (n: number): number => Math.min(1, Math.max(MIN_SHARE, n));
 const clampDuty = (n: number): number => (Number.isFinite(n) ? Math.min(1, Math.max(MIN_DUTY, n)) : 1);
 
 /**
- * What the setting resolves to right now. Automatic is Balanced, or Eco when
- * the native governor reports the machine on battery or thermally serious or
- * critical; without the governor nothing knows those, so Automatic is Balanced
- * and the source says who answered.
+ * The governor's table (tm-governor `effective_preset`) in Node, for the shim
+ * and for scan records: an explicit preset is itself; Automatic is `base`, one
+ * step lower on battery (Turbo to Balanced, Balanced to Eco) and Eco under
+ * serious or critical heat. A battery or a thermal state nobody reported
+ * (null, 'unknown') is not pressure, as in the Rust rule.
+ */
+export function resolvePreset(preset: BudgetPreset, base: EffectiveBudgetPreset, onBattery: boolean | null, thermal: NativeThermal | null): EffectiveBudgetPreset {
+  if (preset !== 'auto') return preset;
+  if (thermal === 'serious' || thermal === 'critical') return 'eco';
+  if (onBattery === true) return base === 'turbo' ? 'balanced' : 'eco';
+  return base;
+}
+
+/**
+ * What the setting resolves to right now, on the process's auto base: the
+ * battery and the heat as the native governor last read them; without the
+ * governor nothing knows those, and the source says who answered. While the
+ * base is Turbo every scan registered is one a person started (`autoBase`), so
+ * this is also what each running scan gets.
  */
 export function effectiveBudget(setting: EngineBudgetSetting = current): EffectiveBudget {
-  const snap = liveSnapshot();
-  let preset: EffectiveBudgetPreset;
-  if (setting.preset !== 'auto') preset = setting.preset;
-  else if (snap && (snap.onBattery === true || snap.thermal === 'serious' || snap.thermal === 'critical')) preset = 'eco';
-  else preset = 'balanced';
+  return effectiveFrom(setting, liveSnapshot());
+}
+
+function effectiveFrom(setting: EngineBudgetSetting, snap: GovernorSnapshot | null, base: EffectiveBudgetPreset = autoBase): EffectiveBudget {
+  const preset = resolvePreset(setting.preset, base, snap ? snap.onBattery : null, snap ? snap.thermal : null);
   const targetShare = snap
     ? snap.targetShare
     : setting.cpuPercent !== null ? clampShare(setting.cpuPercent / 100) : PRESET_CEILING[preset];
@@ -350,10 +396,16 @@ export interface EngineBudgetState {
   source: BudgetSource;
 }
 
-/** GET /api/engine/budget. */
+/**
+ * GET /api/engine/budget. With the governor in force, `effective` is its own
+ * preset beside its own share, so the two always agree (U-13); without it, the
+ * table worked out here at the shim's ceilings.
+ */
 export function budgetSnapshot(): EngineBudgetState {
-  const effective = effectiveBudget(current);
   const snapshot = liveSnapshot();
+  const effective: EffectiveBudget = snapshot
+    ? { preset: snapshot.effective, targetShare: snapshot.targetShare, source: 'native' }
+    : effectiveFrom(current, null);
   return {
     setting: currentEngineBudgetSetting(),
     effective,
@@ -412,6 +464,14 @@ interface ScanState {
   lastReturnAt: Map<number, number>;
   /** A preset the scan was started with, whatever the setting says. */
   override?: EffectiveBudgetPreset;
+  /**
+   * Who started the scan, for the auto base: a person in the window
+   * (`interactive`) or anything else (`unattended`). Unset for state that a
+   * throttle or a pause made for a scan never begun here (a cloud listing).
+   */
+  kind?: 'interactive' | 'unattended';
+  /** The budget the scan's record keeps, so a change made while it runs is written there. */
+  record?: ScanRecordBudget;
   paused: boolean;
   waiting: Promise<void> | null;
   release: (() => void) | null;
@@ -430,31 +490,112 @@ function stateFor(scanId: string): ScanState {
   return s;
 }
 
-/** The budget a scan starts under, as its record keeps it. */
-export function scanBudget(forced?: EffectiveBudgetPreset): ScanBudget {
-  const effective = effectiveBudget(current);
+/**
+ * The budget a scan starts under, as its record keeps it, on Automatic's
+ * `base`: the resting base for a record nothing registered here (a cloud
+ * listing, which no budget governs), the process's for a scan begun here.
+ */
+export function scanBudget(forced?: EffectiveBudgetPreset, base: EffectiveBudgetPreset = RESTING_AUTO_BASE): ScanBudget {
+  const effective = effectiveFrom(current, liveSnapshot(), base);
   return { preset: forced ?? current.preset, effective: forced ?? effective.preset, source: effective.source };
 }
 
 /**
- * Register a scan: with a forced preset it runs at that preset whatever the
- * setting says or later becomes (the scheduler's scans run Eco). Returns what
- * the record should carry.
+ * Why a person's scan runs a step lower, or steps back up: its record's
+ * `budget.changes`, whose `effective` names the level. Written only when what
+ * the scan runs at moves (under serious heat it is Eco either way).
  */
-export function beginScanBudget(scanId: string, forced?: EffectiveBudgetPreset): ScanBudget {
+const AUTO_BASE_LOWERED = 'An unattended scan started. TreeMap holds one budget for the whole app and never runs unattended work above the setting, so this scan runs one step lower until no unattended scan is running.';
+const AUTO_BASE_HELD = 'An unattended scan was already running. TreeMap holds one budget for the whole app and never runs unattended work above the setting, so this scan starts one step lower and steps up when no unattended scan is running.';
+const AUTO_BASE_RAISED = 'No unattended scan is running any more, so this scan steps back up.';
+/** The most changes a record keeps, the latest: scan after unattended scan cannot grow it without bound. */
+export const MAX_BUDGET_CHANGES = 20;
+
+/** The auto base the scans registered right now call for (see `autoBase`). */
+function computeAutoBase(): EffectiveBudgetPreset {
+  let watched = false;
+  for (const s of states.values()) {
+    if (s.kind === 'unattended') return RESTING_AUTO_BASE;
+    if (s.kind === 'interactive') watched = true;
+  }
+  return watched ? 'turbo' : RESTING_AUTO_BASE;
+}
+
+function noteBudgetChange(record: ScanRecordBudget, effective: EffectiveBudgetPreset, reason: string): void {
+  record.changes = [...(record.changes ?? []), { at: Date.now(), effective, reason }].slice(-MAX_BUDGET_CHANGES);
+}
+
+/** What a record says its scan runs at now: its latest change, or what it started at. */
+function lastEffective(record: ScanRecordBudget): EffectiveBudgetPreset {
+  const changes = record.changes ?? [];
+  return changes.length > 0 ? changes[changes.length - 1].effective : record.effective;
+}
+
+/**
+ * Bring the auto base up to date. When it moves, the governor is reconfigured
+ * once (U-D15's counted reconfigure), and every running scan a person started
+ * whose level that moves — not one under an explicit preset, not one that
+ * serious heat holds at Eco — gets a line in its record saying what it runs at
+ * now and why.
+ */
+function syncAutoBase(): void {
+  const next = computeAutoBase();
+  if (next === autoBase) return;
+  autoBase = next;
+  const native = governor();
+  if (native) configureGovernor(native);
+  const effective = effectiveBudget(current).preset;
+  const reason = next === 'turbo' ? AUTO_BASE_RAISED : AUTO_BASE_LOWERED;
+  for (const s of states.values()) {
+    if (s.kind === 'interactive' && s.record && lastEffective(s.record) !== effective) noteBudgetChange(s.record, effective, reason);
+  }
+}
+
+export interface BeginScanBudgetOptions {
+  /**
+   * A person started this scan in the TreeMap window (ScanOptions.interactive):
+   * under Automatic it raises the auto base to Turbo while it runs. Nothing
+   * fixes its preset, so it follows every later change of the setting (P8-5).
+   */
+  interactive?: boolean;
+}
+
+/**
+ * Register a scan: with a forced preset it runs at that preset whatever the
+ * setting says or later becomes (the scheduler's scans run Eco), and holds the
+ * auto base like any unattended scan, since a held preset is never raised.
+ * Returns what the record should carry.
+ */
+export function beginScanBudget(scanId: string, forced?: EffectiveBudgetPreset, opts: BeginScanBudgetOptions = {}): ScanRecordBudget {
   const s = stateFor(scanId);
   if (forced) s.override = forced;
-  return scanBudget(forced);
+  s.kind = opts.interactive === true && forced === undefined ? 'interactive' : 'unattended';
+  syncAutoBase();
+  const budget: ScanRecordBudget = scanBudget(forced, autoBase);
+  // A person's scan that an unattended one holds down says so, when the hold
+  // changes what it runs at: on Turbo's base it would run something else.
+  if (s.kind === 'interactive' && scanBudget(forced, 'turbo').effective !== budget.effective) {
+    noteBudgetChange(budget, budget.effective, AUTO_BASE_HELD);
+  }
+  s.record = budget;
+  return budget;
 }
 
 /**
  * Drop everything held for a scan: throttle timing, the forced preset, a
- * pause. A paused scan is released so a walker parked on the gate returns
- * (and reads `cancelled`, which is why the caller settled the record first).
+ * pause, its say in the auto base. A paused scan is released so a walker parked
+ * on the gate returns (and reads `cancelled`, which is why the caller settled
+ * the record first).
  */
 export function forgetScanBudget(scanId: string): void {
+  if (!dropScanState(scanId)) return;
+  syncAutoBase();
+}
+
+/** Drop a scan's state and let go of whatever it holds; false when there was none. */
+function dropScanState(scanId: string): boolean {
   const s = states.get(scanId);
-  if (!s) return;
+  if (!s) return false;
   states.delete(scanId);
   // A shard stopped in place is let go before its record is forgotten: whoever
   // is dropping the scan has killed it or is about to, and a killed process
@@ -465,11 +606,15 @@ export function forgetScanBudget(scanId: string): void {
   s.release = null;
   s.waiting = null;
   release?.();
+  return true;
 }
 
 /** Test-only: forget every scan, the setting, the faults and the loader override. */
 export function resetEngineBudgetForTests(): void {
-  for (const id of [...states.keys()]) forgetScanBudget(id);
+  // Dropped without a reconfigure: a reset must not reach into whichever
+  // module the previous test left loaded.
+  for (const id of [...states.keys()]) dropScanState(id);
+  autoBase = RESTING_AUTO_BASE;
   current = { ...DEFAULT_ENGINE_BUDGET };
   governorConfigured = false;
   snapshotFault = null;

@@ -741,6 +741,7 @@ fn the_governor_starts_turbo_at_the_performance_cores_and_nothing_else() {
             Budget {
                 preset,
                 cpu_percent: None,
+                auto_base: Preset::Balanced,
             },
             false,
             Box::new(FakeSampler::new(8)),
@@ -1630,6 +1631,7 @@ fn start_and_probe_report_the_platform_as_unsupported() -> TestResult {
         Budget {
             preset: Preset::Balanced,
             cpu_percent: None,
+            auto_base: Preset::Balanced,
         },
         false,
         Box::new(FakeSampler::new(4)),
@@ -1675,6 +1677,7 @@ fn the_probe_and_a_real_walk_use_this_platforms_listing() -> TestResult {
             Budget {
                 preset: Preset::Balanced,
                 cpu_percent: None,
+                auto_base: Preset::Balanced,
             },
             false,
             Box::new(FakeSampler::new(4)),
@@ -1849,6 +1852,7 @@ mod live {
             Budget {
                 preset: Preset::Turbo,
                 cpu_percent: None,
+                auto_base: Preset::Balanced,
             },
             false,
             Box::new(FakeSampler::new(8)),

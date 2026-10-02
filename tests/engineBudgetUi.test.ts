@@ -25,7 +25,7 @@ type Preset = (typeof PRESETS)[number];
 
 const LABELS: Record<Preset, string> = { auto: 'Automatic', eco: 'Eco', balanced: 'Balanced', turbo: 'Turbo' };
 const SENTENCES: Record<Preset, string> = {
-  auto: 'Balanced, and Eco by itself on battery or when the Mac runs hot',
+  auto: 'Turbo for scans you start, never above Balanced for the rest; a step lower on battery, Eco when the Mac runs hot',
   eco: 'A quarter of the machine; scans take longer and stay out of your way',
   balanced: 'Half the machine; backs off while you are working',
   turbo: 'All of it; for when you are watching and want it now',

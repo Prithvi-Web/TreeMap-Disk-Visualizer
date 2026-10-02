@@ -59,6 +59,7 @@ fn governor() -> Arc<Governor> {
         Budget {
             preset: Preset::Turbo,
             cpu_percent: None,
+            auto_base: Preset::Balanced,
         },
         false,
         Box::new(FakeSampler::new(8)),

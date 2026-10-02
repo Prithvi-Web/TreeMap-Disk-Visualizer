@@ -1,6 +1,6 @@
 //! The governor: a ticking thread that samples this process, runs the
 //! [`Controller`] and publishes its decision; `throttle()` for the workers;
-//! pause and resume; live reconfiguration; the auto-Eco rule; and a snapshot
+//! pause and resume; live reconfiguration; the auto rule; and a snapshot
 //! of it all.
 //!
 //! The tick thread owns the sampler and the signals. Every [`TICK`] it measures
@@ -19,9 +19,11 @@
 //! skipped, so the duty holds on average. A stopped governor governs nothing: `throttle()`
 //! returns at once, paused or not, so workers can never be stranded.
 //!
-//! Auto mode (`auto = true`) means Balanced that flips to Eco while the machine
-//! runs on battery or reports `Serious` or worse thermal pressure, and back when
-//! it does not. An unknown signal is not pressure.
+//! Auto mode (`auto = true`) runs the budget's auto base — Balanced unless the
+//! caller names another; Turbo while a scan a person started runs (Track U, U-13) —
+//! one step lower while the machine runs on battery (Turbo to Balanced, Balanced
+//! to Eco), Eco while it reports `Serious` or worse thermal pressure, and the base
+//! again when neither holds. An unknown signal is not pressure.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -196,7 +198,8 @@ static NEXT_GOVERNOR_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Governor {
     /// Starts a governor for `budget` and spawns its tick thread. `auto` makes
-    /// the budget Balanced-that-flips-to-Eco (see the module docs). If the OS
+    /// the budget its auto base that steps down for battery and heat (see the
+    /// module docs). If the OS
     /// refuses the thread, the governor is inert: `ticks` stays at zero and
     /// `throttle()` never sleeps.
     pub fn start(
@@ -412,7 +415,7 @@ impl Inner {
         f64::from_bits(self.duty_bits.load(Ordering::Acquire))
     }
 
-    /// One tick: the auto-Eco rule, the controller, the window, the atomics.
+    /// One tick: the auto rule, the controller, the window, the atomics.
     fn tick(&self, sample: &Sample) {
         let mut state = self.state();
         state.thermal = sample.thermal;
@@ -514,8 +517,9 @@ fn run_ticks(inner: &Weak<Inner>, mut sampler: Box<dyn CpuSampler>, mut signals:
     }
 }
 
-/// The preset in force for a budget: the budget's own, or in auto mode
-/// Balanced unless the machine is on battery or under `Serious`-or-worse heat.
+/// The preset in force for a budget: the budget's own, or in auto mode Eco under
+/// `Serious`-or-worse heat, else one step below the auto base on battery (a Turbo
+/// base runs Balanced; any other runs Eco), else the auto base itself.
 pub fn effective_preset(
     budget: Budget,
     auto: bool,
@@ -525,11 +529,16 @@ pub fn effective_preset(
     if !auto {
         return budget.preset;
     }
-    if on_battery == Some(true) || thermal.is_serious_or_worse() {
-        Preset::Eco
-    } else {
-        Preset::Balanced
+    if thermal.is_serious_or_worse() {
+        return Preset::Eco;
     }
+    if on_battery == Some(true) {
+        return match budget.auto_base {
+            Preset::Turbo => Preset::Balanced,
+            Preset::Balanced | Preset::Eco => Preset::Eco,
+        };
+    }
+    budget.auto_base
 }
 
 /// How long a worker sleeps after `work` at `duty`: `(1 − duty) / duty × work`,

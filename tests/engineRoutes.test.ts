@@ -308,6 +308,33 @@ test('every scan’s stats carry the budget it ran under, in the spec and in the
   }
 });
 
+test('a scan the window starts (interactive) runs Automatic at Turbo and any other at Balanced, and the changes a record keeps never reach /stats (U-13)', async () => {
+  useShim();
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-engine-turbo-'));
+  fs.writeFileSync(path.join(fixture, 'x.txt'), 'hello');
+  const { port, close } = await listen();
+  try {
+    await req(port, 'PUT', '/api/engine/budget', { preset: 'auto' });
+    const person = await req(port, 'POST', '/api/scan?wait=true&waitMs=30000', { path: fixture, interactive: true });
+    assert.equal(person.status, 200, JSON.stringify(person.body));
+    assert.deepEqual(person.body.budget, { preset: 'auto', effective: 'turbo', source: 'node-shim' }, 'a person’s scan');
+    const agent = await req(port, 'POST', '/api/scan?wait=true&waitMs=30000', { path: fixture });
+    assert.equal(agent.status, 200, JSON.stringify(agent.body));
+    assert.deepEqual(agent.body.budget, { preset: 'auto', effective: 'balanced', source: 'node-shim' }, 'a scan nobody is watching');
+
+    // A record whose budget changed while it ran keeps the changes to itself.
+    const scanId = person.body.scanId as string;
+    const record = getScan(scanId)!;
+    record.budget = { ...record.budget, changes: [{ at: 1, effective: 'balanced', reason: 'An unattended scan started.' }] };
+    const stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
+    assert.deepEqual(stats.body.budget, { preset: 'auto', effective: 'turbo', source: 'node-shim' }, '/stats serves the three keys and nothing else');
+    assert.deepEqual(Object.keys(buildScanStats(record).budget), ['preset', 'effective', 'source'], 'and the SSE complete frame’s stats the same three');
+  } finally {
+    await close();
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('POST /api/scan/:id/pause and /resume: a running walker pauses and resumes, a finished scan says so, an unknown id is 404', async () => {
   useShim();
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-engine-pause-'));

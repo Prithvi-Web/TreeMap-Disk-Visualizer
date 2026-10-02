@@ -56,6 +56,7 @@ use napi::{Env, Error, Result, ScopedTask, Status, Unknown};
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tm_governor::preset::DEFAULT_AUTO_BASE;
 use tm_governor::{
     Budget, Governor, HoldReport, Preset, capabilities, hold, platform_sampler, platform_signals,
 };
@@ -71,11 +72,13 @@ use tm_walk::{
 mod pin;
 pub mod store;
 
-/// The budget the governor starts with before the app configures it: Automatic,
-/// Balanced that yields to battery and heat, which is also the app's default setting.
+/// The budget the governor starts with before the app configures it: Automatic on
+/// its default base, Balanced that yields to battery and heat, which is also the
+/// app's default setting while no scan a person started is running.
 const STARTING_BUDGET: Budget = Budget {
     preset: Preset::Balanced,
     cpu_percent: None,
+    auto_base: DEFAULT_AUTO_BASE,
 };
 /// Automatic mode for the starting budget.
 const STARTING_AUTO: bool = true;
@@ -93,7 +96,7 @@ const HOLD_SECONDS_MIN: f64 = 1.0;
 /// The longest hold (seconds): ten minutes, already the three gate runs together.
 const HOLD_SECONDS_MAX: f64 = 600.0;
 /// The shape `governorConfigure` accepts, for the refusal message.
-const BUDGET_SHAPE: &str = "governorConfigure needs a budget like { preset: 'eco' | 'balanced' | 'turbo', cpuPercent?: 1..100 | null }";
+const BUDGET_SHAPE: &str = "governorConfigure needs a budget like { preset: 'eco' | 'balanced' | 'turbo', cpuPercent?: 1..100 | null, autoBase?: 'eco' | 'balanced' | 'turbo' }";
 
 /// What the app last asked for, kept beside the governor because [`Governor`]
 /// reports its budget but not whether auto mode is on.
@@ -164,8 +167,9 @@ fn to_json<T: Serialize>(what: &str, value: &T) -> Result<Value> {
 }
 
 /// The budget object from JavaScript, checked at the boundary: one of the three
-/// presets and a whole-number override from 1 to 100 or null; anything else is
-/// refused with the shape and what was received.
+/// presets, a whole-number override from 1 to 100 or null, and optionally one of
+/// the three presets as the auto base (Balanced when absent); anything else, an
+/// unknown key included, is refused with the shape and what was received.
 fn parse_budget(raw: Value) -> Result<Budget> {
     let received = raw.to_string();
     let budget: Budget = serde_json::from_value(raw)
@@ -195,9 +199,10 @@ pub fn governor_capabilities() -> Result<Value> {
     to_json("the capabilities", &capabilities())
 }
 
-/// Sets the budget live. `budget` is `{ preset, cpuPercent? }`; `auto` makes it
-/// Balanced that flips to Eco on battery or under serious heat. A budget that is not
-/// valid is refused and the one in force stays.
+/// Sets the budget live. `budget` is `{ preset, cpuPercent?, autoBase? }`; `auto`
+/// makes it the auto base (Balanced unless `autoBase` names another), one step lower
+/// on battery and Eco under serious heat. A budget that is not valid is refused and
+/// the one in force stays.
 #[napi(js_name = "governorConfigure", catch_unwind)]
 pub fn governor_configure(budget: Option<Value>, auto: bool) -> Result<()> {
     let raw = budget.ok_or_else(|| refuse(format!("{BUDGET_SHAPE}; got nothing")))?;
@@ -303,6 +308,7 @@ fn run_hold(request: HoldRequest) -> Result<HoldReport> {
             Budget {
                 preset: configured.budget.preset,
                 cpu_percent: Some(request.percent),
+                auto_base: configured.budget.auto_base,
             },
             false,
         );

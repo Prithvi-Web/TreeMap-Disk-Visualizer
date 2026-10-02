@@ -99,7 +99,7 @@ strings, `Option` as `null`, shares as fractions of the whole machine (0..1).
 | --- | --- |
 | `version()` | the crate version, for the handshake |
 | `governorCapabilities()` | the seven mechanisms (`qos`, `ioPolicy`, `priority`, `thermal`, `battery`, `interaction`, `machineCpu`), each `{ available, mechanism, reason }`; probed, never applied |
-| `governorConfigure(budget, auto)` | sets the budget live: `{ preset: 'eco' \| 'balanced' \| 'turbo', cpuPercent?: 1..100 \| null }`; `auto` means Balanced that flips to Eco on battery or under serious heat; a bad budget throws and the one in force stays |
+| `governorConfigure(budget, auto)` | sets the budget live: `{ preset: 'eco' \| 'balanced' \| 'turbo', cpuPercent?: 1..100 \| null, autoBase?: 'eco' \| 'balanced' \| 'turbo' }`; `auto` means the auto base — Balanced when absent, and Turbo while a scan a person started runs, which the app sends (contract 0.6.0) — one step lower on battery and Eco under serious heat; a bad budget throws and the one in force stays |
 | `governorSnapshot()` | the Rust `Snapshot`: budget, effective preset, `targetShare`, `share1s`, `workers`, `duty`, thermal, battery, interaction, `machineBusyShare`, `paused`, `ticks`, the mechanisms last applied |
 | `governorPause()` / `governorResume()` | block and release the workers; a thermal pause is the governor's own and stays |
 | `governorHold(targetPercent, seconds)` | test-only: holds a percent of the machine with a synthetic load and resolves with the Rust `HoldReport` in shares, `machineIdleLastHalf` included (the whole machine's idle share over the second half, `null` where the OS published none: a hold under its target on a machine with no idle CPU measured the machine, not the governor) |
@@ -117,10 +117,16 @@ strings, `Option` as `null`, shares as fractions of the whole machine (0..1).
 
 The governor is one per process, started lazily on the first call with this
 machine's sampler and signals, at the Automatic budget (the app's default);
-the app configures it on every settings load. A walk obeys that same governor:
-every worker calls its throttle after each directory and re-reads its worker
-limit between directories, so the Scanning budget bounds the native engine
-exactly as it bounds the legacy ones.
+the app configures it on every settings load, and moves its auto base whenever
+a scan a person started begins or ends (contract 0.6.0). A walk obeys that same
+governor: every worker calls its throttle after each directory and re-reads its
+worker limit between directories, so the Scanning budget bounds the native
+engine exactly as it bounds the legacy ones, and a budget that rises or falls
+mid-walk reaches each worker at its next throttle. On Linux one part of a rise
+does not: an unprivileged thread can raise its nice value but never lower it,
+so a worker that already ran at a lower budget keeps that budget's priority
+(the snapshot's `mechanisms.priority` says so) while its duty and the worker
+count follow the new budget.
 
 ## The native walker (Phase 3)
 

@@ -32,6 +32,11 @@ OpenAPI 3 spec).
    TreeMap window sends it for a scan a person started there, the only kind
    that may raise an administrator prompt (the Windows `ntfs-mft` engine);
    a scan without it lists the folders and says why in `engineReason`.
+   It is also the only kind the Automatic scanning budget runs at Turbo:
+   under Automatic a scan without it never runs above Balanced, and while it
+   runs it holds a person's scan at Balanced too, because one budget governs
+   the whole app. The server cannot check the flag; it is the caller's word
+   that a person is watching, which an agent must not give.
    For the whole picture in one call afterwards:
    `GET /api/agent/summary?scanId=` — top culprits, reclaimable-by-category,
    and the forecast, every number as raw bytes plus a formatted string, in

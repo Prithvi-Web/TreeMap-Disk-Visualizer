@@ -260,6 +260,7 @@ fn listing_walk(root: &Path) -> Result<WalkOutput, String> {
         Budget {
             preset: Preset::Balanced,
             cpu_percent: None,
+            auto_base: Preset::Balanced,
         },
         false,
         Box::new(FakeSampler::new(4)),

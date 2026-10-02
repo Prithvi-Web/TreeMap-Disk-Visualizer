@@ -1,5 +1,5 @@
 //! Tests for the governor: the tick thread, `throttle()`, pause/resume, `configure()`,
-//! the auto-Eco rule, `snapshot()` and `stop()`. The sampler and the signals are fakes
+//! the auto rule, `snapshot()` and `stop()`. The sampler and the signals are fakes
 //! the test keeps steering after the governor owns them; the clock and the threads are real.
 
 use std::hint::black_box;
@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use tm_governor::controller::{DUTY_MAX, DUTY_MIN, WORKER_CHANGE_TICKS};
 use tm_governor::governor::{
-    SHARE_WINDOW_TICKS, THROTTLE_CREDIT_CAP, THROTTLE_MIN_SLEEP, THROTTLE_SLEEP_CAP, ledger_charge,
-    ledger_settle, throttle_sleep,
+    SHARE_WINDOW_TICKS, THROTTLE_CREDIT_CAP, THROTTLE_MIN_SLEEP, THROTTLE_SLEEP_CAP,
+    effective_preset, ledger_charge, ledger_settle, throttle_sleep,
 };
+use tm_governor::preset::TURBO_CEILING;
 use tm_governor::{
     Budget, CpuSampler, FakeSampler, FakeSignals, Governor, Preset, Signals, Snapshot,
     SyntheticLoad, Thermal, profile,
@@ -111,9 +112,15 @@ fn idle_sampler() -> FakeSampler {
 }
 
 fn budget(preset: Preset) -> Budget {
+    with_base(preset, Preset::Balanced)
+}
+
+/// A budget whose auto mode works from `auto_base`.
+fn with_base(preset: Preset, auto_base: Preset) -> Budget {
     Budget {
         preset,
         cpu_percent: None,
+        auto_base,
     }
 }
 
@@ -403,6 +410,7 @@ fn configure_takes_effect_on_the_next_tick() {
     let turbo_forty = Budget {
         preset: Preset::Turbo,
         cpu_percent: Some(40),
+        auto_base: Preset::Balanced,
     };
     governor.configure(turbo_forty, false);
     assert!(
@@ -490,13 +498,13 @@ fn auto_mode_flips_balanced_to_eco_on_battery_or_heat_and_back() {
         "unknown signals are not pressure"
     );
 
-    // Auto means Balanced, whatever preset the budget names.
+    // Auto runs its base, Balanced here, whatever preset the budget names.
     governor.configure(budget(Preset::Turbo), true);
     thread::sleep(TICK * 3);
     assert_eq!(
         effective(&governor),
         Preset::Balanced,
-        "auto is Balanced, not the budget's preset"
+        "auto runs its base, not the budget's preset"
     );
 
     // Without auto, the battery changes nothing.
@@ -514,6 +522,7 @@ fn auto_mode_flips_balanced_to_eco_on_battery_or_heat_and_back() {
         Budget {
             preset: Preset::Balanced,
             cpu_percent: Some(30),
+            auto_base: Preset::Balanced,
         },
         true,
     );
@@ -524,6 +533,201 @@ fn auto_mode_flips_balanced_to_eco_on_battery_or_heat_and_back() {
         }),
         "the override survives the flip: {:?}",
         governor.snapshot()
+    );
+    governor.stop();
+}
+
+/// Track U, U-13: what auto mode runs for each base and power source while the heat is not
+/// pressure, written out row by row rather than derived from the rule it checks. An unknown
+/// power source is not a battery.
+const AUTO_BY_BASE_AND_POWER: [(Preset, Option<bool>, Preset); 9] = [
+    (Preset::Eco, None, Preset::Eco),
+    (Preset::Eco, Some(false), Preset::Eco),
+    (Preset::Eco, Some(true), Preset::Eco),
+    (Preset::Balanced, None, Preset::Balanced),
+    (Preset::Balanced, Some(false), Preset::Balanced),
+    (Preset::Balanced, Some(true), Preset::Eco),
+    (Preset::Turbo, None, Preset::Turbo),
+    (Preset::Turbo, Some(false), Preset::Turbo),
+    (Preset::Turbo, Some(true), Preset::Balanced),
+];
+const PRESETS: [Preset; 3] = [Preset::Eco, Preset::Balanced, Preset::Turbo];
+const POWER_SOURCES: [Option<bool>; 3] = [None, Some(false), Some(true)];
+/// Thermal states that are not pressure.
+const CALM: [Thermal; 3] = [Thermal::Nominal, Thermal::Fair, Thermal::Unknown];
+/// Thermal states auto mode answers with Eco.
+const HOT: [Thermal; 2] = [Thermal::Serious, Thermal::Critical];
+
+#[test]
+fn auto_mode_runs_its_base_one_step_lower_on_battery_and_eco_under_heat() {
+    for (base, on_battery, expected) in AUTO_BY_BASE_AND_POWER {
+        // The budget's own preset plays no part in auto mode.
+        for preset in PRESETS {
+            let budget = with_base(preset, base);
+            for thermal in CALM {
+                assert_eq!(
+                    effective_preset(budget, true, on_battery, thermal),
+                    expected,
+                    "auto on base {base:?}, battery {on_battery:?}, {thermal:?} (preset {preset:?})"
+                );
+            }
+            for thermal in HOT {
+                assert_eq!(
+                    effective_preset(budget, true, on_battery, thermal),
+                    Preset::Eco,
+                    "{thermal:?} heat is Eco on base {base:?} with battery {on_battery:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_manual_budget_runs_its_own_preset_whatever_the_base_the_battery_or_the_heat() {
+    for preset in PRESETS {
+        for base in PRESETS {
+            let budget = Budget {
+                preset,
+                cpu_percent: Some(30),
+                auto_base: base,
+            };
+            for on_battery in POWER_SOURCES {
+                for thermal in CALM.into_iter().chain(HOT) {
+                    assert_eq!(
+                        effective_preset(budget, false, on_battery, thermal),
+                        preset,
+                        "manual {preset:?} on base {base:?}, battery {on_battery:?}, {thermal:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_turbo_auto_base_takes_effect_at_once_and_the_snapshot_reports_it() {
+    let _serial = serial();
+    let governor = Governor::start(
+        budget(Preset::Balanced),
+        true,
+        Box::new(idle_sampler()),
+        SharedSignals::quiet().boxed(),
+    );
+    let at_start = governor.snapshot();
+    assert_eq!(
+        (at_start.budget.auto_base, at_start.effective),
+        (Preset::Balanced, Preset::Balanced),
+        "auto starts on the default base, Balanced: {at_start:?}"
+    );
+
+    // configure() switches the profile before it returns, so nothing waits for a tick.
+    let raised = with_base(Preset::Balanced, Preset::Turbo);
+    governor.configure(raised, true);
+    let turbo = governor.snapshot();
+    assert_eq!(
+        turbo.budget, raised,
+        "the snapshot reports the base it was given"
+    );
+    assert_eq!(
+        turbo.effective,
+        Preset::Turbo,
+        "a quiet machine on a Turbo base runs Turbo: {turbo:?}"
+    );
+    assert!(
+        approx(turbo.target_share, TURBO_CEILING),
+        "Turbo's ceiling, unscaled on a quiet machine: {turbo:?}"
+    );
+    assert_eq!(
+        governor.worker_limit(),
+        CORES,
+        "Turbo runs a worker per core"
+    );
+
+    governor.configure(budget(Preset::Balanced), true);
+    let lowered = governor.snapshot();
+    assert_eq!(
+        lowered.effective,
+        Preset::Balanced,
+        "the base going back to Balanced takes Turbo away at once: {lowered:?}"
+    );
+    assert_eq!(
+        governor.worker_limit(),
+        CORES / 2,
+        "Balanced on eight cores runs four workers"
+    );
+
+    governor.configure(with_base(Preset::Eco, Preset::Turbo), false);
+    assert_eq!(
+        governor.snapshot().effective,
+        Preset::Eco,
+        "a manual budget ignores the base"
+    );
+    governor.stop();
+}
+
+/// The snapshot once two more ticks have run: the tick under way when a signal changed may
+/// have read the old one, and the one after it cannot. Counted in ticks; the wall clock only
+/// ends a hang.
+fn after_two_ticks(governor: &Governor) -> Snapshot {
+    let from = governor.snapshot().ticks;
+    assert!(
+        wait_until(TICK_THREAD_ALIVE, || governor.snapshot().ticks >= from + 2),
+        "the tick thread stopped ticking: {:?}",
+        governor.snapshot()
+    );
+    governor.snapshot()
+}
+
+#[test]
+fn each_tick_steps_a_turbo_base_down_on_battery_and_to_eco_under_heat_and_back() {
+    let _serial = serial();
+    let signals = SharedSignals::quiet();
+    let governor = Governor::start(
+        with_base(Preset::Balanced, Preset::Turbo),
+        true,
+        Box::new(idle_sampler()),
+        signals.boxed(),
+    );
+    // Before its first tick, too: start() resolves the base itself, nothing repairs it
+    // later. (A tick that ran first would read the same quiet machine.)
+    assert_eq!(
+        governor.snapshot().effective,
+        Preset::Turbo,
+        "a governor started on a Turbo base runs Turbo from the start"
+    );
+    assert_eq!(
+        after_two_ticks(&governor).effective,
+        Preset::Turbo,
+        "a quiet machine runs the base"
+    );
+    signals.set(|s| s.on_battery = Some(true));
+    assert_eq!(
+        after_two_ticks(&governor).effective,
+        Preset::Balanced,
+        "on battery a Turbo base runs Balanced"
+    );
+    signals.set(|s| s.thermal = Thermal::Serious);
+    assert_eq!(
+        after_two_ticks(&governor).effective,
+        Preset::Eco,
+        "serious heat on battery is Eco"
+    );
+    signals.set(|s| s.on_battery = Some(false));
+    assert_eq!(
+        after_two_ticks(&governor).effective,
+        Preset::Eco,
+        "serious heat on mains is Eco too"
+    );
+    signals.set(|s| s.thermal = Thermal::Nominal);
+    let back = after_two_ticks(&governor);
+    assert_eq!(
+        back.effective,
+        Preset::Turbo,
+        "on mains and calm again, the base: {back:?}"
+    );
+    assert!(
+        approx(back.target_share, TURBO_CEILING),
+        "and Turbo's ceiling: {back:?}"
     );
     governor.stop();
 }
@@ -700,6 +904,7 @@ fn throttle_honours_the_duty_on_average_despite_stretched_sleeps() {
         Budget {
             preset: Preset::Balanced,
             cpu_percent: Some(25),
+            auto_base: Preset::Balanced,
         },
         false,
         Box::new(sampler),

@@ -147,9 +147,11 @@ export interface ScanResult {
   /**
    * The scanning budget this scan ran under, captured when it started (Phase
    * 2) — every record has one, so /stats never has to guess. A scheduled scan
-   * records Eco whatever the setting says.
+   * records Eco whatever the setting says. The record alone also keeps the
+   * changes made to it while the scan ran (U-13); /stats serves the three
+   * keys of `ScanBudget` and nothing else.
    */
-  budget: ScanBudget;
+  budget: ScanRecordBudget;
   /** True when this scan reused the on-disk mtime cache (fast rescan). */
   incremental?: boolean;
   /** Directories served from the cache (incremental scans only). */
@@ -330,7 +332,11 @@ export type EngineSetting = 'auto' | 'native' | 'gdu' | 'walker' | 'ntfs-mft';
 
 /* ---------- The scanning budget (Phase 2) ---------- */
 
-/** The setting's presets; `auto` resolves to Balanced, or Eco on battery or heat. */
+/**
+ * The setting's presets. `auto` resolves to Turbo for a scan a person started
+ * in the window and to Balanced for any other (Track U, U-13) — one step lower
+ * on battery, and Eco under serious or critical heat.
+ */
 export type BudgetPreset = 'auto' | 'eco' | 'balanced' | 'turbo';
 /** What a scan actually runs at. */
 export type EffectiveBudgetPreset = 'eco' | 'balanced' | 'turbo';
@@ -349,6 +355,27 @@ export interface ScanBudget {
   preset: BudgetPreset;
   effective: EffectiveBudgetPreset;
   source: BudgetSource;
+}
+
+/** One change to what a running scan's Automatic budget ran at after it started (U-13). */
+export interface ScanBudgetChange {
+  /** Epoch ms of the change. */
+  at: number;
+  /** What the scan ran at from then on. */
+  effective: EffectiveBudgetPreset;
+  /** Why, in a sentence. */
+  reason: string;
+}
+
+/**
+ * The budget as a scan's record keeps it: the three keys /stats serves, and —
+ * on the record only, never in a response (P8-1: /stats does not change) — each
+ * change made to it while it ran, present once there is one. Today that is the
+ * auto base moving under a scan a person started: an unattended scan holding
+ * the whole app below Turbo, and that hold ending (U-D15).
+ */
+export interface ScanRecordBudget extends ScanBudget {
+  changes?: ScanBudgetChange[];
 }
 
 export type ScanEvent =

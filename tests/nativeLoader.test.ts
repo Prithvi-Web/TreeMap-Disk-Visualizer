@@ -12,6 +12,9 @@ import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-nativeLoader-data-');
 
 import { loadNative, nativeCandidates, resetNativeForTests } from '../src/services/scan/native';
+import { getScan, startScan } from '../src/services/diskScanner';
+import { resetEngineBudgetForTests, setNativeLoadOptionsForTests } from '../src/services/engineBudget';
+import { updateSettings } from '../src/services/settings';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as { nativeVersion: string };
 
@@ -49,6 +52,17 @@ test('a version other than the one package.json expects is refused, naming both'
   assert.equal(r.available, false);
   if (r.available) return;
   assert.ok(r.reason.includes('9.9.9') && r.reason.includes(pkg.nativeVersion), r.reason);
+});
+
+test('a module of contract 0.5.0, which knows no auto base, is refused by this app, naming both versions (U-13)', () => {
+  // A 0.5.0 governor would take `autoBase` and drop it, running a person's scan
+  // at Balanced while the app records Turbo: refused, never half-understood.
+  resetNativeForTests();
+  const r = loadNative({ path: '/fake/treemap_core.node', requireModule: () => ({ version: () => '0.5.0' }) });
+  assert.equal(r.available, false, `a 0.5.0 module loaded into an app expecting ${pkg.nativeVersion}`);
+  if (r.available) return;
+  assert.ok(r.reason.includes('0.5.0') && r.reason.includes(pkg.nativeVersion), r.reason);
+  resetNativeForTests();
 });
 
 test('a module with the expected version loads and the outcome is cached until reset', () => {
@@ -244,7 +258,7 @@ test('governorConfigure() is live: eco reports effective eco and a quarter of th
   const { governorConfigure, governorSnapshot } = real.core;
   governorConfigure({ preset: 'eco' }, false);
   const eco = governorSnapshot();
-  assert.deepEqual(eco.budget, { preset: 'eco', cpuPercent: null });
+  assert.deepEqual(eco.budget, { preset: 'eco', cpuPercent: null, autoBase: 'balanced' }, 'a budget that names no auto base runs on Balanced’s');
   assert.equal(eco.effective, 'eco');
   assert.ok(Math.abs(eco.targetShare - scaledTarget(ECO_SHARE, eco)) < 1e-9, `targetShare ${eco.targetShare} for ${JSON.stringify({ thermal: eco.thermal, interacting: eco.interacting })}`);
   assert.ok(THERMAL_STATES.includes(eco.thermal), eco.thermal);
@@ -261,15 +275,29 @@ test('governorConfigure() is live: eco reports effective eco and a quarter of th
 
   governorConfigure({ preset: 'balanced', cpuPercent: 40 }, false);
   const forty = governorSnapshot();
-  assert.deepEqual(forty.budget, { preset: 'balanced', cpuPercent: 40 });
+  assert.deepEqual(forty.budget, { preset: 'balanced', cpuPercent: 40, autoBase: 'balanced' });
   assert.equal(forty.effective, 'balanced');
   assert.ok(Math.abs(forty.targetShare - scaledTarget(0.4, forty)) < 1e-9, `targetShare ${forty.targetShare}`);
 
   governorConfigure({ preset: 'balanced', cpuPercent: null }, true);
   const auto = governorSnapshot();
-  assert.deepEqual(auto.budget, { preset: 'balanced', cpuPercent: null });
-  const pressed = auto.onBattery === true || auto.thermal === 'serious' || auto.thermal === 'critical';
+  assert.deepEqual(auto.budget, { preset: 'balanced', cpuPercent: null, autoBase: 'balanced' });
+  const hot = auto.thermal === 'serious' || auto.thermal === 'critical';
+  const pressed = auto.onBattery === true || hot;
   assert.equal(auto.effective, pressed ? 'eco' : 'balanced', `auto with ${JSON.stringify({ onBattery: auto.onBattery, thermal: auto.thermal })}`);
+
+  // U-13: the auto base a scan a person started raises it to. Turbo on mains
+  // (or an unknown power source), Balanced on battery, Eco under serious heat.
+  governorConfigure({ preset: 'balanced', cpuPercent: null, autoBase: 'turbo' }, true);
+  const raised = governorSnapshot();
+  assert.deepEqual(raised.budget, { preset: 'balanced', cpuPercent: null, autoBase: 'turbo' });
+  const raisedHot = raised.thermal === 'serious' || raised.thermal === 'critical';
+  const expected = raisedHot ? 'eco' : raised.onBattery === true ? 'balanced' : 'turbo';
+  assert.equal(raised.effective, expected, `auto on a Turbo base with ${JSON.stringify({ onBattery: raised.onBattery, thermal: raised.thermal })}`);
+  governorConfigure({ preset: 'eco', cpuPercent: null, autoBase: 'turbo' }, false);
+  assert.equal(governorSnapshot().effective, 'eco', 'a manual budget ignores the auto base');
+  governorConfigure({ preset: 'balanced', cpuPercent: null }, true);
+  assert.equal(governorSnapshot().budget.autoBase, 'balanced', 'leaving the base out puts Balanced’s back');
 });
 
 test('a budget the governor cannot take is refused with a message, and the last good budget stays in force', (t) => {
@@ -288,8 +316,14 @@ test('a budget the governor cannot take is refused with a message, and the last 
   bad('eco', /preset/);
   bad(null, /preset/);
   bad(undefined, /preset/);
+  bad({ preset: 'eco', autoBase: 'fast' }, /unknown variant `fast`/);
+  bad({ preset: 'eco', autoBase: 'auto' }, /unknown variant `auto`/);
+  // A misspelled key is refused rather than ignored: ignored, it would leave the
+  // base at Balanced without a word while the app recorded Turbo.
+  bad({ preset: 'balanced', autobase: 'turbo' }, /unknown field `autobase`/);
+  bad({ preset: 'eco', cpu_percent: 40 }, /unknown field `cpu_percent`/);
   const after = governorSnapshot();
-  assert.deepEqual(after.budget, { preset: 'eco', cpuPercent: null });
+  assert.deepEqual(after.budget, { preset: 'eco', cpuPercent: null, autoBase: 'balanced' });
   assert.equal(after.effective, 'eco');
 });
 
@@ -348,7 +382,7 @@ test('the module survives governorPause()/governorResume(), and a second hold wh
   await assert.rejects(governorHold(SMOKE_PERCENT, 1), /already/);
   const report = await first;
   assert.ok(Math.abs(report.samples.length - SAMPLES_PER_SECOND) <= 1, `${report.samples.length} samples for 1 s`);
-  assert.deepEqual(governorSnapshot().budget, { preset: 'eco', cpuPercent: null }, 'the refused hold did not disturb the restore');
+  assert.deepEqual(governorSnapshot().budget, { preset: 'eco', cpuPercent: null, autoBase: 'balanced' }, 'the refused hold did not disturb the restore');
 });
 
 test('a hold outside 1..100 percent or 1..600 seconds is refused with a message, never a crash', async (t) => {
@@ -363,4 +397,41 @@ test('a hold outside 1..100 percent or 1..600 seconds is refused with a message,
   }
   assert.equal(version(), pkg.nativeVersion, 'the process and the module are still here');
   assert.equal(typeof governorSnapshot().ticks, 'number');
+});
+
+test('a scan a person starts raises the real governor’s auto base to Turbo while it runs, and its settling lowers it again (U-13)', async (t) => {
+  const real = loadReal(t);
+  if (!real) return;
+  const { governorSnapshot } = real.core;
+  type Snap = ReturnType<typeof governorSnapshot>;
+  /** What the governor runs Automatic at on `base`, from the battery and heat it last read. */
+  const expectedOn = (base: 'balanced' | 'turbo', s: Snap): string => {
+    if (s.thermal === 'serious' || s.thermal === 'critical') return 'eco';
+    if (s.onBattery === true) return base === 'turbo' ? 'balanced' : 'eco';
+    return base;
+  };
+  resetEngineBudgetForTests();
+  setNativeLoadOptionsForTests({ path: real.path });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-turbo-real-'));
+  for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(root, `f${i}.txt`), 'x');
+  try {
+    await updateSettings({ engineBudget: { preset: 'auto', cpuPercent: null } });
+    assert.equal(governorSnapshot().budget.autoBase, 'balanced', 'nothing a person started is running yet');
+    const scan = await startScan(root, { interactive: true });
+    assert.equal(scan.status, 'running', 'still walking when startScan hands the record back');
+    const during = governorSnapshot();
+    assert.equal(during.budget.autoBase, 'turbo', `a person’s scan runs the governor on the Turbo base: ${JSON.stringify(during.budget)}`);
+    assert.equal(during.effective, expectedOn('turbo', during), `on ${JSON.stringify({ onBattery: during.onBattery, thermal: during.thermal })}`);
+    assert.equal(scan.budget.effective, during.effective, 'the record says what the governor runs');
+    await waitFor(() => getScan(scan.scanId)?.status !== 'running', 'the scan settling');
+    assert.equal(getScan(scan.scanId)?.status, 'complete', getScan(scan.scanId)?.error);
+    await waitFor(() => governorSnapshot().budget.autoBase === 'balanced', 'the settled scan lowering the auto base');
+    const after = governorSnapshot();
+    assert.equal(after.effective, expectedOn('balanced', after), `back on Balanced's base: ${JSON.stringify({ onBattery: after.onBattery, thermal: after.thermal })}`);
+  } finally {
+    await updateSettings({ engineBudget: { preset: 'auto', cpuPercent: null } });
+    resetEngineBudgetForTests();
+    resetNativeForTests();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

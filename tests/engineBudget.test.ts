@@ -20,10 +20,12 @@ import {
   PRESET_CEILING,
   CHILD_PRIORITY,
   MAX_THROTTLE_SLEEP_MS,
+  MAX_BUDGET_CHANGES,
   MECHANISM_NAMES,
   CONFIGURE_RETRY_MS,
   applyEngineBudgetSetting,
   applyChildBudget,
+  beginScanBudget,
   budgetSnapshot,
   childPriority,
   currentEngineBudgetSetting,
@@ -36,6 +38,7 @@ import {
   pauseScan,
   registerPausable,
   resetEngineBudgetForTests,
+  resolvePreset,
   resumeScan,
   setClockForTests,
   setNativeLoadOptionsForTests,
@@ -46,11 +49,11 @@ import {
   validateEngineBudget,
   workerCap,
 } from '../src/services/engineBudget';
-import { allScans, cancelScan, createScanRecord, evictExpiredScans, getScan, startScan } from '../src/services/diskScanner';
+import { allScans, cancelAllScans, cancelScan, createScanRecord, evictExpiredScans, getScan, startScan } from '../src/services/diskScanner';
 import { gduScanIntoStore, runGdu, trackShard, type ShardControls } from '../src/services/gduScanner';
 import { startScheduler, stopScheduler } from '../src/services/scheduler';
 import { loadMain } from './fixtures/desktop/electronStub';
-import type { ScanResult } from '../src/models/types';
+import type { EngineBudgetSetting, ScanResult } from '../src/models/types';
 
 /**
  * The scanning budget — Eco, Balanced, Turbo — as the app obeys it with or
@@ -254,8 +257,8 @@ test('with the native governor, Automatic follows the machine: Eco on battery or
   applyEngineBudgetSetting({ preset: 'auto', cpuPercent: null });
   applyEngineBudgetSetting({ preset: 'eco', cpuPercent: 30 });
   assert.deepEqual(native.configured, [
-    { budget: { preset: 'balanced', cpuPercent: null }, auto: true },
-    { budget: { preset: 'eco', cpuPercent: 30 }, auto: false },
+    { budget: { preset: 'balanced', cpuPercent: null, autoBase: 'balanced' }, auto: true },
+    { budget: { preset: 'eco', cpuPercent: 30, autoBase: 'balanced' }, auto: false },
   ]);
   const state = budgetSnapshot();
   assert.equal(state.source, 'native');
@@ -284,6 +287,357 @@ test('capabilities name the seven mechanisms, or say for each why nothing is the
   assert.equal(present.mechanisms.qos.mechanism, 'pthread_set_qos_class_self_np');
   assert.equal(present.mechanisms.machineCpu.available, true);
   useShim();
+});
+
+/* ─────────────── U-13: a scan a person starts runs at Turbo ─────────────── */
+
+const AUTO: EngineBudgetSetting = { preset: 'auto', cpuPercent: null };
+const ON_MAINS = { onBattery: false, thermal: 'nominal' } as const;
+
+/** The governor's configure call for Automatic on `autoBase`, as the fake records it. */
+const autoOn = (autoBase: 'balanced' | 'turbo') => ({ budget: { preset: 'balanced', cpuPercent: null, autoBase }, auto: true });
+
+/**
+ * The Rust table (tm-governor, `effective_preset`) written out again, row by row:
+ * what Automatic runs for each base and power source while the heat is not
+ * pressure. An unknown power source is not a battery.
+ */
+const AUTO_BY_BASE_AND_POWER = [
+  ['eco', null, 'eco'], ['eco', false, 'eco'], ['eco', true, 'eco'],
+  ['balanced', null, 'balanced'], ['balanced', false, 'balanced'], ['balanced', true, 'eco'],
+  ['turbo', null, 'turbo'], ['turbo', false, 'turbo'], ['turbo', true, 'balanced'],
+] as const;
+
+test('the Node mirror of the governor’s table: Automatic runs its base, one step lower on battery and Eco under serious or critical heat; an explicit preset is itself', () => {
+  const calm = ['nominal', 'fair', 'unknown', null] as const;
+  const hot = ['serious', 'critical'] as const;
+  for (const [base, onBattery, expected] of AUTO_BY_BASE_AND_POWER) {
+    for (const thermal of calm) {
+      assert.equal(resolvePreset('auto', base, onBattery, thermal), expected, `Automatic on ${base}, battery ${String(onBattery)}, thermal ${String(thermal)}`);
+    }
+    for (const thermal of hot) {
+      assert.equal(resolvePreset('auto', base, onBattery, thermal), 'eco', `${thermal} heat is Eco on ${base}, battery ${String(onBattery)}`);
+    }
+    for (const preset of ['eco', 'balanced', 'turbo'] as const) {
+      for (const thermal of [...calm, ...hot]) {
+        assert.equal(resolvePreset(preset, base, onBattery, thermal), preset, `an explicit ${preset} on base ${base}, battery ${String(onBattery)}, thermal ${String(thermal)}`);
+      }
+    }
+  }
+});
+
+test('a scan a person starts runs Automatic at Turbo on mains, Balanced on battery and Eco under serious heat; any other scan stays Balanced (Eco on battery); an explicit preset always wins', () => {
+  let n = 0;
+  const startsAt = (snap: Partial<FakeSnapshot>, setting: EngineBudgetSetting, interactive: boolean): string => {
+    useFakeNative(fakeSnapshot(snap));
+    applyEngineBudgetSetting(setting);
+    const id = `table-${n++}`;
+    try {
+      return beginScanBudget(id, undefined, { interactive }).effective;
+    } finally {
+      forgetScanBudget(id);
+    }
+  };
+  assert.equal(startsAt(ON_MAINS, AUTO, true), 'turbo', 'a person’s scan on mains, nominal heat');
+  assert.equal(startsAt({ onBattery: true, thermal: 'nominal' }, AUTO, true), 'balanced', 'a person’s scan on battery');
+  assert.equal(startsAt({ onBattery: false, thermal: 'serious' }, AUTO, true), 'eco', 'a person’s scan under serious heat');
+  assert.equal(startsAt(ON_MAINS, AUTO, false), 'balanced', 'a scan nobody is watching: Balanced, as before');
+  assert.equal(startsAt({ onBattery: true, thermal: 'nominal' }, AUTO, false), 'eco', 'and Eco on battery, as before');
+  for (const preset of ['eco', 'balanced', 'turbo'] as const) {
+    for (const interactive of [true, false]) {
+      assert.equal(startsAt({ onBattery: true, thermal: 'nominal' }, { preset, cpuPercent: null }, interactive), preset, `an explicit ${preset} wins (interactive: ${interactive})`);
+    }
+  }
+
+  // Without the governor nothing knows the battery or the heat, and an unknown
+  // signal is not pressure (the Rust rule), so the shim runs the base itself.
+  useShim();
+  const person = beginScanBudget('shim-person', undefined, { interactive: true });
+  try {
+    assert.deepEqual(person, { preset: 'auto', effective: 'turbo', source: 'node-shim' });
+  } finally {
+    forgetScanBudget('shim-person');
+  }
+  const unattended = beginScanBudget('shim-unattended');
+  try {
+    assert.deepEqual(unattended, { preset: 'auto', effective: 'balanced', source: 'node-shim' });
+  } finally {
+    forgetScanBudget('shim-unattended');
+  }
+});
+
+test('a scan a person starts raises the governor’s auto base to Turbo with one reconfigure, and the last such scan ending lowers it with one more', () => {
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting(AUTO);
+  const before = native.configured.length;
+  const first = beginScanBudget('person-1', undefined, { interactive: true });
+  assert.deepEqual(native.configured.slice(before), [autoOn('turbo')], 'exactly one reconfigure, to the Turbo base');
+  assert.deepEqual(first, { preset: 'auto', effective: 'turbo', source: 'native' }, 'the record keeps what the scan runs under');
+  beginScanBudget('person-2', undefined, { interactive: true });
+  assert.equal(native.configured.length, before + 1, 'a second person’s scan changes nothing');
+  forgetScanBudget('person-1');
+  assert.equal(native.configured.length, before + 1, 'one person’s scan still runs, so the base stays Turbo');
+  forgetScanBudget('person-2');
+  assert.deepEqual(native.configured.slice(before + 1), [autoOn('balanced')], 'the last one ending lowers it, once');
+  assert.equal(first.changes, undefined, 'nothing held the scan below Turbo, so its record has no changes');
+  useShim();
+});
+
+test('an unattended scan starting while a person’s scan runs lowers the auto base once, the person’s scan records it, and its end raises it again', () => {
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting(AUTO);
+  const person = beginScanBudget('person', undefined, { interactive: true });
+  const before = native.configured.length;
+  const agent = beginScanBudget('agent');
+  assert.deepEqual(native.configured.slice(before), [autoOn('balanced')], 'exactly one reconfigure, back to the Balanced base');
+  assert.deepEqual(agent, { preset: 'auto', effective: 'balanced', source: 'native' }, 'unattended work never runs above the setting');
+  const lowered = person.changes ?? [];
+  assert.equal(lowered.length, 1, `one change on the person’s scan: ${JSON.stringify(lowered)}`);
+  assert.equal(lowered[0].effective, 'balanced');
+  assert.match(lowered[0].reason, /^An unattended scan started\./);
+  assert.equal(typeof lowered[0].at, 'number');
+
+  forgetScanBudget('agent');
+  assert.deepEqual(native.configured.slice(before + 1), [autoOn('turbo')], 'its end raises the base again, once');
+  assert.deepEqual((person.changes ?? []).map((c) => c.effective), ['balanced', 'turbo'], 'and the person’s scan records that too');
+  assert.match((person.changes ?? [])[1].reason, /^No unattended scan is running any more/);
+  forgetScanBudget('person');
+  assert.deepEqual(native.configured.slice(before + 2), [autoOn('balanced')]);
+  useShim();
+});
+
+test('a person’s scan that starts while an unattended scan runs is held below Turbo and says why; a scheduled scan’s held Eco holds the process the same way', () => {
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting(AUTO);
+  const scheduled = beginScanBudget('scheduled', 'eco');
+  assert.deepEqual(scheduled, { preset: 'eco', effective: 'eco', source: 'native' });
+  const before = native.configured.length;
+  const person = beginScanBudget('person', undefined, { interactive: true });
+  assert.equal(native.configured.length, before, 'held: the base stays Balanced, so nothing is reconfigured');
+  assert.equal(person.effective, 'balanced');
+  const held = person.changes ?? [];
+  assert.equal(held.length, 1, `the record says why it is not Turbo: ${JSON.stringify(held)}`);
+  assert.equal(held[0].effective, 'balanced');
+  assert.match(held[0].reason, /^An unattended scan was already running\./);
+
+  forgetScanBudget('scheduled');
+  assert.deepEqual(native.configured.slice(before), [autoOn('turbo')], 'the scheduled scan ending raises the base, once');
+  assert.deepEqual((person.changes ?? []).map((c) => c.effective), ['balanced', 'turbo']);
+  forgetScanBudget('person');
+  useShim();
+});
+
+test('under an explicit preset the auto base changes nothing a scan runs at, so no change is recorded', () => {
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting({ preset: 'balanced', cpuPercent: null });
+  const person = beginScanBudget('person', undefined, { interactive: true });
+  assert.deepEqual(person, { preset: 'balanced', effective: 'balanced', source: 'native' });
+  beginScanBudget('agent');
+  forgetScanBudget('agent');
+  assert.equal(person.changes, undefined, 'Balanced throughout: nothing changed for this scan');
+  assert.ok(native.configured.every((c) => c.auto === false), `a manual preset is configured without auto: ${JSON.stringify(native.configured)}`);
+  forgetScanBudget('person');
+  useShim();
+});
+
+test('a person’s scan has no fixed preset: a setting change mid-scan is followed from the next read (P8-5)', async () => {
+  useShim();
+  applyEngineBudgetSetting(AUTO);
+  const cores = Math.max(1, os.cpus().length);
+  const id = 'person-follows';
+  const clock = throttleClock();
+  try {
+    beginScanBudget(id, undefined, { interactive: true });
+    assert.equal(workerCap(id), cores, 'Automatic for a person’s scan is Turbo: a worker per core');
+    assert.equal(childPriority(id), CHILD_PRIORITY.turbo);
+    await throttleBatch(id);
+    clock.work(40);
+    await throttleBatch(id);
+    assert.deepEqual(clock.rests, [], 'Turbo does not rest');
+
+    applyEngineBudgetSetting({ preset: 'eco', cpuPercent: null });
+    assert.equal(workerCap(id), shimWorkerCap('eco', cores), 'the same scan runs Eco’s workers from the next read');
+    assert.equal(childPriority(id), CHILD_PRIORITY.eco, 'and starts its next helper at Eco’s priority');
+    clock.work(40);
+    await throttleBatch(id);
+    assert.deepEqual(clock.rests, [120], 'and rests three parts to one');
+
+    applyEngineBudgetSetting(AUTO);
+    assert.equal(workerCap(id), cores, 'back to Automatic: Turbo again');
+    assert.equal(childPriority(id), CHILD_PRIORITY.turbo);
+  } finally {
+    forgetScanBudget(id);
+    setThrottleClockForTests(null);
+    applyEngineBudgetSetting(AUTO);
+  }
+});
+
+test('the governor hears every setting change a person’s scan follows, with the auto base it runs on', () => {
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting(AUTO);
+  beginScanBudget('person', undefined, { interactive: true });
+  const before = native.configured.length;
+  applyEngineBudgetSetting({ preset: 'eco', cpuPercent: null });
+  applyEngineBudgetSetting(AUTO);
+  assert.deepEqual(native.configured.slice(before), [
+    { budget: { preset: 'eco', cpuPercent: null, autoBase: 'turbo' }, auto: false },
+    autoOn('turbo'),
+  ]);
+  forgetScanBudget('person');
+  useShim();
+});
+
+test('GET /api/engine/budget states the governor’s own effective preset beside its targetShare, never one worked out from the setting', () => {
+  // No scan a person started is registered here, so a preset worked out from
+  // the setting would say Balanced beside Turbo's share.
+  useFakeNative(fakeSnapshot({ ...ON_MAINS, effective: 'turbo', targetShare: 0.9 }));
+  const state = budgetSnapshot();
+  assert.deepEqual(state.effective, { preset: 'turbo', targetShare: 0.9, source: 'native' });
+  assert.equal(state.effective.preset, state.snapshot?.effective, 'the preset and the share are the governor’s, so they agree');
+  useShim();
+});
+
+test('a snapshot whose effective preset is not one of the three is refused like any other wrong shape', () => {
+  useFakeNative(fakeSnapshot({}), { governorSnapshot: () => ({ ...fakeSnapshot({}), effective: 'ludicrous' }) });
+  const warn = capturingWarn();
+  try {
+    const state = budgetSnapshot();
+    assert.equal(state.source, 'node-shim');
+    assert.match(state.native.reason ?? '', /"effective" is not one of eco, balanced, turbo/);
+  } finally {
+    warn.restore();
+    useShim();
+  }
+});
+
+test('startScan hands the window’s interactive on: that scan raises the auto base while it runs and its settling lowers it; a scan without it never raises it', async () => {
+  const native = useFakeNative(fakeSnapshot({ ...ON_MAINS, duty: 1 }));
+  const root = await buildTree(2, 3, 'treemap-interactive-turbo-');
+  try {
+    await updateSettings({ engineBudget: AUTO });
+    const before = native.configured.length;
+    const scan = await startScan(root, { interactive: true });
+    assert.equal(scan.status, 'running', 'still walking when startScan hands the record back');
+    assert.deepEqual(native.configured.slice(before), [autoOn('turbo')], 'raised once, as the scan started');
+    assert.deepEqual(scan.budget, { preset: 'auto', effective: 'turbo', source: 'native' });
+    const done = await settle(scan.scanId);
+    assert.equal(done.status, 'complete', done.error);
+    await waitFor(() => native.configured.length >= before + 2, 'the settled scan lowering the auto base');
+    assert.deepEqual(native.configured.slice(before + 1), [autoOn('balanced')], 'lowered once, as it settled');
+
+    // What an agent, Autopilot, a paired computer or the API sends: no interactive.
+    const quiet = await startScan(root);
+    assert.deepEqual(quiet.budget, { preset: 'auto', effective: 'balanced', source: 'native' });
+    await settle(quiet.scanId);
+    assert.equal(native.configured.length, before + 2, 'a scan nobody is watching never raises the base');
+  } finally {
+    await updateSettings({ engineBudget: AUTO });
+    await fsp.rm(root, { recursive: true, force: true });
+    useShim();
+  }
+});
+
+test('a person’s scan that is stopped, evicted or shut down lowers the auto base at once, like one that finished', async () => {
+  const native = useFakeNative(fakeSnapshot({ ...ON_MAINS, duty: 1 }));
+  const root = await buildTree(2, 3, 'treemap-turbo-endings-');
+  const endings: Record<string, (scan: ScanResult) => void> = {
+    'stopped by the person': (scan) => { assert.equal(cancelScan(scan.scanId), true); },
+    'evicted past the six-hour cap': (scan) => {
+      scan.createdAt = Date.now() - 7 * 60 * 60 * 1000;
+      assert.ok(evictExpiredScans().includes(scan.scanId), 'the eviction took the running scan');
+    },
+    'shut down with the app': () => { cancelAllScans(); },
+  };
+  try {
+    await updateSettings({ engineBudget: AUTO });
+    for (const [ending, end] of Object.entries(endings)) {
+      const before = native.configured.length;
+      const scan = await startScan(root, { interactive: true });
+      assert.equal(scan.status, 'running', `${ending}: still walking when startScan hands the record back`);
+      assert.deepEqual(native.configured.slice(before), [autoOn('turbo')], `${ending}: raised as it started`);
+      end(scan);
+      assert.deepEqual(native.configured.slice(before + 1), [autoOn('balanced')], `${ending}: lowered at once, not when the walk next looks`);
+      // A shutdown leaves records as they were; this one is settled so no later test meets it running.
+      cancelScan(scan.scanId);
+      assert.equal(native.configured.length, before + 2, `${ending}: and nothing after that reconfigures again`);
+    }
+  } finally {
+    await updateSettings({ engineBudget: AUTO });
+    await fsp.rm(root, { recursive: true, force: true });
+    useShim();
+  }
+});
+
+test('a scan with a held preset never raises the auto base, even one marked interactive, and it holds a person’s scan like any unattended scan', () => {
+  const native = useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting(AUTO);
+  const before = native.configured.length;
+  const held = beginScanBudget('held-eco', 'eco', { interactive: true });
+  try {
+    assert.deepEqual(held, { preset: 'eco', effective: 'eco', source: 'native' });
+    assert.equal(native.configured.length, before, 'a held preset is never raised, so the base does not move');
+    const person = beginScanBudget('person', undefined, { interactive: true });
+    assert.equal(person.effective, 'balanced', 'and a person’s scan beside it is held at Balanced');
+    assert.equal(native.configured.length, before);
+  } finally {
+    forgetScanBudget('held-eco');
+    forgetScanBudget('person');
+    useShim();
+  }
+});
+
+test('a cloud listing started while a person’s scan runs records Automatic’s resting base, not Turbo', () => {
+  useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting(AUTO);
+  beginScanBudget('person', undefined, { interactive: true });
+  const cloud = createScanRecord('/cloud-beside-a-person');
+  try {
+    assert.deepEqual(cloud.budget, { preset: 'auto', effective: 'balanced', source: 'native' }, 'no person started this one from the window');
+  } finally {
+    cancelScan(cloud.scanId);
+    forgetScanBudget('person');
+    useShim();
+  }
+});
+
+test('under serious heat an unattended scan changes nothing a person’s scan runs at, so nothing is recorded, though the governor still hears the base move', () => {
+  const native = useFakeNative(fakeSnapshot({ onBattery: false, thermal: 'serious' }));
+  applyEngineBudgetSetting(AUTO);
+  const person = beginScanBudget('person', undefined, { interactive: true });
+  try {
+    assert.equal(person.effective, 'eco', 'serious heat is Eco, whatever the base');
+    const before = native.configured.length;
+    beginScanBudget('agent');
+    const second = beginScanBudget('person-2', undefined, { interactive: true });
+    forgetScanBudget('agent');
+    assert.deepEqual(native.configured.slice(before), [autoOn('balanced'), autoOn('turbo')], 'the base moves both ways all the same');
+    assert.equal(person.changes, undefined, 'Eco before and after: no change to record');
+    assert.equal(second.changes, undefined, 'and one that started held under heat was Eco on any base');
+  } finally {
+    forgetScanBudget('person');
+    forgetScanBudget('person-2');
+    useShim();
+  }
+});
+
+test(`a person’s scan keeps the latest ${MAX_BUDGET_CHANGES} changes, however many unattended scans come and go`, () => {
+  useFakeNative(fakeSnapshot(ON_MAINS));
+  applyEngineBudgetSetting(AUTO);
+  const person = beginScanBudget('person', undefined, { interactive: true });
+  try {
+    const rounds = MAX_BUDGET_CHANGES; // two changes each, twice the cap
+    for (let i = 0; i < rounds; i++) {
+      beginScanBudget(`agent-${i}`);
+      forgetScanBudget(`agent-${i}`);
+    }
+    const kept = person.changes ?? [];
+    assert.equal(kept.length, MAX_BUDGET_CHANGES, `${2 * rounds} changes made, the latest ${MAX_BUDGET_CHANGES} kept`);
+    assert.deepEqual(kept.map((c) => c.effective), Array.from({ length: MAX_BUDGET_CHANGES }, (_, i) => (i % 2 === 0 ? 'balanced' : 'turbo')));
+    assert.match(kept[kept.length - 1].reason, /^No unattended scan is running any more/, 'the newest is the last rise');
+  } finally {
+    forgetScanBudget('person');
+    useShim();
+  }
 });
 
 /* ─────────────────────────── the shim’s duty ─────────────────────────── */

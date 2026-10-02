@@ -557,7 +557,9 @@ export interface ScanOptions {
    * ask for administrator permission (the NTFS turbo mode): the scheduler,
    * autopilot, a paired computer, the MCP server and API calls that do not
    * say so are never the reason a prompt appears on someone's screen (the
-   * pre-landing review of 23 Sep 2026).
+   * pre-landing review of 23 Sep 2026). And only such a scan runs the
+   * Automatic budget at Turbo (U-13, engineBudget's `autoBase`): work nobody
+   * is watching never runs above the setting.
    */
   interactive?: boolean;
 }
@@ -626,7 +628,8 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     cancelled: false,
     // The budget this scan runs under, captured now (the settings read above
     // handed the budget module the persisted setting) and kept on the record.
-    budget: beginScanBudget(scanId, opts.budget),
+    // A scan a person started raises Automatic to Turbo while it runs (U-13).
+    budget: beginScanBudget(scanId, opts.budget, { interactive: opts.interactive === true }),
     engine: WALKER_ENGINE,
     ioThreads: IO_THREADS,
     engineReason: '',
