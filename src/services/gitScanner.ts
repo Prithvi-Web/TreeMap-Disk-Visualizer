@@ -89,7 +89,10 @@ export function findGitRepos(source: TreeSource): GitRepoInfo[] {
   while (stack.length) {
     const { id, parent } = stack.pop()!;
     if (store.isDir(id) && store.name(id) === '.git' && parent !== -1) {
-      store.setFlag(parent, Flag.GitRepo, true);
+      // Only when not set already: setFlag bumps the store's version, and a
+      // read-only route must not make every cache of this scan — the cleanup
+      // memo among them (U-16) — answer for a tree that did not change.
+      if (!store.flag(parent, Flag.GitRepo)) store.setFlag(parent, Flag.GitRepo, true);
       repos.push(analyzeGitDir(store, id, store.path(parent)));
       continue; // don't descend into .git itself
     }

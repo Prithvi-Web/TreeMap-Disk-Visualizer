@@ -105,15 +105,20 @@ async function answer<T>(
   const entry = memoFor(store);
   const clock = walkOptions.now ?? Date.now;
   const asked = clock();
-  const kept = entry.last.get(kind) as Answer<T> | undefined;
-  if (kept && holds(kept, store, key, asked)) {
-    counts.reused++;
-    return kept.value;
-  }
-
   const flight = `${kind}\n${key}`;
-  const running = entry.running.get(flight) as Promise<Answer<T>> | undefined;
-  if (running) {
+  // A request that turns a shared answer down looks again before it walks:
+  // another request past the same threshold may already be walking, and
+  // joining that walk beats starting one more (review of U-16, finding 1).
+  // Every turn of this loop waits for a walk that began after the previous
+  // one finished — after this request arrived — so the next answer serves it.
+  for (;;) {
+    const kept = entry.last.get(kind) as Answer<T> | undefined;
+    if (kept && holds(kept, store, key, asked)) {
+      counts.reused++;
+      return kept.value;
+    }
+    const running = entry.running.get(flight) as Promise<Answer<T>> | undefined;
+    if (!running) break;
     const shared = await running;
     // A walk that read the clock at or after this request's is an answer
     // inside its lifetime. One that read it earlier is this request's answer

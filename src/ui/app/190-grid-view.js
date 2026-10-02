@@ -263,11 +263,17 @@ async function loadCostEstimate(after) {
   // U-16: the suggestions below are a walk of the whole tree. After a scan,
   // finishScan hands over the dashboard lists' own walks, and the card asks
   // only once those have answered rather than competing with them. A newer
-  // scan by then loads its own estimate.
+  // scan by then loads its own estimate; until it does — and for good if it
+  // is stopped — this card has nothing current to show, so it says so rather
+  // than stay on its loading state (review of U-16, finding 3).
   if (after) {
     const scanId = state.scanId;
     try { await after; } catch { /* the lists report their own failure; the card still loads */ }
-    if (scanId !== state.scanId) return;
+    if (scanId !== state.scanId) {
+      host.classList.remove('fx-chart-loading');
+      host.innerHTML = '<div class="muted">Run a scan to see what this data would cost to keep online.</div>';
+      return;
+    }
   }
   // The what-if uses whatever the Clean Up rules already found to be
   // reclaimable, so the two features agree about the same bytes.

@@ -26,6 +26,7 @@ import {
 import { computeRuleClaims } from '../src/services/reclaimInputs';
 import { selectCandidates, simulatePolicy } from '../src/services/autopilot';
 import { createScanRecord } from '../src/services/diskScanner';
+import { findGitRepos } from '../src/services/gitScanner';
 import { buildStoreFromTree, fileNodeToInput, ObjectScanStore, ScanStore } from '../src/services/scanStore';
 import { loadRuleCatalog, Rule, RuleCatalog } from '../src/services/rulePacks';
 import { compileIgnoreList, CompiledIgnore } from '../src/utils/glob';
@@ -621,13 +622,46 @@ test('a request that joins a walk begun before a threshold it is already past ge
       const store = make(tree);
       const early = cleanupSuggestionsFor(store, [], catalog, []); // its walk reads T, then hands back a turn
       clock = T + 2_001; // past setup.dmg's threshold, while that walk is still running
-      const late = cleanupSuggestionsFor(store, [], catalog, []);
+      const late = [0, 1, 2, 3].map(() => cleanupSuggestionsFor(store, [], catalog, []));
       assert.equal(JSON.stringify(await early), JSON.stringify(oracleCleanupSuggestions(store, [], catalog, undefined, [], T)), `${kind}: the first request gets the answer at its own clock`);
-      const fresh = JSON.stringify(await late);
-      assert.equal(fresh, JSON.stringify(oracleCleanupSuggestions(store, [], catalog, undefined, [], T + 2_001)), `${kind}: the later one, the answer at its clock`);
-      assert.ok(fresh.includes('setup.dmg'), `${kind}: which offers the file that crossed`);
-      assert.equal(cleanupMemoCountsForTests().suggestions, 2, `${kind}: from a walk of its own`);
+      const want = JSON.stringify(oracleCleanupSuggestions(store, [], catalog, undefined, [], T + 2_001));
+      for (const answer of await Promise.all(late)) {
+        assert.equal(JSON.stringify(answer), want, `${kind}: each later one, the answer at its clock`);
+      }
+      assert.ok(want.includes('setup.dmg'), `${kind}: which offers the file that crossed`);
+      // Review of U-16, finding 1: the four that turned the first walk's answer
+      // down share one fresh walk rather than starting four.
+      assert.equal(cleanupMemoCountsForTests().suggestions, 2, `${kind}: from one more walk between them`);
     }
+  } finally {
+    setCleanupMemoOptionsForTests(null);
+  }
+});
+
+test('a look at the git repos does not cost the next suggestions request a walk', async () => {
+  // Review of U-16, finding 2: GET /api/git/repos marks each repo root, and a
+  // flag set again bumped store.version even though nothing changed — every
+  // Clean Up pane open then threw the memo's answer away.
+  resetCleanupMemoForTests();
+  setCleanupMemoOptionsForTests({ yieldTurn: immediate });
+  try {
+    const root = path.join(path.sep, 'repos');
+    const repo = (name: string, flagged: boolean): FileNode => {
+      const at = path.join(root, name);
+      return { ...dirAt(root, name, [dirAt(at, '.git', [fileAt(path.join(at, '.git'), 'HEAD', 23, 0)]), dirAt(at, 'node_modules', [fileAt(path.join(at, 'node_modules'), 'i.js', 40, 0)])]), ...(flagged ? { gitRepo: true } : {}) };
+    };
+    const tree = dirAt(path.sep, 'repos', [repo('marked', true), repo('unmarked', false)]);
+    const store = buildStoreFromTree(tree);
+    const catalog = loadRuleCatalog();
+    await cleanupSuggestionsFor(store, [], catalog, []);
+    findGitRepos(store); // marks `unmarked`, the one repo the scan had not marked: a real change
+    const before = store.version;
+    await cleanupSuggestionsFor(store, [], catalog, []);
+    assert.equal(cleanupMemoCountsForTests().suggestions, 2, 'the real change is walked again');
+    findGitRepos(store); // both already marked: nothing changes
+    assert.equal(store.version, before, 'a second look at the repos leaves the version alone');
+    assert.equal(JSON.stringify(await cleanupSuggestionsFor(store, [], catalog, [])), JSON.stringify(oracleCleanupSuggestions(store, [], catalog)), 'and the next request is answered');
+    assert.equal(cleanupMemoCountsForTests().suggestions, 2, 'from the memo, with no third walk');
   } finally {
     setCleanupMemoOptionsForTests(null);
   }
@@ -852,13 +886,14 @@ test('a finished scan asks for the three dashboard lists first and hands their w
 });
 
 /** The cost card out of the built page, with `api` recording what it asks for. */
-function costCard() {
+function costCard(populated = false) {
   const src = pageFunction('async function loadCostEstimate(');
   const asked: string[] = [];
   const host = {
     innerHTML: '', veiled: false,
     classList: { add: (c: string) => { if (c === 'fx-chart-loading') host.veiled = true; }, remove: (c: string) => { if (c === 'fx-chart-loading') host.veiled = false; } },
-    querySelector: (): null => null,
+    // A card already showing prices finds its rows, so a reload veils it instead of a skeleton.
+    querySelector: (): unknown => (populated ? {} : null),
   };
   const state: { scanId: string | null; cost: unknown } = { scanId: 's1', cost: null };
   const $ = (id: string): unknown => (id === 'costBody' ? host : { value: 'USD' });
@@ -899,6 +934,20 @@ test('the cost card shows it is loading at once, and asks for suggestions only o
   answerStale();
   await staleDone;
   assert.equal(stale.asked.length, 0, 'a superseded card asks for nothing');
+  // Review of U-16, finding 3: it does not stay on its loading state either —
+  // if that newer scan is stopped, nothing else would ever settle it.
+  assert.match(stale.host.innerHTML, /^<div class="muted">Run a scan to see what this data would cost to keep online\.<\/div>$/, 'it shows the card\'s own empty state');
+  // A card that was already showing prices is veiled while it waits, and the veil comes off too.
+  const veiled = costCard(true);
+  let answerVeiled: () => void = () => {};
+  const veiledLists = new Promise<boolean>((resolve) => { answerVeiled = () => resolve(true); });
+  const veiledDone = veiled.load(veiledLists);
+  assert.equal(veiled.host.veiled, true, 'a card with standing prices is veiled while it waits');
+  veiled.state.scanId = 's2';
+  answerVeiled();
+  await veiledDone;
+  assert.equal(veiled.host.veiled, false, 'and a superseded one leaves no loading veil on');
+  assert.match(veiled.host.innerHTML, /Run a scan to see what this data would cost/, 'and shows the empty state, not another scan\'s prices');
 
   // Lists that failed still let the card load; the lists say why on their own cards.
   const failed = costCard();
