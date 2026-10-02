@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
 import {
   allScans,
-  collectLargestFolders,
+  collectLargestFoldersAsync,
   collectEmptyFolders,
   compareTrees,
 } from '../services/diskScanner';
@@ -219,7 +219,7 @@ insightRouter.get('/apps', storageModeGate, async (req: Request, res: Response) 
  * be answered from a partial scan, and polling would be wrong" — offload,
  * watch, cloud and the rest of this file.
  */
-insightRouter.get('/large-folders', (req: Request, res: Response) => {
+insightRouter.get('/large-folders', async (req: Request, res: Response) => {
   const running = requireScan(req, req.query.scanId);
   if (running.status === 'running') {
     res.status(202).json({ status: 'running' });
@@ -228,7 +228,8 @@ insightRouter.get('/large-folders', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const limit = clampInt(req.query.limit, 20, 1, 500);
   const minSize = clampInt(req.query.minSize, 1_048_576, 0, Number.MAX_SAFE_INTEGER);
-  res.json({ folders: collectLargestFolders(storeOf(scan), limit, minSize) });
+  // Walked in slices (U-17): after a whole-disk scan this walk held the loop for 1.1 s.
+  res.json({ folders: await collectLargestFoldersAsync(storeOf(scan), limit, minSize) });
 });
 
 /** GET /api/empty-folders?scanId=&ignoreJunk=true */

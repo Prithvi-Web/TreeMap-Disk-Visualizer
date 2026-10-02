@@ -22,6 +22,7 @@ import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBa
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
 import { newScanStorageMode } from './storageMode';
+import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
 import { isSpillFolderName, isSpillPath } from '../utils/pathSanitizer';
 
 /**
@@ -1260,68 +1261,178 @@ async function processDirectory(
 
 /* ---------- Aggregations over a completed scan ---------- */
 
-export function collectLargestFiles(source: TreeSource, limit: number, minSize: number) {
+/**
+ * Steps per slice when the dashboard's lists are walked in slices (Track U,
+ * U-17): the cleanup walk's slice, over lighter work per step. After a
+ * 9M-entry scan the drained file-type walk held the event loop for 1.8 s and
+ * the largest-folders walk for 1.1 s; the routes now take the async forms.
+ */
+export const COLLECTOR_SLICE_NODES = 16_384;
+
+/**
+ * eachFile's walk as one that can stop between any two nodes: the same
+ * pre-order, a file visited and never descended into (a container's listing
+ * stays invisible), a folder's children in insertion order.
+ */
+class FileWalk implements SlicedWalk {
+  private readonly stack: number[];
+
+  constructor(private readonly store: ScanStore, private readonly visit: (fileId: number) => void) {
+    this.stack = [store.rootId];
+  }
+
+  step(budget: number): boolean {
+    const { store, stack } = this;
+    for (let left = budget; stack.length > 0; left--) {
+      if (left <= 0) return false;
+      const cur = stack.pop() as number;
+      if (!store.isDir(cur)) {
+        this.visit(cur);
+        continue;
+      }
+      const kids = store.childIds(cur);
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+    }
+    return true;
+  }
+}
+
+/**
+ * Every file at or below the root in eachFile's order, walked in slices under
+ * U-D9's version guard. `start` begins each attempt and returns its visitor,
+ * so whatever a walk the store changed under gathered is thrown away whole.
+ */
+export async function eachFileInSlices(
+  source: TreeSource,
+  start: () => (fileId: number) => void,
+  options: SliceOptions = {},
+): Promise<void> {
   const store = asStore(source);
+  await walkInSlices(store, () => new FileWalk(store, start()), options, COLLECTOR_SLICE_NODES);
+}
+
+/** collectLargestFiles' bounded insertion, fed one file at a time by either walk. */
+function largestFilesTally(store: ScanStore, limit: number, minSize: number) {
   interface Hit { id: number; size: number }
   const top: Hit[] = [];
-  // Simple bounded insertion keeps memory flat even for huge trees.
-  store.eachFile(store.rootId, (id) => {
-    const size = store.size(id);
-    if (size < minSize) return;
-    if (top.length < limit) {
-      top.push({ id, size });
-      if (top.length === limit) top.sort((a, b) => b.size - a.size);
-    } else if (size > top[top.length - 1].size) {
-      top[top.length - 1] = { id, size };
+  return {
+    // Simple bounded insertion keeps memory flat even for huge trees.
+    visit: (id: number): void => {
+      const size = store.size(id);
+      if (size < minSize) return;
+      if (top.length < limit) {
+        top.push({ id, size });
+        if (top.length === limit) top.sort((a, b) => b.size - a.size);
+      } else if (size > top[top.length - 1].size) {
+        top[top.length - 1] = { id, size };
+        top.sort((a, b) => b.size - a.size);
+      }
+    },
+    result: () => {
       top.sort((a, b) => b.size - a.size);
+      return top.map(({ id, size }) => ({
+        name: store.name(id),
+        path: store.path(id),
+        size,
+        extension: store.extension(id),
+        modifiedAt: store.modifiedAt(id),
+      }));
+    },
+  };
+}
+
+export function collectLargestFiles(source: TreeSource, limit: number, minSize: number) {
+  const store = asStore(source);
+  const tally = largestFilesTally(store, limit, minSize);
+  store.eachFile(store.rootId, tally.visit);
+  return tally.result();
+}
+
+/** collectLargestFiles walked in slices (U-17): the same answer, the loop handed back between slices. */
+export async function collectLargestFilesAsync(source: TreeSource, limit: number, minSize: number, options: SliceOptions = {}) {
+  const store = asStore(source);
+  let tally = largestFilesTally(store, limit, minSize);
+  await eachFileInSlices(store, () => {
+    tally = largestFilesTally(store, limit, minSize);
+    return tally.visit;
+  }, options);
+  return tally.result();
+}
+
+interface FolderFrame { id: number; kids: number[]; next: number; count: number }
+
+/**
+ * collectLargestFolders' post-order walk with an explicit stack (no recursion
+ * on deep trees), able to stop between any two steps: entering a node is a
+ * step, and so is leaving a folder. Each frame accumulates its subtree's
+ * recursive file count as its children finish.
+ */
+class FolderWalk implements SlicedWalk {
+  readonly found: LargeFolder[] = [];
+  private readonly stack: FolderFrame[];
+
+  constructor(private readonly store: ScanStore, private readonly minSize: number) {
+    this.stack = [this.frame(store.rootId)];
+  }
+
+  private frame(id: number): FolderFrame {
+    return { id, kids: this.store.isDir(id) ? this.store.childIds(id) : [], next: 0, count: 0 };
+  }
+
+  step(budget: number): boolean {
+    const { store, stack, found } = this;
+    for (let left = budget; stack.length > 0; left--) {
+      if (left <= 0) return false;
+      const f = stack[stack.length - 1];
+      if (!store.isDir(f.id)) {
+        // A file (containers included — their listings are not files on disk).
+        stack.pop();
+        if (stack.length) stack[stack.length - 1].count += 1;
+        continue;
+      }
+      if (f.next < f.kids.length) {
+        stack.push(this.frame(f.kids[f.next++]));
+        continue;
+      }
+      stack.pop();
+      if (stack.length) {
+        const size = store.size(f.id);
+        if (size >= this.minSize) {
+          found.push({
+            name: store.name(f.id),
+            path: store.path(f.id),
+            size,
+            fileCount: f.count,
+            modifiedAt: store.modifiedAt(f.id),
+          });
+        }
+        stack[stack.length - 1].count += f.count;
+      }
     }
-  });
-  top.sort((a, b) => b.size - a.size);
-  return top.map(({ id, size }) => ({
-    name: store.name(id),
-    path: store.path(id),
-    size,
-    extension: store.extension(id),
-    modifiedAt: store.modifiedAt(id),
-  }));
+    return true;
+  }
+
+  result(limit: number): LargeFolder[] {
+    return this.found.sort((a, b) => b.size - a.size).slice(0, limit);
+  }
 }
 
 export function collectLargestFolders(source: TreeSource, limit: number, minSize: number): LargeFolder[] {
+  const walk = new FolderWalk(asStore(source), minSize);
+  walk.step(Infinity);
+  return walk.result(limit);
+}
+
+/** collectLargestFolders walked in slices (U-17): the same answer, the loop handed back between slices. */
+export async function collectLargestFoldersAsync(
+  source: TreeSource,
+  limit: number,
+  minSize: number,
+  options: SliceOptions = {},
+): Promise<LargeFolder[]> {
   const store = asStore(source);
-  const found: LargeFolder[] = [];
-  // Post-order with an explicit stack (no recursion on deep trees): each
-  // frame accumulates its subtree's recursive file count as children finish.
-  interface Frame { id: number; kids: number[]; next: number; count: number }
-  const frame = (id: number): Frame => ({ id, kids: store.isDir(id) ? store.childIds(id) : [], next: 0, count: 0 });
-  const stack: Frame[] = [frame(store.rootId)];
-  while (stack.length) {
-    const f = stack[stack.length - 1];
-    if (!store.isDir(f.id)) {
-      // A file (containers included — their listings are not files on disk).
-      stack.pop();
-      if (stack.length) stack[stack.length - 1].count += 1;
-      continue;
-    }
-    if (f.next < f.kids.length) {
-      stack.push(frame(f.kids[f.next++]));
-      continue;
-    }
-    stack.pop();
-    if (stack.length) {
-      const size = store.size(f.id);
-      if (size >= minSize) {
-        found.push({
-          name: store.name(f.id),
-          path: store.path(f.id),
-          size,
-          fileCount: f.count,
-          modifiedAt: store.modifiedAt(f.id),
-        });
-      }
-      stack[stack.length - 1].count += f.count;
-    }
-  }
-  return found.sort((a, b) => b.size - a.size).slice(0, limit);
+  const { walk } = await walkInSlices(store, () => new FolderWalk(store, minSize), options, COLLECTOR_SLICE_NODES);
+  return walk.result(limit);
 }
 
 /** Junk files that don't stop a folder from counting as empty. */
@@ -1513,17 +1624,37 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
   return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP };
 }
 
+/** collectFileTypes' per-extension tally, fed one file at a time by either walk. */
+function fileTypesTally(store: ScanStore) {
+  const byExt = new Map<string, { count: number; totalSize: number }>();
+  return {
+    visit: (id: number): void => {
+      const ext = store.extension(id) ?? '(none)';
+      const entry = byExt.get(ext) ?? { count: 0, totalSize: 0 };
+      entry.count++;
+      entry.totalSize += store.size(id);
+      byExt.set(ext, entry);
+    },
+    result: () => [...byExt.entries()]
+      .map(([ext, v]) => ({ ext, count: v.count, totalSize: v.totalSize }))
+      .sort((a, b) => b.totalSize - a.totalSize),
+  };
+}
+
 export function collectFileTypes(source: TreeSource) {
   const store = asStore(source);
-  const byExt = new Map<string, { count: number; totalSize: number }>();
-  store.eachFile(store.rootId, (id) => {
-    const ext = store.extension(id) ?? '(none)';
-    const entry = byExt.get(ext) ?? { count: 0, totalSize: 0 };
-    entry.count++;
-    entry.totalSize += store.size(id);
-    byExt.set(ext, entry);
-  });
-  return [...byExt.entries()]
-    .map(([ext, v]) => ({ ext, count: v.count, totalSize: v.totalSize }))
-    .sort((a, b) => b.totalSize - a.totalSize);
+  const tally = fileTypesTally(store);
+  store.eachFile(store.rootId, tally.visit);
+  return tally.result();
+}
+
+/** collectFileTypes walked in slices (U-17): the same answer, the loop handed back between slices. */
+export async function collectFileTypesAsync(source: TreeSource, options: SliceOptions = {}) {
+  const store = asStore(source);
+  let tally = fileTypesTally(store);
+  await eachFileInSlices(store, () => {
+    tally = fileTypesTally(store);
+    return tally.visit;
+  }, options);
+  return tally.result();
 }

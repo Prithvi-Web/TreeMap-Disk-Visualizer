@@ -13,6 +13,7 @@ import {
   RuleCatalog,
   StaleFilesRule,
 } from './rulePacks';
+import { MAX_SLICE_ATTEMPTS, SlicedWalk, SliceOptions, walkInSlices } from './slices';
 
 /**
  * cleanupRules — well-known reclaimable disk space, matched against a
@@ -49,13 +50,8 @@ const DAY_MS = 86_400_000;
 /** Children examined per slice of the async walk: about 18 ms at the rate the diagnosis measured. */
 export const CLEANUP_SLICE_NODES = 16_384;
 
-/**
- * U-D9: walks of a store that changed between slices before the walk stops
- * yielding. The last attempt runs in one turn, so a store that never stops
- * changing costs one stall like the old matcher's — never a walk that cannot
- * finish.
- */
-export const CLEANUP_MAX_ATTEMPTS = 3;
+/** U-D9's limit, kept by the shared driver (`slices.ts`): the last attempt runs in one turn. */
+export const CLEANUP_MAX_ATTEMPTS = MAX_SLICE_ATTEMPTS;
 
 /** True if any sibling basename matches a pattern (`foo.*` ⇒ any `foo.<ext>`). */
 function siblingPresent(siblings: Set<string>, patterns: string[]): boolean {
@@ -100,7 +96,7 @@ interface Frame {
  * the recursive matcher visited them, so groups, items, the per-rule cap and
  * the observer all see the same sequence.
  */
-class SuggestionWalk {
+class SuggestionWalk implements SlicedWalk {
   /**
    * The answer holds for every clock reading from the walk's own `now` up to,
    * not including, this: the first moment a file this walk passed over would
@@ -334,16 +330,10 @@ export function collectCleanupSuggestions(
   return walk.result();
 }
 
-/** How the async walk slices itself. Every field has a default; tests set them to count. */
-export interface CleanupWalkOptions {
-  /** Hands the event loop a turn between slices. Default: a `setImmediate` turn. */
-  yieldTurn?: () => Promise<void>;
-  /** Children examined per slice. Default CLEANUP_SLICE_NODES. */
-  sliceNodes?: number;
+/** How the async walk slices itself (children per slice, default CLEANUP_SLICE_NODES) and which clock it reads. */
+export interface CleanupWalkOptions extends SliceOptions {
   /** The clock the stale-files rules read, once per attempt. Default `Date.now`. */
   now?: () => number;
-  /** Told the number of each attempt as it starts (a test counts restarts by it). */
-  onAttempt?: (attempt: number) => void;
 }
 
 /** A finished async walk: the answer and what it was an answer for. */
@@ -359,13 +349,12 @@ export interface CleanupWalk {
   attempts: number;
 }
 
-const nextTurn = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
-
 /**
  * The same answer as `collectCleanupSuggestions`, walked in slices of
  * `sliceNodes` children with the event loop handed back after each, under
- * U-D9's version guard: a store that changed during a slice's turn is walked
- * again from the start, and the third attempt runs in one turn. The observer
+ * U-D9's version guard (the shared driver in `slices.ts`): a store that
+ * changed during a slice's turn is walked again from the start, and the third
+ * attempt runs in one turn. The observer
  * hears only the attempt that finished, in walk order.
  *
  * Pure in (store, arguments): nothing is remembered here. `cleanupMemo.ts`
@@ -380,27 +369,15 @@ export async function collectCleanupSuggestionsAsync(
   options: CleanupWalkOptions = {},
 ): Promise<CleanupWalk> {
   const store = asStore(source);
-  const yieldTurn = options.yieldTurn ?? nextTurn;
-  const slice = options.sliceNodes !== undefined && options.sliceNodes >= 1 ? options.sliceNodes : CLEANUP_SLICE_NODES;
   const clock = options.now ?? Date.now;
-  for (let attempt = 1; ; attempt++) {
-    options.onAttempt?.(attempt);
-    const version = store.version;
-    const computedAt = clock();
-    const heard: Array<[Rule, string]> = [];
-    const walk = new SuggestionWalk(store, ignore, catalog, observe ? (rule, p) => { heard.push([rule, p]); } : undefined, suppressedRoots, computedAt);
-    let changed = false;
-    if (attempt >= CLEANUP_MAX_ATTEMPTS) {
-      walk.step(Infinity);
-    } else {
-      for (let done = false; !done;) {
-        done = walk.step(slice);
-        await yieldTurn();
-        if (store.version !== version) { changed = true; break; }
-      }
-    }
-    if (changed) continue;
-    if (observe) for (const [rule, p] of heard) observe(rule, p);
-    return { groups: walk.result(), version, computedAt, validUntil: walk.validUntil, attempts: attempt };
-  }
+  // Each attempt reads the clock and hears its own claims; only the last is kept.
+  let computedAt = 0;
+  let heard: Array<[Rule, string]> = [];
+  const { walk, version, attempts } = await walkInSlices(store, () => {
+    computedAt = clock();
+    heard = [];
+    return new SuggestionWalk(store, ignore, catalog, observe ? (rule, p) => { heard.push([rule, p]); } : undefined, suppressedRoots, computedAt);
+  }, options, CLEANUP_SLICE_NODES);
+  if (observe) for (const [rule, p] of heard) observe(rule, p);
+  return { groups: walk.result(), version, computedAt, validUntil: walk.validUntil, attempts };
 }

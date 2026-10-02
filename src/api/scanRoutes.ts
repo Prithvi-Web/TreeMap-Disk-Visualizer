@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { formatCount } from '../utils/formatCount';
-import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes, scanExpiresAt, scanIdOf } from '../services/diskScanner';
+import { startScan, getScan, cancelScan, collectLargestFilesAsync, collectFileTypesAsync, scanExpiresAt, scanIdOf } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
@@ -654,8 +654,8 @@ scanRouter.get('/scan/:scanId/calendar', storageModeGate, (req: Request, res: Re
   res.json({ scanId: scan.scanId, rootPath: scan.rootPath, ...result });
 });
 
-/** GET /api/large-files?scanId=x&limit=50&minSize=1048576 */
-scanRouter.get('/large-files', (req: Request, res: Response) => {
+/** GET /api/large-files?scanId=x&limit=50&minSize=1048576 — walked in slices (U-17). */
+scanRouter.get('/large-files', async (req: Request, res: Response) => {
   const scan = requireScan(req, String(req.query.scanId ?? ''));
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });
@@ -665,18 +665,18 @@ scanRouter.get('/large-files', (req: Request, res: Response) => {
 
   const limit = clampInt(req.query.limit, 50, 1, 1000);
   const minSize = clampInt(req.query.minSize, 1_048_576, 0, Number.MAX_SAFE_INTEGER);
-  res.json({ files: collectLargestFiles(storeOf(scan), limit, minSize) });
+  res.json({ files: await collectLargestFilesAsync(storeOf(scan), limit, minSize) });
 });
 
-/** GET /api/file-types?scanId=x */
-scanRouter.get('/file-types', (req: Request, res: Response) => {
+/** GET /api/file-types?scanId=x — walked in slices (U-17). */
+scanRouter.get('/file-types', async (req: Request, res: Response) => {
   const scan = requireScan(req, String(req.query.scanId ?? ''));
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });
     return;
   }
   if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
-  res.json({ types: collectFileTypes(storeOf(scan)) });
+  res.json({ types: await collectFileTypesAsync(storeOf(scan)) });
 });
 
 export function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
