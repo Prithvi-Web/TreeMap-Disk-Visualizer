@@ -16,10 +16,23 @@
  *    uses (notifications, and the sanitised clipboard write behind
  *    navigator.clipboard.writeText — "Path copied"). Electron's default is
  *    to grant everything.
+ *  - privacySettingsUrl: the System Settings pane behind the page's
+ *    openPrivacySettings(pane) bridge call, looked up by NAME in a fixed
+ *    table. The page never supplies a URL, which is why windowOpenDecision
+ *    can keep refusing every x-apple URL (Track U, U-D16).
  */
 
 /** Permissions the page actually uses. Everything else is denied. */
 const ALLOWED_PERMISSIONS = new Set(['notifications', 'clipboard-sanitized-write']);
+
+/**
+ * Pane name → settings URL, per platform. A Map, so a name only matches as
+ * itself: no inherited key (`constructor`, `__proto__`) and no value that
+ * merely turns into the name (an array, an object with toString) finds a URL.
+ */
+const PRIVACY_SETTINGS_URLS = new Map([
+  ['darwin', new Map([['full-disk-access', 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles']])],
+]);
 
 const EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
@@ -54,4 +67,15 @@ function permissionAllowed(permission) {
   return typeof permission === 'string' && ALLOWED_PERMISSIONS.has(permission);
 }
 
-module.exports = { ALLOWED_PERMISSIONS, windowOpenDecision, navigationAllowed, permissionAllowed };
+/**
+ * @param {unknown} pane the pane the page asked for by name, e.g. 'full-disk-access'
+ * @param {string} platform process.platform
+ * @returns {string | null} the settings URL to hand shell.openExternal, or null: nothing to open
+ */
+function privacySettingsUrl(pane, platform) {
+  const panes = PRIVACY_SETTINGS_URLS.get(platform);
+  const url = panes ? panes.get(pane) : undefined;
+  return typeof url === 'string' ? url : null;
+}
+
+module.exports = { ALLOWED_PERMISSIONS, windowOpenDecision, navigationAllowed, permissionAllowed, privacySettingsUrl };

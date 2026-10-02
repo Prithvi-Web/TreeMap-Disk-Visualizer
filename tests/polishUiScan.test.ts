@@ -215,6 +215,65 @@ test('the probe checks Desktop, Documents and Downloads under a home-folder scan
   assert.equal(stale.state.scanRefused, null, 'a superseded probe paints nothing');
 });
 
+/* ══════════════ Track U U-3 — the Full Disk Access button asks the desktop shell, by name ══════════════ */
+
+/**
+ * The button's handler and its wiring, out of the built page. `bridge` stands
+ * in for window.treemapDesktop: undefined is a browser tab. Every call the
+ * page makes — to the bridge, to window.open, to toast — is counted.
+ */
+function privacyButtonHarness(bridge: unknown) {
+  const handler = braced('async function openFullDiskAccessSettings(');
+  const wiring = slice("$('accessOpenBtn').addEventListener('click'", '/* ── Scan queue ── */');
+  const { $, els } = makeDom();
+  const toasts: string[] = [];
+  const windowOpens: unknown[][] = [];
+  const win = { treemapDesktop: bridge, open: (...args: unknown[]) => { windowOpens.push(args); return null; } };
+  const run = new Function('$', 'window', 'toast', `'use strict'; ${handler}\n${wiring}\nreturn openFullDiskAccessSettings;`)(
+    $, win, (m: string) => toasts.push(m),
+  ) as () => Promise<void>;
+  const click = async (): Promise<void> => {
+    for (const fn of els.accessOpenBtn.listeners.click || []) fn();
+    for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); // let the bridge's answer land
+  };
+  return { run, click, toasts, windowOpens, els };
+}
+
+/** A bridge whose openPrivacySettings answers with `answer` (a function may throw or reject), recording each pane asked for. */
+function privacyBridge(answer: () => unknown) {
+  const panes: unknown[] = [];
+  return { panes, bridge: { openPrivacySettings: (pane: unknown) => { panes.push(pane); return answer(); } } };
+}
+
+test('the Full Disk Access button asks the desktop shell for the pane by name: one bridge call, no window.open, no toast', async () => {
+  const { panes, bridge } = privacyBridge(async () => ({ opened: true }));
+  const h = privacyButtonHarness(bridge);
+  assert.equal((h.els.accessOpenBtn.listeners.click || []).length, 1, 'the button has one click handler');
+  await h.click();
+  assert.deepEqual(panes, ['full-disk-access'], 'one bridge call, naming the pane — never a URL');
+  assert.equal(h.windowOpens.length, 0, 'no window.open: the shell refuses x-apple URLs there (U-D16)');
+  assert.equal(h.toasts.length, 0, 'System Settings opened, so there is nothing to say');
+  assert.doesNotMatch(INDEX, /x-apple\.systempreferences/, 'the page holds no settings URL at all: the shell owns it');
+});
+
+test('without a bridge that opened the pane, the button says the path in words — once — and never calls window.open', async () => {
+  const cases: Array<[string, unknown]> = [
+    ['a browser tab (no desktop bridge)', undefined],
+    ['an older shell without openPrivacySettings', { getPathForFile: () => '' }],
+    ['the shell answering opened: false', privacyBridge(async () => ({ opened: false, reason: 'Full Disk Access is a macOS setting.' })).bridge],
+    ['the shell answering nothing usable', privacyBridge(async () => undefined).bridge],
+    ['the bridge rejecting', privacyBridge(async () => { throw new Error('the IPC channel closed'); }).bridge],
+    ['the bridge throwing before it answers', privacyBridge(() => { throw new Error('not a function of this shell'); }).bridge],
+  ];
+  for (const [what, bridge] of cases) {
+    const h = privacyButtonHarness(bridge);
+    await assert.doesNotReject(h.run(), `${what}: the handler settles instead of leaving a rejection behind`);
+    assert.equal(h.toasts.length, 1, `${what}: one toast`);
+    assert.match(h.toasts[0], /System Settings › Privacy & Security › Full Disk Access/, `${what}: it names the pane in words`);
+    assert.equal(h.windowOpens.length, 0, `${what}: no window.open`);
+  }
+});
+
 /**
  * finishScan out of the built page, executed with the index-first stub list
  * plus the names later rounds added. `indexBuilds` records the arguments of

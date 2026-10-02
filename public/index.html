@@ -9104,12 +9104,28 @@ subscribe(TOPIC.scan, (scanId) => {
   renderRefusedFolders();
   if (scanId) void probeRefusedFolders();
 });
+/**
+ * "Open Privacy settings": the desktop shell opens the Full Disk Access pane
+ * when asked for it BY NAME. The page holds no settings URL, and the shell's
+ * window.open guard refuses x-apple URLs (Track U, U-3; the window.open this
+ * replaced was dropped by that guard, so the button did nothing). Wherever
+ * the pane did not open — a browser tab, an answer of opened: false, a
+ * failed call — the path is said in words instead.
+ */
+async function openFullDiskAccessSettings() {
+  const bridge = window.treemapDesktop;
+  if (bridge && typeof bridge.openPrivacySettings === 'function') {
+    try {
+      const answer = await bridge.openPrivacySettings('full-disk-access');
+      if (answer && answer.opened === true) return;
+    } catch {
+      // The call failed: nothing opened, so the words below are the answer.
+    }
+  }
+  toast('Open System Settings › Privacy & Security › Full Disk Access, switch TreeMap on, then scan again.', 'success', 9000);
+}
 $('accessOpenBtn').addEventListener('click', () => {
-  // Electron routes any non-local URL through shell.openExternal, which is
-  // how a settings deep link reaches System Settings. In a browser tab there
-  // is no such door, so the path is said in words instead.
-  if (window.treemapDesktop) window.open('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
-  else toast('Open System Settings › Privacy & Security › Full Disk Access, switch TreeMap on, then scan again.', 'success', 9000);
+  void openFullDiskAccessSettings();
 });
 
 /* ── Scan queue ── */

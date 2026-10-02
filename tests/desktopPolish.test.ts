@@ -45,6 +45,8 @@ test('desktopToken mints a fresh 64-hex token, keeps one the owner set, and neve
 /* ═══════════════════════ security-electron-5: navigation guards ═══════════════════════ */
 
 const ORIGIN = 'http://127.0.0.1:43210';
+/** The one System Settings pane the page may ask for (Track U U-3): Privacy & Security › Full Disk Access. */
+const FULL_DISK_ACCESS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
 
 test('windowOpenDecision: own origin opens in-app, web links go to the browser, everything else dies quietly', () => {
   assert.deepEqual(guards.windowOpenDecision(`${ORIGIN}/`, ORIGIN), { action: 'allow' });
@@ -55,10 +57,28 @@ test('windowOpenDecision: own origin opens in-app, web links go to the browser, 
   const spoof = guards.windowOpenDecision('http://127.0.0.1.evil.tld/', ORIGIN);
   assert.equal(spoof.action, 'deny', 'a look-alike host is not the app');
   assert.equal(guards.windowOpenDecision('http://127.0.0.1:9999/', ORIGIN).action, 'deny', 'nor is another port');
-  for (const url of ['file:///Applications/Evil.app', 'smb://nas/share', 'vnc://host', 'x-apple.systempreferences:', 'javascript:alert(1)', 'not a url']) {
+  // The Full Disk Access pane's own URL included: the button reaches it by name
+  // through openPrivacySettings, so the window.open guard stays closed (U-D16).
+  for (const url of ['file:///Applications/Evil.app', 'smb://nas/share', 'vnc://host', 'x-apple.systempreferences:', FULL_DISK_ACCESS_URL, 'javascript:alert(1)', 'not a url']) {
     const d = guards.windowOpenDecision(url, ORIGIN);
     assert.equal(d.action, 'deny', url);
     assert.equal(d.openExternal, undefined, `${url} must never reach shell.openExternal`);
+  }
+});
+
+test('privacySettingsUrl gives the one URL for full-disk-access on macOS and nothing for any other pane, any URL, a non-string or another OS', () => {
+  assert.equal(guards.privacySettingsUrl('full-disk-access', 'darwin'), FULL_DISK_ACCESS_URL);
+  // Names that are near it, URLs (the page never supplies one), and the names every object inherits.
+  for (const pane of ['camera', 'Privacy_AllFiles', 'FULL-DISK-ACCESS', ' full-disk-access', 'full-disk-access ', '', FULL_DISK_ACCESS_URL,
+    'x-apple.systempreferences:', 'https://example.com/', 'file:///Applications/Evil.app', '__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+    assert.equal(guards.privacySettingsUrl(pane, 'darwin'), null, `the pane ${JSON.stringify(pane)} has no URL`);
+  }
+  // A value that only turns INTO the name (an array, an object with toString) is not the name.
+  for (const pane of [undefined, null, 1, true, {}, ['full-disk-access'], { toString: () => 'full-disk-access' }]) {
+    assert.equal(guards.privacySettingsUrl(pane, 'darwin'), null, `a ${Array.isArray(pane) ? 'array' : typeof pane} pane has no URL`);
+  }
+  for (const os of ['win32', 'linux', 'freebsd', 'Darwin', '', undefined, '__proto__', 'constructor']) {
+    assert.equal(guards.privacySettingsUrl('full-disk-access', os), null, `${String(os)} has no such pane`);
   }
 });
 
@@ -505,16 +525,18 @@ function loadPreload() {
 test('preload exposes the documented desktop bridge and routes each call to its IPC channel', async () => {
   const { api, name, sent, invoked, listeners } = loadPreload();
   assert.equal(name, 'treemapDesktop');
-  for (const m of ['getPathForFile', 'resolveScanPath', 'onScanPath', 'requestScans', 'scanProgress', 'scanFinished', 'onCommand']) {
+  for (const m of ['getPathForFile', 'resolveScanPath', 'onScanPath', 'requestScans', 'scanProgress', 'scanFinished', 'onCommand', 'openPrivacySettings']) {
     assert.equal(typeof api[m], 'function', m);
   }
   assert.equal(api.getPathForFile({ name: 'a.txt' }), '/dropped/a.txt');
   await api.resolveScanPath('/x');
   await api.requestScans(['/a', '/b']);
+  assert.equal(await api.openPrivacySettings('full-disk-access'), 'invoked', 'the page gets the shell\'s answer back');
   api.scanProgress(0.4);
   api.scanFinished({ ok: true, path: '/a' });
-  assert.deepEqual(invoked.map((i) => i.channel), ['treemap:resolve-scan-path', 'treemap:request-scans']);
+  assert.deepEqual(invoked.map((i) => i.channel), ['treemap:resolve-scan-path', 'treemap:request-scans', 'treemap:open-privacy-settings']);
   assert.deepEqual(invoked[1].args, [['/a', '/b']]);
+  assert.deepEqual(invoked[2].args, ['full-disk-access'], 'the pane goes by name, untouched: the shell holds the URL');
   assert.deepEqual(sent, [
     { channel: 'treemap:scan-progress', args: [0.4] },
     { channel: 'treemap:scan-finished', args: [{ ok: true, path: '/a' }] },
@@ -611,6 +633,38 @@ test('main: navigation and permission guards are installed on the real window an
     assert.deepEqual(asked, [false, true]);
     assert.equal(s.permissionCheckHandler!({}, 'geolocation'), false);
     assert.equal(s.permissionCheckHandler!({}, 'clipboard-sanitized-write'), true);
+  } finally { h.dispose(); rm(dir); }
+});
+
+test('main: the privacy IPC opens System Settings exactly once, and never for a pane it does not know', async () => {
+  type Answer = { opened: boolean; reason?: string };
+  const dir = mkTmp();
+  let h = await loadMain({ dataDir: dir });
+  try {
+    const open = (pane: unknown) => h.stub.ipcMain.invoke('treemap:open-privacy-settings', pane) as Promise<Answer>;
+    assert.deepEqual(await open('full-disk-access'), { opened: true });
+    assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'one request, for the Full Disk Access pane');
+    // Unknown panes, and the page handing over a URL of its own: nothing opens, and the answer says so.
+    for (const pane of ['camera', FULL_DISK_ACCESS_URL, 'https://example.com/', 'file:///Applications/Evil.app', '', null, undefined, 7, { pane: 'full-disk-access' }]) {
+      const r = await open(pane);
+      assert.equal(r.opened, false, `${JSON.stringify(pane)} opens nothing`);
+      assert.ok(typeof r.reason === 'string' && r.reason.length > 10, `${JSON.stringify(pane)} is answered with a reason in words`);
+    }
+    assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'nothing else ever reached shell.openExternal');
+    // Electron rejects when no app takes the URL: the page must hear "not opened", not "opened".
+    h.stub.shell.openExternalError = new Error('no application is registered for this URL');
+    const failed = await open('full-disk-access');
+    assert.equal(failed.opened, false, 'a refused open is not reported as opened');
+    assert.match(String(failed.reason), /System Settings did not open/, 'and the reason says what happened');
+    assert.equal(h.stub.shell.opened.length, 2, 'the one attempt, still at the same pane');
+    assert.equal(h.stub.shell.opened[1], FULL_DISK_ACCESS_URL);
+  } finally { h.dispose(); }
+  h = await loadMain({ dataDir: dir, platform: 'win32' });
+  try {
+    const r = await (h.stub.ipcMain.invoke('treemap:open-privacy-settings', 'full-disk-access') as Promise<Answer>);
+    assert.equal(r.opened, false, 'Full Disk Access is a macOS setting');
+    assert.ok(typeof r.reason === 'string' && r.reason.length > 10, 'answered in words');
+    assert.deepEqual(h.stub.shell.opened, [], 'nothing reached shell.openExternal on Windows');
   } finally { h.dispose(); rm(dir); }
 });
 

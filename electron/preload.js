@@ -27,6 +27,13 @@
  *                                  the taskbar and posts a notification. A page that
  *                                  never calls this leaves queued folders waiting;
  *                                  scanProgress(-1) also counts as "done".
+ *  - openPrivacySettings(pane)   → Promise<{ opened, reason? }>. Opens one System
+ *                                  Settings pane, named — today only 'full-disk-access'
+ *                                  (macOS: Privacy & Security › Full Disk Access). The
+ *                                  shell holds the URL; the page never sends one, and
+ *                                  window.open still refuses x-apple URLs. opened: false
+ *                                  (with a reason) means nothing opened: say the path in
+ *                                  words instead.
  *
  * Shell → page
  *  - onScanPath(cb)              cb(folder) — scan this folder now (dock drop, second
@@ -68,5 +75,9 @@ contextBridge.exposeInMainWorld('treemapDesktop', {
   /** Every terminal path of a scan: { ok, path, files, bytes, error, stopped }. */
   scanFinished(result) {
     ipcRenderer.send('treemap:scan-finished', result);
+  },
+  /** Open a System Settings pane by name → { opened, reason? }. The shell owns the URL. */
+  openPrivacySettings(pane) {
+    return ipcRenderer.invoke('treemap:open-privacy-settings', pane);
   },
 });

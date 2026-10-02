@@ -187,6 +187,24 @@ ipcMain.handle('treemap:request-scans', (_event, paths) => {
   return requestScans(paths.filter((p) => typeof p === 'string'));
 });
 
+/**
+ * The page's "Open Privacy settings" button (Track U, U-3). The page names a
+ * pane; the URL comes from the fixed table in guards.privacySettingsUrl,
+ * never from the page, so this channel can open nothing else, and the
+ * window.open guard keeps refusing x-apple URLs (U-D16). The answer tells the
+ * page whether to fall back to saying the path in words.
+ */
+ipcMain.handle('treemap:open-privacy-settings', async (_event, pane) => {
+  const url = guards.privacySettingsUrl(pane, process.platform);
+  if (!url) return { opened: false, reason: 'TreeMap has no such settings pane to open on this computer.' };
+  try {
+    await shell.openExternal(url);
+    return { opened: true };
+  } catch (err) {
+    return { opened: false, reason: `System Settings did not open: ${err && err.message ? err.message : String(err)}` };
+  }
+});
+
 /* ───────────────────── Dock progress and "scan finished" ───────────────────── */
 
 ipcMain.on('treemap:scan-progress', (_event, value) => {

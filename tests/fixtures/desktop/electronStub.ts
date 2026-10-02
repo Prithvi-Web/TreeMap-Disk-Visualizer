@@ -212,7 +212,12 @@ export function makeStub(opts: StubOptions) {
   const shell = {
     opened: [] as string[],
     openedPaths: [] as string[],
-    openExternal(url: string): Promise<void> { shell.opened.push(url); return Promise.resolve(); },
+    /** When set, openExternal still records the URL and then rejects with it, as Electron does when no app takes the URL. */
+    openExternalError: null as Error | null,
+    openExternal(url: string): Promise<void> {
+      shell.opened.push(url);
+      return shell.openExternalError ? Promise.reject(shell.openExternalError) : Promise.resolve();
+    },
     openPath(p: string): Promise<string> { shell.openedPaths.push(p); return Promise.resolve(''); },
   };
 
