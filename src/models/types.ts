@@ -6,6 +6,7 @@
 import type { ScanStore } from '../services/scanStore';
 import type { ReclaimWeights } from '../services/reclaimScore';
 import type { StorageMode } from '../services/storageMode';
+import type { EntryProjection } from '../services/scan/projection';
 
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
@@ -215,6 +216,18 @@ export interface ScanResult {
    * table's refusals read it — /stats keeps its own `storageMode: 'memory'` until T23.
    */
   storageMode?: StorageMode;
+  /**
+   * What a native scan knew before it walked (Track U): the size it projected
+   * (U-30). Internal — every scan response is shaped by an explicit whitelist
+   * and none carries it (DESIGN §12).
+   */
+  nativePlan?: NativePlan;
+}
+
+/** A native scan's plan, made before it walks (Track U, U-30). */
+export interface NativePlan {
+  /** The entries projected from the last scan of the folder, or the volume's used inodes, or unknown. */
+  projection: EntryProjection;
 }
 
 /** One rectangle of the squarified treemap, coordinates in percent (0–100). */

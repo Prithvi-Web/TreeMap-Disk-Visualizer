@@ -21,6 +21,7 @@ import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
+import { nativeProjection } from './scan/projection';
 import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
 import { isSpillFolderName, isSpillPath } from '../utils/pathSanitizer';
@@ -614,6 +615,17 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
    * reason the faster engines did not run.
    */
   const native = decideNative(rootPath, { incremental, ignoreCount: ignore.length, forced, rootIsDir });
+  /*
+   * The native walk, when the engine is eligible, with the tree's size
+   * projected before it walks (Track U, U-30): the last scan of this folder,
+   * else a whole volume's used inodes, else unknown — never a throw. It is
+   * projected here, before the record exists, rather than in the walk's
+   * fire-and-forget block, so startScan still returns with the native walk
+   * started: a pause or a Stop always meets a walk, never a gap before one.
+   */
+  const nativeWalk = native.eligibility.ok && native.module
+    ? { module: native.module, fastPath: native.eligibility.fastPath, reason: native.eligibility.reason, projection: await nativeProjection(rootPath) }
+    : null;
 
   const scanId = crypto.randomUUID();
   const scan: ScanResult = {
@@ -755,14 +767,15 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     }
     if (mftClause !== null) why.unshift(mftClause);
     if (mftFallback !== null) noteFallback(scan, mftFallback);
-    if (native.eligibility.ok && native.module) {
+    if (nativeWalk) {
       scan.engine = 'native';
-      scan.fastPath = native.eligibility.fastPath;
-      scan.engineReason = mftClause === null ? native.eligibility.reason : `${native.eligibility.reason}; ${mftClause}`;
+      scan.fastPath = nativeWalk.fastPath;
+      scan.engineReason = mftClause === null ? nativeWalk.reason : `${nativeWalk.reason}; ${mftClause}`;
       scan.fallbackReason = mftFallback;
+      scan.nativePlan = { projection: nativeWalk.projection };
       const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
       try {
-        await runNativeWalk(scan, store, rootPath, native.module, nativeStorageFor(native.module));
+        await runNativeWalk(scan, store, rootPath, nativeWalk.module, nativeStorageFor(nativeWalk.module));
         if (scan.cancelled) return;
         await rootCheck(scan.rootPath);
         settleComplete(scan, store);

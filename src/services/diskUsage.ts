@@ -122,8 +122,12 @@ async function windowsDiskUsage(target: string): Promise<DiskUsage> {
  * this promise does, and the `df` fallback then blocks too — so a hung NFS
  * mount costs about twelve seconds rather than being unbounded, with the
  * thread still held. Worth having; not a fix for the threadpool.
+ *
+ * Exported for the other caller that must not wait longer than this on a
+ * volume: a native scan's projection reads the used-inode count with it
+ * (`scan/projection.ts`, Track U U-30).
  */
-const STATFS_TIMEOUT_MS = 2_000;
+export const STATFS_TIMEOUT_MS = 2_000;
 
 /**
  * The same numbers from one syscall, with no subprocess at all.

@@ -4,15 +4,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type * as NativeCore from '../native/index';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-nativeMemoryDefault-data-');
 
-import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { loadNative, resetNativeForTests, type ScanModule } from '../src/services/scan/native';
-import { resetEngineBudgetForTests, setNativeLoadOptionsForTests } from '../src/services/engineBudget';
+import { countedReal } from './fixtures/countedNative';
+import type { ScanModule } from '../src/services/scan/native';
 import { nativeStorageFor, rootName, runNativeWalk } from '../src/services/scan/nativeEngine';
 import { setMemoryRoomForTests } from '../src/services/scan/nativeMemory';
 import { allScans, createScanRecord, getScan, startScan } from '../src/services/diskScanner';
@@ -29,72 +27,6 @@ import type { ScanResult } from '../src/models/types';
  * natively, on the columns path, which is what took every native scan
  * before T10, with the reason in `engineReason`: never the legacy walker.
  */
-
-const REPO = path.join(__dirname, '..');
-const PREBUILT_MODULE = path.join(REPO, 'native', 'prebuilt', `${process.platform}-${process.arch}`, 'treemap_core.node');
-
-type Core = typeof NativeCore;
-
-interface Counted {
-  module: ScanModule;
-  /** Each walk's storage, in order. */
-  starts: string[];
-  /** Stores taken, whole or filled. */
-  takes: number;
-}
-
-/** What a walk's poll reports, given its storage, which poll of that walk it is (from 1) and the module's own report. */
-type PollHook = (storage: string, nth: number, real: NativeCore.NativeProgress) => NativeCore.NativeProgress;
-
-/**
- * The real module, passed through with its starts and takes counted, loaded
- * through the real loader; with `poll`, every poll's report passes through it.
- */
-function countedReal(t: TestContext, poll?: PollHook): Counted | null {
-  const file = process.env.TREEMAP_NATIVE_MODULE ?? PREBUILT_MODULE;
-  if (!fs.existsSync(file)) {
-    skipOrFailOnCi(t, `no native module at ${file}; build it with npm run build:native`);
-    return null;
-  }
-  resetNativeForTests();
-  resetEngineBudgetForTests();
-  const direct = loadNative({ path: file });
-  if (!direct.available) assert.fail(direct.reason);
-  const core = direct.module as unknown as Core;
-  const counted: Counted = { module: {} as ScanModule, starts: [], takes: 0 };
-  const walks = new Map<number, { storage: string; polls: number }>();
-  const module = {
-    ...core,
-    scanStart: (root: string, opts: NativeCore.ScanStartOptions): number => {
-      const storage = opts.storage ?? 'columns';
-      counted.starts.push(storage);
-      const handle = core.scanStart(root, opts);
-      walks.set(handle, { storage, polls: 0 });
-      return handle;
-    },
-    scanPoll: (handle: number): NativeCore.NativeProgress => {
-      const real = core.scanPoll(handle);
-      const walk = walks.get(handle);
-      if (!poll || !walk) return real;
-      walk.polls++;
-      return poll(walk.storage, walk.polls, real);
-    },
-    storeTake: async (handle: number): Promise<NativeCore.NativeStore> => {
-      counted.takes++;
-      return core.storeTake(handle);
-    },
-    storeTakeInto: async (handle: number, into: NativeCore.NativeStoreArrays): Promise<NativeCore.NativeStore> => {
-      counted.takes++;
-      return core.storeTakeInto(handle, into);
-    },
-  };
-  resetNativeForTests();
-  setNativeLoadOptionsForTests({ path: file, requireModule: () => module });
-  const outcome = loadNative({ path: file, requireModule: () => module });
-  assert.equal(outcome.available, true, 'the pass-through must pass the loader\'s handshake');
-  counted.module = module as unknown as ScanModule;
-  return counted;
-}
 
 /** `folders` folders of `files` files each under a new temp folder; `pad` lengthens every file's name. */
 function tree(t: TestContext, folders: number, files: number, pad = ''): string {
@@ -177,12 +109,14 @@ test('walked again on the columns path, the count the scan shows never goes back
   t.after(() => setMemoryRoomForTests(null));
   const root = tree(t, 40, 60);
   const shown: Array<{ storage: string; scanned: number }> = [];
-  const counted = countedReal(t, (storage, nth, real) => {
-    const running = allScans().find((s) => s.rootPath === root && s.status === 'running');
-    if (running) shown.push({ storage, scanned: running.scanned });
-    // At its first poll the walk again has only just begun: nothing listed
-    // yet, whatever this machine's scheduling let it list meanwhile.
-    return storage === 'columns' && nth === 1 ? { ...real, done: false, entries: 0, dirs: 0, files: 0, bytes: 0, currentPath: null } : real;
+  const counted = countedReal(t, {
+    poll: (storage, nth, real) => {
+      const running = allScans().find((s) => s.rootPath === root && s.status === 'running');
+      if (running) shown.push({ storage, scanned: running.scanned });
+      // At its first poll the walk again has only just begun: nothing listed
+      // yet, whatever this machine's scheduling let it list meanwhile.
+      return storage === 'columns' && nth === 1 ? { ...real, done: false, entries: 0, dirs: 0, files: 0, bytes: 0, currentPath: null } : real;
+    },
   });
   if (!counted) return;
   setMemoryRoomForTests({ capRows: 2_048 });

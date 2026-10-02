@@ -203,6 +203,15 @@ export async function saveSnapshot(scan: ScanResult): Promise<Snapshot | null> {
   return snapshot;
 }
 
+/**
+ * Every snapshot record as the file holds it, unchecked: what a reader that
+ * must survive a hand-edited or old snapshots.json starts from, element by
+ * element — a native scan's projection (`scan/projection.ts`, Track U U-30).
+ */
+export async function readSnapshotRecords(): Promise<readonly unknown[]> {
+  return (await load()).snapshots;
+}
+
 /** All snapshots for one root path, oldest first. */
 export async function listSnapshots(rootPath: string): Promise<Snapshot[]> {
   const store = await load();
