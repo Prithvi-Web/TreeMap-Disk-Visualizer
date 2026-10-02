@@ -1095,7 +1095,11 @@ export interface AutopilotRun {
    * its place is empty. Absent when there were none.
    */
   unverified?: string[];
-  /** Set once the run has been undone: everything an undo could put back was put back. */
+  /**
+   * Set once the run has been undone: an undo's restore completed, everything an undo could put back
+   * was put back, and no copy is left that a later undo could. Never by an undo that failed or was
+   * cancelled, nor when one started (FG3d #8).
+   */
   undoneAt?: number;
 }
 

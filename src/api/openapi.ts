@@ -631,7 +631,7 @@ const schemas: Json = {
       capsuleRunId: str('Ties this run’s deletions to their Time Capsule copies'),
       skipped: arr(obj({ path: str(), reason: str() }, ['path', 'reason'])),
       unverified: arr(str(), 'Items of skipped whose trash step was not confirmed either way: their copies are kept, and an undo puts each back once its place is empty'),
-      undoneAt: int('Set once the run has been undone: everything an undo could put back was put back'),
+      undoneAt: int('Set once the run has been undone: an undo\'s restore completed and everything an undo could put back was put back. Never by an undo that failed or was cancelled'),
     },
     ['id', 'policyId', 'policyName', 'at', 'mode', 'status', 'items', 'bytesMatched', 'bytesDeleted', 'skipped'],
   ),

@@ -30,7 +30,8 @@ import {
   undoRun,
   type Candidate,
 } from '../src/services/autopilot';
-import { protectItems } from '../src/services/timeCapsule';
+import { getCapsuleJob, protectItems } from '../src/services/timeCapsule';
+import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AutopilotPolicy, AutopilotRun, CleanupSuggestionGroup } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
@@ -628,6 +629,95 @@ test('a run is undone by putting every item back from the Time Capsule', async (
     assert.ok(fs.existsSync(a), 'the first file is back');
     assert.ok(fs.existsSync(b), 'and so is the second');
     assert.equal((await listRuns()).find((r) => r.id === runId)?.undoneAt !== undefined, true);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** A live run of one file, as a completed run leaves it: the original gone, its copy in the capsule under the run's id. */
+async function plantedRun(dir: string, name: string, size: number): Promise<{ runId: string; policyId: string; file: string; bytes: Buffer }> {
+  const file = await writeFile(path.join(dir, name), size);
+  const bytes = await fsp.readFile(file);
+  const runId = crypto.randomUUID();
+  const policyId = `undo-${runId}`;
+  const { outcomes } = await protectItems([{ path: file }], { runId, policyId });
+  assert.ok(outcomes.every((o) => o.protected), 'it was protected');
+  await fsp.rm(file);
+  const raw = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+  raw.runs.unshift(run({ id: runId, policyId, capsuleRunId: runId, bytesDeleted: size, mode: 'live' }));
+  await writeJsonFile('autopilot.json', raw);
+  return { runId, policyId, file, bytes };
+}
+
+/** An undo's restore job, once it has settled. */
+async function settledUndo(jobId: string): Promise<{ status: string; error?: string }> {
+  await waitFor(() => { const job = getCapsuleJob(jobId); return job !== undefined && job.status !== 'running'; }, 'the undo job settling', 25);
+  const job = getCapsuleJob(jobId);
+  assert.ok(job, 'the job record exists');
+  return job;
+}
+
+/** The run as autopilot.json holds it on disk this moment — what the page reads when it reloads the runs. */
+function runOnDisk(runId: string): AutopilotRun | undefined {
+  const raw = JSON.parse(fs.readFileSync(path.join(process.env.TREEMAP_DATA_DIR ?? '', 'autopilot.json'), 'utf8')) as { runs: AutopilotRun[] };
+  return raw.runs.find((r) => r.id === runId);
+}
+
+/** What a file read stream hands over at a time: a fault past it lands part-way through a file. */
+const CHUNK = 64 * 1024;
+const WEEK_AGO = (): number => Date.now() - 7 * 86_400_000;
+
+test('an undo whose restore fails leaves the run undoable and counted against its week, and the one that puts it back marks it undone (FG3d #8)', async () => {
+  const dir = await mkTmp();
+  try {
+    const { runId, policyId, file, bytes } = await plantedRun(dir, 'a.bin', 3 * CHUNK);
+    const removeFault = setCopyFaultForTests((dest, read) => (dest === file && read > CHUNK ? new Error('the disk stopped answering (a test)') : null));
+    let failed: { status: string; error?: string };
+    try {
+      failed = await settledUndo((await undoRun(runId)).jobId);
+    } finally {
+      removeFault();
+    }
+    assert.equal(failed.status, 'error', `the case under test: the restore failed (${failed.error})`);
+    assert.ok(!fs.existsSync(file), 'and nothing came back');
+    assert.equal((await listRuns()).find((r) => r.id === runId)?.undoneAt, undefined, 'a run whose undo failed is not marked undone');
+    assert.equal(bytesDeletedSince(await listRuns(), policyId, WEEK_AGO()), 3 * CHUNK, 'and what it deleted still counts against its week');
+
+    const retried = await settledUndo((await undoRun(runId)).jobId); // not refused as already undone
+    assert.equal(retried.status, 'complete', retried.error ?? '');
+    assert.deepEqual(await fsp.readFile(file), bytes, 'the second undo puts it back');
+    assert.notEqual((await listRuns()).find((r) => r.id === runId)?.undoneAt, undefined, 'and marks the run undone');
+    assert.equal(bytesDeletedSince(await listRuns(), policyId, WEEK_AGO()), 0, 'which no longer counts against its week');
+    await assert.rejects(() => undoRun(runId), (err: unknown) => err instanceof AppError && err.code === 'ALREADY_UNDONE');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an undo is marked undone before its job says complete, and a cancel that comes once everything is back does not report it cancelled (FG3d #8)', async () => {
+  const dir = await mkTmp();
+  try {
+    const { runId, file, bytes } = await plantedRun(dir, 'b.bin', 4096);
+    const { jobId } = await undoRun(runId);
+    const job = getCapsuleJob(jobId);
+    assert.ok(job, 'the job record exists');
+    // The cancel button pressed as the last byte lands: a cancel that reads true once every file is home.
+    Object.defineProperty(job, 'cancelled', { get: () => job.filesDone >= job.fileCount, set: () => {}, configurable: true });
+    // What the page reads the moment the job says complete: the run as autopilot.json holds it then.
+    let status = job.status;
+    let undoneWhenComplete: boolean | null = null;
+    Object.defineProperty(job, 'status', {
+      get: () => status,
+      set: (next: typeof status) => {
+        if (next === 'complete') undoneWhenComplete = runOnDisk(runId)?.undoneAt !== undefined;
+        status = next;
+      },
+      configurable: true,
+    });
+    const done = await settledUndo(jobId);
+    assert.equal(done.status, 'complete', 'everything is back, so the undo is complete, not cancelled');
+    assert.equal(undoneWhenComplete, true, 'the run was marked undone before the job said complete');
+    assert.deepEqual(await fsp.readFile(file), bytes);
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }

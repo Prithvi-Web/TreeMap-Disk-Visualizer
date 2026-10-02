@@ -909,16 +909,27 @@ export async function undoRun(runId: string): Promise<AutopilotUndo> {
     throw nothingToUndo('run', plan);
   }
 
-  const job = await startCapsuleRestore(plan.undoable.map((e) => e.id));
-  // Undone only when no copy is left that a later undo could still put back.
-  if (!plan.passedOver.some((p) => stillUndoable(p.why))) run.undoneAt = Date.now();
-  await saveStore(store);
+  // Undone only once this undo has put back everything it set out to, and no copy is left that a
+  // later undo could still put back — stamped from the restore's outcome, before its job says
+  // complete, never when it starts (FG3d #8). An undo that fails or is cancelled leaves the run
+  // undoable, and what it deleted still counts against its week.
+  const leavesSome = plan.passedOver.some((p) => stillUndoable(p.why));
+  const job = await startCapsuleRestore(plan.undoable.map((e) => e.id), leavesSome ? {} : { beforeComplete: () => markUndone(run.id) });
   return {
     jobId: job.jobId,
     entryCount: plan.undoable.length,
     ...passedOverOf(plan),
     puttingBack: { paths: plan.undoable.map((e) => e.originalPath), bytes: job.bytesTotal },
   };
+}
+
+/** Stamp a run undone, read afresh: other runs may have been recorded while its undo ran. */
+async function markUndone(runId: string): Promise<void> {
+  const store = await loadStore();
+  const run = store.runs.find((r) => r.id === runId);
+  if (!run || run.undoneAt) return;
+  run.undoneAt = Date.now();
+  await saveStore(store);
 }
 
 /** What `undoRun` started. `puttingBack` is for the audit line, and is not part of the HTTP answer. */

@@ -1683,7 +1683,17 @@ export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError 
  * nothing starts. A partial undo that silently skipped two of five items would
  * be exactly the kind of half-applied operation §B2 refuses elsewhere.
  */
-export async function startCapsuleRestore(entryIds: string[]): Promise<TimeCapsuleJob> {
+export interface RestoreOptions {
+  /**
+   * Run once every entry is back, before the job says it is complete (FG3d #8): what depends on the
+   * restore's real outcome — an Autopilot run marked undone — is recorded from it, never from the
+   * job's start, and is on disk by the time anything reads "complete". Not run for a job that fails
+   * or is cancelled. A failure here is logged: the bytes are home either way.
+   */
+  beforeComplete?: () => Promise<void>;
+}
+
+export async function startCapsuleRestore(entryIds: string[], options: RestoreOptions = {}): Promise<TimeCapsuleJob> {
   pruneJobs();
   if (entryIds.length === 0) throw new AppError(400, 'NOTHING_TO_RESTORE', 'No items to restore');
 
@@ -1732,7 +1742,7 @@ export async function startCapsuleRestore(entryIds: string[]): Promise<TimeCapsu
   };
   jobs.set(job.jobId, job);
 
-  void runRestoreAll(job, planned).catch((err: unknown) => {
+  void runRestoreAll(job, planned, options.beforeComplete).catch((err: unknown) => {
     job.status = job.cancelled ? 'cancelled' : 'error';
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
@@ -1747,20 +1757,28 @@ export async function startCapsuleRestore(entryIds: string[]): Promise<TimeCapsu
  * so the user can fix whatever went wrong and undo again. Entries already put
  * back stay put back — they are at their correct paths, and pulling them out
  * again would be a second destructive act nobody asked for.
+ *
+ * A cancel stops what is left to put back (FG3d #8): one that arrives once the
+ * last entry is home stops nothing, and the job says complete, as it is.
  */
 async function runRestoreAll(
   job: TimeCapsuleJob,
   planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[],
+  beforeComplete?: () => Promise<void>,
 ): Promise<void> {
   for (const { entry, manifest } of planned) {
-    if (job.cancelled) break;
+    if (job.cancelled) {
+      job.status = 'cancelled';
+      job.finishedAt = Date.now();
+      return;
+    }
     await runRestore(job, entry, manifest);
     if (job.status === 'error' || job.status === 'cancelled') return;
   }
-  if (job.cancelled) {
-    job.status = 'cancelled';
-    job.finishedAt = Date.now();
-    return;
+  if (beforeComplete) {
+    await beforeComplete().catch((err: unknown) => {
+      console.error('[treemap] time capsule: recording what a completed restore finished did not succeed:', err);
+    });
   }
   job.phase = 'done';
   job.status = 'complete';
