@@ -194,6 +194,25 @@ test('an undo passes over a record of its run that is not one TreeMap made, and 
   assertIntact(victim, 'the undo');
 });
 
+test('an undo of a run holding a record whose original place is not a path is refused with a sentence and an audit line, never an internal error (FG3d #6)', async () => {
+  const file = path.join(PLACE, 'beside-a-bad-record.txt');
+  fs.writeFileSync(file, 'the content of beside-a-bad-record.txt');
+  const committed = await commitCart([file]);
+  assert.deepEqual(committed.trashed, [file]);
+  for (const originalPath of [12345, null, { not: 'a path' }]) {
+    const bad = record({ runId: committed.runId, originalPath: originalPath as unknown as string });
+    plant(bad);
+    const answer = await request('POST', '/api/cart/undo', { runId: committed.runId });
+    assert.deepEqual([answer.status, answer.body.code], [409, 'CAPSULE_RECORD_INVALID'], `${JSON.stringify(originalPath)}: ${JSON.stringify(answer.body)}`);
+    assert.match(answer.body.error, /not one TreeMap made/, JSON.stringify(originalPath));
+    const [line] = (await request('GET', '/api/audit?limit=1')).body.entries as { action: string; outcome: string; code?: string }[];
+    assert.deepEqual([line?.action, line?.outcome, line?.code], ['cart.undo', 'refused', 'CAPSULE_RECORD_INVALID'], 'and the refusal is audited');
+    assert.ok(!fs.existsSync(file), 'nothing was put back: an undo checks every copy before it restores any');
+    const index = JSON.parse(fs.readFileSync(INDEX, 'utf8')) as { entries: TimeCapsuleEntry[] };
+    fs.writeFileSync(INDEX, JSON.stringify({ ...index, entries: index.entries.filter((e) => e.id !== bad.id) }));
+  }
+});
+
 /* ─────────────── A restore writes only where capture would have ─────────────── */
 
 /** A capsule entry of TreeMap's shape, in the capsule, whose manifest the test writes. */

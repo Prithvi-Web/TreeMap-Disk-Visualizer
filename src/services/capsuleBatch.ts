@@ -117,8 +117,14 @@ export async function collapseBatch<T extends { path: string }>(batch: T[], disk
   return collapsed;
 }
 
-/** Lexical depth: how many names a path has. */
-function depthOf(p: string): number {
+/**
+ * Lexical depth: how many names a path has. An undo orders the index's records by it, and a record
+ * is data: one whose path is not text sorts last instead of throwing, so the undo reaches the check
+ * that refuses it with a sentence (`recordRefusal`, CAPSULE_RECORD_INVALID) rather than failing as
+ * an internal error (FG3d #6).
+ */
+function depthOf(p: unknown): number {
+  if (typeof p !== 'string') return Number.MAX_SAFE_INTEGER;
   return path.resolve(p).split(path.sep).filter((name) => name.length > 0).length;
 }
 
