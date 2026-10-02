@@ -13,7 +13,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { ENDPOINTS } from '../src/api/openapi';
-import { MCP_TOOL_NAMES } from '../src/mcp/server';
+import { MCP_TOOL_NAMES } from '../src/mcp/toolNames';
 
 /**
  * Discoverability contract: GET /api/openapi.json and GET /api/capabilities
@@ -154,6 +154,13 @@ test('capabilities and openapi are generated from the same endpoint registry', a
     // cannot drift from the live server. The literal ten-name spec lives in
     // tests/mcp.test.ts against an actual MCP handshake.
     assert.deepEqual(caps.mcp.tools.slice().sort(), [...MCP_TOOL_NAMES].sort());
+    // Byte for byte as it was before the list moved into src/mcp/toolNames.ts
+    // (Track U U-6), so the server need not load the MCP SDK to describe it.
+    assert.equal(
+      JSON.stringify(caps.mcp),
+      '{"transport":"stdio","start":"npm run mcp","tools":["scan_path","get_largest","reclaim_ranked","missing_gigabytes","find_duplicates","cleanup_suggestions","forecast","compare_scans","offload","trash_paths"]}',
+      'the mcp block of /api/capabilities is unchanged, tool order included',
+    );
   } finally {
     await close();
   }

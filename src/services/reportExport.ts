@@ -1,8 +1,7 @@
 import type { Response } from 'express';
 import { formatCount, machineHourCycle, UI_LOCALE } from '../utils/formatCount';
-import PdfPrinter from 'pdfmake/src/printer';
+import type PdfPrinter from 'pdfmake/src/printer';
 import type { TDocumentDefinitions, Content, TableCell } from 'pdfmake/interfaces';
-import Excel from 'exceljs';
 import { ScanResult } from '../models/types';
 import { collectLargestFiles, collectLargestFolders, collectFileTypes } from './diskScanner';
 import { diskUsage } from './diskUsage';
@@ -16,9 +15,23 @@ import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
  * the same in the packaged desktop app). The treemap image is intentionally
  * not embedded — this is a text report. Rows stream straight off the scan's
  * packed store; the whole tree is never buffered as objects.
+ *
+ * exceljs and pdfmake are loaded by the export that needs them, never at
+ * start (Track U, U-6): every boot used to load both — with the MCP SDK,
+ * 0.56–1.65 s in the Track U diagnosis — for exports most sessions never
+ * make. The first XLSX or PDF export pays that cost instead, once. Only
+ * loadExcel and getPrinter may load them (tests/bootModules.test.ts).
  */
 
 type CompleteScan = ScanResult;
+type ExcelModule = typeof import('exceljs');
+
+let excelModule: ExcelModule | null = null;
+/** exceljs, loaded on the first XLSX export and kept for the next. */
+function loadExcel(): ExcelModule {
+  if (!excelModule) excelModule = require('exceljs') as ExcelModule;
+  return excelModule;
+}
 
 /* ----------------------------- CSV ----------------------------- */
 
@@ -126,6 +139,8 @@ export async function streamXlsx(
   res: Response,
   maxRows: number = XLSX_MAX_DATA_ROWS // injectable so tests can exercise truncation cheaply
 ): Promise<void> {
+  // Loaded before anything is written, so a library that fails to load still leaves the error handler a clean response.
+  const Excel = loadExcel();
   res.status(200);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="treemap-${safeBase(scan)}-${mode}-${stamp()}.xlsx"`);
@@ -183,8 +198,12 @@ const FONTS = {
 };
 
 let printer: PdfPrinter | null = null;
+/** pdfmake's printer, loaded on the first PDF export and kept for the next. */
 function getPrinter(): PdfPrinter {
-  if (!printer) printer = new PdfPrinter(FONTS);
+  if (!printer) {
+    const Printer = require('pdfmake/src/printer') as typeof import('pdfmake/src/printer');
+    printer = new Printer(FONTS);
+  }
   return printer;
 }
 

@@ -15,7 +15,9 @@ import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { rateLimitLanes } from '../middleware/rateLimiter';
 import { getCapabilities } from '../platform/capabilities';
-import { MCP_TOOL_NAMES } from '../mcp/server';
+// The list alone, from the file that imports nothing: '../mcp/server' would
+// load the MCP SDK and zod into every boot (Track U, U-6).
+import { MCP_TOOL_NAMES } from '../mcp/toolNames';
 import { capabilitySummary } from './platformRoutes';
 import { SuggestionCategory } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';

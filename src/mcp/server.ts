@@ -29,6 +29,7 @@ import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, known
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { OffloadJob, ScanResult } from '../models/types';
 import { assertToolAvailable } from '../services/storageMode';
+import { MCP_TOOL_NAMES } from './toolNames';
 
 /**
  * TreeMap MCP server — the agent-facing face of the disk visualizer.
@@ -54,22 +55,12 @@ const { version: APP_VERSION } = require('../../package.json') as { version: str
 
 /**
  * The single source of truth for which tools this server exposes, in
- * registration order. GET /api/capabilities republishes it verbatim, and
- * buildMcpServer refuses to build if its registrations ever disagree with it —
- * the same one-registry discipline openapi.ts's ENDPOINTS applies to routes.
+ * registration order: kept in ./toolNames.ts, which imports nothing, so the
+ * HTTP server can publish it without loading the MCP SDK (Track U, U-6).
+ * buildMcpServer still refuses to build if its registrations ever disagree
+ * with it.
  */
-export const MCP_TOOL_NAMES = [
-  'scan_path',
-  'get_largest',
-  'reclaim_ranked',
-  'missing_gigabytes',
-  'find_duplicates',
-  'cleanup_suggestions',
-  'forecast',
-  'compare_scans',
-  'offload',
-  'trash_paths',
-] as const;
+export { MCP_TOOL_NAMES };
 
 const POLL_MS = 250;
 const DEFAULT_WAIT_MS = 55_000;
