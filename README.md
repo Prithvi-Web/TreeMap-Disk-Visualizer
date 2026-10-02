@@ -448,6 +448,8 @@ npm run dist:win     # produce a Windows installer in release/
 > ⚠️ You can only build the macOS app on a Mac and the Windows app on Windows.
 > To get **both** without owning both machines, use the automated release below — GitHub builds them for you.
 
+> 🦀 The `dist` scripts build TreeMap's native scanner first (`npm run build:native`), so packaging needs **Rust** — install it from [rustup.rs](https://rustup.rs). A build that cannot include the scanner stops with the reason instead of producing a slower app without it. Installing or running TreeMap never needs Rust.
+
 <details>
 <summary><b>🤖 Publish a new version (automated GitHub Actions)</b></summary>
 

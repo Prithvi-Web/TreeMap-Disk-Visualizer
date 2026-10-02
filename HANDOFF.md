@@ -3770,9 +3770,13 @@ B5 zombie handles.
 
 1. `npm version X.Y.Z --no-git-tag-version` + `npm install --package-lock-only`
    (the lock goes stale otherwise), commit "Release vX.Y.Z".
-2. `npm run build && npx electron-builder --mac --dir` (the local DMG step is
-   broken — dmg-builder background.tiff — CI builds the real installers).
+2. `npm run build && npm run build:native && npx electron-builder --mac --dir`
+   (the local DMG step is broken — dmg-builder background.tiff — CI builds the
+   real installers). `build:native` is not optional: since Track U U-14,
+   afterPack refuses a bundle without the native module for its platform and
+   architecture.
 3. Verify the bundle: PlistBuddy version, `Resources/gdu/gdu` present,
+   `[afterPack] native module …` in the build output,
    `codesign --verify --deep --strict` ("0 valid identities" during the build is
    normal — afterPack ad-hoc signs).
 4. `osascript -e 'quit app "TreeMap"'` → `rm -rf /Applications/TreeMap.app` →
