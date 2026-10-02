@@ -648,3 +648,10 @@ HOST=0.0.0.0 PORT=4280 TREEMAP_TOKEN=<long-random-secret> npm start
 - Scan results are in-memory (30-minute TTL); snapshots, settings and the
   offload manifest persist in the per-OS app-data directory
   (`TREEMAP_DATA_DIR` overrides — useful for tests and containers).
+- A native scan that fails part-way through a tree known to be above
+  5,000,000 items — it had counted more, or the folder's previous scan
+  counted enough that 1.25 × that count is above it — ends with
+  `status: "error"` and the reason, and is never restarted from zero in the
+  built-in walker on its own (P4-14); the error says how to scan it anyway.
+  Below that, a failed native walk falls back to the walker as before, and
+  `fallbackReason` says why.

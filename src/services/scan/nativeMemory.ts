@@ -6,7 +6,9 @@ import { cloudProviderFor } from '../cloudFolders';
 import { noteRefused } from '../scanRefusals';
 import { platform } from '../../platform';
 import type { ScanModule } from './native';
+import type { EntryProjection } from './projection';
 import type { ScanResult } from '../../models/types';
+import { formatCount } from '../../utils/formatCount';
 
 /**
  * The native engine's memory path (Phase 4, T8c; every native scan's since
@@ -36,15 +38,27 @@ const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
 const SORT_CHILDREN = platform().platform !== 'windows';
 
 /**
+ * `T_mem`: the entries memory mode is planned for in both runtimes (the
+ * owner's 5,000,000, Phase 4 Q3; T9's measurement, 26 Sep 2026: 533 MB at 5M
+ * in plain Node, 547 MB in Electron, under the 700 MB ceiling). A tree known
+ * to be above it is never walked again from zero in the built-in walker
+ * after a native failure (P4-14, `noRestartRefusal`).
+ */
+export const T_MEM_ENTRIES = 5_000_000;
+/**
+ * T16's margin over `T_mem` (P4-4a, U-D18): the default room is this many
+ * times `T_mem`, and a previous scan's count is weighed against `T_mem` at
+ * this many times itself.
+ */
+export const T_MEM_MARGIN = 1.25;
+/**
  * Rows the memory sink reserves by default, the headroom among them: 1.25 ×
- * `T_mem`, the 5M rows memory mode takes in both runtimes (T9's measurement,
- * 26 Sep 2026: 533 MB at 5M in plain Node, 547 MB in Electron, under the
- * 700 MB ceiling). A walk with more entries, or more bytes of names than
+ * `T_mem`. A walk with more entries, or more bytes of names than
  * `NAME_BYTES_PER_ROW` a row, ends at its ceiling, and `runNativeWalk` walks
  * it again on the columns path (T10) until T12's conversions carry it on —
  * unless its projection sized the room first (`memoryRoomFor`, U-31).
  */
-export const MEMORY_CAP_ROWS = 6_250_000;
+export const MEMORY_CAP_ROWS = T_MEM_MARGIN * T_MEM_ENTRIES;
 /** Name bytes the sink reserves a row: address space, resident only where names are written (names average 13–21 bytes). */
 const NAME_BYTES_PER_ROW = 128;
 /**
@@ -71,10 +85,11 @@ export interface MemoryRoom {
   sizedBy: 'default' | 'projection';
 }
 
-/** A test's room: rows reserved and, optionally, name bytes a row. */
+/** A test's room: rows reserved and, optionally, name bytes a row and the `T_mem` its scans are weighed against. */
 export interface MemoryRoomForTests {
   capRows: number;
   nameBytesPerRow?: number;
+  tMem?: number;
 }
 
 let roomForTests: MemoryRoomForTests | null = null;
@@ -111,6 +126,74 @@ export function memoryRoom(): MemoryRoom {
 /** Tests only: less room, so a small tree can reach a ceiling — its rows' or its names'; null restores the real room. */
 export function setMemoryRoomForTests(room: MemoryRoomForTests | null): void {
   roomForTests = room;
+}
+
+/** `T_mem` as a scan is weighed against it: `T_MEM_ENTRIES`, or a test's. */
+export function memoryTMem(): number {
+  return roomForTests?.tMem ?? T_MEM_ENTRIES;
+}
+
+/** A failure's words, whatever was thrown, without a closing full stop: a value with no string form still gives a reason. */
+function reasonOf(err: unknown): string {
+  try {
+    return (err instanceof Error ? err.message : String(err)).replace(/\.$/, '');
+  } catch {
+    return 'a failure with no description';
+  }
+}
+
+/** The folder a stalled walk last reported (`lastSeenAt`, set by `runNativeWalk`'s stall), or null. */
+function lastSeenAtOf(err: unknown): string | null {
+  try {
+    const seen = (err as { lastSeenAt?: unknown } | null)?.lastSeenAt;
+    return typeof seen === 'string' ? seen : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * P4-14 now (Track U, U-32; the owner's U-Q16, 2 Oct 2026): the error a
+ * native scan that failed fails with, instead of being walked again from
+ * zero in the built-in walker — or null, where that restart stands, as
+ * today. The tree is known to be above `T_mem` when the scan has counted more
+ * than it, or when the previous scan of the folder counted enough that, at
+ * T16's margin, it is (U-D18). The used-inode hint is never such a fact.
+ *
+ * No ceiling clause: every room numbers more than `T_mem` entries before its
+ * ceiling, so a walk that met one has counted past `T_mem` — unless a single
+ * listing larger than the margin (1,187,500 entries in the default room), or
+ * the names' room, met it first: an edge the plan records and this does not
+ * handle.
+ *
+ * The error says how to scan anyway (the Scan engine setting). A walk that
+ * stalled names the folder it last reported (`lastSeenAt`), as only that: the
+ * walk samples its path when a listing starts, at most every 50 ms, so at a
+ * stall it is often a folder another worker finished.
+ */
+export function noRestartRefusal(err: unknown, scanned: number, projection: EntryProjection | null, tMem: number = memoryTMem()): Error | null {
+  let lead: string;
+  if (scanned > tMem) {
+    lead = `The native engine failed part-way past ${formatCount(tMem)} items`;
+  } else if (projection?.source === 'previousScan' && projection.entries !== null && T_MEM_MARGIN * projection.entries > tMem) {
+    lead = `The native engine failed on a folder whose last scan counted ${formatCount(projection.entries)} items`;
+  } else {
+    return null;
+  }
+  const sentences = [
+    `${lead}: ${reasonOf(err)}.`,
+    'TreeMap does not restart a scan this large in the built-in walker on its own: it would walk the tree again from zero at a fraction of the speed.',
+  ];
+  const seen = lastSeenAtOf(err);
+  if (seen !== null) {
+    sentences.push(
+      `The walk was last seen at ${seen}, which may not be the folder that stopped answering. While a folder does not answer, every scan this large fails this way.`,
+      'To scan it anyway, set Scan engine to Built-in walker in Settings, or add the folder that does not answer to "Don\'t scan", which also hands the scan to the built-in walker; either way the scan is slower.',
+    );
+  } else {
+    sentences.push('To scan it anyway, set Scan engine to Built-in walker in Settings; the scan is slower.');
+  }
+  return new Error(sentences.join(' '));
 }
 
 /**

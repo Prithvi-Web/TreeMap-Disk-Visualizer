@@ -790,7 +790,9 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
           // mount is a bounded cost and a fallback, not a scan that never ends.
           await settleOnce();
           const spare = stall.spareWindows > 0 && stall.blindWindows === 0 ? ' while the machine had CPU to spare' : '';
-          throw new Error(`the native walk made no progress for ${timing.stallMs / 1000} s at ${scan.currentPath ?? rootPath}${spare}`);
+          // `lastSeenAt`: the folder the walk last reported, which a refusal names (P4-14, U-32).
+          const lastSeenAt = scan.currentPath ?? rootPath;
+          throw Object.assign(new Error(`the native walk made no progress for ${timing.stallMs / 1000} s at ${lastSeenAt}${spare}`), { lastSeenAt });
         }
       }
       await timing.sleep(interval);

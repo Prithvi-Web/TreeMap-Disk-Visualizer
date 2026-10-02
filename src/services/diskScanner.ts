@@ -22,7 +22,7 @@ import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBa
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
 import { nativeProjection } from './scan/projection';
-import { memoryRoomFor } from './scan/nativeMemory';
+import { memoryRoomFor, noRestartRefusal } from './scan/nativeMemory';
 import { formatCount } from '../utils/formatCount';
 import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
@@ -797,6 +797,11 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         // legacy chain would only fail the same way after a pointless retry.
         const e = err as NodeJS.ErrnoException;
         if (e.code === 'ENOENT' && e.path === scan.rootPath) throw err;
+        // P4-14 now (U-32, the owner's U-Q16): a tree known to be above T_mem
+        // is not walked again from zero by the built-in walker. The scan
+        // fails with the reason, its count kept and nothing reset.
+        const refusal = noRestartRefusal(err, scan.scanned, nativeWalk.projection);
+        if (refusal !== null) throw refusal;
         // Anything else is a fallback: the legacy chain produces the scan,
         // and the stats say what the native engine could not do.
         const reason = `the native engine failed part-way: ${e instanceof Error ? e.message : String(err)}`;
