@@ -600,7 +600,7 @@ test('the result summary offers a one-click undo of that run', () => {
  * undo's own answer. Its collaborators are stand-ins; `watchJob` captures the completion handler.
  */
 async function undoToasts(answer: Record<string, unknown>): Promise<string[]> {
-  const src = slice('async function cartUndoRun', '// Drawer + delegated row-button wiring.');
+  const src = `${slice('function passedOverToast', 'function restoreFromCapsule')}; ${slice('async function cartUndoRun', '// Drawer + delegated row-button wiring.')}`;
   const toasts: string[] = [];
   let watched: { onComplete: () => void } | null = null;
   const make = new Function(
@@ -628,6 +628,23 @@ test('an undo that passed over an unconfirmed item says so, rather than that eve
   assert.ok(partial.join(' | ').includes(reason), `the item's own sentence is shown (${partial.join(' | ')})`);
   const whole = await undoToasts({ jobId: 'j', entryCount: 2, bytesTotal: 10 });
   assert.match(whole.join(' | '), /Everything from that run is back — 2 items/, 'and a whole undo still says so');
+});
+
+test('an undo that passed over copies for different reasons names each with its own, never one copy\'s for all (FG3d #7)', async () => {
+  const inPlace = 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
+  const occupied = 'Something stands where it was that TreeMap cannot show is the item it copied — the original may be in the Trash.';
+  const unknown = 'Its place could not be looked at, so it was not put back; its copy stays in the Time Capsule.';
+  const rows = [
+    { path: '/x/late-a.txt', reason: inPlace },
+    { path: '/x/late-b.txt', reason: occupied },
+    ...['c', 'd', 'e', 'f', 'g'].map((n) => ({ path: `/x/late-${n}.txt`, reason: unknown })),
+  ];
+  const said = (await undoToasts({ jobId: 'j', entryCount: 1, bytesTotal: 10, passedOver: rows })).join(' | ');
+  assert.match(said, /Put back 1 item; 7 not put back/, said);
+  assert.ok(said.includes(`late-a.txt: ${inPlace}`), `each copy by name, with its own sentence (${said})`);
+  assert.ok(said.includes(`late-b.txt: ${occupied}`), said);
+  assert.ok(said.includes(`late-c.txt, late-d.txt, late-e.txt and 2 more: ${unknown}`), `copies with one sentence are grouped under it (${said})`);
+  assert.equal(said.split(inPlace).length - 1, 1, `"still in its place" is said of one copy only (${said})`);
 });
 
 /**

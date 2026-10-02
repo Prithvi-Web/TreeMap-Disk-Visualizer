@@ -208,12 +208,12 @@ function undoAutopilotRun(runId) {
         footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
         cancelledMessage: 'Undo cancelled — nothing was left half-written',
         lostMessage: 'Lost the progress stream — reopen Autopilot for the result',
-        // One it passed over (its place is not empty yet) is named with what the disk showed (FG3c).
+        // Each one it passed over (its place is not empty yet) is named with what the disk showed of
+        // it (FG3c, FG3d #7); the run keeps its Undo for them.
         onComplete: () => {
           const left = resp.passedOver || [];
-          toast(left.length
-            ? `Put back ${formatCount(resp.entryCount)} item${resp.entryCount === 1 ? '' : 's'}; ${formatCount(left.length)} not put back: ${left[0].reason}`
-            : 'Everything from that run is back', left.length ? 'error' : undefined, left.length ? 12000 : undefined);
+          toast(left.length ? passedOverToast(resp.entryCount, left) : 'Everything from that run is back',
+            left.length ? 'error' : undefined, left.length ? 12000 : undefined);
           loadAutopilot();
         },
         onSettled: () => loadAutopilot(),

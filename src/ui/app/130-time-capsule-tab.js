@@ -203,6 +203,23 @@ function renderCapsuleEvents(events) {
   });
 }
 
+/**
+ * What an undo that passed over copies of unconfirmed items says once it is done (FG3c, FG3d #7):
+ * how many it put back, then every copy it did not, by name, under the sentence the server gave
+ * that copy — still in its place, something else there, or a place it could not look at. Each copy
+ * carries its own sentence, so one is never said of another.
+ */
+function passedOverToast(putBack, rows) {
+  const byReason = new Map();
+  for (const row of rows) {
+    const name = String(row.path).split(/[\\/]/).filter(Boolean).pop() || String(row.path);
+    byReason.set(row.reason, [...(byReason.get(row.reason) || []), name]);
+  }
+  const said = [...byReason].map(([reason, names]) =>
+    `${names.slice(0, 3).join(', ')}${names.length > 3 ? ` and ${formatCount(names.length - 3)} more` : ''}: ${reason}`);
+  return `Put back ${formatCount(putBack)} item${putBack === 1 ? '' : 's'}; ${formatCount(rows.length)} not put back. ${said.join(' ')}`;
+}
+
 function restoreFromCapsule(id) {
   api(`/api/timecapsule/${encodeURIComponent(id)}/restore`, { method: 'POST' })
     .then(resp => {

@@ -1631,10 +1631,11 @@ test('a run whose items were not confirmed as trashed offers its undo, and does 
 test('an Autopilot undo that passed over an unconfirmed item says so, rather than that everything is back (FG3c #3)', async () => {
   const code = appCode();
   const src = code.slice(code.indexOf('function undoAutopilotRun'), code.indexOf('function deletePolicy'));
+  const helper = region('function passedOverToast', 'function restoreFromCapsule');
   const run = async (answer: Record<string, unknown>): Promise<string[]> => {
     const toasts: string[] = [];
     let watched: { onComplete: () => void } | null = null;
-    const make = new Function('api', 'watchJob', 'toast', 'loadAutopilot', 'formatCount', `${src}; return undoAutopilotRun;`);
+    const make = new Function('api', 'watchJob', 'toast', 'loadAutopilot', 'formatCount', `${helper}; ${src}; return undoAutopilotRun;`);
     make(
       () => Promise.resolve(answer),
       (opts: { onComplete: () => void }) => { watched = opts; },
@@ -1652,6 +1653,13 @@ test('an Autopilot undo that passed over an unconfirmed item says so, rather tha
   assert.doesNotMatch(partial.join(' | '), /Everything from that run is back/, 'one item was not put back');
   assert.ok(partial.join(' | ').includes(reason), `the item's own sentence is shown (${partial.join(' | ')})`);
   assert.match((await run({ jobId: 'j', entryCount: 2 })).join(' | '), /Everything from that run is back/, 'and a whole undo still says so');
+  // Copies passed over for different reasons are each named with their own (FG3d #7).
+  const occupied = 'Something stands where it was that TreeMap cannot show is the item it copied — the original may be in the Trash.';
+  const mixed = (await run({ jobId: 'j', entryCount: 1, passedOver: [{ path: '/x/late-a.bin', reason }, { path: 'C:\\x\\late-b.bin', reason: occupied }] })).join(' | ');
+  assert.match(mixed, /Put back 1 item; 2 not put back/, mixed);
+  assert.ok(mixed.includes(`late-a.bin: ${reason}`), `the first copy, by name, with its own sentence (${mixed})`);
+  assert.ok(mixed.includes(`late-b.bin: ${occupied}`), `the second copy, by name, with its own sentence (${mixed})`);
+  assert.equal(mixed.split(reason).length - 1, 1, `"still in its place" is said of one copy only (${mixed})`);
 });
 
 test('a run shows why each item was chosen, and what it left alone', () => {

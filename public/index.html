@@ -22136,6 +22136,23 @@ function renderCapsuleEvents(events) {
   });
 }
 
+/**
+ * What an undo that passed over copies of unconfirmed items says once it is done (FG3c, FG3d #7):
+ * how many it put back, then every copy it did not, by name, under the sentence the server gave
+ * that copy — still in its place, something else there, or a place it could not look at. Each copy
+ * carries its own sentence, so one is never said of another.
+ */
+function passedOverToast(putBack, rows) {
+  const byReason = new Map();
+  for (const row of rows) {
+    const name = String(row.path).split(/[\\/]/).filter(Boolean).pop() || String(row.path);
+    byReason.set(row.reason, [...(byReason.get(row.reason) || []), name]);
+  }
+  const said = [...byReason].map(([reason, names]) =>
+    `${names.slice(0, 3).join(', ')}${names.length > 3 ? ` and ${formatCount(names.length - 3)} more` : ''}: ${reason}`);
+  return `Put back ${formatCount(putBack)} item${putBack === 1 ? '' : 's'}; ${formatCount(rows.length)} not put back. ${said.join(' ')}`;
+}
+
 function restoreFromCapsule(id) {
   api(`/api/timecapsule/${encodeURIComponent(id)}/restore`, { method: 'POST' })
     .then(resp => {
@@ -24902,12 +24919,12 @@ function undoAutopilotRun(runId) {
         footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
         cancelledMessage: 'Undo cancelled — nothing was left half-written',
         lostMessage: 'Lost the progress stream — reopen Autopilot for the result',
-        // One it passed over (its place is not empty yet) is named with what the disk showed (FG3c).
+        // Each one it passed over (its place is not empty yet) is named with what the disk showed of
+        // it (FG3c, FG3d #7); the run keeps its Undo for them.
         onComplete: () => {
           const left = resp.passedOver || [];
-          toast(left.length
-            ? `Put back ${formatCount(resp.entryCount)} item${resp.entryCount === 1 ? '' : 's'}; ${formatCount(left.length)} not put back: ${left[0].reason}`
-            : 'Everything from that run is back', left.length ? 'error' : undefined, left.length ? 12000 : undefined);
+          toast(left.length ? passedOverToast(resp.entryCount, left) : 'Everything from that run is back',
+            left.length ? 'error' : undefined, left.length ? 12000 : undefined);
           loadAutopilot();
         },
         onSettled: () => loadAutopilot(),
@@ -27030,11 +27047,12 @@ async function cartUndoRun(runId) {
     cancelledMessage: 'Undo cancelled — nothing was left half-written',
     lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
     onComplete: () => {
-      // A copy it passed over (an unconfirmed item whose place is not empty) is named with what the
-      // disk showed, and the undo stays offered for it (FG3c).
+      // Each copy it passed over (an unconfirmed item whose place is not empty) is named with what
+      // the disk showed of it (FG3c, FG3d #7). The copy stays in the Time Capsule, whose tab restores
+      // it once its place is empty: the summary that held this Undo closed when the undo began.
       const left = job.passedOver || [];
       if (left.length) {
-        toast(`Put back ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}; ${formatCount(left.length)} not put back: ${left[0].reason}`, 'error', 12000);
+        toast(passedOverToast(job.entryCount, left), 'error', 12000);
       } else {
         toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
         cartLastRun = null;
