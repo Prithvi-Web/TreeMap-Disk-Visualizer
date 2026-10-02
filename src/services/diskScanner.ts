@@ -22,6 +22,8 @@ import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBa
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
 import { nativeProjection } from './scan/projection';
+import { memoryRoomFor } from './scan/nativeMemory';
+import { formatCount } from '../utils/formatCount';
 import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
 import { isSpillFolderName, isSpillPath } from '../utils/pathSanitizer';
@@ -772,10 +774,19 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
       scan.fastPath = nativeWalk.fastPath;
       scan.engineReason = mftClause === null ? nativeWalk.reason : `${nativeWalk.reason}; ${mftClause}`;
       scan.fallbackReason = mftFallback;
-      scan.nativePlan = { projection: nativeWalk.projection };
+      // The memory store's room, sized from the projection (U-31, the owner's
+      // U-Q15): a tree that outgrew the default room is walked once, not once
+      // to the ceiling and again. Interim until T16's chooser.
+      const storage = nativeStorageFor(nativeWalk.module);
+      const room = storage === 'memory' ? memoryRoomFor(nativeWalk.projection) : null;
+      scan.nativePlan = { projection: nativeWalk.projection, room };
+      if (room?.sizedBy === 'projection') {
+        // "Sized for": the plan, before the module is asked; a refusal of it is said after it (runNativeWalk).
+        scan.engineReason = `${scan.engineReason}; the memory store was sized for ${formatCount(room.capRows)} rows because ${nativeWalk.projection.reason}`;
+      }
       const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
       try {
-        await runNativeWalk(scan, store, rootPath, nativeWalk.module, nativeStorageFor(nativeWalk.module));
+        await runNativeWalk(scan, store, rootPath, nativeWalk.module, storage, room ?? undefined);
         if (scan.cancelled) return;
         await rootCheck(scan.rootPath);
         settleComplete(scan, store);

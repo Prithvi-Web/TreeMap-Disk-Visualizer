@@ -36,16 +36,30 @@ const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
 const SORT_CHILDREN = platform().platform !== 'windows';
 
 /**
- * Rows the memory sink reserves, the headroom among them: 1.25 × `T_mem`, the
- * 5M rows memory mode takes in both runtimes (T9's measurement, 26 Sep 2026:
- * 533 MB at 5M in plain Node, 547 MB in Electron, under the 700 MB ceiling).
- * A walk with more entries, or more bytes of names than `NAME_BYTES_PER_ROW`
- * a row, ends at its ceiling, and `runNativeWalk` walks it again on the
- * columns path (T10) until T12's conversions carry it on.
+ * Rows the memory sink reserves by default, the headroom among them: 1.25 ×
+ * `T_mem`, the 5M rows memory mode takes in both runtimes (T9's measurement,
+ * 26 Sep 2026: 533 MB at 5M in plain Node, 547 MB in Electron, under the
+ * 700 MB ceiling). A walk with more entries, or more bytes of names than
+ * `NAME_BYTES_PER_ROW` a row, ends at its ceiling, and `runNativeWalk` walks
+ * it again on the columns path (T10) until T12's conversions carry it on —
+ * unless its projection sized the room first (`memoryRoomFor`, U-31).
  */
 export const MEMORY_CAP_ROWS = 6_250_000;
 /** Name bytes the sink reserves a row: address space, resident only where names are written (names average 13–21 bytes). */
 const NAME_BYTES_PER_ROW = 128;
+/**
+ * How much room a tree gets for its projected entries (Track U, U-31; the
+ * owner's U-Q15, 2 Oct 2026): a stated policy, not a measurement. A row
+ * reserved and never written costs only address space — its pages are never
+ * touched, so never resident (P4-11) — while a row too few costs a whole
+ * second walk. Interim: T16's chooser replaces it, and the room goes back to
+ * 1.25 × `T_mem` as the conversion trigger.
+ */
+export const RESERVE_FACTOR = 2;
+/** The most rows the store can number: its ids are signed 32-bit. */
+const MAX_ROOM_ROWS = 2 ** 31 - 1;
+/** The most name bytes its 32-bit name offsets reach. */
+const MAX_NAME_BYTES = 2 ** 32 - 1;
 
 /** The memory sink's room: rows reserved, the headroom among them, and name bytes. */
 export interface MemoryRoom {
@@ -53,6 +67,8 @@ export interface MemoryRoom {
   /** Rows kept free after the scan's for the watcher and container expansion: 1 % of the reservation, at least 1,024 (P4-6). */
   headroomRows: number;
   nameBytes: number;
+  /** `default`: `MEMORY_CAP_ROWS` (or a test's); `projection`: more, sized from the tree's projected entries (U-31). */
+  sizedBy: 'default' | 'projection';
 }
 
 /** A test's room: rows reserved and, optionally, name bytes a row. */
@@ -63,11 +79,33 @@ export interface MemoryRoomForTests {
 
 let roomForTests: MemoryRoomForTests | null = null;
 
-/** The room a memory-mode walk is given (`MEMORY_CAP_ROWS`, or a test's). */
-export function memoryRoom(): MemoryRoom {
-  const capRows = roomForTests?.capRows ?? MEMORY_CAP_ROWS;
+/**
+ * The room a memory-mode walk is given for a tree projected at `entries`
+ * (U-31): `RESERVE_FACTOR` times the projection where that is more than the
+ * default room (`MEMORY_CAP_ROWS`, or a test's), else the default; no more
+ * rows than the store's ids number, and no more name bytes than its offsets
+ * reach. An unknown projection — null, or anything but a positive finite
+ * number — gets the default.
+ */
+export function memoryRoomFor(projection: { entries: number | null } | null): MemoryRoom {
+  const base = roomForTests?.capRows ?? MEMORY_CAP_ROWS;
   const nameBytesPerRow = roomForTests?.nameBytesPerRow ?? NAME_BYTES_PER_ROW;
-  return { capRows, headroomRows: Math.max(1_024, Math.ceil(capRows / 100)), nameBytes: capRows * nameBytesPerRow };
+  const entries = projection?.entries;
+  const wanted = typeof entries === 'number' && Number.isFinite(entries) && entries > 0
+    ? Math.max(base, Math.ceil(RESERVE_FACTOR * entries))
+    : base;
+  const capRows = Math.min(wanted, MAX_ROOM_ROWS);
+  return {
+    capRows,
+    headroomRows: Math.max(1_024, Math.ceil(capRows / 100)),
+    nameBytes: Math.min(capRows * nameBytesPerRow, MAX_NAME_BYTES),
+    sizedBy: capRows > base ? 'projection' : 'default',
+  };
+}
+
+/** The default room a memory-mode walk is given (`MEMORY_CAP_ROWS`, or a test's): `memoryRoomFor` with no projection. */
+export function memoryRoom(): MemoryRoom {
+  return memoryRoomFor(null);
 }
 
 /** Tests only: less room, so a small tree can reach a ceiling — its rows' or its names'; null restores the real room. */
@@ -81,10 +119,10 @@ export function setMemoryRoomForTests(room: MemoryRoomForTests | null): void {
  * reach a scan only rarely: `rootMtimeMs` stands in for the root's time only
  * where the walk withheld it, and `sortChildren` is the reference build's
  * re-sort — the sink keeps the walk's listing order, which the POSIX listers
- * sort themselves and Windows keeps as listed, as the ingest does.
+ * sort themselves and Windows keeps as listed, as the ingest does. `room` is
+ * the sink's room: the default, or one sized from the tree's projection.
  */
-export function memoryStoreOptions(store: PackedScanStore): StoreStartOptions {
-  const room = memoryRoom();
+export function memoryStoreOptions(store: PackedScanStore, room: MemoryRoom = memoryRoom()): StoreStartOptions {
   return {
     rootName: store.name(store.rootId),
     rootMtimeMs: store.modifiedAt(store.rootId),

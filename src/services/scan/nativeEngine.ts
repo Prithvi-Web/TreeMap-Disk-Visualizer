@@ -9,7 +9,8 @@ import { elevationRefusal, unpackedPath } from './mftHelperPath';
 import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTests } from './mftPrompt';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, ScanStore, joinPath } from '../scanStore';
-import { adoptNativeStore, memoryStoreOptions, takeNativeStore } from './nativeMemory';
+import { adoptNativeStore, memoryRoom, memoryStoreOptions, takeNativeStore, type MemoryRoom } from './nativeMemory';
+import { formatCount } from '../../utils/formatCount';
 import { cloudProviderFor } from '../cloudFolders';
 import { noteRefused } from '../scanRefusals';
 import { neverDescendPaths } from '../../utils/mountBoundaries';
@@ -668,6 +669,12 @@ async function settle(mod: ScanModule, handle: number): Promise<void> {
  * fallback; time in which the machine was saturated is left out, since the
  * walk may only be waiting for a turn. A module that throws mid-walk has its
  * handle settled first, so nothing is leaked behind the error.
+ *
+ * In memory mode the sink is given `room`: the default, or one sized from the
+ * tree's projection (`memoryRoomFor`, Track U U-31). A sized room the module
+ * refuses to make is retried once at the default room, and a default room
+ * refused walks the tree natively on the columns path, each said in
+ * `engineReason`; any other failure to start is thrown.
  */
 /**
  * Where a native scan's rows go: `'columns'`, the walk's own columns, which
@@ -685,14 +692,41 @@ export function nativeStorageFor(module: ScanModule): NativeStorage {
   return typeof module.storeTake === 'function' ? 'memory' : 'columns';
 }
 
-export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath: string, module?: ScanModule, storage: NativeStorage = 'columns'): Promise<void> {
+/**
+ * How tm-node refuses a memory sink it cannot make — its room's mappings
+ * refused (address space, or under strict overcommit the commit charge), or
+ * a room the store cannot hold — before any walk starts (tm-node `store.rs`).
+ */
+const SINK_REFUSED = /the memory sink cannot be made/;
+
+/** A clause of `engineReason`, after any it already has. */
+function addReason(scan: ScanResult, clause: string): void {
+  scan.engineReason = scan.engineReason ? `${scan.engineReason}; ${clause}` : clause;
+}
+
+export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath: string, module?: ScanModule, storage: NativeStorage = 'columns', room: MemoryRoom = memoryRoom()): Promise<void> {
   const mod = module ?? mustScanModule();
   const memory = storage === 'memory' ? memoryTarget(store, mod) : null;
-  const handle = mod.scanStart(rootPath, {
-    neverDescend: neverDescendPaths(),
-    wantAtime: true,
-    ...(memory ? { storage: 'memory' as const, store: memoryStoreOptions(memory.store) } : {}),
-  });
+  let handle: number;
+  try {
+    handle = mod.scanStart(rootPath, {
+      neverDescend: neverDescendPaths(),
+      wantAtime: true,
+      ...(memory ? { storage: 'memory' as const, store: memoryStoreOptions(memory.store, room) } : {}),
+    });
+  } catch (err: unknown) {
+    // A room the OS would not reserve (U-31). A sized room is retried once at
+    // the default; a default room refused walks natively on the columns path,
+    // which needs no sink — never the legacy walker. Nothing else is retried.
+    if (memory === null || !SINK_REFUSED.test(describe(err))) throw err;
+    if (room.sizedBy === 'projection') {
+      const fallback = memoryRoom();
+      addReason(scan, `the memory store could not be given room for ${formatCount(room.capRows)} rows (${describe(err)}), so it was given its default room for ${formatCount(fallback.capRows)}`);
+      return runNativeWalk(scan, store, rootPath, mod, 'memory', fallback);
+    }
+    addReason(scan, `the memory store could not be made (${describe(err)}), so the tree was walked on the columns path`);
+    return runNativeWalk(scan, store, rootPath, mod, 'columns');
+  }
   let nativePaused = false;
   const setPaused = (want: boolean): void => {
     if (want === nativePaused) return;
@@ -780,8 +814,7 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
     // bare root the scanner made, for the columns path to fill, until T12's
     // conversions give such a tree a mode of its own.
     await settleOnce();
-    const again = `${ceiling}, so it walked the tree again on the columns path`;
-    scan.engineReason = scan.engineReason ? `${scan.engineReason}; ${again}` : again;
+    addReason(scan, `${ceiling}, so it walked the tree again on the columns path`);
     return runNativeWalk(scan, store, rootPath, mod, 'columns');
   }
   if (memory) {

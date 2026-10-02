@@ -7,6 +7,7 @@ import type { ScanStore } from '../services/scanStore';
 import type { ReclaimWeights } from '../services/reclaimScore';
 import type { StorageMode } from '../services/storageMode';
 import type { EntryProjection } from '../services/scan/projection';
+import type { MemoryRoom } from '../services/scan/nativeMemory';
 
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
@@ -218,16 +219,24 @@ export interface ScanResult {
   storageMode?: StorageMode;
   /**
    * What a native scan knew before it walked (Track U): the size it projected
-   * (U-30). Internal — every scan response is shaped by an explicit whitelist
-   * and none carries it (DESIGN §12).
+   * (U-30) and the room its memory store was given (U-31). Internal — every
+   * scan response is shaped by an explicit whitelist and none carries it
+   * (DESIGN §12).
    */
   nativePlan?: NativePlan;
 }
 
-/** A native scan's plan, made before it walks (Track U, U-30). */
+/** A native scan's plan, made before it walks (Track U, U-30 and U-31). */
 export interface NativePlan {
   /** The entries projected from the last scan of the folder, or the volume's used inodes, or unknown. */
   projection: EntryProjection;
+  /**
+   * The memory store's room as planned before the walk: sized from the
+   * projection, or the default; null for a walk on the columns path. A room the
+   * module refused is retried at the default, as `engineReason` says; the walks
+   * themselves are U-9's to record.
+   */
+  room: MemoryRoom | null;
 }
 
 /** One rectangle of the squarified treemap, coordinates in percent (0–100). */
