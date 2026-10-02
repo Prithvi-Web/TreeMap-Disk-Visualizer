@@ -363,9 +363,10 @@ export function isExpandableId(store: ScanStore, id: number): boolean {
   );
 }
 
-/** pruneTree, but reading a ScanStore. Same invariants, same output bytes. */
+/** pruneTree, but reading a ScanStore. Same invariants, same output bytes, same `overshoot` rule. */
 export function pruneStore(store: ScanStore, id: number, options: PruneOptions): PruneResult {
   const maxNodes = Math.max(1, options.maxNodes);
+  const exact = options.overshoot === 'none';
   const rootCopy = materializeBare(store, id);
   let nodes = 1;
   let prunedDirs = 0;
@@ -386,6 +387,10 @@ export function pruneStore(store: ScanStore, id: number, options: PruneOptions):
 
   while (heap.size > 0 && nodes < maxNodes) {
     const { srcId, copy } = heap.pop() as StoreJob;
+    // pruneTree's exact budget: a folder that does not fit stays pruned (asked
+    // by its count, so its children are never listed), and a smaller one may
+    // still fit. Not the prune's own root.
+    if (exact && srcId !== id && nodes + store.childCount(srcId) > maxNodes) continue;
 
     const kidIds = store.childIds(srcId);
     // Children reuse the parent's already-built path — O(1) per node instead
@@ -405,12 +410,14 @@ export function pruneStore(store: ScanStore, id: number, options: PruneOptions):
 /**
  * The folders `pruneStore(store, id, options)` expands — gives its children —
  * found without building a node: the same heap, fed the same folders in the
- * same order, so the same ones are popped. Every other folder in its tree is
- * `pruned`, or `children: []` when it is empty (`treeFrame.ts` writes the
- * tree's JSON from this).
+ * same order, so the same ones are popped, and under `overshoot: 'none'` the
+ * same ones skipped. Every other folder in its tree is `pruned`, or
+ * `children: []` when it is empty (`treeFrame.ts` writes the tree's JSON from
+ * this).
  */
 export function prunedExpansion(store: ScanStore, id: number, options: PruneOptions): Set<number> {
   const maxNodes = Math.max(1, options.maxNodes);
+  const exact = options.overshoot === 'none';
   const expanded = new Set<number>();
   const heap = new StoreSizeHeap<SizedJob>();
   let nodes = 1;
@@ -420,6 +427,7 @@ export function prunedExpansion(store: ScanStore, id: number, options: PruneOpti
   defer(id);
   while (heap.size > 0 && nodes < maxNodes) {
     const { srcId } = heap.pop() as SizedJob;
+    if (exact && srcId !== id && nodes + store.childCount(srcId) > maxNodes) continue;
     expanded.add(srcId);
     const kidIds = store.childIds(srcId);
     nodes += kidIds.length;

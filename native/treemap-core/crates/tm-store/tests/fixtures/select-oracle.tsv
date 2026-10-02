@@ -1,40 +1,76 @@
 tree	ties-a	1	400	35	10	3	30	60	6	10	85	9	5	40	3	400	f35d15e3
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	6	40964454
-prune	0	5	1	4b95f515	6	40964454
-prune	0	50	3	acea1422	76	215fab88
-prune	0	51	3	acea1422	76	215fab88
-prune	0	250000	60	f02b4329	390	8f47bd19
-prune	40	1	0	811c9dc5	1	d27fcfbd
-prune	40	2	1	d27fcfbd	73	d0766abd
-prune	40	5	1	d27fcfbd	73	d0766abd
-prune	40	50	1	d27fcfbd	73	d0766abd
-prune	40	51	1	d27fcfbd	73	d0766abd
-prune	40	250000	15	bc6652c9	107	342fc062
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
-prune	93	1	0	811c9dc5	1	33cedf18
-prune	93	2	1	33cedf18	4	89a4a201
-prune	93	5	1	33cedf18	4	89a4a201
-prune	93	50	1	33cedf18	4	89a4a201
-prune	93	51	1	33cedf18	4	89a4a201
-prune	93	250000	1	33cedf18	4	89a4a201
-prune	52	1	0	811c9dc5	1	1330cc01
-prune	52	2	0	811c9dc5	1	1330cc01
-prune	52	5	0	811c9dc5	1	1330cc01
-prune	52	50	0	811c9dc5	1	1330cc01
-prune	52	51	0	811c9dc5	1	1330cc01
-prune	52	250000	0	811c9dc5	1	1330cc01
-prune	20	1	0	811c9dc5	1	0da8e9e1
-prune	20	2	0	811c9dc5	1	0da8e9e1
-prune	20	5	0	811c9dc5	1	0da8e9e1
-prune	20	50	0	811c9dc5	1	0da8e9e1
-prune	20	51	0	811c9dc5	1	0da8e9e1
-prune	20	250000	0	811c9dc5	1	0da8e9e1
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	6	40964454
+prune	0	2	none	1	4b95f515	6	40964454
+prune	0	5	lastFolder	1	4b95f515	6	40964454
+prune	0	5	none	1	4b95f515	6	40964454
+prune	0	50	lastFolder	3	acea1422	76	215fab88
+prune	0	50	none	12	b920f3e5	50	1b2405cd
+prune	0	51	lastFolder	3	acea1422	76	215fab88
+prune	0	51	none	13	24ea16f6	51	322a52de
+prune	0	250000	lastFolder	60	f02b4329	390	8f47bd19
+prune	0	250000	none	60	f02b4329	390	8f47bd19
+prune	40	1	lastFolder	0	811c9dc5	1	d27fcfbd
+prune	40	1	none	0	811c9dc5	1	d27fcfbd
+prune	40	2	lastFolder	1	d27fcfbd	73	d0766abd
+prune	40	2	none	1	d27fcfbd	73	d0766abd
+prune	40	5	lastFolder	1	d27fcfbd	73	d0766abd
+prune	40	5	none	1	d27fcfbd	73	d0766abd
+prune	40	50	lastFolder	1	d27fcfbd	73	d0766abd
+prune	40	50	none	1	d27fcfbd	73	d0766abd
+prune	40	51	lastFolder	1	d27fcfbd	73	d0766abd
+prune	40	51	none	1	d27fcfbd	73	d0766abd
+prune	40	250000	lastFolder	15	bc6652c9	107	342fc062
+prune	40	250000	none	15	bc6652c9	107	342fc062
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
+prune	93	1	lastFolder	0	811c9dc5	1	33cedf18
+prune	93	1	none	0	811c9dc5	1	33cedf18
+prune	93	2	lastFolder	1	33cedf18	4	89a4a201
+prune	93	2	none	1	33cedf18	4	89a4a201
+prune	93	5	lastFolder	1	33cedf18	4	89a4a201
+prune	93	5	none	1	33cedf18	4	89a4a201
+prune	93	50	lastFolder	1	33cedf18	4	89a4a201
+prune	93	50	none	1	33cedf18	4	89a4a201
+prune	93	51	lastFolder	1	33cedf18	4	89a4a201
+prune	93	51	none	1	33cedf18	4	89a4a201
+prune	93	250000	lastFolder	1	33cedf18	4	89a4a201
+prune	93	250000	none	1	33cedf18	4	89a4a201
+prune	52	1	lastFolder	0	811c9dc5	1	1330cc01
+prune	52	1	none	0	811c9dc5	1	1330cc01
+prune	52	2	lastFolder	0	811c9dc5	1	1330cc01
+prune	52	2	none	0	811c9dc5	1	1330cc01
+prune	52	5	lastFolder	0	811c9dc5	1	1330cc01
+prune	52	5	none	0	811c9dc5	1	1330cc01
+prune	52	50	lastFolder	0	811c9dc5	1	1330cc01
+prune	52	50	none	0	811c9dc5	1	1330cc01
+prune	52	51	lastFolder	0	811c9dc5	1	1330cc01
+prune	52	51	none	0	811c9dc5	1	1330cc01
+prune	52	250000	lastFolder	0	811c9dc5	1	1330cc01
+prune	52	250000	none	0	811c9dc5	1	1330cc01
+prune	20	1	lastFolder	0	811c9dc5	1	0da8e9e1
+prune	20	1	none	0	811c9dc5	1	0da8e9e1
+prune	20	2	lastFolder	0	811c9dc5	1	0da8e9e1
+prune	20	2	none	0	811c9dc5	1	0da8e9e1
+prune	20	5	lastFolder	0	811c9dc5	1	0da8e9e1
+prune	20	5	none	0	811c9dc5	1	0da8e9e1
+prune	20	50	lastFolder	0	811c9dc5	1	0da8e9e1
+prune	20	50	none	0	811c9dc5	1	0da8e9e1
+prune	20	51	lastFolder	0	811c9dc5	1	0da8e9e1
+prune	20	51	none	0	811c9dc5	1	0da8e9e1
+prune	20	250000	lastFolder	0	811c9dc5	1	0da8e9e1
+prune	20	250000	none	0	811c9dc5	1	0da8e9e1
 treemap	0	1	0	1	1	4b95f515	6	40964454	1	86b9a351
 treemap	0	1	0	7	1	4b95f515	6	40964454	5	7e6f7ed5
 treemap	0	1	0	50	1	4b95f515	6	40964454	5	7e6f7ed5
@@ -236,48 +272,90 @@ treemap	52	6	1	50	1	1330cc01	2	ad9a8347	1	766e7f66
 treemap	20	3	0	20000	0	811c9dc5	1	0da8e9e1	0	811c9dc5
 treemap	20	6	1	50	0	811c9dc5	1	0da8e9e1	0	811c9dc5
 tree	ties-b	2	1200	35	10	3	30	60	6	10	85	9	5	40	3	1200	95c5207b
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	5	8ea9e711
-prune	0	5	1	4b95f515	5	8ea9e711
-prune	0	50	2	4bb53254	52	041b4da5
-prune	0	51	2	4bb53254	52	041b4da5
-prune	0	250000	130	cf378a35	828	09a4a54d
-prune	102	1	0	811c9dc5	1	a5b594d3
-prune	102	2	1	a5b594d3	3	bd0205a2
-prune	102	5	2	612bd044	79	dd4680ba
-prune	102	50	2	612bd044	79	dd4680ba
-prune	102	51	2	612bd044	79	dd4680ba
-prune	102	250000	27	3c31b3a8	243	5663f0de
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
-prune	97	1	0	811c9dc5	1	f5e1d3e4
-prune	97	2	1	f5e1d3e4	7	62d330df
-prune	97	5	1	f5e1d3e4	7	62d330df
-prune	97	50	3	78263422	16	1bc61d89
-prune	97	51	3	78263422	16	1bc61d89
-prune	97	250000	3	78263422	16	1bc61d89
-prune	19	1	0	811c9dc5	1	9e862536
-prune	19	2	0	811c9dc5	1	9e862536
-prune	19	5	0	811c9dc5	1	9e862536
-prune	19	50	0	811c9dc5	1	9e862536
-prune	19	51	0	811c9dc5	1	9e862536
-prune	19	250000	0	811c9dc5	1	9e862536
-prune	412	1	0	811c9dc5	1	3a04a69e
-prune	412	2	0	811c9dc5	1	3a04a69e
-prune	412	5	0	811c9dc5	1	3a04a69e
-prune	412	50	0	811c9dc5	1	3a04a69e
-prune	412	51	0	811c9dc5	1	3a04a69e
-prune	412	250000	0	811c9dc5	1	3a04a69e
-prune	93	1	0	811c9dc5	1	33cedf18
-prune	93	2	0	811c9dc5	1	33cedf18
-prune	93	5	0	811c9dc5	1	33cedf18
-prune	93	50	0	811c9dc5	1	33cedf18
-prune	93	51	0	811c9dc5	1	33cedf18
-prune	93	250000	0	811c9dc5	1	33cedf18
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	5	8ea9e711
+prune	0	2	none	1	4b95f515	5	8ea9e711
+prune	0	5	lastFolder	1	4b95f515	5	8ea9e711
+prune	0	5	none	1	4b95f515	5	8ea9e711
+prune	0	50	lastFolder	2	4bb53254	52	041b4da5
+prune	0	50	none	1	4b95f515	5	8ea9e711
+prune	0	51	lastFolder	2	4bb53254	52	041b4da5
+prune	0	51	none	1	4b95f515	5	8ea9e711
+prune	0	250000	lastFolder	130	cf378a35	828	09a4a54d
+prune	0	250000	none	130	cf378a35	828	09a4a54d
+prune	102	1	lastFolder	0	811c9dc5	1	a5b594d3
+prune	102	1	none	0	811c9dc5	1	a5b594d3
+prune	102	2	lastFolder	1	a5b594d3	3	bd0205a2
+prune	102	2	none	1	a5b594d3	3	bd0205a2
+prune	102	5	lastFolder	2	612bd044	79	dd4680ba
+prune	102	5	none	1	a5b594d3	3	bd0205a2
+prune	102	50	lastFolder	2	612bd044	79	dd4680ba
+prune	102	50	none	1	a5b594d3	3	bd0205a2
+prune	102	51	lastFolder	2	612bd044	79	dd4680ba
+prune	102	51	none	1	a5b594d3	3	bd0205a2
+prune	102	250000	lastFolder	27	3c31b3a8	243	5663f0de
+prune	102	250000	none	27	3c31b3a8	243	5663f0de
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
+prune	97	1	lastFolder	0	811c9dc5	1	f5e1d3e4
+prune	97	1	none	0	811c9dc5	1	f5e1d3e4
+prune	97	2	lastFolder	1	f5e1d3e4	7	62d330df
+prune	97	2	none	1	f5e1d3e4	7	62d330df
+prune	97	5	lastFolder	1	f5e1d3e4	7	62d330df
+prune	97	5	none	1	f5e1d3e4	7	62d330df
+prune	97	50	lastFolder	3	78263422	16	1bc61d89
+prune	97	50	none	3	78263422	16	1bc61d89
+prune	97	51	lastFolder	3	78263422	16	1bc61d89
+prune	97	51	none	3	78263422	16	1bc61d89
+prune	97	250000	lastFolder	3	78263422	16	1bc61d89
+prune	97	250000	none	3	78263422	16	1bc61d89
+prune	19	1	lastFolder	0	811c9dc5	1	9e862536
+prune	19	1	none	0	811c9dc5	1	9e862536
+prune	19	2	lastFolder	0	811c9dc5	1	9e862536
+prune	19	2	none	0	811c9dc5	1	9e862536
+prune	19	5	lastFolder	0	811c9dc5	1	9e862536
+prune	19	5	none	0	811c9dc5	1	9e862536
+prune	19	50	lastFolder	0	811c9dc5	1	9e862536
+prune	19	50	none	0	811c9dc5	1	9e862536
+prune	19	51	lastFolder	0	811c9dc5	1	9e862536
+prune	19	51	none	0	811c9dc5	1	9e862536
+prune	19	250000	lastFolder	0	811c9dc5	1	9e862536
+prune	19	250000	none	0	811c9dc5	1	9e862536
+prune	412	1	lastFolder	0	811c9dc5	1	3a04a69e
+prune	412	1	none	0	811c9dc5	1	3a04a69e
+prune	412	2	lastFolder	0	811c9dc5	1	3a04a69e
+prune	412	2	none	0	811c9dc5	1	3a04a69e
+prune	412	5	lastFolder	0	811c9dc5	1	3a04a69e
+prune	412	5	none	0	811c9dc5	1	3a04a69e
+prune	412	50	lastFolder	0	811c9dc5	1	3a04a69e
+prune	412	50	none	0	811c9dc5	1	3a04a69e
+prune	412	51	lastFolder	0	811c9dc5	1	3a04a69e
+prune	412	51	none	0	811c9dc5	1	3a04a69e
+prune	412	250000	lastFolder	0	811c9dc5	1	3a04a69e
+prune	412	250000	none	0	811c9dc5	1	3a04a69e
+prune	93	1	lastFolder	0	811c9dc5	1	33cedf18
+prune	93	1	none	0	811c9dc5	1	33cedf18
+prune	93	2	lastFolder	0	811c9dc5	1	33cedf18
+prune	93	2	none	0	811c9dc5	1	33cedf18
+prune	93	5	lastFolder	0	811c9dc5	1	33cedf18
+prune	93	5	none	0	811c9dc5	1	33cedf18
+prune	93	50	lastFolder	0	811c9dc5	1	33cedf18
+prune	93	50	none	0	811c9dc5	1	33cedf18
+prune	93	51	lastFolder	0	811c9dc5	1	33cedf18
+prune	93	51	none	0	811c9dc5	1	33cedf18
+prune	93	250000	lastFolder	0	811c9dc5	1	33cedf18
+prune	93	250000	none	0	811c9dc5	1	33cedf18
 treemap	0	1	0	1	1	4b95f515	5	8ea9e711	1	e3a69785
 treemap	0	1	0	7	1	4b95f515	5	8ea9e711	4	3990acac
 treemap	0	1	0	50	1	4b95f515	5	8ea9e711	4	3990acac
@@ -481,24 +559,42 @@ treemap	412	6	1	50	1	3a04a69e	1	3a04a69e	0	811c9dc5
 treemap	93	3	0	20000	0	811c9dc5	1	33cedf18	0	811c9dc5
 treemap	93	6	1	50	0	811c9dc5	1	33cedf18	0	811c9dc5
 tree	flat-a	3	500	40	15	2	20	40	5	5	95	1	0	0	0	500	c9b0c90c
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	5	8ea9e711
-prune	0	5	1	4b95f515	5	8ea9e711
-prune	0	50	9	de6873b3	64	f5affe86
-prune	0	51	9	de6873b3	64	f5affe86
-prune	0	250000	138	5e15ba3f	500	487b83a1
-prune	187	1	0	811c9dc5	1	0f50775e
-prune	187	2	1	0f50775e	61	3139e7be
-prune	187	5	1	0f50775e	61	3139e7be
-prune	187	50	1	0f50775e	61	3139e7be
-prune	187	51	1	0f50775e	61	3139e7be
-prune	187	250000	17	f56135ec	102	4997b3aa
-prune	3	1	0	811c9dc5	1	9bc23426
-prune	3	2	0	811c9dc5	1	9bc23426
-prune	3	5	0	811c9dc5	1	9bc23426
-prune	3	50	0	811c9dc5	1	9bc23426
-prune	3	51	0	811c9dc5	1	9bc23426
-prune	3	250000	0	811c9dc5	1	9bc23426
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	5	8ea9e711
+prune	0	2	none	1	4b95f515	5	8ea9e711
+prune	0	5	lastFolder	1	4b95f515	5	8ea9e711
+prune	0	5	none	1	4b95f515	5	8ea9e711
+prune	0	50	lastFolder	9	de6873b3	64	f5affe86
+prune	0	50	none	11	a90e6e7e	31	5eed46ca
+prune	0	51	lastFolder	9	de6873b3	64	f5affe86
+prune	0	51	none	11	a90e6e7e	31	5eed46ca
+prune	0	250000	lastFolder	138	5e15ba3f	500	487b83a1
+prune	0	250000	none	138	5e15ba3f	500	487b83a1
+prune	187	1	lastFolder	0	811c9dc5	1	0f50775e
+prune	187	1	none	0	811c9dc5	1	0f50775e
+prune	187	2	lastFolder	1	0f50775e	61	3139e7be
+prune	187	2	none	1	0f50775e	61	3139e7be
+prune	187	5	lastFolder	1	0f50775e	61	3139e7be
+prune	187	5	none	1	0f50775e	61	3139e7be
+prune	187	50	lastFolder	1	0f50775e	61	3139e7be
+prune	187	50	none	1	0f50775e	61	3139e7be
+prune	187	51	lastFolder	1	0f50775e	61	3139e7be
+prune	187	51	none	1	0f50775e	61	3139e7be
+prune	187	250000	lastFolder	17	f56135ec	102	4997b3aa
+prune	187	250000	none	17	f56135ec	102	4997b3aa
+prune	3	1	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	1	none	0	811c9dc5	1	9bc23426
+prune	3	2	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	2	none	0	811c9dc5	1	9bc23426
+prune	3	5	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	5	none	0	811c9dc5	1	9bc23426
+prune	3	50	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	50	none	0	811c9dc5	1	9bc23426
+prune	3	51	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	51	none	0	811c9dc5	1	9bc23426
+prune	3	250000	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	250000	none	0	811c9dc5	1	9bc23426
 treemap	0	1	0	1	1	4b95f515	5	8ea9e711	1	45783720
 treemap	0	1	0	7	1	4b95f515	5	8ea9e711	4	3f109d9b
 treemap	0	1	0	50	1	4b95f515	5	8ea9e711	4	3f109d9b
@@ -694,24 +790,42 @@ treemap	187	6	10240	20000	1	0f50775e	1	0f50775e	0	811c9dc5
 treemap	3	3	0	20000	0	811c9dc5	1	9bc23426	0	811c9dc5
 treemap	3	6	1	50	0	811c9dc5	1	9bc23426	0	811c9dc5
 tree	flat-b	4	1500	30	5	5	50	100	7	20	80	2	0	0	0	1500	0d2fcece
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	8	b44ff9c5
-prune	0	5	1	4b95f515	8	b44ff9c5
-prune	0	50	6	ee2c3283	98	e57da58d
-prune	0	51	6	ee2c3283	98	e57da58d
-prune	0	250000	182	af63c1bd	1500	1f0b956d
-prune	241	1	0	811c9dc5	1	e2863c74
-prune	241	2	1	e2863c74	115	63e7423e
-prune	241	5	1	e2863c74	115	63e7423e
-prune	241	50	1	e2863c74	115	63e7423e
-prune	241	51	1	e2863c74	115	63e7423e
-prune	241	250000	37	6987e777	392	5570cf5b
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	8	b44ff9c5
+prune	0	2	none	1	4b95f515	8	b44ff9c5
+prune	0	5	lastFolder	1	4b95f515	8	b44ff9c5
+prune	0	5	none	1	4b95f515	8	b44ff9c5
+prune	0	50	lastFolder	6	ee2c3283	98	e57da58d
+prune	0	50	none	6	3e587194	16	93aab7c5
+prune	0	51	lastFolder	6	ee2c3283	98	e57da58d
+prune	0	51	none	6	3e587194	16	93aab7c5
+prune	0	250000	lastFolder	182	af63c1bd	1500	1f0b956d
+prune	0	250000	none	182	af63c1bd	1500	1f0b956d
+prune	241	1	lastFolder	0	811c9dc5	1	e2863c74
+prune	241	1	none	0	811c9dc5	1	e2863c74
+prune	241	2	lastFolder	1	e2863c74	115	63e7423e
+prune	241	2	none	1	e2863c74	115	63e7423e
+prune	241	5	lastFolder	1	e2863c74	115	63e7423e
+prune	241	5	none	1	e2863c74	115	63e7423e
+prune	241	50	lastFolder	1	e2863c74	115	63e7423e
+prune	241	50	none	1	e2863c74	115	63e7423e
+prune	241	51	lastFolder	1	e2863c74	115	63e7423e
+prune	241	51	none	1	e2863c74	115	63e7423e
+prune	241	250000	lastFolder	37	6987e777	392	5570cf5b
+prune	241	250000	none	37	6987e777	392	5570cf5b
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
 treemap	0	1	0	1	1	4b95f515	7	a2e2b772	1	f60cb6c1
 treemap	0	1	0	7	1	4b95f515	7	a2e2b772	6	d66debd6
 treemap	0	1	0	50	1	4b95f515	7	a2e2b772	6	d66debd6
@@ -907,24 +1021,42 @@ treemap	241	6	10240	20000	1	e2863c74	1	e2863c74	0	811c9dc5
 treemap	2	3	0	20000	0	811c9dc5	1	ebee7337	0	811c9dc5
 treemap	2	6	1	50	0	811c9dc5	1	ebee7337	0	811c9dc5
 tree	chains-a	5	300	50	60	0	0	0	3	10	80	5	0	0	0	300	71065395
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	2	4bb53254
-prune	0	5	4	00732805	5	8ea9e711
-prune	0	50	37	1286cac5	51	8ad9d5e8
-prune	0	51	37	1286cac5	51	8ad9d5e8
-prune	0	250000	228	04451da0	300	40dec6b5
-prune	205	1	0	811c9dc5	1	1aeb6588
-prune	205	2	1	1aeb6588	2	430ae0fa
-prune	205	5	4	f2a7e097	5	31d730e7
-prune	205	50	39	e3067f7f	50	383b776d
-prune	205	51	40	518fc133	51	378e067a
-prune	205	250000	61	4df16f83	75	c2470e78
-prune	12	1	0	811c9dc5	1	8c46f159
-prune	12	2	0	811c9dc5	1	8c46f159
-prune	12	5	0	811c9dc5	1	8c46f159
-prune	12	50	0	811c9dc5	1	8c46f159
-prune	12	51	0	811c9dc5	1	8c46f159
-prune	12	250000	0	811c9dc5	1	8c46f159
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	2	4bb53254
+prune	0	2	none	1	4b95f515	2	4bb53254
+prune	0	5	lastFolder	4	00732805	5	8ea9e711
+prune	0	5	none	4	00732805	5	8ea9e711
+prune	0	50	lastFolder	37	1286cac5	51	8ad9d5e8
+prune	0	50	none	38	82ca50e6	50	c91ea3d6
+prune	0	51	lastFolder	37	1286cac5	51	8ad9d5e8
+prune	0	51	none	37	1286cac5	51	8ad9d5e8
+prune	0	250000	lastFolder	228	04451da0	300	40dec6b5
+prune	0	250000	none	228	04451da0	300	40dec6b5
+prune	205	1	lastFolder	0	811c9dc5	1	1aeb6588
+prune	205	1	none	0	811c9dc5	1	1aeb6588
+prune	205	2	lastFolder	1	1aeb6588	2	430ae0fa
+prune	205	2	none	1	1aeb6588	2	430ae0fa
+prune	205	5	lastFolder	4	f2a7e097	5	31d730e7
+prune	205	5	none	4	f2a7e097	5	31d730e7
+prune	205	50	lastFolder	39	e3067f7f	50	383b776d
+prune	205	50	none	39	e3067f7f	50	383b776d
+prune	205	51	lastFolder	40	518fc133	51	378e067a
+prune	205	51	none	40	518fc133	51	378e067a
+prune	205	250000	lastFolder	61	4df16f83	75	c2470e78
+prune	205	250000	none	61	4df16f83	75	c2470e78
+prune	12	1	lastFolder	0	811c9dc5	1	8c46f159
+prune	12	1	none	0	811c9dc5	1	8c46f159
+prune	12	2	lastFolder	0	811c9dc5	1	8c46f159
+prune	12	2	none	0	811c9dc5	1	8c46f159
+prune	12	5	lastFolder	0	811c9dc5	1	8c46f159
+prune	12	5	none	0	811c9dc5	1	8c46f159
+prune	12	50	lastFolder	0	811c9dc5	1	8c46f159
+prune	12	50	none	0	811c9dc5	1	8c46f159
+prune	12	51	lastFolder	0	811c9dc5	1	8c46f159
+prune	12	51	none	0	811c9dc5	1	8c46f159
+prune	12	250000	lastFolder	0	811c9dc5	1	8c46f159
+prune	12	250000	none	0	811c9dc5	1	8c46f159
 treemap	0	1	0	1	1	4b95f515	2	4bb53254	1	69ae672f
 treemap	0	1	0	7	1	4b95f515	2	4bb53254	1	69ae672f
 treemap	0	1	0	50	1	4b95f515	2	4bb53254	1	69ae672f
@@ -1120,48 +1252,90 @@ treemap	205	6	10240	20000	1	1aeb6588	1	1aeb6588	0	811c9dc5
 treemap	12	3	0	20000	0	811c9dc5	1	8c46f159	0	811c9dc5
 treemap	12	6	1	50	0	811c9dc5	1	8c46f159	0	811c9dc5
 tree	chains-b	6	900	55	45	2	10	20	4	10	80	6	3	50	2	900	3818aaec
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	3	253381b6
-prune	0	5	3	755fc0c7	5	8ea9e711
-prune	0	50	27	b3b2e95c	56	abf4d2fa
-prune	0	51	27	b3b2e95c	56	abf4d2fa
-prune	0	250000	403	25bca541	841	c0ad5e7d
-prune	190	1	0	811c9dc5	1	1ecbba2b
-prune	190	2	1	1ecbba2b	19	7267449a
-prune	190	5	1	1ecbba2b	19	7267449a
-prune	190	50	16	b01c8cbf	70	65b7db81
-prune	190	51	16	b01c8cbf	70	65b7db81
-prune	190	250000	103	3452cf97	230	cc521ccd
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
-prune	156	1	0	811c9dc5	1	78eb59e9
-prune	156	2	1	78eb59e9	5	3e3c8c89
-prune	156	5	1	78eb59e9	5	3e3c8c89
-prune	156	50	10	c40c0b5c	51	a130f7cf
-prune	156	51	10	c40c0b5c	51	a130f7cf
-prune	156	250000	32	c338f993	90	7484cb9d
-prune	115	1	0	811c9dc5	1	98fe4316
-prune	115	2	0	811c9dc5	1	98fe4316
-prune	115	5	0	811c9dc5	1	98fe4316
-prune	115	50	0	811c9dc5	1	98fe4316
-prune	115	51	0	811c9dc5	1	98fe4316
-prune	115	250000	0	811c9dc5	1	98fe4316
-prune	665	1	0	811c9dc5	1	e73d7db2
-prune	665	2	0	811c9dc5	1	e73d7db2
-prune	665	5	0	811c9dc5	1	e73d7db2
-prune	665	50	0	811c9dc5	1	e73d7db2
-prune	665	51	0	811c9dc5	1	e73d7db2
-prune	665	250000	0	811c9dc5	1	e73d7db2
-prune	177	1	0	811c9dc5	1	ed9600b4
-prune	177	2	0	811c9dc5	1	ed9600b4
-prune	177	5	0	811c9dc5	1	ed9600b4
-prune	177	50	0	811c9dc5	1	ed9600b4
-prune	177	51	0	811c9dc5	1	ed9600b4
-prune	177	250000	0	811c9dc5	1	ed9600b4
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	3	253381b6
+prune	0	2	none	1	4b95f515	3	253381b6
+prune	0	5	lastFolder	3	755fc0c7	5	8ea9e711
+prune	0	5	none	3	755fc0c7	5	8ea9e711
+prune	0	50	lastFolder	27	b3b2e95c	56	abf4d2fa
+prune	0	50	none	31	1afca919	50	a9996ae9
+prune	0	51	lastFolder	27	b3b2e95c	56	abf4d2fa
+prune	0	51	none	32	1c254efd	51	50be0503
+prune	0	250000	lastFolder	403	25bca541	841	c0ad5e7d
+prune	0	250000	none	403	25bca541	841	c0ad5e7d
+prune	190	1	lastFolder	0	811c9dc5	1	1ecbba2b
+prune	190	1	none	0	811c9dc5	1	1ecbba2b
+prune	190	2	lastFolder	1	1ecbba2b	19	7267449a
+prune	190	2	none	1	1ecbba2b	19	7267449a
+prune	190	5	lastFolder	1	1ecbba2b	19	7267449a
+prune	190	5	none	1	1ecbba2b	19	7267449a
+prune	190	50	lastFolder	16	b01c8cbf	70	65b7db81
+prune	190	50	none	17	2bb6eb63	50	2c944787
+prune	190	51	lastFolder	16	b01c8cbf	70	65b7db81
+prune	190	51	none	18	1ffda8af	51	20d65a85
+prune	190	250000	lastFolder	103	3452cf97	230	cc521ccd
+prune	190	250000	none	103	3452cf97	230	cc521ccd
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
+prune	156	1	lastFolder	0	811c9dc5	1	78eb59e9
+prune	156	1	none	0	811c9dc5	1	78eb59e9
+prune	156	2	lastFolder	1	78eb59e9	5	3e3c8c89
+prune	156	2	none	1	78eb59e9	5	3e3c8c89
+prune	156	5	lastFolder	1	78eb59e9	5	3e3c8c89
+prune	156	5	none	1	78eb59e9	5	3e3c8c89
+prune	156	50	lastFolder	10	c40c0b5c	51	a130f7cf
+prune	156	50	none	10	536ac069	50	75af6f20
+prune	156	51	lastFolder	10	c40c0b5c	51	a130f7cf
+prune	156	51	none	10	c40c0b5c	51	a130f7cf
+prune	156	250000	lastFolder	32	c338f993	90	7484cb9d
+prune	156	250000	none	32	c338f993	90	7484cb9d
+prune	115	1	lastFolder	0	811c9dc5	1	98fe4316
+prune	115	1	none	0	811c9dc5	1	98fe4316
+prune	115	2	lastFolder	0	811c9dc5	1	98fe4316
+prune	115	2	none	0	811c9dc5	1	98fe4316
+prune	115	5	lastFolder	0	811c9dc5	1	98fe4316
+prune	115	5	none	0	811c9dc5	1	98fe4316
+prune	115	50	lastFolder	0	811c9dc5	1	98fe4316
+prune	115	50	none	0	811c9dc5	1	98fe4316
+prune	115	51	lastFolder	0	811c9dc5	1	98fe4316
+prune	115	51	none	0	811c9dc5	1	98fe4316
+prune	115	250000	lastFolder	0	811c9dc5	1	98fe4316
+prune	115	250000	none	0	811c9dc5	1	98fe4316
+prune	665	1	lastFolder	0	811c9dc5	1	e73d7db2
+prune	665	1	none	0	811c9dc5	1	e73d7db2
+prune	665	2	lastFolder	0	811c9dc5	1	e73d7db2
+prune	665	2	none	0	811c9dc5	1	e73d7db2
+prune	665	5	lastFolder	0	811c9dc5	1	e73d7db2
+prune	665	5	none	0	811c9dc5	1	e73d7db2
+prune	665	50	lastFolder	0	811c9dc5	1	e73d7db2
+prune	665	50	none	0	811c9dc5	1	e73d7db2
+prune	665	51	lastFolder	0	811c9dc5	1	e73d7db2
+prune	665	51	none	0	811c9dc5	1	e73d7db2
+prune	665	250000	lastFolder	0	811c9dc5	1	e73d7db2
+prune	665	250000	none	0	811c9dc5	1	e73d7db2
+prune	177	1	lastFolder	0	811c9dc5	1	ed9600b4
+prune	177	1	none	0	811c9dc5	1	ed9600b4
+prune	177	2	lastFolder	0	811c9dc5	1	ed9600b4
+prune	177	2	none	0	811c9dc5	1	ed9600b4
+prune	177	5	lastFolder	0	811c9dc5	1	ed9600b4
+prune	177	5	none	0	811c9dc5	1	ed9600b4
+prune	177	50	lastFolder	0	811c9dc5	1	ed9600b4
+prune	177	50	none	0	811c9dc5	1	ed9600b4
+prune	177	51	lastFolder	0	811c9dc5	1	ed9600b4
+prune	177	51	none	0	811c9dc5	1	ed9600b4
+prune	177	250000	lastFolder	0	811c9dc5	1	ed9600b4
+prune	177	250000	none	0	811c9dc5	1	ed9600b4
 treemap	0	1	0	1	1	4b95f515	3	253381b6	1	b6355d7e
 treemap	0	1	0	7	1	4b95f515	3	253381b6	2	30fe5a59
 treemap	0	1	0	50	1	4b95f515	3	253381b6	2	30fe5a59
@@ -1365,42 +1539,78 @@ treemap	665	6	1	50	1	e73d7db2	1	e73d7db2	0	811c9dc5
 treemap	177	3	0	20000	0	811c9dc5	1	ed9600b4	0	811c9dc5
 treemap	177	6	1	50	0	811c9dc5	1	ed9600b4	0	811c9dc5
 tree	wide-a	7	3000	20	5	20	100	400	6	10	80	9	2	30	1	3000	c0666f4d
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	2	4bb53254
-prune	0	5	2	4bb53254	459	86e7310d
-prune	0	50	2	4bb53254	459	86e7310d
-prune	0	51	2	4bb53254	459	86e7310d
-prune	0	250000	49	0b0bbf8e	2978	77cf86d2
-prune	112	1	0	811c9dc5	1	48d20405
-prune	112	2	1	48d20405	393	947135fd
-prune	112	5	1	48d20405	393	947135fd
-prune	112	50	1	48d20405	393	947135fd
-prune	112	51	1	48d20405	393	947135fd
-prune	112	250000	1	48d20405	393	947135fd
-prune	4	1	0	811c9dc5	1	0ae4f8d1
-prune	4	2	0	811c9dc5	1	0ae4f8d1
-prune	4	5	0	811c9dc5	1	0ae4f8d1
-prune	4	50	0	811c9dc5	1	0ae4f8d1
-prune	4	51	0	811c9dc5	1	0ae4f8d1
-prune	4	250000	0	811c9dc5	1	0ae4f8d1
-prune	231	1	0	811c9dc5	1	3f69cd42
-prune	231	2	1	3f69cd42	290	b40e7925
-prune	231	5	1	3f69cd42	290	b40e7925
-prune	231	50	1	3f69cd42	290	b40e7925
-prune	231	51	1	3f69cd42	290	b40e7925
-prune	231	250000	1	3f69cd42	290	b40e7925
-prune	86	1	0	811c9dc5	1	a2f1a3c3
-prune	86	2	0	811c9dc5	1	a2f1a3c3
-prune	86	5	0	811c9dc5	1	a2f1a3c3
-prune	86	50	0	811c9dc5	1	a2f1a3c3
-prune	86	51	0	811c9dc5	1	a2f1a3c3
-prune	86	250000	0	811c9dc5	1	a2f1a3c3
-prune	15	1	0	811c9dc5	1	dc73306a
-prune	15	2	0	811c9dc5	1	dc73306a
-prune	15	5	0	811c9dc5	1	dc73306a
-prune	15	50	0	811c9dc5	1	dc73306a
-prune	15	51	0	811c9dc5	1	dc73306a
-prune	15	250000	0	811c9dc5	1	dc73306a
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	2	4bb53254
+prune	0	2	none	1	4b95f515	2	4bb53254
+prune	0	5	lastFolder	2	4bb53254	459	86e7310d
+prune	0	5	none	1	4b95f515	2	4bb53254
+prune	0	50	lastFolder	2	4bb53254	459	86e7310d
+prune	0	50	none	1	4b95f515	2	4bb53254
+prune	0	51	lastFolder	2	4bb53254	459	86e7310d
+prune	0	51	none	1	4b95f515	2	4bb53254
+prune	0	250000	lastFolder	49	0b0bbf8e	2978	77cf86d2
+prune	0	250000	none	49	0b0bbf8e	2978	77cf86d2
+prune	112	1	lastFolder	0	811c9dc5	1	48d20405
+prune	112	1	none	0	811c9dc5	1	48d20405
+prune	112	2	lastFolder	1	48d20405	393	947135fd
+prune	112	2	none	1	48d20405	393	947135fd
+prune	112	5	lastFolder	1	48d20405	393	947135fd
+prune	112	5	none	1	48d20405	393	947135fd
+prune	112	50	lastFolder	1	48d20405	393	947135fd
+prune	112	50	none	1	48d20405	393	947135fd
+prune	112	51	lastFolder	1	48d20405	393	947135fd
+prune	112	51	none	1	48d20405	393	947135fd
+prune	112	250000	lastFolder	1	48d20405	393	947135fd
+prune	112	250000	none	1	48d20405	393	947135fd
+prune	4	1	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	1	none	0	811c9dc5	1	0ae4f8d1
+prune	4	2	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	2	none	0	811c9dc5	1	0ae4f8d1
+prune	4	5	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	5	none	0	811c9dc5	1	0ae4f8d1
+prune	4	50	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	50	none	0	811c9dc5	1	0ae4f8d1
+prune	4	51	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	51	none	0	811c9dc5	1	0ae4f8d1
+prune	4	250000	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	250000	none	0	811c9dc5	1	0ae4f8d1
+prune	231	1	lastFolder	0	811c9dc5	1	3f69cd42
+prune	231	1	none	0	811c9dc5	1	3f69cd42
+prune	231	2	lastFolder	1	3f69cd42	290	b40e7925
+prune	231	2	none	1	3f69cd42	290	b40e7925
+prune	231	5	lastFolder	1	3f69cd42	290	b40e7925
+prune	231	5	none	1	3f69cd42	290	b40e7925
+prune	231	50	lastFolder	1	3f69cd42	290	b40e7925
+prune	231	50	none	1	3f69cd42	290	b40e7925
+prune	231	51	lastFolder	1	3f69cd42	290	b40e7925
+prune	231	51	none	1	3f69cd42	290	b40e7925
+prune	231	250000	lastFolder	1	3f69cd42	290	b40e7925
+prune	231	250000	none	1	3f69cd42	290	b40e7925
+prune	86	1	lastFolder	0	811c9dc5	1	a2f1a3c3
+prune	86	1	none	0	811c9dc5	1	a2f1a3c3
+prune	86	2	lastFolder	0	811c9dc5	1	a2f1a3c3
+prune	86	2	none	0	811c9dc5	1	a2f1a3c3
+prune	86	5	lastFolder	0	811c9dc5	1	a2f1a3c3
+prune	86	5	none	0	811c9dc5	1	a2f1a3c3
+prune	86	50	lastFolder	0	811c9dc5	1	a2f1a3c3
+prune	86	50	none	0	811c9dc5	1	a2f1a3c3
+prune	86	51	lastFolder	0	811c9dc5	1	a2f1a3c3
+prune	86	51	none	0	811c9dc5	1	a2f1a3c3
+prune	86	250000	lastFolder	0	811c9dc5	1	a2f1a3c3
+prune	86	250000	none	0	811c9dc5	1	a2f1a3c3
+prune	15	1	lastFolder	0	811c9dc5	1	dc73306a
+prune	15	1	none	0	811c9dc5	1	dc73306a
+prune	15	2	lastFolder	0	811c9dc5	1	dc73306a
+prune	15	2	none	0	811c9dc5	1	dc73306a
+prune	15	5	lastFolder	0	811c9dc5	1	dc73306a
+prune	15	5	none	0	811c9dc5	1	dc73306a
+prune	15	50	lastFolder	0	811c9dc5	1	dc73306a
+prune	15	50	none	0	811c9dc5	1	dc73306a
+prune	15	51	lastFolder	0	811c9dc5	1	dc73306a
+prune	15	51	none	0	811c9dc5	1	dc73306a
+prune	15	250000	lastFolder	0	811c9dc5	1	dc73306a
+prune	15	250000	none	0	811c9dc5	1	dc73306a
 treemap	0	1	0	1	1	4b95f515	2	4bb53254	1	69ae672f
 treemap	0	1	0	7	1	4b95f515	2	4bb53254	1	69ae672f
 treemap	0	1	0	50	1	4b95f515	2	4bb53254	1	69ae672f
@@ -1602,24 +1812,42 @@ treemap	86	6	1	50	1	a2f1a3c3	7	c97538d8	6	e8d5ffa4
 treemap	15	3	0	20000	0	811c9dc5	1	dc73306a	0	811c9dc5
 treemap	15	6	1	50	0	811c9dc5	1	dc73306a	0	811c9dc5
 tree	wide-b	8	2500	25	0	30	60	300	3	30	70	3	0	0	0	2500	524326f3
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	345	9bae494a
-prune	0	5	1	4b95f515	345	9bae494a
-prune	0	50	1	4b95f515	345	9bae494a
-prune	0	51	1	4b95f515	345	9bae494a
-prune	0	250000	32	982aa2d3	2500	81979405
-prune	21	1	0	811c9dc5	1	bd7caad0
-prune	21	2	1	bd7caad0	329	efa91720
-prune	21	5	1	bd7caad0	329	efa91720
-prune	21	50	1	bd7caad0	329	efa91720
-prune	21	51	1	bd7caad0	329	efa91720
-prune	21	250000	1	bd7caad0	329	efa91720
-prune	3	1	0	811c9dc5	1	9bc23426
-prune	3	2	0	811c9dc5	1	9bc23426
-prune	3	5	0	811c9dc5	1	9bc23426
-prune	3	50	0	811c9dc5	1	9bc23426
-prune	3	51	0	811c9dc5	1	9bc23426
-prune	3	250000	0	811c9dc5	1	9bc23426
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	345	9bae494a
+prune	0	2	none	1	4b95f515	345	9bae494a
+prune	0	5	lastFolder	1	4b95f515	345	9bae494a
+prune	0	5	none	1	4b95f515	345	9bae494a
+prune	0	50	lastFolder	1	4b95f515	345	9bae494a
+prune	0	50	none	1	4b95f515	345	9bae494a
+prune	0	51	lastFolder	1	4b95f515	345	9bae494a
+prune	0	51	none	1	4b95f515	345	9bae494a
+prune	0	250000	lastFolder	32	982aa2d3	2500	81979405
+prune	0	250000	none	32	982aa2d3	2500	81979405
+prune	21	1	lastFolder	0	811c9dc5	1	bd7caad0
+prune	21	1	none	0	811c9dc5	1	bd7caad0
+prune	21	2	lastFolder	1	bd7caad0	329	efa91720
+prune	21	2	none	1	bd7caad0	329	efa91720
+prune	21	5	lastFolder	1	bd7caad0	329	efa91720
+prune	21	5	none	1	bd7caad0	329	efa91720
+prune	21	50	lastFolder	1	bd7caad0	329	efa91720
+prune	21	50	none	1	bd7caad0	329	efa91720
+prune	21	51	lastFolder	1	bd7caad0	329	efa91720
+prune	21	51	none	1	bd7caad0	329	efa91720
+prune	21	250000	lastFolder	1	bd7caad0	329	efa91720
+prune	21	250000	none	1	bd7caad0	329	efa91720
+prune	3	1	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	1	none	0	811c9dc5	1	9bc23426
+prune	3	2	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	2	none	0	811c9dc5	1	9bc23426
+prune	3	5	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	5	none	0	811c9dc5	1	9bc23426
+prune	3	50	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	50	none	0	811c9dc5	1	9bc23426
+prune	3	51	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	51	none	0	811c9dc5	1	9bc23426
+prune	3	250000	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	250000	none	0	811c9dc5	1	9bc23426
 treemap	0	1	0	1	1	4b95f515	217	cb5ffcca	1	d133750a
 treemap	0	1	0	7	1	4b95f515	217	cb5ffcca	7	cdfa7be1
 treemap	0	1	0	50	1	4b95f515	217	cb5ffcca	50	36b29b23
@@ -1815,24 +2043,42 @@ treemap	21	6	10240	20000	1	bd7caad0	1	bd7caad0	0	811c9dc5
 treemap	3	3	0	20000	0	811c9dc5	1	9bc23426	0	811c9dc5
 treemap	3	6	1	50	0	811c9dc5	1	9bc23426	0	811c9dc5
 tree	zeros-a	9	600	45	10	3	20	30	5	70	25	4	0	0	0	600	63510dc4
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	6	40964454
-prune	0	5	1	4b95f515	6	40964454
-prune	0	50	7	ab9d1e33	88	6f467b2b
-prune	0	51	7	ab9d1e33	88	6f467b2b
-prune	0	250000	167	79ed0421	600	a191ce39
-prune	12	1	0	811c9dc5	1	8c46f159
-prune	12	2	1	8c46f159	6	e6dd75d2
-prune	12	5	1	8c46f159	6	e6dd75d2
-prune	12	50	15	c772c8d4	52	e1ceb7e1
-prune	12	51	15	c772c8d4	52	e1ceb7e1
-prune	12	250000	32	255c9f5f	102	f1d01a4e
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	6	40964454
+prune	0	2	none	1	4b95f515	6	40964454
+prune	0	5	lastFolder	1	4b95f515	6	40964454
+prune	0	5	none	1	4b95f515	6	40964454
+prune	0	50	lastFolder	7	ab9d1e33	88	6f467b2b
+prune	0	50	none	8	c680446b	50	8abfd4d8
+prune	0	51	lastFolder	7	ab9d1e33	88	6f467b2b
+prune	0	51	none	9	22f49992	51	f3250013
+prune	0	250000	lastFolder	167	79ed0421	600	a191ce39
+prune	0	250000	none	167	79ed0421	600	a191ce39
+prune	12	1	lastFolder	0	811c9dc5	1	8c46f159
+prune	12	1	none	0	811c9dc5	1	8c46f159
+prune	12	2	lastFolder	1	8c46f159	6	e6dd75d2
+prune	12	2	none	1	8c46f159	6	e6dd75d2
+prune	12	5	lastFolder	1	8c46f159	6	e6dd75d2
+prune	12	5	none	1	8c46f159	6	e6dd75d2
+prune	12	50	lastFolder	15	c772c8d4	52	e1ceb7e1
+prune	12	50	none	16	092c8d4c	50	fc4b6056
+prune	12	51	lastFolder	15	c772c8d4	52	e1ceb7e1
+prune	12	51	none	17	36108824	51	0e7517c0
+prune	12	250000	lastFolder	32	255c9f5f	102	f1d01a4e
+prune	12	250000	none	32	255c9f5f	102	f1d01a4e
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
 treemap	0	1	0	1	1	4b95f515	3	feecc592	1	c804fa6a
 treemap	0	1	0	7	1	4b95f515	3	feecc592	2	6ab3f856
 treemap	0	1	0	50	1	4b95f515	3	feecc592	2	6ab3f856
@@ -2028,24 +2274,42 @@ treemap	12	6	10240	20000	4	82d8cc42	5	b337709b	4	f3c716b5
 treemap	2	3	0	20000	0	811c9dc5	1	ebee7337	0	811c9dc5
 treemap	2	6	1	50	0	811c9dc5	1	ebee7337	0	811c9dc5
 tree	zeros-b	10	800	50	20	0	0	0	4	95	5	1	0	0	0	800	c459d4dd
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	5	8ea9e711
-prune	0	5	1	4b95f515	5	8ea9e711
-prune	0	50	25	2dcc3572	50	fc8b4777
-prune	0	51	26	c0129741	51	9830c941
-prune	0	250000	376	4f88293d	800	7cc8e5b9
-prune	562	1	0	811c9dc5	1	7207acfd
-prune	562	2	1	7207acfd	5	90f947f1
-prune	562	5	1	7207acfd	5	90f947f1
-prune	562	50	21	b344cf56	52	40aac527
-prune	562	51	21	b344cf56	52	40aac527
-prune	562	250000	94	810db5a6	205	b033b186
-prune	4	1	0	811c9dc5	1	0ae4f8d1
-prune	4	2	0	811c9dc5	1	0ae4f8d1
-prune	4	5	0	811c9dc5	1	0ae4f8d1
-prune	4	50	0	811c9dc5	1	0ae4f8d1
-prune	4	51	0	811c9dc5	1	0ae4f8d1
-prune	4	250000	0	811c9dc5	1	0ae4f8d1
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	5	8ea9e711
+prune	0	2	none	1	4b95f515	5	8ea9e711
+prune	0	5	lastFolder	1	4b95f515	5	8ea9e711
+prune	0	5	none	1	4b95f515	5	8ea9e711
+prune	0	50	lastFolder	25	2dcc3572	50	fc8b4777
+prune	0	50	none	25	2dcc3572	50	fc8b4777
+prune	0	51	lastFolder	26	c0129741	51	9830c941
+prune	0	51	none	26	c0129741	51	9830c941
+prune	0	250000	lastFolder	376	4f88293d	800	7cc8e5b9
+prune	0	250000	none	376	4f88293d	800	7cc8e5b9
+prune	562	1	lastFolder	0	811c9dc5	1	7207acfd
+prune	562	1	none	0	811c9dc5	1	7207acfd
+prune	562	2	lastFolder	1	7207acfd	5	90f947f1
+prune	562	2	none	1	7207acfd	5	90f947f1
+prune	562	5	lastFolder	1	7207acfd	5	90f947f1
+prune	562	5	none	1	7207acfd	5	90f947f1
+prune	562	50	lastFolder	21	b344cf56	52	40aac527
+prune	562	50	none	21	07d6413b	50	3249cf92
+prune	562	51	lastFolder	21	b344cf56	52	40aac527
+prune	562	51	none	21	db12520a	51	016209e2
+prune	562	250000	lastFolder	94	810db5a6	205	b033b186
+prune	562	250000	none	94	810db5a6	205	b033b186
+prune	4	1	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	1	none	0	811c9dc5	1	0ae4f8d1
+prune	4	2	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	2	none	0	811c9dc5	1	0ae4f8d1
+prune	4	5	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	5	none	0	811c9dc5	1	0ae4f8d1
+prune	4	50	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	50	none	0	811c9dc5	1	0ae4f8d1
+prune	4	51	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	51	none	0	811c9dc5	1	0ae4f8d1
+prune	4	250000	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	250000	none	0	811c9dc5	1	0ae4f8d1
 treemap	0	1	0	1	1	4b95f515	2	3c39ef87	1	61b541c2
 treemap	0	1	0	7	1	4b95f515	2	3c39ef87	1	61b541c2
 treemap	0	1	0	50	1	4b95f515	2	3c39ef87	1	61b541c2
@@ -2241,42 +2505,78 @@ treemap	562	6	10240	20000	1	7207acfd	1	7207acfd	0	811c9dc5
 treemap	4	3	0	20000	0	811c9dc5	1	0ae4f8d1	0	811c9dc5
 treemap	4	6	1	50	0	811c9dc5	1	0ae4f8d1	0	811c9dc5
 tree	spread-a	11	1000	30	5	3	30	60	8	2	0	9	5	40	2	1000	be7d7f00
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	3	253381b6
-prune	0	5	2	4bb53254	10	3a210ed4
-prune	0	50	5	fc5e476e	21	9b3fee41
-prune	0	51	5	fc5e476e	21	9b3fee41
-prune	0	250000	5	fc5e476e	21	9b3fee41
-prune	94	1	0	811c9dc5	1	24539c4b
-prune	94	2	1	24539c4b	2	d4b20546
-prune	94	5	2	d4b20546	87	a15e2427
-prune	94	50	2	d4b20546	87	a15e2427
-prune	94	51	2	d4b20546	87	a15e2427
-prune	94	250000	27	04b10cd6	192	5bc06804
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
-prune	109	1	0	811c9dc5	1	3692d028
-prune	109	2	1	3692d028	8	c353e4e5
-prune	109	5	1	3692d028	8	c353e4e5
-prune	109	50	6	585f7591	24	68d8c8cd
-prune	109	51	6	585f7591	24	68d8c8cd
-prune	109	250000	6	585f7591	24	68d8c8cd
-prune	100	1	0	811c9dc5	1	055d16b1
-prune	100	2	0	811c9dc5	1	055d16b1
-prune	100	5	0	811c9dc5	1	055d16b1
-prune	100	50	0	811c9dc5	1	055d16b1
-prune	100	51	0	811c9dc5	1	055d16b1
-prune	100	250000	0	811c9dc5	1	055d16b1
-prune	16	1	0	811c9dc5	1	4e59e625
-prune	16	2	0	811c9dc5	1	4e59e625
-prune	16	5	0	811c9dc5	1	4e59e625
-prune	16	50	0	811c9dc5	1	4e59e625
-prune	16	51	0	811c9dc5	1	4e59e625
-prune	16	250000	0	811c9dc5	1	4e59e625
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	3	253381b6
+prune	0	2	none	1	4b95f515	3	253381b6
+prune	0	5	lastFolder	2	4bb53254	10	3a210ed4
+prune	0	5	none	1	4b95f515	3	253381b6
+prune	0	50	lastFolder	5	fc5e476e	21	9b3fee41
+prune	0	50	none	5	fc5e476e	21	9b3fee41
+prune	0	51	lastFolder	5	fc5e476e	21	9b3fee41
+prune	0	51	none	5	fc5e476e	21	9b3fee41
+prune	0	250000	lastFolder	5	fc5e476e	21	9b3fee41
+prune	0	250000	none	5	fc5e476e	21	9b3fee41
+prune	94	1	lastFolder	0	811c9dc5	1	24539c4b
+prune	94	1	none	0	811c9dc5	1	24539c4b
+prune	94	2	lastFolder	1	24539c4b	2	d4b20546
+prune	94	2	none	1	24539c4b	2	d4b20546
+prune	94	5	lastFolder	2	d4b20546	87	a15e2427
+prune	94	5	none	1	24539c4b	2	d4b20546
+prune	94	50	lastFolder	2	d4b20546	87	a15e2427
+prune	94	50	none	1	24539c4b	2	d4b20546
+prune	94	51	lastFolder	2	d4b20546	87	a15e2427
+prune	94	51	none	1	24539c4b	2	d4b20546
+prune	94	250000	lastFolder	27	04b10cd6	192	5bc06804
+prune	94	250000	none	27	04b10cd6	192	5bc06804
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
+prune	109	1	lastFolder	0	811c9dc5	1	3692d028
+prune	109	1	none	0	811c9dc5	1	3692d028
+prune	109	2	lastFolder	1	3692d028	8	c353e4e5
+prune	109	2	none	1	3692d028	8	c353e4e5
+prune	109	5	lastFolder	1	3692d028	8	c353e4e5
+prune	109	5	none	1	3692d028	8	c353e4e5
+prune	109	50	lastFolder	6	585f7591	24	68d8c8cd
+prune	109	50	none	6	585f7591	24	68d8c8cd
+prune	109	51	lastFolder	6	585f7591	24	68d8c8cd
+prune	109	51	none	6	585f7591	24	68d8c8cd
+prune	109	250000	lastFolder	6	585f7591	24	68d8c8cd
+prune	109	250000	none	6	585f7591	24	68d8c8cd
+prune	100	1	lastFolder	0	811c9dc5	1	055d16b1
+prune	100	1	none	0	811c9dc5	1	055d16b1
+prune	100	2	lastFolder	0	811c9dc5	1	055d16b1
+prune	100	2	none	0	811c9dc5	1	055d16b1
+prune	100	5	lastFolder	0	811c9dc5	1	055d16b1
+prune	100	5	none	0	811c9dc5	1	055d16b1
+prune	100	50	lastFolder	0	811c9dc5	1	055d16b1
+prune	100	50	none	0	811c9dc5	1	055d16b1
+prune	100	51	lastFolder	0	811c9dc5	1	055d16b1
+prune	100	51	none	0	811c9dc5	1	055d16b1
+prune	100	250000	lastFolder	0	811c9dc5	1	055d16b1
+prune	100	250000	none	0	811c9dc5	1	055d16b1
+prune	16	1	lastFolder	0	811c9dc5	1	4e59e625
+prune	16	1	none	0	811c9dc5	1	4e59e625
+prune	16	2	lastFolder	0	811c9dc5	1	4e59e625
+prune	16	2	none	0	811c9dc5	1	4e59e625
+prune	16	5	lastFolder	0	811c9dc5	1	4e59e625
+prune	16	5	none	0	811c9dc5	1	4e59e625
+prune	16	50	lastFolder	0	811c9dc5	1	4e59e625
+prune	16	50	none	0	811c9dc5	1	4e59e625
+prune	16	51	lastFolder	0	811c9dc5	1	4e59e625
+prune	16	51	none	0	811c9dc5	1	4e59e625
+prune	16	250000	lastFolder	0	811c9dc5	1	4e59e625
+prune	16	250000	none	0	811c9dc5	1	4e59e625
 treemap	0	1	0	1	1	4b95f515	3	253381b6	1	778e4222
 treemap	0	1	0	7	1	4b95f515	3	253381b6	2	68af5b43
 treemap	0	1	0	50	1	4b95f515	3	253381b6	2	68af5b43
@@ -2478,48 +2778,90 @@ treemap	100	6	1	50	4	6cfc39b1	10	ab52c6d9	9	bb1b3bb1
 treemap	16	3	0	20000	0	811c9dc5	1	4e59e625	0	811c9dc5
 treemap	16	6	1	50	0	811c9dc5	1	4e59e625	0	811c9dc5
 tree	containers-a	12	800	30	5	3	20	40	6	10	70	9	40	50	10	800	b8ad1beb
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	6	40964454
-prune	0	5	1	4b95f515	6	40964454
-prune	0	50	2	0b043610	12	c27a9305
-prune	0	51	2	0b043610	12	c27a9305
-prune	0	250000	2	0b043610	12	c27a9305
-prune	26	1	0	811c9dc5	1	70145ccf
-prune	26	2	1	70145ccf	6	146f8e90
-prune	26	5	1	70145ccf	6	146f8e90
-prune	26	50	3	6c3bcc18	58	a2ad5ee5
-prune	26	51	3	6c3bcc18	58	a2ad5ee5
-prune	26	250000	4	83131ede	64	8fca3968
-prune	3	1	0	811c9dc5	1	9bc23426
-prune	3	2	0	811c9dc5	1	9bc23426
-prune	3	5	0	811c9dc5	1	9bc23426
-prune	3	50	0	811c9dc5	1	9bc23426
-prune	3	51	0	811c9dc5	1	9bc23426
-prune	3	250000	0	811c9dc5	1	9bc23426
-prune	5	1	0	811c9dc5	1	bab8b9c0
-prune	5	2	1	bab8b9c0	7	6b182371
-prune	5	5	1	bab8b9c0	7	6b182371
-prune	5	50	1	bab8b9c0	7	6b182371
-prune	5	51	1	bab8b9c0	7	6b182371
-prune	5	250000	1	bab8b9c0	7	6b182371
-prune	1	1	0	811c9dc5	1	fb69b604
-prune	1	2	0	811c9dc5	1	fb69b604
-prune	1	5	0	811c9dc5	1	fb69b604
-prune	1	50	0	811c9dc5	1	fb69b604
-prune	1	51	0	811c9dc5	1	fb69b604
-prune	1	250000	0	811c9dc5	1	fb69b604
-prune	242	1	0	811c9dc5	1	d30af9a7
-prune	242	2	0	811c9dc5	1	d30af9a7
-prune	242	5	0	811c9dc5	1	d30af9a7
-prune	242	50	0	811c9dc5	1	d30af9a7
-prune	242	51	0	811c9dc5	1	d30af9a7
-prune	242	250000	0	811c9dc5	1	d30af9a7
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	6	40964454
+prune	0	2	none	1	4b95f515	6	40964454
+prune	0	5	lastFolder	1	4b95f515	6	40964454
+prune	0	5	none	1	4b95f515	6	40964454
+prune	0	50	lastFolder	2	0b043610	12	c27a9305
+prune	0	50	none	2	0b043610	12	c27a9305
+prune	0	51	lastFolder	2	0b043610	12	c27a9305
+prune	0	51	none	2	0b043610	12	c27a9305
+prune	0	250000	lastFolder	2	0b043610	12	c27a9305
+prune	0	250000	none	2	0b043610	12	c27a9305
+prune	26	1	lastFolder	0	811c9dc5	1	70145ccf
+prune	26	1	none	0	811c9dc5	1	70145ccf
+prune	26	2	lastFolder	1	70145ccf	6	146f8e90
+prune	26	2	none	1	70145ccf	6	146f8e90
+prune	26	5	lastFolder	1	70145ccf	6	146f8e90
+prune	26	5	none	1	70145ccf	6	146f8e90
+prune	26	50	lastFolder	3	6c3bcc18	58	a2ad5ee5
+prune	26	50	none	3	5cc0894b	15	d14f0952
+prune	26	51	lastFolder	3	6c3bcc18	58	a2ad5ee5
+prune	26	51	none	3	5cc0894b	15	d14f0952
+prune	26	250000	lastFolder	4	83131ede	64	8fca3968
+prune	26	250000	none	4	83131ede	64	8fca3968
+prune	3	1	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	1	none	0	811c9dc5	1	9bc23426
+prune	3	2	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	2	none	0	811c9dc5	1	9bc23426
+prune	3	5	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	5	none	0	811c9dc5	1	9bc23426
+prune	3	50	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	50	none	0	811c9dc5	1	9bc23426
+prune	3	51	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	51	none	0	811c9dc5	1	9bc23426
+prune	3	250000	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	250000	none	0	811c9dc5	1	9bc23426
+prune	5	1	lastFolder	0	811c9dc5	1	bab8b9c0
+prune	5	1	none	0	811c9dc5	1	bab8b9c0
+prune	5	2	lastFolder	1	bab8b9c0	7	6b182371
+prune	5	2	none	1	bab8b9c0	7	6b182371
+prune	5	5	lastFolder	1	bab8b9c0	7	6b182371
+prune	5	5	none	1	bab8b9c0	7	6b182371
+prune	5	50	lastFolder	1	bab8b9c0	7	6b182371
+prune	5	50	none	1	bab8b9c0	7	6b182371
+prune	5	51	lastFolder	1	bab8b9c0	7	6b182371
+prune	5	51	none	1	bab8b9c0	7	6b182371
+prune	5	250000	lastFolder	1	bab8b9c0	7	6b182371
+prune	5	250000	none	1	bab8b9c0	7	6b182371
+prune	1	1	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	1	none	0	811c9dc5	1	fb69b604
+prune	1	2	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	2	none	0	811c9dc5	1	fb69b604
+prune	1	5	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	5	none	0	811c9dc5	1	fb69b604
+prune	1	50	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	50	none	0	811c9dc5	1	fb69b604
+prune	1	51	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	51	none	0	811c9dc5	1	fb69b604
+prune	1	250000	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	250000	none	0	811c9dc5	1	fb69b604
+prune	242	1	lastFolder	0	811c9dc5	1	d30af9a7
+prune	242	1	none	0	811c9dc5	1	d30af9a7
+prune	242	2	lastFolder	0	811c9dc5	1	d30af9a7
+prune	242	2	none	0	811c9dc5	1	d30af9a7
+prune	242	5	lastFolder	0	811c9dc5	1	d30af9a7
+prune	242	5	none	0	811c9dc5	1	d30af9a7
+prune	242	50	lastFolder	0	811c9dc5	1	d30af9a7
+prune	242	50	none	0	811c9dc5	1	d30af9a7
+prune	242	51	lastFolder	0	811c9dc5	1	d30af9a7
+prune	242	51	none	0	811c9dc5	1	d30af9a7
+prune	242	250000	lastFolder	0	811c9dc5	1	d30af9a7
+prune	242	250000	none	0	811c9dc5	1	d30af9a7
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
 treemap	0	1	0	1	1	4b95f515	6	40964454	1	c2e8258d
 treemap	0	1	0	7	1	4b95f515	6	40964454	5	2505acc0
 treemap	0	1	0	50	1	4b95f515	6	40964454	5	2505acc0
@@ -2723,48 +3065,90 @@ treemap	242	6	1	50	1	d30af9a7	1	d30af9a7	0	811c9dc5
 treemap	2	3	0	20000	0	811c9dc5	1	ebee7337	0	811c9dc5
 treemap	2	6	1	50	0	811c9dc5	1	ebee7337	0	811c9dc5
 tree	containers-b	13	1500	25	5	5	30	80	6	10	60	9	30	40	8	1500	8c5a0f6f
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	3	253381b6
-prune	0	5	1	4b95f515	3	253381b6
-prune	0	50	1	4b95f515	3	253381b6
-prune	0	51	1	4b95f515	3	253381b6
-prune	0	250000	1	4b95f515	3	253381b6
-prune	149	1	0	811c9dc5	1	a75d2250
-prune	149	2	1	a75d2250	103	cdc08b57
-prune	149	5	1	a75d2250	103	cdc08b57
-prune	149	50	1	a75d2250	103	cdc08b57
-prune	149	51	1	a75d2250	103	cdc08b57
-prune	149	250000	31	1a1f25ba	300	a6268164
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
-prune	4	1	0	811c9dc5	1	0ae4f8d1
-prune	4	2	1	0ae4f8d1	3	80693716
-prune	4	5	2	710051d2	5	13b9d7c7
-prune	4	50	4	417f50e7	79	4bd9b148
-prune	4	51	4	417f50e7	79	4bd9b148
-prune	4	250000	5	a7eb539f	82	0dae7d20
-prune	1	1	0	811c9dc5	1	fb69b604
-prune	1	2	0	811c9dc5	1	fb69b604
-prune	1	5	0	811c9dc5	1	fb69b604
-prune	1	50	0	811c9dc5	1	fb69b604
-prune	1	51	0	811c9dc5	1	fb69b604
-prune	1	250000	0	811c9dc5	1	fb69b604
-prune	110	1	0	811c9dc5	1	27178d5b
-prune	110	2	0	811c9dc5	1	27178d5b
-prune	110	5	0	811c9dc5	1	27178d5b
-prune	110	50	0	811c9dc5	1	27178d5b
-prune	110	51	0	811c9dc5	1	27178d5b
-prune	110	250000	0	811c9dc5	1	27178d5b
-prune	33	1	0	811c9dc5	1	00f19824
-prune	33	2	0	811c9dc5	1	00f19824
-prune	33	5	0	811c9dc5	1	00f19824
-prune	33	50	0	811c9dc5	1	00f19824
-prune	33	51	0	811c9dc5	1	00f19824
-prune	33	250000	0	811c9dc5	1	00f19824
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	3	253381b6
+prune	0	2	none	1	4b95f515	3	253381b6
+prune	0	5	lastFolder	1	4b95f515	3	253381b6
+prune	0	5	none	1	4b95f515	3	253381b6
+prune	0	50	lastFolder	1	4b95f515	3	253381b6
+prune	0	50	none	1	4b95f515	3	253381b6
+prune	0	51	lastFolder	1	4b95f515	3	253381b6
+prune	0	51	none	1	4b95f515	3	253381b6
+prune	0	250000	lastFolder	1	4b95f515	3	253381b6
+prune	0	250000	none	1	4b95f515	3	253381b6
+prune	149	1	lastFolder	0	811c9dc5	1	a75d2250
+prune	149	1	none	0	811c9dc5	1	a75d2250
+prune	149	2	lastFolder	1	a75d2250	103	cdc08b57
+prune	149	2	none	1	a75d2250	103	cdc08b57
+prune	149	5	lastFolder	1	a75d2250	103	cdc08b57
+prune	149	5	none	1	a75d2250	103	cdc08b57
+prune	149	50	lastFolder	1	a75d2250	103	cdc08b57
+prune	149	50	none	1	a75d2250	103	cdc08b57
+prune	149	51	lastFolder	1	a75d2250	103	cdc08b57
+prune	149	51	none	1	a75d2250	103	cdc08b57
+prune	149	250000	lastFolder	31	1a1f25ba	300	a6268164
+prune	149	250000	none	31	1a1f25ba	300	a6268164
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
+prune	4	1	lastFolder	0	811c9dc5	1	0ae4f8d1
+prune	4	1	none	0	811c9dc5	1	0ae4f8d1
+prune	4	2	lastFolder	1	0ae4f8d1	3	80693716
+prune	4	2	none	1	0ae4f8d1	3	80693716
+prune	4	5	lastFolder	2	710051d2	5	13b9d7c7
+prune	4	5	none	2	710051d2	5	13b9d7c7
+prune	4	50	lastFolder	4	417f50e7	79	4bd9b148
+prune	4	50	none	4	9cc19ff1	13	3eed9340
+prune	4	51	lastFolder	4	417f50e7	79	4bd9b148
+prune	4	51	none	4	9cc19ff1	13	3eed9340
+prune	4	250000	lastFolder	5	a7eb539f	82	0dae7d20
+prune	4	250000	none	5	a7eb539f	82	0dae7d20
+prune	1	1	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	1	none	0	811c9dc5	1	fb69b604
+prune	1	2	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	2	none	0	811c9dc5	1	fb69b604
+prune	1	5	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	5	none	0	811c9dc5	1	fb69b604
+prune	1	50	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	50	none	0	811c9dc5	1	fb69b604
+prune	1	51	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	51	none	0	811c9dc5	1	fb69b604
+prune	1	250000	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	250000	none	0	811c9dc5	1	fb69b604
+prune	110	1	lastFolder	0	811c9dc5	1	27178d5b
+prune	110	1	none	0	811c9dc5	1	27178d5b
+prune	110	2	lastFolder	0	811c9dc5	1	27178d5b
+prune	110	2	none	0	811c9dc5	1	27178d5b
+prune	110	5	lastFolder	0	811c9dc5	1	27178d5b
+prune	110	5	none	0	811c9dc5	1	27178d5b
+prune	110	50	lastFolder	0	811c9dc5	1	27178d5b
+prune	110	50	none	0	811c9dc5	1	27178d5b
+prune	110	51	lastFolder	0	811c9dc5	1	27178d5b
+prune	110	51	none	0	811c9dc5	1	27178d5b
+prune	110	250000	lastFolder	0	811c9dc5	1	27178d5b
+prune	110	250000	none	0	811c9dc5	1	27178d5b
+prune	33	1	lastFolder	0	811c9dc5	1	00f19824
+prune	33	1	none	0	811c9dc5	1	00f19824
+prune	33	2	lastFolder	0	811c9dc5	1	00f19824
+prune	33	2	none	0	811c9dc5	1	00f19824
+prune	33	5	lastFolder	0	811c9dc5	1	00f19824
+prune	33	5	none	0	811c9dc5	1	00f19824
+prune	33	50	lastFolder	0	811c9dc5	1	00f19824
+prune	33	50	none	0	811c9dc5	1	00f19824
+prune	33	51	lastFolder	0	811c9dc5	1	00f19824
+prune	33	51	none	0	811c9dc5	1	00f19824
+prune	33	250000	lastFolder	0	811c9dc5	1	00f19824
+prune	33	250000	none	0	811c9dc5	1	00f19824
 treemap	0	1	0	1	1	4b95f515	3	253381b6	1	b4bb41f9
 treemap	0	1	0	7	1	4b95f515	3	253381b6	2	1ec7bca9
 treemap	0	1	0	50	1	4b95f515	3	253381b6	2	1ec7bca9
@@ -2968,48 +3352,90 @@ treemap	110	6	1	50	1	27178d5b	2	18ce586e	1	6d3245de
 treemap	33	3	0	20000	0	811c9dc5	1	00f19824	0	811c9dc5
 treemap	33	6	1	50	0	811c9dc5	1	00f19824	0	811c9dc5
 tree	deep-a	14	700	60	30	1	10	10	3	10	80	9	2	50	2	700	321a7fa4
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	2	4bb53254
-prune	0	5	4	00732805	6	40964454
-prune	0	50	31	f6d1fd22	51	2273a57e
-prune	0	51	31	f6d1fd22	51	2273a57e
-prune	0	250000	35	894bdd22	57	6d0decfd
-prune	113	1	0	811c9dc5	1	f8a5c4f4
-prune	113	2	1	f8a5c4f4	4	0018b274
-prune	113	5	2	f2a315d6	5	055eba57
-prune	113	50	17	f53c3397	51	eddc9f39
-prune	113	51	17	f53c3397	51	eddc9f39
-prune	113	250000	46	553f95ca	95	5f92cf72
-prune	11	1	0	811c9dc5	1	1d242cae
-prune	11	2	0	811c9dc5	1	1d242cae
-prune	11	5	0	811c9dc5	1	1d242cae
-prune	11	50	0	811c9dc5	1	1d242cae
-prune	11	51	0	811c9dc5	1	1d242cae
-prune	11	250000	0	811c9dc5	1	1d242cae
-prune	569	1	0	811c9dc5	1	02e4e852
-prune	569	2	1	02e4e852	2	58c37561
-prune	569	5	3	c6fea844	4	b77d2671
-prune	569	50	3	c6fea844	4	b77d2671
-prune	569	51	3	c6fea844	4	b77d2671
-prune	569	250000	3	c6fea844	4	b77d2671
-prune	74	1	0	811c9dc5	1	6240a77f
-prune	74	2	0	811c9dc5	1	6240a77f
-prune	74	5	0	811c9dc5	1	6240a77f
-prune	74	50	0	811c9dc5	1	6240a77f
-prune	74	51	0	811c9dc5	1	6240a77f
-prune	74	250000	0	811c9dc5	1	6240a77f
-prune	340	1	0	811c9dc5	1	c3b27256
-prune	340	2	0	811c9dc5	1	c3b27256
-prune	340	5	0	811c9dc5	1	c3b27256
-prune	340	50	0	811c9dc5	1	c3b27256
-prune	340	51	0	811c9dc5	1	c3b27256
-prune	340	250000	0	811c9dc5	1	c3b27256
-prune	55	1	0	811c9dc5	1	635d0b12
-prune	55	2	0	811c9dc5	1	635d0b12
-prune	55	5	0	811c9dc5	1	635d0b12
-prune	55	50	0	811c9dc5	1	635d0b12
-prune	55	51	0	811c9dc5	1	635d0b12
-prune	55	250000	0	811c9dc5	1	635d0b12
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	2	4bb53254
+prune	0	2	none	1	4b95f515	2	4bb53254
+prune	0	5	lastFolder	4	00732805	6	40964454
+prune	0	5	none	3	253381b6	4	00732805
+prune	0	50	lastFolder	31	f6d1fd22	51	2273a57e
+prune	0	50	none	32	dd536b08	50	0f49db32
+prune	0	51	lastFolder	31	f6d1fd22	51	2273a57e
+prune	0	51	none	31	f6d1fd22	51	2273a57e
+prune	0	250000	lastFolder	35	894bdd22	57	6d0decfd
+prune	0	250000	none	35	894bdd22	57	6d0decfd
+prune	113	1	lastFolder	0	811c9dc5	1	f8a5c4f4
+prune	113	1	none	0	811c9dc5	1	f8a5c4f4
+prune	113	2	lastFolder	1	f8a5c4f4	4	0018b274
+prune	113	2	none	1	f8a5c4f4	4	0018b274
+prune	113	5	lastFolder	2	f2a315d6	5	055eba57
+prune	113	5	none	2	f2a315d6	5	055eba57
+prune	113	50	lastFolder	17	f53c3397	51	eddc9f39
+prune	113	50	none	17	d9099f0d	50	c1a3f1f0
+prune	113	51	lastFolder	17	f53c3397	51	eddc9f39
+prune	113	51	none	17	f53c3397	51	eddc9f39
+prune	113	250000	lastFolder	46	553f95ca	95	5f92cf72
+prune	113	250000	none	46	553f95ca	95	5f92cf72
+prune	11	1	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	1	none	0	811c9dc5	1	1d242cae
+prune	11	2	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	2	none	0	811c9dc5	1	1d242cae
+prune	11	5	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	5	none	0	811c9dc5	1	1d242cae
+prune	11	50	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	50	none	0	811c9dc5	1	1d242cae
+prune	11	51	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	51	none	0	811c9dc5	1	1d242cae
+prune	11	250000	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	250000	none	0	811c9dc5	1	1d242cae
+prune	569	1	lastFolder	0	811c9dc5	1	02e4e852
+prune	569	1	none	0	811c9dc5	1	02e4e852
+prune	569	2	lastFolder	1	02e4e852	2	58c37561
+prune	569	2	none	1	02e4e852	2	58c37561
+prune	569	5	lastFolder	3	c6fea844	4	b77d2671
+prune	569	5	none	3	c6fea844	4	b77d2671
+prune	569	50	lastFolder	3	c6fea844	4	b77d2671
+prune	569	50	none	3	c6fea844	4	b77d2671
+prune	569	51	lastFolder	3	c6fea844	4	b77d2671
+prune	569	51	none	3	c6fea844	4	b77d2671
+prune	569	250000	lastFolder	3	c6fea844	4	b77d2671
+prune	569	250000	none	3	c6fea844	4	b77d2671
+prune	74	1	lastFolder	0	811c9dc5	1	6240a77f
+prune	74	1	none	0	811c9dc5	1	6240a77f
+prune	74	2	lastFolder	0	811c9dc5	1	6240a77f
+prune	74	2	none	0	811c9dc5	1	6240a77f
+prune	74	5	lastFolder	0	811c9dc5	1	6240a77f
+prune	74	5	none	0	811c9dc5	1	6240a77f
+prune	74	50	lastFolder	0	811c9dc5	1	6240a77f
+prune	74	50	none	0	811c9dc5	1	6240a77f
+prune	74	51	lastFolder	0	811c9dc5	1	6240a77f
+prune	74	51	none	0	811c9dc5	1	6240a77f
+prune	74	250000	lastFolder	0	811c9dc5	1	6240a77f
+prune	74	250000	none	0	811c9dc5	1	6240a77f
+prune	340	1	lastFolder	0	811c9dc5	1	c3b27256
+prune	340	1	none	0	811c9dc5	1	c3b27256
+prune	340	2	lastFolder	0	811c9dc5	1	c3b27256
+prune	340	2	none	0	811c9dc5	1	c3b27256
+prune	340	5	lastFolder	0	811c9dc5	1	c3b27256
+prune	340	5	none	0	811c9dc5	1	c3b27256
+prune	340	50	lastFolder	0	811c9dc5	1	c3b27256
+prune	340	50	none	0	811c9dc5	1	c3b27256
+prune	340	51	lastFolder	0	811c9dc5	1	c3b27256
+prune	340	51	none	0	811c9dc5	1	c3b27256
+prune	340	250000	lastFolder	0	811c9dc5	1	c3b27256
+prune	340	250000	none	0	811c9dc5	1	c3b27256
+prune	55	1	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	1	none	0	811c9dc5	1	635d0b12
+prune	55	2	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	2	none	0	811c9dc5	1	635d0b12
+prune	55	5	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	5	none	0	811c9dc5	1	635d0b12
+prune	55	50	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	50	none	0	811c9dc5	1	635d0b12
+prune	55	51	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	51	none	0	811c9dc5	1	635d0b12
+prune	55	250000	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	250000	none	0	811c9dc5	1	635d0b12
 treemap	0	1	0	1	1	4b95f515	2	4bb53254	1	69ae672f
 treemap	0	1	0	7	1	4b95f515	2	4bb53254	1	69ae672f
 treemap	0	1	0	50	1	4b95f515	2	4bb53254	1	69ae672f
@@ -3213,42 +3639,78 @@ treemap	340	6	1	50	1	c3b27256	1	c3b27256	0	811c9dc5
 treemap	55	3	0	20000	0	811c9dc5	1	635d0b12	0	811c9dc5
 treemap	55	6	1	50	0	811c9dc5	1	635d0b12	0	811c9dc5
 tree	mixed-a	15	2000	30	10	5	40	200	8	15	60	9	5	40	3	2000	fff9ac54
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	9	a705099d
-prune	0	5	1	4b95f515	9	a705099d
-prune	0	50	6	cd1201ba	30	a04fb3f2
-prune	0	51	6	cd1201ba	30	a04fb3f2
-prune	0	250000	6	cd1201ba	30	a04fb3f2
-prune	77	1	0	811c9dc5	1	310aee08
-prune	77	2	1	310aee08	94	a53a5d03
-prune	77	5	1	310aee08	94	a53a5d03
-prune	77	50	1	310aee08	94	a53a5d03
-prune	77	51	1	310aee08	94	a53a5d03
-prune	77	250000	27	3bf8977f	606	d727d4f7
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
-prune	166	1	0	811c9dc5	1	9aa5d093
-prune	166	2	1	9aa5d093	2	7a7b5686
-prune	166	5	2	7a7b5686	10	775f1a3e
-prune	166	50	2	7a7b5686	10	775f1a3e
-prune	166	51	2	7a7b5686	10	775f1a3e
-prune	166	250000	2	7a7b5686	10	775f1a3e
-prune	55	1	0	811c9dc5	1	635d0b12
-prune	55	2	0	811c9dc5	1	635d0b12
-prune	55	5	0	811c9dc5	1	635d0b12
-prune	55	50	0	811c9dc5	1	635d0b12
-prune	55	51	0	811c9dc5	1	635d0b12
-prune	55	250000	0	811c9dc5	1	635d0b12
-prune	11	1	0	811c9dc5	1	1d242cae
-prune	11	2	0	811c9dc5	1	1d242cae
-prune	11	5	0	811c9dc5	1	1d242cae
-prune	11	50	0	811c9dc5	1	1d242cae
-prune	11	51	0	811c9dc5	1	1d242cae
-prune	11	250000	0	811c9dc5	1	1d242cae
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	9	a705099d
+prune	0	2	none	1	4b95f515	9	a705099d
+prune	0	5	lastFolder	1	4b95f515	9	a705099d
+prune	0	5	none	1	4b95f515	9	a705099d
+prune	0	50	lastFolder	6	cd1201ba	30	a04fb3f2
+prune	0	50	none	6	cd1201ba	30	a04fb3f2
+prune	0	51	lastFolder	6	cd1201ba	30	a04fb3f2
+prune	0	51	none	6	cd1201ba	30	a04fb3f2
+prune	0	250000	lastFolder	6	cd1201ba	30	a04fb3f2
+prune	0	250000	none	6	cd1201ba	30	a04fb3f2
+prune	77	1	lastFolder	0	811c9dc5	1	310aee08
+prune	77	1	none	0	811c9dc5	1	310aee08
+prune	77	2	lastFolder	1	310aee08	94	a53a5d03
+prune	77	2	none	1	310aee08	94	a53a5d03
+prune	77	5	lastFolder	1	310aee08	94	a53a5d03
+prune	77	5	none	1	310aee08	94	a53a5d03
+prune	77	50	lastFolder	1	310aee08	94	a53a5d03
+prune	77	50	none	1	310aee08	94	a53a5d03
+prune	77	51	lastFolder	1	310aee08	94	a53a5d03
+prune	77	51	none	1	310aee08	94	a53a5d03
+prune	77	250000	lastFolder	27	3bf8977f	606	d727d4f7
+prune	77	250000	none	27	3bf8977f	606	d727d4f7
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
+prune	166	1	lastFolder	0	811c9dc5	1	9aa5d093
+prune	166	1	none	0	811c9dc5	1	9aa5d093
+prune	166	2	lastFolder	1	9aa5d093	2	7a7b5686
+prune	166	2	none	1	9aa5d093	2	7a7b5686
+prune	166	5	lastFolder	2	7a7b5686	10	775f1a3e
+prune	166	5	none	1	9aa5d093	2	7a7b5686
+prune	166	50	lastFolder	2	7a7b5686	10	775f1a3e
+prune	166	50	none	2	7a7b5686	10	775f1a3e
+prune	166	51	lastFolder	2	7a7b5686	10	775f1a3e
+prune	166	51	none	2	7a7b5686	10	775f1a3e
+prune	166	250000	lastFolder	2	7a7b5686	10	775f1a3e
+prune	166	250000	none	2	7a7b5686	10	775f1a3e
+prune	55	1	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	1	none	0	811c9dc5	1	635d0b12
+prune	55	2	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	2	none	0	811c9dc5	1	635d0b12
+prune	55	5	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	5	none	0	811c9dc5	1	635d0b12
+prune	55	50	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	50	none	0	811c9dc5	1	635d0b12
+prune	55	51	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	51	none	0	811c9dc5	1	635d0b12
+prune	55	250000	lastFolder	0	811c9dc5	1	635d0b12
+prune	55	250000	none	0	811c9dc5	1	635d0b12
+prune	11	1	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	1	none	0	811c9dc5	1	1d242cae
+prune	11	2	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	2	none	0	811c9dc5	1	1d242cae
+prune	11	5	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	5	none	0	811c9dc5	1	1d242cae
+prune	11	50	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	50	none	0	811c9dc5	1	1d242cae
+prune	11	51	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	51	none	0	811c9dc5	1	1d242cae
+prune	11	250000	lastFolder	0	811c9dc5	1	1d242cae
+prune	11	250000	none	0	811c9dc5	1	1d242cae
 treemap	0	1	0	1	1	4b95f515	6	5e108cfc	1	0666fd20
 treemap	0	1	0	7	1	4b95f515	6	5e108cfc	5	b0e5ff33
 treemap	0	1	0	50	1	4b95f515	6	5e108cfc	5	b0e5ff33
@@ -3450,42 +3912,78 @@ treemap	55	6	1	50	1	635d0b12	126	bc7b4182	50	f47e6803
 treemap	11	3	0	20000	0	811c9dc5	1	1d242cae	0	811c9dc5
 treemap	11	6	1	50	0	811c9dc5	1	1d242cae	0	811c9dc5
 tree	tiny-a	16	40	40	10	0	0	0	4	10	80	3	5	50	5	40	ce07fabf
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	3	253381b6
-prune	0	5	2	3c39ef87	4	601aa9e3
-prune	0	50	2	3c39ef87	4	601aa9e3
-prune	0	51	2	3c39ef87	4	601aa9e3
-prune	0	250000	2	3c39ef87	4	601aa9e3
-prune	28	1	0	811c9dc5	1	8f0ae269
-prune	28	2	1	8f0ae269	4	f89c60fa
-prune	28	5	2	91c8bec8	6	68d1c36b
-prune	28	50	3	652fc568	9	249aa219
-prune	28	51	3	652fc568	9	249aa219
-prune	28	250000	3	652fc568	9	249aa219
-prune	3	1	0	811c9dc5	1	9bc23426
-prune	3	2	0	811c9dc5	1	9bc23426
-prune	3	5	0	811c9dc5	1	9bc23426
-prune	3	50	0	811c9dc5	1	9bc23426
-prune	3	51	0	811c9dc5	1	9bc23426
-prune	3	250000	0	811c9dc5	1	9bc23426
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	1	ebee7337	2	c5c6f452
-prune	2	5	1	ebee7337	2	c5c6f452
-prune	2	50	1	ebee7337	2	c5c6f452
-prune	2	51	1	ebee7337	2	c5c6f452
-prune	2	250000	1	ebee7337	2	c5c6f452
-prune	1	1	0	811c9dc5	1	fb69b604
-prune	1	2	0	811c9dc5	1	fb69b604
-prune	1	5	0	811c9dc5	1	fb69b604
-prune	1	50	0	811c9dc5	1	fb69b604
-prune	1	51	0	811c9dc5	1	fb69b604
-prune	1	250000	0	811c9dc5	1	fb69b604
-prune	5	1	0	811c9dc5	1	bab8b9c0
-prune	5	2	0	811c9dc5	1	bab8b9c0
-prune	5	5	0	811c9dc5	1	bab8b9c0
-prune	5	50	0	811c9dc5	1	bab8b9c0
-prune	5	51	0	811c9dc5	1	bab8b9c0
-prune	5	250000	0	811c9dc5	1	bab8b9c0
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	3	253381b6
+prune	0	2	none	1	4b95f515	3	253381b6
+prune	0	5	lastFolder	2	3c39ef87	4	601aa9e3
+prune	0	5	none	2	3c39ef87	4	601aa9e3
+prune	0	50	lastFolder	2	3c39ef87	4	601aa9e3
+prune	0	50	none	2	3c39ef87	4	601aa9e3
+prune	0	51	lastFolder	2	3c39ef87	4	601aa9e3
+prune	0	51	none	2	3c39ef87	4	601aa9e3
+prune	0	250000	lastFolder	2	3c39ef87	4	601aa9e3
+prune	0	250000	none	2	3c39ef87	4	601aa9e3
+prune	28	1	lastFolder	0	811c9dc5	1	8f0ae269
+prune	28	1	none	0	811c9dc5	1	8f0ae269
+prune	28	2	lastFolder	1	8f0ae269	4	f89c60fa
+prune	28	2	none	1	8f0ae269	4	f89c60fa
+prune	28	5	lastFolder	2	91c8bec8	6	68d1c36b
+prune	28	5	none	1	8f0ae269	4	f89c60fa
+prune	28	50	lastFolder	3	652fc568	9	249aa219
+prune	28	50	none	3	652fc568	9	249aa219
+prune	28	51	lastFolder	3	652fc568	9	249aa219
+prune	28	51	none	3	652fc568	9	249aa219
+prune	28	250000	lastFolder	3	652fc568	9	249aa219
+prune	28	250000	none	3	652fc568	9	249aa219
+prune	3	1	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	1	none	0	811c9dc5	1	9bc23426
+prune	3	2	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	2	none	0	811c9dc5	1	9bc23426
+prune	3	5	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	5	none	0	811c9dc5	1	9bc23426
+prune	3	50	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	50	none	0	811c9dc5	1	9bc23426
+prune	3	51	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	51	none	0	811c9dc5	1	9bc23426
+prune	3	250000	lastFolder	0	811c9dc5	1	9bc23426
+prune	3	250000	none	0	811c9dc5	1	9bc23426
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	1	ebee7337	2	c5c6f452
+prune	2	2	none	1	ebee7337	2	c5c6f452
+prune	2	5	lastFolder	1	ebee7337	2	c5c6f452
+prune	2	5	none	1	ebee7337	2	c5c6f452
+prune	2	50	lastFolder	1	ebee7337	2	c5c6f452
+prune	2	50	none	1	ebee7337	2	c5c6f452
+prune	2	51	lastFolder	1	ebee7337	2	c5c6f452
+prune	2	51	none	1	ebee7337	2	c5c6f452
+prune	2	250000	lastFolder	1	ebee7337	2	c5c6f452
+prune	2	250000	none	1	ebee7337	2	c5c6f452
+prune	1	1	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	1	none	0	811c9dc5	1	fb69b604
+prune	1	2	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	2	none	0	811c9dc5	1	fb69b604
+prune	1	5	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	5	none	0	811c9dc5	1	fb69b604
+prune	1	50	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	50	none	0	811c9dc5	1	fb69b604
+prune	1	51	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	51	none	0	811c9dc5	1	fb69b604
+prune	1	250000	lastFolder	0	811c9dc5	1	fb69b604
+prune	1	250000	none	0	811c9dc5	1	fb69b604
+prune	5	1	lastFolder	0	811c9dc5	1	bab8b9c0
+prune	5	1	none	0	811c9dc5	1	bab8b9c0
+prune	5	2	lastFolder	0	811c9dc5	1	bab8b9c0
+prune	5	2	none	0	811c9dc5	1	bab8b9c0
+prune	5	5	lastFolder	0	811c9dc5	1	bab8b9c0
+prune	5	5	none	0	811c9dc5	1	bab8b9c0
+prune	5	50	lastFolder	0	811c9dc5	1	bab8b9c0
+prune	5	50	none	0	811c9dc5	1	bab8b9c0
+prune	5	51	lastFolder	0	811c9dc5	1	bab8b9c0
+prune	5	51	none	0	811c9dc5	1	bab8b9c0
+prune	5	250000	lastFolder	0	811c9dc5	1	bab8b9c0
+prune	5	250000	none	0	811c9dc5	1	bab8b9c0
 treemap	0	1	0	1	1	4b95f515	3	253381b6	1	0986c09f
 treemap	0	1	0	7	1	4b95f515	3	253381b6	2	35730925
 treemap	0	1	0	50	1	4b95f515	3	253381b6	2	35730925
@@ -3687,24 +4185,42 @@ treemap	1	6	1	50	1	fb69b604	2	2f04cf77	1	bb030815
 treemap	5	3	0	20000	0	811c9dc5	1	bab8b9c0	0	811c9dc5
 treemap	5	6	1	50	0	811c9dc5	1	bab8b9c0	0	811c9dc5
 tree	tiny-b	17	12	50	20	0	0	0	3	10	90	2	0	0	0	12	bb3e2aa4
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	2	1	4b95f515	4	00732805
-prune	0	5	2	ec0db076	5	3e7da800
-prune	0	50	6	f1807563	12	4549a675
-prune	0	51	6	f1807563	12	4549a675
-prune	0	250000	6	f1807563	12	4549a675
-prune	7	1	0	811c9dc5	1	5b1137e2
-prune	7	2	1	5b1137e2	3	07021193
-prune	7	5	1	5b1137e2	3	07021193
-prune	7	50	1	5b1137e2	3	07021193
-prune	7	51	1	5b1137e2	3	07021193
-prune	7	250000	1	5b1137e2	3	07021193
-prune	2	1	0	811c9dc5	1	ebee7337
-prune	2	2	0	811c9dc5	1	ebee7337
-prune	2	5	0	811c9dc5	1	ebee7337
-prune	2	50	0	811c9dc5	1	ebee7337
-prune	2	51	0	811c9dc5	1	ebee7337
-prune	2	250000	0	811c9dc5	1	ebee7337
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	2	lastFolder	1	4b95f515	4	00732805
+prune	0	2	none	1	4b95f515	4	00732805
+prune	0	5	lastFolder	2	ec0db076	5	3e7da800
+prune	0	5	none	2	ec0db076	5	3e7da800
+prune	0	50	lastFolder	6	f1807563	12	4549a675
+prune	0	50	none	6	f1807563	12	4549a675
+prune	0	51	lastFolder	6	f1807563	12	4549a675
+prune	0	51	none	6	f1807563	12	4549a675
+prune	0	250000	lastFolder	6	f1807563	12	4549a675
+prune	0	250000	none	6	f1807563	12	4549a675
+prune	7	1	lastFolder	0	811c9dc5	1	5b1137e2
+prune	7	1	none	0	811c9dc5	1	5b1137e2
+prune	7	2	lastFolder	1	5b1137e2	3	07021193
+prune	7	2	none	1	5b1137e2	3	07021193
+prune	7	5	lastFolder	1	5b1137e2	3	07021193
+prune	7	5	none	1	5b1137e2	3	07021193
+prune	7	50	lastFolder	1	5b1137e2	3	07021193
+prune	7	50	none	1	5b1137e2	3	07021193
+prune	7	51	lastFolder	1	5b1137e2	3	07021193
+prune	7	51	none	1	5b1137e2	3	07021193
+prune	7	250000	lastFolder	1	5b1137e2	3	07021193
+prune	7	250000	none	1	5b1137e2	3	07021193
+prune	2	1	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	1	none	0	811c9dc5	1	ebee7337
+prune	2	2	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	2	none	0	811c9dc5	1	ebee7337
+prune	2	5	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	5	none	0	811c9dc5	1	ebee7337
+prune	2	50	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	50	none	0	811c9dc5	1	ebee7337
+prune	2	51	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	51	none	0	811c9dc5	1	ebee7337
+prune	2	250000	lastFolder	0	811c9dc5	1	ebee7337
+prune	2	250000	none	0	811c9dc5	1	ebee7337
 treemap	0	1	0	1	1	4b95f515	4	00732805	1	7a4adade
 treemap	0	1	0	7	1	4b95f515	4	00732805	3	bf2fb650
 treemap	0	1	0	50	1	4b95f515	4	00732805	3	bf2fb650
@@ -3900,12 +4416,18 @@ treemap	7	6	10240	20000	0	811c9dc5	1	5b1137e2	0	811c9dc5
 treemap	2	3	0	20000	0	811c9dc5	1	ebee7337	0	811c9dc5
 treemap	2	6	1	50	0	811c9dc5	1	ebee7337	0	811c9dc5
 tree	big	107	320000	25	5	3	100	900	14	8	70	9	3	30	0	320000	c87702a5
-prune	0	1	0	811c9dc5	1	4b95f515
-prune	0	50	3	9055ed2f	892	bd9fce95
-prune	0	20000	38	db540b94	20229	4bb2a70e
-prune	0	250000	3597	b8637e3e	250004	ef057066
-prune	71	20000	31	d8a0615d	20425	b5d83327
-prune	71	250000	3161	ba75dafa	74057	1f97eaed
+prune	0	1	lastFolder	0	811c9dc5	1	4b95f515
+prune	0	1	none	0	811c9dc5	1	4b95f515
+prune	0	50	lastFolder	3	9055ed2f	892	bd9fce95
+prune	0	50	none	6	c9734985	48	e9f93468
+prune	0	20000	lastFolder	38	db540b94	20229	4bb2a70e
+prune	0	20000	none	53	513ddd73	20000	8cf0a1f3
+prune	0	250000	lastFolder	3597	b8637e3e	250004	ef057066
+prune	0	250000	none	3598	a09fdfd1	250000	41653b4e
+prune	71	20000	lastFolder	31	d8a0615d	20425	b5d83327
+prune	71	20000	none	52	d78b3bd2	20000	815862af
+prune	71	250000	lastFolder	3161	ba75dafa	74057	1f97eaed
+prune	71	250000	none	3161	ba75dafa	74057	1f97eaed
 treemap	0	4	4096	20000	297	2e483413	6001	099df099	5988	5a0a40e4
 treemap	0	4	1	20000	297	2e483413	8077	57819011	8059	653c9c96
 treemap	0	2	0	20000	4	5eff5e9b	37	28ec8b23	36	572f0f3a

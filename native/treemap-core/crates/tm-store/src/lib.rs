@@ -45,8 +45,8 @@ pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};
 pub use derive::{CloudAnchor, CloudRule, ContainerRule};
 pub use memory::MemorySink;
 pub use select::{
-    PruneSelection, Rect, RowError, RowSource, TreemapCell, TreemapOptions, TreemapSelection,
-    select_prune, select_treemap,
+    Overshoot, PruneSelection, Rect, RowError, RowSource, TreemapCell, TreemapOptions,
+    TreemapSelection, select_prune, select_treemap,
 };
 
 /// The store's flag bits: `Flag` in `src/services/scanStore.ts`, bit for bit.

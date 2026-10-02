@@ -3,7 +3,8 @@
 //! (`src/services/scanStore.ts`), `buildTreemapFromStore` (`src/utils/treemap.ts`).
 //!
 //! Two kinds of evidence. Small trees worked by hand pin each rule a port could get wrong —
-//! the heap's tie order, the last folder given every child, each bound — with the answers
+//! the heap's tie order, the last folder given every child, each bound, and the first
+//! frame's exact budget (`Overshoot::None`, plan U-19) — with the answers
 //! the JavaScript itself gives for the same trees (`tests/selectOracle.test.ts` holds the
 //! JavaScript to them). And the oracle `tests/fixtures/selectOracle.ts` writes from the
 //! JavaScript (`tests/fixtures/select-oracle.tsv`): eighteen seeded trees full of ties,
@@ -12,8 +13,8 @@
 
 use tm_store::column::Column;
 use tm_store::{
-    Counters, Rect, RowError, Store, StoreMode, TreemapCell, TreemapOptions, flag, select_prune,
-    select_treemap,
+    Counters, Overshoot, Rect, RowError, Store, StoreMode, TreemapCell, TreemapOptions, flag,
+    select_prune, select_treemap,
 };
 use tm_walk::{FastPath, WalkStats};
 
@@ -240,15 +241,15 @@ fn equal_folders_pop_first_then_last_to_second_as_the_javascript_heap_leaves_the
     // to the top, which neither child beats, so D comes second. Neither first-in-first-out
     // nor the smallest id gives that order.
     let store = four_equal_folders()?;
-    let at_nine = select_prune(&store, 0, 9)?;
+    let at_nine = select_prune(&store, 0, 9, Overshoot::LastFolder)?;
     assert_eq!(at_nine.expanded, [0, 1, 4]);
     assert_eq!(at_nine.rows, [0, 1, 2, 3, 4, 5, 6, 11, 12]);
-    let all = select_prune(&store, 0, 1_000)?;
+    let all = select_prune(&store, 0, 1_000, Overshoot::LastFolder)?;
     assert_eq!(all.expanded, [0, 1, 4, 3, 2]);
     assert_eq!(all.rows, [0, 1, 2, 3, 4, 5, 6, 11, 12, 9, 10, 7, 8]);
 
     let seven = hand(&folder((0..7).map(|_| folder(vec![file(10.0)])).collect()))?;
-    let all = select_prune(&seven, 0, 1_000)?;
+    let all = select_prune(&seven, 0, 1_000, Overshoot::LastFolder)?;
     assert_eq!(all.expanded, [0, 1, 7, 6, 5, 4, 3, 2]);
     Ok(())
 }
@@ -261,7 +262,7 @@ fn the_last_folder_popped_gives_every_child_past_the_budget() -> TestResult {
         folder((0..10).map(|_| file(100.0)).collect()),
         file(7.0),
     ]))?;
-    let selection = select_prune(&store, 0, 5)?;
+    let selection = select_prune(&store, 0, 5, Overshoot::LastFolder)?;
     assert_eq!(selection.expanded, [0, 1]);
     assert_eq!(selection.rows, (0..13).collect::<Vec<u32>>());
     Ok(())
@@ -284,10 +285,121 @@ fn no_folder_is_popped_once_the_rows_reach_the_budget() -> TestResult {
         (6, &[0, 1], &[0, 1, 2, 3, 4, 5]),
     ];
     for (max_nodes, expanded, rows) in cases {
-        let selection = select_prune(&store, 0, max_nodes)?;
+        let selection = select_prune(&store, 0, max_nodes, Overshoot::LastFolder)?;
         assert_eq!(selection.expanded, expanded, "expanded at {max_nodes}");
         assert_eq!(selection.rows, rows, "rows at {max_nodes}");
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The first frame's exact budget (plan U-19): `overshoot: 'none'`. Every expected value is
+// again the JavaScript's for the same tree (`tests/selectOracle.test.ts`).
+// ---------------------------------------------------------------------------
+
+/// `from..to` as the rows of an answer.
+fn span(from: u32, to: u32) -> Vec<u32> {
+    (from..to).collect()
+}
+
+#[test]
+fn under_the_exact_budget_a_folder_whose_children_would_pass_it_stays_closed() -> TestResult {
+    // The folder of ten files: 3 + 10 = 13 rows passes 5 and 12, and fits 13 exactly.
+    let store = hand(&folder(vec![
+        folder((0..10).map(|_| file(100.0)).collect()),
+        file(7.0),
+    ]))?;
+    let cases: [(usize, &[u32], Vec<u32>); 3] = [
+        (5, &[0], vec![0, 1, 2]),
+        (12, &[0], vec![0, 1, 2]),
+        (13, &[0, 1], span(0, 13)),
+    ];
+    for (max_nodes, expanded, rows) in cases {
+        let selection = select_prune(&store, 0, max_nodes, Overshoot::None)?;
+        assert_eq!(selection.expanded, expanded, "expanded at {max_nodes}");
+        assert_eq!(selection.rows, rows, "rows at {max_nodes}");
+    }
+    Ok(())
+}
+
+#[test]
+fn under_the_exact_budget_the_next_folder_is_tried_and_one_that_fits_exactly_is_opened()
+-> TestResult {
+    // 300 files of 100 bytes, then 5 of 10: at 40 the first folder is passed over and the
+    // second, popped after it, opened.
+    let past = hand(&folder(vec![
+        folder((0..300).map(|_| file(100.0)).collect()),
+        folder((0..5).map(|_| file(10.0)).collect()),
+        file(1.0),
+    ]))?;
+    let strict = select_prune(&past, 0, 40, Overshoot::None)?;
+    assert_eq!(strict.expanded, [0, 2]);
+    let mut rows = vec![0, 1, 2, 3];
+    rows.extend(304..309);
+    assert_eq!(strict.rows, rows);
+    let today = select_prune(&past, 0, 40, Overshoot::LastFolder)?;
+    assert_eq!(today.expanded, [0, 1]);
+    assert_eq!(today.rows, span(0, 304));
+
+    // 4 rows, then 36 more: exactly 40.
+    let exact = hand(&folder(vec![
+        folder((0..36).map(|_| file(10.0)).collect()),
+        folder(vec![file(1.0), file(1.0)]),
+        file(1.0),
+    ]))?;
+    let fits = select_prune(&exact, 0, 40, Overshoot::None)?;
+    assert_eq!(fits.expanded, [0, 1]);
+    assert_eq!(fits.rows, span(0, 40));
+    let one_short = select_prune(&exact, 0, 39, Overshoot::None)?;
+    assert_eq!(one_short.expanded, [0, 2]);
+    assert_eq!(one_short.rows, [0, 1, 2, 3, 40, 41]);
+    Ok(())
+}
+
+#[test]
+fn under_the_exact_budget_the_roots_own_children_always_come() -> TestResult {
+    let store = hand(&folder(vec![
+        folder(vec![file(1.0)]),
+        folder(vec![file(1.0)]),
+        file(1.0),
+        file(1.0),
+    ]))?;
+    let cases: [(usize, &[u32], &[u32]); 4] = [
+        (0, &[], &[0]),
+        (1, &[], &[0]),
+        (2, &[0], &[0, 1, 2, 3, 4]),
+        (6, &[0, 1], &[0, 1, 2, 3, 4, 5]),
+    ];
+    for (max_nodes, expanded, rows) in cases {
+        let selection = select_prune(&store, 0, max_nodes, Overshoot::None)?;
+        assert_eq!(selection.expanded, expanded, "expanded at {max_nodes}");
+        assert_eq!(selection.rows, rows, "rows at {max_nodes}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_giant_folder_is_opened_by_todays_rule_and_left_closed_by_the_exact_budget() -> TestResult {
+    // 300,000 one-byte files in one folder, beside three files of 10 bytes and one of 5.
+    let giant = hand(&folder(vec![
+        folder((0..300_000).map(|_| file(1.0)).collect()),
+        folder((0..3).map(|_| file(10.0)).collect()),
+        file(5.0),
+    ]))?;
+    let today = select_prune(&giant, 0, 250_000, Overshoot::LastFolder)?;
+    assert_eq!(today.expanded, [0, 1]);
+    assert_eq!(today.rows, span(0, 300_004));
+    for max_nodes in [50, 250_000] {
+        let strict = select_prune(&giant, 0, max_nodes, Overshoot::None)?;
+        assert_eq!(strict.expanded, [0, 2], "expanded at {max_nodes}");
+        assert_eq!(
+            strict.rows,
+            [0, 1, 2, 3, 300_004, 300_005, 300_006],
+            "rows at {max_nodes}"
+        );
+    }
+    let alone = select_prune(&giant, 0, 1, Overshoot::None)?;
+    assert_eq!((alone.expanded.len(), alone.rows), (0, vec![0]));
     Ok(())
 }
 
@@ -456,7 +568,7 @@ fn a_folder_without_a_child_array_is_laid_out_but_never_pruned_open() -> TestRes
         folder_without_child_array(vec![file(10.0), file(10.0)]),
         file(5.0),
     ]))?;
-    let pruned = select_prune(&store, 0, 100)?;
+    let pruned = select_prune(&store, 0, 100, Overshoot::LastFolder)?;
     assert_eq!(pruned.expanded, [0]);
     assert_eq!(pruned.rows, [0, 1, 2]);
     let map = select_treemap(&store, 0, &options(3, 0.0, 20_000))?;
@@ -510,7 +622,7 @@ fn a_row_the_store_does_not_hold_is_refused() -> TestResult {
         )
     };
     assert!(
-        past_the_rows(select_prune(&store, 13, 10).map(|_| ())),
+        past_the_rows(select_prune(&store, 13, 10, Overshoot::LastFolder).map(|_| ())),
         "a root past the rows, pruned"
     );
     assert!(
@@ -529,7 +641,7 @@ fn a_row_the_store_does_not_hold_is_refused() -> TestResult {
     })?;
     short.size = Column::Owned(vec![10.0]);
     assert_eq!(
-        select_prune(&short, 0, 10),
+        select_prune(&short, 0, 10, Overshoot::LastFolder),
         Err(RowError::NoRow {
             id: 1,
             column: "size",
@@ -549,7 +661,10 @@ fn a_child_range_past_the_rows_is_refused_where_the_javascript_would_read_it() -
         count: 2,
         rows: 2,
     });
-    assert_eq!(select_prune(&broken, 0, 10).map(|_| ()), at_the_root);
+    assert_eq!(
+        select_prune(&broken, 0, 10, Overshoot::LastFolder).map(|_| ()),
+        at_the_root
+    );
     assert_eq!(
         select_treemap(&broken, 0, &options(4, 0.0, 10)).map(|_| ()),
         at_the_root
@@ -557,7 +672,7 @@ fn a_child_range_past_the_rows_is_refused_where_the_javascript_would_read_it() -
     // A range whose end does not fit in 32 bits is past the rows too.
     let wrapped = rows_of(&[FOLDER, FOLDER], &[10.0, 10.0], &[u32::MAX, 2], &[2, 0])?;
     assert_eq!(
-        select_prune(&wrapped, 0, 10).map(|_| ()),
+        select_prune(&wrapped, 0, 10, Overshoot::LastFolder).map(|_| ()),
         Err(RowError::ChildrenPastRows {
             id: 0,
             start: u32::MAX,
@@ -584,7 +699,10 @@ fn a_child_range_past_the_rows_is_refused_where_the_javascript_would_read_it() -
         count: 3,
         rows: 3,
     });
-    assert_eq!(select_prune(&past, 0, 2).map(|_| ()), at_the_folder);
+    assert_eq!(
+        select_prune(&past, 0, 2, Overshoot::LastFolder).map(|_| ()),
+        at_the_folder
+    );
     let one = select_treemap(&past, 0, &options(4, 0.0, 1))?;
     assert_eq!(one.read, [0]);
     assert_eq!(one.rows, [0, 1, 2]);
@@ -610,7 +728,7 @@ fn only_the_seven_container_kinds_open_a_file() -> TestResult {
         opened_container(7, 20.0, vec![file(5.0), file(5.0)]),
         file(5.0),
     ]))?;
-    let pruned = select_prune(&store, 0, 100)?;
+    let pruned = select_prune(&store, 0, 100, Overshoot::LastFolder)?;
     assert_eq!(pruned.expanded, [0, 2]);
     assert_eq!(pruned.rows, [0, 1, 2, 3, 6, 7]);
     let map = select_treemap(&store, 0, &options(3, 0.0, 20_000))?;
@@ -670,7 +788,7 @@ fn a_size_that_is_not_a_number_is_compared_as_the_javascript_compares_it() -> Te
         file(5.0),
         folder(vec![file(3.0)]),
     ]))?;
-    let all = select_prune(&store, 0, 100)?;
+    let all = select_prune(&store, 0, 100, Overshoot::LastFolder)?;
     assert_eq!(all.expanded, [0, 3, 1]);
     assert_eq!(all.rows, [0, 1, 2, 3, 6, 4, 5]);
     let map = select_treemap(&store, 0, &options(3, 0.0, 20_000))?;
@@ -979,8 +1097,13 @@ fn answer_line(store: &Store, fields: &[&str]) -> Result<String, String> {
     match fields.first().copied() {
         Some("prune") => {
             let max_nodes: usize = field(fields, 2, "maxNodes")?;
-            let s = select_prune(store, root, max_nodes).map_err(|e| e.to_string())?;
-            let head = fields.get(..3).ok_or("a short line")?.join("\t");
+            let overshoot = match fields.get(3).copied() {
+                Some("lastFolder") => Overshoot::LastFolder,
+                Some("none") => Overshoot::None,
+                other => return Err(format!("a prune line whose overshoot is {other:?}")),
+            };
+            let s = select_prune(store, root, max_nodes, overshoot).map_err(|e| e.to_string())?;
+            let head = fields.get(..4).ok_or("a short line")?.join("\t");
             Ok(format!(
                 "{head}\t{}\t{}",
                 list_text(&s.expanded),
@@ -1007,9 +1130,10 @@ fn answer_line(store: &Store, fields: &[&str]) -> Result<String, String> {
 }
 
 /// Trees, prunes and treemaps in the oracle: a file cut short, or one that lost a case,
-/// is not quietly held to less.
+/// is not quietly held to less. Each prune case is a line under today's rule and one under
+/// the first frame's exact budget.
 const ORACLE_TREES: usize = 18;
-const ORACLE_PRUNES: usize = 522;
+const ORACLE_PRUNES: usize = 1_044;
 const ORACLE_TREEMAPS: usize = 3_376;
 
 #[test]

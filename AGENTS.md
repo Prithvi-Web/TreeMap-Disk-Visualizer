@@ -46,6 +46,15 @@ OpenAPI 3 spec).
    `GET /api/agent/summary?scanId=` — top culprits, reclaimable-by-category,
    and the forecast, every number as raw bytes plus a formatted string, in
    deterministic order.
+   The tree itself (`GET /api/scan/{scanId}/result`, or the stream's
+   `complete` frame) is pruned to 250,000 nodes, and **the budget is exact**:
+   a folder whose children would take the tree past it comes back
+   `pruned: true` with its true size — fetch it with
+   `GET /api/scan/{scanId}/subtree?path=` — except the scanned folder's own
+   children, which always come. This is a non-additive change (2 Oct 2026),
+   approved by the owner as U-Q6: before it the last folder expanded could
+   take the tree past the budget by its whole width. A tree that fitted the
+   budget is byte for byte what it was.
 2. **Inspect.** With the `scanId`:
    - `GET /api/large-files` / `GET /api/large-folders` — the big things.
    - `GET /api/media?scanId=` — Photos/Final Cut/iMovie/Lightroom/Capture One

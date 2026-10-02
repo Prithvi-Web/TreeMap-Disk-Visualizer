@@ -966,7 +966,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/scan/{scanId}/progress',
-    summary: "SSE progress stream: frames of type 'progress' (the unchanged frame repeats about every 2 s as a heartbeat while the count stands still), then one 'complete' (pruned tree + stats) or 'error'",
+    summary: "SSE progress stream: frames of type 'progress' (the unchanged frame repeats about every 2 s as a heartbeat while the count stands still), then one 'complete' (the tree pruned as /result's + stats) or 'error'",
     tag: 'scan',
     destructive: false,
     parameters: [pathParam('scanId', 'Scan id')],
@@ -975,7 +975,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/scan/{scanId}/result',
-    summary: 'The completed scan: counters plus the tree pruned to a 250k-node budget',
+    summary: "The completed scan: counters plus the tree pruned to an exact 250k-node budget — a folder whose children would pass it comes back pruned (open it with /subtree), the scanned folder's own children excepted (a non-additive change of 2 Oct 2026, approved by the owner as U-Q6)",
     tag: 'scan',
     destructive: false,
     parameters: [pathParam('scanId', 'Scan id')],

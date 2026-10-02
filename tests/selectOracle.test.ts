@@ -6,6 +6,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-selectOracle-data-');
 
 import { Flag } from '../src/services/scanStore';
+import type { Overshoot } from '../src/utils/pruneTree';
 import {
   ORACLE_PATH,
   oracleText,
@@ -72,6 +73,9 @@ test("the oracle's trees hold the ties and odd rows it claims, and each bound de
     ...everyKey('prunes that stop with folders waiting', f.cutShort, [1, 50, 20_000, 250_000]),
     ...everyKey('prunes that stop at exactly maxNodes with folders waiting', f.exactFits, [2, 5, 50, 51]),
     [`prunes that pop two folders of one size, the second already waiting: ${f.heapTies}`, f.heapTies > 10],
+    ...everyKey('exact-budget prunes that leave closed a folder today\'s rule opens', f.exactClosed, [5, 50, 20_000, 250_000]),
+    ...everyKey('exact-budget prunes that open a folder past one they leave closed', f.exactOpenedPast, [50, 20_000, 250_000]),
+    ...everyKey('exact-budget prunes that answer as today\'s rule, which fits', f.exactSame, [1, 2, 50, 250_000]),
     ...everyKey('treemaps the cap stops', f.capped, [1, 7, 50, 20_000]),
     ...everyKey('treemaps cut by maxDepth', f.depthCuts, [1, 2, 3, 4, 5, 6]),
     ...everyKey('treemaps that keep a child of exactly minSize', f.minSizeTies, [1, 4096, 10240]),
@@ -129,10 +133,13 @@ function hand(name: string, root: Row): Tree {
 const cell = (id: number, depth: number, expanded: boolean, [x, y, w, h]: number[]): Cell => ({ id, depth, expanded, x, y, w, h });
 const times = (n: number, row: () => Row): Row[] => Array.from({ length: n }, row);
 
-/** Asserts `tree`'s prune from `root` to `maxNodes`, naming the case when it differs. */
-function prunes(tree: Tree, root: number, maxNodes: number, want: PruneAnswer): void {
-  assert.deepEqual(pruneAnswer(tree, root, maxNodes), want, `${tree.name}: prune from ${root} to ${maxNodes}`);
+/** Asserts `tree`'s prune from `root` to `maxNodes` under `overshoot`, naming the case when it differs. */
+function prunes(tree: Tree, root: number, maxNodes: number, want: PruneAnswer, overshoot: Overshoot = 'lastFolder'): void {
+  assert.deepEqual(pruneAnswer(tree, root, maxNodes, overshoot), want, `${tree.name}: prune from ${root} to ${maxNodes} (${overshoot})`);
 }
+
+/** `from` up to and not including `to`. */
+const range = (from: number, to: number): number[] => Array.from({ length: to - from }, (_, i) => from + i);
 
 /** Asserts `tree`'s treemap from `root` at `p`, naming the case when it differs. */
 function maps(tree: Tree, root: number, p: TreemapParams, want: TreemapAnswer): void {
@@ -148,12 +155,39 @@ test('the hand-made trees of tests/select.rs answer as the JavaScript does', () 
 
   const last = hand('a wide last folder', folder([folder(times(10, () => file(100))), file(7)]));
   prunes(last, 0, 5, { expanded: [0, 1], rows: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] });
+  // The first frame's exact budget (U-19): the folder whose ten children would pass 5 stays closed.
+  prunes(last, 0, 5, { expanded: [0], rows: [0, 1, 2] }, 'none');
+  prunes(last, 0, 13, { expanded: [0, 1], rows: range(0, 13) }, 'none');
+  prunes(last, 0, 12, { expanded: [0], rows: [0, 1, 2] }, 'none');
 
   const bound = hand('the budget', folder([folder([file(1)]), folder([file(1)]), file(1), file(1)]));
   prunes(bound, 0, 0, { expanded: [], rows: [0] });
   prunes(bound, 0, 1, { expanded: [], rows: [0] });
   prunes(bound, 0, 5, { expanded: [0], rows: [0, 1, 2, 3, 4] });
   prunes(bound, 0, 6, { expanded: [0, 1], rows: [0, 1, 2, 3, 4, 5] });
+  // Under the exact budget the root's own children always come, even past it.
+  prunes(bound, 0, 0, { expanded: [], rows: [0] }, 'none');
+  prunes(bound, 0, 1, { expanded: [], rows: [0] }, 'none');
+  prunes(bound, 0, 2, { expanded: [0], rows: [0, 1, 2, 3, 4] }, 'none');
+  prunes(bound, 0, 6, { expanded: [0, 1], rows: [0, 1, 2, 3, 4, 5] }, 'none');
+
+  // A 300-child folder at 40 stays closed and the smaller folder popped after it is opened;
+  // a folder that makes exactly 40 is opened.
+  const past = hand('a folder past the budget', folder([folder(times(300, () => file(100))), folder(times(5, () => file(10))), file(1)]));
+  prunes(past, 0, 40, { expanded: [0, 2], rows: [0, 1, 2, 3, ...range(304, 309)] }, 'none');
+  prunes(past, 0, 40, { expanded: [0, 1], rows: range(0, 304) });
+  const exact = hand('an exact fit', folder([folder(times(36, () => file(10))), folder([file(1), file(1)]), file(1)]));
+  prunes(exact, 0, 40, { expanded: [0, 1], rows: range(0, 40) }, 'none');
+  prunes(exact, 0, 39, { expanded: [0, 2], rows: [0, 1, 2, 3, 40, 41] }, 'none');
+
+  // A folder of 300,000 rows: today's rule opens it at 250,000; the exact budget leaves it
+  // closed at every budget and opens the small folder beside it.
+  const giant = hand('a giant folder', folder([folder(times(300_000, () => file(1))), folder(times(3, () => file(10))), file(5)]));
+  prunes(giant, 0, 250_000, { expanded: [0, 1], rows: range(0, 300_004) });
+  for (const maxNodes of [50, 250_000]) {
+    prunes(giant, 0, maxNodes, { expanded: [0, 2], rows: [0, 1, 2, 3, 300_004, 300_005, 300_006] }, 'none');
+  }
+  prunes(giant, 0, 1, { expanded: [], rows: [0] }, 'none');
 
   const whole = [0, 0, 100, 100];
   const chain = hand('a chain', folder([folder([folder([file(100)])])]));

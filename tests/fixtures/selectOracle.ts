@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { FileNode } from '../../src/models/types';
 import { Flag, PackedScanStore, pruneStore, prunedExpansion } from '../../src/services/scanStore';
+import type { Overshoot } from '../../src/utils/pruneTree';
 import { buildTreemapFromStore } from '../../src/utils/treemap';
 import { makeRng } from './storeFuzz';
 
@@ -37,15 +38,16 @@ import { makeRng } from './storeFuzz';
  *
  * Regenerate with `npx tsx tests/fixtures/selectOracle.ts`;
  * `tests/selectOracle.test.ts` fails when the file is stale. To see one case's
- * lists, e.g. the first tree pruned from its root to 50:
+ * lists, e.g. the first tree pruned from its root to 50, under the first
+ * frame's exact budget:
  *   npx tsx -e "const o = require('./tests/fixtures/selectOracle');
- *     console.log(o.pruneAnswer(o.treeOf(o.SHAPES[0]), 0, 50))"
+ *     console.log(o.pruneAnswer(o.treeOf(o.SHAPES[0]), 0, 50, 'none'))"
  *
  * One record per line, tab-separated; a case belongs to the tree above it:
  *   tree    <name> <seed> <nodes> <dirPct> <chainPct> <widePct> <wideMin>
  *           <wideSpan> <smallMax> <zeroPct> <palettePct> <paletteLen>
  *           <containerPct> <openPct> <oddPct> <rows> <tree digest>
- *   prune   <root> <maxNodes> <expanded> <digest> <rows> <digest>
+ *   prune   <root> <maxNodes> <overshoot> <expanded> <digest> <rows> <digest>
  *   treemap <root> <maxDepth> <minSize> <maxNodes> <read> <digest> <rows>
  *           <digest> <cells> <digest>
  * A list is its length and the FNV-1a (32-bit) digest of its little-endian
@@ -395,13 +397,20 @@ export interface PruneAnswer {
   readonly rows: number[];
 }
 
+/** Both rules for the last folder popped: today's, and the first frame's exact budget (plan U-19). */
+export const OVERSHOOTS: readonly Overshoot[] = ['lastFolder', 'none'];
+
 /**
- * `pruneStore` and `prunedExpansion` from `root` under `maxNodes`, recorded.
- * The two are held to each other here (the same folders, in the same order)
- * and `pruneStore`'s rows to the root and every child of each folder it
- * expanded, so the file cannot quietly hold a recording of something else.
+ * `pruneStore` and `prunedExpansion` from `root` under `maxNodes` and
+ * `overshoot`, recorded. The two are held to each other here (the same
+ * folders, in the same order) and `pruneStore`'s rows to the root and every
+ * child of each folder it expanded, so the file cannot quietly hold a
+ * recording of something else. Under `'none'` the rows are also held to the
+ * exact budget: at most max(maxNodes, 1 + the root's children), and the root
+ * alone at 1. A folder that rule leaves closed has its children counted, never
+ * listed, so it is no read of either function.
  */
-export function pruneAnswer(tree: Tree, root: number, maxNodes: number): PruneAnswer {
+export function pruneAnswer(tree: Tree, root: number, maxNodes: number, overshoot: Overshoot = 'lastFolder'): PruneAnswer {
   const { store } = tree;
   store.read.length = 0;
   store.made.length = 0;
@@ -410,20 +419,24 @@ export function pruneAnswer(tree: Tree, root: number, maxNodes: number): PruneAn
   let expansionRead: number[];
   let nodes: number;
   try {
-    expansion = prunedExpansion(store, root, { maxNodes });
+    expansion = prunedExpansion(store, root, { maxNodes, overshoot });
     expansionRead = store.read.splice(0);
-    nodes = pruneStore(store, root, { maxNodes }).nodes;
+    nodes = pruneStore(store, root, { maxNodes, overshoot }).nodes;
   } finally {
     store.recording = false;
   }
   const expanded = [...expansion];
   const pruneRead = store.read.splice(0);
   const rows = store.made.splice(0);
-  const at = `${tree.name}, prune from ${root} to ${maxNodes}`;
+  const at = `${tree.name}, prune from ${root} to ${maxNodes} (${overshoot})`;
   assert.deepEqual(expansionRead, expanded, `${at}: prunedExpansion reads the folders it returns, in order`);
   assert.deepEqual(pruneRead, expanded, `${at}: pruneStore expands what prunedExpansion names, in order`);
   assert.equal(rows.length, nodes, `${at}: one node made per row counted`);
   assert.deepEqual(rows, [root, ...expanded.flatMap((f) => store.childIds(f))], `${at}: every child of each folder expanded`);
+  if (overshoot === 'none') {
+    const bound = maxNodes <= 1 ? 1 : Math.max(maxNodes, 1 + (isExpandable(tree, root) ? tree.columns.childCnt[root] : 0));
+    assert.ok(rows.length <= bound, `${at}: ${rows.length} rows, past the exact budget's ${bound}`);
+  }
   return { expanded, rows };
 }
 
@@ -579,10 +592,12 @@ function treeLine(tree: Tree, s: Shape): string {
   ].join('\t');
 }
 
-function pruneLine(tree: Tree, root: number, maxNodes: number, facts: Facts): string {
-  const a = pruneAnswer(tree, root, maxNodes);
-  facts.notePrune(tree, maxNodes, a);
-  return `prune\t${root}\t${maxNodes}\t${listText(a.expanded)}\t${listText(a.rows)}`;
+/** A prune case's two lines, today's rule and then the exact budget's. */
+function pruneLines(tree: Tree, root: number, maxNodes: number, facts: Facts): string[] {
+  const [soft, exact] = OVERSHOOTS.map((overshoot) => pruneAnswer(tree, root, maxNodes, overshoot));
+  facts.notePrune(tree, maxNodes, soft);
+  facts.noteExactPrune(maxNodes, soft, exact);
+  return [soft, exact].map((a, i) => `prune\t${root}\t${maxNodes}\t${OVERSHOOTS[i]}\t${listText(a.expanded)}\t${listText(a.rows)}`);
 }
 
 /** A treemap case's line; `uncapped` is how many cells the same map has with no cap. */
@@ -640,6 +655,12 @@ class Facts {
   readonly exactFits = new Map<number, number>();
   /** Prunes that popped two folders of one size in a row, the second waiting before the first was popped. */
   heapTies = 0;
+  /** Exact-budget prunes that left closed a folder today's rule opens, by `maxNodes`. */
+  readonly exactClosed = new Map<number, number>();
+  /** Exact-budget prunes that, past a folder they left closed, opened one today's rule leaves closed, by `maxNodes`. */
+  readonly exactOpenedPast = new Map<number, number>();
+  /** Exact-budget prunes whose answer is today's, row for row, because today's fits the budget, by `maxNodes`. */
+  readonly exactSame = new Map<number, number>();
   /** Treemaps the cap stopped (with no cap they emit more), by `maxNodes`. */
   readonly capped = new Map<number, number>();
   /** Treemaps with a cell that drills in and has children, not expanded only because of `maxDepth`, by `maxDepth`. */
@@ -701,6 +722,18 @@ class Facts {
     }
   }
 
+  /** `soft` and `exact`, one prune case under both rules. */
+  noteExactPrune(maxNodes: number, soft: PruneAnswer, exact: PruneAnswer): void {
+    const softExpanded = new Set(soft.expanded);
+    const exactExpanded = new Set(exact.expanded);
+    if (soft.expanded.some((f) => !exactExpanded.has(f))) bump(this.exactClosed, maxNodes);
+    if (exact.expanded.some((f) => !softExpanded.has(f))) bump(this.exactOpenedPast, maxNodes);
+    if (soft.rows.length <= maxNodes) {
+      assert.deepEqual(exact, soft, `the exact budget answers as today's rule where today's fits ${maxNodes}`);
+      bump(this.exactSame, maxNodes);
+    }
+  }
+
   noteTreemap(tree: Tree, p: TreemapParams, a: TreemapAnswer, uncapped: number): void {
     const c = tree.columns;
     const drillsIn = (cell: Cell): boolean => isDirOrBox(tree, cell.id) && c.childCnt[cell.id] > 0;
@@ -736,7 +769,7 @@ function smallTreeLines(s: Shape, facts: Facts): string[] {
   const { folder, others } = rootsOf(tree);
   const roots = folder === undefined ? [0] : [0, folder];
   for (const root of [...roots, ...others]) {
-    for (const maxNodes of PRUNE_BUDGETS) lines.push(pruneLine(tree, root, maxNodes, facts));
+    for (const maxNodes of PRUNE_BUDGETS) lines.push(...pruneLines(tree, root, maxNodes, facts));
   }
   for (const root of roots) {
     for (const maxDepth of TREEMAP_MAX_DEPTHS) {
@@ -759,9 +792,9 @@ function bigTreeLines(facts: Facts): string[] {
   facts.noteTree(tree);
   const lines = [treeLine(tree, BIG)];
   const { folder } = rootsOf(tree);
-  for (const maxNodes of BIG_PRUNES) lines.push(pruneLine(tree, 0, maxNodes, facts));
+  for (const maxNodes of BIG_PRUNES) lines.push(...pruneLines(tree, 0, maxNodes, facts));
   if (folder !== undefined) {
-    for (const maxNodes of BIG_FOLDER_PRUNES) lines.push(pruneLine(tree, folder, maxNodes, facts));
+    for (const maxNodes of BIG_FOLDER_PRUNES) lines.push(...pruneLines(tree, folder, maxNodes, facts));
   }
   for (const p of BIG_TREEMAPS) lines.push(treemapLine(tree, 0, p, uncappedCells(tree, 0, p), facts));
   if (folder !== undefined) {

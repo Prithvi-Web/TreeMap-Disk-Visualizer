@@ -1,15 +1,19 @@
 import { constants } from 'node:buffer';
+import type { Overshoot } from '../utils/pruneTree';
 import { isExpandableId, materializeBare, prunedExpansion, type ScanStore } from './scanStore';
 
 /**
  * The first tree, sent from the store (Phase 4 T9b; plan T9b, RISKS R93).
  *
  * The progress stream's `complete` frame and `/result`'s body carry the
- * pruned tree: 250,000 nodes, 81–86 MB of JSON. Built the old way — the
- * pruned tree as objects, the whole frame as one string, the socket's UTF-8
- * copy of it — sending it cost +680 MB in plain Node and +325–410 MB in
- * Electron (T9's measurements). Here the tree is written from the store in
- * chunks instead, byte for byte what `JSON.stringify` wrote:
+ * pruned tree: 250,000 nodes, 81–86 MB of JSON. (Both prune with
+ * `overshoot: 'none'` since plan U-19, so a folder wider than the room left
+ * stays `pruned` instead of taking the frame past its budget: on the
+ * diagnosis Mac one folder had made it 671,545 nodes and 238.6 MB.) Built
+ * the old way — the pruned tree as objects, the whole frame as one string,
+ * the socket's UTF-8 copy of it — sending it cost +680 MB in plain Node and
+ * +325–410 MB in Electron (T9's measurements). Here the tree is written from
+ * the store in chunks instead, byte for byte what `JSON.stringify` wrote:
  *
  *  - `prunedExpansion` finds the folders `pruneStore` expands, with its heap;
  *  - each node is `materializeBare`'s node stringified, with the key
@@ -76,8 +80,9 @@ interface OpenFolder {
 }
 
 /**
- * `pruneStore(store, rootId, { maxNodes }).root`'s JSON, as `JSON.stringify`
- * writes it, in pieces, with a stack of its own (so any depth goes). A folder
+ * `pruneStore(store, rootId, { maxNodes, overshoot }).root`'s JSON, as
+ * `JSON.stringify` writes it, in pieces, with a stack of its own (so any depth
+ * goes), from the folders `prunedExpansion` names. A folder
  * `pruneStore` expands gets `"children":[…]`, one it does not `"pruned":true`,
  * an empty one `"children":[]` — each where `pruneStore` adds the key, after
  * the node's own.
@@ -160,9 +165,15 @@ function drained(out: TreeSink): Promise<boolean> {
   });
 }
 
+/** How a tree is sent. */
+export interface SendTreeOptions {
+  /** The prune's rule for the last folder (`PruneOptions.overshoot`): today's `'lastFolder'` unless set. */
+  overshoot?: Overshoot;
+}
+
 /**
- * Writes `head`, then `pruneStore(store, rootId, { maxNodes }).root`'s JSON
- * byte for byte, then `tail`, to `out` in chunks (see the module's note).
+ * Writes `head`, then `pruneStore(store, rootId, { maxNodes, overshoot }).root`'s
+ * JSON byte for byte, then `tail`, to `out` in chunks (see the module's note).
  * `'refused'`, with nothing written, when the whole would be longer than
  * `treeFrameMaxChars()`; `'closed'` when `out` closed first; else `'sent'`.
  * The caller ends `out`.
@@ -174,8 +185,9 @@ export async function sendPrunedTree(
   maxNodes: number,
   head: string,
   tail: string,
+  options: SendTreeOptions = {},
 ): Promise<TreeSendOutcome> {
-  const expanded = prunedExpansion(store, rootId, { maxNodes });
+  const expanded = prunedExpansion(store, rootId, { maxNodes, overshoot: options.overshoot });
   let length = head.length + tail.length;
   const counted = new PrunedJson(store, rootId, expanded);
   const scratch: string[] = [];

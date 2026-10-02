@@ -12,8 +12,10 @@
 //!   `prunedExpansion` shares: `StoreSizeHeap`, whose sift rules decide ties, ported as it
 //!   is rather than replaced by [`std::collections::BinaryHeap`], whose order among equal
 //!   keys is its own; children pushed in child order; folders popped while fewer rows than
-//!   `max_nodes` are counted; and every child of each popped folder counted, the last
-//!   folder's included.
+//!   `max_nodes` are counted; and every child of each popped folder counted — the last
+//!   folder's included under [`Overshoot::LastFolder`], while under [`Overshoot::None`] (the
+//!   first frame's exact budget, plan U-19) a folder whose children would pass `max_nodes`
+//!   is passed over, the root excepted.
 //! * [`select_treemap`] is `buildTreemapFromStore`'s (`src/utils/treemap.ts`): its
 //!   breadth-first queue, its size filter, its stable sort, `squarify`'s float arithmetic
 //!   operation for operation (a rectangle 0.2 across or less either way is never expanded,
@@ -257,15 +259,34 @@ fn defer<S: RowSource + ?Sized>(store: &S, id: u32, heap: &mut SizeHeap) -> Resu
     Ok(())
 }
 
-/// The rows `pruneStore(store, root, { maxNodes: max_nodes })` reads, as it reads them
-/// (see [`PruneSelection`]). The root is counted before anything is popped, so a budget of
-/// 0 answers as 1 does, which is all `Math.max(1, maxNodes)` changes in the JavaScript:
-/// nothing is popped under either. The last folder popped gives every child however far
-/// past the budget that takes the count: a folder is shown whole or not at all.
+/// What the last folder popped may do to the budget: `PruneOptions.overshoot`
+/// (`src/utils/pruneTree.ts`), whose two values these are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Overshoot {
+    /// `'lastFolder'`, every prune but the first frame's: a popped folder gives every
+    /// child, so the last one popped can take the count past `max_nodes` by its whole width.
+    #[default]
+    LastFolder,
+    /// `'none'`, the first frame's (plan U-19, the owner's U-Q6): a popped folder whose
+    /// children would take the count past `max_nodes` is passed over, left closed, and the
+    /// next one popped is tried. The root is the one exception, so the rows are at most
+    /// max(`max_nodes`, 1 + the root's children), and the root alone at 1.
+    None,
+}
+
+/// The rows `pruneStore(store, root, { maxNodes: max_nodes, overshoot })` reads, as it
+/// reads them (see [`PruneSelection`]). The root is counted before anything is popped, so a
+/// budget of 0 answers as 1 does, which is all `Math.max(1, maxNodes)` changes in the
+/// JavaScript: nothing is popped under either. A folder expanded gives every child: a
+/// folder is shown whole or not at all. Under [`Overshoot::LastFolder`] the last folder
+/// popped gives them however far past the budget that takes the count; under
+/// [`Overshoot::None`] a folder they would take past it is passed over (its children are
+/// counted, never read), the root's excepted.
 pub fn select_prune<S: RowSource + ?Sized>(
     store: &S,
     root: u32,
     max_nodes: usize,
+    overshoot: Overshoot,
 ) -> Result<PruneSelection, S::Error> {
     let mut heap = SizeHeap::default();
     let mut expanded = Vec::new();
@@ -277,6 +298,13 @@ pub fn select_prune<S: RowSource + ?Sized>(
         let Some(folder) = heap.pop() else {
             break;
         };
+        // `if (exact && srcId !== id && nodes + store.childCount(srcId) > maxNodes) continue;`
+        if overshoot == Overshoot::None
+            && folder.id != root
+            && nodes.saturating_add(folder.children.len()) > max_nodes
+        {
+            continue;
+        }
         expanded.push(folder.id);
         nodes += folder.children.len();
         rows.extend(folder.children.clone());

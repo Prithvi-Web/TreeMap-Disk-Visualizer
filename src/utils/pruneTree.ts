@@ -23,13 +23,29 @@ import { FileNode } from '../models/types';
  * that are cheap to fetch if the user ever looks at them.
  */
 
+/**
+ * What the last directory expanded may do to the node budget.
+ *
+ *  - `'lastFolder'` (the default; every prune but the first frame): the cap is
+ *    soft. Directories are expanded while fewer than `maxNodes` nodes are
+ *    counted, and each gives every child (invariant 1), so the result can
+ *    overshoot by the fanout of the last directory expanded — however wide.
+ *  - `'none'` (the first frame sent to the window, plan U-19, the owner's
+ *    U-Q6): the cap is honoured exactly. A directory whose children would take
+ *    the count past `maxNodes` stays `pruned`, and the next, smaller one is
+ *    tried, so the result holds at most `maxNodes` nodes. The prune's own root
+ *    is the one exception: its children always come, so the bound is
+ *    max(maxNodes, 1 + the root's children), and at `maxNodes` 1 the root
+ *    alone. Where `'lastFolder'`'s result fits the budget, this one is the
+ *    same, byte for byte.
+ */
+export type Overshoot = 'lastFolder' | 'none';
+
 export interface PruneOptions {
-  /**
-   * Soft cap on emitted nodes. A directory's children are all-or-nothing
-   * (invariant 1), so the result can overshoot by at most the fanout of the
-   * last directory expanded.
-   */
+  /** Cap on emitted nodes: soft or exact, as `overshoot` says. */
   maxNodes: number;
+  /** Today's soft cap unless `'none'`. */
+  overshoot?: Overshoot;
 }
 
 export interface PruneResult {
@@ -105,6 +121,7 @@ class SizeHeap {
 
 export function pruneTree(root: FileNode, options: PruneOptions): PruneResult {
   const maxNodes = Math.max(1, options.maxNodes);
+  const exact = options.overshoot === 'none';
   const rootCopy = copyNode(root);
   let nodes = 1;
   let prunedDirs = 0;
@@ -130,6 +147,9 @@ export function pruneTree(root: FileNode, options: PruneOptions): PruneResult {
   while (heap.size > 0 && nodes < maxNodes) {
     const { src, copy } = heap.pop() as Job;
     const kids = src.children as FileNode[];
+    // An exact budget: a directory that does not fit keeps the mark defer()
+    // gave it, and a smaller one popped later may still fit. Not the root.
+    if (exact && src !== root && nodes + kids.length > maxNodes) continue;
 
     const copies = kids.map(copyNode);
     copy.children = copies;

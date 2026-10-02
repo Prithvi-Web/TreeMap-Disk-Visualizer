@@ -93,8 +93,29 @@ export function buildScanStats(scan: ScanResult): ScanStats {
  *
  * Detail beyond this budget isn't lost, only deferred: pruned directories keep
  * their true sizes and are fetched on demand from the subtree endpoint.
+ *
+ * The first frame honours it exactly (plan U-19, the owner's U-Q6): the
+ * stream's `complete` frame and `/result` prune with `overshoot: 'none'`, so a
+ * folder whose children would pass the budget stays `pruned` — the scanned
+ * folder's own children excepted, which always come. `/subtree` keeps the
+ * soft cap: there the folder asked for is the prune's root.
  */
 export const PRUNE_MAX_NODES = 250_000;
+
+let firstFrameMaxNodesForTests: number | null = null;
+
+/** The first frame's node budget: PRUNE_MAX_NODES, unless a test set another. */
+export function firstFrameMaxNodes(): number {
+  return firstFrameMaxNodesForTests ?? PRUNE_MAX_NODES;
+}
+
+/**
+ * Tests only: the first frame's budget (the stream's `complete` frame and
+ * `/result`), so a tree past it fits in a test; null restores PRUNE_MAX_NODES.
+ */
+export function setPruneMaxNodesForTests(maxNodes: number | null): void {
+  firstFrameMaxNodesForTests = maxNodes;
+}
 
 /** Default budget for one on-demand drill-in. */
 export const SUBTREE_MAX_NODES = 20_000;
@@ -246,7 +267,9 @@ export async function sendFinalEvent(res: Response, scan: ScanResult): Promise<v
     if (scan.status === 'complete' && (scan.store || scan.root)) {
       const store = storeOf(scan);
       const [before, after] = jsonAroundTree({ type: 'complete', root: TREE_MARK, stats: buildScanStats(scan) });
-      const outcome = await sendPrunedTree(res, store, store.rootId, PRUNE_MAX_NODES, `data: ${before}`, `${after}\n\n`);
+      const outcome = await sendPrunedTree(res, store, store.rootId, firstFrameMaxNodes(), `data: ${before}`, `${after}\n\n`, {
+        overshoot: 'none',
+      });
       if (outcome === 'refused') sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
     } else {
       sseSend(res, { type: 'error', message: scan.error ?? 'Scan failed' });
@@ -413,7 +436,7 @@ scanRouter.get('/scan/:scanId/result', async (req: Request, res: Response) => {
   const store = storeOf(scan);
   const [before, after] = jsonAroundTree(body);
   res.type('application/json');
-  const outcome = await sendPrunedTree(res, store, store.rootId, PRUNE_MAX_NODES, before, after);
+  const outcome = await sendPrunedTree(res, store, store.rootId, firstFrameMaxNodes(), before, after, { overshoot: 'none' });
   // Longer than one string can be: res.json threw building it, before a byte went out.
   if (outcome === 'refused') throw new RangeError('Invalid string length');
   if (outcome === 'sent') res.end();

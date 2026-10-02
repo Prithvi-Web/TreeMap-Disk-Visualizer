@@ -316,6 +316,8 @@ async function outputsOf(store: PackedScanStore, probe: Probe, scan: ScanResult,
   put('eachFile', files);
 
   for (const maxNodes of [1, 2, 7, 50, 250, 250_000]) put(`prune @${maxNodes}`, store.prune(store.rootId, { maxNodes }));
+  // The first frame's rule (plan U-19): a folder that would pass the budget stays closed.
+  for (const maxNodes of [2, 7, 50, 250]) put(`strict prune @${maxNodes}`, store.prune(store.rootId, { maxNodes, overshoot: 'none' }));
   for (const maxNodes of [1, 10, 20_000]) {
     put(`subtree @${maxNodes}`, probe.folders.map((p) => store.prune(store.findByPath(p), { maxNodes })));
   }

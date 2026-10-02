@@ -13,6 +13,7 @@ import { buildPair, mutateBoth } from './fixtures/storeFuzz';
 import { sseSend } from '../src/utils/sse';
 import { ObjectScanStore, PackedScanStore, materializeBare, type NodeInput, type ScanStore } from '../src/services/scanStore';
 import type { FileNode } from '../src/models/types';
+import type { Overshoot } from '../src/utils/pruneTree';
 import {
   TREE_CHUNK_CHARS,
   TREE_MARK,
@@ -39,11 +40,14 @@ import { PRUNE_MAX_NODES } from '../src/api/scanRoutes';
 
 const STATS = { scanned: 3, fileCount: 2, dirCount: 1, engine: 'native', note: 'é "quoted" \\ \u2028 \t' };
 
+/** Both rules for the last folder: today's, and the first frame's own since U-19. */
+const OVERSHOOTS: readonly Overshoot[] = ['lastFolder', 'none'];
+
 /** Today's frame: the pruned tree built as objects, then the whole event serialized as one string. */
-function todaysFrame(store: ScanStore, maxNodes: number, stats: unknown = STATS): string {
+function todaysFrame(store: ScanStore, maxNodes: number, stats: unknown = STATS, overshoot: Overshoot = 'lastFolder'): string {
   const frames: string[] = [];
   const res = { write: (frame: string) => { frames.push(frame); return true; } } as unknown as Response;
-  assert.ok(sseSend(res, { type: 'complete', root: store.prune(store.rootId, { maxNodes }).root, stats }));
+  assert.ok(sseSend(res, { type: 'complete', root: store.prune(store.rootId, { maxNodes, overshoot }).root, stats }));
   assert.equal(frames.length, 1);
   return frames[0];
 }
@@ -67,9 +71,11 @@ class Sink extends EventEmitter implements TreeSink {
   }
 }
 
-function sendFrame(sink: TreeSink, store: ScanStore, maxNodes: number, stats: unknown = STATS): Promise<'sent' | 'refused' | 'closed'> {
+function sendFrame(
+  sink: TreeSink, store: ScanStore, maxNodes: number, stats: unknown = STATS, overshoot: Overshoot = 'lastFolder',
+): Promise<'sent' | 'refused' | 'closed'> {
   const [before, after] = jsonAroundTree({ type: 'complete', root: TREE_MARK, stats });
-  return sendPrunedTree(sink, store, store.rootId, maxNodes, `data: ${before}`, `${after}\n\n`);
+  return sendPrunedTree(sink, store, store.rootId, maxNodes, `data: ${before}`, `${after}\n\n`, { overshoot });
 }
 
 test('the event splits around its tree exactly where the tree goes, and a value without exactly one tree mark is refused', () => {
@@ -80,16 +86,22 @@ test('the event splits around its tree exactly where the tree goes, and a value 
   assert.throws(() => jsonAroundTree({ a: TREE_MARK, b: [TREE_MARK] }), /exactly once/);
 });
 
-test('the frame goes out byte for byte as today\'s one-string frame, on the fuzz trees at every budget, before and after watcher edits', async () => {
+test('the frame goes out byte for byte as today\'s one-string frame, on the fuzz trees at every budget and under both rules for the last folder, before and after watcher edits', async () => {
   for (let seed = 1; seed <= 12; seed++) {
     const { obj, packed, rng } = buildPair(seed, seed, 300 + seed * 170);
     for (const round of ['as scanned', 'after edits']) {
       if (round === 'after edits') mutateBoth(obj, packed, rng);
       for (const store of [obj, packed]) {
         for (const maxNodes of [1, 2, 7, 20, 250, 20_000, PRUNE_MAX_NODES]) {
-          const sink = new Sink();
-          assert.equal(await sendFrame(sink, store, maxNodes), 'sent');
-          assert.equal(sink.text, todaysFrame(store, maxNodes), `seed ${seed}, ${round}, ${store.constructor.name}, maxNodes ${maxNodes}`);
+          for (const overshoot of OVERSHOOTS) {
+            const sink = new Sink();
+            assert.equal(await sendFrame(sink, store, maxNodes, STATS, overshoot), 'sent');
+            assert.equal(
+              sink.text,
+              todaysFrame(store, maxNodes, STATS, overshoot),
+              `seed ${seed}, ${round}, ${store.constructor.name}, maxNodes ${maxNodes}, overshoot ${overshoot}`,
+            );
+          }
         }
       }
     }
@@ -148,9 +160,11 @@ test('names JSON must escape, virtual and container nodes, empty folders, a fold
   for (const [rootPath, sep, build] of shapes) {
     for (const store of storesOf(rootPath, sep, build)) {
       for (const maxNodes of [1, 3, 5, 40, PRUNE_MAX_NODES]) {
-        const sink = new Sink();
-        assert.equal(await sendFrame(sink, store, maxNodes), 'sent');
-        assert.equal(sink.text, todaysFrame(store, maxNodes), `${rootPath} ${store.constructor.name} maxNodes ${maxNodes}`);
+        for (const overshoot of OVERSHOOTS) {
+          const sink = new Sink();
+          assert.equal(await sendFrame(sink, store, maxNodes, STATS, overshoot), 'sent');
+          assert.equal(sink.text, todaysFrame(store, maxNodes, STATS, overshoot), `${rootPath} ${store.constructor.name} maxNodes ${maxNodes} ${overshoot}`);
+        }
       }
     }
   }
@@ -320,6 +334,8 @@ test('the progress stream\'s complete frame and /result\'s tree are sent from th
     const stream = await get(port, `/api/scan/${scanId}/progress`);
     const frame = stream.body.slice(stream.body.indexOf('data: {"type":"complete"'));
     const event = JSON.parse(frame.slice('data: '.length)) as { stats: unknown };
+    // The first frame's own rule (U-19); this tree fits the budget, so it is also today's bytes.
+    assert.equal(frame, todaysFrame(packed, PRUNE_MAX_NODES, event.stats, 'none'));
     assert.equal(frame, todaysFrame(packed, PRUNE_MAX_NODES, event.stats));
 
     const result = await get(port, `/api/scan/${scanId}/result`);
@@ -327,7 +343,7 @@ test('the progress stream\'s complete frame and /result\'s tree are sent from th
     assert.match(result.type, /^application\/json; charset=utf-8$/);
     const body = JSON.parse(result.body) as { root: unknown };
     assert.equal(result.body, JSON.stringify(body), 'compact JSON, keys in order');
-    assert.equal(JSON.stringify(body.root), JSON.stringify(packed.prune(packed.rootId, { maxNodes: PRUNE_MAX_NODES }).root));
+    assert.equal(JSON.stringify(body.root), JSON.stringify(packed.prune(packed.rootId, { maxNodes: PRUNE_MAX_NODES, overshoot: 'none' }).root));
   } finally {
     await close();
   }
@@ -356,7 +372,7 @@ test('a reader that stops reading mid-frame gets exactly one complete frame, tod
     const frames = body.split('\n\n').filter((frame) => frame.startsWith('data: {"type":"complete"'));
     assert.equal(frames.length, 1, 'one complete frame');
     const stats = (JSON.parse(frames[0].slice('data: '.length)) as { stats: unknown }).stats;
-    assert.equal(`${frames[0]}\n\n`, todaysFrame(packed, PRUNE_MAX_NODES, stats));
+    assert.equal(`${frames[0]}\n\n`, todaysFrame(packed, PRUNE_MAX_NODES, stats, 'none'));
   } finally {
     await close();
   }

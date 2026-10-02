@@ -940,6 +940,14 @@ assertion.
     - Now: the tree is written from the store with a stack of its own, so it goes out. The UI indexes the tree it receives with a stack of its own too (`indexTree`), and `JSON.parse` takes a 5,000-deep tree in both runtimes.
 16. **`/api/scan/:id/result` streams its body.** It carries no `ETag` and no `Content-Length`, where `res.json` gave both. A body past V8's longest string still fails as before, with the same 500, before any byte is written.
 
+**Added 2 October 2026 by Track U U-19 (built; a JSON change the owner approved as U-Q6, not additive):**
+
+17. **The first frame honours its node budget.**
+    - Before: the progress stream's `complete` frame and `/result` were pruned to 250,000 nodes as a soft cap. Folders were expanded largest first while fewer than 250,000 nodes were counted, and each gave every child, so the last folder popped could take the frame past the budget by its whole width. On the diagnosis Mac one folder of at least 421,546 entries made it 671,545 nodes and 238.6 MB.
+    - Now: both prune with `overshoot: 'none'` (`src/utils/pruneTree.ts`; `pruneStore` and `prunedExpansion` in `scanStore.ts`; tm-store's `select_prune` as `Overshoot::None`). A popped folder whose children would take the frame past the budget stays `pruned`, with its true size, and the next, smaller folder is tried. The scanned folder's own children always come. So the frame holds at most max(250,000, 1 + the scanned folder's children) nodes, and at a budget of 1 the root alone.
+    - The JSON changes only for a tree whose soft-cap frame passed the budget. Where it fitted, the frame is byte for byte as before, and the goldens (a tree of about 200 nodes) are unchanged. A folder left closed opens in the window through `/subtree` (`ensureSubtree`), whose prune keeps the soft cap: there the folder asked for is the prune's root, so all its children come (U-Q7; RISKS R82 stays open for the drill-in).
+    - The index preview (`readTree`, 25,000 nodes for the instant open) needed no change. It already withholds any folder whose children would pass the room left, the start folder included, and goes on to the next.
+
 The spill folder is not added to the never-descend list, so there is no walker difference there: its files have no names, and no walk can list them (§6.1).
 
 ## 17. Phase plan → commits
