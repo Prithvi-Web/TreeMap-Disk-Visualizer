@@ -98,6 +98,51 @@ test('the sliced and drained collectors give the pre-change answers on fuzz tree
   assert.ok(ties > 100, `the fuzz trees put folders of equal size side by side (${ties} ties), so order among equals was tested`);
 });
 
+test('a container\'s listing, a file root and an empty root are walked as eachFile walks them', async () => {
+  // Review of U-17, finding 2: no fuzz tree held these, so a walk that went
+  // into a container's listing (whose entries are not files on disk) would
+  // have stayed green.
+  const root = path.join(path.sep, 'shapes');
+  const file = (at: string, name: string, size: number): FileNode => ({ name, path: path.join(at, name), size, type: 'file', modifiedAt: 0, isHidden: false, extension: name.split('.').pop() });
+  const zipAt = path.join(root, 'archive.zip');
+  const listing: FileNode[] = [
+    { ...file(zipAt, 'inner.bin', 9 * MIB), virtual: true },
+    { name: 'sub', path: path.join(zipAt, 'sub'), type: 'dir', size: 8 * MIB, modifiedAt: 0, isHidden: false, virtual: true, children: [{ ...file(path.join(zipAt, 'sub'), 'deep.bin', 8 * MIB), virtual: true }] },
+  ];
+  const kids: FileNode[] = [
+    { ...file(root, 'archive.zip', 2 * MIB), container: 'zip' },
+    file(root, 'plain.dat', 3 * MIB),
+    { name: 'empty', path: path.join(root, 'empty'), type: 'dir', size: 0, modifiedAt: 0, isHidden: false, children: [] },
+  ];
+  const tree: FileNode = { name: 'shapes', path: root, type: 'dir', size: 5 * MIB, modifiedAt: 0, isHidden: false, children: kids };
+  const withListing = (store: ScanStore): ScanStore => {
+    store.ingestSubtree(store.findByPath(zipAt), listing); // as a container expansion grafts it, after finalize
+    return store;
+  };
+  const shapes: Array<[string, ScanStore]> = [
+    ['an expanded container, object store', withListing(ObjectScanStore.wrap(structuredClone(tree)))],
+    ['an expanded container, packed store', withListing(buildStoreFromTree(tree))],
+    ['a file root, object store', ObjectScanStore.wrap(file(path.sep, 'solo.bin', 7))],
+    ['a file root, packed store', buildStoreFromTree(file(path.sep, 'solo.bin', 7))],
+    ['an empty root, packed store', buildStoreFromTree({ name: 'none', path: path.join(path.sep, 'none'), type: 'dir', size: 0, modifiedAt: 0, isHidden: false, children: [] })],
+  ];
+  for (const [what, store] of shapes) {
+    const options = { sliceNodes: 2, yieldTurn: immediate };
+    for (const [limit, minSize] of [[10, 0], [500, 1]] as const) {
+      const files = JSON.stringify(oracleLargestFiles(store, limit, minSize));
+      assert.equal(JSON.stringify(await collectLargestFilesAsync(store, limit, minSize, options)), files, `${what}: largest files, sliced`);
+      assert.equal(JSON.stringify(collectLargestFiles(store, limit, minSize)), files, `${what}: largest files, drained`);
+      const folders = JSON.stringify(oracleLargestFolders(store, limit, minSize));
+      assert.equal(JSON.stringify(await collectLargestFoldersAsync(store, limit, minSize, options)), folders, `${what}: largest folders, sliced`);
+      assert.equal(JSON.stringify(collectLargestFolders(store, limit, minSize)), folders, `${what}: largest folders, drained`);
+    }
+    assert.equal(JSON.stringify(await collectFileTypesAsync(store, { sliceNodes: 2, yieldTurn: immediate })), JSON.stringify(oracleFileTypes(store)), `${what}: file types`);
+  }
+  const expanded = shapes[1][1];
+  const names = (await collectLargestFilesAsync(expanded, 10, 0)).map((f) => f.name);
+  assert.deepEqual(names, ['plain.dat', 'archive.zip'], 'the listing\'s entries are not files on disk: the archive counts, its contents do not');
+});
+
 test('a sliced walk of the files visits them in the order eachFile does, tombstones and late additions included', async () => {
   for (let seed = 1; seed <= 10; seed++) {
     const pair = tiedPair(seed, true);
