@@ -312,9 +312,14 @@ OpenAPI 3 spec).
      in `trashed` with it — once the disk no longer shows it — and counted
      once, and one undo puts both back (or, when the item holding it is not
      confirmed moved, it is in `unverified` with it; when that item is not
-     deleted, it is in `skipped`, saying so). "Inside" is where each is on the
-     disk, not how it is spelled: another spelling of a folder (an alias,
-     another case where the volume folds case) is that folder, while a path
+     deleted, it is in `skipped`, saying so; when the Trash reports taking that
+     item but the disk still shows the inner path in its place, the inner path
+     is in `skipped` with code `NOT_DELETED`, and when its place cannot be
+     looked at, it is in `unverified`). "Inside" is where each is on the
+     disk, not how it is spelled: another spelling of a folder (an alias; on
+     macOS and Windows, another case where the volume folds case — Linux's
+     realpath keeps a name as it was typed, so there two cases of one folder
+     stay two items) is that folder, while a path
      through a link out of a folder, a link itself, or anything on a volume
      mounted inside it is its own item, with its own copy.
      A failure the Trash reports is judged by the disk: an item gone from its

@@ -9,8 +9,10 @@ import { realPlaceOf } from '../utils/pathSanitizer';
  *
  * "Inside" is judged by where each path is on the disk, never by how it is spelled (FG3c). A
  * request is placed by the native realpath of the folder it is in (every link above it resolved,
- * each name as the volume stores it), so `/var/x/proj` and `/private/var/x/proj/a.txt`, or `proj`
- * and `PROJ/a.txt` on a volume that folds case, are one folder and an item in it — while `A/lnk/x`,
+ * each name as the volume stores it — on macOS and Windows; Linux's realpath keeps each name as it
+ * was typed, so there `proj` and `PROJ` stay two items even on a volume that folds case), so
+ * `/var/x/proj` and `/private/var/x/proj/a.txt`, or `proj` and `PROJ/a.txt` on a Mac or Windows
+ * volume that folds case, are one folder and an item in it — while `A/lnk/x`,
  * where `lnk` is a link out of `A`, is not in `A`, and trashing `A` would take only the link. Only a
  * real folder holds anything: a link is itself the item, wherever it leads. And a folder holds only
  * what is on its own device, so a volume mounted inside it is not taken for part of it. A request
