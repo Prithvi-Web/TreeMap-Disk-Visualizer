@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 
 /**
  * Track U's measuring tools (bench/trackU/, plan U-0).
@@ -47,7 +48,7 @@ function runNode(args: string[], extra: NodeJS.ProcessEnv = {}): Promise<{ code:
     child.stdout.setEncoding('utf8').on('data', (c: string) => { stdout += c; });
     child.stderr.setEncoding('utf8').on('data', (c: string) => { stderr += c; });
     // A hang guard, not a measurement: a tool that never exits fails here instead of holding the file open.
-    const guard = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`node ${args.join(' ')} did not exit: ${stderr}`)); }, 60_000);
+    const guard = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`node ${args.join(' ')} did not exit: ${stderr}`)); }, HANG_GUARD_MS);
     child.on('error', reject);
     child.on('close', (code) => { clearTimeout(guard); resolve({ code, stdout, stderr }); });
   });

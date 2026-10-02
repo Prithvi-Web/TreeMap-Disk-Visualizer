@@ -5,6 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-indexAutoPlan-data-');
 
 import { createApp } from '../src/server';
@@ -568,12 +569,14 @@ function fixture(files: number): string {
 
 /** Polls a job's result until it is not 202; the bound is a hang guard, never a measurement. */
 async function settle(base: string, jobId: string): Promise<{ status: number; json: Record<string, unknown> }> {
-  for (let i = 0; i < 2000; i++) {
+  let settled: { status: number; json: Record<string, unknown> } | undefined;
+  await waitFor(async () => {
     const r = await call(base, 'GET', `/api/index/${jobId}/result`);
-    if (r.status !== 202) return r;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  return assert.fail(`index job ${jobId} never settled`);
+    if (r.status === 202) return false;
+    settled = r;
+    return true;
+  }, `index job ${jobId} settling`, 20);
+  return settled ?? assert.fail(`index job ${jobId} never settled`);
 }
 
 test('the limit is the owner\'s answer: 1,000,000 items (U-Q3)', () => {

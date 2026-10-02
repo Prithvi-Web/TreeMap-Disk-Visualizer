@@ -5,6 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-indexCapAside-data-');
 
 import { createApp } from '../src/server';
@@ -209,12 +210,14 @@ async function call(base: string, method: string, url: string, body?: unknown): 
 
 /** Polls a job's result until it is not 202; the bound is a hang guard, never a measurement. */
 async function settle(base: string, jobId: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
-  for (let i = 0; i < 2000; i++) {
+  let settled: { status: number; json: Record<string, unknown> } | undefined;
+  await waitFor(async () => {
     const r = await call(base, 'GET', `/api/index/${String(jobId)}/result`);
-    if (r.status !== 202) return r;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  return assert.fail(`index job ${String(jobId)} never settled`);
+    if (r.status === 202) return false;
+    settled = r;
+    return true;
+  }, `index job ${String(jobId)} settling`, 20);
+  return settled ?? assert.fail(`index job ${String(jobId)} never settled`);
 }
 
 const statusOf = (base: string, dir: string) => call(base, 'GET', '/api/index/status?path=' + encodeURIComponent(dir));
