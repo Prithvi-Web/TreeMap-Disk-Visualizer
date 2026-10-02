@@ -639,33 +639,36 @@ test('main: navigation and permission guards are installed on the real window an
 test('main: the privacy IPC opens System Settings exactly once, and never for a pane it does not know', async () => {
   type Answer = { opened: boolean; reason?: string };
   const dir = mkTmp();
-  let h = await loadMain({ dataDir: dir });
+  // The folder goes whichever block fails: a failure in the first must not leave it behind.
   try {
-    const open = (pane: unknown) => h.stub.ipcMain.invoke('treemap:open-privacy-settings', pane) as Promise<Answer>;
-    assert.deepEqual(await open('full-disk-access'), { opened: true });
-    assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'one request, for the Full Disk Access pane');
-    // Unknown panes, and the page handing over a URL of its own: nothing opens, and the answer says so.
-    for (const pane of ['camera', FULL_DISK_ACCESS_URL, 'https://example.com/', 'file:///Applications/Evil.app', '', null, undefined, 7, { pane: 'full-disk-access' }]) {
-      const r = await open(pane);
-      assert.equal(r.opened, false, `${JSON.stringify(pane)} opens nothing`);
-      assert.ok(typeof r.reason === 'string' && r.reason.length > 10, `${JSON.stringify(pane)} is answered with a reason in words`);
-    }
-    assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'nothing else ever reached shell.openExternal');
-    // Electron rejects when no app takes the URL: the page must hear "not opened", not "opened".
-    h.stub.shell.openExternalError = new Error('no application is registered for this URL');
-    const failed = await open('full-disk-access');
-    assert.equal(failed.opened, false, 'a refused open is not reported as opened');
-    assert.match(String(failed.reason), /System Settings did not open/, 'and the reason says what happened');
-    assert.equal(h.stub.shell.opened.length, 2, 'the one attempt, still at the same pane');
-    assert.equal(h.stub.shell.opened[1], FULL_DISK_ACCESS_URL);
-  } finally { h.dispose(); }
-  h = await loadMain({ dataDir: dir, platform: 'win32' });
-  try {
-    const r = await (h.stub.ipcMain.invoke('treemap:open-privacy-settings', 'full-disk-access') as Promise<Answer>);
-    assert.equal(r.opened, false, 'Full Disk Access is a macOS setting');
-    assert.ok(typeof r.reason === 'string' && r.reason.length > 10, 'answered in words');
-    assert.deepEqual(h.stub.shell.opened, [], 'nothing reached shell.openExternal on Windows');
-  } finally { h.dispose(); rm(dir); }
+    let h = await loadMain({ dataDir: dir });
+    try {
+      const open = (pane: unknown) => h.stub.ipcMain.invoke('treemap:open-privacy-settings', pane) as Promise<Answer>;
+      assert.deepEqual(await open('full-disk-access'), { opened: true });
+      assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'one request, for the Full Disk Access pane');
+      // Unknown panes, and the page handing over a URL of its own: nothing opens, and the answer says so.
+      for (const pane of ['camera', FULL_DISK_ACCESS_URL, 'https://example.com/', 'file:///Applications/Evil.app', '', null, undefined, 7, { pane: 'full-disk-access' }]) {
+        const r = await open(pane);
+        assert.equal(r.opened, false, `${JSON.stringify(pane)} opens nothing`);
+        assert.ok(typeof r.reason === 'string' && r.reason.length > 10, `${JSON.stringify(pane)} is answered with a reason in words`);
+      }
+      assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'nothing else ever reached shell.openExternal');
+      // Electron rejects when no app takes the URL: the page must hear "not opened", not "opened".
+      h.stub.shell.openExternalError = new Error('no application is registered for this URL');
+      const failed = await open('full-disk-access');
+      assert.equal(failed.opened, false, 'a refused open is not reported as opened');
+      assert.match(String(failed.reason), /System Settings did not open/, 'and the reason says what happened');
+      assert.equal(h.stub.shell.opened.length, 2, 'the one attempt, still at the same pane');
+      assert.equal(h.stub.shell.opened[1], FULL_DISK_ACCESS_URL);
+    } finally { h.dispose(); }
+    h = await loadMain({ dataDir: dir, platform: 'win32' });
+    try {
+      const r = await (h.stub.ipcMain.invoke('treemap:open-privacy-settings', 'full-disk-access') as Promise<Answer>);
+      assert.equal(r.opened, false, 'Full Disk Access is a macOS setting');
+      assert.ok(typeof r.reason === 'string' && r.reason.length > 10, 'answered in words');
+      assert.deepEqual(h.stub.shell.opened, [], 'nothing reached shell.openExternal on Windows');
+    } finally { h.dispose(); }
+  } finally { rm(dir); }
 });
 
 test('main: scan progress drives the dock bar; a finish while unfocused bounces the dock and posts a notice; Stop is silent', async () => {
