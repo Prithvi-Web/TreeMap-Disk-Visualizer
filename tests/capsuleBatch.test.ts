@@ -20,19 +20,95 @@ const ROOT = path.resolve('/stand-in');
  * A disk of folders and files, each on a device, every name as stored — and links (`linkTo`), which
  * the real disk's realpath follows to where they lead, as `stat` does, while `lstat` reads the link.
  */
-function diskOf(entries: Record<string, { dir: boolean; dev: number; linkTo?: string }>): PlaceReader {
-  const at = (p: string) => entries[path.resolve(p)];
-  const followed = (p: string) => (at(p)?.linkTo !== undefined ? path.resolve(at(p).linkTo as string) : path.resolve(p));
+function diskOf(entries: Record<string, { dir: boolean; dev: number; linkTo?: string }>, failing: string[] = [], failingLstat: string[] = []): PlaceReader {
+  /** Where a path leads: each link on the way followed, and the last name too when `followLast`. */
+  const resolved = (p: string, followLast: boolean): string => {
+    const full = path.resolve(p);
+    const names = full.split(path.sep).filter(Boolean);
+    let at = path.parse(full).root;
+    for (const [i, name] of names.entries()) {
+      at = path.join(at, name);
+      const link = entries[at]?.linkTo;
+      if (link !== undefined && (followLast || i < names.length - 1)) at = path.resolve(link);
+    }
+    return at;
+  };
+  // A look at a path in `failing` fails as a volume having a bad moment does: it says nothing either
+  // way. One in `failingLstat` fails for its own lstat only, as one look of several can.
+  const look = (p: string, among = failing): void => {
+    if (among.map((f) => path.resolve(f)).includes(path.resolve(p))) throw Object.assign(new Error('i/o error (a test)'), { code: 'EIO' });
+  };
   return {
     lstat: async (p) => {
-      const e = at(p);
+      look(p);
+      look(p, failingLstat);
+      const at = resolved(p, false);
+      const e = entries[at];
       const isLink = e?.linkTo !== undefined;
-      return e ? { dev: BigInt(e.dev), ino: BigInt(Object.keys(entries).indexOf(path.resolve(p)) + 1), isSymbolicLink: () => isLink, isDirectory: () => e.dir && !isLink } : null;
+      return e ? { dev: BigInt(e.dev), ino: BigInt(Object.keys(entries).indexOf(at) + 1), isSymbolicLink: () => isLink, isDirectory: () => e.dir && !isLink } : null;
     },
-    stat: async (p) => (at(followed(p)) ? { dev: BigInt(at(followed(p)).dev) } : null),
-    realPlaceOf: async (p) => (at(p) && at(followed(p)) ? followed(p) : null),
+    stat: async (p) => {
+      const e = entries[resolved(p, true)];
+      return e ? { dev: BigInt(e.dev) } : null;
+    },
+    realPlaceOf: async (p) => {
+      look(p);
+      return entries[resolved(p, true)] ? resolved(p, true) : null;
+    },
   };
 }
+
+test('a request whose place cannot be looked at is never silently its own item: one written inside another goes with it (FG3d #10)', async () => {
+  const folder = path.join(ROOT, 'A');
+  const inner = path.join(folder, 'b.txt');
+  const beside = path.join(ROOT, 'C', 'c.txt');
+  const entries = {
+    [ROOT]: { dir: true, dev: 1 },
+    [folder]: { dir: true, dev: 1 },
+    [inner]: { dir: false, dev: 1 },
+    [path.join(ROOT, 'C')]: { dir: true, dev: 1 },
+    [beside]: { dir: false, dev: 1 },
+  };
+  const looks: [string, PlaceReader][] = [
+    ['the item\u2019s', diskOf(entries, [inner])],
+    ['the folder\u2019s', diskOf(entries, [folder])],
+    ['the folder\u2019s own lstat alone', diskOf(entries, [], [folder])],
+  ];
+  for (const [which, disk] of looks) {
+    const { top, covered } = await collapseBatch([folder, inner, beside].map((p) => ({ path: p })), disk);
+    assert.deepEqual(top.map((r) => r.path), [folder, beside], `${which} look failed: not two copies of b.txt`);
+    assert.deepEqual(covered.map((c) => [c.request.path, c.by]), [[inner, folder]], `${which} look failed: b.txt goes with the folder it is written inside`);
+  }
+  // Three deep, judged by how they are written: each goes with the outermost.
+  const sub = path.join(folder, 'sub');
+  const deep = path.join(sub, 'd.txt');
+  const nested = { ...entries, [sub]: { dir: true, dev: 1 }, [deep]: { dir: false, dev: 1 } };
+  const three = await collapseBatch([folder, sub, deep].map((p) => ({ path: p })), diskOf(nested, [deep]));
+  assert.deepEqual(three.top.map((r) => r.path), [folder]);
+  assert.deepEqual(three.covered.map((c) => [c.request.path, c.by]), [[sub, folder], [deep, folder]], 'by the outermost, a request of top');
+  // One that is simply not there is its own item, as before: its own capture says it is gone.
+  const gone = path.join(folder, 'gone.txt');
+  const { top } = await collapseBatch([folder, gone].map((p) => ({ path: p })), diskOf(entries));
+  assert.deepEqual(top.map((r) => r.path), [folder, gone]);
+});
+
+test('a request whose place cannot be looked at, written apart from every other, leaves the rest judged by where each is (FG3d #10)', async () => {
+  const real = path.join(ROOT, 'real');
+  const alias = path.join(ROOT, 'alias');
+  const apart = path.join(ROOT, 'elsewhere', 'x.txt');
+  const disk = diskOf({
+    [ROOT]: { dir: true, dev: 1 },
+    [real]: { dir: true, dev: 1 },
+    [alias]: { dir: false, dev: 1, linkTo: real },
+    [path.join(real, 'a.txt')]: { dir: false, dev: 1 },
+    [path.join(ROOT, 'elsewhere')]: { dir: true, dev: 1 },
+    [apart]: { dir: false, dev: 1 },
+  }, [apart]);
+  const throughAlias = path.join(alias, 'a.txt');
+  const { top, covered } = await collapseBatch([real, throughAlias, apart].map((p) => ({ path: p })), disk);
+  assert.deepEqual(covered.map((c) => [c.request.path, c.by]), [[throughAlias, real]], 'a.txt through the link is still the folder\u2019s, by where it is');
+  assert.deepEqual(top.map((r) => r.path), [real, apart]);
+});
 
 test('a folder holds what is inside it on its own device, and not what is on a volume mounted inside it (FG3c #7)', async () => {
   const folder = path.join(ROOT, 'A');

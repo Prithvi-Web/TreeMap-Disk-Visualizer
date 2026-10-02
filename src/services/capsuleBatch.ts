@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { realPlaceOf } from '../utils/pathSanitizer';
+import { meansAbsent } from '../utils/errno';
 
 /**
  * A batch as the Time Capsule deletes it (FG3, FG3b, FG3c): each item once, and an item inside
@@ -17,8 +18,12 @@ import { realPlaceOf } from '../utils/pathSanitizer';
  * real folder holds anything: a link is itself the item, wherever it leads. And a folder holds only
  * what is on its own device, so what is on a volume mounted inside it is not taken for part of it —
  * unless the batch holds the volume's root too: that root is an entry of the folder and goes with
- * it, taking what it holds along (FG3d #4). A request the disk cannot place (gone, or unreadable) is
- * its own item, judged by the disk when it is trashed.
+ * it, taking what it holds along (FG3d #4). A request that is not there is its own item, and its own
+ * capture says it is gone. One whose place cannot be looked at — a look that fails for another
+ * reason, which says nothing either way — is never silently its own item (FG3d #10): when it is
+ * written inside another request of the batch, or another inside it, the batch is judged by how its
+ * paths are written, as before FG3c, so no item gets a second copy for want of a look; the trash
+ * step's own look at the disk then says what really went.
  */
 
 /** Where one request is on the disk. */
@@ -34,16 +39,25 @@ interface Place {
   realPath: string;
 }
 
-/** How the disk is read here — the real one, or a test's stand-in for what no test can make (a mount). */
+/**
+ * How the disk is read here — the real one, or a test's stand-in for what no test can make (a mount).
+ * Each answers null when nothing is there, and throws when a look fails for another reason.
+ */
 export interface PlaceReader {
   lstat(p: string): Promise<{ dev: bigint; ino: bigint; isSymbolicLink(): boolean; isDirectory(): boolean } | null>;
   stat(p: string): Promise<{ dev: bigint } | null>;
   realPlaceOf(p: string): Promise<string | null>;
 }
 
+/** Null for "nothing is there" (`meansAbsent`); any other failure is rethrown: it says nothing either way. */
+const absentAsNull = (err: unknown): null => {
+  if (meansAbsent(err)) return null;
+  throw err;
+};
+
 const DISK: PlaceReader = {
-  lstat: (p) => fsp.lstat(p, { bigint: true }).catch(() => null),
-  stat: (p) => fsp.stat(p, { bigint: true }).catch(() => null),
+  lstat: (p) => fsp.lstat(p, { bigint: true }).catch(absentAsNull),
+  stat: (p) => fsp.stat(p, { bigint: true }).catch(absentAsNull),
   realPlaceOf,
 };
 
@@ -85,7 +99,18 @@ export async function collapseBatch<T extends { path: string }>(batch: T[], disk
     if (!firstOf.has(spelled)) firstOf.set(spelled, request);
   }
   const placed: { request: T; place: Place | null }[] = [];
-  for (const request of firstOf.values()) placed.push({ request, place: await placeOf(request.path, disk) });
+  const unplaced: T[] = [];
+  for (const request of firstOf.values()) {
+    try {
+      placed.push({ request, place: await placeOf(request.path, disk) });
+    } catch {
+      unplaced.push(request);
+    }
+  }
+  if (unplaced.length > 0 && unplaced.some((u) => writtenWithAnother(u, [...firstOf.values()]))) {
+    return bySpelling([...firstOf.values()], new Map(placed.flatMap(({ request, place }) => (place === null ? [] : [[request.path, place.realPath] as const]))));
+  }
+  for (const request of unplaced) placed.push({ request, place: null });
 
   // The first request of each item, and the real folders that can hold others.
   const firstAt = new Map<string, T>();
@@ -130,6 +155,39 @@ export async function collapseBatch<T extends { path: string }>(batch: T[], disk
     return at;
   };
   collapsed.covered = collapsed.covered.map((c) => ({ ...c, by: outermost(c.by) }));
+  return collapsed;
+}
+
+/** Whether `request` is written inside another request of `all`, or another inside it. */
+function writtenWithAnother<T extends { path: string }>(request: T, all: T[]): boolean {
+  const at = path.resolve(request.path);
+  return all.some((other) => other !== request && (isWrittenInside(at, path.resolve(other.path)) || isWrittenInside(path.resolve(other.path), at)));
+}
+
+/** Whether the path `inner` is written inside the folder `outer` (both resolved). */
+function isWrittenInside(inner: string, outer: string): boolean {
+  const rel = path.relative(outer, inner);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * The batch judged by how its paths are written (FG3b's rule), for when the disk could not place
+ * one of them (FG3d #10): each goes with the outermost request written around it. Linear in the
+ * batch times the depth of a path. `realPathOf` keeps what the disk did place.
+ */
+function bySpelling<T extends { path: string }>(requests: T[], realPathOf: Map<string, string>): CollapsedBatch<T> {
+  const written = new Map(requests.map((r) => [path.resolve(r.path), r]));
+  const collapsed: CollapsedBatch<T> = { top: [], covered: [], realPathOf };
+  for (const request of requests) {
+    let by: T | null = null;
+    for (let at = path.dirname(path.resolve(request.path)); ; at = path.dirname(at)) {
+      const holder = written.get(at);
+      if (holder !== undefined && holder !== request) by = holder; // keep climbing: the outermost
+      if (path.dirname(at) === at) break;
+    }
+    if (by === null) collapsed.top.push(request);
+    else collapsed.covered.push({ request, by: by.path, same: false });
+  }
   return collapsed;
 }
 

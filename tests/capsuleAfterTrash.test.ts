@@ -556,6 +556,17 @@ test('an item reached through a link out of a folder, that the Trash refused, is
   assert.equal(fs.readFileSync(target, 'utf8'), contentOf(target));
 });
 
+test('an item whose place cannot be looked at, inside a folder of the same batch, is planned with that folder, never as an item of its own (FG3d #10)', { skip: NO_CHMOD }, async () => {
+  const { dir, inner } = project('unlookable', 'unlookable-proj');
+  fs.chmodSync(dir, 0o600); // its listing can be read, but nothing in it can be looked at
+  try {
+    const row = (await planCartCommit([dir, inner[0]])).items.find((i) => i.path === inner[0]);
+    assert.match(row?.reason ?? '', /^It is inside .*unlookable-proj/, `with the folder it is written inside (${row?.reason})`);
+  } finally {
+    fs.chmodSync(dir, 0o755);
+  }
+});
+
 test('the dry run names an item spelled another way as that item (FG3c #1)', async () => {
   const real = fileTempDir('treemap-capsuleAfterTrash-respelled-plan-');
   const alias = path.join(fileTempDir('treemap-capsuleAfterTrash-respelled-plan-alias-'), 'via');

@@ -3,6 +3,7 @@ import os from 'os';
 import fs from 'fs';
 import { appDataDir } from '../services/storage';
 import { SPILL_DIR } from '../services/spillSweep';
+import { meansAbsent } from './errno';
 
 /**
  * Path validation shared by the pathGuard middleware and the services.
@@ -383,15 +384,18 @@ export function canonicalDirOf(p: string): string {
 
 /**
  * Where `p` is on the disk: every link resolved and each name as the volume stores it — the native
- * realpath, so `proj/FOO.TXT` answers `…/Proj/Foo.txt` on a volume that folds case — on the Data
- * volume's short spelling. Not memoised, unlike `canonDir`: it decides what one delete takes
- * (FG3c). Null when it cannot be resolved (gone, or a folder above it cannot be looked into).
+ * realpath, so `proj/FOO.TXT` answers `…/Proj/Foo.txt` on a volume that folds case (on macOS and
+ * Windows; Linux's keeps each name as typed) — on the Data volume's short spelling. Not memoised,
+ * unlike `canonDir`: it decides what one delete takes (FG3c). Null when nothing is there
+ * (`meansAbsent`); a look that fails for another reason (a folder above it cannot be looked into,
+ * an I/O error) throws, since it says nothing either way (FG3d #10).
  */
 export async function realPlaceOf(p: string): Promise<string | null> {
   try {
     return stripDataVolume(strip(await realpathNative(p)));
-  } catch {
-    return null;
+  } catch (err) {
+    if (meansAbsent(err)) return null;
+    throw err;
   }
 }
 const realpathNative = (p: string): Promise<string> =>
