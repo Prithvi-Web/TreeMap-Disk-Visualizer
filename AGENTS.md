@@ -410,7 +410,12 @@ read-what-you-saw) permission to act.
   (`DELETE /api/files`, `/api/cart/commit`, `/api/files/open`,
   `/api/files/terminal`, `/api/files/preview`, `/api/offload`, `/api/git/gc`,
   `/api/container/expand`) demand the path lie inside the root of a scan this
-  server performed. Outside → `403 { code: "OUTSIDE_SCAN_ROOT" }`.
+  server performed. Outside → `403 { code: "OUTSIDE_SCAN_ROOT" }`. A scan
+  grants only what it listed: a path at or beneath a folder it never descended
+  into — a fixed never-descend folder such as `/Volumes` after a scan of `/`,
+  or a drive mounted inside the folder that it did not enter under "Stay on
+  this drive" — is outside that scan too, unless another scan covers it (scan
+  the drive itself to act there).
 - **TreeMap's own spill folder.** `<appData>/scan-spill` is reserved for the
   working files of very large scans (Phase 4; no scan writes there yet). Every
   endpoint and MCP tool that takes a path

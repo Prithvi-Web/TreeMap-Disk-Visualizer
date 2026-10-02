@@ -1,7 +1,10 @@
+import path from 'path';
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, canonicalDirOf, isSpillPath, isAppDataPath } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, canonicalDirOf, isSpillPath, isAppDataPath, foldName } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
+import { exclusionsOf } from '../utils/mountBoundaries';
+import type { ScanResult } from '../models/types';
 import { isVirtualPath } from '../services/containerScanner';
 import { AppError } from './errorHandler';
 
@@ -165,11 +168,40 @@ export function guardQueryPath(...params: string[]) {
  * ever scanned — and refused the same file under an alias spelling. This is the
  * one gate for every destructive and OS-touching route AND the MCP tools, so it
  * is the one place the rule lives.
+ *
+ * And a scan grants only what it LISTED (Track U, U-25, U-D19): a path at or
+ * beneath a folder it never descended into — a fixed never-descend folder
+ * below its root (/Volumes after a scan of /), or a drive mounted inside that
+ * it did not enter under "Stay on this drive" — is outside that scan, unless
+ * another scan covers it. The prefix test alone let a delete, an offload or an
+ * open reach files on a drive the scan never saw.
  */
 export function insideAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false; // never on this filesystem
   const where = canonicalDirOf(p);
-  return allScans().some((scan) => isInside(canonicalDirOf(scan.rootPath), where));
+  return allScans().some((scan) => listedBy(scan, where));
+}
+
+/** A path's names, its root first, as a file system may fold them (`foldName`). */
+function foldedNames(p: string): string[] {
+  const { root } = path.parse(p);
+  return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map((name) => foldName(name));
+}
+
+/**
+ * Whether `where` (`canonicalDirOf` of a path) is something `scan` listed: under
+ * its root, and not at or beneath a folder the scan never descended into
+ * (`exclusionsOf`). Names are compared as a file system may fold them, so the
+ * drive's name in another case is the drive; on a volume that keeps case that
+ * also refuses a look-alike folder, which only ever refuses more.
+ */
+function listedBy(scan: ScanResult, where: string): boolean {
+  if (!isInside(canonicalDirOf(scan.rootPath), where)) return false;
+  const names = foldedNames(where);
+  return !exclusionsOf(scan.boundary, scan.rootPath).some((never) => {
+    const prefix = foldedNames(canonicalDirOf(never));
+    return prefix.length <= names.length && prefix.every((name, i) => name === names[i]);
+  });
 }
 
 /**
