@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -110,8 +111,53 @@ test('on this machine, the probe agrees with the temp volume (FG3c #5)', async (
 const SETTLED_BLOCKS: [number, number][] = [
   [0x20, 0x58f], [0x1e00, 0x1fff], [0x2100, 0x218f], [0x2460, 0x24ff], [0xfb00, 0xfb4f], [0xff00, 0xffef], [0x1d400, 0x1d7ff],
 ];
+
+/**
+ * The file system a path is on, from a macOS mount table (`mount`'s lines, "<device> on <mount
+ * point> (<type>, …)"): the type of the longest mount point holding it, or null (FG3d #15). The sweep
+ * below measures APFS's own table, so it runs only on APFS: a temp folder on HFS+, exFAT, FAT or SMB
+ * folds case too, by another table (HFS+ keeps ß and ss apart), and would fail for that alone.
+ */
+function fileSystemOf(real: string, mountTable: string): string | null {
+  let best: { at: string; type: string } | null = null;
+  for (const line of mountTable.split('\n')) {
+    const m = / on (.+?) \(([^,)]+)/.exec(line);
+    if (m === null) continue;
+    const [, at, type] = m;
+    const holds = real === at || real.startsWith(at.endsWith('/') ? at : `${at}/`);
+    if (holds && (best === null || at.length > best.at.length)) best = { at, type };
+  }
+  return best?.type ?? null;
+}
+
+test('the mount table names the file system of the longest mount point holding a path (FG3d #15)', () => {
+  const table = [
+    '/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)',
+    '/dev/disk4s2 on /Volumes/Old Drive (hfs, local, nodev, nosuid, journaled)',
+    '/dev/disk5s1 on /Volumes/USB (exfat, local, nodev, nosuid, noowners)',
+  ].join('\n');
+  assert.equal(fileSystemOf('/private/var/folders/x/T', table), 'apfs');
+  assert.equal(fileSystemOf('/Volumes/Old Drive/tmp', table), 'hfs', 'a mount point with a space in its name');
+  assert.equal(fileSystemOf('/Volumes/USB', table), 'exfat', 'the mount point itself');
+  assert.equal(fileSystemOf('/Volumes/USBX/tmp', table), 'apfs', 'a name that only starts like a mount point is not on it');
+  assert.equal(fileSystemOf('/x', ''), null);
+});
+
+/** This file's temp volume's file system, on a Mac: 'apfs', 'hfs', … or null when it cannot be told. */
+const TEMP_FILE_SYSTEM = ((): string | null => {
+  if (process.platform !== 'darwin') return null;
+  try {
+    return fileSystemOf(fs.realpathSync.native(fileTempDir('treemap-volumeNames-fs-probe-')), execFileSync('/sbin/mount', [], { encoding: 'utf8' }));
+  } catch {
+    return null;
+  }
+})();
+
 test('the APFS key agrees with this volume on every name with a case or form mapping (FG3c #5, #9)', {
-  skip: process.platform === 'darwin' && FOLDS_CASE ? false : 'measured on a Mac volume that folds case',
+  skip: process.platform !== 'darwin' ? 'measured on a Mac'
+    : !FOLDS_CASE ? 'this Mac\u2019s temp volume keeps a and A apart'
+      : TEMP_FILE_SYSTEM !== 'apfs' ? `the temp volume is ${TEMP_FILE_SYSTEM ?? 'of a kind the mount table does not name'}, not APFS, and folds names by its own table`
+        : false,
 }, () => {
   const dir = fileTempDir('treemap-volumeNames-oracle-');
   const names = new Set<string>();
