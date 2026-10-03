@@ -374,6 +374,20 @@ test('the version is found where it really is: About in the desktop app, :4280 o
   }
 });
 
+test('the bug report template asks for the version where it is and the engine as the Dashboard names it', () => {
+  const bug = read('.github', 'ISSUE_TEMPLATE', 'bug_report.md');
+  const version = section(bug, '**TreeMap version**', 'Version:');
+  for (const t of version.split(/(?<=[.;])\s+/).filter((x) => x.includes('127.0.0.1:4280'))) {
+    assert.match(t, /web mode/, `the :4280 address is web mode's: ${t}`);
+    assert.doesNotMatch(t, /desktop|Anywhere/i, `never the desktop app's: ${t}`);
+  }
+  assert.match(version, /Help → About TreeMap on Windows/, 'Windows has About under Help');
+  const scan = section(bug, '**The scan**', '**Which view**');
+  assert.doesNotMatch(scan, /gdu or built-in/, 'the native engine is the usual one now');
+  assert.match(scan, /"Native engine"/, 'the engine line is quoted as the Dashboard writes it');
+  assert.doesNotMatch(bug, /portable zip/, 'no portable zip is released (the -mac.zip is the updater\'s)');
+});
+
 test('SECURITY.md describes the update flow each platform has', () => {
   const desk = read('electron', 'lib', 'desktop.js');
   const button = /buttons: \['([^']+)'/.exec(desk.slice(desk.indexOf('function updateDialogCopy(')));

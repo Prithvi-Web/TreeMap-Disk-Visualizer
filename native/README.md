@@ -10,6 +10,9 @@ native/
   treemap-core/          the Cargo workspace (edition 2024, Rust ≥ 1.85)
     crates/tm-governor   the resource governor: presets, the closed loop, the OS mechanisms — pure Rust
     crates/tm-walk       the native walker: one listing call per directory, a governed walk, columnar output
+    crates/tm-store      the finalized scan store, built in Rust from the walk's columns in PackedScanStore's own layout
+    crates/tm-mft        the NTFS master file table, read as records (the NTFS turbo mode's reader; portable, tested on synthetic volumes)
+    crates/tm-mft-helper the turbo mode's elevated, read-only Windows helper: one volume's $MFT for one scan root, written as a columns file
     crates/tm-node       the napi-rs bindings — the only crate Node touches
   index.d.ts             the module's TypeScript declaration, the one source of truth for its shapes
   THIRD_PARTY_NOTICES.txt  the licences of every crate the binaries are built from (generated; see below)

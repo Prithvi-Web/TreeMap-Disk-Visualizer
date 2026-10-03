@@ -44,6 +44,11 @@ native modules (`better-sqlite3`, `sharp`) built for standard Node, and VS Code'
 extension host is Electron, whose ABI differs. Loading the server in-process
 would crash the extension host.
 
+The extension builds TreeMap with `npm run build`, which does not build its
+Rust scan core, so a downloaded copy scans with the built-in walker (or gdu,
+if one is on your `PATH`) and TreeMap's Dashboard says why. A TreeMap working
+tree where you have run `npm run build:native` uses that module.
+
 ## Settings
 
 | Setting | Default | Meaning |

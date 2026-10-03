@@ -281,7 +281,7 @@ export function makeStub(opts: StubOptions) {
     /** The scan registry main.js reads on sleep and wake, and what it asked of each. */
     scans: [] as Array<Record<string, unknown> & { scanId: string; status: string; rootPath: string }>,
     pausedIds: new Set<string>(),
-    /** Scans the stand-in refuses to pause (gdu on Windows in real life). */
+    /** Scans the stand-in refuses to pause (an NTFS turbo read or a cloud listing in real life). */
     unpausable: new Set<string>(),
     paused: [] as string[],
     resumed: [] as string[],

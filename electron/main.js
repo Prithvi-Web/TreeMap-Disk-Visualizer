@@ -479,7 +479,7 @@ const pausedForSleep = new Set();
 /**
  * Closing the lid pauses every running scan; opening it resumes exactly those.
  * A scan the person paused themselves stays paused across the nap, and a scan
- * that could not be paused (gdu on Windows) is logged, not pretended. The
+ * that could not be paused (an NTFS turbo read, a cloud listing) is logged, not pretended. The
  * server runs in this process, so the scan service is called directly. Electron
  * only provides powerMonitor once the app is ready, which is why this is wired
  * from boot() and not at load.

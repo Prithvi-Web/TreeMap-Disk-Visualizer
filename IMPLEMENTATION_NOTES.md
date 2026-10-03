@@ -13,7 +13,7 @@ middleware accepts either `Authorization: Bearer <token>` or that cookie.
 
 Why this and not the alternatives:
 
-- The frontend is frozen (R1): its literal `fetch('/api/…')` calls and
+- The frontend was frozen at the time (R1, since lifted): its literal `fetch('/api/…')` calls and
   `new EventSource('/api/…')` cannot be taught to send headers — and
   `EventSource` *cannot* send custom headers at all, so header-only auth
   would silently kill every SSE stream the UI depends on. Cookies ride along
@@ -38,7 +38,7 @@ authenticates page loads and terminates TLS.
 - **CORS is implemented in-tree** (`src/middleware/cors.ts`): the policy is a
   handful of headers; the MIT `cors` package would add a dependency for no
   behavior we need.
-- **Zero frontend dependencies added**; `public/index.html` is untouched.
+- **Zero frontend dependencies added**; `public/index.html` was left untouched at the time (R1, since lifted).
 
 ## Design choices worth knowing
 

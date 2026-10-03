@@ -74,7 +74,8 @@ function pauseReply(outcome: PauseOutcome, status: string): ScanPauseReply {
 /**
  * POST /api/scan/:scanId/pause — the walker stops counting within a batch,
  * a gdu shard is stopped in place. `paused: false` comes with a reason: the
- * scan had finished, or its engine cannot be paused here (gdu on Windows).
+ * scan had finished, or its engine cannot be paused (an NTFS turbo read, a
+ * cloud listing; gdu, which never runs on Windows, would be one there).
  */
 engineRouter.post('/scan/:scanId/pause', (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
