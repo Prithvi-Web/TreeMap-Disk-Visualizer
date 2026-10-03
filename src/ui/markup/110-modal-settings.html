@@ -79,6 +79,25 @@
         </label>
       </div>
 
+      <!-- Track U, U-27: at a drive mounted inside the folder being scanned (a
+           disk image, the iOS Simulator's volumes, a separate /home on Linux), stay
+           on the drive the scan started on (the default, the owner's answer to
+           U-Q9), or go into it. Saved the moment it is picked, like the engine. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="hardDrive"></span>Drives mounted inside a folder</div>
+      <div class="muted" style="margin-bottom:10px;">A disk image or drive mounted inside the folder you scan is a separate disk. Staying on this drive keeps the totals true to the disk you chose.</div>
+      <div id="scanBoundary" role="radiogroup" aria-label="Drives mounted inside a folder">
+        <label class="rule-row budget-row" for="scanBoundary-stay">
+          <input type="radio" name="scanBoundary" id="scanBoundary-stay" value="stay" checked>
+          <span class="budget-name">Stay on this drive</span>
+          <span class="muted budget-help">the scan stops where another drive is mounted, and the Dashboard names it</span>
+        </label>
+        <label class="rule-row budget-row" for="scanBoundary-cross">
+          <input type="radio" name="scanBoundary" id="scanBoundary-cross" value="cross">
+          <span class="budget-name">Include drives mounted inside it</span>
+          <span class="muted budget-help">their files are counted as well, from the next scan</span>
+        </label>
+      </div>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="trendUp"></span>Disk-full forecast</div>
       <div class="muted" style="margin-bottom:10px;">Scheduled scans also project when the disk will fill up (needs 5+ scans across 2+ days). You'll get a notification when the forecast drops below:</div>
       <div class="rule-row">

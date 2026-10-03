@@ -1136,6 +1136,107 @@ subscribe(TOPIC.scan, (scanId) => {
   renderRefusedFolders();
   if (scanId) void probeRefusedFolders();
 });
+/* ── Drives mounted inside the folder ── */
+/* Track U, U-27. A drive mounted inside the scanned folder — a disk image,
+   the iOS Simulator's runtime volumes, a nullfs view an app makes of its own
+   bundle — is a separate disk, and under "Stay on this drive" (Settings, the
+   default) no scan goes into it. Its mount point stays in the tree as an
+   empty folder, which says nothing by itself: this row names the drives the
+   scan stayed out of, or, under "Include drives mounted inside it", the ones
+   it counted, or why it could not tell. It reads GET /api/scan/:id/boundary
+   once a scan has painted (TOPIC.scan), never in front of the paint, and
+   writes only text: a drive may be named anything. */
+
+/** The note for a /boundary answer — its sentence, and whether Settings can change it — or null when there is nothing to say. */
+function mountsNoteText(b, rootPath) {
+  if (!b || !b.rule) return null;
+  if (!b.notEntered || !b.mounts) {
+    if (!b.reason) return null;
+    return { text: `TreeMap could not read the list of mounted drives (${b.reason}), so a drive mounted inside this folder may have been counted as part of it.`, settings: false };
+  }
+  const plural = (n, one, many) => (n === 1 ? one : many);
+  /** Up to five names, then how many more. */
+  const names = (list, total) => {
+    const shown = list.slice(0, 5).map((m) => lastPathSegment(m.path));
+    const more = total - shown.length;
+    return shown.join(', ') + (more > 0 ? ` and ${formatCount(more)} more` : '');
+  };
+  if (b.rule === 'cross') {
+    const n = b.entered ? b.entered.count : 0;
+    if (!n) return null;
+    const shown = b.entered.examples.map((p) => ({ path: p }));
+    return {
+      text: `This scan includes ${formatCount(n)} drive${plural(n, '', 's')} mounted inside it — ${names(shown, n)}. ` +
+        plural(n, 'Its files are counted, though it is not on this disk.', 'Their files are counted, though they are not on this disk.'),
+      settings: true,
+    };
+  }
+  const n = b.notEntered.count;
+  if (!n) return null;
+  // A nullfs or bind mount shows a folder a second time: it is no disk of its own.
+  const VIEWS = ['nullfs', 'bindfs', 'fuse.bindfs'];
+  const listed = b.mounts.filter((m) => m.reached && !m.entered);
+  const views = listed.filter((m) => VIEWS.includes(m.filesystem));
+  const disks = listed.filter((m) => !VIEWS.includes(m.filesystem));
+  const diskCount = n - views.length; // past the fifty the answer lists, a drive is read as a disk
+  const root = String(rootPath || '');
+  const insideRoot = (p) => (root === '/' ? String(p).startsWith('/') : p === root || String(p).startsWith(root + '/'));
+  const counted = views.every((m) => insideRoot(m.source));
+  if (diskCount > 0) {
+    let text = `${formatCount(diskCount)} drive${plural(diskCount, '', 's')} mounted inside this folder ${plural(diskCount, 'was', 'were')} not scanned — ${names(disks, diskCount)}. ` +
+      `${plural(diskCount, 'It is a separate disk, so its files are', 'They are separate disks, so their files are')} not part of this disk’s total.`;
+    if (views.length) {
+      const what = counted ? plural(views.length, 'a folder already counted', 'folders already counted') : plural(views.length, 'another folder', 'other folders');
+      text += ` Also not scanned: ${names(views, views.length)}, ${plural(views.length, 'a second view', 'second views')} of ${what}.`;
+    }
+    return { text, settings: true };
+  }
+  return {
+    text: `${formatCount(n)} drive${plural(n, '', 's')} mounted inside this folder ${plural(n, 'was', 'were')} not scanned — ${names(views, n)}. ` +
+      `${plural(n, 'It is', 'Each is')} a second view of ${counted ? 'a folder already counted' : 'another folder'}, so ${plural(n, 'it was', 'they were')} not counted ${counted ? 'again' : 'here'}.`,
+    settings: true,
+  };
+}
+
+/** Paint (or hide) the note for a /boundary answer. Text only: a drive may be named like markup. */
+function renderMountsNote(b) {
+  const row = $('mountsNote');
+  if (!row) return;
+  const note = mountsNoteText(b, state.root ? state.root.path : '');
+  if (!note) {
+    row.hidden = true;
+    return;
+  }
+  $('mountsNoteText').textContent = note.text;
+  $('mountsNoteSettingsBtn').hidden = !note.settings;
+  row.hidden = false;
+}
+
+/** The scan the note shows, or is asking about: TOPIC.scan fires again after the refused-folder probe, and one question is enough. */
+let mountsNoteScanId = null;
+async function loadBoundary(scanId) {
+  if (scanId === mountsNoteScanId) return;
+  mountsNoteScanId = scanId;
+  let b = null;
+  try {
+    b = await api(`/api/scan/${encodeURIComponent(scanId)}/boundary`);
+  } catch {
+    b = null; // an older server, or no answer: say nothing rather than guess
+  }
+  if (scanId !== state.scanId) return; // a newer scan owns the Dashboard now
+  renderMountsNote(b);
+}
+
+subscribe(TOPIC.scan, (scanId) => {
+  if (!scanId) {
+    mountsNoteScanId = null;
+    renderMountsNote(null);
+    return;
+  }
+  void loadBoundary(scanId);
+});
+$('mountsNoteSettingsBtn').addEventListener('click', () => cmdkOpenSettingsSection('Drives mounted inside a folder'));
+/* ── end drives mounted inside ── */
 /**
  * "Open Privacy settings": the desktop shell opens the Full Disk Access pane
  * when asked for it BY NAME. The page holds no settings URL, and the shell's

@@ -25,6 +25,7 @@ $('settingsBtn').addEventListener('click', async () => {
   renderReclaimWeights();
   $('humanScaleToggle').checked = settingsData.humanScaleUnits !== false;
   renderScanEngine(settingsData.engine); // Phase 3 — rides on the settings just loaded
+  renderScanBoundary(settingsData.scanBoundary); // Track U, U-27 — likewise
 });
 
 /* ── Scan engine (Phase 3) ──
@@ -304,6 +305,42 @@ $('reclaimResetBtn').addEventListener('click', () => {
     }
   })();
 });
+
+/* ── Drives mounted inside a folder (Track U, U-27) ──
+   "Stay on this drive" (the default, the owner's U-Q9 answer) or "Include
+   drives mounted inside it": a dial like the scan engine above — saved the
+   moment it is picked, through PUT /api/settings with the one key
+   { scanBoundary } — and applied from the next scan. A value the page does
+   not know reads as the default. */
+const SCAN_BOUNDARY_RULES = ['stay', 'cross'];
+const SCAN_BOUNDARY_LABELS = { stay: 'Stay on this drive', cross: 'Include drives mounted inside it' };
+
+function scanBoundaryInputs() {
+  return SCAN_BOUNDARY_RULES.map((r) => $(`scanBoundary-${r}`)).filter(Boolean);
+}
+
+function renderScanBoundary(rule) {
+  const chosen = SCAN_BOUNDARY_RULES.includes(rule) ? rule : 'stay';
+  for (const input of scanBoundaryInputs()) input.checked = input.value === chosen;
+}
+
+async function saveScanBoundary(rule) {
+  try {
+    settingsData = await api('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanBoundary: rule }),
+    });
+    renderScanBoundary(settingsData.scanBoundary);
+    toast(`Drives mounted inside a folder: ${SCAN_BOUNDARY_LABELS[settingsData.scanBoundary] || settingsData.scanBoundary} — from the next scan`);
+  } catch (e) {
+    // The radio moved before the server had its say: back on what is stored, and why.
+    renderScanBoundary(settingsData.scanBoundary);
+    toast('Could not save where scans stop: ' + e.message, 'error');
+  }
+}
+for (const input of scanBoundaryInputs()) {
+  input.addEventListener('change', () => { if (input.checked) void saveScanBoundary(input.value); });
+}
 
 /* ── Cloud accounts (Feature 25) ── */
 function renderCloudAccounts() {

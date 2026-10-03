@@ -3457,6 +3457,18 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             </div>
             <button class="btn" id="accessOpenBtn" hidden>Open Privacy settings</button>
           </div>
+          <!-- Track U, U-27: the drives mounted inside the scanned folder that the
+               scan did not enter ("Stay on this drive", in Settings), by name; or,
+               under "Include drives mounted inside it", the ones it counted; or why
+               it could not tell. Hidden when there is nothing to say: a folder with
+               no drive mounted inside it says nothing here. -->
+          <div class="access-row" id="mountsNote" role="status" aria-live="polite" hidden>
+            <span data-icon="hardDrive" data-size="14"></span>
+            <div class="access-body">
+              <div class="access-text" id="mountsNoteText"></div>
+            </div>
+            <button class="btn" id="mountsNoteSettingsBtn">Change in Settings</button>
+          </div>
         </div>
 
         <div class="card glass">
@@ -4448,6 +4460,25 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <input type="radio" name="scanEngine" id="scanEngine-ntfs-mft" value="ntfs-mft">
           <span class="budget-name">NTFS turbo</span>
           <span class="muted budget-help">Windows only, with TreeMap installed for everyone who uses the computer: asks Windows for administrator permission, then reads the drive’s file table directly, read-only — not verified on this build</span>
+        </label>
+      </div>
+
+      <!-- Track U, U-27: at a drive mounted inside the folder being scanned (a
+           disk image, the iOS Simulator's volumes, a separate /home on Linux), stay
+           on the drive the scan started on (the default, the owner's answer to
+           U-Q9), or go into it. Saved the moment it is picked, like the engine. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="hardDrive"></span>Drives mounted inside a folder</div>
+      <div class="muted" style="margin-bottom:10px;">A disk image or drive mounted inside the folder you scan is a separate disk. Staying on this drive keeps the totals true to the disk you chose.</div>
+      <div id="scanBoundary" role="radiogroup" aria-label="Drives mounted inside a folder">
+        <label class="rule-row budget-row" for="scanBoundary-stay">
+          <input type="radio" name="scanBoundary" id="scanBoundary-stay" value="stay" checked>
+          <span class="budget-name">Stay on this drive</span>
+          <span class="muted budget-help">the scan stops where another drive is mounted, and the Dashboard names it</span>
+        </label>
+        <label class="rule-row budget-row" for="scanBoundary-cross">
+          <input type="radio" name="scanBoundary" id="scanBoundary-cross" value="cross">
+          <span class="budget-name">Include drives mounted inside it</span>
+          <span class="muted budget-help">their files are counted as well, from the next scan</span>
         </label>
       </div>
 
@@ -9131,6 +9162,107 @@ subscribe(TOPIC.scan, (scanId) => {
   renderRefusedFolders();
   if (scanId) void probeRefusedFolders();
 });
+/* ── Drives mounted inside the folder ── */
+/* Track U, U-27. A drive mounted inside the scanned folder — a disk image,
+   the iOS Simulator's runtime volumes, a nullfs view an app makes of its own
+   bundle — is a separate disk, and under "Stay on this drive" (Settings, the
+   default) no scan goes into it. Its mount point stays in the tree as an
+   empty folder, which says nothing by itself: this row names the drives the
+   scan stayed out of, or, under "Include drives mounted inside it", the ones
+   it counted, or why it could not tell. It reads GET /api/scan/:id/boundary
+   once a scan has painted (TOPIC.scan), never in front of the paint, and
+   writes only text: a drive may be named anything. */
+
+/** The note for a /boundary answer — its sentence, and whether Settings can change it — or null when there is nothing to say. */
+function mountsNoteText(b, rootPath) {
+  if (!b || !b.rule) return null;
+  if (!b.notEntered || !b.mounts) {
+    if (!b.reason) return null;
+    return { text: `TreeMap could not read the list of mounted drives (${b.reason}), so a drive mounted inside this folder may have been counted as part of it.`, settings: false };
+  }
+  const plural = (n, one, many) => (n === 1 ? one : many);
+  /** Up to five names, then how many more. */
+  const names = (list, total) => {
+    const shown = list.slice(0, 5).map((m) => lastPathSegment(m.path));
+    const more = total - shown.length;
+    return shown.join(', ') + (more > 0 ? ` and ${formatCount(more)} more` : '');
+  };
+  if (b.rule === 'cross') {
+    const n = b.entered ? b.entered.count : 0;
+    if (!n) return null;
+    const shown = b.entered.examples.map((p) => ({ path: p }));
+    return {
+      text: `This scan includes ${formatCount(n)} drive${plural(n, '', 's')} mounted inside it — ${names(shown, n)}. ` +
+        plural(n, 'Its files are counted, though it is not on this disk.', 'Their files are counted, though they are not on this disk.'),
+      settings: true,
+    };
+  }
+  const n = b.notEntered.count;
+  if (!n) return null;
+  // A nullfs or bind mount shows a folder a second time: it is no disk of its own.
+  const VIEWS = ['nullfs', 'bindfs', 'fuse.bindfs'];
+  const listed = b.mounts.filter((m) => m.reached && !m.entered);
+  const views = listed.filter((m) => VIEWS.includes(m.filesystem));
+  const disks = listed.filter((m) => !VIEWS.includes(m.filesystem));
+  const diskCount = n - views.length; // past the fifty the answer lists, a drive is read as a disk
+  const root = String(rootPath || '');
+  const insideRoot = (p) => (root === '/' ? String(p).startsWith('/') : p === root || String(p).startsWith(root + '/'));
+  const counted = views.every((m) => insideRoot(m.source));
+  if (diskCount > 0) {
+    let text = `${formatCount(diskCount)} drive${plural(diskCount, '', 's')} mounted inside this folder ${plural(diskCount, 'was', 'were')} not scanned — ${names(disks, diskCount)}. ` +
+      `${plural(diskCount, 'It is a separate disk, so its files are', 'They are separate disks, so their files are')} not part of this disk’s total.`;
+    if (views.length) {
+      const what = counted ? plural(views.length, 'a folder already counted', 'folders already counted') : plural(views.length, 'another folder', 'other folders');
+      text += ` Also not scanned: ${names(views, views.length)}, ${plural(views.length, 'a second view', 'second views')} of ${what}.`;
+    }
+    return { text, settings: true };
+  }
+  return {
+    text: `${formatCount(n)} drive${plural(n, '', 's')} mounted inside this folder ${plural(n, 'was', 'were')} not scanned — ${names(views, n)}. ` +
+      `${plural(n, 'It is', 'Each is')} a second view of ${counted ? 'a folder already counted' : 'another folder'}, so ${plural(n, 'it was', 'they were')} not counted ${counted ? 'again' : 'here'}.`,
+    settings: true,
+  };
+}
+
+/** Paint (or hide) the note for a /boundary answer. Text only: a drive may be named like markup. */
+function renderMountsNote(b) {
+  const row = $('mountsNote');
+  if (!row) return;
+  const note = mountsNoteText(b, state.root ? state.root.path : '');
+  if (!note) {
+    row.hidden = true;
+    return;
+  }
+  $('mountsNoteText').textContent = note.text;
+  $('mountsNoteSettingsBtn').hidden = !note.settings;
+  row.hidden = false;
+}
+
+/** The scan the note shows, or is asking about: TOPIC.scan fires again after the refused-folder probe, and one question is enough. */
+let mountsNoteScanId = null;
+async function loadBoundary(scanId) {
+  if (scanId === mountsNoteScanId) return;
+  mountsNoteScanId = scanId;
+  let b = null;
+  try {
+    b = await api(`/api/scan/${encodeURIComponent(scanId)}/boundary`);
+  } catch {
+    b = null; // an older server, or no answer: say nothing rather than guess
+  }
+  if (scanId !== state.scanId) return; // a newer scan owns the Dashboard now
+  renderMountsNote(b);
+}
+
+subscribe(TOPIC.scan, (scanId) => {
+  if (!scanId) {
+    mountsNoteScanId = null;
+    renderMountsNote(null);
+    return;
+  }
+  void loadBoundary(scanId);
+});
+$('mountsNoteSettingsBtn').addEventListener('click', () => cmdkOpenSettingsSection('Drives mounted inside a folder'));
+/* ── end drives mounted inside ── */
 /**
  * "Open Privacy settings": the desktop shell opens the Full Disk Access pane
  * when asked for it BY NAME. The page holds no settings URL, and the shell's
@@ -26088,6 +26220,7 @@ const CMDK_SETTINGS_SECTIONS = [
   { name: 'Scheduled scans', hint: 'schedule, recurring, automatic' },
   { name: 'Scanning budget', hint: 'eco, balanced, turbo, battery, slower, faster' },
   { name: 'Scan engine', hint: 'native, gdu, walker, fastest, engine' },
+  { name: 'Drives mounted inside a folder', hint: 'mount, mounted, disk image, simulator, stay on this drive, include' },
   { name: 'Disk-full forecast', hint: 'warning, days, projection' },
   { name: 'Live activity', hint: 'watch, auto-pause' },
   { name: 'Time Capsule', hint: 'retention, undo copies' },
@@ -31900,6 +32033,7 @@ $('settingsBtn').addEventListener('click', async () => {
   renderReclaimWeights();
   $('humanScaleToggle').checked = settingsData.humanScaleUnits !== false;
   renderScanEngine(settingsData.engine); // Phase 3 — rides on the settings just loaded
+  renderScanBoundary(settingsData.scanBoundary); // Track U, U-27 — likewise
 });
 
 /* ── Scan engine (Phase 3) ──
@@ -32179,6 +32313,42 @@ $('reclaimResetBtn').addEventListener('click', () => {
     }
   })();
 });
+
+/* ── Drives mounted inside a folder (Track U, U-27) ──
+   "Stay on this drive" (the default, the owner's U-Q9 answer) or "Include
+   drives mounted inside it": a dial like the scan engine above — saved the
+   moment it is picked, through PUT /api/settings with the one key
+   { scanBoundary } — and applied from the next scan. A value the page does
+   not know reads as the default. */
+const SCAN_BOUNDARY_RULES = ['stay', 'cross'];
+const SCAN_BOUNDARY_LABELS = { stay: 'Stay on this drive', cross: 'Include drives mounted inside it' };
+
+function scanBoundaryInputs() {
+  return SCAN_BOUNDARY_RULES.map((r) => $(`scanBoundary-${r}`)).filter(Boolean);
+}
+
+function renderScanBoundary(rule) {
+  const chosen = SCAN_BOUNDARY_RULES.includes(rule) ? rule : 'stay';
+  for (const input of scanBoundaryInputs()) input.checked = input.value === chosen;
+}
+
+async function saveScanBoundary(rule) {
+  try {
+    settingsData = await api('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanBoundary: rule }),
+    });
+    renderScanBoundary(settingsData.scanBoundary);
+    toast(`Drives mounted inside a folder: ${SCAN_BOUNDARY_LABELS[settingsData.scanBoundary] || settingsData.scanBoundary} — from the next scan`);
+  } catch (e) {
+    // The radio moved before the server had its say: back on what is stored, and why.
+    renderScanBoundary(settingsData.scanBoundary);
+    toast('Could not save where scans stop: ' + e.message, 'error');
+  }
+}
+for (const input of scanBoundaryInputs()) {
+  input.addEventListener('change', () => { if (input.checked) void saveScanBoundary(input.value); });
+}
 
 /* ── Cloud accounts (Feature 25) ── */
 function renderCloudAccounts() {
