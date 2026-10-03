@@ -143,10 +143,14 @@ function crashDialogFor(err, info) {
 /* ───────────────────────────── About panel ───────────────────────────── */
 
 /**
- * The credits name what the app bundles and where those licences are:
- * build.extraResources puts gdu/LICENSE.md and THIRD_PARTY_NOTICES.txt (the
- * native core's Rust crates and standard library, scripts/rust-notices.js) in
- * the resources folder. They claim no more than that folder holds.
+ * The credits name what the app is built on and bundles, and where those
+ * licences are, on every platform: build.extraResources puts gdu/LICENSE.md
+ * and THIRD_PARTY_NOTICES.txt (the native core's Rust crates and standard
+ * library, scripts/rust-notices.js) in the resources folder; Electron's
+ * LICENSE.electron.txt and Chromium's LICENSES.chromium.html are in that
+ * folder on macOS (scripts/electron-licences.js puts them there) and beside
+ * it, next to the executable, on Windows and Linux (electron-builder keeps
+ * them there). They claim no more than that.
  */
 function aboutPanelOptions({ version }) {
   return {
@@ -154,7 +158,7 @@ function aboutPanelOptions({ version }) {
     applicationVersion: version,
     copyright: 'Copyright © 2026 Prithvi Vinay · MIT License',
     credits:
-      "See where your disk space goes, and get it back. Includes TreeMap's native scan core and gdu (MIT); gdu's licence and the native core's third-party licences are in the app's resources.",
+      "See where your disk space goes, and get it back. Built on Electron and Chromium, and includes TreeMap's native scan core and gdu (MIT); their licences ship inside the app, in or beside its resources folder.",
     website: REPO_URL,
   };
 }

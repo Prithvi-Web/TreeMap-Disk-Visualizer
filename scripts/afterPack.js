@@ -1,7 +1,14 @@
 'use strict';
 /*
  * electron-builder afterPack hook — on every platform, refuse an app without
- * its native module; on macOS, then give the app a VALID ad-hoc signature.
+ * its native module or without Electron's licences (on macOS, put those into
+ * the bundle first); on macOS, then give the app a VALID ad-hoc signature.
+ *
+ * Electron's licences (scripts/electron-licences.js): electron-builder
+ * deletes Electron's LICENSE and Chromium's LICENSES.chromium.html from a
+ * macOS build and keeps them beside the executable elsewhere, so the hook
+ * puts them into the bundle's Contents/Resources, from the Electron zip and
+ * checked against the Electron in the bundle, before the signature seals it.
  *
  * The native module (Track U U-14): electron-builder runs this hook after it
  * has laid the app out and before anything is signed or archived, on every
@@ -40,6 +47,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { checkPrebuilt } = require('./check-prebuilt');
+const { placeElectronLicences, assertElectronLicences } = require('./electron-licences');
 
 /**
  * electron-builder's Arch enum (builder-util), by value, under the names Node
@@ -110,13 +118,40 @@ function signInsideOut(appPath, run) {
 }
 
 /**
- * The hook. electron-builder calls it with the context alone; `run` stands in
- * for execFileSync and `repo` for this repository in tests. Its resolver
- * takes an export named "afterPack" over this default one, so no export
- * carries that name.
+ * Electron's licence and Chromium's credits: on macOS put into the bundle
+ * (electron-builder deletes them from a Mac build), then held to be in place
+ * on every platform — before anything is signed.
  */
-exports.default = async function afterPack(context, { run = execFileSync, repo = path.join(__dirname, '..') } = {}) {
+async function ensureElectronLicences(context, deps) {
+  const platform = context.electronPlatformName;
+  const productFilename = context.packager.appInfo.productFilename;
+  if (platform === 'darwin') {
+    const placed = await placeElectronLicences(
+      {
+        appOutDir: context.appOutDir,
+        productFilename,
+        arch: nodeArchOf(context.arch),
+        frameworkVersion: context.packager.info.framework.version,
+        config: context.packager.config,
+        projectDir: context.packager.projectDir,
+      },
+      deps,
+    );
+    console.log(`[afterPack] placed ${placed}`);
+  }
+  console.log(`[afterPack] Electron's licences: ${assertElectronLicences({ platform, appOutDir: context.appOutDir, productFilename })}`);
+}
+
+/**
+ * The hook. electron-builder calls it with the context alone; in tests `run`
+ * stands in for execFileSync, `repo` for this repository, and `downloadZip`
+ * and `readZipEntry` for the Electron zip (scripts/electron-licences.js). Its
+ * resolver takes an export named "afterPack" over this default one, so no
+ * export carries that name.
+ */
+exports.default = async function afterPack(context, { run = execFileSync, repo = path.join(__dirname, '..'), downloadZip, readZipEntry } = {}) {
   assertPackagedModule(context, repo);
+  await ensureElectronLicences(context, { downloadZip, readZipEntry });
   if (context.electronPlatformName !== 'darwin') return;
   // electron-builder still ad-hoc signs when a real identity is configured;
   // only step in when signing was skipped (no _CodeSignature was written).

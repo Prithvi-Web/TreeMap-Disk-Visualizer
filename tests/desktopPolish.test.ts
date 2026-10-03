@@ -382,14 +382,16 @@ test('the About panel names the version, the real copyright holder, the licence,
   assert.match(o.website, /^https:\/\/github\.com\//);
 });
 
-test('the About panel names what TreeMap bundles and says where their licences are (the native core ships from 5.2.0)', () => {
+test('the About panel names what TreeMap is built on and bundles, and says where their licences are (the native core, Electron and Chromium from 5.2.0)', () => {
   const { credits } = desktop.aboutPanelOptions({ version: '5.2.0' });
+  assert.match(credits, /Built on Electron and Chromium/, "Electron's licence and Chromium's credits ship in every build (tests/electronLicences.test.ts)");
   assert.match(credits, /native scan core/, "TreeMap's Rust module is named, not only gdu");
   assert.match(credits, /gdu \(MIT\)/);
-  assert.match(credits, /gdu's licence and the native core's third-party licences are in the app's resources/,
-    'it points at gdu/LICENSE.md and THIRD_PARTY_NOTICES.txt, which build.extraResources puts there (tests/rustNotices.test.ts)');
-  assert.doesNotMatch(credits, /(?<!core's )third-party licences are in/,
-    'and claims no more: Electron\'s and the npm packages\' licences are not in that folder');
+  assert.match(credits, /their licences ship inside the app, in or beside its resources folder\.$/,
+    'gdu/LICENSE.md and THIRD_PARTY_NOTICES.txt are in the resources folder (build.extraResources, tests/rustNotices.test.ts); LICENSE.electron.txt and ' +
+      'LICENSES.chromium.html are in it on macOS and beside it, next to the executable, on Windows and Linux (tests/electronLicences.test.ts)');
+  assert.doesNotMatch(credits, /npm/, "and claims no more: the npm packages' licences are not among them");
+  assert.doesNotMatch(credits, /\n/, 'one line');
   assert.doesNotMatch(credits, /Bundles gdu/, 'the old line, which left the native core out, is gone');
 });
 

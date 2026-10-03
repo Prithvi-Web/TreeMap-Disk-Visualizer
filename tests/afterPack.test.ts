@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { CPU_TYPE_ARM64, CPU_TYPE_X86_64, EM_X86_64, IMAGE_FILE_MACHINE_AMD64, elf64, machO64, pe } from './fixtures/binaryHeaders';
+import { chromiumCredits, electronLicence, electronZipEntries, macAppLayout } from './fixtures/electronLicences';
 isolatedDataDir('treemap-afterPack-data-');
 
 /**
@@ -18,23 +19,43 @@ isolatedDataDir('treemap-afterPack-data-');
  * signing, so a Windows or Linux package is held to it too, and an app that
  * will not ship is never signed. The 5.1.0 build the owner ran shipped
  * without the module and nothing said so.
+ *
+ * And Electron's licences: electron-builder deletes Electron's LICENSE and
+ * Chromium's LICENSES.chromium.html from a macOS build, so afterPack puts
+ * them into the bundle's Resources, from the Electron zip, before signing,
+ * and refuses any package — macOS, Windows or Linux — without them
+ * (scripts/electron-licences.js, tests/electronLicences.test.ts).
  */
 
 const REPO = path.join(__dirname, '..');
 const NATIVE_VERSION = (JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')) as { nativeVersion: string }).nativeVersion;
 
-interface Context { electronPlatformName: string; arch: number; appOutDir: string; packager: { appInfo: { productFilename: string } } }
+interface Context {
+  electronPlatformName: string;
+  arch: number;
+  appOutDir: string;
+  packager: { appInfo: { productFilename: string }; info: { framework: { version: string } }; config: Record<string, unknown>; projectDir: string };
+}
 type Run = (cmd: string, args: string[], opts?: object) => unknown;
+interface Deps { run: Run; downloadZip(o: { version: string; platform: string; arch: string }): Promise<string>; readZipEntry(zip: string, entry: string): Buffer }
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const hook = require('../scripts/afterPack.js') as { default(context: Context, deps?: { run: Run; repo?: string }): Promise<void>; nodeArchOf(arch: number): string };
+const hook = require('../scripts/afterPack.js') as { default(context: Context, deps?: Partial<Deps> & { repo?: string }): Promise<void>; nodeArchOf(arch: number): string };
 // electron-builder's own Arch enum, the value it hands the hook as context.arch.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { Arch } = require('electron-builder') as { Arch: Record<'ia32' | 'x64' | 'armv7l' | 'arm64' | 'universal', number> };
 
 type Platform = 'darwin' | 'win32' | 'linux';
+const ELECTRON = '31.7.7';
+const ZIP = '/cache/electron-v31.7.7-darwin-arm64.zip';
 
 function context(platform: Platform, arch: number): Context {
-  return { electronPlatformName: platform, arch, appOutDir: fileTempDir(`treemap-afterpack-${platform}-`), packager: { appInfo: { productFilename: 'TreeMap' } } };
+  const appOutDir = fileTempDir(`treemap-afterpack-${platform}-`);
+  return {
+    electronPlatformName: platform,
+    arch,
+    appOutDir,
+    packager: { appInfo: { productFilename: 'TreeMap' }, info: { framework: { version: ELECTRON } }, config: {}, projectDir: appOutDir },
+  };
 }
 
 /** Where electron-builder puts the app's resources: inside the bundle on macOS, beside the executable elsewhere. */
@@ -46,9 +67,20 @@ function moduleDirOf(c: Context, triple: string): string {
   return path.join(resourcesOf(c), 'app.asar.unpacked', 'native', 'prebuilt', triple);
 }
 
-/** Lays out what electron-builder would have: the resources folder, and the module and VERSION when given. */
-function pack(c: Context, triple: string, header: Buffer | null, version: string | null = `${NATIVE_VERSION}\n`): void {
+/**
+ * Lays out what electron-builder would have when afterPack runs: the
+ * resources folder; on macOS the bundle's Electron Framework (and, as
+ * electron-builder leaves it, no Electron licence anywhere); elsewhere
+ * Electron's licences beside the executable, as electron-builder names them
+ * there (unless `licences` is false); and the module and VERSION when given.
+ */
+function pack(c: Context, triple: string, header: Buffer | null, version: string | null = `${NATIVE_VERSION}\n`, licences = true): void {
   fs.mkdirSync(resourcesOf(c), { recursive: true });
+  if (c.electronPlatformName === 'darwin') macAppLayout(c.appOutDir, 'TreeMap', ELECTRON);
+  else if (licences) {
+    fs.writeFileSync(path.join(c.appOutDir, 'LICENSE.electron.txt'), electronLicence());
+    fs.writeFileSync(path.join(c.appOutDir, 'LICENSES.chromium.html'), chromiumCredits());
+  }
   if (!header) return;
   const dir = moduleDirOf(c, triple);
   fs.mkdirSync(dir, { recursive: true });
@@ -63,14 +95,40 @@ function prebuilt(dir: string, header: Buffer): void {
   fs.writeFileSync(path.join(dir, 'VERSION'), `${NATIVE_VERSION}\n`);
 }
 
-/** Runs the hook with codesign stood in for, and answers every command it ran; `repo` stands in for the repository it packages from. */
-async function runHook(c: Context, repo?: string): Promise<{ calls: string[][]; error: Error | null }> {
+/**
+ * Runs the hook with codesign, the Electron download and the zip reader
+ * stood in for — the zip holding `entries` — and answers every command it ran
+ * and what `onSign` saw at each codesign call; `repo` stands in for the
+ * repository it packages from.
+ */
+async function runHook(
+  c: Context,
+  entries: Record<string, Buffer> = electronZipEntries(ELECTRON),
+  onSign: () => void = () => {},
+  repo?: string,
+): Promise<{ calls: string[][]; error: Error | null; asked: unknown[] }> {
   const calls: string[][] = [];
+  const asked: unknown[] = [];
   try {
-    await hook.default(c, { run: (cmd, args) => { calls.push([cmd, ...args]); }, ...(repo === undefined ? {} : { repo }) });
-    return { calls, error: null };
+    await hook.default(c, {
+      run: (cmd, args) => {
+        onSign();
+        calls.push([cmd, ...args]);
+      },
+      downloadZip: async (o) => {
+        asked.push(o);
+        return ZIP;
+      },
+      readZipEntry: (zip, entry) => {
+        assert.equal(zip, ZIP);
+        if (!(entry in entries)) throw new Error(`caution: filename not matched:  ${entry}`);
+        return entries[entry];
+      },
+      ...(repo === undefined ? {} : { repo }),
+    });
+    return { calls, error: null, asked };
   } catch (err) {
-    return { calls, error: err as Error };
+    return { calls, error: err as Error, asked };
   }
 }
 
@@ -99,7 +157,7 @@ test('afterPack sends a missing module back to native/prebuilt/<triple>/ in the 
     const source = path.join(repo, 'native', 'prebuilt', triple);
     const c = context(platform, arch);
     pack(c, triple, null);
-    const none = await runHook(c, repo);
+    const none = await runHook(c, undefined, undefined, repo);
     assert.ok(none.error, `${platform}: refused`);
     const hint = none.error.message.slice(none.error.message.indexOf('does not exist'));
     assert.ok(hint.includes(source), `${platform}: the hint names ${source}: ${hint}`);
@@ -108,7 +166,7 @@ test('afterPack sends a missing module back to native/prebuilt/<triple>/ in the 
     prebuilt(source, header);
     const c2 = context(platform, arch);
     pack(c2, triple, null);
-    const dropped = await runHook(c2, repo);
+    const dropped = await runHook(c2, undefined, undefined, repo);
     assert.ok(dropped.error, `${platform}: still refused`);
     assert.match(dropped.error.message, /build\.files or build\.asarUnpack/, `${platform}: the other cause: ${dropped.error.message}`);
     assert.deepEqual(dropped.calls, [], `${platform}: and nothing is signed`);
@@ -126,8 +184,12 @@ test("afterPack passes the module of the target's architecture at nativeVersion;
       continue;
     }
     const app = path.join(c.appOutDir, 'TreeMap.app');
-    assert.deepEqual(calls, [['codesign', '--force', '--sign', '-', '--timestamp=none', app], ['codesign', '--verify', '--deep', '--strict', app]],
-      'the bundle is ad-hoc signed and its signature verified, as before');
+    const framework = path.join(app, 'Contents', 'Frameworks', 'Electron Framework.framework');
+    assert.deepEqual(calls, [
+      ['codesign', '--force', '--sign', '-', '--timestamp=none', framework],
+      ['codesign', '--force', '--sign', '-', '--timestamp=none', app],
+      ['codesign', '--verify', '--deep', '--strict', app],
+    ], 'the framework, then the bundle, are ad-hoc signed and the signature verified, as before');
   }
 });
 
@@ -146,6 +208,44 @@ test('afterPack refuses a packaged module of another architecture, format or ver
     assert.ok(error, `${label}: refused`);
     assert.match(error.message, reason, `${label}: ${error.message}`);
     assert.deepEqual(calls, [], `${label}: and not signed`);
+  }
+});
+
+test("afterPack, on macOS, puts Electron's licence and Chromium's credits into the bundle before it signs anything", async () => {
+  const c = context('darwin', Arch.arm64);
+  pack(c, 'darwin-arm64', machO64(CPU_TYPE_ARM64));
+  const resources = resourcesOf(c);
+  const seen: boolean[] = [];
+  const { calls, error, asked } = await runHook(c, electronZipEntries(ELECTRON), () => {
+    seen.push(fs.existsSync(path.join(resources, 'LICENSE.electron.txt')) && fs.existsSync(path.join(resources, 'LICENSES.chromium.html')));
+  });
+  assert.equal(error, null, error?.message);
+  assert.deepEqual(asked, [{ version: ELECTRON, platform: 'darwin', arch: 'arm64' }],
+    "the zip asked for is the Electron electron-builder packaged (its framework's version) for this architecture, by Node's name for it");
+  assert.ok(calls.length > 0 && seen.length === calls.length && seen.every(Boolean), `both files are in place at every codesign call, so the signature seals them: ${JSON.stringify(seen)}`);
+  const zip = electronZipEntries(ELECTRON);
+  assert.ok(fs.readFileSync(path.join(resources, 'LICENSE.electron.txt')).equals(zip.LICENSE), "Electron's LICENSE, byte for byte");
+  assert.ok(fs.readFileSync(path.join(resources, 'LICENSES.chromium.html')).equals(zip['LICENSES.chromium.html']), "Chromium's credits, byte for byte");
+});
+
+test("afterPack refuses, before any signing, a macOS app whose Electron zip lacks LICENSE and a Windows or Linux app without Electron's licences", async () => {
+  const mac = context('darwin', Arch.arm64);
+  pack(mac, 'darwin-arm64', machO64(CPU_TYPE_ARM64));
+  const { LICENSE: _gone, ...noLicence } = electronZipEntries(ELECTRON);
+  void _gone;
+  const r = await runHook(mac, noLicence);
+  assert.ok(r.error && r.error.message.includes('LICENSE') && r.error.message.includes(ZIP), `darwin: the zip and the entry are named: ${r.error?.message}`);
+  assert.deepEqual(r.calls, [], 'darwin: nothing is signed');
+
+  for (const [platform, triple, header] of [['win32', 'win32-x64', pe(IMAGE_FILE_MACHINE_AMD64)], ['linux', 'linux-x64', elf64(EM_X86_64)]] as const) {
+    const c = context(platform, Arch.x64);
+    pack(c, triple, header, `${NATIVE_VERSION}\n`, false);
+    const { calls, error } = await runHook(c);
+    assert.ok(error, `${platform}: an app without Electron's licences is refused`);
+    for (const name of ['LICENSE.electron.txt', 'LICENSES.chromium.html']) {
+      assert.ok(error.message.includes(path.join(c.appOutDir, name)), `${platform}: names ${name} beside the executable: ${error.message}`);
+    }
+    assert.deepEqual(calls, [], `${platform}: no signing step runs`);
   }
 });
 

@@ -3776,9 +3776,10 @@ B5 zombie handles.
    afterPack refuses a bundle without the native module for its platform and
    architecture.
 3. Verify the bundle: PlistBuddy version, `Resources/gdu/gdu` present,
-   `[afterPack] native module …` in the build output,
-   `codesign --verify --deep --strict` ("0 valid identities" during the build is
-   normal — afterPack ad-hoc signs).
+   `[afterPack] native module …` and `[afterPack] placed LICENSE.electron.txt
+   and LICENSES.chromium.html …` in the build output (both files then sit in
+   `Resources/`), `codesign --verify --deep --strict` ("0 valid identities"
+   during the build is normal — afterPack ad-hoc signs).
 4. `osascript -e 'quit app "TreeMap"'` → `rm -rf /Applications/TreeMap.app` →
    `ditto release/mac-arm64/TreeMap.app /Applications/TreeMap.app` → open →
    find the port via `lsof -nP -iTCP -sTCP:LISTEN -a -c TreeMap` → curl
