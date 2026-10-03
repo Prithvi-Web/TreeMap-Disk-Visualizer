@@ -160,6 +160,10 @@
       {
         "from": "build/gdu/LICENSE.md",
         "to": "gdu/LICENSE.md"
+      },
+      {
+        "from": "native/THIRD_PARTY_NOTICES.txt",
+        "to": "THIRD_PARTY_NOTICES.txt"
       }
     ]
   }

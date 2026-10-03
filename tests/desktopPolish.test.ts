@@ -382,6 +382,17 @@ test('the About panel names the version, the real copyright holder, the licence,
   assert.match(o.website, /^https:\/\/github\.com\//);
 });
 
+test('the About panel names what TreeMap bundles and says where their licences are (the native core ships from 5.2.0)', () => {
+  const { credits } = desktop.aboutPanelOptions({ version: '5.2.0' });
+  assert.match(credits, /native scan core/, "TreeMap's Rust module is named, not only gdu");
+  assert.match(credits, /gdu \(MIT\)/);
+  assert.match(credits, /gdu's licence and the native core's third-party licences are in the app's resources/,
+    'it points at gdu/LICENSE.md and THIRD_PARTY_NOTICES.txt, which build.extraResources puts there (tests/rustNotices.test.ts)');
+  assert.doesNotMatch(credits, /(?<!core's )third-party licences are in/,
+    'and claims no more: Electron\'s and the npm packages\' licences are not in that folder');
+  assert.doesNotMatch(credits, /Bundles gdu/, 'the old line, which left the native core out, is gone');
+});
+
 /* ═══════════════════════ desktop-polish-6: the update flow ═══════════════════════ */
 
 test('updateOffer: a skipped version stays skipped, one offer per run, and the running version is never "available"', () => {

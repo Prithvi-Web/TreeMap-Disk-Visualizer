@@ -142,12 +142,19 @@ function crashDialogFor(err, info) {
 
 /* ───────────────────────────── About panel ───────────────────────────── */
 
+/**
+ * The credits name what the app bundles and where those licences are:
+ * build.extraResources puts gdu/LICENSE.md and THIRD_PARTY_NOTICES.txt (the
+ * native core's Rust crates and standard library, scripts/rust-notices.js) in
+ * the resources folder. They claim no more than that folder holds.
+ */
 function aboutPanelOptions({ version }) {
   return {
     applicationName: 'TreeMap',
     applicationVersion: version,
     copyright: 'Copyright © 2026 Prithvi Vinay · MIT License',
-    credits: 'See where your disk space goes, and get it back. Bundles gdu (MIT).',
+    credits:
+      "See where your disk space goes, and get it back. Includes TreeMap's native scan core and gdu (MIT); gdu's licence and the native core's third-party licences are in the app's resources.",
     website: REPO_URL,
   };
 }
