@@ -83,6 +83,17 @@ const running202 = jsonResponse(
   obj({ status: str("Always 'running'"), scanned: int(), currentPath: str() }, ['status']),
 );
 
+/** The allocation routes' answer while the index that holds the path is being built (plan U-7): no figure. */
+const allocationBuilding202 = jsonResponse(
+  'The index that holds this path is still being built — nothing is summed from a partial index; retry when it is ready',
+  obj({ status: str("Always 'building'") }, ['status']),
+);
+
+/** The allocation routes' answer where TreeMap did not measure what the files occupy (plan U-7, U-Q5). */
+const allocationNotMeasured409 = errorResponse(
+  'ALLOCATION_NOT_MEASURED — this index holds no measure of what its files occupy (an index built from a scan, or any index on Windows, where a file\'s blocks are not reported): a sentence says so, and no number is sent',
+);
+
 /* ------------------------------- schemas ------------------------------- */
 
 const schemas: Json = {
@@ -2421,7 +2432,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse(
         'Matches, largest first',
-        opaque('hits[], total, countCapped, truncated, tookMs, roots[], staleRoots[]'),
+        opaque('hits[], total, countCapped, truncated, tookMs, roots[], staleRoots[]. Only ready and stale roots are searched: a root still being built, or one whose build failed, gives no hit and is not counted'),
       ),
     },
   },
@@ -2440,7 +2451,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         'Allocation summary — always carries approximate:true with a plain-language reason',
         opaque('naiveLogicalBytes, logicalBytes, allocatedBytes, sharedBytes, exclusiveBytes, reconciliation'),
       ),
+      '202': allocationBuilding202,
       '404': errorResponse('INDEX_NOT_BUILT — scan the folder once first'),
+      '409': allocationNotMeasured409,
+      '500': errorResponse('INDEX_BUILD_FAILED — the build of the index that holds this folder failed'),
     },
   },
   {
@@ -2452,7 +2466,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     parameters: [queryParam('path', 'File path inside an indexed folder', str())],
     responses: {
       '200': jsonResponse('Per-file allocation', opaque('logicalBytes, allocatedBytes, sharedBytes, exclusiveBytes, links')),
+      '202': allocationBuilding202,
       '404': errorResponse('INDEX_NOT_BUILT or PATH_NOT_FOUND'),
+      '409': allocationNotMeasured409,
+      '500': errorResponse('INDEX_BUILD_FAILED — the build of the index that holds this file failed'),
     },
   },
 

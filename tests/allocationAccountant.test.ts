@@ -23,6 +23,15 @@ process.env.TREEMAP_DATA_DIR = DATA_DIR;
 
 import { buildIndex, deleteIndex, closeIndex } from '../src/services/indexEngine';
 import { accountFor, allocationForFile, isMountPoint } from '../src/services/allocationAccountant';
+import { platform } from '../src/platform';
+
+/**
+ * Where a file's blocks mean nothing (Windows) TreeMap does not measure what
+ * files occupy, and every report below is refused with 409
+ * ALLOCATION_NOT_MEASURED instead of being summed (plan U-7; the owner's
+ * answer to U-Q5). tests/indexReaders.test.ts holds that answer there.
+ */
+const UNMEASURED = !platform().blocksAreMeaningful && 'allocation is not measured where a file\'s blocks mean nothing (plan U-7): tests/indexReaders.test.ts holds the 409 there';
 
 const MB = 1024 * 1024;
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-alloc-'));
@@ -54,7 +63,7 @@ after(() => {
 
 /* ══════════════════════ Hard links — exactly measurable ══════════════════════ */
 
-test('a hard-linked pair is counted once, and neither name owns the bytes', async () => {
+test('a hard-linked pair is counted once, and neither name owns the bytes', { skip: UNMEASURED }, async () => {
   const dir = await mkTmp();
   try {
     const original = path.join(dir, 'original.bin');
@@ -87,7 +96,7 @@ test('a hard-linked pair is counted once, and neither name owns the bytes', asyn
   }
 });
 
-test('three names for one file: the diagnostic counts one file, the dashboard counts two extra names', async () => {
+test('three names for one file: the diagnostic counts one file, the dashboard counts two extra names', { skip: UNMEASURED }, async () => {
   // The two screens report the same tree with different units. A PAIR makes
   // both figures 1, which is why nothing caught them drifting apart. Only a
   // third name separates them.
@@ -109,7 +118,7 @@ test('three names for one file: the diagnostic counts one file, the dashboard co
   }
 });
 
-test('deleting one member of a family makes the survivor exclusive again', async () => {
+test('deleting one member of a family makes the survivor exclusive again', { skip: UNMEASURED }, async () => {
   // §A2 acceptance: "Deleting one member of a clone family updates the
   // remaining members' exclusive bytes correctly."
   const dir = await mkTmp();
@@ -136,7 +145,7 @@ test('deleting one member of a family makes the survivor exclusive again', async
   }
 });
 
-test('a family reaching outside the scanned root is flagged, not counted as exclusive', async () => {
+test('a family reaching outside the scanned root is flagged, not counted as exclusive', { skip: UNMEASURED }, async () => {
   // The scope rule: `nlink` counts names anywhere on the volume, and the index
   // counts the ones inside the root. When they differ, deleting everything in
   // scope still frees nothing — treating those bytes as exclusive would tell
@@ -169,7 +178,7 @@ test('a family reaching outside the scanned root is flagged, not counted as excl
 // was set, so "occupies what it claims" is the genuinely correct answer
 // there — recorded by CI's first real Windows run, same as the platform
 // suite's sparse test.
-test('a sparse file is sized by what it occupies, not what it claims', { skip: process.platform === 'win32' && 'NTFS allocates truncate-only files solid' }, async () => {
+test('a sparse file is sized by what it occupies, not what it claims', { skip: (process.platform === 'win32' && 'NTFS allocates truncate-only files solid') || UNMEASURED }, async () => {
   const dir = await mkTmp();
   try {
     const sparse = path.join(dir, 'sparse.bin');
@@ -193,7 +202,7 @@ test('a sparse file is sized by what it occupies, not what it claims', { skip: p
 
 /* ══════════════════════ Clones — honestly NOT measurable ══════════════════════ */
 
-test('a clone is indistinguishable from a real copy, and is not pretended otherwise', async (t) => {
+test('a clone is indistinguishable from a real copy, and is not pretended otherwise', { skip: UNMEASURED }, async (t) => {
   // This test documents a limitation rather than a capability, deliberately.
   // If a future change ever makes clone detection work, this test failing is
   // the signal to update the UI's honesty copy — not to delete the test.
@@ -232,7 +241,7 @@ test('a clone is indistinguishable from a real copy, and is not pretended otherw
 
 /* ══════════════════════ Reconciliation ══════════════════════ */
 
-test('reconciliation is offered only for a whole volume, never invented for a subfolder', async () => {
+test('reconciliation is offered only for a whole volume, never invented for a subfolder', { skip: UNMEASURED }, async () => {
   // A subfolder's contribution to used space cannot be isolated from outside,
   // so a "delta" computed for one would be made of everything else on the disk.
   const dir = await mkTmp();
@@ -254,7 +263,7 @@ test('the filesystem root is recognised as a volume', async () => {
   assert.equal(await isMountPoint(path.parse(process.cwd()).root), true);
 });
 
-test('every summary states that it may be an undercount of sharing', async () => {
+test('every summary states that it may be an undercount of sharing', { skip: UNMEASURED }, async () => {
   // §10 bans reporting a number you cannot verify. On any filesystem that
   // supports copy-on-write, the allocated sum is an upper bound — and saying so
   // is the whole difference between an honest total and a wrong one.
@@ -273,7 +282,7 @@ test('every summary states that it may be an undercount of sharing', async () =>
   }
 });
 
-test('shared and exclusive always add up to the allocated total', async () => {
+test('shared and exclusive always add up to the allocated total', { skip: UNMEASURED }, async () => {
   const dir = await mkTmp();
   try {
     await fsp.writeFile(path.join(dir, 'solo.bin'), Buffer.alloc(2 * MB, 1));
@@ -296,7 +305,7 @@ test('an unindexed folder answers null rather than zeroes', async () => {
   assert.equal(allocationForFile('/definitely/not/indexed', '/definitely/not/indexed/x'), null);
 });
 
-test('an ordinary single-name file reports all of its bytes as exclusive', async () => {
+test('an ordinary single-name file reports all of its bytes as exclusive', { skip: UNMEASURED }, async () => {
   const dir = await mkTmp();
   try {
     const solo = path.join(dir, 'solo.bin');
@@ -342,7 +351,12 @@ test('a hard-link family is found by index seek, never by rescanning the root', 
     assert.ok(!/idx_nodes_mtime/.test(detail), `must not fall back to the mtime index: ${detail}`);
     assert.ok(!/SCAN nodes\b/.test(detail), `must not scan the table: ${detail}`);
 
-    // And the report itself still comes out right with the index in place.
+    // And the report itself still comes out right with the index in place —
+    // or, where blocks mean nothing, is refused rather than summed.
+    if (UNMEASURED) {
+      await assert.rejects(accountFor(dir), { code: 'ALLOCATION_NOT_MEASURED' }, 'not measured here: refused, never summed');
+      return;
+    }
     const summary = await accountFor(dir);
     assert.ok(summary, 'a summary is produced');
     assert.equal(summary.hardlinkFamilies, 1, 'the one family is found');

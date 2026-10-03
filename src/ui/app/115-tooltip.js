@@ -17,6 +17,10 @@ function resolveAllocation(node) {
 
   api('/api/allocation/file?path=' + encodeURIComponent(node.path))
     .then((info) => {
+      // An answer without figures — 202, the index still being built — is
+      // nothing to say, like a 409 (not measured) below: the slot keeps its
+      // null, and nothing is grafted onto the node (plan U-7).
+      if (!info || typeof info.allocatedBytes !== 'number') return;
       allocationCache.set(node.path, info);
       // Graft onto the node so every later read — tooltip, grid, preview —
       // sees it without another request.
@@ -31,7 +35,7 @@ function resolveAllocation(node) {
         showTooltip(Number(tip.dataset.x), Number(tip.dataset.y), node, tip.dataset.pct ? Number(tip.dataset.pct) : null);
       }
     })
-    .catch(() => { /* no index yet, or not a local file — the tooltip just omits the line */ });
+    .catch(() => { /* no index yet, not a local file, or not measured (409) — the tooltip just omits the line */ });
 }
 
 /**

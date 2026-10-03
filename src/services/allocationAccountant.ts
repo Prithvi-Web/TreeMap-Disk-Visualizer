@@ -1,6 +1,8 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
-import { openIndex, getRoot, findNodeIdByPath, pathResolver } from './indexEngine';
+import { openIndex, getRoot, findNodeIdByPath, pathResolver, type IndexedRoot } from './indexEngine';
+import { platform } from '../platform';
+import { AppError } from '../middleware/errorHandler';
 
 /**
  * AllocationAccountant (A2) — what a folder really costs on disk.
@@ -124,6 +126,41 @@ const MAX_FAMILIES = 200;
 const MAX_PATHS_PER_FAMILY = 12;
 
 /**
+ * `roots.mechanism` of an index built from a scan's own rows (plan U-36,
+ * U-D4): it holds no allocated blocks, inodes or link counts, because the
+ * scan it was built from did not keep them.
+ */
+export const MECHANISM_FROM_SCAN = 'scan';
+
+/**
+ * What allocation answers where TreeMap did not measure what the files
+ * occupy (plan U-7; the owner's answer to U-Q5), as the page shows it.
+ */
+export const ALLOCATION_NOT_MEASURED_SENTENCE =
+  'This index was built from data that does not include the blocks files occupy on disk, so TreeMap cannot say what these files occupy.';
+
+/**
+ * Whether TreeMap measured what `root`'s files occupy on disk: not for an
+ * index built from a scan, and not on a platform whose `Stats.blocks` means
+ * nothing (Windows, `blocksAreMeaningful`), where every row's `allocated` is
+ * NULL. Read at call time, from the provider TreeMap runs on.
+ */
+export function allocationMeasured(root: IndexedRoot): boolean {
+  return root.mechanism !== MECHANISM_FROM_SCAN && platform().blocksAreMeaningful;
+}
+
+/**
+ * Refuses, with 409 ALLOCATION_NOT_MEASURED and the sentence, a root whose
+ * allocation was not measured (plan U-7, U-D5). Both readers below call it
+ * before reading a row, so their fallback to logical size — written for the
+ * odd row with no allocated figure — can never stand in for a whole root's.
+ * No number is sent with the refusal.
+ */
+function refuseUnmeasured(root: IndexedRoot): void {
+  if (!allocationMeasured(root)) throw new AppError(409, 'ALLOCATION_NOT_MEASURED', ALLOCATION_NOT_MEASURED_SENTENCE);
+}
+
+/**
  * Is `dir` the root of its own filesystem?
  *
  * Reconciliation against `statfs` only means anything for a whole volume: a
@@ -209,10 +246,14 @@ export function verdictFor(deltaBytes: number, deltaPercent: number, plat: NodeJ
  * stores inode, link count and allocated size per file, which is everything
  * this needs. That also makes it instant on a root that would take minutes to
  * re-walk.
+ *
+ * Throws 409 ALLOCATION_NOT_MEASURED where it was not measured
+ * (`allocationMeasured`).
  */
 export async function accountFor(rootPath: string): Promise<AllocationSummary | null> {
   const root = getRoot(rootPath);
   if (!root) return null;
+  refuseUnmeasured(root);
   const handle = openIndex();
 
   const totals = handle
@@ -281,10 +322,11 @@ export async function accountFor(rootPath: string): Promise<AllocationSummary | 
   // What a naive logical sum would have double-counted: every name after the
   // first in each family. Computed per family — (names in scope − 1) × the
   // family's real size — never from the zeroed duplicate rows themselves:
-  // their size is 0 by the dedup convention, and on Windows their allocated
-  // is NULL too (blocks is meaningless there), which made this figure
-  // silently collapse to zero on CI's first real Windows run. The family's
-  // MAX picks the one unzeroed row, which always knows the true size.
+  // their size is 0 by the dedup convention, and a row with no allocated
+  // figure falls back to that 0 (on Windows, where every row is so, this
+  // made the figure silently collapse to zero on CI's first real Windows
+  // run; Windows is now refused as not measured before this runs). The
+  // family's MAX picks the one unzeroed row, which always knows the true size.
   const savedByDeduplication = familyRows.reduce(
     (sum, row) => sum + Math.max(0, row.links_in_scope - 1) * row.allocated,
     0,
@@ -356,6 +398,7 @@ export interface FileAllocation {
 export function allocationForFile(rootPath: string, filePath: string): FileAllocation | null {
   const root = getRoot(rootPath);
   if (!root) return null;
+  refuseUnmeasured(root); // 409 ALLOCATION_NOT_MEASURED, as accountFor
   const handle = openIndex();
 
   const nodeId = findNodeIdByPath(root.id, root.path, filePath);
@@ -382,8 +425,10 @@ export function allocationForFile(rootPath: string, filePath: string): FileAlloc
   }
 
   // Falls back to logicalBytes, never row.size: a zeroed duplicate row with
-  // no allocated figure (Windows, where blocks is meaningless) would
-  // otherwise report a 4 MB hard link as 0 bytes shared.
+  // no allocated figure would otherwise report a 4 MB hard link as 0 bytes
+  // shared. Windows, where no row has one, never gets here
+  // (`refuseUnmeasured` above); a row the live watcher wrote for a file with
+  // no blocks still can.
   const allocated = row.allocated ?? logicalBytes;
 
   const extendsOutsideRoot = linksTotal > linksInScope;

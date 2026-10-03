@@ -21036,6 +21036,10 @@ function resolveAllocation(node) {
 
   api('/api/allocation/file?path=' + encodeURIComponent(node.path))
     .then((info) => {
+      // An answer without figures — 202, the index still being built — is
+      // nothing to say, like a 409 (not measured) below: the slot keeps its
+      // null, and nothing is grafted onto the node (plan U-7).
+      if (!info || typeof info.allocatedBytes !== 'number') return;
       allocationCache.set(node.path, info);
       // Graft onto the node so every later read — tooltip, grid, preview —
       // sees it without another request.
@@ -21050,7 +21054,7 @@ function resolveAllocation(node) {
         showTooltip(Number(tip.dataset.x), Number(tip.dataset.y), node, tip.dataset.pct ? Number(tip.dataset.pct) : null);
       }
     })
-    .catch(() => { /* no index yet, or not a local file — the tooltip just omits the line */ });
+    .catch(() => { /* no index yet, not a local file, or not measured (409) — the tooltip just omits the line */ });
 }
 
 /**
@@ -31517,8 +31521,19 @@ async function renderAllocationDiagnostic() {
         ? 'TreeMap is still building its index of this folder. Try again in a moment.'
         : 'TreeMap has not indexed this folder, and measuring what it really occupies on disk needs the index.' +
           (typeof max === 'number' ? ` It indexes a folder of up to ${formatCount(max)} items on its own after scanning it.` : '');
+    } else if (e.code === 'ALLOCATION_NOT_MEASURED') {
+      // An index built from a scan, or any index on Windows: nothing measured
+      // what the files occupy, so no figure is shown — never the size they
+      // claim in its place (plan U-7, the owner's answer to U-Q5).
+      message = 'Not measured for this index. ' + e.message;
     }
     host.innerHTML = `<span class="muted">${escapeHtml(message)}</span>`;
+    return;
+  }
+  // 202: the index is still being built. Its rows so far are part of a walk,
+  // and summed they would read as the whole folder (plan U-7).
+  if (a && a.status === 'building') {
+    host.innerHTML = `<span class="muted">${escapeHtml('TreeMap is still building its index of this folder. Try again in a moment.')}</span>`;
     return;
   }
 

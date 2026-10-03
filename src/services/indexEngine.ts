@@ -1957,8 +1957,21 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
   // so SQLite seeks it in the unique index on roots.path instead of scanning
   // the roots table: every path that starts with ASIDE_PREFIX sorts at or
   // after it, and before ASIDE_PREFIX_END.
-  const where: string[] = ['n.root_id NOT IN (SELECT id FROM roots WHERE path >= ? AND path < ?)'];
-  const params: (string | number)[] = [ASIDE_PREFIX, ASIDE_PREFIX_END];
+  //
+  // And only rows of the roots this search reports: 'ready' or 'stale',
+  // never one still being built or one whose build failed (plan U-7, U-D5).
+  // A building root's rows are the part of a walk written so far, its
+  // folders not yet summed; found and counted, they read as an answer. The
+  // filter sits in the shared clause, so the count of a full page leaves
+  // them out as well as the page. The unary `+` keeps the term out of
+  // SQLite's choice of index: without it the list of ids drives a walk of
+  // `idx_nodes_size` root by root instead of the plans tests/indexSearch.test.ts
+  // pins (the extension seek, the one scan of the nodes).
+  const where: string[] = [
+    'n.root_id NOT IN (SELECT id FROM roots WHERE path >= ? AND path < ?)',
+    `+n.root_id IN (${roots.map(() => '?').join(', ')})`,
+  ];
+  const params: (string | number)[] = [ASIDE_PREFIX, ASIDE_PREFIX_END, ...roots.map((r) => r.id)];
 
   if (parsed.kind === 'extension') {
     where.push('n.ext = ?', 'n.is_dir = 0');

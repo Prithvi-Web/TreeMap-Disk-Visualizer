@@ -515,6 +515,25 @@ indexRouter.get('/search', guardQueryPath('scope'), (req: Request, res: Response
 });
 
 /**
+ * Whether the allocation routes may read `root` (plan U-7, U-D5): only a
+ * 'ready' or 'stale' root is read. A root still being built answers 202
+ * `{ status: 'building' }` and nothing else — its rows are the part of a walk
+ * written so far, and summed they would be stated as a whole account — and a
+ * root whose build failed answers as `/api/index/tree` answers it. Returns
+ * true once it has answered.
+ */
+function answeredUnread(root: IndexedRoot, res: Response): boolean {
+  if (root.state === 'building') {
+    res.status(202).json({ status: 'building' });
+    return true;
+  }
+  if (root.state === 'error') {
+    throw new AppError(500, 'INDEX_BUILD_FAILED', root.error ?? 'The index for that folder could not be built');
+  }
+  return false;
+}
+
+/**
  * GET /api/allocation?path= (A2)
  *
  * What a folder really costs on disk: the naive figure other tools report, the
@@ -525,6 +544,11 @@ indexRouter.get('/search', guardQueryPath('scope'), (req: Request, res: Response
  * Always carries `approximate: true` with a reason. On any filesystem
  * supporting copy-on-write the allocated sum is an upper bound, and §10
  * requires saying so rather than presenting it as exact.
+ *
+ * A root still being built answers 202 `{ status: 'building' }`, one whose
+ * build failed 500 INDEX_BUILD_FAILED, and one whose allocation TreeMap did
+ * not measure — built from a scan, or on Windows — 409
+ * ALLOCATION_NOT_MEASURED with a sentence and no number (plan U-7).
  */
 indexRouter.get('/allocation', guardQueryPath('path'), async (req: Request, res: Response) => {
   const target = String(req.query.path ?? '');
@@ -538,6 +562,7 @@ indexRouter.get('/allocation', guardQueryPath('path'), async (req: Request, res:
       'That folder has not been indexed yet — scan it once and TreeMap can measure what it really costs on disk',
     );
   }
+  if (answeredUnread(root, res)) return;
   const summary = await accountFor(root.path);
   if (!summary) throw new AppError(404, 'INDEX_NOT_BUILT', 'That folder is not in the index');
   res.json(summary);
@@ -548,7 +573,7 @@ indexRouter.get('/allocation', guardQueryPath('path'), async (req: Request, res:
  *
  * The per-file split behind a tooltip: "2.1 GB total, 340 MB exclusive to this
  * copy". Answers 404 for a file that is not in the index rather than inventing
- * a zero.
+ * a zero, and 202, 500 or 409 as `/api/allocation` does.
  */
 indexRouter.get('/allocation/file', guardQueryPath('path'), (req: Request, res: Response) => {
   const target = String(req.query.path ?? '');
@@ -556,6 +581,7 @@ indexRouter.get('/allocation/file', guardQueryPath('path'), (req: Request, res: 
 
   const root = rootFor(target);
   if (!root) throw new AppError(404, 'INDEX_NOT_BUILT', 'That file’s folder has not been indexed yet');
+  if (answeredUnread(root, res)) return;
   const allocation = allocationForFile(root.path, target);
   if (!allocation) throw new AppError(404, 'PATH_NOT_FOUND', 'That file is not in the index');
   res.json(allocation);

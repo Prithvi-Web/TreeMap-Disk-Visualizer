@@ -31,8 +31,19 @@ async function renderAllocationDiagnostic() {
         ? 'TreeMap is still building its index of this folder. Try again in a moment.'
         : 'TreeMap has not indexed this folder, and measuring what it really occupies on disk needs the index.' +
           (typeof max === 'number' ? ` It indexes a folder of up to ${formatCount(max)} items on its own after scanning it.` : '');
+    } else if (e.code === 'ALLOCATION_NOT_MEASURED') {
+      // An index built from a scan, or any index on Windows: nothing measured
+      // what the files occupy, so no figure is shown — never the size they
+      // claim in its place (plan U-7, the owner's answer to U-Q5).
+      message = 'Not measured for this index. ' + e.message;
     }
     host.innerHTML = `<span class="muted">${escapeHtml(message)}</span>`;
+    return;
+  }
+  // 202: the index is still being built. Its rows so far are part of a walk,
+  // and summed they would read as the whole folder (plan U-7).
+  if (a && a.status === 'building') {
+    host.innerHTML = `<span class="muted">${escapeHtml('TreeMap is still building its index of this folder. Try again in a moment.')}</span>`;
     return;
   }
 
