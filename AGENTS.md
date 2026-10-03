@@ -1,6 +1,7 @@
 # TreeMap for agents
 
-TreeMap is a local, privacy-preserving disk-space visualizer (Node 20 + Express).
+TreeMap is a local, privacy-preserving disk-space visualizer (Node 20 + Express;
+the desktop app is Electron, and scanning uses an optional Rust native module).
 This file documents how an automated agent should drive it — the workflows and,
 above all, the safety model. Machine-readable equivalents:
 `GET /api/capabilities` (compact manifest) and `GET /api/openapi.json` (full
@@ -21,12 +22,16 @@ OpenAPI 3 spec).
 ## The core workflow: scan → inspect → dry-run → act
 
 1. **Scan.** `POST /api/scan` with `{ "path": "/absolute/dir" }` → `202 { scanId }`.
-   Poll `GET /api/scan/{scanId}/stats` until `status` is `"complete"`
-   (or stream `GET /api/scan/{scanId}/progress`, Server-Sent Events; while
-   the count stands still the unchanged `progress` frame repeats about every
-   2 s as a heartbeat).
+   Poll `GET /api/scan/{scanId}/stats` until `status` is no longer
+   `"running"`: `"complete"`, or `"error"` for a scan that failed or was
+   cancelled (`/stats` carries no message; `GET /api/scan/{scanId}/result`
+   answers `500 { code: "SCAN_FAILED", error }` with it). Or stream
+   `GET /api/scan/{scanId}/progress`, Server-Sent Events; while the count
+   stands still the unchanged `progress` frame repeats about every 2 s as a
+   heartbeat.
    Agents can skip the polling: `POST /api/scan?wait=true&waitMs=55000`
-   blocks until the scan settles and answers `200` with the stats inline
+   blocks until the scan settles and answers `200` with the stats inline,
+   or `500 SCAN_FAILED` with the reason when it failed or was cancelled
    (`202 { status: "running" }` if it outlives `waitMs`). Scans live in
    memory for ~30 minutes after completion. Leave out `interactive`: the
    TreeMap window sends it for a scan a person started there, the only kind
@@ -253,8 +258,9 @@ OpenAPI 3 spec).
      date, and a policy of it alone is refused as `POLICY_MATCH_EMPTY`).
      `POST /api/query/validate` parses without running (it never
      touches a scan); `GET /api/query/fields` serves the grammar so nothing
-     duplicates it. `GET`/`POST`/`DELETE /api/queries` are saved views — a
-     query that does not parse is refused rather than stored.
+     duplicates it. `GET`/`POST /api/queries` and `DELETE /api/queries/{id}`
+     are saved views — a query that does not parse is refused rather than
+     stored.
      `score>70` filters on the reclaim score above. It appears in
      `postFiltered`, because a score genuinely is computed per file after the
      tree is walked, but it is **not** reported degraded: the score is built
@@ -282,6 +288,31 @@ OpenAPI 3 spec).
      findings and provenance URLs never cross the network, and **there is no
      remote-delete route at all**. Triggering a scan on a peer is a separate
      opt-in that peer must have granted.
+   - `GET /api/engine/budget` — the scanning budget: the setting
+     (`auto|eco|balanced|turbo`, optional `cpuPercent`), what it resolves to
+     now (`effective`), and who holds it (`source`: the native governor, or the
+     Node shim when the native module is absent). Automatic is Balanced, a step
+     lower on battery and Eco under serious heat — and Turbo while a scan sent
+     with `interactive` runs (step 1). `PUT /api/engine/budget` changes it
+     (`400 BAD_SETTING`). `POST /api/scan/{scanId}/pause` and `/resume` act on
+     a running scan; an engine that cannot pause answers `paused: false` with
+     the reason. `/stats.engine` names the engine that ran — `native`,
+     `gdu-turbo`, `walker`/`turbo-walker`, `ntfs-mft` — and `engineReason`
+     says why; `fallbackReason` names what was wanted and could not run (a
+     missing or refused native module, a walk that failed, a missing gdu). The
+     native module is an accelerator: when it is missing or the wrong version,
+     `GET /api/engine/capabilities` says why and the legacy engines scan.
+   - `GET /api/index/status[?path=]`, `POST /api/index/build { path,
+     maxEntries? }`, `GET /api/index/{jobId}/progress|result`,
+     `GET /api/index/tree`, `GET /api/search` — the persistent index that opens
+     a folder instantly and searches it. The status carries
+     `autoBuild: { maxEntries }` (1,000,000): the most items a folder may hold
+     for TreeMap to index it on its own after a scan. `maxEntries` must be a
+     positive whole number (`400 MAX_ENTRIES_INVALID`); past it the build
+     stops, the saved index is left as it was, the stop is remembered
+     (`stoppedAtCap` on `status?path=`), and `/result` answers
+     `409 INDEX_CAP_REACHED` — nothing failed. The index progress stream keeps
+     itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
      Trash** — recoverable, never a hard delete.
@@ -345,17 +376,22 @@ read-what-you-saw) permission to act.
 
 ## The safety model (enforced server-side, not advisory)
 
-- **Trash-only deletes.** Every delete is a move to the platform Trash /
-  Recycle Bin. The only irreversible operations are explicitly labelled and
-  double-gated: `POST /api/trash/empty` and `POST /api/system/snapshots/purge`
-  both require `{ "confirm": true }`.
+- **Trash-only deletes.** Every delete of your files is a move to the
+  platform Trash / Recycle Bin. What cannot be undone is labelled and gated:
+  `POST /api/trash/empty`, `POST /api/system/snapshots/purge` and
+  `POST /api/git/gc` each require `{ "confirm": true }`. Two more cannot be
+  taken back and take no confirm flag, so confirm with the user first:
+  `DELETE /api/timecapsule/{id}` discards a Time Capsule copy for good, and
+  `POST /api/zombie-handles/restart` quits a program, which can lose its
+  unsaved work.
 - **The scanned-root rule.** Endpoints that read, open, move or delete a path
   (`DELETE /api/files`, `/api/cart/commit`, `/api/files/open`,
   `/api/files/terminal`, `/api/files/preview`, `/api/offload`, `/api/git/gc`,
   `/api/container/expand`) demand the path lie inside the root of a scan this
   server performed. Outside → `403 { code: "OUTSIDE_SCAN_ROOT" }`.
-- **TreeMap's own spill folder.** `<appData>/scan-spill` holds the working files
-  of very large scans (Phase 4). Every endpoint and MCP tool that takes a path
+- **TreeMap's own spill folder.** `<appData>/scan-spill` is reserved for the
+  working files of very large scans (Phase 4; no scan writes there yet). Every
+  endpoint and MCP tool that takes a path
   to trash, open, move or write refuses that folder and anything under it with
   `403 { code: "SPILL_PATH" }` — before the scanned-root rule, so scanning a
   home folder is no licence there — however the path is spelled (`..`, trailing
@@ -531,14 +567,20 @@ read-what-you-saw) permission to act.
   refuses any single oversized operation. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" }`. An absent or empty file imposes nothing. The
-  policy is deliberately not writable through the API.
+  policy is deliberately not writable through the API. It governs local paths
+  only: a connected cloud account's scan and `POST /api/cloud/trash` are not
+  held to it. A policy file that is there but will not parse refuses every
+  operation it governs (`500 POLICY_UNREADABLE`).
 - **Audit.** Every destructive request that touches **files** and reaches
   its endpoint — executed, dry-run, or refused there — is appended to
   `audit.jsonl` (timestamp, action, source http/mcp, token id, paths, bytes,
   outcome). The refusals recorded are the ones the endpoint itself decides:
   the agent policy and its byte cap, an open file and the offload plan, each
-  with its code, and a relocation whose move failed, as refused. A request
-  refused before that is not recorded, because it never became an operation:
+  with its code, and a relocation whose move failed, as refused — except
+  that `POST /api/security/relocate` and `POST /api/compression/encode` check
+  the policy before their audited step, so their policy refusals are not
+  recorded. A request refused before that is not recorded, because it never
+  became an operation:
   by the path rules (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`,
   `SPILL_PATH`, `APP_DATA_PATH`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
   field (`CONFIRM_REQUIRED`, `DEST_REQUIRED`), the rate limiter, or the
@@ -595,10 +637,15 @@ read-what-you-saw) permission to act.
   asserts none contains network code. (An optional local
   Ollama passthrough shipped briefly and was removed at the owner's
   request.)
-- **Idempotency.** Destructive endpoints honor an `Idempotency-Key` header:
-  repeating a successful request with the same key within ~10 minutes replays
-  the stored response (`Idempotency-Replayed: true`) instead of executing
-  again. Send one on every destructive call you might retry.
+- **Idempotency.** Every endpoint that moves, trashes, restores or encodes
+  files — and `POST /api/trash/empty`, `/api/system/snapshots/purge` and
+  `/api/git/gc` — honors an `Idempotency-Key` header: repeating a successful
+  request with the same key within ~10 minutes replays the stored response
+  (`Idempotency-Replayed: true`) instead of executing again. Send one on every
+  such call you might retry. The configuration writes (settings, notes, the
+  scanning budget, Autopilot policies, cloud disconnect),
+  `DELETE /api/timecapsule/{id}` and `POST /api/zombie-handles/restart` do not
+  honor it.
 
 ## MCP specifics
 
@@ -611,8 +658,11 @@ read-what-you-saw) permission to act.
 
 ## Server profile: auth, CORS and remote bind
 
-All of this is **opt-in via environment variables; with none of them set the
-app behaves exactly as it always has** (localhost bind, no auth, no CORS).
+All of this is **opt-in via environment variables; with none of them set,
+`npm start` behaves exactly as it always has** (localhost bind, no auth, no
+CORS). The desktop app runs this server on a random localhost port with a
+fresh token each run, so drive your own `npm start` or `npm run mcp`, not the
+window's.
 
 | Variable | Default | Effect when set |
 | --- | --- | --- |
@@ -621,11 +671,20 @@ app behaves exactly as it always has** (localhost bind, no auth, no CORS).
 | `TREEMAP_TOKEN` | unset (no auth) | Every `/api` request must send `Authorization: Bearer <token>`; otherwise `401 { code: "UNAUTHORIZED" }` |
 | `TREEMAP_ALLOWED_ORIGINS` | unset (no CORS) | Comma-separated origins allowed to call the API from browsers |
 | `TREEMAP_DATA_DIR` | per-OS app-data dir | Where snapshots/settings/manifests persist |
+| `TREEMAP_INSECURE_BIND` | unset | `1` lets a non-loopback `HOST` start without `TREEMAP_TOKEN`, with a warning; without it such a bind refuses to start |
+| `TREEMAP_TRUST_PROXY` | unset | `1` trusts exactly one reverse proxy in front, so the rate limiter buckets by client |
+| `TREEMAP_FRAME_ANCESTORS` | unset (the page may be framed) | A CSP `frame-ancestors` value, e.g. `'none'` for a hardened server (the VS Code extension frames the page) |
+| `TREEMAP_NO_GDU` | unset | `1` never runs gdu; a scan that would have used it takes the built-in walker |
+| `TREEMAP_NATIVE_MODULE` | unset | Load the native module from this path only |
+| `TREEMAP_PORTABLE` | unset | `1` (or `true`) runs a portable, no-trace session (`GET /api/platform/portable`) |
+
+A loopback-bound server answers only to loopback names (and the address it
+was given): any other `Host` header is `403 { code: "BAD_HOST" }`.
 
 How the human UI keeps working with a token set: serving the UI page also
 sets an `HttpOnly`, `SameSite=Strict` session cookie, which same-origin
 `fetch()` **and `EventSource`** (which cannot send headers) attach
-automatically. The frozen frontend needs no changes.
+automatically. The page needs no auth code of its own.
 
 Threat model, stated plainly: the token gates API access for non-browser
 clients, and `SameSite=Strict` + CORS-off blocks cross-site browser attacks —
@@ -641,8 +700,10 @@ HOST=0.0.0.0 PORT=4280 TREEMAP_TOKEN=<long-random-secret> npm start
 
 ## Operational notes
 
-- Local-first: nothing talks to the network except the optional cloud
-  integrations the user explicitly connects.
+- Local-first: nothing reaches the internet except the optional cloud
+  integrations the user connects and, in the packaged desktop app, its update
+  check against GitHub Releases; the fleet, off by default, talks only to
+  TreeMaps on the LAN.
 - The server binds `127.0.0.1` by default. `PORT` and `HOST` env vars change
   that for server deployments.
 - Scan results are in-memory (30-minute TTL); snapshots, settings and the
