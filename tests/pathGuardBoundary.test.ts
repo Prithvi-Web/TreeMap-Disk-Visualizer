@@ -18,7 +18,9 @@ import { insideAnyScanRoot } from '../src/middleware/pathGuard';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
-import { neverDescendPaths, setBoundaryDepsForTests } from '../src/utils/mountBoundaries';
+import { parseBsdMount } from '../src/platform/atime';
+import { boundaryRecord, firmlinkAliases, neverDescendPaths, parseFirmlinks, scanBoundary, setBoundaryDepsForTests } from '../src/utils/mountBoundaries';
+import { DIAGNOSIS_MAC_FIRMLINKS, DIAGNOSIS_MAC_MOUNT, IOS_22E238 } from './fixtures/mountTables';
 import type { ScanResult } from '../src/models/types';
 
 /**
@@ -184,6 +186,58 @@ test('a scan of / does not permit a path inside a fixed never-descend folder (/V
     assert.equal(insideAnyScanRoot(elsewhere), true, 'everything the walk of / would list is still inside');
   } finally {
     // The record of / would cover every path for the rest of the run; it goes.
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});
+
+test('a scan of / under stay, with the diagnosis Mac’s real mount table, still grants what it listed — and nothing on the drives it did not enter (the U-25 security review, F1)', async () => {
+  // /System/Volumes/Data is one of the mounts the table lists under the fixed
+  // /System/Volumes, and the Data volume's own spelling of the root is "/": an
+  // exclusion taken through canonicalDirOf on its own became "/", and every
+  // path on the disk was refused after a whole-disk scan.
+  const boundary = await scanBoundary('/', 'stay', {
+    platform: 'darwin',
+    readTable: async () => ({ source: 'mount', entries: parseBsdMount(DIAGNOSIS_MAC_MOUNT), reason: null }),
+    realpath: async (p: string) => p,
+    aliases: async () => firmlinkAliases(parseFirmlinks(DIAGNOSIS_MAC_FIRMLINKS)),
+    isDirectory: async () => true,
+  });
+  assert.ok(boundary.neverDescend.includes('/System/Volumes/Data'), 'the table lists the Data volume, under the fixed /System/Volumes');
+  const slash = createScanRecord('/');
+  slash.status = 'complete';
+  slash.finishedAt = Date.now();
+  slash.boundary = boundaryRecord(boundary);
+  try {
+    const home = fs.realpathSync(fileTempDir('treemap-guard-slash-stay-'));
+    assert.equal(insideAnyScanRoot(path.join(home, 'listed.txt')), true, 'a file the walk of / listed is still inside');
+    assert.equal(insideAnyScanRoot(path.join(IOS_22E238, 'System', 'Library', 'x.plist')), false, 'a file on a drive it did not enter is not');
+    assert.equal(insideAnyScanRoot(IOS_22E238), false, 'nor the drive’s mount point');
+    if (process.platform === 'darwin') {
+      assert.equal(insideAnyScanRoot('/Volumes/SomeDrive/f.txt'), false, 'nor anything in /Volumes');
+      assert.equal(insideAnyScanRoot('/System/Volumes/Preboot/x'), false, 'nor another system volume');
+      assert.equal(insideAnyScanRoot(path.join('/System/Volumes/Data', home, 'listed.txt')), true, 'the Data volume’s spelling of a listed file is the same file');
+    }
+  } finally {
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});
+
+test('a drive named with a word-final sigma is the same drive in either sigma (the U-25 security review, F7)', () => {
+  const root = fs.realpathSync(fileTempDir('treemap-guard-sigma-'));
+  const drive = path.join(root, 'ΔΙΣΚΟΣ');
+  const record = createScanRecord(root);
+  record.status = 'complete';
+  record.finishedAt = Date.now();
+  record.boundary = boundaryRecord({
+    rule: 'stay', source: 'mount', reason: null,
+    mounts: [{ path: drive, filesystem: 'apfs', source: '/dev/disk99s1', underFixed: false }],
+    fixed: [], neverDescend: [drive],
+  });
+  try {
+    assert.equal(insideAnyScanRoot(path.join(root, 'δισκος')), false, 'final sigma');
+    assert.equal(insideAnyScanRoot(path.join(root, 'δισκοσ')), false, 'medial sigma at the end: a fold that keeps the two apart lets this through');
+    assert.equal(insideAnyScanRoot(path.join(root, 'other')), true);
+  } finally {
     evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
   }
 });

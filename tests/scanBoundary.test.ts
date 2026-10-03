@@ -253,6 +253,22 @@ test('a fixed folder above the root is not a boundary of this scan: a drive insi
   assert.deepEqual(fromRoot.mounts?.map((m) => [m.path, m.underFixed]), [['/Volumes/Backup', true], ['/Volumes/Backup/inner', true]], 'from / both sit under the fixed /Volumes');
 });
 
+test('a mount the table spells on the Data volume is listed as the walk of / meets it — through the firmlink — never under /System/Volumes', async () => {
+  // The security review of U-25 (F8): with the table's own spelling preferred,
+  // /System/Volumes/Data/Users/someone/mnt sat under the fixed /System/Volumes,
+  // and the walk of / — which reaches it as /Users/someone/mnt — would go in.
+  const table: MountTable = {
+    source: 'mount',
+    entries: parseBsdMount('/dev/disk8s1 on /System/Volumes/Data/Users/someone/mnt (apfs, local, nodev, nosuid, journaled, nobrowse)\n'),
+    reason: null,
+  };
+  const b = await scanBoundary('/', 'stay', fakeDeps('darwin', table));
+  assert.deepEqual(b.mounts?.map((m) => [m.path, m.underFixed]), [['/Users/someone/mnt', false]]);
+  assert.ok(b.neverDescend.includes('/Users/someone/mnt'), 'the walk of / meets the drive at /Users/someone/mnt, and stops there');
+  const data = await scanBoundary('/System/Volumes/Data', 'stay', fakeDeps('darwin', table));
+  assert.deepEqual(data.mounts?.map((m) => m.path), ['/System/Volumes/Data/Users/someone/mnt'], 'a scan of the Data volume meets it in its own spelling');
+});
+
 test('a mount the system reports as a file is dropped (Docker’s /etc/hosts); one whose kind cannot be learned is kept', async () => {
   const deps = fakeDeps('linux', linuxTable(), {
     async isDirectory(p: string) {

@@ -182,10 +182,41 @@ export function insideAnyScanRoot(p: string): boolean {
   return allScans().some((scan) => listedBy(scan, where));
 }
 
-/** A path's names, its root first, as a file system may fold them (`foldName`). */
+/**
+ * A path's names, its root first, as a file system may fold them: `foldName`,
+ * then upper and lower case once more, so a word-final sigma (ς) and σ are one
+ * letter on every platform, as on Windows. A fold only ever refuses more.
+ */
 function foldedNames(p: string): string[] {
   const { root } = path.parse(p);
-  return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map((name) => foldName(name));
+  return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map((name) => foldName(name).toUpperCase().toLowerCase());
+}
+
+/** A run of folded names as one key: NUL is in no file name. */
+const NAMES_JOIN = '\u0000';
+
+/**
+ * The folders `scan` never listed below its root, each as the key of its folded
+ * names, spelled from where the root really is (`canonicalDirOf`) and then
+ * exactly as the walk spelled them below it — the walk never follows a link,
+ * so nothing below the root needs resolving. No file system call is made for
+ * an exclusion (a dead mount there answers none), and an exclusion is never
+ * canonicalised on its own: the Data volume's own spelling of the root,
+ * `/System/Volumes/Data`, canonicalises to `/`, which made every path on the
+ * disk "beneath" it after a scan of / (the U-25 security review, F1). The
+ * boundary never changes once a scan has started, so the keys are made once
+ * per record and spelling of its root.
+ */
+const exclusionKeys = new WeakMap<ScanResult, { root: string; keys: Set<string> }>();
+
+function exclusionKeysOf(scan: ScanResult, root: string): Set<string> {
+  const known = exclusionKeys.get(scan);
+  if (known && known.root === root) return known.keys;
+  const keys = new Set(
+    exclusionsOf(scan.boundary, scan.rootPath).map((never) => foldedNames(path.join(root, path.relative(scan.rootPath, never))).join(NAMES_JOIN)),
+  );
+  exclusionKeys.set(scan, { root, keys });
+  return keys;
 }
 
 /**
@@ -196,12 +227,17 @@ function foldedNames(p: string): string[] {
  * also refuses a look-alike folder, which only ever refuses more.
  */
 function listedBy(scan: ScanResult, where: string): boolean {
-  if (!isInside(canonicalDirOf(scan.rootPath), where)) return false;
-  const names = foldedNames(where);
-  return !exclusionsOf(scan.boundary, scan.rootPath).some((never) => {
-    const prefix = foldedNames(canonicalDirOf(never));
-    return prefix.length <= names.length && prefix.every((name, i) => name === names[i]);
-  });
+  const root = canonicalDirOf(scan.rootPath);
+  if (!isInside(root, where)) return false;
+  const keys = exclusionKeysOf(scan, root);
+  if (keys.size === 0) return true;
+  // At or beneath an exclusion when some leading run of the path's names is one.
+  let key = '';
+  for (const name of foldedNames(where)) {
+    key = key === '' ? name : `${key}${NAMES_JOIN}${name}`;
+    if (keys.has(key)) return false;
+  }
+  return true;
 }
 
 /**

@@ -428,7 +428,10 @@ read-what-you-saw) permission to act.
   into — a fixed never-descend folder such as `/Volumes` after a scan of `/`,
   or a drive mounted inside the folder that it did not enter under "Stay on
   this drive" — is outside that scan too, unless another scan covers it (scan
-  the drive itself to act there).
+  the drive itself to act there). The drives are the ones the mount table
+  listed when the scan started: a drive mounted inside the folder later is not
+  known to that scan until it is scanned again (on macOS, `/Volumes`, where
+  drives appear, is excluded whatever is mounted there).
 - **TreeMap's own spill folder.** `<appData>/scan-spill` is reserved for the
   working files of very large scans (Phase 4; no scan writes there yet). Every
   endpoint and MCP tool that takes a path

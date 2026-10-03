@@ -255,17 +255,25 @@ function respell(p: string, root: string, realRoot: string): string | null {
  * root typed as /var/folders/… finds the mounts the table spells under
  * /private/var/folders/…; `aliases` gives a table spelling's other names (the
  * firmlinks), so a root of /System/Volumes/Data finds the mounts the table
- * spells under /Library. A mount's own spelling is preferred to an alias, and
- * a mount point listed twice (one mounted over the other) is the later entry,
- * the one a walk meets.
+ * spells under /Library. A mount's own spelling is preferred to an alias —
+ * unless `avoid` says the walk never reaches that spelling (it lies under a
+ * folder no walk descends into), and an alias it does reach exists: the walk
+ * of / meets a drive the table spells /System/Volumes/Data/Users/me/mnt at
+ * /Users/me/mnt. A mount point listed twice (one mounted over the other) is
+ * the later entry, the one a walk meets.
  */
-export function mountPointsUnder(root: string, realRoot: string, entries: readonly MountEntry[], aliases: AliasRule): MountUnder[] {
+export function mountPointsUnder(root: string, realRoot: string, entries: readonly MountEntry[], aliases: AliasRule, avoid?: (p: string) => boolean): MountUnder[] {
   const byPath = new Map<string, MountUnder>();
   for (const entry of entries) {
     let walked: string | null = null;
     for (const spelling of [entry.mountPoint, ...aliases(entry.mountPoint)]) {
-      walked = respell(spelling, root, realRoot);
-      if (walked !== null) break;
+      const candidate = respell(spelling, root, realRoot);
+      if (candidate === null) continue;
+      walked ??= candidate;
+      if (!avoid || !avoid(candidate)) {
+        walked = candidate;
+        break;
+      }
     }
     if (walked === null) continue;
     byPath.delete(walked);
@@ -376,9 +384,10 @@ export async function scanBoundary(root: string, rule: BoundaryRule, deps: Bound
   const realRoot = await deps.realpath(root).catch(() => root);
   const aliases = await deps.aliases().catch(() => (deps.platform === 'darwin' ? dataVolumeAlias : NO_ALIASES));
   const fixedBelow = fixed.filter((f) => isStrictlyUnder(root, f));
+  const unreachable = (p: string): boolean => fixedBelow.some((f) => isAtOrUnder(f, p));
   const looked = await Promise.all(
-    mountPointsUnder(root, realRoot, table.entries, aliases).map(async (m): Promise<BoundaryMount | null> => {
-      const underFixed = fixedBelow.some((f) => isAtOrUnder(f, m.path));
+    mountPointsUnder(root, realRoot, table.entries, aliases, unreachable).map(async (m): Promise<BoundaryMount | null> => {
+      const underFixed = unreachable(m.path);
       if (!underFixed && (await deps.isDirectory(m.path)) === false) return null;
       return { ...m, underFixed };
     }),
