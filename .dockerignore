@@ -9,3 +9,5 @@ docs
 tests
 electron
 vscode-extension
+native/treemap-core/target
+native/prebuilt

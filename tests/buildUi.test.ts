@@ -98,6 +98,43 @@ test('the Docker build stage copies everything npm run build reaches for', () =>
   }
 });
 
+/**
+ * The same stage compiles src/, and src/ reaches outside itself: the native
+ * module's type declarations (`native/index.d.ts`, imported by the engine and
+ * budget services since 18 Sep 2026) and package.json. A file the compiler
+ * needs that the stage never copied is a TS2307 in an image build no workflow
+ * runs. Derived from the imports, so the next one cannot be missed either.
+ */
+test('the Docker build stage copies every file outside src/ that src/ imports', () => {
+  const dockerfile = readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
+  const buildStage = dockerfile.slice(0, dockerfile.indexOf('# ---- runtime'));
+  const copied = [...buildStage.matchAll(/^COPY (?!--)(.+)$/gm)].flatMap((m) => m[1].trim().split(/\s+/).slice(0, -1));
+  const src = path.join(repoRoot, 'src');
+  const outside = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!name.endsWith('.ts')) continue;
+      for (const m of readFileSync(full, 'utf8').matchAll(/(?:from\s+|import\s*\(\s*|require\(\s*)'(\.{1,2}\/[^']+)'/g)) {
+        const target = path.resolve(path.dirname(full), m[1]);
+        if (!path.relative(src, target).startsWith('..')) continue;
+        const file = ['', '.d.ts', '.ts', '.js', '.json'].map((ext) => target + ext).find((f) => { try { return statSync(f).isFile(); } catch { return false; } });
+        assert.ok(file, `${path.relative(repoRoot, full)} imports ${m[1]}, which is not a file`);
+        outside.add(path.relative(repoRoot, file!).split(path.sep).join('/'));
+      }
+    }
+  };
+  walk(src);
+  assert.ok(outside.has('native/index.d.ts') && outside.has('package.json'), `the scan finds what src/ imports from outside it: ${[...outside].join(', ')}`);
+  for (const file of outside) {
+    assert.ok(
+      copied.some((c) => { const from = c.replace(/^\.\//, '').replace(/\/$/, ''); return file === from || file.startsWith(`${from}/`); }),
+      `src/ imports ${file}, so the build stage must COPY it (copied: ${copied.join(', ')})`,
+    );
+  }
+});
+
 test('the image takes the generated page from the stage that built it', () => {
   const dockerfile = readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
   const runtime = dockerfile.slice(dockerfile.indexOf('# ---- runtime'));

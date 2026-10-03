@@ -22,6 +22,11 @@ COPY tsconfig.json ./
 # runtime rule packs. Without this the image build dies on a missing module.
 COPY scripts ./scripts
 COPY src ./src
+# src/ imports the native module's type declarations (the engine and budget
+# services), so tsc needs them. They are types only: the image carries no
+# native module, and a container scans with the built-in walker
+# (TREEMAP_NO_GDU=1 below keeps gdu off too).
+COPY native/index.d.ts ./native/index.d.ts
 RUN npm run build
 
 # ---- runtime: production deps only ----

@@ -73,7 +73,13 @@ authenticates page loads and terminates TLS.
   `node dist/index.js`) was staged in a clean directory and served
   `/api/system`, `/api/capabilities` and the UI correctly with production
   dependencies only. Run `docker build .` on a Docker-equipped machine (or
-  CI) to close the loop.
+  CI) to close the loop. Since 18 Sep 2026 `src/` also imports the native
+  module's type declarations, `native/index.d.ts`, so the build stage copies
+  that file too (2 Oct 2026: the build stage's copy set was rebuilt in a
+  scratch folder — `tsc` failed with six TS2307 errors without it and passed
+  with it; `tests/buildUi.test.ts` derives the set from `src/`'s imports). The
+  image carries no native module: a container scans with the built-in
+  walker.
 - No other deviations: every existing endpoint's response shape is unchanged
   (golden + contract suites), and with all new env vars unset the server's
   behavior is byte-identical to before (explicit tests assert the historical
