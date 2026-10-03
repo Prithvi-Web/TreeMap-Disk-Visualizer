@@ -61,14 +61,19 @@ function resourcesDirOf(context) {
   return path.join(context.appOutDir, 'resources');
 }
 
-/** Throws, naming the path, unless the packaged app holds the module it will load. */
-function assertPackagedModule(context) {
+/**
+ * Throws, naming the path, unless the packaged app holds the module it will
+ * load. A missing one is looked for in `repo`'s native/prebuilt/<triple>/,
+ * the folder electron-builder packages it from (tests stand a repo in).
+ */
+function assertPackagedModule(context, repo) {
   const platform = context.electronPlatformName;
   const arch = nodeArchOf(context.arch);
   const triple = `${platform}-${arch}`;
   const dir = path.join(resourcesDirOf(context), 'app.asar.unpacked', 'native', 'prebuilt', triple);
   const { nativeVersion } = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  const result = checkPrebuilt({ dir, platform, arch, nativeVersion, host: { platform: process.platform, arch: process.arch } });
+  const packagedFrom = path.join(repo, 'native', 'prebuilt', triple);
+  const result = checkPrebuilt({ dir, platform, arch, nativeVersion, host: { platform: process.platform, arch: process.arch }, packagedFrom });
   if (!result.ok) {
     throw new Error(
       `[afterPack] the ${triple} app has no native module it can load: ${result.reason}. ` +
@@ -106,11 +111,12 @@ function signInsideOut(appPath, run) {
 
 /**
  * The hook. electron-builder calls it with the context alone; `run` stands in
- * for execFileSync in tests. Its resolver takes an export named "afterPack"
- * over this default one, so no export carries that name.
+ * for execFileSync and `repo` for this repository in tests. Its resolver
+ * takes an export named "afterPack" over this default one, so no export
+ * carries that name.
  */
-exports.default = async function afterPack(context, { run = execFileSync } = {}) {
-  assertPackagedModule(context);
+exports.default = async function afterPack(context, { run = execFileSync, repo = path.join(__dirname, '..') } = {}) {
+  assertPackagedModule(context, repo);
   if (context.electronPlatformName !== 'darwin') return;
   // electron-builder still ad-hoc signs when a real identity is configured;
   // only step in when signing was skipped (no _CodeSignature was written).

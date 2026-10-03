@@ -26,7 +26,7 @@ const NATIVE_VERSION = (JSON.parse(fs.readFileSync(path.join(REPO, 'package.json
 interface Context { electronPlatformName: string; arch: number; appOutDir: string; packager: { appInfo: { productFilename: string } } }
 type Run = (cmd: string, args: string[], opts?: object) => unknown;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const hook = require('../scripts/afterPack.js') as { default(context: Context, deps?: { run: Run }): Promise<void>; nodeArchOf(arch: number): string };
+const hook = require('../scripts/afterPack.js') as { default(context: Context, deps?: { run: Run; repo?: string }): Promise<void>; nodeArchOf(arch: number): string };
 // electron-builder's own Arch enum, the value it hands the hook as context.arch.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { Arch } = require('electron-builder') as { Arch: Record<'ia32' | 'x64' | 'armv7l' | 'arm64' | 'universal', number> };
@@ -56,11 +56,18 @@ function pack(c: Context, triple: string, header: Buffer | null, version: string
   if (version !== null) fs.writeFileSync(path.join(dir, 'VERSION'), version);
 }
 
-/** Runs the hook with codesign stood in for, and answers every command it ran. */
-async function runHook(c: Context): Promise<{ calls: string[][]; error: Error | null }> {
+/** A repository's native/prebuilt/<triple>/ holding `header` at nativeVersion. */
+function prebuilt(dir: string, header: Buffer): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'treemap_core.node'), header);
+  fs.writeFileSync(path.join(dir, 'VERSION'), `${NATIVE_VERSION}\n`);
+}
+
+/** Runs the hook with codesign stood in for, and answers every command it ran; `repo` stands in for the repository it packages from. */
+async function runHook(c: Context, repo?: string): Promise<{ calls: string[][]; error: Error | null }> {
   const calls: string[][] = [];
   try {
-    await hook.default(c, { run: (cmd, args) => { calls.push([cmd, ...args]); } });
+    await hook.default(c, { run: (cmd, args) => { calls.push([cmd, ...args]); }, ...(repo === undefined ? {} : { repo }) });
     return { calls, error: null };
   } catch (err) {
     return { calls, error: err as Error };
@@ -83,6 +90,28 @@ test('afterPack, for a packaged app without the module, throws naming its path b
     assert.ok(error.message.includes(expected), `${platform}: the error names ${expected}: ${error.message}`);
     assert.match(error.message, /build:native/, `${platform}: and says how to get it`);
     assert.deepEqual(calls, [], `${platform}: nothing is signed for an app that will not ship`);
+  }
+});
+
+test('afterPack sends a missing module back to native/prebuilt/<triple>/ in the repository, and names a packaging config that dropped one that is there', async () => {
+  for (const [platform, arch, triple, header] of CASES) {
+    const repo = fileTempDir('treemap-afterpack-repo-');
+    const source = path.join(repo, 'native', 'prebuilt', triple);
+    const c = context(platform, arch);
+    pack(c, triple, null);
+    const none = await runHook(c, repo);
+    assert.ok(none.error, `${platform}: refused`);
+    const hint = none.error.message.slice(none.error.message.indexOf('does not exist'));
+    assert.ok(hint.includes(source), `${platform}: the hint names ${source}: ${hint}`);
+    assert.ok(!hint.includes(c.appOutDir), `${platform}: never the package electron-builder regenerates: ${hint}`);
+
+    prebuilt(source, header);
+    const c2 = context(platform, arch);
+    pack(c2, triple, null);
+    const dropped = await runHook(c2, repo);
+    assert.ok(dropped.error, `${platform}: still refused`);
+    assert.match(dropped.error.message, /build\.files or build\.asarUnpack/, `${platform}: the other cause: ${dropped.error.message}`);
+    assert.deepEqual(dropped.calls, [], `${platform}: and nothing is signed`);
   }
 });
 

@@ -51,7 +51,7 @@ interface CheckPrebuilt {
   machineOf(bytes: Buffer): Machine | null;
   machineOfFile(file: string): Machine | null;
   resolveTarget(spec: string | undefined, host: Host): Resolved;
-  checkPrebuilt(opts: { dir: string; platform: string; arch: string; nativeVersion: string; host: Host }): Checked;
+  checkPrebuilt(opts: { dir: string; platform: string; arch: string; nativeVersion: string; host: Host; packagedFrom?: string }): Checked;
   main(argv: string[], deps: { repo: string; host: Host; out(line: string): void; err(line: string): void }): number;
 }
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -176,6 +176,35 @@ test('checkPrebuilt fails, with the reason, on a missing module, another archite
   const both = run('both', pe(IMAGE_FILE_MACHINE_ARM64), '0.0.1\n');
   fails(both, /0\.0\.1/, 'every reason is given at once');
   if (!both.ok) assert.match(both.reason, /arm64/, `both reasons: ${both.reason}`);
+});
+
+test('checking a packaged copy, a missing module is looked for where it is packaged from — never in the package electron-builder regenerates — and one that is there means the config dropped it', () => {
+  // scripts/afterPack.js checks app.asar.unpacked/native/prebuilt/<triple>/
+  // inside release/; "put the module there" sent a person into a folder the
+  // next build deletes. The package is made from native/prebuilt/<triple>/.
+  const root = fileTempDir('treemap-prebuilt-packaged-');
+  const packagedOf = (triple: string) => path.join(root, 'release', 'x-unpacked', 'resources', 'app.asar.unpacked', 'native', 'prebuilt', triple);
+  const sourceOf = (triple: string) => path.join(root, 'native', 'prebuilt', triple);
+  const hintOf = (r: Checked) => {
+    assert.equal(r.ok, false, 'refused');
+    return r.ok ? '' : r.reason.slice(r.reason.indexOf('does not exist'));
+  };
+  for (const [platform, arch, host, how] of [['darwin', 'arm64', MAC_ARM, /npm run build:native builds it there/], ['win32', 'x64', MAC_ARM, /CI's release job/]] as const) {
+    const triple = `${platform}-${arch}`;
+    const r = check.checkPrebuilt({ dir: packagedOf(triple), platform, arch, nativeVersion: NATIVE_VERSION, host, packagedFrom: sourceOf(triple) });
+    assert.ok(!r.ok && r.reason.startsWith(path.join(packagedOf(triple), check.MODULE_FILE)), 'the missing packaged file is named first');
+    const hint = hintOf(r);
+    assert.ok(hint.includes(sourceOf(triple)), `${triple}: the hint names the folder it is packaged from: ${hint}`);
+    assert.ok(!hint.includes(path.join(root, 'release')), `${triple}: and never the regenerated package: ${hint}`);
+    assert.match(hint, how, `${triple}: and how a module gets there from this machine: ${hint}`);
+    assert.doesNotMatch(hint, /build\.files/, `${triple}: the config is not blamed while the source has none: ${hint}`);
+  }
+  const triple = 'darwin-arm64';
+  prebuilt(sourceOf(triple), machO64(CPU_TYPE_ARM64), `${NATIVE_VERSION}\n`);
+  const dropped = hintOf(check.checkPrebuilt({ dir: packagedOf(triple), platform: 'darwin', arch: 'arm64', nativeVersion: NATIVE_VERSION, host: MAC_ARM, packagedFrom: sourceOf(triple) }));
+  assert.match(dropped, /build\.files or build\.asarUnpack/, `a module in the source but not in the package is a packaging-config drift: ${dropped}`);
+  assert.ok(dropped.includes(sourceOf(triple)), dropped);
+  assert.doesNotMatch(dropped, /npm run build:native builds/, 'and building it again would not help');
 });
 
 test("resolveTarget: a triple is taken as written, a platform alone takes this machine's architecture, and no target is this machine", () => {

@@ -127,28 +127,47 @@ function resolveTarget(spec, host) {
   return { ok: true, platform, arch, triple: `${platform}-${arch}`, how };
 }
 
+/** Whether `file` is a file (a folder or nothing is not). */
+function isFile(file) {
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What to do about a module missing from a `triple` prebuilt folder. Checking
+ * the repository's own folder, "there" is that folder. Checking a packaged
+ * copy (`packagedFrom` names the native/prebuilt/<triple>/ folder it is
+ * packaged from), the hint points at that folder — never at the package,
+ * which electron-builder regenerates on the next build — and a module that IS
+ * there but not in the package means package.json's build.files or
+ * build.asarUnpack dropped it, which building it again would not mend.
+ */
+function missingHint(triple, host, packagedFrom) {
+  if (packagedFrom !== undefined && isFile(path.join(packagedFrom, MODULE_FILE))) {
+    return `the app is packaged from ${packagedFrom}, which holds one, so package.json's build.files or build.asarUnpack no longer carries native/prebuilt into app.asar.unpacked`;
+  }
+  const lead = packagedFrom === undefined ? '' : `the app is packaged from ${packagedFrom}, which has none either: `;
+  const how = triple === `${host.platform}-${host.arch}`
+    ? 'npm run build:native builds it there, on this machine'
+    : `this machine is ${host.platform}-${host.arch}, and npm run build:native builds only this machine's module: put the ${triple} module a ${triple} build made (CI's release job builds one) there, with its VERSION`;
+  return lead + how;
+}
+
 /**
  * Whether `dir` holds the module a `platform`-`arch` app loads: the file, a
  * VERSION equal to `nativeVersion`, and a header of that platform's format
- * holding that architecture. `host` only words the hint for a missing file.
+ * holding that architecture. `host` and `packagedFrom` (the folder a packaged
+ * `dir` is copied from; scripts/afterPack.js) only word the hint for a
+ * missing file.
  * @returns {{ ok: true, summary: string } | { ok: false, reason: string }}
  */
-function checkPrebuilt({ dir, platform, arch, nativeVersion, host }) {
+function checkPrebuilt({ dir, platform, arch, nativeVersion, host, packagedFrom }) {
   const triple = `${platform}-${arch}`;
   const file = path.join(dir, MODULE_FILE);
-  let stat = null;
-  try {
-    stat = fs.statSync(file);
-  } catch {
-    /* reported below */
-  }
-  if (!stat || !stat.isFile()) {
-    const hint =
-      triple === `${host.platform}-${host.arch}`
-        ? 'npm run build:native builds it on this machine'
-        : `this machine is ${host.platform}-${host.arch}, and npm run build:native builds only this machine's module: put the ${triple} module a ${triple} build made (CI's release job builds one) there, with its VERSION`;
-    return { ok: false, reason: `${file} does not exist; ${hint}` };
-  }
+  if (!isFile(file)) return { ok: false, reason: `${file} does not exist; ${missingHint(triple, host, packagedFrom)}` };
 
   const reasons = [];
   const machine = machineOfFile(file);

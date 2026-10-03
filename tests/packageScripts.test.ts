@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { CPU_TYPE_ARM64, machO64 } from './fixtures/binaryHeaders';
@@ -108,6 +109,26 @@ test('every dist script builds the module and checks it before electron-builder'
 test("each dist script's check names the target its own electron-builder call packages", () => {
   for (const [name, script] of DIST) {
     assert.equal(checkSpec(name, script), builderSpec(name, script), `${name}: the check and electron-builder name one target: ${script}`);
+  }
+});
+
+test('dist:portable-mac and dist:portable-linux hand electron-builder its ${…} macros, not the empty strings sh would expand them to', {
+  skip: process.platform === 'win32' && 'npm runs these two through sh; they package macOS and Linux, and are never run on Windows',
+}, () => {
+  // npm runs a script with `sh -c` on macOS and Linux, and sh expands
+  // ${version}, ${arch} and ${ext} inside double quotes — to nothing, so the
+  // portable builds were named "TreeMap-Portable--.". Each script's
+  // electron-builder command is run through sh here with printf standing in
+  // for electron-builder, which prints the arguments it is handed.
+  for (const name of ['dist:portable-mac', 'dist:portable-linux']) {
+    const steps = commands(name, PKG.scripts[name]);
+    const builder = steps[only(name, steps, 'electron-builder', isBuilder)];
+    const handed = execFileSync('/bin/sh', ['-c', builder.replace(/^electron-builder/, "printf '%s\\n'")], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+    }).split('\n');
+    const artifact = handed.find((a) => a.startsWith('--config.artifactName='));
+    assert.equal(artifact, '--config.artifactName=TreeMap-Portable-${version}-${arch}.${ext}', `${name}: ${builder}`);
   }
 });
 
