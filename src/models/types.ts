@@ -417,9 +417,11 @@ export interface CleanResult {
    * `stopped`: the trash command was stopped before it answered (its time limit, or a signal on
    * macOS and Linux), so the Trash may still finish the move after this answer — the path was not
    * shown to be left in place (FG3b). `refused`: TreeMap itself did not hand the path to the Trash
-   * (a name Windows would trim, `trashRefusal`), so the Trash was never asked (FG3d #9).
+   * (a name Windows would trim, `trashRefusal`), so the Trash was never asked (FG3d #9). `code`:
+   * present with `refused` when a delete asked for empty folders only (`onlyEmptyFolders`) and this
+   * path was not one when its turn came (Track U, U-4).
    */
-  failed: { path: string; reason: string; stopped?: true; refused?: true }[];
+  failed: { path: string; reason: string; stopped?: true; refused?: true; code?: 'FOLDER_NOT_EMPTY' }[];
 }
 
 export interface SystemInfo {
@@ -577,6 +579,14 @@ export interface EmptyFoldersResult {
   /** All empty dirs found, including those nested inside the ones above. */
   totalCount: number;
   truncated: boolean;
+}
+
+/** GET /api/empty-folders (Track U, U-4): the tree's answer after a second look on disk. Additive over EmptyFoldersResult. */
+export interface EmptyFoldersAnswer extends EmptyFoldersResult {
+  /** Folders the tree offered that a second look did not find still empty (or could not look at): left out of `folders`, with their nested ones out of `totalCount`. */
+  withheld: number;
+  /** Why nothing is offered, for a scan whose tree cannot tell an empty folder from one it never read (gdu); absent otherwise. */
+  reason?: string;
 }
 
 /* ---------- Snapshots (size history / Trends) ---------- */

@@ -293,7 +293,12 @@ async function apiPaced(url, options, tries = 8) {
   return api(url, options, { retries: tries });
 }
 
-async function trashPaths(paths, { silent = false, ignoreOpenHandles = false } = {}) {
+/*
+ * `onlyEmptyFolders`: every path was offered as an empty folder, and the server
+ * looks at each again right before trashing it, leaving one that is no longer
+ * empty in `failed` with code FOLDER_NOT_EMPTY (Track U, U-4).
+ */
+async function trashPaths(paths, { silent = false, ignoreOpenHandles = false, onlyEmptyFolders = false } = {}) {
   if (!paths.length) return { deleted: [], failed: [] };
   await ensureNodes(paths); // real sizes for the "recovered" figure
   const recovered = paths.reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
@@ -312,7 +317,11 @@ async function trashPaths(paths, { silent = false, ignoreOpenHandles = false } =
     try {
       const result = await apiPaced('/api/files', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: chunk, ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}) }),
+        body: JSON.stringify({
+          paths: chunk,
+          ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}),
+          ...(onlyEmptyFolders ? { onlyEmptyFolders: true } : {}),
+        }),
       });
       deleted.push(...result.deleted);
       failed.push(...result.failed);

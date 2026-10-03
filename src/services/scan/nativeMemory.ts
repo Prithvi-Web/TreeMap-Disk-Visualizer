@@ -3,7 +3,7 @@ import { CONTAINER_RULES } from '../../utils/containerKind';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, containerKindId } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
-import { noteRefused } from '../scanRefusals';
+import { markUnlisted, noteRefused } from '../scanRefusals';
 import { platform } from '../../platform';
 import type { ScanModule } from './native';
 import type { EntryProjection } from './projection';
@@ -328,7 +328,13 @@ export function adoptNativeStore(scan: ScanResult, store: PackedScanStore, taken
     scan.sparseBytes = sparseTotal(store, taken, guesses);
   }
   if (counters.slackBytes > 0) scan.slackBytes = counters.slackBytes;
-  for (const id of counters.deniedDirs) noteRefused(scan, store.path(id));
+  for (const id of counters.deniedDirs) {
+    noteRefused(scan, store.path(id));
+    markUnlisted(store, id); // never listed, so never offered as empty (U-4)
+  }
+  // The build counts the folders that vanished or could not be read without
+  // naming them, so none can be marked here: Empty Folders' second look on disk
+  // is what keeps such a folder out (U-4, emptyFolders.ts).
   if (counters.vanishedDirs > 0) scan.vanishedDirs = counters.vanishedDirs;
   if (counters.unreadableDirs > 0) scan.unreadableDirs = counters.unreadableDirs;
   const stats = taken.stats;

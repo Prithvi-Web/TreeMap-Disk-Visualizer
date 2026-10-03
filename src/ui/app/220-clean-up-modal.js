@@ -197,8 +197,17 @@ async function loadEmptyFolders() {
   try {
     const data = await api(`/api/empty-folders?scanId=${state.scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
     emptyFolders = data.folders;
+    // Track U, U-4: folders the scan saw empty that the server, looking again
+    // on disk, did not find still empty — said, never dropped in silence. And a
+    // scan that cannot tell an empty folder from one it never read (gdu) offers
+    // none with a reason: "tidy already" would be a claim nobody could make.
+    const withheld = data.withheld > 0 ? data.withheld : 0;
+    const leftOut = (lead) => `${lead} looked empty to the scan but ${withheld === 1 ? 'was' : 'were'} left out: looked at again, ${withheld === 1 ? 'it' : 'each'} held something, could not be read, or did not answer.`;
     if (!emptyFolders.length) {
-      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} No empty folders found — tidy already.</div>`;
+      const said = data.reason
+        ? escapeHtml(data.reason)
+        : withheld ? leftOut(`${formatCount(withheld)} folder${withheld === 1 ? '' : 's'}`) : 'No empty folders found — tidy already.';
+      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon(data.reason || withheld ? 'alert' : 'checkCircle', 15)} ${said}</div>`;
       updateCleanSummary();
       return;
     }
@@ -217,7 +226,8 @@ async function loadEmptyFolders() {
       <div class="rule-row">
         <input type="checkbox" id="emptyAll" checked>
         <label for="emptyAll" class="muted">${selectAllLabel}</label>
-      </div>
+      </div>` + (withheld ? `
+      <div class="muted" style="padding:2px 2px 8px;">${leftOut(`${formatCount(withheld)} more folder${withheld === 1 ? '' : 's'}`)}</div>` : '') + `
       <div class="clean-list">` + emptyFolders.map((f, i) => `
         <div class="clean-item">
           <input type="checkbox" class="empty-ck" data-i="${i}" checked aria-label="Select ${escapeHtml(f.name)}">
@@ -930,7 +940,9 @@ function activeCleanSelection() {
       .filter(ck => ck.checked).map(ck => emptyFolders[+ck.dataset.i]);
     // An empty folder is worth ~0 bytes by definition, so there is nothing to
     // size — an empty map, not a missing one, so callers need no special case.
-    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder', sizes: new Map() };
+    // `onlyEmptyFolders`: the server looks at each again before it trashes it,
+    // and leaves one that is no longer empty (Track U, U-4).
+    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder', sizes: new Map(), onlyEmptyFolders: true };
   }
   // The Smart pane has three sources that can name the SAME path — an orphaned
   // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
@@ -1029,26 +1041,30 @@ function renderCleanFunnel(freed) {
  * credits the user with space still sitting on the disk.
  */
 async function runCleanTrash() {
-  const { paths, sizes } = activeCleanSelection();
+  const { paths, sizes, onlyEmptyFolders } = activeCleanSelection();
   if (!paths.length) return;
   const btn = $('cleanConfirmBtn');
   btn.disabled = true;
   $('cleanProgress').classList.add('on');
-  let done = 0, failed = 0, blocked = 0, recovered = 0;
+  let done = 0, failed = 0, notEmpty = 0, blocked = 0, recovered = 0;
   for (let i = 0; i < paths.length; i += 20) {
     const chunk = paths.slice(i, i + 20);
-    const result = await trashPaths(chunk, { silent: true });
+    const result = await trashPaths(chunk, onlyEmptyFolders ? { silent: true, onlyEmptyFolders: true } : { silent: true });
     done += result.deleted.length;
     for (const p of result.deleted) recovered += sizes.get(p) || 0;
-    failed += result.failed.length;
+    // A folder offered as empty that holds something now was left on purpose (Track U, U-4).
+    const changed = result.failed.filter(f => f.code === 'FOLDER_NOT_EMPTY').length;
+    notEmpty += changed;
+    failed += result.failed.length - changed;
     blocked += (result.blocked || []).length;
-    const settled = done + failed + blocked;
+    const settled = done + failed + notEmpty + blocked;
     $('cleanProgressFill').style.width = Math.round((settled / paths.length) * 100) + '%';
     btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
   }
   closeModal('cleanModal');
   if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` — ${formatBytes(recovered)} recovered` : ''}`);
   if (failed) toast(`${failed} could not be trashed`, 'error');
+  if (notEmpty) toast(`${notEmpty} folder${notEmpty > 1 ? 's are' : ' is'} no longer empty — left where ${notEmpty > 1 ? 'they are' : 'it is'}. Rescan to see what is in ${notEmpty > 1 ? 'them' : 'it'}.`, 'error', 9000);
   // Silent mode suppresses trashPaths' own re-ask dialog, so this is the only
   // place these files get mentioned at all. They are still where they were.
   if (blocked) toast(`${blocked} still in use — left where ${blocked > 1 ? 'they are' : 'it is'}. Close what is using ${blocked > 1 ? 'them' : 'it'} and try again.`, 'error', 9000);

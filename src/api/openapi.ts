@@ -383,11 +383,13 @@ const schemas: Json = {
   ),
   EmptyFoldersResult: obj(
     {
-      folders: arr(obj({ name: str(), path: str() }, ['name', 'path']), 'Topmost recursively-empty dirs'),
+      folders: arr(obj({ name: str(), path: str() }, ['name', 'path']), 'Topmost recursively-empty dirs. Never a folder the scan did not list in full (refused, unreadable, vanished, never entered, entries left out by a "don\'t scan" pattern or a failed stat), nor one above it; each was looked at again on disk and found still empty'),
       totalCount: int('All empty dirs found, nested included'),
       truncated: bool(),
+      withheld: int('Folders the scan saw empty that a second look on disk did not find still empty — they hold something now, could not be read, or did not answer — left out of folders, and their nested ones out of totalCount'),
+      reason: str('Present only when the scan cannot offer empty folders at all, and why: a gdu scan shows a folder it could not read as an empty one'),
     },
-    ['folders', 'totalCount', 'truncated'],
+    ['folders', 'totalCount', 'truncated', 'withheld'],
   ),
   CompareEntry: obj(
     {
@@ -455,7 +457,8 @@ const schemas: Json = {
         path: str(),
         reason: str(),
         stopped: bool('Present (true) when the Trash command was stopped before it answered (its time limit, or a signal on macOS and Linux): the Trash may still finish the move after this answer'),
-        refused: bool('Present (true) when TreeMap itself did not hand the path to the Trash (a name Windows would trim): the Trash was never asked'),
+        refused: bool('Present (true) when TreeMap itself did not hand the path to the Trash (a name Windows would trim, or a folder no longer empty under onlyEmptyFolders): the Trash was never asked'),
+        code: { type: 'string', enum: ['FOLDER_NOT_EMPTY'], description: 'Present with refused when onlyEmptyFolders was set and this path was not still an empty folder at its turn' },
       }, ['path', 'reason'])),
     },
     ['deleted', 'failed'],
@@ -678,6 +681,10 @@ const schemas: Json = {
       dryRun: bool('Always true'),
       wouldTrash: arr(obj({ path: str(), bytes: nullable(int('null when no scan knows this path')) }, ['path', 'bytes'])),
       totalKnownBytes: int(),
+      notEmpty: arr(
+        obj({ path: str(), code: { type: 'string', enum: ['FOLDER_NOT_EMPTY'] }, reason: str() }, ['path', 'code', 'reason']),
+        'Present only with onlyEmptyFolders: the paths the real run would leave, because each is not still an empty folder; they are not in wouldTrash',
+      ),
     },
     ['dryRun', 'wouldTrash', 'totalKnownBytes'],
     'What DELETE /api/files would do — nothing has been touched',
@@ -1315,7 +1322,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/empty-folders',
-    summary: 'Topmost recursively-empty directories',
+    summary: 'Topmost recursively-empty directories: only folders the scan listed in full, each looked at again on disk (withheld counts the ones left out); none from a gdu scan (reason)',
     tag: 'insights',
     destructive: false,
     parameters: [scanIdQuery, queryParam('ignoreJunk', "OS junk files don't count as content (default true)", bool())],
@@ -1874,12 +1881,14 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           paths: arr(str(), 'At most 500, each inside a scanned root'),
           dryRun: bool('true = return the exact manifest (paths + known bytes) and touch nothing'),
           ignoreOpenHandles: bool('true = trash even though a program has something open (the user chose "delete anyway")'),
+          onlyEmptyFolders: bool('true = every path was offered as an empty folder (GET /api/empty-folders): each is looked at again right before its own Trash step, and one that is not still an empty folder (OS junk such as .DS_Store aside) is left where it is, failed with code FOLDER_NOT_EMPTY'),
         },
         ['paths'],
       ),
     ),
     responses: {
       '200': jsonResponse('Per-path outcome, or the dry-run manifest', { oneOf: [ref('CleanResult'), ref('TrashDryRunManifest')] }),
+      '400': errorResponse('ONLY_EMPTY_FOLDERS_INVALID — onlyEmptyFolders is present and not a boolean'),
       '403': errorResponse('A path is outside every scanned root, cloud-hosted, inside an archive, or refused by agent-policy.json'),
       '409': errorResponse('OPEN_HANDLE_CONFLICT — a program holds one of these paths (or a file inside it) open; the offending processes are listed in `conflicts`. Retry with ignoreOpenHandles: true to proceed anyway'),
     },

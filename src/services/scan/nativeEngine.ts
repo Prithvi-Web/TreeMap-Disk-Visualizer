@@ -12,7 +12,7 @@ import { Flag, PackedScanStore, ScanStore, joinPath } from '../scanStore';
 import { adoptNativeStore, memoryRoom, memoryStoreOptions, takeNativeStore, type MemoryRoom } from './nativeMemory';
 import { formatCount } from '../../utils/formatCount';
 import { cloudProviderFor } from '../cloudFolders';
-import { noteRefused } from '../scanRefusals';
+import { markUnlisted, noteRefused } from '../scanRefusals';
 import { neverDescendPaths } from '../../utils/mountBoundaries';
 import { budgetSnapshot, isScanPaused, registerPausable, unregisterPausable } from '../engineBudget';
 import { platform } from '../../platform';
@@ -251,8 +251,11 @@ export function decideNative(rootPath: string, pre: Omit<EligibilityInput, 'nati
  *    placeholder whose bytes another line already takes off;
  *  - a child named `.git` sets `GitRepo` on its parent;
  *  - refusals become `deniedDirs` (with the five smallest paths as
- *    examples), `vanishedDirs` or `unreadableDirs`; the walk's per-entry
- *    refusals become `deniedEntries`/`unreadableEntries`.
+ *    examples), `vanishedDirs` or `unreadableDirs`, and every refused folder
+ *    is marked not listed (`Flag.Unlisted`, Track U U-4); the walk's
+ *    per-entry refusals become `deniedEntries`/`unreadableEntries` (counts
+ *    only: the walk names no folder for them, so Empty Folders' second look
+ *    is what keeps such a folder out).
  *
  * The root (index 0) is the store's own root: its facts from the walk replace
  * the caller's, and `walkedDirs` counts every directory the walk visited
@@ -390,6 +393,8 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
     if (why === REFUSAL_DENIED) noteRefused(scan, pathOf(refusalNode[r]));
     else if (why === REFUSAL_VANISHED) scan.vanishedDirs = (scan.vanishedDirs ?? 0) + 1;
     else scan.unreadableDirs = (scan.unreadableDirs ?? 0) + 1;
+    // Whichever it was, its node is childless and was never listed (U-4).
+    markUnlisted(store, ids[refusalNode[r]]);
   }
   scan.deniedEntries = cols.stats.deniedEntries;
   scan.unreadableEntries = cols.stats.unreadableEntries;

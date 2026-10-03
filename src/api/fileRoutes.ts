@@ -16,6 +16,7 @@ import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { checkOpenHandles } from '../services/openHandleGuard';
+import { stillEmptyFolder } from '../services/emptyFolderCheck';
 
 export const fileRouter = Router();
 
@@ -35,7 +36,7 @@ fileRouter.post('/files/open-handles', guardBodyPaths, requireInsideScanRoot, as
 });
 
 /**
- * DELETE /api/files  { paths: string[], dryRun?: boolean, ignoreOpenHandles?: boolean }
+ * DELETE /api/files  { paths: string[], dryRun?: boolean, ignoreOpenHandles?: boolean, onlyEmptyFolders?: boolean }
  * Moves every path to the system trash (never hard-deletes).
  * -> { deleted: string[], failed: { path, reason }[] }
  * With dryRun: true, reports the exact manifest (paths + known bytes) and
@@ -47,13 +48,25 @@ fileRouter.post('/files/open-handles', guardBodyPaths, requireInsideScanRoot, as
  * `ignoreOpenHandles: true` (the "delete anyway" the user chose after seeing
  * the warning). A dry run reports the conflicts rather than refusing: its whole
  * job is to describe what would happen without anything happening.
+ *
+ * `onlyEmptyFolders: true` (Empty Folders sends it, Track U U-4): every path
+ * was offered as an empty folder, and each is looked at again right before its
+ * own Trash step. One that is not still empty is left where it is, in `failed`
+ * with `code: 'FOLDER_NOT_EMPTY'` and `refused: true`; a dry run lists those in
+ * `notEmpty` and leaves them out of `wouldTrash`. Anything but a boolean is
+ * `400 ONLY_EMPTY_FOLDERS_INVALID`, so a caller that meant the check never
+ * goes without it.
  */
 fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
-  const { paths, dryRun, ignoreOpenHandles } = req.body as {
+  const { paths, dryRun, ignoreOpenHandles, onlyEmptyFolders } = req.body as {
     paths: string[];
     dryRun?: boolean;
     ignoreOpenHandles?: boolean;
+    onlyEmptyFolders?: unknown;
   };
+  if (onlyEmptyFolders !== undefined && typeof onlyEmptyFolders !== 'boolean') {
+    throw new AppError(400, 'ONLY_EMPTY_FOLDERS_INVALID', 'onlyEmptyFolders must be true or false');
+  }
   const sized = paths.map((p) => ({ path: p, bytes: knownSizeOf(p) }));
   const totalKnownBytes = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
 
@@ -73,13 +86,25 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
     // part of the picture rather than as an error.
     const openHandles = await checkOpenHandles(paths);
     await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: true, outcome: 'ok' });
-    res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes, openHandles });
+    if (onlyEmptyFolders !== true) {
+      res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes, openHandles });
+      return;
+    }
+    // The real run's own look, path by path, so the manifest is what it would do.
+    const notEmpty: { path: string; code: 'FOLDER_NOT_EMPTY'; reason: string }[] = [];
+    for (const p of paths) {
+      const look = await stillEmptyFolder(p, true);
+      if (!look.empty && look.why !== 'gone') notEmpty.push({ path: p, code: 'FOLDER_NOT_EMPTY', reason: look.reason });
+    }
+    const left = new Set(notEmpty.map((n) => n.path));
+    const wouldTrash = sized.filter((s) => !left.has(s.path));
+    res.json({ dryRun: true, wouldTrash, totalKnownBytes: wouldTrash.reduce((sum, s) => sum + (s.bytes ?? 0), 0), openHandles, notEmpty });
     return;
   }
 
   let result;
   try {
-    result = await moveToTrash(paths, { ignoreOpenHandles: ignoreOpenHandles === true });
+    result = await moveToTrash(paths, { ignoreOpenHandles: ignoreOpenHandles === true, onlyEmptyFolders: onlyEmptyFolders === true });
   } catch (err) {
     // A refusal is a real outcome and belongs in the audit trail beside the
     // policy refusals above — otherwise the log shows a delete that simply

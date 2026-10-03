@@ -10,11 +10,12 @@ import { readJsonFile, writeFileChunked } from './storage';
 import { streamTreeJson } from './scanStoreJson';
 import { isEphemeral } from './portableMode';
 import { IO_THREADS } from '../utils/ioThreads';
-import { neverDescend } from '../utils/mountBoundaries';
+import { neverDescend, neverDescendPaths } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
 import { cloudProviderFor } from './cloudFolders';
-import { noteRefused } from './scanRefusals';
+import { markUnlisted, markUnlistedPaths, noteRefused } from './scanRefusals';
+import { JUNK_FILES } from './emptyFolderCheck';
 import { permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 import { platform } from '../platform';
@@ -530,6 +531,10 @@ function settleComplete(scan: ScanResult, store: ScanStore): void {
   // settled as cancelled, and the finished walk must not overwrite it,
   // publish its tree or write the rescan cache and history.
   if (scan.status !== 'running') return;
+  // The folders no engine entered look childless in every engine's tree: each
+  // is marked here, the one place every engine settles (Track U, U-4). U-24
+  // hands this the scan's own never-descend list, its mounts not entered too.
+  markUnlistedPaths(store, neverDescendPaths());
   scan.store = store;
   scan.status = 'complete';
   scan.finishedAt = Date.now();
@@ -1126,7 +1131,9 @@ async function processDirectory(
     } catch {
       // Vanished since the cache was written. The parent's listing says it
       // exists, so show it empty rather than invent stale contents — the
-      // parent's changed mtime makes the next rescan re-list it anyway.
+      // parent's changed mtime makes the next rescan re-list it anyway. It
+      // was never listed, so Empty Folders never offers it (U-4).
+      markUnlisted(store, dirId);
       return;
     }
     store.setModifiedAt(dirId, Math.round(st.mtimeMs));
@@ -1156,6 +1163,8 @@ async function processDirectory(
     if (listed.why === 'denied') noteRefused(scan, dirPath);
     else if (listed.why === 'vanished') scan.vanishedDirs = (scan.vanishedDirs ?? 0) + 1;
     else scan.unreadableDirs = (scan.unreadableDirs ?? 0) + 1;
+    // Childless in the tree, whatever it holds: never offered as empty (U-4).
+    markUnlisted(store, dirId);
     return;
   }
   let entries: Dirent[] = listed.entries;
@@ -1164,7 +1173,10 @@ async function processDirectory(
 
   // Honor the user's "don't scan" list before paying for any lstat calls.
   if (ignore.length > 0) {
+    const listedCount = entries.length;
     entries = entries.filter((ent) => !matchesAny(ignore, path.join(dirPath, ent.name), ent.name));
+    // What the pattern left out is still in the folder: it is not empty (U-4).
+    if (entries.length < listedCount) markUnlisted(store, dirId);
   }
 
   for (let i = 0; i < entries.length; i += STAT_BATCH) {
@@ -1232,6 +1244,9 @@ async function processDirectory(
         const why = classifyFsError(result.reason as NodeJS.ErrnoException);
         if (why === 'denied') scan.deniedEntries = (scan.deniedEntries ?? 0) + 1;
         else if (why !== 'vanished') scan.unreadableEntries = (scan.unreadableEntries ?? 0) + 1;
+        // An entry left out but still there: its folder is not empty (U-4). A
+        // vanished one is gone, and takes nothing from the folder's listing.
+        if (why !== 'vanished') markUnlisted(store, dirId);
         continue;
       }
       const { input, fullPath, isDir, inoKey, allocDelta } = result.value;
@@ -1464,8 +1479,8 @@ export async function collectLargestFoldersAsync(
   return walk.result(limit);
 }
 
-/** Junk files that don't stop a folder from counting as empty. */
-const JUNK_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini', '.localized']);
+// JUNK_FILES, the junk files that don't stop a folder from counting as empty,
+// live in ./emptyFolderCheck, which looks at a folder again on disk by the same rule.
 const EMPTY_FOLDERS_CAP = 1000;
 
 /**
@@ -1504,13 +1519,34 @@ function isTreeMapSpillFolder(store: ScanStore, id: number, name: string): boole
   return isSpillFolderName(name) && store.isDir(id) && isSpillPath(store.path(id));
 }
 
+/** What Empty Folders finds in a tree, before anything is looked at again on disk (Track U, U-4). */
+export interface EmptyFolderCandidates {
+  /**
+   * The topmost empty folders, at most EMPTY_FOLDERS_CAP of them. `counted`:
+   * how many of `totalCount`'s folders lie at or under it, itself included —
+   * what leaves the count when it is withheld. Worked out here, so nothing the
+   * walk built is held while the folders are looked at again on disk.
+   */
+  folders: { name: string; path: string; counted: number }[];
+  /** Every reportable empty folder, nested ones included. */
+  totalCount: number;
+  truncated: boolean;
+}
+
 /**
  * Find recursively-empty directories: no files anywhere below (only other
  * empty dirs). With `ignoreJunk`, OS metadata files like .DS_Store don't
  * count as content. Returns only the topmost empty dirs — trashing those
  * removes everything beneath them anyway.
+ *
+ * A folder the scan did not list in full (`Flag.Unlisted`: refused,
+ * unreadable, vanished, never entered, entries left out) is content, never
+ * empty, whatever the tree holds under it (U-4, decision U-D12: what was not
+ * listed comes from the walk's own records, never from a childless node). So
+ * it is never offered or counted, and no folder above it is empty; a folder
+ * the scan did list inside it still can be.
  */
-export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): EmptyFoldersResult {
+export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): EmptyFolderCandidates {
   const store = asStore(source);
 
   // Pass 1, bottom-up: a dir is empty when every child is junk or an empty
@@ -1530,7 +1566,7 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
   }
   const empty = new Map<number, boolean>();
   for (const id of ordered) {
-    empty.set(id, store.isDir(id) ? true : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase()));
+    empty.set(id, store.isDir(id) ? !store.flag(id, Flag.Unlisted) : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase()));
   }
   for (let i = ordered.length - 1; i >= 0; i--) {
     const id = ordered[i];
@@ -1567,7 +1603,19 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
   // empty, so trashing the top one is sufficient) and stop descending there.
   // Iterator frames reproduce the original recursion's emission order exactly
   // (descend into a non-empty dir before examining its later siblings).
-  const topmost: { name: string; path: string }[] = [];
+  /** Reportable folders at or under `id`, an empty one: its subtree is empty folders and junk, so this walk is small. */
+  const countedUnder = (id: number): number => {
+    let n = 0;
+    const walk: number[] = [id];
+    while (walk.length) {
+      const cur = walk.pop() as number;
+      if (reportable(cur)) n++;
+      if (store.isDir(cur)) for (const c of store.childIds(cur)) walk.push(c);
+    }
+    return n;
+  };
+
+  const topmost: { name: string; path: string; counted: number }[] = [];
   let truncated = false;
   interface Frame { kids: number[]; next: number }
   const stack: Frame[] = [{ kids: store.childIds(store.rootId), next: 0 }];
@@ -1584,7 +1632,7 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
       // into — its whole subtree is empty by definition, so there is nothing
       // reportable below it either.
       if (!reportable(c)) continue;
-      if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: store.name(c), path: store.path(c) });
+      if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: store.name(c), path: store.path(c), counted: countedUnder(c) });
       else truncated = true;
     } else {
       stack.push({ kids: store.childIds(c), next: 0 });
@@ -1592,6 +1640,12 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
   }
 
   return { folders: topmost, totalCount, truncated };
+}
+
+/** findEmptyFolders as the tree alone answers it: the topmost empty folders, the count, and whether the list was cut. */
+export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): EmptyFoldersResult {
+  const { folders, totalCount, truncated } = findEmptyFolders(source, ignoreJunk);
+  return { folders: folders.map(({ name, path: p }) => ({ name, path: p })), totalCount, truncated };
 }
 
 const COMPARE_CAP = 1000;

@@ -1,0 +1,243 @@
+import { test, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-emptyFoldersDelete-data-');
+process.env.TREEMAP_NO_GDU = '1';
+
+import { startScan } from '../src/services/diskScanner';
+import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
+import { EMPTY_CHECK_MAX_ENTRIES, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { canLock } from './fixtures/nativeEdge';
+import { waitFor } from './fixtures/waitFor';
+
+/**
+ * Track U, U-4: the last look before an empty folder goes to the Trash.
+ *
+ * Empty Folders offers what the scan saw empty, and the page sends the ticked
+ * folders to `DELETE /api/files`. That route trashes whatever it is given, so a
+ * folder that gained a file between the list and the click went with the file.
+ * With `onlyEmptyFolders: true` every path is looked at once more, right before
+ * its own Trash step: a folder that holds anything (OS junk such as `.DS_Store`
+ * aside), that cannot be read, or that does not answer is left where it is and
+ * reported in `failed[]` with `code: 'FOLDER_NOT_EMPTY'`. Without the flag the
+ * route is what it was. Nothing reaches the machine's Trash: the step is
+ * replaced for the whole file and records what it was handed.
+ */
+
+const ROOT = fs.realpathSync(fileTempDir('treemap-emptyFoldersDelete-'));
+const at = (...p: string[]): string => path.join(ROOT, ...p);
+for (const d of ['gained', 'still', 'junk', 'nest/a', 'filled', 'locked-holder/locked', 'many']) fs.mkdirSync(at(...d.split('/')), { recursive: true });
+fs.writeFileSync(at('junk', '.DS_Store'), 'Finder');
+fs.writeFileSync(at('a-file.txt'), 'not a folder');
+
+const trashed: string[] = [];
+let server: http.Server;
+let port: number;
+
+before(async () => {
+  setTrashStepForTests(async (p) => {
+    trashed.push(p);
+  });
+  resetRateLimiter();
+  server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  port = (server.address() as { port: number }).port;
+  // The paths must lie inside a root this server scanned.
+  const scan = await startScan(ROOT);
+  await waitFor(() => scan.status !== 'running', 'the scan of the delete fixture');
+  assert.equal(scan.status, 'complete', scan.error);
+  // A file arrives after the scan saw the folder empty.
+  fs.writeFileSync(at('gained', 'arrived.txt'), 'after the list was drawn');
+});
+
+beforeEach(() => {
+  trashed.length = 0;
+});
+
+after(async () => {
+  setTrashStepForTests(null);
+  setEmptyCheckForTests(null);
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+function send(method: string, url: string, body: unknown): Promise<{ status: number; body: any }> {
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const r = http.request(
+      { host: '127.0.0.1', port, path: url, method, headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+      (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) });
+          } catch {
+            resolve({ status: res.statusCode ?? 0, body: buf });
+          }
+        });
+      },
+    );
+    r.on('error', reject);
+    r.write(payload);
+    r.end();
+  });
+}
+
+const trash = (body: Record<string, unknown>) => send('DELETE', '/api/files', { ignoreOpenHandles: true, ...body });
+
+test('a folder that gained a file since the list is left where it is; the empty ones go', async () => {
+  const r = await trash({ paths: [at('gained'), at('still'), at('junk'), at('nest')], onlyEmptyFolders: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.deleted, [at('still'), at('junk'), at('nest')], 'an empty folder, one holding only junk, and one holding only an empty folder');
+  assert.equal(r.body.failed.length, 1);
+  const [refusal] = r.body.failed;
+  assert.equal(refusal.path, at('gained'));
+  assert.equal(refusal.code, 'FOLDER_NOT_EMPTY');
+  assert.equal(refusal.refused, true, 'TreeMap never handed it to the Trash');
+  assert.match(refusal.reason, /arrived\.txt/, 'the reason names what is in it now');
+  assert.deepEqual(trashed, [at('still'), at('junk'), at('nest')], 'the Trash step was never asked about the folder that is not empty');
+});
+
+test('a folder holding a folder that cannot be read is refused', { skip: !canLock && 'a folder cannot be made unlistable here (Windows, or running as root)' }, async () => {
+  fs.chmodSync(at('locked-holder', 'locked'), 0o000);
+  try {
+    const r = await trash({ paths: [at('locked-holder')], onlyEmptyFolders: true });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.deleted, []);
+    assert.equal(r.body.failed[0].code, 'FOLDER_NOT_EMPTY');
+    assert.match(r.body.failed[0].reason, /could not be read/);
+    assert.deepEqual(trashed, []);
+  } finally {
+    fs.chmodSync(at('locked-holder', 'locked'), 0o755);
+  }
+});
+
+test('a folder that is gone is not "not empty": it goes on to the Trash step, which says what it says', async () => {
+  // The check refuses what it can show is not an empty folder; a path that is no
+  // longer there is the Trash step's to report, as it always was.
+  const r = await trash({ paths: [at('never-was')], onlyEmptyFolders: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(!r.body.failed.some((f: { code?: string }) => f.code === 'FOLDER_NOT_EMPTY'), 'not refused as not empty');
+  assert.deepEqual(trashed, [at('never-was')], 'handed to the Trash step (this file\'s stand-in, which reports success)');
+});
+
+test('a file is not an empty folder', async () => {
+  const r = await trash({ paths: [at('a-file.txt')], onlyEmptyFolders: true });
+  assert.equal(r.body.failed[0].code, 'FOLDER_NOT_EMPTY');
+  assert.match(r.body.failed[0].reason, /not a folder/);
+  assert.deepEqual(trashed, []);
+});
+
+test('without the flag the route trashes what it is given, as before', async () => {
+  const r = await trash({ paths: [at('gained')] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.deleted, [at('gained')]);
+  assert.deepEqual(trashed, [at('gained')], 'a caller that did not ask for the check gets none');
+});
+
+test('a dry run with the flag names what the real run would leave, and touches nothing', async () => {
+  const r = await trash({ paths: [at('gained'), at('still')], onlyEmptyFolders: true, dryRun: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.dryRun, true);
+  assert.deepEqual(r.body.wouldTrash.map((w: { path: string }) => w.path), [at('still')], 'only what the real run would trash');
+  assert.equal(r.body.notEmpty.length, 1);
+  assert.equal(r.body.notEmpty[0].path, at('gained'));
+  assert.equal(r.body.notEmpty[0].code, 'FOLDER_NOT_EMPTY');
+  assert.match(r.body.notEmpty[0].reason, /arrived\.txt/);
+  assert.deepEqual(trashed, [], 'a dry run trashes nothing');
+});
+
+test('a dry run without the flag says nothing about emptiness', async () => {
+  const r = await trash({ paths: [at('gained')], dryRun: true });
+  assert.equal(r.body.notEmpty, undefined, 'the manifest is what it was');
+  assert.deepEqual(r.body.wouldTrash.map((w: { path: string }) => w.path), [at('gained')]);
+});
+
+test('onlyEmptyFolders that is not a boolean is refused before anything happens', async () => {
+  const r = await trash({ paths: [at('still')], onlyEmptyFolders: 'yes' });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'ONLY_EMPTY_FOLDERS_INVALID');
+  assert.deepEqual(trashed, []);
+});
+
+test('moveToTrash itself looks again, right before each folder\'s own Trash step', async () => {
+  // The first folder's step fills the second: the look must come at the second's turn, not before the batch.
+  const first = at('still');
+  const second = at('filled');
+  setTrashStepForTests(async (p) => {
+    trashed.push(p);
+    if (p === first) fs.writeFileSync(path.join(second, 'late.txt'), 'written while the batch ran');
+  });
+  try {
+    const result = await moveToTrash([first, second], { ignoreOpenHandles: true, onlyEmptyFolders: true });
+    assert.deepEqual(result.deleted, [first]);
+    assert.equal(result.failed[0].path, second);
+    assert.equal(result.failed[0].code, 'FOLDER_NOT_EMPTY');
+    assert.deepEqual(trashed, [first]);
+  } finally {
+    setTrashStepForTests(async (p) => {
+      trashed.push(p);
+    });
+  }
+});
+
+/* ─────────────── the look itself ─────────────── */
+
+test('the look: what makes a folder not empty, each with its reason', async () => {
+  assert.deepEqual(await stillEmptyFolder(at('still'), true), { empty: true });
+  assert.deepEqual(await stillEmptyFolder(at('junk'), true), { empty: true }, 'junk does not count, with the junk rule');
+  const junkCounts = await stillEmptyFolder(at('junk'), false);
+  assert.equal(junkCounts.empty, false, 'and counts without it');
+  const gained = await stillEmptyFolder(at('gained'), true);
+  assert.equal(gained.empty === false && gained.why, 'content');
+  const gone = await stillEmptyFolder(at('never-was'), true);
+  assert.equal(gone.empty === false && gone.why, 'gone');
+  const notFolder = await stillEmptyFolder(at('a-file.txt'), true);
+  assert.equal(notFolder.empty === false && notFolder.why, 'not-a-folder');
+  const link = at('link-to-still');
+  fs.symlinkSync(at('still'), link, 'junction');
+  try {
+    const viaLink = await stillEmptyFolder(link, true);
+    assert.equal(viaLink.empty === false && viaLink.why, 'not-a-folder', 'a link is never followed: it is not the folder that was offered');
+  } finally {
+    fs.unlinkSync(link);
+  }
+});
+
+test('the look stops after so many entries, and a folder it could not finish is not empty', async () => {
+  assert.equal(EMPTY_CHECK_MAX_ENTRIES, 1000);
+  const wide = at('many');
+  for (let i = 0; i < 5; i++) fs.mkdirSync(path.join(wide, `d${i}`), { recursive: true });
+  setEmptyCheckForTests({ maxEntries: 4 });
+  try {
+    const cut = await stillEmptyFolder(wide, true);
+    assert.equal(cut.empty === false && cut.why, 'too-many');
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+  assert.deepEqual(await stillEmptyFolder(wide, true), { empty: true }, 'five empty folders are well within the real limit');
+});
+
+test('a look that does not answer is not empty, whether the stat or the listing goes silent', async () => {
+  const never = (): Promise<never> => new Promise(() => { /* a drive that stopped answering */ });
+  const passed = (): { late: Promise<void>; cancel: () => void } => ({ late: Promise.resolve(), cancel: () => {} });
+  try {
+    setEmptyCheckForTests({ lstat: never, deadline: passed });
+    const statSilent = await stillEmptyFolder(at('still'), true);
+    assert.equal(statSilent.empty === false && statSilent.why, 'no-answer', 'the folder\'s own stat');
+    // The stat answers at once (an answer already there wins the race); the listing never does.
+    setEmptyCheckForTests({ lstat: () => Promise.resolve({ isDirectory: () => true }), readdir: never, deadline: passed });
+    const listSilent = await stillEmptyFolder(at('still'), true);
+    assert.equal(listSilent.empty === false && listSilent.why, 'no-answer', 'its listing');
+    assert.match(listSilent.empty === false ? listSilent.reason : '', /did not answer/);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});

@@ -22,7 +22,11 @@
 const DARWIN_SKIP = new Set(['/System/Volumes', '/Volumes', '/dev', '/home', '/net', '/Network']);
 const LINUX_SKIP = new Set(['/proc', '/sys', '/dev', '/run']);
 
+/** Paths a test adds to every platform's list (`setNeverDescendForTests`): a scan of a temp folder cannot reach the real ones. */
+let extraForTests: ReadonlySet<string> | null = null;
+
 export function neverDescend(p: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (extraForTests?.has(p)) return true;
   if (platform === 'darwin') return DARWIN_SKIP.has(p);
   if (platform === 'linux') return LINUX_SKIP.has(p);
   return false;
@@ -30,7 +34,11 @@ export function neverDescend(p: string, platform: NodeJS.Platform = process.plat
 
 /** The whole list for a platform, in a fixed order — what the native walker is given. */
 export function neverDescendPaths(platform: NodeJS.Platform = process.platform): string[] {
-  if (platform === 'darwin') return [...DARWIN_SKIP];
-  if (platform === 'linux') return [...LINUX_SKIP];
-  return [];
+  const fixed = platform === 'darwin' ? [...DARWIN_SKIP] : platform === 'linux' ? [...LINUX_SKIP] : [];
+  return extraForTests ? [...fixed, ...extraForTests] : fixed;
+}
+
+/** Tests only: `paths` join every platform's never-descend list, for every engine; null puts the fixed lists back. */
+export function setNeverDescendForTests(paths: readonly string[] | null): void {
+  extraForTests = paths ? new Set(paths) : null;
 }

@@ -277,7 +277,16 @@ OpenAPI 3 spec).
      machine with no git and no backup still scores everything on size,
      staleness and regenerability. A file that cannot be scored at all simply
      does not match.
-   - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
+   - `GET /api/empty-folders` — the topmost empty folders. **Never a folder
+     the scan did not list in full**: one it was refused, could not read, saw
+     vanish, never entered (`/Volumes`, `/dev`, …), or listed with entries left
+     out (a "don't scan" pattern, a failed stat) is not empty, and neither is
+     any folder above it. Each folder offered was also looked at again on disk
+     just now; one that holds something, refuses or does not answer is left
+     out and counted in `withheld`. A gdu scan offers none and says why in
+     `reason` (gdu shows a folder it could not read as an empty one). To trash
+     what it offers, send `onlyEmptyFolders: true` (below).
+   - `GET /api/file-types`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"
      right-click entry. Per-user, no elevation, and the installed flag is read
@@ -324,7 +333,11 @@ OpenAPI 3 spec).
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
-     Trash** — recoverable, never a hard delete.
+     Trash** — recoverable, never a hard delete. With `onlyEmptyFolders: true`
+     each path is looked at again right before its own Trash step, and one
+     that is no longer an empty folder (OS junk such as `.DS_Store` aside) is
+     left where it is, in `failed[]` with `code: "FOLDER_NOT_EMPTY"`; a dry
+     run lists those in `notEmpty`.
    - `POST /api/offload` with `{ scanId, paths, dest }` moves data to another
      drive the safe way: copy → verify SHA-256 → only then trash originals;
      any failure rolls back and leaves local data untouched.

@@ -1,7 +1,7 @@
 import { FileNode } from '../models/types';
 import { detectContainerKind } from '../utils/containerKind';
 import { ScanStore, NodeInput, Flag } from './scanStore';
-import { keepSmallest } from './scanRefusals';
+import { keepSmallest, markUnlisted } from './scanRefusals';
 
 /**
  * gdu's JSON export -> TreeMap's FileNode.
@@ -364,6 +364,10 @@ export function mapGduTreeIntoStore(
       isHidden: name.charCodeAt(0) === 46,
       container: detectContainerKind(name, true),
     });
+    // Never listed, so never offered as empty (Track U, U-4). gdu v5.36.1 does
+    // not flag a refusal at all, which is why a gdu scan offers no empty folder
+    // until U-12 reads its refusals from its log.
+    if (meta.read_error === true) markUnlisted(store, dirId);
 
     let sawGit = false;
     for (let i = 1; i < d.length; i++) {

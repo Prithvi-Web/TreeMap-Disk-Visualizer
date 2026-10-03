@@ -1,4 +1,5 @@
 import type { ScanResult } from '../models/types';
+import { Flag, type ScanStore } from './scanStore';
 
 /**
  * Folders the OS would not let a scan list, counted and named.
@@ -27,4 +28,50 @@ export function noteRefused(scan: ScanResult, dirPath: string): void {
   scan.deniedDirs = (scan.deniedDirs ?? 0) + 1;
   scan.deniedExamples = scan.deniedExamples ?? [];
   keepSmallest(scan.deniedExamples, dirPath);
+}
+
+/**
+ * Folder `id` is one whose whole listing the tree does not hold (Track U, U-4,
+ * `Flag.Unlisted`): refused, unreadable, vanished mid-walk, never entered, or
+ * listed with entries left out. Its node looks childless, or emptier than it
+ * is, so Empty Folders never offers it nor any folder above it. Every engine
+ * marks it where it knows (decision U-D12: what was not listed is taken from the
+ * walk's own records, never from "a childless node"). An id taken before
+ * `finalize()` is fine: the flag moves with its node when the store renumbers.
+ * Marking twice changes nothing, and bumps the store's version once.
+ */
+export function markUnlisted(store: ScanStore, id: number): void {
+  if (!store.flag(id, Flag.Unlisted)) store.setFlag(id, Flag.Unlisted, true);
+}
+
+/**
+ * The never-descend paths a finished scan did not enter, marked `Flag.Unlisted`
+ * on any engine's tree (the walker, both native paths, gdu, the NTFS turbo
+ * mode): the folder at each path strictly under the root, or — where an engine
+ * left the node out, as gdu's `-x` drops a mount point — the folder that held
+ * it, whose listing is then short of it. A path that is the root was listed
+ * (a never-descend path may be chosen as the root). A path whose parent the
+ * tree does not hold either, or whose parent is the root, marks nothing: no
+ * folder Empty Folders could offer lost an entry to it.
+ *
+ * Today `settleComplete` hands it the fixed list (`neverDescendPaths`). Under
+ * "Stay on this drive" (U-24) it is handed the scan's own never-descend list,
+ * the mounts not entered included, and a not-entered mount is kept out of Empty
+ * Folders by this same mark.
+ */
+export function markUnlistedPaths(store: ScanStore, paths: readonly string[]): void {
+  const root = store.rootPath;
+  const base = root.endsWith(store.sep) ? root : root + store.sep;
+  for (const p of paths) {
+    if (p.length <= base.length || !p.startsWith(base)) continue;
+    const id = store.findByPath(p);
+    if (id !== -1) {
+      markUnlisted(store, id);
+      continue;
+    }
+    const cut = p.lastIndexOf(store.sep);
+    if (cut < base.length) continue; // its parent is the root
+    const parent = store.findByPath(p.slice(0, cut));
+    if (parent !== -1) markUnlisted(store, parent);
+  }
 }

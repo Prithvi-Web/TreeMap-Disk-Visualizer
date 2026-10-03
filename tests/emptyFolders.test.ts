@@ -1,11 +1,35 @@
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-emptyFolders-data-');
+// gdu is asked for by name in the one test that wants it; Automatic never picks it here.
+process.env.TREEMAP_NO_GDU = '1';
 
-import { FileNode } from '../src/models/types';
-import { collectEmptyFolders } from '../src/services/diskScanner';
+import type { NativeStore, WalkResult } from '../native/index';
+import { FileNode, ScanResult } from '../src/models/types';
+import { collectEmptyFolders, createScanRecord, startScan } from '../src/services/diskScanner';
+import { buildStoreFromTree, Flag, ObjectScanStore, PackedScanStore } from '../src/services/scanStore';
+import { markUnlistedPaths } from '../src/services/scanRefusals';
+import { emptyFoldersForScan, GDU_EMPTY_FOLDERS_REASON } from '../src/services/emptyFolders';
+import { setEmptyCheckForTests } from '../src/services/emptyFolderCheck';
+import { setNeverDescendForTests } from '../src/utils/mountBoundaries';
+import { updateSettings } from '../src/services/settings';
+import { ingestColumns, KIND_DIR, REFUSAL_DENIED, REFUSAL_UNREADABLE, REFUSAL_VANISHED } from '../src/services/scan/nativeEngine';
+import { adoptNativeStore } from '../src/services/scan/nativeMemory';
+import { statToInput } from '../src/services/scan/nodeInput';
+import { findGduBinary } from '../src/services/gduScanner';
+import { mapGduTreeIntoStore } from '../src/services/gduMapper';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { canLock } from './fixtures/nativeEdge';
+import { skipOrFailOnCi } from './fixtures/ciSkip';
+import { waitFor } from './fixtures/waitFor';
+import { settled } from '../src/utils/backgroundWrites';
 
 /**
  * Empty Folders reports directories with nothing underneath them.
@@ -111,4 +135,527 @@ test('a repository that is genuinely empty is skipped whole, not descended into'
   const { folders, totalCount } = collectEmptyFolders(t, true);
   assert.deepEqual(folders, []);
   assert.equal(totalCount, 0);
+});
+
+/* ═══════════════ U-4: a folder the scan did not list in full is never empty ═══════════════ */
+
+/*
+ * Track U, U-4. A folder macOS refused the scan, one the scan never entered (the
+ * never-descend list; later the drives "Stay on this drive" leaves out), one that
+ * failed or vanished mid-walk, and one whose listing a "don't scan" pattern or a
+ * failed stat left entries out of, all look childless in the tree. Each was
+ * offered as empty, and trashing it trashes what the scan never saw. Three layers
+ * keep it out: the scan's own record (`Flag.Unlisted`, set where each engine
+ * knows), a second look on disk at every folder the answer offers (what no record
+ * can know: the native memory path's unreadable folders, a cached listing, a
+ * change since the scan), and a last look at delete time
+ * (tests/emptyFoldersDelete.test.ts).
+ */
+
+test('a folder the scan did not list in full is never offered, never counted, and no folder above it is empty', () => {
+  const shape = (): FileNode => dir('r', '/r', [
+    dir('refused', '/r/refused', []),
+    dir('holder', '/r/holder', [dir('locked', '/r/holder/locked', [])]),
+    // Listed, but a "don't scan" pattern left an entry out: its listed empty child is still empty.
+    dir('partial', '/r/partial', [dir('kid', '/r/partial/kid', [])]),
+    dir('fine', '/r/fine', []),
+  ]);
+  for (const store of [buildStoreFromTree(shape()), ObjectScanStore.wrap(shape())]) {
+    for (const p of ['/r/refused', '/r/holder/locked', '/r/partial']) store.setFlag(store.findByPath(p), Flag.Unlisted, true);
+    const { folders, totalCount } = collectEmptyFolders(store, true);
+    const kind = store instanceof PackedScanStore ? 'packed' : 'object';
+    assert.deepEqual(folders.map((f) => f.path), ['/r/partial/kid', '/r/fine'],
+      `${kind}: a folder not listed in full holds what the scan did not see, so neither it nor its holder is empty`);
+    assert.equal(totalCount, 2, `${kind}: and neither is counted`);
+  }
+});
+
+test('a never-descend path is marked where the tree holds it, and the folder that held it where an engine left the node out', () => {
+  const store = buildStoreFromTree(dir('r', '/r', [
+    dir('Volumes', '/r/Volumes', []),
+    dir('a', '/r/a', [dir('b', '/r/a/b', [])]),
+    dir('c', '/r/c', []),
+  ]));
+  markUnlistedPaths(store, ['/r', '/r/Volumes', '/r/c/mnt', '/r/absent', '/r/gone/deeper', '/elsewhere/x']);
+  const flagged = (p: string): boolean => store.flag(store.findByPath(p), Flag.Unlisted);
+  assert.equal(flagged('/r/Volumes'), true, 'held by the tree: marked');
+  assert.equal(flagged('/r/c'), true, 'left out of the tree (gdu\'s -x drops a mount point): the folder that held it is marked');
+  assert.equal(flagged('/r'), false, 'the root was listed (a never-descend path may be scanned as a root), and an absent path right under it marks nothing');
+  assert.equal(flagged('/r/a'), false, 'nothing else is marked');
+  assert.equal(flagged('/r/a/b'), false);
+  assert.deepEqual(collectEmptyFolders(store, true).folders.map((f) => f.path), ['/r/a']);
+});
+
+/* ─────────────── the native engine's records, on columns built by hand ─────────────── */
+
+/** Columns as the walk hands them over for `root`: every node a folder directly under the root, `refused` as given. */
+function handColumns(root: string, names: string[], refused: Array<[number, number]>): WalkResult {
+  const all = [path.basename(root), ...names];
+  const encoded = all.map((n) => Buffer.from(n, 'utf8'));
+  const nameOff = new Uint32Array(all.length + 1);
+  let at = 0;
+  encoded.forEach((b, i) => { nameOff[i] = at; at += b.length; });
+  nameOff[all.length] = at;
+  const n = all.length;
+  return {
+    parent: new Uint32Array(n),
+    nameOff,
+    names: new Uint8Array(Buffer.concat(encoded)),
+    kind: new Uint8Array(n).fill(KIND_DIR),
+    flags: new Uint8Array(n),
+    size: new Float64Array(n),
+    allocBytes: new Float64Array(n),
+    mtimeMs: new Float64Array(n).fill(NOW),
+    atimeMs: new Float64Array(n),
+    hardlinkNode: new Uint32Array(0),
+    hardlinkFamily: new Uint32Array(0),
+    refusalNode: Uint32Array.from(refused.map(([node]) => node)),
+    refusalWhy: Uint8Array.from(refused.map(([, why]) => why)),
+    stats: {
+      dirsListed: n - refused.length, entries: n - 1, wallMs: 1, cpuSeconds: null, fastPath: 'bulk', workersPeak: 1, climbSteps: 0,
+      deniedEntries: 0, unreadableEntries: 0, dataless: 0,
+    },
+  };
+}
+
+test('the native columns: a folder the walk refused, saw vanish or could not read is not listed, whichever it was', () => {
+  const root = '/r';
+  const scan = createScanRecord(root);
+  const store = new PackedScanStore(root, '/', statToInput('r', true, 0, NOW));
+  ingestColumns(scan, store, handColumns(root, ['denied', 'vanished', 'unreadable', 'fine'], [
+    [1, REFUSAL_DENIED], [2, REFUSAL_VANISHED], [3, REFUSAL_UNREADABLE],
+  ]), root);
+  store.finalize();
+  for (const name of ['denied', 'vanished', 'unreadable']) {
+    assert.equal(store.flag(store.findByPath(`/r/${name}`), Flag.Unlisted), true, `${name}: not listed`);
+  }
+  assert.equal(store.flag(store.findByPath('/r/fine'), Flag.Unlisted), false, 'a folder the walk listed is listed');
+  assert.deepEqual(collectEmptyFolders(store, true).folders.map((f) => f.path), ['/r/fine']);
+  assert.equal(scan.deniedDirs, 1, 'and the counts are as before');
+  assert.equal(scan.vanishedDirs, 1);
+  assert.equal(scan.unreadableDirs, 1);
+});
+
+/** A memory-mode store as the native build hands it over: the root (0) holding folders `a` (1) and `b` (2), both childless. */
+function handMemoryStore(deniedDirs: number[], unreadableDirs: number): NativeStore {
+  const capacity = 4;
+  const names = ['r', 'a', 'b'].map((n) => new TextEncoder().encode(n));
+  const nameOff = new Uint32Array(capacity + 1);
+  let at = 0;
+  names.forEach((bytes, id) => { nameOff[id] = at; at += bytes.length; });
+  for (let id = names.length; id <= capacity; id++) nameOff[id] = at;
+  const pool = new Uint8Array(at + 4);
+  names.forEach((bytes, id) => pool.set(bytes, nameOff[id]));
+  const dirFlags = Flag.Dir | Flag.HasChildArray;
+  const col = <T extends { set(v: ArrayLike<number>): void }>(make: (n: number) => T, rows: number[]): T => {
+    const out = make(capacity);
+    out.set(rows);
+    return out;
+  };
+  return {
+    n: 3,
+    capacity,
+    parent: col((n) => new Int32Array(n), [-1, 0, 0]),
+    size: new Float64Array(capacity),
+    mtime: col((n) => new Float64Array(n), [NOW, NOW, NOW]),
+    flags: col((n) => new Uint16Array(n), [dirFlags, dirFlags, dirFlags]),
+    ext: new Uint16Array(capacity),
+    container: new Uint8Array(capacity),
+    cloudProv: new Uint8Array(capacity),
+    nameOff,
+    names: pool,
+    namesLen: at,
+    childStart: col((n) => new Uint32Array(n), [1, 3, 3]),
+    childCnt: col((n) => new Uint32Array(n), [2, 0, 0]),
+    extDict: [''],
+    extOverflowIds: new Uint32Array(0),
+    extOverflowTexts: [],
+    cloudCandidates: new Uint32Array(0),
+    textCandidates: new Uint32Array(0),
+    sparseTermIds: new Uint32Array(0),
+    sparseTermBytes: new Float64Array(0),
+    counters: {
+      dirs: 3, files: 0, hardlinkedFiles: 0, hardlinkedBytes: 0, cloudFiles: 0, cloudBytes: 0,
+      sparseFiles: 0, sparseBytes: 0, slackBytes: 0, deniedDirs, vanishedDirs: 0, unreadableDirs,
+    },
+    stats: {
+      dirsListed: 3 - deniedDirs.length - unreadableDirs, entries: 2, wallMs: 1, cpuSeconds: null, fastPath: 'bulk', workersPeak: 1, climbSteps: 0,
+      deniedEntries: 0, unreadableEntries: 0, dataless: 0,
+    },
+  } as NativeStore;
+}
+
+test('gdu\'s mapper: a folder gdu flagged read_error is not listed', () => {
+  const store = new PackedScanStore('/r', '/', statToInput('r', true, 0, NOW));
+  const doc = [1, 2, {}, [{ name: '/r/shard', mtime: 1 }, [{ name: 'locked', mtime: 1, read_error: true }], [{ name: 'fine', mtime: 1 }]]];
+  const { stats } = mapGduTreeIntoStore(doc, '/r/shard', store, store.rootId);
+  store.finalize();
+  assert.equal(stats.deniedDirs, 1, 'counted, as before');
+  assert.equal(store.flag(store.findByPath('/r/shard/locked'), Flag.Unlisted), true, 'and not listed');
+  assert.equal(store.flag(store.findByPath('/r/shard/fine'), Flag.Unlisted), false);
+});
+
+test('the native memory path: a folder the walk was refused is not listed', () => {
+  const scan = createScanRecord('/r');
+  const store = new PackedScanStore('/r', '/', statToInput('r', true, 0, NOW));
+  adoptNativeStore(scan, store, handMemoryStore([1], 0));
+  assert.equal(store.flag(1, Flag.Unlisted), true, 'the refused folder, by the id the build named');
+  assert.equal(store.flag(2, Flag.Unlisted), false);
+  assert.deepEqual(collectEmptyFolders(store, true).folders.map((f) => f.path), ['/r/b']);
+});
+
+/* ─────────────── real scans, through GET /api/empty-folders ─────────────── */
+
+interface Answer {
+  folders: { name: string; path: string }[];
+  totalCount: number;
+  truncated: boolean;
+  withheld: number;
+  reason?: string;
+}
+
+let server: http.Server;
+let port: number;
+
+before(async () => {
+  resetRateLimiter();
+  server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  port = (server.address() as { port: number }).port;
+});
+
+after(async () => {
+  setNeverDescendForTests(null);
+  setEmptyCheckForTests(null);
+  await updateSettings({ engine: 'auto', ignore: [] });
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+function get(url: string): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: url }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => { buf += c; });
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) });
+        } catch {
+          resolve({ status: res.statusCode ?? 0, body: buf });
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function emptyFolders(scanId: string, ignoreJunk = true): Promise<Answer> {
+  const r = await get(`/api/empty-folders?scanId=${scanId}&ignoreJunk=${ignoreJunk}`);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  return r.body as Answer;
+}
+
+/** A fresh real folder holding `entries`: a name ending in `/` is a folder, any other a file. */
+function onDisk(prefix: string, entries: string[]): string {
+  const root = fs.realpathSync(fileTempDir(`treemap-emptyFolders-${prefix}-`));
+  for (const e of entries) {
+    const full = path.join(root, ...e.split('/').filter(Boolean));
+    if (e.endsWith('/')) {
+      fs.mkdirSync(full, { recursive: true });
+    } else {
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, 'x');
+    }
+  }
+  return root;
+}
+
+async function scanWith(engine: 'walker' | 'native' | 'auto' | 'gdu', root: string): Promise<ScanResult> {
+  await updateSettings({ engine });
+  const scan = await startScan(root);
+  await waitFor(() => scan.status !== 'running', `the ${engine} scan of ${root}`);
+  assert.equal(scan.status, 'complete', scan.error);
+  return scan;
+}
+
+/** False (after a skip, or a failure on CI) when the engine asked for is not the one that ran. */
+function ran(t: TestContext, scan: ScanResult, engine: 'walker' | 'native'): boolean {
+  const ok = engine === 'native' ? scan.engine === 'native' : scan.engine === 'walker' || scan.engine === 'turbo-walker';
+  if (!ok) skipOrFailOnCi(t, `the ${engine} engine did not run (${scan.engine}): ${scan.fallbackReason ?? scan.engineReason}`);
+  return ok;
+}
+
+const offered = (a: Answer): string[] => a.folders.map((f) => f.path);
+
+for (const engine of ['walker', 'native'] as const) {
+  test(`${engine}: a genuinely empty folder, one holding only junk and one holding only empty folders are still offered`, async (t) => {
+    const root = onDisk(`${engine}-plain`, ['e1/', 'junk/.DS_Store', 'nest/a/b/', 'real/file.txt']);
+    const scan = await scanWith(engine, root);
+    if (!ran(t, scan, engine)) return;
+    const answer = await emptyFolders(scan.scanId);
+    assert.deepEqual(offered(answer), ['e1', 'junk', 'nest'].map((n) => path.join(root, n)), 'the topmost empty folders, the second look agreeing');
+    assert.equal(answer.totalCount, 5, 'e1, junk, nest, nest/a and nest/a/b');
+    assert.equal(answer.withheld, 0, 'nothing changed since the scan, so nothing is withheld');
+    assert.deepEqual(Object.keys(answer), ['folders', 'totalCount', 'truncated', 'withheld'], 'the answer keeps its keys and adds one');
+  });
+
+  test(`${engine}: a never-descend folder is never offered, and totalCount excludes it`, async (t) => {
+    // Empty on disk, so only the scan's own record can keep it out: a second look would find it empty.
+    const root = onDisk(`${engine}-never`, ['mnt/', 'plain/', 'keep/file.txt']);
+    setNeverDescendForTests([path.join(root, 'mnt')]);
+    try {
+      const scan = await scanWith(engine, root);
+      if (!ran(t, scan, engine)) return;
+      const answer = await emptyFolders(scan.scanId);
+      assert.deepEqual(offered(answer), [path.join(root, 'plain')], 'the folder the scan never entered is not offered');
+      assert.equal(answer.totalCount, 1, 'nor counted');
+      assert.equal(answer.withheld, 0, 'it was never a candidate: the second look never touched it');
+    } finally {
+      setNeverDescendForTests(null);
+    }
+  });
+
+  test(`${engine}: a folder the walk was refused (mode 000) is never offered, nor the folder that holds it`, { skip: !canLock && 'a folder cannot be made unlistable here (Windows, or running as root)' }, async (t) => {
+    const root = onDisk(`${engine}-locked`, ['locked/secret.bin', 'holder/locked2/', 'plain/']);
+    const locked = [path.join(root, 'locked'), path.join(root, 'holder', 'locked2')];
+    for (const p of locked) fs.chmodSync(p, 0o000);
+    try {
+      const scan = await scanWith(engine, root);
+      if (!ran(t, scan, engine)) return;
+      assert.equal(scan.deniedDirs, 2, 'both refusals were counted');
+      const answer = await emptyFolders(scan.scanId);
+      assert.deepEqual(offered(answer), [path.join(root, 'plain')]);
+      assert.equal(answer.totalCount, 1);
+      assert.equal(answer.withheld, 0, 'kept out by the scan\'s record, before any second look');
+    } finally {
+      for (const p of locked) fs.chmodSync(p, 0o755);
+    }
+  });
+
+  test(`${engine}: an offered folder that changed after the scan is withheld, counted, and its nested count leaves totalCount`, async (t) => {
+    const root = onDisk(`${engine}-changed`, ['e1/', 'e2/', 'nest/a/', 'keep/file.txt']);
+    const scan = await scanWith(engine, root);
+    if (!ran(t, scan, engine)) return;
+    assert.equal((await emptyFolders(scan.scanId)).totalCount, 4, 'before: e1, e2, nest and nest/a');
+    fs.writeFileSync(path.join(root, 'e1', 'new.txt'), 'arrived after the scan');
+    fs.writeFileSync(path.join(root, 'nest', 'a', 'new.txt'), 'and here, one folder down');
+    const answer = await emptyFolders(scan.scanId);
+    assert.deepEqual(offered(answer), [path.join(root, 'e2')], 'only the folder still empty on disk');
+    assert.equal(answer.withheld, 2, 'the two offered folders that hold something now');
+    assert.equal(answer.totalCount, 1, 'and the count no longer holds them, nest/a included');
+  });
+}
+
+test('walker: a folder the walk could not read (an injected EIO) is never offered', async (t) => {
+  // Empty on disk: the second look would offer it, so only the walk's record keeps it out.
+  const root = onDisk('eio', ['broken/', 'plain/']);
+  const broken = path.join(root, 'broken');
+  const real = fs.promises.readdir;
+  (fs.promises as { readdir: unknown }).readdir = function (p: fs.PathLike, ...rest: unknown[]) {
+    if (String(p) === broken) {
+      return Promise.reject(Object.assign(new Error(`EIO: i/o error, scandir '${broken}'`), { code: 'EIO', errno: -5, syscall: 'scandir', path: broken }));
+    }
+    return (real as (...a: unknown[]) => Promise<unknown>).call(fs.promises, p, ...rest);
+  };
+  let scan: ScanResult;
+  try {
+    scan = await scanWith('walker', root);
+  } finally {
+    (fs.promises as { readdir: unknown }).readdir = real;
+  }
+  if (!ran(t, scan, 'walker')) return;
+  assert.equal(scan.unreadableDirs, 1, 'the failed listing was counted');
+  const answer = await emptyFolders(scan.scanId);
+  assert.deepEqual(offered(answer), [path.join(root, 'plain')]);
+  assert.equal(answer.totalCount, 1);
+});
+
+/** Run a walker scan of `root` with `fs.promises.lstat` failing for `target` with `code`. */
+async function scanWithLstatFailing(root: string, target: string, code: string): Promise<ScanResult> {
+  const real = fs.promises.lstat;
+  (fs.promises as { lstat: unknown }).lstat = function (p: fs.PathLike, ...rest: unknown[]) {
+    if (String(p) === target) return Promise.reject(Object.assign(new Error(`${code}: lstat '${target}'`), { code, syscall: 'lstat', path: target }));
+    return (real as (...a: unknown[]) => Promise<unknown>).call(fs.promises, p, ...rest);
+  };
+  try {
+    return await scanWith('walker', root);
+  } finally {
+    (fs.promises as { lstat: unknown }).lstat = real;
+  }
+}
+
+for (const code of ['EACCES', 'EIO']) {
+  test(`walker: a folder whose only entry could not be looked at (${code}) is never offered`, async (t) => {
+    const root = onDisk(`entry-${code}`, ['shy/hidden.bin', 'plain/']);
+    const scan = await scanWithLstatFailing(root, path.join(root, 'shy', 'hidden.bin'), code);
+    if (!ran(t, scan, 'walker')) return;
+    assert.equal(code === 'EACCES' ? scan.deniedEntries : scan.unreadableEntries, 1, 'the entry was counted');
+    const answer = await emptyFolders(scan.scanId);
+    assert.deepEqual(offered(answer), [path.join(root, 'plain')]);
+    assert.equal(answer.withheld, 0, 'kept out by the walk\'s record: the folder was never a candidate for the second look');
+  });
+}
+
+test('walker: an entry that vanished between the listing and its stat leaves its folder empty, as it is', async (t) => {
+  const root = onDisk('entry-vanished', ['went/gone.bin', 'plain/']);
+  const gone = path.join(root, 'went', 'gone.bin');
+  const scan = await scanWithLstatFailing(root, gone, 'ENOENT');
+  if (!ran(t, scan, 'walker')) return;
+  fs.rmSync(gone);
+  const answer = await emptyFolders(scan.scanId);
+  assert.deepEqual(offered(answer), ['plain', 'went'].map((n) => path.join(root, n)), 'a race with a delete accounts for nothing');
+});
+
+test('walker: a "don\'t scan" pattern that left entries out of a folder keeps it from being offered', async (t) => {
+  const root = onDisk('ignored', ['proj/node_modules/x.js', 'plain/']);
+  await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+  try {
+    const scan = await scanWith('auto', root);
+    if (!ran(t, scan, 'walker')) return;
+    const store = scan.store as PackedScanStore;
+    assert.equal(store.findByPath(path.join(root, 'proj', 'node_modules')), -1, 'the pattern was honoured');
+    const answer = await emptyFolders(scan.scanId);
+    assert.deepEqual(offered(answer), [path.join(root, 'plain')], 'proj holds node_modules, which the scan was told not to list');
+    assert.equal(answer.withheld, 0, 'kept out by the walk\'s record, before any second look');
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
+});
+
+test('walker, fast rescan: a folder the cached listing names but the disk no longer has is never offered', async (t) => {
+  const root = onDisk('cached-vanished', ['holder/gone/', 'holder/keep.txt', 'plain/']);
+  const holder = path.join(root, 'holder');
+  const first = await scanWith('walker', root);
+  if (!ran(t, first, 'walker')) return;
+  await settled(); // the fast-rescan cache is written after the scan answers
+  // The folder goes, and its parent's time is put back, so the rescan takes the parent's listing from the cache.
+  const times = fs.statSync(holder);
+  fs.rmdirSync(path.join(holder, 'gone'));
+  fs.utimesSync(holder, times.atime, times.mtime);
+  const again = await startScan(root, { incremental: true });
+  await waitFor(() => again.status !== 'running', 'the fast rescan');
+  assert.equal(again.status, 'complete', again.error);
+  assert.ok((again.cachedDirs ?? 0) > 0, 'the rescan took a listing from the cache');
+  const store = again.store as PackedScanStore;
+  assert.notEqual(store.findByPath(path.join(holder, 'gone')), -1, 'the cached listing still names the folder');
+  const answer = await emptyFolders(again.scanId);
+  assert.deepEqual(offered(answer), [path.join(root, 'plain')]);
+  assert.equal(answer.withheld, 0, 'kept out by the walk\'s record that it never listed it, before any second look');
+});
+
+test('the native memory path names no unreadable folder, so the second look is what keeps one out', async () => {
+  // `a` stands for a folder the walk could not read: counted, never named. On disk it holds a file.
+  const root = onDisk('memory-unreadable', ['a/inside.txt', 'b/']);
+  const scan = createScanRecord(root);
+  const store = new PackedScanStore(root, path.sep, statToInput(path.basename(root), true, 0, NOW));
+  adoptNativeStore(scan, store, handMemoryStore([], 1));
+  scan.engine = 'native';
+  scan.store = store;
+  scan.status = 'complete';
+  const answer = await emptyFoldersForScan(scan, true);
+  assert.deepEqual(answer.folders.map((f) => f.path), [path.join(root, 'b')]);
+  assert.equal(answer.withheld, 1, 'a, offered by the tree, was looked at again and left out');
+  assert.equal(answer.totalCount, 1);
+});
+
+/* ─────────────── the second look's own rules ─────────────── */
+
+async function settledWalkerScan(prefix: string, entries: string[]): Promise<{ root: string; scan: ScanResult }> {
+  const root = onDisk(prefix, entries);
+  return { root, scan: await scanWith('walker', root) };
+}
+
+test('a folder the second look cannot read is withheld', async () => {
+  const { root, scan } = await settledWalkerScan('second-refused', ['e1/', 'e2/']);
+  const refused = path.join(root, 'e1');
+  setEmptyCheckForTests({
+    readdir: (p) => (p === refused
+      ? Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }))
+      : fs.promises.readdir(p, { withFileTypes: true })),
+  });
+  try {
+    const answer = await emptyFolders(scan.scanId);
+    assert.deepEqual(offered(answer), [path.join(root, 'e2')]);
+    assert.equal(answer.withheld, 1);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('a second look that does not answer withholds that folder and every one not yet looked at', async () => {
+  const names = ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8'];
+  const { scan } = await settledWalkerScan('second-silent', names.map((n) => `${n}/`));
+  let asked = 0;
+  setEmptyCheckForTests({
+    lstat: () => {
+      asked++;
+      return new Promise(() => { /* a folder on a drive that stopped answering */ });
+    },
+    deadline: () => ({ late: Promise.resolve(), cancel: () => {} }),
+  });
+  try {
+    const answer = await emptyFolders(scan.scanId);
+    assert.deepEqual(answer.folders, [], 'nothing unanswered is offered');
+    assert.equal(answer.withheld, names.length, 'every folder is withheld, looked at or not');
+    assert.ok(asked >= 1 && asked <= 4, `after the first silence no new folder is asked (asked ${asked} of ${names.length})`);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+/* ─────────────── gdu cannot tell an empty folder from a refused one ─────────────── */
+
+test('a gdu scan offers no empty folder, and says why', async () => {
+  const root = onDisk('gdu-record', ['e1/', 'keep/file.txt']);
+  const scan = createScanRecord(root);
+  scan.engine = 'gdu-turbo';
+  scan.store = buildStoreFromTree(dir(path.basename(root), root, [
+    dir('e1', path.join(root, 'e1'), []),
+    dir('keep', path.join(root, 'keep'), [file('file.txt', path.join(root, 'keep', 'file.txt'), 1)]),
+  ]), path.sep);
+  scan.status = 'complete';
+  const direct = await emptyFoldersForScan(scan, true);
+  assert.deepEqual(direct, { folders: [], totalCount: 0, truncated: false, withheld: 0, reason: GDU_EMPTY_FOLDERS_REASON });
+  assert.match(GDU_EMPTY_FOLDERS_REASON, /gdu/, 'the reason names the engine');
+  assert.match(GDU_EMPTY_FOLDERS_REASON, /Scan engine/, 'and what to do instead');
+  const answer = await emptyFolders(scan.scanId);
+  assert.deepEqual(answer, direct, 'the route answers the same, reason included');
+});
+
+test('a cloud scan\'s folders live at the provider: offered from its listing, never looked for on this disk', async () => {
+  const root = 'cloud://gdrive/u4-test';
+  const scan = createScanRecord(root);
+  scan.engine = 'cloud';
+  scan.store = buildStoreFromTree(dir('u4-test', root, [dir('empty', `${root}/empty`, [])]), '/');
+  scan.status = 'complete';
+  const answer = await emptyFoldersForScan(scan, true);
+  assert.deepEqual(answer.folders.map((f) => f.path), [`${root}/empty`]);
+  assert.equal(answer.withheld, 0, 'no local look could find a cloud folder, so none is made');
+});
+
+test('a real gdu scan offers no empty folder, and says why', { skip: process.platform === 'win32' && 'gdu never runs on Windows (gduRuleFor)' }, async (t) => {
+  if (!(await findGduBinary())) {
+    skipOrFailOnCi(t, 'no gdu binary is bundled or on PATH; fetch it with node scripts/fetchGdu.js');
+    return;
+  }
+  const root = onDisk('gdu-real', ['e1/', 'keep/file.txt']);
+  delete process.env.TREEMAP_NO_GDU;
+  let scan: ScanResult;
+  try {
+    scan = await scanWith('gdu', root);
+  } finally {
+    process.env.TREEMAP_NO_GDU = '1';
+  }
+  assert.equal(scan.engine, 'gdu-turbo', scan.engineReason);
+  const answer = await emptyFolders(scan.scanId);
+  assert.deepEqual(answer.folders, []);
+  assert.equal(answer.reason, GDU_EMPTY_FOLDERS_REASON);
+});
+
+test('openapi describes the two additive fields', async () => {
+  const doc = (await get('/api/openapi.json')).body;
+  const schema = doc.components.schemas.EmptyFoldersResult;
+  assert.deepEqual(schema.required, ['folders', 'totalCount', 'truncated', 'withheld'], 'withheld is always sent');
+  assert.ok(schema.properties.withheld, 'withheld is described');
+  assert.ok(schema.properties.reason, 'reason is described');
+  assert.ok(!schema.required.includes('reason'), 'and reason is sent only when it applies');
 });

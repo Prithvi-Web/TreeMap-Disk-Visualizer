@@ -8,6 +8,7 @@ import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
 import { assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
 import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
+import { stillEmptyFolder } from './emptyFolderCheck';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -170,6 +171,15 @@ export interface TrashOptions {
    * being shown it.
    */
   unattended?: boolean;
+  /**
+   * Every path was offered as an empty folder (Empty Folders, Track U U-4):
+   * each is looked at again right before its own Trash step, and one that is
+   * not still an empty folder — it holds something (OS junk such as .DS_Store
+   * aside), a folder in it cannot be read, it does not answer, it is not a
+   * folder — is left where it is and failed with `code: 'FOLDER_NOT_EMPTY'`.
+   * A path that is gone fails as it always did.
+   */
+  onlyEmptyFolders?: boolean;
 }
 
 /** The step that moves one path to the Trash; a test replaces it (setTrashStepForTests). */
@@ -232,6 +242,14 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
       if (refusal) {
         await fsp.lstat(p);
         throw new TrashRefusal(refusal);
+      }
+      if (opts.onlyEmptyFolders) {
+        // At this path's own turn, not before the batch: an earlier step's wait is time for it to fill.
+        const look = await stillEmptyFolder(p, true);
+        if (!look.empty && look.why !== 'gone') {
+          failed.push({ path: p, reason: look.reason, refused: true, code: 'FOLDER_NOT_EMPTY' });
+          continue;
+        }
       }
       await trashStep(p);
       deleted.push(p);

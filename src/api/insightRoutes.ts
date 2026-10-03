@@ -3,9 +3,9 @@ import { requireScan, clampInt } from './scanRoutes';
 import {
   allScans,
   collectLargestFoldersAsync,
-  collectEmptyFolders,
   compareTrees,
 } from '../services/diskScanner';
+import { emptyFoldersForScan } from '../services/emptyFolders';
 import { getDuplicateJob } from '../services/duplicateFinder';
 import { getNearDupeJob } from '../services/perceptualDupes';
 import { warmThumbnails } from '../services/thumbnailCache';
@@ -232,11 +232,18 @@ insightRouter.get('/large-folders', async (req: Request, res: Response) => {
   res.json({ folders: await collectLargestFoldersAsync(storeOf(scan), limit, minSize) });
 });
 
-/** GET /api/empty-folders?scanId=&ignoreJunk=true */
-insightRouter.get('/empty-folders', storageModeGate, (req: Request, res: Response) => {
+/**
+ * GET /api/empty-folders?scanId=&ignoreJunk=true
+ *
+ * Never a folder the scan did not or could not list (Track U, U-4): the scan's
+ * records first, then a second look on disk at each folder offered (`withheld`
+ * counts the ones left out), and none at all from a gdu scan (`reason`). See
+ * services/emptyFolders.ts.
+ */
+insightRouter.get('/empty-folders', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignoreJunk = String(req.query.ignoreJunk ?? 'true') !== 'false';
-  res.json(collectEmptyFolders(storeOf(scan), ignoreJunk));
+  res.json(await emptyFoldersForScan(scan, ignoreJunk));
 });
 
 /**

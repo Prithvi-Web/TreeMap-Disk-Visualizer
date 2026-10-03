@@ -46,6 +46,18 @@ export enum Flag {
   HasAccessed = 256,
   /** Tombstone: detached by removeNode(); skipped by every traversal. */
   Removed = 512,
+  /**
+   * A folder whose whole listing the tree does not hold (Track U, U-4): the OS
+   * refused it, it could not be read or vanished mid-walk, the scan never
+   * entered it (the never-descend list; under "Stay on this drive" the drives
+   * it did not enter), or entries were left out of its listing (a "don't scan"
+   * pattern, an entry whose stat failed). What the tree holds under it is not
+   * all it holds, so Empty Folders never offers it, nor any folder above it.
+   * Set by Node only (`scanRefusals.markUnlisted`): the native build never
+   * sets it, and tm-store's `flag` module, which names the bits it sets, does
+   * not name it. Never serialized.
+   */
+  Unlisted = 1024,
 }
 
 export type CloudProviderName = 'icloud' | 'onedrive' | 'dropbox';
@@ -455,6 +467,8 @@ export class ObjectScanStore implements ScanStore {
   private ids = new Map<FileNode, number>();
   private parents: number[] = [];
   private removed = new Set<number>();
+  /** Folders whose listing the tree does not hold in full (`Flag.Unlisted`): not a FileNode field, so kept beside the tree. */
+  private unlisted = new Set<number>();
 
   /** Build-mode: start from a root described like any other node. */
   constructor(rootPath: string, sep: string, rootFields: NodeInput) {
@@ -479,6 +493,7 @@ export class ObjectScanStore implements ScanStore {
     store.ids = new Map();
     store.parents = [];
     store.removed = new Set();
+    store.unlisted = new Set();
     store.register(root, -1);
     return store;
   }
@@ -573,6 +588,7 @@ export class ObjectScanStore implements ScanStore {
       case Flag.Virtual: return n.virtual === true;
       case Flag.HasAccessed: return n.accessedAt !== undefined;
       case Flag.Removed: return this.removed.has(id);
+      case Flag.Unlisted: return this.unlisted.has(id);
       default: return false;
     }
   }
@@ -634,6 +650,7 @@ export class ObjectScanStore implements ScanStore {
       case Flag.CloudPlaceholder: if (on) n.cloudPlaceholder = true; else delete n.cloudPlaceholder; break;
       case Flag.GitRepo: if (on) n.gitRepo = true; else delete n.gitRepo; break;
       case Flag.Virtual: if (on) n.virtual = true; else delete n.virtual; break;
+      case Flag.Unlisted: if (on) this.unlisted.add(id); else this.unlisted.delete(id); break;
       default:
         throw new Error(`setFlag: ${Flag[f]} is structural, not settable`);
     }
