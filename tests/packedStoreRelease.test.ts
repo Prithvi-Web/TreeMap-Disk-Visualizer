@@ -136,11 +136,14 @@ const CALLS: Record<string, { call: (s: PackedScanStore) => unknown; fresh?: () 
   prune: { call: (s) => s.prune(0, { maxNodes: 10 }) },
   materialize: { call: (s) => s.materialize(0) },
   bareNode: { call: (s) => s.bareNode(4) },
+  reserve: { call: (s) => s.reserve(4, 64) },
+  buildCountsForTests: { call: (s) => s.buildCountsForTests() },
 };
 
 /** Members only the class itself calls: its storage plumbing and its checks. */
 const INTERNAL = new Set([
-  'allocate', 'grow', 'appendName', 'internExt', 'writeNode', 'check', 'live', 'requireFinal', 'nameEquals',
+  'allocate', 'grow', 'resize', 'appendName', 'growNames', 'internExt', 'writeNode', 'check', 'live', 'requireFinal', 'nameEquals',
+  'finalizeInOrder',
 ]);
 
 const PRODUCERS: Array<[string, () => PackedScanStore]> = [

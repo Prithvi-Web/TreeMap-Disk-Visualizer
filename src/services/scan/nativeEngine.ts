@@ -9,7 +9,8 @@ import { elevationRefusal, unpackedPath } from './mftHelperPath';
 import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTests } from './mftPrompt';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, ScanStore, joinPath } from '../scanStore';
-import { adoptNativeStore, memoryRoom, memoryStoreOptions, takeNativeStore, type MemoryRoom } from './nativeMemory';
+import { adoptNativeStoreInSlices, memoryRoom, memoryStoreOptions, takeNativeStore, type MemoryRoom } from './nativeMemory';
+import { completionSliceOptions, cpuMicros } from './completionSlices';
 import { formatCount } from '../../utils/formatCount';
 import { cloudProviderFor } from '../cloudFolders';
 import { markUnlisted, noteRefused } from '../scanRefusals';
@@ -265,6 +266,11 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
   const n = cols.parent.length;
   const names = Buffer.from(cols.names.buffer, cols.names.byteOffset, cols.names.byteLength);
   const off = cols.nameOff;
+  // Room for every row and name the walk holds, made once (Track U, U-35): no
+  // column regrows, and, the ingest's order being breadth first, finalize
+  // moves no row and has no room to trim. A name that is not UTF-8 is stored
+  // with U+FFFD, three bytes for each bad one, so it can still outgrow the room.
+  if (store instanceof PackedScanStore && n > 1) store.reserve(n - 1, off[n] - off[1]);
   const ids = new Int32Array(n);
   ids[0] = store.rootId;
   const pathOf = columnPathOf(cols, rootPath, store.sep);
@@ -661,7 +667,9 @@ async function settle(mod: ScanModule, handle: number): Promise<void> {
  * `Pausable` pauses the handle the instant the gate closes, and the poll
  * loop re-checks the gate, so neither path can be missed), then take the
  * columns, ingest them, finalize and sum. `scan.cpuSeconds` is the walk's
- * own thread CPU plus the ingest's `process.cpuUsage()` delta, or null where
+ * own thread CPU plus Node's after it, as `process.cpuUsage()` deltas: the
+ * ingest's, or the memory path's adopt slices' and sum's (never the turns
+ * between slices, where other work runs), or null where
  * the walk could not measure its own (a platform without a thread clock) —
  * never a zero standing in for "unknown", though a coarse clock (Windows
  * counts 15.6 ms ticks) can measure a very short walk as 0.
@@ -831,10 +839,14 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
     } catch (err: unknown) {
       throw withErrno(err, rootPath);
     }
-    const cpuBefore = process.cpuUsage();
-    adoptNativeStore(scan, memory.store, taken);
+    // Node's passes in slices, the event loop turning between them (U-35);
+    // a Stop between two ends them with nothing written, and the caller sees
+    // the cancel. Their CPU is counted per slice, not across the turns.
+    const adopted = await adoptNativeStoreInSlices(scan, memory.store, taken, { ...completionSliceOptions(), isCancelled: () => scan.cancelled === true });
+    if (!adopted.completed) return;
+    const sumBefore = process.cpuUsage();
     memory.store.sumSizes();
-    noteCpu(scan, taken.stats.cpuSeconds, process.cpuUsage(cpuBefore));
+    noteCpu(scan, taken.stats.cpuSeconds, adopted.cpuMicros + cpuMicros(process.cpuUsage(sumBefore)));
     scan.currentPath = rootPath;
     return;
   }
@@ -848,14 +860,14 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
   ingestColumns(scan, store, cols, rootPath);
   store.finalize();
   store.sumSizes();
-  noteCpu(scan, cols.stats.cpuSeconds, process.cpuUsage(cpuBefore));
+  noteCpu(scan, cols.stats.cpuSeconds, cpuMicros(process.cpuUsage(cpuBefore)));
   scan.currentPath = rootPath;
 }
 
-/** `scan.cpuSeconds`: the walk's own thread CPU and Node's part after it, or null where the walk could not measure its own. */
-function noteCpu(scan: ScanResult, walkCpu: number | null, node: NodeJS.CpuUsage): void {
+/** `scan.cpuSeconds`: the walk's own thread CPU and Node's part after it (microseconds), or null where the walk could not measure its own. */
+function noteCpu(scan: ScanResult, walkCpu: number | null, nodeMicros: number): void {
   scan.cpuSeconds = typeof walkCpu === 'number' && Number.isFinite(walkCpu)
-    ? walkCpu + (node.user + node.system) / 1e6
+    ? walkCpu + nodeMicros / 1e6
     : null;
 }
 

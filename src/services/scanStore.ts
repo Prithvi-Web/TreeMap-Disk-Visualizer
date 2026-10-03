@@ -792,6 +792,52 @@ const utf8Decoder = new TextDecoder();
 
 const INITIAL_CAP = 1024;
 const INITIAL_POOL = 16 * 1024;
+/** The most rows a store can number: its ids and parent links are signed 32-bit. */
+const MAX_ROWS = 2 ** 31 - 1;
+/** The most name bytes its 32-bit name offsets reach. */
+const MAX_NAME_BYTES = 2 ** 32 - 1;
+
+/**
+ * What a store's build cost (Track U, U-35), counted, never timed: what the
+ * tests of `reserve` and of finalize's fast path hold them to.
+ */
+export interface BuildCounts {
+  /** Times the per-node columns were regrown, each a copy of every row. */
+  grows: number;
+  /** Times the name pool was regrown, each a copy of every name. */
+  nameGrows: number;
+  /** Rows finalize permuted into breadth-first order: every row of a build not already in it, none of one that was. */
+  permutedRows: number;
+  /** Times finalize copied the columns to trim their room to the rows: never when the room was the rows. */
+  columnTrims: number;
+  /** Times finalize copied the name pool to trim it to its bytes. */
+  nameTrims: number;
+}
+
+let finalizeAlwaysPermutes = false;
+
+/** Tests only: every finalize permutes, as every one did before U-35 — the old path a fast-path store is held to. */
+export function forceFinalizePermutationForTests(on: boolean): void {
+  finalizeAlwaysPermutes = on;
+}
+
+/**
+ * The bytes `TextEncoder` writes for `s`: one to four a code point, and three
+ * for a lone surrogate, which it writes as U+FFFD.
+ */
+function utf8Length(s: string): number {
+  let bytes = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
 
 /**
  * The packed Structure-of-Arrays store: one scan's whole tree in a handful of
@@ -841,6 +887,20 @@ export class PackedScanStore implements ScanStore {
   private firstChild!: Int32Array | null;
   private lastChild!: Int32Array | null;
   private nextSibling!: Int32Array | null;
+  /**
+   * Whether every node added before finalize came under a parent no smaller
+   * than the one before it (U-35): the native ingest's breadth-first order,
+   * in which finalize's renumbering is the identity. `lastParent` is the
+   * parent the last of them came under.
+   */
+  private builtInOrder = true;
+  private lastParent = 0;
+  /** What this store's build cost so far (U-35, `BuildCounts`): plain counts, as `n` and `cap` are. */
+  private grows = 0;
+  private nameGrows = 0;
+  private permutedRows = 0;
+  private columnTrims = 0;
+  private nameTrims = 0;
 
   /** Post-finalize adjacency: consecutive ranges + per-parent overflow. */
   private childStart!: Uint32Array;
@@ -891,7 +951,12 @@ export class PackedScanStore implements ScanStore {
   }
 
   private grow(): void {
-    const cap = this.cap * 2;
+    this.resize(this.cap * 2);
+    this.grows++;
+  }
+
+  /** Every per-node column copied into `cap` rows (never fewer than the rows held). */
+  private resize(cap: number): void {
     const copy = <T extends Int32Array | Float64Array | Uint16Array | Uint8Array | Uint32Array>(
       src: T,
       dst: T,
@@ -919,15 +984,23 @@ export class PackedScanStore implements ScanStore {
     this.cap = cap;
   }
 
+  /** The name pool regrown, doubling, to hold at least `need` bytes: a copy of every name. */
+  private growNames(need: number): void {
+    let len = Math.max(1, this.nameBytes.length);
+    while (len < need) len *= 2;
+    const bigger = new Uint8Array(len);
+    bigger.set(this.nameBytes.subarray(0, this.namePoolLen));
+    this.nameBytes = bigger;
+    this.nameGrows++;
+  }
+
   private appendName(name: string): void {
-    // encodeInto with guaranteed headroom (UTF-8 is at most 3 bytes per UTF-16 unit).
-    const need = this.namePoolLen + name.length * 3;
-    if (need > this.nameBytes.length) {
-      let len = this.nameBytes.length;
-      while (len < need) len *= 2;
-      const bigger = new Uint8Array(len);
-      bigger.set(this.nameBytes);
-      this.nameBytes = bigger;
+    // encodeInto with guaranteed headroom: UTF-8 is at most 3 bytes per UTF-16
+    // unit. Only where the pool lacks that much is the name's own length worked
+    // out (U-35), so a pool `reserve` sized to the byte is filled to the byte.
+    if (this.namePoolLen + name.length * 3 > this.nameBytes.length) {
+      const need = this.namePoolLen + utf8Length(name);
+      if (need > this.nameBytes.length) this.growNames(need);
     }
     // Nearly every name is ASCII, whose UTF-8 is its char codes: copied one by
     // one, with no subarray view and no call into the encoder, that cut a
@@ -1011,6 +1084,37 @@ export class PackedScanStore implements ScanStore {
 
   /* ---------- build ---------- */
 
+  /**
+   * Makes room for `rows` more nodes and `nameBytes` more bytes of their names
+   * (UTF-8, as stored) at once (U-35), so a build that adds no more than that
+   * never regrows a column or the name pool — each regrowth a copy of
+   * everything held — and finalize, the room then equal to the rows, has no
+   * room to trim. Never shrinks a room; before or after finalize alike.
+   */
+  reserve(rows: number, nameBytes: number): void {
+    this.live();
+    if (!Number.isSafeInteger(rows) || rows < 0 || !Number.isSafeInteger(nameBytes) || nameBytes < 0) {
+      throw new RangeError(`PackedScanStore.reserve: rows and name bytes are whole numbers from 0, not ${rows} and ${nameBytes}`);
+    }
+    const wantRows = this.n + rows;
+    const wantBytes = this.namePoolLen + nameBytes;
+    if (wantRows > MAX_ROWS || wantBytes > MAX_NAME_BYTES) {
+      throw new RangeError(`PackedScanStore.reserve: ${wantRows} rows and ${wantBytes} name bytes are past what a store can number (${MAX_ROWS} rows, ${MAX_NAME_BYTES} bytes)`);
+    }
+    if (wantRows > this.cap) this.resize(wantRows);
+    if (wantBytes > this.nameBytes.length) {
+      const exact = new Uint8Array(wantBytes);
+      exact.set(this.nameBytes.subarray(0, this.namePoolLen));
+      this.nameBytes = exact;
+    }
+  }
+
+  /** Tests only: what this store's build cost so far, counted (U-35). */
+  buildCountsForTests(): BuildCounts {
+    this.live();
+    return { grows: this.grows, nameGrows: this.nameGrows, permutedRows: this.permutedRows, columnTrims: this.columnTrims, nameTrims: this.nameTrims };
+  }
+
   addNode(parent: number, fields: NodeInput): number {
     this.version++;
     this.check(parent);
@@ -1023,6 +1127,9 @@ export class PackedScanStore implements ScanStore {
       }
       extras.push(id);
     } else {
+      // Still breadth first while no node comes under a smaller parent than the one before it.
+      this.builtInOrder = this.builtInOrder && parent >= this.lastParent;
+      this.lastParent = parent;
       const last = (this.lastChild as Int32Array)[parent];
       if (last === -1) (this.firstChild as Int32Array)[parent] = id;
       else (this.nextSibling as Int32Array)[last] = id;
@@ -1034,6 +1141,10 @@ export class PackedScanStore implements ScanStore {
   finalize(): void {
     this.live();
     if (this.finalized) return;
+    if (this.builtInOrder && !finalizeAlwaysPermutes) {
+      this.finalizeInOrder();
+      return;
+    }
     const n = this.n;
     const first = this.firstChild as Int32Array;
     const next = this.nextSibling as Int32Array;
@@ -1119,6 +1230,57 @@ export class PackedScanStore implements ScanStore {
     this.childStart = childStart;
     this.childCnt = childCnt;
     this.cap = n;
+    this.firstChild = null;
+    this.lastChild = null;
+    this.nextSibling = null;
+    this.finalized = true;
+    this.permutedRows += n;
+  }
+
+  /**
+   * finalize for a store built breadth first (U-35): every node's children
+   * already hold one consecutive id range, in the order they came, and the
+   * ranges come in their parents' order, so the renumbering is the identity.
+   * The ranges are read off the build lists and no row moves. The columns
+   * are copied only to trim a room larger than the rows; a store whose room
+   * is its rows (`reserve`) keeps the very columns it built.
+   */
+  private finalizeInOrder(): void {
+    const n = this.n;
+    const first = this.firstChild as Int32Array;
+    const last = this.lastChild as Int32Array;
+    const childStart = new Uint32Array(n);
+    const childCnt = new Uint32Array(n);
+    // `next` is where the permutation would have started each node's range:
+    // a childless node's start is the next id handed out, as there.
+    let next = 1;
+    for (let id = 0; id < n; id++) {
+      childStart[id] = next;
+      if (first[id] !== -1) {
+        const cnt = last[id] - first[id] + 1;
+        childCnt[id] = cnt;
+        next += cnt;
+      }
+    }
+    if (this.cap !== n) {
+      this.parentArr = this.parentArr.slice(0, n);
+      this.sizeArr = this.sizeArr.slice(0, n);
+      this.mtimeArr = this.mtimeArr.slice(0, n);
+      this.flagsArr = this.flagsArr.slice(0, n);
+      this.extArr = this.extArr.slice(0, n);
+      this.containerArr = this.containerArr.slice(0, n);
+      this.cloudProvArr = this.cloudProvArr.slice(0, n);
+      this.nameOff = this.nameOff.slice(0, n + 1);
+      if (this.atimeArr) this.atimeArr = this.atimeArr.slice(0, n);
+      this.cap = n;
+      this.columnTrims++;
+    }
+    if (this.nameBytes.length !== this.namePoolLen) {
+      this.nameBytes = this.nameBytes.slice(0, this.namePoolLen);
+      this.nameTrims++;
+    }
+    this.childStart = childStart;
+    this.childCnt = childCnt;
     this.firstChild = null;
     this.lastChild = null;
     this.nextSibling = null;

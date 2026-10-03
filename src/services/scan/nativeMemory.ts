@@ -9,6 +9,7 @@ import type { ScanModule } from './native';
 import type { EntryProjection } from './projection';
 import type { ScanResult } from '../../models/types';
 import { formatCount } from '../../utils/formatCount';
+import { cpuMicros, runInSlices, type CompletionSliceOptions, type SliceOutcome, type SliceWork } from './completionSlices';
 
 /**
  * The native engine's memory path (Phase 4, T8c; every native scan's since
@@ -32,6 +33,11 @@ import { formatCount } from '../../utils/formatCount';
  * terms and Node's sparse guesses — are summed from 0 in breadth-first order,
  * the ingest's; the refused folders are named by path; the counters land on
  * the scan record, unset wherever the ingest leaves them unset.
+ *
+ * A scan runs those passes a slice at a time (`adoptNativeStoreInSlices`,
+ * Track U, U-35), the event loop turning between slices, and writes the
+ * record once, after the last; the order, and so every sum, is the same as
+ * in one go (`adoptNativeStore`).
  */
 
 const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
@@ -265,11 +271,45 @@ export async function takeNativeStore(mod: ScanModule, handle: number): Promise<
 }
 
 /**
+ * Candidates and refused folders the adopt decides in one slice (Track U,
+ * U-35): the slice the cleanup walk and the dashboard's lists take. Each
+ * cloud candidate and refused folder builds its whole path, so a slice of
+ * them costs more than a slice of a walk's nodes.
+ */
+export const ADOPT_SLICE_ITEMS = 16_384;
+
+/**
  * `taken` adopted by `store` — which holds just its root, as the scanner made
  * it — with Node's passes over it and the scan record filled as
- * `ingestColumns` fills it (see the module docs).
+ * `ingestColumns` fills it (see the module docs), in one go.
  */
 export function adoptNativeStore(scan: ScanResult, store: PackedScanStore, taken: NativeStore): void {
+  const adoption = beginAdoption(scan, store, taken);
+  adoption.step(Number.POSITIVE_INFINITY);
+  adoption.finish();
+}
+
+/**
+ * The same adopt with Node's passes in slices of `ADOPT_SLICE_ITEMS` (U-35),
+ * the event loop turning between them, so a whole disk's thousands of
+ * candidates never hold the main thread at once. The scan record is written
+ * once, after the last slice: until then it reads as the walk left it. A
+ * cancel between two slices ends the adopt there, with nothing written.
+ */
+export async function adoptNativeStoreInSlices(scan: ScanResult, store: PackedScanStore, taken: NativeStore, options: CompletionSliceOptions = {}): Promise<SliceOutcome> {
+  const begun = process.cpuUsage();
+  const adoption = beginAdoption(scan, store, taken);
+  let used = cpuMicros(process.cpuUsage(begun));
+  const sliced = await runInSlices(adoption, options, ADOPT_SLICE_ITEMS);
+  used += sliced.cpuMicros;
+  if (!sliced.completed) return { completed: false, cpuMicros: used };
+  const finishing = process.cpuUsage();
+  adoption.finish();
+  return { completed: true, cpuMicros: used + cpuMicros(process.cpuUsage(finishing)) };
+}
+
+/** `taken`'s columns adopted by `store`, and Node's passes over them ready to run. */
+function beginAdoption(scan: ScanResult, store: PackedScanStore, taken: NativeStore): Adoption {
   store.adoptColumns({
     n: taken.n,
     capacity: taken.capacity,
@@ -289,63 +329,112 @@ export function adoptNativeStore(scan: ScanResult, store: PackedScanStore, taken
     extDict: taken.extDict,
     extOverflow: Array.from(taken.extOverflowIds, (id, k): [number, string] => [id, taken.extOverflowTexts[k]]),
   });
-  for (const id of taken.textCandidates) {
-    const input = statToInput(store.name(id), store.isDir(id), 0, 0);
-    store.setExtension(id, input.extension);
-    store.setContainer(id, input.container);
+  return new Adoption(scan, store, taken);
+}
+
+/**
+ * Node's passes over an adopted store as work that can stop between any two
+ * of its items: the text candidates, then the cloud candidates, then the
+ * refused folders, each list in its own order — the order the passes always
+ * took, so every sum is the same sum, from 0 (U-35). What the passes find is
+ * kept here; only `finish` writes the scan record.
+ */
+class Adoption implements SliceWork {
+  private next = 0;
+  private readonly textEnd: number;
+  private readonly cloudEnd: number;
+  private readonly total: number;
+  private cloudFiles: number;
+  /** In breadth-first order, the ingest's: `cloudBytes` is summed in it from 0. */
+  private cloudBytes = 0;
+  private readonly guesses: number[] = [];
+  private readonly deniedPaths: string[] = [];
+
+  constructor(
+    private readonly scan: ScanResult,
+    private readonly store: PackedScanStore,
+    private readonly taken: NativeStore,
+  ) {
+    this.textEnd = taken.textCandidates.length;
+    this.cloudEnd = this.textEnd + taken.cloudCandidates.length;
+    this.total = this.cloudEnd + taken.counters.deniedDirs.length;
+    this.cloudFiles = taken.counters.cloudFiles;
   }
-  const counters = taken.counters;
-  let cloudFiles = counters.cloudFiles;
-  let cloudBytes = 0;
-  const guesses: number[] = [];
-  // In breadth-first order, the ingest's: `cloudBytes` is summed in it from 0.
-  for (const id of taken.cloudCandidates) {
+
+  get done(): boolean {
+    return this.next >= this.total;
+  }
+
+  step(budget: number): void {
+    const end = Math.min(this.total, this.next + budget);
+    const { store, taken } = this;
+    for (; this.next < end && this.next < this.textEnd; this.next++) {
+      const id = taken.textCandidates[this.next];
+      const input = statToInput(store.name(id), store.isDir(id), 0, 0);
+      store.setExtension(id, input.extension);
+      store.setContainer(id, input.container);
+    }
+    for (; this.next < end && this.next < this.cloudEnd; this.next++) {
+      this.cloudCandidate(taken.cloudCandidates[this.next - this.textEnd]);
+    }
+    for (; this.next < end; this.next++) {
+      const id = taken.counters.deniedDirs[this.next - this.cloudEnd];
+      this.deniedPaths.push(store.path(id));
+      markUnlisted(store, id); // never listed, so never offered as empty (U-4)
+    }
+  }
+
+  private cloudCandidate(id: number): void {
+    const store = this.store;
     const provider = cloudProviderFor(store.path(id));
     if (store.flag(id, Flag.CloudPlaceholder)) {
       // The walk's own placeholder, counted by the build: Node names its provider.
       if (provider) store.setCloudProvider(id, provider);
-      cloudBytes += store.size(id);
+      this.cloudBytes += store.size(id);
     } else if (provider) {
       store.setFlag(id, Flag.CloudPlaceholder, true);
       store.setCloudProvider(id, provider);
-      cloudFiles += 1;
-      cloudBytes += store.size(id);
+      this.cloudFiles += 1;
+      this.cloudBytes += store.size(id);
     } else if (BLOCKS_ARE_MEANINGFUL && !store.flag(id, Flag.HardlinkDup)) {
-      guesses.push(id);
+      this.guesses.push(id);
     }
   }
-  if (counters.hardlinkedFiles > 0) {
-    scan.hardlinkedFiles = counters.hardlinkedFiles;
-    scan.hardlinkedBytes = counters.hardlinkedBytes;
+
+  /** The scan record, filled as `ingestColumns` fills it, unset wherever it leaves a field unset. */
+  finish(): void {
+    const { scan, store, taken } = this;
+    const counters = taken.counters;
+    if (counters.hardlinkedFiles > 0) {
+      scan.hardlinkedFiles = counters.hardlinkedFiles;
+      scan.hardlinkedBytes = counters.hardlinkedBytes;
+    }
+    if (this.cloudFiles > 0) {
+      scan.cloudFiles = this.cloudFiles;
+      scan.cloudBytes = this.cloudBytes;
+    }
+    const sparseFiles = counters.sparseFiles + this.guesses.length;
+    if (sparseFiles > 0) {
+      scan.sparseFiles = sparseFiles;
+      scan.sparseBytes = sparseTotal(store, taken, this.guesses);
+    }
+    if (counters.slackBytes > 0) scan.slackBytes = counters.slackBytes;
+    for (const deniedPath of this.deniedPaths) noteRefused(scan, deniedPath);
+    // The build counts the folders that vanished or could not be read without
+    // naming them, so none can be marked here: Empty Folders' second look on disk
+    // is what keeps such a folder out (U-4, emptyFolders.ts).
+    if (counters.vanishedDirs > 0) scan.vanishedDirs = counters.vanishedDirs;
+    if (counters.unreadableDirs > 0) scan.unreadableDirs = counters.unreadableDirs;
+    const stats = taken.stats;
+    scan.deniedEntries = stats.deniedEntries;
+    scan.unreadableEntries = stats.unreadableEntries;
+    scan.walkedDirs = stats.dirsListed + counters.deniedDirs.length + counters.vanishedDirs + counters.unreadableDirs;
+    scan.cachedDirs = 0;
+    scan.placeholdersSkipped = stats.dataless;
+    scan.scanned = taken.n;
+    scan.dirCount = counters.dirs;
+    scan.fileCount = counters.files;
   }
-  if (cloudFiles > 0) {
-    scan.cloudFiles = cloudFiles;
-    scan.cloudBytes = cloudBytes;
-  }
-  const sparseFiles = counters.sparseFiles + guesses.length;
-  if (sparseFiles > 0) {
-    scan.sparseFiles = sparseFiles;
-    scan.sparseBytes = sparseTotal(store, taken, guesses);
-  }
-  if (counters.slackBytes > 0) scan.slackBytes = counters.slackBytes;
-  for (const id of counters.deniedDirs) {
-    noteRefused(scan, store.path(id));
-    markUnlisted(store, id); // never listed, so never offered as empty (U-4)
-  }
-  // The build counts the folders that vanished or could not be read without
-  // naming them, so none can be marked here: Empty Folders' second look on disk
-  // is what keeps such a folder out (U-4, emptyFolders.ts).
-  if (counters.vanishedDirs > 0) scan.vanishedDirs = counters.vanishedDirs;
-  if (counters.unreadableDirs > 0) scan.unreadableDirs = counters.unreadableDirs;
-  const stats = taken.stats;
-  scan.deniedEntries = stats.deniedEntries;
-  scan.unreadableEntries = stats.unreadableEntries;
-  scan.walkedDirs = stats.dirsListed + counters.deniedDirs.length + counters.vanishedDirs + counters.unreadableDirs;
-  scan.cachedDirs = 0;
-  scan.placeholdersSkipped = stats.dataless;
-  scan.scanned = taken.n;
-  scan.dirCount = counters.dirs;
-  scan.fileCount = counters.files;
 }
 
 /**
