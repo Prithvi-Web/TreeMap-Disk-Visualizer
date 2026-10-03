@@ -471,6 +471,10 @@ export class ObjectScanStore implements ScanStore {
     (store as { rootId: number }).rootId = 0;
     (store as { rootPath: string }).rootPath = root.path;
     (store as { sep: string }).sep = sep ?? (root.path.includes('\\') ? '\\' : '/');
+    // Object.create skips the field initializers: without this the version
+    // would be undefined, then NaN after a change, and a count guarded by it
+    // (treeFrame.ts) would see every comparison as a change.
+    store.version = 0;
     store.nodes = [];
     store.ids = new Map();
     store.parents = [];

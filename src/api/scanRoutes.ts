@@ -260,18 +260,28 @@ scanRouter.post('/scan/:scanId/cancel', (req: Request, res: Response) => {
  * where the frame would be longer than one string can be, the `error` event
  * says the scan is too large instead, as before. A scan that did not finish
  * gets its own error. It never throws — nothing sits above a timer's callback
- * to catch it — so a failure part-way only ends the stream.
+ * to catch it — so a failure part-way only ends the stream. The frame's count
+ * runs in slices (U-18); `beforeFirstByte` is called in the turn the last
+ * frame's first byte is written, whichever frame that is.
  */
-export async function sendFinalEvent(res: Response, scan: ScanResult): Promise<void> {
+export async function sendFinalEvent(res: Response, scan: ScanResult, beforeFirstByte: () => void = () => {}): Promise<void> {
   try {
     if (scan.status === 'complete' && (scan.store || scan.root)) {
       const store = storeOf(scan);
       const [before, after] = jsonAroundTree({ type: 'complete', root: TREE_MARK, stats: buildScanStats(scan) });
       const outcome = await sendPrunedTree(res, store, store.rootId, firstFrameMaxNodes(), `data: ${before}`, `${after}\n\n`, {
         overshoot: 'none',
+        onFirstByte: beforeFirstByte,
       });
-      if (outcome === 'refused') sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
+      // The count yields, so the stream may have ended while it ran (the
+      // client left, or the server is shutting down): a write after its end
+      // would be an 'error' on the response with nothing listening.
+      if (outcome === 'refused' && !res.writableEnded && !res.destroyed) {
+        beforeFirstByte();
+        sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
+      }
     } else {
+      beforeFirstByte();
       sseSend(res, { type: 'error', message: scan.error ?? 'Scan failed' });
     }
   } catch (err) {
@@ -345,12 +355,10 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   res.flushHeaders();
 
   let tick: ProgressTickState = { lastScanned: -1, quietTicks: 0 };
-  // Heartbeats go on until the complete frame's first byte, including while
-  // that frame is being built: the timer keeps running after the scan ends,
-  // and stops only when the frame starts. sendFinalEvent writes its first
-  // byte in the same turn it is called (its count pass is synchronous), so
-  // the flag flips just before the call; a build that yields (U-18) moves it
-  // to the first write.
+  // Heartbeats go on until the last frame's first byte, including while the
+  // complete frame is counted: the timer keeps running after the scan ends,
+  // and stops in the turn that frame's first byte is written. The count runs
+  // in slices (U-18), so that is sendFinalEvent's callback, not its call.
   let firstByteWritten = false;
 
   let finishing = false;
@@ -360,9 +368,10 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
     void (async () => {
       if (finalFrameHold) await finalFrameHold;
       if (res.writableEnded || res.destroyed) return; // the client left, or the server is shutting down
-      firstByteWritten = true;
-      clearInterval(timer);
-      await sendFinalEvent(res, scan);
+      await sendFinalEvent(res, scan, () => {
+        firstByteWritten = true;
+        clearInterval(timer);
+      });
     })().finally(() => closeClient(client));
   };
 

@@ -19,6 +19,7 @@ import {
   TREE_MARK,
   jsonAroundTree,
   sendPrunedTree,
+  setFrameBufferMaxForTests,
   setTreeFrameMaxCharsForTests,
   treeFrameMaxChars,
   type TreeSink,
@@ -32,10 +33,11 @@ import { PRUNE_MAX_NODES } from '../src/api/scanRoutes';
  * object tree, no one string of the whole frame, no buffer of it — and the
  * bytes are today's: `pruneStore`'s tree, serialized by `JSON.stringify`,
  * inside `sseSend`'s frame. The frame is refused, before a byte is written,
- * exactly when today's one string could not have been built. While the
- * socket takes each chunk the frame is written in one turn (one instant of
- * the store, as today); when it pushes back, nothing more is written until
- * it drains, and a closed socket ends the send.
+ * exactly when today's one string could not have been built. Its count runs
+ * in slices (U-18, tests/frameBuild.test.ts); once counted, while the socket
+ * takes each chunk the frame is written in one turn (one instant of the
+ * store, as today); when it pushes back, nothing more is written until it
+ * drains, and a closed socket ends the send.
  */
 
 const STATS = { scanned: 3, fileCount: 2, dirCount: 1, engine: 'native', note: 'é "quoted" \\ \u2028 \t' };
@@ -228,70 +230,101 @@ test('a frame longer than one string can be is refused before a byte is written,
   assert.equal(sent.text, frame);
 });
 
-test('while the socket takes every chunk, the whole frame is written, in chunks, before the send returns', async () => {
+test('while the socket takes every chunk, the whole frame is written, in chunks, in the one turn its count ends', async () => {
   const { packed } = buildPair(6, 6, 3_000);
-  const sink = new Sink();
+  let writtenWhenProbed = -1;
+  const sink = new Sink((s) => {
+    if (s.chunks.length === 1) setImmediate(() => { writtenWhenProbed = s.chunks.length; });
+    return true;
+  });
   const sending = sendFrame(sink, packed, PRUNE_MAX_NODES);
+  assert.equal(sink.chunks.length, 0, 'counted before a byte is written: nothing goes out in the turn the send begins (U-18)');
+  assert.equal(await sending, 'sent');
+  await new Promise((resolve) => setImmediate(resolve));
   const frame = todaysFrame(packed, PRUNE_MAX_NODES);
-  assert.equal(sink.text, frame, 'written in the same turn: one instant of the store');
+  assert.equal(sink.text, frame);
+  assert.equal(writtenWhenProbed, sink.chunks.length, 'one instant of the store: a turn queued at the first chunk ran after the last');
   assert.ok(frame.length > 2 * TREE_CHUNK_CHARS, 'the fixture spans several chunks');
   assert.ok(sink.chunks.length > 1, 'in chunks, not one string');
   assert.ok(sink.chunks.every((chunk) => chunk.length <= TREE_CHUNK_CHARS + 8_192), 'no chunk much past the chunk size');
-  assert.equal(await sending, 'sent');
 });
 
-test('when the socket pushes back, nothing more is written until it drains', async () => {
+/**
+ * The two ways a counted frame is written (U-18): from the chunks its count
+ * gathered (a tree within the buffer cap), and from the store again (past it,
+ * which is every frame that fills the 250,000-node budget). Each socket test
+ * below runs both.
+ */
+const WAYS: ReadonlyArray<readonly [string, number | null]> = [['from chunks', null], ['from the store', 1]];
+
+test('when the socket pushes back, nothing more is written until it drains', async (t) => {
+  t.after(() => setFrameBufferMaxForTests(null));
   const { packed } = buildPair(7, 7, 3_000);
-  let full = false;
-  let writtenWhileFull = 0;
-  const sink = new Sink((s) => {
-    if (full) writtenWhileFull++;
-    full = true;
-    setImmediate(() => {
-      full = false;
-      s.emit('drain');
+  for (const [way, cap] of WAYS) {
+    setFrameBufferMaxForTests(cap);
+    let full = false;
+    let writtenWhileFull = 0;
+    const sink = new Sink((s) => {
+      if (full) writtenWhileFull++;
+      full = true;
+      setImmediate(() => {
+        full = false;
+        s.emit('drain');
+      });
+      return false;
     });
-    return false;
-  });
-  assert.equal(await sendFrame(sink, packed, PRUNE_MAX_NODES), 'sent');
-  assert.equal(writtenWhileFull, 0, 'a chunk was written before the socket drained');
-  assert.ok(sink.chunks.length > 1);
-  assert.equal(sink.text, todaysFrame(packed, PRUNE_MAX_NODES));
+    assert.equal(await sendFrame(sink, packed, PRUNE_MAX_NODES), 'sent', way);
+    assert.equal(writtenWhileFull, 0, `${way}: a chunk was written before the socket drained`);
+    assert.ok(sink.chunks.length > 1, way);
+    assert.equal(sink.text, todaysFrame(packed, PRUNE_MAX_NODES), way);
+  }
 });
 
-test('a socket that closes while the send waits for it ends the send, writing nothing more', async () => {
+test('a socket that closes while the send waits for it ends the send, writing nothing more', async (t) => {
+  t.after(() => setFrameBufferMaxForTests(null));
   const { packed } = buildPair(8, 8, 3_000);
-  const sink = new Sink((s) => {
-    setImmediate(() => {
-      s.destroyed = true;
-      s.emit('close');
+  for (const [way, cap] of WAYS) {
+    setFrameBufferMaxForTests(cap);
+    const sink = new Sink((s) => {
+      setImmediate(() => {
+        s.destroyed = true;
+        s.emit('close');
+      });
+      return false;
     });
-    return false;
-  });
-  assert.equal(await sendFrame(sink, packed, PRUNE_MAX_NODES), 'closed');
-  assert.equal(sink.chunks.length, 1, 'the one chunk before the socket pushed back');
+    assert.equal(await sendFrame(sink, packed, PRUNE_MAX_NODES), 'closed', way);
+    assert.equal(sink.chunks.length, 1, `${way}: the one chunk before the socket pushed back`);
+  }
 });
 
-test('a socket that fails while the send waits for it ends the send, writing nothing more', async () => {
+test('a socket that fails while the send waits for it ends the send, writing nothing more', async (t) => {
+  t.after(() => setFrameBufferMaxForTests(null));
   const { packed } = buildPair(13, 13, 3_000);
-  const sink = new Sink((s) => {
-    setImmediate(() => s.emit('error', new Error('EPIPE')));
-    return false;
-  });
-  assert.equal(await sendFrame(sink, packed, PRUNE_MAX_NODES), 'closed');
-  assert.equal(sink.chunks.length, 1, 'the one chunk before the socket pushed back');
+  for (const [way, cap] of WAYS) {
+    setFrameBufferMaxForTests(cap);
+    const sink = new Sink((s) => {
+      setImmediate(() => s.emit('error', new Error('EPIPE')));
+      return false;
+    });
+    assert.equal(await sendFrame(sink, packed, PRUNE_MAX_NODES), 'closed', way);
+    assert.equal(sink.chunks.length, 1, `${way}: the one chunk before the socket pushed back`);
+  }
 });
 
-test('a socket already closed or ended is not written to', async () => {
+test('a socket already closed or ended is not written to', async (t) => {
+  t.after(() => setFrameBufferMaxForTests(null));
   const { packed } = buildPair(9, 9, 200);
-  const closed = new Sink();
-  closed.destroyed = true;
-  assert.equal(await sendFrame(closed, packed, 20), 'closed');
-  assert.equal(closed.chunks.length, 0);
-  const ended = new Sink();
-  ended.writableEnded = true;
-  assert.equal(await sendFrame(ended, packed, 20), 'closed');
-  assert.equal(ended.chunks.length, 0);
+  for (const [way, cap] of WAYS) {
+    setFrameBufferMaxForTests(cap);
+    const closed = new Sink();
+    closed.destroyed = true;
+    assert.equal(await sendFrame(closed, packed, 20), 'closed', way);
+    assert.equal(closed.chunks.length, 0, way);
+    const ended = new Sink();
+    ended.writableEnded = true;
+    assert.equal(await sendFrame(ended, packed, 20), 'closed', way);
+    assert.equal(ended.chunks.length, 0, way);
+  }
 });
 
 /* ------------------------------ the routes ------------------------------ */
@@ -349,30 +382,34 @@ test('the progress stream\'s complete frame and /result\'s tree are sent from th
   }
 });
 
-test('a reader that stops reading mid-frame gets exactly one complete frame, today\'s bytes, once it reads again', async () => {
+test('a reader that stops reading mid-frame gets exactly one complete frame, today\'s bytes, once it reads again, written either way', async (t) => {
+  t.after(() => setFrameBufferMaxForTests(null));
   // Far more than the sockets between the two ends hold, so the send waits
   // for the reader across several of the stream's 150 ms ticks.
   const { packed } = buildPair(12, 12, 60_000);
-  const scanId = completedScan(packed);
   const { port, close } = await listen();
   try {
-    const body = await new Promise<string>((resolve, reject) => {
-      http.get({ host: '127.0.0.1', port, path: `/api/scan/${scanId}/progress` }, (res) => {
-        res.pause();
-        setTimeout(() => {
-          let text = '';
-          res.setEncoding('utf8');
-          res.on('data', (chunk: string) => { text += chunk; });
-          res.on('end', () => resolve(text));
-          res.on('error', reject);
-          res.resume();
-        }, 600);
-      }).on('error', reject);
-    });
-    const frames = body.split('\n\n').filter((frame) => frame.startsWith('data: {"type":"complete"'));
-    assert.equal(frames.length, 1, 'one complete frame');
-    const stats = (JSON.parse(frames[0].slice('data: '.length)) as { stats: unknown }).stats;
-    assert.equal(`${frames[0]}\n\n`, todaysFrame(packed, PRUNE_MAX_NODES, stats, 'none'));
+    for (const [way, cap] of WAYS) {
+      setFrameBufferMaxForTests(cap);
+      const scanId = completedScan(packed);
+      const body = await new Promise<string>((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port, path: `/api/scan/${scanId}/progress` }, (res) => {
+          res.pause();
+          setTimeout(() => {
+            let text = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk: string) => { text += chunk; });
+            res.on('end', () => resolve(text));
+            res.on('error', reject);
+            res.resume();
+          }, 600);
+        }).on('error', reject);
+      });
+      const frames = body.split('\n\n').filter((frame) => frame.startsWith('data: {"type":"complete"'));
+      assert.equal(frames.length, 1, `${way}: one complete frame`);
+      const stats = (JSON.parse(frames[0].slice('data: '.length)) as { stats: unknown }).stats;
+      assert.equal(`${frames[0]}\n\n`, todaysFrame(packed, PRUNE_MAX_NODES, stats, 'none'), way);
+    }
   } finally {
     await close();
   }
