@@ -89,7 +89,7 @@ test('without the scan core, Fast scanning is the ordinary path, degraded, and c
 });
 
 test('a platform note is appended to the sentence in both states', () => {
-  const words = { ...WORDS, note: 'Reading the drive’s own file table directly is not part of this build.' };
+  const words = { ...WORDS, note: 'A platform sentence about what else this platform offers.' };
 
   const loaded = fastEnumerationState({ available: true, module: fakeScanModule() as never, path: '/x' }, words);
   const missing = fastEnumerationState({ available: false, reason: 'nope' }, words);
@@ -126,7 +126,10 @@ for (const { name, make, call } of PROVIDERS) {
   });
 }
 
-test('Windows keeps the honest note that the file-table trick is not part of this build, in both states', async () => {
+test('Windows names the opt-in NTFS turbo mode, how far it is verified, and where its trick cannot apply, in both states', async () => {
+  // The mode has been built since Phase 3 W6 and is offered in Settings
+  // (settings.ts accepts `ntfs-mft`); the sentence once said it was "not part
+  // of this build". GET /api/platform/capabilities serves it as Fast scanning.
   try {
     useFakeNative();
     const withCore = await new WindowsProvider().probeFastEnumeration();
@@ -134,6 +137,9 @@ test('Windows keeps the honest note that the file-table trick is not part of thi
     const withoutCore = await new WindowsProvider().probeFastEnumeration();
     for (const state of [withCore, withoutCore]) {
       assert.match(state.reason ?? '', /file table/, state.reason);
+      assert.match(state.reason ?? '', /NTFS turbo mode \(Settings › Scan engine\)/, 'named as Settings names it, and where');
+      assert.doesNotMatch(state.reason ?? '', /not part of this build/, 'it is built');
+      assert.match(state.reason ?? '', /not yet verified end to end/, 'and how far it is proven is said');
       assert.match(state.reason ?? '', /USB sticks and network drives/, state.reason);
     }
   } finally {

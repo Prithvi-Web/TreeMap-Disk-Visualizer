@@ -17,7 +17,7 @@ export interface FastEnumerationWords {
   legacy: string;
   /** The short name of that path, for `degradedTo`. */
   legacyShort: string;
-  /** A platform sentence appended in both states (Windows: the file-table trick is not part of this build). */
+  /** A platform sentence appended in both states (Windows: the opt-in NTFS turbo mode, and where it cannot apply). */
   note?: string;
 }
 

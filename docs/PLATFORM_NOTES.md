@@ -16,12 +16,20 @@ language rather than degrading into a confident wrong answer.
 3. A bundled or system binary, always in a structured output mode.
 
 TreeMap ships **one native addon** since Phase 3 of the scan engine (September
-2026): `treemap_core.node` — Rust, built in CI for each platform, never compiled
-on a user's machine, loaded only when its version matches the app's, and when
-it is missing or refuses to load the legacy engines run and the Dashboard says
-why. It carries exactly two things: the scan core (`getattrlistbulk` on macOS,
+2026): `treemap_core.node` — Rust, built with every installer, which refuses to
+package without it (the released ones by CI: macOS Apple Silicon and Windows
+x64; elsewhere only by building from source), never compiled on a user's
+machine, loaded only when its version is the one this build of the app expects,
+and when it is missing or refuses to load the legacy engines run and the
+Dashboard says why. It carries the scan core (`getattrlistbulk` on macOS,
 `FileIdExtdDirectoryInfo` on Windows, `getdents64` + `statx` on Linux — see
-`docs/engine/DESIGN.md` §5) and the resource governor (§8). Every other
+`docs/engine/DESIGN.md` §5), the resource governor (§8), the memory store a
+scan is built into as it walks (Phase 4), the reader and cross-check for the
+NTFS turbo mode, and two small questions: whether a file's data is on this disk
+right now (asked before any file is read) and, on Windows, where the system
+folder is. On Windows a second native file ships beside it:
+`tm-mft-helper.exe`, the turbo mode's elevated helper — a program, not an
+addon. Every other
 mechanism below is still tier 1 (a plain Node call) or tier 3 (a system binary
 in a structured mode); where a capability would need the addon to do more than
 it does, that is stated rather than hidden.
@@ -30,7 +38,7 @@ it does, that is stated rather than hidden.
 
 | Platform | How this code was verified |
 |---|---|
-| **macOS** | Written and executed on macOS 15 (Darwin 25.5, arm64). Every mechanism was probed against the live system, and the behaviours in "Measured surprises" below were found that way. |
+| **macOS** | Written and executed on macOS 26 Tahoe (Darwin 25.5, arm64); the native scan core and everything since September 2026 on macOS 27. Every mechanism was probed against the live system, and the behaviours in "Measured surprises" below were found that way. |
 | **Windows** | **Written on macOS; never executed on Windows by the author.** Pure logic is unit-tested in `tests/platformCrossOs.test.ts`; the live round-trips run in CI on `windows-latest`. |
 | **Linux** | **Written on macOS; never executed on Linux by the author.** `/proc` walking is tested against a synthetic `/proc` fixture that runs on any OS; the rest is unit-tested and exercised in CI on `ubuntu-latest`. |
 
@@ -45,7 +53,7 @@ only visible by reading it.
 
 | Capability | Mechanism | Tier | When unavailable |
 |---|---|---|---|
-| Fast enumeration | `getattrlistbulk`, one call per folder, in the native scan core | 2 | Core not loaded → `readdir` + `lstat` (degraded, with the loader's reason — see below) |
+| Fast enumeration | `getattrlistbulk`, one call per folder, in the native scan core | 2 | Core not loaded → the bundled gdu for a full scan with no "Don't scan" list, otherwise `readdir` + `lstat` (degraded, with the loader's reason — see below); Fast rescans and scans with a "Don't scan" list always take `readdir` + `lstat` |
 | Live changes | `fs.watch(recursive)` → FSEvents | 1 | Watch cannot be established → index staleness guard |
 | Open handles | `lsof -F` | 3 | `lsof` missing → delete proceeds without the warning |
 | Zombie handles | `lsof -F` + inode comparison | 3 | as above |
@@ -71,7 +79,7 @@ not take says why in `GET /api/scan/:id/stats`. `probeFastEnumeration` reports
 what the loader found: the bulk call when the core is loaded, *degraded* to
 `readdir` + `lstat` with the loader's own reason when it is not. Throughput
 belongs to `bench/`, not to this page: the Phase 3 measurement is recorded in
-`docs/engine/CURRENT-STATE.md` §11 when it is taken.
+`docs/engine/CURRENT-STATE.md` §11.2 (23 September 2026).
 
 ### Why clone-family detection is absent
 
@@ -94,7 +102,7 @@ This is §10's "if clone detection failed, say the size is approximate".
 A clone receives its **own inode** and `nlink` stays 1, so it is
 indistinguishable from a real copy through every interface TreeMap reaches:
 no Node API exposes clone identity, and the native scan core does not request
-`ATTR_CMNEXT_CLONEID` — it lists folders and governs the scan, nothing else. `du` gets this wrong identically. In that measurement the naive
+`ATTR_CMNEXT_CLONEID` — it lists folders, builds the scan's store and governs the scan. `du` gets this wrong identically. In that measurement the naive
 allocated sum was 157,286,400 against 107,286,528 actually consumed — a
 49,999,872-byte gap, exactly the cloned file.
 
@@ -177,8 +185,8 @@ Checked on this machine, not assumed: `diskutil info -plist`, `diskutil apfs
 list -plist` and `system_profiler -json SPStorageDataType` were each read and
 **none carries a purgeable figure** — `diskutil info` reports `FreeSpace = 0`
 and `VolumeSize = 0` for the sealed volume, and only container-level free space
-elsewhere. The native scan core does not read it either — it lists folders
-and governs the scan, nothing else — so the statement's purgeable line is
+elsewhere. The native scan core does not read it either — it lists folders,
+builds the scan's store and governs the scan — so the statement's purgeable line is
 unavailable with that reason, its bytes sit inside `unaccounted`, and
 `unaccounted` names it. It never reads 0.
 
@@ -328,7 +336,8 @@ shipped a confidently wrong answer.
 
 | Capability | Mechanism | Tier | When unavailable |
 |---|---|---|---|
-| Fast enumeration | `FileIdExtdDirectoryInfo`, one call per folder, in the native scan core | 2 | Core not loaded → `readdir` + `lstat` (degraded, with the loader's reason); the MFT mode is not built (below) |
+| Fast enumeration | `FileIdExtdDirectoryInfo`, one call per folder, in the native scan core | 2 | Core not loaded → `readdir` + `lstat` (degraded, with the loader's reason). The bundled gdu is never run here: it keys no hard links on Windows |
+| Volume file table (opt-in: NTFS turbo) | `tm-mft-helper.exe` reads `$MFT` read-only as administrator; the native core reads its output and checks up to 1,000 entries unelevated | 2 + helper | Not NTFS, a network drive, a per-user or portable install, a scan not started in the window, a "Don't scan" list, a declined prompt or a failed check → the listing above, with the reason (below) |
 | Live changes | `fs.watch(recursive)` → ReadDirectoryChangesW | 1 | staleness guard |
 | Open handles | Restart Manager (`RmGetList`) via PowerShell P/Invoke | 1 | PowerShell missing → no warning |
 | Allocated size | `GetCompressedFileSize`, batched | 1 | falls back to logical size |
@@ -341,28 +350,31 @@ shipped a confidently wrong answer.
 | Shell menu | `reg.exe` under `HKCU` | 3 | — |
 | Zombie handles | **not implemented** | — | Explained in the UI |
 
-### Why MFT parsing is not implemented
+### The NTFS turbo mode: built, opt-in, not yet verified end to end
 
-A1's headline claim rests on reading `$MFT` through a raw volume handle. It is
-reachable in principle from pure Node (`fs.read` on `\\.\C:`), but it is roughly
-1,500 lines of binary structure parsing — boot sector, record headers, attribute
-lists, non-resident run-lists, path reconstruction — that **could not be
-executed even once** from the development machine. Shipping untested binary
-parsing that reports disk sizes would violate the prompt's own core rule.
-Since Phase 3 the default fast path on Windows is the native scan core's
-`FileIdExtdDirectoryInfo` listing (one call per folder; proven live only by
-the Windows CI leg). The MFT mode is a separate, opt-in, elevated read-only
-helper (decision D7 in `docs/engine/DESIGN.md` §0) that is not part of this
-build; `probeFastEnumeration` says so in both states, with the boundary
-WizTree itself has: the technique does not apply to FAT32, exFAT or network
-paths at all.
+A1's headline claim rests on reading `$MFT` through a raw volume handle. Since
+Phase 3 (W6, decision D7 in `docs/engine/DESIGN.md`) TreeMap can. The Scan
+engine setting's **NTFS turbo** option (`ntfs-mft`, Windows only, never chosen
+by Automatic) starts `tm-mft-helper.exe` — Rust, built beside the native
+module, read-only — with administrator permission, only for a scan a person
+started in the TreeMap window, after a plain-words question and Windows' own
+prompt. The helper writes one file to `%TEMP%\TreeMap-mft`; the unelevated
+native core reads it, opens up to 1,000 of its entries itself, and discards the
+whole result at the first disagreement. The default fast path stays the native
+scan core's `FileIdExtdDirectoryInfo` listing (one call per folder). The
+Windows CI leg proves the reader on a real volume
+(`crates/tm-mft/tests/live_windows.rs`); no CI can answer a UAC prompt, so the
+elevation has not run end to end, and every scan through the mode says "not
+verified on this build". It never applies to FAT32, exFAT or network paths —
+the boundary WizTree itself has — or to an install a program running as you
+could change; `probeFastEnumeration` says so in both states.
 
 ### Why zombie-handle detection is absent
 
 B5 requires picking **one** implementation and finishing it. Both candidates are
 out of reach: `NtQuerySystemInformation` handle enumeration is undocumented and
-is not in the native scan core (which lists folders and governs the scan,
-nothing else), and Sysinternals' `handle.exe` may not be redistributed.
+is not in the native scan core (which lists folders, builds the scan's store
+and governs the scan), and Sysinternals' `handle.exe` may not be redistributed.
 Rather than half-build both, `getZombieHandles` returns nothing and the
 capability explains what the user can do instead (restart the program, or the
 PC). This is the one capability where Windows is genuinely behind macOS and
@@ -413,7 +425,7 @@ item that launches TreeMap with no path.
 
 | Capability | Mechanism | Tier | When unavailable |
 |---|---|---|---|
-| Fast enumeration | `getdents64` + `statx`, in the native scan core | 2 | Core not loaded → `readdir` + `lstat`, concurrency from sysfs (degraded, with the loader's reason) |
+| Fast enumeration | `getdents64` + `statx`, in the native scan core | 2 | Core not loaded → gdu, when one is bundled (an AppImage you built), fetched (`npm run fetch:gdu:dev`) or on PATH, for a full scan with no "Don't scan" list; otherwise `readdir` + `lstat`, concurrency from sysfs (degraded, with the loader's reason) |
 | Live changes | per-directory inotify | 1 | Watch limit → staleness guard |
 | Open handles | `/proc/<pid>/fd` — no subprocess | 1 | `/proc` absent → no warning |
 | Zombie handles | `/proc` + kernel's `(deleted)` marker | 1 | as above |

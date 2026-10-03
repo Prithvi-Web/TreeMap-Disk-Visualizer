@@ -52,7 +52,7 @@ import type {
  * | snapshots      | Win32_ShadowCopy (+ mklink to read)          | 3    |
  * | SMART          | smartctl --json                              | 3    |
  * | shell menu     | reg.exe under HKCU — no admin                | 3    |
- * | fast listing   | FileIdExtdDirectoryInfo in the native scan core; MFT mode (D7) not built — see probeFastEnumeration | 2 |
+ * | fast listing   | FileIdExtdDirectoryInfo in the native scan core; the opt-in NTFS turbo mode (D7) reads $MFT through tm-mft-helper — see probeFastEnumeration | 2 |
  * | zombie handles | unreachable — see probeZombieHandles         | —    |
  *
  * `subscribeToChanges` is inherited because Node's recursive `fs.watch` is
@@ -338,14 +338,16 @@ export class WindowsProvider extends BaseProvider {
 
   override async probeFastEnumeration(): Promise<CapabilityState> {
     // Decided by the loader: the native scan core lists a folder with one
-    // FileIdExtdDirectoryInfo call. The MFT "turbo" mode (D7) is a separate
-    // opt-in that is not part of this build, and the note says so either way.
+    // FileIdExtdDirectoryInfo call. The NTFS turbo mode (D7) is a separate
+    // opt-in in Settings — built, not yet verified end to end — and the note
+    // says so either way.
     return fastEnumerationState(nativeScanModule(), {
       call: 'FileIdExtdDirectoryInfo',
       legacy: 'readdir + lstat',
       legacyShort: 'readdir + lstat',
       note:
-        "Reading the drive's own file table directly (the trick that makes WizTree fast) is not part of this build. " +
+        "The opt-in NTFS turbo mode (Settings › Scan engine) reads the drive's own file table directly — the trick that makes WizTree fast — " +
+        'with administrator permission, for a scan started in the TreeMap window; it is not yet verified end to end. ' +
         'Scans work on every drive type, including USB sticks and network drives, where that trick does not apply at all.',
     });
   }
