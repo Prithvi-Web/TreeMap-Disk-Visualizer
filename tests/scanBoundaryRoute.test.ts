@@ -230,3 +230,16 @@ test('MCP scan_path names the drives a scan did not enter', async (t) => {
     await client.close();
   }
 });
+
+test('a table that was read keeps its own sentence: Windows says why it has none, and lists nothing — known, not unknown', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-boundary-route-win-'));
+  const rec = createScanRecord(root);
+  rec.status = 'complete';
+  const sentence = 'Windows keeps no mount table for a walk to read: a drive mounted in a folder there is a reparse point, which the scan engines treat as a link and do not follow.';
+  rec.boundary = boundaryRecord({ rule: 'stay', source: 'none', reason: sentence, mounts: [], fixed: [], neverDescend: [] });
+  const b = (await get(`/api/scan/${rec.scanId}/boundary`)).body;
+  assert.equal(b.reason, sentence, 'the sentence the table came with');
+  assert.deepEqual(b.notEntered, { count: 0, examples: [] }, 'known: nothing was left out');
+  assert.deepEqual(b.mounts, []);
+  assert.equal(b.mountsListed, 0);
+});

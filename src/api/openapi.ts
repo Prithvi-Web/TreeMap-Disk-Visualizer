@@ -1788,7 +1788,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'history',
     destructive: false,
     parameters: [queryParam('path', 'Root to list snapshots for'), queryParam('all', "'true' for every snapshot, slim", bool())],
-    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}')) },
+    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}. A snapshot carries boundary — { rule: "stay", notEntered[] } or { rule: "cross", entered[] } — only when a drive was mounted inside its folder (Track U); history never compares across two different boundaries')) },
   },
   {
     method: 'get',
@@ -1812,7 +1812,11 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'history',
     destructive: false,
     parameters: [queryParam('a', 'Snapshot id', { type: 'string' }, true), queryParam('b', 'Snapshot id', { type: 'string' }, true)],
-    responses: { '200': jsonResponse('Diff', opaque('SnapshotDiff: a, b, rootPath, totalDelta, entries[]')), '404': errorResponse('Unknown snapshot id') },
+    responses: {
+      '200': jsonResponse('Diff', opaque('SnapshotDiff: a, b, rootPath, totalDelta, entries[]')),
+      '404': errorResponse('Unknown snapshot id'),
+      '409': errorResponse('BOUNDARY_CHANGED — the two snapshots stopped at different drives mounted inside the folder, so a diff would show a drive as files added or removed'),
+    },
   },
   {
     method: 'get',

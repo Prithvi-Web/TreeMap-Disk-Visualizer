@@ -51,7 +51,7 @@ import { idempotency } from '../middleware/idempotency';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { CompareResult, FileNode, ScanResult } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
-import { assertSameBoundary } from '../services/boundaryReport';
+import { assertSameBoundary, assertSameSnapshotBoundary } from '../services/boundaryReport';
 
 /**
  * insightRoutes — analysis endpoints layered on top of completed scans:
@@ -709,5 +709,7 @@ insightRouter.get('/snapshots/compare', async (req: Request, res: Response) => {
   if (a.rootPath !== b.rootPath) {
     throw new AppError(400, 'ROOT_MISMATCH', 'Snapshots must cover the same root path');
   }
+  // Track U, U-24: two snapshots that stopped at different drives counted different disks.
+  assertSameSnapshotBoundary(a, b);
   res.json(diffSnapshots(a, b));
 });

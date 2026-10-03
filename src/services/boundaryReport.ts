@@ -1,8 +1,8 @@
-import type { ScanResult } from '../models/types';
+import type { ScanResult, Snapshot } from '../models/types';
 import { mountOutcome, type BoundaryMount, type BoundaryRule, type MountOutcome, type MountTableSource } from '../utils/mountBoundaries';
 import { storeOf } from './scanStore';
 import { storageModeOf } from './storageMode';
-import { scanBoundaryKey, snapshotBoundaryOf } from './snapshots';
+import { boundaryKeyOf, scanBoundaryKey, snapshotBoundaryOf } from './snapshots';
 import { AppError } from '../middleware/errorHandler';
 
 /**
@@ -85,7 +85,8 @@ export function boundaryReport(scan: ScanResult): BoundaryReport {
     };
   }
   const outcome = mountOutcome(record);
-  const reason = outcome.known ? null : (record.reason ?? 'the mount table could not be read');
+  // A table that was read keeps its own sentence when it has one (Windows says why it has none).
+  const reason = outcome.known ? record.reason : (record.reason ?? 'the mount table could not be read');
   const entered = outcome.known ? enteredBytes(scan, outcome.entered) : { bytes: null, reason: reason ?? undefined };
   return {
     rule: record.rule,
@@ -106,15 +107,27 @@ export function boundaryReport(scan: ScanResult): BoundaryReport {
  */
 export function assertSameBoundary(scanA: ScanResult, scanB: ScanResult): void {
   if (scanBoundaryKey(scanA) === scanBoundaryKey(scanB)) return;
-  const left = (s: ScanResult): string => {
-    const out = snapshotBoundaryOf(s);
-    return out && out.rule === 'stay' ? `left out ${out.notEntered.length} drive${out.notEntered.length === 1 ? '' : 's'} mounted inside it` : 'counted every drive mounted inside it';
-  };
-  throw new AppError(
+  throw boundaryChanged('scans', scanA.rootPath, snapshotBoundaryOf(scanA), snapshotBoundaryOf(scanB));
+}
+
+/**
+ * The same refusal for two snapshots (Trends, Compare, and the "what's new"
+ * banner after a scan, which says nothing rather than call a drive left out
+ * "freed").
+ */
+export function assertSameSnapshotBoundary(a: Snapshot, b: Snapshot): void {
+  if (boundaryKeyOf(a.boundary) === boundaryKeyOf(b.boundary)) return;
+  throw boundaryChanged('snapshots', a.rootPath, a.boundary, b.boundary);
+}
+
+function boundaryChanged(what: string, rootPath: string, a: Snapshot['boundary'], b: Snapshot['boundary']): AppError {
+  const left = (out: Snapshot['boundary']): string =>
+    out && out.rule === 'stay' ? `left out ${out.notEntered.length} drive${out.notEntered.length === 1 ? '' : 's'} mounted inside it` : 'left no drive out';
+  return new AppError(
     409,
     'BOUNDARY_CHANGED',
-    `These two scans of ${scanA.rootPath} counted different disks: the first ${left(scanA)}, the second ${left(scanB)}. ` +
-      'Comparing them would show a drive as files added or removed, so compare two scans made with the same "drives mounted inside" setting.',
+    `These two ${what} of ${rootPath} counted different disks: the first ${left(a)}, the second ${left(b)}. ` +
+      'Comparing them would show a drive as files added or removed, so compare two made with the same "drives mounted inside" setting.',
   );
 }
 

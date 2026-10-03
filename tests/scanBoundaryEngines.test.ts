@@ -655,3 +655,38 @@ test('exclusionsOf: the fixed folders below the root and, under stay, the drives
   assert.ok(exclusionsOf(undefined, '/', 'darwin').includes('/Volumes'), 'no boundary on the record: the fixed list, which every engine honours');
   assert.deepEqual(exclusionsOf(undefined, '/Volumes/Backup', 'darwin'), [], 'a fixed folder above the root is not this scan’s');
 });
+
+test('Trends and What’s new never compare two snapshots that stopped at different drives (409 BOUNDARY_CHANGED); two with one boundary are compared', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const f = tree();
+  useTable([f.mnt]);
+  for (const rule of ['cross', 'stay', 'stay'] as const) {
+    await scanWith(f.root, rule, 'walker');
+    await settled();
+  }
+  const snaps = await listSnapshots(f.root);
+  assert.equal(snaps.length, 3, 'one snapshot a scan');
+  const [crossed, stayed, stayedAgain] = snaps;
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(REPO, 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const get = (url: string): Promise<{ status: number; body: any }> => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: url }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => { buf += c; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) }));
+    }).on('error', reject);
+  });
+  try {
+    const across = await get(`/api/snapshots/compare?a=${crossed.id}&b=${stayed.id}`);
+    assert.equal(across.status, 409, JSON.stringify(across.body));
+    assert.equal(across.body.code, 'BOUNDARY_CHANGED');
+    assert.match(across.body.error, /counted different disks/);
+    const within = await get(`/api/snapshots/compare?a=${stayed.id}&b=${stayedAgain.id}`);
+    assert.equal(within.status, 200, JSON.stringify(within.body));
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
