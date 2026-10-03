@@ -2,7 +2,7 @@ import fs from 'fs';
 import { formatCount } from '../../utils/formatCount';
 import os from 'os';
 import { getScan } from '../diskScanner';
-import { storeOf } from '../scanStore';
+import { Flag, storeOf } from '../scanStore';
 import { computeFacts } from '../facts';
 import { capabilityState } from '../../platform/capabilities';
 import { evaluateMaybe, isEmptyQuery, type CloudState, type EvalFacts, type EvalNode } from './evaluate';
@@ -359,7 +359,10 @@ export async function executeAgainstScan(
       // whose children were never listed (permission denied, excluded,
       // pruned). Conflating them would offer permission-denied folders up to
       // an `empty:yes` query — and those are exactly what gets bulk-trashed.
-      childCount: isDir && store.hasChildArray(id) ? store.childCount(id) : undefined,
+      // A folder whose listing the tree does not hold in full (Flag.Unlisted:
+      // refused, unreadable, a mount not entered) can still carry an empty
+      // child array, so it is unknown too.
+      childCount: isDir && store.hasChildArray(id) && !store.flag(id, Flag.Unlisted) ? store.childCount(id) : undefined,
     };
 
     // Deliberately NO facts here, and deliberately no stat. `created:` is left

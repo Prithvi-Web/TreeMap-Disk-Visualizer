@@ -13,7 +13,9 @@ process.env.TREEMAP_NO_GDU = '1';
 import { parse } from '../src/services/query/parse';
 import { evaluate, evaluateMaybe, type EvalFacts, type EvalNode } from '../src/services/query/evaluate';
 import { executeAgainstScan, gitStateOf, cloudStateOf, type QueryOutcome } from '../src/services/query/execute';
-import { startScan, peekScan } from '../src/services/diskScanner';
+import { startScan, peekScan, createScanRecord } from '../src/services/diskScanner';
+import { buildStoreFromTree, Flag } from '../src/services/scanStore';
+import type { FileNode } from '../src/models/types';
 import { normalizePolicy, savePolicies, listPolicies, simulatePolicy, runPolicy } from '../src/services/autopilot';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -679,4 +681,27 @@ test('on a real scan, -cloud:placeholder still finds a file on this disk in a sy
   } finally {
     realLocality();
   }
+});
+
+test('empty: never decides a folder the scan did not list in full (Flag.Unlisted): neither empty:yes nor empty:no matches it', async () => {
+  // A folder macOS refused to the scan looks childless in the tree. It is not
+  // known to be empty, so a query must not offer it as empty (that is the
+  // pane people bulk-trash from), nor call it non-empty (U-4's rule, here for
+  // the query grammar).
+  const at = (name: string, p: string, children?: FileNode[]): FileNode => ({
+    name, path: p, type: children ? 'dir' : 'file', modifiedAt: 1_800_000_000_000, isHidden: false,
+    size: children ? 0 : 10, ...(children ? { children } : {}),
+  });
+  const store = buildStoreFromTree(at('r', '/q', [at('refused', '/q/refused', []), at('fine', '/q/fine', []), at('full', '/q/full', [at('f.txt', '/q/full/f.txt')])]));
+  store.setFlag(store.findByPath('/q/refused'), Flag.Unlisted, true);
+  const scan = createScanRecord('/q');
+  scan.store = store;
+  scan.status = 'complete';
+  const dirs = async (q: string): Promise<string[]> => {
+    const out = await executeAgainstScan(scan.scanId, ast(q), { limit: 1_000, offset: 0, sort: 'path', signal: new AbortController().signal });
+    assert.ok(!('error' in out), `"${q}": ${JSON.stringify(out)}`);
+    return (out as QueryOutcome).hits.filter((h) => h.isDir).map((h) => h.path).sort();
+  };
+  assert.deepEqual(await dirs('type:dir empty:yes'), ['/q/fine'], 'only the folder known to be empty is empty');
+  assert.deepEqual(await dirs('type:dir empty:no'), ['/q', '/q/full'], 'and the refused folder is not known to hold anything either');
 });
