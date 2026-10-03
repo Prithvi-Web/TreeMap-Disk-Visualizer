@@ -123,9 +123,13 @@ test('dist:portable-mac and dist:portable-linux hand electron-builder its ${…}
   for (const name of ['dist:portable-mac', 'dist:portable-linux']) {
     const steps = commands(name, PKG.scripts[name]);
     const builder = steps[only(name, steps, 'electron-builder', isBuilder)];
+    // The child inherits this process's environment, so it carries the test
+    // guard (childEnvCarriesGuard); the three names the macros spell are set
+    // empty, as they are in the shell npm starts, so a macro sh expands
+    // vanishes here exactly as it did in the real build.
     const handed = execFileSync('/bin/sh', ['-c', builder.replace(/^electron-builder/, "printf '%s\\n'")], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH ?? '' },
+      env: { ...process.env, version: '', arch: '', ext: '' },
     }).split('\n');
     const artifact = handed.find((a) => a.startsWith('--config.artifactName='));
     assert.equal(artifact, '--config.artifactName=TreeMap-Portable-${version}-${arch}.${ext}', `${name}: ${builder}`);
