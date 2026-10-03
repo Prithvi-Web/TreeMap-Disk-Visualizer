@@ -3,6 +3,7 @@ async function loadSystem() {
   try {
     const sys = await api('/api/system');
     state.system = sys;
+    renderKeyNames(); // ⌘ and ⌥ on a Mac, Ctrl and Alt elsewhere, now that the OS is known
     // The tour's welcome card offers "scan my home folder" only once it
     // knows where home is; repaint it if it went up first (§9.2).
     if (typeof tour !== 'undefined' && tour.active && tour.step === 'welcome') tourRender();

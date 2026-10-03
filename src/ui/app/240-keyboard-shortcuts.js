@@ -1,4 +1,16 @@
 /* ───────────────────────────── Keyboard shortcuts ───────────────────────────── */
+/* The page's key names, rewritten for this keyboard once /api/system has said
+   which OS this is (loadSystem calls this): every <kbd> and hint that names a
+   modifier carries data-key="mod" or data-key="alt" and ships the Mac glyph,
+   and the sidebar toggle's tooltip names its shortcut. KEY_NAMES (prelude)
+   holds the names. */
+function renderKeyNames() {
+  for (const el of document.querySelectorAll('[data-key="mod"]')) el.textContent = keyName('mod');
+  for (const el of document.querySelectorAll('[data-key="alt"]')) el.textContent = keyName('alt');
+  const nav = $('sideToggle');
+  if (nav) nav.title = sideNavTitle($('sideNav').classList.contains('collapsed'));
+}
+
 /* ── v4 §6.4 — hold Z ──
    `keydown` repeats while a key is held, so the guard on `state.lens.held` is
    what keeps this from repainting the map sixty times a second for as long as

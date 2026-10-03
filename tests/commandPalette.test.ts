@@ -85,6 +85,25 @@ test('the core actions exist by name', () => {
   }
 });
 
+test('the Open Settings row promises only what Settings holds', () => {
+  // Its hint said "schedules, weights, notes and more", and hints are scored
+  // when a label misses — so typing "notes" offered Settings, which has no
+  // notes (a folder's note is written from the map, with n). Every word of the
+  // hint must be a Settings section or one of that section's own words, which
+  // CMDK_SETTINGS_SECTIONS is already held to (the real headings).
+  const reg = INDEX.slice(INDEX.indexOf('const CMDK_ACTIONS'), INDEX.indexOf('const CMDK_SETTINGS_SECTIONS'));
+  const row = /\{ label: 'Open Settings', hint: '([^']+)'/.exec(reg);
+  assert.ok(row, 'the action carries a hint');
+  const at = INDEX.indexOf('const CMDK_SETTINGS_SECTIONS');
+  const sections = INDEX.slice(at, INDEX.indexOf('];', at)).toLowerCase();
+  const terms = row![1].replace(/\s+and more$/, '').split(/,\s*|\s+and\s+/).map((t) => t.trim()).filter(Boolean);
+  assert.ok(terms.length >= 3, `the hint names what is there: ${row![1]}`);
+  for (const term of terms) {
+    const stem = term.toLowerCase().replace(/s$/, '');
+    assert.ok(sections.includes(stem), `"${term}" is not a Settings section or one of its words`);
+  }
+});
+
 test('saved views and recent scan roots join the palette when they exist', () => {
   const fn = INDEX.slice(INDEX.indexOf('function cmdkItems'), INDEX.indexOf('function cmdkItems') + 4000);
   assert.match(fn, /state\.savedViews/, 'saved views are listed');

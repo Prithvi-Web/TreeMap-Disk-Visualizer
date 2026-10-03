@@ -128,6 +128,21 @@ test('macOS and Linux open and reveal pass the path as argv data', () => {
   assert.deepEqual(openCommand(HOSTILE, false, 'linux'), { cmd: 'xdg-open', args: [HOSTILE] });
 });
 
+test('Linux reveal opens the folder that holds the item, never the item itself', () => {
+  // xdg-open has no "select this item": handed the item, it OPENS it — runs
+  // the default program on a file the person only asked to see. The folder
+  // above it is the reveal xdg-open can do, as open -R and explorer /select,
+  // show the item inside its folder.
+  const inside = `${HOSTILE}/report final.pdf`;
+  assert.deepEqual(openCommand(inside, true, 'linux'), { cmd: 'xdg-open', args: [HOSTILE] }, 'the hostile folder, still one argv entry');
+  assert.deepEqual(openCommand(`${HOSTILE}/sub dir/`, true, 'linux'), { cmd: 'xdg-open', args: [HOSTILE] }, 'a folder is shown in the folder above it');
+  assert.deepEqual(openCommand('/', true, 'linux'), { cmd: 'xdg-open', args: ['/'] }, 'the root has no folder above it');
+  assert.deepEqual(openCommand(inside, true, 'freebsd'), { cmd: 'xdg-open', args: [HOSTILE] }, 'every other xdg-open platform the same');
+  assert.deepEqual(openCommand(inside, false, 'linux'), { cmd: 'xdg-open', args: [inside] }, 'Open still opens the item');
+  assert.deepEqual(openCommand(inside, true, 'darwin'), { cmd: 'open', args: ['-R', inside] }, 'macOS keeps open -R');
+  assert.deepEqual(openCommand('C:\\x\\y.txt', true, 'win32'), { cmd: 'explorer.exe', args: ['/select,', 'C:\\x\\y.txt'] }, 'Windows keeps explorer /select,');
+});
+
 test('Windows terminal: the folder is the new window\u2019s working directory, never an argument', () => {
   assert.deepEqual(terminalCommands(WIN_HOSTILE, 'win32'), [
     { cmd: 'wt.exe', args: ['-d', '.'], cwd: WIN_HOSTILE },

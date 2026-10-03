@@ -332,12 +332,16 @@ const sideNavNarrow = window.matchMedia('(max-width: 900px)');
 function sideNavPref() {
   try { return localStorage.getItem('tm-sidenav'); } catch { return null; /* private mode */ }
 }
+/** The toggle's tooltip, naming this keyboard's shortcut (renderKeyNames says it again once the OS is known). */
+function sideNavTitle(collapsed) {
+  return `${collapsed ? 'Expand navigation' : 'Collapse navigation'} (${keyCombo('B')})`;
+}
 function applySideNav(collapsed) {
   $('sideNav').classList.toggle('collapsed', collapsed);
   const btn = $('sideToggle');
   btn.setAttribute('aria-expanded', String(!collapsed));
   btn.setAttribute('aria-label', collapsed ? 'Expand the navigation' : 'Collapse the navigation');
-  btn.title = (collapsed ? 'Expand navigation' : 'Collapse navigation') + ' (⌘B)';
+  btn.title = sideNavTitle(collapsed);
   btn.innerHTML = icon(collapsed ? 'chevronRight' : 'chevronLeft', 16);
   // Only a wide-viewport choice is the pin; narrow states are transient.
   if (!sideNavNarrow.matches) {

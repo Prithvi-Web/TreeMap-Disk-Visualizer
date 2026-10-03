@@ -56,7 +56,7 @@ const CMDK_ACTIONS = [
   // and the ✨ button the popover anchors to is not on screen — the popover
   // would arm at (8,8) and resurface stale over whatever came next.
   { label: 'Ask in plain words', hint: 'translated to a query you approve', when: () => !!state.root, run: () => { switchView('treemap'); requestAnimationFrame(() => nlOpen()); } },
-  { label: 'Open Settings', hint: 'schedules, weights, notes and more', run: () => $('settingsBtn').click() },
+  { label: 'Open Settings', hint: 'schedules, scanning budget, scan engine, weights and more', run: () => $('settingsBtn').click() },
   { label: 'Open Clean Up', hint: 'smart suggestions, custom rules, empty folders', run: () => $('cleanupBtn').click() },
   { label: 'Keyboard shortcuts', hint: 'the ? panel', run: () => toggleShortcuts() },
   { label: 'Switch light / dark', hint: 'theme', run: () => $('themeToggle').click() },

@@ -314,6 +314,25 @@ test('no element id is declared twice', () => {
   assert.deepEqual([...dupes], [], 'duplicate element ids');
 });
 
+/* ══════════════════════ Function names are unique ══════════════════════ */
+
+test('no function is declared twice at the top of the application script', () => {
+  // The page is one classic script, so a second top-level declaration of a
+  // name is no error: the later one silently replaces the earlier everywhere,
+  // and a test that lifts "the" function by name drives the copy the browser
+  // never runs. quietRescanFailed lived like that — its first copy's messages
+  // never appeared, and polishUiScan drove the first copy.
+  const names = [...appCode().matchAll(/^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1]);
+  assert.ok(names.length > 500, `the scan finds the page's top-level functions (${names.length})`);
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const name of names) {
+    if (seen.has(name)) dupes.add(name);
+    seen.add(name);
+  }
+  assert.deepEqual([...dupes], [], 'functions declared twice at the top level');
+});
+
 /* ══════════════════════ One fetch path (§3.4) ══════════════════════ */
 
 test('every network call goes through the shared wrapper, never a raw fetch', () => {

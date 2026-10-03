@@ -334,6 +334,71 @@ test('the ? sheet refuses to stack on another dialog', () => {
   assert.equal(shortcuts.classList.contains('open'), false, 'over Settings, ? does nothing — no second scrim');
 });
 
+/* ══════════════ the keys are named as this keyboard names them ══════════════ */
+
+/** keyName/keyCombo/renderKeyNames out of the page, with `state` saying which OS this is (undefined: not answered yet). */
+function keysFor(platform: string | undefined, els: { mod: Array<{ textContent: string }>; alt: Array<{ textContent: string }>; nav: { title: string }; collapsed: boolean }) {
+  const src = [
+    braced('function platformWord('), INDEX.slice(INDEX.indexOf('const KEY_NAMES = '), INDEX.indexOf(';', INDEX.indexOf('const KEY_NAMES = ')) + 1),
+    braced('function keyName('), braced('function keyCombo('), braced('function sideNavTitle('), braced('function renderKeyNames('),
+  ].join('\n');
+  const document = { querySelectorAll: (sel: string) => (sel === '[data-key="mod"]' ? els.mod : sel === '[data-key="alt"]' ? els.alt : []) };
+  const $ = (id: string) => (id === 'sideToggle' ? els.nav : id === 'sideNav' ? { classList: { contains: (c: string) => c === 'collapsed' && els.collapsed } } : null);
+  const state = platform === undefined ? { system: null } : { system: { platform } };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('document', '$', 'state', `'use strict'; ${src}\nreturn { keyName, keyCombo, renderKeyNames };`)(document, $, state) as {
+    keyName: (which: string) => string; keyCombo: (key: string) => string; renderKeyNames: () => void;
+  };
+}
+
+test('modifier keys are named for this keyboard: ⌘ and ⌥ on a Mac, Ctrl and Alt everywhere else', () => {
+  // Every shortcut listens for metaKey || ctrlKey, and the lasso's freehand
+  // for altKey, so Ctrl and Alt work on every computer — the neutral names
+  // before /api/system has answered.
+  const els = () => ({ mod: [], alt: [], nav: { title: '' }, collapsed: false });
+  const mac = keysFor('darwin', els());
+  assert.deepEqual([mac.keyName('mod'), mac.keyName('alt'), mac.keyCombo('B')], ['⌘', '⌥', '⌘B']);
+  for (const p of ['win32', 'linux', 'freebsd', undefined]) {
+    const k = keysFor(p, els());
+    assert.deepEqual([k.keyName('mod'), k.keyName('alt'), k.keyCombo('B')], ['Ctrl', 'Alt', 'Ctrl+B'], String(p));
+  }
+  assert.match(braced('function applySideNav('), /btn\.title = sideNavTitle\(collapsed\);/, 'the sidebar toggle\'s tooltip names the key the same way');
+});
+
+test('once the OS is known, the shortcuts sheet, the lasso hint and the sidebar tooltip are rewritten in its key names', () => {
+  const made = (t: string) => ({ textContent: t });
+  const win = { mod: [made('⌘'), made('⌘')], alt: [made('⌥')], nav: { title: 'Collapse navigation (⌘B)' }, collapsed: false };
+  keysFor('win32', win).renderKeyNames();
+  assert.deepEqual(win.mod.map((e) => e.textContent), ['Ctrl', 'Ctrl']);
+  assert.deepEqual(win.alt.map((e) => e.textContent), ['Alt']);
+  assert.equal(win.nav.title, 'Collapse navigation (Ctrl+B)');
+  const mac = { mod: [made('Ctrl')], alt: [made('Alt')], nav: { title: 'Expand navigation (Ctrl+B)' }, collapsed: true };
+  keysFor('darwin', mac).renderKeyNames();
+  assert.deepEqual([mac.mod[0].textContent, mac.alt[0].textContent, mac.nav.title], ['⌘', '⌥', 'Expand navigation (⌘B)']);
+  const sys = braced('async function loadSystem(');
+  assert.ok(sys.indexOf('renderKeyNames();') > sys.indexOf('state.system = sys;'), 'loadSystem renames the keys once it knows the OS');
+});
+
+test('the page names no ⌘ or ⌥ that the renaming cannot reach', () => {
+  // The markup and styles outside the script, HTML and CSS comments removed:
+  // every ⌘ and ⌥ sits in an element renderKeyNames rewrites. In the script,
+  // comments removed, the glyphs live only in the key-name table.
+  const scriptAt = INDEX.indexOf("<script>\n'use strict';");
+  const markup = (INDEX.slice(0, scriptAt) + INDEX.slice(INDEX.indexOf('</script>', scriptAt)))
+    .replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const glyphs = [...markup.matchAll(/[⌘⌥]/g)];
+  assert.ok(glyphs.length >= 6, `the sheet and the lasso hint still show the Mac glyphs by default (${glyphs.length})`);
+  for (const m of glyphs) {
+    const before = markup.slice(Math.max(0, m.index! - 40), m.index);
+    assert.match(before, m[0] === '⌘' ? /data-key="mod">$/ : /data-key="alt">$/, `a ${m[0]} outside a renamed element: …${before}${m[0]}`);
+  }
+  const code = INDEX.slice(scriptAt, INDEX.indexOf('</script>', scriptAt))
+    .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
+  const table = INDEX.slice(INDEX.indexOf('const KEY_NAMES = '), INDEX.indexOf(';', INDEX.indexOf('const KEY_NAMES = ')));
+  assert.equal(code.split('⌘').length - 1, table.split('⌘').length - 1, 'no ⌘ in a script string outside KEY_NAMES');
+  assert.equal(code.split('⌥').length - 1, table.split('⌥').length - 1, 'no ⌥ in a script string outside KEY_NAMES');
+});
+
 test('the hold-Z lens does not paint under a scrim', () => {
   const z = braced("document.addEventListener('keydown', (e) => {\n  if (e.key !== 'z' && e.key !== 'Z') return;");
   assert.match(z, /topModal\(\)/, 'the lens checks for an open sheet');

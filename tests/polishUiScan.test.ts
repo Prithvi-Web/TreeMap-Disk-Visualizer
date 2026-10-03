@@ -429,13 +429,20 @@ test('a failed background rescan clears the spinner, the skeletons and the Stop 
     `'use strict'; ${fn} return quietRescanFailed;`)(
     $, () => calls.push('end'), () => calls.push('restore'), () => '', (s: string) => s, (m: string, k: string) => toasts.push([m, k]), () => calls.push('drain'),
     { scanning: true }) as (e: Error) => void;
+  assert.equal(INDEX.split('function quietRescanFailed(').length - 1, 1, 'one definition: a second one silently replaced the first, whose messages never showed');
   run(new Error('That folder no longer exists.'));
   assert.deepEqual(calls.slice(0, 2), ['end', 'restore'], 'the chrome ends and the honest panels come back');
   assert.equal(els.scanStatus.cls.has('error'), true);
   assert.match(els.scanStatus.innerHTML, /saved index/i, 'the tree on screen is named for what it is');
-  assert.match(els.scanStatus.innerHTML, /no longer exists/, 'with the reason');
+  assert.match(els.scanStatus.innerHTML, /Showing the saved index — the refresh failed: That folder no longer exists\./, 'with the reason');
+  assert.equal(els.scanAnnounce?.textContent, 'Couldn’t refresh this folder: That folder no longer exists.', 'a screen reader hears it too');
   assert.equal(els.indexBadge.cls.has('stale'), true, '"Index live — always current" is no longer claimed');
-  assert.equal(toasts.length, 1); assert.equal(toasts[0][1], 'error');
+  assert.deepEqual(toasts, [['Couldn’t refresh this folder: That folder no longer exists.', 'error']]);
+  assert.deepEqual(calls.slice(2), ['drain'], 'a folder waiting behind this one still gets its turn');
+  // A rejection that is not an Error still ends the chrome and says something.
+  toasts.length = 0;
+  assert.doesNotThrow(() => run(undefined as unknown as Error), 'an answer with no message cannot leave the spinner up');
+  assert.deepEqual(toasts, [['Couldn’t refresh this folder: the folder could not be read', 'error']]);
 });
 
 /* ══════════════ states-errors-3 — a small folder is never a blank canvas ══════════════ */

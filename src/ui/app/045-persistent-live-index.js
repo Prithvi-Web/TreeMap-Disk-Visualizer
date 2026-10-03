@@ -342,10 +342,17 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
  *
  * "Quiet" was taken literally: the function returned, and the spinner, the
  * three skeleton cards and the Stop button stayed up for ever over a tree
- * that was never going to be refreshed. The tree itself is still good — it
- * came from the index — so it stays; what has to end is the pretence that
- * something is still happening, and the badge's claim that the index is
- * current, which is exactly what just failed to be confirmed.
+ * that was never going to be refreshed — unplug the drive a folder lived on,
+ * reopen it from Recent, and the app spun forever with the lists as grey
+ * skeletons and "Index live — always current" underneath. The tree itself is
+ * still good — it came from the index — so it stays; what has to end is the
+ * pretence that something is still happening, and the badge's claim that the
+ * index is current, which is exactly what just failed to be confirmed. Said
+ * three ways: the status line, a screen reader's announcement, and a toast.
+ *
+ * (There were two of these, and the second, declared later in the one page
+ * script, silently replaced this one everywhere — tests/frontendContract now
+ * refuses a second top-level declaration of any name.)
  */
 function quietRescanFailed(e) {
   state.scanning = false;
@@ -355,6 +362,7 @@ function quietRescanFailed(e) {
   const el = $('scanStatus');
   el.classList.add('error');
   el.innerHTML = icon('alert', 14) + '<span>Showing the saved index — the refresh failed: ' + escapeHtml(why) + '</span>';
+  $('scanAnnounce').textContent = 'Couldn’t refresh this folder: ' + why;
   $('indexBadge').classList.add('stale');
   toast('Couldn’t refresh this folder: ' + why, 'error');
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
@@ -585,29 +593,6 @@ function failScan(message) {
   tourScanFailed(); // v4 §9.2 — the welcome card comes back, with its buttons
   switchView(state.view);
   drainScanQueue(); // a folder waiting behind this one still gets its turn
-}
-
-/**
- * A quiet (behind-the-index) rescan that failed.
- *
- * The tree on screen is still perfectly usable, so it must not be wiped —
- * but the chrome the request put up (spinner, Stop, skeletons, "Checking for
- * changes…") was promising a scan that will never land. Leaving it up was
- * the bug: unplug the drive a folder lived on, reopen it from Recent, and the
- * app spun forever with the lists as grey skeletons and "Index live — always
- * current" underneath. End the chrome, say what the screen is showing, and
- * stop claiming the index is live.
- */
-function quietRescanFailed(e) {
-  endScanChrome();
-  restoreDashboardPanels();
-  const status = $('scanStatus');
-  status.classList.add('error');
-  status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml('Showing the saved index — couldn’t rescan: ' + e.message) + '</span>';
-  $('scanAnnounce').textContent = 'Couldn’t rescan this folder: ' + e.message;
-  $('indexBadge').classList.add('stale');
-  toast('Couldn’t rescan this folder: ' + e.message, 'error');
-  drainScanQueue();
 }
 
 /**

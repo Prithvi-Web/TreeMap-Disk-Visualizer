@@ -50,6 +50,20 @@ function platformWord(words) {
   try { p = state && state.system ? state.system.platform : undefined; } catch { p = undefined; }
   return p !== undefined && Object.prototype.hasOwnProperty.call(words, p) ? words[p] : words.other;
 }
+/* Modifier keys, named as this keyboard names them. Every shortcut in the page
+   listens for ⌘ and Ctrl alike (metaKey || ctrlKey), and the lasso's freehand
+   for ⌥ or Alt (altKey), so a Mac is shown ⌘ and ⌥ and every other computer
+   Ctrl and Alt — as is a page that does not know its OS yet, since those work
+   on a Mac too. `join` is what goes between a modifier and its key in text:
+   ⌘B, Ctrl+B. renderKeyNames (240) writes these into the page. */
+const KEY_NAMES = {
+  mod: { darwin: '⌘', win32: 'Ctrl', linux: 'Ctrl', other: 'Ctrl' },
+  alt: { darwin: '⌥', win32: 'Alt', linux: 'Alt', other: 'Alt' },
+  join: { darwin: '', win32: '+', linux: '+', other: '+' },
+};
+function keyName(which) { return platformWord(KEY_NAMES[which]); }
+/** A shortcut as text, for a tooltip: ⌘B on a Mac, Ctrl+B elsewhere. */
+function keyCombo(key) { return keyName('mod') + keyName('join') + key; }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }

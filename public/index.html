@@ -3270,7 +3270,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     </div>
     <span id="headerSpin" aria-hidden="true"></span>
     <button class="icon-btn" id="sideToggle" aria-label="Collapse the navigation" aria-expanded="true"
-            title="Collapse navigation (⌘B)"></button>
+            title="Collapse navigation"></button>
   </div>
 
   <!-- A4: global search. Lives at the top of the sidebar, not in a view,
@@ -3686,7 +3686,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <div class="tm-foot">
       <div id="tmLegend" class="tm-legend"></div>
       <span class="num" id="tmStatus"></span>
-      <span class="hint"><span data-icon="mouse"></span>click to drill in · drag to lasso (⌥ freehand, ⌘ to unstage) · hold Z to magnify · Esc to go up</span>
+      <span class="hint"><span data-icon="mouse"></span><span>click to drill in · drag to lasso (<span data-key="alt">⌥</span> freehand, <span data-key="mod">⌘</span> to unstage) · hold Z to magnify · Esc to go up</span></span>
     </div>
     <!-- v4 §8.3 — the drive dock: drop the cart on a drive to offload -->
     <div class="drive-dock" id="tmDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
@@ -3739,7 +3739,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <div class="tm-foot">
       <div id="cityLegend" class="tm-legend"></div>
       <span class="num" id="cityStatus"></span>
-      <span class="hint"><span data-icon="mouse"></span>drag to pan · ⇧ or ⌥ drag to lasso · scroll to zoom · click to drill in · Esc to go up</span>
+      <span class="hint"><span data-icon="mouse"></span><span>drag to pan · ⇧ or <span data-key="alt">⌥</span> drag to lasso · scroll to zoom · click to drill in · Esc to go up</span></span>
     </div>
     <div class="drive-dock" id="cityDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
     <!-- §6 cross-cutting: every canvas view needs a text-equivalent path to the
@@ -4607,11 +4607,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
       <div class="kbd-sec">Anywhere</div>
       <div class="kbd-grid">
-        <div><kbd>⌘</kbd><kbd>K</kbd></div><div>Command palette — views, actions, saved views, recent folders</div>
-        <div><kbd>⌘</kbd><kbd>B</kbd></div><div>Collapse or expand the navigation</div>
+        <div><kbd data-key="mod">⌘</kbd><kbd>K</kbd></div><div>Command palette — views, actions, saved views, recent folders</div>
+        <div><kbd data-key="mod">⌘</kbd><kbd>B</kbd></div><div>Collapse or expand the navigation</div>
         <div><kbd>/</kbd></div><div>Search everything indexed (in Treemap and Grid, <kbd>/</kbd> focuses that view's own filter instead)</div>
-        <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
-        <div><kbd>⌘</kbd><kbd>⌫</kbd></div><div>Move the selection to Trash</div>
+        <div><kbd data-key="mod">⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
+        <div><kbd data-key="mod">⌘</kbd><kbd>⌫</kbd></div><div>Move the selection to Trash</div>
         <div><kbd>?</kbd></div><div>Show this help</div>
       </div>
     </div>
@@ -4806,6 +4806,20 @@ function platformWord(words) {
   try { p = state && state.system ? state.system.platform : undefined; } catch { p = undefined; }
   return p !== undefined && Object.prototype.hasOwnProperty.call(words, p) ? words[p] : words.other;
 }
+/* Modifier keys, named as this keyboard names them. Every shortcut in the page
+   listens for ⌘ and Ctrl alike (metaKey || ctrlKey), and the lasso's freehand
+   for ⌥ or Alt (altKey), so a Mac is shown ⌘ and ⌥ and every other computer
+   Ctrl and Alt — as is a page that does not know its OS yet, since those work
+   on a Mac too. `join` is what goes between a modifier and its key in text:
+   ⌘B, Ctrl+B. renderKeyNames (240) writes these into the page. */
+const KEY_NAMES = {
+  mod: { darwin: '⌘', win32: 'Ctrl', linux: 'Ctrl', other: 'Ctrl' },
+  alt: { darwin: '⌥', win32: 'Alt', linux: 'Alt', other: 'Alt' },
+  join: { darwin: '', win32: '+', linux: '+', other: '+' },
+};
+function keyName(which) { return platformWord(KEY_NAMES[which]); }
+/** A shortcut as text, for a tooltip: ⌘B on a Mac, Ctrl+B elsewhere. */
+function keyCombo(key) { return keyName('mod') + keyName('join') + key; }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -6221,12 +6235,16 @@ const sideNavNarrow = window.matchMedia('(max-width: 900px)');
 function sideNavPref() {
   try { return localStorage.getItem('tm-sidenav'); } catch { return null; /* private mode */ }
 }
+/** The toggle's tooltip, naming this keyboard's shortcut (renderKeyNames says it again once the OS is known). */
+function sideNavTitle(collapsed) {
+  return `${collapsed ? 'Expand navigation' : 'Collapse navigation'} (${keyCombo('B')})`;
+}
 function applySideNav(collapsed) {
   $('sideNav').classList.toggle('collapsed', collapsed);
   const btn = $('sideToggle');
   btn.setAttribute('aria-expanded', String(!collapsed));
   btn.setAttribute('aria-label', collapsed ? 'Expand the navigation' : 'Collapse the navigation');
-  btn.title = (collapsed ? 'Expand navigation' : 'Collapse navigation') + ' (⌘B)';
+  btn.title = sideNavTitle(collapsed);
   btn.innerHTML = icon(collapsed ? 'chevronRight' : 'chevronLeft', 16);
   // Only a wide-viewport choice is the pin; narrow states are transient.
   if (!sideNavNarrow.matches) {
@@ -7467,6 +7485,7 @@ async function loadSystem() {
   try {
     const sys = await api('/api/system');
     state.system = sys;
+    renderKeyNames(); // ⌘ and ⌥ on a Mac, Ctrl and Alt elsewhere, now that the OS is known
     // The tour's welcome card offers "scan my home folder" only once it
     // knows where home is; repaint it if it went up first (§9.2).
     if (typeof tour !== 'undefined' && tour.active && tour.step === 'welcome') tourRender();
@@ -8318,10 +8337,17 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
  *
  * "Quiet" was taken literally: the function returned, and the spinner, the
  * three skeleton cards and the Stop button stayed up for ever over a tree
- * that was never going to be refreshed. The tree itself is still good — it
- * came from the index — so it stays; what has to end is the pretence that
- * something is still happening, and the badge's claim that the index is
- * current, which is exactly what just failed to be confirmed.
+ * that was never going to be refreshed — unplug the drive a folder lived on,
+ * reopen it from Recent, and the app spun forever with the lists as grey
+ * skeletons and "Index live — always current" underneath. The tree itself is
+ * still good — it came from the index — so it stays; what has to end is the
+ * pretence that something is still happening, and the badge's claim that the
+ * index is current, which is exactly what just failed to be confirmed. Said
+ * three ways: the status line, a screen reader's announcement, and a toast.
+ *
+ * (There were two of these, and the second, declared later in the one page
+ * script, silently replaced this one everywhere — tests/frontendContract now
+ * refuses a second top-level declaration of any name.)
  */
 function quietRescanFailed(e) {
   state.scanning = false;
@@ -8331,6 +8357,7 @@ function quietRescanFailed(e) {
   const el = $('scanStatus');
   el.classList.add('error');
   el.innerHTML = icon('alert', 14) + '<span>Showing the saved index — the refresh failed: ' + escapeHtml(why) + '</span>';
+  $('scanAnnounce').textContent = 'Couldn’t refresh this folder: ' + why;
   $('indexBadge').classList.add('stale');
   toast('Couldn’t refresh this folder: ' + why, 'error');
   drainScanQueue(); // a folder waiting behind this one still deserves its turn
@@ -8561,29 +8588,6 @@ function failScan(message) {
   tourScanFailed(); // v4 §9.2 — the welcome card comes back, with its buttons
   switchView(state.view);
   drainScanQueue(); // a folder waiting behind this one still gets its turn
-}
-
-/**
- * A quiet (behind-the-index) rescan that failed.
- *
- * The tree on screen is still perfectly usable, so it must not be wiped —
- * but the chrome the request put up (spinner, Stop, skeletons, "Checking for
- * changes…") was promising a scan that will never land. Leaving it up was
- * the bug: unplug the drive a folder lived on, reopen it from Recent, and the
- * app spun forever with the lists as grey skeletons and "Index live — always
- * current" underneath. End the chrome, say what the screen is showing, and
- * stop claiming the index is live.
- */
-function quietRescanFailed(e) {
-  endScanChrome();
-  restoreDashboardPanels();
-  const status = $('scanStatus');
-  status.classList.add('error');
-  status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml('Showing the saved index — couldn’t rescan: ' + e.message) + '</span>';
-  $('scanAnnounce').textContent = 'Couldn’t rescan this folder: ' + e.message;
-  $('indexBadge').classList.add('stale');
-  toast('Couldn’t rescan this folder: ' + e.message, 'error');
-  drainScanQueue();
 }
 
 /**
@@ -26052,7 +26056,7 @@ const CMDK_ACTIONS = [
   // and the ✨ button the popover anchors to is not on screen — the popover
   // would arm at (8,8) and resurface stale over whatever came next.
   { label: 'Ask in plain words', hint: 'translated to a query you approve', when: () => !!state.root, run: () => { switchView('treemap'); requestAnimationFrame(() => nlOpen()); } },
-  { label: 'Open Settings', hint: 'schedules, weights, notes and more', run: () => $('settingsBtn').click() },
+  { label: 'Open Settings', hint: 'schedules, scanning budget, scan engine, weights and more', run: () => $('settingsBtn').click() },
   { label: 'Open Clean Up', hint: 'smart suggestions, custom rules, empty folders', run: () => $('cleanupBtn').click() },
   { label: 'Keyboard shortcuts', hint: 'the ? panel', run: () => toggleShortcuts() },
   { label: 'Switch light / dark', hint: 'theme', run: () => $('themeToggle').click() },
@@ -32644,6 +32648,18 @@ function tablistKeydown(e) {
 }
 
 /* ───────────────────────────── Keyboard shortcuts ───────────────────────────── */
+/* The page's key names, rewritten for this keyboard once /api/system has said
+   which OS this is (loadSystem calls this): every <kbd> and hint that names a
+   modifier carries data-key="mod" or data-key="alt" and ships the Mac glyph,
+   and the sidebar toggle's tooltip names its shortcut. KEY_NAMES (prelude)
+   holds the names. */
+function renderKeyNames() {
+  for (const el of document.querySelectorAll('[data-key="mod"]')) el.textContent = keyName('mod');
+  for (const el of document.querySelectorAll('[data-key="alt"]')) el.textContent = keyName('alt');
+  const nav = $('sideToggle');
+  if (nav) nav.title = sideNavTitle($('sideNav').classList.contains('collapsed'));
+}
+
 /* ── v4 §6.4 — hold Z ──
    `keydown` repeats while a key is held, so the guard on `state.lens.held` is
    what keeps this from repainting the map sixty times a second for as long as

@@ -381,7 +381,9 @@ export async function openTerminal(dirPath: string): Promise<void> {
  * Finder/Explorer. Pure — exported so tests assert the argv per platform.
  * On Windows opening goes through PowerShell's `Invoke-Item`, which reads the
  * path from the environment (WINDOWS_REPARSE); explorer.exe, started
- * directly, takes it as its own argument.
+ * directly, takes it as its own argument. xdg-open has no "select this item":
+ * handed the item it would OPEN it, so a reveal there opens the folder that
+ * holds it (POSIX paths, whatever the host).
  */
 export function openCommand(p: string, reveal: boolean, platform: NodeJS.Platform = process.platform): PlatformCommand {
   switch (platform) {
@@ -396,7 +398,7 @@ export function openCommand(p: string, reveal: boolean, platform: NodeJS.Platfor
           env: { TREEMAP_OPEN_TARGET: p },
         };
     default:
-      return { cmd: 'xdg-open', args: [p] };
+      return { cmd: 'xdg-open', args: [reveal ? path.posix.dirname(p) : p] };
   }
 }
 
