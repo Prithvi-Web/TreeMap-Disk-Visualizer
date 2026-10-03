@@ -1,7 +1,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { STATFS_TIMEOUT_MS } from '../diskUsage';
-import { readSnapshotRecords } from '../snapshots';
+import { newestCountsByRoot, newestSnapshotCounts, type SnapshotCounts } from '../snapshots';
 import { formatCount } from '../../utils/formatCount';
 
 /**
@@ -24,7 +24,9 @@ import { formatCount } from '../../utils/formatCount';
  * Not quite read-only: a corrupt snapshots.json read through `readJsonFile`
  * is copied aside to snapshots.json.corrupt in app-data, as every reader of it
  * does. Until U-24 records each scan's boundary rule, every snapshot of the
- * root counts, whatever rule it was taken under.
+ * root counts, whatever rule it was taken under. The history is not parsed at
+ * every start: snapshots.ts keeps each root's newest counts, read once a
+ * process and kept current by each save (`newestSnapshotCounts`).
  */
 
 /** Where a projection's number came from; `none` when there is no number. */
@@ -41,8 +43,13 @@ export interface EntryProjection {
 /** Everything the projection reads, injected so every case can be counted on any machine. */
 export interface ProjectionDeps {
   platform: NodeJS.Platform;
-  /** Every snapshot record on file, unchecked (`readSnapshotRecords`). */
-  snapshots(): Promise<readonly unknown[]>;
+  /**
+   * Snapshot records, unchecked, among which is `rootPath`'s newest: every
+   * record on file would do, since the projection picks the newest of exactly
+   * this root. The live one hands over only that newest, from the counts
+   * index, so a scan start parses no history (`newestSnapshotCounts`).
+   */
+  snapshots(rootPath: string): Promise<readonly unknown[]>;
   /** `stat().dev`; rejects when the path cannot be read. */
   dev(target: string): Promise<number>;
   /** statfs's inode counts for the volume at `mount`. */
@@ -53,7 +60,10 @@ export interface ProjectionDeps {
 
 const LIVE: ProjectionDeps = {
   platform: process.platform,
-  snapshots: readSnapshotRecords,
+  snapshots: async (rootPath) => {
+    const newest = await newestSnapshotCounts(rootPath);
+    return newest === null ? [] : [newest];
+  },
   dev: async (target) => (await fsp.stat(target)).dev,
   statfs: async (mount) => {
     const st = await fsp.statfs(mount);
@@ -150,22 +160,9 @@ function withinDeadline<T>(work: Promise<T>, ms: number, deps: ProjectionDeps): 
   });
 }
 
-/** The newest record of exactly `rootPath` among `records`, or null. A time that is not a number reads as oldest. */
-function newestOf(records: readonly unknown[], rootPath: string): Record<string, unknown> | null {
-  let newest: Record<string, unknown> | null = null;
-  let newestAt = -Infinity;
-  for (const record of records) {
-    if (typeof record !== 'object' || record === null) continue;
-    const r = record as Record<string, unknown>;
-    if (r.rootPath !== rootPath) continue;
-    const at = typeof r.takenAt === 'number' && Number.isFinite(r.takenAt) ? r.takenAt : -Infinity;
-    // `>=`: of two taken at the same time, the one written later.
-    if (newest === null || at >= newestAt) {
-      newest = r;
-      newestAt = at;
-    }
-  }
-  return newest;
+/** The newest record of exactly `rootPath` among `records`, or null, by snapshots.ts's one rule (`newestCountsByRoot`). */
+function newestOf(records: readonly unknown[], rootPath: string): SnapshotCounts | null {
+  return newestCountsByRoot(records).get(rootPath) ?? null;
 }
 
 /** Why `value` is not a count a previous scan can be read as, or null when it is one. */
@@ -176,7 +173,7 @@ function countProblem(name: string, value: unknown): string | null {
 }
 
 /** A previous scan's record as a projection: its file and folder counts, or why they cannot be read as one. */
-function fromSnapshot(record: Record<string, unknown>): EntryProjection {
+function fromSnapshot(record: SnapshotCounts): EntryProjection {
   const unusable = (why: string): EntryProjection => ({ entries: null, source: 'none', reason: `the newest scan of this folder on record has no usable size: ${why}` });
   const problem = countProblem('file count', record.fileCount) ?? countProblem('folder count', record.dirCount);
   if (problem !== null) return unusable(problem);
@@ -215,7 +212,7 @@ export async function projectEntries(rootPath: string, deps: ProjectionDeps = LI
   try {
     let lead = NO_EARLIER_SCAN;
     try {
-      const newest = newestOf(await deps.snapshots(), rootPath);
+      const newest = newestOf(await deps.snapshots(rootPath), rootPath);
       if (newest !== null) return fromSnapshot(newest);
     } catch (err: unknown) {
       lead = `the earlier scans on record could not be read (${describe(err)})`;

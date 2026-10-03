@@ -1,6 +1,9 @@
 import crypto from 'crypto';
+import { promises as fsp } from 'fs';
+import path from 'path';
 import { FileNode, ScanResult, Snapshot, SnapshotDiff, SnapshotDeltaEntry, SnapshotTreeNode } from '../models/types';
-import { readJsonFile, writeJsonFile } from './storage';
+import { appDataDir, readJsonFile, writeJsonFile } from './storage';
+import { isEphemeral } from './portableMode';
 import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
 
 /**
@@ -34,10 +37,128 @@ interface SnapshotStore {
   snapshots: Snapshot[];
 }
 
+/** Reads of snapshots.json, each a parse of the whole history: counted for the tests that prove the counts index spares them. */
+let historyReads = 0;
+
 async function load(): Promise<SnapshotStore> {
+  historyReads++;
   const store = await readJsonFile<SnapshotStore>(SNAP_FILE, { snapshots: [] });
   if (!Array.isArray(store.snapshots)) return { snapshots: [] };
   return store;
+}
+
+/* ---------- The newest counts of each root (Track U, U-30) ---------- */
+
+/** A root's newest snapshot as a native scan's projection reads it: its counts, unchecked, as the file holds them. */
+export interface SnapshotCounts {
+  rootPath: string;
+  takenAt: unknown;
+  fileCount: unknown;
+  dirCount: unknown;
+}
+
+/** When a record says it was taken: its `takenAt`, or -Infinity — the oldest — when that is not a finite number. */
+function takenAtOf(record: { takenAt?: unknown }): number {
+  return typeof record.takenAt === 'number' && Number.isFinite(record.takenAt) ? record.takenAt : -Infinity;
+}
+
+/**
+ * Each root's newest snapshot among `records`, as its counts, unchecked: the
+ * latest `takenAt`; of two taken at the same time, the one written later; a
+ * record with no usable time, the oldest. Anything that is not an object with
+ * a string `rootPath` is passed over: a hand-edited or old file can hold
+ * anything (Track U, U-30).
+ */
+export function newestCountsByRoot(records: readonly unknown[]): Map<string, SnapshotCounts> {
+  const newest = new Map<string, SnapshotCounts>();
+  for (const record of records) {
+    if (typeof record !== 'object' || record === null) continue;
+    const r = record as Record<string, unknown>;
+    if (typeof r.rootPath !== 'string') continue;
+    const held = newest.get(r.rootPath);
+    // `>=`: of two taken at the same time, the one written later.
+    if (held === undefined || takenAtOf(r) >= takenAtOf(held)) {
+      newest.set(r.rootPath, { rootPath: r.rootPath, takenAt: r.takenAt, fileCount: r.fileCount, dirCount: r.dirCount });
+    }
+  }
+  return newest;
+}
+
+/**
+ * The newest counts of each root, with the stamp of the snapshots.json they
+ * came from, so a native scan's projection reads one root's counts without
+ * parsing the whole history — tens of MB on a long-used Mac — at every start.
+ *
+ *  - Built by one read the first time it is asked for in a process.
+ *  - Rebuilt, with no read, from the history `saveSnapshot` has just written
+ *    (already parsed), and stamped then: every save of this process waits its
+ *    turn (`saving`), so no other save of it can write between the two.
+ *  - Read again only when the file on disk is not the one stamped: written by
+ *    another process (the MCP server, a second app), by a person, or removed.
+ *
+ * A stamp is taken before the read it labels, so a write during that read
+ * makes the next ask read again: a mismatch costs a read, never a stale
+ * answer. The one write this can miss is another process's landing between
+ * this process's write and its look at that write, microseconds apart, until
+ * the file next changes.
+ */
+interface CountsIndex {
+  byRoot: Map<string, SnapshotCounts>;
+  stamp: string;
+}
+let countsIndex: CountsIndex | null = null;
+/** A rebuild in flight, which every ask meanwhile shares: one read, however many scans start at once. */
+let rebuilding: Promise<CountsIndex> | null = null;
+
+/**
+ * Which snapshots.json is there now: its folder, and its file id, size and
+ * times, or `absent`. A no-trace portable session keeps its files in this
+ * process, where nothing else can write them. A look that fails otherwise is
+ * thrown, never guessed: the projection says the history could not be read.
+ */
+async function historyStamp(): Promise<string> {
+  if (isEphemeral()) return 'in-memory';
+  const file = path.join(appDataDir(), SNAP_FILE);
+  try {
+    const st = await fsp.stat(file);
+    return `${file}\0${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return `${file}\0absent`;
+    throw err;
+  }
+}
+
+function rebuildCountsIndex(): Promise<CountsIndex> {
+  if (rebuilding === null) {
+    rebuilding = (async () => {
+      // The stamp before the read: a write during the read is then a mismatch next time.
+      const stamp = await historyStamp();
+      const built = { byRoot: newestCountsByRoot((await load()).snapshots), stamp };
+      countsIndex = built;
+      return built;
+    })().finally(() => {
+      rebuilding = null;
+    });
+  }
+  return rebuilding;
+}
+
+/** The newest snapshot counts of exactly `rootPath`, or null: from the index, read again only when the history on disk changed. */
+export async function newestSnapshotCounts(rootPath: string): Promise<SnapshotCounts | null> {
+  const stamp = await historyStamp();
+  const held = countsIndex;
+  const index = held !== null && held.stamp === stamp ? held : await rebuildCountsIndex();
+  return index.byRoot.get(rootPath) ?? null;
+}
+
+/** Tests only: how many times snapshots.json has been read and parsed in this process. */
+export function snapshotHistoryReadsForTests(): number {
+  return historyReads;
+}
+
+/** Tests only: forget the counts index, as a new process starts without one. */
+export function forgetSnapshotCountsForTests(): void {
+  countsIndex = null;
 }
 
 /* ---------- Time-slider trees (stored beside snapshots.json, per root) ---------- */
@@ -148,8 +269,22 @@ export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   };
 }
 
+/**
+ * The saves of this process, one at a time: each reads the history, adds to
+ * it, writes it and stamps the counts index before the next begins, so no
+ * save drops another's snapshot (each rewrites the whole file) and no stamp
+ * labels another save's write.
+ */
+let saving: Promise<unknown> = Promise.resolve();
+
 /** Record a completed scan. Called automatically by the scanner. */
-export async function saveSnapshot(scan: ScanResult): Promise<Snapshot | null> {
+export function saveSnapshot(scan: ScanResult): Promise<Snapshot | null> {
+  const turn = saving.then(() => writeSnapshot(scan));
+  saving = turn.catch(() => undefined);
+  return turn;
+}
+
+async function writeSnapshot(scan: ScanResult): Promise<Snapshot | null> {
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) return null;
   const tree = storeOf(scan);
 
@@ -186,6 +321,13 @@ export async function saveSnapshot(scan: ScanResult): Promise<Snapshot | null> {
   }
 
   await writeJsonFile(SNAP_FILE, store);
+  // The counts index, from the history just written: already parsed, so no read.
+  const byRoot = newestCountsByRoot(store.snapshots);
+  try {
+    countsIndex = { byRoot, stamp: await historyStamp() };
+  } catch {
+    countsIndex = null; // which file is there could not be told: the next ask reads it
+  }
 
   // Time-slider tree: written after the main store so a failure here can
   // never lose the snapshot itself; orphaned trees are pruned on each save.
@@ -201,15 +343,6 @@ export async function saveSnapshot(scan: ScanResult): Promise<Snapshot | null> {
   }
 
   return snapshot;
-}
-
-/**
- * Every snapshot record as the file holds it, unchecked: what a reader that
- * must survive a hand-edited or old snapshots.json starts from, element by
- * element — a native scan's projection (`scan/projection.ts`, Track U U-30).
- */
-export async function readSnapshotRecords(): Promise<readonly unknown[]> {
-  return (await load()).snapshots;
 }
 
 /** All snapshots for one root path, oldest first. */
