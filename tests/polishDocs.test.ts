@@ -330,6 +330,63 @@ test('README first-launch guidance never offers right-click → Open as a workin
   assert.match(INSTALL_NOTE, /right-click[^\n]*no longer works/i);
 });
 
+test('install guidance names no closed list of Apple chips or macOS versions that the next release outdates', () => {
+  // The release page printed "M1/M2/M3/M4" after M5 Macs shipped, and "Sequoia
+  // (15) and Tahoe (26)" as the versions without right-click → Open while the
+  // owner's Mac ran macOS 27.
+  for (const [name, doc] of [['INSTALL-NOTE.md', INSTALL_NOTE], ['README.md', README]] as const) {
+    assert.doesNotMatch(doc, /\bM1\b[^\n]*\bM[2-9]\b/, `${name} lists Apple chips by generation`);
+    assert.doesNotMatch(doc, /Sequoia[^.\n]*\band\b[^.\n]*Tahoe/, `${name} closes the list of macOS versions without right-click → Open at Tahoe`);
+  }
+  assert.match(INSTALL_NOTE, /any M-series Mac/);
+  assert.match(INSTALL_NOTE, /Sequoia \(15\) on/, 'from Sequoia on — every later macOS included');
+});
+
+test('INSTALL-NOTE tells Windows users which install the NTFS turbo engine needs, and names the portable exe', () => {
+  // The helper is refused from any folder a program running as the user can
+  // change (mftHelperPath.ts, elevationRefusal): a per-user install or the
+  // portable exe. The installer asks who it is for and preselects "Only for me".
+  const win = section(INSTALL_NOTE, '**Windows**', '**Intel Mac');
+  assert.match(win, /\*\*NTFS turbo\*\*/);
+  assert.match(win, /\*\*Anyone who uses this computer\*\*/, "the installer's own words for the per-machine choice");
+  assert.match(win, /`TreeMap-x\.y\.z\.exe`/, 'the portable exe every release attaches is named');
+  const nsis = (JSON.parse(read('package.json')) as { build: { nsis: { oneClick?: boolean } } }).build.nsis;
+  assert.equal(nsis.oneClick, false, 'the premise: the installer asks who it is for');
+  const choice = read('node_modules', 'app-builder-lib', 'templates', 'nsis', 'assistedMessages.yml');
+  assert.match(choice, /forAll:\n\s+en: Anyone who uses this computer/, "and that is the installer's wording");
+});
+
+test('the version is found where it really is: About in the desktop app, :4280 only in web mode', () => {
+  // The desktop app's server listens on a random port with a per-launch token,
+  // so nothing answers at :4280 there; Windows has no app menu, so About is
+  // under Help (electron/lib/menu.js).
+  assert.match(MAIN_JS, /startServer\(\{ host: '127\.0\.0\.1', port: 0,/, 'the premise: the desktop server takes a random port');
+  assert.match(read('electron', 'lib', 'menu.js'), /isMac \? \[\] : \[sep\(\), \{ label: 'About TreeMap'/, 'and About is under Help off the Mac');
+  for (const [name, text] of [['SECURITY.md', SECURITY], ['README.md', section(README, 'Which version', '\n\n')]] as const) {
+    const sentences = text.split(/(?<=[.;])\s+/).filter((t) => t.includes('127.0.0.1:4280'));
+    assert.ok(sentences.length > 0, `${name} still says how web mode finds it`);
+    for (const t of sentences) {
+      assert.match(t, /web mode/, `${name}: the :4280 address is web mode's: ${t}`);
+      assert.doesNotMatch(t, /desktop/i, `${name}: never the desktop app's: ${t}`);
+    }
+    assert.match(text, /\*\*TreeMap → About TreeMap\*\* on macOS/, `${name}: the macOS menu`);
+    assert.match(text, /\*\*Help → About TreeMap\*\* on Windows/, `${name}: the Windows menu`);
+  }
+});
+
+test('SECURITY.md describes the update flow each platform has', () => {
+  const desk = read('electron', 'lib', 'desktop.js');
+  const button = /buttons: \['([^']+)'/.exec(desk.slice(desk.indexOf('function updateDialogCopy(')));
+  assert.ok(button, 'the macOS update dialog has a primary button');
+  assert.match(MAIN_JS, /autoUpdater\.autoDownload = true;\n\s*autoUpdater\.autoInstallOnAppQuit = true;/, 'the premise: Windows downloads by itself and installs at quit');
+  const item = SECURITY.split('\n').find((l) => l.startsWith('1. **The update check.**'));
+  assert.ok(item, 'the update check is the first outbound connection listed');
+  assert.ok(item!.includes(`**${button![1]}**`), `the macOS dialog's button, "${button![1]}", is named`);
+  assert.doesNotMatch(item!, /Download Update/, 'no dialog of that name exists');
+  assert.doesNotMatch(item!, /after asking/, 'Windows downloads without asking');
+  assert.match(item!, /next time you quit/, 'and installs at the next quit unless restarted now');
+});
+
 test('the generated page is the only index.html, and the README steers contributors at src/ui', () => {
   assert.ok(!existsSync(path.join(root, 'index.html')), 'no stale index.html at the repo root');
   const layout = section(README, '## 🗂️ Project layout', '\n## ');

@@ -3,7 +3,7 @@
 
 ## 📥 Installing
 
-**macOS** — `TreeMap-x.y.z-arm64.dmg` · **Apple Silicon only** (M1/M2/M3/M4). Open the DMG, drag TreeMap into Applications.
+**macOS** — `TreeMap-x.y.z-arm64.dmg` · **Apple Silicon only** (any M-series Mac). Open the DMG, drag TreeMap into Applications.
 
 > ### ⚠️ macOS will block the first launch — this is expected
 >
@@ -21,12 +21,12 @@
 > → scroll to **Security** → **Open Anyway** → authenticate → double-click TreeMap → **Open Anyway**.
 > *(That button expires after ~1 hour; if it's missing, double-click TreeMap again to bring it back.)*
 >
-> On **macOS Sequoia (15) and Tahoe (26)** the old *right-click → Open* trick no longer works —
+> From **macOS Sequoia (15) on** — Tahoe (26) and macOS 27 included — the old *right-click → Open* trick no longer works —
 > Apple removed it. Use one of the two routes above.
 >
 > Full walkthrough, including the *"TreeMap is damaged"* variant:
 > **[Installing on macOS](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer#-first-launch-on-macos--apple-could-not-verify)**
 
-**Windows** — `TreeMap-Setup-x.y.z.exe`. Run it, click **More info** → **Run anyway** at the SmartScreen prompt.
+**Windows** — `TreeMap-Setup-x.y.z.exe`. Run it, click **More info** → **Run anyway** at the SmartScreen prompt. To use the **NTFS turbo** scan engine (Settings), choose **Anyone who uses this computer** when the installer asks — it runs only from Program Files. *Only for me*, and the portable `TreeMap-x.y.z.exe` (no installer; it keeps its data beside itself), scan the normal way.
 
 **Intel Mac / Linux** — no desktop build; run web mode from source ([3 commands](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer#-run-from-source--web-mode-3-commands)).

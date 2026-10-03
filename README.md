@@ -171,7 +171,7 @@ The complaint this answers is that **the numbers do not add up**: the Finder say
 
 The lines are files the scan walked, online-only files counted but not resident, filesystem snapshots, purgeable space, space held by programs still gripping a deleted file, **other volumes sharing the same storage pool**, and what the scan was refused. That sixth line is most of the point on a Mac: Preboot, VM and Update sit in the same APFS container as `/`, share its free space, and no scan of `/` ever walks them — about 12 GB a files-only tool simply loses.
 
-**An unknown is never shown as a zero.** A line that could not be measured says so, in full, with the real reason — and the Unaccounted line names it, so the gap is attributable rather than mysterious. Two on this Mac: **purgeable space**, which macOS reports only through a native API (`diskutil`, `diskutil apfs` and `system_profiler` were each checked and none carries the figure, and TreeMap's native scan core does not ask for it — it lists folders and governs the scan, nothing else), and **what a gdu scan was refused**, because gdu emits a folder it could not open as an ordinary *empty* folder and exits 0. The built-in walker counts refusals exactly; only it claims a zero.
+**An unknown is never shown as a zero.** A line that could not be measured says so, in full, with the real reason — and the Unaccounted line names it, so the gap is attributable rather than mysterious. Two on this Mac: **purgeable space**, which macOS reports only through a native API (`diskutil`, `diskutil apfs` and `system_profiler` were each checked and none carries the figure, and TreeMap's native scan core does not ask for it — it lists folders, builds the scan's store and governs the scan), and **what a gdu scan was refused**, because gdu emits a folder it could not open as an ordinary *empty* folder and exits 0. The native engine and the built-in walker count refusals exactly (and so does the NTFS turbo mode on Windows); only they claim a zero.
 
 Also stated rather than implied: hard links are already counted once by the scan, so they are a note under that line and not a second deduction; and copy-on-write clones **cannot** yet be told from real copies — no Node API exposes clone identity, and the native scan core does not ask APFS for it — so where they exist that line is an over-count and the difference lands in Unaccounted. Every remedy offered is a signpost to an existing, separately-gated action — nothing here deletes anything.
 
@@ -260,7 +260,7 @@ Re-scan folders on a schedule with **growth-threshold alerts** and **disk-full f
 </tr>
 </table>
 
-> **How it's built** — Node.js + **Express 5** + **TypeScript** on the backend. The frontend ships as a single, **zero-dependency** `index.html` — generated from `src/ui/` (small source files stitched by `scripts/build-ui.js`) — with hand-coded **Canvas 2D**, no React, no D3, no Chart.js. Navigation is a **liquid-glass sidebar** that collapses to a 64-px icon rail with ⌘B (and floats over the content, with a scrim, on narrow windows). Ships as a **web app** _and_ a downloadable **Electron desktop app** for macOS and Windows.
+> **How it's built** — Node.js + **Express 5** + **TypeScript** on the backend, with a Rust scan core (`native/treemap-core`) loaded as a Node module. The frontend ships as a single, **zero-dependency** `index.html` — generated from `src/ui/` (small source files stitched by `scripts/build-ui.js`) — with hand-coded **Canvas 2D**, no React, no D3, no Chart.js. Navigation is a **liquid-glass sidebar** that collapses to a 64-px icon rail with ⌘B (and floats over the content, with a scrim, on narrow windows). Ships as a **web app** _and_ a downloadable **Electron desktop app** for macOS and Windows.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -283,7 +283,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 </table>
 
 > [!NOTE]
-> **The macOS build is Apple Silicon only** — M1, M2, M3 or M4 (any Mac from late 2020 onward).
+> **The macOS build is Apple Silicon only** — any M-series Mac (late 2020 onward).
 > There is no Intel Mac build. On an Intel Mac, run TreeMap in web mode instead — see
 > **🚀 Run from source / web mode** further down; it is the same app in a browser tab.
 > Not sure which you have?  → **About This Mac**: it says either *Apple M…* or *Intel*.
@@ -293,7 +293,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 
 Every release also carries `TreeMap-x.y.z.exe` (Windows, **portable** — no installer, and it keeps its data beside itself), `TreeMap-x.y.z-arm64-mac.zip`, and the `latest*.yml` / `.blockmap` files the in-app updater reads. The version is in every file name.
 
-**Which version do I have?** On macOS, **TreeMap → About TreeMap**. Anywhere TreeMap is running — desktop or web mode — open <http://127.0.0.1:4280/api/capabilities> and read `version`; that is the number on the Releases page.
+**Which version do I have?** In the desktop app: **TreeMap → About TreeMap** on macOS, **Help → About TreeMap** on Windows. In web mode, open <http://127.0.0.1:4280/api/capabilities> (or the `PORT` you set) and read `version`; that is the number on the Releases page.
 
 ### 🍎 First launch on macOS — "Apple could not verify…"
 
@@ -320,7 +320,7 @@ Get past it **once** with either route below. After that TreeMap opens normally 
 > ⚠️ **Two things people trip on here**
 >
 > **1 — *Right-click → Open* no longer works.** Apple removed that old shortcut in macOS
-> **Sequoia (15)**, so on Sequoia and **Tahoe (26)** it does nothing at all. The steps below are
+> **Sequoia (15)**, so on Sequoia and every macOS since it does nothing at all. The steps below are
 > the replacement.
 >
 > **2 — There is a one-hour clock.** The **Open Anyway** button in step 3 only appears for about
@@ -393,7 +393,8 @@ SmartScreen shows a blue box once. Click **More info**, then **Run anyway**. Tha
 - 🔄 **Auto-updates** from GitHub Releases, checked shortly after launch and every 6 hours. Windows downloads the new version and asks before restarting. macOS cannot install an update into an un-notarized app, so there TreeMap only *checks* and offers a **Download** dialog that opens the Releases page — drag the new build into Applications yourself. Decline once with "Skip This Version" and that version stays quiet.
 - 🔔 **Growth alerts** from scheduled scans arrive as native notifications.
 - 🖱️ **"Scan with TreeMap" in the right-click menu** — a Finder Quick Action on macOS, a shell entry on Windows, and a Nautilus / Dolphin / Thunar entry on Linux (for a build you made yourself). Add or remove it from Settings; it applies to **your account only and needs no administrator rights**. TreeMap asks the OS whether it's installed every single time rather than remembering, so uninstalling TreeMap can never leave a dead menu entry behind claiming otherwise.
-- 🧳 **Portable, no-trace mode** — run TreeMap from a USB stick and it writes **nothing to the host machine**: settings, index and history all live beside the executable. If the medium is read-only it goes fully **ephemeral** — memory-backed storage, an in-memory database, an audit ring buffer, and the Time Capsule switched off *with the reason shown* rather than silently. Portable builds: `npm run dist:portable-mac` / `-win` / `-linux`.
+- 🧳 **Portable, no-trace mode** — run TreeMap from a USB stick and it writes **nothing to the host machine**: settings, index and history all live beside the executable. If the medium is read-only it goes fully **ephemeral** — memory-backed storage, an in-memory database, an audit ring buffer, and the Time Capsule switched off *with the reason shown* rather than silently — and the same when the `TreeMap-Data` folder beside it is a link or holds one, since whoever prepared the drive could have pointed TreeMap's saves elsewhere. Portable builds: `npm run dist:portable-mac` / `-win` / `-linux`.
+- ⚙️ **How hard a scan works is yours to set.** Settings › Scanning budget: Eco (about a quarter of the computer), Balanced (about half), Turbo (up to nine-tenths), or Automatic — Turbo for a scan you start and watch, Balanced for the ones that run on their own, a step lower on battery, and Eco when the system reports serious heat. Settings › Scan engine picks the engine — Automatic, the native engine, gdu or the built-in walker — and on Windows offers the opt-in **NTFS turbo** mode, which reads a drive's file table directly with administrator permission, after asking, for TreeMap installed for everyone who uses the computer. The Dashboard says which engine and budget every scan used, and why.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -436,6 +437,8 @@ Then open **http://127.0.0.1:4280** in your browser.
 
 Requires **Node.js 20+**. Trash support uses `gio` on Linux (preinstalled on GNOME/KDE), Finder via `osascript` on macOS, and the Recycle Bin via PowerShell on Windows.
 
+`npm run build` does not build the native scan engine, so a copy run from source scans with the built-in walker — or, on macOS and Linux, gdu, if `npm run fetch:gdu:dev` fetched one or one is on your PATH — and the Dashboard's engine line says why. To build the engine, install Rust from https://rustup.rs — the version it needs is pinned in `native/treemap-core/rust-toolchain.toml` and installed on first use — and run `npm run build:native`.
+
 ### 📦 Build the desktop app
 
 ```bash
@@ -445,7 +448,7 @@ npm run dist:mac     # produce a macOS .dmg in release/
 npm run dist:win     # produce a Windows installer in release/
 ```
 
-> ⚠️ You can only build the macOS app on a Mac and the Windows app on Windows.
+> ⚠️ You can only build the macOS app on a Mac and the Windows app on Windows (the Windows `dist` also needs the Windows native module, which only a Windows build or the release workflow makes).
 > To get **both** without owning both machines, use the automated release below — GitHub builds them for you.
 
 > 🦀 The `dist` scripts build TreeMap's native scanner first (`npm run build:native`), so packaging needs **Rust** — install it from [rustup.rs](https://rustup.rs). A build that cannot include the scanner stops with the reason instead of producing a slower app without it. Installing or running TreeMap never needs Rust.
@@ -459,7 +462,7 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 
 **To cut a release:**
 
-1. Bump the `version` in `package.json` (e.g. `1.2.1`) and add a matching `## [1.2.1]` entry at the top of `CHANGELOG.md`.
+1. Bump the version with `npm version 1.2.1 --no-git-tag-version` (it changes `package.json` and the two app entries in `package-lock.json`, nothing else) and add a matching `## [1.2.1]` entry at the top of `CHANGELOG.md`.
 2. Create a matching **tag** prefixed with `v` (e.g. `v1.2.1`) and push it — either way works; the first is the safer one:
    - **From GitHub Desktop (recommended):** **Repository → Push** first and wait for **Tests** to be green under **Actions**; then **History →** right-click the commit **→ Create Tag… →** `v1.2.1` **→ Create Tag**, then **Repository → Push** again (Desktop pushes the tag with it). The workflow creates the release itself as a draft, with that version's entry in `CHANGELOG.md` as its notes, and publishes it only once every installer is attached and checked.
    - **On github.com:** GitHub Desktop **Repository → Push** first, then **Releases → Draft a new release → Choose a tag →** type `v1.2.1` → **Create new tag: v1.2.1 on publish** → leave the notes empty (the workflow writes them from `CHANGELOG.md`; do **not** click *Generate release notes*, which would replace them with raw commit titles, and leave *Set as a pre-release* unticked, or the in-app updater will skip the version) → **Publish release**.
@@ -489,10 +492,11 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 |---|---|
 | `POST /api/scan` | Start scanning a folder → `{ scanId }` |
 | `GET /api/scan/:id/progress` | Live scan progress (Server-Sent Events) |
-| `POST /api/scan/:id/cancel` | Stop a running scan. The walker halts and a gdu subprocess is killed; `cancelled: false` means it had already finished |
+| `POST /api/scan/:id/cancel` | Stop a running scan: a native walk is cancelled, the walker halts, a gdu subprocess is killed; `cancelled: false` means it had already finished |
+| `POST /api/scan/:id/pause` · `…/resume` | Pause and resume a running scan; one whose engine cannot pause says why |
 | `GET /api/scan/:id/result` | Full file tree (202 while running) |
 | `GET /api/scan/:id/treemap` | Pre-computed squarified treemap layout |
-| `GET /api/scan/:id/stats` | Scan counters incl. engine, duration & fast-rescan cache usage |
+| `GET /api/scan/:id/stats` | Scan counters incl. engine and why it was chosen (`engineReason`, `fallbackReason`), the budget it ran under, duration & fast-rescan cache usage |
 | `GET /api/scan/:id/budgets` | Saved folder budgets cross-referenced against this scan |
 | `GET /api/scan/:id/export?format=csv\|pdf` | Download the scan as CSV (files / folders) or a PDF report |
 | `GET /api/missing-gigabytes?scanId=` | The accounting statement for the volume: the lines sum to used space exactly, and the residual is its own `unaccounted` line. A line that could not be measured reports `bytes: null` with a reason, never `0` |
@@ -539,7 +543,9 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `GET /api/timecapsule` | Items copied aside before an automated delete, with capacity + history |
 | `POST /api/timecapsule/:id/restore` · `DELETE /api/timecapsule/:id` | Verified restore to the original path (202 + SSE job), or forget one copy |
 | `GET /api/timecapsule/jobs/:jobId/progress` | Restore progress (Server-Sent Events), cancellable |
-| `GET /api/settings` · `PUT /api/settings` | Ignore list, scheduled scans + folder budgets |
+| `GET /api/settings` · `PUT /api/settings` | Ignore list, scheduled scans, folder budgets, the Scan engine and the scanning budget |
+| `GET /api/engine/budget` · `PUT …` | The scanning budget (Automatic / Eco / Balanced / Turbo, optional CPU %) and what is in force now |
+| `GET /api/engine/capabilities` | Whether the native core loaded, and which of its mechanisms this machine uses |
 | `GET /api/notifications` | Growth alerts from scheduled scans |
 | `GET /api/system` · `GET /api/trash/size` | Disk totals & platform; system Trash size |
 | `GET /api/fs/list?path=` | Folder browser (powers the path picker) |
@@ -716,7 +722,9 @@ src/
                 offload, cloud, fleet, autopilot, time capsule, notes, journal,
                 platform, settings, and meta (capabilities + OpenAPI)
   services/     ScanStore (packed Structure-of-Arrays scan memory),
-                DiskScanner (adaptive concurrent walker) and the gdu engine,
+                DiskScanner (engine choice + the built-in walker), scan/ (the
+                native engine's Node side: loader, eligibility, memory store,
+                NTFS turbo check) and the gdu engine,
                 indexEngine (the SQLite live index behind global search),
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
                 CleanupRules + rulepacks/ (smart suggestions), AppAttribution,
@@ -737,6 +745,14 @@ src/
 electron/
   main.js       Desktop shell: window, tray, drag-drop, notifications, auto-update
   preload.js    Context-isolated bridge for drag-drop paths & scan pushes
+  mft.js        Windows: starts the NTFS turbo helper, after asking
+native/
+  index.d.ts    The contract between the app and the Rust module (nativeVersion)
+  treemap-core/ Rust workspace: tm-walk (folder listing), tm-governor (the
+                scanning budget), tm-store (the scan's store), tm-node (the
+                Node module), tm-mft + tm-mft-helper (Windows NTFS turbo)
+bench/          `npm run bench` — the harness and recorded baselines the
+                native engine's speed figures come from
 public/
   index.html    GENERATED from src/ui/ — never edit it; run `npm run build:ui`
 vscode-extension/
@@ -747,6 +763,9 @@ vscode-extension/
                 and the child process that runs TreeMap's own server
 scripts/
   build-ui.js       Stitches src/ui/ into public/index.html (`--check` verifies)
+  build-native.js   Builds the Rust module into native/prebuilt/<platform-arch>/
+  check-prebuilt.js Refuses a dist whose native module is missing or stale
+  release-notes.js  Writes a release's notes from CHANGELOG.md + INSTALL-NOTE.md
   dev-isolated.js   Runs the server against a throwaway data folder
   fetchGdu.js       Downloads the gdu scan engine for packaging
   afterPack.js      Ad-hoc-signs the macOS bundle so it is not "damaged"
@@ -759,10 +778,10 @@ tests/          node:test suite — `npm test`, or one file with
 
 ## 🧠 Design decisions worth knowing
 
-- **A scan lives in a packed Structure-of-Arrays store, not a tree of objects.** Every scan used to be millions of JavaScript objects (~330 bytes each, measured) — which put a hard ceiling of a few million files on what fit in RAM. The tree now lives in a handful of typed arrays (`src/services/scanStore.ts`): names in one UTF-8 pool, children as contiguous id ranges laid out breadth-first, paths reconstructed on demand instead of stored. Measured cost: **~52 bytes per file** at 1M, 5M, 20M and 40M synthetic nodes — a 40M-item scan is ~2 GB of arrays, and a 100M-item scan projects to ~5 GB, on hardware where the object tree could not have held 20M. Summing every directory size is one reverse linear pass (28 ms for 5M nodes vs 2.2 s recursive), nothing recurses on pathological depth, and the browser notices nothing: the pruned JSON the API emits is byte-identical to the old tree — a golden test replays a fixture scan against responses recorded from the pre-rewrite server and compares the raw bytes. The store is pure JS + TypedArrays — no native modules, nothing new to package. (An on-disk SQLite tier behind the same interface remains a possible future for scans that must survive restarts; the packed store is the shipping default.) The one deliberate trade: handing 250k pruned nodes to the UI rebuilds path strings the old tree kept around, ~150 ms per handover on an operation that already spends ~170 ms serializing.
+- **A scan lives in a packed Structure-of-Arrays store, not a tree of objects.** Every scan used to be millions of JavaScript objects (~330 bytes each, measured) — which put a hard ceiling of a few million files on what fit in RAM. The tree now lives in a handful of typed arrays (`src/services/scanStore.ts`): names in one UTF-8 pool, children as contiguous id ranges laid out breadth-first, paths reconstructed on demand instead of stored. Measured cost: **~52 bytes per file** at 1M, 5M, 20M and 40M synthetic nodes — a 40M-item scan is ~2 GB of arrays, and a 100M-item scan projects to ~5 GB, on hardware where the object tree could not have held 20M. Summing every directory size is one reverse linear pass (28 ms for 5M nodes vs 2.2 s recursive), nothing recurses on pathological depth, and the browser notices nothing: the pruned JSON the API emits is byte-identical to the old tree — a golden test replays a fixture scan against responses recorded from the pre-rewrite server and compares the raw bytes. The store's columns are plain typed arrays. For a native scan they are built by the Rust core (`tm-store`) while the walk runs and adopted without a copy; the built-in walker and gdu fill the same columns from JavaScript. (A spill mode that keeps a very large scan in files on disk is being built; until it ships, every scan is held in memory.) The one deliberate trade: handing 250k pruned nodes to the UI rebuilds path strings the old tree kept around, ~150 ms per handover on an operation that already spends ~170 ms serializing.
 - **For the built-in walker, scan speed is a threadpool problem.** Every async `lstat`/`readdir` runs on libuv's threadpool, which defaults to 4 threads — that, not the walker's concurrency, was its bottleneck. TreeMap sizes the pool to 2× cores (≤ 16) before it spins up; measured on APFS this scans ~1.6× faster, while 32 threads is *slower* than 4 (kernel metadata-lock contention). The dashboard shows which engine ran and how long the scan took.
 - **The native scan engine lists a whole folder in one system call.** On macOS it asks `getattrlistbulk` for every entry's name, type, sizes, times and flags at once, on its own worker threads (Linux: `getdents64` + `statx`; Windows: `FileIdExtdDirectoryInfo`), and hands the tree over as columns into the same store — so the JSON is the same, and the equivalence tests hold it byte-identical to the built-in walker's (verified on macOS; Linux and Windows run on CI). Recorded by `npm run bench` on an Apple M3 (4 performance + 4 efficiency cores, 16 GB, macOS 27), warm cache, Turbo budget, load 2.2–3.6 (up to 7.0 during the built-in walker’s runs on the 1,000,000-entry tree), 23 September 2026: **412,291 entries/s on a 200,000-entry tree** (the built-in walker: 131,203), and **91,308 entries/s on a 1,000,000-entry tree** too big for the kernel's metadata cache, which reads 2.3 GB per scan (the walker: 82,497). At the Eco budget it runs on the efficiency cores and its speed varied too much run to run to record (±17%). Where the native module cannot load, the built-in walker runs and the scan's stats say why.
-- **The numbers, measured, with the machine's load next to them.** A throughput figure without the load it was taken under is not a claim about anything — the same code on the same tree has measured 116,793 items/s on an idle machine and ~47,000/s on a busy one. On an Apple Silicon MacBook running a normal desktop session (`load average 3.1–4.6`, i.e. *not* a quiet benchmark box): a **whole-disk scan of `/` covered 1,411,715 items in 16.4 s (~86,000 items/s)**, and a home folder of **458,661 items took 9.1 s**. The persistent index stores a node in **183 bytes on disk** (164 after compaction), and `readTree` hands the UI its 250,000-node cap in **~790 ms**. Expect better on an idle machine and worse under load; the relationships between these numbers are the stable part, not the absolute values.
+- **The numbers, measured, with the machine's load next to them.** A throughput figure without the load it was taken under is not a claim about anything — the same code on the same tree has measured 116,793 items/s on an idle machine and ~47,000/s on a busy one. Measured with the engines of the 5.0 releases, before the native engine, on an Apple Silicon MacBook running a normal desktop session (`load average 3.1–4.6`, i.e. *not* a quiet benchmark box): a **whole-disk scan of `/` covered 1,411,715 items in 16.4 s (~86,000 items/s)**, and a home folder of **458,661 items took 9.1 s**. The persistent index stores a node in **183 bytes on disk** (164 after compaction), and `readTree` hands the UI its 250,000-node cap in **~790 ms**. Expect better on an idle machine and worse under load; the relationships between these numbers are the stable part, not the absolute values.
 - **Snapshots are automatic** — one is saved after every successful scan, so Trends needs zero setup. Totals + top-level entries live in `snapshots.json` (a few KB each, capped at 200 per folder); the time slider's shallow trees (≤ 3 levels, ~100 KB budget each) sit in separate per-root files so the main history file stays tiny.
 - **The scheduler is a 60-second `setInterval`**, not `node-cron` — hour-level granularity doesn't justify a dependency. Schedules fire while the app runs (the desktop app keeps running in the tray).
 - **Duplicate detection is staged** (size → first 64 KB hash → full SHA-256) so scans with hundreds of thousands of files finish hashing in seconds, and only true content matches are reported.
