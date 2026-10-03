@@ -12,6 +12,8 @@ native/
     crates/tm-walk       the native walker: one listing call per directory, a governed walk, columnar output
     crates/tm-node       the napi-rs bindings — the only crate Node touches
   index.d.ts             the module's TypeScript declaration, the one source of truth for its shapes
+  THIRD_PARTY_NOTICES.txt  the licences of every crate the binaries are built from (generated; see below)
+  licence-texts/<crate>/   upstream licence texts for a crate whose package carries none (kept by hand; none yet)
   prebuilt/<platform>-<arch>/treemap_core.node   the built module (gitignored)
   prebuilt/<platform>-<arch>/VERSION             the handshake value it was built for (gitignored)
 ```
@@ -52,6 +54,54 @@ for a minute each — is
 `cargo test --release -p tm-governor --test hold -- --ignored --test-threads=1 --nocapture`
 in the Rust suite and `npm run bench -- governor --preset=eco|balanced|turbo --seconds=60 --record`
 through the module (see `bench/README.md`).
+
+## Third-party notices
+
+`treemap_core.node` and `tm-mft-helper.exe` are statically linked from the
+crates in `treemap-core/Cargo.lock` and from Rust's standard library, and MIT
+and Apache-2.0 both ask for their notices to travel with every binary copy.
+`THIRD_PARTY_NOTICES.txt` here holds them:
+
+* every crate in Cargo.lock, with its licence expression, repository and the
+  licence files its own package carries, verbatim. Crates that only run while
+  the binaries are built (procedural macros, build-script dependencies) are
+  included too and marked `In the binaries: no`. A crate whose package holds
+  no licence file gets the text a person copied from its upstream repository
+  into `licence-texts/<crate>/`, or else the standard text of its licence, and
+  its entry says which;
+* the standard library's own licences, and the notices of the crates.io crates
+  it is built from, as the pinned toolchain records them
+  (`share/doc/rust/COPYRIGHT-library.html` and `COPYRIGHT.html`). Which crates
+  those are, per Rust version, is `STD_CRATES` in
+  `scripts/rust-notices/toolchain.js`; the generator checks the list against
+  the `/rust/deps/<crate>-<version>/` paths in the installed standard
+  libraries' rlibs.
+
+`package.json`'s `build.extraResources` ships it in the app's resources as
+`THIRD_PARTY_NOTICES.txt`, beside `gdu/LICENSE.md`, which is what the About
+panel points at.
+
+It is generated, never edited by hand. After any change to `Cargo.lock`, to
+`rust-toolchain.toml` (which also needs a `STD_CRATES` list for the new
+version) or to the generator itself:
+
+```
+node scripts/rust-notices.js           rewrite native/THIRD_PARTY_NOTICES.txt from cargo metadata and the toolchain (offline)
+node scripts/rust-notices.js --check   exit 1 if the committed file is not what it would write
+```
+
+It reads `cargo metadata --offline --locked`, so the crates must be in the
+local registry (`cargo fetch` here puts them there, the one step that uses the
+network). It refuses, writing nothing, when a licence cannot be met on the
+permissive terms in `PERMISSIVE` (`scripts/rust-notices/spdx.js`): a copyleft
+or unknown licence is a person's decision. The file's last line seals it with
+the digest of the generator and of its own text. `tests/rustNotices.test.ts`
+compares it with Cargo.lock, rust-toolchain.toml and the generator's source
+alone, so it runs offline on every CI leg. It fails, naming what moved, when a
+crate is added, removed or re-versioned without regenerating, when the
+generator changed since the file was written, and when the file was edited by
+hand. Bumping the workspace version needs no regeneration: the file names
+TreeMap's own crates without versions.
 
 ## The version handshake
 

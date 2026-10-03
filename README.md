@@ -768,6 +768,10 @@ tests/          node:test suite — `npm test`, or one file with
 - **Duplicate detection is staged** (size → first 64 KB hash → full SHA-256) so scans with hundreds of thousands of files finish hashing in seconds, and only true content matches are reported.
 - **Compare collapses subtrees** — a deleted or added folder shows as one row, not thousands of file rows.
 
+## 📜 Licence
+
+TreeMap is MIT-licensed — see [LICENSE](LICENSE). The desktop app also bundles code by others. Two parts of it carry their licences in the app's resources folder: **gdu** (MIT), as `gdu/LICENSE.md`, and **TreeMap's native scan core**, whose Rust crates and standard library are listed with their licence texts in `THIRD_PARTY_NOTICES.txt` — the same file as [`native/THIRD_PARTY_NOTICES.txt`](native/THIRD_PARTY_NOTICES.txt) here, generated from `Cargo.lock` and the pinned Rust toolchain by `scripts/rust-notices.js` (see [native/README.md](native/README.md#third-party-notices)).
+
 <br>
 
 <img src="divider.svg" width="100%" alt="">
