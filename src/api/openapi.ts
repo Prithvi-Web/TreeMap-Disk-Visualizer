@@ -1446,7 +1446,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             lines: arr(
               obj(
                 {
-                  id: str("One of: scanned, cloudPlaceholders, sparseFiles, snapshots, purgeable, openHandles, otherVolumes, unscannable, unaccounted"),
+                  id: str("One of: scanned, cloudPlaceholders, sparseFiles, snapshots, purgeable, openHandles, otherVolumes, mountedInside, unscannable, unaccounted. mountedInside (Track U): drives mounted inside the scanned folder — 0 when the scan stayed out of them (Stay on this drive), null with the reason when it went in (their logical total is in the detail; it is never subtracted) or could not tell"),
                   label: str(),
                   bytes: nullable(
                     num(

@@ -5,6 +5,7 @@ import { wholeDiskOf } from '../platform/macos/diskutil';
 import { ELEVATE_HOW, getSnapshotAccounting } from './snapshotAccounting';
 import { groupZombies } from './zombieHandles';
 import { storeOf } from './scanStore';
+import { boundaryReport } from './boundaryReport';
 import { formatBytes } from '../utils/formatBytes';
 import type { ScanResult } from '../models/types';
 import type { LogicalVolumeInfo, VolumeTopology } from '../platform/types';
@@ -77,6 +78,7 @@ export type StatementLineId =
   | 'purgeable'
   | 'openHandles'
   | 'otherVolumes'
+  | 'mountedInside'
   | 'unscannable'
   | 'unaccounted';
 
@@ -460,6 +462,10 @@ export async function buildStatement(
 
   lines.push(otherVolumesLine(topology.logicalVolumes, volume, resolved.onSameDevice, plat));
 
+  /* ── Drives mounted inside the scanned folder (Track U, U-28) ──────────── */
+
+  lines.push(mountedInsideLine(scan));
+
   /* ── What the scan was refused ─────────────────────────────────────────── */
 
   lines.push(unscannableLine(scan, plat));
@@ -751,6 +757,78 @@ function otherVolumesLine(
     notes,
     remedy: null,
   };
+}
+
+/**
+ * Drives mounted inside the scanned folder (Track U, U-28).
+ *
+ * A drive mounted inside the folder — a disk image, the iOS Simulator's
+ * volumes, a separate partition — is not on this volume, so a scan that went
+ * into it counted files this volume does not hold. Under "Stay on this drive"
+ * (the default) the scan went into none of them: a measured 0, with the count.
+ *
+ * Under "Include drives mounted inside it" the over-count is real but UNKNOWN,
+ * and the line is null with the reason — never a subtraction of the logical
+ * bytes counted there. The tree's sizes are logical, and `sparseLine` has
+ * already netted every file's sparse and slack share, those inside entered
+ * drives included; taking their logical total off again would subtract a
+ * sparse disk image's unallocated part twice. Allocation is not tracked per
+ * drive, so the logical total is stated in the detail and the rest is in
+ * Unaccounted, which names this line.
+ *
+ * Unknown too, with the reason: a scan with no boundary on its record, a mount
+ * table that could not be read, and a crossing the table did not list (the
+ * walker's device detector), which may be a drive counted as this disk.
+ */
+function mountedInsideLine(scan: ScanResult): StatementLine {
+  const label = 'Drives mounted inside the scanned folder';
+  const detail =
+    'Drives mounted inside the scanned folder — disk images, the iOS Simulator\u2019s volumes, separate partitions — hold files that are not on this volume.';
+  const unknown = (reason: string, count: number | null, more?: string): StatementLine => ({
+    id: 'mountedInside', label, bytes: null, available: false, reason, detail: more ?? detail, count, notes: [], remedy: null,
+  });
+  const report = boundaryReport(scan);
+  const root = scan.rootPath;
+  const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
+  if (report.rule === null) {
+    return unknown('This scan was made without reading the mount table, so whether it counted a drive mounted inside the folder is not known.', null);
+  }
+  if (!report.known) {
+    return unknown(`TreeMap could not read the list of mounted drives (${report.reason ?? 'no reason given'}), so a drive mounted inside ${root} may have been counted above as part of this disk.`, null);
+  }
+  const crossed = report.crossedUnlisted;
+  if (crossed.count > 0) {
+    return unknown(
+      `The scan went into ${String(crossed.count)} ${plural(crossed.count, 'folder', 'folders')} on another device that the mount table does not list (${crossed.examples.join(', ')}); ` +
+        `if ${plural(crossed.count, 'it is a separate drive, its', 'they are separate drives, their')} files are counted above although they are not on this disk.`,
+      crossed.count,
+    );
+  }
+  if (report.rule === 'stay') {
+    const n = report.notEntered.count;
+    return {
+      id: 'mountedInside', label, bytes: 0, available: true,
+      detail: n > 0
+        ? `${String(n)} separate ${plural(n, 'drive is', 'drives are')} mounted inside ${root}; by the mount table the scan did not enter ${plural(n, 'it', 'them')}, so none of ${plural(n, 'its', 'their')} files are counted above.`
+        : `No drive is mounted inside ${root}, so nothing on another disk is counted above.`,
+      count: n, notes: [], remedy: null,
+    };
+  }
+  const n = report.entered.count;
+  if (n === 0) {
+    return {
+      id: 'mountedInside', label, bytes: 0, available: true,
+      detail: `No drive is mounted inside ${root}, so nothing on another disk is counted above.`,
+      count: 0, notes: [], remedy: null,
+    };
+  }
+  const total = report.entered.bytes;
+  const counted = total === null ? 'an amount it cannot look up' : formatBytes(total);
+  return unknown(
+    `The scan counted ${counted} inside drives mounted in this folder; their allocated share is already inside the sparse-file line and is not tracked per drive, so TreeMap cannot say how much to take back off.`,
+    n,
+    `${String(n)} ${plural(n, 'drive', 'drives')} mounted inside ${root} ${plural(n, 'was', 'were')} entered (\u201cInclude drives mounted inside it\u201d): the scan counted ${counted} of files there, by their logical size, and those files are not on this disk.`,
+  );
 }
 
 /**

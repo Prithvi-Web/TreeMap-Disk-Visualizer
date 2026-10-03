@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-missingGigabytes-data-');
 
@@ -26,6 +26,9 @@ import type { ScanResult } from '../src/models/types';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { startScan } from '../src/services/diskScanner';
+import { updateSettings } from '../src/services/settings';
+import { setBoundaryDepsForTests, type MountTable } from '../src/utils/mountBoundaries';
+import { formatBytes } from '../src/utils/formatBytes';
 import { platform } from '../src/platform';
 
 /**
@@ -812,4 +815,95 @@ test('a PC-wide figure says so when Windows could not tell which drive each rest
   );
   assert.deepEqual(lineOf(scoped, 'snapshots').notes, [], 'scoped to the drive: nothing to warn about');
   assert.match(lineOf(scoped, 'snapshots').detail, /1 restore point holds space no folder scan can see/);
+});
+
+/* ═══════════ Track U, U-28: drives mounted inside the scanned folder ═══════════ */
+
+const NO_TABLE = process.platform === 'win32' ? 'Windows keeps no mount table, so no scan there has a drive inside it to stop at' : null;
+
+/**
+ * A real walk of root/{here.txt, mnt-a/{a.bin, thin.img}, mnt-b/b.bin}, the
+ * mount table naming mnt-a and mnt-b; thin.img is sparse (64 MiB claimed,
+ * nothing written), so its logical size is far from what it holds.
+ */
+async function mountedScan(rule: 'stay' | 'cross'): Promise<{ scan: ScanResult; root: string; logicalInside: number }> {
+  const root = fs.realpathSync(fileTempDir('treemap-mg-mounted-'));
+  const a = path.join(root, 'mnt-a');
+  const b = path.join(root, 'mnt-b');
+  fs.mkdirSync(a);
+  fs.mkdirSync(b);
+  fs.writeFileSync(path.join(root, 'here.txt'), 'h'.repeat(1000));
+  fs.writeFileSync(path.join(a, 'a.bin'), 'a'.repeat(3000));
+  fs.writeFileSync(path.join(a, 'thin.img'), '');
+  fs.truncateSync(path.join(a, 'thin.img'), 64 * 1024 * 1024);
+  fs.writeFileSync(path.join(b, 'b.bin'), 'b'.repeat(5000));
+  const table: MountTable = { source: 'mount', entries: [a, b].map((m) => ({ mountPoint: m, filesystem: 'apfs', options: ['apfs'], source: '/dev/disk99s1' })), reason: null };
+  setBoundaryDepsForTests({ readTable: async () => table, aliases: async () => () => [] });
+  try {
+    await updateSettings({ scanBoundary: rule, engine: 'walker' });
+    const scan = await startScan(root);
+    await waitFor(() => scan.status !== 'running', `the scan of ${root} settling`);
+    assert.equal(scan.status, 'complete', scan.error);
+    return { scan, root, logicalInside: 3000 + 64 * 1024 * 1024 + 5000 };
+  } finally {
+    setBoundaryDepsForTests(null);
+    await updateSettings({ scanBoundary: 'stay' });
+  }
+}
+
+test('stay: the drives mounted inside are a measured zero, with their count — none of their files was counted', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const { scan, root } = await mountedScan('stay');
+  const s = await buildStatement(scan, sourcesFixture());
+  const line = lineOf(s, 'mountedInside');
+  assert.equal(line.bytes, 0, 'a measurement: nothing on another disk is in the scanned line');
+  assert.equal(line.available, true);
+  assert.equal(line.count, 2);
+  assert.equal(line.label, 'Drives mounted inside the scanned folder');
+  assert.equal(line.detail, `2 separate drives are mounted inside ${root}; by the mount table the scan did not enter them, so none of their files are counted above.`);
+  assertBalances(s);
+});
+
+test('cross: unknown, never a subtraction — the logical total is stated, the allocated share is already in the sparse-file line', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const { scan, root, logicalInside } = await mountedScan('cross');
+  const s = await buildStatement(scan, sourcesFixture());
+  const line = lineOf(s, 'mountedInside');
+  assert.equal(line.bytes, null, 'never the logical total taken back off: the sparse image inside was already netted by its own line');
+  assert.equal(line.available, false);
+  assert.equal(line.count, 2);
+  assert.equal(line.reason, `The scan counted ${formatBytes(logicalInside)} inside drives mounted in this folder; their allocated share is already inside the sparse-file line and is not tracked per drive, so TreeMap cannot say how much to take back off.`);
+  assert.ok(line.detail.includes(formatBytes(logicalInside)) && line.detail.includes(root), 'the logical total and the folder are in the detail');
+  assert.ok(lineOf(s, 'sparseFiles').bytes! < 0, 'the sparse image inside the drive is in the sparse-file line');
+  assert.ok(lineOf(s, 'unaccounted').detail.includes(line.label), 'an unknown line is named in the residual');
+  assertBalances(s);
+});
+
+test('a crossing the mount table did not list makes the line unknown, naming the folder', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const { scan } = await mountedScan('stay');
+  scan.boundary!.walk.crossedUnlisted = { count: 1, examples: ['/odd/btrfs-subvolume'] };
+  const s = await buildStatement(scan, sourcesFixture());
+  const line = lineOf(s, 'mountedInside');
+  assert.equal(line.bytes, null);
+  assert.match(line.reason ?? '', /1 folder on another device that the mount table does not list \(\/odd\/btrfs-subvolume\)/);
+  assert.ok(lineOf(s, 'unaccounted').detail.includes(line.label));
+  assertBalances(s);
+});
+
+test('no boundary on the record, or a table that could not be read: unknown with the reason, named in the residual', async (t) => {
+  const old = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture());
+  const none = lineOf(old, 'mountedInside');
+  assert.equal(none.bytes, null);
+  assert.match(none.reason ?? '', /mount table/);
+  assert.ok(lineOf(old, 'unaccounted').detail.includes(none.label));
+  assertBalances(old);
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const { scan } = await mountedScan('stay');
+  scan.boundary = { ...scan.boundary!, mounts: null, reason: '/sbin/mount did not answer within 5 s', neverDescend: scan.boundary!.fixed };
+  const s = await buildStatement(scan, sourcesFixture());
+  const line = lineOf(s, 'mountedInside');
+  assert.equal(line.bytes, null);
+  assert.match(line.reason ?? '', /\/sbin\/mount did not answer within 5 s/);
+  assertBalances(s);
 });
