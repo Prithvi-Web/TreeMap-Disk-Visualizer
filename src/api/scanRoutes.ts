@@ -18,6 +18,7 @@ import { TREE_MARK, jsonAroundTree, sendPrunedTree } from '../services/treeFrame
 import { scanBudget } from '../services/engineBudget';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
+import { boundaryResponse } from '../services/boundaryReport';
 
 export const scanRouter = Router();
 
@@ -511,6 +512,19 @@ scanRouter.post('/scan/:scanId/nodes', guardBodyPaths, (req: Request, res: Respo
 scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
   res.json({ scanId: scan.scanId, status: scan.status, ...buildScanStats(scan) });
+});
+
+/**
+ * GET /api/scan/:scanId/boundary — which drives mounted inside the scanned
+ * folder the scan did not enter, or entered (Track U, U-26), from the scan's
+ * own record: the rule it ran under, the mount table it read when it started,
+ * and what its walk recorded. Unknown is null with the reason, never an empty
+ * list. Answered while a scan runs too: the list is known from its start, and
+ * only the bytes inside entered drives wait for the tree.
+ */
+scanRouter.get('/scan/:scanId/boundary', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  res.json(boundaryResponse(scan));
 });
 
 /**

@@ -169,6 +169,11 @@ export const FEATURES = {
   scheduler: { ...TOTALS, label: 'scheduled scans' },
   fleet: { ...TOTALS, label: 'Fleet' },
   stats: { ...TOTALS, label: 'the scan’s counters (/stats)' },
+  boundary: {
+    ...TOTALS,
+    label: 'the drives a scan did not enter (/boundary)',
+    classified: 'it reads the boundary kept on the scan’s record; only the bytes inside entered drives need the tree, and those are null with the reason outside memory mode',
+  },
   // Not the store at all.
   noStore: {
     ...NO_STORE,
@@ -242,6 +247,7 @@ export const ROUTE_FEATURES: Readonly<Record<string, RouteEntry>> = {
   'GET /api/scan/:scanId/subtree': 'tree',
   'POST /api/scan/:scanId/nodes': 'nodes',
   'GET /api/scan/:scanId/stats': 'stats',
+  'GET /api/scan/:scanId/boundary': 'boundary',
   'GET /api/scan/:scanId/budgets': 'budgets',
   'GET /api/scan/:scanId/budget-gauges': 'budgets',
   'GET /api/scan/:scanId/export': EXPORT,

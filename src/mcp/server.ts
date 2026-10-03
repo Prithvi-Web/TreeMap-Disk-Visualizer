@@ -29,7 +29,7 @@ import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, known
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { OffloadJob, ScanResult } from '../models/types';
 import { assertToolAvailable } from '../services/storageMode';
-import { assertSameBoundary } from '../services/boundaryReport';
+import { assertSameBoundary, drivesSentence } from '../services/boundaryReport';
 import { MCP_TOOL_NAMES } from './toolNames';
 
 /**
@@ -187,6 +187,7 @@ function guardDestructivePaths(raw: string[]): string[] {
 
 function scanSummary(scan: ScanResult): Record<string, unknown> {
   const store = storeOf(scan);
+  const drives = drivesSentence(scan);
   const totalBytes = store.size(store.rootId);
   const topEntries = store
     .childIds(store.rootId)
@@ -211,6 +212,8 @@ function scanSummary(scan: ScanResult): Record<string, unknown> {
     durationMs: (scan.finishedAt ?? scan.startedAt) - scan.startedAt,
     incremental: scan.incremental === true,
     topEntries,
+    // Track U, U-26: the drives mounted inside that the scan did not enter, or entered.
+    ...(drives ? { drivesMountedInside: drives } : {}),
   };
 }
 

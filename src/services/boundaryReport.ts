@@ -117,3 +117,105 @@ export function assertSameBoundary(scanA: ScanResult, scanB: ScanResult): void {
       'Comparing them would show a drive as files added or removed, so compare two scans made with the same "drives mounted inside" setting.',
   );
 }
+
+/* ───────────────────────────── GET /api/scan/:scanId/boundary (Track U, U-26) ───────────────────────────── */
+
+/** At most this many listed drives in one answer; `mountsListed` says how many there are. */
+export const BOUNDARY_MOUNTS_CAP = 50;
+
+/** One listed drive, as the route answers it. */
+export interface BoundaryMountRow {
+  path: string;
+  filesystem: string;
+  /** What is mounted there: a device, or the folder a nullfs or bind mount shows again. */
+  source: string;
+  /** The walk got to the mount point: not under a folder no walk descends into, nor beneath a refused or skipped one. */
+  reached: boolean;
+  /** The walk went in (`cross`). */
+  entered: boolean;
+  /** The logical bytes the scan counted inside: null where it did not enter, or cannot look the total up. */
+  bytes: number | null;
+}
+
+/** The route's answer. Every list is null — with `reason` — where it is not known, never empty (U-D13). */
+export interface BoundaryResponse {
+  scanId: string;
+  rule: BoundaryRule | null;
+  source: MountTableSource | null;
+  reason: string | null;
+  notEntered: BoundaryCount | null;
+  entered: (BoundaryCount & { bytes: number | null; reason?: string }) | null;
+  crossedUnlisted: BoundaryCount | null;
+  mountsListed: number | null;
+  mounts: BoundaryMountRow[] | null;
+}
+
+export function boundaryResponse(scan: ScanResult): BoundaryResponse {
+  const report = boundaryReport(scan);
+  const base = { scanId: scan.scanId, rule: report.rule, source: report.source, reason: report.reason };
+  const record = scan.boundary;
+  if (!record) return { ...base, notEntered: null, entered: null, crossedUnlisted: null, mountsListed: null, mounts: null };
+  const crossedUnlisted = { count: report.crossedUnlisted.count, examples: report.crossedUnlisted.examples };
+  if (!report.known || record.mounts === null) return { ...base, notEntered: null, entered: null, crossedUnlisted, mountsListed: null, mounts: null };
+  const o = report.outcome;
+  const reached = new Set([...o.notEntered, ...o.entered, ...o.enteredWithin].map((m) => m.path));
+  const entered = new Set([...o.entered, ...o.enteredWithin].map((m) => m.path));
+  const sizeOf = enteredSizes(scan);
+  const all = [...record.mounts].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const mounts = all.slice(0, BOUNDARY_MOUNTS_CAP).map((m) => ({
+    path: m.path,
+    filesystem: m.filesystem,
+    source: m.source,
+    reached: reached.has(m.path),
+    entered: entered.has(m.path),
+    bytes: entered.has(m.path) && sizeOf ? sizeOf(m.path) : null,
+  }));
+  const { mounts: _enteredMounts, ...enteredCount } = report.entered;
+  return {
+    ...base,
+    notEntered: { count: report.notEntered.count, examples: report.notEntered.examples },
+    entered: enteredCount,
+    crossedUnlisted,
+    mountsListed: all.length,
+    mounts,
+  };
+}
+
+/** A folder's total by path, where the tree holds one for every folder; null where it does not (yet). */
+function enteredSizes(scan: ScanResult): ((p: string) => number | null) | null {
+  if (storageModeOf(scan) !== 'memory' || scan.status !== 'complete' || (!scan.store && !scan.root)) return null;
+  const store = storeOf(scan);
+  return (p) => {
+    const id = store.findByPath(p);
+    return id === -1 ? null : store.size(id);
+  };
+}
+
+const lastName = (p: string): string => p.slice(p.lastIndexOf('/') + 1) || p;
+
+/** Up to five names, then how many more. */
+function namesOf(examples: readonly string[], count: number): string {
+  const names = examples.map(lastName).join(', ');
+  return count > examples.length ? `${names} and ${count - examples.length} more` : names;
+}
+
+/**
+ * The sentence an agent reads beside a scan's totals (MCP `scan_path`): the
+ * drives the scan did not enter, entered, or could not know about. Null when
+ * there is nothing to say — no drive mounted inside, or no boundary at all.
+ */
+export function drivesSentence(scan: ScanResult): string | null {
+  const report = boundaryReport(scan);
+  if (report.rule === null) return null;
+  if (!report.known) {
+    return `TreeMap could not read the list of mounted drives (${report.reason ?? 'no reason given'}), so a drive mounted inside this folder may have been counted as part of it.`;
+  }
+  const s = (n: number): string => (n === 1 ? '' : 's');
+  if (report.notEntered.count > 0) {
+    return `${report.notEntered.count} drive${s(report.notEntered.count)} mounted inside ${report.notEntered.count === 1 ? 'was' : 'were'} not entered: ${namesOf(report.notEntered.examples, report.notEntered.count)}. Their files are not counted; PUT /api/settings { "scanBoundary": "cross" } includes them in the next scan.`;
+  }
+  if (report.entered.count > 0) {
+    return `${report.entered.count} drive${s(report.entered.count)} mounted inside ${report.entered.count === 1 ? 'was' : 'were'} entered and counted: ${namesOf(report.entered.examples, report.entered.count)} (scanBoundary is "cross").`;
+  }
+  return null;
+}

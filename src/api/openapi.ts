@@ -112,6 +112,38 @@ const schemas: Json = {
     ['error', 'code', 'mode', 'feature'],
     'A feature that is off in the storage mode a very large scan is kept in (Phase 4). Every scan is kept in memory today, where nothing is off.',
   ),
+  ScanBoundary: obj(
+    {
+      scanId: str(),
+      rule: nullable({ type: 'string', enum: ['stay', 'cross'], description: 'The boundary rule the scan ran under (Settings: scanBoundary); null for a record made without a boundary (a cloud listing).' }),
+      source: nullable({ type: 'string', enum: ['mount', '/proc/mounts', 'none'], description: 'Where the mount table came from: macOS mount, Linux /proc/mounts, or none (Windows keeps no table).' }),
+      reason: nullable(str('Why the lists below are unknown (no boundary on the record, or a mount table that could not be read); Windows says why it has no table. Null when everything is known.')),
+      notEntered: nullable(obj({ count: int(), examples: arr(str(), 'Up to five paths, sorted') }, ['count', 'examples'], 'Drives mounted inside the folder that the walk reached and did not enter (stay). Null when unknown — never an empty list standing in for unknown.')),
+      entered: nullable(obj(
+        { count: int(), examples: arr(str(), 'Up to five paths, sorted'), bytes: nullable(int('Logical bytes the scan counted inside the outermost entered drives; null when that total cannot be looked up (spill or aggregate mode, a scan still running), with reason')), reason: str('Present when bytes is null') },
+        ['count', 'examples', 'bytes'],
+        'The outermost drives the walk entered (cross); a drive inside one is inside its bytes. Null when unknown.',
+      )),
+      crossedUnlisted: nullable(obj({ count: int(), examples: arr(str(), 'Up to five paths, sorted') }, ['count', 'examples'], 'Folders the built-in walker went into whose device differs from their parent’s and that the mount table did not list — counted, never a reason to stop (only the built-in walker counts them). Null for a record without a boundary.')),
+      mountsListed: nullable(int('How many drives the mount table showed mounted beneath the root; null when unknown')),
+      mounts: nullable(arr(
+        obj(
+          {
+            path: str('The mount point, spelled as the scan spells it'),
+            filesystem: str('e.g. apfs, nullfs, ext4, tmpfs'),
+            source: str('What is mounted there: a device, or the folder a nullfs or bind mount shows again'),
+            reached: bool('The walk got to the mount point (false under a folder no walk descends into, such as /Volumes for a scan of /, or beneath a refused or skipped folder)'),
+            entered: bool('The walk went in'),
+            bytes: nullable(int('Logical bytes the scan counted inside; null where it did not enter or cannot look the total up')),
+          },
+          ['path', 'filesystem', 'source', 'reached', 'entered', 'bytes'],
+        ),
+        'At most 50, sorted by path; null when unknown',
+      )),
+    },
+    ['scanId', 'rule', 'source', 'reason', 'notEntered', 'entered', 'crossedUnlisted', 'mountsListed', 'mounts'],
+    'Which drives mounted inside the scanned folder the scan did not enter, or entered (Track U, U-26).',
+  ),
   BudgetGauge: obj(
     {
       path: str(), name: str(), maxBytes: int(),
@@ -1108,6 +1140,18 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Budget statuses', obj({ scanId: str(), budgets: arr(ref('BudgetStatus')) }, ['scanId', 'budgets'])),
       '202': running202,
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/scan/{scanId}/boundary',
+    summary: 'Which drives mounted inside the scanned folder the scan did not enter ("Stay on this drive", the default) or entered ("Include drives mounted inside it"), from the mount table read when it started; unknown is null with the reason',
+    tag: 'scan',
+    destructive: false,
+    parameters: [pathParam('scanId', 'Scan id')],
+    responses: {
+      '200': jsonResponse('The scan boundary', ref('ScanBoundary')),
+      '404': errorResponse('SCAN_NOT_FOUND — unknown or expired scanId'),
     },
   },
   {

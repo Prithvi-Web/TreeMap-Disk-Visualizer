@@ -67,6 +67,19 @@ OpenAPI 3 spec).
      (null with a reason when unreadable — never guessed), per-file dHash
      diff blocks against `diffReference`, and `recommendedKeep` with the rule
      that picked it stated in prose.
+   - `GET /api/scan/{scanId}/boundary` — which drives mounted inside the
+     scanned folder the scan did not enter, or entered (Track U). The setting
+     `scanBoundary` (`PUT /api/settings`) decides: `"stay"` ("Stay on this
+     drive", the default) stops every engine at a drive mounted inside the
+     folder — a disk image, the iOS Simulator's volumes, a separate `/home`
+     on Linux — read from the operating system's mount table when the scan
+     starts, never from device ids; the mount point stays in the tree as an
+     empty folder, nothing inside it is counted, and nothing inside it may
+     be acted on (the scanned-root rule). `"cross"` ("Include drives mounted
+     inside it") walks into them. Unknown is `null` with a `reason`, never an
+     empty list; `entered.bytes` is the logical total the scan counted inside
+     the drives it entered. MCP `scan_path` adds a `drivesMountedInside`
+     sentence whenever a drive was left out or counted.
    - `GET /api/volumes` — attached external drives with free/total bytes; a
      drive whose stats cannot be read is listed with nulls and a reason.
    - `GET /api/scan/{scanId}/calendar` — bytes and file counts per local day
