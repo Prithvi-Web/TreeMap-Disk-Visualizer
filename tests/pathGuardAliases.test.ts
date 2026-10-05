@@ -390,10 +390,27 @@ test('a link realpath cannot follow because its target is missing is judged wher
 /** Field names that carry a path on this API. */
 const PATHISH = new Set(['path', 'paths', 'root', 'dest', 'to', 'destination', 'scope', 'device']);
 
+/**
+ * Whether a field may carry a path: one of the names above, or text whose own name or description
+ * reads like one — so a field added as `file`, `folder` or `target`, or described as "the folder
+ * to …", is walked below or exempted with a reason, never missed (the SEC-2 review, INFO). A field
+ * of no stated type counts as text.
+ */
+const PATH_NAME = /path|file|folder|dir|root|dest|target|location|drive|volume/i;
+const PATH_WORDS = /\bpaths?\b|\bfolders?\b|\bdirector(?:y|ies)\b/i;
+function mayCarryAPath(name: string, schema: { type?: unknown; items?: { type?: unknown } } | undefined, description: string): boolean {
+  if (PATHISH.has(name)) return true;
+  const type = schema?.type;
+  const text = type === undefined || type === 'string' || (Array.isArray(type) && type.includes('string')) || (type === 'array' && (schema?.items?.type ?? 'string') === 'string');
+  return text && (PATH_NAME.test(name) || PATH_WORDS.test(description));
+}
+
 /** Path fields that take no path through this server's sanitizer, each with why. */
 const NOT_A_LOCAL_PATH: Record<string, string> = {
   'POST /api/fleet/peers/{id}/trigger-scan body.path': 'a path on the paired peer, handed to it unread: the peer’s fleet receiver (fleetSync, /fleet/scan) judges it by its own sanitizer before any scan starts (fleetSync.test.ts, the SEC-2 review, F2)',
   'GET /api/health/smart query.device': 'names a drive to ask for SMART data, never a file to read or act on',
+  'GET /api/scan/{scanId}/export query.mode': 'one of two words, files or folders: what the export lists, never a path',
+  'POST /api/query body.sort': 'one of four sort keys, path among them: never a path',
 };
 
 interface Probe {
@@ -463,11 +480,14 @@ test('the walk covers every path field the registry describes, or says why it ne
   for (const e of ENDPOINTS) {
     const route = `${e.method.toUpperCase()} ${e.path}`;
     routes.add(route);
-    for (const p of (e.parameters ?? []) as { in?: string; name?: string }[]) {
-      if (p.in === 'query' && p.name && PATHISH.has(p.name)) described.add(`${route} query.${p.name}`);
+    for (const p of (e.parameters ?? []) as { in?: string; name?: string; description?: string; schema?: { type?: unknown; description?: string } }[]) {
+      if (p.in === 'query' && p.name && mayCarryAPath(p.name, p.schema, p.description ?? p.schema?.description ?? '')) described.add(`${route} query.${p.name}`);
     }
-    const schema = (e.requestBody as { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> } | undefined)?.content?.['application/json']?.schema;
-    for (const name of Object.keys(schema?.properties ?? {})) if (PATHISH.has(name)) described.add(`${route} body.${name}`);
+    type Field = { type?: unknown; items?: { type?: unknown }; description?: string };
+    const schema = (e.requestBody as { content?: Record<string, { schema?: { properties?: Record<string, Field> } }> } | undefined)?.content?.['application/json']?.schema;
+    for (const [name, field] of Object.entries(schema?.properties ?? {})) {
+      if (mayCarryAPath(name, field, field.description ?? '')) described.add(`${route} body.${name}`);
+    }
   }
   const walked = new Set(probes().map((p) => p.key));
   for (const key of described) assert.ok(walked.has(key) || key in NOT_A_LOCAL_PATH, `${key} takes a path, and the walk does not try a second name on it`);
@@ -491,8 +511,9 @@ test('every MCP tool that takes a path refuses a second name of a scanned path: 
   const { tools } = await client.listTools();
   const described = new Set<string>();
   for (const tool of tools) {
-    for (const name of Object.keys((tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {})) {
-      if (PATHISH.has(name)) described.add(`${tool.name}.${name}`);
+    type Field = { type?: unknown; items?: { type?: unknown }; description?: string };
+    for (const [name, field] of Object.entries((tool.inputSchema as { properties?: Record<string, Field> }).properties ?? {})) {
+      if (mayCarryAPath(name, field, field.description ?? '')) described.add(`${tool.name}.${name}`);
     }
   }
   const a = path.join(T, 'a.txt');
@@ -503,7 +524,14 @@ test('every MCP tool that takes a path refuses a second name of a scanned path: 
     'offload.dest': (al) => callTool('offload', { scanId: scan.scanId, paths: [a], dest: al(DEST), dryRun: true }),
     'trash_paths.paths': (al) => callTool('trash_paths', { paths: [al(a)], dryRun: true }),
   };
-  assert.deepEqual([...described].sort(), Object.keys(calls).sort(), 'every tool field that takes a path is called below');
+  // Tool fields that read like paths by that rule but take none, each with why.
+  const notAPath: Record<string, string> = {
+    'get_largest.kind': 'files or folders: what to rank, never a path',
+    'reclaim_ranked.kind': 'files or folders: what to rank, never a path',
+    'offload.scanId': 'names the scan the paths belong to, never a path',
+  };
+  assert.deepEqual([...described].filter((key) => !(key in notAPath)).sort(), Object.keys(calls).sort(), 'every tool field that takes a path is called below');
+  for (const key of Object.keys(notAPath)) assert.ok(described.has(key), `${key} is exempted, but no tool describes it`);
   const wrong: string[] = [];
   for (const { name, of } of spellings()) {
     for (const [field, call] of Object.entries(calls)) {
