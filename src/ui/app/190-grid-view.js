@@ -512,13 +512,16 @@ function renderSecurity() {
     return;
   }
   const { high = 0, medium = 0 } = report.counts || {};
+  // The server counts every finding and lists the most serious ones (QA D77),
+  // so the headline and the counts describe the disk, not the list.
+  const total = report.total ?? findings.length;
   // Keyed by scan, like the apps line: a repaint of the same scan rolls the
   // counts (a relocation re-checks), a new scan snaps.
   FxNum.rollHtml($('securityInfo'),
-    `<b>${formatCount(findings.length)}</b> ${findings.length === 1 ? 'file' : 'files'} sitting outside the folder ${findings.length === 1 ? 'it belongs' : 'they belong'} in` +
+    `<b>${formatCount(total)}</b> ${total === 1 ? 'file' : 'files'} sitting outside the folder ${total === 1 ? 'it belongs' : 'they belong'} in` +
     (high ? ` — <b>${formatCount(high)} serious</b>` : '') + (medium ? `, ${formatCount(medium)} worth fixing` : '') +
     `. <span class="sec-note">Matched on name and location only; no file was opened and nothing leaves this computer.</span>` +
-    (report.truncated ? ' <span class="num">(first 500 shown)</span>' : ''), state.scanId);
+    (report.truncated ? ` <span class="num">(the ${formatCount(findings.length)} most serious shown)</span>` : ''), state.scanId);
 
   host.innerHTML = '<div class="sec-list">' + findings.map((f, i) => `
     <div class="sec-item sev-${escapeHtml(f.severity)}">

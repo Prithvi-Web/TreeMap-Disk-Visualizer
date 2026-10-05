@@ -1654,9 +1654,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           {
             scanId: str(),
             patternCount: int('How many patterns the catalog checks'),
-            findings: arr(opaque('patternId, label, why, severity, path, name, size, modifiedAt, reason, suggestedPath, exposed')),
-            counts: opaque('high, medium and low finding counts'),
-            truncated: bool('true when the 500-finding cap was reached'),
+            findings: arr(opaque('patternId, label, why, severity, path, name, size, modifiedAt, reason, suggestedPath, exposed, appOwned')),
+            counts: opaque('high, medium and low finding counts, over every finding (not only the listed ones)'),
+            total: int('How many findings there are in all; more than findings.length once the cap bites'),
+            truncated: bool('true when there are more than 500 findings: the 500 most serious are listed'),
           },
           ['scanId', 'findings', 'counts'],
         ),

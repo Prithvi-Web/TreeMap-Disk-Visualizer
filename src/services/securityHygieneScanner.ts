@@ -7,8 +7,9 @@ import { appDataPathRefusal, insideAnyScanRoot, spillPathRefusal } from '../midd
 /**
  * securityHygieneScanner — secrets in the wrong place (§C5).
  *
- * This looks at **names and locations only**. It never opens a file, never
- * reads a byte of user content, and never sends anything anywhere. A private
+ * This looks at **names and locations only** (plus the size the scan already
+ * recorded, for the one extension a Mac shares with Keynote). It never opens a
+ * file, never reads a byte of user content, and never sends anything anywhere. A private
  * key in `~/.ssh` is where a private key belongs and is not a finding; the same
  * file in `~/Downloads` is, because that is the folder people share, sync,
  * screen-record and forget.
@@ -44,9 +45,27 @@ export interface SecurityPattern {
    * ancestor directory of the file.
    */
   expectedIn: string[];
-  /** Where it should live, shown as the suggested destination. */
+  /**
+   * Where it should live, shown as the suggested destination. Only an SSH-key
+   * pattern names `.ssh`: offering to move anything else there (a certificate,
+   * a TLS key, a Keynote presentation) puts a person's file somewhere it does
+   * not belong, which is the harm this panel exists to undo.
+   */
   suggestedHome?: string;
+  /**
+   * A file larger than this is not what the pattern means, so it is not a
+   * finding. Decided from the scan's own size, never by opening the file.
+   */
+  maxBytes?: number;
 }
+
+/**
+ * The largest `.key` file that could be a private key. A PEM private key is a
+ * few KB (RSA-8192 is about 6.5 KB; an exported PGP secret key with subkeys
+ * stays well under this). A Keynote document, which shares the extension on a
+ * Mac, is far larger.
+ */
+const KEY_FILE_MAX_BYTES = 64 * 1024;
 
 /**
  * The catalog. Deliberately conservative: every entry here is a file whose
@@ -67,9 +86,33 @@ export const SECURITY_PATTERNS: SecurityPattern[] = [
     label: 'Private key or certificate',
     why: 'PEM files usually hold a private key or a certificate with one.',
     severity: 'high',
-    extensions: ['pem', 'key', 'ppk'],
+    extensions: ['pem'],
     expectedIn: ['.ssh', '.certs', '.config/certs'],
+    // No suggested home: a .pem is as often a TLS key or a certificate as an
+    // SSH key, and ~/.ssh is not where either of those belongs.
+  },
+  {
+    id: 'putty-private-key',
+    label: 'PuTTY SSH private key',
+    why: 'A PuTTY key file holds an SSH private key: anyone with it can log in as you wherever it is trusted.',
+    severity: 'high',
+    extensions: ['ppk'],
+    expectedIn: ['.ssh', '.putty'],
     suggestedHome: '.ssh',
+  },
+  {
+    id: 'key-file',
+    label: 'Key file, or a Keynote presentation',
+    why:
+      'A .key file is either a private key or, on a Mac, a Keynote presentation. TreeMap reads names and ' +
+      'sizes only, never contents, so it cannot tell which: open it to check.',
+    // Minor, and never moved: the name alone is as likely a presentation as a
+    // key, so calling it serious, or offering to move it into ~/.ssh, would be
+    // wrong for most of the files it matches.
+    severity: 'low',
+    extensions: ['key'],
+    expectedIn: ['.ssh', '.certs', '.config/certs'],
+    maxBytes: KEY_FILE_MAX_BYTES,
   },
   {
     id: 'pkcs12-bundle',
@@ -187,8 +230,12 @@ export interface SecurityFinding {
 }
 
 export interface SecurityReport {
+  /** The most serious findings first, at most MAX_FINDINGS of them. */
   findings: SecurityFinding[];
+  /** Counted over EVERY finding, not only the ones in `findings`. */
   counts: { high: number; medium: number; low: number };
+  /** How many findings there are in all; more than `findings.length` once the cap bites. */
+  total: number;
   /** True once the cap below has bitten, so the UI can say the list is partial. */
   truncated: boolean;
 }
@@ -239,11 +286,37 @@ function hasRun(dirs: string[], want: string[]): boolean {
   return false;
 }
 
+/**
+ * A macOS bundle other than an app: frameworks, loadable bundles, extensions,
+ * XPC services, plug-ins and kernel extensions. Apple ships public root CA
+ * `.pem` files inside Ruby.framework (QA D42). The name before the suffix must
+ * not be empty, so Bundler's per-project `.bundle` settings folder is not one.
+ */
+const BUNDLE_DIR = /^.+\.(?:framework|bundle|appex|xpc|plugin|kext)$/;
+
+/**
+ * Top-level folders the operating system itself manages, as the leading
+ * lowercased segments of an absolute POSIX path. `/usr/local` is excluded
+ * below: it is where a person installs things.
+ */
+const OS_OWNED_ROOTS = [
+  ['system'], ['usr'], ['bin'], ['sbin'], ['lib'], ['lib64'], ['etc'], ['private', 'etc'], ['library', 'apple'],
+];
+
+/** True when the file lives in a folder the operating system manages. */
+function isOsOwned(filePath: string): boolean {
+  const dirs = segments(path.dirname(filePath));
+  if (/^[a-z]:$/.test(dirs[0] ?? '')) return dirs[1] === 'windows';
+  if (!filePath.startsWith('/')) return false;
+  if (dirs[0] === 'usr' && dirs[1] === 'local') return false;
+  return OS_OWNED_ROOTS.some((root) => root.every((s, i) => dirs[i] === s));
+}
+
 /** True when the file lives inside an installed program's own files. */
 export function isApplicationOwned(filePath: string): boolean {
   const dirs = segments(path.dirname(filePath));
   // A macOS bundle is a directory whose name ends in `.app`.
-  if (dirs.some((d) => d.endsWith('.app') || APP_OWNED_SEGMENTS.has(d))) return true;
+  if (dirs.some((d) => d.endsWith('.app') || APP_OWNED_SEGMENTS.has(d) || BUNDLE_DIR.test(d))) return true;
   return APP_OWNED_RUNS.some((want) => hasRun(dirs, want));
 }
 
@@ -265,10 +338,11 @@ function inExpectedLocation(filePath: string, pattern: SecurityPattern, homeDir:
   return false;
 }
 
-function matchPattern(name: string): SecurityPattern | undefined {
+function matchPattern(name: string, size: number): SecurityPattern | undefined {
   const lower = name.toLowerCase();
   const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : '';
   return SECURITY_PATTERNS.find((p) => {
+    if (p.maxBytes !== undefined && size > p.maxBytes) return false;
     if (p.names?.includes(lower)) return true;
     if (ext && p.extensions?.includes(ext)) return true;
     if (p.prefixes?.some((prefix) => lower.startsWith(prefix))) return true;
@@ -277,8 +351,13 @@ function matchPattern(name: string): SecurityPattern | undefined {
 }
 
 /**
- * Findings for a completed scan. Reads names and paths from the scan tree
- * only — no file is ever opened.
+ * Findings for a completed scan. Reads names, paths and sizes from the scan
+ * tree only — no file is ever opened.
+ *
+ * Every match is collected, sorted most serious first, counted, and only then
+ * cut to MAX_FINDINGS. Cutting in walk order (QA D77) let 500 Keynote decks
+ * walked first push the real keys out of the list, and the counts then
+ * described the cut list rather than the disk.
  */
 export function collectSecurityFindings(
   source: TreeSource,
@@ -287,7 +366,6 @@ export function collectSecurityFindings(
 ): SecurityReport {
   const store = asStore(source);
   const findings: SecurityFinding[] = [];
-  let truncated = false;
 
   const visit = (node: number, nodePath: string): void => {
     for (const child of store.childIds(node)) {
@@ -298,9 +376,8 @@ export function collectSecurityFindings(
         visit(child, childPath);
         continue;
       }
-      if (findings.length >= MAX_FINDINGS) { truncated = true; return; }
 
-      const pattern = matchPattern(name);
+      const pattern = matchPattern(name, store.size(child));
       if (!pattern) continue;
       // A public key is not a secret, and flagging it teaches people to ignore
       // the whole panel.
@@ -315,7 +392,8 @@ export function collectSecurityFindings(
       // Being inside a synced or shared folder raises the stakes, never lowers
       // them — a medium finding in Dropbox is a high one.
       const stakes = syncFolder && pattern.severity === 'medium' ? 'high' : pattern.severity;
-      const appOwned = isApplicationOwned(childPath);
+      const osOwned = isOsOwned(childPath);
+      const appOwned = osOwned || isApplicationOwned(childPath);
 
       findings.push({
         patternId: pattern.id,
@@ -329,7 +407,9 @@ export function collectSecurityFindings(
         name,
         size: store.size(child),
         modifiedAt: store.modifiedAt(child),
-        reason: appOwned
+        reason: osOwned
+          ? `In “${where}”, a folder the operating system manages — this file is part of the system, so moving it would break whatever uses it.`
+          : appOwned
           ? `In “${where}”, which belongs to an installed program — this file is part of that software, so moving it would break it.`
           : syncFolder
             ? `In “${where}”, which syncs to the cloud — a copy of this file leaves this computer.`
@@ -355,13 +435,14 @@ export function collectSecurityFindings(
   findings.sort((a, b) => rank[a.severity] - rank[b.severity] || Number(b.exposed) - Number(a.exposed) || b.modifiedAt - a.modifiedAt);
 
   return {
-    findings,
+    findings: findings.slice(0, MAX_FINDINGS),
     counts: {
       high: findings.filter((f) => f.severity === 'high').length,
       medium: findings.filter((f) => f.severity === 'medium').length,
       low: findings.filter((f) => f.severity === 'low').length,
     },
-    truncated,
+    total: findings.length,
+    truncated: findings.length > MAX_FINDINGS,
   };
 }
 

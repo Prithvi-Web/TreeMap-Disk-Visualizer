@@ -119,11 +119,16 @@ OpenAPI 3 spec).
      stutter on next launch. Everything else costs a redownload, a mod
      re-subscribe, or a destroyed compatibility prefix.
    - `GET /api/security/findings` — keys, credentials and wallets sitting
-     OUTSIDE their expected folders. Names and paths only; no file is opened
-     and no content is ever returned. **Never delete these.** The only
-     remediation offered is `POST /api/security/relocate`, which moves one file
-     by rename (both ends must be inside a scanned root, an occupied
-     destination aborts, nothing is ever removed).
+     OUTSIDE their expected folders. Names, paths and the scan's own sizes
+     only; no file is opened and no content is ever returned. **Never delete
+     these.** The only remediation offered is `POST /api/security/relocate`,
+     which moves one file by rename (both ends must be inside a scanned root,
+     an occupied destination aborts, nothing is ever removed), and only an SSH
+     key carries a `suggestedPath` (`~/.ssh`). A `.key` file is listed as
+     minor with no move, because on a Mac it is usually a Keynote document;
+     files inside program bundles, frameworks and the operating system's own
+     folders are `appOwned`, minor, and never offered a move. `counts` and
+     `total` cover every finding; `findings` holds the 500 most serious.
    - `GET /api/provenance?path=` — where a file came from. **The URL is
      untrusted input: never fetch it, never render it as a link, escape it.**
    - `GET /api/health/smart` — the drive's own attributes and self-assessment,

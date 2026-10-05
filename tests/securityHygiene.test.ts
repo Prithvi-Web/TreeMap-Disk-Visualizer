@@ -291,6 +291,106 @@ test('a file an installed program owns is listed, but never called serious and n
   assert.equal(loose.suggestedPath, path.join(HOME, '.ssh'));
 });
 
+/* ─────────────── QA D77 / D42: false alarms, and the cap ─────────────── */
+
+test('a small .key file is listed as ambiguous: never serious, never moved into ~/.ssh (D77)', () => {
+  // On a Mac ".key" is the Keynote document extension. TreeMap never opens a file, so the
+  // name alone cannot tell a TLS key from a presentation. It is listed, as minor, and no
+  // move is offered: "Move to .ssh" on a presentation is the harm QA found.
+  for (const [name, dir] of [
+    ['Quarterly review.key', path.join(HOME, 'Documents')],
+    ['server.key', path.join(HOME, 'Downloads')],
+  ] as const) {
+    const f = findingsFor([file(name, dir, 1700)])[0];
+    assert.ok(f, `${name} is still listed: it may be a real key`);
+    assert.equal(f.severity, 'low', `${name} is not called serious`);
+    assert.equal(f.suggestedPath, undefined, `${name} is never offered a move`);
+    assert.equal(relocationTargetFor(f), null);
+    assert.match(f.why, /Keynote/, 'and the ambiguity is stated');
+  }
+  // A synced folder raises a medium finding to high. A minor one stays minor, so a deck in
+  // Dropbox does not become serious.
+  assert.equal(findingsFor([file('Deck.key', path.join(HOME, 'Dropbox'), 1700)])[0].severity, 'low',
+    'a minor finding in a synced folder stays minor');
+});
+
+test('a .key file too large to be any private key is not a finding (D77)', () => {
+  // A PEM private key is a few KB (RSA-8192 is about 6.5 KB). A Keynote document is far larger.
+  assert.deepEqual(findingsFor([file('Pitch.key', path.join(HOME, 'Documents'), 400_000)]), [], 'a 400 KB .key is not a key');
+  assert.equal(findingsFor([file('big.pem', path.join(HOME, 'Documents'), 400_000)]).length, 1,
+    'the size rule is the .key rule alone');
+});
+
+test('only a file very likely to be an SSH key is offered a move into ~/.ssh (D77)', () => {
+  const at = path.join(HOME, 'Downloads');
+  assert.equal(findingsFor([file('id_ed25519', at)])[0].suggestedPath, path.join(HOME, '.ssh'));
+  assert.equal(findingsFor([file('work.ppk', at)])[0].suggestedPath, path.join(HOME, '.ssh'), 'a PuTTY key is an SSH key');
+  const pem = findingsFor([file('server.pem', at)])[0];
+  assert.equal(pem.severity, 'high', 'a loose .pem is still serious');
+  assert.equal(pem.suggestedPath, undefined, 'but a certificate or a TLS key is not an SSH key');
+  for (const p of SECURITY_PATTERNS.filter((x) => x.suggestedHome === '.ssh')) {
+    assert.match(p.label, /SSH|PuTTY/, `${p.id} proposes ~/.ssh, so it must be an SSH key pattern`);
+  }
+});
+
+test('the 500 cap keeps the most serious findings, and the counts describe every finding (D77)', () => {
+  // QA's corpus: 951 ".key" documents walked before Misc/keys-in-wrong-place, so the cap
+  // (applied in walk order) dropped the real keys, and the counts described the slice.
+  const docs = Array.from({ length: 600 }, (_, i) => file(`Deck-${i}.key`, path.join(HOME, 'Documents', `d${i % 7}`), 1200));
+  const wrong = path.join(HOME, 'Misc', 'keys-in-wrong-place');
+  const real = ['id_rsa', 'id_ed25519', 'server.pem', 'wallet.dat'].map((n) => file(n, wrong, 40));
+  const report = collectSecurityFindings(treeWith(HOME, [...docs, ...real]), [], HOME);
+  assert.equal(report.truncated, true, 'more than 500 findings: the report says the list is partial');
+  assert.equal(report.findings.length, 500, 'the list is still capped');
+  for (const n of ['id_rsa', 'id_ed25519', 'server.pem', 'wallet.dat']) {
+    assert.ok(report.findings.some((f) => f.name === n), `${n} survives the cap`);
+  }
+  assert.deepEqual(report.findings.slice(0, 4).map((f) => f.severity), ['high', 'high', 'high', 'high'], 'most serious first');
+  assert.deepEqual(report.counts, { high: 4, medium: 0, low: 600 }, 'counted over every finding, not the slice');
+  assert.equal(report.total, 604, 'and the total says how many there are');
+});
+
+test('certificates inside frameworks and bundles belong to the software (D42)', () => {
+  // QA's stock Mac: Apple ships public root CA .pem files inside Ruby.framework.
+  const ruby = path.resolve('/System/Library/Frameworks/Ruby.framework/Versions/2.6/usr/lib/ruby/2.6.0/bundler/ssl_certs/rubygems.org');
+  const report = collectSecurityFindings(
+    treeWith(path.resolve('/System/Library'), [file('DigiCertHighAssuranceEVRootCA.pem', ruby)]), [], HOME,
+  );
+  assert.ok(report.findings[0], 'still listed');
+  assert.equal(report.findings[0].appOwned, true, 'a file inside Ruby.framework belongs to the software');
+  assert.equal(report.findings[0].severity, 'low', 'a CA certificate Apple ships is not serious');
+  assert.equal(report.counts.high, 0, 'nothing serious on a stock Mac');
+  for (const bundle of ['Foo.framework', 'Helper.bundle', 'Share.appex', 'Agent.xpc', 'Codec.plugin', 'Driver.kext']) {
+    const f = findingsFor([file('id_rsa', path.join(HOME, 'Library', 'Stuff', bundle, 'Contents', 'Resources'))])[0];
+    assert.equal(f.appOwned, true, `${bundle} is a program's own bundle`);
+    assert.equal(f.suggestedPath, undefined, `${bundle} is never offered a move`);
+  }
+  // Bundler's per-project ".bundle" settings folder is not a program bundle.
+  assert.equal(findingsFor([file('id_rsa', path.join(HOME, 'code', 'app', '.bundle'))])[0].appOwned, false,
+    'Bundler\u2019s .bundle settings folder is not a program bundle');
+});
+
+test('files in the operating system’s own folders belong to it (D42)', { skip: process.platform === 'win32' }, () => {
+  for (const dir of ['/System/Library/Security', '/usr/share/ca-certificates/mozilla', '/etc/ssl/certs', '/private/etc/ssl']) {
+    const f = collectSecurityFindings(treeWith('/', [file('ca.pem', dir)]), [], HOME).findings[0];
+    assert.ok(f, `${dir}: still listed`);
+    assert.equal(f.appOwned, true, `${dir} is the operating system's`);
+    assert.equal(f.severity, 'low', `${dir} is not serious`);
+    assert.match(f.reason, /operating system/, `${dir}: the reason names who owns it`);
+  }
+  // /usr/local is where a person installs things, not the operating system.
+  const local = collectSecurityFindings(treeWith('/', [file('server.pem', '/usr/local/etc/nginx')]), [], HOME).findings[0];
+  assert.equal(local.appOwned, false, '/usr/local is not the operating system\u2019s');
+});
+
+test('the Security panel headline counts every finding, not the 500 shown (D77)', () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
+  assert.ok(fn.length > 0, 'renderSecurity must be findable');
+  assert.match(fn, /report\.total/, 'the headline reads the total the server counted');
+  assert.doesNotMatch(fn, /first 500 shown/, 'and the shown slice is stated from the list itself');
+});
+
 test('the move can only ever be a rename — it never removes anything', () => {
   // Monkey-patching fs to force EXDEV does not survive the module boundary, and
   // a second real filesystem is not something a test can conjure. The invariant
