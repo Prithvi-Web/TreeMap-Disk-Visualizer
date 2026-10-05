@@ -1,5 +1,17 @@
 /* ───────────────────────────── Grid view ───────────────────────────── */
-const GAP = 12, MIN_SQ = 48, MAX_SQ = 256;
+const GAP = 12, MIN_SQ = 64, MAX_SQ = 256;
+/* Every tile names itself and says its size (QA D43). MIN_SQ was 48 while
+   the name came only at 64 px and the size at 84, so a folder of small files
+   was a wall of bare icons, and "Extensions" had a name and no size. Below
+   GRID_COMPACT_BELOW a tile draws a smaller icon on tighter spacing (.gcell
+   .compact) so all three fit. The folder-count badge sits in the top-right
+   corner and waits for GRID_BADGE_MIN, the size from which the centred icon
+   starts below it. tests/gridViewQa.test.ts checks both against the
+   stylesheet's own numbers. */
+const GRID_COMPACT_BELOW = 84, GRID_BADGE_MIN = 120;
+function gridIconPx(side) {
+  return side < GRID_COMPACT_BELOW ? 16 : Math.max(17, Math.min(46, Math.round(side * 0.3)));
+}
 const gridScroll = $('gridScroll');
 const gridInner = $('gridInner');
 
@@ -56,6 +68,9 @@ async function renderGrid() {
   // This folder's children may have been pruned out of the tree we were sent.
   // Fetch them before rendering, or an untouched folder reads as empty.
   const seq = ++gridSeq;
+  // Up has nowhere to go at the scan root: say so rather than offer a button
+  // that does nothing (QA D43 — the treemap's Up already does this).
+  $('gridUpBtn').disabled = !state.root || state.grid.path === state.root.path;
   await ensureSubtree(state.grid.path);
   if (seq !== gridSeq) return; // a newer navigation superseded this one
 
@@ -84,9 +99,7 @@ async function renderGrid() {
   gridInner.style.height = state.grid.totalH + 'px';
   state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
-  renderCrumbs($('gridCrumbs'), state.grid.path, (p) => {
-    state.grid.path = p; state.grid.selection.clear(); updateSelectionBar(); renderGrid();
-  });
+  renderCrumbs($('gridCrumbs'), state.grid.path, (p) => gridNavigate(p));
   const existing = gridScroll.querySelector('.grid-empty');
   if (existing) existing.remove();
   if (!items.length) {
@@ -119,19 +132,18 @@ function renderGridWindow(force = false) {
     const { it, x, y, side } = layout[i];
     const k = kindFor(it);
     const cell = document.createElement('div');
-    cell.className = 'gcell' + (state.grid.selection.has(it.path) ? ' selected' : '');
+    cell.className = 'gcell' + (side < GRID_COMPACT_BELOW ? ' compact' : '') + (state.grid.selection.has(it.path) ? ' selected' : '');
     cell.tabIndex = 0;
     cell.dataset.i = i;
     cell.setAttribute('role', 'button');
     cell.setAttribute('aria-label', `${it.name}, ${formatBytes(it.size)}${it.type === 'dir' ? ', folder' : ''}`);
     cell.style.cssText = `left:${x}px;top:${y}px;width:${side}px;height:${side}px;`;
-    const iconPx = Math.max(17, Math.min(46, Math.round(side * 0.3)));
     cell.innerHTML = `
       <span class="sel-mark">${icon('check', 11)}</span>
-      ${it.type === 'dir' && it.children && side >= 84 ? `<span class="badge num">${formatCount(it.children.length)}</span>` : ''}
-      <span style="color:${k.tint};display:inline-flex;">${icon(k.icon, iconPx)}</span>
-      ${side >= 64 ? `<span class="nm">${escapeHtml(it.name)}</span>` : ''}
-      ${side >= 84 ? `<span class="sz num">${formatBytes(it.size)}</span>` : ''}`;
+      ${it.type === 'dir' && it.children && side >= GRID_BADGE_MIN ? `<span class="badge num">${formatCount(it.children.length)}</span>` : ''}
+      <span style="color:${k.tint};display:inline-flex;">${icon(k.icon, gridIconPx(side))}</span>
+      <span class="nm">${escapeHtml(it.name)}</span>
+      <span class="sz num">${formatBytes(it.size)}</span>`;
     cell.addEventListener('click', (e) => onCellClick(e, i));
     cell.addEventListener('dblclick', () => { if (it.type === 'file') openInOS(it.path, false); });
     cell.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, it); });
@@ -175,9 +187,7 @@ function onCellClick(e, i) {
     state.grid.anchor = i;
   } else if (it.type === 'dir') {
     hideTooltip();
-    sel.clear(); updateSelectionBar();
-    state.grid.path = it.path;
-    renderGrid();
+    gridNavigate(it.path);
     return;
   } else {
     sel.clear(); sel.add(it.path);
@@ -191,11 +201,20 @@ function onCellClick(e, i) {
 $('gridUpBtn').addEventListener('click', gridUp);
 function gridUp() {
   const crumbs = breadcrumbsFor(state.grid.path);
-  if (crumbs.length > 1) {
-    state.grid.path = crumbs[crumbs.length - 2].path;
-    state.grid.selection.clear(); updateSelectionBar();
-    renderGrid();
-  }
+  if (crumbs.length > 1) gridNavigate(crumbs[crumbs.length - 2].path);
+}
+/* Every move to another folder — a folder tile, a breadcrumb, Up — goes
+   through here. The filter belongs to the folder it was typed in (QA D44):
+   "Fonts" found the Fonts folder, and opening it then said 'No files match
+   "Fonts"'. A keystroke still inside its debounce is cancelled with it, or it
+   would land on the new folder a moment later. */
+function gridNavigate(path) {
+  clearTimeout(searchDeb);
+  state.grid.query = '';
+  $('gridSearch').value = '';
+  state.grid.path = path;
+  state.grid.selection.clear(); updateSelectionBar();
+  renderGrid();
 }
 $('gridSort').addEventListener('change', (e) => { state.grid.sort = e.target.value; renderGrid(); });
 let searchDeb = 0;

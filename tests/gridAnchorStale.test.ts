@@ -72,10 +72,10 @@ function harness(): Harness {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const mod = new Function(
     'GAP', 'MIN_SQ', 'MAX_SQ', 'gridScroll', 'state',
-    'updateSelectionBar', 'renderGridWindow', 'renderGrid', 'hideTooltip', 'openPreview',
+    'updateSelectionBar', 'renderGridWindow', 'renderGrid', 'hideTooltip', 'openPreview', 'gridNavigate',
     `'use strict'; ${src}\nreturn { layoutGrid, onCellClick };`,
   )(
-    12, 48, 256,
+    12, 64, 256,
     { clientWidth: 1220 },
     state,
     () => {},
@@ -83,6 +83,9 @@ function harness(): Harness {
     () => { navigations.push(state.grid.path); },
     () => {},
     () => {},
+    // A folder click goes through the page's gridNavigate (QA D44); here it
+    // just moves, so a folder click in a future test lands somewhere.
+    (p: string) => { state.grid.path = p; navigations.push(p); },
   ) as Pick<Harness, 'layoutGrid' | 'onCellClick'>;
   assert.equal(typeof mod.layoutGrid, 'function', 'layoutGrid is spliced into the page');
   assert.equal(typeof mod.onCellClick, 'function', 'onCellClick is spliced into the page');

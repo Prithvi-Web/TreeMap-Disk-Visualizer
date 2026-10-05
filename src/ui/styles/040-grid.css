@@ -40,16 +40,26 @@
 .gcell .sel-mark { position: absolute; top: 7px; left: 7px; width: 17px; height: 17px; border-radius: 50%;
   background: var(--accent); color: #fff; display: none; align-items: center; justify-content: center; }
 .gcell.selected .sel-mark { display: inline-flex; }
-.gcell .nm { font-size: 11px; font-weight: 500; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gcell .sz { font-size: 10px; color: var(--text-2); }
-.gcell .badge { position: absolute; top: 7px; right: 7px; font-size: 9.5px; font-weight: 600; color: var(--text-2);
+/* Line heights are fixed so a tile's stack — icon, name, size — has a known
+   height: every tile carries all three, and the smallest (.compact, under
+   84 px) fits them only on its tighter padding and gap (QA D43). */
+.gcell .nm { font-size: 11px; line-height: 14px; font-weight: 500; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcell .sz { font-size: 10px; line-height: 13px; color: var(--text-2); }
+.gcell.compact { padding: 6px; gap: 2px; }
+.gcell .badge { position: absolute; top: 7px; right: 7px; font-size: 9.5px; line-height: 12px; font-weight: 600; color: var(--text-2);
   background: var(--surface-2); border-radius: 99px; padding: 2px 7px; }
 .grid-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 10px; color: var(--text-2); font-size: 13px; }
 .grid-empty .ic { color: var(--text-3); }
 
+/* With nothing selected the bar is slid below the window AND hidden:
+   off-screen alone left "Offload…", "Move to Trash" and "Clear" in the Tab
+   order and the accessibility tree (QA D02). visibility, not inert — the
+   dialog focus net rewrites every body-level element's inert flag whenever a
+   sheet closes. Hiding waits for the slide-out; showing is immediate. */
 #selectionBar { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(96px);
   display: flex; align-items: center; gap: 14px; padding: 11px 18px; z-index: 60;
-  --lg-tint: var(--lg-tint-strong);
-  transition: transform var(--dur-3) var(--ease); font-size: 13px; }
-#selectionBar.visible { transform: translateX(-50%) translateY(0); }
+  --lg-tint: var(--lg-tint-strong); visibility: hidden;
+  transition: transform var(--dur-3) var(--ease), visibility 0s linear var(--dur-3); font-size: 13px; }
+#selectionBar.visible { transform: translateX(-50%) translateY(0); visibility: visible;
+  transition: transform var(--dur-3) var(--ease), visibility 0s; }

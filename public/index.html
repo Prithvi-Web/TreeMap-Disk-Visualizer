@@ -1209,19 +1209,29 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .gcell .sel-mark { position: absolute; top: 7px; left: 7px; width: 17px; height: 17px; border-radius: 50%;
   background: var(--accent); color: #fff; display: none; align-items: center; justify-content: center; }
 .gcell.selected .sel-mark { display: inline-flex; }
-.gcell .nm { font-size: 11px; font-weight: 500; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gcell .sz { font-size: 10px; color: var(--text-2); }
-.gcell .badge { position: absolute; top: 7px; right: 7px; font-size: 9.5px; font-weight: 600; color: var(--text-2);
+/* Line heights are fixed so a tile's stack — icon, name, size — has a known
+   height: every tile carries all three, and the smallest (.compact, under
+   84 px) fits them only on its tighter padding and gap (QA D43). */
+.gcell .nm { font-size: 11px; line-height: 14px; font-weight: 500; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcell .sz { font-size: 10px; line-height: 13px; color: var(--text-2); }
+.gcell.compact { padding: 6px; gap: 2px; }
+.gcell .badge { position: absolute; top: 7px; right: 7px; font-size: 9.5px; line-height: 12px; font-weight: 600; color: var(--text-2);
   background: var(--surface-2); border-radius: 99px; padding: 2px 7px; }
 .grid-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 10px; color: var(--text-2); font-size: 13px; }
 .grid-empty .ic { color: var(--text-3); }
 
+/* With nothing selected the bar is slid below the window AND hidden:
+   off-screen alone left "Offload…", "Move to Trash" and "Clear" in the Tab
+   order and the accessibility tree (QA D02). visibility, not inert — the
+   dialog focus net rewrites every body-level element's inert flag whenever a
+   sheet closes. Hiding waits for the slide-out; showing is immediate. */
 #selectionBar { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(96px);
   display: flex; align-items: center; gap: 14px; padding: 11px 18px; z-index: 60;
-  --lg-tint: var(--lg-tint-strong);
-  transition: transform var(--dur-3) var(--ease); font-size: 13px; }
-#selectionBar.visible { transform: translateX(-50%) translateY(0); }
+  --lg-tint: var(--lg-tint-strong); visibility: hidden;
+  transition: transform var(--dur-3) var(--ease), visibility 0s linear var(--dur-3); font-size: 13px; }
+#selectionBar.visible { transform: translateX(-50%) translateY(0); visibility: visible;
+  transition: transform var(--dur-3) var(--ease), visibility 0s; }
 
 /* ── Cleanup cart (Feature 2) ── */
 /* `max-width: 92vw` is a guard against the VIEWPORT only, and it is correct
@@ -28125,7 +28135,19 @@ function byReclaimDesc(pathOf) {
 }
 
 /* ───────────────────────────── Grid view ───────────────────────────── */
-const GAP = 12, MIN_SQ = 48, MAX_SQ = 256;
+const GAP = 12, MIN_SQ = 64, MAX_SQ = 256;
+/* Every tile names itself and says its size (QA D43). MIN_SQ was 48 while
+   the name came only at 64 px and the size at 84, so a folder of small files
+   was a wall of bare icons, and "Extensions" had a name and no size. Below
+   GRID_COMPACT_BELOW a tile draws a smaller icon on tighter spacing (.gcell
+   .compact) so all three fit. The folder-count badge sits in the top-right
+   corner and waits for GRID_BADGE_MIN, the size from which the centred icon
+   starts below it. tests/gridViewQa.test.ts checks both against the
+   stylesheet's own numbers. */
+const GRID_COMPACT_BELOW = 84, GRID_BADGE_MIN = 120;
+function gridIconPx(side) {
+  return side < GRID_COMPACT_BELOW ? 16 : Math.max(17, Math.min(46, Math.round(side * 0.3)));
+}
 const gridScroll = $('gridScroll');
 const gridInner = $('gridInner');
 
@@ -28182,6 +28204,9 @@ async function renderGrid() {
   // This folder's children may have been pruned out of the tree we were sent.
   // Fetch them before rendering, or an untouched folder reads as empty.
   const seq = ++gridSeq;
+  // Up has nowhere to go at the scan root: say so rather than offer a button
+  // that does nothing (QA D43 — the treemap's Up already does this).
+  $('gridUpBtn').disabled = !state.root || state.grid.path === state.root.path;
   await ensureSubtree(state.grid.path);
   if (seq !== gridSeq) return; // a newer navigation superseded this one
 
@@ -28210,9 +28235,7 @@ async function renderGrid() {
   gridInner.style.height = state.grid.totalH + 'px';
   state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
-  renderCrumbs($('gridCrumbs'), state.grid.path, (p) => {
-    state.grid.path = p; state.grid.selection.clear(); updateSelectionBar(); renderGrid();
-  });
+  renderCrumbs($('gridCrumbs'), state.grid.path, (p) => gridNavigate(p));
   const existing = gridScroll.querySelector('.grid-empty');
   if (existing) existing.remove();
   if (!items.length) {
@@ -28245,19 +28268,18 @@ function renderGridWindow(force = false) {
     const { it, x, y, side } = layout[i];
     const k = kindFor(it);
     const cell = document.createElement('div');
-    cell.className = 'gcell' + (state.grid.selection.has(it.path) ? ' selected' : '');
+    cell.className = 'gcell' + (side < GRID_COMPACT_BELOW ? ' compact' : '') + (state.grid.selection.has(it.path) ? ' selected' : '');
     cell.tabIndex = 0;
     cell.dataset.i = i;
     cell.setAttribute('role', 'button');
     cell.setAttribute('aria-label', `${it.name}, ${formatBytes(it.size)}${it.type === 'dir' ? ', folder' : ''}`);
     cell.style.cssText = `left:${x}px;top:${y}px;width:${side}px;height:${side}px;`;
-    const iconPx = Math.max(17, Math.min(46, Math.round(side * 0.3)));
     cell.innerHTML = `
       <span class="sel-mark">${icon('check', 11)}</span>
-      ${it.type === 'dir' && it.children && side >= 84 ? `<span class="badge num">${formatCount(it.children.length)}</span>` : ''}
-      <span style="color:${k.tint};display:inline-flex;">${icon(k.icon, iconPx)}</span>
-      ${side >= 64 ? `<span class="nm">${escapeHtml(it.name)}</span>` : ''}
-      ${side >= 84 ? `<span class="sz num">${formatBytes(it.size)}</span>` : ''}`;
+      ${it.type === 'dir' && it.children && side >= GRID_BADGE_MIN ? `<span class="badge num">${formatCount(it.children.length)}</span>` : ''}
+      <span style="color:${k.tint};display:inline-flex;">${icon(k.icon, gridIconPx(side))}</span>
+      <span class="nm">${escapeHtml(it.name)}</span>
+      <span class="sz num">${formatBytes(it.size)}</span>`;
     cell.addEventListener('click', (e) => onCellClick(e, i));
     cell.addEventListener('dblclick', () => { if (it.type === 'file') openInOS(it.path, false); });
     cell.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, it); });
@@ -28301,9 +28323,7 @@ function onCellClick(e, i) {
     state.grid.anchor = i;
   } else if (it.type === 'dir') {
     hideTooltip();
-    sel.clear(); updateSelectionBar();
-    state.grid.path = it.path;
-    renderGrid();
+    gridNavigate(it.path);
     return;
   } else {
     sel.clear(); sel.add(it.path);
@@ -28317,11 +28337,20 @@ function onCellClick(e, i) {
 $('gridUpBtn').addEventListener('click', gridUp);
 function gridUp() {
   const crumbs = breadcrumbsFor(state.grid.path);
-  if (crumbs.length > 1) {
-    state.grid.path = crumbs[crumbs.length - 2].path;
-    state.grid.selection.clear(); updateSelectionBar();
-    renderGrid();
-  }
+  if (crumbs.length > 1) gridNavigate(crumbs[crumbs.length - 2].path);
+}
+/* Every move to another folder — a folder tile, a breadcrumb, Up — goes
+   through here. The filter belongs to the folder it was typed in (QA D44):
+   "Fonts" found the Fonts folder, and opening it then said 'No files match
+   "Fonts"'. A keystroke still inside its debounce is cancelled with it, or it
+   would land on the new folder a moment later. */
+function gridNavigate(path) {
+  clearTimeout(searchDeb);
+  state.grid.query = '';
+  $('gridSearch').value = '';
+  state.grid.path = path;
+  state.grid.selection.clear(); updateSelectionBar();
+  renderGrid();
 }
 $('gridSort').addEventListener('change', (e) => { state.grid.sort = e.target.value; renderGrid(); });
 let searchDeb = 0;
