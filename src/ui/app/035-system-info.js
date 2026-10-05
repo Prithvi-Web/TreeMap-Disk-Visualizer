@@ -198,6 +198,77 @@ function timeAgo(ms) {
   return y === 1 ? 'a year ago' : `${y} years ago`;
 }
 
+/* ── What a scan counted (QA D75) ──
+   A snapshot records the totals a scan COUNTED, not what it was allowed to
+   count. A new "Don't scan" pattern leaves a folder out, and the next banner
+   read the drop as "5.0 MB freed · 25,600 files removed" when nothing had
+   been removed. History already refuses to compare two scans that stopped at
+   different drives (U-24, 409 BOUNDARY_CHANGED — the banner meets that as no
+   banner); this is the page's equivalent for what the page can know: the
+   "Don't scan" patterns each scan ran with, and the kind of engine that
+   counted. It is kept per folder and per snapshot, in this browser, so a
+   snapshot the page never saw (a scheduled scan, another window, a build
+   before this one) has no record — and then the banner states the change in
+   the totals without naming a cause. */
+const SCAN_COVERAGE_STORE = 'tm-scan-coverage';
+/** Snapshots remembered per folder: the two a banner compares, and a reopened scan's. */
+const SCAN_COVERAGE_PER_ROOT = 4;
+const SCAN_COVERAGE_ROOTS = 60;
+
+/**
+ * What a scan counted besides the folder itself, or null when unknown: its
+ * "Don't scan" patterns (a "suggest"-only entry is no scan rule) and the kind
+ * of engine. The native engine, the walker at any pool size and its fast
+ * rescan count the same entries; gdu shows a folder it may not open as an
+ * empty one; the NTFS read counts from the volume's own table. The index and
+ * a cloud listing are no scan of the disk.
+ */
+function scanCoverageOf(settings, engine) {
+  if (!settings || !Array.isArray(settings.ignore)) return null;
+  const family = { native: 'walk', walker: 'walk', 'turbo-walker': 'walk', 'gdu-turbo': 'gdu', 'ntfs-mft': 'ntfs-mft' }[engine];
+  if (!family) return null;
+  const patterns = settings.ignore
+    .filter((e) => e && typeof e.pattern === 'string' && e.pattern && e.scope !== 'suggest')
+    .map((e) => e.pattern)
+    .sort();
+  return { family, patterns };
+}
+function readCoverageBook() {
+  try {
+    const book = JSON.parse(localStorage.getItem(SCAN_COVERAGE_STORE) || '{}');
+    return book && typeof book === 'object' && !Array.isArray(book) ? book : {};
+  } catch { return {}; }
+}
+/** The coverage recorded for one snapshot of a folder, or null. */
+function coverageFor(rootPath, snapshotId) {
+  const list = readCoverageBook()[rootPath];
+  const hit = Array.isArray(list) ? list.find((r) => r && r.snap === snapshotId) : null;
+  return hit && typeof hit.family === 'string' && Array.isArray(hit.patterns) ? { family: hit.family, patterns: hit.patterns } : null;
+}
+function rememberCoverage(rootPath, snapshotId, coverage) {
+  try {
+    const book = readCoverageBook();
+    const list = (Array.isArray(book[rootPath]) ? book[rootPath] : []).filter((r) => r && r.snap !== snapshotId);
+    list.push({ snap: snapshotId, family: coverage.family, patterns: coverage.patterns });
+    delete book[rootPath]; // put back last: the folders scanned most recently are the ones kept
+    book[rootPath] = list.slice(-SCAN_COVERAGE_PER_ROOT);
+    const roots = Object.keys(book);
+    for (const r of roots.slice(0, Math.max(0, roots.length - SCAN_COVERAGE_ROOTS))) delete book[r];
+    localStorage.setItem(SCAN_COVERAGE_STORE, JSON.stringify(book));
+  } catch { /* a convenience of this browser: without it the banner only says less */ }
+}
+/**
+ * How two scans' coverage compares: 'same', 'rules' (their "Don't scan"
+ * patterns differ — the stated cause even when the engine changed with them,
+ * as adding a pattern moves a scan off the native engine), 'engine' (another
+ * kind of engine counted), or 'unknown' (either side has no record).
+ */
+function coverageChange(before, after) {
+  if (!before || !after) return 'unknown';
+  if (JSON.stringify(before.patterns) !== JSON.stringify(after.patterns)) return 'rules';
+  return before.family === after.family ? 'same' : 'engine';
+}
+
 /**
  * After a completed scan, compare the two most recent snapshots of this root
  * and summarize what changed. The scan's own snapshot is written async just
@@ -212,6 +283,10 @@ async function loadWhatsNew() {
   if (!state.root) return;
   const rootPath = state.root.path;
   const finishedBy = state.lastScan ? state.lastScan.when : Date.now();
+  // This scan's engine, read before the first await: another scan can replace
+  // the stats meanwhile. A tree painted from the index says 'index', which
+  // scanCoverageOf refuses: no scan counted it.
+  const engine = state.scanStats ? state.scanStats.engine : null;
   try {
     let snaps = null;
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -223,30 +298,71 @@ async function loadWhatsNew() {
       }
       await new Promise((r) => setTimeout(r, 700));
     }
-    if (!snaps || snaps.length < 2) return;
-    const prev = snaps[snaps.length - 2], curr = snaps[snaps.length - 1];
+    if (!snaps) return;
+    const curr = snaps[snaps.length - 1];
+    // What this scan counted, kept beside its snapshot for the next banner.
+    // A scan reopened later is described by what it ran with, not by today's
+    // settings. "Don't scan" rules apply from the next scan, so the settings
+    // read now are the ones this scan ran with.
+    let after = coverageFor(rootPath, curr.id);
+    if (!after && engine) {
+      const settings = await api('/api/settings').catch(() => null);
+      if (seq !== state.whatsNew.seq) return;
+      after = scanCoverageOf(settings, engine);
+      if (after) rememberCoverage(rootPath, curr.id, after);
+    }
+    if (snaps.length < 2) return;
+    const prev = snaps[snaps.length - 2];
+    const change = coverageChange(coverageFor(rootPath, prev.id), after);
+    // Another kind of engine counted: like two scans that stopped at
+    // different drives, no banner rather than a wrong one.
+    if (change === 'engine') return;
     const diff = await api(`/api/snapshots/compare?a=${encodeURIComponent(prev.id)}&b=${encodeURIComponent(curr.id)}`);
     if (seq !== state.whatsNew.seq || state.whatsNew.dismissed) return;
-    renderWhatsNew(prev, curr, diff);
+    renderWhatsNew(prev, curr, diff, change);
   } catch { /* history is best-effort — no banner beats a wrong one */ }
 }
 
-function renderWhatsNew(prev, curr, diff) {
+/**
+ * The banner. `change` is coverageChange's: only two scans known to have
+ * counted the same way say "added", "freed" and "removed". Across a change of
+ * "Don't scan" rules the difference is what was scanned, said as that and
+ * nothing more — no bytes "freed", no mover. Without a record either side the
+ * totals' difference is stated with its sign and no cause.
+ */
+function renderWhatsNew(prev, curr, diff, change = 'unknown') {
   const bytes = diff.totalDelta;
   const files = curr.fileCount - prev.fileCount;
   // diff entries arrive sorted by |delta|, so the first grower is the biggest.
   const mover = (diff.entries || []).find((e) => e.delta > 0) || null;
   const ago = timeAgo(prev.takenAt);
+  const n = Math.abs(files);
+  const fileWord = `file${n === 1 ? '' : 's'}`;
 
   const parts = [];
-  if (bytes !== 0) {
-    parts.push(`<span class="delta-badge num ${bytes > 0 ? 'up' : 'down'}">${bytes > 0 ? '+' : ''}${formatBytes(Math.abs(bytes))} ${bytes > 0 ? 'added' : 'freed'}</span>`);
-  }
-  if (files !== 0) {
-    parts.push(`<span class="delta-badge num ${files > 0 ? 'up' : 'down'}">${files > 0 ? '+' : ''}${formatCount(Math.abs(files))} file${Math.abs(files) === 1 ? '' : 's'} ${files > 0 ? 'added' : 'removed'}</span>`);
-  }
-  if (mover) {
-    parts.push(`<span class="wn-mover" title="${escapeHtml(mover.path)}">${escapeHtml(mover.name)} grew the most (+${formatBytes(mover.delta)})</span>`);
+  if (change === 'rules') {
+    const counted = files < 0 ? `${formatCount(n)} ${fileWord} no longer scanned`
+      : files > 0 ? `${formatCount(n)} more ${fileWord} scanned`
+        : 'Not compared';
+    // The badge never wraps (105-trends.css), so the cause goes beside it.
+    parts.push(`<span class="delta-badge num">${counted}</span>`, '<span class="wn-mover">— your “Don’t scan” rules changed</span>');
+  } else {
+    const known = change === 'same';
+    // Coloured as growth or as space won back only when that is what it is.
+    const tone = (up) => (known ? (up ? ' up' : ' down') : '');
+    if (bytes !== 0) {
+      parts.push(`<span class="delta-badge num${tone(bytes > 0)}">${bytes > 0 ? '+' : known ? '' : '−'}${formatBytes(Math.abs(bytes))}` +
+        `${known ? (bytes > 0 ? ' added' : ' freed') : ''}</span>`);
+    }
+    if (files !== 0) {
+      parts.push(`<span class="delta-badge num${tone(files > 0)}">${files > 0 ? '+' : known ? '' : '−'}${formatCount(n)} ${fileWord}` +
+        `${known ? (files > 0 ? ' added' : ' removed') : ''}</span>`);
+    }
+    // Unknown coverage names no mover either: a folder counted again after a
+    // rule was removed is not one that grew (review L1).
+    if (mover && known) {
+      parts.push(`<span class="wn-mover" title="${escapeHtml(mover.path)}">${escapeHtml(mover.name)} grew the most (+${formatBytes(mover.delta)})</span>`);
+    }
   }
   const headline = parts.length ? "What's new" : 'Nothing changed';
   $('whatsNewBody').innerHTML =
