@@ -120,6 +120,17 @@ interface ManifestMember {
    * of `digestOf`.
    */
   mode?: number;
+  /**
+   * Files only: the file's id on its volume (`ino`) and its change time (`ctimeMs`) when it was
+   * copied (FG3g M1), so the look right before its trash step sees a file rewritten with its size
+   * and modification time put back (rsync -t, cp -p, touch -r, a volume with coarse times): any
+   * write moves the change time, and nothing can set it back; a file saved the way editors save is
+   * another file, with another id. Optional — a copy recorded before is compared on size and
+   * modification time, as it always was — and not part of `digestOf`. Where a volume keeps no change
+   * time of its own (FAT, exFAT) it is whatever Node reports there.
+   */
+  ino?: number;
+  ctimeMs?: number;
 }
 
 interface EntryManifest {
@@ -518,6 +529,9 @@ interface WalkedMember {
   mtimeMs?: number;
   atimeMs?: number;
   mode?: number;
+  /** Files only, from the same lstat (FG3g M1). */
+  ino?: number;
+  ctimeMs?: number;
 }
 
 /**
@@ -590,7 +604,10 @@ async function walkItem(
   }
   if (!stat.isDirectory()) {
     return {
-      members: [{ abs: root, rel: '', kind: 'file', size: stat.size, mtimeMs: stat.mtimeMs, atimeMs: stat.atimeMs, mode: stat.mode & 0o777 }],
+      members: [{
+        abs: root, rel: '', kind: 'file', size: stat.size, mtimeMs: stat.mtimeMs, atimeMs: stat.atimeMs, mode: stat.mode & 0o777,
+        ino: stat.ino, ctimeMs: stat.ctimeMs,
+      }],
       bytes: stat.size,
       isFolder: false,
     };
@@ -633,7 +650,9 @@ async function walkItem(
       } else if (dirent.isFile()) {
         const st = await lstatMember(abs, rel);
         if (!st) continue; // vanished mid-walk — nothing to protect
-        members.push({ abs, rel, kind: 'file', size: st.size, mtimeMs: st.mtimeMs, atimeMs: st.atimeMs, mode: st.mode & 0o777 });
+        members.push({
+          abs, rel, kind: 'file', size: st.size, mtimeMs: st.mtimeMs, atimeMs: st.atimeMs, mode: st.mode & 0o777, ino: st.ino, ctimeMs: st.ctimeMs,
+        });
         bytes += st.size;
       }
       // Sockets, FIFOs and devices are deliberately skipped: they carry no
@@ -782,7 +801,7 @@ async function capture(
       if (verify !== hash) {
         throw new Error(`the copy of ${member.rel || name} did not match what was read`);
       }
-      members.push({ rel: member.rel, kind: 'file', size: member.size, hash, ...timesOf(member), ...modeOf(member) });
+      members.push({ rel: member.rel, kind: 'file', size: member.size, hash, ...timesOf(member), ...modeOf(member), ...fileIdOf(member) });
     }
 
     // The captured folder's own times, read from the original before it goes.
@@ -847,6 +866,14 @@ export function linkTypeFor(target: string, targetIsDir: boolean | undefined, pl
 /** The recorded permission bits, or nothing when the walk could not read them (FG3f #10). */
 function modeOf(member: WalkedMember): { mode?: number } {
   return typeof member.mode === 'number' && Number.isInteger(member.mode) ? { mode: member.mode } : {};
+}
+
+/** A file's id and change time as the walk read them, each only when it is a number (FG3g M1). */
+function fileIdOf(member: WalkedMember): { ino?: number; ctimeMs?: number } {
+  return {
+    ...(typeof member.ino === 'number' && Number.isFinite(member.ino) ? { ino: member.ino } : {}),
+    ...(typeof member.ctimeMs === 'number' && Number.isFinite(member.ctimeMs) ? { ctimeMs: member.ctimeMs } : {}),
+  };
 }
 
 /** One fingerprint over every member, order-independent of the walk. */
@@ -1396,8 +1423,11 @@ async function stopBeforeTrash(entryId: string | undefined, original: string): P
 /**
  * What differs between an item as its manifest records it and as it is walked now, as a phrase
  * naming the first difference and how many more, or null when nothing does (FG3f #4). Compared:
- * which members there are and their kinds, each file's size and modification time, each link's
- * target. Not compared: access times (the copy itself read every file) and folders' own times.
+ * which members there are and their kinds, each file's size, modification time, id and change time
+ * (FG3g M1: the last two where the copy recorded them), each link's target. Not compared: access
+ * times (the copy itself read every file) and folders' own times. A change time that moved for a
+ * reason other than content (a permission, an extended attribute) leaves the item in place too:
+ * that costs a deletion, never a file.
  */
 async function changeSinceCopy(manifest: EntryManifest, walked: Awaited<ReturnType<typeof walkItem>>): Promise<string | null> {
   const nameOf = (rel: string): string => (rel === '' ? manifest.name : rel);
@@ -1410,6 +1440,10 @@ async function changeSinceCopy(manifest: EntryManifest, walked: Awaited<ReturnTy
     else if (was.kind !== now.kind) changes.push(`${nameOf(now.rel)} is no longer a ${was.kind === 'dir' ? 'folder' : was.kind}`);
     else if (now.kind === 'file' && (was.size !== now.size || (typeof was.mtimeMs === 'number' && was.mtimeMs !== now.mtimeMs))) {
       changes.push(`${nameOf(now.rel)} was modified`);
+    } else if (now.kind === 'file' && typeof was.ino === 'number' && was.ino !== now.ino) {
+      changes.push(`${nameOf(now.rel)} was replaced by another file`);
+    } else if (now.kind === 'file' && typeof was.ctimeMs === 'number' && was.ctimeMs !== now.ctimeMs) {
+      changes.push(`${nameOf(now.rel)} was changed`);
     } else if (now.kind === 'symlink' && was.target !== await fsp.readlink(now.abs).catch(() => null)) {
       changes.push(`${nameOf(now.rel)} points somewhere else`);
     }

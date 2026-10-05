@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleChanged-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { getCapsuleIndex, getCapsuleJob, setMemberLookFaultForTests } from '../src/services/timeCapsule';
+import { capsuleRoot, getCapsuleIndex, getCapsuleJob, setMemberLookFaultForTests } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { waitFor } from './fixtures/waitFor';
@@ -140,6 +140,78 @@ test('a file whose size changed while its modification time was set back is stil
     assert.equal(fs.statSync(main).mtimeMs, WHEN * 1000, 'the time is exactly as it was copied');
   });
   await assertLeftInPlace(result, proj, /src[\\/]main\.c was modified/);
+});
+
+/** POSIX change times move on every write and every utimes; Windows reports a change time of its own. */
+const POSIX_CTIME = process.platform === 'win32' ? 'Windows reports a change time of its own; the change-time rule is proven where POSIX ctime holds' : false;
+
+test('a file rewritten in place with its size and modification time both put back is still seen as changed: its change time moved (FG3f review R2)', { skip: POSIX_CTIME }, async () => {
+  const { first, proj } = batch('ctime');
+  const state = path.join(proj, 'state.txt');
+  fs.writeFileSync(state, 'AAAA');
+  const WHEN = 1_700_000_000; // whole seconds, so the time put back is exactly the one copied
+  fs.utimesSync(state, WHEN, WHEN);
+  const ino = fs.statSync(state).ino;
+  const result = await commitChanging(first, proj, () => {
+    fs.writeFileSync(state, 'BBBB'); // the same size, written in place: the same file
+    fs.utimesSync(state, WHEN, WHEN); // as rsync -t, cp -p or touch -r would put it back
+    const now = fs.statSync(state);
+    assert.equal(now.size, 4);
+    assert.equal(now.mtimeMs, WHEN * 1000);
+    assert.equal(now.ino, ino, 'the same file, rewritten');
+  });
+  await assertLeftInPlace(result, proj, /state\.txt was changed/);
+  assert.equal(fs.readFileSync(state, 'utf8'), 'BBBB', 'the new content is still there, not in the Trash with no copy');
+});
+
+test('a file item rewritten in place with its size and modification time put back is left in place', { skip: POSIX_CTIME }, async () => {
+  const { first } = batch('ctime-file');
+  const notes = path.join(fileTempDir('treemap-capsuleChanged-ctime-file-'), 'notes.txt');
+  fs.writeFileSync(notes, 'version 1');
+  const WHEN = 1_700_000_000;
+  fs.utimesSync(notes, WHEN, WHEN);
+  const result = await commitChanging(first, notes, () => {
+    fs.writeFileSync(notes, 'version 2');
+    fs.utimesSync(notes, WHEN, WHEN);
+  });
+  await assertLeftInPlace(result, notes, /notes\.txt was changed/);
+  assert.equal(fs.readFileSync(notes, 'utf8'), 'version 2');
+});
+
+test('a file replaced by another with its size and modification time put back is seen as replaced: it is another file', { skip: POSIX_CTIME }, async () => {
+  const { first, proj } = batch('ino');
+  const main = path.join(proj, 'src', 'main.c');
+  const WHEN = 1_700_000_000;
+  fs.utimesSync(main, WHEN, WHEN);
+  const before = fs.statSync(main);
+  const result = await commitChanging(first, proj, () => {
+    const saved = path.join(proj, 'src', '.main.c.swp');
+    fs.writeFileSync(saved, 'int main(void) { return 9; }\n'); // the same size
+    fs.utimesSync(saved, WHEN, WHEN);
+    fs.renameSync(saved, main); // saved the way editors save: a new file put in its place
+    assert.notEqual(fs.statSync(main).ino, before.ino);
+  });
+  await assertLeftInPlace(result, proj, /src[\\/]main\.c was replaced by another file/);
+});
+
+test('a copy recorded before file ids and change times were kept is compared as it always was: on size and modification time', async () => {
+  const { first, proj } = batch('older-manifest');
+  const readme = path.join(proj, 'README.md');
+  const result = await commitChanging(first, proj, () => {
+    // The copy's record, as a build before FG3g wrote it: no file ids, no change times.
+    const entry = fs.readdirSync(capsuleRoot()).map((id) => path.join(capsuleRoot(), id, 'manifest.json'))
+      .filter((m) => fs.existsSync(m))
+      .find((m) => (JSON.parse(fs.readFileSync(m, 'utf8')) as { originalPath: string }).originalPath === proj);
+    assert.ok(entry, 'the copy of proj is recorded');
+    const manifest = JSON.parse(fs.readFileSync(entry, 'utf8')) as { members: Record<string, unknown>[] };
+    for (const m of manifest.members) {
+      delete m.ino;
+      delete m.ctimeMs;
+    }
+    fs.writeFileSync(entry, JSON.stringify(manifest));
+    fs.chmodSync(readme, 0o600); // moves the change time, and nothing a copy holds
+  });
+  assert.deepEqual([...result.trashed].sort(), [first, proj].sort(), JSON.stringify(result.skipped));
 });
 
 test('a folder member that turned from a file into a folder is seen as changed', async () => {

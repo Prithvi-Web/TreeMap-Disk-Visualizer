@@ -432,10 +432,13 @@ OpenAPI 3 spec).
      is reading is held for it the same way until that job ends — never
      evicted, forgotten or expired from under it; and right before each item's
      trash step its copy is looked for again — one that is gone by then leaves
-     the item in place (`CAPSULE_COPY_GONE`) — and the item's metadata is walked
-     again and compared with what was copied: a file added, removed, rewritten
-     or replaced since leaves it in place, its copy discarded
-     (`CAPSULE_CHANGED`, naming what changed). `dryRun: true` returns that same verdict per
+     the item in place (`CAPSULE_COPY_GONE`) — and the item's metadata (each
+     file's size, modified time, change time and file id; no bytes are read)
+     is walked again and compared with what was copied: a file added, removed,
+     rewritten — even with its size and modified time put back — or replaced
+     since leaves it in place, its copy discarded (`CAPSULE_CHANGED`, naming
+     what changed). A volume that keeps no change time of its own (FAT,
+     exFAT) answers with what it has. `dryRun: true` returns that same verdict per
      path *before* anything happens, along with the older capsule copies that
      would be evicted to make room and B2's open-handle preflight. At most 500
      paths per commit. Nothing after the trash step can fail the request:
