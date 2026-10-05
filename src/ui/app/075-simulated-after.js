@@ -705,19 +705,34 @@ async function refreshTimebar() {
   $('tmLiveToggle').hidden = isCloudScan(); // live watching is local-disk only
   const h = state.treemap.history;
   if (!state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
+  // The map's height is the window minus everything above it, this bar
+  // included, and the draw that follows this call measures it NOW — before
+  // the snapshot list below has answered.
+  const wasHidden = bar.hidden;
+  const root = state.root;
   try {
-    const data = await api('/api/snapshots?path=' + encodeURIComponent(state.root.path));
+    const data = await api('/api/snapshots?path=' + encodeURIComponent(root.path));
     // §7.1 — ordered and tree-bearing only: a treeless snapshot is a gap the
     // slider and playback both skip, never a tree to guess at.
     h.snaps = lapseOrderedSnaps(data.snapshots || []);
   } catch { h.snaps = []; }
+  // Answered after the map left the scan root (a drill-in while this was out):
+  // the newer load has already hidden the bar, and this answer must not
+  // bring it back over a subfolder.
+  if (state.root !== root || state.treemap.rootPath !== root.path) return;
   // The newest snapshot is the scan you're looking at — history needs two.
-  if (h.snaps.length < 2) { bar.hidden = true; return; }
-  bar.hidden = false;
-  const slider = $('tmTimeSlider');
-  slider.max = String(h.snaps.length);
-  if (!h.active && !h.scrubbing) slider.value = slider.max; // a scrub in flight owns the thumb
-  updateTimeLabel();
+  bar.hidden = h.snaps.length < 2;
+  if (!bar.hidden) {
+    const slider = $('tmTimeSlider');
+    slider.max = String(h.snaps.length);
+    if (!h.active && !h.scrubbing) slider.value = slider.max; // a scrub in flight owns the thumb
+    updateTimeLabel();
+  }
+  // QA D59: the bar appearing pushed a map sized without it down by its own
+  // height, and the footer — legend, counts, hint — fell off a 1440×900
+  // window until the window was resized. Whenever it shows or goes, redraw
+  // the way the resize handler does.
+  if (bar.hidden !== wasHidden && state.view === 'treemap' && state.treemap.rootPath) drawView();
 }
 
 function updateTimeLabel() {

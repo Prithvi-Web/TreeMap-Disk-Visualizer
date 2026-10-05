@@ -454,3 +454,58 @@ test('D58: every rectangle-map paint refreshes the note under the map', () => {
   assert.ok(at < body.indexOf('if (!px.length)'), 'before the empty-map return, so a stale note never outlives its map');
   assert.match(body.slice(at, at + 200), /renderAltNote\(\);/, 'and shows it');
 });
+
+/* ══════════════ D59 — the time-lapse bar appearing re-fits the map ══════════════ */
+
+/**
+ * Run the real `refreshTimebar` with the bar starting `startHidden` and the
+ * snapshot list answering `snaps` entries; count the redraws it asks for.
+ * `during` runs while the snapshot request is out.
+ */
+async function timebar(startHidden: boolean, snaps: number, opts: { view?: string; rootPath?: string; during?: (s: any, els: any) => void } = {}) {
+  const els: Record<string, { hidden: boolean; value?: string; max?: string }> = {
+    tmTimebar: { hidden: startHidden }, tmLiveToggle: { hidden: false }, tmTimeSlider: { hidden: false, value: '0', max: '0' },
+  };
+  const state = {
+    view: opts.view ?? 'treemap',
+    root: { path: '/r' },
+    treemap: { rootPath: opts.rootPath ?? '/r', lapse: { playing: false }, history: { snaps: [] as unknown[], active: false, scrubbing: false } },
+  };
+  let redraws = 0;
+  const refresh = load<() => Promise<void>>(['refreshTimebar'], {
+    $: (id: string) => els[id],
+    state,
+    isCloudScan: () => false,
+    api: async () => {
+      if (opts.during) opts.during(state, els);
+      return { snapshots: Array.from({ length: snaps }, (_, i) => ({ id: i, takenAt: i })) };
+    },
+    lapseOrderedSnaps: (s: unknown[]) => s,
+    updateTimeLabel() {},
+    drawView: () => { redraws++; },
+  }, 'refreshTimebar');
+  await refresh();
+  return { redraws, hidden: els.tmTimebar.hidden };
+}
+
+test('D59: when the history bar appears or goes, the map is re-measured and redrawn', async () => {
+  // QA at 1440×900: the bar unhid after the map was sized, pushed it down,
+  // and cut the footer (legend, node count, hint) off the window.
+  assert.deepEqual(await timebar(true, 2), { redraws: 1, hidden: false }, 'the bar appeared: one redraw');
+  assert.deepEqual(await timebar(false, 1), { redraws: 1, hidden: true }, 'the bar went: the map takes the room back');
+});
+
+test('D59: no redraw when nothing moved, when the map is not on screen, or when the caller draws next', async () => {
+  assert.deepEqual(await timebar(false, 3), { redraws: 0, hidden: false }, 'shown before and after');
+  assert.deepEqual(await timebar(true, 1), { redraws: 0, hidden: true }, 'hidden before and after');
+  assert.deepEqual(await timebar(true, 2, { view: 'grid' }), { redraws: 0, hidden: false }, 'a hidden view is not drawn');
+  assert.deepEqual(await timebar(false, 2, { rootPath: '/r/sub' }), { redraws: 0, hidden: true },
+    'in a subfolder the bar hides at once, before loadTreemap draws');
+});
+
+test('D59: a snapshot answer that lands after the map left the scan root does not bring the bar back', async () => {
+  const r = await timebar(true, 2, {
+    during: (state, els) => { state.treemap.rootPath = '/r/sub'; els.tmTimebar.hidden = true; },
+  });
+  assert.deepEqual(r, { redraws: 0, hidden: true }, 'the newer load (in a subfolder) owns the bar');
+});
