@@ -1363,7 +1363,7 @@ $('pathInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') toast('A scan is already running — press Stop to end it, then press Enter to scan this path.', 'error');
 });
 $('pathInput').addEventListener('input', maybeShowFastRescan);
-maybeShowFastRescan();
+void refreshFastRescanPlan(); // shows or hides the box once the engine plan is known (QA D45)
 window.addEventListener('beforeunload', closeEventSource);
 
 /* ───────────────────────────── Dashboard: largest files ───────────────────────────── */

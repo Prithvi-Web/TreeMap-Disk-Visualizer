@@ -65,8 +65,11 @@
             <button class="btn" id="browseBtn">Browse…</button>
             <button class="btn btn-primary" id="scanBtn"><span data-icon="play"></span>Scan</button>
           </div>
+          <!-- QA D45: never ticked by the page, and not offered where the next
+               scan runs on the native engine — an incremental rescan runs on
+               the built-in walker, which is far slower than native there. -->
           <label class="fast-rescan" id="fastRescanWrap" hidden>
-            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
+            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse the last scan for unchanged folders (built-in walker)
           </label>
           <!-- FX wiring: the well is where the "searching" orb lives while a
                scan runs. It must sit OUTSIDE #scanStatus — followScanProgress

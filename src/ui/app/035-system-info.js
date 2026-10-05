@@ -24,7 +24,9 @@ async function loadSystem() {
     countUp($('ringPct'), Math.round(pct * 100), (v) => v + '%');
     const C = 2 * Math.PI * 55;
     requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
-    if (!$('pathInput').value) $('pathInput').value = sys.homeDir;
+    // The Fast rescan box follows the folder the box now holds — at once,
+    // not whenever the engine plan happens to answer (review L3).
+    if (!$('pathInput').value) { $('pathInput').value = sys.homeDir; maybeShowFastRescan(); }
     loadTrash();
     loadSnapshots();
     loadCloudStatus(); // reads local token state; network only for connected accounts

@@ -164,15 +164,57 @@ const INSTANT_OPEN_NODES = 25000;
 /** Budget for one on-demand drill-in, matching the scan path's subtree cap. */
 const SUBTREE_NODES = 20000;
 
-/* Feature 5 — fast (incremental) rescan helpers. */
+/* Feature 5 — fast (incremental) rescan helpers.
+   "Fast" is against the built-in walker: an incremental rescan always runs
+   on the walker, because the mtime cache it reuses is the walker's. Where
+   the native engine would run instead it is ~20× SLOWER (QA D45: 4.3 s
+   against 0.2 s on the QA corpus), so the box is offered only where the next
+   scan would not be native, and it is never ticked for the person. */
 function scannedRoots() { try { return new Set(JSON.parse(localStorage.getItem('tm-scanned-roots') || '[]')); } catch { return new Set(); } }
-function rememberScannedRoot(p) { const s = scannedRoots(); s.add(p); localStorage.setItem('tm-scanned-roots', JSON.stringify([...s].slice(-60))); }
+function rememberScannedRoot(p) {
+  const s = scannedRoots(); s.add(p);
+  try { localStorage.setItem('tm-scanned-roots', JSON.stringify([...s].slice(-60))); } catch { /* the box is a convenience */ }
+  // QA D47: the folder in the path box may be the one just scanned — the box
+  // is offered now, not after the next edit. The engine plan is read again:
+  // a "Don't scan" rule saved since the last look moves the next scan off
+  // the native engine.
+  maybeShowFastRescan();
+  void refreshFastRescanPlan();
+}
+/** Whether the next scan would run on the native engine: true, false, or null while not known. */
+let fastRescanNative = null;
+/**
+ * The engine rule (scan/nativeEngine.ts, nativeRule) as far as the page can
+ * see it: Automatic or Native, the native core loaded, and no "Don't scan"
+ * pattern (their glob dialect lives in the walker). The probe of the folder
+ * itself is the server's; a refusal there sends a scan to the walker, which
+ * only means the box was not offered where it would have helped.
+ */
+function nativeScanExpected(caps, settings) {
+  if (!caps || !caps.native || typeof caps.native.available !== 'boolean' || !settings) return null;
+  if (!caps.native.available) return false;
+  const engine = settings.engine || 'auto';
+  if (engine !== 'auto' && engine !== 'native') return false;
+  const ignore = Array.isArray(settings.ignore) ? settings.ignore : [];
+  return !ignore.some((e) => e && e.pattern && e.scope !== 'suggest');
+}
+async function refreshFastRescanPlan() {
+  try {
+    const [caps, settings] = await Promise.all([api('/api/engine/capabilities'), api('/api/settings')]);
+    fastRescanNative = nativeScanExpected(caps, settings);
+  } catch {
+    fastRescanNative = null; // not known: offered unticked, which costs nothing
+  }
+  maybeShowFastRescan();
+}
 function maybeShowFastRescan() {
   const wrap = $('fastRescanWrap'); if (!wrap) return;
   const p = $('pathInput').value.trim();
-  const known = !!p && scannedRoots().has(p);
-  wrap.hidden = !known;
-  $('fastRescan').checked = known;
+  const show = !!p && scannedRoots().has(p) && fastRescanNative !== true;
+  wrap.hidden = !show;
+  // Never ticked for the person: it can be the slow path, so it is their
+  // choice, which stands while the box is offered. A hidden box asks nothing.
+  if (!show) $('fastRescan').checked = false;
 }
 async function showFastRescanStat(scanId) {
   try {

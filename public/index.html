@@ -3515,8 +3515,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             <button class="btn" id="browseBtn">Browse…</button>
             <button class="btn btn-primary" id="scanBtn"><span data-icon="play"></span>Scan</button>
           </div>
+          <!-- QA D45: never ticked by the page, and not offered where the next
+               scan runs on the native engine — an incremental rescan runs on
+               the built-in walker, which is far slower than native there. -->
           <label class="fast-rescan" id="fastRescanWrap" hidden>
-            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
+            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse the last scan for unchanged folders (built-in walker)
           </label>
           <!-- FX wiring: the well is where the "searching" orb lives while a
                scan runs. It must sit OUTSIDE #scanStatus — followScanProgress
@@ -7675,7 +7678,9 @@ async function loadSystem() {
     countUp($('ringPct'), Math.round(pct * 100), (v) => v + '%');
     const C = 2 * Math.PI * 55;
     requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
-    if (!$('pathInput').value) $('pathInput').value = sys.homeDir;
+    // The Fast rescan box follows the folder the box now holds — at once,
+    // not whenever the engine plan happens to answer (review L3).
+    if (!$('pathInput').value) { $('pathInput').value = sys.homeDir; maybeShowFastRescan(); }
     loadTrash();
     loadSnapshots();
     loadCloudStatus(); // reads local token state; network only for connected accounts
@@ -8198,15 +8203,57 @@ const INSTANT_OPEN_NODES = 25000;
 /** Budget for one on-demand drill-in, matching the scan path's subtree cap. */
 const SUBTREE_NODES = 20000;
 
-/* Feature 5 — fast (incremental) rescan helpers. */
+/* Feature 5 — fast (incremental) rescan helpers.
+   "Fast" is against the built-in walker: an incremental rescan always runs
+   on the walker, because the mtime cache it reuses is the walker's. Where
+   the native engine would run instead it is ~20× SLOWER (QA D45: 4.3 s
+   against 0.2 s on the QA corpus), so the box is offered only where the next
+   scan would not be native, and it is never ticked for the person. */
 function scannedRoots() { try { return new Set(JSON.parse(localStorage.getItem('tm-scanned-roots') || '[]')); } catch { return new Set(); } }
-function rememberScannedRoot(p) { const s = scannedRoots(); s.add(p); localStorage.setItem('tm-scanned-roots', JSON.stringify([...s].slice(-60))); }
+function rememberScannedRoot(p) {
+  const s = scannedRoots(); s.add(p);
+  try { localStorage.setItem('tm-scanned-roots', JSON.stringify([...s].slice(-60))); } catch { /* the box is a convenience */ }
+  // QA D47: the folder in the path box may be the one just scanned — the box
+  // is offered now, not after the next edit. The engine plan is read again:
+  // a "Don't scan" rule saved since the last look moves the next scan off
+  // the native engine.
+  maybeShowFastRescan();
+  void refreshFastRescanPlan();
+}
+/** Whether the next scan would run on the native engine: true, false, or null while not known. */
+let fastRescanNative = null;
+/**
+ * The engine rule (scan/nativeEngine.ts, nativeRule) as far as the page can
+ * see it: Automatic or Native, the native core loaded, and no "Don't scan"
+ * pattern (their glob dialect lives in the walker). The probe of the folder
+ * itself is the server's; a refusal there sends a scan to the walker, which
+ * only means the box was not offered where it would have helped.
+ */
+function nativeScanExpected(caps, settings) {
+  if (!caps || !caps.native || typeof caps.native.available !== 'boolean' || !settings) return null;
+  if (!caps.native.available) return false;
+  const engine = settings.engine || 'auto';
+  if (engine !== 'auto' && engine !== 'native') return false;
+  const ignore = Array.isArray(settings.ignore) ? settings.ignore : [];
+  return !ignore.some((e) => e && e.pattern && e.scope !== 'suggest');
+}
+async function refreshFastRescanPlan() {
+  try {
+    const [caps, settings] = await Promise.all([api('/api/engine/capabilities'), api('/api/settings')]);
+    fastRescanNative = nativeScanExpected(caps, settings);
+  } catch {
+    fastRescanNative = null; // not known: offered unticked, which costs nothing
+  }
+  maybeShowFastRescan();
+}
 function maybeShowFastRescan() {
   const wrap = $('fastRescanWrap'); if (!wrap) return;
   const p = $('pathInput').value.trim();
-  const known = !!p && scannedRoots().has(p);
-  wrap.hidden = !known;
-  $('fastRescan').checked = known;
+  const show = !!p && scannedRoots().has(p) && fastRescanNative !== true;
+  wrap.hidden = !show;
+  // Never ticked for the person: it can be the slow path, so it is their
+  // choice, which stands while the box is offered. A hidden box asks nothing.
+  if (!show) $('fastRescan').checked = false;
 }
 async function showFastRescanStat(scanId) {
   try {
@@ -9643,7 +9690,7 @@ $('pathInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') toast('A scan is already running — press Stop to end it, then press Enter to scan this path.', 'error');
 });
 $('pathInput').addEventListener('input', maybeShowFastRescan);
-maybeShowFastRescan();
+void refreshFastRescanPlan(); // shows or hides the box once the engine plan is known (QA D45)
 window.addEventListener('beforeunload', closeEventSource);
 
 /* ───────────────────────────── Dashboard: largest files ───────────────────────────── */
