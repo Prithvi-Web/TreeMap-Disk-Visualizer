@@ -703,8 +703,12 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   }
 
   // The node ids this build sets aside (U-D6): its cap and one more — the
-  // walk stops on the entry past the cap — or 2^32 without one.
-  const stride = seams?.stride ?? (opts.maxEntries !== undefined ? opts.maxEntries + 1 : UNCAPPED_ID_STRIDE);
+  // walk stops on the entry past the cap — or 2^32 without one, and never
+  // more than 2^32: the route accepts any whole number as a cap, and a cap
+  // of 2^53 would leave no room for this build or any after it. A walk that
+  // reaches 2^32 entries stops at the stride check below either way.
+  const stride =
+    seams?.stride ?? (opts.maxEntries !== undefined ? Math.min(opts.maxEntries + 1, UNCAPPED_ID_STRIDE) : UNCAPPED_ID_STRIDE);
   let base = 0;
 
   // Replace any previous index for this root atomically — or, aside, leave it
@@ -785,6 +789,12 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       if (opts.maxEntries !== undefined && processed >= opts.maxEntries) {
         capped = true;
         break;
+      }
+      // Every row's id is `base + ordinal`, so an entry without a number of
+      // its own (a provider that does not number its walk) would land
+      // outside the ids this build set aside, on another build's.
+      if (!Number.isInteger(entry.ordinal) || entry.ordinal < 0) {
+        throw new Error(`index build: the walk handed over ${entry.path} without a number of its own`);
       }
       if (entry.ordinal >= stride) throw new Error(strideSentence(stride));
 
@@ -998,6 +1008,10 @@ export function deleteIndex(rootPath?: string): number {
     handle.prepare('DELETE FROM nodes').run();
     handle.prepare('DELETE FROM roots').run();
     handle.prepare('DELETE FROM cap_stops').run();
+    // No row is left, so no id is in use: the next build sets its ids aside
+    // from 1 again (U-D6). This is what makes the sentence a build with no
+    // room left ends with — "remove the index, then build it again" — true.
+    handle.prepare("DELETE FROM sqlite_sequence WHERE name = 'nodes'").run();
   } else {
     stopWatcher(rootPath);
     staleReasons.delete(rootPath);

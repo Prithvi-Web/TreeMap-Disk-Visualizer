@@ -579,3 +579,59 @@ test('a walk past the ids the build set aside stops with a sentence, and nothing
   assert.ok(ids.every((id) => id >= base && id < base + 10), `no row was written past the ten ids set aside: ${ids.join(', ')}`);
   assert.equal(allHits('stride').filter((h) => (h as { rootPath: string }).rootPath === dir).length, 0, 'and search serves none of it');
 });
+
+/* ══════════════════ the ids a cap sets aside, and a remedy that works (review of U-15) ══════════════════ */
+
+test('a cap above 2^32 sets aside 2^32 ids, as a build without a cap does, so every cap the route accepts builds', async (t) => {
+  // The route accepts any positive whole number as `maxEntries`. A cap of
+  // 2^53 − 1 set that many ids aside and failed at once; a cap of 10^15
+  // spent a ninth of every id there is, so a few such builds left no room
+  // for any build after them.
+  const dir = flatTree('bigcap', 3, 10);
+  const strides: number[] = [];
+  setBuildSeamsForTests({ onReserve: (_base, stride) => { strides.push(stride); } });
+  t.after(() => setBuildSeamsForTests(null));
+  const caps = [Number.MAX_SAFE_INTEGER, 1e15, 2 ** 32, 2 ** 32 - 1];
+  for (const maxEntries of caps) {
+    const built = await buildIndex(dir, { live: false, maxEntries });
+    assert.equal(built.fileCount, 3, `a cap of ${String(maxEntries)} builds the folder`);
+  }
+  assert.deepEqual(strides, caps.map(() => 2 ** 32), 'and none of them sets aside more than 2^32 ids');
+});
+
+test('removing the whole index starts the ids again from 1, so the sentence a build with no room ends with names a remedy that works', async (t) => {
+  const dir = flatTree('reset', 3, 10);
+  const bases: number[] = [];
+  setBuildSeamsForTests({ onReserve: (base) => { bases.push(base); } });
+  t.after(() => setBuildSeamsForTests(null));
+  await buildIndex(dir, { live: false });
+  deleteIndex();
+  await buildIndex(dir, { live: false });
+  assert.equal(bases.at(-1), 1, 'the first build after the whole index is removed sets its ids aside from 1');
+
+  // No room left: the sequence a step below 2^53.
+  openIndex().prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'").run(Number.MAX_SAFE_INTEGER - 10);
+  const sentence = 'The index has no room left for another build: remove the index, then build it again.';
+  await assert.rejects(buildIndex(dir, { live: false }), { message: sentence });
+  assert.equal(getRoot(dir)?.fileCount, 3, 'the build that had no room left the folder\'s index as it was');
+  deleteIndex();
+  const again = await buildIndex(dir, { live: false });
+  assert.equal(again.fileCount, 3, 'and the remedy the sentence names works: removed, it builds again');
+  assert.equal(bases.at(-1), 1);
+});
+
+test('an entry the walk hands over without a number of its own fails the build loudly instead of being written outside its ids', async (t) => {
+  const dir = flatTree('unnumbered', 2, 10);
+  const provider = platform() as unknown as { fastEnumerate: (root: string, opts: object) => AsyncIterable<RawEntry> };
+  const real = provider.fastEnumerate.bind(provider);
+  t.after(() => { delete (provider as { fastEnumerate?: unknown }).fastEnumerate; });
+  for (const bad of [-1, Number.NaN, 1.5]) {
+    provider.fastEnumerate = async function* (root: string, opts: object): AsyncIterable<RawEntry> {
+      for await (const entry of real(root, opts)) yield entry.isDir ? entry : { ...entry, ordinal: bad };
+    };
+    await assert.rejects(buildIndex(dir, { live: false }), { message: /without a number of its own/ }, `an entry numbered ${String(bad)}`);
+    const root = getRoot(dir);
+    assert.equal(root?.state, 'error', `numbered ${String(bad)}: the build failed`);
+    assert.equal((openIndex().prepare('SELECT COUNT(*) c FROM nodes WHERE root_id = ?').get(root!.id) as { c: number }).c, 0, `numbered ${String(bad)}: and wrote no row`);
+  }
+});
