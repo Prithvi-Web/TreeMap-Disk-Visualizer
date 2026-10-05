@@ -33,7 +33,7 @@ import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, 
 import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
-import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
+import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, nativeRuleCause, rootName, runMftWalk, nativeStorageFor, runNativeWalk, type RuleCause } from './scan/nativeEngine';
 import { nativeProjection } from './scan/projection';
 import { memoryRoomFor, noRestartRefusal } from './scan/nativeMemory';
 import { formatCount } from '../utils/formatCount';
@@ -439,10 +439,33 @@ export function createScanRecord(rootPath: string): ScanResult {
   return scan;
 }
 
-/** The sentence a legacy engine's `engineReason` carries: what it is, every reason the faster engines did not run, and the CPU clause. */
-function legacyReason(engine: 'gdu' | 'walker', why: string[]): string {
+/** One reason a faster engine did not run, and what it is about when more than one engine has a rule about that (`RuleCause`). */
+interface WhyClause {
+  text: string;
+  cause: RuleCause | null;
+}
+
+/** A clause no other engine's rule can repeat: a failure, a setting, a probe. */
+const said = (text: string): WhyClause => ({ text, cause: null });
+
+/**
+ * The sentence a legacy engine's `engineReason` carries: what it is, every
+ * reason the faster engines did not run, and the CPU clause. A cause two
+ * engines' rules share is said once, in the words of the first engine it kept
+ * off (QA D45, D75: "this is an incremental rescan" was said twice).
+ */
+function legacyReason(engine: 'gdu' | 'walker', why: readonly WhyClause[]): string {
   const label = engine === 'gdu' ? 'gdu was chosen' : 'the built-in walker ran';
-  return `${label}: ${[...why, CPU_NOT_MEASURED].join('; ')}`;
+  const causes = new Set<RuleCause>();
+  const clauses: string[] = [];
+  for (const { text, cause } of why) {
+    if (cause !== null) {
+      if (causes.has(cause)) continue;
+      causes.add(cause);
+    }
+    clauses.push(text);
+  }
+  return `${label}: ${[...clauses, CPU_NOT_MEASURED].join('; ')}`;
 }
 
 /** Record why an engine that was wanted could not run; a second reason joins the first rather than replacing it. */
@@ -520,13 +543,29 @@ export function gduRuleFor(o: GduRuleInput): string | null {
   if (o.platform === 'win32') {
     return 'on Windows gdu keys no hard links (it reads every file id as 0), so a tree that has them would be counted more than once; the built-in walker keys them by file id';
   }
-  if (!o.rootIsDir) return 'the root is a single file, which needs no gdu process';
-  if (o.incremental) return 'this is an incremental rescan, which gdu has no cache for';
-  if (o.ignoreCount > 0) return `the scan has ${o.ignoreCount} "don't scan" pattern${o.ignoreCount === 1 ? '' : 's'} gdu cannot express`;
+  switch (gduRuleCause(o)) {
+    case 'singleFile':
+      return 'the root is a single file, which needs no gdu process';
+    case 'incremental':
+      return 'this is an incremental rescan, which gdu has no cache for';
+    case 'ignore':
+      return `the scan has ${o.ignoreCount} "don't scan" pattern${o.ignoreCount === 1 ? '' : 's'} gdu cannot express`;
+    default:
+      break;
+  }
   // gdu runs with -x and stops at every mount point, so under "Include drives
   // mounted inside it" it would leave out what the person asked to count.
   if (o.crossesMounts) return 'the scan includes the drives mounted inside the folder ("Include drives mounted inside it"), and gdu stops at every drive';
   if (o.noGdu) return 'gdu is switched off by TREEMAP_NO_GDU';
+  return null;
+}
+
+/** The cause of the rule `gduRuleFor` gives, when another engine's rule can share it (`RuleCause`); else null. */
+export function gduRuleCause(o: GduRuleInput): RuleCause | null {
+  if (o.forced === 'walker' || o.platform === 'win32') return null;
+  if (!o.rootIsDir) return 'singleFile';
+  if (o.incremental) return 'incremental';
+  if (o.ignoreCount > 0) return 'ignore';
   return null;
 }
 
@@ -726,7 +765,8 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
    * clause in `engineReason`, and the walker's sentence ends with every
    * reason the faster engines did not run.
    */
-  const native = decideNative(rootPath, { incremental, ignoreCount: ignore.length, forced, rootIsDir });
+  const nativeInput = { incremental, ignoreCount: ignore.length, forced, rootIsDir };
+  const native = decideNative(rootPath, nativeInput);
   /*
    * The native walk, when the engine is eligible, with the tree's size
    * projected before it walks (Track U, U-30): the last scan of this folder,
@@ -782,11 +822,11 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
   scans.set(scan.scanId, scan);
 
   /** Why each faster engine did not run, in order — the clauses of a legacy engine's reason. */
-  const why: string[] = [];
+  const why: WhyClause[] = [];
   /** The fast path a legacy engine reports: `unavailable` once the native listing was probed and refused (P3-9), else its own. */
   let legacyFastPath: string | null = null;
   if (!native.eligibility.ok) {
-    why.push(native.eligibility.reason);
+    why.push({ text: native.eligibility.reason, cause: native.eligibility.fallback ? null : nativeRuleCause(nativeInput) });
     if (native.eligibility.fallback) noteFallback(scan, native.eligibility.reason);
     if (native.eligibility.probeRefused) legacyFastPath = FAST_PATH_UNAVAILABLE;
   }
@@ -807,7 +847,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
    * rule that keeps a scan gdu asked for off it is a fallback, named. The
    * rules are gduRuleFor's.
    */
-  const gduRule = gduRuleFor({
+  const gduInput: GduRuleInput = {
     forced,
     rootIsDir,
     incremental,
@@ -815,7 +855,8 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     noGdu: process.env.TREEMAP_NO_GDU === '1',
     platform: process.platform,
     crossesMounts: rule === 'cross' && mountOutcome(boundary).entered.length > 0,
-  });
+  };
+  const gduRule = gduRuleFor(gduInput);
   const gduWanted = !native.eligibility.ok && gduRule === null;
 
   /*
@@ -835,23 +876,26 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     : mftOffered && !mftWanted
       ? `the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it asks for administrator permission only for a scan started from the TreeMap window, and this one was not`
       : null;
-  const mftRule = !mftWanted ? null
-    : !rootIsDir ? 'the root is a single file, which needs no volume read'
-      : incremental ? 'this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker'
-        : ignore.length > 0 ? `the scan has ${ignore.length} "don't scan" pattern${ignore.length === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`
-          : null;
+  const mftRuleCause: RuleCause | null = !mftWanted ? null : !rootIsDir ? 'singleFile' : incremental ? 'incremental' : ignore.length > 0 ? 'ignore' : null;
+  const mftRule = mftRuleCause === 'singleFile' ? 'the root is a single file, which needs no volume read'
+    : mftRuleCause === 'incremental' ? 'this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker'
+      : mftRuleCause === 'ignore' ? `the scan has ${ignore.length} "don't scan" pattern${ignore.length === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`
+        : null;
   if (!native.eligibility.ok && gduRule !== null && forced !== 'walker') {
     if (forced === 'gdu') noteFallback(scan, `${gduRule} (the Scan engine setting asked for gdu)`);
-    why.push(gduRule);
+    why.push({ text: gduRule, cause: gduRuleCause(gduInput) });
   }
 
   // Fire and forget — errors land on the record, never as unhandled rejections.
   void (async () => {
     /** The mode's clause when it was asked for and not used; its fallback when that was a failure. */
     let mftClause: string | null = mftUntried;
+    /** What the mode's clause is about, when a rule kept it off: the engines after it say that cause no more. */
+    let mftCause: RuleCause | null = null;
     let mftFallback: string | null = null;
     if (mftWanted && mftRule !== null) {
       mftClause = `the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: ${mftRule}`;
+      mftCause = mftRuleCause;
     } else if (mftWanted) {
       scan.engine = 'ntfs-mft';
       scan.fastPath = 'mft';
@@ -879,7 +923,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
       scan.engine = WALKER_ENGINE;
       scan.fastPath = WALKER_FAST_PATH;
     }
-    if (mftClause !== null) why.unshift(mftClause);
+    if (mftClause !== null) why.unshift({ text: mftClause, cause: mftCause });
     if (mftFallback !== null) noteFallback(scan, mftFallback);
     if (nativeWalk) {
       scan.engine = 'native';
@@ -920,7 +964,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
         console.warn(`[treemap] ${reason}; using the legacy engines`);
         resetCounters(scan);
         noteFallback(scan, reason);
-        why.push(reason);
+        why.push(said(reason));
         scan.engine = WALKER_ENGINE;
         scan.fastPath = WALKER_FAST_PATH;
       }
@@ -931,7 +975,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
         if (bin) {
           scan.engine = 'gdu-turbo';
           scan.fastPath = legacyFastPath ?? GDU_FAST_PATH;
-          scan.engineReason = told(legacyReason('gdu', [...why, 'a gdu binary is available and the scan is a full walk with no ignore list']));
+          scan.engineReason = told(legacyReason('gdu', [...why, said('a gdu binary is available and the scan is a full walk with no ignore list')]));
           const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
           if (scan.cancelled) return;
           await rootCheck(scan.rootPath);
@@ -939,7 +983,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
           return;
         }
         const missing = 'no gdu binary is bundled or on PATH';
-        why.push(missing);
+        why.push(said(missing));
         if (forced === 'gdu') noteFallback(scan, `${missing} (the Scan engine setting asked for gdu)`);
       } catch (err) {
         if (scan.cancelled) return; // cancellation is not a gdu failure
@@ -956,7 +1000,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
         // doesn't double-count on top of it.
         resetCounters(scan);
         noteFallback(scan, reason);
-        why.push(reason);
+        why.push(said(reason));
       }
     }
     scan.engine = WALKER_ENGINE;

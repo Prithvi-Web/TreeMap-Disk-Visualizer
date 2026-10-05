@@ -149,18 +149,43 @@ export type Eligibility =
    */
   | { ok: false; reason: string; fallback: boolean; probeRefused: boolean };
 
+/**
+ * What a rule that keeps a scan off an engine is about, where more than one
+ * engine has a rule about it: the sentence that explains why the legacy
+ * walker ran names each cause once, in the words of the first engine it kept
+ * off (QA D45, D75 — "this is an incremental rescan" was said twice, once by
+ * the native engine's rule and once by gdu's). A rule about anything else —
+ * the setting, Windows, a mount, a switch — has no cause here and is always
+ * said.
+ */
+export type RuleCause = 'singleFile' | 'incremental' | 'ignore';
+
+/** The cause of the rule `nativeRule` gives, or null for none or for one only the native engine has. Pure. */
+export function nativeRuleCause(input: Omit<EligibilityInput, 'native'>): RuleCause | null {
+  if (input.forced === 'gdu' || input.forced === 'walker') return null;
+  if (!input.rootIsDir) return 'singleFile';
+  if (input.incremental) return 'incremental';
+  if (input.ignoreCount > 0) return 'ignore';
+  return null;
+}
+
 /** The rules that keep a scan off the native engine before any module is consulted, or null. Pure. */
 export function nativeRule(input: Omit<EligibilityInput, 'native'>): string | null {
   if (input.forced === 'gdu') return 'the Scan engine setting asks for gdu';
   if (input.forced === 'walker') return 'the Scan engine setting asks for the built-in walker';
   const asked = input.forced === 'native' ? 'the Scan engine setting asks for the native engine, but ' : '';
-  if (!input.rootIsDir) return `${asked}the root is a single file, which the built-in walker records without a listing`;
-  if (input.incremental) return `${asked}this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker`;
-  if (input.ignoreCount > 0) {
-    const n = input.ignoreCount;
-    return `${asked}the scan has ${n} "don't scan" pattern${n === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`;
+  switch (nativeRuleCause(input)) {
+    case 'singleFile':
+      return `${asked}the root is a single file, which the built-in walker records without a listing`;
+    case 'incremental':
+      return `${asked}this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker`;
+    case 'ignore': {
+      const n = input.ignoreCount;
+      return `${asked}the scan has ${n} "don't scan" pattern${n === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`;
+    }
+    default:
+      return null;
   }
-  return null;
 }
 
 /**
