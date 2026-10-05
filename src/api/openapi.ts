@@ -2410,7 +2410,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '202': running202,
       '404': errorResponse('JOB_NOT_FOUND'),
       '409': errorResponse('INDEX_CAP_REACHED — the build stopped at its maxEntries (carried in the body): the folder holds more than it may write. Nothing failed; the saved index, if any, is as it was'),
-      '500': errorResponse('INDEX_BUILD_FAILED — the build failed or was cancelled'),
+      '500': errorResponse('INDEX_BUILD_FAILED — the build failed or was cancelled. A folder that is gone or cannot be listed is refused with a sentence before anything is written, and its saved index is kept'),
     },
   },
   {

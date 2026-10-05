@@ -84,7 +84,12 @@ export abstract class BaseProvider implements PlatformProvider {
     rootEntry.ordinal = ordinal++;
     yield rootEntry;
 
-    let frontier: { path: string; ordinal: number }[] = [{ path: root, ordinal: rootEntry.ordinal }];
+    // Only a folder is listed. A root that is a file has nothing in it, and a
+    // root that is a link is a leaf as every link in the walk is — listing
+    // it would follow the link (readdir does), handing over the entries of
+    // a folder the walk never yielded (Track U review of the index, M-1).
+    // A scan treats the root the same way: it lstats it, and a link is one file.
+    let frontier: { path: string; ordinal: number }[] = rootEntry.isDir ? [{ path: root, ordinal: rootEntry.ordinal }] : [];
 
     while (frontier.length > 0) {
       if (opts.isCancelled?.()) return;

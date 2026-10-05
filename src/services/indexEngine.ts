@@ -814,7 +814,34 @@ export async function buildIndex(root: string, opts: BuildOptions = {}): Promise
   }
 }
 
+/**
+ * Refuses, with a sentence, a root the walk could not list — before a build
+ * writes anything (Track U review of the index, M-1). The walk itself takes
+ * a folder it cannot list for an empty one, so without this an explicit
+ * build, which sets the saved index aside in its first transaction (U-D3),
+ * traded it for an error (a root that is gone) or for an index of nothing (a
+ * folder TreeMap may not list); a capped build swapped the empty one in. The
+ * test is the one a scan makes of its root: lstat it, and open it when it is
+ * a folder — lstat alone passes for a folder this user may not list.
+ */
+async function refuseUnwalkable(root: string): Promise<void> {
+  try {
+    const st = await fsp.lstat(root);
+    if (st.isDirectory()) await (await fsp.opendir(root)).close();
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    const why = meansAbsent(err)
+      ? 'there is nothing at that path'
+      : code === 'EACCES' || code === 'EPERM'
+        ? 'TreeMap is not allowed to open it'
+        : `it could not be opened (${code ?? (err instanceof Error ? err.message : String(err))})`;
+    throw new Error(`TreeMap could not index ${root}: ${why}. Nothing was changed: its saved index, if it has one, is kept.`);
+  }
+}
+
 async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
+  // Before anything is written or set aside.
+  await refuseUnwalkable(root);
   const handle = openIndex();
   const provider = platform();
   const seams = buildSeams;
@@ -1613,8 +1640,22 @@ function enqueueChange(rootPath: string, change: PendingChange): void {
   scheduleFlush(rootPath, attempts);
 }
 
+/**
+ * Whether the index of `rootPath` is one file — a file, or a link (never
+ * followed, M-1). It holds nothing a watch could add to, and a watch on a
+ * link reports the folder it points at, whose changes would be written under
+ * a row that is no folder.
+ */
+function indexedAsLeaf(rootPath: string): boolean {
+  const row = openIndex()
+    .prepare('SELECT n.is_dir FROM roots r JOIN nodes n ON n.root_id = r.id AND n.parent_id IS NULL WHERE r.path = ?')
+    .get(rootPath) as { is_dir: number } | undefined;
+  return row !== undefined && row.is_dir !== 1;
+}
+
 export function startWatcher(rootPath: string): boolean {
   if (watchers.has(rootPath)) return true;
+  if (indexedAsLeaf(rootPath)) return false;
   try {
     const unsubscribe = platform().subscribeToChanges(
       rootPath,

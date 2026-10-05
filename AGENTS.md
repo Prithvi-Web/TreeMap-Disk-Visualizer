@@ -361,7 +361,12 @@ OpenAPI 3 spec).
      positive whole number (`400 MAX_ENTRIES_INVALID`); past it the build
      stops, the saved index is left as it was, the stop is remembered
      (`stoppedAtCap` on `status?path=`), and `/result` answers
-     `409 INDEX_CAP_REACHED` — nothing failed. The index progress stream keeps
+     `409 INDEX_CAP_REACHED` — nothing failed. A folder that is gone, or that
+     TreeMap may not list, is refused with a sentence before anything is
+     written, and its saved index is kept (`/result` answers
+     `500 INDEX_BUILD_FAILED` with that sentence). A path that is a link is
+     indexed as the link itself, one file, as a scan of it shows it: no walk
+     follows a link. The index progress stream keeps
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
