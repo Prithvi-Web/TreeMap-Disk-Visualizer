@@ -20,6 +20,7 @@ import { describeFsError, meansAbsent } from '../utils/errno';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
+import { AsyncMutex } from '../utils/asyncMutex';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -54,8 +55,20 @@ interface ManifestStore {
   destinations: Record<string, { lastSeenAt: number }>;
 }
 
+/**
+ * Test-only: awaited each time the manifest has been read, before anything is done with it (FG3g M3):
+ * a test holds one read-modify-write there to show what overlaps it. The suite's ForTests idiom:
+ * returns the function that removes it.
+ */
+let afterManifestLoadForTests: (() => Promise<void>) | null = null;
+export function setAfterManifestLoadForTests(hook: () => Promise<void>): () => void {
+  afterManifestLoadForTests = hook;
+  return () => { afterManifestLoadForTests = null; };
+}
+
 async function loadManifest(): Promise<ManifestStore> {
   const raw = await readJsonFile<Partial<ManifestStore>>(MANIFEST_FILE, {});
+  if (afterManifestLoadForTests) await afterManifestLoadForTests();
   return {
     entries: Array.isArray(raw.entries) ? raw.entries : [],
     destinations: raw.destinations && typeof raw.destinations === 'object' ? raw.destinations : {},
@@ -77,6 +90,26 @@ export function trimManifest(entries: OffloadEntry[], cap: number): OffloadEntry
 async function saveManifest(store: ManifestStore): Promise<void> {
   store.entries = trimManifest(store.entries, MAX_MANIFEST_ENTRIES);
   await writeJsonFile(MANIFEST_FILE, store);
+}
+
+/**
+ * Every read-modify-write of the manifest, one at a time (FG3g M3): load, change, save, with nothing
+ * else's save in between. A restore loaded the manifest when it started, copied for as long as the
+ * copies took and saved what it had loaded — so an offload that finished meanwhile was erased from
+ * the record (its originals in the Trash, its copies at the destination, and Restore unable to list
+ * them), and two overlapping restores lost each other's "restored". Every `saveManifest` call is
+ * inside one (tests/offloadManifestLock.test.ts reads this file to hold it so); a read alone needs
+ * none, since a save replaces the file whole. Never nested: see AsyncMutex.
+ */
+const manifestLock = new AsyncMutex();
+
+function withOffloadManifest<T>(fn: () => Promise<T>): Promise<T> {
+  return manifestLock.run(fn);
+}
+
+/** Test-only: how many read-modify-writes of the manifest are waiting for the one under way (FG3g M3). */
+export function offloadManifestWaitersForTests(): number {
+  return manifestLock.waiting;
 }
 
 /** The largest record on a drive this reads whole; a larger one is kept as it is, beside a new one. */
@@ -649,23 +682,27 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     // applies, and it holds with more force here because the originals are
     // already gone.
     try {
-      const store = await loadManifest();
-      const now = Date.now();
-      for (const r of results) {
-        store.entries.push({
-          id: crypto.randomUUID(),
-          name: path.basename(r.src),
-          originalPath: r.src,
-          destPath: r.dest,
-          destRoot: destDir,
-          size: r.size,
-          hash: r.hash,
-          offloadedAt: now,
-        });
-      }
-      store.destinations[destDir] = { lastSeenAt: now };
-      await saveManifest(store);
-      const unwritten = await writeDestManifest(destDir, store.entries);
+      // Loaded, added to and saved with no other writer between (FG3g M3) — and the destination's
+      // own copy of the record written from that same document.
+      const unwritten = await withOffloadManifest(async () => {
+        const store = await loadManifest();
+        const now = Date.now();
+        for (const r of results) {
+          store.entries.push({
+            id: crypto.randomUUID(),
+            name: path.basename(r.src),
+            originalPath: r.src,
+            destPath: r.dest,
+            destRoot: destDir,
+            size: r.size,
+            hash: r.hash,
+            offloadedAt: now,
+          });
+        }
+        store.destinations[destDir] = { lastSeenAt: now };
+        await saveManifest(store);
+        return writeDestManifest(destDir, store.entries);
+      });
       if (unwritten) job.error = job.error ? `${job.error} Also: ${unwritten}` : unwritten;
     } catch (err) {
       // The files are where they should be; only the record of them failed.
@@ -737,7 +774,11 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
   const failures: string[] = [];
   /** Restores that stopped and could not remove what they had begun writing (FG3f #7). */
   const leftBehind: string[] = [];
-  const store = await loadManifest();
+  /**
+   * What this restore put back, by entry id, and when: recorded on a fresh read of the manifest at
+   * the end (FG3g M3), never on the document as it stood when the restore began.
+   */
+  const putBack = new Map<string, number>();
   for (const entry of entries) {
     if (job.cancelled) break;
     try {
@@ -766,14 +807,22 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
         await fsp.rm(partial, { force: true }).catch(() => {});
         throw err.code === 'EEXIST' ? new Error(`something appeared at ${entry.originalPath} while it was being restored`) : err;
       });
-      const live = store.entries.find((e) => e.id === entry.id);
-      if (live) live.restoredAt = Date.now();
+      putBack.set(entry.id, Date.now());
       job.filesDone++;
     } catch (err) {
       (err instanceof CopyLeftBehind ? leftBehind : failures).push(`${entry.name}: ${messageOf(err)}`);
     }
   }
-  await saveManifest(store);
+  if (putBack.size > 0) {
+    await withOffloadManifest(async () => {
+      const store = await loadManifest();
+      for (const live of store.entries) {
+        const at = putBack.get(live.id);
+        if (at !== undefined) live.restoredAt = at;
+      }
+      await saveManifest(store);
+    });
+  }
   job.phase = 'done';
   job.finishedAt = Date.now();
   if (leftBehind.length > 0) {
@@ -805,34 +854,37 @@ export interface OffloadIndex {
 }
 
 export async function getOffloadIndex(): Promise<OffloadIndex> {
-  const store = await loadManifest();
-  const roots = new Map<string, { totalBytes: number; activeCount: number; restoredCount: number }>();
-  for (const e of store.entries) {
-    const agg = roots.get(e.destRoot) ?? { totalBytes: 0, activeCount: 0, restoredCount: 0 };
-    if (e.restoredAt) {
-      agg.restoredCount++;
-    } else {
-      agg.activeCount++;
-      agg.totalBytes += e.size;
+  // Its "last seen" is a write too, so the whole read-modify-write holds the manifest (FG3g M3).
+  return withOffloadManifest(async () => {
+    const store = await loadManifest();
+    const roots = new Map<string, { totalBytes: number; activeCount: number; restoredCount: number }>();
+    for (const e of store.entries) {
+      const agg = roots.get(e.destRoot) ?? { totalBytes: 0, activeCount: 0, restoredCount: 0 };
+      if (e.restoredAt) {
+        agg.restoredCount++;
+      } else {
+        agg.activeCount++;
+        agg.totalBytes += e.size;
+      }
+      roots.set(e.destRoot, agg);
     }
-    roots.set(e.destRoot, agg);
-  }
-  let touched = false;
-  const destinations = [...roots.entries()].map(([root, agg]) => {
-    const mounted = fs.existsSync(root);
-    if (mounted) {
-      store.destinations[root] = { lastSeenAt: Date.now() };
-      touched = true;
-    }
-    return {
-      root,
-      mounted,
-      lastSeenAt: store.destinations[root]?.lastSeenAt ?? 0,
-      ...agg,
-    };
-  }).sort((a, b) => b.totalBytes - a.totalBytes);
-  if (touched) await saveManifest(store);
-  return { destinations, entries: [...store.entries].sort((a, b) => b.offloadedAt - a.offloadedAt) };
+    let touched = false;
+    const destinations = [...roots.entries()].map(([root, agg]) => {
+      const mounted = fs.existsSync(root);
+      if (mounted) {
+        store.destinations[root] = { lastSeenAt: Date.now() };
+        touched = true;
+      }
+      return {
+        root,
+        mounted,
+        lastSeenAt: store.destinations[root]?.lastSeenAt ?? 0,
+        ...agg,
+      };
+    }).sort((a, b) => b.totalBytes - a.totalBytes);
+    if (touched) await saveManifest(store);
+    return { destinations, entries: [...store.entries].sort((a, b) => b.offloadedAt - a.offloadedAt) };
+  });
 }
 
 /** Manifest lookup for the reveal endpoint (only manifest paths may open). */
