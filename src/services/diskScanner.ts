@@ -28,7 +28,7 @@ import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
 import { cloudProviderFor } from './cloudFolders';
 import { markUnlisted, markUnlistedPaths, noteRefused, noteUnlistedBelow } from './scanRefusals';
 import { JUNK_FILES } from './emptyFolderCheck';
-import { permissionDeniedMessage } from '../middleware/errorHandler';
+import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
@@ -39,7 +39,8 @@ import { memoryRoomFor, noRestartRefusal } from './scan/nativeMemory';
 import { formatCount } from '../utils/formatCount';
 import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
-import { isSpillFolderName, isSpillPath } from '../utils/pathSanitizer';
+import { isInside, isSpillFolderName, isSpillPath, sanitizePath } from '../utils/pathSanitizer';
+import { meansGone } from '../utils/errno';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -593,11 +594,86 @@ export interface ScanOptions {
   interactive?: boolean;
 }
 
-export async function startScan(rootPath: string, opts: ScanOptions = {}): Promise<ScanResult> {
+/** The folder a scan walks, and the link it was given as, when it was given one (D78). */
+interface ScanRoot {
+  rootPath: string;
+  rootStat: Stats;
+  /** The path the scan was asked for, when that is a link to the folder it walks; else null. */
+  linkedFrom: string | null;
+}
+
+/**
+ * What a scan of `given` walks (QA D78, 5 Oct 2026). A link to a folder —
+ * macOS's /tmp, /var and /etc, a project folder kept elsewhere — is followed,
+ * here and only here: the scan is of the folder it points to, by that
+ * folder's own path, so every engine is handed it, its boundary and its
+ * fast-rescan cache are that folder's, and everything the scan lists is
+ * spelled under it (the scanned-root rule resolves the parents of every path
+ * it is asked about, so a path spelled through the link is the same file).
+ * A person who points TreeMap at a folder by a link means the folder; the
+ * scan showed one tile, the link, before. No walk follows a link below the
+ * root, as before.
+ *
+ * A link to a file, to nothing, or round in a loop stays the one file it is.
+ * The folder a link leads to passes the checks a path typed by hand passes
+ * (`sanitizePath`) and must lie in the agent policy's allowed roots, if it
+ * has any: the caller checked the link's own spelling, which can lie inside
+ * an allowed root while the folder lies anywhere.
+ */
+async function scanRootOf(given: string): Promise<ScanRoot> {
+  const stat = await fsp.lstat(given);
+  if (!stat.isSymbolicLink()) return { rootPath: given, rootStat: stat, linkedFrom: null };
+  let target: string;
+  try {
+    if (!(await fsp.stat(given)).isDirectory()) return { rootPath: given, rootStat: stat, linkedFrom: null };
+    target = await fsp.realpath(given);
+  } catch (err) {
+    // To nothing, or round in a loop: the one file it is. Anything else — a
+    // folder on the way TreeMap may not look into — fails the scan as a scan
+    // of that folder would, with the permission sentence, never quietly as a
+    // one-file scan of the link.
+    if (meansGone(err)) return { rootPath: given, rootStat: stat, linkedFrom: null };
+    throw err;
+  }
+  const folder = sanitizePath(target);
+  await assertLinkTargetAllowed(given, folder);
+  return { rootPath: folder, rootStat: await fsp.lstat(folder), linkedFrom: given };
+}
+
+/** The agent policy's allowed roots, as written or where each really is, must hold the folder a link root leads to. */
+async function assertLinkTargetAllowed(given: string, folder: string): Promise<void> {
+  // Imported when called: policy.ts reads the scans (`allScans`), and a module
+  // cycle is refused (tests/importCycles.test.ts).
+  const { getPolicy } = await import('./policy');
+  const { allowedRoots } = await getPolicy();
+  if (allowedRoots.length === 0) return;
+  for (const allowed of allowedRoots) {
+    if (isInside(allowed, folder)) return;
+    const real = await fsp.realpath(allowed).catch(() => null);
+    if (real !== null && isInside(real, folder)) return;
+  }
+  throw new AppError(
+    403,
+    'POLICY_ROOT_NOT_ALLOWED',
+    // The folder is not named: it lies outside every root this caller may see.
+    `"${given}" is a link to a folder outside the allowed roots — edit agent-policy.json (allowedRoots) to widen them`,
+  );
+}
+
+/** The clause a scan of a link to a folder leads its engine sentence with (D78). */
+function linkedRootClause(root: ScanRoot): string | null {
+  return root.linkedFrom === null ? null : `${root.linkedFrom} is a link to ${root.rootPath}, and TreeMap scanned the folder it points to`;
+}
+
+export async function startScan(given: string, opts: ScanOptions = {}): Promise<ScanResult> {
   ensureEvictor();
 
   // Fail fast on unreadable/nonexistent roots so the API can 4xx properly.
-  const rootStat = await fsp.lstat(rootPath);
+  const root = await scanRootOf(given);
+  const { rootPath, rootStat } = root;
+  /** Every engine sentence, led by the link clause when the root was given as a link (D78). */
+  const linkClause = linkedRootClause(root);
+  const told = (reason: string): string => (linkClause === null ? reason : `${linkClause}; ${reason}`);
   // lstat alone passes for a folder this user may not LIST (macOS TCC: Mail,
   // Photos, another account's home), and the scan then settled as "complete,
   // 0 files". Opening it is the honest test, and its EACCES/EPERM carries the
@@ -779,13 +855,13 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     } else if (mftWanted) {
       scan.engine = 'ntfs-mft';
       scan.fastPath = 'mft';
-      scan.engineReason = `the NTFS turbo mode was chosen by the Scan engine setting (${MFT_NOT_VERIFIED}); it waits for its elevated helper`;
+      scan.engineReason = told(`the NTFS turbo mode was chosen by the Scan engine setting (${MFT_NOT_VERIFIED}); it waits for its elevated helper`);
       const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
       try {
         const outcome = await mftWalk(scan, store, rootPath);
         if (scan.cancelled) return;
         if (outcome.used) {
-          scan.engineReason = outcome.reason;
+          scan.engineReason = told(outcome.reason);
           await rootCheck(scan.rootPath);
           settleComplete(scan, store);
           return;
@@ -808,7 +884,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     if (nativeWalk) {
       scan.engine = 'native';
       scan.fastPath = nativeWalk.fastPath;
-      scan.engineReason = mftClause === null ? nativeWalk.reason : `${nativeWalk.reason}; ${mftClause}`;
+      scan.engineReason = told(mftClause === null ? nativeWalk.reason : `${nativeWalk.reason}; ${mftClause}`);
       scan.fallbackReason = mftFallback;
       // The memory store's room, sized from the projection (U-31, the owner's
       // U-Q15): a tree that outgrew the default room is walked once, not once
@@ -855,7 +931,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         if (bin) {
           scan.engine = 'gdu-turbo';
           scan.fastPath = legacyFastPath ?? GDU_FAST_PATH;
-          scan.engineReason = legacyReason('gdu', [...why, 'a gdu binary is available and the scan is a full walk with no ignore list']);
+          scan.engineReason = told(legacyReason('gdu', [...why, 'a gdu binary is available and the scan is a full walk with no ignore list']));
           const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
           if (scan.cancelled) return;
           await rootCheck(scan.rootPath);
@@ -885,7 +961,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     }
     scan.engine = WALKER_ENGINE;
     scan.fastPath = legacyFastPath ?? WALKER_FAST_PATH;
-    scan.engineReason = legacyReason('walker', why);
+    scan.engineReason = told(legacyReason('walker', why));
     await walk(scan, rootIsDir, ignore, cache);
   })().catch((err: unknown) => {
     scan.status = 'error';

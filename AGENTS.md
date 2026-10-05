@@ -42,6 +42,14 @@ OpenAPI 3 spec).
    runs it holds a person's scan at Balanced too, because one budget governs
    the whole app. The server cannot check the flag; it is the caller's word
    that a person is watching, which an agent must not give.
+   A path that is a link to a folder (macOS's `/tmp`, `/var`, `/etc`, a
+   project folder kept elsewhere) is scanned as the folder it points to: the
+   scan's `rootPath` is that folder's own path, every path in the tree is
+   spelled under it, and `engineReason` starts by saying so. Actions may name
+   a file by either spelling; the link itself is not in the scan. Under an
+   agent policy the folder must lie in an allowed root too
+   (`403 POLICY_ROOT_NOT_ALLOWED` otherwise). A link to a file, or to nothing,
+   is scanned as the one file it is.
    For the whole picture in one call afterwards:
    `GET /api/agent/summary?scanId=` — top culprits, reclaimable-by-category,
    and the forecast, every number as raw bytes plus a formatted string, in
@@ -375,8 +383,9 @@ OpenAPI 3 spec).
      TreeMap may not list, is refused with a sentence before anything is
      written, and its saved index is kept (`/result` answers
      `500 INDEX_BUILD_FAILED` with that sentence). A path that is a link is
-     indexed as the link itself, one file, as a scan of it shows it: no walk
-     follows a link. A build without `maxEntries` replaces the folder's saved
+     indexed as the link itself, one file: no walk follows a link. (A scan of
+     a link to a folder is of that folder, so build from the scan's
+     `rootPath`, as the TreeMap window does.) A build without `maxEntries` replaces the folder's saved
      index at its start, so one that is cancelled or fails leaves the folder
      with no index; only a capped build keeps the saved one until it is
      swapped in. A build honours the "Stay on this drive" setting as a scan

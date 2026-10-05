@@ -28,13 +28,14 @@ import {
  *
  * A root that is a link to a folder. `sanitizePath` returns the caller's
  * spelling, never the link's target, so `~/Projects` as a link, `/tmp` and
- * `/var/...` reach the build as links. A scan never follows a link — the
- * root included: it lstats the root, finds no folder, and shows the link
- * itself as one file. The index shows what the scan of the same path shows.
- * Before this, the walk listed the folder the link points at while the root
- * was recorded as a file, and every build of it failed ("the folder numbered
- * 0 was never handed over") — after setting the saved index aside, for an
- * explicit build.
+ * `/var/...` reach the build as links. The build never follows a link — the
+ * root included: it indexes the link itself as one file. Before this, the
+ * walk listed the folder the link points at while the root was recorded as a
+ * file, and every build of it failed ("the folder numbered 0 was never handed
+ * over") — after setting the saved index aside, for an explicit build. A scan
+ * of the same path follows it (QA D78): it is rooted at the folder the link
+ * points to, and the page builds the index from the scan's root, so the index
+ * it asks for is that folder's and holds what the scan shows.
  *
  * A root that cannot be walked — gone, or a folder TreeMap may not list —
  * is refused with a sentence before anything is written, so an explicit
@@ -91,36 +92,49 @@ const rootsCount = (): number => (openIndex().prepare('SELECT COUNT(*) c FROM ro
 
 /* ══════════════════ a root that is a link ══════════════════ */
 
-test('an index of a link to a folder is the link itself, as a scan of the same path shows it: one row, never followed — explicit or capped', { skip: NO_LINKS }, async () => {
-  const { link } = linkTree();
-  const linkBytes = fs.lstatSync(link).size;
+test('the page builds the index from the scan’s root: a scan of a link to a folder is of the folder (D78), and the index of that root holds what the scan shows — explicit or capped', { skip: NO_LINKS }, async () => {
+  const { real, link } = linkTree();
 
   const scan = await startScan(link);
   await waitFor(() => scan.status !== 'running', 'the scan of the link settling');
   assert.equal(scan.status, 'complete', scan.error);
   const scanned = getScan(scan.scanId) ?? scan;
+  assert.equal(scanned.rootPath, real, 'the scan is rooted at the folder the link points to');
   const store = storeOf(scanned);
-  assert.equal(store.isDir(store.rootId), false, 'the scan shows the link as a file: it never follows a link');
-  assert.equal(scanned.fileCount, 1);
-  assert.equal(scanned.dirCount, 0);
+  assert.equal(scanned.fileCount, 2);
+  assert.equal(scanned.dirCount, 2);
+
+  for (const cap of [undefined, 10]) {
+    const built = await buildIndex(scanned.rootPath, { live: false, ...(cap === undefined ? {} : { maxEntries: cap }) });
+    const how = cap === undefined ? 'explicit' : 'capped';
+    assert.equal(built.state, 'ready', `${how}: the build of the scan's root completes`);
+    assert.equal(built.path, real);
+    assert.equal(built.fileCount, scanned.fileCount, `${how}: as many files as the scan shows`);
+    assert.equal(built.dirCount, scanned.dirCount, `${how}: as many folders as the scan shows`);
+    assert.equal(built.totalSize, store.size(store.rootId), `${how}: the size the scan shows`);
+  }
+});
+
+test('an index asked for by a link’s own path is the link itself: one row, never followed — explicit or capped', { skip: NO_LINKS }, async () => {
+  const { link } = linkTree();
+  const linkBytes = fs.lstatSync(link).size;
 
   for (const cap of [undefined, 10]) {
     const built = await buildIndex(link, { live: false, ...(cap === undefined ? {} : { maxEntries: cap }) });
     const how = cap === undefined ? 'explicit' : 'capped';
     assert.equal(built.state, 'ready', `${how}: the build of a link completes`);
     assert.equal(built.path, link, `${how}: under the path it was given, not the link's target`);
-    assert.equal(built.fileCount, scanned.fileCount, `${how}: as many files as the scan shows`);
-    assert.equal(built.dirCount, scanned.dirCount, `${how}: as many folders as the scan shows`);
-    assert.equal(built.totalSize, store.size(store.rootId), `${how}: the size the scan shows`);
-    assert.equal(built.totalSize, linkBytes, `${how}: which is the link's own bytes`);
+    assert.equal(built.fileCount, 1, `${how}: one file`);
+    assert.equal(built.dirCount, 0, `${how}: no folder`);
+    assert.equal(built.totalSize, linkBytes, `${how}: the link's own bytes`);
     const rows = rowsOf(built.id);
     assert.equal(rows.length, 1, `${how}: one row — nothing behind the link is in it: ${rows.map((r) => r.name).join(', ')}`);
     assert.equal(rows[0].name, 'link');
     assert.equal(rows[0].is_dir, 0, `${how}: the link is a leaf, as every link inside a tree is`);
     assert.ok((rows[0].flags & FLAG.SYMLINK) !== 0, `${how}: and says it is a link`);
     const tree = readTree(link);
-    assert.equal(tree?.root.type, 'file', `${how}: the tree read shows the file the scan shows`);
-    assert.equal(tree?.root.size, store.size(store.rootId));
+    assert.equal(tree?.root.type, 'file', `${how}: the tree read shows one file`);
+    assert.equal(tree?.root.size, linkBytes);
   }
 });
 
