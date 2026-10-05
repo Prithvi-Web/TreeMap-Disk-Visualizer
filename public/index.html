@@ -30664,10 +30664,11 @@ async function startEncode(paths) {
       const ok = (d.results || []).filter(r => r.ok).length;
       const failed = (d.results || []).filter(r => !r.ok);
       $('vidFill').style.width = '100%';
-      $('vidProgText').innerHTML = `${ok} re-encoded, ${formatBytes(d.savedBytes || 0)} recovered.` +
+      // The originals went to the Trash, which still holds them: smaller, not yet freed (D54).
+      $('vidProgText').innerHTML = `${ok} re-encoded, ${formatBytes(d.savedBytes || 0)} smaller. The originals are in the Trash until you empty it.` +
         (failed.length ? `<div class="vid-failed">${failed.map(f =>
           `<div>${escapeHtml(baseName(f.path))}: ${escapeHtml(f.error || 'failed')}</div>`).join('')}</div>` : '');
-      toast(`Re-encoded ${ok} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} recovered`);
+      toast(`Re-encoded ${ok} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} smaller once you empty the Trash`);
       rescan();
     }
   };
@@ -31456,10 +31457,15 @@ function activeCleanSelection() {
   return { paths: [...chosen.keys()], bytes, noun: 'item', sizes: chosen };
 }
 
+/*
+ * What a selection frees is said as what a move to the Trash does (D54): it
+ * frees nothing until the Trash is emptied, and then at most the size the
+ * files report — a sparse or shared file frees less.
+ */
 function updateCleanSummary() {
   const { paths, bytes, noun } = activeCleanSelection();
   $('cleanSummary').textContent = paths.length
-    ? `${paths.length} ${noun}${paths.length > 1 ? 's' : ''}${bytes ? ` — ${formatBytes(bytes)} will be recovered` : ''}`
+    ? `${paths.length} ${noun}${paths.length > 1 ? 's' : ''}${bytes ? ` · up to ${formatBytes(bytes)}, freed when you empty the Trash` : ''}`
     : '';
   $('cleanConfirmBtn').disabled = !paths.length;
   $('cleanConfirmBtn').innerHTML = icon('trash', 14) +
@@ -31558,7 +31564,7 @@ async function runCleanTrash(selection, options) {
     btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
   }
   closeModal('cleanModal');
-  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` — ${formatBytes(recovered)} recovered` : ''}`);
+  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` (${formatBytes(recovered)}) — the space comes back when you empty the Trash` : ''}`);
   if (failed) toast(`${failed} could not be trashed`, 'error');
   if (notEmpty) toast(`${notEmpty} folder${notEmpty > 1 ? 's are' : ' is'} no longer empty — left where ${notEmpty > 1 ? 'they are' : 'it is'}. Rescan to see what is in ${notEmpty > 1 ? 'them' : 'it'}.`, 'error', 9000);
   // Silent mode suppresses trashPaths' own re-ask dialog, so this is the only

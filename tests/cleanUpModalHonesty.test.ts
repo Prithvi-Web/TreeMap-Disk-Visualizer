@@ -482,3 +482,72 @@ test('a cloud scan keeps the dialog\'s own cloud delete: its files go to the pro
   assert.equal(h.trashCalls.length, 0, 'a cloud path is never sent to the local Trash route');
   assert.deepEqual(h.cloudCalls, [['cloud://drive/a', 'cloud://drive/b']]);
 });
+
+/* ═══════ 5. A move to the Trash frees nothing yet, and says so (D54) ═══════ */
+
+/**
+ * "2 files — 3.6 GB will be recovered" was the summary under a selection of
+ * two sparse files that occupy nothing, about to be MOVED to the Trash —
+ * where they go on occupying exactly what they did until the Trash is
+ * emptied. The figure is the size the files report, and the most a move can
+ * ever free. So the line says that: up to this much, when the Trash is
+ * emptied. The completion toast and Shrink Video's report made the same claim.
+ */
+
+test('the selection summary promises nothing the Trash has not done yet', async () => {
+  const { els, $ } = makeDom();
+  const fn = runnable(bodyOf('function updateCleanSummary() {'), {
+    $,
+    activeCleanSelection: () => ({ paths: ['/a', '/b'], bytes: 3_600_000_000, noun: 'file' }),
+    formatBytes: () => '3.6 GB',
+    icon: () => '',
+    cleanPane: 'rules',
+    renderCleanFunnel: () => {},
+  });
+  await fn();
+  const line = els.cleanSummary.textContent;
+  assert.doesNotMatch(line, /recovered/i, `nothing is recovered by a move to the Trash: "${line}"`);
+  assert.match(line, /2 files/);
+  assert.match(line, /up to 3\.6 GB/, 'the reported size is the most it can free');
+  assert.match(line, /empty the Trash/, 'and only when the Trash is emptied');
+});
+
+test('the completion toast says where the files went, not that space came back', async () => {
+  const { toasts } = await runConfirm({ paths: PATHS, sizes: SIZES }, { deleted: PATHS, failed: [] });
+  const moved = toasts.find((t) => /Moved/.test(t.msg));
+  assert.ok(moved, 'the move is reported');
+  assert.doesNotMatch(moved!.msg, /recovered/i, moved!.msg);
+  assert.match(moved!.msg, /empty the Trash/, moved!.msg);
+});
+
+test('Shrink Video reports a smaller file and an original in the Trash, not space recovered', async () => {
+  const { els, $ } = makeDom();
+  const toasts: string[] = [];
+  // A holder rather than a bare `let`: assigned inside the constructor, a
+  // `let` would be narrowed to null at the use below.
+  const opened: { stream: { onmessage?: (ev: { data: string }) => void } | null } = { stream: null };
+  class FakeEventSource {
+    onmessage?: (ev: { data: string }) => void;
+    onerror?: () => void;
+    constructor() { opened.stream = this; }
+    close() {}
+  }
+  const fn = runnable(bodyOf('async function startEncode(paths) {'), {
+    $,
+    api: async () => ({ jobId: 'j1' }),
+    toast: (msg: string) => { toasts.push(msg); },
+    EventSource: FakeEventSource,
+    videoJobStream: null,
+    formatBytes: (n: number) => `${n}B`,
+    escapeHtml: (s: string) => s,
+    baseName: (p: string) => p,
+    rescan: () => {},
+  }, 'paths');
+  await fn(['/v/a.mov']);
+  assert.ok(opened.stream, 'the progress stream was opened');
+  opened.stream.onmessage!({ data: JSON.stringify({ type: 'complete', results: [{ ok: true, path: '/v/a.mov' }], savedBytes: 500 }) });
+  const report = `${els.vidProgText.innerHTML} | ${toasts.join(' | ')}`;
+  assert.doesNotMatch(report, /recovered/i, report);
+  assert.match(report, /500B/, 'the saving is still stated');
+  assert.match(report, /Trash/, 'with where the original went');
+});
