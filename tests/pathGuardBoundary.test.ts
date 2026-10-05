@@ -14,7 +14,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer } from '../src/mcp/server';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { insideAnyScanRoot } from '../src/middleware/pathGuard';
+import { insideAnyScanRoot, setDataVolumeFoldersForTests } from '../src/middleware/pathGuard';
 import { isInside } from '../src/utils/pathSanitizer';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -293,4 +293,39 @@ test('a name that only begins with two dots (..data, as Kubernetes mounts a Conf
   assert.equal(r.status, 200, `a file the scan listed under ..data is acted on: ${JSON.stringify(r.body)}`);
   assert.equal(r.body.wouldTrash?.[0]?.path, file);
   assert.ok(fs.existsSync(file), 'a dry run moves nothing');
+});
+
+test('a scan of the Data volume itself covers what the root shows of that volume, never the sealed system volume or another volume (the U-25 security review, F2)', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume and its firmlinks are macOS');
+  // Every spelling under /System/Volumes/Data is the root's own (pathSanitizer), so this scan's
+  // root reads as "/" — and before, it granted every path on every volume.
+  evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  const data = createScanRecord('/System/Volumes/Data');
+  data.status = 'complete';
+  data.finishedAt = Date.now();
+  const home = fs.realpathSync(fileTempDir('treemap-guard-data-volume-'));
+  assert.ok(home.startsWith('/private/'), `the temp folder is on the Data volume, under /private: ${home}`);
+  try {
+    // This Mac's own firmlinks.
+    assert.equal(insideAnyScanRoot(path.join(home, 'x.txt')), true, 'a file on the Data volume, as the root spells it');
+    assert.equal(insideAnyScanRoot(path.join('/System/Volumes/Data', home, 'x.txt')), true, 'and as the Data volume spells it');
+    assert.equal(insideAnyScanRoot('/System/Library/CoreServices/SystemVersion.plist'), false, 'the sealed system volume was never listed');
+    assert.equal(insideAnyScanRoot('/usr/bin/true'), false);
+    assert.equal(insideAnyScanRoot('/System/Volumes/Preboot/x'), false, 'nor another volume');
+    // A firmlink list that cannot be read grants nothing.
+    setDataVolumeFoldersForTests([]);
+    assert.equal(insideAnyScanRoot(path.join(home, 'x.txt')), false, 'unknown firmlinks: fail closed');
+    setDataVolumeFoldersForTests(['/Users']);
+    assert.equal(insideAnyScanRoot(path.join(home, 'x.txt')), false, 'only the folders the firmlinks name');
+    setDataVolumeFoldersForTests(null);
+    // A scan of / itself listed the system volume too.
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+    const slash = createScanRecord('/');
+    slash.status = 'complete';
+    slash.finishedAt = Date.now();
+    assert.equal(insideAnyScanRoot('/usr/bin/true'), true, 'a scan of / covers the system volume it listed');
+  } finally {
+    setDataVolumeFoldersForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
 });

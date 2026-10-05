@@ -1,9 +1,10 @@
+import fs from 'fs';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
 import { sanitizePath, isInside, canonicalDirOf, isSpillPath, isAppDataPath, foldName } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
-import { exclusionsOf } from '../utils/mountBoundaries';
+import { exclusionsOf, parseFirmlinks } from '../utils/mountBoundaries';
 import type { ScanResult } from '../models/types';
 import { isVirtualPath } from '../services/containerScanner';
 import { AppError } from './errorHandler';
@@ -231,6 +232,30 @@ function exclusionKeysOf(scan: ScanResult, root: string): Set<string> {
   return keys;
 }
 
+/** macOS's list of the Data volume's folders that the root shows (firmlinks): /Users, /Applications, /private, … */
+const FIRMLINKS_FILE = '/usr/share/firmlinks';
+
+/** The Data volume's folders as the root spells them, read once; empty when the list cannot be read. */
+let dataVolumeFolders: readonly string[] | null = null;
+let dataVolumeFoldersForTests: readonly string[] | null = null;
+
+function dataVolumeFolderList(): readonly string[] {
+  if (dataVolumeFoldersForTests) return dataVolumeFoldersForTests;
+  if (dataVolumeFolders === null) {
+    try {
+      dataVolumeFolders = parseFirmlinks(fs.readFileSync(FIRMLINKS_FILE, 'utf8')).map((pair) => pair.system);
+    } catch {
+      dataVolumeFolders = []; // unknown: a scan of the Data volume then grants nothing
+    }
+  }
+  return dataVolumeFolders;
+}
+
+/** Tests only: the Data volume's folders, in place of this Mac's firmlinks; null puts them back. */
+export function setDataVolumeFoldersForTests(list: readonly string[] | null): void {
+  dataVolumeFoldersForTests = list;
+}
+
 /**
  * Whether `where` (`canonicalDirOf` of a path) is something `scan` listed: under
  * its root, and not at or beneath a folder the scan never descended into
@@ -241,6 +266,12 @@ function exclusionKeysOf(scan: ScanResult, root: string): Set<string> {
 function listedBy(scan: ScanResult, where: string): boolean {
   const root = canonicalDirOf(scan.rootPath);
   if (!isInside(root, where)) return false;
+  // A scan of the Data volume itself (/System/Volumes/Data) has the root "/"
+  // here, since every spelling under it is the root's own (pathSanitizer). It
+  // listed only that volume, which the root shows through the firmlinks, so it
+  // covers a path only under one of them — never the sealed system volume
+  // (/System/Library, /usr/bin) nor another volume (the U-25 security review, F2).
+  if (root === '/' && path.resolve(scan.rootPath) !== '/' && !dataVolumeFolderList().some((f) => isInside(f, where))) return false;
   const keys = exclusionKeysOf(scan, root);
   if (keys.size === 0) return true;
   // At or beneath an exclusion when some leading run of the path's names is one.

@@ -441,7 +441,10 @@ read-what-you-saw) permission to act.
   the drive itself to act there). The drives are the ones the mount table
   listed when the scan started: a drive mounted inside the folder later is not
   known to that scan until it is scanned again (on macOS, `/Volumes`, where
-  drives appear, is excluded whatever is mounted there).
+  drives appear, is excluded whatever is mounted there). A scan of the Data
+  volume itself (`/System/Volumes/Data`) covers only what the root shows of
+  that volume — its firmlinked folders (`/Users`, `/Applications`,
+  `/private`, …) — never the sealed system volume or another volume.
 - **TreeMap's own spill folder.** `<appData>/scan-spill` is reserved for the
   working files of very large scans (Phase 4; no scan writes there yet). Every
   endpoint and MCP tool that takes a path
