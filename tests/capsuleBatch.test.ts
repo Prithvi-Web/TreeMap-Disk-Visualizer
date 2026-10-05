@@ -189,3 +189,38 @@ test('the trash step goes deepest first and the undo shallowest first, each othe
   const entries = [through, beside, other, a].map((originalPath) => ({ originalPath }));
   assert.deepEqual(shallowestFirst(entries).map((e) => e.originalPath), [a, beside, other, through]);
 });
+
+/**
+ * FG3f #6. When a request's place cannot be looked at, the batch asks whether it is written inside
+ * another request or another inside it — and asked that of each such request against every other:
+ * 2,000 requests whose looks failed (a volume having a bad moment) made four million path
+ * comparisons, 19 seconds of the event loop that also serves the page. Counted here, never timed:
+ * the path operations one collapse makes, wrapped for its duration, against a bound linear in the
+ * batch times a path's depth.
+ */
+test('a batch whose places cannot be looked at is judged in work linear in the batch, not each request against every other (FG3f #6)', async () => {
+  const n = 600;
+  const requests = Array.from({ length: n }, (_, i) => ({ path: path.join(ROOT, 'Caches', `app-${i}`, 'data', 'node_modules') }));
+  const eio = (): never => { throw Object.assign(new Error('i/o error (a test)'), { code: 'EIO' }); };
+  const failing: PlaceReader = { lstat: async () => eio(), stat: async () => eio(), realPlaceOf: async () => eio() };
+  const counted = ['resolve', 'relative', 'dirname'] as const;
+  const real = Object.fromEntries(counted.map((name) => [name, path[name]])) as Pick<typeof path, typeof counted[number]>;
+  let calls = 0;
+  for (const name of counted) {
+    (path as unknown as Record<string, unknown>)[name] = (...args: string[]) => {
+      calls++;
+      return (real[name] as (...a: string[]) => string)(...args);
+    };
+  }
+  let collapsed: Awaited<ReturnType<typeof collapseBatch>>;
+  try {
+    collapsed = await collapseBatch(requests, failing);
+  } finally {
+    for (const name of counted) (path as unknown as Record<string, unknown>)[name] = real[name];
+  }
+  assert.equal(collapsed.top.length, n, 'none is inside another: each is its own item');
+  assert.deepEqual(collapsed.covered, []);
+  const depth = requests[0].path.split(path.sep).length;
+  const bound = 10 * n * depth;
+  assert.ok(calls <= bound, `${calls} path operations for ${n} requests: not linear in the batch (bound ${bound})`);
+});

@@ -107,7 +107,7 @@ export async function collapseBatch<T extends { path: string }>(batch: T[], disk
       unplaced.push(request);
     }
   }
-  if (unplaced.length > 0 && unplaced.some((u) => writtenWithAnother(u, [...firstOf.values()]))) {
+  if (unplaced.length > 0 && anyWrittenWithAnother(unplaced, [...firstOf.values()])) {
     return bySpelling([...firstOf.values()], new Map(placed.flatMap(({ request, place }) => (place === null ? [] : [[request.path, place.realPath] as const]))));
   }
   for (const request of unplaced) placed.push({ request, place: null });
@@ -158,16 +158,32 @@ export async function collapseBatch<T extends { path: string }>(batch: T[], disk
   return collapsed;
 }
 
-/** Whether `request` is written inside another request of `all`, or another inside it. */
-function writtenWithAnother<T extends { path: string }>(request: T, all: T[]): boolean {
-  const at = path.resolve(request.path);
-  return all.some((other) => other !== request && (isWrittenInside(at, path.resolve(other.path)) || isWrittenInside(path.resolve(other.path), at)));
-}
-
-/** Whether the path `inner` is written inside the folder `outer` (both resolved). */
-function isWrittenInside(inner: string, outer: string): boolean {
-  const rel = path.relative(outer, inner);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+/**
+ * Whether any of `unplaced` is written inside another request of `all`, or another inside it.
+ * Linear in the batch times a path's depth (FG3f #6): the folders every request is written inside
+ * are gathered once, and each unplaced request is looked up in them and its own folders in the
+ * batch. Each request against every other was four million comparisons for 2,000 requests whose
+ * looks had failed — 19 seconds of the event loop that also serves the page.
+ */
+function anyWrittenWithAnother<T extends { path: string }>(unplaced: T[], all: T[]): boolean {
+  const written = new Set<string>();
+  const holding = new Set<string>();
+  for (const request of all) {
+    const at = path.resolve(request.path);
+    written.add(at);
+    for (let up = path.dirname(at); ; up = path.dirname(up)) {
+      holding.add(up);
+      if (path.dirname(up) === up) break;
+    }
+  }
+  return unplaced.some((request) => {
+    const at = path.resolve(request.path);
+    if (holding.has(at)) return true; // another is written inside it
+    for (let up = path.dirname(at); ; up = path.dirname(up)) {
+      if (written.has(up)) return true; // it is written inside another
+      if (path.dirname(up) === up) return false;
+    }
+  });
 }
 
 /**
