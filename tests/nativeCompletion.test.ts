@@ -333,6 +333,28 @@ test('reserve refuses what is not a count, makes room after finalize too, and ne
   assert.equal(store.buildCountsForTests().grows, 1, 'a room already full grows by doubling, as before');
 });
 
+test('reserve refuses room past what a store can number, 2^31 - 1 rows and 2^32 - 1 name bytes, before making any', () => {
+  // A store numbers its rows in signed 32 bits (parent links) and its names'
+  // bytes in unsigned 32 bits (name offsets); scanStore.ts's MAX_ROWS and
+  // MAX_NAME_BYTES. The store is finalized, so it holds exactly its root's one
+  // row and one name byte: a refusal that came after making room would leave
+  // zero-filled room behind, never build lists to fill.
+  const maxRows = 2 ** 31 - 1;
+  const maxNameBytes = 2 ** 32 - 1;
+  const store = new PackedScanStore('/r', '/', statToInput('r', true, 0, 0));
+  store.finalize();
+  assert.throws(() => store.reserve(maxRows, 0), { name: 'RangeError', message: /^PackedScanStore\.reserve: 2147483648 rows and 1 name bytes are past what a store can number/ }, 'the root and 2^31 - 1 more rows: one past what a signed 32-bit parent link can number');
+  assert.throws(() => store.reserve(0, maxNameBytes), { name: 'RangeError', message: /^PackedScanStore\.reserve: 1 rows and 4294967296 name bytes are past what a store can number/ }, 'the root\'s name and 2^32 - 1 more bytes: one past what a 32-bit name offset reaches');
+  // Nothing was made: the room is still the one row and the one byte finalize
+  // left, so the first node added regrows both, once.
+  const before = store.buildCountsForTests();
+  store.addNode(store.rootId, statToInput('x', false, 1, 0));
+  const after = store.buildCountsForTests();
+  assert.equal(after.grows - before.grows, 1, 'no row room was made: the first node added regrows the columns');
+  assert.equal(after.nameGrows - before.nameGrows, 1, 'no name room either: its one-byte name regrows the pool');
+  assert.equal(store.name(store.count - 1), 'x');
+});
+
 test('a store past 65,535 extensions keeps every overflowing extension through the fast path', () => {
   // The slow path re-keys the overflow by the new ids; the fast path keeps
   // the ids, so it must keep the overflow as it is. 66,000 distinct
@@ -667,6 +689,76 @@ function blockNumbered(): NativeStore {
   };
 }
 
+/** What a turn between slices stands for in the counted clock: other work, never the adopt's. */
+const TURN_MICROS = 1_000_000;
+
+/**
+ * A counted CPU clock in place of `process.cpuUsage()`, read as that is read:
+ * an absolute reading, or the difference from an earlier one. Only the store's
+ * work, the record's writes and the turns between slices move it.
+ */
+class CountedClock {
+  now = 0;
+  inTurns = 0;
+  readonly read = (previous?: NodeJS.CpuUsage): NodeJS.CpuUsage => ({ user: this.now - (previous?.user ?? 0), system: 0 });
+  tick(micros: number): void {
+    this.now += micros;
+  }
+  /** A turn between two slices: a million, for whatever else the loop ran then. */
+  turn(): void {
+    this.now += TURN_MICROS;
+    this.inTurns += TURN_MICROS;
+  }
+}
+
+/** A store whose work moves `clock`: the hand-over 1,000, each text candidate decided 1, each sum 100. */
+class ClockedStore extends PackedScanStore {
+  clock: CountedClock | null = null;
+  override adoptColumns(cols: Parameters<PackedScanStore['adoptColumns']>[0]): void {
+    this.clock?.tick(1_000);
+    super.adoptColumns(cols);
+  }
+  override setExtension(id: number, extension: string | undefined): void {
+    this.clock?.tick(1);
+    super.setExtension(id, extension);
+  }
+  override sumSizes(): void {
+    this.clock?.tick(100);
+    super.sumSizes();
+  }
+}
+
+test('the CPU the adopt notes is its own, the hand-over, every slice and the record, and never the turns between its slices', async () => {
+  const spec: TakenSpec = { folders: 4, filesPerFolder: 15, denied: 3, textEvery: 2, cloudEvery: 3, seed: 13 };
+  const taken = syntheticTaken(spec);
+  const clock = new CountedClock();
+  const store = new ClockedStore(ADOPT_ROOT, '/', statToInput('r', true, 0, 1_000));
+  store.clock = clock;
+  // Writing the record moves the clock 10 a field: the share that only finish() has.
+  let recordWrites = 0;
+  const scan = new Proxy(createScanRecord(ADOPT_ROOT), {
+    set(target, key, value): boolean {
+      recordWrites++;
+      clock.tick(10);
+      return Reflect.set(target, key, value);
+    },
+  });
+  let turns = 0;
+  const outcome = await adoptNativeStoreInSlices(scan, store, taken, {
+    sliceNodes: 4,
+    cpuUsage: clock.read,
+    yieldTurn: async () => { turns++; clock.turn(); },
+  });
+  assert.equal(outcome.completed, true);
+  const items = taken.textCandidates.length + taken.cloudCandidates.length + taken.counters.deniedDirs.length;
+  assert.equal(turns, Math.ceil(items / 4), `a turn after each of the slices of its ${items} items`);
+  assert.equal(clock.inTurns, turns * TURN_MICROS);
+  const own = clock.now - clock.inTurns;
+  assert.equal(own, 1_000 + taken.textCandidates.length + 10 * recordWrites, 'the clock moved by the hand-over, a tick a text candidate and ten a record field, and by the turns');
+  assert.ok(taken.textCandidates.length > 0 && recordWrites > 0, `every share is there to count (${taken.textCandidates.length} text candidates, ${recordWrites} record fields)`);
+  assert.equal(outcome.cpuMicros, own, 'the CPU noted: the hand-over, the slices and the record, and not one of the turns');
+});
+
 /** A store that counts the text candidates the adopt decides. */
 class CountingStore extends PackedScanStore {
   extensionsSet = 0;
@@ -724,10 +816,11 @@ function watchTake(core: ScanModule, onTaken: (taken: NativeStore) => void): Sca
   return module as unknown as ScanModule;
 }
 
-async function walkInto(module: ScanModule, root: string, storage: NativeStorage): Promise<Adopted> {
+async function walkInto(module: ScanModule, root: string, storage: NativeStorage, clock: CountedClock | null = null): Promise<Adopted> {
   const scan = createScanRecord(root);
   const st = fs.lstatSync(root);
-  const store = new PackedScanStore(root, path.sep, statToInput(rootName(root), true, 0, st.mtimeMs, st.atimeMs));
+  const store = new ClockedStore(root, path.sep, statToInput(rootName(root), true, 0, st.mtimeMs, st.atimeMs));
+  store.clock = clock;
   await runNativeWalk(scan, store, root, module, storage);
   return { scan, store };
 }
@@ -744,23 +837,38 @@ test('real module: the memory path adopts in slices, as the columns path builds 
   const { root, locked } = await buildEdgeFixture('treemap-native-completion-walk-');
   try {
     let items = -1;
+    let walkCpu: number | null = null;
     const module = watchTake(core, (taken) => {
       items = taken.textCandidates.length + taken.cloudCandidates.length + taken.counters.deniedDirs.length;
+      walkCpu = taken.stats.cpuSeconds;
     });
     let yields = 0;
-    setCompletionSlicesForTests({ sliceNodes: 1, yieldTurn: async () => { yields++; } });
-    const memory = await walkInto(module, root, 'memory');
+    const clock = new CountedClock();
+    setCompletionSlicesForTests({ sliceNodes: 1, cpuUsage: clock.read, yieldTurn: async () => { yields++; clock.turn(); } });
+    const memory = await walkInto(module, root, 'memory', clock);
     setCompletionSlicesForTests(null);
     assert.ok(items >= 2, `the fixture holds names Node decides (${items} candidates and refused folders)`);
     assert.equal(yields, items, 'one turn per candidate, in slices of one');
+    // The CPU runNativeWalk notes: the walk's own, and Node's after it on the
+    // counted clock (the hand-over, the slices, the sum), none of the turns.
+    const own = clock.now - clock.inTurns;
+    assert.ok(own >= 1_000 + 100, `the hand-over and the sum moved the clock (${own})`);
+    assert.equal(clock.inTurns, items * TURN_MICROS);
+    const walked = walkCpu as number | null; // set in the take's callback, which TS cannot see
+    if (walked === null) assert.equal(memory.scan.cpuSeconds, null, 'a walk that could not measure its own CPU notes none');
+    else assert.equal(memory.scan.cpuSeconds, walked + own / 1e6, 'the walk\'s CPU and Node\'s own after it, not the turns between slices');
     const columns = await walkInto(core, root, 'columns');
     assert.equal(treeJson(memory.store), treeJson(columns.store), 'the tree, byte for byte');
     assert.deepEqual(record(memory.scan), record(columns.scan), 'the record, field for field');
 
     let stopped: ScanResult | null = null;
+    let stopTurns = 0;
     setCompletionSlicesForTests({
       sliceNodes: 1,
-      yieldTurn: async () => { if (stopped) stopped.cancelled = true; },
+      yieldTurn: async () => {
+        stopTurns++;
+        if (stopped) stopped.cancelled = true;
+      },
     });
     const scan = createScanRecord(root);
     stopped = scan;
@@ -768,6 +876,7 @@ test('real module: the memory path adopts in slices, as the columns path builds 
     const store = new PackedScanStore(root, path.sep, statToInput(rootName(root), true, 0, st.mtimeMs, st.atimeMs));
     await runNativeWalk(scan, store, root, core, 'memory');
     setCompletionSlicesForTests(null);
+    assert.equal(stopTurns, 1, 'one slice ran, and the Stop in the turn after it ended the adopt before the second: the scan\'s own cancel reaches the slices');
     assert.equal(scan.dirCount, 0, 'stopped after the first slice: no counts written');
     assert.equal(scan.fileCount, 0);
     assert.equal(scan.walkedDirs, undefined);

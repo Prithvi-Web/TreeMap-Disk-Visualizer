@@ -26,6 +26,12 @@ export interface CompletionSliceOptions {
   sliceNodes?: number;
   /** Read before every slice and after the last one: true ends the work there, unfinished. */
   isCancelled?: () => boolean;
+  /**
+   * The CPU clock, read as `process.cpuUsage()` is read: an absolute reading,
+   * or the difference from an earlier one. Default: that clock; tests count
+   * with their own, so what is and is not counted can be held exactly.
+   */
+  cpuUsage?: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage;
 }
 
 /** Work that can stop between any two of its steps. */
@@ -44,6 +50,12 @@ export interface SliceOutcome {
 }
 
 const nextTurn = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+const processCpu = (previous?: NodeJS.CpuUsage): NodeJS.CpuUsage => process.cpuUsage(previous);
+
+/** The CPU clock `options` names: a test's, or the process's own. */
+export function cpuClock(options: CompletionSliceOptions): (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage {
+  return options.cpuUsage ?? processCpu;
+}
 
 /** A `process.cpuUsage()` reading, or a difference of two, in microseconds. */
 export function cpuMicros(usage: NodeJS.CpuUsage): number {
@@ -56,21 +68,22 @@ export function cpuMicros(usage: NodeJS.CpuUsage): number {
  */
 export async function runInSlices(work: SliceWork, options: CompletionSliceOptions, defaultSlice: number): Promise<SliceOutcome> {
   const yieldTurn = options.yieldTurn ?? nextTurn;
+  const cpuUsage = cpuClock(options);
   const slice = options.sliceNodes !== undefined && options.sliceNodes >= 1 ? options.sliceNodes : defaultSlice;
   let used = 0;
   for (;;) {
     if (options.isCancelled?.() === true) return { completed: false, cpuMicros: used };
     if (work.done) return { completed: true, cpuMicros: used };
-    const before = process.cpuUsage();
+    const before = cpuUsage();
     work.step(slice);
-    used += cpuMicros(process.cpuUsage(before));
+    used += cpuMicros(cpuUsage(before));
     await yieldTurn();
   }
 }
 
 let optionsForTests: CompletionSliceOptions | null = null;
 
-/** Tests only: how `runNativeWalk` slices a completion — a slice size and a counted turn; null restores the defaults. */
+/** Tests only: how `runNativeWalk` slices a completion — a slice size, a counted turn, a counted CPU clock; null restores the defaults. */
 export function setCompletionSlicesForTests(options: CompletionSliceOptions | null): void {
   optionsForTests = options;
 }

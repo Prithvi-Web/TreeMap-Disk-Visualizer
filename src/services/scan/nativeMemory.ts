@@ -9,7 +9,7 @@ import type { ScanModule } from './native';
 import type { EntryProjection } from './projection';
 import type { ScanResult } from '../../models/types';
 import { formatCount } from '../../utils/formatCount';
-import { cpuMicros, runInSlices, type CompletionSliceOptions, type SliceOutcome, type SliceWork } from './completionSlices';
+import { cpuClock, cpuMicros, runInSlices, type CompletionSliceOptions, type SliceOutcome, type SliceWork } from './completionSlices';
 
 /**
  * The native engine's memory path (Phase 4, T8c; every native scan's since
@@ -297,15 +297,16 @@ export function adoptNativeStore(scan: ScanResult, store: PackedScanStore, taken
  * cancel between two slices ends the adopt there, with nothing written.
  */
 export async function adoptNativeStoreInSlices(scan: ScanResult, store: PackedScanStore, taken: NativeStore, options: CompletionSliceOptions = {}): Promise<SliceOutcome> {
-  const begun = process.cpuUsage();
+  const cpuUsage = cpuClock(options);
+  const begun = cpuUsage();
   const adoption = beginAdoption(scan, store, taken);
-  let used = cpuMicros(process.cpuUsage(begun));
+  let used = cpuMicros(cpuUsage(begun));
   const sliced = await runInSlices(adoption, options, ADOPT_SLICE_ITEMS);
   used += sliced.cpuMicros;
   if (!sliced.completed) return { completed: false, cpuMicros: used };
-  const finishing = process.cpuUsage();
+  const finishing = cpuUsage();
   adoption.finish();
-  return { completed: true, cpuMicros: used + cpuMicros(process.cpuUsage(finishing)) };
+  return { completed: true, cpuMicros: used + cpuMicros(cpuUsage(finishing)) };
 }
 
 /** `taken`'s columns adopted by `store`, and Node's passes over them ready to run. */

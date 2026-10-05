@@ -10,7 +10,7 @@ import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTe
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, ScanStore, joinPath } from '../scanStore';
 import { adoptNativeStoreInSlices, memoryRoom, memoryStoreOptions, takeNativeStore, type MemoryRoom } from './nativeMemory';
-import { completionSliceOptions, cpuMicros } from './completionSlices';
+import { completionSliceOptions, cpuClock, cpuMicros, type CompletionSliceOptions } from './completionSlices';
 import { formatCount } from '../../utils/formatCount';
 import { cloudProviderFor } from '../cloudFolders';
 import { markUnlisted, noteRefused } from '../scanRefusals';
@@ -842,11 +842,13 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
     // Node's passes in slices, the event loop turning between them (U-35);
     // a Stop between two ends them with nothing written, and the caller sees
     // the cancel. Their CPU is counted per slice, not across the turns.
-    const adopted = await adoptNativeStoreInSlices(scan, memory.store, taken, { ...completionSliceOptions(), isCancelled: () => scan.cancelled === true });
+    const slicing: CompletionSliceOptions = { ...completionSliceOptions(), isCancelled: () => scan.cancelled === true };
+    const adopted = await adoptNativeStoreInSlices(scan, memory.store, taken, slicing);
     if (!adopted.completed) return;
-    const sumBefore = process.cpuUsage();
+    const cpuUsage = cpuClock(slicing);
+    const sumBefore = cpuUsage();
     memory.store.sumSizes();
-    noteCpu(scan, taken.stats.cpuSeconds, adopted.cpuMicros + cpuMicros(process.cpuUsage(sumBefore)));
+    noteCpu(scan, taken.stats.cpuSeconds, adopted.cpuMicros + cpuMicros(cpuUsage(sumBefore)));
     scan.currentPath = rootPath;
     return;
   }
