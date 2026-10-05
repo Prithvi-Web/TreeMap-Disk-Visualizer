@@ -1,0 +1,192 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+/**
+ * The query box's "Stage matches", and the cart total it feeds (D60 = D34, D61).
+ *
+ * `size>1gb` matches the scanned folder itself, every big folder on the way
+ * down, AND the big files inside them. "Stage N matches" put all of them in
+ * the cart: on the QA corpus it staged the scanned folder, Videos and Archives
+ * plus the files inside them, and the cart read "Reclaims 22.5 GB" from an
+ * 8.8 GB scan, because the cart summed a folder and its own contents. The
+ * button promised "Add 6 matched files". Only the capsule's item cap stopped a
+ * cart commit of the whole scanned folder; a smaller folder would have gone
+ * from one query click.
+ *
+ * What staging owes the user now: files only, unless the query itself asks for
+ * folders (`type:dir`, `empty:yes`); never the scanned folder; never a path
+ * inside another staged one; and a cart total that counts each byte once,
+ * however the cart was filled.
+ *
+ * The functions run out of the built page with their globals stubbed, so the
+ * pins are on behaviour; the cart is a real Set.
+ */
+
+const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+function matchingBrace(open: number): number {
+  let depth = 0;
+  for (let i = open; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return i;
+  }
+  return assert.fail(`the block opening at ${open} never closes`);
+}
+
+/** The whole declaration of one named function, `async` included. */
+function declOf(name: string): string {
+  const m = new RegExp(`(?:async\\s+)?function ${name}\\s*\\(`).exec(INDEX);
+  assert.ok(m, `function ${name} exists in the built page`);
+  const open = INDEX.indexOf(') {', m!.index) + 2;
+  return INDEX.slice(m!.index, matchingBrace(open) + 1);
+}
+
+/** Every `const NAME = …;` the given names need, so the real regexes ship with the functions. */
+function constOf(name: string): string {
+  const m = new RegExp(`const ${name} = [^\\n]*;`).exec(INDEX);
+  assert.ok(m, `const ${name} exists in the built page`);
+  return m![0];
+}
+
+type Hit = { path: string; name: string; size: number; isDir: boolean; mtimeMs: number };
+const hit = (p: string, isDir: boolean, size = 2e9): Hit => ({ path: p, name: p.split('/').pop() || p, size, isDir, mtimeMs: 0 });
+
+interface Btn { hidden: boolean; textContent: string; title: string }
+
+/**
+ * Run one grammar query through the real `tmRunGrammarQuery`, then press
+ * Stage through the real `tmStageMatches`, all sharing one `tmLastHits` and a
+ * real cart Set.
+ */
+async function queryThenStage(q: string, hits: Hit[], opts: { cart?: string[]; truncated?: boolean; total?: number } = {}) {
+  const cart = new Set<string>(opts.cart || []);
+  const toasts: { msg: string; kind?: string }[] = [];
+  const button: Btn = { hidden: true, textContent: '', title: '' };
+  const state = {
+    scanId: 's1',
+    root: { path: '/r' },
+    cart,
+    treemap: { matchedPaths: null as Set<string> | null, queryMode: 'bare', matchTotal: null as number | null, matches: hits.length, rootPath: '/r' },
+  };
+  const deps: Record<string, unknown> = {
+    $: (id: string) => (id === 'tmStageMatches' ? button : { hidden: true, textContent: '', classList: { toggle() {} }, setAttribute() {} }),
+    state,
+    api: async () => ({ hits, total: opts.total ?? hits.length, truncated: Boolean(opts.truncated), degraded: [] }),
+    seedNodes: () => {},
+    renderSearchOverlay: () => {},
+    presentView: () => {},
+    tmSetQueryMessage: () => {},
+    tmUndrawnMessage: () => '',
+    tmSyncQueryBar: () => {},
+    saveCart: () => {},
+    renderCart: async () => {},
+    refreshCartButtons: () => {},
+    toast: (msg: string, kind?: string) => { toasts.push({ msg, kind }); },
+    formatCount: (n: number) => Number(n).toLocaleString('en-US'),
+  };
+  const helpers = ['tmParentPath', 'tmStageable'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
+  const consts = ['TM_ASKS_FOR_DIRS_RE'].filter((n) => INDEX.includes(`const ${n} =`));
+  const keys = Object.keys(deps);
+  const src = `
+    let tmLastHits = { q: '', paths: [], total: 0, truncated: false };
+    let tmQuerySeq = 0;
+    ${consts.map(constOf).join('\n')}
+    ${helpers.map(declOf).join('\n')}
+    ${declOf('tmSyncStageButton')}
+    ${declOf('tmRunGrammarQuery')}
+    ${declOf('tmStageMatches')}
+    return { run: tmRunGrammarQuery, stage: tmStageMatches };`;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, src)(...keys.map((k) => deps[k]));
+  await page.run(q);
+  const offered = { ...button };
+  await page.stage();
+  return { cart: [...cart], toasts, button: offered };
+}
+
+/* ══════════════════ D60: what Stage puts in the cart ══════════════════ */
+
+test('size>1gb stages the big files — never the scanned folder, never the folders around them', async () => {
+  const { cart } = await queryThenStage('size>1gb', [
+    hit('/r', true, 9e9), hit('/r/V', true, 5e9), hit('/r/V/a.mov', false, 3e9), hit('/r/b.dmg', false, 2e9),
+  ]);
+  assert.ok(!cart.includes('/r'), 'the scanned folder itself is never staged from a query');
+  assert.ok(!cart.includes('/r/V'), 'a folder the query happened to match is not staged when the query did not ask for folders');
+  assert.deepEqual(cart.sort(), ['/r/V/a.mov', '/r/b.dmg'], 'exactly the matched files');
+});
+
+test('a query that asks for folders stages them, outermost only, and still never the scanned folder', async () => {
+  const { cart } = await queryThenStage('type:dir size>1gb', [
+    hit('/r', true), hit('/r/V', true), hit('/r/V/sub', true), hit('/r/W', true),
+  ]);
+  assert.ok(!cart.includes('/r'), 'type:dir is no licence to stage the scanned folder');
+  assert.deepEqual(cart.sort(), ['/r/V', '/r/W'], '/r/V/sub goes with /r/V, so it is not staged a second time');
+});
+
+test('-type:dir is not a request for folders', async () => {
+  const { cart } = await queryThenStage('-type:dir size>1gb', [hit('/r/V', true), hit('/r/a.mov', false)]);
+  assert.deepEqual(cart, ['/r/a.mov']);
+});
+
+test('the button offers what it will stage, by count and by noun', async () => {
+  const { button } = await queryThenStage('size>1gb', [
+    hit('/r', true), hit('/r/V', true), hit('/r/V/a.mov', false), hit('/r/b.dmg', false),
+  ]);
+  assert.equal(button.hidden, false);
+  assert.match(button.textContent, /\b2\b/, `two files will be staged, so the button says 2: "${button.textContent}"`);
+  assert.doesNotMatch(button.textContent, /\b4\b/, 'not the four hits, two of which it will not stage');
+  assert.match(button.title, /2 matched files/, 'the title counts the files it adds');
+});
+
+test('the button says "items" when the query asked for folders', async () => {
+  const { button } = await queryThenStage('type:dir', [hit('/r/V', true), hit('/r/W', true)]);
+  assert.match(button.title, /2 matched items/);
+  assert.doesNotMatch(button.title, /files/, 'folders are not files');
+});
+
+test('the toast says what was left out, and why', async () => {
+  const { toasts } = await queryThenStage('size>1gb', [
+    hit('/r', true), hit('/r/V', true), hit('/r/V/a.mov', false),
+  ]);
+  const msg = toasts.map((t) => t.msg).join(' | ');
+  assert.match(msg, /Staged 1 file\b/, msg);
+  assert.match(msg, /scanned folder/i, 'the scanned folder matched and was left out — said, not silently dropped');
+  assert.match(msg, /1 matched folder/, 'and so was the folder');
+  assert.match(msg, /type:dir/, 'with the way to stage folders on purpose');
+});
+
+/* ══════════════════ D61: the toast is sentences ══════════════════ */
+
+test('"Staged 6 items Nothing has been deleted." — every sentence ends before the next starts', async () => {
+  const { toasts } = await queryThenStage('size>1gb', [hit('/r/a.mov', false), hit('/r/b.mov', false)]);
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0].msg, /^Staged 2 files\. Nothing has been deleted\.$/, toasts[0].msg);
+});
+
+test('with items already staged and a truncated answer, each part is still its own sentence', async () => {
+  const { toasts } = await queryThenStage('size>1gb', [hit('/r/a.mov', false), hit('/r/b.mov', false)], {
+    cart: ['/r/a.mov'], truncated: true, total: 5000,
+  });
+  const msg = toasts[0].msg;
+  assert.doesNotMatch(msg, /[a-z0-9] [A-Z]/, `a full stop before every new sentence: ${msg}`);
+  assert.doesNotMatch(msg, /\.\./, 'and never two');
+  assert.match(msg, /5,000/, 'the real total, formatted');
+});
+
+/* ══════════════════ D60: the cart counts each byte once ══════════════════ */
+
+test('the cart total counts a folder and a file inside it once', () => {
+  const sizes: Record<string, number> = { '/r/V': 100, '/r/V/a.mov': 60, '/r/b.dmg': 7 };
+  const state = { cart: new Set(['/r/V', '/r/V/a.mov', '/r/b.dmg']) };
+  const deps: Record<string, unknown> = {
+    state,
+    cartNode: (p: string) => (p in sizes ? { size: sizes[p] } : null),
+  };
+  const helpers = ['tmParentPath', 'tmCartRoots'].map(declOf).join('\n');
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const total = new Function(...keys, `${helpers}\n${declOf('cartTotalBytes')}\nreturn cartTotalBytes();`)(...keys.map((k) => deps[k]));
+  assert.equal(total, 107, 'a.mov is inside V, so its 60 bytes are already in V’s 100');
+});

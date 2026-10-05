@@ -27,7 +27,9 @@ function cartNode(p) { return nodeFor(p); }
 // "Known" means the scan really contains it — not merely that the pruned tree
 // we were handed happened to include it. renderCart resolves these first.
 function cartKnownPaths() { return [...state.cart].filter((p) => nodeFor(p)); }
-function cartTotalBytes() { return [...state.cart].reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0); }
+// A path inside another staged one is already in that folder's size, so it is
+// counted once (D60): the cart summed both and read 22.5 GB from an 8.8 GB scan.
+function cartTotalBytes() { return tmCartRoots().reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0); }
 function cartToggle(p) {
   if (!p) return;
   if (state.cart.has(p)) state.cart.delete(p); else state.cart.add(p);

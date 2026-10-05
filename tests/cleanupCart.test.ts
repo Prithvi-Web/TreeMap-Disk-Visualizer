@@ -229,7 +229,11 @@ test('every cart total is computed from the whole cart, never from the drawn row
   assert.match(body, /const n = state\.cart\.size;/, 'the count is the Set size');
   assert.match(body, /const total = cartTotalBytes\(\);/, 'and the total is over the Set');
   const totals = INDEX.slice(INDEX.indexOf('function cartTotalBytes'), INDEX.indexOf('function cartToggle'));
-  assert.match(totals, /\[\.\.\.state\.cart\]\.reduce/, 'cartTotalBytes reads the Set, not the DOM');
+  // Through tmCartRoots, which reads the Set and drops a path whose folder is
+  // also staged, so nothing is counted twice (D60).
+  assert.match(totals, /tmCartRoots\(\)\.reduce/, 'cartTotalBytes reads the Set, not the DOM');
+  const roots = INDEX.slice(INDEX.indexOf('function tmCartRoots'), INDEX.indexOf('function tmBuildPreview'));
+  assert.match(roots, /const paths = \[\.\.\.state\.cart\];/, 'and tmCartRoots reads the whole Set');
 });
 
 test('showing all is delegated, like every other cart button', () => {

@@ -45,29 +45,70 @@ let tmQuerySeq = 0;
  * would be obvious to a reader, and staging "what is outlined" when the
  * message above says "412 matches — 37 shown here" would stage the wrong
  * thing. `truncated` is carried so the button can say what it is offering
- * instead of implying it has everything.
+ * instead of implying it has everything. `stage` is the part of the hits the
+ * button actually stages (tmStageable).
  */
-let tmLastHits = { q: '', paths: [], total: 0, truncated: false };
+let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null };
+
+/**
+ * A query that asks for folders on purpose: a `type:dir` or `empty:yes` term
+ * not negated by a leading `-`.
+ */
+const TM_ASKS_FOR_DIRS_RE = /(^|[\s(])(type\s*[:=]\s*"?dir"?|empty\s*[:=]\s*"?yes"?)(?=$|[\s)])/i;
+
+/**
+ * Which of a query's hits "Stage matches" puts in the cart (D60).
+ *
+ * `size>1gb` matches the big files, every folder on the way down to them and
+ * the scanned folder itself, and staging all of that put the whole scan in
+ * the cart from one click, with every nested file counted again. So:
+ *   - never the scanned folder;
+ *   - files only, unless the query asks for folders (TM_ASKS_FOR_DIRS_RE);
+ *   - never a hit inside another staged hit: it goes with that folder.
+ * What was left out is counted, so the toast can say so.
+ */
+function tmStageable(hits, q, rootPath) {
+  const wantsDirs = TM_ASKS_FOR_DIRS_RE.test(q);
+  const picked = [];
+  let root = false, folders = 0;
+  for (const h of hits) {
+    if (rootPath && h.path === rootPath) root = true;
+    else if (h.isDir && !wantsDirs) folders++;
+    else picked.push(h.path);
+  }
+  const chosen = new Set(picked);
+  let nested = 0;
+  const paths = picked.filter((p) => {
+    for (let dir = tmParentPath(p); dir; dir = tmParentPath(dir)) {
+      if (chosen.has(dir)) { nested++; return false; }
+      if (dir === tmParentPath(dir)) break; // reached the filesystem root
+    }
+    return true;
+  });
+  return { paths, noun: wantsDirs ? 'item' : 'file', root, folders, nested };
+}
 
 /** Show / hide the Stage matches button for the current result (§4.2). */
 function tmSyncStageButton() {
   const btn = $('tmStageMatches');
   if (!btn) return;
-  const n = tmLastHits.paths.length;
+  const stage = tmLastHits.stage;
+  const n = stage ? stage.paths.length : 0;
   btn.hidden = n === 0;
   // The bar earns its row from three things now, and this is one of them —
   // syncing here rather than at every call site is what keeps them agreeing.
   tmSyncQueryBar();
   if (n === 0) return;
-  btn.textContent = `Stage ${formatCount(n)} match${n === 1 ? '' : 'es'}`;
+  const nouns = `${stage.noun}${n === 1 ? '' : 's'}`;
+  btn.textContent = `Stage ${formatCount(n)} ${nouns}`;
   btn.title = tmLastHits.truncated
-    ? `Add the ${formatCount(n)} biggest of ${formatCount(tmLastHits.total)} matches to the cleanup cart. Nothing is deleted — staging only.`
-    : `Add ${formatCount(n)} matched file${n === 1 ? '' : 's'} to the cleanup cart. Nothing is deleted — staging only.`;
+    ? `Add ${formatCount(n)} matched ${nouns}, from the biggest of ${formatCount(tmLastHits.total)} matches, to the cleanup cart. Nothing is deleted — staging only.`
+    : `Add ${formatCount(n)} matched ${nouns} to the cleanup cart. Nothing is deleted — staging only.`;
 }
 
 /** Clear the staged-matches offer. Called wherever a query stops being current. */
 function tmClearHits() {
-  tmLastHits = { q: '', paths: [], total: 0, truncated: false };
+  tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null };
   // The status line's "N of M" reads this; a failed or cleared query has no M,
   // and keeping the previous one would caption the map with a stale total.
   state.treemap.matchTotal = null;
@@ -185,15 +226,14 @@ async function tmRunGrammarQuery(q) {
     // What the query matched across the whole scan, so the status line can say
     // "1 of 2" rather than a drawn count that reads as the total.
     state.treemap.matchTotal = out.total;
-    // §4.2 — keep the hits themselves so they can be staged. Directories are
-    // included exactly as the query returned them: `type:dir` is a legitimate
-    // thing to ask for, and dropping them here would silently narrow what the
-    // button stages relative to what the message says matched.
+    // §4.2 — keep the hits themselves, every one, for the message below; what
+    // the Stage button may put in the cart is the narrower `stage` (D60).
     tmLastHits = {
       q,
       paths: (out.hits || []).map((h) => h.path),
       total: out.total,
       truncated: Boolean(out.truncated),
+      stage: tmStageable(out.hits || [], q, state.root && state.root.path),
     };
     seedNodes((out.hits || []).map((h) => ({ path: h.path, name: h.name, size: h.size, type: h.isDir ? 'dir' : 'file', modifiedAt: h.mtimeMs })));
     tmSyncStageButton();
@@ -230,30 +270,40 @@ async function tmRunGrammarQuery(q) {
 }
 
 /**
- * Stage every hit from the current query (v4 §4.2).
+ * Stage the current query's stageable hits (v4 §4.2; which ones: tmStageable).
  *
  * Staging, never deleting: the cart is the only route to a deletion and it
  * runs its own dry run and confirmation (§4.4). What this owes the user is an
  * honest count — including saying when the list is the biggest N of a larger
- * result rather than all of it.
+ * result rather than all of it, and what it left out. Said as sentences, each
+ * ending in its own full stop (D61).
  */
 async function tmStageMatches() {
-  const paths = tmLastHits.paths;
-  if (!paths.length) return;
+  const stage = tmLastHits.stage;
+  if (!stage || !stage.paths.length) return;
+  const paths = stage.paths;
   let added = 0;
   for (const p of paths) if (!state.cart.has(p)) { state.cart.add(p); added++; }
   saveCart();
   await renderCart();
   refreshCartButtons();
   const already = paths.length - added;
-  toast(
-    `Staged ${formatCount(added)} item${added === 1 ? '' : 's'}` +
-    (already ? ` — ${formatCount(already)} ${already === 1 ? 'was' : 'were'} already in the cart` : '') +
-    (tmLastHits.truncated ? `. This query matched ${formatCount(tmLastHits.total)}; only the ${formatCount(paths.length)} biggest were returned.` : '') +
-    ' Nothing has been deleted.',
-    'success',
-    tmLastHits.truncated ? 9000 : 5000,
-  );
+  const sentences = [
+    `Staged ${formatCount(added)} ${stage.noun}${added === 1 ? '' : 's'}` +
+      (already ? ` — ${formatCount(already)} ${already === 1 ? 'was' : 'were'} already in the cart.` : '.'),
+  ];
+  if (tmLastHits.truncated) {
+    sentences.push(`This query matched ${formatCount(tmLastHits.total)}; only the ${formatCount(tmLastHits.paths.length)} biggest were returned.`);
+  }
+  if (stage.root) sentences.push('The scanned folder itself matched too, and was not staged.');
+  if (stage.folders) {
+    sentences.push(`${formatCount(stage.folders)} matched folder${stage.folders === 1 ? ' was' : 's were'} not staged — add type:dir to the query to stage folders.`);
+  }
+  if (stage.nested) {
+    sentences.push(`${formatCount(stage.nested)} inside a staged folder ${stage.nested === 1 ? 'goes' : 'go'} with it, so ${stage.nested === 1 ? 'it was' : 'they were'} not added on ${stage.nested === 1 ? 'its' : 'their'} own.`);
+  }
+  sentences.push('Nothing has been deleted.');
+  toast(sentences.join(' '), 'success', sentences.length > 2 ? 9000 : 5000);
 }
 $('tmStageMatches').addEventListener('click', () => { void tmStageMatches(); });
 
