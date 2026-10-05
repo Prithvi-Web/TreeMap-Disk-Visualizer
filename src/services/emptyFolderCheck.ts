@@ -2,6 +2,7 @@ import { promises as fsp } from 'fs';
 import type { Dirent } from 'fs';
 import path from 'path';
 import { underTestRunner } from './realMachineGuard';
+import { isAtOrUnder, readMountTable } from '../utils/mountBoundaries';
 
 /**
  * Is this folder still empty on disk? (Track U, U-4.)
@@ -21,7 +22,29 @@ import { underTestRunner } from './realMachineGuard';
  * it is content. Whatever cannot be shown empty is not empty — a folder that
  * refuses, does not answer within `EMPTY_CHECK_DEADLINE_MS`, or holds more than
  * `EMPTY_CHECK_MAX_ENTRIES` entries to look through — each with its reason in a
- * sentence. Imports no service, so the Trash pathway (`cleaner.ts`) can use it.
+ * sentence.
+ *
+ * **A drive that does not answer (U-4b M1).** A stat on a dead network mount
+ * never returns, and the race below only stops waiting for it: the call keeps a
+ * thread of libuv's small I/O pool for as long as it hangs. So looks are made in
+ * sessions — one per request (`emptyCheckSession`) — under three rules:
+ *  - **Silence is remembered per drive.** A stat or listing that misses its
+ *    deadline makes its drive silent: until that call answers, no look anywhere
+ *    — this request, a later one, the delete after the list — touches the
+ *    drive; each answers "did not answer" at once. A call that answers at last
+ *    lifts the silence (a spun-down disk woke); one that fails after its
+ *    silence keeps it for `SILENT_DRIVE_MEMORY_MS`. A drive is told by the
+ *    mount table (`driveFor`), as the scan's boundary is, never by a stat —
+ *    a stat is what hangs. So a silent drive holds at most one thread per call
+ *    that went silent on it, and never another.
+ *  - **The first look on a drive goes alone.** Within a session, looks on a
+ *    drive not yet heard from wait for that drive's first look to answer — or
+ *    to go silent — before they start: one probe, not four at once.
+ *  - **A session looks for `EMPTY_CHECK_BUDGET_MS` at most**, counting only
+ *    while a look is running (a delete's Trash steps between its looks are not
+ *    looking). A folder whose look the budget cut, or that came after it ran
+ *    out, did not answer in time.
+ * Imports nothing that imports the Trash pathway, so `cleaner.ts` can use it.
  */
 
 /** Junk files that don't stop a folder from counting as empty. */
@@ -43,6 +66,24 @@ export const TEST_RUNNER_DEADLINE_MS = 120_000;
 export function lookDeadlineMs(env: NodeJS.ProcessEnv = process.env): number {
   return underTestRunner(env) ? TEST_RUNNER_DEADLINE_MS : EMPTY_CHECK_DEADLINE_MS;
 }
+
+/** The most time the looks of one request may spend looking, together (U-4b M1). */
+export const EMPTY_CHECK_BUDGET_MS = 10_000;
+
+/**
+ * The same budget under a test runner: `npm test`'s own limit for one test
+ * (`--test-timeout=1200000`), well past the hang guard, so a test's look waits
+ * its deadline and is never cut by a budget the runner's pauses ate.
+ */
+export const TEST_RUNNER_BUDGET_MS = 1_200_000;
+
+/** How long a session may look here: 10 s, or npm test's per-test limit under a test runner. */
+export function lookBudgetMs(env: NodeJS.ProcessEnv = process.env): number {
+  return underTestRunner(env) ? TEST_RUNNER_BUDGET_MS : EMPTY_CHECK_BUDGET_MS;
+}
+
+/** How long a drive stays silent after a call that went silent on it answers with a failure. */
+export const SILENT_DRIVE_MEMORY_MS = 60_000;
 
 /** The most entries one look goes through, nested folders' included, before it stops short of proving a folder empty. */
 export const EMPTY_CHECK_MAX_ENTRIES = 1_000;
@@ -71,6 +112,12 @@ export interface EmptyCheckDeps {
   deadline: (ms: number) => { late: Promise<void>; cancel: () => void };
   /** How long one stat or listing may take (`lookDeadlineMs`). */
   deadlineMs: number;
+  /** How long one session may spend looking (`lookBudgetMs`). */
+  budgetMs: number;
+  /** The clock the budget and a drive's silence are measured on. */
+  now: () => number;
+  /** Which drive a path is on (`driveFor`): looks on one drive share its silence. */
+  driveOf: (p: string) => Promise<string>;
   maxEntries: number;
 }
 
@@ -83,32 +130,108 @@ function realDeadline(ms: number): { late: Promise<void>; cancel: () => void } {
   return { late, cancel: () => clearTimeout(timer) };
 }
 
+/**
+ * Which drive `p` is on, by its spelling (U-4b M1): the deepest mount point the
+ * table lists at or above it, or `/` when none does or the table could not be
+ * read; on Windows, the drive or share the path names. Two folders on one drive
+ * may get two names (a firmlink's two spellings) — they then go silent apart,
+ * no worse than before — and two drives the table does not tell apart share
+ * one, which only withholds more.
+ */
+export function driveFor(p: string, mountPoints: readonly string[] | null, platform: NodeJS.Platform): string {
+  if (platform === 'win32') return path.win32.parse(p).root.toLowerCase() || p;
+  let drive = '/';
+  for (const m of mountPoints ?? []) if (m.length > drive.length && isAtOrUnder(m, p)) drive = m;
+  return drive;
+}
+
+/** How long a read mount table is used before it is read again: a drive attached since is a new name. */
+const MOUNT_TABLE_FRESH_MS = 60_000;
+let mountTable: { readAt: number; points: string[] | null } | null = null;
+let mountTableRead: Promise<string[] | null> | null = null;
+
+/** The mount points of this machine, read at most once a minute; null when the table cannot be read. */
+async function currentMountPoints(): Promise<string[] | null> {
+  if (mountTable && Date.now() - mountTable.readAt < MOUNT_TABLE_FRESH_MS) return mountTable.points;
+  mountTableRead ??= readMountTable(process.platform)
+    .then((t) => t.entries?.map((e) => e.mountPoint) ?? null, () => null)
+    .then((points) => {
+      mountTable = { readAt: Date.now(), points };
+      mountTableRead = null;
+      return points;
+    });
+  return mountTableRead;
+}
+
+/** Which drive `p` is on, on this machine (`driveFor` over its mount table). */
+export async function driveOn(p: string): Promise<string> {
+  return driveFor(p, process.platform === 'win32' ? null : await currentMountPoints(), process.platform);
+}
+
 const REAL: EmptyCheckDeps = {
   lstat: (p) => fsp.lstat(p),
   opendir: (p) => fsp.opendir(p),
   deadline: realDeadline,
   deadlineMs: lookDeadlineMs(),
+  budgetMs: lookBudgetMs(),
+  now: () => Date.now(),
+  driveOf: driveOn,
   maxEntries: EMPTY_CHECK_MAX_ENTRIES,
 };
 
 let deps: EmptyCheckDeps = REAL;
 
-/** Tests only: replace what a look reads with; null puts the real disk and clock back. */
+/* ───────────────────────────── silent drives ───────────────────────────── */
+
+/** A drive a call went silent on: `pending` calls still out on it; `failedAt` once one answered with a failure. */
+interface Silence {
+  pending: number;
+  failedAt: number | null;
+}
+
+/** Process-wide: a silent drive is silent for every session, a later request's included. */
+const silentDrives = new Map<string, Silence>();
+
+/** The first look on each drive that is running now, any session's: a look on a drive not yet heard from waits for it. */
+const probing = new Map<string, Promise<void>>();
+
+function isSilent(d: EmptyCheckDeps, drive: string): boolean {
+  const s = silentDrives.get(drive);
+  if (!s) return false;
+  if (s.pending > 0 || (s.failedAt !== null && d.now() - s.failedAt < SILENT_DRIVE_MEMORY_MS)) return true;
+  silentDrives.delete(drive);
+  return false;
+}
+
+/** `op` missed its wait on `drive`: the drive is silent until `op` answers, and for a while after a failure. */
+function wentSilent(d: EmptyCheckDeps, drive: string, op: Promise<unknown>): void {
+  let s = silentDrives.get(drive);
+  if (!s) {
+    s = { pending: 0, failedAt: null };
+    silentDrives.set(drive, s);
+  }
+  const silence = s;
+  silence.pending++;
+  // An answer at last lifts the silence once no call is out (`isSilent` then lets the drive go);
+  // a failure keeps it for a minute from the failure.
+  const answered = (failed: boolean): void => {
+    silence.pending--;
+    if (failed) silence.failedAt = d.now();
+  };
+  op.then(() => answered(false), () => answered(true));
+}
+
+/** Tests only: replace what a look reads with; null puts the real disk and clock back. Either way every drive is heard afresh. */
 export function setEmptyCheckForTests(over: Partial<EmptyCheckDeps> | null): void {
   deps = over ? { ...REAL, ...over } : REAL;
+  silentDrives.clear();
+  probing.clear();
 }
+
+/* ───────────────────────────── one look ───────────────────────────── */
 
 const LATE = Symbol('late');
-
-/** `op`'s answer, or LATE when the deadline passes first. A later rejection of `op` is handled by the race. */
-async function answered<T>(d: EmptyCheckDeps, op: Promise<T>): Promise<T | typeof LATE> {
-  const deadline = d.deadline(d.deadlineMs);
-  try {
-    return await Promise.race([op, deadline.late.then((): typeof LATE => LATE)]);
-  } finally {
-    deadline.cancel();
-  }
-}
+const SPENT = Symbol('spent');
 
 /** A wait as a sentence says it: "2 seconds", or "1 ms" for a test's. */
 function waitWords(ms: number): string {
@@ -118,6 +241,41 @@ function waitWords(ms: number): string {
 function codeOf(err: unknown): string {
   const code = (err as NodeJS.ErrnoException | null)?.code;
   return typeof code === 'string' ? code : 'an error';
+}
+
+/** What a look needs from the session it runs in. */
+interface LookContext {
+  d: EmptyCheckDeps;
+  drive: string;
+  /** Milliseconds of the session's budget left. */
+  left: () => number;
+}
+
+/**
+ * `start()`'s answer; LATE when its deadline passes first, SPENT when the
+ * session's budget does (or was gone before it started, when nothing is
+ * started). A call left waiting makes its drive silent until it answers. A
+ * later rejection of the call is handled by the race.
+ */
+async function answered<T>(ctx: LookContext, start: () => Promise<T>): Promise<T | typeof LATE | typeof SPENT> {
+  const left = ctx.left();
+  if (left <= 0) return SPENT;
+  const wait = Math.min(ctx.d.deadlineMs, left);
+  let op: Promise<T>;
+  try {
+    op = start();
+  } catch (err) {
+    op = Promise.reject(err);
+  }
+  const deadline = ctx.d.deadline(wait);
+  try {
+    const answer = await Promise.race([op, deadline.late.then((): typeof LATE => LATE)]);
+    if (answer !== LATE) return answer;
+    wentSilent(ctx.d, ctx.drive, op);
+    return wait < ctx.d.deadlineMs ? SPENT : LATE;
+  } finally {
+    deadline.cancel();
+  }
 }
 
 /**
@@ -141,22 +299,27 @@ async function readListing(d: EmptyCheckDeps, folder: string, visit: (ent: Diren
   }
 }
 
-/**
- * Whether `dir` is still an empty folder on disk: `{ empty: true }`, or why
- * not. `ignoreJunk` is Empty Folders' junk rule. Never throws.
- */
-export async function stillEmptyFolder(dir: string, ignoreJunk: boolean): Promise<EmptyVerdict> {
-  const d = deps;
-  const notEmpty = (why: NotEmptyWhy, reason: string): EmptyVerdict => ({ empty: false, why, reason });
+const notEmpty = (why: NotEmptyWhy, reason: string): EmptyVerdict => ({ empty: false, why, reason });
+
+function budgetSpent(d: EmptyCheckDeps): EmptyVerdict {
+  return notEmpty('no-answer', `the ${waitWords(d.budgetMs)} TreeMap gives to looking at folders again ran out before it made sure this one is empty`);
+}
+
+/** The look itself: the folder's own stat, then every listing below it, each raced against its deadline and the budget. */
+async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promise<EmptyVerdict> {
+  const { d } = ctx;
   const named = (folder: string): string => (folder === dir ? 'it' : `the folder ${path.relative(dir, folder)} inside it`);
-  let top: { isDirectory(): boolean } | typeof LATE;
+  const silent = (folder: string): EmptyVerdict =>
+    notEmpty('no-answer', `${named(folder)} did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
+  let top: { isDirectory(): boolean } | typeof LATE | typeof SPENT;
   try {
-    top = await answered(d, d.lstat(dir));
+    top = await answered(ctx, () => d.lstat(dir));
   } catch (err) {
     if (codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
     return notEmpty('unreadable', `it could not be looked at (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
   }
-  if (top === LATE) return notEmpty('no-answer', `it did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
+  if (top === LATE) return silent(dir);
+  if (top === SPENT) return budgetSpent(d);
   if (!top.isDirectory()) return notEmpty('not-a-folder', 'it is not a folder any more');
   const queue = [dir];
   let examined = 0;
@@ -181,18 +344,91 @@ export async function stillEmptyFolder(dir: string, ignoreJunk: boolean): Promis
       return true;
     };
     let gaveUp = false;
-    let listed: void | typeof LATE;
+    let listed: void | typeof LATE | typeof SPENT;
     try {
-      listed = await answered(d, readListing(d, folder, visit, () => gaveUp));
+      listed = await answered(ctx, () => readListing(d, folder, visit, () => gaveUp));
     } catch (err) {
       if (folder === dir && codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
       return notEmpty('unreadable', `${named(folder)} could not be read (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
     }
-    if (listed === LATE) {
+    if (listed === LATE || listed === SPENT) {
       gaveUp = true;
-      return notEmpty('no-answer', `${named(folder)} did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
+      return listed === LATE ? silent(folder) : budgetSpent(d);
     }
     if (found) return found;
   }
   return { empty: true };
+}
+
+/* ───────────────────────────── sessions ───────────────────────────── */
+
+/** The looks one request makes: they share a budget, and each drive's first look goes alone. */
+export interface EmptyCheckSession {
+  /** Whether `dir` is still an empty folder on disk: `{ empty: true }`, or why not. Never throws. */
+  look(dir: string): Promise<EmptyVerdict>;
+}
+
+/**
+ * A session of looks for one request (U-4b M1): GET /api/empty-folders' second
+ * look, a dry run, or an "only empty folders" delete. `ignoreJunk` is Empty
+ * Folders' junk rule. The session keeps the dependencies it began with.
+ */
+export function emptyCheckSession(ignoreJunk: boolean): EmptyCheckSession {
+  const d = deps;
+  let spent = 0;
+  let running = 0;
+  let runningSince = 0;
+  /** Drives a look of this session has heard from: its other looks there need not wait. */
+  const heard = new Set<string>();
+  const left = (): number => d.budgetMs - (spent + (running > 0 ? d.now() - runningSince : 0));
+  const timed = async (drive: string, dir: string): Promise<EmptyVerdict> => {
+    if (running++ === 0) runningSince = d.now();
+    try {
+      return await lookAt({ d, drive, left }, dir, ignoreJunk);
+    } finally {
+      if (--running === 0) spent += d.now() - runningSince;
+    }
+  };
+  const driveSilent = (): EmptyVerdict =>
+    notEmpty('no-answer', 'the drive it is on did not answer a moment ago, so TreeMap did not look at it again and cannot tell that it is empty');
+
+  return {
+    async look(dir: string): Promise<EmptyVerdict> {
+      if (left() <= 0) return budgetSpent(d);
+      let drive: string;
+      try {
+        drive = await d.driveOf(dir);
+      } catch {
+        drive = '';
+      }
+      for (;;) {
+        if (isSilent(d, drive)) return driveSilent();
+        if (heard.has(drive)) return timed(drive, dir);
+        const first = probing.get(drive);
+        if (!first) break;
+        await first; // ends when that look answers or goes silent: it is bounded by its own deadline
+      }
+      // This look is the drive's first: the others wait for it.
+      let done = (): void => {};
+      const mine = new Promise<void>((resolve) => { done = resolve; });
+      probing.set(drive, mine);
+      try {
+        const verdict = await timed(drive, dir);
+        if (!isSilent(d, drive)) heard.add(drive);
+        return verdict;
+      } finally {
+        if (probing.get(drive) === mine) probing.delete(drive);
+        done();
+      }
+    },
+  };
+}
+
+/**
+ * Whether `dir` is still an empty folder on disk: `{ empty: true }`, or why
+ * not — one look, in a session of its own. `ignoreJunk` is Empty Folders' junk
+ * rule. Never throws.
+ */
+export async function stillEmptyFolder(dir: string, ignoreJunk: boolean): Promise<EmptyVerdict> {
+  return emptyCheckSession(ignoreJunk).look(dir);
 }

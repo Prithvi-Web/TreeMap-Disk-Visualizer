@@ -16,7 +16,7 @@ import { collectEmptyFolders, createScanRecord, startScan } from '../src/service
 import { buildStoreFromTree, Flag, ObjectScanStore, PackedScanStore } from '../src/services/scanStore';
 import { markUnlistedPaths } from '../src/services/scanRefusals';
 import { emptyFoldersForScan, GDU_EMPTY_FOLDERS_REASON } from '../src/services/emptyFolders';
-import { setEmptyCheckForTests } from '../src/services/emptyFolderCheck';
+import { EMPTY_CHECK_BUDGET_MS, setEmptyCheckForTests } from '../src/services/emptyFolderCheck';
 import { boundaryRecord, mountOutcome, setNeverDescendForTests } from '../src/utils/mountBoundaries';
 import { updateSettings } from '../src/services/settings';
 import { ingestColumns, KIND_DIR, REFUSAL_DENIED, REFUSAL_UNREADABLE, REFUSAL_VANISHED } from '../src/services/scan/nativeEngine';
@@ -372,6 +372,9 @@ after(async () => {
 });
 
 function get(url: string): Promise<{ status: number; body: any }> {
+  // Every request starts with a full allowance: this file's ~40 requests come faster than 10 a second,
+  // and the rate limiter is not what it tests.
+  resetRateLimiter();
   return new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port, path: url }, (res) => {
       let buf = '';
@@ -636,7 +639,34 @@ test('a second look that does not answer withholds that folder and every one not
     const answer = await emptyFolders(scan.scanId);
     assert.deepEqual(answer.folders, [], 'nothing unanswered is offered');
     assert.equal(answer.withheld, names.length, 'every folder is withheld, looked at or not');
-    assert.ok(asked >= 1 && asked <= 4, `after the first silence no new folder is asked (asked ${asked} of ${names.length})`);
+    // U-4b M1: the drive's first look goes alone, so a silent drive holds one thread of the pool, not four.
+    assert.equal(asked, 1, `one folder is asked, alone, and its silence answers for the rest (asked ${asked} of ${names.length})`);
+    // And the silence is remembered: the page asking again does not take another thread.
+    const again = await emptyFolders(scan.scanId);
+    assert.equal(again.withheld, names.length);
+    assert.equal(asked, 1, 'a second request does not ask the silent drive again');
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('the second look stops after 10 s of looking: one budget for the whole answer, not one per folder', async () => {
+  const names = ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8'];
+  const { scan } = await settledWalkerScan('second-budget', names.map((n) => `${n}/`));
+  let now = 0;
+  let asked = 0;
+  setEmptyCheckForTests({
+    budgetMs: EMPTY_CHECK_BUDGET_MS,
+    now: () => now,
+    // A slow drive: each stat takes 6 s of the clock, and answers.
+    lstat: async (p) => { asked++; now += 6_000; return fs.promises.lstat(p); },
+  });
+  try {
+    const answer = await emptyFolders(scan.scanId);
+    // The first folder goes alone (6 s); the next stat runs the 10 s out, and nothing more is asked.
+    assert.equal(answer.folders.length, 1, JSON.stringify(answer));
+    assert.equal(answer.withheld, names.length - 1);
+    assert.equal(asked, 2);
   } finally {
     setEmptyCheckForTests(null);
   }

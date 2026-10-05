@@ -8,7 +8,7 @@ import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
 import { assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
 import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
-import { stillEmptyFolder } from './emptyFolderCheck';
+import { emptyCheckSession } from './emptyFolderCheck';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -236,6 +236,9 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
 
   const deleted: string[] = [];
   const failed: CleanResult['failed'] = [];
+  // One session of looks for the batch (U-4b M1): a drive that does not answer is asked once, and
+  // the looks together stop after 10 s — the Trash steps between them are not looking.
+  const looks = opts.onlyEmptyFolders ? emptyCheckSession(true) : null;
 
   // Sequential on purpose: parallel osascript/powershell invocations are
   // flaky, and trash batches are small (UI sends chunks).
@@ -250,9 +253,9 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
         await fsp.lstat(p);
         throw new TrashRefusal(refusal);
       }
-      if (opts.onlyEmptyFolders) {
+      if (looks) {
         // At this path's own turn, not before the batch: an earlier step's wait is time for it to fill.
-        const look = await stillEmptyFolder(p, true);
+        const look = await looks.look(p);
         if (!look.empty && look.why !== 'gone') {
           failed.push({ path: p, reason: look.reason, refused: true, code: 'FOLDER_NOT_EMPTY' });
           continue;

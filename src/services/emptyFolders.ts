@@ -1,7 +1,7 @@
 import type { EmptyFoldersAnswer, ScanResult } from '../models/types';
 import { findEmptyFolders } from './diskScanner';
 import { storeOf } from './scanStore';
-import { stillEmptyFolder } from './emptyFolderCheck';
+import { emptyCheckSession } from './emptyFolderCheck';
 
 /**
  * GET /api/empty-folders, answered (Track U, U-4): never a folder the scan did
@@ -10,13 +10,14 @@ import { stillEmptyFolder } from './emptyFolderCheck';
  *  - The scan's own records come first: a folder marked not listed
  *    (`Flag.Unlisted`, set where each engine knows) is never a candidate, nor
  *    is any folder above it (`findEmptyFolders`).
- *  - Then every folder the answer would offer is looked at again on disk
- *    (`stillEmptyFolder`), a few at a time. One that holds something now,
- *    refuses, or does not answer is left out and counted in `withheld`, and
- *    every empty folder at or under it leaves `totalCount`. The first folder
- *    that does not answer stops the rest from being asked — each would wait on
- *    the same silent drive, holding a thread of the I/O pool — and they are
- *    left out too. This is what catches what no record can: the native memory
+ *  - Then every folder the answer would offer is looked at again on disk, a
+ *    few at a time, in one session of looks (`emptyCheckSession`, U-4b M1).
+ *    One that holds something now, refuses, or does not answer is left out and
+ *    counted in `withheld`, and every empty folder at or under it leaves
+ *    `totalCount`. A drive that does not answer is asked once — its first
+ *    folder goes alone — and every other folder on it is left out unasked,
+ *    now and in the requests after, until that call answers; the looks stop
+ *    after 10 s. This is what catches what no record can: the native memory
  *    path's unreadable folders (counted, never named), a listing a fast rescan
  *    took from its cache, a change since the scan.
  *  - A gdu scan offers none (`reason`): gdu shows a folder it was refused, and
@@ -61,17 +62,19 @@ export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean)
   return { folders, totalCount, truncated: found.truncated, withheld };
 }
 
-/** Each path looked at again, in order: true where it is still an empty folder. A path never asked is false. */
+/**
+ * Each path looked at again, in order: true where it is still an empty folder.
+ * One session: a silent drive's folders, and every folder past the session's
+ * budget, answer at once without being asked.
+ */
 async function secondLooks(paths: readonly string[], ignoreJunk: boolean): Promise<boolean[]> {
+  const session = emptyCheckSession(ignoreJunk);
   const still = paths.map(() => false);
   let next = 0;
-  let silent = false;
   const worker = async (): Promise<void> => {
-    while (!silent && next < paths.length) {
+    while (next < paths.length) {
       const i = next++;
-      const verdict = await stillEmptyFolder(paths[i], ignoreJunk);
-      if (verdict.empty) still[i] = true;
-      else if (verdict.why === 'no-answer') silent = true;
+      still[i] = (await session.look(paths[i])).empty;
     }
   };
   await Promise.all(Array.from({ length: Math.min(SECOND_LOOKS_AT_ONCE, paths.length) }, worker));

@@ -16,7 +16,7 @@ import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { checkOpenHandles } from '../services/openHandleGuard';
-import { stillEmptyFolder } from '../services/emptyFolderCheck';
+import { emptyCheckSession } from '../services/emptyFolderCheck';
 
 export const fileRouter = Router();
 
@@ -90,10 +90,12 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
       res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes, openHandles });
       return;
     }
-    // The real run's own look, path by path, so the manifest is what it would do.
+    // The real run's own look, path by path, so the manifest is what it would do — in one
+    // session, so a drive that does not answer is asked once (U-4b M1).
     const notEmpty: { path: string; code: 'FOLDER_NOT_EMPTY'; reason: string }[] = [];
+    const looks = emptyCheckSession(true);
     for (const p of paths) {
-      const look = await stillEmptyFolder(p, true);
+      const look = await looks.look(p);
       if (!look.empty && look.why !== 'gone') notEmpty.push({ path: p, code: 'FOLDER_NOT_EMPTY', reason: look.reason });
     }
     const left = new Set(notEmpty.map((n) => n.path));

@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { startScan } from '../src/services/diskScanner';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
-import { EMPTY_CHECK_DEADLINE_MS, EMPTY_CHECK_MAX_ENTRIES, lookDeadlineMs, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
+import { EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, EMPTY_CHECK_MAX_ENTRIES, lookDeadlineMs, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { canLock } from './fixtures/nativeEdge';
@@ -182,6 +182,100 @@ test('moveToTrash itself looks again, right before each folder\'s own Trash step
     assert.equal(result.failed[0].code, 'FOLDER_NOT_EMPTY');
     assert.deepEqual(trashed, [first]);
   } finally {
+    setTrashStepForTests(async (p) => {
+      trashed.push(p);
+    });
+  }
+});
+
+/* ─────────────── a drive that does not answer (U-4b M1) ─────────────── */
+
+const passedDeadline = (): { late: Promise<void>; cancel: () => void } => ({ late: Promise.resolve(), cancel: () => {} });
+
+/** Every stat hangs, as on a dead network mount; `asked` counts the threads such stats would hold. */
+function deadDrive(): { asked: () => number } {
+  let asked = 0;
+  setEmptyCheckForTests({
+    lstat: () => {
+      asked++;
+      return new Promise(() => { /* a drive that stopped answering */ });
+    },
+    deadline: passedDeadline,
+    driveOf: async () => 'the one drive',
+  });
+  return { asked: () => asked };
+}
+
+const twenty = Array.from({ length: 20 }, (_, i) => at(`quiet-${i}`));
+
+test('a delete of twenty folders on a drive that does not answer asks it once, and moves none of them', async () => {
+  const drive = deadDrive();
+  try {
+    const r = await trash({ paths: twenty, onlyEmptyFolders: true });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.deleted, []);
+    assert.equal(r.body.failed.length, 20);
+    for (const f of r.body.failed) {
+      assert.equal(f.refused, true, 'never handed to the Trash');
+      assert.match(f.reason, /did not answer/);
+    }
+    assert.equal(drive.asked(), 1, 'the first silence answers for the other nineteen: one thread held, not twenty');
+    assert.deepEqual(trashed, []);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('a dry run on that drive asks it once, and the real run after it does not ask again', async () => {
+  const drive = deadDrive();
+  try {
+    const dry = await trash({ paths: twenty, onlyEmptyFolders: true, dryRun: true });
+    assert.equal(dry.status, 200, JSON.stringify(dry.body));
+    assert.equal(dry.body.notEmpty.length, 20);
+    assert.deepEqual(dry.body.wouldTrash, []);
+    assert.equal(drive.asked(), 1);
+    const real = await trash({ paths: twenty, onlyEmptyFolders: true });
+    assert.equal(real.body.failed.length, 20);
+    assert.equal(drive.asked(), 1, 'the silence the dry run met is carried into the delete');
+    assert.deepEqual(trashed, []);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('a delete looks for 10 s at most, and its Trash steps between looks are not looking', async () => {
+  const five = ['b1', 'b2', 'b3', 'b4', 'b5'].map((n) => at('budget', n));
+  for (const p of five) fs.mkdirSync(p, { recursive: true });
+  let now = 0;
+  setEmptyCheckForTests({
+    budgetMs: EMPTY_CHECK_BUDGET_MS,
+    now: () => now,
+    driveOf: async () => 'slow drive',
+    lstat: async (p) => { now += 3_000; return fs.promises.lstat(p); }, // each look takes 3 s of the clock
+  });
+  setTrashStepForTests(async (p) => {
+    trashed.push(p);
+    now += 60_000; // a slow Trash: a minute a folder, none of it spent looking
+  });
+  try {
+    const result = await moveToTrash(five, { ignoreOpenHandles: true, onlyEmptyFolders: true });
+    assert.deepEqual(result.deleted, five.slice(0, 3), '9 s of looking: three folders');
+    assert.deepEqual(result.failed.map((f) => f.path), five.slice(3), 'the fourth look ran past 10 s, the fifth never started');
+    for (const f of result.failed) assert.match(f.reason, /10 seconds TreeMap gives to looking at folders again ran out/);
+    assert.deepEqual(trashed, five.slice(0, 3));
+    // A dry run is one request too: one budget for all its looks.
+    now = 0;
+    setEmptyCheckForTests({
+      budgetMs: EMPTY_CHECK_BUDGET_MS,
+      now: () => now,
+      driveOf: async () => 'slow drive',
+      lstat: async (p) => { now += 3_000; return fs.promises.lstat(p); },
+    });
+    const dry = await trash({ paths: five, onlyEmptyFolders: true, dryRun: true });
+    assert.deepEqual(dry.body.wouldTrash.map((w: { path: string }) => w.path), five.slice(0, 3));
+    assert.deepEqual(dry.body.notEmpty.map((n: { path: string }) => n.path), five.slice(3));
+  } finally {
+    setEmptyCheckForTests(null);
     setTrashStepForTests(async (p) => {
       trashed.push(p);
     });
