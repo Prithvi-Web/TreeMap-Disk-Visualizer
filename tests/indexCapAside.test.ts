@@ -11,8 +11,8 @@ import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-indexCapAside-data-');
 
 import { createApp } from '../src/server';
-import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { holdIndexBuildsForTests } from '../src/api/indexRoutes';
+import { apiCall as call, settleIndexJob as settle } from './fixtures/indexJobs';
 import { setSharedStreamForTests, setWatchImplForTests, watchPath } from '../src/platform/watchRegistry';
 import {
   IndexCapReached,
@@ -229,28 +229,6 @@ async function listen(): Promise<{ base: string; close: () => Promise<void> }> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as { port: number }).port;
   return { base: `http://127.0.0.1:${port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
-}
-
-async function call(base: string, method: string, url: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
-  resetRateLimiter();
-  const res = await fetch(base + url, {
-    method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return { status: res.status, json: (await res.json()) as Record<string, unknown> };
-}
-
-/** Polls a job's result until it is not 202; the bound is a hang guard, never a measurement. */
-async function settle(base: string, jobId: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
-  let settled: { status: number; json: Record<string, unknown> } | undefined;
-  await waitFor(async () => {
-    const r = await call(base, 'GET', `/api/index/${String(jobId)}/result`);
-    if (r.status === 202) return false;
-    settled = r;
-    return true;
-  }, `index job ${String(jobId)} settling`, 20);
-  return settled ?? assert.fail(`index job ${String(jobId)} never settled`);
 }
 
 const statusOf = (base: string, dir: string) => call(base, 'GET', '/api/index/status?path=' + encodeURIComponent(dir));

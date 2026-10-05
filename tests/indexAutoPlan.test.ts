@@ -5,12 +5,11 @@ import http from 'node:http';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
-import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-indexAutoPlan-data-');
 
 import { createApp } from '../src/server';
-import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { INDEX_AUTO_MAX_ENTRIES, buildIndex, closeIndex, getRoot, listRoots, openIndex, reclaimsSettled, rootFor } from '../src/services/indexEngine';
+import { apiCall as call, settleIndexJob as settle } from './fixtures/indexJobs';
 import { lift } from './fixtures/liftFrontend';
 
 /**
@@ -550,33 +549,11 @@ async function listen(): Promise<{ base: string; close: () => Promise<void> }> {
   return { base: `http://127.0.0.1:${port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 
-async function call(base: string, method: string, url: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
-  resetRateLimiter();
-  const res = await fetch(base + url, {
-    method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return { status: res.status, json: (await res.json()) as Record<string, unknown> };
-}
-
 /** A folder of `files` empty files: `files + 1` entries with the folder itself. */
 function fixture(files: number): string {
   const dir = fileTempDir('treemap-indexAutoPlan-tree-');
   for (let i = 0; i < files; i++) fs.writeFileSync(path.join(dir, `f${String(i).padStart(3, '0')}.txt`), '');
   return fs.realpathSync(dir);
-}
-
-/** Polls a job's result until it is not 202; the bound is a hang guard, never a measurement. */
-async function settle(base: string, jobId: string): Promise<{ status: number; json: Record<string, unknown> }> {
-  let settled: { status: number; json: Record<string, unknown> } | undefined;
-  await waitFor(async () => {
-    const r = await call(base, 'GET', `/api/index/${jobId}/result`);
-    if (r.status === 202) return false;
-    settled = r;
-    return true;
-  }, `index job ${jobId} settling`, 20);
-  return settled ?? assert.fail(`index job ${jobId} never settled`);
 }
 
 test('the limit is the owner\'s answer: 1,000,000 items (U-Q3)', () => {
