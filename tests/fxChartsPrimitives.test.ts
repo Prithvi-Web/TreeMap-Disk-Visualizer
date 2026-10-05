@@ -392,7 +392,8 @@ test('scatter log axes ride the tested math, and crowding shrinks the dots', () 
   // decades on y so the tick labels format exactly.
   const wiring = INDEX.slice(INDEX.indexOf('async function loadAppsScatter'), INDEX.indexOf('async function loadDuplicates'));
   assert.ok(wiring.length > 200, 'the apps-scatter wiring slice is non-empty');
-  assert.match(wiring, /logX: 10, logY: 1024/, 'size-vs-count runs log/log with byte-decade y ticks');
+  // Decimal decades since QA D09/D48: sizes are 1 GB = 10^9 bytes everywhere.
+  assert.match(wiring, /logX: 10, logY: 1000/, 'size-vs-count runs log/log with decimal byte-decade y ticks');
   // Both domains read their cap off the tick list, and logTicks now tops out
   // at the data — so neither axis can go back to claiming a ceiling (a 1 TB
   // y-axis over a 17 GB largest app) that nothing in the data reaches.

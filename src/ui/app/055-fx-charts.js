@@ -22,6 +22,9 @@ const FxCharts = (() => {
   const RADAR_LABEL_PX = 10;
   const RADAR_LABEL_FONT = `500 ${RADAR_LABEL_PX}px -apple-system, "SF Pro Text", sans-serif`;
 
+  /* area(): a series of one moment is centred in this much time either side. */
+  const SINGLE_POINT_SPAN = 86400000;
+
   /* ═════════════════════ pure math (no DOM) ═════════════════════ */
   const math = {
     /** Linear scale: domain → range, with the inverse for hit-testing. */
@@ -759,11 +762,18 @@ const FxCharts = (() => {
       const allT = [], allV = [];
       for (const sr of series) for (const p of sr.points) { allT.push(p.t); allV.push(p.v); }
       if (proj) for (const p of proj.points) { allT.push(p.t); allV.push(p.v); }
-      const [t0, t1] = math.extent(allT);
+      const [tLo, tHi] = math.extent(allT);
+      // One moment is a point, not a span. A zero-width time domain sent it
+      // through scaleLinear's guard to padL, where the series clip cut the dot
+      // in half (QA D48: Trends with one snapshot). Centre it in a day either
+      // side instead; the date axis then names that one date, under the dot.
+      const single = allT.length > 0 && !(tHi > tLo);
+      const t0 = single ? tLo - SINGLE_POINT_SPAN : tLo;
+      const t1 = single ? tHi + SINGLE_POINT_SPAN : tHi;
       const [, fullMax] = math.extent(allV);
       // the view domain: the brush window when one is set, everything otherwise
       let v0 = t0, v1 = t1;
-      if (win && t1 > t0) {
+      if (win && t1 > t0 && !single) {
         const c = math.clampBrush(win[0], win[1], t0, t1, (t1 - t0) * math.BRUSH_MIN_FRAC);
         v0 = c[0]; v1 = c[1];
       }
@@ -785,7 +795,8 @@ const FxCharts = (() => {
       if (yShown == null) yShown = targetTop;
       const X = math.scaleTime(v0, v1, f.padL, f.width - f.padR);
       const XFull = math.scaleTime(t0, t1, f.padL, f.width - f.padR);
-      return { series, proj, ticks, targetTop, X, XFull, Y: yScale(f), t0, t1, v0, v1, fullMax, fmtV, fmtT };
+      return { series, proj, ticks, targetTop, X, XFull, Y: yScale(f), t0, t1, v0, v1, fullMax, fmtV, fmtT,
+               single: single ? tLo : null };
     }
 
     /* The y scale is the one part of the model that reads the tweened top,
@@ -1135,10 +1146,14 @@ const FxCharts = (() => {
         ctx.fillText('No data yet.', f.width / 2, f.plotH / 2);
         return;
       }
-      // minimal date axis: view first · view last
+      // minimal date axis: view first · view last — or, for a single moment,
+      // that moment's date under its dot (the padding days hold no data)
       ctx.textAlign = 'center';
-      ctx.fillText(m.fmtT(m.v0), f.padL + 24, f.plotH - 8);
-      if (m.v1 > m.v0) ctx.fillText(m.fmtT(m.v1), f.width - f.padR - 24, f.plotH - 8);
+      if (m.single !== null) ctx.fillText(m.fmtT(m.single), m.X.to(m.single), f.plotH - 8);
+      else {
+        ctx.fillText(m.fmtT(m.v0), f.padL + 24, f.plotH - 8);
+        if (m.v1 > m.v0) ctx.fillText(m.fmtT(m.v1), f.width - f.padR - 24, f.plotH - 8);
+      }
 
       drawSeries(ctx, f, m);
 
@@ -1934,7 +1949,7 @@ const FxCharts = (() => {
        height?: 240, yGradient?: false | [stops], color?,
        formatX?: fxDate, formatY?: fmtBytes,
        logX?: true | tickBase,         // log10(v+1) axes for skewed domains;
-       logY?: true | tickBase,         // a number is the tick base (1024 = byte decades)
+       logY?: true | tickBase,         // a number is the tick base (1000 = decimal byte decades)
        formatXTick?: math.compactCount, // log-x decade labels (10 / 100 / 1k)
      } */
   function scatter(canvas, spec) {

@@ -357,8 +357,9 @@ async function loadAppsScatter() {
     points, height: 200, yGradient: true,
     // ~300 apps span five decades in both size and count; linear axes pile
     // them into one blob at the origin. Ticks: count decades and byte
-    // decades (base 1024, so every label formats exactly: KB → MB → GB).
-    logX: 10, logY: 1024,
+    // decades — base 1000, because sizes are decimal (1 GB = 10^9 bytes, the
+    // owner's choice in QA D09), so every label prints a round 1.0 KB → MB → GB.
+    logX: 10, logY: 1000,
     formatX: (v) => `${formatCount(Math.round(v))} files`,
     formatY: formatBytes,
   };

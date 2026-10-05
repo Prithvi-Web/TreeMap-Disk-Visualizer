@@ -126,12 +126,13 @@ function loadKit() {
   return { fx, host, canvas, rec };
 }
 
-/** The fillText calls of the LAST frame painted — a mount can paint more than once. */
-function texts(calls: Call[]): Call[] {
+/** The calls of the LAST frame painted — a mount can paint more than once. */
+function lastFrame(calls: Call[]): Call[] {
   let from = 0;
   calls.forEach((c, i) => { if (c.op === 'clearRect') from = i; });
-  return calls.slice(from).filter((c) => c.op === 'fillText');
+  return calls.slice(from);
 }
+const texts = (calls: Call[]) => lastFrame(calls).filter((c) => c.op === 'fillText');
 const px = (font: string) => Number((/(\d+(?:\.\d+)?)px/.exec(font) || [])[1]);
 
 /* ══════════════ D29 — the reclaim radar's labels stay on the canvas ══════════════ */
@@ -161,4 +162,57 @@ test('D29: every radar axis label lies inside the canvas — top, bottom and bot
       assert.ok(left >= 0 && left + w <= W, `"${s}" spans x ${left.toFixed(1)}–${(left + w).toFixed(1)} inside 0–${W}`);
     }
   }
+});
+
+/* ══════════════ D48 — Trends with one snapshot; round decimal byte ticks ══════════════ */
+
+const DAY = 86_400_000;
+const T0 = 1_700_000_000_000;
+
+test('D48: one snapshot is a dot in the middle of the plot, not half under its left edge', () => {
+  // A single time maps a zero-width domain; scaleLinear's guard put the point
+  // on padL, where the series clip cut it in half. The date under it is the
+  // one date there is.
+  const k = loadKit();
+  k.fx.area(k.canvas, { series: [{ name: 'Used', points: [{ t: T0, v: 46.6e9 }] }], height: 300 });
+  const frame = lastFrame(k.rec().calls);
+  const W = k.canvas.width;
+  const mid = (62 + (W - 14)) / 2; // the plot between padL and padR
+  const dot = frame.find((c) => c.op === 'arc' && c.args[2] === 3.5);
+  assert.ok(dot, 'the snapshot is drawn as a dot');
+  assert.ok(Math.abs((dot!.args[0] as number) - mid) < 0.5, `at the plot's centre ${mid}, not at ${dot!.args[0]}`);
+  const dates = texts(k.rec().calls).filter((c) => String(c.args[0]).startsWith('day'));
+  assert.deepEqual(dates.map((c) => [c.args[0], Math.round(c.args[1] as number)]), [[`day${T0}`, Math.round(mid)]],
+    'one date, under the dot — not the empty days either side of it');
+});
+
+test('D48: two snapshots still span the plot edge to edge, dated at both ends', () => {
+  const k = loadKit();
+  k.fx.area(k.canvas, { series: [{ name: 'Used', points: [{ t: T0, v: 20e9 }, { t: T0 + DAY, v: 46.6e9 }] }], height: 300 });
+  const dates = texts(k.rec().calls).filter((c) => String(c.args[0]).startsWith('day')).map((c) => c.args[0]);
+  assert.deepEqual(dates, [`day${T0}`, `day${T0 + DAY}`]);
+});
+
+test('D48: byte ticks step in round decimal units, printed by formatBytes', () => {
+  // QA read 46.6 / 37.3 / 27.9 / 18.6 / 9.3 GB: decimal 10 GB steps printed by
+  // a binary formatBytes. The owner chose decimal units (D09): the steps are
+  // 1/2/5 × 10^k bytes and the labels are whatever formatBytes prints.
+  const k = loadKit();
+  k.fx.area(k.canvas, { series: [{ name: 'Used', points: [{ t: T0, v: 20e9 }, { t: T0 + DAY, v: 46.6e9 }] }], height: 300 });
+  const y = texts(k.rec().calls).filter((c) => c.align === 'right').map((c) => c.args[0]);
+  assert.deepEqual(y, ['0 B', '10.0 GB', '20.0 GB', '30.0 GB', '40.0 GB', '50.0 GB']);
+});
+
+test('D48: a log byte axis ticks by decimal decades — 1 KB, 1 MB, 1 GB — and tops at the data', () => {
+  const k = loadKit();
+  const points = [1e3, 4e5, 3e7, 2e9, 17e9].map((y, i) => ({ x: 10 ** (i + 1), y, label: 'app' + i }));
+  k.fx.scatter(k.canvas, { points, logX: 10, logY: 1000 });
+  const y = texts(k.rec().calls).filter((c) => c.align === 'right').map((c) => c.args[0]);
+  assert.deepEqual(y, ['0 B', '1.0 KB', '1.0 MB', '1.0 GB', '17.0 GB']);
+});
+
+test('D48: the Apps scatter asks for decimal byte decades', () => {
+  const at = INDEX.indexOf('async function loadAppsScatter');
+  const wiring = INDEX.slice(at, INDEX.indexOf('async function loadDuplicates', at));
+  assert.match(wiring, /logX: 10, logY: 1000,/, 'base 1000, so every decade prints as a round 1.0 KB / MB / GB');
 });
