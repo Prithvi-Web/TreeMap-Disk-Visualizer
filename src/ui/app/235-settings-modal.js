@@ -631,6 +631,9 @@ function closeModal(id) {
   // An ask sheet closed any way but its OK is a "no" (D65); after OK this
   // finds the question already answered.
   if (id === 'askModal') askSettle(null);
+  // The shared dialog's Cancel and OK label are put back for whichever dialog
+  // uses it next (D62).
+  if (id === 'confirmModal') confirmFooterReset();
   // FX: the job ring dies with the sheet, whichever surface closed it — a beam
   // on a hidden modal would be a claim nobody can see.
   if (id === 'offloadModal') {

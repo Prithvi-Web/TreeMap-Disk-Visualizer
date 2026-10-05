@@ -285,7 +285,9 @@ async function cartTrashAll() {
   if (!willDelete.length) {
     // Nothing would happen, so the button says so and does nothing — rather
     // than reading "Move to Trash" over a dialog explaining that it cannot.
+    // One way out, not two: Cancel would do exactly what Close does (D62).
     $('confirmOk').innerHTML = icon('x', 15) + 'Close';
+    $('confirmCancel').hidden = true;
     onConfirmTrash = () => {};
   } else {
     cartCommitKey = 'cart-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
@@ -539,6 +541,7 @@ function cartCommitSummary(result) {
   confirmPaths = [];
   onConfirmTrash = () => {};
   $('confirmOk').innerHTML = icon('check', 15) + 'Close';
+  $('confirmCancel').hidden = true; // a report has one way out (D62)
   $('confirmModal').classList.add('open');
 }
 

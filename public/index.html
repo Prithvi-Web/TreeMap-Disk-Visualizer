@@ -4283,7 +4283,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     </div>
     <div class="modal-foot">
       <div style="flex:1"></div>
-      <button class="btn" data-close="confirmModal">Cancel</button>
+      <button class="btn" id="confirmCancel" data-close="confirmModal">Cancel</button>
       <button class="btn btn-danger" id="confirmOk"><span data-icon="trash"></span>Move to Trash</button>
     </div>
   </div>
@@ -25722,6 +25722,20 @@ function setConfirmButton(label) {
   $('confirmOk').innerHTML = icon('trash', 15) + escapeHtml(label);
 }
 
+/**
+ * The shared dialog's footer back in its asking form: Cancel shown, OK reading
+ * "Move to Trash" (D62). The cart's report-only dialogs (nothing deletable,
+ * "Done") hide Cancel and relabel OK "Close", and other dialogs relabel OK
+ * too; closeModal runs this on every close of the dialog, so none of that
+ * outlives the dialog that made it — a "Close" label must never sit on the
+ * next dialog's delete (Empty the Trash does not relabel its button).
+ */
+function confirmFooterReset() {
+  const cancel = $('confirmCancel');
+  if (cancel) cancel.hidden = false;
+  setConfirmButton('Move to Trash');
+}
+
 $('confirmOk').addEventListener('click', async () => {
   closeModal('confirmModal');
   const cb = onConfirmTrash; onConfirmTrash = null;
@@ -27058,7 +27072,9 @@ async function cartTrashAll() {
   if (!willDelete.length) {
     // Nothing would happen, so the button says so and does nothing — rather
     // than reading "Move to Trash" over a dialog explaining that it cannot.
+    // One way out, not two: Cancel would do exactly what Close does (D62).
     $('confirmOk').innerHTML = icon('x', 15) + 'Close';
+    $('confirmCancel').hidden = true;
     onConfirmTrash = () => {};
   } else {
     cartCommitKey = 'cart-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
@@ -27312,6 +27328,7 @@ function cartCommitSummary(result) {
   confirmPaths = [];
   onConfirmTrash = () => {};
   $('confirmOk').innerHTML = icon('check', 15) + 'Close';
+  $('confirmCancel').hidden = true; // a report has one way out (D62)
   $('confirmModal').classList.add('open');
 }
 
@@ -32823,6 +32840,9 @@ function closeModal(id) {
   // An ask sheet closed any way but its OK is a "no" (D65); after OK this
   // finds the question already answered.
   if (id === 'askModal') askSettle(null);
+  // The shared dialog's Cancel and OK label are put back for whichever dialog
+  // uses it next (D62).
+  if (id === 'confirmModal') confirmFooterReset();
   // FX: the job ring dies with the sheet, whichever surface closed it — a beam
   // on a hidden modal would be a claim nobody can see.
   if (id === 'offloadModal') {

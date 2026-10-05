@@ -256,6 +256,20 @@ function setConfirmButton(label) {
   $('confirmOk').innerHTML = icon('trash', 15) + escapeHtml(label);
 }
 
+/**
+ * The shared dialog's footer back in its asking form: Cancel shown, OK reading
+ * "Move to Trash" (D62). The cart's report-only dialogs (nothing deletable,
+ * "Done") hide Cancel and relabel OK "Close", and other dialogs relabel OK
+ * too; closeModal runs this on every close of the dialog, so none of that
+ * outlives the dialog that made it — a "Close" label must never sit on the
+ * next dialog's delete (Empty the Trash does not relabel its button).
+ */
+function confirmFooterReset() {
+  const cancel = $('confirmCancel');
+  if (cancel) cancel.hidden = false;
+  setConfirmButton('Move to Trash');
+}
+
 $('confirmOk').addEventListener('click', async () => {
   closeModal('confirmModal');
   const cb = onConfirmTrash; onConfirmTrash = null;
