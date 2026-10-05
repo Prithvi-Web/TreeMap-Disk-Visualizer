@@ -558,6 +558,22 @@ test('a quiet refresh behind a painted tree leaves its facts where they are (QA 
   assert.equal(h.gen(), 0, 'and its index build goes on speaking for it');
 });
 
+/* ══════════════ QA D19 — the Dashboard's two columns end near each other ══════════════ */
+
+test('the Dashboard\'s columns are balanced: Drive Health and Cost to Keep sit in the right column, after All Storage (QA D19)', () => {
+  // QA D19, measured at 1440×900 on the QA corpus: the left column held seven
+  // cards and ended ~2,640 px down, the right four and ended ~1,650 px down,
+  // leaving the right half empty. Drive Health (~180 px) and Cost to Keep
+  // (~330 px) move across: about 2,090 against 2,190. The heights move with
+  // the data (Held-Up Space, Disk Topology), so the final look is a browser's.
+  const view = slice('<section class="view" id="view-dashboard"', '</section>');
+  const cols = view.split('<div class="dash-col">').slice(1);
+  assert.equal(cols.length, 2, 'two columns');
+  const cards = (col: string) => [...col.matchAll(/<h2><span data-icon="[^"]+"><\/span>([^<\n]+)/g)].map((m) => m[1].trim());
+  assert.deepEqual(cards(cols[0]), ['System', 'Scan a Folder', 'Quick Stats', 'Disk Topology', 'Held-Up Space']);
+  assert.deepEqual(cards(cols[1]), ['File Types by Size', 'Largest Files', 'Largest Folders', 'All Storage', 'Drive Health', 'Cost to Keep', 'Folder Budgets']);
+});
+
 /* ══════════════ states-errors-1 — a quiet rescan that fails ends the chrome ══════════════ */
 
 test('a failed background rescan clears the spinner, the skeletons and the Stop button — and says so', () => {
