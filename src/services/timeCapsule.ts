@@ -1443,6 +1443,10 @@ async function stopBeforeTrash(entryId: string | undefined, original: string): P
   if (manifestRefusal(manifest) !== null) {
     return { code: COPY_GONE, reason: 'its Time Capsule copy\'s record is not one TreeMap wrote, and nothing is deleted without a copy that was seen' };
   }
+  const incomplete = await copyIncompleteness(entryId, manifest);
+  if (incomplete !== null) {
+    return { code: COPY_GONE, reason: `its Time Capsule copy is incomplete (${incomplete}), and nothing is deleted without a whole copy` };
+  }
   try {
     await fsp.lstat(original);
   } catch (err) {
@@ -1458,6 +1462,37 @@ async function stopBeforeTrash(entryId: string | undefined, original: string): P
   }
   const change = await changeSinceCopy(manifest, walked);
   return change === null ? null : { code: CHANGED, reason: `it changed after it was copied (${change}), so its copy is not of what is there now` };
+}
+
+/**
+ * What is wrong with an entry's copy itself, as a phrase naming the first thing and how many more,
+ * or null when it is whole as its manifest records it (FG3g L8): each member is there as the kind it
+ * was copied as, and each file the size it was copied at. Its record alone was taken as proof, and a
+ * copy whose files had gone from the capsule folder (another program, a disk's own repair) was
+ * deleted for. No bytes are read: the copy was read back and verified when it was made.
+ */
+async function copyIncompleteness(entryId: string, manifest: EntryManifest): Promise<string | null> {
+  const dataRoot = path.join(payloadRoot(entryId), manifest.name);
+  const problems: string[] = [];
+  const nameOf = (rel: string): string => (rel === '' ? manifest.name : rel);
+  const look = async (rel: string): Promise<Stats | string> => fsp.lstat(rel === '' ? dataRoot : path.join(dataRoot, rel)).catch(
+    (err: unknown) => (meansAbsent(err) ? `${nameOf(rel)} is missing from it` : `${nameOf(rel)} could not be looked at (${describeFsError(err)})`),
+  );
+  // A folder item's own folder first: the members are inside it.
+  if (manifest.members.length === 0 || manifest.members.some((m) => m.rel !== '')) {
+    const own = await look('');
+    if (typeof own === 'string') return own;
+    if (!own.isDirectory()) return `${manifest.name} is no longer a folder in it`;
+  }
+  for (const member of manifest.members) {
+    const st = await look(member.rel);
+    if (typeof st === 'string') problems.push(st);
+    else if (member.kind === 'file' && (!st.isFile() || st.size !== member.size)) problems.push(`${nameOf(member.rel)} is not the size it was copied at`);
+    else if (member.kind === 'dir' && !st.isDirectory()) problems.push(`${nameOf(member.rel)} is no longer a folder in it`);
+    else if (member.kind === 'symlink' && !st.isSymbolicLink()) problems.push(`${nameOf(member.rel)} is no longer a link in it`);
+  }
+  if (problems.length === 0) return null;
+  return problems.length === 1 ? problems[0] : `${problems[0]}, and ${formatCount(problems.length - 1)} more`;
 }
 
 /**

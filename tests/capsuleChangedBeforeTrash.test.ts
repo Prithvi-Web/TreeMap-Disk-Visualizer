@@ -261,3 +261,43 @@ test('an item gone by its own turn goes on to its trash step, which judges it as
   const entry = (await getCapsuleIndex()).entries.find((e) => e.runId === result.runId && e.originalPath === proj);
   assert.equal(entry?.hasPayload, true, 'and its copy is kept, as it always was');
 });
+
+/* ─────────────── FG3g L8: the copy is looked at, not only its record ─────────────── */
+
+/** The folder of the copy of `original`, found by its record (read in the trash step, synchronously). */
+function copyFolderOf(original: string): string {
+  const dir = fs.readdirSync(capsuleRoot()).map((id) => path.join(capsuleRoot(), id))
+    .find((d) => fs.existsSync(path.join(d, 'manifest.json'))
+      && (JSON.parse(fs.readFileSync(path.join(d, 'manifest.json'), 'utf8')) as { originalPath: string }).originalPath === original);
+  assert.ok(dir, `the copy of ${original} is recorded`);
+  return dir;
+}
+
+for (const [label, harm, said] of [
+  ['a file of its copy is gone', (data: string) => fs.rmSync(path.join(data, 'proj', 'src', 'main.c')), /src[\\/]main\.c is missing from it/],
+  ['a file of its copy is not the size copied', (data: string) => fs.writeFileSync(path.join(data, 'proj', 'README.md'), 'r'), /README\.md is not the size it was copied at/],
+  ['its copy\'s own folder is gone', (data: string) => fs.rmSync(path.join(data, 'proj'), { recursive: true }), /proj is missing from it/],
+] as const) {
+  test(`an item whose copy is incomplete by its turn is left in place: ${label} (FG3g L8)`, async () => {
+    const { first, proj } = batch(`incomplete-${label.split(' ')[2]}`);
+    const result = await commitChanging(first, proj, () => harm(path.join(copyFolderOf(proj), 'data')));
+    assert.ok(!result.trashed.includes(proj), JSON.stringify(result.trashed));
+    assert.ok(fs.existsSync(path.join(proj, 'src', 'main.c')), 'it is still where it was');
+    const row = result.skipped.find((s) => s.path === proj);
+    assert.equal(row?.code, 'CAPSULE_COPY_GONE', JSON.stringify(result.skipped));
+    assert.match(row?.reason ?? '', /its Time Capsule copy is incomplete/, row?.reason);
+    assert.match(row?.reason ?? '', said, row?.reason);
+    assert.deepEqual(result.trashed, [first], 'the item whose copy is whole went');
+  });
+}
+
+test('a single file whose copy went missing by its turn is left in place (FG3g L8)', async () => {
+  const { first } = batch('incomplete-file');
+  const notes = path.join(fileTempDir('treemap-capsuleChanged-incomplete-file-'), 'notes.txt');
+  fs.writeFileSync(notes, 'the notes');
+  const result = await commitChanging(first, notes, () => fs.rmSync(path.join(copyFolderOf(notes), 'data', 'notes.txt')));
+  assert.ok(!result.trashed.includes(notes));
+  const row = result.skipped.find((s) => s.path === notes);
+  assert.equal(row?.code, 'CAPSULE_COPY_GONE', JSON.stringify(result.skipped));
+  assert.match(row?.reason ?? '', /notes\.txt is missing from it/, row?.reason);
+});
