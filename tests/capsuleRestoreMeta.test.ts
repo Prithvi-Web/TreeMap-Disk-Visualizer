@@ -124,7 +124,10 @@ test('the type a restored link is made with: a folder link on Windows says so, a
   assert.equal(linkTypeFor('C:\\Users\\me\\proj\\pkg', true, 'win32'), 'junction', 'absolute, to a folder: a junction, which needs no privilege');
   assert.equal(linkTypeFor('..\\pkg', true, 'win32'), 'dir', 'relative, to a folder: a folder link, as it was');
   assert.equal(linkTypeFor('notes.txt', false, 'win32'), 'file');
-  assert.equal(linkTypeFor('notes.txt', undefined, 'win32'), 'file', 'a manifest from before the kind was recorded: as before');
+  // FG3g L2: before FG3f #9 no type was passed at all, and Node looks at the target and picks one; a
+  // 'file' type for a link whose kind was never recorded made a folder link that does not open.
+  assert.equal(linkTypeFor('..\\pkg', undefined, 'win32'), undefined, 'a manifest from before the kind was recorded: no type, so Node picks one, as before');
+  assert.equal(linkTypeFor('C:\\Users\\me\\proj\\pkg', undefined, 'win32'), undefined, 'nor for an absolute target');
   assert.equal(linkTypeFor('/x/pkg', true, 'darwin'), undefined, 'elsewhere the type means nothing and is not passed');
   assert.equal(linkTypeFor('/x/pkg', true, 'linux'), undefined);
 });

@@ -854,12 +854,14 @@ function timesOf(member: WalkedMember): { mtimeMs?: number; atimeMs?: number } {
  * The type a restored link is made with (FG3f #9). Windows makes a link to a folder work only when it
  * is told the link is to one: 'dir' for a relative target, as the link was — or, for an absolute
  * target, a 'junction', which (unlike a 'dir' link) needs no privilege and is what npm makes there.
- * A link to anything else, or one whose target's kind was not recorded (a manifest written before
- * it was), is a 'file' link, as before. Elsewhere the type means nothing and none is passed.
+ * A link recorded as leading to something else is a 'file' link. One whose target's kind was not
+ * recorded (a manifest written before it was, or a link that led nowhere) gets no type, so Node
+ * looks at the target and picks one, exactly as before FG3f #9 (FG3g L2): a 'file' type there made a
+ * link to a folder that does not open. Elsewhere the type means nothing and none is passed.
  */
 export function linkTypeFor(target: string, targetIsDir: boolean | undefined, platform: NodeJS.Platform = process.platform): 'dir' | 'file' | 'junction' | undefined {
-  if (platform !== 'win32') return undefined;
-  if (targetIsDir !== true) return 'file';
+  if (platform !== 'win32' || targetIsDir === undefined) return undefined;
+  if (!targetIsDir) return 'file';
   return path.win32.isAbsolute(target) ? 'junction' : 'dir';
 }
 
