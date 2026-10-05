@@ -996,6 +996,11 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
    * next build.
    */
   const discard = (): void => {
+    // An index closed under the build — a quit: the server cancels every
+    // build, then closes the index — is not a failure. The root still reads
+    // 'building', and the next open reclaims it, as `reclaimSlice` leaves a
+    // closed index (review of 5 Oct 2026, L-3).
+    if (db !== handle) return;
     try {
       setAside(handle, rootId);
       reclaimLater(handle, rootId);

@@ -326,6 +326,38 @@ test('a reclaim cut short by a close stops there, and the next open reclaims the
   assert.equal(rootRow(saved.id), undefined);
 });
 
+test('a quit during a build — cancelled, then the index closed, as the server shuts down — ends it cancelled without a word, and the next open reclaims what it wrote (review L-3)', async (t) => {
+  for (const capped of [true, false]) {
+    const how = capped ? 'capped' : 'explicit';
+    await reclaimsSettled();
+    const dir = folder(`quit-${how}`);
+    fs.mkdirSync(path.join(dir, 'sub'));
+    addFiles(path.join(dir, 'sub'), 600);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let held = false;
+    setBuildSeamsForTests({ afterWrite: (n) => { if (n !== 1) return undefined; held = true; return gate; } });
+    t.after(() => { release(); setBuildSeamsForTests(null); });
+    let cancelled = false;
+    const building = buildIndex(dir, { live: false, isCancelled: () => cancelled, ...(capped ? { maxEntries: 5000 } : {}) });
+    await waitFor(() => held, `the ${how} build being held after its first write`);
+    const logged = t.mock.method(console, 'error', () => {});
+    cancelled = true; // cancelAllIndexJobs()
+    closeIndex(); // then closeIndex(), as server.ts shutdown() does
+    release();
+    await assert.rejects(building, { message: 'cancelled' }, `${how}: the build ends cancelled`);
+    await reclaimsSettled();
+    assert.equal(logged.mock.callCount(), 0, `${how}: a quit is not a failure, and logs nothing: ${logged.mock.calls.map((c) => String(c.arguments[0])).join(' | ')}`);
+    logged.mock.restore();
+    setBuildSeamsForTests(null);
+
+    openIndex(); // the next start
+    await reclaimsSettled();
+    assert.equal(count("SELECT COUNT(*) c FROM roots WHERE state = 'building'"), 0, `${how}: the next open reclaims what the build wrote`);
+    assert.equal(getRoot(dir), null, `${how}: and the folder has no index`);
+  }
+});
+
 test('a build that starts while another is running leaves that one alone: only a root no build is writing is reclaimed', async (t) => {
   await reclaimsSettled();
   const held = folder('held');
