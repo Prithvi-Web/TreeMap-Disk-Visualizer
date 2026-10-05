@@ -428,10 +428,13 @@ OpenAPI 3 spec).
      **The refusal that matters:** anything the capsule cannot protect whole —
      too large for it, or a folder holding a file that could not be looked at —
      is **left undeleted** and named in `skipped[]` with its reason — never
-     deleted unprotected. The copies of a run still under way (every chunk of
-     a chunked commit included) are never evicted to make room, so a batch
-     bigger than the capsule leaves its later items undeleted (`CAPSULE_FULL`)
-     rather than dropping its own earlier copies. A copy a restore or an undo
+     deleted unprotected. A run's copies are never evicted to make room while
+     a request of that run is under way — its own, or a later chunk of the
+     same chunked commit — so a batch bigger than the capsule leaves its later
+     items undeleted (`CAPSULE_FULL`) rather than dropping its own earlier
+     copies. Between the requests of a chunked commit nothing holds the
+     earlier chunks' copies: another deletion may evict them then, and an
+     undo names those items in `unrestorable[]`. A copy a restore or an undo
      is reading is held for it the same way until that job ends — never
      evicted, forgotten or expired from under it — and a copy kept because
      its item's trash step could not be confirmed (it may be the only one) is
