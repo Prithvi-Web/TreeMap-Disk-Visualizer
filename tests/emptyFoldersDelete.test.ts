@@ -324,6 +324,22 @@ test('the pane\'s junk rule holds at delete: with it off, a folder holding .DS_S
   assert.deepEqual(unsaid.body.deleted, [at('junk')], 'left out, the rule is on, as the pane starts');
 });
 
+test('with the junk rule off or on, a folder holding one nobody can read is still refused', { skip: !canLock && 'a folder cannot be made unlistable here (Windows, or running as root)' }, async () => {
+  fs.chmodSync(at('locked-holder', 'locked'), 0o000);
+  try {
+    for (const ignoreJunk of [false, true]) {
+      const r = await trash({ paths: [at('locked-holder')], onlyEmptyFolders: true, ignoreJunk });
+      assert.deepEqual(r.body.deleted, [], `ignoreJunk: ${ignoreJunk}`);
+      assert.equal(r.body.failed[0].code, 'FOLDER_UNREADABLE');
+      const dry = await trash({ paths: [at('locked-holder')], onlyEmptyFolders: true, ignoreJunk, dryRun: true });
+      assert.deepEqual(dry.body.wouldTrash, []);
+    }
+    assert.deepEqual(trashed, []);
+  } finally {
+    fs.chmodSync(at('locked-holder', 'locked'), 0o755);
+  }
+});
+
 test('ignoreJunk must be a boolean, and is read only with onlyEmptyFolders', async () => {
   const notBool = await trash({ paths: [at('still')], onlyEmptyFolders: true, ignoreJunk: 'no' });
   assert.equal(notBool.status, 400, JSON.stringify(notBool.body));
