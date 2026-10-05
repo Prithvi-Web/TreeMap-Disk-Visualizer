@@ -8740,7 +8740,9 @@ async function finishScan(root, durationMs, stats) {
   // buildIndexInBackground decides (indexAutoPlan): a cloud account has no
   // filesystem to watch, re-indexing what we just read from the index would
   // be pointless work, and a whole disk is not indexed automatically (U-1).
-  if (root.path) buildIndexInBackground(root.path, state.scanStats);
+  // This scan's own counts, not state.scanStats: another scan finishing
+  // while the lists loaded has replaced those (Track U review L4).
+  if (root.path) buildIndexInBackground(root.path, stats || null);
   renderGrowthProjection();
   loadBudgets();
   // The snapshot (and its time-slider tree) is saved asynchronously after the

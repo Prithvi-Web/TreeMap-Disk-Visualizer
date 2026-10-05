@@ -655,3 +655,51 @@ test("maxEntries of 0, -1 or 'x' is refused with 400", async () => {
     await close();
   }
 });
+
+test('a finished scan plans its index build on its own counts, even when another scan finished while its lists loaded (Track U review L4)', async () => {
+  // finishScan sets state.scanStats, then waits for the three dashboard
+  // lists; another scan finishing in that wait sets state.scanStats again.
+  // The build planned after the wait must be this scan's, on this scan's
+  // counts: a small folder planned on a whole disk's would be offered
+  // instead of built, and a whole disk planned on a small folder's built.
+  const src = braced('async function finishScan(');
+  const element = (): Record<string, unknown> => ({ classList: { remove: () => {}, add: () => {} }, dataset: {}, innerHTML: '', textContent: '' });
+  const elements = new Map<string, Record<string, unknown>>();
+  const $ = (id: string): Record<string, unknown> => {
+    if (!elements.has(id)) elements.set(id, element());
+    return elements.get(id) as Record<string, unknown>;
+  };
+  const noop = (): void => {};
+  const state: Record<string, unknown> = {
+    scanId: null, treemap: { rootPath: '' }, grid: { path: '', selection: new Set() }, apps: { loadedFor: 'x' },
+    view: 'dashboard', live: { wanted: false }, scanStats: null, root: null,
+  };
+  const answerLists: (() => void)[] = [];
+  const planned: [string, unknown][] = [];
+  const deps: Record<string, unknown> = {
+    $, state, endScanChrome: noop, indexTree: noop, updateSelectionBar: noop, DUP_PAGE: 100, icon: () => '',
+    formatCount: (n: number) => String(n), formatBytes: (n: number) => `${n} B`, escapeHtml: (s: string) => s,
+    countUp: noop, FxNum: { rollText: noop }, renderDiskNotes: noop, loadWhatsNew: noop, loadDriveHealth: noop,
+    loadCostEstimate: noop, showListsPending: noop, emit: noop, TOPIC: { scan: 'scan' }, switchView: noop, toast: noop,
+    fxScanDonePulse: noop, loadDashboardLists: () => new Promise<void>((resolve) => { answerLists.push(resolve); }),
+    buildIndexInBackground: (p: string, stats: unknown) => { planned.push([p, stats]); },
+    renderGrowthProjection: noop, loadBudgets: noop, refreshTimebar: noop, enableLive: noop, setTimeout: noop, formatClock: () => '10:31 PM',
+  };
+  const finishScan = new Function(...Object.keys(deps), `'use strict'; ${src} return finishScan;`)(...Object.values(deps)) as
+    (root: unknown, ms: number, stats: unknown) => Promise<void>;
+
+  const small = scanStats(40_000);
+  const whole = scanStats(5_000_000);
+  state.scanId = 'scan-small';
+  const first = finishScan({ path: HOME_PROJECTS, size: 10 }, 50, small);
+  await drain();
+  state.scanId = 'scan-whole';
+  const second = finishScan({ path: '/', size: 20 }, 50, whole);
+  await drain();
+  assert.equal(answerLists.length, 2, 'both scans wait on their lists');
+  answerLists[1](); // the later scan's lists answer first
+  await second;
+  answerLists[0]();
+  await first;
+  assert.deepEqual(planned, [['/', whole], [HOME_PROJECTS, small]], 'each build is planned on its own scan\'s counts');
+});
