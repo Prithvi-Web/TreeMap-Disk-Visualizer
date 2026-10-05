@@ -22974,8 +22974,10 @@ function renderMissing() {
   body.classList.remove('fx-chart-loading'); // every paint settles the veil
   const total = d.volume.totalBytes;
 
+  // The source in the reader's words ("what macOS reports for Macintosh HD"),
+  // not the call that read it (QA D41: the page printed "statfs(/) — …").
   $('missingInfo').textContent =
-    `Read from ${d.volume.mechanism}. Every line below is a measurement or an honest unknown; ` +
+    `Totals are ${d.volume.mechanismLabel}. Every line below is a measurement or an honest unknown; ` +
     `they sum to the volume's used space exactly.`;
 
   /* ── the bar ── */
@@ -23077,7 +23079,8 @@ function renderMissing() {
   body.innerHTML =
     `<div class="mg-head">` +
       `<span class="mg-vol">${escapeHtml(d.volume.mountPoint === '/' ? 'This disk' : d.volume.mountPoint)}</span>` +
-      `<span class="mg-mp">${escapeHtml(d.rootPath)}</span>` +
+      // Labelled, so the scanned folder never reads as the disk's name (QA D41).
+      `<span class="mg-mp">Scanned: ${escapeHtml(d.rootPath)}</span>` +
       `<span class="mg-cap"><b>${escapeHtml(formatBytes(d.volume.usedBytes))}</b> used of ${escapeHtml(formatBytes(total))}</span>` +
     `</div>` +
     barHtml +

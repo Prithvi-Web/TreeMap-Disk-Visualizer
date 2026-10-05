@@ -616,11 +616,17 @@ async function snapshotLine(sources: StatementSources, mountPoint: string): Prom
  * confused by is named rather than absent. An absent line reads as "TreeMap
  * did not think of this"; an unavailable one reads as "TreeMap knows, and here
  * is why it cannot tell you".
+ *
+ * The macOS reason is written for the person reading the page (QA D41). The
+ * checkable detail: the figure is exposed only as the Foundation resource key
+ * NSURLVolumeAvailableCapacityForImportantUsageKey; `diskutil`, `diskutil apfs`
+ * and `system_profiler` were each checked and none carries it, and TreeMap's
+ * native scan core does not read that key.
  */
 export function purgeableLine(plat: NodeJS.Platform): StatementLine {
   const reason =
     plat === 'darwin'
-      ? 'macOS reports purgeable space only through a native API (NSURLVolumeAvailableCapacityForImportantUsageKey). diskutil, diskutil apfs and system_profiler were each checked on this machine and none carries the figure, and TreeMap\'s native scan core does not read it — so this cannot be measured here.'
+      ? 'macOS tells only apps that ask through Apple’s own programming interface how much space is purgeable. TreeMap does not ask that way, and none of the disk tools that come with macOS report the figure, so it cannot be measured here.'
       : plat === 'win32'
         ? 'Windows has no purgeable-space concept; space reclaimable by Storage Sense is not reported as used, so there is nothing to account for on this line.'
         : 'This filesystem has no purgeable-space concept, so there is nothing to account for on this line.';

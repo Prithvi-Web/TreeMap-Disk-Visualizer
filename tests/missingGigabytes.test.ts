@@ -266,8 +266,52 @@ test('purgeable is unavailable with a reason on every platform, and never reads 
   }
   assert.match(
     purgeableLine('darwin').reason ?? '',
-    /native API/,
+    /Apple.s own programming interface/,
     'the macOS reason names the actual obstacle, so the limit is checkable',
+  );
+  // QA D41: the page is read by people, so the obstacle is named in plain words.
+  for (const plat of ['darwin', 'win32', 'linux'] as NodeJS.Platform[]) {
+    assert.doesNotMatch(
+      purgeableLine(plat).reason ?? '',
+      /NSURL|statfs|diskutil|system_profiler|\bAPI\b/,
+      `${plat}: no developer names on a page a person reads`,
+    );
+  }
+});
+
+test('the Missing GB page names its source in plain words and labels the scanned folder as one (QA D41)', () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = index.indexOf('const MG_SEG = {');
+  const end = index.indexOf('/* Segment → its row.', start);
+  assert.ok(start > 0 && end > start, 'the Missing GB renderer is in the built page');
+  type El = { textContent: string; innerHTML: string; classList: { add(): void; remove(): void } };
+  const els: Record<string, El> = {};
+  const stubs: Record<string, unknown> = {
+    $: (id: string): El => (els[id] ||= { textContent: '', innerHTML: '', classList: { add() {}, remove() {} } }),
+    state: {}, api: async () => null, skeletonRows: () => '',
+    escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${String(n)} B`, formatCount: (n: number) => String(n),
+  };
+  const keys = Object.keys(stubs);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const show = new Function(...keys, `${index.slice(start, end)}; return (d) => { missingData = d; renderMissing(); };`)(
+    ...keys.map((k) => stubs[k]),
+  ) as (d: unknown) => void;
+  show({
+    scanId: 's', rootPath: '/System/Library',
+    volume: {
+      mountPoint: '/', totalBytes: 100, usedBytes: 60, freeBytes: 40, reservedBytes: 0,
+      mechanism: 'statfs(/) — the shared pool this volume draws from', mechanismLabel: 'what macOS reports for Macintosh HD',
+    },
+    lines: [{ id: 'scanned', label: 'Scanned', bytes: 60, available: true, detail: 'd', count: null, notes: [], remedy: null }],
+    unaccountedBytes: 0, coversWholeVolume: false, caveats: [], generatedAt: 0,
+  });
+  assert.match(els.missingInfo.textContent, /what macOS reports for Macintosh HD/, 'the source is named in the user’s words');
+  assert.doesNotMatch(els.missingInfo.textContent, /statfs/, 'not by the call that read it');
+  assert.match(els.missingBody.innerHTML, /Scanned: \/System\/Library/, 'the scanned folder is labelled as the scanned folder');
+  assert.doesNotMatch(
+    els.missingBody.innerHTML,
+    /This disk<\/span><span class="mg-mp">\/System\/Library/,
+    'not set beside "This disk" as if it were the disk’s name',
   );
 });
 
