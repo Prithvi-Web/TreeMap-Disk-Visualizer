@@ -226,3 +226,29 @@ test('the README describes the capsule the same way (D72)', () => {
   const para = readme.slice(start, readme.indexOf('</td>', start)).replace(/\*/g, '');
   assertCapsuleSentence('The README', plain(para));
 });
+
+/* ══════════════ D71 + D10 — "How TreeMap measures space" says what the totals count ══════════════ */
+
+/** The Settings markup, from the sheet's opening tag to its footer. */
+function settingsSheet(): string {
+  const start = INDEX.indexOf('<div class="modal-backdrop" id="settingsModal"');
+  assert.notEqual(start, -1, 'the Settings sheet is in the page');
+  return INDEX.slice(start, INDEX.indexOf('<div class="modal-foot">', start));
+}
+
+test('Settings no longer claims the totals measure occupied space — they count the size files claim (D71, D10)', () => {
+  // The scan sizes every file by the size it claims; the goldens hold the scan
+  // responses byte-identical (DESIGN §12), so the sentence is what changes.
+  const sheet = settingsSheet();
+  const head = sheet.indexOf('></span>How TreeMap measures space</div>');
+  assert.notEqual(head, -1, 'the section is still there');
+  const at = sheet.indexOf('<div class="muted"', head);
+  const text = plain(sheet.slice(at, sheet.indexOf('</div>', at)));
+  assert.doesNotMatch(text, /measures the space files actually occupy/, `the false claim is gone: "${text}"`);
+  assert.match(text, /map and totals count the size each file claims/, `it says what the totals count: "${text}"`);
+  assert.match(text, /space the files actually take up on disk/, `and what this panel adds: "${text}"`);
+  // The two figures it contrasts are rows the panel really draws.
+  const panel = braced('async function renderAllocationDiagnostic(');
+  assert.match(panel, /row\('Size the files claim'/, 'the claimed size is a row of the panel');
+  assert.match(panel, /row\('Space actually used'/, 'and so is the space used');
+});
