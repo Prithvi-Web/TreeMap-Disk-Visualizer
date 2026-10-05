@@ -236,8 +236,11 @@ async function runProvider(
   }
   const cached = paths.length - missing.length;
 
-  // Everything was already known: answer without touching the provider at all.
-  if (missing.length === 0) {
+  // Everything was already known: answer without touching the provider at all. Not an empty
+  // batch, though — no cached value then vouches that the provider works on this computer, so it
+  // is asked, and says (the SEC-1 review, L3). The route sends one when every path it was given
+  // is one no scan listed, and "available" there was only ever the absence of a question.
+  if (missing.length === 0 && paths.length > 0) {
     return {
       available: true,
       stats: { requested: paths.length, computed: cached, skipped: 0, failed: 0 },

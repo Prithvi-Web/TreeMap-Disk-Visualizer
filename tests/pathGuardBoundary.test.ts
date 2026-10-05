@@ -23,6 +23,8 @@ import { parseBsdMount } from '../src/platform/atime';
 import { boundaryRecord, firmlinkAliases, neverDescendPaths, parseFirmlinks, scanBoundary, setBoundaryDepsForTests } from '../src/utils/mountBoundaries';
 import { DIAGNOSIS_MAC_FIRMLINKS, DIAGNOSIS_MAC_MOUNT, IOS_22E238 } from './fixtures/mountTables';
 import type { ScanResult } from '../src/models/types';
+import { registerFactProvider, unregisterFactProvider } from '../src/services/facts';
+import { unavailableBatch, type FactProvider } from '../src/services/facts/types';
 
 /**
  * Track U, U-25: the scanned-root rule reads what the scan listed (U-D19).
@@ -161,6 +163,39 @@ test('POST /api/facts answers a batch holding a drive the scan did not enter: th
   const outside = path.join(fs.realpathSync(fileTempDir('treemap-guard-facts-outside-')), 'x.txt');
   const refused = await postFacts({ scanId: s.scanId, paths: [f.other, outside], providers: ['size'] });
   assert.deepEqual([refused.status, refused.body.code], [403, 'OUTSIDE_SCAN_ROOT'], 'a path under no scanned root is still refused');
+});
+
+test('POST /api/facts: a batch of only paths no scan listed still says which providers cannot answer on this computer — never "available" for want of asking (the SEC-1 review, L3)', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const f = tree();
+  const s = await scanned(f.root);
+  // A provider this computer cannot run, standing in for last-opened dates where nothing records them.
+  let asked = 0;
+  const missing: FactProvider<never> = {
+    id: 'zzz-sec1-not-here',
+    label: 'A signal this computer lacks',
+    capabilityKey: null,
+    async compute(_scanId, paths) {
+      asked++;
+      return unavailableBatch('This computer does not record that.', paths.length);
+    },
+  };
+  registerFactProvider(missing);
+  try {
+    const r = await postFacts({ scanId: s.scanId, paths: [f.mnt, f.onDrive], providers: ['zzz-sec1-not-here', 'size'] });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const lacking = r.body.providers['zzz-sec1-not-here'];
+    assert.equal(lacking.available, false, 'the provider was asked, and said it cannot answer here');
+    assert.equal(lacking.reason, 'This computer does not record that.');
+    assert.deepEqual(lacking.values, {});
+    assert.deepEqual(lacking.stats, { requested: 2, computed: 0, skipped: 2, failed: 0 }, 'requested = computed + skipped + failed still holds');
+    assert.equal(asked, 1);
+    const size = r.body.providers.size;
+    assert.equal(size.available, true, 'one that can answer says so');
+    assert.deepEqual(size.stats, { requested: 2, computed: 0, skipped: 2, failed: 0 }, 'both paths skipped, and counted');
+  } finally {
+    unregisterFactProvider('zzz-sec1-not-here');
+  }
 });
 
 test('a spelling of the drive in another case is the same drive where names fold (macOS and Windows)', async (t) => {
