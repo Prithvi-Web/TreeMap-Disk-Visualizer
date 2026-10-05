@@ -138,15 +138,23 @@ function isBlocked(resolved: string, platform: NodeJS.Platform = process.platfor
 const WIN32_BARE_DRIVE_BEHIND_PREFIX = /^[\\/]{2}[?.][\\/][a-z]:$/i;
 
 /**
- * `p` resolved to an absolute path, by `platform`'s rules (`path.resolve`) — except that on Windows a
- * drive's root folder behind `\\?\` or `\\.\` keeps its separator. Resolving drops it
- * (`\\?\C:\` → `\\?\C:`), which spells the volume device, not its root folder, and the sanitizer
- * refused the root of every drive spelled that way (the SEC-2 review, F5). Typed without the
- * separator, it is the device, and stays refused.
+ * `p` resolved to an absolute path (`path.resolve`) — except that on Windows a drive's root folder
+ * behind `\\?\` or `\\.\` keeps its separator. Resolving drops it (`\\?\C:\` → `\\?\C:`), which
+ * spells the volume device, not its root folder, and the sanitizer refused the root of every drive
+ * spelled that way (the SEC-2 review, F5). Typed without the separator, it is the device, and stays
+ * refused.
+ *
+ * Resolved by `platform`'s rules when one is named (`path.win32` or `path.posix`), so a test pins
+ * Windows' resolution on any OS; with none named, by the path module Node runs with — never by
+ * `process.platform`. The answer is what the file system is asked about next, and the tests stand
+ * Windows in for process.platform on another OS to reach Windows' rules with this OS's real paths:
+ * resolved by Windows' rules there, `/var/folders/…` came back as `\var\folders\…`, which no file
+ * system call finds. On a real machine the platform and Node's module are the same.
  */
-export function resolveAsTyped(p: string, platform: NodeJS.Platform = process.platform): string {
-  if (platform !== 'win32') return path.posix.resolve(p);
-  const resolved = path.win32.resolve(p);
+export function resolveAsTyped(p: string, platform?: NodeJS.Platform): string {
+  const paths = platform === undefined ? path : platform === 'win32' ? path.win32 : path.posix;
+  const resolved = paths.resolve(p);
+  if (paths !== path.win32) return resolved;
   return WIN32_BARE_DRIVE_BEHIND_PREFIX.test(resolved) && WIN32_FILE_BEHIND_PREFIX.test(p) ? `${resolved}${path.win32.sep}` : resolved;
 }
 
@@ -163,17 +171,20 @@ export interface SpellingVerdict {
 /**
  * The half of `sanitizePath`'s verdict that needs no file system call: `p` (its `~` already
  * expanded) resolved, a second name it is spelled through, and the blocklist on the resolved
- * spelling. Pure — `platform` picks the rules and the resolution, so Windows' are tested on every
- * OS — and `ownHosts` stands in for this machine's names where a test needs others.
+ * spelling. Pure — a `platform` named picks the rules and the resolution, so Windows' are tested on
+ * every OS; with none named, the rules are process.platform's and the resolution Node's own
+ * (`resolveAsTyped`), as `sanitizePath` needs — and `ownHosts` stands in for this machine's names
+ * where a test needs others.
  */
-export function judgeSpelling(p: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): SpellingVerdict {
+export function judgeSpelling(p: string, platform?: NodeJS.Platform, ownHosts?: readonly string[]): SpellingVerdict {
+  const rules = platform ?? process.platform;
   const resolved = resolveAsTyped(p, platform);
   // Asked of the typed path too, since resolving on Windows turns `\??\x` into a folder of the
   // current drive and would hide what was asked for.
-  const named = aliasNamespaceOf(p, platform, ownHosts) !== null ? p : resolved;
-  const alias = aliasNamespaceOf(named, platform, ownHosts);
+  const named = aliasNamespaceOf(p, rules, ownHosts) !== null ? p : resolved;
+  const alias = aliasNamespaceOf(named, rules, ownHosts);
   if (alias !== null) return { resolved, secondName: { alias, named }, blocked: true };
-  return { resolved, secondName: null, blocked: isBlocked(resolved, platform, ownHosts) };
+  return { resolved, secondName: null, blocked: isBlocked(resolved, rules, ownHosts) };
 }
 
 /** Node's realpath.native can hand back a Windows extended-length prefix; the

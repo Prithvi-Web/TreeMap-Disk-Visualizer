@@ -207,6 +207,38 @@ test('Windows: a drive’s root behind \\\\?\\ or \\\\.\\ is the drive’s root 
   assert.deepEqual(judgeSpelling('\\\\?\\C:\\Users\\me', 'win32'), { resolved: '\\\\?\\C:\\Users\\me', secondName: null, blocked: false });
 });
 
+test('with Windows stood in for process.platform — as the tests that need its rules on another OS do — the sanitizer judges by Windows’ rules but resolves with the path module Node runs with', () => {
+  // The SEC-2 change for F5 resolved by process.platform's rules, so under a stood-in Windows on a
+  // Mac /var/folders/… came back as \var\folders\…, a path no file system call finds: every scan the
+  // API started there answered 404 "Path does not exist" (scanMftMode), and every Time Capsule
+  // record read "not spelled as TreeMap records one" (capsuleRestoreMeta). On a real machine the
+  // platform and Node's path module agree, so only the stand-in could tell them apart.
+  const dir = fileTempDir('treemap-alias-standin-'); // as os.tmpdir() spells it, links unresolved
+  // In the folder as its links lead, so that the spelling alone can refuse it: no second, canonical look.
+  const stream = path.join(fs.realpathSync(dir), 'f.txt:Zone.Identifier');
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  let answered: unknown;
+  let streamRefusal: unknown;
+  Object.defineProperty(process, 'platform', { ...real, value: 'win32' });
+  try {
+    answered = sanitizePath(dir);
+    try {
+      sanitizePath(stream);
+    } catch (err) {
+      streamRefusal = err;
+    }
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+  }
+  assert.equal(answered, dir, 'this machine’s folder comes back as itself, resolved as Node resolves every path it is then asked about');
+  assert.ok(
+    streamRefusal instanceof PathRejectedError && streamRefusal.code === 'PATH_BLOCKED',
+    `the rules are still Windows’: a colon past the root names an NTFS stream, a second name (${String(streamRefusal)})`,
+  );
+  if (real.value !== 'win32') assert.equal(sanitizePath(stream), stream, 'outside the stand-in, a colon is a name like any other here');
+});
+
 test('Windows: this machine’s own admin shares and an NTFS stream name are second names, refused by the sanitizer and the scanned-root rule; another machine’s share and an ordinary share are paths (the SEC-2 review, LOW-3)', () => {
   // \\localhost\C$\Windows\System32\config\SAM is C:\Windows\System32\config\SAM, and
   // C:\Windows\System32::$INDEX_ALLOCATION is the folder itself, yet neither string starts with a
