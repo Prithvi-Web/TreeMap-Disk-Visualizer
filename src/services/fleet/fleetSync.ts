@@ -1,7 +1,9 @@
 import crypto from 'crypto';
 import http from 'http';
 import os from 'os';
+import path from 'path';
 import { readJsonFile, writeJsonFile } from '../storage';
+import { PathRejectedError, sanitizePath } from '../../utils/pathSanitizer';
 import { FleetSummary, serialiseSummary } from './fleetSummary';
 
 /**
@@ -298,6 +300,22 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+/**
+ * The folder another machine asks this one to scan, judged by this machine's own path rules before
+ * any scan starts (the SEC-2 review, F2): `sanitizePath`, as POST /api/scan applies it — a blocked
+ * OS folder, a second name of a path (/.nofollow, /.vol, a device namespace) or a null byte is
+ * refused — and an absolute path (or `~`) only, since this server's working folder means nothing to
+ * the machine that asked. `startScan` itself sanitizes nothing. Throws `PathRejectedError`.
+ */
+function remoteScanRoot(given: string): string {
+  const typed = given.replace(/^\s+/, '');
+  const home = typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\');
+  if (!home && !path.isAbsolute(typed)) {
+    throw new PathRejectedError('A scan started from another machine must name an absolute path on this one', 'PATH_INVALID');
+  }
+  return sanitizePath(given);
+}
+
 function send(res: http.ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
   res.writeHead(status, {
@@ -463,7 +481,15 @@ export async function handlePeerRequest(
       send(res, 400, { error: 'A path is required' });
       return;
     }
-    const started = await hooks.startScan(body.path);
+    let root: string;
+    try {
+      root = remoteScanRoot(body.path);
+    } catch (err) {
+      if (!(err instanceof PathRejectedError)) throw err;
+      send(res, 400, { error: err.message, code: err.code });
+      return;
+    }
+    const started = await hooks.startScan(root);
     // The scanId only; the RESULT is never pushed anywhere. A peer sees the
     // outcome as a summary, exactly like any other, or not at all.
     send(res, 202, { scanId: started.scanId });

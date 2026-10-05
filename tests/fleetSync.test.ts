@@ -43,6 +43,9 @@ function summary(over: Partial<FleetSummary> = {}): FleetSummary {
   };
 }
 
+/** Every path the handler handed on to start a scan, in order. */
+const scansStarted: string[] = [];
+
 /** Drive one request through the peer handler without opening a socket. */
 async function call(
   cfg: FleetConfig,
@@ -69,7 +72,7 @@ async function call(
 
   const done = handlePeerRequest(req, res, cfg, {
     async summary() { return summary({ acceptsRemoteScan: cfg.allowRemoteScan }); },
-    async startScan() { return { scanId: 'scan-1' }; },
+    async startScan(root: string) { scansStarted.push(root); return { scanId: 'scan-1' }; },
     onPairingAbuse: opts.onPairingAbuse,
   });
   if (payload) { req.emit('data', Buffer.from(payload)); }
@@ -297,6 +300,36 @@ test('remote scanning is refused until it is separately turned on', async () => 
   assert.equal(accepted.status, 202);
   assert.equal(accepted.body.scanId, 'scan-1');
   assert.equal(Object.keys(accepted.body).length, 1, 'a scan id, never a result');
+});
+
+test('a scan another machine asks for is judged by this machine’s own path rules first: a blocked folder, a second name or a relative path is refused 400, and no scan starts (the SEC-2 review, F2)', async () => {
+  // The receiver handed body.path straight to startScan, which sanitizes nothing: a paired peer
+  // allowed to start scans could root one at a blocked OS folder, at a second name of a path, or
+  // at a path read from this server's working folder, and learn its sizes from the summary.
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  scansStarted.length = 0;
+  const windows = process.platform === 'win32';
+  const tmp = path.resolve(os.tmpdir());
+  const refused: [string, string][] = [
+    [windows ? 'C:\\Windows\\System32' : '/dev', 'PATH_BLOCKED'],
+    ['Documents', 'PATH_INVALID'],
+    [path.join('..', 'elsewhere'), 'PATH_INVALID'],
+    [`${tmp}\0x`, 'PATH_INVALID'],
+  ];
+  if (process.platform === 'darwin') refused.push(['/.nofollow/private/tmp', 'PATH_BLOCKED'], ['/.vol/1/2', 'PATH_BLOCKED']);
+  if (windows) refused.push(['\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\Users', 'PATH_BLOCKED'], ['C:Users', 'PATH_INVALID']);
+  for (const [p, code] of refused) {
+    const r = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } });
+    assert.deepEqual([r.status, r.body?.code], [400, code], `${JSON.stringify(p)}: ${JSON.stringify(r.body)}`);
+  }
+  assert.deepEqual(scansStarted, [], 'no scan was started');
+  // A path that passes is handed on as the sanitizer resolves it.
+  const accepted = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: `  ${tmp}${path.sep}a${path.sep}..` } });
+  assert.equal(accepted.status, 202, JSON.stringify(accepted.body));
+  assert.deepEqual(scansStarted, [tmp]);
 });
 
 test('there is no route that deletes, reads a file, or lists a directory', async () => {

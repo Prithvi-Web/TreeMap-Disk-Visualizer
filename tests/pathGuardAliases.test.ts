@@ -269,7 +269,7 @@ const PATHISH = new Set(['path', 'paths', 'root', 'dest', 'to', 'destination', '
 
 /** Path fields that take no path through this server's sanitizer, each with why. */
 const NOT_A_LOCAL_PATH: Record<string, string> = {
-  'POST /api/fleet/peers/{id}/trigger-scan body.path': 'handed to a paired peer, whose own POST /api/scan sanitizes it; this server never reads it',
+  'POST /api/fleet/peers/{id}/trigger-scan body.path': 'a path on the paired peer, handed to it unread: the peer’s fleet receiver (fleetSync, /fleet/scan) judges it by its own sanitizer before any scan starts (fleetSync.test.ts, the SEC-2 review, F2)',
   'GET /api/health/smart query.device': 'names a drive to ask for SMART data, never a file to read or act on',
 };
 

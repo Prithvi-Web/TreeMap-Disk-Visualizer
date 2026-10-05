@@ -114,8 +114,12 @@ class FleetRuntime {
       // machine's job, and the fleet panel is where the code was shown.
       onPairingAbuse: (address: string) => { this.abuse = { address, at: Date.now() }; },
       startScan: async (path: string) => {
-        // Routed through the ordinary scan path, which applies every existing
-        // guard. Imported lazily to keep the fleet module out of the boot path.
+        // `path` was judged by the receiver (fleetSync's /fleet/scan) with this
+        // machine's path rules — sanitizePath, as POST /api/scan applies it —
+        // because startScan itself sanitizes nothing (the SEC-2 review, F2).
+        // agent-policy.json's allowedRoots is not asked here: it confines the
+        // API's and the MCP tools' callers, and a peer's scan is a separate
+        // opt-in. Imported lazily to keep the fleet module out of the boot path.
         const { startScan } = await import('../diskScanner');
         const scan = await startScan(path, {});
         return { scanId: scan.scanId };
