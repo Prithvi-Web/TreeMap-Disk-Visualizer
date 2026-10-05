@@ -475,11 +475,10 @@ function growFirstClaim(store: ScanStore, turn: number): void {
 }
 
 /**
- * An ObjectScanStore built node by node, so its `version` counts. One made by
- * `ObjectScanStore.wrap` skips the class's field initialisers: its version is
- * undefined, and NaN after its first edit, so every later check reads as a
- * change (a quirk older than this task; the last test below pins that such a
- * store still gets the right answer).
+ * An ObjectScanStore built node by node, through the class's constructor and
+ * `addNode`. One made by `ObjectScanStore.wrap` skips the field initialisers
+ * and starts its own version at 0 (U-18); both are walked while changing, so
+ * both ways an object store is made count their edits the same.
  */
 function builtObjectStore(tree: FileNode): ScanStore {
   const store = new ObjectScanStore(tree.path, path.sep, fileNodeToInput(tree));
@@ -492,6 +491,7 @@ function builtObjectStore(tree: FileNode): ScanStore {
 
 const MUTABLE_STORES: ReadonlyArray<readonly [string, (tree: FileNode) => ScanStore]> = [
   ['object store', builtObjectStore],
+  ['wrapped object store', (tree) => ObjectScanStore.wrap(tree)],
   ['packed store', (tree) => buildStoreFromTree(tree)],
 ];
 
@@ -520,11 +520,44 @@ test('a store that keeps changing is walked at most three times, the last in one
   }
 });
 
-test('a wrapped object store, whose version stops counting after one edit, still gets the changed store\'s answer', async () => {
-  const store = ObjectScanStore.wrap(projectsTree(path.join(path.sep, 'wrapped')));
-  const { result } = await walkWhileChanging(store, growFirstClaim, (turn) => turn === 1);
-  assert.equal(result.attempts, CLEANUP_MAX_ATTEMPTS, 'every check after the edit reads as a change, so the one-turn attempt answers');
-  assert.equal(JSON.stringify(result.groups), JSON.stringify(oracleCleanupSuggestions(store, [], loadRuleCatalog())), 'with the edited store\'s answer');
+test('a wrapped object store counts its edits: the memo answers it once per version, and walks it again after every edit', async () => {
+  resetCleanupMemoForTests();
+  setCleanupMemoOptionsForTests({ yieldTurn: immediate, sliceNodes: 4 });
+  try {
+    const store = ObjectScanStore.wrap(projectsTree(path.join(path.sep, 'wrapped')));
+    const catalog = loadRuleCatalog();
+    for (let edits = 0; edits <= 3; edits++) {
+      if (edits > 0) growFirstClaim(store, edits);
+      const want = JSON.stringify(oracleCleanupSuggestions(store, [], catalog));
+      assert.equal(JSON.stringify(await cleanupSuggestionsFor(store, [], catalog, [])), want, `after ${edits} edit(s): the edited store's answer, never an earlier version's`);
+      assert.equal(JSON.stringify(await cleanupSuggestionsFor(store, [], catalog, [])), want, `after ${edits} edit(s): asked again, the same answer`);
+      assert.deepEqual(cleanupMemoCountsForTests(), { suggestions: edits + 1, claims: 0, reused: edits + 1 },
+        `after ${edits} edit(s): one walk per version, and the second request answered from it`);
+    }
+  } finally {
+    setCleanupMemoOptionsForTests(null);
+  }
+});
+
+test('a second wrap of an edited tree starts at version 0 again, and is answered from its own walk, never from another wrap\'s', async () => {
+  resetCleanupMemoForTests();
+  setCleanupMemoOptionsForTests({ yieldTurn: immediate, sliceNodes: 4 });
+  try {
+    const tree = projectsTree(path.join(path.sep, 'rewrapped'));
+    const catalog = loadRuleCatalog();
+    const first = ObjectScanStore.wrap(tree);
+    const before = JSON.stringify(await cleanupSuggestionsFor(first, [], catalog, []));
+    // Edit the shared tree through another wrap: the first wrap's memo keeps its version-0 answer.
+    growFirstClaim(ObjectScanStore.wrap(tree), 1);
+    const later = ObjectScanStore.wrap(tree);
+    assert.equal(later.version, first.version, 'the new wrap is at the same version number as the first wrap\'s remembered answer');
+    const want = JSON.stringify(oracleCleanupSuggestions(later, [], catalog));
+    assert.notEqual(want, before, 'the edit changed the answer');
+    assert.equal(JSON.stringify(await cleanupSuggestionsFor(later, [], catalog, [])), want, 'the new wrap gets the edited tree\'s answer');
+    assert.equal(cleanupMemoCountsForTests().suggestions, 2, 'from a walk of its own');
+  } finally {
+    setCleanupMemoOptionsForTests(null);
+  }
 });
 
 /* ───────────────────────────── one walk per version ───────────────────────────── */
