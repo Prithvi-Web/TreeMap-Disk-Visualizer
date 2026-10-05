@@ -7,7 +7,7 @@ import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuar
 import { moveToTrash } from './cleaner';
 import { AppError } from '../middleware/errorHandler';
 import type { SnapshotCandidate, SnapshotSearchResult, SnapshotRestoreOutcome } from '../models/types';
-import { meansAbsent } from '../utils/errno';
+import { describeFsError, meansAbsent } from '../utils/errno';
 
 /**
  * Snapshot recovery — getting back a file the Trash no longer has (B4).
@@ -220,7 +220,14 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
   // restore that finds nothing, can only be known after it; the answer then
   // says the replaced file is in the Trash.
   const provider = platform();
-  const folderRefusal = await provider.restoreFolderRefusal(path.dirname(destination));
+  const folder = path.dirname(destination);
+  // A folder that cannot be checked (any failure but "absent") is no answer
+  // either way: it used to escape raw and reach the client as a 500 (FG4e).
+  const folderRefusal = await provider.restoreFolderRefusal(folder).catch((err: unknown) => {
+    throw new AppError(409, 'DESTINATION_FOLDER_UNAVAILABLE',
+      `TreeMap could not check the folder ${folder} (${describeFsError(err)}), so nothing was restored and nothing was moved to the Trash. ` +
+      'Try again, or choose another destination.');
+  });
   if (folderRefusal) throw new AppError(409, 'DESTINATION_FOLDER_REFUSED', folderRefusal);
   const volume = volumeFor(original);
   let listFailed: string | null = null;

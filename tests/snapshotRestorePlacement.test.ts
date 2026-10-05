@@ -1021,3 +1021,67 @@ test('a Windows restore point that could not be opened is a failed restore, neve
   assert.match(refused.reason ?? '', /administrator rights/);
   assert.equal(fs.existsSync(dest), false);
 });
+
+/**
+ * FG4e: the destination folder's check before the password prompt used to
+ * throw a raw error for any stat failure but "absent", which the error handler
+ * turned into a 500 — or, for the folder the restore makes, a mkdir EACCES
+ * into a 403 telling the person TreeMap may not READ it. Each is a 409 now,
+ * DESTINATION_FOLDER_UNAVAILABLE, with the folder and the reason, before
+ * anything is moved to the Trash or a password asked for.
+ */
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+test('a destination folder whose check fails for a reason other than absence is a 409 with the reason, before the Trash or the prompt (FG4e)', { skip: process.platform === 'win32' }, async () => {
+  const dir = tmp('treemap-place-unverifiable-');
+  const existing = path.join(dir, 'notes.txt');
+  fs.writeFileSync(existing, 'newer work');
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  let asked = 0;
+  setAdminPromptForTests(async () => { asked++; return 'NOTFOUND\n'; });
+  const mac = macProvider();
+  const provider = platform() as unknown as { restoreFolderRefusal: (d: string) => Promise<string | null> };
+  provider.restoreFolderRefusal = async (d) => { throw Object.assign(new Error(`EIO: i/o error, stat '${d}'`), { code: 'EIO' }); };
+  try {
+    await assert.rejects(restoreFromSnapshot({ path: path.join(dir, 'lost.txt'), destination: existing, overwrite: true }), (err: unknown) => {
+      assert.ok(err instanceof AppError, `a raw error reaches the client as a 500: ${String(err)}`);
+      assert.equal(err.status, 409);
+      assert.equal(err.code, 'DESTINATION_FOLDER_UNAVAILABLE');
+      assert.match(err.message, new RegExp(`could not check the folder ${escapeRe(dir)} \\(the disk did not answer`));
+      return true;
+    });
+    assert.deepEqual(trashed, [], 'nothing was moved to the Trash');
+    assert.equal(asked, 0, 'and no password was asked for');
+    assert.equal(fs.readFileSync(existing, 'utf8'), 'newer work');
+  } finally {
+    mac.undo();
+    setAdminPromptForTests(null);
+    setTrashStepForTests(null);
+  }
+});
+
+test('a destination folder the restore cannot make is a 409 with the reason, not a 403 about reading (FG4e)', { skip: process.platform === 'win32' || UID === 0 }, async () => {
+  const parent = tmp('treemap-place-unmakeable-');
+  fs.chmodSync(parent, 0o500); // readable, not writable: a folder cannot be made inside it
+  let asked = 0;
+  setAdminPromptForTests(async () => { asked++; return 'NOTFOUND\n'; });
+  const mac = macProvider();
+  const folder = path.join(parent, 'new-folder');
+  try {
+    await assert.rejects(restoreFromSnapshot({ path: path.join(parent, 'lost.txt'), destination: path.join(folder, 'lost.txt') }), (err: unknown) => {
+      assert.ok(err instanceof AppError, `a raw mkdir error reaches the client as a 403 about reading: ${String(err)}`);
+      assert.equal(err.status, 409);
+      assert.equal(err.code, 'DESTINATION_FOLDER_UNAVAILABLE');
+      assert.match(err.message, new RegExp(`could not make or check the folder ${escapeRe(folder)} \\(`));
+      assert.match(err.message, /permissions/);
+      return true;
+    });
+    assert.equal(asked, 0, 'no password was asked for');
+    assert.equal(fs.existsSync(folder), false);
+  } finally {
+    mac.undo();
+    setAdminPromptForTests(null);
+    fs.chmodSync(parent, 0o700);
+  }
+});

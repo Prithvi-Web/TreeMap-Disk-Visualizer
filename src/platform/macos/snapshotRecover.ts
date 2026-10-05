@@ -6,7 +6,7 @@ import type { VolumeSnapshotRef, SnapshotRecoveryResult } from '../types';
 import { relativeToVolume } from '../snapshotPaths';
 import { destinationTakenReason } from '../snapshotCopy';
 import { RealMachineRefusal, refuseUnderTestRunner } from '../../services/realMachineGuard';
-import { meansAbsent } from '../../utils/errno';
+import { describeFsError, meansAbsent } from '../../utils/errno';
 
 /**
  * Recovering a deleted file from an APFS local snapshot (B4, macOS).
@@ -532,12 +532,24 @@ export async function recoverFromSnapshots(
   // Newest first: the most recent copy of a file is the one the user wants back.
   const ordered = [...snapshots].sort((a, b) => (b.takenAt ?? 0) - (a.takenAt ?? 0));
   const destinationDir = path.dirname(destination);
-  await fsp.mkdir(destinationDir, { recursive: true });
 
   // The folder rule the root helper applies when it runs, checked before the password is asked
   // for (FG4c, review #24) — again, now that the folder is there: the service asked before it
-  // made it or moved anything to the Trash (FG4d).
-  const refusal = await restoreFolderRefusal(destinationDir);
+  // made it or moved anything to the Trash (FG4d). A folder that cannot be made, or checked once
+  // made, is an answer with its reason, never a raw error: a mkdir EACCES used to reach the
+  // client as a 403 saying TreeMap may not read it (FG4e).
+  let refusal: string | null;
+  try {
+    await fsp.mkdir(destinationDir, { recursive: true });
+    refusal = await restoreFolderRefusal(destinationDir);
+  } catch (err) {
+    return {
+      restored: false,
+      destinationUnavailable: true,
+      reason: `TreeMap could not make or check the folder ${destinationDir} (${describeFsError(err)}), so nothing was restored. ` +
+        'Try again, or choose another destination.',
+    };
+  }
   if (refusal) return { restored: false, destinationRefused: true, reason: refusal };
 
   const helper = await writeHelper();

@@ -637,7 +637,8 @@ read-what-you-saw) permission to act.
   helper could not open or check when it ran — moved, removed, or its drive
   disconnected while the prompt was open — is `409
   DESTINATION_FOLDER_UNAVAILABLE` instead, with the helper's words, and may
-  succeed if tried again. The helper
+  succeed if tried again; so is a folder that could not be checked before the
+  prompt, or made, with the reason (never a raw 500). The helper
   copies into a folder it makes there and works from inside it, so a folder
   swapped in under that folder's name is never written to. It places a file
   with `link`, which fails whatever is at the name (on a volume without hard
