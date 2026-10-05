@@ -1495,6 +1495,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             hardwareCodecs: arr(str(), 'Codecs with genuine hardware ENCODE support — decode-only never counts'),
             candidates: arr(opaque('path, name, size, codec, width, height, durationSeconds, estimatedBytes, estimatedSaving, reason')),
             totalSaving: int('Sum of the estimates — an estimate, not a promise'),
+            shortlisted: int('Large video files looked at, biggest first (up to `limit`)'),
+            unreadable: int('Of those, how many could not be read as video — not judged, so never counted as already efficient'),
           },
           ['scanId', 'available', 'candidates'],
         ),

@@ -551,3 +551,69 @@ test('Shrink Video reports a smaller file and an original in the Trash, not spac
   assert.match(report, /500B/, 'the saving is still stated');
   assert.match(report, /Trash/, 'with where the original went');
 });
+
+/* ═══════ 6. Shrink Video: "could not be read" is not "already efficient" (D56) ═══════ */
+
+/**
+ * The server now says how many large videos it looked at (`shortlisted`) and
+ * how many of those it could not read as video (`unreadable`). The pane used
+ * to answer an empty list with "everything large is already in an efficient
+ * format" — about files nobody had judged, or when there were no large videos
+ * at all. Each case now gets its own sentence.
+ */
+async function videoPane(data: Record<string, unknown>): Promise<string> {
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= {
+    innerHTML: '', textContent: '', disabled: false, hidden: false, style: {},
+    querySelectorAll: () => [], addEventListener: () => {},
+  });
+  const fn = runnable(bodyOf('async function loadVideoCandidates() {'), {
+    $,
+    state: { scanId: 's1' },
+    api: async () => ({ available: true, candidates: [], ...data }),
+    skeletonRows: () => '',
+    icon: () => '',
+    escapeHtml: (s: string) => s,
+    chipFor: () => '',
+    formatBytes: (n: number) => `${n}B`,
+    formatCount: (n: number) => Number(n).toLocaleString('en-US'),
+    sizeColor: () => '',
+    videoCandidates: [],
+    confirmEncode: () => {},
+  });
+  await fn();
+  return els.videoBody.innerHTML.replace(/\s+/g, ' ');
+}
+
+test('videos that could not be read are counted and named as unjudged, never as efficient', async () => {
+  const html = await videoPane({ shortlisted: 4, unreadable: 2 });
+  assert.match(html, /2 large videos couldn’t be read/, html);
+  assert.doesNotMatch(html, /everything large/i, 'no claim about files nobody judged');
+  assert.match(html, /other 2 are already in an efficient format/, 'the ones that were read are still credited');
+});
+
+test('when every large video is unreadable, nothing is called efficient', async () => {
+  const html = await videoPane({ shortlisted: 3, unreadable: 3 });
+  assert.match(html, /3 large videos couldn’t be read/, html);
+  assert.doesNotMatch(html, /efficient/, html);
+});
+
+test('no large videos at all is said as that', async () => {
+  const html = await videoPane({ shortlisted: 0, unreadable: 0 });
+  assert.match(html, /No large videos/, html);
+  assert.doesNotMatch(html, /efficient/, 'there was nothing to call efficient');
+});
+
+test('large videos that were all read and are efficient still get the efficient sentence', async () => {
+  const html = await videoPane({ shortlisted: 3, unreadable: 0 });
+  assert.match(html, /already in an efficient format/, html);
+});
+
+test('beside real candidates, the unreadable ones are still mentioned', async () => {
+  const html = await videoPane({
+    shortlisted: 2, unreadable: 1,
+    candidates: [{ name: 'a.mp4', path: '/v/a.mp4', size: 100, estimatedBytes: 55, estimatedSaving: 45, reason: 'H264 video' }],
+  });
+  assert.match(html, /a\.mp4/, 'the candidate is listed');
+  assert.match(html, /1 more large video couldn’t be read/, html);
+});

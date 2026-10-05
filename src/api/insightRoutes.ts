@@ -459,8 +459,12 @@ insightRouter.get('/compression/candidates', storageModeGate, async (req: Reques
   const ignore = await getIgnoreMatchers('suggest');
   const shortlist = shortlistFromScan(storeOf(scan), ignore, clampInt(req.query.limit, 60, 1, 200));
   const candidates: CompressionCandidate[] = [];
+  // A file ffprobe could not read as video was never judged. Counted, so an
+  // empty list is not read as "everything here is already efficient" (D56).
+  let unreadable = 0;
   for (const item of shortlist) {
     const probe = await tools.probe(item.path);
+    if (!probe || !probe.videoCodec) { unreadable++; continue; }
     if (!isWorthEncoding(probe)) continue;
     const { estimatedBytes, estimatedSaving } = estimateFor(item.size, probe!.videoCodec);
     candidates.push({
@@ -478,6 +482,8 @@ insightRouter.get('/compression/candidates', storageModeGate, async (req: Reques
   res.json({
     scanId: scan.scanId, ...availability, candidates,
     totalSaving: candidates.reduce((s, c) => s + c.estimatedSaving, 0),
+    shortlisted: shortlist.length,
+    unreadable,
   });
 });
 

@@ -30576,9 +30576,20 @@ async function loadVideoCandidates() {
     return;
   }
   videoCandidates = data.candidates || [];
+  // What was looked at and what could not be read (D56): a video ffprobe could
+  // not read was never judged, so it is never counted as "already efficient".
+  const unreadable = Number(data.unreadable) || 0;
+  const looked = Number(data.shortlisted) || 0;
+  const unreadSentence = (lead) => `${lead} large video${unreadable === 1 ? '' : 's'} couldn’t be read, so TreeMap can’t say whether re-encoding ${unreadable === 1 ? 'it' : 'them'} would help`;
   if (!videoCandidates.length) {
-    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('checkCircle', 15)}
-      No video worth re-encoding — everything large is already in an efficient format.</div>`;
+    const efficient = Math.max(0, looked - unreadable);
+    const said = unreadable
+      ? `${unreadSentence(formatCount(unreadable))}${efficient ? `; the other ${formatCount(efficient)} ${efficient === 1 ? 'is' : 'are'} already in an efficient format` : ''}.`
+      : looked
+        ? `No video worth re-encoding — the large ${looked === 1 ? 'one here is' : 'ones here are'} already in an efficient format.`
+        : 'No large videos in this scan to re-encode.';
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon(unreadable ? 'alert' : 'checkCircle', 15)}
+      ${escapeHtml(said)}</div>`;
     return;
   }
 
@@ -30598,7 +30609,8 @@ async function loadVideoCandidates() {
         </div>
         <span class="vid-ba num">${formatBytes(c.size)} → <b>~${formatBytes(c.estimatedBytes)}</b></span>
         <span class="size-badge num" style="color:${sizeColor(c.estimatedSaving)}">~${formatBytes(c.estimatedSaving)}</span>
-      </div>`).join('') + `</div>
+      </div>`).join('') + `</div>` +
+    (unreadable ? `<div class="muted" style="padding:6px 2px;">${escapeHtml(`${formatCount(unreadable)} more large video${unreadable === 1 ? '' : 's'} couldn’t be read, so ${unreadable === 1 ? 'it isn’t' : 'they aren’t'} listed: TreeMap can’t say whether re-encoding ${unreadable === 1 ? 'it' : 'them'} would help.`)}</div>` : '') + `
     <div class="vid-actions">
       <button class="btn" id="vidSelectAll">Select all</button>
       <button class="btn btn-danger" id="vidEncodeBtn" disabled>${icon('video', 14)} Re-encode</button>
