@@ -147,7 +147,8 @@ test('the privileged helper fails safe when it cannot mount, and leaks no mounts
     await fsp.mkdir(bin);
     await fsp.writeFile(path.join(bin, 'mount_apfs'), [
       '#!/bin/sh',
-      'printf \'%s\\n\' "$4" >> "$TM_MOUNT_LOG"',
+      'for a in "$@"; do last=$a; done',
+      'printf \'%s\\n\' "$last" >> "$TM_MOUNT_LOG"',
       'mkdir -p "$TM_FOREIGN_MAKE"',
       'exec /sbin/mount_apfs "$@"',
       '',
@@ -167,8 +168,9 @@ test('the privileged helper fails safe when it cannot mount, and leaks no mounts
     assert.match(stdout.trim(), /^ERROR no snapshot could be mounted or read \(/, 'the failed mount is the answer');
     assert.notEqual(stdout.trim(), 'NOTFOUND');
     assert.equal(mounts.length, 1, `the helper made one mount point: ${JSON.stringify(mounts)}`);
-    assert.match(mounts[0], /^\/tmp\/treemap-snap-/);
+    assert.match(mounts[0], /^\/tmp\/treemap-snap-[^/]+\/[^/]+$/, 'inside a folder of its own (FG4e, review L7)');
     assert.equal(fs.existsSync(mounts[0]), false, 'the trap cleaned up its mount point');
+    assert.equal(fs.existsSync(path.dirname(mounts[0])), false, 'and the folder it was in');
     assert.ok(fs.existsSync(foreign), 'and left another run\'s alone');
     assert.equal(fs.existsSync(path.join(dir, 'out')), false, 'and wrote nothing');
   } finally {

@@ -251,7 +251,12 @@ if [ -e "./$dest_name" ] || [ -L "./$dest_name" ]; then
   echo "ERROR something already exists at the destination"; exit 0
 fi
 
-mount_point=$(mktemp -d /tmp/treemap-snap-XXXXXX) || { echo "ERROR could not create a mount point"; exit 0; }
+# The mount point is a folder inside one only the running account (root) can enter: mktemp
+# makes it 0700. A snapshot mounted on the mount point takes its place, permissions and all, so the
+# folder around it is what keeps every other account out of the snapshot while it is mounted
+# (FG4e, review L7).
+mount_parent=$(mktemp -d /tmp/treemap-snap-XXXXXX) || { echo "ERROR could not create a mount point"; exit 0; }
+mount_point="$mount_parent/snapshot"
 
 # However this exits — success, failure or a signal — the snapshot must not be
 # left mounted. An orphaned snapshot mount is invisible in Finder yet pins the
@@ -260,9 +265,11 @@ mount_point=$(mktemp -d /tmp/treemap-snap-XXXXXX) || { echo "ERROR could not cre
 cleanup() {
   umount "$mount_point" 2>/dev/null || true
   rmdir "$mount_point" 2>/dev/null || true
+  rmdir "$mount_parent" 2>/dev/null || true
   leave_stage
 }
 trap cleanup EXIT INT TERM
+mkdir -m 700 -- "$mount_point" 2>/dev/null || { echo "ERROR could not create a mount point"; exit 0; }
 
 # A snapshot that could not be mounted, or mounted but could not be looked in at that path, was
 # not looked in: it is counted, with the first reason, and never read as one that lacks the path
@@ -274,7 +281,9 @@ outside=0
 place=0
 for snapshot in "$@"; do
   place=$((place + 1))
-  if ! failure=$(mount_apfs -s "$snapshot" "$volume" "$mount_point" 2>&1 >/dev/null); then
+  # Read-only, no set-id bits or device files honoured, and kept out of Finder: mount(8)'s options,
+  # which mount_apfs's manual lists for its -s form too (FG4e, review L7).
+  if ! failure=$(mount_apfs -o rdonly,nosuid,nodev,nobrowse -s "$snapshot" "$volume" "$mount_point" 2>&1 >/dev/null); then
     unread=$((unread + 1))
     if [ -z "$first_failure" ]; then first_failure=$(printf '%s\\n' "$failure" | head -n 1); fi
     continue

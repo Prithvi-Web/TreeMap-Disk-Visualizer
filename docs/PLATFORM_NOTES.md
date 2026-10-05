@@ -566,6 +566,18 @@ file" or "not a directory" counts as not looked in, and a copy placed from an
 older snapshot past one not looked in is answered `FOUNDOLDER`, which the
 restore carries as `newerUnread` (FG4e).
 
+Each snapshot is mounted with `-o rdonly,nosuid,nodev,nobrowse`, on a mount
+point inside a folder of its own that only root can enter (`mktemp -d`, 0700):
+a mounted snapshot takes the mount point's place, permissions and all, so the
+folder around it is what keeps other accounts out while it is mounted (FG4e).
+The options are mount(8)'s, and `mount_apfs(8)` lists `-o options` for its
+`-s snapshot` form, every mount(8) option but `force`, `sync` and `[no]async`.
+**That is the manual's word, not a measurement:** no development run mounts a
+snapshot (it needs root). Were a real `mount_apfs` to refuse one of these
+options for a snapshot, every snapshot would read as not mounted and the
+restore would answer `RESTORE_FAILED` with `mount_apfs`'s own reason — nothing
+written, nothing claimed absent.
+
 ### `mdadm` is deliberately not shelled out to
 
 It has no JSON mode, but `lsblk --json` already reports md devices with their

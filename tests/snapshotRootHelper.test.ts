@@ -40,11 +40,16 @@ function standIns(): string {
   const dir = tmp('treemap-helper-bin-');
   fs.writeFileSync(path.join(dir, 'mount_apfs'), [
     '#!/bin/sh',
-    '# Stands in for `mount_apfs -s <snapshot> <volume> <mount point>`: the fixture snapshot\'s files',
-    '# copied into the mount point, or the failure of a snapshot that is not there. The mount point',
-    '# is written down first; another run\'s mount point can be made or removed meanwhile.',
+    '# Stands in for `mount_apfs [-o <options>] -s <snapshot> <volume> <mount point>`: the fixture',
+    '# snapshot\'s files copied into the mount point, or the failure of a snapshot that is not there.',
+    '# The mount point is written down first; another run\'s mount point can be made or removed',
+    '# meanwhile. With TM_MOUNT_SEEN, the options and the owner and mode of the folder the mount point',
+    '# is in are written down too.',
+    'opts=""',
+    'if [ "$1" = "-o" ]; then opts=$2; shift 2; fi',
     '[ "$1" = "-s" ] || exit 64',
     'printf \'%s\\n\' "$4" >> "$TM_MOUNT_LOG"',
+    '[ -z "${TM_MOUNT_SEEN:-}" ] || printf \'%s %s\\n\' "$opts" "$(stat -f \'%u:%Lp\' "$(dirname "$4")")" >> "$TM_MOUNT_SEEN"',
     '[ -z "${TM_FOREIGN_MAKE:-}" ] || mkdir -p "$TM_FOREIGN_MAKE"',
     '[ -z "${TM_FOREIGN_REMOVE:-}" ] || rmdir "$TM_FOREIGN_REMOVE" 2>/dev/null',
     'if [ -n "${TM_MOUNT_FAILS:-}" ]; then echo "mount_apfs: volume could not be mounted: Operation not permitted" >&2; exit 1; fi',
@@ -97,11 +102,12 @@ function runHelper(rel: string, destDir: string, name: string, snaps: string[], 
   return { stdout: run.stdout.trim(), status: run.status, stderr: run.stderr, mounts };
 }
 
-/** The mount points a run was handed: exactly one, the helper's own, and it is gone. */
+/** The mount points a run was handed: exactly one, the helper's own, in a folder of its own, and both are gone. */
 function assertOwnMountPointGone(mounts: string[]): void {
   assert.equal(mounts.length, 1, `one mount point for the whole run: ${JSON.stringify(mounts)}`);
-  assert.match(mounts[0], /^\/tmp\/treemap-snap-/);
+  assert.match(mounts[0], /^\/tmp\/treemap-snap-[^/]+\/[^/]+$/, 'the mount point is inside a folder of its own (FG4e, review L7)');
   assert.equal(fs.existsSync(mounts[0]), false, `the trap removed its mount point ${mounts[0]}`);
+  assert.equal(fs.existsSync(path.dirname(mounts[0])), false, `and the folder it was in, ${path.dirname(mounts[0])}`);
 }
 
 /** A name another run's helper could have made, unique to this test. */
@@ -129,6 +135,19 @@ test('restored from an older snapshot because a newer one could not be mounted, 
   assert.equal(status, 0);
   assert.equal(fs.readFileSync(path.join(dest, 'a (recovered).txt'), 'utf8'), 'from snapB');
   assert.deepEqual(fs.readdirSync(dest), ['a (recovered).txt'], 'nothing else left in the folder');
+  assertOwnMountPointGone(mounts);
+});
+
+test('a snapshot is mounted read-only, with no set-id or device files, unseen by Finder, in a folder only the helper can enter', { skip: !onMac }, () => {
+  // FG4e, review L7: a mounted snapshot takes the mount point's place, and with it its permissions;
+  // the folder around it (0700, the running account's — root's, as the helper runs) is what keeps
+  // every other account out of the snapshot while it is mounted. The options are mount(8)'s, which
+  // mount_apfs's own manual lists for its `-s snapshot` form.
+  const seen = path.join(tmp('treemap-helper-seen-'), 'seen.log');
+  fs.writeFileSync(seen, '');
+  const { stdout, mounts } = runHelper('Users/me/a.txt', tmp('treemap-helper-dest-'), 'a.txt', ['snapB'], { env: { TM_MOUNT_SEEN: seen } });
+  assert.equal(stdout, 'FOUND snapB');
+  assert.deepEqual(fs.readFileSync(seen, 'utf8').trim().split('\n'), [`rdonly,nosuid,nodev,nobrowse ${String(UID)}:700`]);
   assertOwnMountPointGone(mounts);
 });
 
