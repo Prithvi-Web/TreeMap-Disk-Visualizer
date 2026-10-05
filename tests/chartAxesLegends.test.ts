@@ -237,3 +237,86 @@ test('D04: with no data a chart says "No data yet." and prints no axis numbers',
     assert.deepEqual(said, ['No data yet.'], `${name}: the empty state is the only text`);
   }
 });
+
+/* ══════════════ D14 / D24 — legend wording ══════════════ */
+
+/** Mount the rings legend and read each row's name span and count span. */
+function ringsLegend(items: Array<Record<string, unknown>>) {
+  const k = loadKit();
+  const legend = makeEl('div');
+  k.fx.rings(k.canvas, legend, { items });
+  return legend.children.map((row: El) => {
+    const nm = row.children.find((c: El) => c.className === 'fx-li-name');
+    const cnt = row.children.find((c: El) => String(c.className).startsWith('fx-li-cnt'));
+    return { name: nm && nm.textContent, title: nm && nm.title, count: cnt && cnt.textContent };
+  });
+}
+
+test('D14: the file-type legend says "1 file", not "1 files"', () => {
+  const rows = ringsLegend([
+    { name: '.dmg', value: 300, count: 1 },
+    { name: '.zip', value: 200, count: 2 },
+    { name: '.mov', value: 100, count: 1234 },
+  ]);
+  assert.deepEqual(rows.map((r) => r.count), ['1 file', '2 files', '1,234 files']);
+});
+
+/** Run the page's real 045 helper `name` with `deps`, plus module-level `prelude`. */
+function run045<T>(name: string, deps: Record<string, unknown>, prelude = ''): T {
+  const start = INDEX.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} is in the built page`);
+  let depth = 0, end = -1;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(...keys, `'use strict'; ${prelude}\n${INDEX.slice(start, end)}\nreturn ${name};`)(...keys.map((k) => deps[k])) as T;
+}
+
+test('D14: Large Folders says "1 file", not "1 files"', () => {
+  const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
+  const render = run045<() => void>('renderBigFolders', {
+    $: () => host,
+    state: { bigFolders: [
+      { name: 'one', path: '/r/one', size: 900, fileCount: 1 },
+      { name: 'two', path: '/r/two', size: 500, fileCount: 2 },
+    ] },
+    escapeHtml: (s: string) => s, chipFor: () => '', formatCount: (n: number) => n.toLocaleString('en-US'),
+    fxBarStyle: () => '', sizeColor: () => '#000', formatBytes: (n: number) => `${n} B`, fxBarsIn() {},
+  });
+  render();
+  const counts = [...host.innerHTML.matchAll(/class="cnt[^"]*"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.deepEqual(counts, ['1 file', '2 files']);
+});
+
+test('D24: the file-type tail reads "Other", with the extensions it stands for in its tooltip', () => {
+  // "873 more" was ellipsized to "873 …" in the legend's narrow name column:
+  // the one row whose name is a number lost the number.
+  let spec: any = null;
+  const legend = { classList: { add() {}, remove() {} }, innerHTML: '' };
+  const types = Array.from({ length: 880 }, (_, i) => ({ ext: 'e' + i, totalSize: 1000 - i, count: 2 }));
+  const render = run045<() => void>('renderDonut', {
+    fxDonutLoadingSync() {},
+    $: () => legend,
+    state: { types },
+    formatCount: (n: number) => n.toLocaleString('en-US'),
+    FxCharts: { rings: (_c: unknown, _l: unknown, s: unknown) => { spec = s; return { update() {}, destroy() {} }; } },
+    Canvas2D: { setup() { throw new Error('the empty branch is not under test'); } },
+  }, 'let donutHandle = null;');
+  render();
+  const tail = spec.items[spec.items.length - 1];
+  assert.equal(tail.name, 'Other', 'a name that fits the column at every width');
+  assert.equal(tail.title, '873 more extensions', 'the count of extensions it stands for is still said — on hover');
+  assert.equal(tail.count, 873 * 2, 'and its file count is in the count column');
+  assert.equal(spec.items.length, 8, 'seven named types and the tail');
+});
+
+test('D24: a legend name carries a tooltip — its own title when given, its full name otherwise', () => {
+  const rows = ringsLegend([
+    { name: 'Other', title: '873 more extensions', value: 100, count: 9 },
+    { name: '.a-very-long-extension', value: 50, count: 1 },
+  ]);
+  assert.deepEqual(rows.map((r) => r.title), ['873 more extensions', '.a-very-long-extension']);
+});

@@ -1478,13 +1478,16 @@ const FxCharts = (() => {
         const nm = document.createElement('span');
         nm.className = 'fx-li-name';
         nm.textContent = it.name; // caller strings → textContent, never HTML
+        // The column ellipsizes, so the whole name — or what the caller says a
+        // short name stands for — is one hover away (QA D24).
+        nm.title = it.title || it.name;
         /* count? in the spec is honored here: the old legend's "N files"
            density survives the kit — muted, between name and track. */
         let cnt = null;
         if (it.count != null) {
           cnt = document.createElement('span');
           cnt.className = 'fx-li-cnt fx-num';
-          cnt.textContent = formatCount(it.count) + ' files';
+          cnt.textContent = formatCount(it.count) + (it.count === 1 ? ' file' : ' files'); // QA D14
           row.classList.add('fx-li-counted');
         }
         const track = document.createElement('span');

@@ -429,7 +429,10 @@ test('the file-types ring accounts for the whole scan, not just its eight bigges
   assert.equal(spec.items.length, 8, 'still eight slices — seven named types and the tail');
 
   const tail = spec.items[spec.items.length - 1];
-  assert.match(tail.name, /13 more/, 'the tail says how many extensions it stands for');
+  // Named "Other" since QA D24 ("873 more" ellipsized to "873 …" in the
+  // legend's name column); how many extensions it stands for is its tooltip.
+  assert.equal(tail.name, 'Other');
+  assert.match(tail.title, /13 more extensions/, 'the tail says how many extensions it stands for');
   assert.equal(tail.value, many.slice(7).reduce((a, t) => a + t.totalSize, 0), 'and carries their bytes');
   assert.equal(tail.count, many.slice(7).reduce((a, t) => a + t.count, 0), 'and their file count');
 
@@ -439,5 +442,5 @@ test('the file-types ring accounts for the whole scan, not just its eight bigges
   ];
   const small = donutSpec(few);
   assert.equal(small.items.length, 2, 'nothing is folded when every type already fits');
-  assert.ok(!small.items.some((it: any) => /more/.test(it.name)), 'and no empty "Other" slice is invented');
+  assert.ok(!small.items.some((it: any) => it.name === 'Other' || /more/.test(it.title || '')), 'and no empty "Other" slice is invented');
 });

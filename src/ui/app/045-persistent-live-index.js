@@ -1459,7 +1459,7 @@ function renderBigFolders() {
         <div class="nm" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
         <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
       </div>
-      <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} files</span>
+      <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} file${f.fileCount === 1 ? '' : 's'}</span>
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
       <span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>
       <span class="size-badge num" style="color:color-mix(in srgb, ${sizeColor(f.size)} 60%, var(--text-1));">${formatBytes(f.size)}</span>
@@ -1516,8 +1516,12 @@ function renderDonut() {
     // that?" per type, and the rings kit renders it when it is provided.
     items: [
       ...top.map(t => ({ name: t.ext === '(none)' ? 'no ext' : '.' + t.ext, value: t.totalSize, count: t.count })),
+      // "Other", not "873 more": the legend's name column ellipsizes, and the
+      // one name made of a number lost the number ("873 …", QA D24). How many
+      // extensions the tail stands for stays said, in the row's tooltip.
       ...(rest.length ? [{
-        name: `${formatCount(rest.length)} more`,
+        name: 'Other',
+        title: `${formatCount(rest.length)} more extension${rest.length === 1 ? '' : 's'}`,
         value: rest.reduce((a, t) => a + t.totalSize, 0),
         count: rest.reduce((a, t) => a + t.count, 0),
       }] : []),
