@@ -14,9 +14,10 @@ import { createApp } from '../src/server';
 import { apiCall as call, settleIndexJob as settle } from './fixtures/indexJobs';
 import { mountTableNaming } from './fixtures/mountTables';
 import { updateSettings } from '../src/services/settings';
-import { setBoundaryDepsForTests } from '../src/utils/mountBoundaries';
+import { neverDescendPaths, setBoundaryDepsForTests, setNeverDescendForTests } from '../src/utils/mountBoundaries';
 import { setWatchImplForTests, type WatchListener } from '../src/platform/watchRegistry';
 import {
+  buildIndex,
   closeIndex,
   deleteIndex,
   findNodeIdByPath,
@@ -196,4 +197,36 @@ test('POST /api/index/watch on a folder built before this process started drops 
       deleteIndex(f.root);
     }
   });
+});
+
+/* ══════════════════ a root on the Data volume ══════════════════ */
+
+/**
+ * The index's watcher leaves out what `exclusionsOf` leaves out, the scanned-root rule's own reading (the SEC-1
+ * review's notes): for a root on macOS's Data volume that includes the fixed folders as that volume spells them,
+ * whatever list the build was handed. The index kept a private copy of the filter that read the list alone. A
+ * test cannot index the Data volume, so it stands in: this file's temp folder by the Data volume's spelling, and
+ * one of its folders added to the fixed list by the root's spelling.
+ */
+test('an index of a folder on the Data volume drops a change in a fixed folder as that volume spells it, though its build was handed the root’s spelling alone', { skip: process.platform !== 'darwin' && 'the Data volume is macOS’s' }, async (t) => {
+  const f = tree();
+  const DATA = '/System/Volumes/Data';
+  const onData = DATA + f.root;
+  if (!fs.existsSync(onData)) return t.skip(`${onData} is not this temp folder's Data-volume spelling here`);
+  const watches = fakeWatches(t);
+  setNeverDescendForTests([f.other]);
+  try {
+    const built = await buildIndex(onData, { neverDescend: neverDescendPaths() });
+    assert.equal(built.live, true, 'the build attached its watcher');
+    const speak = watches.get(onData) ?? assert.fail('a watch on the folder itself');
+    fs.writeFileSync(path.join(f.other, 'new-in-the-fixed-folder.bin'), 'n'.repeat(4096));
+    fs.writeFileSync(path.join(f.mnt, 'new-here.bin'), 'h'.repeat(2048));
+    speak('rename', 'other/new-in-the-fixed-folder.bin');
+    speak('rename', 'mnt/new-here.bin');
+    await waitFor(() => idOf(onData, `${DATA}${f.mnt}/new-here.bin`) !== null, 'the change elsewhere reaching the index');
+    assert.equal(idOf(onData, `${DATA}${f.other}/new-in-the-fixed-folder.bin`), null, 'the change in the fixed folder, as the Data volume spells it, was dropped');
+  } finally {
+    setNeverDescendForTests(null);
+    deleteIndex(onData);
+  }
 });

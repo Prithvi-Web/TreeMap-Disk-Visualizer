@@ -621,7 +621,7 @@ export function mountOutcome(record: ScanBoundaryRecord): MountOutcome {
  * only the drives the table named when the scan started were refused — none
  * at all when the table could not be read.
  */
-export function exclusionsOf(record: ScanBoundary | undefined, root: string, platform: NodeJS.Platform = process.platform): string[] {
+export function exclusionsOf(record: Pick<ScanBoundary, 'neverDescend' | 'fixed'> | undefined, root: string, platform: NodeJS.Platform = process.platform): string[] {
   const list = record ? record.neverDescend : neverDescendPaths(platform);
   const onData = dataSpellingOf(record ? record.fixed : neverDescendPaths(platform), root, platform);
   return [...new Set([...list, ...onData])].filter((p) => isStrictlyUnder(root, p));

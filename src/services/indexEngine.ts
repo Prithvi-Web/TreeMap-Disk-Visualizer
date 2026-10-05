@@ -5,7 +5,7 @@ import { appDataDir } from './storage';
 import { trackWrite } from '../utils/backgroundWrites';
 import { isEphemeral } from './portableMode';
 import { platform } from '../platform';
-import { isAtOrUnder, isStrictlyUnder, neverDescend, neverDescendPaths } from '../utils/mountBoundaries';
+import { exclusionsOf, isAtOrUnder, neverDescend, neverDescendPaths } from '../utils/mountBoundaries';
 // `escapeLike` guards the one LIKE query left (the substring search): `_` and
 // `%` are LIKE wildcards, and a real filename containing either must not
 // become a pattern. Since v3, deletes and scopes work on node ids, so no
@@ -1231,7 +1231,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       reclaimLater(handle, replaced);
     }
     // What this index leaves out, for its watcher, whenever it is started.
-    rootExclusions.set(rootId, exclusionsUnder(root, opts.neverDescend ?? neverDescendPaths()));
+    rootExclusions.set(rootId, exclusionsUnder(root, opts.neverDescend));
 
     opts.onProgress?.({ phase: 'done', processed: written, currentPath: root });
     if (opts.live !== false) startWatcher(root);
@@ -1506,9 +1506,14 @@ const watchers = new Map<string, Unsubscribe>();
  */
 const rootExclusions = new Map<number, readonly string[]>();
 
-/** The paths of `list` strictly beneath `rootPath` (`exclusionsOf`, for a list rather than a scan's record). */
-function exclusionsUnder(rootPath: string, list: readonly string[]): string[] {
-  return list.filter((p) => isStrictlyUnder(rootPath, p));
+/**
+ * What an index of `rootPath` leaves out beneath it: `exclusionsOf`, the scanned-root rule's own reading, over
+ * the list its build was handed, else the fixed list — so a root on macOS's Data volume also leaves out the fixed
+ * folders as that volume spells them, whatever the list (the SEC-1 review's notes: a private copy of the filter
+ * read the list alone).
+ */
+function exclusionsUnder(rootPath: string, list: readonly string[] | undefined): string[] {
+  return exclusionsOf(list === undefined ? undefined : { neverDescend: [...list], fixed: neverDescendPaths() }, rootPath);
 }
 
 /** How a root's watcher is named in the watch registry, so its own watches can be told from the rest. */
@@ -1814,7 +1819,7 @@ export function startWatcher(rootPath: string, neverDescendList?: readonly strin
     .prepare('SELECT r.id, n.is_dir FROM roots r LEFT JOIN nodes n ON n.root_id = r.id AND n.parent_id IS NULL WHERE r.path = ?')
     .get(rootPath) as { id: number; is_dir: number | null } | undefined;
   if (indexedAsLeaf(row)) return false;
-  const excluded = (row ? rootExclusions.get(row.id) : undefined) ?? exclusionsUnder(rootPath, neverDescendList ?? neverDescendPaths());
+  const excluded = (row ? rootExclusions.get(row.id) : undefined) ?? exclusionsUnder(rootPath, neverDescendList);
   try {
     const unsubscribe = platform().subscribeToChanges(
       rootPath,
