@@ -23,7 +23,7 @@ import {
 import type { LogicalVolumeInfo, VolumeTopology } from '../src/platform/types';
 import { mapLsblk } from '../src/platform/linux/topology';
 import type { ScanResult } from '../src/models/types';
-import { groupZombies } from '../src/services/zombieHandles';
+import { groupZombies, RESTART_REFUSES } from '../src/services/zombieHandles';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { startScan } from '../src/services/diskScanner';
@@ -668,6 +668,8 @@ test('held space counts each held file once and names how many programs hold the
   assert.ok(line.notes.some((n) => /3 programs/.test(n)), `how many programs hold them is stated (notes: ${line.notes.join(' | ')})`);
   assert.ok(line.notes.some((n) => /counted once/.test(n)), 'and that a shared file is counted once');
   assertBalances(s);
+  // QA D40: the remedy's safety claim is the restart code's own sentence, so the two cannot drift.
+  assert.ok(line.remedy?.caveat.includes(RESTART_REFUSES), `the caveat quotes what restart refuses (got: ${line.remedy?.caveat ?? ''})`);
 });
 
 /* ═══════ 8. The route turns an unreadable layout into an honest state ═══════ */

@@ -3,7 +3,7 @@ import { promises as fsp } from 'fs';
 import { platform } from '../platform';
 import { wholeDiskOf } from '../platform/macos/diskutil';
 import { ELEVATE_HOW, getSnapshotAccounting } from './snapshotAccounting';
-import { groupZombies } from './zombieHandles';
+import { groupZombies, RESTART_REFUSES } from './zombieHandles';
 import { storeOf } from './scanStore';
 import { boundaryReport } from './boundaryReport';
 import { formatBytes } from '../utils/formatBytes';
@@ -645,7 +645,8 @@ async function openHandleLine(sources: StatementSources): Promise<StatementLine>
     action: 'review-open-handles',
     label: 'See what is holding it',
     caveat:
-      'TreeMap only asks a program to quit. It refuses system processes, itself and its own parent, and a program that declines is reported as still running rather than force-killed.',
+      // The restart's own sentence (QA D40: this used to claim refusals the code did not make).
+      `TreeMap only asks a program to quit. It refuses ${RESTART_REFUSES}, and a program that declines is reported as still running rather than force-killed.`,
   };
   try {
     const report = await sources.zombies();

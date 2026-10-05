@@ -2708,7 +2708,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         'The held-space report',
         obj(
           {
-            processes: opaque('per-process groups: pid, processName, appBundle, bytes, unknownSizeCount, handles[] (path, bytes, holders)'),
+            processes: opaque('per-process groups: pid, processName, appBundle, restartable, restartRefusal, bytes, unknownSizeCount, handles[] (path, bytes, holders)'),
             totalBytes: int('Known held bytes, each deleted file counted once however many processes hold it — a floor, not an estimate'),
             unknownSizeCount: int('Held files whose size could not be read, each counted once'),
             fileCount: int('Distinct deleted files held open'),
@@ -2751,7 +2751,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           ['pid', 'processName', 'terminated', 'relaunched', 'message'],
         ),
       ),
-      '400': errorResponse('PID_INVALID / PROCESS_NAME_REQUIRED / PID_IS_TREEMAP'),
+      '400': errorResponse('PID_INVALID / PROCESS_NAME_REQUIRED / PID_IS_TREEMAP / PID_SYSTEM (part of the operating system, or run as root) / PID_OTHER_USER / RESTART_UNSUPPORTED'),
       '409': errorResponse('CAPABILITY_UNAVAILABLE / PID_REUSED / PID_UNVERIFIED / TERMINATE_REFUSED'),
     },
   },

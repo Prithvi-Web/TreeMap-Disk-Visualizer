@@ -89,6 +89,12 @@ function renderZombies(report) {
     const bar = p.bytes > 0 && maxHeld > 0
       ? `<span class="fx-bar-track"><span class="fx-bar-fill" data-w="${Math.max(3, (p.bytes / maxHeld) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></span></span>`
       : '';
+    // The server decides who may be restarted (QA D40): a program that is
+    // part of the system, root's or another user's gets no button, and the
+    // row says why instead.
+    const action = p.restartable
+      ? `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ''}">Restart</button>`
+      : `<span class="zh-locked" title="TreeMap does not restart this program">${escapeHtml(p.restartRefusal || 'Not restartable')}</span>`;
     // The process id is a fact nobody needs to decide anything — the Restart
     // button already targets the process — so it lives in the row's title
     // for the curious, not beside the name.
@@ -96,7 +102,7 @@ function renderZombies(report) {
       `<span class="nm">${escapeHtml(p.processName)}</span>` +
       bar +
       `<b class="sz num">${held}</b>` +
-      `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ''}">Restart</button>` +
+      action +
       `</div>`;
   }).join('');
 

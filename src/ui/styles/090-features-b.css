@@ -236,6 +236,8 @@
   #zombieBody .fx-bar-track + .sz { margin-left: auto; }
 }
 #zombieBody .zh-note { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+/* In place of Restart, for a program TreeMap will not ask to quit (QA D40). */
+#zombieBody .zh-row .zh-locked { flex: none; font-size: 11px; color: var(--text-3); }
 
 .cloud-row { border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 8px 10px; margin-bottom: 8px; }
 #cloudRedirectUri { font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }

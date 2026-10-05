@@ -629,6 +629,8 @@ Also available:
   with the honest reason on Windows. `POST /api/zombie-handles/restart`
   (destructive, in the manifest's pinned list) asks one holder to quit —
   SIGTERM only, identity-checked against pid reuse, never TreeMap itself,
+  never a program that is part of the operating system or run by root or
+  another user (QA D40; `restartable: false` with the reason in the report),
   never escalated to SIGKILL — and reopens it where that is genuinely
   supported (a macOS `.app`, via `open`, after the exit is confirmed).
 

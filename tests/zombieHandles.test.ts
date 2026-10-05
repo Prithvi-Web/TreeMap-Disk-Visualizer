@@ -12,7 +12,9 @@ import { withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('tm-b5-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { groupZombies, appBundleOf, zombieReport, restartProcess, executablePathsOf, PS_PIDS_PER_CALL } from '../src/services/zombieHandles';
+import {
+  groupZombies, appBundleOf, zombieReport, restartProcess, executablePathsOf, PS_PIDS_PER_CALL, restartRefusal, RESTART_REFUSES,
+} from '../src/services/zombieHandles';
 import { AppError } from '../src/middleware/errorHandler';
 import { runText, CommandFailedError } from '../src/platform/exec';
 import { createApp } from '../src/server';
@@ -132,17 +134,23 @@ type Call = { cmd: string; args: string[] };
 /** The pids one recorded `ps` call asked about. */
 const pidsAskedIn = (call: Call): number[] => call.args[call.args.indexOf('-p') + 1].split(',').map(Number);
 
+/** The uid the fake `ps` reports unless told otherwise, and the one the report is told is TreeMap's. */
+const OUR_UID = 501;
+
 /**
- * A stand-in for `ps -ww -o pid=,comm= -p <pids>`: answers the way macOS's
- * does (the pid right-aligned, one space, then the whole path), for the pids
- * it knows, and records every call.
+ * A stand-in for `ps -ww -o pid=,uid=,comm= -p <pids>`: answers the way macOS's
+ * does (pid and uid right-aligned, one space, then the whole path), for the
+ * pids it knows, and records every call. `uids` overrides the owner per pid.
  */
-function fakePs(paths: ReadonlyMap<number, string>) {
+function fakePs(paths: ReadonlyMap<number, string>, uids: ReadonlyMap<number, number> = new Map()) {
   const calls: Call[] = [];
   const run = async (cmd: string, args: string[]): Promise<string> => {
     const call = { cmd, args };
     calls.push(call);
-    return pidsAskedIn(call).filter((pid) => paths.has(pid)).map((pid) => `${String(pid).padStart(5)} ${paths.get(pid)}\n`).join('');
+    return pidsAskedIn(call)
+      .filter((pid) => paths.has(pid))
+      .map((pid) => `${String(pid).padStart(5)} ${String(uids.get(pid) ?? OUR_UID).padStart(5)} ${paths.get(pid)}\n`)
+      .join('');
   };
   return { run, calls };
 }
@@ -157,7 +165,7 @@ test('fifty processes holding space cost exactly one ps, and each gets its own a
   const report = await zombieReport({ handles: heldBy(pids), run: ps.run, os: 'darwin' });
   assert.equal(ps.calls.length, 1, 'one ps for the whole report, not one per process');
   assert.equal(ps.calls[0].cmd, 'ps');
-  assert.deepEqual(ps.calls[0].args, ['-ww', '-o', 'pid=,comm=', '-p', pids.join(',')], 'every pid asked about in that one call, at full width');
+  assert.deepEqual(ps.calls[0].args, ['-ww', '-o', 'pid=,uid=,comm=', '-p', pids.join(',')], 'every pid asked about in that one call, at full width');
   assert.equal(report.processes.length, 50, 'every holder is still listed');
   const bundle = (pid: number) => report.processes.find((p) => p.pid === pid)?.appBundle;
   assert.equal(bundle(1003), '/Applications/My App.app', 'a path with spaces is read whole, not cut at its first space');
@@ -235,6 +243,115 @@ test('the real ps answers the batched form: this process by its executable, an e
   assert.ok(typeof mine === 'string' && mine.length > 0, `ps named this process (got ${String(mine)})`);
   assert.equal(path.basename(mine), NODE_NAME, 'by its executable');
   assert.equal(paths.get(gone.pid!), null, 'an exited process is unknown');
+});
+
+/* ══════════════════ QA D40 — never a program that is part of the system ══════════════════ */
+
+test('restartRefusal: the operating system\u2019s own programs, root and other users are refused (QA D40)', () => {
+  const refuse = (executable: string | null, os: NodeJS.Platform, uid: number | null = OUR_UID) =>
+    restartRefusal({ executable, uid }, os, OUR_UID);
+  // QA's list, at the paths macOS runs them from: each was offered Restart (SIGTERM).
+  for (const exe of [
+    '/System/Library/PrivateFrameworks/Chrono.framework/Support/chronod',
+    '/System/Library/Frameworks/FileProvider.framework/Support/fileproviderd',
+    '/System/Library/CoreServices/WallpaperAgent.app/Contents/MacOS/WallpaperAgent',
+    '/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder',
+    '/usr/libexec/linkd', '/usr/sbin/cfprefsd', '/sbin/launchd', '/usr/bin/vim', '/bin/zsh', '/Library/Apple/usr/libexec/x',
+  ]) {
+    const r = refuse(exe, 'darwin');
+    assert.equal(r?.code, 'PID_SYSTEM', `${exe} is part of macOS`);
+    assert.match(r?.reason ?? '', /part of macOS/i, `${exe}: and the reason says so`);
+  }
+  // A person's own programs, Apple's apps included, stay restartable.
+  for (const exe of [
+    '/Applications/Docker.app/Contents/MacOS/Docker',
+    '/System/Applications/Mail.app/Contents/MacOS/Mail',
+    '/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal',
+    '/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app/Contents/MacOS/Safari',
+    '/usr/local/bin/node',
+    '/Users/me/bin/tool',
+  ]) {
+    assert.equal(refuse(exe, 'darwin'), null, `${exe} is a program a person runs`);
+  }
+  const app = '/Applications/Docker.app/Contents/MacOS/Docker';
+  assert.equal(refuse(app, 'darwin', 0)?.code, 'PID_SYSTEM', 'a program run as root is refused wherever it lives');
+  assert.match(refuse(app, 'darwin', 0)?.reason ?? '', /administrator/i, 'and says who runs it');
+  assert.equal(refuse(app, 'darwin', OUR_UID + 1)?.code, 'PID_OTHER_USER', 'another user\u2019s program is refused');
+  assert.equal(refuse(app, 'darwin', null)?.code, 'PID_UNVERIFIED', 'an owner TreeMap could not read is refused, not assumed');
+  assert.equal(refuse(null, 'darwin')?.code, 'PID_UNVERIFIED', 'and so is a program TreeMap could not locate');
+  // Linux: the same rule over the executable /proc names.
+  for (const exe of ['/usr/lib/systemd/systemd', '/usr/libexec/gvfsd', '/usr/bin/pipewire', '/sbin/init', '/lib/systemd/systemd-logind']) {
+    assert.equal(refuse(exe, 'linux')?.code, 'PID_SYSTEM', `${exe} is part of the operating system`);
+  }
+  for (const exe of ['/opt/google/chrome/chrome', '/home/me/.local/bin/tool', '/usr/local/bin/node', '/snap/firefox/123/usr/lib/firefox/firefox']) {
+    assert.equal(refuse(exe, 'linux'), null, `${exe} is a program a person runs`);
+  }
+  assert.ok(refuse('C:\\Program Files\\App\\app.exe', 'win32'), 'and nowhere else is a restart carried out');
+});
+
+/**
+ * A pid no process can ever have: macOS caps pids below 100,000 and Linux at
+ * 4,194,304. The refusal tests name it so that no signal can reach any process,
+ * even if a refusal were broken (a mutant), since nothing can be alive there.
+ */
+const IMPOSSIBLE_PID = 2 ** 30;
+
+test('restart refuses a system program, root\u2019s or another user\u2019s, before any signal (QA D40)', async () => {
+  const cases: Array<[string, number, string]> = [
+    ['/usr/libexec/chronod', OUR_UID, 'PID_SYSTEM'],
+    ['/System/Library/PrivateFrameworks/Chrono.framework/Support/chronod', OUR_UID, 'PID_SYSTEM'],
+    ['/Applications/Thing.app/Contents/MacOS/chronod', 0, 'PID_SYSTEM'],
+    ['/Applications/Thing.app/Contents/MacOS/chronod', OUR_UID + 1, 'PID_OTHER_USER'],
+  ];
+  for (const [exe, uid, code] of cases) {
+    const ps = fakePs(new Map([[IMPOSSIBLE_PID, exe]]), new Map([[IMPOSSIBLE_PID, uid]]));
+    assert.equal(
+      await appErrorCode(() => restartProcess(IMPOSSIBLE_PID, 'chronod', 800, ps.run, { os: 'darwin', uid: OUR_UID })),
+      code,
+      `${exe} run by uid ${String(uid)} is refused`,
+    );
+  }
+  // Linux's ps names a process by its 15-character comm, so the system check reads
+  // the executable from /proc instead.
+  const linuxPs = fakePs(new Map([[IMPOSSIBLE_PID, 'systemd']]));
+  assert.equal(
+    await appErrorCode(() => restartProcess(IMPOSSIBLE_PID, 'systemd', 800, linuxPs.run, {
+      os: 'linux', uid: OUR_UID, procFacts: async () => ({ executable: '/usr/lib/systemd/systemd', uid: OUR_UID }),
+    })),
+    'PID_SYSTEM',
+    'on Linux the executable /proc names decides',
+  );
+  // The control: a person's own program passes every check and only then finds the
+  // process gone — the refusals are not a blanket "no".
+  const own = fakePs(new Map([[IMPOSSIBLE_PID, '/Applications/Thing.app/Contents/MacOS/Thing']]));
+  const result = await restartProcess(IMPOSSIBLE_PID, 'Thing', 800, own.run, { os: 'darwin', uid: OUR_UID });
+  assert.match(result.message, /already quit/, 'a program of the person\u2019s own is not refused');
+});
+
+test('the report marks programs that cannot be restarted, and says why (QA D40)', async () => {
+  const ps = fakePs(new Map([[1001, '/usr/libexec/chronod'], [1002, '/Applications/My App.app/Contents/MacOS/My App']]));
+  const report = await zombieReport({ handles: heldBy([1001, 1002, 1003]), run: ps.run, os: 'darwin', uid: OUR_UID });
+  const proc = (pid: number) => report.processes.find((p) => p.pid === pid);
+  assert.equal(proc(1001)?.restartable, false, 'chronod is part of macOS');
+  assert.match(proc(1001)?.restartRefusal ?? '', /part of macOS/i, 'and the report says so');
+  assert.equal(proc(1002)?.restartable, true, 'a person\u2019s own app can be restarted');
+  assert.equal(proc(1002)?.restartRefusal, null, 'with nothing to explain');
+  assert.equal(proc(1003)?.restartable, false, 'a program ps could not name is not offered a restart');
+  assert.match(proc(1003)?.restartRefusal ?? '', /could not confirm/i);
+  assert.equal(ps.calls.length, 1, 'still one ps for the whole report');
+
+  // Linux reads the executable and owner from /proc, with no ps at all.
+  let asked = 0;
+  const onLinux = await zombieReport({
+    handles: heldBy([2001, 2002]),
+    run: async () => { asked++; return ''; },
+    os: 'linux',
+    uid: OUR_UID,
+    procFacts: async (pid) => ({ executable: pid === 2001 ? '/usr/lib/systemd/systemd' : '/opt/app/bin/app', uid: OUR_UID }),
+  });
+  assert.equal(onLinux.processes.find((p) => p.pid === 2001)?.restartable, false, 'systemd is part of the operating system');
+  assert.equal(onLinux.processes.find((p) => p.pid === 2002)?.restartable, true, 'an app under /opt is not');
+  assert.equal(asked, 0, 'and no ps was run on Linux');
 });
 
 /* ══════════════════ The acceptance criterion (unix) ══════════════════ */
@@ -534,4 +651,26 @@ test('the held-up space card counts a shared file once and says so (QA D17)', ()
   assert.match(html, /600 B held by 3 programs/, 'the headline is the file once, held by three programs');
   assert.match(html, /open in more than one program/, 'and the card says a shared file is counted once');
   assert.doesNotMatch(html, /1200 B|1800 B/, 'no figure on the card adds the shared file up per program');
+});
+
+test('the card offers Restart only where the server allows it, and says why not elsewhere (QA D40)', () => {
+  const row = (pid: number, name: string, restartable: boolean, restartRefusal: string | null) => ({
+    pid, processName: name, appBundle: null, bytes: 100, unknownSizeCount: 0, restartable, restartRefusal,
+    handles: [{ path: `/tmp/${name}`, bytes: 100, holders: 1 }],
+  });
+  const html = paintZombies({
+    processes: [row(1, 'MyApp', true, null), row(2, 'chronod', false, 'Part of macOS')],
+    totalBytes: 200, unknownSizeCount: 0, fileCount: 2, sharedFileCount: 0, scannedAt: 0,
+  });
+  const rows = html.split('<div class="zh-row"').slice(1);
+  assert.equal(rows.length, 2, 'both holders are listed');
+  assert.match(rows[0], /data-zh-restart="0"/, 'a person’s own program keeps its Restart button');
+  assert.doesNotMatch(rows[1], /data-zh-restart/, 'a system program is never offered one');
+  assert.match(rows[1], /Part of macOS/, 'and the row says why');
+});
+
+test('the restart refusals are stated in one sentence the Missing GB page quotes (QA D40)', () => {
+  for (const kind of [/part of the operating system/, /system administrator/, /another user/, /TreeMap itself/, /its own parent/]) {
+    assert.match(RESTART_REFUSES, kind, `the sentence names every refusal restartProcess makes (${String(kind)})`);
+  }
 });
