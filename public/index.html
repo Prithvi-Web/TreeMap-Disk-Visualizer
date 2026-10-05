@@ -30366,6 +30366,28 @@ function closeDupeViewer() {
   document.removeEventListener('keydown', dupeViewerKeys);
 }
 
+/**
+ * A copy's image facts on its card: its dimensions and capture date, or why
+ * each is absent. A reason both share — a text file is "not an image" twice
+ * over — is said once (QA D50).
+ */
+function dupeImageFacts(f) {
+  const dims = f.width != null ? `${f.width} × ${f.height}` : null;
+  const dimsWhy = f.dimensionsReason || 'not an image';
+  if (!dims && !f.captureDate && dimsWhy === f.captureDateReason) {
+    return `<div><span class="dv-absent">${escapeHtml(dimsWhy)}</span></div>`;
+  }
+  return `<div>${dims ? `<span class="num">${dims}</span>` : `<span class="dv-absent">${escapeHtml(f.dimensionsReason || 'not an image')}</span>`}</div>
+        <div>${(() => {
+          if (!f.captureDate) return `<span class="dv-absent">${escapeHtml(f.captureDateReason || 'no capture date recorded')}</span>`;
+          // The server sends EXIF wall-clock time as a timezone-less string;
+          // Date.parse reads it as local time, which is what a camera's
+          // wall clock means. Fed raw to formatDate it threw (review RD1).
+          const ms = Date.parse(f.captureDate);
+          return `<span class="num">taken ${Number.isFinite(ms) ? formatDate(ms) : escapeHtml(f.captureDate)}</span>`;
+        })()}</div>`;
+}
+
 function renderDupeViewer() {
   const d = dupeViewer.data;
   const list = dupeViewerList();
@@ -30384,7 +30406,6 @@ function renderDupeViewer() {
     (dupeViewer.totalCopies > d.files.length
       ? ` · <span class="dv-absent">comparing the first ${d.files.length} of ${dupeViewer.totalCopies} copies — the rest are not staged from here</span>` : '');
   $('dupeViewerPanes').innerHTML = d.files.map((f, i) => {
-    const dims = f.width != null ? `${f.width} × ${f.height}` : null;
     const blocks = f.visualDiff && i !== ref
       ? `<div class="dv-diff" aria-hidden="true">${f.visualDiff.differingBlocks.map((b) =>
           `<i style="left:${(b % 8) * 12.5}%;top:${Math.floor(b / 8) * 12.5}%"></i>`).join('')}</div>`
@@ -30408,15 +30429,7 @@ function renderDupeViewer() {
         </div>
         ${keep ? `<div class="dv-keepwhy">${escapeHtml(why)}</div>` : ''}
         <div class="num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
-        <div>${dims ? `<span class="num">${dims}</span>` : `<span class="dv-absent">${escapeHtml(f.dimensionsReason || 'not an image')}</span>`}</div>
-        <div>${(() => {
-          if (!f.captureDate) return `<span class="dv-absent">${escapeHtml(f.captureDateReason || 'no capture date recorded')}</span>`;
-          // The server sends EXIF wall-clock time as a timezone-less string;
-          // Date.parse reads it as local time, which is what a camera's
-          // wall clock means. Fed raw to formatDate it threw (review RD1).
-          const ms = Date.parse(f.captureDate);
-          return `<span class="num">taken ${Number.isFinite(ms) ? formatDate(ms) : escapeHtml(f.captureDate)}</span>`;
-        })()}</div>
+        ${dupeImageFacts(f)}
         ${f.visualDiff && i !== ref ? `<div class="dv-absent num">${dupeSimilarity(f.visualDiff.hammingDistance)}</div>` : ''}
         <div class="dv-absent" title="${escapeHtml(f.path)}" style="word-break:break-all;">${escapeHtml(f.path)}</div>
         <button class="pill" data-dv-keep="${i}">Keep this one</button>

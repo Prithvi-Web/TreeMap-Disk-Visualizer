@@ -13,6 +13,7 @@ import { createScanRecord } from '../src/services/diskScanner';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { recommendKeep, diffBlocks, diffSummary, parseExifCaptureDate } from '../src/services/dupeViewer';
 import { FileNode } from '../src/models/types';
+import { lift } from './fixtures/liftFrontend';
 
 /**
  * The duplicate viewer's facts (§8.2). Two rules govern every assertion here:
@@ -91,6 +92,18 @@ test('recommendKeep is honest about a dead tie', () => {
   ]);
   assert.equal(r.index, 0);
   assert.match(r.reason, /same age and size/);
+});
+
+test('recommendKeep never calls one of several same-size copies "also the largest" (QA D50)', () => {
+  // Content-identical copies are always the same size: "it is also the largest" was true of every one.
+  const r = recommendKeep([
+    { size: 100, modifiedAt: 1_000 },
+    { size: 100, modifiedAt: 3_000 },
+    { size: 100, modifiedAt: 2_000 },
+  ]);
+  assert.equal(r.index, 1);
+  assert.doesNotMatch(r.reason, /largest/i);
+  assert.match(r.reason, /the copies are the same size/);
 });
 
 test('recommendKeep keeps the non-empty copy when the newest is empty', () => {
@@ -473,4 +486,36 @@ test('an unknown scanId is a 404', async () => {
   } finally {
     await s.close();
   }
+});
+
+test('same-size copies are none of them "largest", and copies of one age none of them "newest" (QA D50)', async () => {
+  const s = await listen(false);
+  try {
+    // new.txt and we,ird.txt: 5 bytes each, modified at 2,000 and 3,000.
+    const r = await get(s.port, detailUrl(s.scanId, [NEW_TXT, COMMA_TXT]));
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.files.map((f: { largest: boolean }) => f.largest), [false, false], 'every copy was tagged "largest"');
+    assert.deepEqual(r.body.files.map((f: { newest: boolean }) => f.newest), [false, true]);
+    assert.doesNotMatch(r.body.recommendedKeep.reason, /also the largest/);
+    // we,ird.txt and big.txt: both modified at 3,000, sizes differ.
+    const t = await get(s.port, detailUrl(s.scanId, [COMMA_TXT, BIG_TXT]));
+    assert.equal(t.status, 200);
+    assert.deepEqual(t.body.files.map((f: { newest: boolean }) => f.newest), [false, false], 'copies of one age: none is "newest"');
+    assert.deepEqual(t.body.files.map((f: { largest: boolean }) => f.largest), [false, true]);
+  } finally {
+    await s.close();
+  }
+});
+
+test('a card says a reason both image facts share once, not twice (QA D50)', () => {
+  const facts = lift<(f: Record<string, unknown>) => string>(['dupeImageFacts', 'escapeHtml', 'formatDate'], 'dupeImageFacts');
+  const times = (html: string, s: string): number => html.split(s).length - 1;
+  const text = facts({ width: null, height: null, dimensionsReason: 'not an image', captureDate: null, captureDateReason: 'not an image' });
+  assert.equal(times(text, 'not an image'), 1, `"not an image" printed ${times(text, 'not an image')} times: ${text}`);
+  const image = facts({ width: 32, height: 24, dimensionsReason: null, captureDate: null, captureDateReason: 'no capture date recorded' });
+  assert.match(image, /32 × 24/);
+  assert.equal(times(image, 'no capture date recorded'), 1);
+  const two = facts({ width: null, height: null, dimensionsReason: 'cannot be decoded', captureDate: null, captureDateReason: 'needs the image library' });
+  assert.equal(times(two, 'cannot be decoded'), 1, 'different reasons are both said');
+  assert.equal(times(two, 'needs the image library'), 1, 'the capture-date reason is said too');
 });

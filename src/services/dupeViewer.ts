@@ -85,6 +85,10 @@ export function recommendKeep(files: { size: number; modifiedAt: number }[]): Ke
       reason: `Keep the newest copy — an older file is ${pct}% larger, but not by more than the 10% margin that would suggest a larger original.`,
     };
   }
+  // Content-identical copies are always the same size: "also the largest" was true of every one (QA D50).
+  if (files.every((f) => f.size === n.size)) {
+    return { index: newest, reason: 'Keep the newest copy — the copies are the same size.' };
+  }
   return { index: newest, reason: 'Keep the newest copy — it is also the largest.' };
 }
 
@@ -234,6 +238,8 @@ export async function buildDuplicateDetail(scanId: string, store: ScanStore, ids
   const recommendedKeep = recommendKeep(meta);
   const maxMtime = Math.max(...meta.map((f) => f.modifiedAt));
   const maxSize = Math.max(...meta.map((f) => f.size));
+  const sameAge = meta.every((f) => f.modifiedAt === maxMtime);
+  const sameSize = meta.every((f) => f.size === maxSize);
 
   // Which images must not be opened, and why. The scan's flags settle a
   // placeholder or a link; every other image is asked about once, as one
@@ -348,8 +354,10 @@ export async function buildDuplicateDetail(scanId: string, store: ScanStore, ids
       path: f.path,
       size: f.size,
       modifiedAt: f.modifiedAt,
-      newest: f.modifiedAt === maxMtime,
-      largest: f.size === maxSize,
+      // A tag that every copy wears says nothing: identical copies are all
+      // the same size, so each one was tagged "largest" (QA D50).
+      newest: !sameAge && f.modifiedAt === maxMtime,
+      largest: !sameSize && f.size === maxSize,
       isImage: !!f.ext && IMAGE_EXT.has(f.ext),
       width: x.width,
       height: x.height,
