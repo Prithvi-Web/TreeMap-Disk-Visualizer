@@ -259,25 +259,46 @@ async function openBrowse(start, onPick = null, title = null) {
   chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
   await browseTo(start || state.system?.homeDir || '/');
 }
+/** Ordinary folders first, dot-folders after them, each in the server's order
+    (QA D05: in a home folder .agents, .cache… pushed Documents below the fold). */
+function browseOrder(dirs) {
+  return [...dirs.filter((d) => !d.isHidden), ...dirs.filter((d) => d.isHidden)];
+}
+/** List a folder in the picker. True when it opened; a failure is a toast and
+    leaves the picker where it was. */
 async function browseTo(path) {
   try {
     const data = await api('/api/fs/list?path=' + encodeURIComponent(path));
     browsePath = data.path;
-    $('browseCurrent').textContent = data.path;
+    $('browseCurrent').value = data.path;
     const list = $('browseList');
     const rows = [];
     if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
-    rows.push(...data.dirs.map(d =>
+    rows.push(...browseOrder(data.dirs).map(d =>
       `<button class="browse-item" data-p="${escapeHtml(d.path)}" aria-label="Open ${escapeHtml(d.name)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
     list.innerHTML = rows.join('') || '<div class="muted" style="padding:14px;">No subfolders.</div>';
     list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
+    return true;
   } catch (e) {
     toast(e.message, 'error');
+    return false;
   }
 }
 $('browseBtn').addEventListener('click', () => openBrowse($('pathInput').value.trim() || null));
 $('emptyBrowseBtn').addEventListener('click', () => openBrowse(null));
-$('browseUseBtn').addEventListener('click', () => {
+// The path line is the picker's typing route (QA D05) — before the first scan
+// the Scan card's path box is not on screen, so this sheet is the only door.
+$('browseCurrent').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const typed = $('browseCurrent').value.trim();
+  if (typed) return browseTo(typed);
+});
+$('browseUseBtn').addEventListener('click', async () => {
+  // A path typed but not opened yet is opened first, and acted on only if it
+  // opened: the folder shown before it is never scanned in its place.
+  const typed = $('browseCurrent').value.trim();
+  if (typed && typed !== browsePath && !(await browseTo(typed))) return;
   const pick = browseOnPick;
   browseOnPick = null;
   closeModal('browseModal');
