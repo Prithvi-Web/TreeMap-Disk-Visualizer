@@ -2031,7 +2031,13 @@ export async function startCapsuleRestore(entryIds: string[], options: RestoreOp
     const refused = recordRefusal(entry);
     if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
     const place = restorePlaceOf(entry);
-    const occupied = await fsp.lstat(place).then(() => true).catch(() => false);
+    // Only "nothing is there" is free (FG3f #5): a look that failed for another reason (EACCES, EIO)
+    // says nothing either way, and was read as an empty place.
+    const occupied = await fsp.lstat(place).then(() => true, (err: unknown) => {
+      if (meansAbsent(err)) return false;
+      throw new AppError(409, 'PATH_UNREADABLE',
+        `TreeMap could not look at ${place} (${describeFsError(err)}), so it cannot tell whether something stands there, and a restore never writes over what is there. Nothing was restored.`);
+    });
     if (occupied) {
       throw new AppError(409, 'PATH_OCCUPIED',
         `Something already exists at ${place}. Move it aside first — restoring will never overwrite what is there now.`);
@@ -2165,19 +2171,38 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
     }
   };
 
+  // A folder of the item, made by this restore and never one already there (FG3f #5): `mkdir -p`
+  // went on without a word into a folder that had appeared since the restore began, or through a
+  // link to one, wrote the item into it, and recorded it as made here — so a later failure removed it.
+  const makeOwnFolder = async (dir: string): Promise<void> => {
+    try {
+      await fsp.mkdir(dir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      throw new Error(`Something appeared at ${dir} since this restore began (or the volume reads its name as one this restore already used), ` +
+        'and a restore never writes into or over what is there, so it stopped.');
+    }
+    dirsCreatedByThisRestore.push(dir);
+  };
+  // The folder a member inside the item is written into must still be a plain folder (FG3f #5): this
+  // restore made it, and a link put in its place since would take the member somewhere else.
+  const assertPlainFolder = async (dir: string): Promise<void> => {
+    const st = await fsp.lstat(dir);
+    if (!st.isDirectory()) {
+      throw new Error(`${dir}, which this restore made to write into, is no longer a plain folder (something replaced it since), so it stopped rather than write through it.`);
+    }
+  };
+
   try {
     await makeParentOf(place);
     // The item's own directory comes first, so a folder that held nothing at
     // all still comes back as a folder rather than as nothing.
-    if (entry.kind === 'folder') {
-      await fsp.mkdir(place, { recursive: true });
-      dirsCreatedByThisRestore.push(place);
-    }
-    // Then its subdirectories, so file writes never race their own parents.
-    for (const member of manifest.members.filter((m) => m.kind === 'dir')) {
-      const dest = path.join(place, member.rel);
-      await fsp.mkdir(dest, { recursive: true });
-      dirsCreatedByThisRestore.push(dest);
+    if (entry.kind === 'folder') await makeOwnFolder(place);
+    // Then its subdirectories, shallowest first, so each is made in one this restore made and file
+    // writes never race their own parents.
+    const dirDepth = (m: ManifestMember): number => m.rel.split(path.sep).length;
+    for (const member of manifest.members.filter((m) => m.kind === 'dir').sort((a, b) => dirDepth(a) - dirDepth(b))) {
+      await makeOwnFolder(path.join(place, member.rel));
     }
 
     // Files, then links, the deepest first (FG3b): a link is made only once every file and folder is
@@ -2193,6 +2218,7 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       const from = path.join(dataRoot, member.rel === '' ? manifest.name : path.join(manifest.name, member.rel));
       const dest = member.rel === '' ? place : path.join(place, member.rel);
       await makeParentOf(dest);
+      if (member.rel !== '') await assertPlainFolder(path.dirname(dest));
 
       if (member.kind === 'symlink') {
         await fsp.symlink(member.target ?? '', dest).catch((err: NodeJS.ErrnoException) => {
