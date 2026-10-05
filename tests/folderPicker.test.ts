@@ -41,7 +41,7 @@ function fakeEl(id: string): FakeEl {
   return el;
 }
 
-function browseRuntime(listing: (p: string) => unknown) {
+function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
   const els = new Map<string, FakeEl>();
   const $ = (id: string) => { if (!els.has(id)) els.set(id, fakeEl(id)); return els.get(id)!; };
   const asked: string[] = [];
@@ -50,7 +50,7 @@ function browseRuntime(listing: (p: string) => unknown) {
   const api = async (url: string) => {
     asked.push(url);
     const p = decodeURIComponent(url.slice(url.indexOf('path=') + 5));
-    const answer = listing(p);
+    const answer = await listing(p);
     if (answer instanceof Error) throw answer;
     return answer;
   };
@@ -67,13 +67,15 @@ function browseRuntime(listing: (p: string) => unknown) {
      ${INDEX.slice(start, end)}
      return { openBrowse, browseTo, path: () => browsePath };`,
   )($, api, (m: string) => { toasts.push(m); }, escapeHtml, (p: string) => { scanned.push(p); }, () => {}) as {
-    openBrowse: (start: string | null) => Promise<void>;
+    openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
   };
   /** The folder names the list shows, top to bottom (the ".." row aside). */
   const rows = () => [...$('browseList').innerHTML.matchAll(/aria-label="Open ([^"]+)"/g)].map((m) => m[1]);
-  return { rt, $, asked, scanned, toasts, rows };
+  /** A click on "Scan this folder" (or "Use this folder" when a pick is pending). */
+  const use = () => $('browseUseBtn').listeners.click() as Promise<void>;
+  return { rt, $, asked, scanned, toasts, rows, use };
 }
 
 const HOME = { path: '/home/u', parent: '/home', dirs: ['.agents', '.antigravity', 'Desktop', '.cache', 'Documents', 'Downloads'].map(dir) };
@@ -102,13 +104,13 @@ test('the picker\'s path line is a field: it shows where you are, and Enter open
     : HOME));
   await rt.openBrowse(null);
   assert.equal($('browseCurrent').value, '/home/u', 'the field holds the folder being shown');
-  $('browseCurrent').value = '  /data/projects ';
+  $('browseCurrent').value = '  /data/projects';
   const keydown = $('browseCurrent').listeners.keydown;
   assert.ok(keydown, 'the path field listens for keys');
   let prevented = false;
   await keydown({ key: 'Enter', preventDefault() { prevented = true; } });
   assert.equal(prevented, true, 'Enter is the field\'s own, not the sheet\'s');
-  assert.equal(asked[asked.length - 1], '/api/fs/list?path=' + encodeURIComponent('/data/projects'), 'the typed path is listed, trimmed');
+  assert.equal(asked[asked.length - 1], '/api/fs/list?path=' + encodeURIComponent('/data/projects'), 'the typed path is listed, leading whitespace dropped');
   assert.deepEqual(rows(), ['treemap', 'site']);
   assert.equal(rt.path(), '/data/projects');
   const before = asked.length;
@@ -116,13 +118,15 @@ test('the picker\'s path line is a field: it shows where you are, and Enter open
   assert.equal(asked.length, before, 'other keys just type');
 });
 
+/** /nope does not open; /data opens; anything else is the home folder. */
+const typedListing = (p: string) => {
+  if (p === '/nope') return new Error('No such folder: /nope');
+  if (p === '/data') return { path: '/data', parent: '/', dirs: [] };
+  return HOME;
+};
+
 test('"Scan this folder" opens a typed path first, and scans it only if it opened (D05)', async () => {
-  const { rt, $, scanned, toasts } = browseRuntime((p) => {
-    if (p === '/nope') return new Error('No such folder: /nope');
-    if (p === '/data') return { path: '/data', parent: '/', dirs: [] };
-    return HOME;
-  });
-  const use = () => $('browseUseBtn').listeners.click();
+  const { rt, $, scanned, toasts, use } = browseRuntime(typedListing);
   await rt.openBrowse(null);
   $('browseCurrent').value = '/nope';
   await use();
@@ -134,6 +138,70 @@ test('"Scan this folder" opens a typed path first, and scans it only if it opene
   await rt.openBrowse(null);
   await use();
   assert.deepEqual(scanned, ['/data', '/home/u'], 'with nothing typed, the folder shown is scanned, as before');
+});
+
+test('choosing a folder for Offload or Autopilot obeys the same rule: a typed path is picked only if it opened (F1.6)', async () => {
+  // The offload destination and the Autopilot folder are picked through this
+  // sheet; the offload job starts on the pick with no second confirmation, so
+  // "the folder shown before" in place of a typed one would move files there.
+  const { rt, $, scanned, toasts, use } = browseRuntime(typedListing);
+  const picked: string[] = [];
+  const onPick = (p: string) => { picked.push(p); };
+  await rt.openBrowse('/home/u', onPick);
+  $('browseCurrent').value = '/nope';
+  await use();
+  assert.deepEqual(picked, [], 'a typed path that does not open is not picked — nor the folder shown before it');
+  assert.ok(toasts.some((t) => /No such folder/.test(t)), 'and the reason is shown');
+  $('browseCurrent').value = '/data';
+  await use();
+  assert.deepEqual(picked, ['/data'], 'a typed path that opens is the one picked');
+  await rt.openBrowse('/home/u', onPick);
+  await use();
+  assert.deepEqual(picked, ['/data', '/home/u'], 'with nothing typed, the folder shown is picked');
+  assert.deepEqual(scanned, [], 'a pick never starts a scan');
+});
+
+/* ══════════════ A trailing space is part of a folder's name (F1.1) ══════════════ */
+
+const SHOT = '/home/u/Screenshots ';
+/** A home folder holding "Screenshots " (trailing space) and a sibling "Screenshots" without it. */
+const spacedListing = (p: string) => {
+  if (p === SHOT) return { path: SHOT, parent: '/home/u', dirs: [] };
+  if (p === '/home/u/Screenshots') return { path: '/home/u/Screenshots', parent: '/home/u', dirs: [] };
+  return { ...HOME, dirs: [...HOME.dirs, dir('Screenshots'), dir('Screenshots ')] };
+};
+
+test('a folder picked from the list is acted on as the server spelled it — its trailing space is never trimmed off (F1.1)', async () => {
+  // macOS and Linux allow a trailing space; the server keeps it (sanitizePath),
+  // and trimming it finds the sibling without one — or nothing at all.
+  const { rt, $, asked, scanned, use } = browseRuntime(spacedListing);
+  await rt.openBrowse(null);
+  assert.match($('browseList').innerHTML, /data-p="\/home\/u\/Screenshots "/, 'the row carries the name as listed');
+  await rt.browseTo(SHOT); // what clicking that row does
+  assert.equal($('browseCurrent').value, SHOT, 'the field shows the folder as the server spelled it');
+  const listed = asked.length;
+  await use();
+  assert.deepEqual(scanned, [SHOT], 'the folder chosen is scanned, not its sibling without the space');
+  assert.equal(asked.length, listed, 'and it is not listed again under another spelling');
+
+  const picked: string[] = [];
+  await rt.openBrowse(null, (p) => { picked.push(p); });
+  await rt.browseTo(SHOT);
+  await use();
+  assert.deepEqual(picked, [SHOT], 'a pick for Offload or Autopilot takes the same folder');
+});
+
+test('a typed path loses only its leading whitespace, as the server\'s own rule does — a trailing space stays (F1.1)', async () => {
+  const { rt, $, asked, scanned, use } = browseRuntime(spacedListing);
+  await rt.openBrowse(null);
+  $('browseCurrent').value = '  /home/u/Screenshots ';
+  await $('browseCurrent').listeners.keydown({ key: 'Enter', preventDefault() {} });
+  assert.equal(asked[asked.length - 1], '/api/fs/list?path=' + encodeURIComponent(SHOT), 'Enter lists the name with its trailing space');
+  assert.equal(rt.path(), SHOT);
+  await rt.openBrowse(null);
+  $('browseCurrent').value = ' /home/u/Screenshots ';
+  await use();
+  assert.deepEqual(scanned, [SHOT], '"Scan this folder" on a typed path keeps the trailing space too');
 });
 
 test('the field says it can be typed in (D05)', () => {

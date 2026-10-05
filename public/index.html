@@ -31828,6 +31828,13 @@ async function browseTo(path) {
     return false;
   }
 }
+/** The path line as a path. Leading whitespace is paste debris and goes; a
+    trailing space is part of a folder's name and stays — the server's own
+    rule (sanitizePath). Trimming it would turn the folder shown, listed by the
+    server as "Screenshots ", into its sibling "Screenshots", or into nothing. */
+function browseFieldPath() {
+  return $('browseCurrent').value.replace(/^\s+/, '');
+}
 $('browseBtn').addEventListener('click', () => openBrowse($('pathInput').value.trim() || null));
 $('emptyBrowseBtn').addEventListener('click', () => openBrowse(null));
 // The path line is the picker's typing route (QA D05) — before the first scan
@@ -31835,13 +31842,15 @@ $('emptyBrowseBtn').addEventListener('click', () => openBrowse(null));
 $('browseCurrent').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
-  const typed = $('browseCurrent').value.trim();
+  const typed = browseFieldPath();
   if (typed) return browseTo(typed);
 });
 $('browseUseBtn').addEventListener('click', async () => {
   // A path typed but not opened yet is opened first, and acted on only if it
-  // opened: the folder shown before it is never scanned in its place.
-  const typed = $('browseCurrent').value.trim();
+  // opened: the folder shown before it is never scanned in its place. Until
+  // someone edits it the field holds the folder shown, spelled as the server
+  // listed it, so a folder picked from the list is never looked up again.
+  const typed = browseFieldPath();
   if (typed && typed !== browsePath && !(await browseTo(typed))) return;
   const pick = browseOnPick;
   browseOnPick = null;
