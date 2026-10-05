@@ -669,22 +669,38 @@ interface ScanRoot {
  */
 async function scanRootOf(given: string): Promise<ScanRoot> {
   const stat = await fsp.lstat(given);
-  if (!stat.isSymbolicLink()) return { rootPath: given, rootStat: stat, linkedFrom: null };
+  /** The root as given: walked where it really is, a link in the folders above it resolved. */
+  const asGiven = async (): Promise<ScanRoot> => {
+    await assertWalkAllowed(given, await placeOfRoot(given, stat), false);
+    return { rootPath: given, rootStat: stat, linkedFrom: null };
+  };
+  if (!stat.isSymbolicLink()) return asGiven();
   let target: string;
   try {
-    if (!(await fsp.stat(given)).isDirectory()) return { rootPath: given, rootStat: stat, linkedFrom: null };
+    if (!(await fsp.stat(given)).isDirectory()) return asGiven();
     target = await fsp.realpath(given);
   } catch (err) {
     // To nothing, or round in a loop: the one file it is. Anything else — a
     // folder on the way TreeMap may not look into — fails the scan as a scan
     // of that folder would, with the permission sentence, never quietly as a
     // one-file scan of the link.
-    if (meansGone(err)) return { rootPath: given, rootStat: stat, linkedFrom: null };
+    if (meansGone(err)) return asGiven();
     throw err;
   }
   const folder = sanitizePath(target);
-  await assertLinkTargetAllowed(given, folder);
+  await assertWalkAllowed(given, folder, true);
   return { rootPath: folder, rootStat: await fsp.lstat(folder), linkedFrom: given };
+}
+
+/**
+ * Where a root taken as given really is: every link resolved for a folder or a file, and for a link (scanned
+ * as the one file it is) the folder it lies in resolved. A path realpath cannot answer for is judged as given:
+ * the walk that follows fails on it in its own words.
+ */
+async function placeOfRoot(given: string, stat: Stats): Promise<string> {
+  if (!stat.isSymbolicLink()) return fsp.realpath(given).catch(() => given);
+  const dir = await fsp.realpath(path.dirname(given)).catch(() => path.dirname(given));
+  return path.join(dir, path.basename(given));
 }
 
 /**
@@ -696,24 +712,27 @@ export async function scanRootPathOf(given: string): Promise<string> {
   return (await scanRootOf(given)).rootPath;
 }
 
-/** The agent policy's allowed roots, as written or where each really is, must hold the folder a link root leads to. */
-async function assertLinkTargetAllowed(given: string, folder: string): Promise<void> {
+/**
+ * The agent policy's allowed roots confine what a scan walks (AGENTS.md), judged where it really is: `place`,
+ * the folder a link root leads to or where the root taken as given lies, must be inside an allowed root, as
+ * written or where that root really is. The caller checked the root's spelling; a link — the root itself, or a
+ * folder above it — can lie inside an allowed root while what it leads to lies anywhere, and a scan grants
+ * actions on what it walked.
+ */
+async function assertWalkAllowed(given: string, place: string, isLinkRoot: boolean): Promise<void> {
   // Imported when called: policy.ts reads the scans (`allScans`), and a module
   // cycle is refused (tests/importCycles.test.ts).
   const { getPolicy } = await import('./policy');
   const { allowedRoots } = await getPolicy();
   if (allowedRoots.length === 0) return;
   for (const allowed of allowedRoots) {
-    if (isInside(allowed, folder)) return;
+    if (isInside(allowed, place)) return;
     const real = await fsp.realpath(allowed).catch(() => null);
-    if (real !== null && isInside(real, folder)) return;
+    if (real !== null && isInside(real, place)) return;
   }
-  throw new AppError(
-    403,
-    'POLICY_ROOT_NOT_ALLOWED',
-    // The folder is not named: it lies outside every root this caller may see.
-    `"${given}" is a link to a folder outside the allowed roots — edit agent-policy.json (allowedRoots) to widen them`,
-  );
+  // Where it leads is not named: it lies outside every root this caller may see.
+  const why = isLinkRoot ? 'is a link to a folder outside the allowed roots' : 'lies outside the allowed roots where it really is (a folder above it is a link)';
+  throw new AppError(403, 'POLICY_ROOT_NOT_ALLOWED', `"${given}" ${why} — edit agent-policy.json (allowedRoots) to widen them`);
 }
 
 /** The clause a scan of a link to a folder leads its engine sentence with (D78). */

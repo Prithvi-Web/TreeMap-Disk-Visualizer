@@ -49,7 +49,8 @@ OpenAPI 3 spec).
    a file by either spelling; the link itself is not in the scan. Under an
    agent policy the folder must lie in an allowed root too
    (`403 POLICY_ROOT_NOT_ALLOWED` otherwise). A link to a file, or to nothing,
-   is scanned as the one file it is.
+   is scanned as the one file it is; a link into a folder TreeMap may not
+   open fails as a scan of that folder would.
    For the whole picture in one call afterwards:
    `GET /api/agent/summary?scanId=` — top culprits, reclaimable-by-category,
    and the forecast, every number as raw bytes plus a formatted string, in
@@ -722,7 +723,10 @@ read-what-you-saw) permission to act.
     "maxBytesPerOperation": 10737418240
   }
   ```
-  `allowedRoots` confines both scanning and destruction; `protectedPaths` can
+  `allowedRoots` confines both scanning and destruction — a scan by where its
+  root really is, so a path spelled through a link (the root itself, or a
+  folder above it) that leads outside every allowed root is refused before
+  anything is walked; `protectedPaths` can
   never be trashed/offloaded (nor anything containing them); the byte cap
   refuses any single oversized operation. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |

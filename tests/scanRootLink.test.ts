@@ -300,6 +300,37 @@ test('an agent policy’s allowed roots confine where a link root leads: a link 
   }
 });
 
+test('an agent policy’s allowed roots are judged where a scan’s root really is: a folder or file reached through a link above it, outside them, is refused before anything is walked or granted', { skip: NO_LINKS }, async () => {
+  const f = linkTree();
+  const allowed = path.join(f.base, 'allowed');
+  fs.mkdirSync(path.join(allowed, 'plain'), { recursive: true });
+  const esc = path.join(allowed, 'esc');
+  fs.symlinkSync(f.real, esc, 'dir');
+  const policyFile = path.join(DATA_DIR, 'agent-policy.json');
+  await updateSettings({ engine: 'walker' });
+  process.env.TREEMAP_NO_GDU = '1';
+  const { port, close } = await listen();
+  try {
+    fs.writeFileSync(policyFile, JSON.stringify({ allowedRoots: [allowed] }));
+    fs.symlinkSync(path.join(f.base, 'nowhere'), path.join(f.real, 'dang'), 'file');
+    // A folder, a file, and a link to nothing (scanned as the one file it is), each reached through `esc`.
+    for (const p of [path.join(esc, 'sub'), path.join(esc, 'a.txt'), path.join(esc, 'dang')]) {
+      const refused = await req(port, 'POST', '/api/scan', { path: p });
+      assert.equal(refused.status, 403, `${p}: ${JSON.stringify(refused.body)}`);
+      assert.equal(refused.body.code, 'POLICY_ROOT_NOT_ALLOWED');
+      assert.ok(!String(refused.body.error).includes(f.real), 'the place outside is not named');
+    }
+    const del = await req(port, 'DELETE', '/api/files', { paths: [path.join(esc, 'sub', 'b.txt')], dryRun: true });
+    assert.equal(del.status, 403, `no scan covers it, so nothing through the link is granted: ${JSON.stringify(del.body)}`);
+    const plain = await scanOverHttp(port, path.join(allowed, 'plain'));
+    assert.equal(plain.rootPath, path.join(allowed, 'plain'), 'a folder inside an allowed root is scanned as before');
+  } finally {
+    fs.rmSync(policyFile, { force: true });
+    await close();
+  }
+  assert.ok(fs.existsSync(path.join(f.real, 'sub', 'b.txt')));
+});
+
 /* ─────────────────────────── a scheduled scan of a link ─────────────────────────── */
 
 test('a scheduled scan of a link to a folder compares with that folder’s history: its growth raises the alert', { skip: NO_LINKS }, async () => {
