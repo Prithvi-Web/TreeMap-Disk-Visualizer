@@ -848,6 +848,8 @@ test('the second look stops after 10 s of looking: one budget for the whole answ
     now: () => now,
     // A slow drive: each stat takes 6 s of the clock, and answers.
     lstat: async (p) => { asked++; now += 6_000; return fs.promises.lstat(p); },
+    // The budget is counted on this clock alone: no real timer races the real stat (U-4c M-B: a stalled runner broke it).
+    deadline: () => ({ late: new Promise<void>(() => {}), cancel: () => {} }),
   });
   try {
     const answer = await emptyFolders(scan.scanId);

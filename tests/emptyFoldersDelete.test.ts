@@ -249,6 +249,7 @@ test('moveToTrash itself looks again, right before each folder\'s own Trash step
 /* ─────────────── a drive that does not answer (U-4b M1) ─────────────── */
 
 const passedDeadline = (): { late: Promise<void>; cancel: () => void } => ({ late: Promise.resolve(), cancel: () => {} });
+const neverPasses = (): { late: Promise<void>; cancel: () => void } => ({ late: new Promise<void>(() => {}), cancel: () => {} });
 
 /** Every stat hangs, as on a dead network mount, its root's too; `asked` counts the threads such stats would hold. */
 function deadDrive(): { asked: () => number } {
@@ -312,6 +313,8 @@ test('a delete looks for 10 s at most, and its Trash steps between looks are not
     now: () => now,
     driveOf: async () => 'slow drive',
     lstat: async (p) => { now += 3_000; return fs.promises.lstat(p); }, // each look takes 3 s of the clock
+    // The budget is counted on this clock alone: no real timer races the real stat (U-4c M-B: a stalled runner broke it).
+    deadline: neverPasses,
   });
   setTrashStepForTests(async (p) => {
     trashed.push(p);
@@ -333,6 +336,7 @@ test('a delete looks for 10 s at most, and its Trash steps between looks are not
       now: () => now,
       driveOf: async () => 'slow drive',
       lstat: async (p) => { now += 3_000; return fs.promises.lstat(p); },
+      deadline: neverPasses,
     });
     const dry = await trash({ paths: five, onlyEmptyFolders: true, dryRun: true });
     assert.deepEqual(dry.body.wouldTrash.map((w: { path: string }) => w.path), five.slice(0, 3));
