@@ -1103,8 +1103,9 @@ async function protectAndTrashInFlight(
     try {
       const result = await moveToTrash(paths, {
         unattended: context.unattended === true,
-        // At each item's own turn, right before its Trash step (FG3f): its copy is still there.
-        checkEach: (p) => stopBeforeTrash(entryOf.get(p)),
+        // At each item's own turn, right before its Trash step (FG3f): its copy is still there, and
+        // it is still what was copied.
+        checkEach: (p) => stopBeforeTrash(entryOf.get(p), p),
       });
       trashed = result.deleted;
       failedToTrash = result.failed;
@@ -1234,30 +1235,79 @@ async function protectAndTrashInFlight(
 /** The code of an item left in place because its copy was gone by its own turn to be trashed (FG3f #1). */
 const COPY_GONE = 'CAPSULE_COPY_GONE';
 
+/** The code of an item left in place because it changed between its copy and its turn (FG3f #4). */
+const CHANGED = 'CAPSULE_CHANGED';
+
 /**
  * Why an item must not go to the Trash after all, asked at its own turn, right before its trash step
- * (FG3f #1), or null to go ahead. Its copy must still be where capture put it: what a run under way
- * holds is never evicted here, but another TreeMap process sharing this app data (the MCP server
- * beside the app) knows nothing of this run, and anything outside TreeMap can remove a folder. The
- * look is one lstat of the copy's manifest, which capture writes last and every removal takes with
- * the folder. Never throws: a look that fails stops the item too — nothing is deleted without a copy
- * that was seen.
+ * (FG3f), or null to go ahead. Never throws: a look that fails stops the item too — nothing is
+ * deleted without a copy that was seen to be of it.
+ *
+ * #1 — its copy must still be where capture put it: what a run under way holds is never evicted
+ * here, but another TreeMap process sharing this app data (the MCP server beside the app) knows
+ * nothing of this run, and anything outside TreeMap can remove a folder. The copy's manifest is
+ * written last by capture and goes with every removal of the folder.
+ *
+ * #4 — the item must still be what was copied: a file added, rewritten or replaced in a captured
+ * folder between the copy and this turn was trashed with the folder and had no copy. Its metadata is
+ * walked again (no bytes are read) and compared with the manifest. An item that is gone by its turn
+ * goes on to its trash step, whose look at the disk says what became of it, as before.
  */
-async function stopBeforeTrash(entryId: string | undefined): Promise<{ reason: string; code: string } | null> {
-  if (typeof entryId !== 'string' || !isEntryId(entryId)) {
-    return { code: COPY_GONE, reason: 'its Time Capsule copy is no longer there, and nothing is deleted without one' };
+async function stopBeforeTrash(entryId: string | undefined, original: string): Promise<{ reason: string; code: string } | null> {
+  const gone = { code: COPY_GONE, reason: 'its Time Capsule copy is no longer there, and nothing is deleted without one' };
+  if (typeof entryId !== 'string' || !isEntryId(entryId)) return gone;
+  let manifest: EntryManifest;
+  try {
+    manifest = await readManifest(entryId);
+  } catch (err) {
+    if (meansAbsent(err)) return gone;
+    const why = err instanceof SyntaxError ? 'its record cannot be read' : describeFsError(err);
+    return { code: COPY_GONE, reason: `its Time Capsule copy could not be looked at (${why}), and nothing is deleted without a copy that was seen` };
+  }
+  if (manifestRefusal(manifest) !== null) {
+    return { code: COPY_GONE, reason: 'its Time Capsule copy\'s record is not one TreeMap wrote, and nothing is deleted without a copy that was seen' };
   }
   try {
-    await fsp.lstat(path.join(entryDir(entryId), 'manifest.json'));
-    return null;
+    await fsp.lstat(original);
   } catch (err) {
-    return {
-      code: COPY_GONE,
-      reason: meansAbsent(err)
-        ? 'its Time Capsule copy is no longer there, and nothing is deleted without one'
-        : `its Time Capsule copy could not be looked at (${describeFsError(err)}), and nothing is deleted without a copy that was seen`,
-    };
+    if (meansAbsent(err)) return null; // gone by its turn: the trash step's own look says what became of it
   }
+  let walked: Awaited<ReturnType<typeof walkItem>>;
+  try {
+    walked = await walkItem(original);
+  } catch (err) {
+    if (meansAbsent(err)) return { code: CHANGED, reason: 'it changed after it was copied (something in it went while it was looked at again), so its copy is not of what is there now' };
+    const why = err instanceof AppError ? err.message : describeFsError(err);
+    return { code: 'CAPSULE_UNREADABLE', reason: `it could not be looked at again right before its deletion (${why})` };
+  }
+  const change = await changeSinceCopy(manifest, walked);
+  return change === null ? null : { code: CHANGED, reason: `it changed after it was copied (${change}), so its copy is not of what is there now` };
+}
+
+/**
+ * What differs between an item as its manifest records it and as it is walked now, as a phrase
+ * naming the first difference and how many more, or null when nothing does (FG3f #4). Compared:
+ * which members there are and their kinds, each file's size and modification time, each link's
+ * target. Not compared: access times (the copy itself read every file) and folders' own times.
+ */
+async function changeSinceCopy(manifest: EntryManifest, walked: Awaited<ReturnType<typeof walkItem>>): Promise<string | null> {
+  const nameOf = (rel: string): string => (rel === '' ? manifest.name : rel);
+  const recorded = new Map(manifest.members.map((m) => [m.rel, m]));
+  const changes: string[] = [];
+  for (const now of walked.members) {
+    const was = recorded.get(now.rel);
+    recorded.delete(now.rel);
+    if (was === undefined) changes.push(`${nameOf(now.rel)} was added`);
+    else if (was.kind !== now.kind) changes.push(`${nameOf(now.rel)} is no longer a ${was.kind === 'dir' ? 'folder' : was.kind}`);
+    else if (now.kind === 'file' && (was.size !== now.size || (typeof was.mtimeMs === 'number' && was.mtimeMs !== now.mtimeMs))) {
+      changes.push(`${nameOf(now.rel)} was modified`);
+    } else if (now.kind === 'symlink' && was.target !== await fsp.readlink(now.abs).catch(() => null)) {
+      changes.push(`${nameOf(now.rel)} points somewhere else`);
+    }
+  }
+  for (const rel of recorded.keys()) changes.push(`${nameOf(rel)} was removed`);
+  if (changes.length === 0) return null;
+  return changes.length === 1 ? changes[0] : `${changes[0]}, and ${formatCount(changes.length - 1)} more change${changes.length === 2 ? '' : 's'}`;
 }
 
 /** What a person is told about an item whose trash step reported a failure the disk could not confirm. */
