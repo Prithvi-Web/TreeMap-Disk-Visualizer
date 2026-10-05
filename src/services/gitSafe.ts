@@ -315,9 +315,14 @@ async function whereGitWorks(root: string): Promise<RepoVetting> {
   return { ok: true, repo: { root, gitDir, commonDir } };
 }
 
-/** A network path (`\\server\share`, `//server/share`): git is never sent to one. */
+/**
+ * A network path, or text Windows may read as one: git is never sent to one. Any two separators
+ * at the start, of either kind — `\\server\share`, `//server/share`, and the mixed `/\server\share`
+ * and `\/server/share`, which Windows reads as UNC paths too (FG4e, review L2). Judged on the text
+ * as written, before anything is resolved: on Windows, resolving one contacts the server.
+ */
 function isNetworkPath(p: string): boolean {
-  return /^(\\\\|\/\/)/.test(p);
+  return /^[\\/]{2}/.test(p);
 }
 
 /**

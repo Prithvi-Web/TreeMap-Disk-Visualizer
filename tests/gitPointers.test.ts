@@ -94,6 +94,39 @@ test('an alternates line naming a network share refuses the repository before gi
   }
 });
 
+test('a network share spelled with one separator of each kind is refused before anything is resolved', async () => {
+  // FG4e, review L2: Windows reads `/\server\share` and `\/server/share` as UNC paths too, and
+  // resolving one contacts the server. Any text that starts with two separators, of either kind,
+  // is refused as it is written — through an alternates line, a .git file and a commondir.
+  const promises = fs.promises as unknown as { realpath: (...args: unknown[]) => Promise<unknown> };
+  const realpath = promises.realpath;
+  const resolved: string[] = [];
+  promises.realpath = async (...args: unknown[]) => {
+    resolved.push(String(args[0]));
+    return realpath.apply(fs.promises, args);
+  };
+  try {
+    for (const share of ['/\\fileserver\\share\\objects', '\\/fileserver/share/objects']) {
+      const viaAlternates = fakeRepo();
+      alternates(viaAlternates, `${share}\n`);
+      const viaGitFile = tmp('treemap-gitptr-unc-');
+      fs.writeFileSync(path.join(viaGitFile, '.git'), `gitdir: ${share}\n`);
+      const viaCommondir = tmp('treemap-gitptr-unc-common-');
+      fs.mkdirSync(path.join(viaCommondir, '.git'));
+      fs.writeFileSync(path.join(viaCommondir, '.git', 'commondir'), `${share}\n`);
+      for (const [how, root] of [['alternates', viaAlternates], ['.git file', viaGitFile], ['commondir', viaCommondir]] as const) {
+        const { vetting, calls } = await vetRecorded(root, () => true);
+        assert.equal(!vetting.ok && vetting.kind, 'refused', `${how} ${share}: ${JSON.stringify(vetting)}`);
+        assert.match(!vetting.ok ? vetting.reason : '', /network share/, `${how} ${share}`);
+        assert.deepEqual(calls, [], `${how} ${share}: git was never started`);
+      }
+    }
+  } finally {
+    promises.realpath = realpath;
+  }
+  assert.deepEqual(resolved.filter((p) => p.includes('fileserver')), [], 'no spelling of the share was handed to the system to resolve');
+});
+
 test('a C-quoted alternates line is read as git reads it', async () => {
   const root = fakeRepo();
   const elsewhere = tmp('treemap-gitptr-quoted-');
