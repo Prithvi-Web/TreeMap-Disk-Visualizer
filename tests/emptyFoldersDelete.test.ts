@@ -250,7 +250,7 @@ test('moveToTrash itself looks again, right before each folder\'s own Trash step
 
 const passedDeadline = (): { late: Promise<void>; cancel: () => void } => ({ late: Promise.resolve(), cancel: () => {} });
 
-/** Every stat hangs, as on a dead network mount; `asked` counts the threads such stats would hold. */
+/** Every stat hangs, as on a dead network mount, its root's too; `asked` counts the threads such stats would hold. */
 function deadDrive(): { asked: () => number } {
   let asked = 0;
   setEmptyCheckForTests({
@@ -259,7 +259,7 @@ function deadDrive(): { asked: () => number } {
       return new Promise(() => { /* a drive that stopped answering */ });
     },
     deadline: passedDeadline,
-    driveOf: async () => 'the one drive',
+    driveOf: async () => '/the-one-drive',
   });
   return { asked: () => asked };
 }
@@ -278,7 +278,7 @@ test('a delete of twenty folders on a drive that does not answer asks it once, a
       assert.equal(f.code, 'FOLDER_NO_ANSWER');
       assert.match(f.reason, /did not answer/);
     }
-    assert.equal(drive.asked(), 1, 'the first silence answers for the other nineteen: one thread held, not twenty');
+    assert.equal(drive.asked(), 2, 'the first folder and its drive\'s root, and their silence answers for the other nineteen: two threads held, not twenty');
     assert.deepEqual(trashed, []);
   } finally {
     setEmptyCheckForTests(null);
@@ -293,10 +293,10 @@ test('a dry run on that drive asks it once, and the real run after it does not a
     assert.equal(dry.body.notEmpty.length, 20);
     assert.ok(dry.body.notEmpty.every((n: { code: string }) => n.code === 'FOLDER_NO_ANSWER'), 'the dry run names the same code');
     assert.deepEqual(dry.body.wouldTrash, []);
-    assert.equal(drive.asked(), 1);
+    assert.equal(drive.asked(), 2);
     const real = await trash({ paths: twenty, onlyEmptyFolders: true });
     assert.equal(real.body.failed.length, 20);
-    assert.equal(drive.asked(), 1, 'the silence the dry run met is carried into the delete');
+    assert.equal(drive.asked(), 2, 'the silence the dry run met is carried into the delete');
     assert.deepEqual(trashed, []);
   } finally {
     setEmptyCheckForTests(null);

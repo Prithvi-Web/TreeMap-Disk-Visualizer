@@ -783,11 +783,12 @@ test('a folder the second look cannot read is withheld', async () => {
 test('a second look that does not answer withholds that folder and every one not yet looked at', async () => {
   const names = ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8'];
   const { scan } = await settledWalkerScan('second-silent', names.map((n) => `${n}/`));
-  let asked = 0;
+  const asked: string[] = [];
   setEmptyCheckForTests({
-    lstat: () => {
-      asked++;
-      return new Promise(() => { /* a folder on a drive that stopped answering */ });
+    driveOf: async () => '/the-drive',
+    lstat: (p) => {
+      asked.push(p);
+      return new Promise(() => { /* a folder on a drive that stopped answering, its root too */ });
     },
     deadline: () => ({ late: Promise.resolve(), cancel: () => {} }),
   });
@@ -795,12 +796,43 @@ test('a second look that does not answer withholds that folder and every one not
     const answer = await emptyFolders(scan.scanId);
     assert.deepEqual(answer.folders, [], 'nothing unanswered is offered');
     assert.equal(answer.withheld, names.length, 'every folder is withheld, looked at or not');
-    // U-4b M1: the drive's first look goes alone, so a silent drive holds one thread of the pool, not four.
-    assert.equal(asked, 1, `one folder is asked, alone, and its silence answers for the rest (asked ${asked} of ${names.length})`);
+    // U-4b M1: the drive's first look goes alone, so a silent drive holds two threads of the pool — the
+    // folder's call and its root's (U-4c M-A) — not four, nor eight.
+    assert.equal(asked.length, 2, `one folder is asked, alone, then its drive's root, and their silence answers for the rest (${asked})`);
+    assert.equal(asked[1], '/the-drive');
     // And the silence is remembered: the page asking again does not take another thread.
     const again = await emptyFolders(scan.scanId);
     assert.equal(again.withheld, names.length);
-    assert.equal(asked, 1, 'a second request does not ask the silent drive again');
+    assert.equal(asked.length, 2, 'a second request does not ask the silent drive again');
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('one folder that does not answer, on a drive whose root does, is withheld alone: the rest of the drive is offered (U-4c M-A)', async () => {
+  // On macOS everything under home is the drive "/": one dataless iCloud folder, or a pool busy with a
+  // rescan, once made every look on it answer "the drive did not answer" and the whole list was withheld.
+  const names = ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8'];
+  const { root, scan } = await settledWalkerScan('second-one-slow', names.map((n) => `${n}/`));
+  const slow = path.join(root, 'e3');
+  let lastSlow = false;
+  setEmptyCheckForTests({
+    driveOf: async () => '/the-drive',
+    lstat: (p) => {
+      lastSlow = p === slow;
+      return lastSlow ? new Promise(() => { /* a folder that does not answer */ }) : Promise.resolve({ isDirectory: () => true });
+    },
+    opendir: async () => ({ read: async () => null, close: async () => {} }),
+    deadline: () => {
+      const late = lastSlow ? Promise.resolve() : new Promise<void>(() => {});
+      lastSlow = false;
+      return { late, cancel: () => {} };
+    },
+  });
+  try {
+    const answer = await emptyFolders(scan.scanId);
+    assert.deepEqual(offered(answer), names.filter((n) => n !== 'e3').map((n) => path.join(root, n)));
+    assert.equal(answer.withheld, 1, 'only the folder that did not answer');
   } finally {
     setEmptyCheckForTests(null);
   }

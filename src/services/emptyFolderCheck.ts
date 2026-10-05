@@ -28,15 +28,21 @@ import { isAtOrUnder, readMountTable } from '../utils/mountBoundaries';
  * never returns, and the race below only stops waiting for it: the call keeps a
  * thread of libuv's small I/O pool for as long as it hangs. So looks are made in
  * sessions — one per request (`emptyCheckSession`) — under three rules:
- *  - **Silence is remembered per drive.** A stat or listing that misses its
- *    deadline makes its drive silent: until that call answers, no look anywhere
- *    — this request, a later one, the delete after the list — touches the
- *    drive; each answers "did not answer" at once. A call that answers at last
- *    lifts the silence (a spun-down disk woke); one that fails after its
- *    silence keeps it for `SILENT_DRIVE_MEMORY_MS`. A drive is told by the
- *    mount table (`driveFor`), as the scan's boundary is, never by a stat —
- *    a stat is what hangs. So a silent drive holds at most one thread per call
- *    that went silent on it, and never another.
+ *  - **Silence is remembered per folder and per drive (U-4c M1 / M-A).** A
+ *    stat or listing that misses its deadline makes its folder silent until
+ *    that call answers, and the root of the drive that folder is on is asked,
+ *    with a deadline of its own: a root that misses too makes the drive silent
+ *    until the root answers. While silent, no look anywhere — this request, a
+ *    later one, the delete after the list — touches the folder or the drive;
+ *    each answers "did not answer" at once. So one slow folder on a drive that
+ *    answers is withheld alone, a dead mount nested in a folder silences its
+ *    own drive and not the folder's, and a call that never settles holds only
+ *    its folder. A call that answers at last lifts its silence (a spun-down
+ *    disk woke); one that fails with the drive's own error (EIO, ESTALE, …)
+ *    keeps it for `SILENT_DRIVE_MEMORY_MS`, while any other failure is an
+ *    answer. A drive is told by the mount table (`driveFor`), as the scan's
+ *    boundary is, never by a stat — a stat is what hangs. So a silent drive
+ *    holds at most the call that went silent and its root's, and never another.
  *  - **The first look on a drive goes alone.** Within a session, looks on a
  *    drive not yet heard from wait for that drive's first look to answer — or
  *    to go silent — before they start: one probe, not four at once.
@@ -274,50 +280,68 @@ const REAL: EmptyCheckDeps = {
 
 let deps: EmptyCheckDeps = REAL;
 
-/* ───────────────────────────── silent drives ───────────────────────────── */
+/* ───────────────────────────── silence ───────────────────────────── */
 
-/** A drive a call went silent on: `pending` calls still out on it; `failedAt` once one answered with a failure. */
+/**
+ * What a call went silent on — a drive, or one folder: `pending` calls still
+ * out there; `failedAt` once one of them failed with a drive's own error.
+ */
 interface Silence {
   pending: number;
   failedAt: number | null;
 }
 
-/** Process-wide: a silent drive is silent for every session, a later request's included. */
+/** Process-wide, by drive (`driveOf`): a silent drive is silent for every session, a later request's included. */
 const silentDrives = new Map<string, Silence>();
+
+/** Process-wide, by path: a folder whose own call is still out is not asked again, by any session (U-4c M-A). */
+const silentFolders = new Map<string, Silence>();
 
 /** The first look on each drive that is running now, any session's: a look on a drive not yet heard from waits for it. */
 const probing = new Map<string, Promise<void>>();
 
-function isSilent(d: EmptyCheckDeps, drive: string): boolean {
-  const s = silentDrives.get(drive);
+/**
+ * The failures that are the drive's own (U-4c M1): the device, its transport,
+ * its server. Only these keep a silence for `SILENT_DRIVE_MEMORY_MS` once the
+ * call answers. Any other — ENOENT, EACCES, EPERM, ENOTDIR — is an answer:
+ * the drive is there, and said something.
+ */
+const DRIVE_ERRORS: ReadonlySet<string> = new Set(['EIO', 'ESTALE', 'ETIMEDOUT', 'ENXIO', 'EHOSTDOWN', 'ENOTCONN', 'EHOSTUNREACH', 'ENETDOWN']);
+
+function silentIn(map: Map<string, Silence>, key: string, d: EmptyCheckDeps): boolean {
+  const s = map.get(key);
   if (!s) return false;
   if (s.pending > 0 || (s.failedAt !== null && d.now() - s.failedAt < SILENT_DRIVE_MEMORY_MS)) return true;
-  silentDrives.delete(drive);
+  map.delete(key);
   return false;
 }
 
-/** `op` missed its wait on `drive`: the drive is silent until `op` answers, and for a while after a failure. */
-function wentSilent(d: EmptyCheckDeps, drive: string, op: Promise<unknown>): void {
-  let s = silentDrives.get(drive);
+function isSilent(d: EmptyCheckDeps, drive: string): boolean {
+  return silentIn(silentDrives, drive, d);
+}
+
+/** `op` missed its wait on `key`: silent until `op` answers, and for a minute after it fails with a drive's own error. */
+function hush(map: Map<string, Silence>, key: string, d: EmptyCheckDeps, op: Promise<unknown>): void {
+  let s = map.get(key);
   if (!s) {
     s = { pending: 0, failedAt: null };
-    silentDrives.set(drive, s);
+    map.set(key, s);
   }
   const silence = s;
   silence.pending++;
-  // An answer at last lifts the silence once no call is out (`isSilent` then lets the drive go);
-  // a failure keeps it for a minute from the failure.
-  const answered = (failed: boolean): void => {
+  // An answer at last lifts the silence once no call is out (`silentIn` then lets it go).
+  const failed = (err: unknown): void => {
     silence.pending--;
-    if (failed) silence.failedAt = d.now();
+    if (DRIVE_ERRORS.has(codeOf(err instanceof NotOpened ? err.failure : err))) silence.failedAt = d.now();
   };
-  op.then(() => answered(false), () => answered(true));
+  op.then(() => { silence.pending--; }, failed);
 }
 
-/** Tests only: replace what a look reads with; null puts the real disk and clock back. Either way every drive is heard afresh. */
+/** Tests only: replace what a look reads with; null puts the real disk and clock back. Either way every drive and folder is heard afresh. */
 export function setEmptyCheckForTests(over: Partial<EmptyCheckDeps> | null): void {
   deps = over ? { ...REAL, ...over } : REAL;
   silentDrives.clear();
+  silentFolders.clear();
   probing.clear();
 }
 
@@ -325,6 +349,8 @@ export function setEmptyCheckForTests(over: Partial<EmptyCheckDeps> | null): voi
 
 const LATE = Symbol('late');
 const SPENT = Symbol('spent');
+/** Never started: the folder or the drive it is on went silent before this call's turn (the U-4b review, L-2). */
+const HUSHED = Symbol('hushed');
 
 /** A wait as a sentence says it: "2 seconds", or "1 ms" for a test's. */
 function waitWords(ms: number): string {
@@ -339,20 +365,31 @@ function codeOf(err: unknown): string {
 /** What a look needs from the session it runs in. */
 interface LookContext {
   d: EmptyCheckDeps;
+  /** The drive the folder looked at is on. */
   drive: string;
   /** Milliseconds of the session's budget left. */
   left: () => number;
 }
 
+/** Where a call goes: a folder, and the drive that folder is on (U-4c M1: a nested mount is a drive of its own). */
+interface Where {
+  folder: string;
+  drive: string;
+}
+
 /**
  * `start()`'s answer; LATE when its deadline passes first, SPENT when the
  * session's budget does (or was gone before it started, when nothing is
- * started). A call left waiting makes its drive silent until it answers. A
- * later rejection of the call is handled by the race.
+ * started), HUSHED — nothing started — when the folder or its drive went
+ * silent before this call's turn. A call left waiting makes its folder silent
+ * until it answers; one that missed its whole deadline has the folder's drive
+ * asked about too (`askRoot`). A later rejection of the call is handled by
+ * the race.
  */
-async function answered<T>(ctx: LookContext, start: () => Promise<T>): Promise<T | typeof LATE | typeof SPENT> {
+async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<T>): Promise<T | typeof LATE | typeof SPENT | typeof HUSHED> {
   const left = ctx.left();
   if (left <= 0) return SPENT;
+  if (silentIn(silentFolders, where.folder, ctx.d) || isSilent(ctx.d, where.drive)) return HUSHED;
   const wait = Math.min(ctx.d.deadlineMs, left);
   let op: Promise<T>;
   try {
@@ -361,15 +398,71 @@ async function answered<T>(ctx: LookContext, start: () => Promise<T>): Promise<T
     op = Promise.reject(err);
   }
   const deadline = ctx.d.deadline(wait);
+  let answer: T | typeof LATE;
   try {
-    const answer = await Promise.race([op, deadline.late.then((): typeof LATE => LATE)]);
-    if (answer !== LATE) return answer;
-    wentSilent(ctx.d, ctx.drive, op);
-    return wait < ctx.d.deadlineMs ? SPENT : LATE;
+    answer = await Promise.race([op, deadline.late.then((): typeof LATE => LATE)]);
+  } finally {
+    deadline.cancel();
+  }
+  if (answer !== LATE) return answer;
+  // Still out: this folder is not asked again until the call answers.
+  hush(silentFolders, where.folder, ctx.d, op);
+  // A wait the budget cut short says nothing of the drive.
+  if (wait < ctx.d.deadlineMs) return SPENT;
+  await askRoot(ctx, where.drive, op);
+  return LATE;
+}
+
+/**
+ * A call on `drive` missed its whole deadline (U-4c M-A): is it that folder,
+ * or the drive? The drive's own root is asked, with a deadline of its own. A
+ * root that misses it too makes the drive silent until the root answers; one
+ * that answers — an error is an answer — shows the drive is there, and only
+ * the folder that hung stays silent. So one slow folder (a dataless iCloud
+ * folder, a busy pool) no longer silences every folder on its drive, and a
+ * call that never settles holds only its own folder. A drive not known, or a
+ * budget already spent, cannot be asked: the drive is silent with the call,
+ * or left for the next request to ask, respectively.
+ */
+async function askRoot(ctx: LookContext, drive: string, op: Promise<unknown>): Promise<void> {
+  const { d } = ctx;
+  if (isSilent(d, drive)) return;
+  if (drive === '') {
+    hush(silentDrives, drive, d, op);
+    return;
+  }
+  const wait = Math.min(d.deadlineMs, ctx.left());
+  if (wait <= 0) return;
+  let probe: Promise<unknown>;
+  try {
+    probe = d.lstat(drive);
+  } catch (err) {
+    probe = Promise.reject(err);
+  }
+  const deadline = d.deadline(wait);
+  try {
+    const late = await Promise.race([probe.then(() => false, () => false), deadline.late.then(() => true)]);
+    if (late) hush(silentDrives, drive, d, probe);
   } finally {
     deadline.cancel();
   }
 }
+
+/** Which drive `p` is on, or '' when that cannot be told. */
+async function driveSafely(d: EmptyCheckDeps, p: string): Promise<string> {
+  try {
+    return await d.driveOf(p);
+  } catch {
+    return '';
+  }
+}
+
+/** The sentence for a folder whose own call is still out from an earlier look. */
+const folderSilent = (named: string): EmptyVerdict =>
+  notEmpty('no-answer', `${named} did not answer a moment ago, so TreeMap did not ask again and cannot tell that it is empty`);
+
+/** The sentence for a folder on a drive that went silent. */
+const DRIVE_SILENT = 'the drive it is on did not answer a moment ago, so TreeMap did not look at it again and cannot tell that it is empty';
 
 /**
  * A listing that could not be opened, and why (`failure`): told apart from a
@@ -417,15 +510,16 @@ function budgetSpent(d: EmptyCheckDeps): EmptyVerdict {
 
 /** Opening `dir` said it is not there: so it is gone if a fresh stat says so too; anything else is not shown empty (U-4c L1). */
 async function goneUnlessThere(ctx: LookContext, dir: string): Promise<EmptyVerdict> {
-  let again: { isDirectory(): boolean } | typeof LATE | typeof SPENT;
+  let again: { isDirectory(): boolean } | typeof LATE | typeof SPENT | typeof HUSHED;
   try {
-    again = await answered(ctx, () => ctx.d.lstat(dir));
+    again = await answered(ctx, { folder: dir, drive: ctx.drive }, () => ctx.d.lstat(dir));
   } catch (err) {
     if (codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
     return notEmpty('unreadable', `it could not be looked at (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
   }
   if (again === LATE) return notEmpty('no-answer', `it did not answer within ${waitWords(ctx.d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
   if (again === SPENT) return budgetSpent(ctx.d);
+  if (again === HUSHED) return notEmpty('no-answer', DRIVE_SILENT);
   return notEmpty('unreadable', 'it could not be opened (ENOENT), though it is there, so TreeMap cannot tell that it is empty');
 }
 
@@ -435,15 +529,22 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
   const named = (folder: string): string => (folder === dir ? 'it' : `the folder ${path.relative(dir, folder)} inside it`);
   const silent = (folder: string): EmptyVerdict =>
     notEmpty('no-answer', `${named(folder)} did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
-  let top: { isDirectory(): boolean } | typeof LATE | typeof SPENT;
+  /** Not asked: the folder's own call, or its drive, went silent before its turn. */
+  const hushed = (folder: string, drive: string): EmptyVerdict => {
+    if (silentIn(silentFolders, folder, d)) return folderSilent(named(folder));
+    if (folder === dir) return notEmpty('no-answer', DRIVE_SILENT);
+    return notEmpty('no-answer', `${named(folder)} is on a drive that did not answer a moment ago, so TreeMap did not ask it again and cannot tell that it is empty`);
+  };
+  let top: { isDirectory(): boolean } | typeof LATE | typeof SPENT | typeof HUSHED;
   try {
-    top = await answered(ctx, () => d.lstat(dir));
+    top = await answered(ctx, { folder: dir, drive: ctx.drive }, () => d.lstat(dir));
   } catch (err) {
     if (codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
     return notEmpty('unreadable', `it could not be looked at (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
   }
   if (top === LATE) return silent(dir);
   if (top === SPENT) return budgetSpent(d);
+  if (top === HUSHED) return hushed(dir, ctx.drive);
   if (!top.isDirectory()) return notEmpty('not-a-folder', 'it is not a folder any more');
   const queue = [dir];
   let examined = 0;
@@ -468,9 +569,11 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
       return true;
     };
     let gaveUp = false;
-    let listed: void | typeof LATE | typeof SPENT;
+    let listed: void | typeof LATE | typeof SPENT | typeof HUSHED;
+    // A folder below may be a mount of its own: its silence is its own drive's (U-4c M1).
+    const drive = folder === dir ? ctx.drive : await driveSafely(d, folder);
     try {
-      listed = await answered(ctx, () => readListing(d, folder, visit, () => gaveUp));
+      listed = await answered(ctx, { folder, drive }, () => readListing(d, folder, visit, () => gaveUp));
     } catch (err) {
       const failure = err instanceof NotOpened ? err.failure : err;
       // Gone only when the folder itself could not be opened for not being there, and a fresh stat
@@ -478,6 +581,7 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
       if (err instanceof NotOpened && folder === dir && codeOf(failure) === 'ENOENT') return goneUnlessThere(ctx, dir);
       return notEmpty('unreadable', `${named(folder)} could not be read (${codeOf(failure)}), so TreeMap cannot tell that it is empty`);
     }
+    if (listed === HUSHED) return hushed(folder, drive);
     if (listed === LATE || listed === SPENT) {
       gaveUp = true;
       return listed === LATE ? silent(folder) : budgetSpent(d);
@@ -516,20 +620,12 @@ export function emptyCheckSession(ignoreJunk: boolean): EmptyCheckSession {
       if (--running === 0) spent += d.now() - runningSince;
     }
   };
-  const driveSilent = (): EmptyVerdict =>
-    notEmpty('no-answer', 'the drive it is on did not answer a moment ago, so TreeMap did not look at it again and cannot tell that it is empty');
-
   return {
     async look(dir: string): Promise<EmptyVerdict> {
       if (left() <= 0) return budgetSpent(d);
-      let drive: string;
-      try {
-        drive = await d.driveOf(dir);
-      } catch {
-        drive = '';
-      }
+      const drive = await driveSafely(d, dir);
       for (;;) {
-        if (isSilent(d, drive)) return driveSilent();
+        if (isSilent(d, drive)) return notEmpty('no-answer', DRIVE_SILENT);
         if (heard.has(drive)) return timed(drive, dir);
         const first = probing.get(drive);
         if (!first) break;

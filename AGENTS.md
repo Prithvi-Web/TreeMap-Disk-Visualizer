@@ -340,10 +340,14 @@ OpenAPI 3 spec).
      out (a "don't scan" pattern, a failed stat) is not empty, and neither is
      any folder above it. Each folder offered was also looked at again on disk
      just now; one that holds something, refuses or does not answer is left
-     out and counted in `withheld`. A drive that does not answer is asked
-     once: until that call answers, every folder on it is withheld unasked —
-     in later requests and in an `onlyEmptyFolders` delete too — and the looks
-     of one request stop after 10 s. A gdu scan offers none and says why in
+     out and counted in `withheld`. A folder that does not answer is not
+     asked again until its call answers, and the root of the drive it is on
+     is asked: a drive whose root does not answer either is asked once, and
+     until the root answers every folder on it is withheld unasked — in later
+     requests and in an `onlyEmptyFolders` delete too — while on a drive that
+     answers only the slow folder is withheld. A call that fails with the
+     drive's own error (EIO, ESTALE, …) keeps its silence a minute; any other
+     answer lifts it. The looks of one request stop after 10 s. A gdu scan offers none and says why in
      `reason` (gdu shows a folder it could not read as an empty one). To trash
      what it offers, send `onlyEmptyFolders: true` (below).
    - `GET /api/file-types`, `GET /api/apps`,
