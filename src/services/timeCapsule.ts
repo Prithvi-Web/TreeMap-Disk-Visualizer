@@ -501,6 +501,22 @@ function inUse(entry: TimeCapsuleEntry): boolean {
   return ofRunInFlight(entry) || restoresInFlight.has(entry.id);
 }
 
+/**
+ * The ids, among `entries` holding a copy, whose copy is marked unconfirmed (`markUnverified`, FG3g
+ * L6): the original's trash step could not be confirmed, so it may be in the Trash and its copy the
+ * only one. Never evicted — only the copies of runs under way were pinned, and once its run ended such
+ * a copy went to make room like any other. A mark that cannot be looked at counts as there.
+ */
+async function unconfirmedIdsOf(entries: TimeCapsuleEntry[]): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (const e of entries) {
+    if (!e.hasPayload || e.heldBytes <= 0 || !isEntryId(e.id)) continue;
+    const marked = await fsp.lstat(path.join(entryDir(e.id), UNVERIFIED_MARK)).then(() => true, (err: unknown) => !meansAbsent(err));
+    if (marked) ids.add(e.id);
+  }
+  return ids;
+}
+
 /** The refusal of a removal, or of a second restore, of a copy a restore is reading (FG3g H1). */
 function restoreRunning(entry: TimeCapsuleEntry, what: string): AppError {
   return new AppError(409, 'RESTORE_RUNNING', `“${entry.name}” is being restored right now, so ${what}. Try again once that restore has finished.`);
@@ -509,7 +525,7 @@ function restoreRunning(entry: TimeCapsuleEntry, what: string): AppError {
 /** The sentence for an item that does not fit: beside the copies still pinned, or at all. */
 function doesNotFitSentence(bytes: number, capBytes: number, pinnedBytes: number, verb: 'was' | 'will be'): string {
   const beside = pinnedBytes > 0 && bytes <= capBytes
-    ? `, and ${formatBytes(pinnedBytes)} of that holds copies in use — of items whose deletion is still under way, or being restored — which are never dropped to make room`
+    ? `, and ${formatBytes(pinnedBytes)} of that holds copies that are never dropped to make room — of items whose deletion is still under way or could not be confirmed, or being restored`
     : '';
   return `Protecting it needs ${formatBytes(bytes)}, but the Time Capsule can only hold ${formatBytes(capBytes)}${beside}. ` +
     `It ${verb} left alone rather than deleted without a backup.`;
@@ -741,8 +757,11 @@ async function capture(
   // Planned and made under the payload lock (FG3g H1), so the copies a restore has accepted are
   // pinned, and a restore never accepts one this eviction is removing.
   const room = await withPayloadLock(async () => {
-    const plan = planEviction(store.entries, capBytes, walked.bytes, inUse);
-    if (!plan.fits) return { fits: false, pinnedBytes: pinnedBytesOf(store.entries, inUse) };
+    // Looked for only when something must go: an unconfirmed copy is never what goes (FG3g L6).
+    const unconfirmed = usedBytesOf(store.entries) + walked.bytes > capBytes ? await unconfirmedIdsOf(store.entries) : new Set<string>();
+    const kept = (e: TimeCapsuleEntry): boolean => inUse(e) || unconfirmed.has(e.id);
+    const plan = planEviction(store.entries, capBytes, walked.bytes, kept);
+    if (!plan.fits) return { fits: false, pinnedBytes: pinnedBytesOf(store.entries, kept) };
     if (beforeEvictionForTests && plan.evict.length > 0) await beforeEvictionForTests(plan.evict.map((e) => e.id));
     // Make room first — the eviction is real and permanent, so it is recorded
     // where the user can see what it cost them.
@@ -1101,6 +1120,7 @@ export async function planProtection(
   const items: ProtectionForecast[] = [];
   let bytesProtected = 0;
   let bytesSkipped = 0;
+  let unconfirmed: Set<string> | undefined;
 
   for (const path of paths) {
     let walked: { members: WalkedMember[]; bytes: number; isFolder: boolean };
@@ -1125,7 +1145,10 @@ export async function planProtection(
     // As the real run pins its own copies (FG3f #1), the plan pins the items it has accepted (and,
     // through `carryOver`, those an earlier request of the same cart accepted), so it never plans
     // to drop a copy of this batch's own and never protects more than the cap.
-    const { evict, fits } = planEviction(simulated, capacity.capBytes, walked.bytes, plannedOrInFlight);
+    // An unconfirmed copy is never planned to go either (FG3g L6), looked for once something must.
+    if (usedBytesOf(simulated) + walked.bytes > capacity.capBytes) unconfirmed ??= await unconfirmedIdsOf(simulated);
+    const kept = (e: TimeCapsuleEntry): boolean => plannedOrInFlight(e) || (unconfirmed?.has(e.id) ?? false);
+    const { evict, fits } = planEviction(simulated, capacity.capBytes, walked.bytes, kept);
     if (!fits) {
       bytesSkipped += walked.bytes;
       items.push({
@@ -1133,7 +1156,7 @@ export async function planProtection(
         bytes: walked.bytes,
         willProtect: false,
         code: 'CAPSULE_FULL',
-        detail: doesNotFitSentence(walked.bytes, capacity.capBytes, pinnedBytesOf(simulated, plannedOrInFlight), 'will be'),
+        detail: doesNotFitSentence(walked.bytes, capacity.capBytes, pinnedBytesOf(simulated, kept), 'will be'),
       });
       continue;
     }

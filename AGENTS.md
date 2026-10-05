@@ -433,7 +433,9 @@ OpenAPI 3 spec).
      bigger than the capsule leaves its later items undeleted (`CAPSULE_FULL`)
      rather than dropping its own earlier copies. A copy a restore or an undo
      is reading is held for it the same way until that job ends — never
-     evicted, forgotten or expired from under it; and right before each item's
+     evicted, forgotten or expired from under it — and a copy kept because
+     its item's trash step could not be confirmed (it may be the only one) is
+     never evicted; and right before each item's
      trash step its copy is looked for again — one that is gone by then leaves
      the item in place (`CAPSULE_COPY_GONE`) — and the item's metadata (each
      file's size, modified time, change time and file id; no bytes are read)
