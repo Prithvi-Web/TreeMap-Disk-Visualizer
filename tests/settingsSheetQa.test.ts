@@ -252,3 +252,21 @@ test('Settings no longer claims the totals measure occupied space — they count
   assert.match(panel, /row\('Size the files claim'/, 'the claimed size is a row of the panel');
   assert.match(panel, /row\('Space actually used'/, 'and so is the space used');
 });
+
+/* ══════════════ D74 — the cleanup target's empty state fits its box ══════════════ */
+
+test('every number box in Settings shows its whole placeholder — "no target" was clipped to "no targe" (D74)', () => {
+  // `.rule-row input[type="number"]` is 88 px wide; after its padding and the
+  // spin buttons about six characters of 13.5 px text fit.
+  const css = /\.rule-row input\[type="number"\] \{ width: (\d+)px; \}/.exec(INDEX);
+  assert.ok(css, 'the number box width is the one this check was measured against');
+  assert.equal(Number(css![1]), 88);
+  const boxes = [...settingsSheet().matchAll(/<input type="number"[^>]*>/g)].map((m) => m[0]);
+  assert.ok(boxes.length >= 5, `found the Settings number boxes (${boxes.length})`);
+  const withPlaceholder = boxes.filter((b) => /placeholder="/.test(b));
+  assert.ok(withPlaceholder.some((b) => b.includes('id="cleanupGoalValue"')), 'the cleanup target still says what empty means');
+  for (const box of withPlaceholder) {
+    const placeholder = /placeholder="([^"]*)"/.exec(box)![1];
+    assert.ok(placeholder.length <= 6, `"${placeholder}" fits an 88 px box: ${box}`);
+  }
+});
