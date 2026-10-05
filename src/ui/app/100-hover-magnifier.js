@@ -99,7 +99,13 @@ function lensPaint(ctx, cssW, cssH) {
       ctx.stroke();
       continue;
     }
-    ctx.fillStyle = s.n.freed ? 'rgba(120,120,130,0.35)' : `rgb(${base[0]},${base[1]},${base[2]})`;
+    // A rectangle is painted with the map's own leaf recipe — the depth-faded
+    // cushion over the canvas background filled above — so the glass shows
+    // the colour the map shows; a flat opaque fill read bright green over an
+    // olive map (QA D39). Circles and Voronoi cells are opaque on the map too.
+    ctx.fillStyle = s.n.freed ? 'rgba(120,120,130,0.35)'
+      : s.kind ? `rgb(${base[0]},${base[1]},${base[2]})`
+      : tmLeafFill(ctx, base, tmDepthFade(s.n), b.y0, b.y1 - b.y0);
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.45)';
     ctx.lineWidth = 0.25;

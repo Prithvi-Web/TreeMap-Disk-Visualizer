@@ -132,3 +132,64 @@ test('D27: the centre disc shortens the folder name to the disc rather than sque
   assert.ok(centre && centre.endsWith('…'), `the centre name is shortened (${centre})`);
   assert.ok(centre!.length * 6 <= 94 * 1.8, 'to the disc\'s width');
 });
+
+/* ══════════════ D39 — the lens shows the tiles in the map's own colours ══════════════ */
+
+const TILE = { name: 'clip.mov', path: '/r/a/b/c/clip.mov', size: 5e8, type: 'file', depth: 4, expanded: false, x: 10, y: 10, w: 30, h: 30 };
+const GREEN = [48, 209, 88];
+
+/** The fillStyle the real drawTreemap gives TILE's rectangle, and the pixel rect it drew. */
+function mapFill() {
+  const rec = recordingCtx();
+  const state = { treemap: { nodes: [TILE], hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
+  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmDepthFade', 'mix'], {
+    $: () => ({ clientWidth: 120 }),
+    treemapCanvasHeight: () => 100,
+    window: { devicePixelRatio: 1 },
+    tmCanvas: { style: {}, width: 0, height: 0 },
+    tmBuffer: { width: 0, height: 0 },
+    tmBufCtx: rec.ctx,
+    cssVar: () => '#0b0b0f',
+    state,
+    tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {},
+    renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+    cellRgb: () => GREEN,
+    tmHatchPattern: () => null,
+    tmPreview: { on: false },
+    roundRect() {},
+    formatBytes: (n: number) => `${n} B`,
+  }, 'drawTreemap');
+  draw();
+  // Pass 1 paints each leaf with exactly one fillRect; the first after the
+  // background fill (fills[0]) is the tile.
+  return { fill: rec.fills[1], px: state.treemap.pxRects };
+}
+
+/** The fillStyle the real lensPaint gives the same tile under the glass. */
+function lensFill(pxRects: any[]) {
+  const rec = recordingCtx();
+  const paint = load<(ctx: unknown, w: number, h: number) => void>(
+    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmDepthFade'], {
+      state: { lens: { held: true, pinned: false, at: { x: 25, y: 25 } }, treemap: { pxRects, cells: [] } },
+      isCells: () => false,
+      cssVar: () => '#0b0b0f',
+      cellRgb: () => GREEN,
+      altCellPath() {},
+      window: { devicePixelRatio: 1 },
+    }, 'lensPaint');
+  paint(rec.ctx, 120, 100);
+  // fills[0] is the glass's background; the next is the tile.
+  return rec.fills[1];
+}
+
+test('D39: the lens paints a tile with the same fill the map painted it with', () => {
+  // QA: bright green under the glass over an olive map. The map paints a
+  // depth-faded gradient over its dark background (a depth-4 tile is ~65%
+  // opaque); the lens painted the same tile opaque and fully saturated.
+  const { fill, px } = mapFill();
+  assert.equal(px.length, 1, 'the map drew the tile');
+  const glass = lensFill(px);
+  assert.equal(typeof glass, 'object', `the lens fills with the map's gradient, not a flat colour (${String(glass)})`);
+  assert.deepEqual((glass as any).stops, (fill as any).stops, 'with the same colour stops — same hue, same depth fade');
+  assert.deepEqual((glass as any).args, (fill as any).args, 'running over the tile\'s own height, as on the map');
+});

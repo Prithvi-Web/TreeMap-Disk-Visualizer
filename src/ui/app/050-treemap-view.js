@@ -400,6 +400,23 @@ function tmSetEmpty(text) {
   el.hidden = !text;
 }
 
+/**
+ * A leaf rectangle's paint: a cushion gradient — lighter at the top, darker at
+ * the bottom — over the cell's colour, faded with depth so the map's dark
+ * background shows through deeper tiles. One recipe for the map's leaf pass
+ * and the hover magnifier, which painted the same tiles opaque and fully
+ * saturated: bright green under the glass over an olive map (QA D39).
+ */
+function tmDepthFade(n) { return Math.max(0.55, 1 - n.depth * 0.08); }
+function tmLeafFill(ctx, base, depthFade, y, h) {
+  const top = mix(base, [255,255,255], 0.16);
+  const bot = mix(base, [0,0,0], 0.22);
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, `rgba(${top[0]},${top[1]},${top[2]},${0.95 * depthFade})`);
+  g.addColorStop(1, `rgba(${bot[0]},${bot[1]},${bot[2]},${0.95 * depthFade})`);
+  return g;
+}
+
 function drawTreemap() {
   const wrap = $('treemapWrap');
   const cssW = wrap.clientWidth - 20;
@@ -480,7 +497,7 @@ function drawTreemap() {
     }
 
     const base = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n); // distinct gray-blue for the Trash cell
-    const depthFade = Math.max(0.55, 1 - r.n.depth * 0.08);
+    const depthFade = tmDepthFade(r.n);
 
     /* A3 — a cloud placeholder is drawn hollow, because it is not here.
        A solid block the size of a 4 GB video says "this is filling your disk",
@@ -499,12 +516,7 @@ function drawTreemap() {
       continue;
     }
 
-    const top = mix(base, [255,255,255], 0.16);
-    const bot = mix(base, [0,0,0], 0.22);
-    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
-    g.addColorStop(0, `rgba(${top[0]},${top[1]},${top[2]},${0.95 * depthFade})`);
-    g.addColorStop(1, `rgba(${bot[0]},${bot[1]},${bot[2]},${0.95 * depthFade})`);
-    ctx.fillStyle = g;
+    ctx.fillStyle = tmLeafFill(ctx, base, depthFade, r.y, r.h);
     ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
     if (r.w > 6 && r.h > 6) {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
