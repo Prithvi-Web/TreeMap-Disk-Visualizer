@@ -233,6 +233,29 @@ test('the pass keeps no Map or Set of every node: a memory-mode scan can hold mo
   assert.deepEqual(found.folders.slice(0, 2).map((f) => [f.path, f.counted]), [['/big/d0/e', 1], ['/big/d1', 2]]);
 });
 
+test('a tree whose ids break parent-before-child is read fail-closed: a folder with a child of a lower id is content (U-4b review, INFO)', () => {
+  // Every store today numbers a child after its parent; the ascending sweeps rely on it. A store that
+  // did not — r → b(3) → a(2) → f.txt(1) — once left b offered while it holds a, which holds a file.
+  const real = buildStoreFromTree(dir('r', '/r', [file('f.txt', '/r/f.txt'), dir('a', '/r/a', []), dir('b', '/r/b', [])]));
+  const [f, a, b] = ['/r/f.txt', '/r/a', '/r/b'].map((p) => real.findByPath(p));
+  assert.ok(f < a && a < b, `ids as built: f ${f}, a ${a}, b ${b}`);
+  const kids = new Map<number, number[]>([[real.rootId, [b]], [b, [a]], [a, [f]]]);
+  const parentOf = new Map<number, number>([[b, real.rootId], [a, b], [f, a]]);
+  const reordered = new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop === 'forEachChild') return (id: number, cb: (c: number) => void) => { for (const c of kids.get(id) ?? []) cb(c); };
+      if (prop === 'childIds') return (id: number) => [...(kids.get(id) ?? [])];
+      if (prop === 'childCount') return (id: number) => (kids.get(id) ?? []).length;
+      if (prop === 'parent') return (id: number) => parentOf.get(id) ?? -1;
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  }) as typeof real;
+  const found = findEmptyFolders(reordered, true);
+  assert.deepEqual(found.folders, [], 'neither b nor a is offered: each holds what the sweep could not have settled first');
+  assert.equal(found.totalCount, 0);
+});
+
 test('a never-descend path is marked where the tree holds it, and the folder that held it where an engine left the node out', () => {
   const store = buildStoreFromTree(dir('r', '/r', [
     dir('Volumes', '/r/Volumes', []),

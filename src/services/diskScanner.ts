@@ -1878,7 +1878,7 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
 
   // Every per-node mark is a byte in a typed array indexed by id (U-4b INFO):
   // a Map or Set of every node throws RangeError past 2^24 entries in V8, and
-  // a scan kept in memory can now hold more nodes than that. Three bytes a node.
+  // a scan kept in memory can now hold more nodes than that. Four bytes a node.
   // Children carry higher ids than their parents (BFS layout; appends too), so
   // each pass below is one sweep over the ids, in order or in reverse.
 
@@ -1886,9 +1886,13 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
   // descend through dirs only, so a container file's virtual listing never
   // participates, and a removed node (no longer anyone's child) is not reached.
   const reached = new Uint8Array(count);
+  // A folder with a child numbered at or below it is content, fail-closed (U-4b review, INFO): the
+  // sweeps settle a node only after its parent, which such a child breaks; it and its subtree are
+  // not reached, so nothing in them is offered.
+  const outOfOrder = new Uint8Array(count);
   reached[store.rootId] = 1;
   for (let id = 0; id < count; id++) {
-    if (reached[id] === 1 && store.isDir(id)) store.forEachChild(id, (c) => { reached[c] = 1; });
+    if (reached[id] === 1 && store.isDir(id)) store.forEachChild(id, (c) => { if (c > id) reached[c] = 1; else outOfOrder[id] = 1; });
   }
 
   // Pass 1, bottom-up: a dir is empty when every child is junk or an empty
@@ -1896,7 +1900,7 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
   const empty = new Uint8Array(count);
   for (let id = 0; id < count; id++) {
     if (reached[id] !== 1) continue;
-    const isEmpty = store.isDir(id) ? !store.flag(id, Flag.Unlisted) : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase());
+    const isEmpty = store.isDir(id) ? !store.flag(id, Flag.Unlisted) && outOfOrder[id] === 0 : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase());
     if (isEmpty) empty[id] = 1;
   }
   for (let id = count - 1; id >= 0; id--) {
