@@ -197,6 +197,9 @@ export interface TrashOptions {
   checkEach?: (p: string) => Promise<{ reason: string; code: string } | null>;
 }
 
+/** Why an "only empty folders" delete leaves a folder the look found gone that a stat then finds there. */
+const GONE_YET_THERE = 'it seemed to be gone when TreeMap looked at it again, yet it is there, so TreeMap cannot tell that it is empty';
+
 /** The step that moves one path to the Trash; a test replaces it (setTrashStepForTests). */
 let trashStep: (p: string) => Promise<void> = trashOne;
 
@@ -266,6 +269,14 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
         const look = await looks.look(p);
         if (!look.empty && look.why !== 'gone') {
           failed.push({ path: p, reason: look.reason, refused: true, code: NOT_EMPTY_CODES[look.why] });
+          continue;
+        }
+        if (!look.empty) {
+          // Gone, the look says. It fails as gone on a stat of its own, as the Trash step's stat
+          // would have failed it — and is never handed to the Trash (U-4c L1): a folder there now,
+          // under that name, is one nobody looked at.
+          await fsp.lstat(p); // ENOENT -> caught below, the path's failure
+          failed.push({ path: p, reason: GONE_YET_THERE, refused: true, code: NOT_EMPTY_CODES.unreadable });
           continue;
         }
       }

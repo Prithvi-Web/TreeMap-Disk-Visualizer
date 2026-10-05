@@ -1,12 +1,13 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Dirent } from 'node:fs';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-emptyFolderCheck-data-');
 
 import {
-  driveFor, driveOn, emptyCheckSession, EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, lookBudgetMs,
-  setEmptyCheckForTests, SILENT_DRIVE_MEMORY_MS, stillEmptyFolder, type EmptyCheckDeps, type EmptyVerdict,
+  driveFor, driveOn, emptyCheckSession, EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, listsEntryTypes, lookBudgetMs,
+  openListing, setEmptyCheckForTests, SILENT_DRIVE_MEMORY_MS, stillEmptyFolder, type EmptyCheckDeps, type EmptyVerdict,
 } from '../src/services/emptyFolderCheck';
 import { HANG_GUARD_MS } from './fixtures/waitFor';
 
@@ -144,6 +145,89 @@ test('a request looks for 10 s at most, counting only while it looks; the wait i
   assert.deepEqual(stats, ['/s/a', '/s/b', '/s/c', '/s/d'], 'nothing is asked once the 10 s are spent');
   assert.match(reasonOf(verdicts[4]), /the 10 seconds TreeMap gives to looking at folders again ran out/);
   assert.deepEqual(waits, [2000, 2000, 2000, 2000, 2000, 1000, 1000], 'each call waits 2 s, or what is left of the 10 s when that is less');
+});
+
+/* ─────────────── "gone" is only ever the folder itself (U-4c L1) ─────────────── */
+
+const enoent = (syscall: string): NodeJS.ErrnoException => Object.assign(new Error(`ENOENT: no such file or directory, ${syscall}`), { code: 'ENOENT' });
+const aFolder = { isDirectory: () => true };
+const dirent = (name: string, isDir: boolean): Dirent => ({ name, isDirectory: () => isDir, isFile: () => !isDir }) as unknown as Dirent;
+
+test('an entry that vanishes while the listing is read is not the folder gone: Dir.read() rejecting ENOENT leaves it unreadable', async () => {
+  // Node's Dir.read() stats an entry of a file system that gives no entry types; one removed between
+  // the listing and that stat rejects the read with ITS ENOENT, while the folder still holds the rest.
+  setEmptyCheckForTests({
+    driveOf: async () => '/',
+    lstat: async () => aFolder,
+    opendir: async () => ({ read: async () => { throw enoent('lstat'); }, close: async () => {} }),
+  });
+  const verdict = await stillEmptyFolder('/x/holder', true);
+  assert.equal(whyOf(verdict), 'unreadable', JSON.stringify(verdict));
+  assert.match(reasonOf(verdict), /could not be read \(ENOENT\)/);
+});
+
+test('a folder whose opening fails ENOENT is gone only when a fresh stat of it fails ENOENT too', async () => {
+  const stats: string[] = [];
+  let thereOnSecondLook = true;
+  setEmptyCheckForTests({
+    driveOf: async () => '/',
+    lstat: async (p) => {
+      stats.push(p);
+      if (stats.length > 1 && !thereOnSecondLook) throw enoent('lstat');
+      return aFolder;
+    },
+    opendir: async () => { throw enoent('opendir'); },
+  });
+  const there = await stillEmptyFolder('/x/odd', true);
+  assert.equal(whyOf(there), 'unreadable', 'still there when looked at again: not gone, and not shown empty');
+  assert.deepEqual(stats, ['/x/odd', '/x/odd'], 'its own stat, then the fresh one');
+  stats.length = 0;
+  thereOnSecondLook = false;
+  const gone = await stillEmptyFolder('/x/odd', true);
+  assert.equal(whyOf(gone), 'gone', 'opening and the fresh stat agree');
+  assert.deepEqual(stats, ['/x/odd', '/x/odd']);
+});
+
+test('a folder inside the one looked at that is not there any more makes it unreadable, never gone', async () => {
+  setEmptyCheckForTests({
+    driveOf: async () => '/',
+    lstat: async () => aFolder,
+    opendir: async (p) => {
+      if (p !== '/x/top') throw enoent('opendir');
+      const rest = [dirent('inner', true)];
+      return { read: async () => rest.shift() ?? null, close: async () => {} };
+    },
+  });
+  const verdict = await stillEmptyFolder('/x/top', true);
+  assert.equal(whyOf(verdict), 'unreadable');
+  assert.match(reasonOf(verdict), /the folder inner inside it could not be read \(ENOENT\)/);
+});
+
+test('a listing is read an entry at a time only where the file system names each entry\'s type; elsewhere whole, its stats off the event loop', async () => {
+  // Node's Dir.read() stats an untyped entry with lstatSync, on the event loop: a slow or dead
+  // network drive would stop the whole server, and no deadline could fire (the U-4b review, L1).
+  for (const fsType of ['apfs', 'hfs', 'ext4', 'ext3', 'btrfs', 'tmpfs', 'zfs', 'f2fs']) {
+    assert.equal(listsEntryTypes(fsType, 'linux'), true, `${fsType} names every entry's type`);
+  }
+  for (const fsType of ['nfs', 'smbfs', 'macfuse', 'fuse.sshfs', 'xfs', 'webdav', 'msdos', 'exfat', 'cifs', 'unknown']) {
+    assert.equal(listsEntryTypes(fsType, 'darwin'), false, `${fsType}: not known to name entry types`);
+  }
+  assert.equal(listsEntryTypes(null, 'darwin'), false, 'a mount table that could not be read: read whole');
+  assert.equal(listsEntryTypes(null, 'win32'), true, 'Windows names every entry\'s type');
+  const calls: string[] = [];
+  const via = (fsType: string | null) => ({
+    platform: 'darwin' as NodeJS.Platform,
+    filesystemOf: async () => fsType,
+    opendir: async (p: string) => { calls.push(`opendir ${p}`); return { read: async () => null, close: async () => {} }; },
+    readdir: async (p: string) => { calls.push(`readdir ${p}`); return [dirent('a', false), dirent('b', true)]; },
+  });
+  await openListing('/n/x', via('nfs'));
+  await openListing('/u/x', via(null));
+  await openListing('/a/x', via('apfs'));
+  assert.deepEqual(calls, ['readdir /n/x', 'readdir /u/x', 'opendir /a/x']);
+  const whole = await openListing('/n/y', via('smbfs'));
+  assert.deepEqual([(await whole.read())?.name, (await whole.read())?.name, await whole.read()], ['a', 'b', null], 'served an entry at a time, then the end');
+  await whole.close();
 });
 
 test('which drive a path is on: the deepest mount point listed above it, by name; a Windows path\'s own drive', () => {

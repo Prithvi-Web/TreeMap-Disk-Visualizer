@@ -121,13 +121,69 @@ test('a folder holding a folder that cannot be read is refused', { skip: !canLoc
   }
 });
 
-test('a folder that is gone is not "not empty": it goes on to the Trash step, which says what it says', async () => {
-  // The check refuses what it can show is not an empty folder; a path that is no
-  // longer there is the Trash step's to report, as it always was.
+test('a folder that is gone is not "not empty": it fails as gone, as the Trash step\'s own stat said, and no Trash step is asked', async () => {
+  // The check refuses what it can show is not an empty folder; a path that is no longer there fails
+  // as it always did — but on a stat of its own (U-4c L1), never by handing the name to the Trash: a
+  // folder made under that name since the look was never looked at.
   const r = await trash({ paths: [at('never-was')], onlyEmptyFolders: true });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.ok(!r.body.failed.some((f: { code?: string }) => f.code === 'FOLDER_NOT_EMPTY'), 'not refused as not empty');
-  assert.deepEqual(trashed, [at('never-was')], 'handed to the Trash step (this file\'s stand-in, which reports success)');
+  assert.deepEqual(r.body.deleted, []);
+  assert.equal(r.body.failed.length, 1);
+  assert.equal(r.body.failed[0].path, at('never-was'));
+  assert.equal(r.body.failed[0].refused, undefined, 'not a refusal: it is simply not there');
+  assert.equal(r.body.failed[0].code, undefined);
+  assert.deepEqual(trashed, [], 'the Trash step is never handed a folder the look found gone');
+});
+
+/* ─────────────── a folder still holding a file is never judged gone (U-4c L1) ─────────────── */
+
+const enoent = (syscall: string): NodeJS.ErrnoException => Object.assign(new Error(`ENOENT: no such file or directory, ${syscall}`), { code: 'ENOENT' });
+
+test('R2: a folder still holding a file, whose listing read failed ENOENT, is refused — by moveToTrash and by the route — and never trashed', async () => {
+  // What Node's Dir.read() throws when an entry of a file system without entry types vanishes between
+  // the listing and its lstat: the CHILD's ENOENT. It once read as "the folder is gone" and went on to the Trash.
+  const holder = at('r2-holder');
+  fs.mkdirSync(holder, { recursive: true });
+  fs.writeFileSync(path.join(holder, 'keep.txt'), 'a person\'s file');
+  setEmptyCheckForTests({
+    opendir: async () => ({ read: async () => { throw enoent('lstat'); }, close: async () => {} }),
+  });
+  try {
+    const direct = await moveToTrash([holder], { ignoreOpenHandles: true, onlyEmptyFolders: true });
+    assert.deepEqual(direct.deleted, []);
+    assert.equal(direct.failed[0].code, 'FOLDER_UNREADABLE', JSON.stringify(direct.failed));
+    assert.equal(direct.failed[0].refused, true);
+    const viaRoute = await trash({ paths: [holder], onlyEmptyFolders: true });
+    assert.equal(viaRoute.status, 200, JSON.stringify(viaRoute.body));
+    assert.deepEqual(viaRoute.body.deleted, []);
+    assert.equal(viaRoute.body.failed[0].code, 'FOLDER_UNREADABLE');
+    const dry = await trash({ paths: [holder], onlyEmptyFolders: true, dryRun: true });
+    assert.deepEqual(dry.body.wouldTrash, [], 'nor would a dry run trash it');
+    assert.equal(dry.body.notEmpty[0].code, 'FOLDER_UNREADABLE');
+    assert.deepEqual(trashed, [], 'no Trash step was asked');
+    assert.deepEqual(fs.readdirSync(holder), ['keep.txt']);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('a look that finds a folder gone while it is there: moveToTrash looks once more, and refuses it rather than hand it to the Trash', async () => {
+  const there = at('said-gone');
+  fs.mkdirSync(there, { recursive: true });
+  fs.writeFileSync(path.join(there, 'keep.txt'), 'still here');
+  // The look's own stat says "not there" (a stale answer, a racing rename); the folder and its file are on disk.
+  setEmptyCheckForTests({ lstat: async () => { throw enoent('lstat'); } });
+  try {
+    const result = await moveToTrash([there], { ignoreOpenHandles: true, onlyEmptyFolders: true });
+    assert.deepEqual(result.deleted, []);
+    assert.equal(result.failed.length, 1);
+    assert.equal(result.failed[0].code, 'FOLDER_UNREADABLE', JSON.stringify(result.failed));
+    assert.equal(result.failed[0].refused, true);
+    assert.match(result.failed[0].reason, /cannot tell that it is empty/);
+    assert.deepEqual(trashed, []);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
 });
 
 test('a file is not an empty folder', async () => {

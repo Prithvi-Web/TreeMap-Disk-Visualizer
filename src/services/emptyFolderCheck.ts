@@ -170,30 +170,100 @@ export function driveFor(p: string, mountPoints: readonly string[] | null, platf
 
 /** How long a read mount table is used before it is read again: a drive attached since is a new name. */
 const MOUNT_TABLE_FRESH_MS = 60_000;
-let mountTable: { readAt: number; points: string[] | null } | null = null;
-let mountTableRead: Promise<string[] | null> | null = null;
 
-/** The mount points of this machine, read at most once a minute; null when the table cannot be read. */
-async function currentMountPoints(): Promise<string[] | null> {
-  if (mountTable && Date.now() - mountTable.readAt < MOUNT_TABLE_FRESH_MS) return mountTable.points;
+/** A mount the table lists: where, and the file system's type as the table names it (`apfs`, `nfs`, …). */
+interface Mount {
+  mountPoint: string;
+  filesystem: string;
+}
+
+let mountTable: { readAt: number; mounts: Mount[] | null } | null = null;
+let mountTableRead: Promise<Mount[] | null> | null = null;
+
+/** The mounts of this machine, read at most once a minute; null when the table cannot be read. */
+async function currentMounts(): Promise<Mount[] | null> {
+  if (mountTable && Date.now() - mountTable.readAt < MOUNT_TABLE_FRESH_MS) return mountTable.mounts;
   mountTableRead ??= readMountTable(process.platform)
-    .then((t) => t.entries?.map((e) => e.mountPoint) ?? null, () => null)
-    .then((points) => {
-      mountTable = { readAt: Date.now(), points };
+    .then((t) => t.entries?.map((e) => ({ mountPoint: e.mountPoint, filesystem: e.filesystem })) ?? null, () => null)
+    .then((mounts) => {
+      mountTable = { readAt: Date.now(), mounts };
       mountTableRead = null;
-      return points;
+      return mounts;
     });
   return mountTableRead;
 }
 
 /** Which drive `p` is on, on this machine (`driveFor` over its mount table). */
 export async function driveOn(p: string): Promise<string> {
-  return driveFor(p, process.platform === 'win32' ? null : await currentMountPoints(), process.platform);
+  if (process.platform === 'win32') return driveFor(p, null, 'win32');
+  return driveFor(p, (await currentMounts())?.map((m) => m.mountPoint) ?? null, process.platform);
+}
+
+/** The type of the file system `p` is on, as this machine's mount table names it; null where the table does not say (and on Windows). */
+export async function filesystemOn(p: string): Promise<string | null> {
+  if (process.platform === 'win32') return null;
+  let deepest: Mount | null = null;
+  for (const m of (await currentMounts()) ?? []) {
+    if ((deepest === null || m.mountPoint.length > deepest.mountPoint.length) && isAtOrUnder(m.mountPoint, p)) deepest = m;
+  }
+  return deepest?.filesystem ?? null;
+}
+
+/* ───────────────────────────── listings ───────────────────────────── */
+
+/**
+ * File systems whose listings name every entry's type (U-4c L1). Where one
+ * does not, Node's `Dir.read()` learns an entry's type with `lstatSync` — on
+ * the event loop, so a slow or dead network drive would stop the whole server
+ * with no deadline able to fire — and an entry removed between the listing and
+ * that stat rejects the read with the entry's own ENOENT. Only these are read
+ * an entry at a time; anything else, or a drive the table does not name, is
+ * read whole by `readdir`, which stats an untyped entry on the I/O pool, where
+ * the deadline races it.
+ */
+const TYPED_LISTINGS: ReadonlySet<string> = new Set(['apfs', 'hfs', 'ext2', 'ext3', 'ext4', 'btrfs', 'tmpfs', 'zfs', 'f2fs']);
+
+/** Does a listing on this file system name every entry's type? Always on Windows, whose listings carry each entry's attributes. */
+export function listsEntryTypes(filesystem: string | null, platform: NodeJS.Platform): boolean {
+  if (platform === 'win32') return true;
+  return filesystem !== null && TYPED_LISTINGS.has(filesystem.toLowerCase());
+}
+
+/** What `openListing` opens a folder with; a test brings its own. */
+export interface ListingDeps {
+  platform: NodeJS.Platform;
+  filesystemOf: (p: string) => Promise<string | null>;
+  opendir: (p: string) => Promise<FolderListing>;
+  readdir: (p: string) => Promise<Dirent[]>;
+}
+
+const LIVE_LISTING: ListingDeps = {
+  platform: process.platform,
+  filesystemOf: (p) => filesystemOn(p),
+  opendir: (p) => fsp.opendir(p),
+  readdir: (p) => fsp.readdir(p, { withFileTypes: true }),
+};
+
+/**
+ * `p`'s listing, to be read an entry at a time: opened as an `fs.Dir` where its
+ * file system names each entry's type (U-4b L5: a folder of a million entries
+ * is read only as far as the look needs), else read whole with `readdir` and
+ * handed out an entry at a time (U-4c L1). Either way no stat runs on the
+ * event loop.
+ */
+export async function openListing(p: string, ld: ListingDeps = LIVE_LISTING): Promise<FolderListing> {
+  if (listsEntryTypes(await ld.filesystemOf(p), ld.platform)) return ld.opendir(p);
+  const entries = await ld.readdir(p);
+  let next = 0;
+  return {
+    read: async () => (next < entries.length ? entries[next++] : null),
+    close: async () => { /* nothing is held open */ },
+  };
 }
 
 const REAL: EmptyCheckDeps = {
   lstat: (p) => fsp.lstat(p),
-  opendir: (p) => fsp.opendir(p),
+  opendir: (p) => openListing(p),
   deadline: realDeadline,
   deadlineMs: lookDeadlineMs(),
   budgetMs: lookBudgetMs(),
@@ -302,6 +372,18 @@ async function answered<T>(ctx: LookContext, start: () => Promise<T>): Promise<T
 }
 
 /**
+ * A listing that could not be opened, and why (`failure`): told apart from a
+ * read that fails once it is open, which never says the folder itself is gone
+ * — an entry that vanished mid-listing rejects a read with its own ENOENT
+ * (U-4c L1).
+ */
+class NotOpened extends Error {
+  constructor(readonly failure: unknown) {
+    super('the listing could not be opened');
+  }
+}
+
+/**
  * Read `folder`'s listing an entry at a time, handing each to `visit` until it
  * answers true (enough is known) or the listing ends; then close it. Once
  * `gaveUp()` is true — the look stopped waiting for this listing — nothing more
@@ -310,7 +392,12 @@ async function answered<T>(ctx: LookContext, start: () => Promise<T>): Promise<T
  * decided, and a close that hangs must not hold the look.
  */
 async function readListing(d: EmptyCheckDeps, folder: string, visit: (ent: Dirent) => boolean, gaveUp: () => boolean): Promise<void> {
-  const listing = await d.opendir(folder);
+  let listing: FolderListing;
+  try {
+    listing = await d.opendir(folder);
+  } catch (err) {
+    throw new NotOpened(err);
+  }
   try {
     for (;;) {
       if (gaveUp()) return;
@@ -326,6 +413,20 @@ const notEmpty = (why: NotEmptyWhy, reason: string): EmptyVerdict => ({ empty: f
 
 function budgetSpent(d: EmptyCheckDeps): EmptyVerdict {
   return notEmpty('no-answer', `the ${waitWords(d.budgetMs)} TreeMap gives to looking at folders again ran out before it made sure this one is empty`);
+}
+
+/** Opening `dir` said it is not there: so it is gone if a fresh stat says so too; anything else is not shown empty (U-4c L1). */
+async function goneUnlessThere(ctx: LookContext, dir: string): Promise<EmptyVerdict> {
+  let again: { isDirectory(): boolean } | typeof LATE | typeof SPENT;
+  try {
+    again = await answered(ctx, () => ctx.d.lstat(dir));
+  } catch (err) {
+    if (codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
+    return notEmpty('unreadable', `it could not be looked at (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
+  }
+  if (again === LATE) return notEmpty('no-answer', `it did not answer within ${waitWords(ctx.d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
+  if (again === SPENT) return budgetSpent(ctx.d);
+  return notEmpty('unreadable', 'it could not be opened (ENOENT), though it is there, so TreeMap cannot tell that it is empty');
 }
 
 /** The look itself: the folder's own stat, then every listing below it, each raced against its deadline and the budget. */
@@ -371,8 +472,11 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
     try {
       listed = await answered(ctx, () => readListing(d, folder, visit, () => gaveUp));
     } catch (err) {
-      if (folder === dir && codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
-      return notEmpty('unreadable', `${named(folder)} could not be read (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
+      const failure = err instanceof NotOpened ? err.failure : err;
+      // Gone only when the folder itself could not be opened for not being there, and a fresh stat
+      // agrees (U-4c L1): a read's ENOENT is an entry's, and the folder may hold the rest.
+      if (err instanceof NotOpened && folder === dir && codeOf(failure) === 'ENOENT') return goneUnlessThere(ctx, dir);
+      return notEmpty('unreadable', `${named(folder)} could not be read (${codeOf(failure)}), so TreeMap cannot tell that it is empty`);
     }
     if (listed === LATE || listed === SPENT) {
       gaveUp = true;
