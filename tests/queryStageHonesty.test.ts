@@ -276,3 +276,83 @@ test('files and folders exports are saved under different names', async () => {
 test('an export with no mode keeps the plain name', async () => {
   assert.match(await downloadName('pdf'), /^treemap-Library-\d{8}\.pdf$/);
 });
+
+/* ══════════════════ D30: a field that is not one gets a hint ══════════════════ */
+
+/**
+ * `sise>1gb` (a typo) and `foo:bar` are filename searches by design: the box
+ * sends a query to the grammar only when it names a REAL field, so that
+ * `Screenshot (1).png` and `-hidden.txt` keep their plain meaning
+ * (tmIsGrammarQuery). That routing stays. What changes is the silence: a bare
+ * "0 matches" under a typed field reads as a broken filter, so when the search
+ * finds nothing and the text has a word shaped like a field, the box names it,
+ * says it is not a field, and offers the nearest real one.
+ */
+async function bareMessage(q: string, matches: number): Promise<{ said: string[]; routedToGrammar: boolean }> {
+  const said: string[] = [];
+  let routedToGrammar = false;
+  const state = { treemap: { query: '', queryMode: 'grammar', matchedPaths: null, matchTotal: null, matches: 99 } };
+  const deps: Record<string, unknown> = {
+    state,
+    tmCancelQueries: () => {},
+    tmClearHits: () => {},
+    tmSetQueryMessage: (text: string) => { said.push(text); },
+    tmValidateQuery: async () => { routedToGrammar = true; return false; },
+    tmRunGrammarQuery: async () => {},
+    isSun: () => false,
+    isCells: () => false,
+    renderSearchOverlay: () => { state.treemap.matches = matches; },
+    presentTreemap: () => {},
+    presentSunburst: () => {},
+    presentCells: () => {},
+    renderCellsStatus: () => {},
+  };
+  const consts = ['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_FIELDLIKE_RE'].filter((n) => INDEX.includes(`const ${n} =`));
+  const helpers = ['tmIsGrammarQuery', 'tmEditDistance', 'tmUnknownFieldHint'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const apply = new Function(...keys, `${consts.map(constOf).join('\n')}\n${helpers.map(declOf).join('\n')}\n${declOf('tmApplyQuery')}\nreturn tmApplyQuery;`)(...keys.map((k) => deps[k]));
+  apply(q);
+  return { said, routedToGrammar };
+}
+
+test('a mistyped field that finds nothing names the word and offers the field meant', async () => {
+  const { said, routedToGrammar } = await bareMessage('sise>1gb', 0);
+  assert.equal(routedToGrammar, false, 'routing is unchanged: an unknown word is still a filename search');
+  const msg = said[said.length - 1];
+  assert.match(msg, /“sise” is not a query field/, msg);
+  assert.match(msg, /did you mean “size”/, msg);
+  assert.match(msg, /size, ext, name/, 'and lists the fields');
+});
+
+test('a word nowhere near a field still gets the list, without a guess', async () => {
+  const { said } = await bareMessage('foo:bar', 0);
+  const msg = said[said.length - 1];
+  assert.match(msg, /“foo” is not a query field/, msg);
+  assert.doesNotMatch(msg, /did you mean/, 'no suggestion that is not close');
+});
+
+test('a short word is only matched to a field one edit away', async () => {
+  const re = (await bareMessage('re:invoice', 0)).said.pop()!;
+  assert.match(re, /“re” is not a query field\./, re);
+  assert.doesNotMatch(re, /did you mean/, '"re" is not a misspelt "in"');
+  const ex = (await bareMessage('ex:mp4', 0)).said.pop()!;
+  assert.match(ex, /did you mean “ext”/, ex);
+});
+
+test('a longer word is matched to a field two edits away', async () => {
+  const msg = (await bareMessage('elswere:proven', 0)).said.pop()!;
+  assert.match(msg, /did you mean “elsewhere”/, msg);
+});
+
+test('a filename search that found something is left alone', async () => {
+  const { said } = await bareMessage('re:invoice', 3);
+  assert.equal(said.filter(Boolean).length, 0, `nothing to explain: ${JSON.stringify(said)}`);
+});
+
+test('ordinary filenames never get the hint', async () => {
+  for (const q of ['Screenshot (1).png', '-hidden.txt', 'C:\\Users', '10:30 notes']) {
+    const { said } = await bareMessage(q, 0);
+    assert.equal(said.filter(Boolean).length, 0, `${q}: ${JSON.stringify(said)}`);
+  }
+});

@@ -20082,6 +20082,50 @@ function tmIsGrammarQuery(q) {
   return TM_GRAMMAR_RE.test(q.trim());
 }
 
+/**
+ * A word shaped like a field — two letters or more, then an operator — whether
+ * or not it is one. Two letters, so a drive letter (`C:\Users`) is not a field.
+ */
+const TM_FIELDLIKE_RE = /(^|[\s(])-?([a-z][a-z0-9_]+)\s*(:|<=|>=|<|>|=)/gi;
+
+/** Levenshtein distance, for "did you mean" over a dozen short field names. */
+function tmEditDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * The hint for a filename search that named a field that is not one (D30):
+ * `sise>1gb`, `foo:bar`. Such text is never parsed — routing stays as
+ * tmIsGrammarQuery decides — but a bare "0 matches" under it reads as a broken
+ * filter. Names the word, offers the nearest field a typo away, and lists
+ * them all. Null when no such word is in the text.
+ */
+function tmUnknownFieldHint(q) {
+  const fields = TM_GRAMMAR_FIELDS.split('|');
+  for (const m of q.matchAll(TM_FIELDLIKE_RE)) {
+    const word = m[2].toLowerCase();
+    if (fields.includes(word)) continue;
+    let near = null;
+    // A typo is one edit away in a short word, two in a longer one; past that
+    // the guess would be a different word ("re" is not a misspelt "in").
+    let nearest = (word.length <= 3 ? 1 : 2) + 1;
+    for (const f of fields) {
+      const d = tmEditDistance(word, f);
+      if (d < nearest) { near = f; nearest = d; }
+    }
+    return `No file name here contains “${q}”. “${m[2]}” is not a query field${near ? ` — did you mean “${near}”?` : '.'} Fields: ${fields.join(', ')}.`;
+  }
+  return null;
+}
+
 let tmQueryDeb = 0;
 let tmQuerySeq = 0;
 
@@ -20403,12 +20447,15 @@ function tmApplyQuery(raw) {
     state.treemap.matchTotal = null; // no server answer to compare the map against
     tmClearHits();
     tmSetQueryMessage('', false);
-    if (isSun()) { presentSunburst(); return; }
+    if (isSun()) presentSunburst();
     // §6.2 — the overlay's own `updateTmStatus` writes nothing for these
     // renderers, so clearing the box would otherwise leave "2 matches for …"
     // standing over a map with no query on it.
-    if (isCells()) { renderSearchOverlay(); renderCellsStatus(); presentCells(); return; }
-    renderSearchOverlay(); presentTreemap();
+    else if (isCells()) { renderSearchOverlay(); renderCellsStatus(); presentCells(); }
+    else { renderSearchOverlay(); presentTreemap(); }
+    // D30 — found nothing, and a word in it is shaped like a field: say so.
+    const hint = q && !(state.treemap.matches > 0) ? tmUnknownFieldHint(q) : null;
+    if (hint) tmSetQueryMessage(hint, false);
     return;
   }
   void tmValidateQuery(q).then((valid) => { if (valid) void tmRunGrammarQuery(q); });
