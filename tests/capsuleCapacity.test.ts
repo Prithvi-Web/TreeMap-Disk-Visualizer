@@ -18,6 +18,7 @@ import {
 } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
+import { approvePolicy, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
 import type { TimeCapsuleEntry } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -225,4 +226,51 @@ test('a run\'s copies stay pinned through its trash step: a commit made meanwhil
   assert.deepEqual(second.trashed, [], 'the second commit trashed nothing');
   assert.equal(second.skipped[0]?.code, 'CAPSULE_FULL', JSON.stringify(second.skipped));
   assert.ok(fs.existsSync(b));
+});
+
+/* ─────────────── FG3f #3: an undo of a run whose copy is gone says so ─────────────── */
+
+test('a cart undo of a commit whose copy was evicted since puts back what it holds, and names the item it cannot', async () => {
+  const [a, b] = files('partial', ['a.bin', 'b.bin']);
+  const first = await withOpenFileCheck('clear', () => commitCart([a, b]));
+  assert.deepEqual(sorted(first.trashed), sorted([a, b]));
+  // A later commit needs room, and the first commit's oldest copy is evicted for it.
+  const [c] = files('partial-later', ['c.bin']);
+  const later = await withOpenFileCheck('clear', () => commitCart([c]));
+  assert.deepEqual(later.trashed, [c]);
+  const lostPath = (await entriesOf(first.runId)).find((e) => !e.hasPayload)?.originalPath;
+  assert.ok(lostPath, 'one of the first commit\'s copies was evicted');
+
+  const undo = await undoCartRun(first.runId);
+  assert.equal(undo.entryCount, 1, 'the copy still held is put back');
+  assert.deepEqual(undo.unrestorable?.map((u) => u.path), [lostPath], 'and the one it no longer holds is named');
+  assert.match(undo.unrestorable?.[0].reason ?? '', /copy is gone/);
+  await restored(undo.jobId);
+  const kept = lostPath === a ? b : a;
+  assert.ok(fs.existsSync(kept), 'the held one is back');
+  assert.ok(!fs.existsSync(lostPath), 'and the lost one is not');
+});
+
+test('an Autopilot undo of a run whose copy was evicted since names the item it cannot put back, and leaves the run not undone', async () => {
+  const dir = fileTempDir('treemap-capsuleCapacity-partial-run-');
+  for (const [name, fill] of [['a.bin', 1], ['b.bin', 2]] as const) fs.writeFileSync(path.join(dir, name), Buffer.alloc(ITEM, fill));
+  await savePolicies([{ id: 'partial', name: 'partial', path: dir, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
+  try {
+    await approvePolicy('partial');
+    const policy = (await listPolicies()).find((p) => p.id === 'partial');
+    assert.ok(policy);
+    const run = await withOpenFileCheck('clear', () => runPolicy(policy));
+    assert.equal(run.status, 'completed', run.blockedReason);
+    assert.equal(run.items.length, 2);
+    const [c] = files('partial-run-later', ['c.bin']);
+    await withOpenFileCheck('clear', () => commitCart([c]));
+
+    const undo = await undoRun(run.id);
+    assert.equal(undo.entryCount, 1);
+    assert.equal(undo.unrestorable?.length, 1, JSON.stringify(undo));
+    await restored(undo.jobId);
+    assert.equal((await getRun(run.id))?.undoneAt, undefined, 'one of its items is not back, so the run is not recorded as undone');
+  } finally {
+    await savePolicies([]);
+  }
 });

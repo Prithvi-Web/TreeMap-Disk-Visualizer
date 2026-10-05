@@ -8,6 +8,7 @@ import {
   planUndoForRun,
   protectAndTrash,
   startCapsuleRestore,
+  unrestorableOf,
   type ProtectionPlan,
 } from './timeCapsule';
 import type { TimeCapsuleEntry } from '../models/types';
@@ -239,7 +240,7 @@ export async function undoCartRun(runId: string): Promise<CartUndoResult> {
   // (FG3c) — or that no copy is held at all.
   if (plan.undoable.length === 0) throw nothingToUndo('commit', plan);
   const job: TimeCapsuleJob = await startCapsuleRestore(plan.undoable.map((e) => e.id));
-  return { jobId: job.jobId, entryCount: plan.undoable.length, bytesTotal: job.bytesTotal, ...passedOverOf(plan) };
+  return { jobId: job.jobId, entryCount: plan.undoable.length, bytesTotal: job.bytesTotal, ...passedOverOf(plan), ...unrestorableOf(plan) };
 }
 
 /** What an undo puts back, and each copy of an unconfirmed item it passed over, saying why (FG3c). */
@@ -249,5 +250,7 @@ export interface CartUndoResult {
   bytesTotal: number;
   /** Present when the undo passed over a copy a later undo may still put back, once its place is empty. */
   passedOver?: { path: string; reason: string }[];
+  /** Present when items of the commit cannot be put back at all: their copy is gone (FG3f #3). */
+  unrestorable?: { path: string; reason: string }[];
 }
 

@@ -112,8 +112,10 @@ autopilotRouter.get('/autopilot/runs', async (req: Request, res: Response) => {
  * POST /api/autopilot/runs/:id/undo → 202 { jobId }
  *
  * Puts back everything the run deleted, from the Time Capsule, as one verified
- * restore job. Refuses outright when the capsule no longer holds the run rather
- * than restoring part of it and reporting success.
+ * restore job. Refuses outright when the capsule no longer holds any of the run.
+ * When it holds only part of it — a copy evicted since to make room — it puts
+ * back what it holds and names the rest in `unrestorable`, and the run is not
+ * marked undone: never "restored part of it and reported success" (FG3f #3).
  */
 autopilotRouter.post('/autopilot/runs/:id/undo', idempotency, async (req: Request, res: Response) => {
   const id = String(req.params.id);

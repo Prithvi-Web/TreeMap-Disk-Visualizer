@@ -1815,6 +1815,12 @@ export interface UndoPlan {
   undoable: TimeCapsuleEntry[];
   /** Copies held but not put back, each with what the disk showed. */
   passedOver: { entry: TimeCapsuleEntry; why: PassedOverWhy }[];
+  /**
+   * The run's records whose copy is gone and that were never put back (FG3f #3): evicted to make
+   * room for later deletions, or missing from the capsule folder. No undo can put these back, and
+   * an undo that leaves one says so rather than "everything is back".
+   */
+  lost: TimeCapsuleEntry[];
 }
 
 /**
@@ -1826,12 +1832,17 @@ export interface UndoPlan {
  * what the look showed (`PassedOverWhy`): never "still in its place" unless it is the same file.
  */
 export async function planUndoForRun(runId: string): Promise<UndoPlan> {
-  const plan: UndoPlan = { undoable: [], passedOver: [] };
+  const plan: UndoPlan = { undoable: [], passedOver: [], lost: [] };
   const marked = (id: string, mark: string): Promise<boolean> => fsp.lstat(path.join(entryDir(id), mark)).then(() => true, () => false);
   for (const entry of await listCapsuleEntriesForRun(runId)) {
-    if (!entry.hasPayload || entry.restoredAt) continue;
+    if (entry.restoredAt) continue;
     // A record TreeMap did not make holds no copy of TreeMap's, and would refuse the whole undo (FG3).
     if (!isEntryId(entry.id)) continue;
+    // Its copy is gone (FG3f #3): passed over in silence, it let an undo say everything was back.
+    if (!entry.hasPayload) {
+      plan.lost.push(entry);
+      continue;
+    }
     if (await marked(entry.id, NOT_DELETED_MARK)) {
       plan.passedOver.push({ entry, why: 'never-deleted' });
       continue;
@@ -1873,6 +1884,20 @@ export function passedOverOf(plan: UndoPlan): { passedOver?: { path: string; rea
     .filter((p) => stillUndoable(p.why))
     .map((p) => ({ path: p.entry.originalPath, reason: passedOverReason(p.why) }));
   return rows.length > 0 ? { passedOver: rows } : {};
+}
+
+/** Said of an item of the run whose copy the Time Capsule no longer holds (FG3f #3). */
+export const COPY_GONE_SENTENCE =
+  'Its Time Capsule copy is gone — removed to make room for later deletions, or missing from the capsule folder — ' +
+  'so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
+
+/**
+ * The run's items an undo cannot put back because their copy is gone, as rows for its answer — or
+ * nothing, when there are none (FG3f #3).
+ */
+export function unrestorableOf(plan: UndoPlan): { unrestorable?: { path: string; reason: string }[] } {
+  const rows = plan.lost.map((entry) => ({ path: entry.originalPath, reason: COPY_GONE_SENTENCE }));
+  return rows.length > 0 ? { unrestorable: rows } : {};
 }
 
 /** One passed-over copy, as a sentence about its item (FG3c). */

@@ -129,7 +129,9 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
  * Restores everything one commit deleted, from the Time Capsule, back to the
  * paths it came from. Progress streams over the capsule's own SSE endpoint —
  * `GET /api/timecapsule/jobs/{jobId}/progress` — because it is the capsule's
- * restore, not a second one (§10: no new pathway).
+ * restore, not a second one (§10: no new pathway). An item whose copy is gone
+ * since (evicted to make room) is named in `unrestorable`, never passed over in
+ * silence (FG3f #3).
  *
  * Idempotency-Key'd, so a retried undo cannot start a second restore of the
  * same run.

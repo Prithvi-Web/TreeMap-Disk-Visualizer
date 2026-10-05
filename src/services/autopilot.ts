@@ -24,6 +24,7 @@ import {
   protectAndTrash,
   startCapsuleRestore,
   stillUndoable,
+  unrestorableOf,
   type ProtectAndTrashResult,
 } from './timeCapsule';
 import nodePath from 'path';
@@ -958,13 +959,15 @@ export async function undoRun(runId: string): Promise<AutopilotUndo> {
   // Undone only once this undo has put back everything it set out to, and no copy is left that a
   // later undo could still put back — stamped from the restore's outcome, before its job says
   // complete, never when it starts (FG3d #8). An undo that fails or is cancelled leaves the run
-  // undoable, and what it deleted still counts against its week.
-  const leavesSome = plan.passedOver.some((p) => stillUndoable(p.why));
+  // undoable, and what it deleted still counts against its week. Nor when an item of the run has
+  // no copy left to put back (FG3f #3): not everything came back, so the run is not undone.
+  const leavesSome = plan.passedOver.some((p) => stillUndoable(p.why)) || plan.lost.length > 0;
   const job = await startCapsuleRestore(plan.undoable.map((e) => e.id), leavesSome ? {} : { beforeComplete: () => markUndone(run.id) });
   return {
     jobId: job.jobId,
     entryCount: plan.undoable.length,
     ...passedOverOf(plan),
+    ...unrestorableOf(plan),
     puttingBack: { paths: plan.undoable.map((e) => e.originalPath), bytes: job.bytesTotal },
   };
 }
@@ -986,6 +989,8 @@ export interface AutopilotUndo {
   entryCount: number;
   /** Copies of unconfirmed items it passed over, each saying why; a later undo may still put them back. */
   passedOver?: { path: string; reason: string }[];
+  /** Items of the run it cannot put back at all: their copy is gone (FG3f #3). */
+  unrestorable?: { path: string; reason: string }[];
   /** The places this undo restores, and their bytes: what it did, rather than what the run once deleted. */
   puttingBack: { paths: string[]; bytes: number };
 }

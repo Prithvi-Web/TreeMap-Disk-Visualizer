@@ -566,7 +566,9 @@ async function cartUndoRun(runId) {
       // Each copy it passed over (an unconfirmed item whose place is not empty) is named with what
       // the disk showed of it (FG3c, FG3d #7). The copy stays in the Time Capsule, whose tab restores
       // it once its place is empty: the summary that held this Undo closed when the undo began.
-      const left = job.passedOver || [];
+      // And each item whose copy is gone, which no undo can put back (FG3f #3): then not everything
+      // from that run is back.
+      const left = [...(job.passedOver || []), ...(job.unrestorable || [])];
       if (left.length) {
         toast(passedOverToast(job.entryCount, left), 'error', 12000);
       } else {

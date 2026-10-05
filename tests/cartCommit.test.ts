@@ -647,6 +647,36 @@ test('an undo that passed over copies for different reasons names each with its 
   assert.equal(said.split(inPlace).length - 1, 1, `"still in its place" is said of one copy only (${said})`);
 });
 
+/** The server's sentence for an item whose copy the Time Capsule no longer holds (FG3f #3). */
+const GONE = 'Its Time Capsule copy is gone — removed to make room for later deletions, or missing from the capsule folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
+
+test('a cart undo that could not put back an item whose copy is gone says how many, and never that everything is back (FG3f #3)', async () => {
+  const said = (await undoToasts({ jobId: 'j', entryCount: 2, bytesTotal: 10, unrestorable: [{ path: '/x/a.bin', reason: GONE }] })).join(' | ');
+  assert.doesNotMatch(said, /Everything from that run is back/, said);
+  assert.match(said, /Put back 2 items; 1 not put back/, said);
+  assert.ok(said.includes(`a.bin: ${GONE}`), `the item, by name, with the reason (${said})`);
+});
+
+test('an Autopilot undo that could not put back an item whose copy is gone says how many, and never that everything is back (FG3f #3)', async () => {
+  const src = `${slice('function passedOverToast', 'function restoreFromCapsule')}; ${slice('function undoAutopilotRun', 'function deletePolicy')}`;
+  const toasts: string[] = [];
+  let watched: { onComplete: () => void } | null = null;
+  const make = new Function('api', 'watchJob', 'toast', 'loadAutopilot', 'formatCount', `${src}; return undoAutopilotRun;`);
+  make(
+    () => Promise.resolve({ jobId: 'j', entryCount: 1, unrestorable: [{ path: '/x/b.bin', reason: GONE }] }),
+    (opts: { onComplete: () => void }) => { watched = opts; },
+    (message: string) => toasts.push(message),
+    () => undefined,
+    (n: number) => String(n),
+  )('run-1');
+  await waitFor(() => watched !== null, 'the restore being followed');
+  (watched as unknown as { onComplete: () => void }).onComplete();
+  const said = toasts.join(' | ');
+  assert.doesNotMatch(said, /Everything from that run is back/, said);
+  assert.match(said, /Put back 1 item; 1 not put back/, said);
+  assert.ok(said.includes(`b.bin: ${GONE}`), said);
+});
+
 /**
  * `cartExecuteCommit` really evaluated, over two batches (a chunk of one path each): the first
  * answers `first`, the second fails as a dropped connection does. What the person is told, the
