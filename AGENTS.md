@@ -547,6 +547,18 @@ read-what-you-saw) permission to act.
 - **Path sanitization.** All user-supplied paths are validated: `..` traversal
   is resolved away, null bytes rejected, `~` expanded, and OS-internal
   directories (`/proc`, `/sys`, `C:\Windows\System32`, …) refused outright.
+  So is a path spelled through a **second name** the system gives it, on
+  every route and MCP tool that takes a path: `400 { code: "PATH_BLOCKED" }`.
+  On macOS that is `/.nofollow/…`, `/.resolve/…` and `/.vol/<dev>/<inode>/…`
+  at the root, in any case — the kernel answers them for any file on any
+  volume, and realpath cannot say where they land, so they walked past both
+  the blocklist and the scanned-root rule. On Windows it is a device or
+  object-manager spelling (`\\?\Volume{…}\`, `\\?\GLOBALROOT\…`,
+  `\\.\PhysicalDrive0`, `\\.\C:`, `\??\…`); behind `\\?\` or `\\.\` only a
+  drive-letter path (`\\?\C:\…`) or a UNC path (`\\?\UNC\server\share\…`)
+  passes. The scanned-root rule refuses such a spelling on its own as well
+  (`OUTSIDE_SCAN_ROOT` to a caller that skipped the sanitizer), including
+  through a link whose target is spelled that way.
 - **Cloud and archive paths.** `cloud://` paths never touch the local
   filesystem — their deletes go to the provider's own trash via
   `POST /api/cloud/trash`. Entries *inside* archives are listings, not files

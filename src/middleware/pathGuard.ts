@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, canonicalDirOf, isSpillPath, isAppDataPath, foldName } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, canonicalDirOf, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
 import { exclusionsOf, parseFirmlinks } from '../utils/mountBoundaries';
@@ -179,8 +179,22 @@ export function guardQueryPath(...params: string[]) {
  */
 export function insideAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false; // never on this filesystem
+  const where = whereUnlessSecondName(p);
+  return where !== null && allScans().some((scan) => listedBy(scan, where));
+}
+
+/**
+ * Where `p` lives (`canonicalDirOf`), or null when it is spelled through a second name the system
+ * gives a path (`aliasNamespaceOf`: macOS's /.nofollow, /.resolve and /.vol; Windows' device
+ * namespaces) — as given, or where a link in its parents leads. No scan lists through one, and
+ * realpath cannot say where one lands, so it is outside every scan: here, on its own, whether or
+ * not the sanitizer ran first (the SEC-1 review, M1).
+ */
+function whereUnlessSecondName(p: string): string | null {
+  // As typed first: on Windows realpath may re-spell a volume's GUID name with its drive letter.
+  if (aliasNamespaceOf(p) !== null) return null;
   const where = canonicalDirOf(p);
-  return allScans().some((scan) => listedBy(scan, where));
+  return aliasNamespaceOf(where) === null ? where : null;
 }
 
 /**
@@ -191,8 +205,8 @@ export function insideAnyScanRoot(p: string): boolean {
  */
 function underAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
-  const where = canonicalDirOf(p);
-  return allScans().some((scan) => isInside(canonicalDirOf(scan.rootPath), where));
+  const where = whereUnlessSecondName(p);
+  return where !== null && allScans().some((scan) => isInside(canonicalDirOf(scan.rootPath), where));
 }
 
 /**

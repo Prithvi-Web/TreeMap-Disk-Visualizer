@@ -195,7 +195,9 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       scannedRootRule:
         'Destructive and OS-touching endpoints only accept paths inside a root this server has actually scanned',
       pathSanitization:
-        'Every user-supplied path is sanitized: traversal resolved, null bytes rejected, OS-internal directories blocked',
+        'Every user-supplied path is sanitized: traversal resolved, null bytes rejected, OS-internal directories blocked, ' +
+        'and a path spelled through a second name the system gives it (macOS /.nofollow, /.resolve, /.vol; a Windows device or object-manager ' +
+        'namespace other than a drive-letter or UNC path behind \\\\?\\ or \\\\.\\) refused: 400 PATH_BLOCKED, and never inside a scanned root',
       cloudPaths: "cloud:// paths never touch the local filesystem; their deletes go to the provider's own trash",
       virtualPaths: 'Entries inside archives are listings, not files — only the archive itself can be acted on',
       offload: 'Offload copies, verifies SHA-256, and only then trashes originals; failures roll back completely',

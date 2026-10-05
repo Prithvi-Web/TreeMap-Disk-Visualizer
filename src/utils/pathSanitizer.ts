@@ -31,6 +31,45 @@ const WINDOWS_BLOCKLIST = [
 ];
 
 /**
+ * A path's second names: spellings the operating system answers for a path that are not that
+ * path's own (the SEC-1 review, M1).
+ *
+ * macOS answers three names at the root of the boot volume, for any path on any mounted volume:
+ * `/.nofollow/<path>` and `/.resolve/<flags>/<path>` (the path again, looked up under other rules
+ * for links) and `/.vol/<device>/<inode>/…` (a file by its device and inode number). realpath gives
+ * the first back unchanged and cannot resolve the other two, while lstat, open and rename go
+ * through all three — so neither the blocklist nor the scanned-root rule could see where such a
+ * spelling lands: `/.nofollow/private/var/db` was not /private/var/db to the blocklist, and after a
+ * scan of / that never entered /Volumes, `/.nofollow/Volumes/Backup/f.txt` was "inside" it. Nothing
+ * TreeMap offers produces one, and a walk of / lists each of the three as an empty folder. Matched
+ * in any case: the boot volume folds it.
+ *
+ * Windows: the Win32 device namespaces (`\\?\`, `\\.\`) and the NT object namespace (`\??\`) reach
+ * a volume by its GUID (`\\?\Volume{…}\`), a raw device (`\\.\PhysicalDrive0`; `\\.\C:` is the
+ * volume itself, not its root folder) and the whole object manager (`\\?\GLOBALROOT\…`), none of
+ * which the drive-letter blocklist names. Behind `\\?\` or `\\.\` only a drive-letter path (`C:\…`)
+ * or a UNC path (`UNC\server\share…`) is a file path; anything else there, and `\??\` always, is a
+ * second name.
+ *
+ * Answers the namespace as spelled (for the refusal's sentence), or null. Pure — no file system
+ * call — and `platform` picks the rules, so both platforms' are tested everywhere.
+ */
+const DARWIN_ALIAS_ROOT = /^\/\.(?:nofollow|resolve|vol)(?=\/|$)/i;
+const WIN32_OBJECT_NAMESPACE = /^[\\/]\?\?(?=[\\/])/;
+const WIN32_DEVICE_PREFIX = /^[\\/]{2}[?.](?=[\\/])/;
+const WIN32_FILE_BEHIND_PREFIX = /^[\\/]{2}[?.][\\/](?:[a-z]:[\\/]|unc[\\/][^\\/]+[\\/][^\\/]+)/i;
+/** `\\?\` or `\\.\` in front of a drive letter: the same path as the drive-letter spelling, to the blocklist. */
+const WIN32_PREFIX_BEFORE_DRIVE = /^[\\/]{2}[?.][\\/](?=[a-z]:[\\/])/i;
+
+export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform === 'darwin') return DARWIN_ALIAS_ROOT.exec(p)?.[0] ?? null;
+  if (platform !== 'win32') return null;
+  if (WIN32_OBJECT_NAMESPACE.test(p)) return p.slice(0, 4);
+  if (WIN32_DEVICE_PREFIX.test(p) && !WIN32_FILE_BEHIND_PREFIX.test(p)) return p.slice(0, 4);
+  return null;
+}
+
+/**
  * Win32 strips trailing spaces and dots from every path component inside the
  * OS, so `C:\\Windows\\System32 ` and `C:\\Windows\\System32` are one directory to
  * every file API. This file deliberately stopped trimming the tail — a trailing
@@ -47,8 +86,11 @@ function win32Normalize(p: string): string {
 }
 
 function isBlocked(resolved: string): boolean {
+  // A second name (`aliasNamespaceOf`) lands where no string here can tell: refused wherever it
+  // appears — as typed, or where a link in the parents leads.
+  if (aliasNamespaceOf(resolved) !== null) return true;
   if (process.platform === 'win32') {
-    const lower = win32Normalize(resolved);
+    const lower = win32Normalize(resolved.replace(WIN32_PREFIX_BEFORE_DRIVE, ''));
     return WINDOWS_BLOCKLIST.some((b) => lower === b || lower.startsWith(b + path.sep));
   }
   return UNIX_BLOCKLIST.some((b) => resolved === b || resolved.startsWith(b + '/'));
@@ -340,6 +382,17 @@ export function sanitizePath(input: unknown): string {
   }
 
   const resolved = path.resolve(p);
+  // A second name (`aliasNamespaceOf`) first, and before any file system call: nothing below can
+  // say where one lands. Asked of the typed path too, since resolving on Windows turns `\??\x`
+  // into a folder of the current drive and would hide what was asked for.
+  const named = aliasNamespaceOf(p) !== null ? p : resolved;
+  const alias = aliasNamespaceOf(named);
+  if (alias !== null) {
+    throw new PathRejectedError(
+      `"${named}" names a path through ${alias}, a second name the system gives it. TreeMap acts on a path only by its own name.`,
+      'PATH_BLOCKED',
+    );
+  }
   // Test the canonical form, return the caller's. Returning the canonical path
   // would quietly rewrite what the rest of the app scans and displays (/tmp/x
   // would surface as /private/tmp/x in the UI, in scan roots, in saved
