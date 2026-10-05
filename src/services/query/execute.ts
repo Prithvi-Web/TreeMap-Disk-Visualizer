@@ -2,7 +2,7 @@ import fs from 'fs';
 import { formatCount } from '../../utils/formatCount';
 import os from 'os';
 import { getScan } from '../diskScanner';
-import { Flag, storeOf } from '../scanStore';
+import { Flag, storeOf, type ScanStore } from '../scanStore';
 import { computeFacts } from '../facts';
 import { capabilityState } from '../../platform/capabilities';
 import { evaluateMaybe, isEmptyQuery, type CloudState, type EvalFacts, type EvalNode } from './evaluate';
@@ -11,6 +11,7 @@ import type { Ast, Term } from './types';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
 import type { LastUsedInfo } from '../../platform/types';
 import type { ReclaimScoreFactValue } from '../facts';
+import type { ScanResult } from '../../models/types';
 
 /**
  * Running a parsed query against a scan (v4 §2.2).
@@ -269,6 +270,54 @@ export function isOnlyHasBeenOpened(ast: Ast): boolean {
   return ast.kind === 'not' && ast.operand.kind === 'term' && ast.operand.term.kind === 'usedNever';
 }
 
+/* ----------------------------- what empty: knows ----------------------------- */
+
+/**
+ * Why this scan cannot vouch that a folder it shows with no children is empty,
+ * or null when it can (U-4b, the review of 5a0b905, M1). Every engine marks
+ * the folders it knows it did not list in full (`Flag.Unlisted`); two cannot
+ * name them all. gdu shows a folder it could not read as an empty one, and the
+ * native engine counts the entries it could not look at without naming their
+ * folders — so on those scans no childless folder is known to be empty. The
+ * walker marks the folder of every entry it could not look at, so its counts
+ * are only a summary.
+ */
+export function childlessUnproven(scan: Pick<ScanResult, 'engine' | 'deniedEntries' | 'unreadableEntries'>): string | null {
+  const instead = 'Clean Up › Empty Folders looks at each folder again on disk; an agent trashes these hits with onlyEmptyFolders: true, which does the same.';
+  if (scan.engine === 'gdu-turbo') {
+    return `This scan ran on gdu, which shows a folder it could not read as an empty one, so "empty:" cannot tell an empty folder from one it never read: folders with nothing listed in them are left undecided. ${instead}`;
+  }
+  const unnamed = scan.engine === 'native' ? (scan.deniedEntries ?? 0) + (scan.unreadableEntries ?? 0) : 0;
+  if (unnamed > 0) {
+    const one = unnamed === 1;
+    return `This scan could not look at ${formatCount(unnamed)} item${one ? '' : 's'} inside folders it listed, and does not record which folders, so "empty:" cannot tell an empty folder from one whose only ${one ? 'item' : 'items'} it could not see: folders with nothing listed in them are left undecided. ${instead}`;
+  }
+  return null;
+}
+
+/**
+ * A folder's child count as `empty:` may read it, or undefined for unknown.
+ * One listed child proves the folder is not empty, whatever else its listing
+ * missed (L5); a folder with none is empty only when the tree holds its whole
+ * listing (not `Flag.Unlisted`) and the scan can vouch for a childless folder.
+ */
+function knownChildCount(store: ScanStore, id: number, childlessKnown: boolean): number | undefined {
+  if (!store.hasChildArray(id)) return undefined;
+  const n = store.childCount(id);
+  if (n > 0) return n;
+  return childlessKnown && !store.flag(id, Flag.Unlisted) ? 0 : undefined;
+}
+
+/** Does this AST ask about `empty:` anywhere? */
+function astUsesEmpty(ast: Ast): boolean {
+  switch (ast.kind) {
+    case 'term': return ast.term.kind === 'empty';
+    case 'not': return astUsesEmpty(ast.operand);
+    case 'and':
+    case 'or': return astUsesEmpty(ast.left) || astUsesEmpty(ast.right);
+  }
+}
+
 /* -------------------------------- execution -------------------------------- */
 
 /**
@@ -357,6 +406,10 @@ export async function executeAgainstScan(
   }
 
   const wantsCreated = astUsesCreated(ast);
+  const childlessDoubt = childlessUnproven(scan);
+  // Said only when it applies: the query asks about empty:, and a childless folder met it.
+  let childlessUndecided = 0;
+  const asksEmpty = childlessDoubt !== null && astUsesEmpty(ast);
   // Pass two costs something only when the query needs a fact fetched, or a
   // creation date statted, file by file. Otherwise every pass-one verdict is
   // already final: the walk counts every match exactly and keeps only the page
@@ -420,9 +473,11 @@ export async function executeAgainstScan(
       // an `empty:yes` query — and those are exactly what gets bulk-trashed.
       // A folder whose listing the tree does not hold in full (Flag.Unlisted:
       // refused, unreadable, a mount not entered) can still carry an empty
-      // child array, so it is unknown too.
-      childCount: isDir && store.hasChildArray(id) && !store.flag(id, Flag.Unlisted) ? store.childCount(id) : undefined,
+      // child array, so it is unknown too — and so is every childless folder
+      // of a scan that cannot name all such folders (`childlessUnproven`).
+      childCount: isDir ? knownChildCount(store, id, childlessDoubt === null) : undefined,
     };
+    if (asksEmpty && isDir && store.hasChildArray(id) && store.childCount(id) === 0) childlessUndecided++;
 
     // Deliberately NO facts here, and deliberately no stat. `created:` is left
     // undecided so the term evaluates to 'maybe' and the node survives to pass
@@ -478,6 +533,7 @@ export async function executeAgainstScan(
   if (capped) {
     degraded.set('capped', `This query needs facts TreeMap looks up file by file, so it checked only the first ${formatCount(CANDIDATE_CAP)} possible matches it came to, in folder order. There may be more matches than the ${formatCount(matched)} counted here, and "biggest" means the biggest of those.`);
   }
+  if (asksEmpty && childlessUndecided > 0 && childlessDoubt !== null) degraded.set('emptyUnproven', childlessDoubt);
   if (undecided > 0) {
     const one = undecided === 1;
     // Past the cap, only the candidates kept were judged: a floor, said as one.

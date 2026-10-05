@@ -297,6 +297,13 @@ OpenAPI 3 spec).
      would have to be true (`-used:never`, "has a last-opened date", is
      answered — though alone it is no condition, nearly every file having a
      date, and a policy of it alone is refused as `POLICY_MATCH_EMPTY`).
+     `empty:` reads the scan's tree, and decides only what the scan can
+     vouch for: a folder with a listed child is not empty; one with none is
+     unknown when the scan did not list it in full, and on a gdu scan, or a
+     native one that could not look at some entries without naming their
+     folders, every such folder is unknown — `degraded` says why
+     (`emptyUnproven`) beside `undecided`. It reads no disk: trash its hits
+     with `onlyEmptyFolders: true`, which looks at each folder again first.
      `POST /api/query/validate` parses without running (it never
      touches a scan); `GET /api/query/fields` serves the grammar so nothing
      duplicates it. `GET`/`POST /api/queries` and `DELETE /api/queries/{id}`
