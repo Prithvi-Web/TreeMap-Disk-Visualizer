@@ -99,6 +99,8 @@ interface ManifestMember {
   hash: string;
   /** Symlinks only: what the link pointed at. */
   target?: string;
+  /** Symlinks only: whether what it pointed at was a folder, when that could be seen (FG3f #9). */
+  targetIsDir?: boolean;
   /**
    * Modification and access time, so a restore puts back the file that was
    * taken rather than a copy of it made today.
@@ -702,14 +704,18 @@ async function capture(
       }
       if (member.kind === 'symlink') {
         const target = await fsp.readlink(member.abs);
+        // Whether it leads to a folder (FG3f #9), so a restore on Windows can make it as one. A link
+        // that leads nowhere records nothing, and comes back as it was made before this was kept.
+        const targetIsDir = await fsp.stat(member.abs).then((st) => st.isDirectory(), () => undefined);
         await fsp.mkdir(path.dirname(dest), { recursive: true });
-        await fsp.symlink(target, dest);
+        await fsp.symlink(target, dest, linkTypeFor(target, targetIsDir));
         members.push({
           rel: member.rel,
           kind: 'symlink',
           size: Buffer.byteLength(target),
           hash: crypto.createHash('sha256').update(target).digest('hex'),
           target,
+          ...(targetIsDir !== undefined ? { targetIsDir } : {}),
         });
         continue;
       }
@@ -769,6 +775,19 @@ async function capture(
 function timesOf(member: WalkedMember): { mtimeMs?: number; atimeMs?: number } {
   if (typeof member.mtimeMs !== 'number' || !Number.isFinite(member.mtimeMs)) return {};
   return { mtimeMs: member.mtimeMs, ...(Number.isFinite(member.atimeMs) ? { atimeMs: member.atimeMs } : {}) };
+}
+
+/**
+ * The type a restored link is made with (FG3f #9). Windows makes a link to a folder work only when it
+ * is told the link is to one: 'dir' for a relative target, as the link was — or, for an absolute
+ * target, a 'junction', which (unlike a 'dir' link) needs no privilege and is what npm makes there.
+ * A link to anything else, or one whose target's kind was not recorded (a manifest written before
+ * it was), is a 'file' link, as before. Elsewhere the type means nothing and none is passed.
+ */
+export function linkTypeFor(target: string, targetIsDir: boolean | undefined, platform: NodeJS.Platform = process.platform): 'dir' | 'file' | 'junction' | undefined {
+  if (platform !== 'win32') return undefined;
+  if (targetIsDir !== true) return 'file';
+  return path.win32.isAbsolute(target) ? 'junction' : 'dir';
 }
 
 /** The recorded permission bits, or nothing when the walk could not read them (FG3f #10). */
@@ -2321,7 +2340,7 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       if (member.rel !== '') await assertPlainFolder(path.dirname(dest));
 
       if (member.kind === 'symlink') {
-        await fsp.symlink(member.target ?? '', dest).catch((err: NodeJS.ErrnoException) => {
+        await fsp.symlink(member.target ?? '', dest, linkTypeFor(member.target ?? '', member.targetIsDir)).catch((err: NodeJS.ErrnoException) => {
           // Something this restore made stands at the link's name as the volume reads names: the
           // record names a member past its own link, which capture never writes (FG3c).
           if (err.code !== 'EEXIST') throw err;

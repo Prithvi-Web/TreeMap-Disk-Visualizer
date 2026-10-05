@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleRestoreMeta-data-');
 
-import { getCapsuleJob, protectItems, setRestoreMetaFaultForTests, startCapsuleRestore } from '../src/services/timeCapsule';
+import { capsuleRoot, getCapsuleJob, linkTypeFor, protectItems, setRestoreMetaFaultForTests, startCapsuleRestore } from '../src/services/timeCapsule';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { waitFor } from './fixtures/waitFor';
@@ -117,3 +117,52 @@ test('a date that cannot be set back finishes the restore with a warning naming 
   }
 });
 
+
+/* ─────────────── FG3f #9: a link to a folder comes back as one on Windows ─────────────── */
+
+test('the type a restored link is made with: a folder link on Windows says so, a junction for an absolute target', () => {
+  assert.equal(linkTypeFor('C:\\Users\\me\\proj\\pkg', true, 'win32'), 'junction', 'absolute, to a folder: a junction, which needs no privilege');
+  assert.equal(linkTypeFor('..\\pkg', true, 'win32'), 'dir', 'relative, to a folder: a folder link, as it was');
+  assert.equal(linkTypeFor('notes.txt', false, 'win32'), 'file');
+  assert.equal(linkTypeFor('notes.txt', undefined, 'win32'), 'file', 'a manifest from before the kind was recorded: as before');
+  assert.equal(linkTypeFor('/x/pkg', true, 'darwin'), undefined, 'elsewhere the type means nothing and is not passed');
+  assert.equal(linkTypeFor('/x/pkg', true, 'linux'), undefined);
+});
+
+test('capture records whether each link points at a folder, and the restore passes the type it implies', { skip: process.platform === 'win32' ? 'stands in for Windows from another OS; on Windows the real links are made' : false }, async () => {
+  const dir = fileTempDir('treemap-capsuleRestoreMeta-links-');
+  const root = path.join(dir, 'proj');
+  fs.mkdirSync(path.join(root, 'pkg'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'notes.txt'), 'notes');
+  fs.symlinkSync('pkg', path.join(root, 'to-folder'));
+  fs.symlinkSync('notes.txt', path.join(root, 'to-file'));
+  const { outcomes } = await protectItems([{ path: root }]);
+  assert.equal(outcomes[0].protected, true, outcomes[0].detail);
+  const id = outcomes[0].entryId as string;
+  const manifest = JSON.parse(fs.readFileSync(path.join(capsuleRoot(), id, 'manifest.json'), 'utf8')) as { members: { rel: string; targetIsDir?: boolean }[] };
+  assert.equal(manifest.members.find((m) => m.rel === 'to-folder')?.targetIsDir, true);
+  assert.equal(manifest.members.find((m) => m.rel === 'to-file')?.targetIsDir, false);
+  fs.rmSync(root, { recursive: true });
+
+  // The restore, as Windows would run it: each link is made with the type its target's kind implies.
+  const made = new Map<string, unknown>();
+  const realSymlink = fs.promises.symlink;
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(realPlatform);
+  (fs.promises as { symlink: unknown }).symlink = (target: string, at: string, type?: unknown) => {
+    made.set(path.basename(at), type);
+    return realSymlink(target, at);
+  };
+  Object.defineProperty(process, 'platform', { ...realPlatform, value: 'win32' });
+  let job: { status?: string; error?: string };
+  try {
+    job = await settled((await startCapsuleRestore([id])).jobId);
+  } finally {
+    Object.defineProperty(process, 'platform', realPlatform);
+    (fs.promises as { symlink: unknown }).symlink = realSymlink;
+  }
+  assert.equal(job.status, 'complete', job.error);
+  assert.equal(made.get('to-folder'), 'dir', `a folder link is made as one (${JSON.stringify([...made])})`);
+  assert.equal(made.get('to-file'), 'file');
+  assert.equal(fs.readlinkSync(path.join(root, 'to-folder')), 'pkg');
+});
