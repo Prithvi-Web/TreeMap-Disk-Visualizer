@@ -46,7 +46,7 @@ test('dates come from one formatter: no bare toLocaleString() on a Date anywhere
   assert.match(consts, /const UI_LOCALE = 'en-US';/, 'the one dialect is English (issue #34)');
   assert.match(consts, /const HOUR_CYCLE = new Intl\.DateTimeFormat\(undefined, \{ hour: 'numeric' \}\)\.resolvedOptions\(\)\.hourCycle;/, 'the clock is the machine\'s');
   const src = consts + slice('const WHEN_FMT = new Intl.DateTimeFormat(', 'function cssVar(');
-  assert.match(src, /new Intl\.DateTimeFormat\(UI_LOCALE, \{ month: ?'short', day: ?'numeric', hour: ?'2-digit', minute: ?'2-digit', hourCycle: HOUR_CYCLE \}\)/, 'the slider\'s dialect is the one dialect: English words, the machine\'s clock');
+  assert.match(src, /new Intl\.DateTimeFormat\(UI_LOCALE, \{ month: ?'short', day: ?'numeric', hour: ?CLOCK_HOUR, minute: ?'2-digit', hourCycle: HOUR_CYCLE \}\)/, 'the slider\'s dialect is the one dialect: English words, the machine\'s clock (its hour unpadded on a 12-hour clock, QA D20)');
   const formatWhen = new Function(`'use strict'; ${src} return formatWhen;`)() as (ms: number) => string;
   assert.equal(formatWhen(0), '–', 'no timestamp, no date');
   const s = formatWhen(Date.UTC(2026, 8, 1, 22, 31, 45));

@@ -104,15 +104,53 @@ test('formatCount: the page and the server agree on every input, take numeric st
   assert.match(tooltip, /formatCount\(b\.sampleCount\)/);
 });
 
+/**
+ * The prelude's two clock formatters, evaluated under a given hour cycle — the
+ * machine's own is whatever it is, so both cycles are forced here.
+ */
+function clockFormatters(hourCycle: string): { formatWhen: (ms: number) => string; formatClock: (ms: number) => string } {
+  const prelude = read('src', 'ui', 'app', '000-prelude.js');
+  const hour = /const CLOCK_HOUR = [^\n]*;/.exec(prelude);
+  assert.ok(hour, 'the hour style is one constant');
+  const start = prelude.indexOf('const WHEN_FMT = ');
+  const endAnchor = 'function formatClock(ms) { return CLOCK_FMT.format(ms); }';
+  const end = prelude.indexOf(endAnchor, start);
+  assert.ok(start !== -1 && end !== -1, 'and the clock formatters read it');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('UI_LOCALE', 'HOUR_CYCLE', `${hour![0]}\n${prelude.slice(start, end + endAnchor.length)}\nreturn { formatWhen, formatClock };`)(UI_LOCALE, hourCycle);
+}
+
+test('a 12-hour clock reads "5:19 PM", never "05:19 PM"; a 24-hour clock keeps "09:05" (QA D20)', () => {
+  // Local times, so the machine's time zone cannot move the hour.
+  const evening = new Date(2026, 8, 6, 17, 19).getTime();
+  const morning = new Date(2026, 8, 6, 9, 5).getTime();
+  const noon = new Date(2026, 8, 6, 12, 0).getTime();
+  for (const cycle of ['h12', 'h11']) {
+    const f = clockFormatters(cycle);
+    const twelve = cycle === 'h12' ? '12:00 PM' : '0:00 PM';
+    assert.equal(f.formatClock(evening), '5:19 PM', `${cycle}: the Dashboard's last-scan clock`);
+    assert.equal(f.formatClock(morning), '9:05 AM', `${cycle}: no leading zero on the hour`);
+    assert.equal(f.formatClock(noon), twelve, `${cycle}: noon`);
+    assert.equal(f.formatWhen(evening), 'Sep 6, 5:19 PM', `${cycle}: the short date-and-time, same clock`);
+  }
+  for (const cycle of ['h23', 'h24']) {
+    const f = clockFormatters(cycle);
+    assert.equal(f.formatClock(evening), '17:19', `${cycle}: a 24-hour clock`);
+    assert.equal(f.formatClock(morning), '09:05', `${cycle}: keeps its leading zero, as 24-hour clocks are written`);
+    assert.equal(f.formatWhen(morning), 'Sep 6, 09:05', `${cycle}: the short date-and-time, same clock`);
+  }
+});
+
 test('dates are English too, with the machine\'s clock and time zone: every date site names UI_LOCALE, every clock names the hour cycle', () => {
   const prelude = read('src', 'ui', 'app', '000-prelude.js');
   assert.match(prelude, /const HOUR_CYCLE = new Intl\.DateTimeFormat\(undefined, \{ hour: 'numeric' \}\)\.resolvedOptions\(\)\.hourCycle;/);
   assert.match(prelude, /const DATE_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ year:'numeric', month:'short', day:'numeric' \}\);/);
-  assert.match(prelude, /const WHEN_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: HOUR_CYCLE \}\);/);
-  assert.match(prelude, /const CLOCK_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ hour: '2-digit', minute: '2-digit', hourCycle: HOUR_CYCLE \}\);\nfunction formatClock\(ms\) \{ return CLOCK_FMT\.format\(ms\); \}/, 'a clock alone, same words and clock as formatWhen');
+  assert.match(prelude, /const CLOCK_HOUR = HOUR_CYCLE === 'h23' \|\| HOUR_CYCLE === 'h24' \? '2-digit' : 'numeric';/, 'a 24-hour clock keeps its leading zero; a 12-hour one has none (QA D20)');
+  assert.match(prelude, /const WHEN_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ month: 'short', day: 'numeric', hour: CLOCK_HOUR, minute: '2-digit', hourCycle: HOUR_CYCLE \}\);/);
+  assert.match(prelude, /const CLOCK_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ hour: CLOCK_HOUR, minute: '2-digit', hourCycle: HOUR_CYCLE \}\);\nfunction formatClock\(ms\) \{ return CLOCK_FMT\.format\(ms\); \}/, 'a clock alone, same words and clock as formatWhen');
   assert.match(read('src', 'ui', 'app', '045-persistent-live-index.js'), /rollText\(\$\('statLastScan'\), formatClock\((?:reopenedAt \|\| )?Date\.now\(\)\)\)/, 'the "last scan" tile goes through it (a reopened scan\'s own time too, QA D57)');
-  const formatClock = lift<(ms: number) => string>(['UI_LOCALE', 'HOUR_CYCLE', 'CLOCK_FMT', 'formatClock'], 'formatClock');
-  assert.match(formatClock(Date.UTC(2026, 8, 6, 22, 31)), /^\d\d:\d\d(?: [AP]M)?$/, 'ASCII digits, the machine\'s own clock');
+  const formatClock = lift<(ms: number) => string>(['UI_LOCALE', 'HOUR_CYCLE', 'CLOCK_HOUR', 'CLOCK_FMT', 'formatClock'], 'formatClock');
+  assert.match(formatClock(Date.UTC(2026, 8, 6, 22, 31)), /^(?:[1-9]|1[0-2]):\d\d [AP]M$|^\d\d:\d\d$/, 'ASCII digits, the machine\'s own clock');
   assert.match(read('src', 'ui', 'app', '135-calendar-heatmap.js'), /toLocaleDateString\(UI_LOCALE, \{ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' \}\)/, 'the heatmap day');
   assert.match(prelude, /const DAY_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ month: 'short', day: 'numeric' \}\);\nfunction formatDay\(ms\) \{ return DAY_FMT\.format\(ms\); \}/, 'a day alone');
   assert.match(read('src', 'ui', 'app', '160-folder-budgets.js'), /const when = formatDay\(p\.breachAtMs\);/, 'the budget breach day goes through it');

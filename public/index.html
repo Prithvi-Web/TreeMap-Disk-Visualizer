@@ -4977,6 +4977,9 @@ function formatBytes(n, d = 1) {
    reader's habit, not a dialect. Mirrors src/utils/formatCount.ts. */
 const UI_LOCALE = 'en-US';
 const HOUR_CYCLE = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hourCycle;
+/* The hour: two digits on a 24-hour clock ("09:05"), as such clocks are
+   written; one on a 12-hour clock ("5:19 PM", never "05:19 PM" — QA D20). */
+const CLOCK_HOUR = HOUR_CYCLE === 'h23' || HOUR_CYCLE === 'h24' ? '2-digit' : 'numeric';
 /* A count. Nothing (null, undefined) is 0; a numeric string is its number; a
    number that is not one (NaN, Infinity) prints the dash formatDate prints for
    no date, so a broken calculation is seen as broken rather than read as
@@ -5033,7 +5036,7 @@ function formatDate(ms) {
    on a 24-hour machine) for every surface that names a moment: the time
    slider, the history captions, the compare pickers. Memoised like formatDate
    — the compare view builds hundreds of option labels from it. */
-const WHEN_FMT = new Intl.DateTimeFormat(UI_LOCALE, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: HOUR_CYCLE });
+const WHEN_FMT = new Intl.DateTimeFormat(UI_LOCALE, { month: 'short', day: 'numeric', hour: CLOCK_HOUR, minute: '2-digit', hourCycle: HOUR_CYCLE });
 const whenMemo = new Map();
 function formatWhen(ms) {
   if (!ms) return '–';
@@ -5047,7 +5050,7 @@ function formatWhen(ms) {
 }
 /* A clock alone ("10:31 PM", or "22:31" on a 24-hour machine): the dashboard's
    "last scan" tile. Same words and same clock as formatWhen. */
-const CLOCK_FMT = new Intl.DateTimeFormat(UI_LOCALE, { hour: '2-digit', minute: '2-digit', hourCycle: HOUR_CYCLE });
+const CLOCK_FMT = new Intl.DateTimeFormat(UI_LOCALE, { hour: CLOCK_HOUR, minute: '2-digit', hourCycle: HOUR_CYCLE });
 function formatClock(ms) { return CLOCK_FMT.format(ms); }
 /* A day alone ("Sep 6"): chart axes, and the day a folder budget runs out. */
 const DAY_FMT = new Intl.DateTimeFormat(UI_LOCALE, { month: 'short', day: 'numeric' });
