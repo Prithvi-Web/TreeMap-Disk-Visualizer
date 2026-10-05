@@ -396,12 +396,15 @@ type Leads = { to: string } | { refusal: string };
 
 /**
  * Where the pointer text `raw` (a `.git` file's `gitdir: `, a `.git` link, a `commondir`, an
- * `alternates` line, a link in the git folder), read relative to `base`, leads — resolved as git
- * and the operating system resolve it: links first, then `..`, by realpath on the text as it is
- * written. `path.resolve` would drop `..` before a link is followed, and so judge a place git
- * never goes (FG4c, review #2). A network path is refused before anything is resolved (on
- * Windows, resolving one contacts the server), and so is a target that is not there — there is
- * nothing to judge — or one outside every scanned folder.
+ * `alternates` line, a link in the git folder), read relative to `base`, leads — resolved as the
+ * operating system resolves it: links first, then `..`, by realpath on the text as it is written,
+ * as git resolves a `.git` file and a `commondir`. `path.resolve` would drop `..` before a link is
+ * followed, and so judge a place git never goes (FG4c, review #2). Not every pointer is resolved by
+ * git the same way: an `alternates` entry git reads as the objects folder's real path, `/`, the
+ * entry, with `..` then removed by text; and on Windows realpath itself removes `..` by text where
+ * git follows links (RISKS R115, FG4e, review L6). A network path is refused before anything is
+ * resolved (on Windows, resolving one contacts the server), and so is a target that is not there —
+ * there is nothing to judge — or one outside every scanned folder.
  */
 async function pointerLeads(raw: string, base: string, opts: VetOptions): Promise<Leads> {
   const network = { refusal: `Git keeps this project's data on a network share (${shown(raw)}), so TreeMap did not run Git on it.` };

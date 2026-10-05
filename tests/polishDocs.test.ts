@@ -239,6 +239,21 @@ test('SECURITY.md names every blocked system folder the sanitizer refuses', () =
   for (const e of entries) assert.ok(SECURITY.includes(`\`${e}\``), `SECURITY.md names \`${e}\``);
 });
 
+test('SECURITY.md claims no more for snapshot restores and git\'s read-ahead than the code guarantees', () => {
+  // FG4e, review L6: an empty folder or a dangling link appearing at the name just before a folder
+  // or a link is put in place is replaced (RISKS R102), and git resolves an alternates entry by
+  // text where TreeMap asks the system (RISKS R115). Each is stated, and the old absolutes are gone.
+  assert.doesNotMatch(SECURITY, /nothing is written over anything/i);
+  assert.doesNotMatch(SECURITY, /exactly as git reads them/i);
+  const restore = section(SECURITY, '**A snapshot restore never writes through', '\n- **');
+  assert.match(restore, /empty folder or a dangling link/, 'what can still be replaced is named');
+  assert.match(restore, /RISKS R102/);
+  const git = section(SECURITY, '**Git never runs a repository\'s own programs.**', '\n- **');
+  assert.match(git, /alternates/);
+  assert.match(git, /`\.\.` removed by text/, 'how git resolves an alternates entry is stated');
+  assert.match(git, /RISKS R115/);
+});
+
 /* ───────────────────────── Code of Conduct ───────────────────────── */
 
 test('the Code of Conduct says where to report', () => {

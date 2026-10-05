@@ -598,8 +598,15 @@ read-what-you-saw) permission to act.
   the git folder leads, and the object folders the repository borrows
   (`objects/info/alternates`, followed as git follows them) are read by
   TreeMap itself before git is started, each resolved as the system
-  resolves it (links first, then `..`): a network share, a folder outside
-  every scan, or nothing at all refuses the repository and git never runs.
+  resolves it (links first, then `..`): a network share (any text starting
+  with two separators, of either kind), a folder outside every scan, or
+  nothing at all refuses the repository and git never runs. One vetting reads
+  at most 256 `alternates` entries in all, and stops at its next step once
+  the request that asked is cancelled. Git resolves an `alternates` entry its
+  own way — the objects folder's real path, then the entry, `..` removed by
+  text — and on Windows TreeMap's own resolution removes `..` by text where
+  git follows links, so for an entry holding a link followed by `..` the two
+  can differ (docs/engine/RISKS.md R115).
   Each is read as git reads it — a pointer file whole, with only its
   trailing line ends removed (leading and trailing spaces and later lines
   are part of the path), a quoted `alternates` line by character — and
