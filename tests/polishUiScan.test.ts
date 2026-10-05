@@ -387,6 +387,18 @@ test('a scan reopened after a reload says when it ran, and is not announced as a
   assert.equal((h.state.lastScan as { reopened: boolean }).reopened, false);
 });
 
+test('the status line states the scan\'s one duration, in the engine row\'s format (QA D12)', async () => {
+  // QA D12: "Scanned 101,034 files in 0.9s" (the page's wall time, which also
+  // counts the request, the stream and the frame) beside the engine row's
+  // "scanned 106,664 items in 0.2 s" (the server's). One duration, one format.
+  const h = finishScanHarness();
+  await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 900, { fileCount: 101034, scanned: 106664, durationMs: 200, engine: 'native' });
+  assert.match(h.els.scanStatus.innerHTML, /Scanned <b>101034<\/b> files in 0\.2 s — /, 'the server\'s duration, spaced like the engine row');
+  assert.doesNotMatch(h.els.scanStatus.innerHTML, /0\.9/, 'not the page\'s wall time beside it');
+  await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 900, { fileCount: 101034 });
+  assert.match(h.els.scanStatus.innerHTML, /in 0\.9 s — /, 'without the server\'s, the page\'s own, in the same format');
+});
+
 test('a refused scan is never toasted as a clean success, and the tour refuses the "clean" card', async () => {
   const { finishScan, els, toasts } = finishScanHarness();
   const noop = () => {};

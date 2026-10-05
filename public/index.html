@@ -9009,12 +9009,17 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   const files = stats ? stats.fileCount : null;
   const dirs = stats ? stats.dirCount : null;
 
+  // QA D12: one duration, in the engine row's format. The server's own
+  // (`stats.durationMs`, which the engine row states too) when it sent one;
+  // the page's wall time — which also counts the request, the stream and the
+  // frame — only when it did not.
+  const tookMs = stats && stats.durationMs > 0 ? stats.durationMs : durationMs;
   $('scanStatus').classList.remove('error');
   $('scanStatus').innerHTML = icon('checkCircle', 14) + (reopenedAt
     ? `<span class="num">Reopened the scan from ${escapeHtml(formatClock(reopenedAt))} — ` +
       `${files === null ? '' : `<b>${formatCount(files)}</b> files, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
     : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
-      `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
+      `in ${(tookMs / 1000).toFixed(1)} s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
   const said = reopenedAt ? 'Reopened the last scan — ' : state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ';
   $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
