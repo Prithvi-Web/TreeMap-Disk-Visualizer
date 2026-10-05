@@ -407,6 +407,8 @@ function cleanUpHarness(opts: { cloud?: boolean } = {}) {
   const src = `
     let onConfirmTrash = null;
     let confirmPaths = [];
+    ${declOf('tmParentPath')}
+    ${declOf('outermostPaths')}
     ${declOf('confirmTrash')}
     ${declOf('runCleanTrash')}
     ${handler === 'runCleanTrash' ? '' : declOf(handler)}

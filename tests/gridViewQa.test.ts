@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * Grid view (QA D43, D44, D02).
+ * Grid view and the cards that share its file (QA D43, D44, D02, D21) and the
+ * shared Move-to-Trash sheet's total.
  *
  * The whole Grid section of the built page is lifted and RUN against a stub
  * DOM — its own top-level wiring included — so these tests drive the real
@@ -19,6 +20,9 @@ import path from 'node:path';
  *    Fonts folder, and opening it said 'No files match "Fonts"'.
  *  - D02: the selection bar slid off-screen with nothing selected but stayed
  *    focusable and in the accessibility tree ("Move to Trash" included).
+ *  - D21: the Cost card told a free plan "clearing … keeps you on the same
+ *    plan" — a plan that costs nothing has no plan to keep you on.
+ *  - confirmTrash's "(X total)" counted a folder and a file inside it twice.
  */
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -332,4 +336,63 @@ test('with nothing selected, the selection bar is hidden from focus and assistiv
   g.state.grid.selection.add('/r/Notes.txt');
   g.updateSelectionBar();
   assert.equal(g.els.selectionBar.cls.has('visible'), true, 'one item: shown');
+});
+
+/* ══════════════ D21 — no "same plan" for a free plan ══════════════ */
+
+test('the Cost card never tells a free plan that clearing space keeps you on it (D21)', async () => {
+  const src = slice('function costMoney(', '/* ───────────────────────────── Drive Health');
+  let painted = '';
+  const provider = (name: string, label: string, monthly: number) => ({
+    providerName: name, bytes: 8.8e9, current: { tier: { label }, monthly },
+    afterCleanup: { tier: { label }, monthly }, sameTierAfterCleanup: true, monthlySavingUsd: 0,
+  });
+  const est = { providers: [provider('Free Drive', 'Free — 15 GB', 0), provider('Paid Drive', 'Basic — 100 GB', 1.99)],
+    asOf: '2026-09', symbol: '$', rateFromUsd: 1, approximate: false };
+  const host = fakeEl('costBody');
+  const deps: Record<string, unknown> = {
+    $: (id: string) => (id === 'costBody' ? host : { value: 'USD' }),
+    state: { scanId: 's1' },
+    api: async (url: string) => (url.startsWith('/api/cleanup/suggestions') ? { groups: [{ totalSize: 137_200_000 }] } : est),
+    skeletonRows: () => '', escapeHtml: (s: string) => String(s), formatBytes: (n: number) => `${n} B`,
+    fxBarStyle: () => '', fxBarsIn: () => {},
+    FxNum: { rollHtml: (_h: unknown, html: string) => { painted = html; } },
+  };
+  const names = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const load = new Function(...names, `'use strict'; ${src} return loadCostEstimate;`)(...names.map((n) => deps[n])) as () => Promise<void>;
+  await load();
+  const rows = painted.split('<div class="cost-row">').slice(1);
+  assert.equal(rows.length, 2, 'both providers are priced');
+  const free = rows.find((r) => r.includes('Free Drive'))!;
+  const paid = rows.find((r) => r.includes('Paid Drive'))!;
+  assert.doesNotMatch(free, /cost-nosave/, 'a plan that costs nothing has no plan to keep you on');
+  assert.match(paid, /cost-nosave/, 'a paid plan the cleanup cannot shrink still says so');
+  assert.match(paid, /keeps you on the same plan/);
+});
+
+/* ══════════════ the shared Move-to-Trash sheet's total ══════════════ */
+
+test('the Move-to-Trash sheet’s total counts a folder and a file inside it once', async () => {
+  const src = slice('/* ───────────────────────────── Trash (confirm + execute) ',
+    '/* ───────────────────────────── Open-file guard (B2)');
+  const sizes: Record<string, { name: string; size: number }> = {
+    '/r/A': { name: 'A', size: 100 }, '/r/A/x.bin': { name: 'x.bin', size: 40 }, '/r/B': { name: 'B', size: 10 },
+    '/r/AB': { name: 'AB', size: 5 },
+  };
+  const els: Record<string, FakeEl> = {};
+  const deps: Record<string, unknown> = {
+    $: (id: string) => (els[id] ||= fakeEl(id)),
+    ensureNodes: async () => {}, nodeFor: (p: string) => sizes[p], resetOpenHandleWarning: () => {},
+    checkOpenHandlesFor: async () => {}, cloudProviderOfScan: () => ({}), cloudTrashPaths: () => {},
+    icon: () => '', escapeHtml: (s: string) => String(s), formatBytes: (n: number) => `${n} B`,
+  };
+  const names = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const confirmTrash = new Function(...names, `'use strict'; ${braced('function tmParentPath(')}\n${src} return confirmTrash;`)(
+    ...names.map((n) => deps[n])) as (p: string[]) => Promise<void>;
+  await confirmTrash(['/r/A', '/r/A/x.bin', '/r/B', '/r/AB']);
+  assert.match(els.confirmText.innerHTML, /\(115 B total\)/,
+    'A (100) holds x.bin (40): the folder counts once; B and AB are separate — a shared name prefix is not nesting');
+  assert.match(els.confirmText.innerHTML, /<b>4 items<\/b>/, 'the sheet still names every item it will move');
 });

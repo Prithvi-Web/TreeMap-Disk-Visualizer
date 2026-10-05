@@ -442,6 +442,22 @@ registerView({
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
 let confirmPaths = [];
 let onConfirmTrash = null; // optional callback override for the shared confirm modal (used by the cart)
+
+/** The paths with no ancestor also in the list — the cart's tmCartRoots rule,
+    for any list. A folder and a file inside it are one set of bytes: the
+    sheet's "(X total)" added the file again on top of the folder that
+    already holds it. Separator-aware through tmParentPath, so "/r/AB" is not
+    read as inside "/r/A". */
+function outermostPaths(paths) {
+  const listed = new Set(paths);
+  return paths.filter((p) => {
+    for (let dir = tmParentPath(p); dir; dir = tmParentPath(dir)) {
+      if (listed.has(dir)) return false;
+      if (dir === tmParentPath(dir)) break; // reached the filesystem root
+    }
+    return true;
+  });
+}
 async function confirmTrash(paths) {
   if (!paths.length) return;
   onConfirmTrash = null;
@@ -453,7 +469,7 @@ async function confirmTrash(paths) {
   // These sizes are what the user is told they're freeing, so they must be
   // real: a pruned-away node read as 0 would understate the total.
   await ensureNodes(paths);
-  const total = paths.reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
+  const total = outermostPaths(paths).reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
   const first = nodeFor(paths[0]);
   // Cloud scans: deletes go to the provider's own trash, never the local one.
   if (paths[0].startsWith('cloud://')) {

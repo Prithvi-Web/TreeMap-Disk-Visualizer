@@ -86,6 +86,8 @@ function harness(plan: { items: { path: string; willDelete: boolean; reason?: st
     ${helpers.map(declOf).join('\n')}
     ${declOf('setConfirmButton')}
     ${declOf('resetOpenHandleWarning')}
+    ${declOf('tmParentPath')}
+    ${declOf('outermostPaths')}
     ${declOf('confirmTrash')}
     ${declOf('cartTrashAll')}
     ${declOf('cartCommitSummary')}
@@ -195,7 +197,7 @@ function lateAnswerHarness() {
     ${constOf('TRASH_CHUNK')}
     ${constOf('OPEN_HANDLE_PREFLIGHT_CHUNKS')}
     ${['setConfirmButton', 'confirmFooterReset', 'baseName', 'renderOpenHandleWarning', 'checkOpenHandlesFor',
-      'resetOpenHandleWarning', 'confirmTrash', 'closeModal'].map(declOf).join('\n')}
+      'resetOpenHandleWarning', 'tmParentPath', 'outermostPaths', 'confirmTrash', 'closeModal'].map(declOf).join('\n')}
     return {
       confirmTrash, closeModal, override: () => confirmIgnoreOpenHandles,
       ok: async () => {${okBody()}},

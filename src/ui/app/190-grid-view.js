@@ -327,11 +327,7 @@ async function loadCostEstimate(after) {
     const price = tier
       ? `${costMoney(p.current.monthly, est)}<span class="per">/mo</span>`
       : '<span class="muted">no plan this big</span>';
-    const saving = p.monthlySavingUsd > 0
-      ? `<span class="cost-save">save ${costMoney(p.monthlySavingUsd, est)}/mo by clearing ${formatBytes(freeable)}</span>`
-      : p.afterCleanup && p.sameTierAfterCleanup
-        ? `<span class="cost-nosave">clearing ${formatBytes(freeable)} keeps you on the same plan</span>`
-        : '';
+    const saving = costSavingHtml(p, freeable, est);
     const bar = tier && maxMonthly > 0
       ? `<span class="fx-bar-track"><span class="fx-bar-fill" data-w="${Math.max(3, (p.current.monthly / maxMonthly) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></span></span>`
       : '';
@@ -356,6 +352,20 @@ async function loadCostEstimate(after) {
     (est.approximate ? ` Figures marked ≈ are converted from US dollars at an approximate rate.` : '') + `</div>`,
     `${state.scanId}:${$('costCurrency').value}`);
   fxBarsIn(host);
+}
+
+/** The what-if beside a provider's price: what clearing the reclaimable bytes
+    would save, or that it would not change the plan. Not said of a plan that
+    costs nothing (QA D21): "clearing 137 MB keeps you on the same plan" read
+    as a cost on a free plan the data already fits. */
+function costSavingHtml(p, freeable, est) {
+  if (p.monthlySavingUsd > 0) {
+    return `<span class="cost-save">save ${costMoney(p.monthlySavingUsd, est)}/mo by clearing ${formatBytes(freeable)}</span>`;
+  }
+  if (p.afterCleanup && p.sameTierAfterCleanup && p.current.tier && p.current.monthly > 0) {
+    return `<span class="cost-nosave">clearing ${formatBytes(freeable)} keeps you on the same plan</span>`;
+  }
+  return '';
 }
 
 /* ───────────────────────────── Drive Health (§C4) ─────────────────────────────
