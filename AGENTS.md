@@ -546,7 +546,11 @@ read-what-you-saw) permission to act.
   moved to the Trash — and the copy checks again when it runs: on macOS the
   destination folder must belong to the user or root, and neither group nor
   others may change it, else `409 DESTINATION_FOLDER_REFUSED` (checked again by
-  the root helper, which enters the folder by its physical path). The helper
+  the root helper, which enters the folder by its physical path); a folder the
+  helper could not open or check when it ran — moved, removed, or its drive
+  disconnected while the prompt was open — is `409
+  DESTINATION_FOLDER_UNAVAILABLE` instead, with the helper's words, and may
+  succeed if tried again. The helper
   copies into a folder it makes there and works from inside it, so a folder
   swapped in under that folder's name is never written to. It places a file
   with `link`, which fails whatever is at the name (on a volume without hard

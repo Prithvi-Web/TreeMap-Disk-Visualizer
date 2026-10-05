@@ -822,11 +822,14 @@ test('each answer of the helper, and of the prompt, is its own 409 code', async 
     ['a dismissed prompt', async () => { throw new Error('0:12: execution error: User canceled. (-128)'); }, 'AUTHORIZATION_DECLINED'],
     ['a prompt that failed', async () => { throw new Error('0:5: execution error: The operation couldn\'t be completed. (1)'); }, 'RESTORE_FAILED'],
     ['a path with -128 in it', async () => { throw new Error('0:108: execution error: ERROR other users can change the destination folder /Volumes/USB-128GB/Photos (1)'); }, 'DESTINATION_FOLDER_REFUSED'],
-    // The helper's one folder refusal that names no folder: `cd -P` into it failed (FG4d, review #6, #16).
-    ['a folder root could not open', async () => 'ERROR the destination folder could not be opened\n', 'DESTINATION_FOLDER_REFUSED'],
-    // A snapshot that could not be mounted was not looked in (FG4d, review #5).
-    ['no snapshot mounted', async () => 'ERROR no snapshot could be mounted (mount_apfs: volume could not be mounted: Operation not permitted), so whether the snapshots hold that path is not known\n', 'RESTORE_FAILED'],
-    ['some snapshots not mounted', async () => 'ERROR 1 of the 2 snapshots could not be mounted (mount_apfs: Resource busy), and none of the others holds that path, so whether it can be recovered is not known\n', 'RESTORE_FAILED'],
+    // A folder root could not open or check — removed, or its volume unmounted, while the prompt was
+    // open — is not a folder refused for who owns it: its own code, with the helper's words (FG4d,
+    // review #6, #16; FG4e, review L5).
+    ['a folder root could not open', async () => 'ERROR the destination folder could not be opened\n', 'DESTINATION_FOLDER_UNAVAILABLE'],
+    ['a folder root could not check', async () => 'ERROR the destination folder /Volumes/USB/Photos could not be checked\n', 'DESTINATION_FOLDER_UNAVAILABLE'],
+    // A snapshot that could not be mounted or read was not looked in (FG4d, review #5; FG4e, review L4).
+    ['no snapshot mounted', async () => 'ERROR no snapshot could be mounted or read (mount_apfs: volume could not be mounted: Operation not permitted), so whether the snapshots hold that path is not known\n', 'RESTORE_FAILED'],
+    ['some snapshots not mounted', async () => 'ERROR 1 of the 2 snapshots could not be mounted or read (mount_apfs: Resource busy), and none of the others holds that path, so whether it can be recovered is not known\n', 'RESTORE_FAILED'],
     // A placement that failed with the name free is not a name taken (FG4d, review #7).
     ['a copy not put in place', async () => 'ERROR the copy could not be put in place (link: ../a.txt: Operation not supported), and nothing was written at the destination\n', 'RESTORE_FAILED'],
     // Found only through a link out of the snapshot: the snapshot does not hold it (FG4d, review #12).
@@ -836,10 +839,17 @@ test('each answer of the helper, and of the prompt, is its own 409 code', async 
     for (const [what, answer, code] of cases) {
       setAdminPromptForTests(answer);
       const original = path.join(tmp('treemap-place-codes-'), 'notes.txt');
+      // The helper's own words, for the answers that must carry them to the panel (FG4e, review L5).
+      const said = code === 'DESTINATION_FOLDER_UNAVAILABLE' ? (await answer()).replace(/^ERROR /, '').trim() : '';
       await assert.rejects(restoreFromSnapshot({ path: original }), (err: unknown) => {
         assert.ok(err instanceof AppError && err.status === 409, `${what}: ${String(err)}`);
         assert.equal(err.code, code, `${what} is ${code}: ${err.message}`);
         if (what === 'only through a link out') assert.match(err.message, /only through a link that leads out of them/);
+        if (code === 'DESTINATION_FOLDER_UNAVAILABLE') {
+          assert.ok(err.message.includes(said), `${what}: the helper's own words (${said}) in: ${err.message}`);
+          assert.match(err.message, /try again/, `${what}: it may not happen again`);
+          assert.doesNotMatch(err.message, /another account|other accounts|belongs to/i, `${what}: never "someone else owns it"`);
+        }
         return true;
       });
     }

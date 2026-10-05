@@ -74,3 +74,30 @@ test('a copy restored from the newest snapshot says nothing about older ones', a
   assert.match(panel.innerHTML, /Recovered/);
   assert.doesNotMatch(panel.innerHTML, /newer snapshot|may not be the newest/);
 });
+
+/* ══════════════════ A folder refused, and a folder that could not be opened (FG4e, review L5) ══════════════════ */
+
+const failing = (code: string, message: string) => async () => {
+  throw Object.assign(new Error(message), { code });
+};
+
+test('a destination folder that could not be opened shows the server\'s reason and keeps the retry', async () => {
+  // Removed, or its volume unmounted, while the password prompt was open: that can change, so the
+  // panel says what the server said and offers to try again — never "another account owns it".
+  const message = 'The destination folder could not be opened when the copy ran (the destination folder could not be opened). Nothing was written.';
+  const h = harness(failing('DESTINATION_FOLDER_UNAVAILABLE', message));
+  const panel = host();
+  await h.restore('/Volumes/USB/Photos/a.jpg', panel);
+  assert.ok(panel.innerHTML.includes(message), panel.innerHTML);
+  assert.match(panel.innerHTML, /data-snap-restore="\/Volumes\/USB\/Photos\/a\.jpg">Try again/);
+  assert.doesNotMatch(panel.innerHTML, /another account|other accounts/);
+  assert.equal(h.wired, 1, 'the retry is wired');
+});
+
+test('a destination folder refused for who can change it is explained without a retry', async () => {
+  const h = harness(failing('DESTINATION_FOLDER_REFUSED', 'Other accounts on this Mac can change the folder /Users/Shared.'));
+  const panel = host();
+  await h.restore('/Users/Shared/a.jpg', panel);
+  assert.match(panel.innerHTML, /another account owns that folder, or other accounts can change it/);
+  assert.doesNotMatch(panel.innerHTML, /Try again|data-snap-restore/);
+});

@@ -442,6 +442,11 @@ export interface SnapshotRecoveryResult {
    * administrator: another account owns it, or others can change it (macOS, FG4c).
    */
   destinationRefused?: boolean;
+  /**
+   * Nothing was restored because the destination folder could not be opened or checked when the
+   * copy ran — removed, or its volume unmounted (macOS, FG4e, review L5). Not a refusal for who owns it.
+   */
+  destinationUnavailable?: boolean;
   /** Nothing was restored because the restore itself failed — not because no snapshot holds the path (FG4c). */
   failed?: boolean;
   /**

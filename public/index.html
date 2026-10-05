@@ -30265,7 +30265,10 @@ async function restoreFromSnapshot(targetPath, host) {
     }
     // A dismissed password prompt is an answer, not a fault — shown neutrally. A restore that
     // failed (RESTORE_FAILED: the prompt, the copy or a snapshot that could not be opened) may
-    // not fail again, so it keeps its retry, with the server's own account of what happened.
+    // not fail again, so it keeps its retry, with the server's own account of what happened — and
+    // so does a destination folder that could not be opened when the copy ran
+    // (DESTINATION_FOLDER_UNAVAILABLE: moved, removed or its drive disconnected), which is not one
+    // refused for who owns it (FG4e, review L5).
     const declined = e.code === 'AUTHORIZATION_DECLINED';
     host.innerHTML =
       `<div class="snap-msg">${icon(declined ? 'clock' : 'alert', 13)} ${escapeHtml(e.message)}</div>` +

@@ -275,12 +275,14 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     // renders it neutrally.
     // A name at the destination when the copy ran (FG4) is the same refusal as one found before.
     // A destination folder refused, and a restore that failed, are neither of them — nor a claim
-    // that no snapshot holds the path (FG4c).
+    // that no snapshot holds the path (FG4c). A destination folder that could not be opened when
+    // the copy ran is not one refused for who owns it (FG4e, review L5).
     const code = result.cancelled ? 'AUTHORIZATION_DECLINED'
       : result.destinationTaken ? 'DESTINATION_OCCUPIED'
         : result.destinationRefused ? 'DESTINATION_FOLDER_REFUSED'
-          : result.failed ? 'RESTORE_FAILED'
-            : 'NOT_IN_ANY_SNAPSHOT';
+          : result.destinationUnavailable ? 'DESTINATION_FOLDER_UNAVAILABLE'
+            : result.failed ? 'RESTORE_FAILED'
+              : 'NOT_IN_ANY_SNAPSHOT';
     throw new AppError(409, code, `${result.reason ?? 'That path could not be recovered from any snapshot.'}${trashNote}`);
   }
 

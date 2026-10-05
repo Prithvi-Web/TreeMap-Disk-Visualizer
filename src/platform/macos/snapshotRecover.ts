@@ -460,8 +460,14 @@ export async function restoreFolderRefusal(dir: string): Promise<string | null> 
   return st ? destinationFolderRefusal(st, dir, os.userInfo().uid) : null;
 }
 
-/** The helper's refusals of the destination folder itself (enter_destination). */
-const FOLDER_REFUSED = /^(the destination folder( .*)? (belongs to another user|could not be (opened|checked))|other users can change the destination folder)/;
+/** The helper's refusals of the destination folder itself, for who owns or can change it (enter_destination). */
+const FOLDER_REFUSED = /^(the destination folder .* belongs to another user|other users can change the destination folder)/;
+/**
+ * The helper could not open or check the destination folder (enter_destination): removed, or its
+ * volume unmounted, while the prompt was open. Not a refusal for who owns it, and it may not happen
+ * again, so it has its own answer (FG4e, review L5).
+ */
+const FOLDER_UNAVAILABLE = /^the destination folder( .*)? could not be (opened|checked)/;
 /** The helper's refusal of a name at the destination (place_copy, and the check before it). */
 const NAME_TAKEN = /^something (already exists|appeared) at the destination/;
 /** The helper found the path only through a link out of the snapshot. */
@@ -555,6 +561,14 @@ export async function recoverFromSnapshots(
   // The helper refused a name at the destination, found when it ran (FG4).
   if (error && NAME_TAKEN.test(error)) {
     return { restored: false, destinationTaken: true, reason: `${destinationTakenReason(destination)} (${error})` };
+  }
+  // The folder went away, or could not be checked, while the prompt was open (FG4e, review L5).
+  if (error && FOLDER_UNAVAILABLE.test(error)) {
+    return {
+      restored: false,
+      destinationUnavailable: true,
+      reason: `The destination folder could not be opened when the copy ran (${error}), so nothing was written. If it was moved or removed, or its drive was disconnected, put it back and try again.`,
+    };
   }
   // The folder changed after the check above, while the prompt was open (FG4c).
   if (error && FOLDER_REFUSED.test(error)) {
