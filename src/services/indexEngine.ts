@@ -313,7 +313,7 @@ export function openIndex(): Database.Database {
  */
 function discardIncompleteBuilds(): void {
   if (!db) return;
-  reclaimLeftovers(db);
+  reclaimLeftovers(db, true);
   // Every surviving root was built by a process that is no longer running, so
   // its watcher is gone and it may have missed changes. Honest state: stale.
   db.prepare("UPDATE roots SET state = 'stale' WHERE state = 'ready'").run();
@@ -570,16 +570,61 @@ function reclaimLater(handle: Database.Database, rootId: number): void {
 const activeBuilds = new Map<number, { handle: Database.Database; root: string; aborted: boolean }>();
 
 /**
- * Sets aside and reclaims every root left 'building' in `handle` that no
- * build of this process is writing there: one a process that ended left (at
- * an open, every one is), or one whose discard failed (Track U review L1).
- * Run at every open, at the start of every build and by `deleteIndex`.
+ * The roots this process's builds could not discard (Track U review L1),
+ * each with the index it is in: its own, so a later build or delete may
+ * reclaim it though no path says whose it is (an explicit build's root holds
+ * the folder's path).
  */
-function reclaimLeftovers(handle: Database.Database): void {
+const discardFailed = new Map<number, Database.Database>();
+
+/** The process a capped build's aside path names (`building-aside:<pid>:<seq>:<folder>`), or null. */
+function asidePid(rootPath: string): number | null {
+  if (!isAside(rootPath) || rootPath.startsWith(DISCARD_PREFIX)) return null;
+  const match = /^(\d+):/.exec(rootPath.slice(ASIDE_PREFIX.length));
+  const pid = match ? Number(match[1]) : 0;
+  return pid > 0 ? pid : null;
+}
+
+/** Whether process `pid` is running. EPERM: it is, as someone else. */
+function processRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Whether no build anywhere can still be writing root `row` (review of
+ * 5 Oct 2026, L-1): it is already set aside for reclaiming, this process
+ * could not discard it, or it is a capped build whose process is this one
+ * (and none of its builds is writing it) or has ended. Another process's
+ * build — a development server beside the app — is none of these until
+ * that process ends, whichever folder it builds.
+ */
+function certainlyLeft(handle: Database.Database, row: { id: number; path: string }): boolean {
+  if (row.path.startsWith(DISCARD_PREFIX)) return true;
+  if (discardFailed.get(row.id) === handle) return true;
+  const pid = asidePid(row.path);
+  return pid !== null && (pid === process.pid || !processRunning(pid));
+}
+
+/**
+ * Sets aside and reclaims the roots left 'building' in `handle` that no
+ * build of this process is writing there. At an open (`atOpen`) every one is
+ * left: whatever wrote it before the index was opened is not writing it now
+ * (the rule since the first index). At the start of a build and in
+ * `deleteIndex` — retrying a discard that failed (Track U review L1) — only
+ * one `certainlyLeft`: another process may be writing the rest.
+ */
+function reclaimLeftovers(handle: Database.Database, atOpen: boolean): void {
   const building = handle.prepare("SELECT id, path FROM roots WHERE state = 'building'").all() as { id: number; path: string }[];
   for (const row of building) {
     if (activeBuilds.get(row.id)?.handle === handle) continue;
+    if (!atOpen && !certainlyLeft(handle, row)) continue;
     if (!row.path.startsWith(DISCARD_PREFIX)) setAside(handle, row.id);
+    discardFailed.delete(row.id);
     reclaimLater(handle, row.id);
   }
 }
@@ -853,8 +898,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   const aside = opts.maxEntries !== undefined;
   const buildPath = aside ? `${ASIDE_PREFIX}${process.pid}:${++asideSeq}:${root}` : root;
 
-  // A discard that failed before is retried here (Track U review L1).
-  reclaimLeftovers(handle);
+  // A discard that failed before is retried here (Track U review L1), and
+  // a capped build whose process has ended is reclaimed; another process's
+  // build is left alone (review of 5 Oct 2026, L-1).
+  reclaimLeftovers(handle, false);
 
   // The node ids this build sets aside (U-D6): its cap and one more — the
   // walk stops on the entry past the cap — or 2^32 without one, and never
@@ -909,8 +956,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       reclaimLater(handle, rootId);
     } catch (err) {
       // Left 'building', out of sight wherever it was: the next build, a
-      // delete or the next open discards it (L1). The build still ends with
-      // its own answer — a stop, a cancel, its own failure.
+      // delete or the next open discards it (L1) — known here as this
+      // process's own, whatever its path says (L-1). The build still ends
+      // with its own answer — a stop, a cancel, its own failure.
+      discardFailed.set(rootId, handle);
       console.error(`[treemap] an index build of ${root} could not be discarded; the next build, delete or start discards it:`, err);
     }
   };
@@ -1222,7 +1271,7 @@ export function deleteIndex(rootPath?: string): number {
     // Deleting a folder's index starts it afresh: its next scan may build again.
     handle.prepare('DELETE FROM cap_stops WHERE path = ?').run(rootPath);
     // A discard that failed before is retried here too (L1), behind the delete.
-    reclaimLeftovers(handle);
+    reclaimLeftovers(handle, false);
     const row = handle.prepare('SELECT id FROM roots WHERE path = ?').get(rootPath) as { id: number } | undefined;
     if (!row) return 0;
     handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(row.id);

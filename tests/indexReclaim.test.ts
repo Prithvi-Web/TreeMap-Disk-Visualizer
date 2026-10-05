@@ -1,8 +1,10 @@
 import { test, after } from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
@@ -13,7 +15,9 @@ import {
   IndexCapReached,
   buildIndex,
   closeIndex,
+  deleteIndex,
   getRoot,
+  indexDbPath,
   listRoots,
   openIndex,
   readTree,
@@ -315,4 +319,92 @@ test('a build that starts while another is running leaves that one alone: only a
   assert.equal(built.fileCount, 1200);
   await reclaimsSettled();
   assert.equal(rowsUnder(built.id), 1202, 'and keeps every row it wrote');
+});
+
+/* ══════════════════ another process on the same index (review of 5 Oct 2026, L-1) ══════════════════ */
+
+/**
+ * A second handle on the index file, writing as another TreeMap process
+ * would (a development server beside the app): a root left 'building' at
+ * `rootPath`, its top row and `rows - 1` files under it. Returns its id.
+ */
+function foreignBuild(other: Database.Database, rootPath: string, rows: number): number {
+  const id = Number(other.prepare("INSERT INTO roots (path, state, mechanism) VALUES (?, 'building', 'readdir + lstat')").run(rootPath).lastInsertRowid);
+  const insert = other.prepare('INSERT INTO nodes (root_id, parent_id, name, is_dir, size) VALUES (?, ?, ?, ?, 1)');
+  other.transaction(() => {
+    const top = Number(insert.run(id, null, 'top', 1).lastInsertRowid);
+    for (let i = 1; i < rows; i++) insert.run(id, top, `f${i}`, 0);
+  })();
+  return id;
+}
+
+/** A process id that has ended: a child this test started and waited for. */
+function endedPid(): number {
+  const child = spawnSync(process.execPath, ['-e', ''], { env: { ...process.env } });
+  assert.equal(child.status, 0, 'the child ran and ended');
+  return child.pid as number;
+}
+
+test('a build another process is writing in the same index is never reclaimed by a build or a delete here — only by the next open, or once its process has ended', async (t) => {
+  await reclaimsSettled();
+  openIndex();
+  const other = new Database(indexDbPath());
+  t.after(() => other.close());
+  const elsewhere = folder('elsewhere');
+  // A capped build of a live process (the test runner that started this one), and an explicit build: the folder's own path.
+  const capped = foreignBuild(other, `building-aside:${String(process.ppid)}:1:${elsewhere}`, 40);
+  const explicit = foreignBuild(other, path.join(elsewhere, 'explicit'), 30);
+  // A capped build whose process has ended: nothing will ever finish it.
+  const orphan = foreignBuild(other, `building-aside:${String(endedPid())}:1:${elsewhere}`, 20);
+  // A capped build of a process this one may not signal (pid 1, the system's own): running, all the same.
+  const notOurs = process.platform === 'win32' ? null : foreignBuild(other, `building-aside:1:1:${elsewhere}`, 10);
+
+  const dir = folder('here');
+  addFiles(dir, 3);
+  await buildIndex(dir, { live: false }); // a build start looks for leftovers
+  deleteIndex(folder('nothing')); // and so does a delete
+  await reclaimsSettled();
+  const alive: [string, number, number][] = [["the live process's capped build", capped, 40], ['the explicit build', explicit, 30]];
+  if (notOurs !== null) alive.push(["a capped build of a process this one may not signal", notOurs, 10]);
+  for (const [what, id, rows] of alive) {
+    assert.equal(rowsUnder(id), rows, `${what} keeps every row it wrote`);
+    assert.equal(rootRow(id)?.state, 'building', `${what} is still building`);
+    assert.ok(!rootRow(id)!.path.startsWith('building-aside:discard:'), `${what} was not set aside: ${rootRow(id)!.path}`);
+  }
+  assert.equal(rootRow(orphan), undefined, 'the build whose process has ended is reclaimed');
+  assert.equal(rowsUnder(orphan), 0, 'with every row it wrote');
+
+  closeIndex();
+  openIndex(); // the open: every building root is a leftover, as it always was
+  await reclaimsSettled();
+  for (const [what, id] of alive) {
+    assert.equal(rootRow(id), undefined, `the open reclaims ${what}`);
+    assert.equal(rowsUnder(id), 0);
+  }
+});
+
+test('an explicit build whose discard failed is reclaimed by the next build of another folder: this process knows it is its own', async (t) => {
+  await reclaimsSettled();
+  const dir = folder('explicit-failed-discard');
+  fs.mkdirSync(path.join(dir, 'sub'));
+  addFiles(path.join(dir, 'sub'), 600);
+  const handle = openIndex();
+  handle.exec("CREATE TEMP TRIGGER fail_discard BEFORE UPDATE OF path ON roots WHEN NEW.path LIKE 'building-aside:discard:%' BEGIN SELECT RAISE(ABORT, 'injected: the discard failed'); END");
+  const logged = t.mock.method(console, 'error', () => {});
+  let polls = 0;
+  try {
+    await assert.rejects(buildIndex(dir, { live: false, isCancelled: () => ++polls >= 560 }), { message: 'cancelled' });
+  } finally {
+    handle.exec('DROP TRIGGER IF EXISTS temp.fail_discard');
+    logged.mock.restore();
+  }
+  assert.equal(logged.mock.callCount(), 1, 'the failed discard is logged');
+  const left = getRoot(dir) ?? assert.fail('the cancelled build is left where it was');
+  assert.equal(left.state, 'building');
+  assert.ok(rowsUnder(left.id) >= 500, 'with the rows it wrote');
+
+  await buildIndex(folder('next'), { live: false });
+  await reclaimsSettled();
+  assert.equal(rootRow(left.id), undefined, 'the next build reclaims it');
+  assert.equal(rowsUnder(left.id), 0);
 });
