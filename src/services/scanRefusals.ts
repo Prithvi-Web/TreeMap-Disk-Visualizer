@@ -79,20 +79,56 @@ export function markUnlisted(store: ScanStore, id: number): void {
  * fixed folders and, under "Stay on this drive", every drive mounted inside
  * that the scan did not enter, so a not-entered mount is kept out of Empty
  * Folders by this same mark on every engine.
+ *
+ * Each path is found name by name from the root through `listingsOf`, which reads
+ * a folder's listing once for the whole call: a lookup by path scans every child
+ * of each folder on the way down, so asking one per path read a Docker host's
+ * overlay2 folder (5,000 mounts) 5,000 times (the SEC-1 review, L4).
  */
 export function markUnlistedPaths(store: ScanStore, paths: readonly string[]): void {
   const root = store.rootPath;
   const base = root.endsWith(store.sep) ? root : root + store.sep;
+  const find = listingsOf(store);
   for (const p of paths) {
     if (p.length <= base.length || !p.startsWith(base)) continue;
-    const id = store.findByPath(p);
+    const names = p.slice(base.length).split(store.sep);
+    const id = find(names);
     if (id !== -1) {
       markUnlisted(store, id);
       continue;
     }
-    const cut = p.lastIndexOf(store.sep);
-    if (cut < base.length) continue; // its parent is the root
-    const parent = store.findByPath(p.slice(0, cut));
+    if (names.length < 2) continue; // its parent is the root
+    const parent = find(names.slice(0, -1));
     if (parent !== -1) markUnlisted(store, parent);
   }
+}
+
+/**
+ * A lookup of a node by its names below the root, as `findByPath` answers it
+ * (the first child of each name), that reads each folder's listing once and
+ * remembers it by name for as long as the lookup is kept.
+ */
+function listingsOf(store: ScanStore): (names: readonly string[]) => number {
+  const byFolder = new Map<number, Map<string, number>>();
+  const listing = (id: number): Map<string, number> => {
+    let children = byFolder.get(id);
+    if (children === undefined) {
+      const named = new Map<string, number>();
+      store.forEachChild(id, (child) => {
+        const name = store.name(child);
+        if (!named.has(name)) named.set(name, child);
+      });
+      children = named;
+      byFolder.set(id, children);
+    }
+    return children;
+  };
+  return (names) => {
+    let id = store.rootId;
+    for (const name of names) {
+      id = listing(id).get(name) ?? -1;
+      if (id === -1) return -1;
+    }
+    return id;
+  };
 }

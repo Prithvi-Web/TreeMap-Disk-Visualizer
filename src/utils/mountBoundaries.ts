@@ -470,10 +470,46 @@ export function restartBoundaryWalk(record: ScanBoundaryRecord): void {
   record.walk.refusedAbove = new Set();
 }
 
-/** A folder the walk was refused, or could not list: every listed mount beneath it was never reached. */
+/**
+ * The listed mounts a walk can reach (not under a fixed folder), their paths sorted, once per list:
+ * the paths beneath a folder are one run of a sorted list (they share its path and a separator as
+ * a prefix), found by a binary search.
+ */
+const reachableByList = new WeakMap<readonly BoundaryMount[], string[]>();
+
+function reachableSorted(mounts: readonly BoundaryMount[]): string[] {
+  let sorted = reachableByList.get(mounts);
+  if (sorted === undefined) {
+    sorted = mounts.filter((m) => !m.underFixed).map((m) => m.path).sort();
+    reachableByList.set(mounts, sorted);
+  }
+  return sorted;
+}
+
+/** The first index in `sorted` whose path is not before `p`. */
+function firstNotBefore(sorted: readonly string[], p: string): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid] < p) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * A folder the walk was refused, or could not list: every listed mount beneath it was never reached.
+ * Called once per such folder, so it looks only at the mounts beneath it (`reachableSorted`): looking
+ * at every mount each time was 4,096 refused folders × 5,000 Docker overlay mounts, 679 ms (the SEC-1
+ * review, L4).
+ */
 export function noteRefusedBelow(record: ScanBoundaryRecord, dirPath: string): void {
-  for (const m of record.mounts ?? []) {
-    if (!m.underFixed && isStrictlyUnder(dirPath, m.path)) record.walk.refusedAbove.add(m.path);
+  if (!record.mounts) return;
+  const sorted = reachableSorted(record.mounts);
+  const prefix = dirPath.endsWith('/') ? dirPath : `${dirPath}/`;
+  for (let i = firstNotBefore(sorted, prefix); i < sorted.length && sorted[i].startsWith(prefix); i++) {
+    if (sorted[i] !== dirPath) record.walk.refusedAbove.add(sorted[i]);
   }
 }
 
