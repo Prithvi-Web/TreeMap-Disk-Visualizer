@@ -352,12 +352,12 @@ function fakeMenu(): FakeMenu {
     querySelector: () => menu.buttons[0] || null,
     setAttribute(k, v) { menu.attrs[k] = String(v); },
     getAttribute(k) { return k in menu.attrs ? menu.attrs[k] : null; },
-    contains: (el: unknown) => menu.buttons.includes(el as FakeBtn) };
+    contains: (el: unknown) => el === menu || menu.buttons.includes(el as FakeBtn) };
   return menu;
 }
 
 /** The menu's machinery, shared by the "…" crumb, the right-click menu and Export (QA-6 review MEDIUM-1). */
-const CTX_MENU_DECLS = ['ctxMenuOpener', 'ctxMenuReturn', 'ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuKeydown'];
+const CTX_MENU_DECLS = ['ctxMenuOpener', 'ctxMenuReturn', 'CTX_MENU_EDGE', 'ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuKeydown'];
 
 type KeyEv = { key: string; target: unknown; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean;
   defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
@@ -639,6 +639,43 @@ test('MEDIUM-1: the right-click menu is named and made of menu items too', () =>
   const at = INDEX.indexOf("$('tmExportBtn').addEventListener('click'");
   const exportHandler = INDEX.slice(at, INDEX.indexOf("menu.querySelectorAll('button')", at));
   assert.match(exportHandler, /ctxMenuShow\(menu, \{ label: '[^']+'/, 'the Export menu is shown named, through ctxMenuShow');
+});
+
+/* ══════════════ QA-6 review LOW-4 — #ctxMenu fits the window ══════════════ */
+
+test('LOW-4: a menu taller than the window opens at its top edge, never above it', () => {
+  // ≥ ~25 folded ancestors at 900 px: top = min(36, 900 − height − 8) went negative,
+  // and the first folders — the root among them — were off the top of the window.
+  const { h, more } = foldedTrail();
+  h.menu.offsetHeight = 1200;
+  more.click();
+  assert.equal(h.menu.style.top, '8px', 'pinned 8 px below the top of the window');
+  const narrow = load<(menu: FakeMenu, o: unknown) => void>(CTX_MENU_DECLS, {
+    document: fakeDoc, window: { innerWidth: 200, innerHeight: 900 },
+  }, 'ctxMenuShow');
+  const m = fakeMenu();
+  narrow(m, { label: 'x', x: 150, y: 20 });
+  assert.equal(m.style.left, '8px', 'and never off the left edge of a window narrower than the menu');
+});
+
+test('LOW-4: the menu scrolls inside a short window, and scrolling it does not close it', () => {
+  const at = INDEX.indexOf('#ctxMenu { position: fixed;');
+  assert.notEqual(at, -1);
+  const rule = INDEX.slice(at, INDEX.indexOf('}', at));
+  const edge = Number(load<number>(['CTX_MENU_EDGE'], {}, 'CTX_MENU_EDGE'));
+  assert.match(rule, new RegExp(`max-height:\\s*calc\\(100vh - ${2 * edge}px\\)`), 'no taller than the window less the edge kept above and below');
+  assert.match(rule, /overflow-y:\s*auto/, 'and what does not fit scrolls');
+  // The capture-phase scroll listener closed the menu on ANY scroll — its own list's included.
+  const menu = fakeMenu();
+  menu.style.display = 'block';
+  const onScroll = load<(e: { target: unknown }) => void>(['ctxMenuOnScroll', ...CTX_MENU_DECLS], {
+    $: () => menu, document: fakeDoc,
+  }, 'ctxMenuOnScroll');
+  onScroll({ target: menu });
+  assert.equal(menu.style.display, 'block', 'scrolling the menu itself leaves it open');
+  onScroll({ target: { tagName: 'MAIN' } });
+  assert.equal(menu.style.display, 'none', 'a scroll anywhere else still closes it');
+  assert.ok(INDEX.includes("document.addEventListener('scroll', ctxMenuOnScroll, true);"), 'and that is the listener the page installs');
 });
 
 /* ══════════════ D58 — the 20,000-node cap is stated, not left as a blank ══════════════ */

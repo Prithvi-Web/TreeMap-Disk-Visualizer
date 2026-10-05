@@ -364,6 +364,13 @@ function showCtxMenu(x, y, node) {
 let ctxMenuOpener = null;
 /** Where focus goes back to when the keyboard closes the menu: the opener, or what had focus when it opened. */
 let ctxMenuReturn = null;
+/**
+ * The gap kept between the menu and every edge of the window (QA-6 review
+ * LOW-4). The CSS caps the menu at the window's height less two of these and
+ * scrolls the rest, so a menu of 30 folded folders opens on screen; the top
+ * used to be placed above the window's top edge, with the root out of reach.
+ */
+const CTX_MENU_EDGE = 8;
 
 /** Show #ctxMenu, already filled, at (x, y), named `label` for assistive technology. */
 function ctxMenuShow(menu, { label, opener = null, x, y }) {
@@ -372,8 +379,8 @@ function ctxMenuShow(menu, { label, opener = null, x, y }) {
   menu.querySelectorAll('button').forEach((b) => b.setAttribute('role', 'menuitem'));
   menu.querySelectorAll('.div').forEach((d) => d.setAttribute('role', 'separator'));
   menu.style.display = 'block';
-  menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+  menu.style.left = Math.max(CTX_MENU_EDGE, Math.min(x, window.innerWidth - 230)) + 'px';
+  menu.style.top = Math.max(CTX_MENU_EDGE, Math.min(y, window.innerHeight - menu.offsetHeight - CTX_MENU_EDGE)) + 'px';
   ctxMenuOpener = opener;
   ctxMenuReturn = opener || document.activeElement || null;
   if (opener) opener.setAttribute('aria-expanded', 'true');
@@ -433,8 +440,12 @@ function ctxMenuKeydown(e) {
   if (typeof items[next].scrollIntoView === 'function') items[next].scrollIntoView({ block: 'nearest' });
   return true;
 }
+/** A scroll elsewhere closes the menu; one of the menu's own list (it scrolls in a short window) does not. */
+function ctxMenuOnScroll(e) {
+  if (!$('ctxMenu').contains(e.target)) hideCtxMenu();
+}
 document.addEventListener('click', (e) => { if (!$('ctxMenu').contains(e.target)) hideCtxMenu(); });
-document.addEventListener('scroll', hideCtxMenu, true);
+document.addEventListener('scroll', ctxMenuOnScroll, true);
 
 async function openInOS(path, reveal) {
   try {

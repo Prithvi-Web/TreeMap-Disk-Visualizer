@@ -56,6 +56,8 @@
 #tooltip .t-line { color: var(--text-2); margin-top: 3px; word-break: break-all; line-height: 1.45; }
 #tooltip .t-strong { color: var(--text-1); font-weight: 600; }
 #ctxMenu { position: fixed; z-index: 210; min-width: 210px; padding: 5px; display: none;
+  /* Never taller than the window less CTX_MENU_EDGE above and below; the rest scrolls (QA-6 review LOW-4). */
+  max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 24px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-3); }
