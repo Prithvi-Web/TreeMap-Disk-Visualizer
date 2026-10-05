@@ -104,31 +104,37 @@ export function markUnlistedPaths(store: ScanStore, paths: readonly string[]): v
 }
 
 /**
- * A lookup of a node by its names below the root, as `findByPath` answers it
- * (the first child of each name), that reads each folder's listing once and
- * remembers it by name for as long as the lookup is kept.
+ * A lookup of a node by its names below the root, as `findByPath` answers it,
+ * that reads each folder's listing once and remembers it by name for as long as
+ * the lookup is kept. Of two children of one name — an archive's listing or a
+ * sliced adopt can hold two — it takes the first whose subtree holds the rest
+ * of the path, as `findByPath` does; taking the first of each name marked the
+ * wrong folder, or none (the SEC-2 review, LOW-2).
  */
 function listingsOf(store: ScanStore): (names: readonly string[]) => number {
-  const byFolder = new Map<number, Map<string, number>>();
-  const listing = (id: number): Map<string, number> => {
+  const byFolder = new Map<number, Map<string, number[]>>();
+  const listing = (id: number): Map<string, number[]> => {
     let children = byFolder.get(id);
     if (children === undefined) {
-      const named = new Map<string, number>();
+      const named = new Map<string, number[]>();
       store.forEachChild(id, (child) => {
         const name = store.name(child);
-        if (!named.has(name)) named.set(name, child);
+        const same = named.get(name);
+        if (same) same.push(child);
+        else named.set(name, [child]);
       });
       children = named;
       byFolder.set(id, children);
     }
     return children;
   };
-  return (names) => {
-    let id = store.rootId;
-    for (const name of names) {
-      id = listing(id).get(name) ?? -1;
-      if (id === -1) return -1;
+  const find = (id: number, names: readonly string[], depth: number): number => {
+    if (depth === names.length) return id;
+    for (const child of listing(id).get(names[depth]) ?? []) {
+      const found = find(child, names, depth + 1);
+      if (found !== -1) return found;
     }
-    return id;
+    return -1;
   };
+  return (names) => find(store.rootId, names, 0);
 }

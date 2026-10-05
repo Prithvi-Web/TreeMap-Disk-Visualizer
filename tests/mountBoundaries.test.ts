@@ -126,3 +126,25 @@ test('marking the folders a scan never listed reads each folder’s listing at m
   const listings = count + count / 2 + 7;
   assert.ok(work <= 2 * listings, `${work} children looked at, for ${listings} children in the folders on the way`);
 });
+
+test('marking a path under two folders of one name finds it where a lookup by path does: in the second, when only the second holds it (the SEC-2 review, LOW-2)', () => {
+  // An archive's listing or a sliced adopt can hold two siblings of one name. The lookup by path
+  // tries each in turn (findByPath backtracks); the listing kept only the first of each name, so it
+  // marked the wrong folder, or none.
+  const dir = (p: string, children: FileNode[]): FileNode => ({ name: p.slice(p.lastIndexOf('/') + 1), path: p, size: 0, type: 'dir', modifiedAt: 0, isHidden: false, children });
+  const store = buildStoreFromTree(dir('/r', [
+    dir('/r/a', [dir('/r/a/other', [])]),
+    dir('/r/a', [dir('/r/a/mnt', [])]),
+    dir('/r/b', []),
+    dir('/r/b', [dir('/r/b/x', [])]),
+  ]));
+  store.finalize();
+  markUnlistedPaths(store, ['/r/a/mnt', '/r/b/x/gone']);
+  const named = (name: string): number[] => store.childIds(store.rootId).filter((id) => store.name(id) === name);
+  const mnt = store.findByPath('/r/a/mnt');
+  assert.equal(store.parent(mnt), named('a')[1], 'the lookup by path finds it in the second a');
+  assert.equal(store.flag(mnt, Flag.Unlisted), true, 'and that is the folder marked');
+  assert.deepEqual(named('a').map((id) => store.flag(id, Flag.Unlisted)), [false, false], 'never an a in its place');
+  assert.equal(store.flag(store.findByPath('/r/b/x'), Flag.Unlisted), true, 'a path the tree left out marks the folder that held it, found the same way');
+  assert.deepEqual(named('b').map((id) => store.flag(id, Flag.Unlisted)), [false, false]);
+});
