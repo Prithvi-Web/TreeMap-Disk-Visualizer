@@ -394,6 +394,11 @@ test('a capsule that cannot run at all reports every item unprotected — and no
     assert.equal(result.bytesFreed, 0);
     assert.equal(result.skipped.length, 2);
     assert.ok(result.capsuleUnavailable);
+    // Each row says why, as the dry run's did (FG3f #11): it carried its path alone.
+    for (const row of result.skipped) {
+      assert.equal(row.code, 'CAPSULE_UNAVAILABLE', JSON.stringify(row));
+      assert.equal(row.reason, result.capsuleUnavailable, 'with the capsule\'s own sentence');
+    }
     for (const p of paths) assert.ok(fs.existsSync(p), 'the originals are untouched');
   } finally {
     // Back to the isolated on-disk data dir, or every later test in this file
@@ -415,6 +420,53 @@ test('undo refuses loudly when the capsule no longer holds the run', async () =>
       return true;
     },
   );
+});
+
+test('a second undo of a commit that is already back answers ALREADY_UNDONE, not that the capsule lost it (FG3f #11)', async () => {
+  const dir = await fixture('undo-twice', 1, 2048);
+  const trash = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-cart-undo-twice-trash-'));
+  setTrashStepForTests(async (p) => fsp.rename(p, path.join(trash, path.basename(p))));
+  try {
+    const file = path.join(dir, 'f0.bin');
+    const committed = await commitCart([file]);
+    assert.deepEqual(committed.trashed, [file], JSON.stringify(committed));
+    await undoAndWait(committed.runId);
+    assert.ok(fs.existsSync(file), 'the first undo put it back');
+    await assert.rejects(() => undoCartRun(committed.runId), (err: any) => {
+      assert.equal(err.status, 409);
+      assert.equal(err.code, 'ALREADY_UNDONE', err.message);
+      assert.match(err.message, /already been undone/);
+      return true;
+    });
+  } finally {
+    setTrashStepForTests(null);
+    await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rm(trash, { recursive: true, force: true });
+  }
+});
+
+const NO_SEARCH = process.platform === 'win32' ? 'a folder\u2019s mode does not stop a look on Windows'
+  : process.getuid?.() === 0 ? 'running as root, a folder\u2019s mode stops nothing' : false;
+
+test('a link whose target cannot be read is not planned as protected with an empty target (FG3f #11)', { skip: NO_SEARCH }, async () => {
+  // A folder that can be listed and not searched: its listing names the link, and reading the link
+  // fails (EACCES). The walk took that for a link to nothing, so the dry run promised to protect and
+  // delete a folder the real run could not copy.
+  const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-cart-unreadable-link-'));
+  const folder = path.join(base, 'proj');
+  await fsp.mkdir(folder);
+  await fsp.symlink('target.txt', path.join(folder, 'lnk'));
+  await fsp.chmod(folder, 0o600);
+  try {
+    const plan = await planCartCommit([folder]);
+    const item = plan.items.find((i) => i.path === folder);
+    assert.equal(item?.willDelete, false, JSON.stringify(item));
+    assert.equal(item?.code, 'CAPSULE_UNREADABLE');
+    assert.match(item?.reason ?? '', /lnk/, item?.reason);
+  } finally {
+    await fsp.chmod(folder, 0o700);
+    await fsp.rm(base, { recursive: true, force: true });
+  }
 });
 
 test('undo needs a runId, and says so', async () => {

@@ -3115,7 +3115,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         }, ['jobId', 'entryCount', 'bytesTotal']),
       ),
       '400': errorResponse('RUN_ID_REQUIRED'),
-      '409': errorResponse('CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — no copy it holds can be put back now, and the sentence says what the disk showed of each: the same file still in its place, never deleted, something else standing there, or a place that could not be looked at'),
+      '409': errorResponse('ALREADY_UNDONE — an undo already put back everything it could (and the sentence counts any item whose copy is gone); CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — no copy it holds can be put back now, and the sentence says what the disk showed of each: the same file still in its place, never deleted, something else standing there, or a place that could not be looked at'),
     },
   },
 

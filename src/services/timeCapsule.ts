@@ -512,6 +512,23 @@ async function lstatMember(abs: string, rel: string): Promise<Stats | null> {
   }
 }
 
+/**
+ * A link member's target, during a walk: null when the link is gone (`meansAbsent`). Any other
+ * failure fails the walk, as `lstatMember` does (FG3f #11): read as an empty target, a link that
+ * could not be read was planned as protected, and the real copy then failed on it.
+ */
+async function readlinkMember(abs: string, rel: string): Promise<string | null> {
+  try {
+    const fault = memberLookFaultForTests?.(abs) ?? null;
+    if (fault !== null) throw fault;
+    return await fsp.readlink(abs);
+  } catch (err) {
+    if (meansAbsent(err)) return null;
+    throw new AppError(409, 'CAPSULE_UNREADABLE',
+      `TreeMap could not read the link ${rel}, inside it (${describeFsError(err)}), so it cannot be protected whole, and what cannot be protected is not deleted.`);
+  }
+}
+
 async function walkItem(
   root: string,
   opts: { withDirTimes?: boolean } = {},
@@ -558,7 +575,8 @@ async function walkItem(
       const abs = path.join(dir.abs, dirent.name);
       const rel = dir.rel ? path.join(dir.rel, dirent.name) : dirent.name;
       if (dirent.isSymbolicLink()) {
-        const target = await fsp.readlink(abs).catch(() => '');
+        const target = await readlinkMember(abs, rel);
+        if (target === null) continue; // vanished mid-walk — nothing to protect
         members.push({ abs, rel, kind: 'symlink', size: Buffer.byteLength(target) });
       } else if (dirent.isDirectory()) {
         queue.push({ abs, rel });
@@ -1075,11 +1093,14 @@ async function protectAndTrashInFlight(
   // told before anything is deleted — not after.
   const capsule = capsuleAvailable();
   if (!capsule.available) {
+    // Each with a code and the capsule's own sentence (FG3f #11): the rows carried a `reason` no
+    // caller reads, so a cart's skipped list named the paths and said nothing about them.
     const outcomes: ProtectionOutcome[] = [...requests, ...covered.map((c) => c.request)].map((r) => ({
       path: r.path,
       protected: false,
       bytes: 0,
-      reason: capsule.reason,
+      code: 'CAPSULE_UNAVAILABLE',
+      ...(capsule.reason ? { detail: capsule.reason } : {}),
     }));
     // Nothing is deleted: `skipped` is every request, and the reason says why.
     return {
@@ -1886,6 +1907,8 @@ export interface UndoPlan {
    * an undo that leaves one says so rather than "everything is back".
    */
   lost: TimeCapsuleEntry[];
+  /** How many of the run's records an undo has already put back (FG3f #11). */
+  restored: number;
 }
 
 /**
@@ -1897,10 +1920,13 @@ export interface UndoPlan {
  * what the look showed (`PassedOverWhy`): never "still in its place" unless it is the same file.
  */
 export async function planUndoForRun(runId: string): Promise<UndoPlan> {
-  const plan: UndoPlan = { undoable: [], passedOver: [], lost: [] };
+  const plan: UndoPlan = { undoable: [], passedOver: [], lost: [], restored: 0 };
   const marked = (id: string, mark: string): Promise<boolean> => fsp.lstat(path.join(entryDir(id), mark)).then(() => true, () => false);
   for (const entry of await listCapsuleEntriesForRun(runId)) {
-    if (entry.restoredAt) continue;
+    if (entry.restoredAt) {
+      plan.restored++;
+      continue;
+    }
     // A record TreeMap did not make holds no copy of TreeMap's, and would refuse the whole undo (FG3).
     if (!isEntryId(entry.id)) continue;
     // Its copy is gone (FG3f #3): passed over in silence, it let an undo say everything was back.
@@ -1983,6 +2009,15 @@ export function passedOverReason(why: PassedOverWhy): string {
  * showed — "still in its place" for the same file, and never for another file or a look that failed.
  */
 export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError {
+  // Undone already, as far as it can be (FG3f #11): a second undo of a commit that is back said the
+  // capsule had lost it.
+  if (plan.passedOver.length === 0 && plan.restored > 0) {
+    const lost = plan.lost.length;
+    return new AppError(409, 'ALREADY_UNDONE', lost === 0
+      ? `That ${noun} has already been undone.`
+      : `That ${noun} has already been undone as far as it can be: ${formatCount(lost)} item${lost === 1 ? '' : 's'} could not be put back, ` +
+        'because the Time Capsule no longer holds a copy of them.');
+  }
   if (plan.passedOver.length === 0) {
     return new AppError(409, 'CAPSULE_EMPTY',
       `The Time Capsule no longer holds the copies from that ${noun}, so it cannot be undone. ` +

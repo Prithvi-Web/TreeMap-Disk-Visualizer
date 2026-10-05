@@ -20,6 +20,7 @@ import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
 import type { TimeCapsuleEntry } from '../src/models/types';
+import { AppError } from '../src/middleware/errorHandler';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
 
@@ -249,6 +250,13 @@ test('a cart undo of a commit whose copy was evicted since puts back what it hol
   const kept = lostPath === a ? b : a;
   assert.ok(fs.existsSync(kept), 'the held one is back');
   assert.ok(!fs.existsSync(lostPath), 'and the lost one is not');
+  // Asked again, it answers that it is undone as far as it can be (FG3f #11), not that the capsule lost it.
+  await assert.rejects(() => undoCartRun(first.runId), (err: unknown) => {
+    assert.ok(err instanceof AppError, String(err));
+    assert.equal(err.code, 'ALREADY_UNDONE', err.message);
+    assert.match(err.message, /1 item could not be put back/, err.message);
+    return true;
+  });
 });
 
 test('an Autopilot undo of a run whose copy was evicted since names the item it cannot put back, and leaves the run not undone', async () => {
@@ -270,6 +278,11 @@ test('an Autopilot undo of a run whose copy was evicted since names the item it 
     assert.equal(undo.unrestorable?.length, 1, JSON.stringify(undo));
     await restored(undo.jobId);
     assert.equal((await getRun(run.id))?.undoneAt, undefined, 'one of its items is not back, so the run is not recorded as undone');
+    await assert.rejects(() => undoRun(run.id), (err: unknown) => {
+      assert.ok(err instanceof AppError, String(err));
+      assert.equal(err.code, 'ALREADY_UNDONE', err.message);
+      return true;
+    });
   } finally {
     await savePolicies([]);
   }
