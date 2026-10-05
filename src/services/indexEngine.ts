@@ -362,6 +362,13 @@ export interface BuildOptions {
    * untouched, so a build that stops at its cap, is cancelled, fails or dies
    * with the process leaves the saved index exactly as it was (the owner's
    * rule, plan U-Q4: a saved index is never deleted automatically).
+   *
+   * An explicit build — no `maxEntries`, a person's request — is NOT written
+   * aside: it replaces the saved index up front, as it always has (U-D3).
+   * Once its folder has been found listable (`refuseUnwalkable`), its first
+   * transaction sets the saved root aside, out of every reader's sight, and
+   * its rows are reclaimed while the build walks; an explicit build that is
+   * cancelled or fails leaves the folder with no index.
    */
   maxEntries?: number;
 }
@@ -1166,8 +1173,9 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     }
     // The swap: in one transaction the saved root is set aside — one
     // statement, no row deleted — and this build takes the folder's path.
-    // The saved rows are reclaimed in slices afterwards (M1); until the swap
-    // they are the folder's index, untouched (U-Q4).
+    // The saved rows are reclaimed in slices afterwards (M1). For a capped
+    // build, until the swap they are the folder's index, untouched (U-Q4);
+    // an explicit build set them aside in its first transaction (U-D3).
     const replaced = handle
       .transaction((): number | null => {
         let prior: { id: number } | undefined;

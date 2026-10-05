@@ -44,7 +44,10 @@ import {
  * reader's sight in one statement — its path moves into the range every
  * reader already leaves out — and its rows are reclaimed afterwards, at most
  * INDEX_RECLAIM_ROWS a statement, with a turn of the event loop before each.
- * The saved index is never deleted before the new one is swapped in (U-Q4).
+ * A capped build never deletes the saved index before it is swapped in
+ * (U-Q4); an explicit build replaces it up front, as it always has (U-D3):
+ * its first transaction sets the saved root aside, and an explicit build
+ * that is then cancelled or fails leaves the folder with no index.
  *
  * Every assertion counts rows, roots, slices or turns; nothing is timed.
  */

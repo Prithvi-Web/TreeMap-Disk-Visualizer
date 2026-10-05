@@ -2375,7 +2375,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'index',
     destructive: false,
     requestBody: jsonBody(obj({
-      path: str('Absolute folder path'),
+      path: str('Absolute folder path. Without maxEntries the build replaces the folder\'s saved index at its start: cancelled or failed, it leaves the folder with no index'),
       maxEntries: int(
         'Optional cap, a positive integer: past this many entries the walk stops, nothing it wrote is kept, the folder\'s saved index (if any) is left exactly as it was, the stop is remembered (GET /api/index/status?path=\'s stoppedAtCap) and the job ends cancelled with a sentence (GET /result answers 409 INDEX_CAP_REACHED). The page sends GET /api/index/status\'s autoBuild.maxEntries with every build it starts on its own',
       ),

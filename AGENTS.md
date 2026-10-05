@@ -366,7 +366,10 @@ OpenAPI 3 spec).
      written, and its saved index is kept (`/result` answers
      `500 INDEX_BUILD_FAILED` with that sentence). A path that is a link is
      indexed as the link itself, one file, as a scan of it shows it: no walk
-     follows a link. The index progress stream keeps
+     follows a link. A build without `maxEntries` replaces the folder's saved
+     index at its start, so one that is cancelled or fails leaves the folder
+     with no index; only a capped build keeps the saved one until it is
+     swapped in. The index progress stream keeps
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
