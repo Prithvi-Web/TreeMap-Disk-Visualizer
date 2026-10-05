@@ -62,6 +62,53 @@ test('an empty handle list groups to an empty report, not an error', () => {
   assert.equal(grouped.totalBytes, 0);
 });
 
+test('one deleted file held by several programs is counted once, and says how many hold it (QA D17)', () => {
+  // QA's Mac: one logd cache file held by hundreds of programs was counted once per
+  // holder, so 687 MB of unique held files read as 2.37 GB.
+  const shared = { path: '/private/var/db/cache.plist-cache', ino: 77, bytes: 100 };
+  const grouped = groupZombies([
+    { pid: 10, processName: 'logd', ...shared },
+    { pid: 11, processName: 'Finder', ...shared },
+    { pid: 12, processName: 'Dock', ...shared },
+    { pid: 12, processName: 'Dock', path: '/tmp/own.log', ino: 5, bytes: 40 },
+  ]);
+  assert.equal(grouped.totalBytes, 140, 'the shared file once plus the other one, not 100 per holder');
+  assert.equal(grouped.processes.length, 3, 'every holder is still listed');
+  assert.equal(grouped.processes.find((p) => p.pid === 12)?.bytes, 140, 'a holder still shows everything it holds');
+  assert.equal(grouped.fileCount, 2, 'two deleted files are held');
+  assert.equal(grouped.sharedFileCount, 1, 'one of them by more than one program');
+  const holdersOf = (pid: number, p: string) =>
+    grouped.processes.find((x) => x.pid === pid)?.handles.find((h) => h.path === p)?.holders;
+  assert.equal(holdersOf(10, shared.path), 3, 'each handle says how many programs hold that file');
+  assert.equal(holdersOf(12, '/tmp/own.log'), 1, 'and a file one program holds says one');
+});
+
+test('the same path on a different inode is a different file, as a log rotated twice is (QA D17)', () => {
+  const grouped = groupZombies([
+    { pid: 10, processName: 'a', path: '/var/log/app.log', ino: 1, bytes: 100 },
+    { pid: 11, processName: 'b', path: '/var/log/app.log', ino: 2, bytes: 100 },
+  ]);
+  assert.equal(grouped.totalBytes, 200, 'two inodes are two files, each holding its own space');
+  assert.equal(grouped.fileCount, 2, 'and two files are counted');
+});
+
+test('without an inode, holders of the same path and size count once, so the total stays a floor (QA D17)', () => {
+  const grouped = groupZombies([
+    { pid: 10, processName: 'a', path: '/x/f', ino: null, bytes: 100 },
+    { pid: 11, processName: 'b', path: '/x/f', ino: null, bytes: 100 },
+    { pid: 10, processName: 'a', path: '/x/u', bytes: null },
+    { pid: 11, processName: 'b', path: '/x/u', bytes: null },
+  ]);
+  assert.equal(grouped.totalBytes, 100, 'never more than is provably held');
+  assert.equal(grouped.unknownSizeCount, 1, 'one unsized file, however many programs hold it');
+  assert.equal(grouped.fileCount, 2, 'two files in all');
+  const resized = groupZombies([
+    { pid: 10, processName: 'a', path: '/x/f', ino: null, bytes: 100 },
+    { pid: 11, processName: 'b', path: '/x/f', ino: null, bytes: 300 },
+  ]);
+  assert.equal(resized.totalBytes, 400, 'a different size at the same path is a different file');
+});
+
 test('the .app bundle test matches path segments, not substrings', () => {
   assert.equal(
     appBundleOf('/Applications/Safari.app/Contents/MacOS/Safari'),
@@ -440,4 +487,51 @@ test('POST /api/zombie-handles/restart validates before it acts', async () => {
   } finally {
     await close();
   }
+});
+
+/* ══════════════════ The held-up space card (built page) ══════════════════ */
+
+/**
+ * Runs the built page's renderZombies with every global it touches stubbed, and
+ * returns the HTML it paints. Sizes print as "<n> B" so the arithmetic is visible.
+ */
+function paintZombies(report: Record<string, unknown>): string {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = index.indexOf('function renderZombies(');
+  const end = index.indexOf('function wireZombieActions(', start);
+  assert.ok(start > 0 && end > start, 'renderZombies is in the built page');
+  let html = '';
+  const body = { classList: { remove() {} }, innerHTML: '' };
+  const stubs: Record<string, unknown> = {
+    $: () => body,
+    formatBytes: (n: number) => `${String(n)} B`,
+    escapeHtml: (s: unknown) => String(s),
+    baseName: (p: string) => p.split('/').pop(),
+    fxBarStyle: () => '',
+    fxBarsIn: () => undefined,
+    wireZombieActions: () => undefined,
+    icon: () => '',
+    ZH_VISIBLE_ROWS: 1,
+    FxNum: { rollHtml: (_el: unknown, h: string) => { html = h; } },
+  };
+  const keys = Object.keys(stubs);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const render = new Function(...keys, `let zombieProcs = []; ${index.slice(start, end)}; return renderZombies;`)(
+    ...keys.map((k) => stubs[k]),
+  ) as (r: unknown) => void;
+  render(report);
+  return html || body.innerHTML;
+}
+
+test('the held-up space card counts a shared file once and says so (QA D17)', () => {
+  const shared = { path: '/var/db/cache', ino: 9, bytes: 600 };
+  const report = groupZombies([
+    { pid: 10, processName: 'logd', ...shared },
+    { pid: 11, processName: 'Finder', ...shared },
+    { pid: 12, processName: 'Dock', ...shared },
+  ]);
+  const html = paintZombies({ ...report, scannedAt: 0 });
+  assert.match(html, /600 B held by 3 programs/, 'the headline is the file once, held by three programs');
+  assert.match(html, /open in more than one program/, 'and the card says a shared file is counted once');
+  assert.doesNotMatch(html, /1200 B|1800 B/, 'no figure on the card adds the shared file up per program');
 });

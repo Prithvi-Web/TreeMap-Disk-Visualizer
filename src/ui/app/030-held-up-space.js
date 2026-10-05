@@ -102,16 +102,20 @@ function renderZombies(report) {
 
   // A browser alone can hold hundreds of unlinked cache files (measured: 330
   // holders on this Mac, most of them a few MB) — so the tail folds behind
-  // the same show-more pattern the topology card uses, biggest first.
+  // the same show-more pattern the topology card uses, biggest first. No byte
+  // figure on the fold: programs share held files (QA D17), so adding up the
+  // folded rows would count a shared file once per program.
   const foldedCount = Math.max(0, zombieProcs.length - ZH_VISIBLE_ROWS);
-  const foldedBytes = zombieProcs.slice(ZH_VISIBLE_ROWS).reduce((s, p) => s + p.bytes, 0);
   const more = foldedCount
-    ? `<button class="pill topo-more" data-zh-toggle="1" data-more="Show ${foldedCount} more · ${formatBytes(foldedBytes)}" data-less="Show fewer" aria-expanded="false">Show ${foldedCount} more · ${formatBytes(foldedBytes)}</button>`
+    ? `<button class="pill topo-more" data-zh-toggle="1" data-more="Show ${foldedCount} more" data-less="Show fewer" aria-expanded="false">Show ${foldedCount} more</button>`
     : '';
 
-  const note = report.unknownSizeCount > 0
+  const shared = report.sharedFileCount || 0;
+  const note = (shared > 0
+    ? `<div class="zh-note">${shared} held file${shared === 1 ? ' is' : 's are'} open in more than one program: counted once in the total, and freed only when every program holding ${shared === 1 ? 'it' : 'them'} lets go.</div>`
+    : '') + (report.unknownSizeCount > 0
     ? `<div class="zh-note">${report.unknownSizeCount} held file${report.unknownSizeCount === 1 ? '’s size' : 's’ sizes'} couldn’t be read, so the real total is higher.</div>`
-    : '';
+    : '');
   // A refresh of the same machine's holders rolls the totals in place; any
   // change in WHO is holding shifts the statics, which FxNum snaps on.
   FxNum.rollHtml(body, head + rows + more + note, 'zh');

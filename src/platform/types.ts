@@ -148,6 +148,12 @@ export interface ZombieHandleInfo {
   path: string;
   /** Bytes the unlinked inode still occupies, or null when unknowable. */
   bytes: number | null;
+  /**
+   * The inode the descriptor points at, when the platform reported one. Two
+   * programs holding the same deleted file hold the same inode, and its space
+   * is counted once (QA D17); absent or null means it could not be told.
+   */
+  ino?: number | null;
 }
 
 /* ---------- Copy-on-write / clone accounting (A2) ---------- */

@@ -131,7 +131,7 @@ test('resolveZombies counts one unlinked inode once, however many descriptors ho
     ['p1', 'ca', 'f3', 's900', 'i200', 'n/gone.bin', 'f4', 's900', 'i200', 'n/gone.bin'].join('\n'),
   );
   const zombies = await resolveZombies(records, async () => {
-    throw new Error('ENOENT');
+    throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
   });
   assert.equal(zombies.length, 1);
   assert.equal(zombies[0].bytes, 900);
@@ -140,6 +140,20 @@ test('resolveZombies counts one unlinked inode once, however many descriptors ho
 test('resolveZombies stays silent when it cannot know — no inode, no claim', async () => {
   const records = parseLsofRecords(['p1', 'ca', 'f3', 'n/mystery.bin'].join('\n'));
   assert.deepEqual(await resolveZombies(records, async () => 5), []);
+});
+
+test('resolveZombies: a path TreeMap may not stat is unknown, never "deleted" (QA D17)', async () => {
+  // Only "no such file" means gone. Permission denied under a root-only folder
+  // says nothing about whether the file is still there.
+  const records = parseLsofRecords(
+    ['p1', 'ca', 'f3', 's500', 'i100', 'n/private/locked.bin', 'f4', 's900', 'i200', 'n/gone.bin', 'f5', 's300', 'i300', 'n/was-a-dir/x'].join('\n'),
+  );
+  const failWith = (code: string) => Object.assign(new Error(code), { code });
+  const zombies = await resolveZombies(records, async (p) => {
+    throw failWith(p === '/private/locked.bin' ? 'EACCES' : p === '/gone.bin' ? 'ENOENT' : 'ENOTDIR');
+  });
+  assert.deepEqual(zombies.map((z) => z.path), ['/gone.bin', '/was-a-dir/x'], 'permission denied is not deletion');
+  assert.equal(zombies[0].ino, 200, 'the inode travels with the handle, so programs holding the same file can be matched');
 });
 
 /* ══════════════════ Provenance (unit) ══════════════════ */

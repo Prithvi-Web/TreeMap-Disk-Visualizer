@@ -23,6 +23,7 @@ import {
 import type { LogicalVolumeInfo, VolumeTopology } from '../src/platform/types';
 import { mapLsblk } from '../src/platform/linux/topology';
 import type { ScanResult } from '../src/models/types';
+import { groupZombies } from '../src/services/zombieHandles';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { startScan } from '../src/services/diskScanner';
@@ -177,6 +178,8 @@ function sourcesFixture(over: SourceOverrides = {}): StatementSources {
         processes: [],
         totalBytes: 0,
         unknownSizeCount: 0,
+        fileCount: 0,
+        sharedFileCount: 0,
         scannedAt: 0,
         ...over.zombies,
       });
@@ -647,6 +650,24 @@ test('nothing holding anything is a zero, with no remedy offered', async () => {
   const line = lineOf(s, 'openHandles');
   assert.equal(line.bytes, 0);
   assert.equal(line.remedy, null, 'there is nothing to act on, so no button is offered');
+});
+
+test('held space counts each held file once and names how many programs hold them (QA D17, D41)', async () => {
+  // One deleted 1 GB file held by three programs is 1 GB held, not 3 GB: the line used
+  // to sum per program, and because the statement balances, Unaccounted shrank to match.
+  const shared = { path: '/private/var/db/cache', ino: 9, bytes: GB };
+  const report = groupZombies([
+    { pid: 1001, processName: 'logd', ...shared },
+    { pid: 1002, processName: 'Finder', ...shared },
+    { pid: 1003, processName: 'Dock', ...shared },
+  ]);
+  const s = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture({ zombies: { ...report, scannedAt: 0 } }));
+  const line = lineOf(s, 'openHandles');
+  assert.equal(line.bytes, GB, 'the file once, not once per program holding it');
+  assert.equal(line.count, 1, 'the count is of held files, which the page calls items, not of programs');
+  assert.ok(line.notes.some((n) => /3 programs/.test(n)), `how many programs hold them is stated (notes: ${line.notes.join(' | ')})`);
+  assert.ok(line.notes.some((n) => /counted once/.test(n)), 'and that a shared file is counted once');
+  assertBalances(s);
 });
 
 /* ═══════ 8. The route turns an unreadable layout into an honest state ═══════ */

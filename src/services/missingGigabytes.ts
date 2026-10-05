@@ -662,6 +662,17 @@ async function openHandleLine(sources: StatementSources): Promise<StatementLine>
       };
     }
     const notes: string[] = [];
+    // Each deleted file is counted once however many programs hold it (QA D17,
+    // D41), so the count is of files and the programs are named separately.
+    const programs = report.processes.length;
+    notes.push(
+      `${String(report.fileCount)} deleted file${report.fileCount === 1 ? ' is' : 's are'} held open by ${String(programs)} program${programs === 1 ? '' : 's'}.`,
+    );
+    if (report.sharedFileCount > 0) {
+      notes.push(
+        `${String(report.sharedFileCount)} of them ${report.sharedFileCount === 1 ? 'is' : 'are'} open in more than one program. Each is counted once here, and its space returns only when every program holding it lets go.`,
+      );
+    }
     if (report.unknownSizeCount > 0) {
       notes.push(
         `${String(report.unknownSizeCount)} held file${report.unknownSizeCount === 1 ? '' : 's'} could not be sized, so this line is a floor, not a total. The remainder is in Unaccounted.`,
@@ -674,7 +685,7 @@ async function openHandleLine(sources: StatementSources): Promise<StatementLine>
       available: true,
       detail:
         'Files that were deleted while a program still had them open. The space is not returned until that program lets go, and no directory walk can see them.',
-      count: report.processes.length,
+      count: report.fileCount,
       notes,
       remedy,
     };

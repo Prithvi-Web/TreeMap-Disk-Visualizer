@@ -2708,12 +2708,14 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         'The held-space report',
         obj(
           {
-            processes: opaque('per-process groups: pid, processName, appBundle, bytes, unknownSizeCount, handles[]'),
-            totalBytes: int('Known held bytes across every process — a floor, not an estimate'),
-            unknownSizeCount: int('Held files whose size could not be read'),
+            processes: opaque('per-process groups: pid, processName, appBundle, bytes, unknownSizeCount, handles[] (path, bytes, holders)'),
+            totalBytes: int('Known held bytes, each deleted file counted once however many processes hold it — a floor, not an estimate'),
+            unknownSizeCount: int('Held files whose size could not be read, each counted once'),
+            fileCount: int('Distinct deleted files held open'),
+            sharedFileCount: int('How many of those more than one process holds'),
             scannedAt: int(),
           },
-          ['processes', 'totalBytes', 'unknownSizeCount', 'scannedAt'],
+          ['processes', 'totalBytes', 'unknownSizeCount', 'fileCount', 'sharedFileCount', 'scannedAt'],
         ),
       ),
       '409': errorResponse('CAPABILITY_UNAVAILABLE — held-space detection is not possible on this system'),

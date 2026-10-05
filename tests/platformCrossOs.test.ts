@@ -182,6 +182,65 @@ test('linux: a genuinely unlinked inode IS reported as a zombie', { skip: WIN_NO
   }
 });
 
+test('linux: a zombie carries the inode its descriptor points at (QA D17)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+  // The descriptor still resolves (the fixture's target exists under its "(deleted)"
+  // name) while nothing is at the original path: the inode is what lets programs
+  // holding the same file be counted once.
+  const root = await mkTmp();
+  const data = await mkTmp();
+  try {
+    const held = path.join(data, 'held.log (deleted)');
+    await fsp.writeFile(held, 'x'.repeat(64));
+    await fakeProc(root, [{ pid: 8, comm: 'logger', fds: [{ name: '3', target: held }] }]);
+    const zombies = await zombieHandles(root);
+    assert.equal(zombies.length, 1, 'nothing is at held.log, so it is a zombie');
+    assert.equal(zombies[0].ino, (await fsp.stat(held)).ino, 'with the inode the descriptor points at');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+    await fsp.rm(data, { recursive: true, force: true });
+  }
+});
+
+test('linux: a path TreeMap may not stat is unknown, never reported as deleted (QA D17)', {
+  skip: WIN_NO_PROC_FIXTURE || (process.getuid?.() === 0 && 'root can stat anything, so there is no refusal to observe'),
+}, async () => {
+  const root = await mkTmp();
+  const data = await mkTmp();
+  const locked = path.join(data, 'locked');
+  try {
+    await fsp.mkdir(locked);
+    await fsp.writeFile(path.join(locked, 'held.log'), 'still here');
+    await fakeProc(root, [{ pid: 9, comm: 'daemon', fds: [{ name: '3', target: `${path.join(locked, 'held.log')} (deleted)` }] }]);
+    await fsp.chmod(locked, 0o000);
+    assert.deepEqual(await zombieHandles(root), [], 'permission denied says nothing about whether the file is gone');
+  } finally {
+    await fsp.chmod(locked, 0o700).catch(() => undefined);
+    await fsp.rm(root, { recursive: true, force: true });
+    await fsp.rm(data, { recursive: true, force: true });
+  }
+});
+
+test('linux: the descriptor answers but the path refuses — still unknown, never deleted (QA D17)', { skip: WIN_NO_PROC_FIXTURE }, async () => {
+  // A real /proc descriptor stats whatever its folder's permissions, while the
+  // path beside it may refuse: the inode is known, what is at the path is not.
+  const root = await mkTmp();
+  try {
+    await fakeProc(root, [{ pid: 9, comm: 'daemon', fds: [{ name: '3', target: '/root-only/held.log (deleted)' }] }]);
+    const statOf = async (p: string) => {
+      if (p.endsWith(path.join('fd', '3'))) return { ino: 5, size: 10 };
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    };
+    assert.deepEqual(await zombieHandles(root, statOf), [], 'an inode with nothing known about the path is not a zombie');
+    const gone = async (p: string) => {
+      if (p.endsWith(path.join('fd', '3'))) return { ino: 5, size: 10 };
+      throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+    };
+    assert.equal((await zombieHandles(root, gone)).length, 1, 'while "no such file" still is one');
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
 /* ════════════════════════ Linux: lsblk topology ════════════════════════ */
 
 /** A partitioned laptop disk: the disk node is only hardware, its partitions are the volumes. */

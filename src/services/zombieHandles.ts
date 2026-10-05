@@ -37,19 +37,32 @@ export interface ZombieProcess {
    * hand.
    */
   appBundle: string | null;
-  /** Bytes known to be held. A floor, not an estimate — unknowns are counted, not guessed. */
+  /**
+   * Bytes known to be held by this process. A floor, not an estimate — unknowns
+   * are counted, not guessed. A file another program also holds is in both
+   * programs' figures, so these do not add up to the report's total.
+   */
   bytes: number;
   /** Held inodes whose size the platform could not report. */
   unknownSizeCount: number;
-  handles: { path: string; bytes: number | null }[];
+  /** `holders`: how many programs hold this same deleted file, this one included. */
+  handles: { path: string; bytes: number | null; holders: number }[];
 }
 
 export interface ZombieReport {
   processes: ZombieProcess[];
-  /** Sum of every known held byte across processes. */
+  /**
+   * Every known held byte, each deleted file counted once however many
+   * programs hold it (QA D17: summing per program counted one file once per
+   * holder).
+   */
   totalBytes: number;
-  /** Total held inodes with unknowable sizes; the UI says "at least". */
+  /** Held files with unknowable sizes, each counted once; the UI says "at least". */
   unknownSizeCount: number;
+  /** How many distinct deleted files are held. */
+  fileCount: number;
+  /** How many of those more than one program holds. */
+  sharedFileCount: number;
   scannedAt: number;
 }
 
@@ -118,16 +131,34 @@ export function appBundleOf(executable: string | null): string | null {
 }
 
 /**
+ * Which deleted file a handle holds. Programs holding the same inode at the
+ * same path hold the same file. Without an inode, the same path and size is
+ * taken as the same file: that can only undercount, and the total is a floor.
+ */
+function heldFileKey(h: { path: string; bytes: number | null; ino?: number | null }): string {
+  return h.ino !== undefined && h.ino !== null
+    ? `${h.path}\0i${String(h.ino)}`
+    : `${h.path}\0s${h.bytes === null ? '?' : String(h.bytes)}`;
+}
+
+/**
  * The pure per-process rollup: group by pid, sum known bytes, count
- * unknowns, biggest holder first. Exported so the arithmetic — the part a
+ * unknowns, biggest holder first — and total the held FILES, each once,
+ * however many programs hold it. Exported so the arithmetic — the part a
  * wrong number would come from — is testable without a live process leaking
  * descriptors.
  */
-export function groupZombies(handles: readonly { pid: number; processName: string; path: string; bytes: number | null }[]): {
-  processes: ZombieProcess[];
-  totalBytes: number;
-  unknownSizeCount: number;
-} {
+export function groupZombies(
+  handles: readonly { pid: number; processName: string; path: string; bytes: number | null; ino?: number | null }[],
+): Omit<ZombieReport, 'scannedAt'> {
+  const files = new Map<string, { bytes: number | null; holders: Set<number> }>();
+  for (const h of handles) {
+    const key = heldFileKey(h);
+    const file = files.get(key) ?? { bytes: h.bytes, holders: new Set<number>() };
+    file.holders.add(h.pid);
+    files.set(key, file);
+  }
+
   const byPid = new Map<number, ZombieProcess>();
   for (const h of handles) {
     let proc = byPid.get(h.pid);
@@ -135,7 +166,7 @@ export function groupZombies(handles: readonly { pid: number; processName: strin
       proc = { pid: h.pid, processName: h.processName, appBundle: null, bytes: 0, unknownSizeCount: 0, handles: [] };
       byPid.set(h.pid, proc);
     }
-    proc.handles.push({ path: h.path, bytes: h.bytes });
+    proc.handles.push({ path: h.path, bytes: h.bytes, holders: files.get(heldFileKey(h))?.holders.size ?? 1 });
     if (h.bytes === null) proc.unknownSizeCount++;
     else proc.bytes += h.bytes;
   }
@@ -143,10 +174,13 @@ export function groupZombies(handles: readonly { pid: number; processName: strin
   const processes = [...byPid.values()].sort((a, b) => b.bytes - a.bytes || a.pid - b.pid);
   for (const proc of processes) proc.handles.sort((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1));
 
+  const held = [...files.values()];
   return {
     processes,
-    totalBytes: processes.reduce((s, p) => s + p.bytes, 0),
-    unknownSizeCount: processes.reduce((s, p) => s + p.unknownSizeCount, 0),
+    totalBytes: held.reduce((s, f) => s + (f.bytes ?? 0), 0),
+    unknownSizeCount: held.filter((f) => f.bytes === null).length,
+    fileCount: held.length,
+    sharedFileCount: held.filter((f) => f.holders.size > 1).length,
   };
 }
 

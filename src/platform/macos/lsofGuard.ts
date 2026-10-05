@@ -39,6 +39,15 @@ import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
  * confident "nothing has it open".
  */
 
+/**
+ * True for the stat failures that mean "nothing is at that path": ENOENT, or
+ * ENOTDIR (a parent was replaced by a file). Shared with the Linux /proc pass.
+ */
+export function isGoneError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
 /** One descriptor as reported by lsof. */
 export interface LsofRecord {
   pid: number;
@@ -259,12 +268,14 @@ export async function resolveZombies(
 ): Promise<ZombieHandleInfo[]> {
   const out: ZombieHandleInfo[] = [];
   // One stat per distinct path, not per descriptor: a browser can hold hundreds
-  // of descriptors on the same handful of files.
-  const inoCache = new Map<string, Promise<number | null>>();
-  const lookup = (p: string): Promise<number | null> => {
+  // of descriptors on the same handful of files. Only "no such file" means the
+  // path is gone; any other failure (permission denied under a root-only
+  // folder, QA D17) says nothing about the file, so it is unknown, not deleted.
+  const inoCache = new Map<string, Promise<number | 'gone' | 'unknown'>>();
+  const lookup = (p: string): Promise<number | 'gone' | 'unknown'> => {
     let hit = inoCache.get(p);
     if (!hit) {
-      hit = inoAt(p).catch(() => null);
+      hit = inoAt(p).catch((err: unknown) => (isGoneError(err) ? 'gone' as const : 'unknown' as const));
       inoCache.set(p, hit);
     }
     return hit;
@@ -280,13 +291,14 @@ export async function resolveZombies(
     if (!isZombie) {
       if (rec.ino === null) continue; // no inode reported — cannot know, so don't claim
       const live = await lookup(rec.path);
-      isZombie = live === null || live !== rec.ino;
+      if (live === 'unknown') continue; // could not look — cannot know, so don't claim
+      isZombie = live === 'gone' || live !== rec.ino;
     }
     if (!isZombie) continue;
     const key = `${rec.pid}\0${rec.ino ?? rec.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes: rec.size });
+    out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes: rec.size, ino: rec.ino });
   }
   return out;
 }

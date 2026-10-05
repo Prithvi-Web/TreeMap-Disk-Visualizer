@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
+import { isGoneError } from '../macos/lsofGuard';
 
 /**
  * Open-handle (B2) and zombie-handle (B5) detection on Linux, straight from
@@ -194,8 +195,15 @@ export function intersectHandles(
  * The size comes from stat'ing the descriptor itself (`/proc/<pid>/fd/<n>`),
  * not the path — the path is gone, which is the whole point. That gives the
  * real byte count rather than an estimate.
+ *
+ * `statOf` is the stat both lookups go through, injectable so a test can make
+ * the descriptor answer while the path refuses — the case a real /proc gives
+ * and a fixture cannot (QA D17).
  */
-export async function zombieHandles(procRoot = '/proc'): Promise<ZombieHandleInfo[]> {
+export async function zombieHandles(
+  procRoot = '/proc',
+  statOf: (p: string) => Promise<{ ino: number; size: number }> = (p) => fsp.stat(p),
+): Promise<ZombieHandleInfo[]> {
   const out: ZombieHandleInfo[] = [];
   const seen = new Set<string>();
 
@@ -208,34 +216,41 @@ export async function zombieHandles(procRoot = '/proc'): Promise<ZombieHandleInf
       // /proc/<pid>/fd/<n> is a magic symlink: stat() resolves to the open
       // file itself, and keeps working after the name is unlinked. That is what
       // makes the byte count exact rather than an estimate.
-      const st = await fsp.stat(rec.fdPath);
+      const st = await statOf(rec.fdPath);
       bytes = st.size;
       ino = st.ino;
     } catch {
       /* the process exited mid-pass — handled below, without guessing */
     }
 
+    // What is at that path now: its inode, 'gone' (no such file), or 'unknown'
+    // when TreeMap could not look. Permission denied says nothing about whether
+    // the file is still there (QA D17), so an unknown is never claimed.
+    const now = await statOf(rec.path).then(
+      (st) => st.ino,
+      (err: unknown) => (isGoneError(err) ? 'gone' as const : 'unknown' as const),
+    );
+    if (now === 'unknown') continue;
+
     // Trap 1: a file genuinely named "notes (deleted)" is not a zombie.
     if (ino !== null) {
       // Authoritative: the descriptor's inode against whatever is at that path
       // now. Same inode means the suffix was part of the name.
-      const stillThere = await fsp.stat(rec.path).then((st) => st.ino === ino, () => false);
-      if (stillThere) continue;
+      if (now === ino) continue;
     } else {
       // The descriptor could not be stat'ed, so the inode comparison is
       // unavailable. Claiming a zombie here would be asserting something
       // unverified — §10's "reporting a number you can't verify". Fall back to
       // the weaker but honest test: if a file still exists at that path, assume
       // the name simply ends in " (deleted)" and stay quiet.
-      const pathExists = await fsp.stat(rec.path).then(() => true, () => false);
-      if (pathExists) continue;
+      if (now !== 'gone') continue;
     }
 
     // One inode held on many descriptors is one leak, not several.
     const key = `${String(rec.pid)}\0${ino !== null ? String(ino) : rec.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes });
+    out.push({ pid: rec.pid, processName: rec.processName, path: rec.path, bytes, ino });
   }
   return out;
 }
