@@ -1131,6 +1131,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   background: transparent; color: var(--accent); cursor: var(--cur-hand); font-size: 12.5px; font-weight: 500;
   height: 30px; padding: 0 10px; border-radius: 7px; transition: background var(--dur-1) var(--ease);
   max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+/* The name, not the button, is what ellipsizes: text-overflow does nothing on
+   a flex container, so the folder on screen was cut at the 220px ceiling with
+   no ellipsis (QA D25). min-width: 0 lets the span shrink below its text. */
+.crumbs .crumb-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumbs button:hover { background: var(--accent-soft); }
 .crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
   border-color: var(--hairline); pointer-events: none; }
@@ -9780,16 +9784,77 @@ async function loadTreemap(rootPath, animate = false) {
   }
 }
 
-/** Shared breadcrumb renderer (treemap + grid). */
+/* ── Breadcrumbs: fold, never clip (QA D25) ──
+   A deep trail used to overflow past its start edge under the mask's fade:
+   ancestors were cut mid-word ("eAsset_iOSSimul"), and a clipped ancestor
+   could not be clicked at all — Library and AssetsV2 were out of reach from
+   the crumbs. The trail now folds instead. Ancestors go, oldest first after
+   the root, into one "…" crumb whose menu lists them, until what is left sits
+   clear of the fade; the root folds last, and the folder on screen never.
+   Every ancestor is therefore always one click away, by name or by menu. */
+const CRUMB_FADE_PX = 34; // the .crumbs mask's fade width — a crumb inside it is half legible
+
+/** Shared breadcrumb renderer (treemap + grid + city). */
 function renderCrumbs(host, path, onPick) {
   const crumbs = breadcrumbsFor(path);
-  host.innerHTML = crumbs.map((c, i) => {
-    const cur = i === crumbs.length - 1;
-    return `${i ? '<span class="sep">' + icon('chevronRight', 12) + '</span>' : ''}` +
-      `<button data-p="${escapeHtml(c.path)}" aria-current="${cur}" title="${escapeHtml(c.path)}">` +
-      `${i === 0 ? icon('hardDrive', 13) : ''}${escapeHtml(c.name)}</button>`;
-  }).join('');
-  host.querySelectorAll('button').forEach(b => {
+  let fold = 0;
+  crumbsPaint(host, crumbs, fold, onPick);
+  while (fold < crumbs.length - 1 && crumbsOverflow(host)) crumbsPaint(host, crumbs, ++fold, onPick);
+  host._crumbs = { path, onPick, width: host.clientWidth };
+  crumbsWatch(host);
+}
+
+/** Is crumb `i` of `n` folded into the "…" menu when `fold` of them are? */
+function crumbFolded(i, n, fold) {
+  if (i === n - 1) return false;   // the folder on screen
+  if (fold >= n - 1) return true;  // everything else, the root included
+  return i >= 1 && i <= fold;      // the middle, oldest first
+}
+
+/**
+ * Does the trail run into the fade? It is packed to the END, so an overflow
+ * spills past the START edge, where scrollWidth cannot see it; the first
+ * crumb's left edge can. A host that is not laid out cannot be measured, and
+ * folds nothing on a guess — its observer re-fits it once it has a width.
+ */
+function crumbsOverflow(host) {
+  const first = host.firstElementChild;
+  if (!first || !(host.clientWidth > 0)) return false;
+  return first.getBoundingClientRect().left < host.getBoundingClientRect().left + CRUMB_FADE_PX;
+}
+
+/** Re-fit when the toolbar changes width: a window resize, the sidebar, the view being shown. */
+function crumbsWatch(host) {
+  if (host._crumbsRo || typeof ResizeObserver === 'undefined') return;
+  host._crumbsRo = new ResizeObserver(() => {
+    const last = host._crumbs;
+    // Only on a real change of width: the re-fit itself must not feed the observer.
+    if (last && host.clientWidth !== last.width) renderCrumbs(host, last.path, last.onPick);
+  });
+  host._crumbsRo.observe(host);
+}
+
+function crumbsPaint(host, crumbs, fold, onPick) {
+  const n = crumbs.length;
+  const folded = crumbs.filter((c, i) => crumbFolded(i, n, fold));
+  const parts = [];
+  crumbs.forEach((c, i) => {
+    if (crumbFolded(i, n, fold)) {
+      if (c === folded[0]) {
+        parts.push(`<button class="crumb-more" data-crumb-more aria-haspopup="menu" ` +
+          `aria-label="${folded.length} more folder${folded.length === 1 ? '' : 's'}" ` +
+          `title="${escapeHtml(folded.map((f) => f.name).join(' › '))}">…</button>`);
+      }
+      return;
+    }
+    // The name is its own span: text-overflow does nothing on the button,
+    // which is a flex container, so the folder on screen was cut off at the
+    // 220 px ceiling with no ellipsis.
+    parts.push(`<button data-p="${escapeHtml(c.path)}" aria-current="${i === n - 1}" title="${escapeHtml(c.path)}">` +
+      `${i === 0 ? icon('hardDrive', 13) : ''}<span class="crumb-nm">${escapeHtml(c.name)}</span></button>`);
+  });
+  host.innerHTML = parts.join('<span class="sep">' + icon('chevronRight', 12) + '</span>');
+  host.querySelectorAll('button[data-p]').forEach(b => {
     // hideTooltip: the card describes a cell of the map being navigated away
     // from — QA caught a keyboard-selection tooltip surviving a crumb jump
     // and floating over the palette opened next.
@@ -9801,6 +9866,28 @@ function renderCrumbs(host, path, onPick) {
       if (node && node.type === 'dir') openBudgetDialog(node);
     });
   });
+  const more = host.querySelector('[data-crumb-more]');
+  if (more) {
+    more.addEventListener('click', (e) => {
+      e.stopPropagation(); // the document's click handler closes #ctxMenu
+      hideTooltip();
+      showCrumbMenu(more, folded, onPick);
+    });
+  }
+}
+
+/** The folded ancestors, root first, as a menu under the "…" crumb — #ctxMenu, like the Export menu. */
+function showCrumbMenu(anchor, folded, onPick) {
+  const menu = $('ctxMenu');
+  menu.innerHTML = folded.map((c) =>
+    `<button data-p="${escapeHtml(c.path)}" title="${escapeHtml(c.path)}">${icon('folder', 15)}${escapeHtml(c.name)}</button>`).join('');
+  menu.style.display = 'block';
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, window.innerWidth - 230) + 'px';
+  menu.style.top = Math.min(r.bottom + 6, window.innerHeight - menu.offsetHeight - 8) + 'px';
+  menu.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { hideCtxMenu(); onPick(b.dataset.p); }));
+  const first = menu.querySelector('button');
+  if (first) first.focus({ preventScroll: true });
 }
 
 function breadcrumbsFor(path) {

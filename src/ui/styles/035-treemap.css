@@ -67,6 +67,10 @@
   background: transparent; color: var(--accent); cursor: var(--cur-hand); font-size: 12.5px; font-weight: 500;
   height: 30px; padding: 0 10px; border-radius: 7px; transition: background var(--dur-1) var(--ease);
   max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+/* The name, not the button, is what ellipsizes: text-overflow does nothing on
+   a flex container, so the folder on screen was cut at the 220px ceiling with
+   no ellipsis (QA D25). min-width: 0 lets the span shrink below its text. */
+.crumbs .crumb-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumbs button:hover { background: var(--accent-soft); }
 .crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
   border-color: var(--hairline); pointer-events: none; }
