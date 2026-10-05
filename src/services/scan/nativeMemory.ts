@@ -3,7 +3,7 @@ import { CONTAINER_RULES } from '../../utils/containerKind';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, containerKindId } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
-import { markUnlisted, noteRefused } from '../scanRefusals';
+import { keepSmallest, markUnlisted } from '../scanRefusals';
 import { platform } from '../../platform';
 import type { ScanModule } from './native';
 import type { EntryProjection } from './projection';
@@ -348,7 +348,14 @@ class Adoption implements SliceWork {
   /** In breadth-first order, the ingest's: `cloudBytes` is summed in it from 0. */
   private cloudBytes = 0;
   private readonly guesses: number[] = [];
-  private readonly deniedPaths: string[] = [];
+  /**
+   * The refused folders passed so far: how many, and the five smallest paths
+   * (`keepSmallest`, the record's own rule) — never every path, which for a
+   * scan refused tens of thousands of folders would be megabytes held across
+   * every turn of the adopt. `finish` adds both to the record.
+   */
+  private deniedCount = 0;
+  private readonly deniedExamples: string[] = [];
 
   constructor(
     private readonly scan: ScanResult,
@@ -379,7 +386,8 @@ class Adoption implements SliceWork {
     }
     for (; this.next < end; this.next++) {
       const id = taken.counters.deniedDirs[this.next - this.cloudEnd];
-      this.deniedPaths.push(store.path(id));
+      this.deniedCount++;
+      keepSmallest(this.deniedExamples, store.path(id));
       markUnlisted(store, id); // never listed, so never offered as empty (U-4)
     }
   }
@@ -419,7 +427,14 @@ class Adoption implements SliceWork {
       scan.sparseBytes = sparseTotal(store, taken, this.guesses);
     }
     if (counters.slackBytes > 0) scan.slackBytes = counters.slackBytes;
-    for (const deniedPath of this.deniedPaths) noteRefused(scan, deniedPath);
+    if (this.deniedCount > 0) {
+      // What `noteRefused` once a folder would leave: the count added to, and
+      // the five smallest of the record's paths and these (each of the five
+      // smallest overall is among the five smallest of its own part).
+      scan.deniedDirs = (scan.deniedDirs ?? 0) + this.deniedCount;
+      scan.deniedExamples = scan.deniedExamples ?? [];
+      for (const example of this.deniedExamples) keepSmallest(scan.deniedExamples, example);
+    }
     // The build counts the folders that vanished or could not be read without
     // naming them, so none can be marked here: Empty Folders' second look on disk
     // is what keeps such a folder out (U-4, emptyFolders.ts).

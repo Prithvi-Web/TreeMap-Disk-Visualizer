@@ -552,6 +552,35 @@ test('nothing reaches the scan record until the adopt\'s last turn', async () =>
   assertSameAdopt(target, oracle(syntheticTaken(spec)), 'written at the end');
 });
 
+test('refused folders are added to a record that already holds some, as noteRefused adds them: the counts summed, the five smallest paths of both', async () => {
+  // The adopt keeps a count and the five smallest paths across its slices, not
+  // every path, and adds them to the record at the end. 31 refused folders,
+  // `locked 7` to `locked 37`; the record already names one path that sorts
+  // before them all and one after.
+  const spec: TakenSpec = { folders: 6, filesPerFolder: 4, denied: 31, textEvery: 0, cloudEvery: 0, seed: 12 };
+  const first = `${ADOPT_ROOT}/0 first`;
+  const last = `${ADOPT_ROOT}/~ last`;
+  const prefilled = (): Adopted => {
+    const target = freshTarget();
+    target.scan.deniedDirs = 2;
+    target.scan.deniedExamples = [first, last];
+    return target;
+  };
+  const want = prefilled();
+  oracleAdoptNativeStore(want.scan, want.store, syntheticTaken(spec));
+  want.store.sumSizes();
+  assert.equal(want.scan.deniedDirs, 33, 'the oracle: two on the record and 31 refused folders');
+  assert.deepEqual(want.scan.deniedExamples, [first, ...[10, 11, 12, 13].map((f) => `${ADOPT_ROOT}/locked ${f}`)], 'the oracle: the record\'s smaller path kept, its larger one displaced');
+  for (const slice of [1, 7, 100_000]) {
+    const got = prefilled();
+    await adoptNativeStoreInSlices(got.scan, got.store, syntheticTaken(spec), { sliceNodes: slice, yieldTurn: immediate });
+    assertSameAdopt(got, want, `slices of ${slice}`);
+  }
+  const drained = prefilled();
+  adoptNativeStore(drained.scan, drained.store, syntheticTaken(spec));
+  assertSameAdopt(drained, want, 'drained');
+});
+
 test('cloudBytes is one sum from 0 in the candidates\' order across slices, and so is sparseBytes past 2^53 (RISKS R91)', async () => {
   // Four candidates under the iCloud folder (1): 0, 1, 1 and 2^53 bytes. From 0 in
   // order the sum is exact, 2^53 + 2; slices of two summed apart would give
