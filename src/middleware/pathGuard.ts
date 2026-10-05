@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, canonicalDirOf, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, livesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
-import { exclusionsOf, parseFirmlinks } from '../utils/mountBoundaries';
+import { DATA_VOLUME, exclusionsOf, isAtOrUnder, parseFirmlinks } from '../utils/mountBoundaries';
 import type { ScanResult } from '../models/types';
 import { isVirtualPath } from '../services/containerScanner';
 import { AppError } from './errorHandler';
@@ -163,7 +163,7 @@ export function guardQueryPath(...params: string[]) {
 /**
  * Is `p` inside the root of any scan this server has run (and not evicted)?
  *
- * Judged on where the path LIVES (`canonicalDirOf`: parents resolved, leaf as
+ * Judged on where the path LIVES (`placeOf`: parents resolved, leaf as
  * spelled), on both sides. A textual test let a symlink inside a root reach any
  * file on the disk — the scanner never follows links, so nothing beyond one was
  * ever scanned — and refused the same file under an alias spelling. This is the
@@ -184,7 +184,7 @@ export function insideAnyScanRoot(p: string): boolean {
 }
 
 /**
- * Where `p` lives (`canonicalDirOf`), or null when it is spelled through a second name the system
+ * Where `p` lives (`placeOf`), or null when it is spelled through a second name the system
  * gives a path (`aliasNamespaceOf`: macOS's /.nofollow, /.resolve and /.vol; Windows' device
  * namespaces) — as given, or where a link in its parents leads. No scan lists through one, and
  * realpath cannot say where one lands, so it is outside every scan: here, on its own, whether or
@@ -193,8 +193,48 @@ export function insideAnyScanRoot(p: string): boolean {
 function whereUnlessSecondName(p: string): string | null {
   // As typed first: on Windows realpath may re-spell a volume's GUID name with its drive letter.
   if (aliasNamespaceOf(p) !== null) return null;
-  const where = canonicalDirOf(p);
+  const where = placeOf(p);
   return aliasNamespaceOf(where) === null ? where : null;
+}
+
+/**
+ * Where a path lives, as the scanned-root rule compares it: every link in its parents resolved,
+ * the last name as spelled (`livesAt`), and — on macOS — the Data volume's prefix taken off only
+ * where the rest lies in a firmlinked folder (the SEC-1 review, L1). /System/Volumes/Data/Users
+ * and /Users are one folder; /System/Volumes/Data/usr/bin and /usr/bin are two, as are
+ * /System/Volumes/Data itself and /. Taking the prefix off everywhere made the Data volume's own
+ * folders, which a scan of / never lists (they lie under /System/Volumes), read as the root's
+ * folders of the same names, which it does.
+ */
+function placeOf(p: string): string {
+  const at = livesAt(p);
+  if (!onDataVolume(at)) return at;
+  const rest = at === DATA_VOLUME ? '/' : at.slice(DATA_VOLUME.length);
+  return underFirmlink(rest) ? rest : at;
+}
+
+/** Whether `p` is spelled under macOS's Data volume, /System/Volumes/Data. */
+function onDataVolume(p: string): boolean {
+  return process.platform === 'darwin' && isAtOrUnder(DATA_VOLUME, p);
+}
+
+/** Whether `p`, as the root spells it, lies in a folder the firmlinks show from the Data volume. */
+function underFirmlink(p: string): boolean {
+  return dataVolumeFolderList().some((f) => isInside(f, p));
+}
+
+/**
+ * `where` (`placeOf` of a path) as a scan rooted at `root` (`placeOf` of its root) listed it, or
+ * null when that scan cannot have listed it. A root in the root's spelling compares as it is. A
+ * root on the Data volume listed Data volume spellings: a path the root spells reaches that volume
+ * only through a firmlink, and a scan of the volume itself covers only what the root shows of it —
+ * never the sealed system volume nor another volume (the U-25 security review, F2) — while one
+ * rooted in a folder only that volume has (no firmlink shows it) listed that folder's paths.
+ */
+function asListedFrom(root: string, where: string): string | null {
+  if (!onDataVolume(root)) return where;
+  if (!onDataVolume(where)) return underFirmlink(where) ? DATA_VOLUME + where : null;
+  return root === DATA_VOLUME ? null : where;
 }
 
 /**
@@ -206,7 +246,11 @@ function whereUnlessSecondName(p: string): string | null {
 function underAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
   const where = whereUnlessSecondName(p);
-  return where !== null && allScans().some((scan) => isInside(canonicalDirOf(scan.rootPath), where));
+  return where !== null && allScans().some((scan) => {
+    const root = placeOf(scan.rootPath);
+    const at = asListedFrom(root, where);
+    return at !== null && isInside(root, at);
+  });
 }
 
 /**
@@ -224,13 +268,13 @@ const NAMES_JOIN = '\u0000';
 
 /**
  * The folders `scan` never listed below its root, each as the key of its folded
- * names, spelled from where the root really is (`canonicalDirOf`) and then
+ * names, spelled from where the root really is (`placeOf`) and then
  * exactly as the walk spelled them below it — the walk never follows a link,
  * so nothing below the root needs resolving. No file system call is made for
  * an exclusion (a dead mount there answers none), and an exclusion is never
  * canonicalised on its own: the Data volume's own spelling of the root,
- * `/System/Volumes/Data`, canonicalises to `/`, which made every path on the
- * disk "beneath" it after a scan of / (the U-25 security review, F1). The
+ * `/System/Volumes/Data`, once canonicalised to `/`, which made every path on
+ * the disk "beneath" it after a scan of / (the U-25 security review, F1). The
  * boundary never changes once a scan has started, so the keys are made once
  * per record and spelling of its root.
  */
@@ -259,7 +303,7 @@ function dataVolumeFolderList(): readonly string[] {
     try {
       dataVolumeFolders = parseFirmlinks(fs.readFileSync(FIRMLINKS_FILE, 'utf8')).map((pair) => pair.system);
     } catch {
-      dataVolumeFolders = []; // unknown: a scan of the Data volume then grants nothing
+      dataVolumeFolders = []; // unknown: no Data volume spelling is read as the root's, and a scan of that volume grants nothing
     }
   }
   return dataVolumeFolders;
@@ -271,26 +315,22 @@ export function setDataVolumeFoldersForTests(list: readonly string[] | null): vo
 }
 
 /**
- * Whether `where` (`canonicalDirOf` of a path) is something `scan` listed: under
- * its root, and not at or beneath a folder the scan never descended into
- * (`exclusionsOf`). Names are compared as a file system may fold them, so the
- * drive's name in another case is the drive; on a volume that keeps case that
- * also refuses a look-alike folder, which only ever refuses more.
+ * Whether `where` (`placeOf` of a path) is something `scan` listed: under its
+ * root as that scan spelled it (`asListedFrom`), and not at or beneath a folder
+ * the scan never descended into (`exclusionsOf`). Names are compared as a file
+ * system may fold them, so the drive's name in another case is the drive; on a
+ * volume that keeps case that also refuses a look-alike folder, which only ever
+ * refuses more.
  */
 function listedBy(scan: ScanResult, where: string): boolean {
-  const root = canonicalDirOf(scan.rootPath);
-  if (!isInside(root, where)) return false;
-  // A scan of the Data volume itself (/System/Volumes/Data) has the root "/"
-  // here, since every spelling under it is the root's own (pathSanitizer). It
-  // listed only that volume, which the root shows through the firmlinks, so it
-  // covers a path only under one of them — never the sealed system volume
-  // (/System/Library, /usr/bin) nor another volume (the U-25 security review, F2).
-  if (root === '/' && path.resolve(scan.rootPath) !== '/' && !dataVolumeFolderList().some((f) => isInside(f, where))) return false;
+  const root = placeOf(scan.rootPath);
+  const at = asListedFrom(root, where);
+  if (at === null || !isInside(root, at)) return false;
   const keys = exclusionKeysOf(scan, root);
   if (keys.size === 0) return true;
   // At or beneath an exclusion when some leading run of the path's names is one.
   let key = '';
-  for (const name of foldedNames(where)) {
+  for (const name of foldedNames(at)) {
     key = key === '' ? name : `${key}${NAMES_JOIN}${name}`;
     if (keys.has(key)) return false;
   }

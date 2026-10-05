@@ -369,3 +369,68 @@ test('a scan of the Data volume never lists /Volumes, where every drive appears:
     evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
   }
 });
+
+test('the Data volume’s spelling of a path is the root’s only under a firmlinked folder: after a scan of /, the Data volume itself and its own folders (/System/Volumes/Data/.Spotlight-V100, …/mnt, …/usr/bin) were never listed (the SEC-1 review, L1)', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume and its firmlinks are macOS');
+  // Only the firmlinked folders (/Users, /private, /usr/local, …) are one folder under two names.
+  // Everything else under /System/Volumes/Data is the Data volume's own and lies under /System/Volumes,
+  // where no walk of / goes; it was stripped to a root path the scan did list (/usr/bin, /mnt, "/").
+  const pairs = parseFirmlinks(DIAGNOSIS_MAC_FIRMLINKS);
+  setDataVolumeFoldersForTests(pairs.map((pair) => pair.system));
+  evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  const home = fs.realpathSync(fileTempDir('treemap-guard-data-l1-'));
+  try {
+    const boundary = await scanBoundary('/', 'stay', {
+      platform: 'darwin',
+      readTable: async () => ({ source: 'mount', entries: parseBsdMount(DIAGNOSIS_MAC_MOUNT), reason: null }),
+      realpath: async (p: string) => p,
+      aliases: async () => firmlinkAliases(pairs),
+      isDirectory: async () => true,
+    });
+    const slash = createScanRecord('/');
+    slash.status = 'complete';
+    slash.finishedAt = Date.now();
+    slash.boundary = boundaryRecord(boundary);
+    for (const p of [
+      '/System/Volumes/Data', '/System/Volumes/Data/', '/System/Volumes/Data/Volumes/..',
+      '/System/Volumes/Data/.Spotlight-V100/x', '/System/Volumes/Data/mnt/x', '/System/Volumes/Data/usr/bin/foo',
+      '/System/Volumes/Data/System/Library/Foo', '/System/Volumes/Data/MobileSoftwareUpdate/x',
+    ]) {
+      assert.equal(insideAnyScanRoot(p), false, `after a scan of /: ${p}`);
+    }
+    for (const p of [
+      path.join('/System/Volumes/Data', home, 'x.txt'), '/System/Volumes/Data/usr/local/bin/x', '/System/Volumes/Data/System/Library/Caches/x',
+      path.join(home, 'x.txt'), '/usr/bin/true', '/.Spotlight-V100/x',
+    ]) {
+      assert.equal(insideAnyScanRoot(p), true, `after a scan of /: ${p}`);
+    }
+    const r = await deleteDryRun(['/System/Volumes/Data/mnt/x']);
+    assert.deepEqual([r.status, r.body.code], [403, 'OUTSIDE_SCAN_ROOT'], JSON.stringify(r.body));
+
+    // A scan of a folder only the Data volume has listed that folder — not the sealed volume's one of that name.
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+    const mnt = createScanRecord('/System/Volumes/Data/mnt');
+    mnt.status = 'complete';
+    mnt.finishedAt = Date.now();
+    assert.equal(insideAnyScanRoot('/System/Volumes/Data/mnt/x'), true, 'what it listed');
+    assert.equal(insideAnyScanRoot('/mnt/x'), false, 'the sealed volume’s /mnt is another folder');
+
+    // A scan of the Data volume itself still covers what the root shows of it, and nothing else (F2).
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+    const data = createScanRecord('/System/Volumes/Data');
+    data.status = 'complete';
+    data.finishedAt = Date.now();
+    assert.equal(insideAnyScanRoot(path.join(home, 'x.txt')), true, 'a firmlinked folder, as the root spells it');
+    assert.equal(insideAnyScanRoot(path.join('/System/Volumes/Data', home, 'x.txt')), true, 'and as the Data volume does');
+    assert.equal(insideAnyScanRoot('/System/Volumes/Data/.Spotlight-V100/x'), false, 'not a folder the root does not show');
+    assert.equal(insideAnyScanRoot('/usr/bin/true'), false, 'nor the sealed system volume');
+    // The read-only rule (facts) asks only "under some scan's root", in the same spelling.
+    const read = await postFacts({ scanId: data.scanId, paths: [path.join(home, 'x.txt')], providers: ['size'] });
+    assert.equal(read.status, 200, `facts read under a firmlinked folder: ${JSON.stringify(read.body)}`);
+    const sealed = await postFacts({ scanId: data.scanId, paths: ['/usr/bin/true'], providers: ['size'] });
+    assert.deepEqual([sealed.status, sealed.body.code], [403, 'OUTSIDE_SCAN_ROOT'], 'and not on the sealed volume, which is under no scan of the Data volume');
+  } finally {
+    setDataVolumeFoldersForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});

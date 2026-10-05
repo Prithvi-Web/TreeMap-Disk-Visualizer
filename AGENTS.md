@@ -479,6 +479,11 @@ read-what-you-saw) permission to act.
   never anything in that volume's own spelling of a fixed folder: its
   `/Volumes` is the root's, so no drive there is covered — one mounted after
   the scan began, or any at all when the mount table could not be read.
+  The Data volume's spelling of a path is the root's own only under a
+  firmlinked folder (`/System/Volumes/Data/Users/…` is `/Users/…`); the Data
+  volume itself and its own folders (`/System/Volumes/Data/.Spotlight-V100`,
+  `…/mnt`, `…/usr/bin`) are not `/`, `/.Spotlight-V100`, `/mnt` or
+  `/usr/bin`, and lie under `/System/Volumes`, which a scan of `/` never lists.
 - **TreeMap's own spill folder.** `<appData>/scan-spill` is reserved for the
   working files of very large scans (Phase 4; no scan writes there yet). Every
   endpoint and MCP tool that takes a path

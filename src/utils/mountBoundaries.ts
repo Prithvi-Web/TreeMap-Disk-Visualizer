@@ -178,7 +178,8 @@ export async function readMountTable(platform: NodeJS.Platform, deps: MountTable
 
 /* ───────────────────────────── firmlinks ───────────────────────────── */
 
-const DATA_VOLUME = '/System/Volumes/Data';
+/** macOS's writable Data volume, firmlinked into the root. */
+export const DATA_VOLUME = '/System/Volumes/Data';
 const FIRMLINKS_FILE = '/usr/share/firmlinks';
 
 /** One firmlink: the folder as the root spells it, and as the Data volume does. Both absolute. */

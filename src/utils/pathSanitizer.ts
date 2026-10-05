@@ -430,9 +430,19 @@ export function sanitizePath(input: unknown): string {
  * five seconds — the window the blocklist already accepts.
  */
 export function canonicalDirOf(p: string): string {
+  return stripDataVolume(livesAt(p));
+}
+
+/**
+ * `canonicalDirOf` with the Data volume's prefix left as it is: every link in the parents
+ * resolved, the last name as spelled. For the scanned-root rule, which takes the prefix off
+ * only where the firmlinks make the rest the root's own folder (the SEC-1 review, L1): under
+ * /System/Volumes/Data, /Users is /Users, but /usr/bin is not /usr/bin.
+ */
+export function livesAt(p: string): string {
   const parent = path.dirname(p);
-  if (parent === p) return stripDataVolume(canonDir(p)); // "/" or "C:\" itself
-  return stripDataVolume(path.join(canonDir(parent), path.basename(p)));
+  if (parent === p) return canonDir(p); // "/" or "C:\" itself
+  return path.join(canonDir(parent), path.basename(p));
 }
 
 /**
