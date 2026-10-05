@@ -3,7 +3,7 @@ import { CONTAINER_RULES } from '../../utils/containerKind';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, containerKindId } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
-import { keepSmallest, markUnlisted } from '../scanRefusals';
+import { keepSmallest, markUnlisted, noteUnlistedBelow } from '../scanRefusals';
 import { platform } from '../../platform';
 import type { ScanModule } from './native';
 import type { EntryProjection } from './projection';
@@ -387,9 +387,12 @@ class Adoption implements SliceWork {
     }
     for (; this.next < end; this.next++) {
       const id = taken.counters.deniedDirs[this.next - this.cloudEnd];
+      const dirPath = store.path(id);
       this.deniedCount++;
-      keepSmallest(this.deniedExamples, store.path(id));
+      keepSmallest(this.deniedExamples, dirPath);
       markUnlisted(store, id); // never listed, so never offered as empty (U-4)
+      // A drive mounted beneath it was never reached (U-24), as `noteRefused` records it.
+      noteUnlistedBelow(this.scan, dirPath);
     }
   }
 

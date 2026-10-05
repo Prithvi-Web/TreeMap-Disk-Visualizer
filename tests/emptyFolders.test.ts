@@ -20,7 +20,7 @@ import { setEmptyCheckForTests } from '../src/services/emptyFolderCheck';
 import { boundaryRecord, mountOutcome, setNeverDescendForTests } from '../src/utils/mountBoundaries';
 import { updateSettings } from '../src/services/settings';
 import { ingestColumns, KIND_DIR, REFUSAL_DENIED, REFUSAL_UNREADABLE, REFUSAL_VANISHED } from '../src/services/scan/nativeEngine';
-import { adoptNativeStore } from '../src/services/scan/nativeMemory';
+import { adoptNativeStore, adoptNativeStoreInSlices } from '../src/services/scan/nativeMemory';
 import { statToInput } from '../src/services/scan/nodeInput';
 import { findGduBinary } from '../src/services/gduScanner';
 import { mapGduTreeIntoStore } from '../src/services/gduMapper';
@@ -320,6 +320,28 @@ test('the native memory path: a folder the walk was refused is not listed', () =
   assert.equal(store.flag(1, Flag.Unlisted), true, 'the refused folder, by the id the build named');
   assert.equal(store.flag(2, Flag.Unlisted), false);
   assert.deepEqual(collectEmptyFolders(store, true).folders.map((f) => f.path), ['/r/b']);
+});
+
+test('the native memory path: a drive mounted beneath a folder the walk was refused was never reached, in slices as in one go (Track U, U-24 on U-35)', async () => {
+  for (const sliced of [true, false]) {
+    const scan = createScanRecord('/r');
+    const drives = ['/r/a/d', '/r/b/d'];
+    scan.boundary = boundaryRecord({
+      rule: 'stay', source: 'mount', reason: null,
+      mounts: drives.map((p) => ({ path: p, filesystem: 'apfs', source: '/dev/disk99s1', underFixed: false })),
+      fixed: [], neverDescend: drives,
+    });
+    const store = new PackedScanStore('/r', '/', statToInput('r', true, 0, NOW));
+    if (sliced) {
+      const outcome = await adoptNativeStoreInSlices(scan, store, handMemoryStore([1], 0), { sliceNodes: 1, yieldTurn: () => new Promise<void>((r) => setImmediate(r)) });
+      assert.equal(outcome.completed, true);
+    } else {
+      adoptNativeStore(scan, store, handMemoryStore([1], 0));
+    }
+    const o = mountOutcome(scan.boundary);
+    assert.deepEqual(o.unreached.map((m) => m.path), ['/r/a/d'], `${sliced ? 'sliced' : 'one go'}: beneath the refused folder, nothing got near it`);
+    assert.deepEqual(o.notEntered.map((m) => m.path), ['/r/b/d']);
+  }
 });
 
 /* ─────────────── real scans, through GET /api/empty-folders ─────────────── */
