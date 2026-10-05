@@ -158,3 +158,57 @@ test('D28: "TreeMap stops at 6,000" is said only when the asking actually reache
   assert.equal(coverage(4000, 4000, 0), '');
   assert.match(coverage(4000, 3990, 0, 10), /10 of 4,000 could not be scored/);
 });
+
+/* ══════════════ D26 — one level per click (owner, 5 Oct 2026) ══════════════ */
+
+type Hit = { n: { path: string; type: 'dir' | 'file'; container?: boolean; virtual?: boolean; isTrash?: boolean }; center?: boolean };
+
+/** Click the map over `hit` while `rootPath` is on screen; report what the click did. */
+function clickOn(hit: Hit, rootPath = '/r') {
+  const did = { loaded: [] as string[], previewed: [] as string[], expanded: [] as string[] };
+  const click = load<(e: unknown) => void>(['tmOnCanvasClick', 'tmStepToward', 'tmIsInside'], {
+    state: { treemap: { rootPath, history: { active: false } } },
+    tmPreview: { on: false },
+    hideTooltip() {},
+    viewHit: () => hit,
+    openTrashModal() { throw new Error('not the Trash cell'); },
+    breadcrumbsFor: () => [],
+    loadTreemap: (p: string) => { did.loaded.push(p); },
+    openPreview: (n: { path: string }) => { did.previewed.push(n.path); },
+    expandContainerNode: (n: { path: string }) => { did.expanded.push(n.path); },
+  }, 'tmOnCanvasClick', 'let tmSuppressClick = false;');
+  click({ clientX: 10, clientY: 10 });
+  return did;
+}
+
+test('D26: a click opens the next folder down under the pointer, never the deepest one drawn there', () => {
+  // QA: one click went AssetsV2 › … › AssetData, four levels at once, while
+  // the tour said "click to drill in" and Esc climbs back ONE.
+  assert.deepEqual(clickOn({ n: { path: '/r/a/b/c', type: 'dir' } }).loaded, ['/r/a'],
+    'a folder drawn three levels down opens its top-level ancestor');
+  assert.deepEqual(clickOn({ n: { path: '/r/a', type: 'dir' } }).loaded, ['/r/a'], 'a top-level folder opens itself');
+  const deepFile = clickOn({ n: { path: '/r/a/b/movie.mov', type: 'file' } });
+  assert.deepEqual(deepFile.loaded, ['/r/a'], 'a file inside a folder is a click on that folder, one level down');
+  assert.deepEqual(deepFile.previewed, [], 'and does not open a preview from three levels away');
+  assert.deepEqual(clickOn({ n: { path: '/r/notes.txt', type: 'file' } }).previewed, ['/r/notes.txt'],
+    'a file directly in the folder on screen still opens its preview');
+});
+
+test('D26: the step is separator-aware: Windows paths, a drive root, and archive entries', () => {
+  assert.deepEqual(clickOn({ n: { path: 'C:\\Users\\me\\AppData\\Local\\Temp', type: 'dir' } }, 'C:\\Users\\me').loaded,
+    ['C:\\Users\\me\\AppData'], 'a Windows tree steps on its own separator');
+  assert.deepEqual(clickOn({ n: { path: '/Users/me/x', type: 'dir' } }, '/').loaded, ['/Users'],
+    'from the filesystem root the next level is /Users, not "" or "//Users"');
+  assert.deepEqual(clickOn({ n: { path: '/r/z.zip/inner/x.txt', type: 'file', virtual: true } }).loaded, ['/r/z.zip'],
+    'an entry inside an opened archive opens the archive first');
+  assert.deepEqual(clickOn({ n: { path: '/r/z.zip', type: 'file', container: true } }).expanded, ['/r/z.zip'],
+    'an archive on screen still opens through the container route');
+});
+
+test('D26: the tour describes the click the map actually performs', () => {
+  const start = INDEX.indexOf("tour.step === 'map'");
+  assert.notEqual(start, -1, 'the map step of the tour exists');
+  const card = INDEX.slice(start, INDEX.indexOf('</p>', start));
+  assert.match(card, /Click a folder to open it, one level at a time/, 'one click, one level — the owner\'s rule, in words');
+  assert.match(card, /<kbd>Esc<\/kbd> to climb back up a level/, 'and Esc is the same step in reverse');
+});

@@ -75,7 +75,7 @@ function tourRender() {
     host.innerHTML = `
       <div class="tour-step">The map · step 2 of 4</div>
       <h4>${icon('treemap', 16)}This is your disk as a map</h4>
-      <p>Every rectangle is a file or folder; bigger means more space. Click one to drill in, press <kbd>Esc</kbd> to climb back out, and hover anything for the details.</p>
+      <p>Every rectangle is a file or folder; bigger means more space. Click a folder to open it, one level at a time; press <kbd>Esc</kbd> to climb back up a level, and hover anything for the details.</p>
       <div class="tour-row">
         <button class="btn btn-primary" data-tour-wins>Show me what I could free</button>
         ${skipBtn}

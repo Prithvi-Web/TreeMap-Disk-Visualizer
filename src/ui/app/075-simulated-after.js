@@ -490,7 +490,23 @@ tmCanvas.addEventListener('mouseleave', () => {
   presentView();
   hideTooltip();
 });
-tmCanvas.addEventListener('click', (e) => {
+tmCanvas.addEventListener('click', tmOnCanvasClick);
+/**
+ * The folder one level below `root` on the way to `p` — `p` itself when it
+ * already is one — or null when `p` is not inside `root`. Separator-aware, like
+ * tmIsInside, so a Windows tree, a drive root and an archive's entries (joined
+ * with the platform separator) all step the same way.
+ */
+function tmStepToward(root, p) {
+  if (!tmIsInside(p, root)) return null;
+  const sep = root.includes('\\') ? '\\' : '/';
+  // The name below `root` starts at root.length, or one further past the
+  // separator; a name never starts with a separator, so +1 is right for both.
+  const i = p.indexOf(sep, root.length + 1);
+  return i < 0 ? p : p.slice(0, i);
+}
+/** A click on the map: open the next level, expand an archive, preview a file. */
+function tmOnCanvasClick(e) {
   // A lasso that ended over a folder must not also drill into it.
   if (tmSuppressClick) { tmSuppressClick = false; hideTooltip(); return; }
   if (state.treemap.history.active) { hideTooltip(); return; } // historical view — read-only
@@ -506,11 +522,20 @@ tmCanvas.addEventListener('click', (e) => {
     if (crumbs.length > 1) { hideTooltip(); loadTreemap(crumbs[crumbs.length - 2].path, true); }
     return;
   }
+  // One level per click (the owner's rule, 5 Oct 2026 — QA D26). The hit is
+  // the DEEPEST shape under the pointer, which is right for a hover card and
+  // wrong for a click: it went AssetsV2 › … › AssetData, four levels at once,
+  // while Esc climbs back one. Anything below the next level — a folder, a
+  // file inside one, an entry inside an opened archive — opens the folder one
+  // level down that holds it. What sits directly in this folder keeps its own
+  // action below: a folder opens, an archive expands, a file previews.
+  const step = tmStepToward(state.treemap.rootPath, hit.n.path);
+  if (step && step !== hit.n.path) { hideTooltip(); loadTreemap(step, true); return; }
   // Feature 23 — containers drill into their virtual contents.
   if (hit.n.container && hit.n.type === 'file' && !hit.n.virtual) { hideTooltip(); expandContainerNode(hit.n); return; }
   if (hit.n.type === 'dir') { hideTooltip(); loadTreemap(hit.n.path, true); }
   else if (!hit.n.virtual) { hideTooltip(); openPreview(hit.n); }
-});
+}
 
 /** Feature 23 — open a container: parse once server-side, then drill in. */
 async function expandContainerNode(n) {
