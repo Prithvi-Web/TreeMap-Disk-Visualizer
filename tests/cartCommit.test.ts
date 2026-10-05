@@ -15,7 +15,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { planProtection, getCapsuleIndex, protectItems, capFor, planEviction, getCapsuleJob, capsuleAvailable } from '../src/services/timeCapsule';
+import { planProtection, getCapsuleIndex, protectItems, capFor, planEviction, getCapsuleJob, capsuleAvailable, setCapsuleCapForTests } from '../src/services/timeCapsule';
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
 import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
@@ -314,25 +314,25 @@ test('the plan accumulates: later items are planned against a capsule the earlie
   // Ten items and a cap that fits only some of them. The naive predictor —
   // "does each item fit on its own?" — says all ten are safe and then the real
   // run refuses three of them, which is exactly the surprise §4.4 forbids.
-  const dir = await fixture('accum', 10, 128 * 1024);
+  const item = 128 * 1024;
+  const dir = await fixture('accum', 10, item);
+  // A cap that holds seven of them, as a number (FG3f): the cap measured from this volume's free
+  // space held all ten on any machine, so nothing here was ever refused.
+  const uncap = setCapsuleCapForTests(7 * item + 1000);
   try {
     const paths = Array.from({ length: 10 }, (_, i) => path.join(dir, `f${i}.bin`));
     const plan = await planProtection(paths);
-    // Whatever the machine's cap turns out to be, the plan must be internally
-    // consistent: the protected bytes never exceed the cap.
+    assert.equal(plan.capBytes, 7 * item + 1000);
     assert.ok(plan.bytesProtected <= plan.capBytes,
       `planned ${plan.bytesProtected} bytes against a ${plan.capBytes} byte cap`);
-    // And every item is accounted for, one way or the other.
-    assert.equal(plan.items.length, 10);
-    assert.equal(
-      plan.items.filter((i) => i.willProtect).length + plan.items.filter((i) => !i.willProtect).length,
-      10,
-    );
-    assert.equal(
-      plan.items.filter((i) => i.willProtect).reduce((s, i) => s + i.bytes, 0),
-      plan.bytesProtected,
-    );
+    // The first seven fit, and the last three are refused — not evicted for by dropping the first.
+    assert.deepEqual(plan.items.map((i) => i.willProtect), [true, true, true, true, true, true, true, false, false, false]);
+    for (const refused of plan.items.slice(7)) assert.equal(refused.code, 'CAPSULE_FULL');
+    assert.equal(plan.bytesProtected, 7 * item);
+    assert.equal(plan.bytesSkipped, 3 * item);
+    assert.equal(plan.evicts.some((e) => e.id.startsWith('plan:')), false, 'never one of this batch\'s own');
   } finally {
+    uncap();
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });

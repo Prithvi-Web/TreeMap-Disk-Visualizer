@@ -296,8 +296,20 @@ export function capFor(freeBytes: number | null, usedBytes: number, maxPercent: 
   return Math.floor((usable * maxPercent) / 100);
 }
 
+/**
+ * Test-only: the capsule's ceiling as a number rather than a share of this volume's live free space
+ * (FG3f), so a test can make a batch the cap cannot hold whole, exactly, on any machine; null
+ * measures again. The suite's ForTests idiom: returns the function that removes it.
+ */
+let capBytesForTests: number | null = null;
+export function setCapsuleCapForTests(capBytes: number | null): () => void {
+  capBytesForTests = capBytes;
+  return () => { capBytesForTests = null; };
+}
+
 async function capacityOf(entries: TimeCapsuleEntry[], maxPercent: number): Promise<CapsuleCapacity> {
   const usedBytes = usedBytesOf(entries);
+  if (capBytesForTests !== null) return { usedBytes, capBytes: capBytesForTests, freeBytes: null, maxPercent };
   let freeBytes: number | null = null;
   try {
     freeBytes = (await diskUsage(appDataDir())).free;
@@ -322,11 +334,18 @@ async function capacityOf(entries: TimeCapsuleEntry[], maxPercent: number): Prom
  * refusal rather than about files: an item larger than the entire cap must be
  * refused *without* evicting anything, or the capsule empties itself to make
  * room for something that was never going to fit.
+ *
+ * `pinned` entries count toward the cap and are never evicted (FG3f #1): the
+ * copies of a run still under way. Its earlier items are in the Trash, or about
+ * to be, and their copy is the only one — a batch bigger than the cap evicted
+ * them for its later items and trashed them with no copy. An item that does not
+ * fit beside what is pinned is refused, again without evicting anything.
  */
 export function planEviction(
   entries: TimeCapsuleEntry[],
   capBytes: number,
   incomingBytes: number,
+  pinned: (entry: TimeCapsuleEntry) => boolean = () => false,
 ): { evict: TimeCapsuleEntry[]; fits: boolean } {
   if (incomingBytes > capBytes) return { evict: [], fits: false };
 
@@ -335,8 +354,9 @@ export function planEviction(
   const holding = entries.filter((e) => e.hasPayload && e.heldBytes > 0);
   let used = holding.reduce((sum, e) => sum + e.heldBytes, 0);
   if (used + incomingBytes <= capBytes) return { evict: [], fits: true };
+  if (pinnedBytesOf(holding, pinned) + incomingBytes > capBytes) return { evict: [], fits: false };
 
-  const byAge = [...holding].sort((a, b) => a.capturedAt - b.capturedAt); // oldest first
+  const byAge = holding.filter((e) => !pinned(e)).sort((a, b) => a.capturedAt - b.capturedAt); // oldest first
   const evict: TimeCapsuleEntry[] = [];
   for (const entry of byAge) {
     evict.push(entry);
@@ -344,6 +364,44 @@ export function planEviction(
     if (used + incomingBytes <= capBytes) break;
   }
   return { evict, fits: used + incomingBytes <= capBytes };
+}
+
+/** The bytes the pinned entries hold. */
+function pinnedBytesOf(entries: TimeCapsuleEntry[], pinned: (entry: TimeCapsuleEntry) => boolean): number {
+  return entries.reduce((sum, e) => sum + (e.hasPayload && e.heldBytes > 0 && pinned(e) ? e.heldBytes : 0), 0);
+}
+
+/**
+ * Runs in this process whose copies are being made or whose trash step is under way, by run id
+ * (FG3f #1), counted: a cart commit's chunks share one id. Their entries are pinned — never evicted
+ * to make room — until the run's trash step is over, so a run never trashes an item whose copy it
+ * or another run just evicted.
+ */
+const runsInFlight = new Map<string, number>();
+
+async function whileInFlight<T>(runId: string, fn: () => Promise<T>): Promise<T> {
+  runsInFlight.set(runId, (runsInFlight.get(runId) ?? 0) + 1);
+  try {
+    return await fn();
+  } finally {
+    const left = (runsInFlight.get(runId) ?? 1) - 1;
+    if (left > 0) runsInFlight.set(runId, left);
+    else runsInFlight.delete(runId);
+  }
+}
+
+/** Whether an entry belongs to a run still under way: never evicted. */
+function ofRunInFlight(entry: TimeCapsuleEntry): boolean {
+  return typeof entry.runId === 'string' && runsInFlight.has(entry.runId);
+}
+
+/** The sentence for an item that does not fit: beside the copies still pinned, or at all. */
+function doesNotFitSentence(bytes: number, capBytes: number, pinnedBytes: number, verb: 'was' | 'will be'): string {
+  const beside = pinnedBytes > 0 && bytes <= capBytes
+    ? `, and ${formatBytes(pinnedBytes)} of that holds the copies of items whose deletion is still under way, which are never dropped to make room`
+    : '';
+  return `Protecting it needs ${formatBytes(bytes)}, but the Time Capsule can only hold ${formatBytes(capBytes)}${beside}. ` +
+    `It ${verb} left alone rather than deleted without a backup.`;
 }
 
 /**
@@ -540,11 +598,9 @@ async function capture(
     return { path: original, protected: false, bytes: 0, code, detail };
   }
 
-  const { evict, fits } = planEviction(store.entries, capBytes, walked.bytes);
+  const { evict, fits } = planEviction(store.entries, capBytes, walked.bytes, ofRunInFlight);
   if (!fits) {
-    const detail =
-      `Protecting it needs ${formatBytes(walked.bytes)}, but the Time Capsule can only hold ${formatBytes(capBytes)}. ` +
-      `It was left alone rather than deleted without a backup.`;
+    const detail = doesNotFitSentence(walked.bytes, capBytes, pinnedBytesOf(store.entries, ofRunInFlight), 'was');
     recordEvent(store, {
       at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: walked.bytes, detail,
     });
@@ -736,20 +792,32 @@ export async function protectItems(
   context: { runId?: string; policyId?: string } = {},
 ): Promise<{ runId: string; outcomes: ProtectionOutcome[] }> {
   const runId = context.runId ?? crypto.randomUUID();
-  const settings = await getSettings();
+  // In flight while it copies (FG3f #1): its own earlier copies are pinned, so a later item that
+  // does not fit beside them is refused rather than making room by evicting them.
+  return whileInFlight(runId, async () => {
+    const settings = await getSettings();
 
-  const store = await loadStore();
-  const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
-  const outcomes: ProtectionOutcome[] = [];
-  for (const request of requests) {
-    outcomes.push(await capture(store, request, { runId, policyId: context.policyId }, capacity.capBytes));
-  }
-  // Persist the captures before anything is deleted. If the process dies at
-  // this instant, the capsule holds copies of files that still exist — wasteful
-  // but harmless. The opposite order could delete a file whose protection was
-  // never recorded.
-  await saveStore(store);
-  return { runId, outcomes };
+    const store = await loadStore();
+    const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
+    const outcomes: ProtectionOutcome[] = [];
+    for (const request of requests) {
+      outcomes.push(await capture(store, request, { runId, policyId: context.policyId }, capacity.capBytes));
+    }
+    // Persist the captures before anything is deleted. If the process dies at
+    // this instant, the capsule holds copies of files that still exist — wasteful
+    // but harmless. The opposite order could delete a file whose protection was
+    // never recorded.
+    await saveStore(store);
+    return { runId, outcomes };
+  });
+}
+
+/** The run id a dry run gives the entries it stands in for the real run's copies (`planProtection`). */
+const PLAN_RUN_ID = 'plan';
+
+/** Pinned in a dry run: the items it has accepted, and the copies of runs still under way. */
+function plannedOrInFlight(entry: TimeCapsuleEntry): boolean {
+  return entry.runId === PLAN_RUN_ID || ofRunInFlight(entry);
 }
 
 /** What a dry run says about one item it was asked to protect (v4 §4.4). */
@@ -870,7 +938,10 @@ export async function planProtection(
       continue;
     }
 
-    const { evict, fits } = planEviction(simulated, capacity.capBytes, walked.bytes);
+    // As the real run pins its own copies (FG3f #1), the plan pins the items it has accepted (and,
+    // through `carryOver`, those an earlier request of the same cart accepted), so it never plans
+    // to drop a copy of this batch's own and never protects more than the cap.
+    const { evict, fits } = planEviction(simulated, capacity.capBytes, walked.bytes, plannedOrInFlight);
     if (!fits) {
       bytesSkipped += walked.bytes;
       items.push({
@@ -878,9 +949,7 @@ export async function planProtection(
         bytes: walked.bytes,
         willProtect: false,
         code: 'CAPSULE_FULL',
-        detail:
-          `Protecting it needs ${formatBytes(walked.bytes)}, but the Time Capsule can only hold ` +
-          `${formatBytes(capacity.capBytes)}. It will be left alone rather than deleted without a backup.`,
+        detail: doesNotFitSentence(walked.bytes, capacity.capBytes, pinnedBytesOf(simulated, plannedOrInFlight), 'will be'),
       });
       continue;
     }
@@ -895,7 +964,7 @@ export async function planProtection(
       id: `plan:${path}`, name: path, originalPath: path, kind: walked.isFolder ? 'folder' : 'file',
       sizeBytes: walked.bytes, heldBytes: walked.bytes, hasPayload: true,
       fileCount: walked.members.filter((m) => m.kind === 'file').length,
-      digest: '', capturedAt: Date.now(), runId: 'plan',
+      digest: '', capturedAt: Date.now(), runId: PLAN_RUN_ID,
     });
     bytesProtected += walked.bytes;
     items.push({ path, bytes: walked.bytes, willProtect: true });
@@ -931,6 +1000,16 @@ export async function planProtection(
 export async function protectAndTrash(
   batch: ProtectionRequest[],
   context: { runId?: string; policyId?: string; unattended?: boolean } = {},
+): Promise<ProtectAndTrashResult> {
+  const runId = context.runId ?? crypto.randomUUID();
+  // In flight until its trash step is over (FG3f #1): what it copied is pinned — no capture, of
+  // this run or another, evicts it to make room — so it never trashes an item whose copy is gone.
+  return whileInFlight(runId, () => protectAndTrashInFlight(batch, { ...context, runId }));
+}
+
+async function protectAndTrashInFlight(
+  batch: ProtectionRequest[],
+  context: { runId: string; policyId?: string; unattended?: boolean },
 ): Promise<ProtectAndTrashResult> {
   // Nothing in TreeMap's own spill folder is protected or trashed (Phase 4 §S.5.3): refused
   // before anything is copied, whatever selected it.
@@ -973,7 +1052,7 @@ export async function protectAndTrash(
   const paths = deepestFirst(protectedOutcomes.map((o) => o.path));
 
   let trashed: string[] = [];
-  let failedToTrash: { path: string; reason: string; stopped?: true; refused?: true }[] = [];
+  let failedToTrash: { path: string; reason: string; stopped?: true; refused?: true; code?: string }[] = [];
   /** Set when TreeMap's own open-file check refused the batch: the Trash was never asked. */
   let heldBackBeforeTrash = false;
   /** Items TreeMap itself did not hand to the Trash, one by one (`refused`, FG3d #9). */
@@ -982,10 +1061,17 @@ export async function protectAndTrash(
   // What stands at each path now, so a failure can be checked against the disk afterwards — and,
   // for an item that stays unconfirmed, by an undo later (`markUnverified`).
   const before = new Map<string, Identity>();
+  /** Why TreeMap itself stopped an item at its own turn (`stopBeforeTrash`), by its code. */
+  const stoppedBecause = new Map<string, string>();
   if (paths.length > 0) {
     for (const p of paths) before.set(p, await identityOf(p));
+    const entryOf = new Map(protectedOutcomes.map((o) => [o.path, o.entryId]));
     try {
-      const result = await moveToTrash(paths, { unattended: context.unattended === true });
+      const result = await moveToTrash(paths, {
+        unattended: context.unattended === true,
+        // At each item's own turn, right before its Trash step (FG3f): its copy is still there.
+        checkEach: (p) => stopBeforeTrash(entryOf.get(p)),
+      });
       trashed = result.deleted;
       failedToTrash = result.failed;
     } catch (err) {
@@ -1006,6 +1092,14 @@ export async function protectAndTrash(
     const stillThere: { path: string; reason: string }[] = [];
     for (const failure of failedToTrash) if (failure.refused) refusedByTreeMap.add(failure.path);
     for (const failure of failedToTrash) {
+      // Stopped by TreeMap's own look at its turn (FG3f): no Trash step was ever asked to move it,
+      // so whatever stands at its place now, nothing this run did moved it — and its copy is gone
+      // or not of what is there, so it is never counted as trashed.
+      if (failure.refused && failure.code !== undefined) {
+        stoppedBecause.set(failure.path, failure.code);
+        stillThere.push({ path: failure.path, reason: failure.reason });
+        continue;
+      }
       // Looked at where the item is, not where its spelling now leads (FG3c): a path through a link
       // that another item took to the Trash no longer reaches it, though it has not moved.
       const now = await identityOf(realPathOf.get(failure.path) ?? failure.path);
@@ -1038,11 +1132,15 @@ export async function protectAndTrash(
       const why = (refusedBecause.get(outcome.path) ?? '').replace(/[\s.]+$/, '');
       const byTreeMap = heldBackBeforeTrash || refusedByTreeMap.has(outcome.path);
       const refusal = `${byTreeMap ? 'TreeMap did not hand it to the Trash' : 'The Trash did not take it'}: ${why}. It is still in place, untouched`;
+      const code = stoppedBecause.get(outcome.path);
       outcome.protected = false;
-      outcome.code = 'NOT_DELETED';
-      outcome.detail = problem === null
-        ? `${refusal}, and its copy was discarded.`
-        : `${refusal}. Discarding its copy did not finish, so the Time Capsule may still list it.`;
+      outcome.code = code ?? 'NOT_DELETED';
+      // A copy that was gone has nothing to discard but its record (FG3f #1).
+      outcome.detail = problem !== null
+        ? `${refusal}. Discarding its copy did not finish, so the Time Capsule may still list it.`
+        : code === COPY_GONE
+          ? `${refusal}.`
+          : `${refusal}, and its copy was discarded.`;
     }
     if (problem !== null) {
       const items = `${formatCount(notDeleted.length)} item${notDeleted.length === 1 ? '' : 's'}`;
@@ -1097,6 +1195,35 @@ export async function protectAndTrash(
     bytesProtected: stillProtected.reduce((sum, o) => sum + o.bytes, 0),
     ...(cleanupError ? { cleanupError } : {}),
   };
+}
+
+/** The code of an item left in place because its copy was gone by its own turn to be trashed (FG3f #1). */
+const COPY_GONE = 'CAPSULE_COPY_GONE';
+
+/**
+ * Why an item must not go to the Trash after all, asked at its own turn, right before its trash step
+ * (FG3f #1), or null to go ahead. Its copy must still be where capture put it: what a run under way
+ * holds is never evicted here, but another TreeMap process sharing this app data (the MCP server
+ * beside the app) knows nothing of this run, and anything outside TreeMap can remove a folder. The
+ * look is one lstat of the copy's manifest, which capture writes last and every removal takes with
+ * the folder. Never throws: a look that fails stops the item too — nothing is deleted without a copy
+ * that was seen.
+ */
+async function stopBeforeTrash(entryId: string | undefined): Promise<{ reason: string; code: string } | null> {
+  if (typeof entryId !== 'string' || !isEntryId(entryId)) {
+    return { code: COPY_GONE, reason: 'its Time Capsule copy is no longer there, and nothing is deleted without one' };
+  }
+  try {
+    await fsp.lstat(path.join(entryDir(entryId), 'manifest.json'));
+    return null;
+  } catch (err) {
+    return {
+      code: COPY_GONE,
+      reason: meansAbsent(err)
+        ? 'its Time Capsule copy is no longer there, and nothing is deleted without one'
+        : `its Time Capsule copy could not be looked at (${describeFsError(err)}), and nothing is deleted without a copy that was seen`,
+    };
+  }
 }
 
 /** What a person is told about an item whose trash step reported a failure the disk could not confirm. */

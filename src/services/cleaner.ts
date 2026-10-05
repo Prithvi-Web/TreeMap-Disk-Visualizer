@@ -180,6 +180,13 @@ export interface TrashOptions {
    * A path that is gone fails as it always did.
    */
   onlyEmptyFolders?: boolean;
+  /**
+   * Asked of each path at its own turn, right before its Trash step (FG3f): a sentence and a code
+   * when it must not be trashed after all — it is then left where it is and failed with
+   * `refused: true` and that code — or null to go ahead. The Time Capsule's: the item's copy is
+   * still there, and the item is still what was copied.
+   */
+  checkEach?: (p: string) => Promise<{ reason: string; code: string } | null>;
 }
 
 /** The step that moves one path to the Trash; a test replaces it (setTrashStepForTests). */
@@ -248,6 +255,13 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
         const look = await stillEmptyFolder(p, true);
         if (!look.empty && look.why !== 'gone') {
           failed.push({ path: p, reason: look.reason, refused: true, code: 'FOLDER_NOT_EMPTY' });
+          continue;
+        }
+      }
+      if (opts.checkEach) {
+        const stop = await opts.checkEach(p);
+        if (stop !== null) {
+          failed.push({ path: p, reason: stop.reason, refused: true, code: stop.code });
           continue;
         }
       }

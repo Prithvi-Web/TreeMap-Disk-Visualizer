@@ -29,8 +29,8 @@ import {
   planEviction,
   capFor,
   usedBytesOf,
+  setCapsuleCapForTests,
 } from '../src/services/timeCapsule';
-import { updateSettings } from '../src/services/settings';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { copyWithHash, CopyCancelled, setCopyFaultForTests } from '../src/utils/copyVerify';
 import { TimeCapsuleEntry, TimeCapsuleJob } from '../src/models/types';
@@ -241,26 +241,23 @@ test('an empty folder is still a folder when it comes back', async () => {
 
 test('an item too big for the cap is left alone, and the refusal is recorded', async () => {
   const dir = await mkTmp();
+  // A cap the item is twice the size of, as a number (FG3f): the cap measured from this volume's
+  // free space is far above 2 KB on any machine, so the assertions used to sit inside an `if` that
+  // never ran.
+  const uncap = setCapsuleCapForTests(1024);
   try {
-    // 1% of usable space is far below any real file here, so the cap refuses.
-    await updateSettings({ timeCapsuleMaxPercent: 1 });
     const huge = await writeFile(path.join(dir, 'huge.bin'), crypto.randomBytes(2048));
-
-    // Re-cap to something microscopic by comparing against a cap we control:
-    // planEviction is what capture consults, and its refusal path is pinned
-    // above. Here we assert the *observable* consequence instead — whatever
-    // the machine's free space, an item is never deleted unprotected.
     const { outcomes } = await protectItems([{ path: huge }]);
-    if (!outcomes[0].protected) {
-      assert.equal(outcomes[0].code, 'CAPSULE_FULL');
-      assert.match(outcomes[0].detail ?? '', /left alone rather than deleted/);
-      const index = await getCapsuleIndex();
-      assert.ok(index.events.some((e) => e.kind === 'unprotected' && e.originalPath === huge),
-        'the user can see that protection was withheld');
-    }
-    assert.equal(fs.existsSync(huge), true, 'either way, protectItems never deletes');
+    assert.equal(outcomes[0].protected, false);
+    assert.equal(outcomes[0].code, 'CAPSULE_FULL');
+    assert.match(outcomes[0].detail ?? '', /left alone rather than deleted/);
+    const index = await getCapsuleIndex();
+    assert.ok(index.events.some((e) => e.kind === 'unprotected' && e.originalPath === huge),
+      'the user can see that protection was withheld');
+    assert.equal(index.entries.some((e) => e.originalPath === huge), false, 'and no copy was recorded');
+    assert.equal(fs.existsSync(huge), true, 'protectItems never deletes');
   } finally {
-    await updateSettings({ timeCapsuleMaxPercent: 10 });
+    uncap();
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });

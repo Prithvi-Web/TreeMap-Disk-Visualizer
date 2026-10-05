@@ -377,7 +377,12 @@ OpenAPI 3 spec).
      **The refusal that matters:** anything the capsule cannot protect whole —
      too large for it, or a folder holding a file that could not be looked at —
      is **left undeleted** and named in `skipped[]` with its reason — never
-     deleted unprotected. `dryRun: true` returns that same verdict per
+     deleted unprotected. The copies of a run still under way (every chunk of
+     a chunked commit included) are never evicted to make room, so a batch
+     bigger than the capsule leaves its later items undeleted (`CAPSULE_FULL`)
+     rather than dropping its own earlier copies; and right before each item's
+     trash step its copy is looked for again — one that is gone by then leaves
+     the item in place (`CAPSULE_COPY_GONE`). `dryRun: true` returns that same verdict per
      path *before* anything happens, along with the older capsule copies that
      would be evicted to make room and B2's open-handle preflight. At most 500
      paths per commit. Nothing after the trash step can fail the request:
