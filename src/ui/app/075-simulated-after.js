@@ -647,23 +647,27 @@ function fetchScoresForTreemap() {
   if (!drawn.length) return;
   const paths = [];
   for (const r of drawn) {
-    // v4 §4.3 — a freed block is a hypothetical, not a path. Asking the fact
-    // layer about it spends a batch slot on a file that never existed and
-    // comes back unanswerable, which the coverage note would then report as a
-    // file that could not be read.
-    if (r.n && r.n.path && !r.n.freed) paths.push(r.n.path);
+    // Only cells the fact route can answer for (reclaimAskableNode): a freed
+    // block (v4 §4.3) is a hypothetical, and the Trash cell's "\0trash" made
+    // the server refuse the whole batch it rode in — re-sent on every repaint.
+    if (reclaimAskableNode(r.n)) paths.push(r.n.path);
     if (paths.length >= TM_SCORE_CAP) break;
   }
+  // Only if the user is still looking at this: a repaint of a view they
+  // navigated away from is wasted work, and worse, can land mid-render.
+  const stillShown = () => state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath;
   void ensureScores(paths, () => {
-    // Only if the user is still looking at this: a repaint of a view they
-    // navigated away from is wasted work, and worse, can land mid-render.
-    if (state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath) {
+    if (stillShown()) {
       // Scores land in batches, so this runs several times per folder. Behind
       // §6.2's Voronoi renderer a re-solve here would be a fifth of a second of
       // main thread per batch, arriving at the arrangement already on screen.
       isCells() ? repaintCells() : drawView();
       renderTmLegend(); // the coverage line changes as batches land
     }
+  }, () => {
+    // Nothing landed: no repaint (it would ask again), only the legend, which
+    // now says these could not be scored instead of "loading".
+    if (stillShown()) renderTmLegend();
   });
 }
 $('tmColorSeg').addEventListener('click', (e) => {

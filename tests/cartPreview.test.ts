@@ -419,10 +419,15 @@ test('a freed block is never sent to the fact layer, nor counted as unreadable',
   // back with nothing, which the coverage note would then report as a file
   // that could not be read. A count of unreadable files that includes
   // something that is not a file is exactly the number this app refuses.
+  // Both ask one predicate, so the batch and the legend's total cannot disagree
+  // (tests/reclaimScoreLoop.test.ts drives both with a freed block on screen).
+  const askable = lift<(n: object) => boolean>(['reclaimAskableNode', 'reclaimAskablePath'], 'reclaimAskableNode');
+  assert.equal(askable({ path: '/r/a — freed', freed: true }), false, 'a freed block is not askable');
+  assert.equal(askable({ path: '/r/a' }), true);
   const fetcher = slice('function fetchScoresForTreemap', '$(\'tmColorSeg\').addEventListener');
-  assert.match(fetcher, /!r\.n\.freed/, 'freed blocks are excluded from the scoring batch');
+  assert.match(fetcher, /if \(reclaimAskableNode\(r\.n\)\) paths\.push/, 'the scoring batch takes only askable cells');
   const coverage = slice('function reclaimCoverageNote', 'Height for the treemap/sunburst canvas');
-  assert.match(coverage, /r\.n\.freed\) continue;/, 'and from the coverage denominator');
+  assert.match(coverage, /if \(!reclaimAskableNode\(r\.n\)\) continue;/, 'and so does the coverage denominator');
 });
 
 test('the preview is read-only for the keyboard, not just the mouse', () => {

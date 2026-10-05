@@ -297,13 +297,23 @@ function reclaimCoverageNote() {
   let unscorable = 0;
   let loading = 0;
   for (const r of drawn) {
-    const p = r.n && r.n.path;
-    if (!p || r.n.freed) continue; // §4.3 — not a file, so not part of coverage
+    // Exactly the cells the map asks about (reclaimAskableNode): not a freed
+    // block (§4.3), not the Trash cell, not an in-archive or cloud listing.
+    // Counting the Trash cell left "the rest are still loading" up for good.
+    if (!reclaimAskableNode(r.n)) continue;
+    const p = r.n.path;
     total++;
-    if (reclaim.pending.has(p)) { loading++; continue; }
-    if (!reclaim.scores.has(p)) continue;
-    if (reclaim.scores.get(p) === null) unscorable++;
-    else scored++;
+    // Landed before in flight: a path stays pending until its whole request
+    // ends, and one whose batch already landed is scored, not loading.
+    if (reclaim.scores.has(p)) {
+      if (reclaim.scores.get(p) === null) unscorable++;
+      else scored++;
+      continue;
+    }
+    // A request that failed is not asked again in this view (ensureScores),
+    // so it is no longer loading: it could not be scored.
+    if (reclaim.failed.has(p)) { unscorable++; continue; }
+    if (reclaim.pending.has(p)) loading++;
   }
   if (total === 0 || scored + unscorable >= total) {
     // Everything on screen was asked about. Name the ones that came back
@@ -314,9 +324,11 @@ function reclaimCoverageNote() {
   }
   // "Stops at 6,000" is a claim that TreeMap stopped ASKING, so it is made
   // only when what was asked — answered or still in flight — reached the
-  // cap. A larger map than the cap is not enough: the QA screen said it over
-  // 210 scores carried in from another layout, with nothing asked at all.
-  const capped = scored + unscorable + loading >= TM_SCORE_CAP;
+  // cap, AND there are cells past it: at exactly 6,000 nothing was left
+  // unasked. A larger map than the cap is not enough either: the QA screen
+  // said it over 210 scores carried in from another layout, with nothing
+  // asked at all.
+  const capped = total > TM_SCORE_CAP && scored + unscorable + loading >= TM_SCORE_CAP;
   const cap = ` — TreeMap stops at ${formatCount(TM_SCORE_CAP)} at a time; drill in to score the rest.`;
   const head = ` Scored ${formatCount(scored)} of ${formatCount(total)} on screen`;
   if (loading > 0) {

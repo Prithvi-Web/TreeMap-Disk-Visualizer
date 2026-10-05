@@ -32,6 +32,15 @@ const reclaim = {
   scores: new Map(),
   /** In flight, so two hovers over the same cell make one request. */
   pending: new Set(),
+  /**
+   * Paths whose request failed, not asked about again until the scan, the
+   * view or the folder on screen changes (failedFor): a request that fails
+   * every time was re-sent on every repaint, one after another, for as long
+   * as the map was open. Shown as "could not be scored", never as loading.
+   */
+  failed: new Set(),
+  /** The scope the failed set belongs to (reclaimFailureScope). */
+  failedFor: '',
   /** The weights in force, for the breakdown's footer. Loaded with settings. */
   weights: null,
 };
@@ -40,7 +49,42 @@ const reclaim = {
 function reclaimReset() {
   reclaim.scores.clear();
   reclaim.pending.clear();
+  reclaim.failed.clear();
 }
+
+/** What a failed request is remembered for: this scan, this view, this folder on screen. */
+function reclaimFailureScope() {
+  return `${state.scanId}\n${state.view}\n${(state.treemap && state.treemap.rootPath) || ''}`;
+}
+
+/**
+ * Could the fact route answer for this path at all? A cloud:// or in-archive
+ * path is a listing, not a file on this disk, and a NUL is no path — the
+ * synthetic Trash cell's is "\0trash" — and the route refuses any of them
+ * for the whole batch it rides in, so they are never sent.
+ */
+function reclaimAskablePath(p) {
+  return !!p && typeof p === 'string' && !p.startsWith('cloud://') && !p.includes('!/') && !p.includes('\0');
+}
+
+/**
+ * Is this drawn cell a file or folder on disk the score is about? Not the
+ * Trash cell, not a freed block (§4.3: a hypothetical, not a path), not an
+ * entry inside an archive. The map asks about exactly these, and its legend
+ * counts exactly these, so neither can disagree with the other.
+ */
+function reclaimAskableNode(n) {
+  return !!n && !n.isTrash && !n.freed && !n.virtual && reclaimAskablePath(n.path);
+}
+
+/**
+ * The fact route's refusals of a path (the path guard, the sanitizer): one
+ * such path in a batch refuses the whole batch — a folder the server will not
+ * look at, such as /private/var/db on a scan of /, by the same rule the
+ * destructive routes keep — so a batch refused this way is halved and asked
+ * again until only the refused paths are left without a score.
+ */
+const RECLAIM_PATH_REFUSALS = new Set(['PATH_BLOCKED', 'PATH_INVALID', 'VIRTUAL_PATH', 'CLOUD_PATH', 'OUTSIDE_SCAN_ROOT']);
 subscribe(TOPIC.scan, reclaimReset);
 // §4.3 — a new scan replaces the very tree the preview was laid out from, so
 // the saved "restore me" node list is stale too. Dropped silently: the map is
@@ -68,18 +112,26 @@ function scoreKnown(path) { return reclaim.scores.has(path); }
  * a repaint re-asks for the scores of whatever it just drew; if this fired on
  * a request where everything was already cached, the two would call each
  * other forever. "Nothing was fetched" and "nothing changed" are the same
- * statement, so the callback has nothing to say.
+ * statement, so the callback has nothing to say. **A failed request is not
+ * scores landing either**: it fired `onLanded` once, and a request that
+ * fails every time — the Trash cell's NUL refused the whole batch — was
+ * re-sent on every repaint for as long as the map was open (QA-6 review).
+ * Failed paths are remembered (`reclaim.failed`) and not asked about again
+ * in this scan, view and folder; `onFailed`, if given, is told instead, so
+ * a legend can say they could not be scored.
  */
-async function ensureScores(paths, onLanded) {
+async function ensureScores(paths, onLanded, onFailed) {
   if (!state.scanId) return;
+  const scope = reclaimFailureScope();
+  if (reclaim.failedFor !== scope) {
+    reclaim.failed.clear();
+    reclaim.failedFor = scope;
+  }
   const wanted = [];
   const seen = new Set();
   for (const p of paths) {
-    if (!p || typeof p !== 'string') continue;
-    // cloud:// and in-archive paths are listings, not files on this disk;
-    // the server would refuse them and the refusal would cost a round trip.
-    if (p.startsWith('cloud://') || p.includes('!/')) continue;
-    if (reclaim.scores.has(p) || reclaim.pending.has(p) || seen.has(p)) continue;
+    if (!reclaimAskablePath(p)) continue;
+    if (reclaim.scores.has(p) || reclaim.pending.has(p) || reclaim.failed.has(p) || seen.has(p)) continue;
     seen.add(p);
     wanted.push(p);
   }
@@ -87,36 +139,66 @@ async function ensureScores(paths, onLanded) {
   for (const p of wanted) reclaim.pending.add(p);
 
   const scanAtRequest = state.scanId;
+  const outcome = { landed: false, failed: false };
   try {
     for (let i = 0; i < wanted.length; i += RECLAIM_BATCH) {
-      const batch = wanted.slice(i, i + RECLAIM_BATCH);
-      const res = await api('/api/facts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanId: scanAtRequest, paths: batch, providers: ['reclaimScore'] }),
-      });
+      await reclaimScoreBatch(wanted.slice(i, i + RECLAIM_BATCH), scanAtRequest, scope, outcome);
       // A scan that changed under a request in flight would otherwise file
       // the previous tree's verdicts against the new one's paths.
       if (state.scanId !== scanAtRequest) return;
-      const provider = (res.providers && res.providers.reclaimScore) || null;
-      const values = (provider && provider.available && provider.values) || {};
-      for (const p of batch) {
-        // Absent from `values` is the server saying it could not score this.
-        // Recorded as null so we neither ask again in a loop nor invent a 0.
-        reclaim.scores.set(p, Object.prototype.hasOwnProperty.call(values, p) ? values[p] : null);
-      }
     }
-  } catch (err) {
-    // A score is an enrichment, never a blocker. Failing silently here is
-    // deliberate: the badge simply does not appear, and every surface below
-    // renders without it. Paths are dropped from `scores` so a later hover
-    // retries rather than remembering a transient failure for the session.
-    for (const p of wanted) reclaim.scores.delete(p);
-    if (window.TREEMAP_DEBUG) console.warn('[treemap] reclaim scores failed:', err);
   } finally {
     for (const p of wanted) reclaim.pending.delete(p);
   }
-  if (onLanded) onLanded();
+  if (outcome.landed) {
+    if (onLanded) onLanded();
+  } else if (outcome.failed && onFailed) {
+    onFailed();
+  }
+}
+
+/**
+ * Asks for one batch and files the answer: a score, or null for a path the
+ * server could not score. A failure is this batch's alone — the scores
+ * earlier batches landed stay — and its paths are remembered as failed. A
+ * batch refused for one of its paths (RECLAIM_PATH_REFUSALS) is halved and
+ * each half asked again, so only the refused paths go without a score: at
+ * most two requests per halving for each refused path. `outcome` records
+ * whether anything landed and whether anything failed.
+ */
+async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome) {
+  let res;
+  try {
+    res = await api('/api/facts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanId: scanAtRequest, paths: batch, providers: ['reclaimScore'] }),
+    });
+  } catch (err) {
+    if (state.scanId !== scanAtRequest) return;
+    if (err && RECLAIM_PATH_REFUSALS.has(err.code) && batch.length > 1) {
+      const half = Math.ceil(batch.length / 2);
+      await reclaimScoreBatch(batch.slice(0, half), scanAtRequest, scope, outcome);
+      await reclaimScoreBatch(batch.slice(half), scanAtRequest, scope, outcome);
+      return;
+    }
+    // A score is an enrichment, never a blocker: the badge does not appear,
+    // every surface renders without it, and the legend says these could not
+    // be scored. Remembered only for the scope it was asked in.
+    if (reclaim.failedFor === scope) for (const p of batch) reclaim.failed.add(p);
+    outcome.failed = true;
+    if (window.TREEMAP_DEBUG) console.warn('[treemap] reclaim scores failed:', err);
+    return;
+  }
+  if (state.scanId !== scanAtRequest) return;
+  const provider = (res.providers && res.providers.reclaimScore) || null;
+  const values = (provider && provider.available && provider.values) || {};
+  for (const p of batch) {
+    // Absent from `values` is the server saying it could not score this.
+    // Recorded as null so we neither ask again in a loop nor invent a 0.
+    reclaim.scores.set(p, Object.prototype.hasOwnProperty.call(values, p) ? values[p] : null);
+  }
+  outcome.landed = true;
 }
 
 /** "high" / "medium" / "low" as a phrase a person can act on. */

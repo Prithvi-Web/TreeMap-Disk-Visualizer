@@ -134,9 +134,9 @@ function coverage(drawn: number, scored: number, pending: number, unscorable = 0
     else if (i < scored + unscorable) scores.set(c.n.path, null);
     else if (i < scored + unscorable + pending) inFlight.add(c.n.path);
   });
-  const note = load<() => string>(['reclaimCoverageNote'], {
+  const note = load<() => string>(['reclaimCoverageNote', 'reclaimAskableNode', 'reclaimAskablePath'], {
     drawnCells: () => cells,
-    reclaim: { scores, pending: inFlight },
+    reclaim: { scores, pending: inFlight, failed: new Set<string>() },
     formatCount: fmtCount,
     TM_SCORE_CAP: 6000,
   }, 'reclaimCoverageNote');
