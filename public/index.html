@@ -27686,10 +27686,10 @@ function tourRender() {
     host.innerHTML = `
       <div class="tour-step">Quick win ${tour.winIx + 1} of ${tour.wins.length} · step 3 of 4</div>
       <h4>${icon('sparkles', 16)}${escapeHtml(g.title)} — ${formatBytes(g.totalSize)}</h4>
-      <p>${escapeHtml(g.description)}${g.why ? ` <span class="muted">${escapeHtml(g.why)}</span>` : ''}</p>
+      <p>${tourWinLine(g)}</p>
       <div class="tour-row">
         <button class="btn btn-primary" data-tour-add ${already ? 'disabled' : ''}>${already ? 'Already in the cart' : 'Add to cart'}</button>
-        <button class="btn" data-tour-next>${tour.winIx + 1 < tour.wins.length ? 'Skip this one' : 'Not this one'}</button>
+        <button class="btn" data-tour-next>Skip this one</button>
         ${skipBtn}
       </div>`;
     host.querySelector('[data-tour-add]').addEventListener('click', () => {
@@ -27717,6 +27717,15 @@ function tourRender() {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
   const primary = host.querySelector('.btn-primary') || host.querySelector('button');
   if (primary && !typing) primary.focus();
+}
+
+/** A quick win's sentence: the rule's description ended as a sentence, then
+    what matched (QA D06: the descriptions carry no full stop, so the card read
+    "…fetched crates A folder named target…"). */
+function tourWinLine(g) {
+  const desc = String(g.description || '').trim();
+  const sentence = desc && !/[.!?…]$/.test(desc) ? desc + '.' : desc;
+  return `${escapeHtml(sentence)}${g.why ? ` <span class="muted">${escapeHtml(g.why)}</span>` : ''}`;
 }
 
 function tourAdvanceWin() {

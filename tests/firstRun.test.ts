@@ -164,3 +164,26 @@ test('the palette closes through its own door from every path — focus restore 
   const scoped = html.slice(html.indexOf("$('cmdkModal').addEventListener('keydown'"), html.indexOf("$('cmdkModal').addEventListener('keydown'") + 600);
   assert.match(scoped, /stopPropagation\(\)/, "palette keys are the palette's — they never reach dupeViewerKeys or the view shortcuts");
 });
+
+/* ══════════════════════ QA D06 — the quick-win card reads as sentences ══════════════════════ */
+
+test('a quick win\'s description ends as a sentence before why it matched — "…fetched crates A folder named…" ran together (QA D06)', async () => {
+  const { lift } = await import('./fixtures/liftFrontend');
+  const line = lift<(g: { description?: string; why?: string }) => string>(['escapeHtml', 'tourWinLine'], 'tourWinLine');
+  const text = (html: string) => html.replace(/<[^>]+>/g, '');
+  assert.equal(text(line({ description: 'Cargo build output and fetched crates', why: 'A folder named target sitting next to Cargo.toml.' })),
+    'Cargo build output and fetched crates. A folder named target sitting next to Cargo.toml.');
+  assert.equal(text(line({ description: 'Ends already.', why: 'Why.' })), 'Ends already. Why.', 'no doubled full stop');
+  assert.equal(text(line({ description: 'Ends with a question?', why: 'Why.' })), 'Ends with a question? Why.');
+  assert.equal(text(line({ description: 'Alone' })), 'Alone.', 'no why, still a sentence');
+  assert.equal(text(line({ description: '', why: 'Only why.' })).trim(), 'Only why.', 'an empty description adds no stray full stop');
+  assert.match(line({ description: 'a <b>', why: '<i>' }), /a &lt;b&gt;\. <span class="muted">&lt;i&gt;<\/span>/, 'both halves are escaped, the why styled apart');
+  const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('function tourAdvanceWin'));
+  assert.match(render, /<p>\$\{tourWinLine\(g\)\}<\/p>/, 'the card renders through it');
+});
+
+test('every quick-win card offers the same "Skip this one" — the last no longer says "Not this one" (QA D06)', () => {
+  const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('function tourAdvanceWin'));
+  assert.match(render, /<button class="btn" data-tour-next>Skip this one<\/button>/, 'one wording on every card');
+  assert.doesNotMatch(render, /Not this one/);
+});
