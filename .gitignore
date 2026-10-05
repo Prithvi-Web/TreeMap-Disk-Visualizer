@@ -7,8 +7,14 @@ release/
 # Bundled gdu binary — fetched at build time by scripts/fetchGdu.js, never committed
 /gdu/
 
-# gdu binaries staged for bundling — fetched by scripts/fetchGdu.js, never committed
-/build/gdu/
+# gdu binaries staged for bundling — fetched by scripts/fetchGdu.js, never committed.
+# The licence files beside them are committed, so every package carries them:
+# gdu's LICENSE.md, and the notices of the Go modules inside gdu with the module
+# list they were written from (scripts/gdu-notices.js).
+/build/gdu/*
+!/build/gdu/LICENSE.md
+!/build/gdu/THIRD_PARTY_NOTICES.txt
+!/build/gdu/gdu-modules.json
 
 # VS Code extension: compiled output and the packaged bundle — never committed
 /vscode-extension/out/

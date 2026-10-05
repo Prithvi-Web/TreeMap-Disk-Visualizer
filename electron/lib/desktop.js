@@ -144,13 +144,15 @@ function crashDialogFor(err, info) {
 
 /**
  * The credits name what the app is built on and bundles, and where those
- * licences are, on every platform: build.extraResources puts gdu/LICENSE.md
- * and THIRD_PARTY_NOTICES.txt (the native core's Rust crates and standard
- * library, scripts/rust-notices.js) in the resources folder; Electron's
- * LICENSE.electron.txt and Chromium's LICENSES.chromium.html are in that
- * folder on macOS (scripts/electron-licences.js puts them there) and beside
- * it, next to the executable, on Windows and Linux (electron-builder keeps
- * them there). They claim no more than that.
+ * licences are, on every platform: build.extraResources puts gdu/LICENSE.md,
+ * gdu/THIRD_PARTY_NOTICES.txt (the Go modules and standard library inside
+ * gdu, scripts/gdu-notices.js) and THIRD_PARTY_NOTICES.txt (the native core's
+ * Rust crates and standard library, scripts/rust-notices.js) in the resources
+ * folder; Electron's LICENSE.electron.txt and Chromium's
+ * LICENSES.chromium.html are in that folder on macOS
+ * (scripts/electron-licences.js puts them there) and beside it, next to the
+ * executable, on Windows and Linux (electron-builder keeps them there). They
+ * claim no more than that.
  */
 function aboutPanelOptions({ version }) {
   return {

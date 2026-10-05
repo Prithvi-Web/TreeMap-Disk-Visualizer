@@ -162,6 +162,10 @@
         "to": "gdu/LICENSE.md"
       },
       {
+        "from": "build/gdu/THIRD_PARTY_NOTICES.txt",
+        "to": "gdu/THIRD_PARTY_NOTICES.txt"
+      },
+      {
         "from": "native/THIRD_PARTY_NOTICES.txt",
         "to": "THIRD_PARTY_NOTICES.txt"
       }

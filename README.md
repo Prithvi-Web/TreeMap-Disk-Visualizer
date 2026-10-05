@@ -791,6 +791,8 @@ tests/          node:test suite — `npm test`, or one file with
 
 TreeMap is MIT-licensed — see [LICENSE](LICENSE). The desktop app also bundles code by others. Two parts of it carry their licences in the app's resources folder: **gdu** (MIT), as `gdu/LICENSE.md`, and **TreeMap's native scan core**, whose Rust crates and standard library are listed with their licence texts in `THIRD_PARTY_NOTICES.txt` — the same file as [`native/THIRD_PARTY_NOTICES.txt`](native/THIRD_PARTY_NOTICES.txt) here, generated from `Cargo.lock` and the pinned Rust toolchain by `scripts/rust-notices.js` (see [native/README.md](native/README.md#third-party-notices)).
 
+gdu is a Go program, and the Go modules and Go standard library linked into it ship their licence texts beside it as `gdu/THIRD_PARTY_NOTICES.txt` — the same file as [`build/gdu/THIRD_PARTY_NOTICES.txt`](build/gdu/THIRD_PARTY_NOTICES.txt) here, written from gdu's own build information by `scripts/gdu-notices.js`.
+
 The desktop app is built on **Electron** (MIT) and **Chromium**, and ships their licences as `LICENSE.electron.txt` and `LICENSES.chromium.html` — Chromium's credits page, with the licence of every component Chromium is built from. On macOS they are in the resources folder (`TreeMap.app/Contents/Resources`): electron-builder leaves both out of a Mac bundle, so `scripts/afterPack.js` puts them there from the Electron release zip, checked against the Electron inside the app, and refuses to finish a build without them. On Windows and Linux they sit beside the TreeMap executable, where electron-builder keeps them.
 
 <br>

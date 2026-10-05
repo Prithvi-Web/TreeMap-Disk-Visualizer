@@ -149,10 +149,17 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  // Never fail a build over this: the app falls back to the walker, and a
-  // developer without network access should still be able to build.
-  console.error(`[fetchGdu] ${err.message}`);
-  console.error('[fetchGdu] continuing without a bundled gdu — the app will use the built-in walker.');
-  process.exit(0);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    // Never fail a build over this: the app falls back to the walker, and a
+    // developer without network access should still be able to build.
+    console.error(`[fetchGdu] ${err.message}`);
+    console.error('[fetchGdu] continuing without a bundled gdu — the app will use the built-in walker.');
+    process.exit(0);
+  });
+} else {
+  // The pin, for scripts/gdu-notices.js: the notices of the Go modules inside
+  // gdu are written for this version and these targets, and
+  // tests/gduNotices.test.ts holds them to it. Requiring the script fetches nothing.
+  module.exports = { VERSION, TARGETS };
+}
