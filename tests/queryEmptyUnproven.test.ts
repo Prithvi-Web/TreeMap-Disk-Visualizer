@@ -109,6 +109,20 @@ test('on a native scan that could not look at some entries, naming no folder, a 
   assert.equal(decided.degraded.has('emptyUnproven'), false);
 });
 
+test('a native scan on the columns path names its unreadable folders: those are undecided by their mark, the rest decided (U-4b review, L-7)', async () => {
+  // The columns ingest marks every folder it could not read (Flag.Unlisted) and says so; counting
+  // them as well once left every childless folder of the scan undecided.
+  const tree = (): FileNode => at('n', '/n', [at('e1', '/n/e1', []), at('bad', '/n/bad', [])]);
+  const named = await run(scanOf(tree(), { engine: 'native', unreadableDirs: 1, unreadableDirsNamed: true }, ['/n/bad']), 'type:dir empty:yes');
+  assert.deepEqual(named.dirs, ['/n/e1'], 'e1 is decided empty; bad, marked, is not');
+  assert.equal(named.degraded.has('emptyUnproven'), false);
+  assert.match(named.degraded.get('undecided') ?? '', /^1 item/, 'only the marked folder is undecided');
+  // Counted without the word that they are named (the memory path): every childless folder is doubted.
+  assert.deepEqual((await run(scanOf(tree(), { engine: 'native', unreadableDirs: 1 }, ['/n/bad']), 'type:dir empty:yes')).dirs, []);
+  // Entries it could not look at are never named, columns path or not.
+  assert.deepEqual((await run(scanOf(tree(), { engine: 'native', unreadableDirs: 1, unreadableDirsNamed: true, deniedEntries: 1 }, ['/n/bad']), 'type:dir empty:yes')).dirs, []);
+});
+
 test('the walker names every folder it did not list, so its own counts leave childless folders decided', async () => {
   // The walker marks the folder of each entry it could not look at (Flag.Unlisted); its counts are a summary.
   const scan = scanOf(at('w', '/w', [at('e1', '/w/e1', [])]), { engine: 'walker', deniedEntries: 4, unreadableEntries: 2 });

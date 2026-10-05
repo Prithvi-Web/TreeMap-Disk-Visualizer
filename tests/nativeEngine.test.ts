@@ -55,7 +55,7 @@ import {
   type MachineTicks,
 } from '../src/services/scan/nativeEngine';
 import { statToInput } from '../src/services/scan/nodeInput';
-import { PackedScanStore, storeOf, type ScanStore } from '../src/services/scanStore';
+import { Flag, PackedScanStore, storeOf, type ScanStore } from '../src/services/scanStore';
 import { platform } from '../src/platform';
 import { cancelScan, createScanRecord, getScan, peekScan, startScan } from '../src/services/diskScanner';
 import { buildScanStats } from '../src/api/scanRoutes';
@@ -880,6 +880,10 @@ test('ingestColumns: a refused folder is counted by its kind and named among the
   assert.notEqual(denied, -1);
   assert.equal(store.isDir(denied), true);
   assert.equal(store.childCount(denied), 0, 'a refused folder is a childless folder node, as the walker leaves it');
+  // The folder it could not read is marked, and the scan says every such folder is (U-4c L-7):
+  // `empty:` decides the rest by path rather than doubting every childless folder.
+  assert.equal(store.flag(store.findByPath('/r/bad'), Flag.Unlisted), true);
+  assert.equal(scan.unreadableDirsNamed, true);
 });
 
 /* ═══════════════════ 3. selection, stats, pause and cancel through the fake ═══════════════════ */

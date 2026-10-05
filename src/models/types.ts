@@ -208,6 +208,13 @@ export interface ScanResult {
   vanishedDirs?: number;
   /** Directories that failed to list for any other reason, including the deadline. */
   unreadableDirs?: number;
+  /**
+   * True when every folder counted in `unreadableDirs` is marked in the tree
+   * (`Flag.Unlisted`): the native engine's columns path (U-4c L-7). Absent where
+   * they are only counted (its memory path), which leaves a native scan's
+   * childless folders undecided to `empty:`.
+   */
+  unreadableDirsNamed?: true;
   /** Individual entries whose `lstat` was refused (EACCES/EPERM). */
   deniedEntries?: number;
   /** Individual entries that failed to stat for any other reason. */

@@ -430,6 +430,8 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
     // Whichever it was, its node is childless and was never listed (U-4).
     markUnlisted(store, ids[refusalNode[r]]);
   }
+  // So every folder counted unreadable is named by its mark (U-4c L-7).
+  scan.unreadableDirsNamed = true;
   scan.deniedEntries = cols.stats.deniedEntries;
   scan.unreadableEntries = cols.stats.unreadableEntries;
   scan.walkedDirs = cols.stats.dirsListed + refusalNode.length;

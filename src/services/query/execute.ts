@@ -279,17 +279,20 @@ export function isOnlyHasBeenOpened(ast: Ast): boolean {
  * name them all. gdu shows a folder it could not read as an empty one, and the
  * native engine counts the entries it could not look at without naming their
  * folders — and, on its memory path, the folders it could not read (a vanished
- * one is gone, and doubts nothing) — so on those scans no childless folder is
+ * one is gone, and doubts nothing; the columns path marks each one, and says
+ * so in `unreadableDirsNamed`) — so on those scans no childless folder is
  * known to be empty. The
  * walker marks the folder of every entry it could not look at, so its counts
  * are only a summary.
  */
-export function childlessUnproven(scan: Pick<ScanResult, 'engine' | 'deniedEntries' | 'unreadableEntries' | 'unreadableDirs'>): string | null {
+export function childlessUnproven(scan: Pick<ScanResult, 'engine' | 'deniedEntries' | 'unreadableEntries' | 'unreadableDirs' | 'unreadableDirsNamed'>): string | null {
   const instead = 'Clean Up › Empty Folders looks at each folder again on disk; an agent trashes these hits with onlyEmptyFolders: true, which does the same.';
   if (scan.engine === 'gdu-turbo') {
     return `This scan ran on gdu, which shows a folder it could not read as an empty one, so "empty:" cannot tell an empty folder from one it never read: folders with nothing listed in them are left undecided. ${instead}`;
   }
-  const unnamed = scan.engine === 'native' ? (scan.deniedEntries ?? 0) + (scan.unreadableEntries ?? 0) + (scan.unreadableDirs ?? 0) : 0;
+  // The columns path marks each folder it could not read (`unreadableDirsNamed`): those are decided by path (L-7).
+  const unnamedDirs = scan.unreadableDirsNamed === true ? 0 : (scan.unreadableDirs ?? 0);
+  const unnamed = scan.engine === 'native' ? (scan.deniedEntries ?? 0) + (scan.unreadableEntries ?? 0) + unnamedDirs : 0;
   if (unnamed > 0) {
     const one = unnamed === 1;
     return `This scan could not look at ${formatCount(unnamed)} item${one ? '' : 's'} inside the folders it listed, and does not record which folders, so "empty:" cannot tell an empty folder from one whose only ${one ? 'item' : 'items'} it could not see: folders with nothing listed in them are left undecided. ${instead}`;
