@@ -96,6 +96,12 @@ test('on a native scan that could not look at some entries, naming no folder, a 
   assert.deepEqual(yes.dirs, []);
   assert.match(yes.degraded.get('emptyUnproven') ?? '', /3 items/, 'how many it could not look at');
   assert.match(yes.degraded.get('undecided') ?? '', /^1 item/);
+  // The memory path counts the folders it could not read without naming them, too.
+  const unreadableFolder = await run(scanOf(tree(), { engine: 'native', unreadableDirs: 1 }), 'type:dir empty:yes');
+  assert.deepEqual(unreadableFolder.dirs, []);
+  assert.match(unreadableFolder.degraded.get('emptyUnproven') ?? '', /1 item /);
+  // A folder that vanished during the scan is gone: nothing to doubt.
+  assert.deepEqual((await run(scanOf(tree(), { engine: 'native', vanishedDirs: 2 }), 'type:dir empty:yes')).dirs, ['/n/e1']);
   // Every entry looked at: the native engine's own records are whole, and its childless folders are empty.
   const whole = scanOf(tree(), { engine: 'native', deniedEntries: 0, unreadableEntries: 0 });
   const decided = await run(whole, 'type:dir empty:yes');

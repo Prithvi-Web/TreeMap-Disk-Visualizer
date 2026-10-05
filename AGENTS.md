@@ -300,8 +300,8 @@ OpenAPI 3 spec).
      `empty:` reads the scan's tree, and decides only what the scan can
      vouch for: a folder with a listed child is not empty; one with none is
      unknown when the scan did not list it in full, and on a gdu scan, or a
-     native one that could not look at some entries without naming their
-     folders, every such folder is unknown — `degraded` says why
+     native one that counted entries or folders it could not read without
+     naming them, every such folder is unknown — `degraded` says why
      (`emptyUnproven`) beside `undecided`. It reads no disk: trash its hits
      with `onlyEmptyFolders: true`, which looks at each folder again first.
      `POST /api/query/validate` parses without running (it never
