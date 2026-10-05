@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-packageEcosystems-data-');
 
 import { scanPackageEcosystems, brokenVenvInterpreter, PackageEntry } from '../src/services/packageEcosystemScanner';
-import { loadRuleCatalogFrom } from '../src/services/rulePacks';
+import { loadRuleCatalogFrom, PACK_NAMES } from '../src/services/rulePacks';
 import { compileIgnoreList } from '../src/utils/glob';
 import { FileNode } from '../src/models/types';
 
@@ -85,7 +85,35 @@ test('an orphaned Rust target is flagged and an active one is not', () => {
   assert.equal(orphan.kind, 'orphan');
   assert.equal(orphan.ecosystem, 'cargo');
   assert.equal(orphan.command, 'cargo build');
+  assert.equal(orphan.reason, 'No Cargo.toml beside it — the project that owned this is gone.',
+    'the missing manifest is named as it is spelled, not as the lowercased match key "cargo.toml" (review F1.4)');
   assert.equal(find(entries, path.join(ROOT, 'live-crate', 'target'))!.kind, 'active');
+});
+
+test('an orphan\'s reason names the missing manifest as the pack spells it — a sibling or an owner manifest (review F1.4)', () => {
+  const pods = find(run(tree([dir('dead-app', [dir('Pods', [file('Manifest.lock'), file('lib.a', 2000)])])])),
+    path.join(ROOT, 'dead-app', 'Pods'));
+  assert.ok(pods, 'the orphaned Pods folder is found');
+  assert.equal(pods.reason, 'No Podfile beside it — the project that owned this is gone.', 'a sibling manifest, as the pack writes it');
+
+  // No shipped ownerManifest is capitalised (package.json is spelled that way),
+  // so a pack that adds one shows the owner manifest is said as written too.
+  const dirPacks = fileTempDir('tm-orphan-packs-');
+  for (const name of PACK_NAMES) fs.copyFileSync(path.join(PACKS, `${name}.json`), path.join(dirPacks, `${name}.json`));
+  const common = JSON.parse(fs.readFileSync(path.join(dirPacks, 'common.json'), 'utf8'));
+  common.rules.push({
+    id: 'regen-bundler', kind: 'project-directory', title: 'Bundler gems', description: 'Gems installed for one project',
+    category: 'regenerable', confidence: 'high', ecosystem: 'bundler', names: ['.bundle'],
+    ownerManifest: ['Gemfile'], evidence: ['config'], restoreCommand: 'bundle install',
+  });
+  fs.writeFileSync(path.join(dirPacks, 'common.json'), JSON.stringify(common, null, 2));
+  const entries = scanPackageEcosystems(tree([
+    dir('dead-gem', [dir('.bundle', [file('config', 10)])]),
+    dir('live-gem', [file('gemfile'), dir('.bundle', [file('config', 10)])]),
+  ]), compileIgnoreList([]), loadRuleCatalogFrom(dirPacks, process.platform)).ecosystems.flatMap((e) => e.entries);
+  assert.equal(find(entries, path.join(ROOT, 'dead-gem', '.bundle'))?.reason, 'No Gemfile beside it — the project that owned this is gone.',
+    'an owner manifest, as the pack writes it');
+  assert.equal(find(entries, path.join(ROOT, 'live-gem', '.bundle'))?.kind, 'active', 'matching the manifest is still case-insensitive');
 });
 
 test('an orphaned virtualenv is flagged and an active one is not', () => {

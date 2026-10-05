@@ -68,6 +68,8 @@ export interface ProjectDirRule extends RuleBase {
    * stated separately because Smart Suggestions flags it with or without one.
    */
   ownerManifest?: string[];
+  /** The owner manifest as the pack writes it, for prose ("Gemfile", not "gemfile"). */
+  ownerManifestLabels?: string[];
   /**
    * §C6: child names that identify the directory when its owner manifest is
    * already gone — without one of these, an orphan is not claimed for this
@@ -283,10 +285,11 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
             ? undefined
             : requireStringArray(packName, `${at}.requiresSibling`, entry.requiresSibling);
         const requiresSibling = siblingLabels?.map((s) => s.toLowerCase());
-        const ownerManifest =
+        const ownerManifestLabels =
           entry.ownerManifest === undefined
             ? undefined
-            : requireStringArray(packName, `${at}.ownerManifest`, entry.ownerManifest).map((s) => s.toLowerCase());
+            : requireStringArray(packName, `${at}.ownerManifest`, entry.ownerManifest);
+        const ownerManifest = ownerManifestLabels?.map((s) => s.toLowerCase());
         const evidence =
           entry.evidence === undefined
             ? undefined
@@ -296,7 +299,7 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
         if (base.ecosystem && !evidence) {
           fail(packName, `${at} is tagged with an ecosystem but has no evidence[] to identify it once its owner manifest is gone`);
         }
-        rule = { ...base, kind, names, labels, restoreCommand, requiresSibling, siblingLabels, ownerManifest, evidence };
+        rule = { ...base, kind, names, labels, restoreCommand, requiresSibling, siblingLabels, ownerManifest, ownerManifestLabels, evidence };
         break;
       }
       case 'directory':

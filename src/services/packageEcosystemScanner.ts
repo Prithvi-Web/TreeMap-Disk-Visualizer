@@ -278,6 +278,10 @@ export function scanPackageEcosystems(
         const kidNames = childNames(store, child);
         const identified = candidates.find((r) => r.evidence.some((e) => kidNames.has(e)));
         if (identified) {
+          // Named as the pack writes it ("Cargo.toml"); the lowercased lists are match keys.
+          const missing = identified.ownerManifest
+            ? (identified.ownerManifestLabels ?? identified.ownerManifest)[0]
+            : (identified.siblingLabels ?? identified.requiresSibling ?? [])[0];
           push({
             ecosystem: identified.ecosystem,
             kind: 'orphan',
@@ -285,7 +289,7 @@ export function scanPackageEcosystems(
             path: childPath,
             size: store.size(child),
             modifiedAt: lastTouched(store, child),
-            reason: `No ${(identified.ownerManifest ?? identified.requiresSibling ?? [])[0] || 'project manifest'} beside it — the project that owned this is gone.`,
+            reason: `No ${missing || 'project manifest'} beside it — the project that owned this is gone.`,
             command: identified.restoreCommand,
           });
           continue;
