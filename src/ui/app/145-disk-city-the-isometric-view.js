@@ -1787,7 +1787,7 @@ $('cityTable').addEventListener('click', (e) => {
 registerView({
   id: 'city',
   label: 'Disk City',
-  icon: 'box',
+  icon: 'city',
   needsScan: true,
   onScanChange() {
     state.city.counts.clear();

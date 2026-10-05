@@ -431,7 +431,7 @@ $('apSaveBtn').addEventListener('click', async () => {
 registerView({
   id: 'autopilot',
   label: 'Autopilot',
-  icon: 'sparkles',
+  icon: 'autopilot',
   // Policies and run history are persisted, so this works with no scan loaded.
   needsScan: false,
   mount() { loadAutopilot(); },
