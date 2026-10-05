@@ -21,6 +21,7 @@ import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
 import { AsyncMutex } from '../utils/asyncMutex';
+import { recordRestorePartial, whileRestoring } from './restoreLeftovers';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -770,7 +771,12 @@ export async function startRestore(ids: string[]): Promise<OffloadJob> {
   return job;
 }
 
-async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<void> {
+/** Recorded as a restore under way (FG3g L4): the start-up sweep never removes its temporary files. */
+function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<void> {
+  return whileRestoring(() => restoreEntries(job, entries));
+}
+
+async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise<void> {
   const failures: string[] = [];
   /** Restores that stopped and could not remove what they had begun writing (FG3f #7). */
   const leftBehind: string[] = [];
@@ -796,7 +802,7 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
       // Written beside its name and put there only once it verifies (FG3f #8): a quit or a kill
       // part-way leaves no part-copied file at the person's own name.
       const partial = partialNameFor(entry.originalPath);
-      const hash = await copyWithHash(entry.destPath, partial, jobProgress(job, true));
+      const hash = await copyWithHash(entry.destPath, partial, jobProgress(job, true), { onCreated: (made) => recordRestorePartial(partial, made) });
 
       job.phase = 'verifying';
       if (hash !== entry.hash) {

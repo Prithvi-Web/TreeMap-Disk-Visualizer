@@ -508,7 +508,11 @@ test('nothing outside Cleaner removes a user file', async () => {
     'src/platform/macos/tmutil.ts: rmdir(mountPoint':
       'its own mkdtemp’d mount point, after unmounting, without recursion: a snapshot that did not come off is never walked into',
     'src/utils/copyVerify.ts: rm(dest':
-      'the file a copy made at its destination moments earlier, when the copy did not finish, and only while the disk still shows that same file (its device and id): never one that was there first — the exclusive open refused it — nor one put there since (FG3d #1)',
+      'the file a copy made at its destination moments earlier, when the copy did not finish, and only while the disk still shows that same file (its device and id): never one that was there first — the exclusive open refused it — nor one put there since (FG3d #1); and the empty placeholder a placement without hard links made at a name moments earlier, when the rename into it failed, only while it is still that same empty file (FG3g L4)',
+    'src/services/restoreLeftovers.ts: rm(journalPath(':
+      'TreeMap’s own record of restores’ temporary files, in app-data, once nothing is left in it (FG3g L4)',
+    'src/services/restoreLeftovers.ts: rm(record.path':
+      'a restore’s temporary file (.treemap-restore-…) that a quit or a kill left, at start: only a name of that shape that TreeMap itself recorded, only while the disk still shows the same plain file the restore made (its device and id), and never while a restore is under way (FG3g L4)',
     'src/utils/copyVerify.ts: rm(partial':
       'the temporary second name (.treemap-restore-…) of a restored file, made by the restore moments earlier, right after the same file was hard-linked at its own name: the file stays, under its name (FG3f #8)',
   };

@@ -24,6 +24,7 @@ import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from
 import { collapseBatch, deepestFirst, shallowestFirst } from './capsuleBatch';
 import { restoreNameKeyFor } from '../utils/volumeNames';
 import { AsyncMutex } from '../utils/asyncMutex';
+import { recordRestorePartial, sweepRestoreLeftovers, whileRestoring } from './restoreLeftovers';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -1881,6 +1882,13 @@ export function startCapsuleMaintenance(): void {
   maintenanceTimer.unref(); // never keeps the process alive on its own
   void reconcileCapsule().catch((err: unknown) => console.error('[treemap] capsule reconcile failed:', err));
   void pruneExpired().catch((err: unknown) => console.error('[treemap] capsule prune failed:', err));
+  // What a restore — of a copy here or of an offloaded file — left beside a name when TreeMap was
+  // quit or killed part-way (FG3g L4): only names it recorded, and only while each is still the file
+  // it made.
+  void sweepRestoreLeftovers().then(({ removed, kept }) => {
+    if (removed.length > 0) console.error(`[treemap] removed ${String(removed.length)} temporary file(s) a restore left when TreeMap last stopped`);
+    for (const k of kept) console.error(`[treemap] left ${k.path}, which a restore recorded: ${k.why}`);
+  }, (err: unknown) => console.error('[treemap] the sweep of restores\' temporary files failed:', err));
 }
 
 export function stopCapsuleMaintenance(): void {
@@ -2297,13 +2305,17 @@ async function runRestoreAll(
   planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[],
   beforeComplete?: () => Promise<void>,
 ): Promise<void> {
-  try {
-    await restoreEach(job, planned, beforeComplete);
-  } finally {
-    // However the job ended — complete, failed, cancelled, or thrown — its copies are no longer in
-    // use by it (FG3g H1). One put back is restored; one it did not reach is held as before.
-    for (const { entry } of planned) restoresInFlight.delete(entry.id);
-  }
+  // Recorded as a restore under way (FG3g L4): the start-up sweep never removes its temporary files.
+  await whileRestoring(async () => {
+    try {
+      await restoreEach(job, planned, beforeComplete);
+    } finally {
+      // However the job ended — complete, failed, cancelled, or thrown — its copies are no longer in
+      // use by it (FG3g H1), and are let go in the same turn its outcome is set, before anything else
+      // is awaited: a retry the moment the job says it failed is never refused as still running.
+      for (const { entry } of planned) restoresInFlight.delete(entry.id);
+    }
+  });
 }
 
 async function restoreEach(
@@ -2506,7 +2518,7 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       const hash = await copyWithHash(from, partial, {
         onBytes: (n) => { job.bytesDone += n; },
         isCancelled: () => job.cancelled,
-      });
+      }, { onCreated: (made) => recordRestorePartial(partial, made) });
       writtenByThisRestore.push(partial);
 
       job.phase = 'verifying';

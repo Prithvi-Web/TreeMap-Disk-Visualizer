@@ -115,6 +115,12 @@ export function setStallTimerForTests(timer: StallTimer): () => void {
 export interface CopyOptions {
   /** Stop the copy (CopyStalled) when its source makes no progress for this long (FG3g M2). */
   stallMs?: number;
+  /**
+   * Awaited with the file the copy has just made at `dest` (`dev:ino`), before any byte is written
+   * into it (FG3g L4): a restore records its temporary file there, so a later start can remove one
+   * a kill left — and only that file.
+   */
+  onCreated?: (identity: string) => Promise<void>;
 }
 
 /**
@@ -124,7 +130,7 @@ export interface CopyOptions {
  */
 export async function copyWithHash(src: string, dest: string, progress?: CopyProgress, options: CopyOptions = {}): Promise<string> {
   const { stallMs } = options;
-  if (stallMs === undefined) return copyOnce(src, dest, progress, () => false);
+  if (stallMs === undefined) return copyOnce(src, dest, progress, () => false, options.onCreated);
   // The stall limit (FG3g M2). A read that never answers cannot be interrupted — the file system call
   // waits in a worker thread, and even destroying the stream waits for it — so the copy is answered
   // at once, as stalled, and its own work stops (removing what it made) whenever that read returns.
@@ -153,7 +159,7 @@ export async function copyWithHash(src: string, dest: string, progress?: CopyPro
       progress?.onBytes?.(n);
     },
     isCancelled: () => stalled || (progress?.isCancelled?.() ?? false),
-  }, () => stalled);
+  }, () => stalled, options.onCreated);
   copying.catch(() => {}); // answered below, or — once stalled — no longer waited for
   try {
     return await Promise.race([copying, expired]);
@@ -173,7 +179,13 @@ const realStallTimer: StallTimer = (ms, onExpire) => {
  * One copy. `abandoned` answers true once the caller has stopped waiting for it (a stall): from then
  * on it makes nothing more, and removes what it made, as a failed copy does.
  */
-async function copyOnce(src: string, dest: string, progress: CopyProgress | undefined, abandoned: () => boolean): Promise<string> {
+async function copyOnce(
+  src: string,
+  dest: string,
+  progress: CopyProgress | undefined,
+  abandoned: () => boolean,
+  onCreated?: (identity: string) => Promise<void>,
+): Promise<string> {
   // The source first, so a copy that cannot read its source makes nothing at all.
   const input = await fsp.open(src, 'r');
   if (abandoned()) {
@@ -191,6 +203,7 @@ async function copyOnce(src: string, dest: string, progress: CopyProgress | unde
   try {
     const st = await output.stat({ bigint: true });
     made = `${st.dev}:${st.ino}`;
+    if (onCreated) await onCreated(made);
     if (abandoned()) throw new CopyCancelled();
     const hash = crypto.createHash('sha256');
     const reader = input.createReadStream();

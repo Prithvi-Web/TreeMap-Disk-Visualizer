@@ -55,6 +55,7 @@ const NOT_A_RACE: Record<string, string> = {
   'services/timeCapsule.ts::runRestoreAll': 'long job, progress endpoint',
   'services/timeCapsule.ts::pruneExpired': 'retention sweep on a timer; owned by no request',
   'services/timeCapsule.ts::reconcileCapsule': 'startup reconciliation; owned by no request',
+  'services/timeCapsule.ts::sweepRestoreLeftovers': 'startup sweep of what restores left when TreeMap last stopped; owned by no request',
   'services/scheduler.ts::tick': 'the scheduler daemon itself',
   'services/scheduler.ts::runDuePolicies': 'scheduler daemon',
   'services/scheduler.ts::runScheduled': 'scheduler daemon',

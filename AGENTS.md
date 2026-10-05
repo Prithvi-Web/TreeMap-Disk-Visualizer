@@ -416,7 +416,10 @@ OpenAPI 3 spec).
      with their permissions and the dates they were last modified and opened
      (not their creation dates, which nothing sets back), even after the Trash
      has been emptied; a date or permission that could not be set back finishes
-     the restore with a warning naming it.
+     the restore with a warning naming it. Each file is written beside its
+     name (`.treemap-restore-…`) and put there only once it verifies; one a
+     quit or a kill left is removed at the next start — only names TreeMap
+     recorded, and only while each is still the file it made.
      (Directory times are restored after their contents, so writing the
      children back does not re-stamp the folder.) It is a separate route from
      `DELETE /api/files`
@@ -547,7 +550,8 @@ read-what-you-saw) permission to act.
   Trash.
 - **TreeMap's own app-data folder is never a write destination.** It holds
   the files TreeMap trusts — settings, the Autopilot policies and their
-  approval, the offload manifest, the Time Capsule, the spill folder — so no
+  approval, the offload manifest, the Time Capsule, the spill folder, the
+  record of restores' temporary files — so no
   request names a place in it that a file is written, moved or copied to: a
   relocation's `to`, an offload's `dest` and every copy its plan makes, a
   snapshot restore's destination (given, or the default beside an original in
