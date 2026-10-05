@@ -491,12 +491,21 @@ export interface DuplicateGroup {
 export type DuplicateJobStatus = 'running' | 'complete' | 'error';
 
 /** Mutable record of one background hashing job (per scanId). */
+export type DuplicatePhase = 'sizes' | 'partial' | 'full';
+
 export interface DuplicateJob {
   scanId: string;
   status: DuplicateJobStatus;
   /** Files below this many bytes were not considered. */
   minSize: number;
-  /** Hashing progress for the UI. */
+  /**
+   * Which pass the job is in: 'sizes' (grouping files by size, nothing read
+   * yet), 'partial' (reading the first 64 KiB of every same-size candidate)
+   * or 'full' (reading whole the files whose first 64 KiB matched). The
+   * counters below are the current pass's.
+   */
+  phase: DuplicatePhase;
+  /** Hashing progress for the UI: files of this pass read so far, and the pass's total. */
   hashed: number;
   toHash: number;
   cancelled: boolean;

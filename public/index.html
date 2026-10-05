@@ -29726,6 +29726,19 @@ async function loadAppsScatter() {
 /* ───────────────────────────── Duplicates view ───────────────────────────── */
 
 /**
+ * The Duplicates view's progress line for a 202 from /api/duplicates, naming
+ * the pass: the quick one reads the start of every same-size candidate, the
+ * second reads whole only the files that still match (QA D52).
+ */
+function dupProgressText(data) {
+  if (!data.toHash) return 'Comparing file sizes…';
+  const counts = `${formatCount(data.hashed)} / ${formatCount(data.toHash)} files`;
+  return data.phase === 'full'
+    ? `Confirming matches… ${counts}, read in full`
+    : `Hashing candidates… ${counts}`;
+}
+
+/**
  * A tree can be on screen with no scan behind it.
  *
  * Two ways in: the index paints a folder before the background scan has an id,
@@ -29777,9 +29790,7 @@ async function loadDuplicates(force = false) {
         undefined, { pending: 'return' });
       if (data.status === 'running') {
         const t = $('dupProgText'), f = $('dupProgFill');
-        if (t) t.textContent = data.toHash
-          ? `Hashing candidates… ${formatCount(data.hashed)} / ${formatCount(data.toHash)} files`
-          : 'Comparing file sizes…';
+        if (t) t.textContent = dupProgressText(data);
         if (f && data.toHash) f.style.width = Math.round((data.hashed / data.toHash) * 100) + '%';
         state.dup.pollTimer = setTimeout(poll, 700);
         return;

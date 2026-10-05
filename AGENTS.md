@@ -120,7 +120,10 @@ OpenAPI 3 spec).
      command that restores or clears them. Same `available:false` + `reason`
      contract as the suggestions endpoint.
    - `GET /api/duplicates` — content-identical groups (background hashing;
-     `202` with progress until done).
+     `202` with progress until done: `phase` says which pass `hashed`/`toHash`
+     count — `partial` reads the first 64 KiB of every same-size candidate,
+     `full` then reads whole only the files that still match, counting again
+     from zero).
    - `GET /api/games` — Steam / Epic / GOG / itch.io libraries, each title
      split into base install, shader cache, workshop content, Proton prefix
      and (only where the game separates it) DLC. **Only `shaderCache`

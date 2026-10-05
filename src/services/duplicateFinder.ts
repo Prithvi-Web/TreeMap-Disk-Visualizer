@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { createReadStream } from 'fs';
-import { ScanResult, DuplicateGroup, DuplicateJob, NotHashed } from '../models/types';
+import { ScanResult, DuplicateGroup, DuplicateJob, DuplicatePhase, NotHashed } from '../models/types';
 import { Flag, storeOf } from './scanStore';
 import { peekScan } from './diskScanner';
 import { stillLocal } from './dataLocality';
@@ -55,6 +55,19 @@ export function observeNotHashedHeldForTests(observer: ((held: number) => void) 
   notHashedHeldObserver = observer;
 }
 
+/** Test-only: told of every change to a job's progress (its phase, hashed or toHash). */
+let progressObserver: ((progress: { phase: DuplicatePhase; hashed: number; toHash: number }) => void) | null = null;
+
+/** Test-only: watch every progress change (null stops watching). */
+export function observeDuplicateProgressForTests(observer: typeof progressObserver): void {
+  progressObserver = observer;
+}
+
+/** Tells the test seam, if any, where `job` stands now. */
+function progressed(job: DuplicateJob): void {
+  progressObserver?.({ phase: job.phase, hashed: job.hashed, toHash: job.toHash });
+}
+
 const jobs = new Map<string, DuplicateJob>();
 
 export function cancelAllDuplicateJobs(): void {
@@ -102,6 +115,7 @@ export function getDuplicateJob(scan: ScanResult, minSize: number): DuplicateJob
     scanId: scan.scanId,
     status: 'running',
     minSize,
+    phase: 'sizes',
     hashed: 0,
     toHash: 0,
     cancelled: false,
@@ -147,7 +161,9 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
   for (const bucket of bySize.values()) {
     if (bucket.length > 1) candidates.push(bucket);
   }
+  job.phase = 'partial';
   job.toHash = candidates.reduce((sum, b) => sum + b.length, 0);
+  progressed(job);
 
   // Stage 2 — partial hash inside each size bucket.
   const partialGroups: number[][] = [];
@@ -157,12 +173,13 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
       placeholders.push(id);
       placeholderBytes += store.size(id);
     });
-    job.toHash -= candidate.length - bucket.length;
+    // A file evicted since the scan is not read, and neither is one left with
+    // no copy to compare: both come off this pass's total, so it ends at it.
+    job.toHash -= bucket.length < 2 ? candidate.length : candidate.length - bucket.length;
+    progressed(job);
     if (bucket.length < 2) continue;
     const byPartial = new Map<string, number[]>();
-    const hashes = await mapConcurrent(bucket, HASH_CONCURRENCY, (id) =>
-      hashFile(store.path(id), PARTIAL_BYTES).catch(() => null)
-    );
+    const hashes = await mapConcurrent(bucket, HASH_CONCURRENCY, (id) => countedHash(job, store.path(id), PARTIAL_BYTES));
     bucket.forEach((id, i) => {
       const h = hashes[i];
       if (h === null) return; // unreadable (vanished / permission) — drop it
@@ -180,13 +197,16 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
 
   job.notHashed = notHashedReport(placeholders, placeholderBytes, (id) => store.size(id), (id) => store.path(id));
 
-  // Stage 3 — full hash for groups that still match.
+  // Stage 3 — full hash for groups that still match. A pass of its own, so
+  // its progress counts from zero against the files it will actually read.
+  job.phase = 'full';
+  job.hashed = 0;
+  job.toHash = partialGroups.reduce((sum, g) => sum + g.length, 0);
+  progressed(job);
   const byFull = new Map<string, number[]>();
   for (const group of partialGroups) {
     if (job.cancelled) return;
-    const hashes = await mapConcurrent(group, HASH_CONCURRENCY, (id) =>
-      hashFile(store.path(id)).catch(() => null)
-    );
+    const hashes = await mapConcurrent(group, HASH_CONCURRENCY, (id) => countedHash(job, store.path(id)));
     group.forEach((id, i) => {
       const h = hashes[i];
       if (h === null) return;
@@ -195,7 +215,6 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
       if (bucket) bucket.push(id);
       else byFull.set(key, [id]);
     });
-    job.hashed += group.length;
   }
 
   const groups: DuplicateGroup[] = [];
@@ -292,6 +311,19 @@ function hashFile(filePath: string, limit?: number): Promise<string> {
     stream.on('data', (chunk) => hash.update(chunk));
     stream.on('end', () => resolve(hash.digest('hex')));
   });
+}
+
+/**
+ * One file's hash (of its first `limit` bytes, or whole), null when it cannot
+ * be read — counted into the job's progress as soon as it is done either way
+ * (QA D52: the first pass, the long one, used to count nothing, so the
+ * Duplicates view read "0 / 39,575 files" until the job was done).
+ */
+async function countedHash(job: DuplicateJob, filePath: string, limit?: number): Promise<string | null> {
+  const hash = await hashFile(filePath, limit).catch(() => null);
+  job.hashed += 1;
+  progressed(job);
+  return hash;
 }
 
 /** Run `fn` over `items` with at most `limit` in flight; results keep order. */

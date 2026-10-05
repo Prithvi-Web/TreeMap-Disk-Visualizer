@@ -524,7 +524,9 @@ export function buildMcpServer(): McpServer {
       description:
         'Content-identical duplicate groups in a completed scan (size bucket → partial hash → full SHA-256). ' +
         'Hashing runs in the background: if it is still working after waitMs you get { status: "running", ' +
-        'hashed, toHash } — call find_duplicates again with the same arguments to keep polling. Groups come ' +
+        'phase, hashed, toHash } — phase is "sizes", "partial" (the first 64 KiB of every candidate) or ' +
+        '"full" (whole files that still match), and hashed/toHash count that pass\'s files. Call ' +
+        'find_duplicates again with the same arguments to keep polling. Groups come ' +
         'back largest-reclaimable first. Cloud placeholders are never opened (opening one downloads it); ' +
         'they are counted in notHashed instead.',
       inputSchema: {
@@ -549,6 +551,7 @@ export function buildMcpServer(): McpServer {
           return ok({
             scanId,
             status: 'running',
+            phase: job.phase,
             hashed: job.hashed,
             toHash: job.toHash,
             hint: 'Call find_duplicates again with the same arguments to keep polling.',

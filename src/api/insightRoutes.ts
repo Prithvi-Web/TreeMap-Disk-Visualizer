@@ -83,7 +83,8 @@ insightRouter.get('/duplicates', storageModeGate, (req: Request, res: Response) 
 
   const job = getDuplicateJob(scan, minSize);
   if (job.status === 'running') {
-    res.status(202).json({ status: 'running', hashed: job.hashed, toHash: job.toHash });
+    // `phase` names the pass `hashed`/`toHash` count (QA D52): the second pass counts from zero.
+    res.status(202).json({ status: 'running', phase: job.phase, hashed: job.hashed, toHash: job.toHash });
     return;
   }
   if (job.status === 'error') {

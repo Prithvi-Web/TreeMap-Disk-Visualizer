@@ -194,6 +194,18 @@ test('find_duplicates finds the identical pair and its reclaimable bytes', async
   assert.equal(dupGroup.reclaimableFormatted, '512.0 KB');
 });
 
+test('find_duplicates still hashing says which pass its counts are for (QA D52)', async () => {
+  // A minimum no earlier call used starts a fresh job; waitMs 0 answers before any file is read.
+  const r = await call('find_duplicates', { scanId, minSizeBytes: 3, waitMs: 0 });
+  assert.ok(!r.isError, JSON.stringify(r.content));
+  const s = r.structuredContent!;
+  assert.equal(s.status, 'running');
+  assert.equal(s.phase, 'partial', 'the partial pass has begun: its counts are of the first 64 KiB of each candidate');
+  assert.equal(s.hashed, 0);
+  assert.ok(s.toHash > 0);
+  await settle('find_duplicates', { scanId, minSizeBytes: 3 }, () => ({ scanId, minSizeBytes: 3 }));
+});
+
 test('cleanup_suggestions flags node_modules as regenerable', async () => {
   const r = await call('cleanup_suggestions', { scanId });
   assert.ok(!r.isError);

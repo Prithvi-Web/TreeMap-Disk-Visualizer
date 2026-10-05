@@ -1336,7 +1336,18 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           ['status', 'scanId', 'minSize', 'groups', 'groupCount', 'totalReclaimable', 'notHashed', 'tookMs'],
         ),
       ),
-      '202': jsonResponse('Hashing in progress', obj({ status: str("'running'"), hashed: int(), toHash: int() }, ['status', 'hashed', 'toHash'])),
+      '202': jsonResponse(
+        'Hashing in progress',
+        obj(
+          {
+            status: str("'running'"),
+            phase: str("Which pass hashed/toHash count: 'sizes' (grouping by size, nothing read yet), 'partial' (the first 64 KiB of every same-size candidate) or 'full' (whole files whose first 64 KiB matched; counts again from zero)"),
+            hashed: int(),
+            toHash: int(),
+          },
+          ['status', 'phase', 'hashed', 'toHash'],
+        ),
+      ),
       '409': errorResponse('Scan still running'),
     },
   },
