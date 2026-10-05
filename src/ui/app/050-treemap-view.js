@@ -349,6 +349,49 @@ function treemapCanvasHeight(wrap) {
   return Math.max(360, Math.floor(window.innerHeight - top - padY - below - mainPadB));
 }
 
+/**
+ * The server's ceiling on one treemap response: `maxNodes: 20_000` where
+ * src/api/scanRoutes.ts builds the map. The response is golden-locked (§12),
+ * so nothing in it can say the map was cut — the page has to know the number.
+ */
+const TM_SERVER_NODE_CAP = 20000;
+let tmCapMemo = { nodes: null, rootSize: -1, note: '' };
+
+/**
+ * The rectangle map's admission that the server's cap cut it short (QA D58).
+ *
+ * A folder of 25,600 files drew 20,000 of them and left a blank rectangle for
+ * the rest, under a status line reading "20,000 nodes · 20,000 drawn" — the
+ * blank read as free space or as a rendering fault. Circles and Voronoi
+ * already name what they leave out; this is the same sentence for this map.
+ *
+ * The bytes with no rectangle are exact from the drawn set alone: every
+ * outlined folder (the root included) minus what was drawn inside it. That
+ * also counts the files under the 4 KB floor, which have no rectangle either,
+ * so the sentence stays true. Below the cap it says nothing — the line on
+ * every map would be noise. The injected Trash cell is not a server node.
+ */
+function tmNodeCapNote() {
+  const nodes = state.treemap.nodes;
+  let sent = 0;
+  for (const n of nodes) if (!n.isTrash) sent++;
+  if (sent < TM_SERVER_NODE_CAP) return '';
+  if (tmCapMemo.nodes === nodes && tmCapMemo.rootSize === state.treemap.rootSize) return tmCapMemo.note;
+  const { root, kids } = tmDrawnTree();
+  let blank = 0;
+  for (const p of [root, ...nodes]) {
+    if (!p.expanded) continue;
+    let drawn = 0;
+    for (const c of kids.get(p.path) || []) drawn += c.size;
+    blank += Math.max(0, p.size - drawn);
+  }
+  const note = `The map stops at ${formatCount(TM_SERVER_NODE_CAP)} items`
+    + (blank > 0 ? `: ${formatBytes(blank)} has no rectangle here` : '')
+    + ' — drill in, or open the Grid view, to see the rest.';
+  tmCapMemo = { nodes, rootSize: state.treemap.rootSize, note };
+  return note;
+}
+
 /** The note over an empty map. Empty text hides it; the note is a live region, so it is also read out. */
 function tmSetEmpty(text) {
   const el = $('tmEmpty');
@@ -386,6 +429,10 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded });
   }
   state.treemap.pxRects = px;
+  // QA D58 — the server stops a map at 20,000 nodes and its response cannot
+  // say so (§12 golden lock), so the note under the map does.
+  state.treemap.altNote = tmNodeCapNote();
+  renderAltNote();
 
   // A map with nothing to draw must say so — a blank panel reads as a broken
   // app, not as a small folder. loadTreemap already dropped the 4 KB floor

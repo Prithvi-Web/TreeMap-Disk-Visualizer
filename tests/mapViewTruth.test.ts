@@ -22,8 +22,9 @@ function declSource(name: string): string {
   if (start > 0 && INDEX.slice(start - 6, start) === 'async ') start -= 6;
   if (start === -1) start = INDEX.indexOf(`const ${name} = {`);
   if (start === -1) {
-    // A scalar constant: `const NAME = value;` up to its semicolon.
-    const at = INDEX.indexOf(`const ${name} = `);
+    // A one-statement value: `const NAME = value;` or `let NAME = value;`, up to its semicolon.
+    let at = INDEX.indexOf(`const ${name} = `);
+    if (at === -1) at = INDEX.indexOf(`let ${name} = `);
     assert.notEqual(at, -1, `${name} is declared in the built page`);
     return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
   }
@@ -400,4 +401,56 @@ test('D25: the name inside a crumb ellipsizes (text-overflow does nothing on the
   for (const d of [/min-width:\s*0/, /overflow:\s*hidden/, /text-overflow:\s*ellipsis/, /white-space:\s*nowrap/]) {
     assert.match(rule, d, `.crumb-nm declares ${d}`);
   }
+});
+
+/* ══════════════ D58 — the 20,000-node cap is stated, not left as a blank ══════════════ */
+
+type TmNode = { path: string; size: number; depth: number; expanded: boolean; isTrash?: boolean };
+
+function capNote(nodes: TmNode[], rootSize: number): string {
+  const note = load<() => string>(['tmNodeCapNote', 'tmDrawnTree', 'tmParentPath', 'TM_SERVER_NODE_CAP', 'tmCapMemo'], {
+    state: { treemap: { rootPath: '/r', rootSize, nodes } },
+    formatCount: fmtCount,
+    formatBytes: (n: number) => `${n} B`,
+  }, 'tmNodeCapNote');
+  return note();
+}
+
+const files = (n: number, size: number, dir = '/r'): TmNode[] =>
+  Array.from({ length: n }, (_, i) => ({ path: `${dir}/f${i}`, size, depth: 1, expanded: false }));
+
+test('D58: a map cut at the server\'s 20,000 nodes says so, and how much has no rectangle', () => {
+  // QA: a folder of 25,600 files drew 20,000 and left a blank rectangle for
+  // the rest, with "20,000 nodes · 20,000 drawn" as the only words.
+  const note = capNote(files(20000, 250), 25600 * 250);
+  assert.match(note, /stops at 20,000 items/, 'the cap is named');
+  assert.match(note, /1400000 B has no rectangle here/, 'the 5,600 undrawn files are 1.4 MB of blank map, stated exactly');
+  assert.match(note, /drill in, or open the Grid view/, 'and the way to see them');
+});
+
+test('D58: the undrawn bytes come from every outlined folder, not only the top level', () => {
+  // Breadth-first: the cap leaves whole subtrees out at the BOTTOM of the
+  // drawing order — a folder outlined with nothing inside it.
+  const nodes = [
+    ...files(19998, 10),
+    { path: '/r/big', size: 5000, depth: 1, expanded: true },
+    { path: '/r/big/a', size: 1000, depth: 2, expanded: false },
+  ];
+  const note = capNote(nodes, 19998 * 10 + 5000);
+  assert.match(note, /4000 B has no rectangle here/, 'big/ is outlined at 5,000 B with 1,000 B drawn inside it');
+});
+
+test('D58: under the cap the map says nothing extra — and the Trash cell is not a node the server sent', () => {
+  assert.equal(capNote(files(19999, 250), 19999 * 250 + 5000), '', '19,999 nodes were not cut by a 20,000 cap');
+  const withTrash = [...files(19999, 250), { path: '\0trash', size: 1e9, depth: 1, expanded: false, isTrash: true }];
+  assert.equal(capNote(withTrash, 19999 * 250), '', 'the injected Trash cell does not make 19,999 into 20,000');
+});
+
+test('D58: every rectangle-map paint refreshes the note under the map', () => {
+  const start = INDEX.indexOf('function drawTreemap() {');
+  const body = INDEX.slice(start, INDEX.indexOf('\n}', start));
+  const at = body.indexOf('state.treemap.altNote = tmNodeCapNote();');
+  assert.ok(at > body.indexOf('state.treemap.pxRects = px;'), 'drawTreemap writes the note once it knows what it drew');
+  assert.ok(at < body.indexOf('if (!px.length)'), 'before the empty-map return, so a stale note never outlives its map');
+  assert.match(body.slice(at, at + 200), /renderAltNote\(\);/, 'and shows it');
 });
