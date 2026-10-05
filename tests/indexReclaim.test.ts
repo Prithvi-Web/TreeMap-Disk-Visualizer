@@ -386,6 +386,34 @@ test('a build that starts while another is running leaves that one alone: only a
   assert.equal(rowsUnder(built.id), 1202, 'and keeps every row it wrote');
 });
 
+/* ══════════════════ delete-all under a reclaim (review of 5 Oct 2026, L-5) ══════════════════ */
+
+test('removing the whole index while a reclaim is in flight, then building the folder again: the reclaim never touches the new index — not even should a root id come round again', async (t) => {
+  for (const reuse of [true, false]) {
+    const how = reuse ? 'an id come round again' : 'ids as they ship';
+    await reclaimsSettled();
+    const dir = folder(reuse ? 'reuse' : 'deleteall');
+    addFiles(dir, 700);
+    const saved = await buildIndex(dir, { live: false });
+    const watch = watchReclaims(t, { rootId: () => saved.id, rows: 100 });
+    await buildIndex(dir, { live: false }); // explicit: the saved root set aside, its reclaim held before its first slice
+    await watch.whenHeld();
+    assert.ok(deleteIndex() >= 1, `${how}: delete-all removes the folder's index`);
+    assert.equal(count('SELECT COUNT(*) c FROM roots'), 0, `${how}: and every root, the one being reclaimed too`);
+    // What a lost id memory would do: roots.id is AUTOINCREMENT, so this takes the test to make it happen.
+    if (reuse) openIndex().prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'roots'").run(saved.id - 1);
+    const fresh = await buildIndex(dir, { live: false });
+    if (reuse) assert.equal(fresh.id, saved.id, `${how}: the new root has the id the held reclaim names`);
+    else assert.ok(fresh.id > saved.id, `${how}: a root id is never used twice`);
+
+    watch.release();
+    await reclaimsSettled();
+    assert.equal(rowsUnder(fresh.id), 701, `${how}: the new index keeps every row`);
+    assert.equal(getRoot(dir)?.id, fresh.id, `${how}: and is the folder's`);
+    assert.deepEqual(watch.slices(saved.id).map((s) => s.rows), [], `${how}: the held reclaim ran no slice: the root it was given is gone`);
+  }
+});
+
 /* ══════════════════ another process on the same index (review of 5 Oct 2026, L-1) ══════════════════ */
 
 /**

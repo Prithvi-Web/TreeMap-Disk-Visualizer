@@ -554,6 +554,12 @@ async function reclaimSlice(job: Reclaim): Promise<boolean> {
   const n = ++job.slices;
   await job.seams?.beforeSlice?.(job.rootId, n);
   if (db !== job.handle) return true;
+  // The root it was given, still set aside under its own id — never one
+  // that took the id after the whole index was removed under this reclaim.
+  // roots.id is AUTOINCREMENT, so an id never comes round today; the reclaim
+  // does not rest on that alone (review of 5 Oct 2026, L-5).
+  const stillAside = job.handle.prepare('SELECT 1 FROM roots WHERE id = ? AND path = ?').get(job.rootId, `${DISCARD_PREFIX}${String(job.rootId)}`);
+  if (stillAside === undefined) return true;
   const { changes } = job.handle
     .prepare('DELETE FROM nodes WHERE rowid IN (SELECT rowid FROM nodes WHERE root_id = ? LIMIT ?)')
     .run(job.rootId, rows);
