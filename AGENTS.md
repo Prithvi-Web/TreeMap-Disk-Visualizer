@@ -475,7 +475,10 @@ read-what-you-saw) permission to act.
   drives appear, is excluded whatever is mounted there). A scan of the Data
   volume itself (`/System/Volumes/Data`) covers only what the root shows of
   that volume — its firmlinked folders (`/Users`, `/Applications`,
-  `/private`, …) — never the sealed system volume or another volume.
+  `/private`, …) — never the sealed system volume or another volume, and
+  never anything in that volume's own spelling of a fixed folder: its
+  `/Volumes` is the root's, so no drive there is covered — one mounted after
+  the scan began, or any at all when the mount table could not be read.
 - **TreeMap's own spill folder.** `<appData>/scan-spill` is reserved for the
   working files of very large scans (Phase 4; no scan writes there yet). Every
   endpoint and MCP tool that takes a path

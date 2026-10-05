@@ -534,8 +534,19 @@ export function mountOutcome(record: ScanBoundaryRecord): MountOutcome {
  * `settleComplete` marks from `neverDescend` on every engine's tree (U-4). A
  * record from before U-24 (no boundary) reads the fixed list, which every
  * engine has always honoured.
+ *
+ * A root on macOS's Data volume (/System/Volumes/Data or below) also never
+ * lists the fixed folders as that volume spells them (the SEC-1 review, M2).
+ * The firmlinks make the Data volume's /Volumes the root's /Volumes, so every
+ * drive mounted at any time appears in a walk of /System/Volumes/Data; the
+ * fixed list is spelled from the root, so none of it lay below this root, and
+ * only the drives the table named when the scan started were refused — none
+ * at all when the table could not be read.
  */
 export function exclusionsOf(record: ScanBoundary | undefined, root: string, platform: NodeJS.Platform = process.platform): string[] {
   const list = record ? record.neverDescend : neverDescendPaths(platform);
-  return list.filter((p) => isStrictlyUnder(root, p));
+  const onData = platform === 'darwin' && isAtOrUnder(DATA_VOLUME, root)
+    ? (record ? record.fixed : neverDescendPaths(platform)).map((f) => DATA_VOLUME + f)
+    : [];
+  return [...new Set([...list, ...onData])].filter((p) => isStrictlyUnder(root, p));
 }

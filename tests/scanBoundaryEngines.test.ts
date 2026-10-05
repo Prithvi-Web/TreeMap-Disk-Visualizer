@@ -682,6 +682,21 @@ test('exclusionsOf: the fixed folders below the root and, under stay, the drives
   assert.deepEqual(exclusionsOf(undefined, '/Volumes/Backup', 'darwin'), [], 'a fixed folder above the root is not this scan’s');
 });
 
+test('exclusionsOf: a scan of the Data volume also never lists the fixed folders as that volume spells them — /Volumes, where every drive appears, with or without a mount table (the SEC-1 review, M2)', () => {
+  const data = '/System/Volumes/Data';
+  const backup = `${data}/Volumes/Backup`;
+  const fixed = ['/System/Volumes', '/Volumes', '/dev', '/home'];
+  const stay = { ...handRecord(data, 'stay', [backup]), fixed, neverDescend: [...fixed, backup] };
+  assert.deepEqual(exclusionsOf(stay, data, 'darwin'), [backup, `${data}/System/Volumes`, `${data}/Volumes`, `${data}/dev`, `${data}/home`]);
+  const unknown = { ...stay, mounts: null, neverDescend: [...fixed] };
+  assert.deepEqual(exclusionsOf(unknown, data, 'darwin'), [`${data}/System/Volumes`, `${data}/Volumes`, `${data}/dev`, `${data}/home`], 'no table: a drive mounted at any time is under /Volumes all the same');
+  assert.ok(exclusionsOf(undefined, data, 'darwin').includes(`${data}/Volumes`), 'no boundary on the record: the fixed list, in both spellings');
+  assert.deepEqual(exclusionsOf(stay, `${data}/Users/me`, 'darwin'), [], 'a folder inside the Data volume holds none of them');
+  assert.deepEqual(exclusionsOf(stay, `${data}/System`, 'darwin'), [`${data}/System/Volumes`], 'one that holds a fixed folder, in its spelling, does');
+  assert.deepEqual(exclusionsOf(stay, '/', 'darwin'), [...fixed, backup], 'a scan of / is as it was');
+  assert.deepEqual(exclusionsOf(undefined, data, 'linux'), [], 'Linux has no Data volume');
+});
+
 test('Trends and What’s new never compare two snapshots that stopped at different drives (409 BOUNDARY_CHANGED); two with one boundary are compared', async (t) => {
   if (NO_TABLE) return t.skip(NO_TABLE);
   const f = tree();
