@@ -89,14 +89,97 @@ export function setCopyFaultForTests(fault: (dest: string, bytesRead: number) =>
   return () => { copyFaultForTests = null; };
 }
 
+/** A copy stopped because its source made no progress for the whole stall limit (FG3g M2). */
+export class CopyStalled extends Error {
+  constructor(readonly src: string, readonly stallMs: number) {
+    super(`reading ${src} made no progress for ${Math.round(stallMs / 1000)} seconds, so the copy was stopped`);
+    this.name = 'CopyStalled';
+  }
+}
+
+/** Arms a timer that calls `onExpire` after `ms`, answering the function that disarms it. */
+export type StallTimer = (ms: number, onExpire: () => void) => () => void;
+
+/**
+ * Test-only: the timer a copy's stall limit is judged by (FG3g M2), so a test fires "the limit passed
+ * with no progress" itself rather than waiting on a clock. The suite's ForTests idiom: returns the
+ * function that removes it.
+ */
+let stallTimerForTests: StallTimer | null = null;
+export function setStallTimerForTests(timer: StallTimer): () => void {
+  stallTimerForTests = timer;
+  return () => { stallTimerForTests = null; };
+}
+
+/** Options of one copy. */
+export interface CopyOptions {
+  /** Stop the copy (CopyStalled) when its source makes no progress for this long (FG3g M2). */
+  stallMs?: number;
+}
+
 /**
  * Copy `src` → `dest`, returning the SHA-256 of the bytes that flowed through.
  * The destination must not already exist. A copy that does not finish leaves
  * nothing it made at `dest`, or throws `CopyLeftBehind` saying what it left.
  */
-export async function copyWithHash(src: string, dest: string, progress?: CopyProgress): Promise<string> {
+export async function copyWithHash(src: string, dest: string, progress?: CopyProgress, options: CopyOptions = {}): Promise<string> {
+  const { stallMs } = options;
+  if (stallMs === undefined) return copyOnce(src, dest, progress, () => false);
+  // The stall limit (FG3g M2). A read that never answers cannot be interrupted — the file system call
+  // waits in a worker thread, and even destroying the stream waits for it — so the copy is answered
+  // at once, as stalled, and its own work stops (removing what it made) whenever that read returns.
+  // Checked once per limit rather than reset per chunk: a stall is seen between one and two limits in.
+  let stalled = false;
+  let progressed = false;
+  let answerStalled!: (err: CopyStalled) => void;
+  const expired = new Promise<never>((_, reject) => { answerStalled = reject; });
+  const timer = stallTimerForTests ?? realStallTimer;
+  let disarm = (): void => {};
+  const arm = (): void => {
+    disarm = timer(stallMs, () => {
+      if (progressed) {
+        progressed = false;
+        arm();
+        return;
+      }
+      stalled = true;
+      answerStalled(new CopyStalled(src, stallMs));
+    });
+  };
+  arm();
+  const copying = copyOnce(src, dest, {
+    onBytes: (n) => {
+      progressed = true;
+      progress?.onBytes?.(n);
+    },
+    isCancelled: () => stalled || (progress?.isCancelled?.() ?? false),
+  }, () => stalled);
+  copying.catch(() => {}); // answered below, or — once stalled — no longer waited for
+  try {
+    return await Promise.race([copying, expired]);
+  } finally {
+    disarm();
+  }
+}
+
+/** The real stall timer: never keeps the process alive on its own. */
+const realStallTimer: StallTimer = (ms, onExpire) => {
+  const handle = setTimeout(onExpire, ms);
+  handle.unref();
+  return () => clearTimeout(handle);
+};
+
+/**
+ * One copy. `abandoned` answers true once the caller has stopped waiting for it (a stall): from then
+ * on it makes nothing more, and removes what it made, as a failed copy does.
+ */
+async function copyOnce(src: string, dest: string, progress: CopyProgress | undefined, abandoned: () => boolean): Promise<string> {
   // The source first, so a copy that cannot read its source makes nothing at all.
   const input = await fsp.open(src, 'r');
+  if (abandoned()) {
+    await input.close().catch(() => {});
+    throw new CopyCancelled();
+  }
   let output: FileHandle;
   try {
     output = await fsp.open(dest, 'wx'); // never clobber: on EEXIST what stands there is not this copy's
@@ -108,6 +191,7 @@ export async function copyWithHash(src: string, dest: string, progress?: CopyPro
   try {
     const st = await output.stat({ bigint: true });
     made = `${st.dev}:${st.ino}`;
+    if (abandoned()) throw new CopyCancelled();
     const hash = crypto.createHash('sha256');
     const reader = input.createReadStream();
     const writer = output.createWriteStream();
@@ -121,6 +205,8 @@ export async function copyWithHash(src: string, dest: string, progress?: CopyPro
       else if (progress?.isCancelled?.()) reader.destroy(new CopyCancelled());
     });
     await pipeline(reader, writer);
+    // A read that returned only after the copy was abandoned (an end of file, say) is not a copy.
+    if (abandoned()) throw new CopyCancelled();
     return hash.digest('hex');
   } catch (err) {
     // Both handles are closed first, so nothing of this copy's still holds the file it removes.

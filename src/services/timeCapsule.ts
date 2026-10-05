@@ -78,6 +78,16 @@ const MAX_FILES_PER_ENTRY = 50_000;
 /** Cap used when the volume's free space cannot be read at all. */
 const FALLBACK_CAP_BYTES = 1024 * 1024 * 1024;
 const JOB_TTL_MS = 30 * 60_000;
+/**
+ * How long one file's copy into the capsule may go without reading a byte before it is stopped
+ * (FG3g M2). A capture holds the index from its load to its save, so a read that never answered — a
+ * network volume gone quiet, a dying disk, a named pipe chosen for deletion — held every restore's
+ * bookkeeping, every Forget, the expiry and every other run behind it for ever, and the Autopilot
+ * policy that started it stayed "still running". Stopped, the copy fails like any other: its item is
+ * not protected, so it is not deleted, and the capture goes on. A volume merely slow still answers
+ * well within it.
+ */
+const CAPTURE_STALL_MS = 60_000;
 /** How often expired entries are swept out. */
 const MAINTENANCE_INTERVAL_MS = 60 * 60_000;
 
@@ -794,7 +804,7 @@ async function capture(
       }
 
       await fsp.mkdir(path.dirname(dest), { recursive: true });
-      const hash = await copyWithHash(member.abs, dest);
+      const hash = await copyWithHash(member.abs, dest, undefined, { stallMs: CAPTURE_STALL_MS });
       // Read back what actually landed. Hashing the source twice would agree
       // with itself even if the write was short or corrupted.
       const verify = await hashFile(dest);
