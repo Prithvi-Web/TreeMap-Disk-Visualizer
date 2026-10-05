@@ -715,6 +715,7 @@ async function capture(
   request: ProtectionRequest,
   context: { runId: string; policyId?: string },
   capBytes: number,
+  persist: () => Promise<void>,
 ): Promise<ProtectionOutcome> {
   const original = request.path;
   const name = path.basename(original);
@@ -755,6 +756,9 @@ async function capture(
         detail: `Removed from the Time Capsule to make room for ${name}. It can no longer be restored from here.`,
       });
     }
+    // Saved at once (FG3g L1), not at the end of the capture: until then the index on disk offered
+    // the evicted copies as restorable, and a restore or an undo of one was refused as unreadable.
+    if (plan.evict.length > 0) await persist();
     return { fits: true, pinnedBytes: 0 };
   });
   if (!room.fits) {
@@ -980,7 +984,7 @@ export async function protectItems(
     const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
     const outcomes: ProtectionOutcome[] = [];
     for (const request of requests) {
-      outcomes.push(await capture(store, request, { runId, policyId: context.policyId }, capacity.capBytes));
+      outcomes.push(await capture(store, request, { runId, policyId: context.policyId }, capacity.capBytes, () => saveStore(store)));
     }
     // Persist the captures before anything is deleted. If the process dies at
     // this instant, the capsule holds copies of files that still exist — wasteful
@@ -2224,7 +2228,12 @@ export async function startCapsuleRestore(entryIds: string[], options: RestoreOp
         throw new AppError(409, 'PATH_OCCUPIED',
           `Something already exists at ${place}. Move it aside first — restoring will never overwrite what is there now.`);
       }
-      const manifest = await readManifest(id).catch(() => null);
+      const manifest = await readManifest(id).catch((err: unknown) => {
+        // Its folder is gone (FG3g L1): evicted, expired or removed outside TreeMap. That is no copy,
+        // not a record that cannot be read.
+        if (meansAbsent(err)) throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
+        return null;
+      });
       if (!manifest) {
         throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
       }

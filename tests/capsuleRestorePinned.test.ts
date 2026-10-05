@@ -26,6 +26,7 @@ import {
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit } from '../src/services/cartCommit';
 import { setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
+import { undoCartRun } from '../src/services/cartCommit';
 import { AppError } from '../src/middleware/errorHandler';
 import type { TimeCapsuleEntry } from '../src/models/types';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
@@ -193,7 +194,7 @@ test('a restore asked for while a capture is evicting that very copy is refused,
       const job = await settled(outcome.jobId);
       assert.fail(`a restore was started on a copy being evicted, and ended ${job.status}: ${job.error}`);
     }
-    assert.ok(['PAYLOAD_GONE', 'MANIFEST_UNREADABLE'].includes(outcome.code ?? ''), `refused, saying the copy is gone: ${outcome.code}`);
+    assert.equal(outcome.code, 'PAYLOAD_GONE', 'refused, saying the copy is gone (FG3g L1)');
   } finally {
     uncap();
   }
@@ -403,4 +404,85 @@ test('every removal of a copy, and accepting a restore, are made under one lock'
   assert.ok(sites.some((s) => s.what === 'restoresInFlight.add'), 'a restore pins its copies');
   const unlocked = sites.filter((s) => !s.locked).map((s) => `${s.what} at line ${s.line}`);
   assert.deepEqual(unlocked, [], 'outside withPayloadLock');
+});
+
+/* ─────────────── FG3g L1: what the index says while a capture that evicted is under way ─────────────── */
+
+test('while a capture that evicted a copy is still copying, the index already says that copy is gone, and a restore of it says so (FG3f review S1)', async () => {
+  const uncap = setCapsuleCapForTests(250_000);
+  try {
+    const a = item('s1', 'a.bin', 19);
+    const b = item('s1', 'b.bin', 20);
+    const c = item('s1', 'c.bin', 21);
+    const [idA] = await protectEach([a, b]); // A is the oldest copy, so the one evicted for C
+    fs.rmSync(a);
+    let listed: Promise<TimeCapsuleEntry | undefined> | null = null;
+    let restore: Promise<string> | null = null;
+    // Part-way through copying C, A's copy is gone: the index and a restore are asked then.
+    const unfault = setCopyFaultForTests((dest) => {
+      if (listed === null && path.basename(dest) === 'c.bin') {
+        listed = entry(idA);
+        restore = startCapsuleRestore([idA]).then(() => 'started', (err: unknown) => (err instanceof AppError ? err.code : String(err)));
+      }
+      return null;
+    });
+    try {
+      const captured = await protectItems([{ path: c }]);
+      assert.equal(captured.outcomes[0].protected, true);
+    } finally {
+      unfault();
+    }
+    assert.ok(listed && restore, 'asked while C was being copied');
+    assert.equal((await (listed as Promise<TimeCapsuleEntry | undefined>))?.hasPayload, false, 'the index no longer offers A as restorable');
+    assert.equal(await (restore as Promise<string>), 'PAYLOAD_GONE', 'and its restore says the copy is gone, not that a record cannot be read');
+  } finally {
+    uncap();
+  }
+});
+
+test('a copy whose folder went from the capsule outside TreeMap is refused as gone; a record that cannot be read is still MANIFEST_UNREADABLE', async () => {
+  const x = item('gone', 'x.bin', 22);
+  const y = item('gone', 'y.bin', 23);
+  const [idX, idY] = await protectEach([x, y]);
+  fs.rmSync(x);
+  fs.rmSync(y);
+  fs.rmSync(path.join(capsuleRoot(), idX), { recursive: true }); // removed by hand, or by another program
+  await assert.rejects(startCapsuleRestore([idX]), refusedWith('PAYLOAD_GONE'));
+  fs.writeFileSync(path.join(capsuleRoot(), idY, 'manifest.json'), '{ not json');
+  await assert.rejects(startCapsuleRestore([idY]), refusedWith('MANIFEST_UNREADABLE'));
+});
+
+test('an undo asked for while a capture that evicted one of its copies is under way names that item as gone', async () => {
+  const uncap = setCapsuleCapForTests(250_000);
+  try {
+    const dir = fileTempDir('treemap-capsuleRestorePinned-undo-s1-');
+    const a = path.join(dir, 'a.bin');
+    const b = path.join(dir, 'b.bin');
+    fs.writeFileSync(a, Buffer.alloc(ITEM, 24));
+    fs.writeFileSync(b, Buffer.alloc(ITEM, 25));
+    const committed = await withOpenFileCheck('clear', () => commitCart([a, b])); // one run: both trashed, both copies kept
+    assert.deepEqual([...committed.trashed].sort(), [a, b].sort());
+    const c = item('undo-s1', 'c.bin', 26);
+    let undo: Promise<{ unrestorable?: { path: string }[]; jobId?: string; code?: string }> | null = null;
+    // The commit's copies are no longer pinned (its run is over), so C evicts the older of them.
+    const unfault = setCopyFaultForTests((dest) => {
+      if (undo === null && path.basename(dest) === 'c.bin') {
+        undo = undoCartRun(committed.runId).then((r) => r, (err: unknown) => ({ code: err instanceof AppError ? err.code : String(err) }));
+      }
+      return null;
+    });
+    try {
+      assert.equal((await protectItems([{ path: c }])).outcomes[0].protected, true);
+    } finally {
+      unfault();
+    }
+    assert.ok(undo);
+    const answer = await (undo as Promise<{ unrestorable?: { path: string }[]; jobId?: string; code?: string }>);
+    assert.equal(answer.code, undefined, `the undo started: ${answer.code}`);
+    assert.equal(answer.unrestorable?.length, 1, 'and named the one item whose copy was evicted, rather than failing on it');
+    const job = await settled(answer.jobId as string);
+    assert.equal(job.status, 'complete', job.error);
+  } finally {
+    uncap();
+  }
 });
