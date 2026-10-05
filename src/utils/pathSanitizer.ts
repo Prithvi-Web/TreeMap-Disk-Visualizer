@@ -235,16 +235,22 @@ function canonDir(dir: string): string {
 function canonDirUncached(dir: string, hops = 0): string {
   try {
     return strip(fs.realpathSync.native(dir));
-  } catch (err) {
+  } catch {
     // A link realpath could not follow is judged where it says it leads, never as a folder here.
     const led = whereLinkLeads(dir, hops);
     if (led !== null) return led;
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return dir;
   }
-  // ENOENT: climb toward the root looking for a real ancestor to canonicalise,
-  // because "/var/db/not-yet.sqlite" must stay blocked even though nothing at
-  // that path exists yet. Recursing through canonDir memoises every level of
-  // the climb, so a second missing sibling costs nothing.
+  // Not a link, and realpath failed: climb toward the root looking for a real
+  // ancestor to canonicalise, then re-attach the rest. A missing name (ENOENT)
+  // is the common case — "/var/db/not-yet.sqlite" must stay blocked though
+  // nothing is there yet — but not the only one: below a link realpath cannot
+  // follow, the failure is that link's (EINVAL beneath a /.resolve target, ELOOP
+  // beneath a loop), and answering with the path as spelled made everything two
+  // names below such a link a folder of its own folder (the SEC-2b review,
+  // F1.7). Climbing reaches the link, which is then judged where it leads. A
+  // folder that cannot be searched (EACCES) gets its real parents this way too.
+  // Recursing through canonDir memoises every level of the climb, so a second
+  // missing sibling costs nothing.
   const parent = path.dirname(dir);
   if (parent === dir) return dir; // a root that will not resolve: nothing above it
   return path.join(canonDir(parent), path.basename(dir));

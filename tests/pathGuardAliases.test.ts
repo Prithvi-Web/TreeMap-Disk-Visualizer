@@ -372,8 +372,8 @@ test('a link whose target is spelled through /.nofollow, /.resolve or /.vol is j
   // refused all the same, as the /.nofollow one always was.
   const dir = path.join(T, 'f3-aliases');
   const target = path.join(dir, 'target');
-  fs.mkdirSync(target, { recursive: true });
-  fs.writeFileSync(path.join(target, 'f.txt'), 'f');
+  fs.mkdirSync(path.join(target, 'sub', 'deeper'), { recursive: true });
+  for (const f of ['f.txt', path.join('sub', 'f.txt'), path.join('sub', 'deeper', 'f.txt')]) fs.writeFileSync(path.join(target, f), 'f');
   const st = fs.lstatSync(target);
   // lstat and readlink go through /.resolve to a link there, so the chase must stop at the second
   // name rather than read on to the scanned folder the hop leads to.
@@ -385,10 +385,20 @@ test('a link whose target is spelled through /.nofollow, /.resolve or /.vol is j
     'via-resolve-hop': `/.resolve/1${path.join(dir, 'hop')}`,
   };
   for (const [name, to] of Object.entries(links)) fs.symlinkSync(to, path.join(dir, name));
+  // Two and three names below each link too: realpath fails there with EINVAL for a /.resolve link, and
+  // only a missing name (ENOENT) climbed to the folder holding the link (the SEC-2b review, F1.7). Every
+  // grant is collected, so a failure names each spelling that got through.
+  const granted: string[] = [];
+  for (const name of Object.keys(links)) {
+    for (const below of ['f.txt', 'sub', path.join('sub', 'f.txt'), path.join('sub', 'deeper'), path.join('sub', 'deeper', 'f.txt')]) {
+      const p = path.join(dir, name, below);
+      if (rejection(p) !== 'PATH_BLOCKED') granted.push(`${name}/${below}: the sanitizer`);
+      if (insideAnyScanRoot(p)) granted.push(`${name}/${below}: the scanned-root rule`);
+    }
+  }
+  assert.deepEqual(granted, [], 'beneath a link that leads through a second name, nothing is a path of the scan');
   for (const name of Object.keys(links)) {
     const link = path.join(dir, name);
-    assert.equal(rejection(path.join(link, 'f.txt')), 'PATH_BLOCKED', `${name}/f.txt: the sanitizer`);
-    assert.equal(insideAnyScanRoot(path.join(link, 'f.txt')), false, `${name}/f.txt: the scanned-root rule`);
     assert.equal(rejection(link), 'PATH_BLOCKED', `${name}: the link itself, to the sanitizer`);
     assert.equal(insideAnyScanRoot(link), false, `${name}: the link itself, to the scanned-root rule — the two agree`);
   }
