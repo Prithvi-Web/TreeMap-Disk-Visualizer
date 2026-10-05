@@ -1,12 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import Module from 'node:module';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-desktopPolish-data-');
 
 import { formatBytes } from '../src/utils/formatBytes';
@@ -29,8 +28,12 @@ const guards = require(path.join(REPO, 'electron', 'lib', 'guards.js'));
 const windowState = require(path.join(REPO, 'electron', 'lib', 'windowState.js'));
 const menu = require(path.join(REPO, 'electron', 'lib', 'menu.js'));
 
-const mkTmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'tm-desktop-'));
-const rm = (p: string): void => fs.rmSync(p, { recursive: true, force: true });
+/**
+ * A new folder under the system temp folder, removed when this file's tests
+ * end (fileTempDir) — whichever test fails and wherever it throws, so no test
+ * needs a finally of its own to clean up.
+ */
+const mkTmp = (): string => fileTempDir('tm-desktop-');
 
 /* ═══════════════════════ security-electron-2: the API token ═══════════════════════ */
 
@@ -152,20 +155,16 @@ test('windowStateFor: maximised and full-screen survive; garbage does not', () =
 
 test('prefs file: round-trips, tolerates a corrupt file, and writes nothing in an ephemeral (read-only portable) session', () => {
   const dir = mkTmp();
-  try {
-    assert.deepEqual(windowState.readPrefs(dir), {}, 'first run: nothing there');
-    windowState.writePrefs(dir, { window: { x: 1, y: 2, width: 1100, height: 800 }, skippedUpdate: '9.9.9' }, { ephemeral: false });
-    assert.equal(windowState.readPrefs(dir).skippedUpdate, '9.9.9');
-    assert.equal(windowState.readPrefs(dir).window.width, 1100);
-    assert.deepEqual(fs.readdirSync(dir), [windowState.PREFS_FILE], 'the temp file from the atomic write is gone');
-    fs.writeFileSync(path.join(dir, windowState.PREFS_FILE), '{not json');
-    assert.deepEqual(windowState.readPrefs(dir), {}, 'a corrupt file is "nothing saved", never a crash');
-    const eph = mkTmp();
-    try {
-      windowState.writePrefs(eph, { skippedUpdate: '1.0.0' }, { ephemeral: true });
-      assert.deepEqual(fs.readdirSync(eph), [], 'a read-only portable run writes nothing anywhere');
-    } finally { rm(eph); }
-  } finally { rm(dir); }
+  assert.deepEqual(windowState.readPrefs(dir), {}, 'first run: nothing there');
+  windowState.writePrefs(dir, { window: { x: 1, y: 2, width: 1100, height: 800 }, skippedUpdate: '9.9.9' }, { ephemeral: false });
+  assert.equal(windowState.readPrefs(dir).skippedUpdate, '9.9.9');
+  assert.equal(windowState.readPrefs(dir).window.width, 1100);
+  assert.deepEqual(fs.readdirSync(dir), [windowState.PREFS_FILE], 'the temp file from the atomic write is gone');
+  fs.writeFileSync(path.join(dir, windowState.PREFS_FILE), '{not json');
+  assert.deepEqual(windowState.readPrefs(dir), {}, 'a corrupt file is "nothing saved", never a crash');
+  const eph = mkTmp();
+  windowState.writePrefs(eph, { skippedUpdate: '1.0.0' }, { ephemeral: true });
+  assert.deepEqual(fs.readdirSync(eph), [], 'a read-only portable run writes nothing anywhere');
 });
 
 /* ═══════════════════════ desktop-polish-4 / a11y-keyboard-8: the menu ═══════════════════════ */
@@ -493,14 +492,12 @@ test('the shipped tray icons: a template glyph for macOS, a colour glyph with co
 
 test('the icon generator reproduces every shipped icon with the same invariants', async () => {
   const out = mkTmp();
-  try {
-    execFileSync(process.execPath, [path.join(REPO, 'scripts', 'gen-tray-icon.js'), '--out', out], { stdio: 'pipe' });
-    await assertMacIcon(path.join(out, 'build', 'icon.png'));
-    await assertFullBleedIcon(path.join(out, 'build', 'icon-full.png'));
-    await assertTemplateTray(path.join(out, 'electron', 'assets', 'trayTemplate.png'), 16);
-    await assertColourTray(path.join(out, 'electron', 'assets', 'tray.png'), 16);
-    await assertColourTray(path.join(out, 'electron', 'assets', 'tray@2x.png'), 32);
-  } finally { rm(out); }
+  execFileSync(process.execPath, [path.join(REPO, 'scripts', 'gen-tray-icon.js'), '--out', out], { stdio: 'pipe' });
+  await assertMacIcon(path.join(out, 'build', 'icon.png'));
+  await assertFullBleedIcon(path.join(out, 'build', 'icon-full.png'));
+  await assertTemplateTray(path.join(out, 'electron', 'assets', 'trayTemplate.png'), 16);
+  await assertColourTray(path.join(out, 'electron', 'assets', 'tray.png'), 16);
+  await assertColourTray(path.join(out, 'electron', 'assets', 'tray@2x.png'), 32);
 });
 
 /* ═══════════════════════ preload: the bridge the page sees ═══════════════════════ */
@@ -576,7 +573,7 @@ test('main: the backend starts with a fresh TREEMAP_TOKEN, and an owner-provided
   h = await loadMain({ dataDir: dir, token: 'mine' });
   try {
     assert.equal(h.stub.backend.startServerCalls[0].tokenAtStart, 'mine');
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: the window opens where it was last closed, and closing it saves the state', async () => {
@@ -595,7 +592,7 @@ test('main: the window opens where it was last closed, and closing it saves the 
     const saved = windowState.readPrefs(dir).window;
     assert.deepEqual({ x: saved.x, y: saved.y, width: saved.width, height: saved.height, maximized: saved.maximized }, { x: 2300, y: 60, width: 1500, height: 900, maximized: true });
     assert.equal(saved.displayId, 2);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: a saved position on a display that is gone, or no saved state, gives the default window that fits the screen', async () => {
@@ -608,7 +605,7 @@ test('main: a saved position on a display that is gone, or no saved state, gives
     assert.equal(w.options.x, undefined, 'centred by Electron, not restored off-screen');
     assert.equal(w.options.width, 1280);
     assert.equal(w.options.height, 695);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: an ephemeral portable session never writes the prefs file', async () => {
@@ -617,7 +614,7 @@ test('main: an ephemeral portable session never writes the prefs file', async ()
   try {
     h.win().close();
     assert.deepEqual(fs.readdirSync(dir), []);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: navigation and permission guards are installed on the real window and session', async () => {
@@ -646,42 +643,39 @@ test('main: navigation and permission guards are installed on the real window an
     assert.deepEqual(asked, [false, true]);
     assert.equal(s.permissionCheckHandler!({}, 'geolocation'), false);
     assert.equal(s.permissionCheckHandler!({}, 'clipboard-sanitized-write'), true);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: the privacy IPC opens System Settings exactly once, and never for a pane it does not know', async () => {
   type Answer = { opened: boolean; reason?: string };
   const dir = mkTmp();
-  // The folder goes whichever block fails: a failure in the first must not leave it behind.
+  let h = await loadMain({ dataDir: dir });
   try {
-    let h = await loadMain({ dataDir: dir });
-    try {
-      const open = (pane: unknown) => h.stub.ipcMain.invoke('treemap:open-privacy-settings', pane) as Promise<Answer>;
-      assert.deepEqual(await open('full-disk-access'), { opened: true });
-      assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'one request, for the Full Disk Access pane');
-      // Unknown panes, and the page handing over a URL of its own: nothing opens, and the answer says so.
-      for (const pane of ['camera', FULL_DISK_ACCESS_URL, 'https://example.com/', 'file:///Applications/Evil.app', '', null, undefined, 7, { pane: 'full-disk-access' }]) {
-        const r = await open(pane);
-        assert.equal(r.opened, false, `${JSON.stringify(pane)} opens nothing`);
-        assert.ok(typeof r.reason === 'string' && r.reason.length > 10, `${JSON.stringify(pane)} is answered with a reason in words`);
-      }
-      assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'nothing else ever reached shell.openExternal');
-      // Electron rejects when no app takes the URL: the page must hear "not opened", not "opened".
-      h.stub.shell.openExternalError = new Error('no application is registered for this URL');
-      const failed = await open('full-disk-access');
-      assert.equal(failed.opened, false, 'a refused open is not reported as opened');
-      assert.match(String(failed.reason), /System Settings did not open/, 'and the reason says what happened');
-      assert.equal(h.stub.shell.opened.length, 2, 'the one attempt, still at the same pane');
-      assert.equal(h.stub.shell.opened[1], FULL_DISK_ACCESS_URL);
-    } finally { h.dispose(); }
-    h = await loadMain({ dataDir: dir, platform: 'win32' });
-    try {
-      const r = await (h.stub.ipcMain.invoke('treemap:open-privacy-settings', 'full-disk-access') as Promise<Answer>);
-      assert.equal(r.opened, false, 'Full Disk Access is a macOS setting');
-      assert.ok(typeof r.reason === 'string' && r.reason.length > 10, 'answered in words');
-      assert.deepEqual(h.stub.shell.opened, [], 'nothing reached shell.openExternal on Windows');
-    } finally { h.dispose(); }
-  } finally { rm(dir); }
+    const open = (pane: unknown) => h.stub.ipcMain.invoke('treemap:open-privacy-settings', pane) as Promise<Answer>;
+    assert.deepEqual(await open('full-disk-access'), { opened: true });
+    assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'one request, for the Full Disk Access pane');
+    // Unknown panes, and the page handing over a URL of its own: nothing opens, and the answer says so.
+    for (const pane of ['camera', FULL_DISK_ACCESS_URL, 'https://example.com/', 'file:///Applications/Evil.app', '', null, undefined, 7, { pane: 'full-disk-access' }]) {
+      const r = await open(pane);
+      assert.equal(r.opened, false, `${JSON.stringify(pane)} opens nothing`);
+      assert.ok(typeof r.reason === 'string' && r.reason.length > 10, `${JSON.stringify(pane)} is answered with a reason in words`);
+    }
+    assert.deepEqual(h.stub.shell.opened, [FULL_DISK_ACCESS_URL], 'nothing else ever reached shell.openExternal');
+    // Electron rejects when no app takes the URL: the page must hear "not opened", not "opened".
+    h.stub.shell.openExternalError = new Error('no application is registered for this URL');
+    const failed = await open('full-disk-access');
+    assert.equal(failed.opened, false, 'a refused open is not reported as opened');
+    assert.match(String(failed.reason), /System Settings did not open/, 'and the reason says what happened');
+    assert.equal(h.stub.shell.opened.length, 2, 'the one attempt, still at the same pane');
+    assert.equal(h.stub.shell.opened[1], FULL_DISK_ACCESS_URL);
+  } finally { h.dispose(); }
+  h = await loadMain({ dataDir: dir, platform: 'win32' });
+  try {
+    const r = await (h.stub.ipcMain.invoke('treemap:open-privacy-settings', 'full-disk-access') as Promise<Answer>);
+    assert.equal(r.opened, false, 'Full Disk Access is a macOS setting');
+    assert.ok(typeof r.reason === 'string' && r.reason.length > 10, 'answered in words');
+    assert.deepEqual(h.stub.shell.opened, [], 'nothing reached shell.openExternal on Windows');
+  } finally { h.dispose(); }
 });
 
 test('main: scan progress drives the dock bar; a finish while unfocused bounces the dock and posts a notice; Stop is silent', async () => {
@@ -708,7 +702,7 @@ test('main: scan progress drives the dock bar; a finish while unfocused bounces 
     h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: '/y' });
     assert.equal(FakeNotification.shown.length, 2, 'a focused window needs no notice: the user is looking at it');
     assert.equal(h.stub.app.dockBounces.length, 2);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main (Windows): a finish while unfocused flashes the taskbar button, and focus stops the flash', async () => {
@@ -723,7 +717,7 @@ test('main (Windows): a finish while unfocused flashes the taskbar button, and f
     w.emit('focus');
     assert.deepEqual(w.flashes, [true, false]);
     assert.equal(h.stub.app.appUserModelId, 'com.prithviweb.treemap', 'toasts need the AppUserModelID to match the Start-menu shortcut');
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: dropped folders are queued and scanned one after another, in order; files resolve to their folder', async () => {
@@ -749,7 +743,7 @@ test('main: dropped folders are queued and scanned one after another, in order; 
     assert.deepEqual(paths(), [a, b, c], 'a cleared progress bar also means "done" — the queue never stalls on a page that only reports progress');
     assert.equal(await h.stub.ipcMain.invoke('treemap:request-scans', 'not-an-array'), null);
     assert.equal(h.stub.ipcMain.invoke('treemap:resolve-scan-path', file), b, 'the older single-path resolver still works');
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: folders handed over by the OS before the window exists (dock drop, second launch) scan in order once the page is up', async () => {
@@ -767,7 +761,7 @@ test('main: folders handed over by the OS before the window exists (dock drop, s
     h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: a });
     await new Promise((r2) => setTimeout(r2, 400));
     assert.deepEqual(w.webContents.on_channel('treemap:scan-path'), [a, b]);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: the application menu is the packaged template, and its items reach the page as commands', async () => {
@@ -790,7 +784,7 @@ test('main: the application menu is the packaged template, and its items reach t
     assert.deepEqual(h.stub.shell.openedPaths, [dir]);
     assert.equal(h.stub.app.aboutOptions?.applicationVersion, '4.1.3');
     assert.match(String(h.stub.app.aboutOptions?.copyright), /Prithvi Vinay/);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: the tray uses the template glyph on macOS and the colour glyph elsewhere; Linux quits with the last window', async () => {
@@ -814,7 +808,7 @@ test('main: the tray uses the template glyph on macOS and the colour glyph elsew
     assert.equal(path.basename(FakeTray.created[0].icon.path), 'tray.png');
     h.stub.app.emit('window-all-closed');
     assert.equal(h.stub.app.quitCalls, 1, 'a Linux desktop may have no tray host at all — never strand an invisible process');
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: a growth alert arrives under the folder-and-number headline', async () => {
@@ -825,7 +819,7 @@ test('main: a growth alert arrives under the folder-and-number headline', async 
     assert.equal(FakeNotification.shown.length, 1);
     assert.equal(FakeNotification.shown[0].title, 'Downloads grew 4.2 GB since the last scan');
     assert.doesNotMatch(String(FakeNotification.shown[0].body), /^\//);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main (packaged): an uncaught exception shows one calm dialog; Copy details puts the stack on the clipboard; a second throw shows nothing', async () => {
@@ -848,7 +842,7 @@ test('main (packaged): an uncaught exception shows one calm dialog; Copy details
     h.crash(new Error('again'));
     await h.settle();
     assert.equal(h.stub.dialog.boxes.length, 1, 'no dialog storm');
-  } finally { console.error = quiet; h.dispose(); rm(dir); }
+  } finally { console.error = quiet; h.dispose(); }
 });
 
 test('main (macOS, packaged): updates are checked quietly after the page is up, offered once as a sheet, and a skipped version stays skipped across launches', async (t) => {
@@ -887,7 +881,7 @@ test('main (macOS, packaged): updates are checked quietly after the page is up, 
     await h.settle();
     assert.equal(h.stub.dialog.boxes.length, 1, 'a newer version is offered again');
     assert.match(h.stub.shell.opened[0], /github\.com\/.*releases/);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
 
 test('main: Help › Check for Updates… reports "up to date" only when the user asked', async () => {
@@ -907,5 +901,5 @@ test('main: Help › Check for Updates… reports "up to date" only when the use
     assert.equal(h.stub.dialog.boxes.length, 1);
     assert.match(String(h.stub.dialog.boxes[0].opts.message), /up to date/i);
     assert.match(String(h.stub.dialog.boxes[0].opts.message), /4\.1\.3/);
-  } finally { h.dispose(); rm(dir); }
+  } finally { h.dispose(); }
 });
