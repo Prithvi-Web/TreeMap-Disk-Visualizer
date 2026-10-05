@@ -191,6 +191,9 @@ test('an undo passes over a record of its run that is not one TreeMap made, and 
   assert.equal(job.entryCount, 1, 'the one copy TreeMap made');
   await waitFor(() => getCapsuleJob(job.jobId)?.status !== 'running', 'the undo');
   assert.equal(getCapsuleJob(job.jobId)?.status, 'complete', getCapsuleJob(job.jobId)?.error);
+  // Counted, not passed over in silence (FG3g L9): the undo does not put everything back.
+  assert.deepEqual(job.unrestorable?.map((u) => u.path), [path.join(PLACE, 'never-restored.txt')], 'the record it passed over is named');
+  assert.match(job.unrestorable?.[0].reason ?? '', /not one TreeMap made/, job.unrestorable?.[0].reason);
   assert.equal(fs.readFileSync(file, 'utf8'), 'the content of undo-me.txt');
   assert.ok(!fs.existsSync(path.join(PLACE, 'never-restored.txt')));
   assertIntact(victim, 'the undo');

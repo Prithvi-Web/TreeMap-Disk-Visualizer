@@ -2110,7 +2110,8 @@ export interface UndoPlan {
   passedOver: { entry: TimeCapsuleEntry; why: PassedOverWhy }[];
   /**
    * The run's records whose copy is gone and that were never put back (FG3f #3): evicted to make
-   * room for later deletions, or missing from the capsule folder. No undo can put these back, and
+   * room for later deletions, expired, or missing from the capsule folder — and records of the run
+   * TreeMap did not make (FG3g L9), which hold no copy of TreeMap's. No undo can put these back, and
    * an undo that leaves one says so rather than "everything is back".
    */
   lost: TimeCapsuleEntry[];
@@ -2134,8 +2135,13 @@ export async function planUndoForRun(runId: string): Promise<UndoPlan> {
       plan.restored++;
       continue;
     }
-    // A record TreeMap did not make holds no copy of TreeMap's, and would refuse the whole undo (FG3).
-    if (!isEntryId(entry.id)) continue;
+    // A record TreeMap did not make holds no copy of TreeMap's, and would refuse the whole undo (FG3)
+    // — so it is not put back, and it is counted (FG3g L9): passed over in silence, it let an undo
+    // say everything was back.
+    if (!isEntryId(entry.id)) {
+      plan.lost.push(entry);
+      continue;
+    }
     // Its copy is gone (FG3f #3): passed over in silence, it let an undo say everything was back.
     if (!entry.hasPayload) {
       plan.lost.push(entry);
@@ -2184,6 +2190,9 @@ export function passedOverOf(plan: UndoPlan): { passedOver?: { path: string; rea
   return rows.length > 0 ? { passedOver: rows } : {};
 }
 
+/** Said of a record of the run that TreeMap did not make (FG3g L9). */
+const NOT_OURS_SENTENCE = `${NOT_OURS} (its id is not one TreeMap gives), so nothing is put back from it.`;
+
 /** Said of an item of the run whose copy the Time Capsule no longer holds (FG3f #3). */
 export const COPY_GONE_SENTENCE =
   'Its Time Capsule copy is gone — removed to make room for later deletions or once the time copies are kept had passed, ' +
@@ -2194,7 +2203,7 @@ export const COPY_GONE_SENTENCE =
  * nothing, when there are none (FG3f #3).
  */
 export function unrestorableOf(plan: UndoPlan): { unrestorable?: { path: string; reason: string }[] } {
-  const rows = plan.lost.map((entry) => ({ path: entry.originalPath, reason: COPY_GONE_SENTENCE }));
+  const rows = plan.lost.map((entry) => ({ path: entry.originalPath, reason: isEntryId(entry.id) ? COPY_GONE_SENTENCE : NOT_OURS_SENTENCE }));
   return rows.length > 0 ? { unrestorable: rows } : {};
 }
 

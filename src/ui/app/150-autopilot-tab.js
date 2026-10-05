@@ -211,10 +211,11 @@ function undoAutopilotRun(runId) {
         // Each one it passed over (its place is not empty yet) is named with what the disk showed of
         // it (FG3c, FG3d #7); the run keeps its Undo for them. And each item whose copy is gone,
         // which no undo can put back (FG3f #3): then not everything from that run is back.
-        onComplete: () => {
+        // And no green "everything is back" beside a warning the dialog shows (FG3g L9).
+        onComplete: (ev) => {
           const left = [...(resp.passedOver || []), ...(resp.unrestorable || [])];
-          toast(left.length ? passedOverToast(resp.entryCount, left) : 'Everything from that run is back',
-            left.length ? 'error' : undefined, left.length ? 12000 : undefined);
+          if (left.length) toast(passedOverToast(resp.entryCount, left), 'error', 12000);
+          else if (!ev || !ev.warning) toast('Everything from that run is back');
           loadAutopilot();
         },
         onSettled: () => loadAutopilot(),

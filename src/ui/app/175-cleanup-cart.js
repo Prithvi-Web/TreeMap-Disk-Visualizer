@@ -569,7 +569,7 @@ async function cartUndoRun(runId) {
     footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
     cancelledMessage: 'Undo cancelled — nothing was left half-written',
     lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
-    onComplete: () => {
+    onComplete: (ev) => {
       // Each copy it passed over (an unconfirmed item whose place is not empty) is named with what
       // the disk showed of it (FG3c, FG3d #7). The copy stays in the Time Capsule, whose tab restores
       // it once its place is empty: the summary that held this Undo closed when the undo began.
@@ -579,7 +579,8 @@ async function cartUndoRun(runId) {
       if (left.length) {
         toast(passedOverToast(job.entryCount, left), 'error', 12000);
       } else {
-        toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
+        // No green "everything is back" beside a warning the dialog shows (FG3g L9).
+        if (!ev || !ev.warning) toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
         cartLastRun = null;
       }
       rescan();

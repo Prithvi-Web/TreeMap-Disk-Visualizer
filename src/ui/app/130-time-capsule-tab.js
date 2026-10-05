@@ -233,7 +233,12 @@ function restoreFromCapsule(id) {
         footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
         cancelledMessage: 'Restore cancelled — nothing was left half-written',
         lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
-        onComplete: () => { toast('Restored and verified'); loadCapsule(); },
+        // A restore that could not set a date or a permission back finishes with a warning, which the
+        // dialog shows: no green "verified" beside it (FG3g L9), as the offload restore already does.
+        onComplete: (ev) => {
+          if (!ev || !ev.warning) toast('Restored and verified');
+          loadCapsule();
+        },
         onSettled: () => loadCapsule(),
       });
     })
