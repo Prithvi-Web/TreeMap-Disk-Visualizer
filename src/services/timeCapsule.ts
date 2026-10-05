@@ -2270,6 +2270,23 @@ export function nothingToUndo(noun: 'commit' | 'run', plan: UndoPlan): AppError 
  * nothing starts. A partial undo that silently skipped two of five items would
  * be exactly the kind of half-applied operation §B2 refuses elsewhere.
  */
+/**
+ * The entry `id` names in `store`, if a restore may take it: there, not restored, not being restored
+ * (FG3g H1), still holding a copy, and a record TreeMap made. Throws the refusal otherwise.
+ */
+function acceptable(store: CapsuleStore, id: string): TimeCapsuleEntry {
+  const entry = store.entries.find((e) => e.id === id);
+  if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+  if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', `“${entry.name}” has already been restored`);
+  if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it is not started a second time');
+  if (!entry.hasPayload) {
+    throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
+  }
+  const refused = recordRefusal(entry);
+  if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
+  return entry;
+}
+
 export interface RestoreOptions {
   /**
    * Run once every entry is back, before the job says it is complete (FG3d #8): what depends on the
@@ -2283,35 +2300,38 @@ export interface RestoreOptions {
 export async function startCapsuleRestore(entryIds: string[], options: RestoreOptions = {}): Promise<TimeCapsuleJob> {
   pruneJobs();
   if (entryIds.length === 0) throw new AppError(400, 'NOTHING_TO_RESTORE', 'No items to restore');
-  // Accepted under the payload lock, and its copies pinned before the lock is let go (FG3g H1): no
-  // removal of a copy is under way while they are looked at, and none starts until the job ends.
+  // Each once: the same id twice was put back, then read again from the copy its first turn removed.
+  const ids = [...new Set(entryIds)];
+
+  // Where each goes is looked at first, holding nothing: a destination on a volume gone quiet holds
+  // up this restore alone, never every removal of a copy waiting on the lock below.
+  const keyOf = new Map<string, (name: string) => string>();
+  const before = await loadStore();
+  for (const id of ids) {
+    const place = restorePlaceOf(acceptable(before, id));
+    // Only "nothing is there" is free (FG3f #5): a look that failed for another reason (EACCES, EIO)
+    // says nothing either way, and was read as an empty place.
+    const occupied = await fsp.lstat(place).then(() => true, (err: unknown) => {
+      if (meansAbsent(err)) return false;
+      throw new AppError(409, 'PATH_UNREADABLE',
+        `TreeMap could not look at ${place} (${describeFsError(err)}), so it cannot tell whether something stands there, and a restore never writes over what is there. Nothing was restored.`);
+    });
+    if (occupied) {
+      throw new AppError(409, 'PATH_OCCUPIED',
+        `Something already exists at ${place}. Move it aside first — restoring will never overwrite what is there now.`);
+    }
+    keyOf.set(id, await restoreNameKeyFor(path.dirname(place)));
+  }
+
+  // Accepted under the payload lock, the copies looked at and pinned in one turn before the lock is
+  // let go (FG3g H1): no removal of a copy is under way while they are looked at, and none starts
+  // until the job ends. Only the store and the copies' own records, in app-data, are read here.
   return withPayloadLock(async () => {
     const store = await loadStore();
     const planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[] = [];
 
-    // Each once: the same id twice was put back, then read again from the copy its first turn removed.
-    for (const id of new Set(entryIds)) {
-      const entry = store.entries.find((e) => e.id === id);
-      if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
-      if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', `“${entry.name}” has already been restored`);
-      if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it is not started a second time');
-      if (!entry.hasPayload) {
-        throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
-      }
-      const refused = recordRefusal(entry);
-      if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
-      const place = restorePlaceOf(entry);
-      // Only "nothing is there" is free (FG3f #5): a look that failed for another reason (EACCES, EIO)
-      // says nothing either way, and was read as an empty place.
-      const occupied = await fsp.lstat(place).then(() => true, (err: unknown) => {
-        if (meansAbsent(err)) return false;
-        throw new AppError(409, 'PATH_UNREADABLE',
-          `TreeMap could not look at ${place} (${describeFsError(err)}), so it cannot tell whether something stands there, and a restore never writes over what is there. Nothing was restored.`);
-      });
-      if (occupied) {
-        throw new AppError(409, 'PATH_OCCUPIED',
-          `Something already exists at ${place}. Move it aside first — restoring will never overwrite what is there now.`);
-      }
+    for (const id of ids) {
+      const entry = acceptable(store, id);
       const manifest = await readManifest(id).catch((err: unknown) => {
         // Its folder is gone (FG3g L1): evicted, expired or removed outside TreeMap. That is no copy,
         // not a record that cannot be read.
@@ -2321,7 +2341,7 @@ export async function startCapsuleRestore(entryIds: string[], options: RestoreOp
       if (!manifest) {
         throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
       }
-      const stray = manifestRefusal(manifest, undefined, await restoreNameKeyFor(path.dirname(place)));
+      const stray = manifestRefusal(manifest, undefined, keyOf.get(id));
       if (stray) {
         throw new AppError(409, 'CAPSULE_RECORD_INVALID',
           `The record of what was captured for “${entry.name}” is not one TreeMap wrote (${stray}), so nothing was restored.`);

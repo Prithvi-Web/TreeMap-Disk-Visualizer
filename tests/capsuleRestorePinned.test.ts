@@ -406,6 +406,33 @@ test('every removal of a copy, and accepting a restore, are made under one lock'
   assert.deepEqual(unlocked, [], 'outside withPayloadLock');
 });
 
+test('a restore holds the payload lock only to look at the copies and pin them: where it writes is looked at before, holding nothing', () => {
+  // A destination on a volume gone quiet would otherwise hold every removal of a copy — and every
+  // capture waiting to evict, holding the index — behind one restore's look at it.
+  const text = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'timeCapsule.ts'), 'utf8');
+  const source = ts.createSourceFile('timeCapsule.ts', text, ts.ScriptTarget.Latest, true);
+  let locked: ts.Node | null = null;
+  const findStart = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'startCapsuleRestore') {
+      const findLock = (n: ts.Node): void => {
+        if (locked === null && ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'withPayloadLock') locked = n;
+        ts.forEachChild(n, findLock);
+      };
+      findLock(node);
+    }
+    ts.forEachChild(node, findStart);
+  };
+  findStart(source);
+  assert.ok(locked, 'startCapsuleRestore takes the payload lock');
+  const named: string[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isIdentifier(n) && ['restoreNameKeyFor', 'restorePlaceOf', 'lstat', 'stat', 'foldsCaseAt'].includes(n.text)) named.push(n.text);
+    ts.forEachChild(n, visit);
+  };
+  visit(locked as unknown as ts.Node);
+  assert.deepEqual(named, [], 'no look at the destination under the lock');
+});
+
 /* ─────────────── FG3g L1: what the index says while a capture that evicted is under way ─────────────── */
 
 test('while a capture that evicted a copy is still copying, the index already says that copy is gone, and a restore of it says so (FG3f review S1)', async () => {
