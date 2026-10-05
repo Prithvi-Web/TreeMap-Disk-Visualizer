@@ -25,6 +25,11 @@ isolatedDataDir('treemap-afterPack-data-');
  * them into the bundle's Resources, from the Electron zip, before signing,
  * and refuses any package — macOS, Windows or Linux — without them
  * (scripts/electron-licences.js, tests/electronLicences.test.ts).
+ *
+ * And gdu's: its LICENSE.md and the notices of the Go modules linked into it
+ * (scripts/gdu-notices.js, tests/gduNotices.test.ts) ship in the resources'
+ * gdu folder, and afterPack refuses a package without them, or with notices
+ * that are not the sealed file the generator wrote.
  */
 
 const REPO = path.join(__dirname, '..');
@@ -67,15 +72,24 @@ function moduleDirOf(c: Context, triple: string): string {
   return path.join(resourcesOf(c), 'app.asar.unpacked', 'native', 'prebuilt', triple);
 }
 
+/** gdu's licence files as build.extraResources puts them in the resources folder: the repository's own. */
+function packGduLicences(c: Context): void {
+  const dir = path.join(resourcesOf(c), 'gdu');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of ['LICENSE.md', 'THIRD_PARTY_NOTICES.txt']) fs.copyFileSync(path.join(REPO, 'build', 'gdu', name), path.join(dir, name));
+}
+
 /**
  * Lays out what electron-builder would have when afterPack runs: the
- * resources folder; on macOS the bundle's Electron Framework (and, as
- * electron-builder leaves it, no Electron licence anywhere); elsewhere
- * Electron's licences beside the executable, as electron-builder names them
- * there (unless `licences` is false); and the module and VERSION when given.
+ * resources folder, with gdu's licence files (unless `gdu` is false); on
+ * macOS the bundle's Electron Framework (and, as electron-builder leaves it,
+ * no Electron licence anywhere); elsewhere Electron's licences beside the
+ * executable, as electron-builder names them there (unless `licences` is
+ * false); and the module and VERSION when given.
  */
-function pack(c: Context, triple: string, header: Buffer | null, version: string | null = `${NATIVE_VERSION}\n`, licences = true): void {
+function pack(c: Context, triple: string, header: Buffer | null, version: string | null = `${NATIVE_VERSION}\n`, licences = true, gdu = true): void {
   fs.mkdirSync(resourcesOf(c), { recursive: true });
+  if (gdu) packGduLicences(c);
   if (c.electronPlatformName === 'darwin') macAppLayout(c.appOutDir, 'TreeMap', ELECTRON);
   else if (licences) {
     fs.writeFileSync(path.join(c.appOutDir, 'LICENSE.electron.txt'), electronLicence());
@@ -246,6 +260,29 @@ test("afterPack refuses, before any signing, a macOS app whose Electron zip lack
       assert.ok(error.message.includes(path.join(c.appOutDir, name)), `${platform}: names ${name} beside the executable: ${error.message}`);
     }
     assert.deepEqual(calls, [], `${platform}: no signing step runs`);
+  }
+});
+
+test("afterPack refuses, before any signing, an app without gdu's licence or the notices of the Go modules in gdu, or with notices edited after they were sealed — darwin, win32 and linux", async () => {
+  for (const [platform, arch, triple, header] of CASES) {
+    const bare = context(platform, arch);
+    pack(bare, triple, header, `${NATIVE_VERSION}\n`, true, false);
+    const none = await runHook(bare);
+    assert.ok(none.error, `${platform}: an app without gdu's licence files is refused`);
+    for (const name of ['LICENSE.md', 'THIRD_PARTY_NOTICES.txt']) {
+      const file = path.join(resourcesOf(bare), 'gdu', name);
+      assert.ok(none.error.message.includes(file), `${platform}: names ${file}: ${none.error.message}`);
+    }
+    assert.deepEqual(none.calls, [], `${platform}: nothing is signed`);
+
+    const edited = context(platform, arch);
+    pack(edited, triple, header);
+    const notices = path.join(resourcesOf(edited), 'gdu', 'THIRD_PARTY_NOTICES.txt');
+    fs.writeFileSync(notices, fs.readFileSync(notices, 'utf8').replace('Permission is hereby granted', 'Permission is not granted'));
+    const r = await runHook(edited);
+    assert.ok(r.error && r.error.message.includes(notices), `${platform}: notices that no longer match their seal are refused, by path: ${r.error?.message}`);
+    assert.match(r.error.message, /edited/);
+    assert.deepEqual(r.calls, [], `${platform}: and not signed`);
   }
 });
 

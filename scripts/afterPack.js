@@ -1,8 +1,14 @@
 'use strict';
 /*
  * electron-builder afterPack hook — on every platform, refuse an app without
- * its native module or without Electron's licences (on macOS, put those into
- * the bundle first); on macOS, then give the app a VALID ad-hoc signature.
+ * its native module, without gdu's licences or without Electron's licences
+ * (on macOS, put those into the bundle first); on macOS, then give the app a
+ * VALID ad-hoc signature.
+ *
+ * gdu's licences (scripts/gdu-notices.js): build.extraResources puts gdu's
+ * LICENSE.md and the notices of the Go modules linked into gdu in the
+ * resources' gdu folder; the hook holds every package to both, the notices to
+ * the seal the generator wrote, so a package never ships gdu without them.
  *
  * Electron's licences (scripts/electron-licences.js): electron-builder
  * deletes Electron's LICENSE and Chromium's LICENSES.chromium.html from a
@@ -48,6 +54,7 @@ const fs = require('fs');
 const path = require('path');
 const { checkPrebuilt } = require('./check-prebuilt');
 const { placeElectronLicences, assertElectronLicences } = require('./electron-licences');
+const { packagedProblems } = require('./gdu-notices/notices');
 
 /**
  * electron-builder's Arch enum (builder-util), by value, under the names Node
@@ -89,6 +96,19 @@ function assertPackagedModule(context, repo) {
     );
   }
   console.log(`[afterPack] native module ${result.summary}`);
+}
+
+/** Throws, naming each path, unless the resources' gdu folder holds gdu's LICENSE.md and the sealed notices of the Go modules in gdu. */
+function assertGduLicences(context) {
+  const dir = path.join(resourcesDirOf(context), 'gdu');
+  const problems = packagedProblems(resourcesDirOf(context));
+  if (problems.length > 0) {
+    throw new Error(
+      `[afterPack] the ${context.electronPlatformName} app does not carry gdu's licences: ${problems.join('; ')}. ` +
+        'build.extraResources ships build/gdu/LICENSE.md and build/gdu/THIRD_PARTY_NOTICES.txt there; scripts/gdu-notices.js writes the notices.',
+    );
+  }
+  console.log(`[afterPack] gdu's licences: ${path.join(dir, 'LICENSE.md')} and THIRD_PARTY_NOTICES.txt beside it`);
 }
 
 function sign(target, run) {
@@ -151,6 +171,7 @@ async function ensureElectronLicences(context, deps) {
  */
 exports.default = async function afterPack(context, { run = execFileSync, repo = path.join(__dirname, '..'), downloadZip, readZipEntry } = {}) {
   assertPackagedModule(context, repo);
+  assertGduLicences(context);
   await ensureElectronLicences(context, { downloadZip, readZipEntry });
   if (context.electronPlatformName !== 'darwin') return;
   // electron-builder still ad-hoc signs when a real identity is configured;
