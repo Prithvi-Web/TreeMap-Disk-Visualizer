@@ -68,7 +68,7 @@ test('every view is reachable: palette items are built FROM the view registry', 
   const start = INDEX.indexOf('function cmdkItems');
   assert.notEqual(start, -1, 'cmdkItems exists');
   const fn = INDEX.slice(start, start + 4000);
-  assert.match(fn, /for \(const v of VIEWS\)/, 'views come from the registry itself');
+  assert.match(fn, /for \(const v of cmdkViewOrder\(VIEWS, /, 'views come from the registry itself, in the sidebar\'s order (QA D68)');
   assert.match(fn, /viewBlockedReason/, 'a capability-blocked view shows its reason instead of vanishing');
 });
 

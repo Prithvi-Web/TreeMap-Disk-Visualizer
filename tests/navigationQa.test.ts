@@ -65,3 +65,49 @@ test('the view registry names the same icon as the sidebar tab for every view (D
   }
   assert.ok(['dashboard', 'city', 'apps', 'autopilot'].every((v) => registry.has(v)), 'the views D03 named are all registered with an icon');
 });
+
+/* ══════════════ D68 — the palette lists views in the sidebar's order ══════════════ */
+
+type View = { id: string; label: string };
+
+/** cmdkItems, as shipped, over a given registry and sidebar — only the view rows are read. */
+function paletteViews(views: View[], sidebarIds: string[]): string[] {
+  const start = INDEX.indexOf('function cmdkItems(');
+  assert.notEqual(start, -1, 'cmdkItems is in the page');
+  const order = INDEX.indexOf('function cmdkViewOrder(');
+  assert.notEqual(order, -1, 'the palette has one function that orders the views');
+  const body = (at: number) => {
+    let depth = 0;
+    for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+      if (INDEX[i] === '{') depth++;
+      else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, i + 1);
+    }
+    return assert.fail('unbalanced function');
+  };
+  const tabs = sidebarIds.map((id) => ({ dataset: { view: id } }));
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const items = new Function(
+    'VIEWS', 'tabs',
+    `'use strict';
+     const CMDK_ACTIONS = [], CMDK_SETTINGS_SECTIONS = [], cmdkRoots = [];
+     const state = { savedViews: [], root: null };
+     function viewBlockedReason() { return null; }
+     function switchView() {}
+     ${body(order)}
+     ${body(start)}
+     return cmdkItems();`,
+  )(views, tabs) as { label: string; hint: string }[];
+  return items.filter((i) => i.hint === 'view').map((i) => i.label);
+}
+
+test('the command palette lists views in the order the sidebar shows them, not registration order (D68)', () => {
+  const sidebar = sidebarEntries().filter((e) => e.name !== 'Clean Up').map((e) => e.name);
+  // Registered in another order — Disk City and Autopilot register late, from their own files.
+  const registry: View[] = [...sidebar].reverse().map((id) => ({ id, label: `L-${id}` }));
+  assert.deepEqual(paletteViews(registry, sidebar), sidebar.map((id) => `L-${id}`));
+});
+
+test('a view with no sidebar tab still appears, after the tabbed ones, in registry order (D68)', () => {
+  const views: View[] = [{ id: 'extraA', label: 'Extra A' }, { id: 'b', label: 'B' }, { id: 'extraB', label: 'Extra B' }, { id: 'a', label: 'A' }];
+  assert.deepEqual(paletteViews(views, ['a', 'b']), ['A', 'B', 'Extra A', 'Extra B'], 'none vanish; the palette never lies about what exists');
+});

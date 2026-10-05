@@ -27429,9 +27429,21 @@ async function cmdkLoadRoots() {
   } catch { cmdkRoots = []; }
 }
 
+/**
+ * The views in the order the sidebar shows them (QA D68: the palette listed
+ * them in registration order, so Disk City and Autopilot — registered from
+ * their own files — came last). A view with no tab keeps its registry place,
+ * after the tabbed ones: it is still listed, never dropped.
+ */
+function cmdkViewOrder(views, sidebarIds) {
+  const rank = new Map(sidebarIds.map((id, i) => [id, i]));
+  const at = (v, i) => (rank.has(v.id) ? rank.get(v.id) : sidebarIds.length + i);
+  return views.map((v, i) => ({ v, k: at(v, i) })).sort((a, b) => a.k - b.k).map((x) => x.v);
+}
+
 function cmdkItems() {
   const items = [];
-  for (const v of VIEWS) {
+  for (const v of cmdkViewOrder(VIEWS, [...tabs].map((b) => b.dataset.view))) {
     // A capability-blocked view still appears — with the capability's own
     // reason as its hint. Landing on it shows the full notice; hiding it
     // would make the palette lie about what this app has.
