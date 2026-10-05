@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-mountBoundaries-data-');
 
-import { boundaryRecord, neverDescend, noteRefusedBelow, type BoundaryMount } from '../src/utils/mountBoundaries';
+import { boundaryRecord, mountOutcome, neverDescend, noteRefusedBelow, type BoundaryMount, type MountOutcome, type ScanBoundaryRecord } from '../src/utils/mountBoundaries';
 import { markUnlistedPaths } from '../src/services/scanRefusals';
 import { buildStoreFromTree, Flag, type ScanStore } from '../src/services/scanStore';
 import type { FileNode } from '../src/models/types';
@@ -148,3 +148,73 @@ test('marking a path under two folders of one name finds it where a lookup by pa
   assert.equal(store.flag(store.findByPath('/r/b/x'), Flag.Unlisted), true, 'a path the tree left out marks the folder that held it, found the same way');
   assert.deepEqual(named('b').map((id) => store.flag(id, Flag.Unlisted)), [false, false]);
 });
+/* ─────────── What became of each mount is linear in the mounts (QA-5b, from the SEC-1 review's notes) ─────────── */
+
+/** mountOutcome as SEC-1 left it, quadratic in the mounts: the reference its answers are compared with. */
+function outcomeByPairs(record: ScanBoundaryRecord): MountOutcome {
+  if (record.mounts === null) return { known: false, notEntered: [], entered: [], unreached: [], enteredWithin: [] };
+  const reached = record.mounts.filter((m) => !m.underFixed && !record.walk.refusedAbove.has(m.path) && !record.walk.skipped.has(m.path));
+  const inside = (m: BoundaryMount): boolean => reached.some((o) => o !== m && o.path !== m.path && m.path.startsWith(`${o.path}/`));
+  const outer = reached.filter((m) => !inside(m));
+  const within = reached.filter(inside);
+  const unreached = record.mounts.filter((m) => !reached.includes(m));
+  if (record.rule === 'stay') return { known: true, notEntered: outer, entered: [], unreached: [...unreached, ...within], enteredWithin: [] };
+  return { known: true, notEntered: [], entered: outer, unreached, enteredWithin: within };
+}
+
+/**
+ * A Docker host's mounts, nested: `count` overlay folders, each with its merged view mounted inside and, for every
+ * third, a bind mount inside that; every fifth under a refused folder, every seventh under a skipped one, and a few
+ * under a fixed folder. Each mount's `path` is read through a getter that counts.
+ */
+function nestedMounts(count: number): { list: BoundaryMount[]; reads: () => number; refused: Set<string>; skipped: Set<string> } {
+  let reads = 0;
+  const mount = (p: string, underFixed = false): BoundaryMount => {
+    const m = { filesystem: 'overlay', source: 'overlay', underFixed } as BoundaryMount;
+    Object.defineProperty(m, 'path', { enumerable: true, get: () => { reads++; return p; } });
+    return m;
+  };
+  const list: BoundaryMount[] = [];
+  const refused = new Set<string>();
+  const skipped = new Set<string>();
+  for (let i = 0; i < count; i++) {
+    const outer = `${OVERLAY}/${hashOf(i)}`;
+    list.push(mount(outer));
+    list.push(mount(`${outer}/merged`));
+    if (i % 3 === 0) list.push(mount(`${outer}/merged/etc/hosts.d`));
+    if (i % 5 === 0) refused.add(`${outer}/merged`);
+    if (i % 7 === 0) skipped.add(outer);
+  }
+  list.push(mount('/Volumes/Backup', true), mount('/Volumes/Backup/inner', true));
+  return { list, reads: () => reads, refused, skipped };
+}
+
+for (const rule of ['stay', 'cross'] as const) {
+  test(`${rule}: what became of each mount is the pairwise answer, with each mount's path read a bounded number of times, not once per other mount`, () => {
+    const count = 600;
+    const { list, reads, refused, skipped } = nestedMounts(count);
+    const record = boundaryRecord({ rule, source: '/proc/mounts', reason: null, mounts: list, fixed: [], neverDescend: [] });
+    for (const p of refused) record.walk.refusedAbove.add(p);
+    for (const p of skipped) record.walk.skipped.add(p);
+    const want = outcomeByPairs(record);
+    // Every scan of every entry is counted too: `includes` over a list is a pass over it, whatever it compares.
+    let scanned = 0;
+    const includes = Array.prototype.includes;
+    const before = reads();
+    let got: MountOutcome;
+    Array.prototype.includes = function (this: unknown[], ...args: [unknown, number?]) { scanned += this.length; return includes.apply(this, args); };
+    try {
+      got = mountOutcome(record);
+    } finally {
+      Array.prototype.includes = includes;
+    }
+    const work = reads() - before + scanned;
+    const paths = (l: readonly BoundaryMount[]): string[] => l.map((m) => m.path).sort();
+    for (const key of ['notEntered', 'entered', 'unreached', 'enteredWithin'] as const) {
+      assert.deepEqual(paths(got[key]), paths(want[key]), `${key} is the pairwise answer`);
+    }
+    assert.equal(got.known, true);
+    assert.ok(paths(rule === 'stay' ? got.notEntered : got.entered).length > 0 && paths(got.unreached).length > 0, 'the fixture reaches some mounts and not others');
+    assert.ok(work <= 8 * list.length, `${work} reads and list entries scanned, for ${list.length} mounts`);
+  });
+}

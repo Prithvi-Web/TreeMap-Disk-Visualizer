@@ -546,6 +546,18 @@ export interface MountOutcome {
   enteredWithin: BoundaryMount[];
 }
 
+/** `p` without a trailing separator (as `isAtOrUnder` reads one), the root excepted. */
+function withoutTrailingSlash(p: string): string {
+  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
+}
+
+/** The folder `p` is in, POSIX spelling; null for the root. */
+function parentFolder(p: string): string | null {
+  const trimmed = withoutTrailingSlash(p);
+  if (trimmed === '/' || !trimmed.includes('/')) return null;
+  return trimmed.slice(0, trimmed.lastIndexOf('/')) || '/';
+}
+
 /**
  * What became of each listed mount, from the list and the walk's own records.
  *
@@ -555,11 +567,19 @@ export interface MountOutcome {
  */
 export function mountOutcome(record: ScanBoundaryRecord): MountOutcome {
   if (record.mounts === null) return { known: false, notEntered: [], entered: [], unreached: [], enteredWithin: [] };
-  const reached = record.mounts.filter((m) => !m.underFixed && !record.walk.refusedAbove.has(m.path) && !record.walk.skipped.has(m.path));
-  const inside = (m: BoundaryMount): boolean => reached.some((o) => o !== m && isStrictlyUnder(o.path, m.path));
+  const isReached = (m: BoundaryMount): boolean => !m.underFixed && !record.walk.refusedAbove.has(m.path) && !record.walk.skipped.has(m.path);
+  const reached = record.mounts.filter(isReached);
+  // A drive inside another reached one: some folder above its mount point is a reached mount point.
+  // Each mount looks up only the folders above it, never every other mount (quadratic in the mounts,
+  // and asked on every snapshot save and boundary report — the SEC-1 review's notes, after L4).
+  const reachedPaths = new Set(reached.map((m) => withoutTrailingSlash(m.path)));
+  const inside = (m: BoundaryMount): boolean => {
+    for (let p = parentFolder(m.path); p !== null; p = parentFolder(p)) if (reachedPaths.has(p)) return true;
+    return false;
+  };
   const outer = reached.filter((m) => !inside(m));
   const within = reached.filter(inside);
-  const unreached = record.mounts.filter((m) => !reached.includes(m));
+  const unreached = record.mounts.filter((m) => !isReached(m));
   if (record.rule === 'stay') return { known: true, notEntered: outer, entered: [], unreached: [...unreached, ...within], enteredWithin: [] };
   return { known: true, notEntered: [], entered: outer, unreached, enteredWithin: within };
 }
