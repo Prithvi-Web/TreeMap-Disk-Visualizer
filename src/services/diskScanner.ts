@@ -1666,55 +1666,57 @@ export interface EmptyFolderCandidates {
  */
 export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): EmptyFolderCandidates {
   const store = asStore(source);
+  const count = store.count;
+
+  // Every per-node mark is a byte in a typed array indexed by id (U-4b INFO):
+  // a Map or Set of every node throws RangeError past 2^24 entries in V8, and
+  // a scan kept in memory can now hold more nodes than that. Three bytes a node.
+  // Children carry higher ids than their parents (BFS layout; appends too), so
+  // each pass below is one sweep over the ids, in order or in reverse.
+
+  // Which nodes the pass looks at. Reachability mirrors the original walk —
+  // descend through dirs only, so a container file's virtual listing never
+  // participates, and a removed node (no longer anyone's child) is not reached.
+  const reached = new Uint8Array(count);
+  reached[store.rootId] = 1;
+  for (let id = 0; id < count; id++) {
+    if (reached[id] === 1 && store.isDir(id)) store.forEachChild(id, (c) => { reached[c] = 1; });
+  }
 
   // Pass 1, bottom-up: a dir is empty when every child is junk or an empty
-  // dir. Reachability mirrors the original walk — descend through dirs only,
-  // so a container file's virtual listing never participates. Children carry
-  // higher ids than their parents (BFS layout; appends too), so one reverse
-  // pass over the reachable ids resolves children before parents.
-  const ordered: number[] = [];
-  {
-    const walk: number[] = [store.rootId];
-    while (walk.length) {
-      const id = walk.pop() as number;
-      ordered.push(id);
-      if (store.isDir(id)) for (const c of store.childIds(id)) walk.push(c);
-    }
-    ordered.sort((a, b) => a - b);
+  // dir. One reverse sweep resolves children before parents.
+  const empty = new Uint8Array(count);
+  for (let id = 0; id < count; id++) {
+    if (reached[id] !== 1) continue;
+    const isEmpty = store.isDir(id) ? !store.flag(id, Flag.Unlisted) : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase());
+    if (isEmpty) empty[id] = 1;
   }
-  const empty = new Map<number, boolean>();
-  for (const id of ordered) {
-    empty.set(id, store.isDir(id) ? !store.flag(id, Flag.Unlisted) : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase()));
+  for (let id = count - 1; id >= 0; id--) {
+    if (reached[id] !== 1 || id === store.rootId) continue;
+    if (empty[id] === 0) empty[store.parent(id)] = 0;
   }
-  for (let i = ordered.length - 1; i >= 0; i--) {
-    const id = ordered[i];
-    if (id === store.rootId) continue;
-    const p = store.parent(id);
-    if (!empty.get(id) && empty.get(p)) empty.set(p, false);
-  }
-  // Which nodes a tool owns. `ordered` is ascending and children carry higher
-  // ids than their parents, so one forward pass settles a parent before any of
+  // Which nodes a tool owns. One forward sweep settles a parent before any of
   // its children ask about it — no second traversal, no recursion.
-  const toolOwned = new Set<number>();
+  const toolOwned = new Uint8Array(count);
   // A scan rooted in the spill folder (or below it) owns nothing it could offer.
   const rootInSpill = isSpillPath(store.path(store.rootId));
-  for (const id of ordered) {
-    if (id === store.rootId) continue;
-    if (rootInSpill || toolOwned.has(store.parent(id))) {
-      toolOwned.add(id);
+  for (let id = 0; id < count; id++) {
+    if (reached[id] !== 1 || id === store.rootId) continue;
+    if (rootInSpill || toolOwned[store.parent(id)] === 1) {
+      toolOwned[id] = 1;
       continue;
     }
     const name = store.name(id);
-    if (ownsItsContents(name) || isTreeMapSpillFolder(store, id, name)) toolOwned.add(id);
+    if (ownsItsContents(name) || isTreeMapSpillFolder(store, id, name)) toolOwned[id] = 1;
   }
   /** Reportable = empty, and not something a tool or the OS keeps for itself. */
   const reportable = (id: number): boolean =>
-    id !== store.rootId && store.isDir(id) && Boolean(empty.get(id)) &&
-    !toolOwned.has(id) && !OS_OWNED_EMPTY_DIRS.has(store.name(id).toLowerCase());
+    id !== store.rootId && store.isDir(id) && empty[id] === 1 &&
+    toolOwned[id] === 0 && !OS_OWNED_EMPTY_DIRS.has(store.name(id).toLowerCase());
 
   let totalCount = 0;
-  for (const id of ordered) {
-    if (reportable(id)) totalCount++;
+  for (let id = 0; id < count; id++) {
+    if (reached[id] === 1 && reportable(id)) totalCount++;
   }
 
   // Pass 2, top-down: report only topmost empty dirs (their whole subtree is
@@ -1745,7 +1747,7 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
     }
     const c = f.kids[f.next++];
     if (!store.isDir(c)) continue;
-    if (empty.get(c)) {
+    if (empty[c] === 1) {
       // An empty dir a tool owns is skipped outright rather than descended
       // into — its whole subtree is empty by definition, so there is nothing
       // reportable below it either.

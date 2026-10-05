@@ -13,7 +13,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import type { NativeStore, WalkResult } from '../native/index';
 import { FileNode, ScanResult } from '../src/models/types';
-import { collectEmptyFolders, createScanRecord, startScan } from '../src/services/diskScanner';
+import { collectEmptyFolders, createScanRecord, findEmptyFolders, startScan } from '../src/services/diskScanner';
 import { buildStoreFromTree, Flag, ObjectScanStore, PackedScanStore } from '../src/services/scanStore';
 import { markUnlistedPaths } from '../src/services/scanRefusals';
 import { emptyFoldersForScan, GDU_EMPTY_FOLDERS_REASON } from '../src/services/emptyFolders';
@@ -169,6 +169,67 @@ test('a folder the scan did not list in full is never offered, never counted, an
       `${kind}: a folder not listed in full holds what the scan did not see, so neither it nor its holder is empty`);
     assert.equal(totalCount, 2, `${kind}: and neither is counted`);
   }
+});
+
+test('the pass looks only at what hangs from the root through folders: never a folder inside an archive, never a removed node', () => {
+  for (const store of [buildStoreFromTree(dir('r', '/r', [
+    file('box.zip', '/r/box.zip', 100),
+    dir('cleared', '/r/cleared', [file('gone.txt', '/r/cleared/gone.txt')]),
+    dir('removed-empty', '/r/removed-empty', []),
+    dir('kept', '/r/kept', []),
+  ])), ObjectScanStore.wrap(dir('r', '/r', [
+    file('box.zip', '/r/box.zip', 100),
+    dir('cleared', '/r/cleared', [file('gone.txt', '/r/cleared/gone.txt')]),
+    dir('removed-empty', '/r/removed-empty', []),
+    dir('kept', '/r/kept', []),
+  ]))]) {
+    const kind = store instanceof PackedScanStore ? 'packed' : 'object';
+    // An archive's listing: entries, not folders on disk.
+    store.ingestSubtree(store.findByPath('/r/box.zip'), [
+      { name: 'inside', path: '/r/box.zip/inside', size: 0, type: 'dir', modifiedAt: NOW, isHidden: false, virtual: true, children: [] },
+    ]);
+    // A delete the tree has taken in since the scan: the folder it emptied is empty; the folder it took is gone.
+    store.removeNode(store.findByPath('/r/cleared/gone.txt'));
+    store.removeNode(store.findByPath('/r/removed-empty'));
+    const { folders, totalCount } = findEmptyFolders(store, true);
+    assert.deepEqual(folders.map((f) => f.path), ['/r/cleared', '/r/kept'], kind);
+    assert.equal(totalCount, 2, kind);
+  }
+});
+
+test('the pass keeps no Map or Set of every node: a memory-mode scan can hold more nodes than V8 lets one hold (U-4b INFO)', () => {
+  // A hundred folders: the even ones hold files, junk and an empty folder; the odd ones only an empty folder.
+  const kids: FileNode[] = [];
+  for (let i = 0; i < 100; i++) {
+    const inner: FileNode[] = [];
+    if (i % 2 === 0) {
+      for (let j = 0; j < 48; j++) inner.push(file(`f${j}.txt`, `/big/d${i}/f${j}.txt`));
+      inner.push(file('.DS_Store', `/big/d${i}/.DS_Store`));
+      inner.push(dir('e', `/big/d${i}/e`, []));
+    } else {
+      inner.push(dir('only-empty', `/big/d${i}/only-empty`, []));
+    }
+    kids.push(dir(`d${i}`, `/big/d${i}`, inner));
+  }
+  const store = buildStoreFromTree(dir('big', '/big', kids));
+  // V8 throws RangeError past 2^24 entries in one Map or Set; counted here through the prototypes.
+  const counts = { mapSet: 0, setAdd: 0 };
+  const realSet = Map.prototype.set;
+  const realAdd = Set.prototype.add;
+  Map.prototype.set = function (this: Map<unknown, unknown>, k: unknown, v: unknown) { counts.mapSet++; return realSet.call(this, k, v); };
+  Set.prototype.add = function (this: Set<unknown>, v: unknown) { counts.setAdd++; return realAdd.call(this, v); };
+  let found: ReturnType<typeof findEmptyFolders>;
+  try {
+    found = findEmptyFolders(store, true);
+  } finally {
+    Map.prototype.set = realSet;
+    Set.prototype.add = realAdd;
+  }
+  assert.ok(store.count > 2_500, `${store.count} nodes`);
+  assert.ok(counts.mapSet + counts.setAdd < 100, `a per-node structure grows with the tree: ${JSON.stringify(counts)} for ${store.count} nodes`);
+  assert.equal(found.folders.length, 100, 'e in each even folder, the whole of each odd one');
+  assert.equal(found.totalCount, 150);
+  assert.deepEqual(found.folders.slice(0, 2).map((f) => [f.path, f.counted]), [['/big/d0/e', 1], ['/big/d1', 2]]);
 });
 
 test('a never-descend path is marked where the tree holds it, and the folder that held it where an engine left the node out', () => {
