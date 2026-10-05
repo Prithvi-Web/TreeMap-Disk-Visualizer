@@ -93,6 +93,35 @@ test('one figure alone is stated as one figure, never completed by a guess', () 
   assert.match(neither.summary, /Neither figure can be projected yet/);
 });
 
+/* ─────────────── QA D18: never asked is not "reports no wear indicator" ─────────────── */
+
+test('a drive TreeMap could not ask is never said to report anything (QA D18)', () => {
+  for (const fc of [forecast({ fullInDays: 200 }), null]) {
+    const o = buildOutlook(null, fc);
+    assert.doesNotMatch(o.summary, /drive reports/, `nothing was read, so the drive reported nothing: ${o.summary}`);
+    assert.match(o.summary, /could not read the drive/, 'and the summary says the drive could not be asked');
+  }
+});
+
+test('a drive reporting 0% wear, or wear without its hours, is not said to have no wear indicator (QA D18)', () => {
+  const zero = buildOutlook(smart({ percentageUsed: 0, powerOnHours: 8760 }), forecast({ fullInDays: 200 }));
+  assert.doesNotMatch(zero.summary, /no wear indicator/, '0% is a reading');
+  assert.match(zero.summary, /no measurable wear yet/, 'and is stated as one');
+  assert.match(buildOutlook(smart({ percentageUsed: 0, powerOnHours: 8760 }), null).summary, /no measurable wear yet/,
+    'with no forecast as well');
+  const noHours = buildOutlook(smart({ percentageUsed: 10, powerOnHours: null }), forecast({ fullInDays: 200 }));
+  assert.doesNotMatch(noHours.summary, /no wear indicator/, 'a wear reading without power-on hours is still a reading');
+  assert.match(noHours.summary, /powered on/, 'and the missing half is named');
+});
+
+test('without smartctl on a Mac, the reason says the drive could not be asked, and suggests no Homebrew (QA D18)', async () => {
+  const { MacOsProvider } = await import('../src/platform/macos/index');
+  const state = await new MacOsProvider().probeSmartData();
+  if (state.available) return; // smartctl is installed here: there is no reason to read
+  assert.doesNotMatch(state.reason ?? '', /brew/i, 'the owner’s Mac has no Homebrew');
+  assert.match(state.reason ?? '', /could not ask the drive/, 'it says the drive was never asked');
+});
+
 test('nothing anywhere renders a verdict about the drive', () => {
   // The specific harm §C4 names. Every phrasing the module can emit is checked
   // against the vocabulary that would scare someone into buying hardware.

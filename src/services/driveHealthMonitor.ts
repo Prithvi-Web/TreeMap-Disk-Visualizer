@@ -20,8 +20,9 @@ import { ForecastResult } from '../models/types';
  * pair is a decision — buy a bigger drive, or buy a new one.
  *
  * `smartctl` is optional, not bundled. When it is missing the platform layer
- * already reports the reason and the install command, and that is passed
- * through unchanged: an honest can't-know beats a silent blank.
+ * already reports the reason, and that is passed through unchanged: an honest
+ * can't-know beats a silent blank. The outlook then says the drive could not
+ * be asked — never that it "reports" anything (QA D18).
  */
 
 export interface DriveHealthOutlook {
@@ -40,7 +41,7 @@ export interface DriveHealthOutlook {
 
 export interface DriveHealthResult {
   available: boolean;
-  /** Why SMART could not be read, including how to install the tool. */
+  /** Why SMART could not be read. */
   reason?: string;
   mechanism: string;
   devicePath: string | null;
@@ -96,14 +97,31 @@ export function buildOutlook(smart: SmartInfo | null, forecast: ForecastResult |
       ? `At the current rate this drive runs out of space in about ${months(spaceFullInDays)}. Its own wear indicator projects the rated write endurance lasting about ${months(wearExhaustedInDays)} — so space is the limit you reach first.`
       : `At the current rate this drive runs out of space in about ${months(spaceFullInDays)}, but its own wear indicator projects the rated write endurance being reached in about ${months(wearExhaustedInDays)} — the wear limit arrives first.`;
   } else if (spaceFullInDays !== null) {
-    summary = `At the current rate this drive runs out of space in about ${months(spaceFullInDays)}. The drive reports no wear indicator, so there is nothing to compare that against.`;
+    const why = noWearDateBecause(smart);
+    summary = `At the current rate this drive runs out of space in about ${months(spaceFullInDays)}. ${why.charAt(0).toUpperCase()}${why.slice(1)}, so there is nothing to compare that against.`;
   } else if (wearExhaustedInDays !== null) {
     summary = `The drive's wear indicator projects the rated write endurance being reached in about ${months(wearExhaustedInDays)}. There is not enough scan history yet to project when space runs out.`;
   } else {
-    summary = 'Neither figure can be projected yet: the drive reports no wear indicator, and there is not enough scan history to project when space runs out.';
+    summary = `Neither figure can be projected yet: ${noWearDateBecause(smart)}, and there is not enough scan history to project when space runs out.`;
   }
 
   return { spaceFullInDays, wearExhaustedInDays, firstLimit, summary };
+}
+
+/**
+ * Why there is no wear date, as a clause. Four different facts (QA D18): a
+ * drive TreeMap could not ask has reported nothing, so it is never said to
+ * "report no wear indicator"; and a drive at 0% has reported a figure, which
+ * is not the same as reporting none.
+ */
+function noWearDateBecause(smart: SmartInfo | null): string {
+  if (smart === null) return 'TreeMap could not read the drive’s own health data';
+  if (smart.percentageUsed === null) return 'the drive reports no wear indicator';
+  if (smart.percentageUsed <= 0) return 'the drive reports no measurable wear yet';
+  if (smart.powerOnHours === null || smart.powerOnHours <= 0) {
+    return 'the drive reports its wear but not how long it has been powered on';
+  }
+  return 'the drive’s wear figures do not support a projection';
 }
 
 /**

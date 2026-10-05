@@ -249,7 +249,8 @@ export class MacOsProvider extends BaseProvider {
         available: false,
         mechanism: 'smartctl',
         reason:
-          'Drive health reporting needs the smartmontools utility, which is not installed. You can add it with Homebrew: brew install smartmontools',
+          // No install command (QA D18): a Homebrew line is wrong on a Mac without Homebrew, which is most of them.
+          'Drive health reporting needs the smartmontools utility (smartmontools.org), which is not installed on this Mac, so TreeMap could not ask the drive for its health data.',
       };
     }
     return { available: true, mechanism: 'smartctl --json' };
