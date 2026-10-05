@@ -81,6 +81,15 @@ export async function copyFailure(err: unknown, destination: string): Promise<Sn
 }
 
 /**
+ * A restore made from an older snapshot after `unread` newer ones could not be looked in carries
+ * them — how many, and the first reason — so it is never presented as the newest copy (FG4e,
+ * review L4). Nothing when every newer one was looked in.
+ */
+export function newerUnread(unread: readonly string[]): { newerUnread?: { count: number; reason: string } } {
+  return unread.length === 0 ? {} : { newerUnread: { count: unread.length, reason: unread[0] } };
+}
+
+/**
  * The answer when `unread` of `total` snapshots could not be looked in and the rest do not hold
  * the path: failed, never "none of them hold it" — unknown is not absent (FG4d, review #8, #17).
  */

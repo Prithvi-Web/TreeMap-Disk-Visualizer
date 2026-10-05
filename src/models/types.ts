@@ -1066,6 +1066,11 @@ export interface SnapshotRestoreOutcome {
   restoredTo: string;
   fromSnapshotId: string | null;
   sizeBytes: number;
+  /**
+   * Present only when the copy came from an older snapshot because `count` newer ones could not be
+   * mounted or looked in (the first for `reason`): it may not be the newest copy (FG4e, review L4).
+   */
+  newerUnread?: { count: number; reason: string };
 }
 
 /* ---------- Autopilot (B1) ---------- */

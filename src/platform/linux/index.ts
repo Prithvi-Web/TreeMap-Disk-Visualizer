@@ -11,7 +11,7 @@ import { volumeTopology, isRotational, queueDepth, topologyReason } from './topo
 import { downloadOrigin, provenanceAvailable, readDownloadOriginsLinux } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
-import { copyFailure, copyOutOfSnapshot, destinationTakenReason, unreadSnapshots } from '../snapshotCopy';
+import { copyFailure, copyOutOfSnapshot, destinationTakenReason, newerUnread, unreadSnapshots } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
 import { readLastUsedLinux, probeLastUsedLinux } from './lastUsed';
 import { readBackupMembershipLinux, probeBackupMembershipLinux } from './backup';
@@ -362,7 +362,8 @@ export class LinuxProvider extends BaseProvider {
       } catch (err) {
         return copyFailure(err, destination);
       }
-      return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: found.size };
+      // From an older snapshot than one that could not be read: said, not passed off as the newest (FG4e, review L4).
+      return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: found.size, ...newerUnread(unread) };
     }
     if (unread.length > 0) return unreadSnapshots(unread, ordered.length, 'btrfs snapshot');
     return {

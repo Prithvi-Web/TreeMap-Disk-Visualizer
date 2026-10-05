@@ -444,6 +444,11 @@ export interface SnapshotRecoveryResult {
   destinationRefused?: boolean;
   /** Nothing was restored because the restore itself failed — not because no snapshot holds the path (FG4c). */
   failed?: boolean;
+  /**
+   * Restored, but from an older snapshot: `count` newer ones could not be mounted or looked in, the
+   * first for `reason`, so the copy may not be the newest (FG4e, review L4). Absent when none were.
+   */
+  newerUnread?: { count: number; reason: string };
 }
 
 /* ---------- Filesystem snapshots (B4) ---------- */

@@ -315,9 +315,14 @@ async function restoreFromSnapshot(targetPath, host) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: targetPath }),
     });
+    // A copy from an older snapshot than ones that could not be opened is said to be that, never
+    // left to read as the newest this panel offered (FG4e, review L4).
+    const older = out.newerUnread
+      ? `<div class="snap-msg">${icon('alert', 13)} ${escapeHtml(snapNewerUnreadText(out.newerUnread))}</div>`
+      : '';
     host.innerHTML =
       `<div class="snap-msg">${icon('checkCircle', 13)} Recovered <b>${formatBytes(out.sizeBytes)}</b> to ` +
-      `<span class="pth">${escapeHtml(out.restoredTo)}</span></div>` +
+      `<span class="pth">${escapeHtml(out.restoredTo)}</span></div>` + older +
       `<div class="snap-actions"><button class="pill" data-snap-reveal="${escapeHtml(out.restoredTo)}">Show me</button></div>`;
     wireSnapshotActions(host);
     toast('Recovered from a system snapshot');
@@ -341,6 +346,12 @@ async function restoreFromSnapshot(targetPath, host) {
       `<div class="snap-actions"><button class="pill" data-snap-restore="${escapeHtml(targetPath)}">Try again</button></div>`;
     wireSnapshotActions(host);
   }
+}
+
+/** What the panel says when the copy came from an older snapshot because newer ones could not be opened. */
+function snapNewerUnreadText(newerUnread) {
+  const which = newerUnread.count === 1 ? '1 newer snapshot' : `${formatCount(newerUnread.count)} newer snapshots`;
+  return `${which} could not be opened (${newerUnread.reason}), so this copy came from an older one and may not be the newest.`;
 }
 
 /** What the panel says when the folder the copy would go into is refused: the folder, why, and what is left to do. */

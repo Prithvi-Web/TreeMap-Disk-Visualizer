@@ -180,6 +180,26 @@ place_copy() {
 `;
 
 /**
+ * Whether `$1` is in the mounted snapshot (FG4e, review L4): 0 there (a link too, dangling or not:
+ * the link is what is restored), 1 absent, 2 not known — with `stat`'s own line in `$why`. Absent is
+ * only "No such file or directory" and "Not a directory" (ENOENT, ENOTDIR — what meansAbsent reads
+ * as absent); any other failure to look (EACCES, EIO, ELOOP…) is a snapshot that could not be
+ * looked in, never one that lacks the path. `stat` reads the path itself, not where a link leads.
+ */
+export const PROBE_FUNCTION = `
+why=''
+probe() {
+  if why=$(LC_ALL=C stat -f '%d' -- "$1" 2>&1 >/dev/null); then return 0; fi
+  case $why in
+    *'No such file or directory'*|*'Not a directory'*) return 1 ;;
+  esac
+  why=$(printf '%s\\n' "$why" | head -n 1 | sed 's/: stat: /: /')
+  [ -n "$why" ] || why='stat gave no reason'
+  return 2
+}
+`;
+
+/**
  * The privileged helper, held as text here and written to a temp file when it
  * is needed rather than shipped as a `.sh` beside this module.
  *
@@ -206,6 +226,9 @@ export const RECOVER_SCRIPT = `#!/bin/sh
 # Prints "FOUND <snapshot>", "NOTFOUND", or "ERROR <detail>", and exits 0 with any of them:
 # under do shell script a non-zero exit is an AppleScript error, and the line would never
 # reach TreeMap as an answer. NOTFOUND means every snapshot was mounted and looked in.
+# "FOUNDOLDER <n> <place> <reason>" is a copy placed from the snapshot at <place> in the list
+# (1 = the first, newest) after <n> newer ones could not be mounted or looked in, the first for
+# <reason> (FG4e, review L4): one line, as every answer is.
 set -u
 
 volume=$1
@@ -216,6 +239,7 @@ owner_uid=$5
 owner_gid=$6
 shift 6
 ${PLACEMENT_FUNCTIONS}
+${PROBE_FUNCTION}
 case $dest_name in
   ''|.|..|*/*) echo "ERROR the destination name is not a plain name"; exit 0 ;;
 esac
@@ -240,19 +264,29 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# A snapshot that could not be mounted was not looked in: it is counted, with the
-# first reason, and never read as one that lacks the path (FG4d, review #5).
+# A snapshot that could not be mounted, or mounted but could not be looked in at that path, was
+# not looked in: it is counted, with the first reason, and never read as one that lacks the path
+# (FG4d, review #5; FG4e, review L4).
 total=$#
-unmounted=0
+unread=0
 first_failure=''
 outside=0
+place=0
 for snapshot in "$@"; do
+  place=$((place + 1))
   if ! failure=$(mount_apfs -s "$snapshot" "$volume" "$mount_point" 2>&1 >/dev/null); then
-    unmounted=$((unmounted + 1))
+    unread=$((unread + 1))
     if [ -z "$first_failure" ]; then first_failure=$(printf '%s\\n' "$failure" | head -n 1); fi
     continue
   fi
-  if [ -e "$mount_point/$rel" ] || [ -L "$mount_point/$rel" ]; then
+  probe "$mount_point/$rel"; there=$?
+  if [ "$there" = 2 ]; then
+    unread=$((unread + 1))
+    if [ -z "$first_failure" ]; then first_failure=\${why#*"$mount_point"/}; fi
+    umount "$mount_point" 2>/dev/null || true
+    continue
+  fi
+  if [ "$there" = 0 ]; then
     # The path must lie inside the mounted snapshot where the system resolves it: a
     # folder in the snapshot that is a link with an absolute target leads to the live
     # disk, which this copy, as root, would read (FG4c, review #7). A link as the last
@@ -272,7 +306,11 @@ for snapshot in "$@"; do
     # reset to now is not the file the user lost.
     if place_copy "$mount_point/$rel" "$dest_name" "$owner_uid" "$owner_gid"; then
       umount "$mount_point" 2>/dev/null || true
-      echo "FOUND $snapshot"
+      if [ "$unread" = 0 ]; then
+        echo "FOUND $snapshot"
+      else
+        echo "FOUNDOLDER $unread $place $first_failure"
+      fi
       exit 0
     fi
     umount "$mount_point" 2>/dev/null || true
@@ -281,12 +319,12 @@ for snapshot in "$@"; do
   umount "$mount_point" 2>/dev/null || true
 done
 
-if [ "$unmounted" != 0 ]; then
+if [ "$unread" != 0 ]; then
   if [ -z "$first_failure" ]; then first_failure='mount_apfs gave no reason'; fi
-  if [ "$unmounted" = "$total" ]; then
-    echo "ERROR no snapshot could be mounted ($first_failure), so whether the snapshots hold that path is not known"
+  if [ "$unread" = "$total" ]; then
+    echo "ERROR no snapshot could be mounted or read ($first_failure), so whether the snapshots hold that path is not known"
   else
-    echo "ERROR $unmounted of the $total snapshots could not be mounted ($first_failure), and none of the others holds that path, so whether it can be recovered is not known"
+    echo "ERROR $unread of the $total snapshots could not be mounted or read ($first_failure), and none of the others holds that path, so whether it can be recovered is not known"
   fi
   exit 0
 fi
@@ -344,10 +382,27 @@ export function buildRecoveryScript(
   return `do shell script "/bin/sh " & ${args} with administrator privileges`;
 }
 
-/** Parse the script's single-line answer. Exported: this is the whole contract. */
-export function parseRecoveryOutput(stdout: string): { found: string | null; error?: string } {
+/** What the helper answered: the snapshot the copy came from, why not, and the newer ones not looked in. */
+export interface RecoveryAnswer {
+  found: string | null;
+  error?: string;
+  newerUnread?: { count: number; reason: string };
+}
+
+/**
+ * Parse the script's single-line answer. Exported: this is the whole contract. `snapshotIds` is the
+ * list the helper was handed, newest first: `FOUNDOLDER` names its snapshot by its place there
+ * (FG4e, review L4), so a name holding spaces never runs into the reason after it.
+ */
+export function parseRecoveryOutput(stdout: string, snapshotIds: readonly string[] = []): RecoveryAnswer {
   const line = stdout.trim().split('\n').pop() ?? '';
   if (line.startsWith('FOUND ')) return { found: line.slice(6).trim() };
+  const older = /^FOUNDOLDER (\d+) (\d+) (.*)$/.exec(line);
+  if (older) {
+    const id = snapshotIds[Number(older[2]) - 1];
+    if (id === undefined) return { found: null, error: `the recovery helper named a snapshot it was not given (${line})` };
+    return { found: id, newerUnread: { count: Number(older[1]), reason: older[3].trim() || 'no reason given' } };
+  }
   if (line === 'NOTFOUND') return { found: null };
   if (line.startsWith('ERROR ')) return { found: null, error: line.slice(6).trim() };
   return { found: null, error: line || 'the recovery helper returned nothing' };
@@ -496,7 +551,7 @@ export async function recoverFromSnapshots(
     await helper.cleanup().catch(() => {});
   }
 
-  const { found, error } = parseRecoveryOutput(stdout);
+  const { found, error, newerUnread } = parseRecoveryOutput(stdout, ordered.map((s) => s.id));
   // The helper refused a name at the destination, found when it ran (FG4).
   if (error && NAME_TAKEN.test(error)) {
     return { restored: false, destinationTaken: true, reason: `${destinationTakenReason(destination)} (${error})` };
@@ -521,5 +576,6 @@ export async function recoverFromSnapshots(
     restored: true,
     fromSnapshotId: found,
     ...(stat ? { sizeBytes: stat.size } : {}),
+    ...(newerUnread ? { newerUnread } : {}),
   };
 }

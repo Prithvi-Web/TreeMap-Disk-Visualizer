@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-snapshotRootHelper-data-');
 
-import { RECOVER_SCRIPT } from '../src/platform/macos/snapshotRecover';
+import { PROBE_FUNCTION, RECOVER_SCRIPT } from '../src/platform/macos/snapshotRecover';
 
 /**
  * FG4c — the macOS root helper run whole (review #3, #7, #11).
@@ -62,9 +62,15 @@ function standIns(): string {
   return dir;
 }
 
-/** snapB holds Users/me/a.txt, a dangling link, and Users/Shared/lnk: a link to a folder outside it. */
+/**
+ * snapB holds Users/me/a.txt, a dangling link, and Users/Shared/lnk: a link to a folder outside it.
+ * snapLoop holds Users/me as a link to itself, so looking for anything under it fails with ELOOP —
+ * a snapshot that mounts but cannot be looked in at that path (FG4e, review L4).
+ */
 function fixtureSnapshots(outside: string): string {
   const root = tmp('treemap-helper-snaps-');
+  fs.mkdirSync(path.join(root, 'snapLoop', 'Users'), { recursive: true });
+  fs.symlinkSync('me', path.join(root, 'snapLoop', 'Users', 'me'));
   const me = path.join(root, 'snapB', 'Users', 'me');
   fs.mkdirSync(me, { recursive: true });
   fs.writeFileSync(path.join(me, 'a.txt'), 'from snapB');
@@ -105,8 +111,21 @@ function foreignMountPoint(): string {
 
 test('the newest snapshot holding the path is found, placed and named, and no mount point is left', { skip: !onMac }, () => {
   const dest = tmp('treemap-helper-dest-');
+  const { stdout, status, mounts } = runHelper('Users/me/a.txt', dest, 'a (recovered).txt', ['snapB']);
+  assert.equal(stdout, 'FOUND snapB');
+  assert.equal(status, 0);
+  assert.equal(fs.readFileSync(path.join(dest, 'a (recovered).txt'), 'utf8'), 'from snapB');
+  assert.deepEqual(fs.readdirSync(dest), ['a (recovered).txt'], 'nothing else left in the folder');
+  assertOwnMountPointGone(mounts);
+});
+
+test('restored from an older snapshot because a newer one could not be mounted, the answer says so', { skip: !onMac }, () => {
+  // FG4e, review L4: a plain FOUND here let the panel present the older copy as the newest. The
+  // answer names how many newer snapshots were not looked in, where the copy came from (its place
+  // in the list the helper was given) and the first reason.
+  const dest = tmp('treemap-helper-dest-');
   const { stdout, status, mounts } = runHelper('Users/me/a.txt', dest, 'a (recovered).txt', ['snapA', 'snapB']);
-  assert.equal(stdout, 'FOUND snapB', 'snapA is not there (the stand-in fails as mount_apfs does); snapB holds it');
+  assert.equal(stdout, 'FOUNDOLDER 1 2 mount_apfs: snapA: No such snapshot', 'snapA is not there (the stand-in fails as mount_apfs does); snapB holds it');
   assert.equal(status, 0);
   assert.equal(fs.readFileSync(path.join(dest, 'a (recovered).txt'), 'utf8'), 'from snapB');
   assert.deepEqual(fs.readdirSync(dest), ['a (recovered).txt'], 'nothing else left in the folder');
@@ -140,7 +159,7 @@ test('when no snapshot could be mounted, the answer says so — never that the p
   const dest = tmp('treemap-helper-dest-');
   const { stdout, status, mounts } = runHelper('Users/me/a.txt', dest, 'a.txt', ['snapA', 'snapB'], { env: { TM_MOUNT_FAILS: '1' } });
   assert.notEqual(stdout, 'NOTFOUND');
-  assert.match(stdout, /^ERROR no snapshot could be mounted \(mount_apfs: volume could not be mounted: Operation not permitted\)/);
+  assert.match(stdout, /^ERROR no snapshot could be mounted or read \(mount_apfs: volume could not be mounted: Operation not permitted\)/);
   assert.match(stdout, /not known/);
   assert.equal(status, 0, 'exit 0, so osascript hands the line over as output');
   assert.deepEqual(fs.readdirSync(dest), [], 'nothing written');
@@ -151,7 +170,7 @@ test('when some snapshots could not be mounted and the rest lack the path, the a
   const dest = tmp('treemap-helper-dest-');
   // snapA is not there (its mount fails); snapB mounts and does not hold the path.
   const { stdout, status, mounts } = runHelper('Users/me/missing.txt', dest, 'missing.txt', ['snapA', 'snapB']);
-  assert.match(stdout, /^ERROR 1 of the 2 snapshots could not be mounted \(mount_apfs: snapA: No such snapshot\)/);
+  assert.match(stdout, /^ERROR 1 of the 2 snapshots could not be mounted or read \(mount_apfs: snapA: No such snapshot\)/);
   assert.equal(status, 0);
   assertOwnMountPointGone(mounts);
 
@@ -209,4 +228,58 @@ test('a path that leads out of the mounted snapshot through a link in it is not 
   assert.match(stdout, /^ERROR .*leads out of the snapshot/);
   assert.equal(status, 0);
   assert.deepEqual(fs.readdirSync(dest), [], 'nothing was copied');
+});
+
+/* ══════════════════ A snapshot that mounts but cannot be looked in (FG4e, review L4) ══════════════════ */
+
+/**
+ * Whether the path is in a mounted snapshot was `[ -e … ] || [ -L … ]`, which reads every failure
+ * to look — not only "no such file" — as "not in this snapshot", and so as NOTFOUND. The probe the
+ * helper runs answers 0 (there), 1 (absent: ENOENT or ENOTDIR, as meansAbsent reads them) or 2
+ * (not known, with the reason in $why). Run here as this user, against paths made here.
+ */
+function probe(target: string): { code: number | null; why: string } {
+  const driver = `${PROBE_FUNCTION}\nset -u\nprobe "$1"\ncode=$?\nprintf '%s\\n' "$why"\nexit $code\n`;
+  const run = spawnSync('/bin/sh', ['-c', driver, 'sh', target], {
+    encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+  });
+  return { code: run.status, why: run.stdout.trim() };
+}
+
+test('the probe tells a path that is there, one that is not, and one that could not be looked at apart', { skip: !onMac || UID === 0 }, () => {
+  const dir = tmp('treemap-helper-probe-');
+  fs.writeFileSync(path.join(dir, 'file.txt'), 'x');
+  fs.symlinkSync('nowhere', path.join(dir, 'dangling'));
+  fs.symlinkSync('loop', path.join(dir, 'loop'));
+  fs.mkdirSync(path.join(dir, 'locked'));
+  fs.writeFileSync(path.join(dir, 'locked', 'inside.txt'), 'x');
+  fs.chmodSync(path.join(dir, 'locked'), 0o000);
+  try {
+    assert.equal(probe(path.join(dir, 'file.txt')).code, 0, 'a file is there');
+    assert.equal(probe(path.join(dir, 'dangling')).code, 0, 'a dangling link is there: it is the link that is restored');
+    assert.equal(probe(path.join(dir, 'missing.txt')).code, 1, 'ENOENT is absent');
+    assert.equal(probe(path.join(dir, 'file.txt', 'below')).code, 1, 'ENOTDIR is absent');
+    const denied = probe(path.join(dir, 'locked', 'inside.txt'));
+    assert.equal(denied.code, 2, `EACCES is not known: ${denied.why}`);
+    assert.match(denied.why, /Permission denied/);
+    const looped = probe(path.join(dir, 'loop', 'a.txt'));
+    assert.equal(looped.code, 2, `ELOOP is not known: ${looped.why}`);
+    assert.match(looped.why, /Too many levels of symbolic links/);
+  } finally {
+    fs.chmodSync(path.join(dir, 'locked'), 0o700);
+  }
+});
+
+test('a snapshot that mounts but cannot be looked in at that path is never read as one that lacks it', { skip: !onMac }, () => {
+  const alone = runHelper('Users/me/a.txt', tmp('treemap-helper-dest-'), 'a.txt', ['snapLoop']);
+  assert.notEqual(alone.stdout, 'NOTFOUND');
+  assert.match(alone.stdout, /^ERROR no snapshot could be mounted or read \(Users\/me\/a\.txt: Too many levels of symbolic links\)/);
+  assert.equal(alone.status, 0);
+  assertOwnMountPointGone(alone.mounts);
+
+  const dest = tmp('treemap-helper-dest-');
+  const older = runHelper('Users/me/a.txt', dest, 'a.txt', ['snapLoop', 'snapB']);
+  assert.equal(older.stdout, 'FOUNDOLDER 1 2 Users/me/a.txt: Too many levels of symbolic links');
+  assert.equal(fs.readFileSync(path.join(dest, 'a.txt'), 'utf8'), 'from snapB');
+  assertOwnMountPointGone(older.mounts);
 });

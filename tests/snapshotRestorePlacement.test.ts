@@ -512,6 +512,110 @@ test('with the prompt stood in for, the helper gets its words and its answer is 
   if (process.platform !== 'win32') assert.equal(call.mode, 0o700, 'only this user can read or change the script run as root');
 });
 
+/* ══════════════════ Restored from an older snapshot: the newer ones not looked in are named (FG4e, review L4) ══════════════════ */
+
+/**
+ * A newer snapshot that could not be mounted or opened, and an older one that holds the path: the
+ * restore goes ahead from the older one, and says so — `newerUnread`, through the provider and the
+ * service — rather than reading as the newest copy, which is what the panel offered.
+ */
+test('macOS: restored from an older snapshot past one that could not be mounted, the result says so', async () => {
+  const dest = path.join(tmp('treemap-place-older-'), 'a (recovered).txt');
+  setAdminPromptForTests(async () => {
+    fs.writeFileSync(dest, 'older');
+    return 'FOUNDOLDER 1 2 mount_apfs: Resource busy\n';
+  });
+  try {
+    const result = await recoverFromSnapshots(SNAPSHOTS, '/Users/me/a.txt', dest);
+    assert.deepEqual(result, {
+      restored: true, fromSnapshotId: SNAPSHOTS[0].id, sizeBytes: 5,
+      newerUnread: { count: 1, reason: 'mount_apfs: Resource busy' },
+    }, 'the second newest — SNAPSHOTS[0] is the older of the two — with the newer one named');
+  } finally {
+    setAdminPromptForTests(null);
+  }
+});
+
+test('through the service, a restore from an older snapshot carries the newer ones not looked in', async () => {
+  const provider = platform() as unknown as Record<'listSnapshots' | 'recoverFromSnapshots' | 'restoreFolderRefusal', unknown>;
+  const saved = { list: provider.listSnapshots, recover: provider.recoverFromSnapshots, folder: provider.restoreFolderRefusal };
+  provider.listSnapshots = async () => SNAPSHOTS;
+  provider.restoreFolderRefusal = async () => null;
+  const dir = tmp('treemap-place-older-service-');
+  provider.recoverFromSnapshots = async (_s: VolumeSnapshotRef[], _o: string, d: string) => {
+    fs.writeFileSync(d, 'older');
+    return { restored: true, fromSnapshotId: SNAPSHOTS[0].id, sizeBytes: 5, newerUnread: { count: 1, reason: 'mount_apfs: Resource busy' } };
+  };
+  try {
+    const plain = await restoreFromSnapshot({ path: path.join(dir, 'notes.txt'), destination: path.join(dir, 'older.txt') });
+    assert.deepEqual(plain.newerUnread, { count: 1, reason: 'mount_apfs: Resource busy' });
+    provider.recoverFromSnapshots = async (_s: VolumeSnapshotRef[], _o: string, d: string) => {
+      fs.writeFileSync(d, 'newest');
+      return { restored: true, fromSnapshotId: SNAPSHOTS[1].id, sizeBytes: 6 };
+    };
+    const newest = await restoreFromSnapshot({ path: path.join(dir, 'notes.txt'), destination: path.join(dir, 'newest.txt') });
+    assert.equal('newerUnread' in newest, false, 'nothing skipped, nothing said');
+  } finally {
+    provider.listSnapshots = saved.list;
+    provider.recoverFromSnapshots = saved.recover;
+    provider.restoreFolderRefusal = saved.folder;
+  }
+});
+
+test('Linux: restored from an older btrfs snapshot past one that could not be read, the result says so', async () => {
+  const older = tmp('treemap-btrfs-snap-');
+  fs.mkdirSync(path.join(older, 'home', 'me'), { recursive: true });
+  fs.writeFileSync(path.join(older, 'home', 'me', 'notes.txt'), 'old notes');
+  const snaps: VolumeSnapshotRef[] = [
+    { id: 'snap-2', name: 'snap-2', takenAt: 2, volume: '/', accessPath: null },
+    { id: 'snap-1', name: 'snap-1', takenAt: 1, volume: '/', accessPath: older },
+  ];
+  const dest = path.join(tmp('treemap-btrfs-dest-'), 'notes (recovered).txt');
+  const result = await new LinuxProvider().recoverFromSnapshots(snaps, '/home/me/notes.txt', dest);
+  assert.equal(result.restored, true, JSON.stringify(result));
+  assert.equal(result.fromSnapshotId, 'snap-1');
+  assert.deepEqual(result.newerUnread, { count: 1, reason: 'snap-2 is not mounted where it can be read' });
+
+  const fresh = path.join(path.dirname(dest), 'again.txt');
+  const only = await new LinuxProvider().recoverFromSnapshots([snaps[1]], '/home/me/notes.txt', fresh);
+  assert.equal(only.restored, true);
+  assert.equal('newerUnread' in only, false, 'nothing skipped, nothing said');
+});
+
+test('Windows: restored from an older restore point past one that could not be opened, the result says so', async (t) => {
+  const snaps: VolumeSnapshotRef[] = [
+    { id: '{shadow-2}', name: 'b', takenAt: 2, volume: 'C:', accessPath: null },
+    { id: '{shadow-1}', name: 'a', takenAt: 1, volume: 'C:', accessPath: null },
+  ];
+  // The older restore point's contents: the path below the drive, as the provider joins it.
+  const shadow = tmp('treemap-vss-shadow-');
+  const inside = path.join(shadow, 'Users\\me\\notes.txt');
+  fs.mkdirSync(path.dirname(inside), { recursive: true });
+  fs.writeFileSync(inside, 'old notes');
+  const dest = path.join(tmp('treemap-vss-dest-'), 'notes (recovered).txt');
+  // Nothing is started here: the two steps that would run PowerShell are stood in for.
+  const provider = new WindowsProvider() as unknown as { deviceObjectFor: unknown; linkShadow: unknown; recoverFromSnapshots: WindowsProvider['recoverFromSnapshots'] };
+  provider.deviceObjectFor = async (id: string) => (id === '{shadow-1}' ? '\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1' : null);
+  let linked = true;
+  provider.linkShadow = async (linkDir: string) => {
+    try {
+      fs.symlinkSync(shadow, linkDir, 'junction');
+    } catch {
+      linked = false;
+      throw new Error('the stand-in could not make a link here');
+    }
+  };
+  const result = await provider.recoverFromSnapshots(snaps, 'C:\\Users\\me\\notes.txt', dest);
+  if (!linked) {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  assert.equal(result.restored, true, JSON.stringify(result));
+  assert.equal(result.fromSnapshotId, '{shadow-1}');
+  assert.deepEqual(result.newerUnread, { count: 1, reason: 'restore point {shadow-2} was not found' });
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'old notes');
+});
+
 /* ══════════════════ Linux and Windows: a copy that never overwrites ══════════════════ */
 
 test('the no-overwrite copy refuses a file, a link and a dangling link at its destination', async () => {

@@ -106,6 +106,18 @@ test('the helper’s output contract is exact', () => {
   assert.ok(parseRecoveryOutput('something else').error);
 });
 
+test('an answer from an older snapshot names the newer ones that were not looked in', () => {
+  // FG4e, review L4: `FOUNDOLDER <not looked in> <place in the list> <first reason>`, the place
+  // being where the snapshot stood in the list the helper was handed, newest first.
+  const ids = ['newest', 'older', 'oldest'];
+  assert.deepEqual(parseRecoveryOutput('FOUNDOLDER 1 2 mount_apfs: Resource busy\n', ids),
+    { found: 'older', newerUnread: { count: 1, reason: 'mount_apfs: Resource busy' } });
+  assert.deepEqual(parseRecoveryOutput('FOUNDOLDER 2 3 Users/me/a.txt: Input/output error\n', ids),
+    { found: 'oldest', newerUnread: { count: 2, reason: 'Users/me/a.txt: Input/output error' } });
+  // A place in the list the helper was not given is not read as a find.
+  assert.ok(parseRecoveryOutput('FOUNDOLDER 1 4 mount_apfs: Resource busy\n', ids).error);
+});
+
 test('a dismissed password prompt is recognised as a decision, not a fault', () => {
   assert.equal(isUserCancelled('User canceled. (-128)'), true);
   assert.equal(isUserCancelled('execution error: User cancelled. (-128)'), true);
@@ -152,7 +164,7 @@ test('the privileged helper fails safe when it cannot mount, and leaks no mounts
     });
     const mounts = [...new Set((await fsp.readFile(log, 'utf8')).split('\n').filter(Boolean))];
 
-    assert.match(stdout.trim(), /^ERROR no snapshot could be mounted \(/, 'the failed mount is the answer');
+    assert.match(stdout.trim(), /^ERROR no snapshot could be mounted or read \(/, 'the failed mount is the answer');
     assert.notEqual(stdout.trim(), 'NOTFOUND');
     assert.equal(mounts.length, 1, `the helper made one mount point: ${JSON.stringify(mounts)}`);
     assert.match(mounts[0], /^\/tmp\/treemap-snap-/);

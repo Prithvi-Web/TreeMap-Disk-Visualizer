@@ -11,7 +11,7 @@ import { volumeTopology } from './topology';
 import { fileFactsBatch, toPlaceholderInfo } from './attributes';
 import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
 import { relativeToVolume } from '../snapshotPaths';
-import { copyFailure, copyOutOfSnapshot, destinationTakenReason, unreadSnapshots } from '../snapshotCopy';
+import { copyFailure, copyOutOfSnapshot, destinationTakenReason, newerUnread, unreadSnapshots } from '../snapshotCopy';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
 import { runPowerShellJson } from './powershell';
 import { meansAbsent } from '../../utils/errno';
@@ -274,7 +274,8 @@ export class WindowsProvider extends BaseProvider {
         } catch (err) {
           return await copyFailure(err, destination);
         }
-        return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size };
+        // From an older restore point than one that could not be opened: said, not passed off as the newest (FG4e, review L4).
+        return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size, ...newerUnread(unread) };
       } finally {
         await fsp.rm(linkDir, { force: true, recursive: false }).catch(() => {});
       }

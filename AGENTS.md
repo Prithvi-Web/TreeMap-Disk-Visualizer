@@ -566,7 +566,12 @@ read-what-you-saw) permission to act.
   failed; on Windows a restore point that could not be opened (administrator
   rights, a link not made) or a copy that failed. A failed copy says what it
   left at the destination, and a restore with `overwrite` that stops after
-  the file there went to the Trash says that too. No test ever raises the
+  the file there went to the Trash says that too. A restore made from an
+  older snapshot because a newer one could not be mounted or opened (on macOS,
+  a stat failure other than "no such file" counts as not opened, never as
+  absent) succeeds and says so: the 200 answer carries
+  `newerUnread: { count, reason }`, and the panel says the copy may not be the
+  newest. No test ever raises the
   password prompt: under a test runner it refuses (`setAdminPromptForTests`
   stands in).
 - **Git runs hardened, and only in a vetted repository.** A repository found

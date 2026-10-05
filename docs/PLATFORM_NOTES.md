@@ -558,9 +558,13 @@ Consequences encoded in the code:
 
 **Not executed:** the elevated branch itself, which needs a real password. The
 helper is verified unprivileged (every mount fails → an `ERROR` saying no
-snapshot could be mounted, exit 0 — never `NOTFOUND`, which means every
-snapshot was mounted and none holds the path (FG4d); no leaked mount points,
-nothing written) and its argv quoting is unit-tested.
+snapshot could be mounted or read, exit 0 — never `NOTFOUND`, which means every
+snapshot was mounted and looked in and none holds the path (FG4d); no leaked
+mount points, nothing written) and its argv quoting is unit-tested. A snapshot
+that mounts but whose path cannot be looked at for any reason but "no such
+file" or "not a directory" counts as not looked in, and a copy placed from an
+older snapshot past one not looked in is answered `FOUNDOLDER`, which the
+restore carries as `newerUnread` (FG4e).
 
 ### `mdadm` is deliberately not shelled out to
 

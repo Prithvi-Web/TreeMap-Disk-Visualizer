@@ -291,5 +291,7 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     restoredTo: destination,
     fromSnapshotId: result.fromSnapshotId ?? null,
     sizeBytes: stat ? stat.size : (result.sizeBytes ?? 0),
+    // An older copy than a snapshot that could not be looked in may hold (FG4e, review L4).
+    ...(result.newerUnread ? { newerUnread: result.newerUnread } : {}),
   };
 }
