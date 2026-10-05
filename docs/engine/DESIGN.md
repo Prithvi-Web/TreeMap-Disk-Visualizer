@@ -177,6 +177,16 @@ non-empty ignore list (the glob dialect lives in `src/utils/glob.ts`, and a
 Rust re-implementation is a divergence risk), a root that is not a
 directory, and a forced engine setting other than `auto` or `native`. Never
 degrade to a broken state; every reason is a sentence in the stats.
+**Amended 5 October 2026 (QA D45):** an incremental request no longer keeps
+the native engine off. Measured by the QA pass, the walker's fast rescan (a
+parse of the whole cached tree, then an `lstat` of every folder) was about
+twenty times slower than a native walk of the same folder, and the native
+walk is exact where the cache is not (an edit inside a file, allocation,
+the dataless flag). Where the native engine walks, the cache is not read and
+`engineReason` says a fast rescan was asked for and not used; the fast
+rescan stays the walker's, under the Walker setting or wherever the native
+engine cannot run. The NTFS turbo mode is still never used for one. A cause
+two engines' rules share is said once in the walker's sentence.
 
 ### 5.1 The correctness gate
 

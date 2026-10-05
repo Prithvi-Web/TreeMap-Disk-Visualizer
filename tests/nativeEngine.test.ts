@@ -48,6 +48,7 @@ import {
   machineTicksFromProcStat,
   platformMachineTicks,
   nativeEligibility,
+  nativeRuleCause,
   nativeScanModule,
   runNativeWalk,
   setNativeWalkTimingForTests,
@@ -67,9 +68,11 @@ import type { EngineSetting, ScanResult } from '../src/models/types';
  *
  * Four things are proven here, in the order the plan lists them:
  *
- *  1. `nativeEligibility` is a pure table: incremental, an ignore list, a
- *     forced setting, a missing module and a refused probe each give a
- *     sentence, and Automatic with a module that lists the root is a yes.
+ *  1. `nativeEligibility` is a pure table: an ignore list, a single-file
+ *     root, a forced setting, a missing module and a refused probe each give
+ *     a sentence, and Automatic with a module that lists the root is a yes —
+ *     a fast-rescan request among them (QA D45: it is the walker's, and the
+ *     scan does not read its cache where the native engine walks).
  *  2. `ingestColumns` over hand-built columns produces a store whose pruned
  *     JSON is byte-identical to what the legacy walker produced on the same
  *     fixture — hard links, a sparse file, a cloud placeholder, `.git`, a
@@ -480,7 +483,7 @@ async function bounded(walk: Promise<void>, fake: { handles: Map<number, FakeHan
 
 const probeOk: NativeProbe = { fastPath: 'bulk', reason: 'the root was listed through the getattrlistbulk path (17 entries)' };
 const withModule = { available: true as const, probe: probeOk };
-const base = { incremental: false, ignoreCount: 0, forced: 'auto' as EngineSetting, rootIsDir: true, native: withModule };
+const base = { ignoreCount: 0, forced: 'auto' as EngineSetting, rootIsDir: true, native: withModule };
 
 test('nativeEligibility: Automatic with a module that lists the root is a yes, with the probe’s fast path and a reason', () => {
   const r = nativeEligibility('/tree', base);
@@ -499,13 +502,13 @@ test('nativeEligibility: forced native keeps the probe’s path and says the set
   assert.match(r.reason, /Scan engine setting/);
 });
 
-test('nativeEligibility: an incremental rescan is not eligible — the mtime cache belongs to the walker', () => {
-  const r = nativeEligibility('/tree', { ...base, incremental: true });
-  assert.equal(r.ok, false);
-  if (r.ok) return;
-  assert.match(r.reason, /incremental/);
-  assert.equal(r.fallback, false, 'a rule, not a failure');
-  assert.equal(r.probeRefused, false);
+test('nativeRuleCause: what each rule is about, so a sentence that names several engines says it once (QA D45, D75)', () => {
+  assert.equal(nativeRuleCause(base), null, 'no rule');
+  assert.equal(nativeRuleCause({ ...base, ignoreCount: 2 }), 'ignore');
+  assert.equal(nativeRuleCause({ ...base, rootIsDir: false }), 'singleFile');
+  assert.equal(nativeRuleCause({ ...base, forced: 'native', rootIsDir: false }), 'singleFile', 'the setting asked, and the rule still says why');
+  assert.equal(nativeRuleCause({ ...base, forced: 'gdu', ignoreCount: 2 }), null, 'the setting is the rule: no other engine says that');
+  assert.equal(nativeRuleCause({ ...base, forced: 'walker', rootIsDir: false }), null);
 });
 
 test('nativeEligibility: an ignore list is not eligible — the glob dialect lives in the walker', () => {
@@ -577,11 +580,11 @@ test('nativeEligibility: forced native that could not be honoured says the setti
   if (!autoProbe.ok) assert.equal(autoProbe.reason, 'the native listing is unavailable for /tree: the native listing is not built for linux yet');
 });
 
-test('nativeEligibility: the rules come before the probe — forced native and incremental is still not eligible, and says both', () => {
-  const r = nativeEligibility('/tree', { ...base, forced: 'native', incremental: true });
+test('nativeEligibility: the rules come before the probe — forced native and a "don\'t scan" pattern is still not eligible, and says both', () => {
+  const r = nativeEligibility('/tree', { ...base, forced: 'native', ignoreCount: 1 });
   assert.equal(r.ok, false);
   if (r.ok) return;
-  assert.match(r.reason, /incremental/);
+  assert.match(r.reason, /1 "don't scan" pattern/);
   assert.match(r.reason, /Scan engine setting/);
   assert.equal(r.fallback, false);
 });
@@ -976,16 +979,16 @@ test('the forced setting is honoured: walker runs the walker without a probe, na
   }
 });
 
-test('an incremental rescan and an ignore list keep the walker, each with its sentence and no fallback', async () => {
+test('a fast-rescan request walks natively and says the cache was not used; an ignore list keeps the walker with its sentence; neither is a fallback (QA D45)', async () => {
   const { root, locked } = await buildEdgeFixture('treemap-native-rules-');
   try {
     const fake = useFakeNative({ steps: 1 });
     const incremental = await scanWith('auto', root, { incremental: true });
-    assert.equal(incremental.engine === 'walker' || incremental.engine === 'turbo-walker', true, incremental.engine);
-    assert.match(incremental.engineReason, /incremental/);
+    assert.equal(incremental.engine, 'native', incremental.engineReason);
+    assert.match(incremental.engineReason, /a fast rescan was asked for and not used/);
+    assert.equal(incremental.incremental, false, 'the walker’s cache was not read');
     assert.equal(incremental.fallbackReason, null);
-    assert.equal(incremental.fastPath, 'readdir+lstat');
-    assert.deepEqual(fake.calls.probe, []);
+    assert.deepEqual(fake.calls.probe, [root]);
 
     await updateSettings({ ignore: [{ pattern: 'mod1', scope: 'scan' }] });
     try {

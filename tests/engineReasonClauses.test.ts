@@ -1,6 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
@@ -9,7 +10,7 @@ isolatedDataDir('treemap-engineReasonClauses-data-');
 
 import { getScan, setMftWalkForTests, startScan } from '../src/services/diskScanner';
 import { resetNativeForTests } from '../src/services/scan/native';
-import { resetEngineBudgetForTests } from '../src/services/engineBudget';
+import { resetEngineBudgetForTests, setNativeLoadOptionsForTests } from '../src/services/engineBudget';
 import { updateSettings } from '../src/services/settings';
 import { settled } from '../src/utils/backgroundWrites';
 import type { EngineSetting, ScanResult } from '../src/models/types';
@@ -73,12 +74,23 @@ test('a single-file root is said once, though it kept two engines off', async ()
   assert.equal(times(scan.engineReason, /single file/), 1, scan.engineReason);
 });
 
-test('an incremental rescan is said once, though it kept two engines off (D45)', async () => {
+test('an incremental rescan the walker serves is said once (D45)', async () => {
+  // Where the native engine can run, a fast-rescan request no longer keeps it
+  // off (tests/fastRescanEngine.test.ts); without one, gdu's rule says it.
   const root = tree();
-  await scanOf(root, 'auto');
-  const scan = await scanOf(root, 'auto', { incremental: true });
-  assert.ok(scan.engine === 'walker' || scan.engine === 'turbo-walker', scan.engine);
-  assert.equal(times(scan.engineReason, /incremental rescan/), 1, scan.engineReason);
+  resetNativeForTests();
+  resetEngineBudgetForTests();
+  setNativeLoadOptionsForTests({ path: path.join(os.tmpdir(), 'treemap-no-native-here.node') });
+  try {
+    await scanOf(root, 'auto');
+    const scan = await scanOf(root, 'auto', { incremental: true });
+    assert.ok(scan.engine === 'walker' || scan.engine === 'turbo-walker', scan.engine);
+    assert.equal(times(scan.engineReason, /incremental rescan/), 1, scan.engineReason);
+  } finally {
+    setNativeLoadOptionsForTests(null);
+    resetNativeForTests();
+    resetEngineBudgetForTests();
+  }
 });
 
 test('two causes are both said: a gdu setting refused by a pattern names the setting and the pattern', async () => {

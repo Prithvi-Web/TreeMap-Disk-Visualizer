@@ -439,6 +439,10 @@ export function createScanRecord(rootPath: string): ScanResult {
   return scan;
 }
 
+/** What a native scan says when a fast rescan was asked for (QA D45): the clause startScan's comment explains. */
+const FAST_RESCAN_NOT_USED =
+  'a fast rescan was asked for and not used: the native engine lists the whole folder faster than the built-in walker reuses its cache, and sees the edits inside files the cache cannot';
+
 /** One reason a faster engine did not run, and what it is about when more than one engine has a rule about that (`RuleCause`). */
 interface WhyClause {
   text: string;
@@ -734,10 +738,48 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
   );
   if (ignore.length > 0) noteSkippedMounts(boundary, rootPath, (p) => matchesAny(ignore, p, path.basename(p)));
 
-  // Incremental rescan: load the previous tree so unchanged directories (same
-  // mtime) can be substituted from cache instead of re-walked.
+  const rootIsDir = rootStat.isDirectory();
+
+  /*
+   * Engine selection (Phase 3, decision P3-4 and DESIGN §4.1), in order:
+   * forced setting → native (eligible, module loaded, root probed) → gdu (as
+   * before) → the walker. The rules cost nothing and come first, so a scan
+   * the setting sends elsewhere never loads a module or pays for a probe; a
+   * refused probe or a missing module is a `fallbackReason`, a rule is a
+   * clause in `engineReason`, and the walker's sentence ends with every
+   * reason the faster engines did not run.
+   */
+  const nativeInput = { ignoreCount: ignore.length, forced, rootIsDir };
+  const native = decideNative(rootPath, nativeInput);
+  /*
+   * The native walk, when the engine is eligible, with the tree's size
+   * projected before it walks (Track U, U-30): the last scan of this folder,
+   * else a whole volume's used inodes, else unknown — never a throw. It is
+   * projected here, before the record exists, rather than in the walk's
+   * fire-and-forget block, so startScan still returns with the native walk
+   * started: a pause or a Stop always meets a walk, never a gap before one.
+   */
+  const nativeWalk = native.eligibility.ok && native.module
+    ? { module: native.module, fastPath: native.eligibility.fastPath, reason: native.eligibility.reason, projection: await nativeProjection(rootPath) }
+    : null;
+
+  /*
+   * A fast (incremental) rescan is the built-in walker's: it reuses the
+   * listing of every folder whose time has not changed, from the tree the
+   * last scan of this folder left in the mtime cache. Where the native engine
+   * walks, a request for one is not used (QA D45, 5 Oct 2026): the native
+   * engine lists a whole folder in one call per folder, about twenty times
+   * faster on the QA Mac than the walker parses the cache and checks every
+   * folder's time, and it is exact where the cache is not — an edit inside a
+   * file is seen, every file's allocation is measured, a placeholder is read
+   * from its flag. So the cache is read only for a scan the native engine
+   * will not walk (the Walker or gdu setting, a pattern, a single file, no
+   * module), and gdu's and the turbo mode's rules weigh only that.
+   */
+  const fastRescanSkipped = opts.incremental === true && nativeWalk !== null;
+  const incremental = opts.incremental === true && !fastRescanSkipped;
   let cache: Map<string, FileNode> | null = null;
-  if (opts.incremental) {
+  if (incremental) {
     // `.catch(() => null)` for the same reason the ignore-matcher read above
     // catches: this is an optimisation, and `null` already means "no usable
     // cache, do a full walk". Without it, `readJsonFile`'s new throw on an
@@ -752,32 +794,6 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
       cache = buildDirCache(cachedRoot);
     }
   }
-
-  const rootIsDir = rootStat.isDirectory();
-  const incremental = opts.incremental === true || cache !== null;
-
-  /*
-   * Engine selection (Phase 3, decision P3-4 and DESIGN §4.1), in order:
-   * forced setting → native (eligible, module loaded, root probed) → gdu (as
-   * before) → the walker. The rules cost nothing and come first, so a scan
-   * the setting sends elsewhere never loads a module or pays for a probe; a
-   * refused probe or a missing module is a `fallbackReason`, a rule is a
-   * clause in `engineReason`, and the walker's sentence ends with every
-   * reason the faster engines did not run.
-   */
-  const nativeInput = { incremental, ignoreCount: ignore.length, forced, rootIsDir };
-  const native = decideNative(rootPath, nativeInput);
-  /*
-   * The native walk, when the engine is eligible, with the tree's size
-   * projected before it walks (Track U, U-30): the last scan of this folder,
-   * else a whole volume's used inodes, else unknown — never a throw. It is
-   * projected here, before the record exists, rather than in the walk's
-   * fire-and-forget block, so startScan still returns with the native walk
-   * started: a pause or a Stop always meets a walk, never a gap before one.
-   */
-  const nativeWalk = native.eligibility.ok && native.module
-    ? { module: native.module, fastPath: native.eligibility.fastPath, reason: native.eligibility.reason, projection: await nativeProjection(rootPath) }
-    : null;
 
   const scanId = crypto.randomUUID();
   const scan: ScanResult = {
@@ -876,9 +892,12 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     : mftOffered && !mftWanted
       ? `the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it asks for administrator permission only for a scan started from the TreeMap window, and this one was not`
       : null;
-  const mftRuleCause: RuleCause | null = !mftWanted ? null : !rootIsDir ? 'singleFile' : incremental ? 'incremental' : ignore.length > 0 ? 'ignore' : null;
+  // A fast-rescan request keeps the mode off whichever engine then scans (the
+  // walker with its cache, or the native engine, which does not read it): no
+  // administrator prompt is raised for a scan that asked to be a rescan.
+  const mftRuleCause: RuleCause | null = !mftWanted ? null : !rootIsDir ? 'singleFile' : opts.incremental === true ? 'incremental' : ignore.length > 0 ? 'ignore' : null;
   const mftRule = mftRuleCause === 'singleFile' ? 'the root is a single file, which needs no volume read'
-    : mftRuleCause === 'incremental' ? 'this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker'
+    : mftRuleCause === 'incremental' ? 'this is an incremental rescan, which the turbo mode does not do'
       : mftRuleCause === 'ignore' ? `the scan has ${ignore.length} "don't scan" pattern${ignore.length === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`
         : null;
   if (!native.eligibility.ok && gduRule !== null && forced !== 'walker') {
@@ -928,7 +947,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     if (nativeWalk) {
       scan.engine = 'native';
       scan.fastPath = nativeWalk.fastPath;
-      scan.engineReason = told(mftClause === null ? nativeWalk.reason : `${nativeWalk.reason}; ${mftClause}`);
+      scan.engineReason = told([nativeWalk.reason, ...(fastRescanSkipped ? [FAST_RESCAN_NOT_USED] : []), ...(mftClause === null ? [] : [mftClause])].join('; '));
       scan.fallbackReason = mftFallback;
       // The memory store's room, sized from the projection (U-31, the owner's
       // U-Q15): a tree that outgrew the default room is walked once, not once

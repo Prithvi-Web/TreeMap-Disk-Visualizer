@@ -12,6 +12,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-inc-test-');
 
 import { startScan, getScan, mtimesMatch } from '../src/services/diskScanner';
+import { updateSettings } from '../src/services/settings';
 import { FileNode, ScanResult } from '../src/models/types';
 import { settled, pending } from '../src/utils/backgroundWrites';
 import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
@@ -79,14 +80,17 @@ async function waitForCache(rootPath: string): Promise<void> {
 
 async function scanOnce(root: string, incremental: boolean): Promise<ScanResult> {
   // No gdu. The FIRST scan runs on whichever engine Automatic picks — the
-  // native engine wherever its module loads — and a fast rescan always runs
-  // on the walker (P3-4), reading the mtime cache the first scan wrote: the
-  // cross-engine path every user takes. (This comment used to say "the
-  // walker on every machine"; written before the native engine existed, it
-  // stopped being true, and on Windows this very path exposed the native
-  // listing's lazily updated directory times — see DirTimes in tm-walk.)
+  // native engine wherever its module loads — and the fast rescan runs on the
+  // walker, reading the mtime cache the first scan wrote: the cross-engine
+  // path. (This comment used to say "the walker on every machine"; written
+  // before the native engine existed, it stopped being true, and on Windows
+  // this very path exposed the native listing's lazily updated directory
+  // times — see DirTimes in tm-walk.) The rescan asks for the walker by the
+  // setting: where the native engine can run, Automatic walks natively and
+  // does not read the cache (QA D45, tests/fastRescanEngine.test.ts).
   process.env.TREEMAP_NO_GDU = '1';
   try {
+    await updateSettings({ engine: incremental ? 'walker' : 'auto' });
     const started = await startScan(root, { incremental });
     return await settle(started.scanId);
   } finally {

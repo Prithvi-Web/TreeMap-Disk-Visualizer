@@ -124,10 +124,14 @@ function describe(err: unknown): string {
 
 /* ------------------------------ eligibility ------------------------------ */
 
-/** Everything the eligibility table needs, gathered by the caller. */
+/**
+ * Everything the eligibility table needs, gathered by the caller. A fast
+ * (incremental) rescan request is not in it (QA D45, 5 Oct 2026): the native
+ * engine has no use for the walker's mtime cache and lists a whole folder
+ * faster than the walker reuses it, so `startScan` reads the cache only for
+ * a scan the walker produces, and says so when it was asked for and not used.
+ */
 export interface EligibilityInput {
-  /** An incremental rescan: the mtime cache it reuses belongs to the walker until Phase 4. */
-  incremental: boolean;
   /** "Don't scan" patterns in force: the glob dialect lives in the walker. */
   ignoreCount: number;
   /** The Scan engine setting. */
@@ -164,7 +168,6 @@ export type RuleCause = 'singleFile' | 'incremental' | 'ignore';
 export function nativeRuleCause(input: Omit<EligibilityInput, 'native'>): RuleCause | null {
   if (input.forced === 'gdu' || input.forced === 'walker') return null;
   if (!input.rootIsDir) return 'singleFile';
-  if (input.incremental) return 'incremental';
   if (input.ignoreCount > 0) return 'ignore';
   return null;
 }
@@ -177,8 +180,6 @@ export function nativeRule(input: Omit<EligibilityInput, 'native'>): string | nu
   switch (nativeRuleCause(input)) {
     case 'singleFile':
       return `${asked}the root is a single file, which the built-in walker records without a listing`;
-    case 'incremental':
-      return `${asked}this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker`;
     case 'ignore': {
       const n = input.ignoreCount;
       return `${asked}the scan has ${n} "don't scan" pattern${n === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`;
