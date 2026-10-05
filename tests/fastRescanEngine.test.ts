@@ -1,5 +1,6 @@
 import { test, after, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -166,4 +167,33 @@ test('the NTFS turbo mode is never used for a fast-rescan request, though the na
     resetEngineBudgetForTests();
     await updateSettings({ engine: 'auto' });
   }
+});
+
+/* ─────────────── what a fast rescan counts from the folders it reuses ─────────────── */
+
+/** The fast-rescan cache of `root` under "Stay on this drive" (diskScanner's cacheFileName). */
+function cacheFileOf(root: string): string {
+  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-${crypto.createHash('sha1').update(root).digest('hex').slice(0, 16)}.json`);
+}
+
+const PARTIAL = /a fast rescan reuses the listings of folders that have not changed, which record no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh/;
+
+test('a fast rescan counts the online-only files of the folders it reuses, from the nodes it reuses, and says its sparse figures cover only what it listed afresh (D45)', async () => {
+  const root = tree();
+  await scanOf(root, 'walker');
+  // The cache as a scan that found sub/b.bin online-only would have written it.
+  const file = cacheFileOf(root);
+  const cached = JSON.parse(fs.readFileSync(file, 'utf8')) as { children: Array<{ name: string; children?: Array<Record<string, unknown>> }> };
+  const b = cached.children.find((c) => c.name === 'sub')!.children!.find((c) => c.name === 'b.bin')!;
+  b.cloudPlaceholder = true;
+  fs.writeFileSync(file, JSON.stringify(cached));
+
+  const again = await scanOf(root, 'walker', { incremental: true });
+  assert.ok((again.cachedDirs ?? 0) >= 2, `both folders reused (cachedDirs ${again.cachedDirs})`);
+  assert.equal(again.cloudFiles, 1, 'the reused placeholder is counted');
+  assert.equal(again.cloudBytes, 200, 'with the size the tree takes from the same node');
+  assert.equal(times(again.engineReason, PARTIAL), 1, again.engineReason);
+
+  const plain = await scanOf(root, 'walker');
+  assert.equal(times(plain.engineReason, PARTIAL), 0, 'a scan that reads no cache measured every file');
 });

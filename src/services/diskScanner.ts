@@ -443,6 +443,10 @@ export function createScanRecord(rootPath: string): ScanResult {
 const FAST_RESCAN_NOT_USED =
   'a fast rescan was asked for and not used: the native engine lists the whole folder faster than the built-in walker reuses its cache, and sees the edits inside files the cache cannot';
 
+/** What the walker says when it reads the fast-rescan cache (QA D45): a reused listing holds no file's allocation. */
+const FAST_RESCAN_PARTIAL =
+  'a fast rescan reuses the listings of folders that have not changed, which record no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh';
+
 /** One reason a faster engine did not run, and what it is about when more than one engine has a rule about that (`RuleCause`). */
 interface WhyClause {
   text: string;
@@ -1024,7 +1028,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     }
     scan.engine = WALKER_ENGINE;
     scan.fastPath = legacyFastPath ?? WALKER_FAST_PATH;
-    scan.engineReason = told(legacyReason('walker', why));
+    scan.engineReason = told(legacyReason('walker', cache === null ? why : [...why, said(FAST_RESCAN_PARTIAL)]));
     await walk(scan, rootIsDir, ignore, cache);
   })().catch((err: unknown) => {
     scan.status = 'error';
@@ -1106,8 +1110,12 @@ interface DirJob {
  * Reuse a validated directory's cached listing: build its direct children
  * into the store and enqueue each subdirectory for its own revalidation
  * visit. Counter semantics mirror a fresh listing (scanned/dirCount/
- * fileCount); as before, cloud and hardlink tallies are not re-derived from
- * cached files — their sizes and flags ride along in the nodes themselves.
+ * fileCount). The online-only tallies are taken from the same nodes the tree
+ * takes, flag and size (QA D45): left out, the Missing Gigabytes statement
+ * took back only the placeholders in folders listed afresh. What a cached
+ * node does not hold is not guessed: its allocation (so the sparse and slack
+ * tallies count only the folders listed afresh — the walker's sentence says
+ * so, FAST_RESCAN_PARTIAL) and a hard-link duplicate's bytes.
  */
 function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, dirPath: string, cachedChildren: FileNode[], queue: DirJob[], dev: number | undefined): void {
   scan.currentPath = dirPath;
@@ -1120,6 +1128,10 @@ function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, d
       queue.push({ id: childId, path: child.path, cached: child, revalidate: true, parentDev: dev });
     } else {
       scan.fileCount++;
+      if (child.cloudPlaceholder) {
+        scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
+        scan.cloudBytes = (scan.cloudBytes ?? 0) + child.size;
+      }
     }
   }
 }
