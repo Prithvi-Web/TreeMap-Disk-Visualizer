@@ -15,6 +15,8 @@ import { findGduBinary } from '../src/services/gduScanner';
 import { nativeScanModule } from '../src/services/scan/native';
 import { storeOf } from '../src/services/scanStore';
 import { updateSettings } from '../src/services/settings';
+import { listNotifications, startScheduler, stopScheduler } from '../src/services/scheduler';
+import { listSnapshots } from '../src/services/snapshots';
 import { settled } from '../src/utils/backgroundWrites';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -295,5 +297,41 @@ test('an agent policy’s allowed roots confine where a link root leads: a link 
   } finally {
     fs.rmSync(policyFile, { force: true });
     await close();
+  }
+});
+
+/* ─────────────────────────── a scheduled scan of a link ─────────────────────────── */
+
+test('a scheduled scan of a link to a folder compares with that folder’s history: its growth raises the alert', { skip: NO_LINKS }, async () => {
+  const f = linkTree();
+  await updateSettings({ engine: 'walker' });
+  process.env.TREEMAP_NO_GDU = '1';
+  // Due now: a run a day ago, as far as the scheduler can tell (an unset lastRunAt is kept from the last save).
+  const due = (): Promise<unknown> => updateSettings({ schedules: [{ id: 'qa5b-link-schedule', path: f.link, intervalHours: 24, thresholdBytes: 1, enabled: true, lastRunAt: 1 }] });
+  /** Ticks the scheduler (each start ticks at once) until `cond` holds. */
+  const tickUntil = async (cond: () => boolean | Promise<boolean>, what: string): Promise<void> => {
+    try {
+      await waitFor(async () => {
+        stopScheduler();
+        startScheduler();
+        return cond();
+      }, what, 100);
+    } finally {
+      stopScheduler();
+    }
+  };
+  try {
+    await due();
+    await tickUntil(async () => (await listSnapshots(f.real)).length === 1, 'the first scheduled scan saving the folder’s snapshot');
+    await settled();
+    fs.writeFileSync(path.join(f.real, 'grown.bin'), 'g'.repeat(5000));
+    const before = listNotifications().length;
+    await due();
+    await tickUntil(() => listNotifications().length > before, 'the growth alert of the second scheduled scan');
+    const alert = listNotifications().at(-1)!;
+    assert.equal(alert.delta, 5000, 'the folder grew by the new file, against its own last snapshot');
+    await settled();
+  } finally {
+    await updateSettings({ schedules: [] });
   }
 });

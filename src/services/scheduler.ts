@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { GrowthNotification, ScanResult, ScheduleConfig, Snapshot } from '../models/types';
-import { startScan, getScan } from './diskScanner';
+import { startScan, getScan, scanRootPathOf } from './diskScanner';
 import { getSettings, patchSchedule } from './settings';
 import { runDuePolicies } from './autopilot';
 import { boundaryKeyOf, listSnapshots, scanBoundaryKey } from './snapshots';
@@ -128,7 +128,11 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
   await patchSchedule(sched.id, { lastRunAt: Date.now() });
 
   const target = sanitizePath(sched.path); // throws on blocked/invalid paths
-  const history = await listSnapshots(target);
+  // The folder the scan is rooted at, which its snapshot is saved under: a
+  // link to a folder is scanned as that folder (QA D78), and read by the
+  // link's path the history held none of it — no growth alert, no forecast.
+  const root = await scanRootPathOf(target);
+  const history = await listSnapshots(root);
   const prev = history[history.length - 1];
 
   // Eco whatever the setting says: nobody asked for this scan right now, so
@@ -138,7 +142,7 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
   const done = getScan(scan.scanId);
   if (!done || done.status !== 'complete' || !done.store) return;
 
-  await maybeForecastAlert(target);
+  await maybeForecastAlert(root);
   if (!prev) return; // first record of this folder — nothing to compare against
 
   // The disk journal (§7.3) is fed HERE, from the scan this tick already ran,
@@ -159,6 +163,9 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
  */
 export function growthAlertFor(sched: ScheduleConfig, target: string, prev: Snapshot, done: ScanResult): Omit<GrowthNotification, 'id' | 'at'> | null {
   if (!done.store) return null;
+  // Another folder's snapshot is no previous size of this one: a link the
+  // scheduler resolved and the scan then followed elsewhere (QA D78).
+  if (prev.rootPath !== done.rootPath) return null;
   if (scanBoundaryKey(done) !== boundaryKeyOf(prev.boundary)) return null;
   const newSize = done.store.size(done.store.rootId);
   const delta = newSize - prev.totalSize;

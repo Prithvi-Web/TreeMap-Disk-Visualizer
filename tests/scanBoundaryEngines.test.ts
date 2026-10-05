@@ -467,6 +467,9 @@ test('a scheduled scan raises no growth alert across a change of boundary, and s
   assert.ok(alert, 'the same boundary, and the folder grew: that is an alert');
   assert.equal(alert.delta, storeOf(crossed).size(storeOf(crossed).rootId) - 800);
   assert.equal(growthAlertFor(sched, f.root, snapshotFor(f.root, Date.now() - 86_400_000, 800), crossed), null, 'one that met no drive: the drive joining the count is not growth');
+  // A snapshot of another folder is no previous size of this one: a link the scheduler resolved
+  // and the scan then followed elsewhere (QA D78), or any history read by another path.
+  assert.equal(growthAlertFor(sched, f.root, snapshotFor(f.other, Date.now() - 86_400_000, 800, { rule: 'cross', entered: [f.mnt] }), crossed), null, 'another folder’s snapshot is not compared');
 });
 
 test('the forecast fits only the scans since the boundary last changed', () => {

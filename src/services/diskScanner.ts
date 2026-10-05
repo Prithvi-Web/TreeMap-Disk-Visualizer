@@ -687,6 +687,15 @@ async function scanRootOf(given: string): Promise<ScanRoot> {
   return { rootPath: folder, rootStat: await fsp.lstat(folder), linkedFrom: given };
 }
 
+/**
+ * The folder a scan of `given` is rooted at (D78): the folder a link points to, else `given`. A caller that
+ * reads what earlier scans of the same folder left (the scheduler's history and forecast) reads it under this
+ * path, which is the one the scan saves under. It decides as `startScan` does, refusals included.
+ */
+export async function scanRootPathOf(given: string): Promise<string> {
+  return (await scanRootOf(given)).rootPath;
+}
+
 /** The agent policy's allowed roots, as written or where each really is, must hold the folder a link root leads to. */
 async function assertLinkTargetAllowed(given: string, folder: string): Promise<void> {
   // Imported when called: policy.ts reads the scans (`allScans`), and a module
