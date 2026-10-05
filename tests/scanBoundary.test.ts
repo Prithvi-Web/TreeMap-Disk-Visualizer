@@ -16,6 +16,7 @@ import {
   parseFirmlinks,
   readMountTable,
   scanBoundary,
+  unknownBoundary,
   type BoundaryDeps,
   type MountTable,
 } from '../src/utils/mountBoundaries';
@@ -324,4 +325,46 @@ test('a mount point whose stat never answers holds one I/O thread, however many 
   assert.deepEqual(asked, ['/mnt/dead', '/mnt/other', '/mnt/dead'], 'an answer is never kept: a drive may be mounted there since');
   const answered = boundedIsDirectory(async () => ({ isDirectory: () => false }), 1);
   assert.equal(await answered('/etc/hosts'), false, 'an answer in time is the answer');
+});
+
+/* ─────────── a root on the Data volume never descends into the fixed folders as that volume spells them ─────────── */
+
+const DATA = '/System/Volumes/Data';
+const dataSpelled = (platform: NodeJS.Platform): string[] => neverDescendPaths(platform).map((f) => DATA + f);
+
+test('a walk of the Data volume is told not to descend into the fixed folders as that volume spells them — /System/Volumes/Data/Volumes, where every drive appears — under either rule, with or without a table (the SEC-1 review’s notes, scan side)', async () => {
+  for (const rule of ['stay', 'cross'] as const) {
+    const b = await scanBoundary(DATA, rule, fakeDeps('darwin', darwinTable()));
+    for (const p of dataSpelled('darwin')) assert.ok(b.neverDescend.includes(p), `${rule}: ${p}`);
+    for (const p of neverDescendPaths('darwin')) assert.ok(b.neverDescend.includes(p), `${rule}: the fixed list as the root spells it stays`);
+    assert.deepEqual(b.fixed, neverDescendPaths('darwin'), `${rule}: the platform's fixed list is what it was`);
+  }
+  const unread = await scanBoundary(DATA, 'stay', fakeDeps('darwin', { source: 'mount', entries: null, reason: 'mount failed' }));
+  for (const p of dataSpelled('darwin')) assert.ok(unread.neverDescend.includes(p), `no table: ${p}`);
+  const unknown = unknownBoundary('stay', 'darwin', 'the table could not be composed', DATA);
+  for (const p of dataSpelled('darwin')) assert.ok(unknown.neverDescend.includes(p), `nothing composed: ${p}`);
+});
+
+test('a drive the table names under /Volumes is, for a walk of the Data volume, under a fixed folder: never reached, and never looked at', async () => {
+  const table: MountTable = {
+    source: 'mount',
+    entries: parseBsdMount('/dev/disk4s2 on /Volumes/Backup (apfs, local, nodev, nosuid, journaled)\n'),
+    reason: null,
+  };
+  const deps = fakeDeps('darwin', table);
+  const b = await scanBoundary(DATA, 'stay', deps);
+  assert.deepEqual(b.mounts?.map((m) => [m.path, m.underFixed]), [[`${DATA}/Volumes/Backup`, true]]);
+  assert.deepEqual(deps.asked, [], 'a dead drive there must not hold the scan’s start');
+});
+
+test('only a root on the Data volume gets that spelling: / and other folders are as they were, and Linux has no Data volume', async () => {
+  const root = await scanBoundary('/', 'cross', fakeDeps('darwin', darwinTable()));
+  assert.deepEqual(sorted(root.neverDescend), sorted(neverDescendPaths('darwin')));
+  const users = await scanBoundary('/Users/someone', 'cross', fakeDeps('darwin', darwinTable()));
+  assert.deepEqual(sorted(users.neverDescend), sorted(neverDescendPaths('darwin')));
+  const inside = await scanBoundary(`${DATA}/Users/someone`, 'cross', fakeDeps('darwin', darwinTable()));
+  assert.deepEqual(inside.neverDescend.filter((p) => p.startsWith(`${DATA}/Users/someone/`)), [], 'nothing of the list lies below a folder inside the Data volume');
+  const linux = await scanBoundary(DATA, 'cross', fakeDeps('linux', linuxTable()));
+  assert.deepEqual(sorted(linux.neverDescend), sorted(neverDescendPaths('linux')));
+  assert.deepEqual(sorted(unknownBoundary('cross', 'darwin', 'x', '/').neverDescend), sorted(neverDescendPaths('darwin')));
 });

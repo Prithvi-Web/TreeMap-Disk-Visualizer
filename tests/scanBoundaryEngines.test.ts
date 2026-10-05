@@ -34,6 +34,7 @@ import {
   mountOutcome,
   scanBoundary,
   setBoundaryDepsForTests,
+  setNeverDescendForTests,
   type MountTable,
   type ScanBoundaryRecord,
 } from '../src/utils/mountBoundaries';
@@ -860,4 +861,62 @@ test('the time slider never overlays a snapshot that stopped at other drives: no
   const within = await apiGet(at(stayedAgain));
   assert.equal(within.body.prevTakenAt, stayed.takenAt, 'one boundary: the overlay is drawn');
   assert.ok((within.body.nodes as { prevSize?: unknown }[]).some((n) => typeof n.prevSize === 'number'));
+});
+
+/* ───────── a root on the Data volume, walked by every engine (the SEC-1 review's notes, scan side) ───────── */
+
+/**
+ * A scan of /System/Volumes/Data never descends into the fixed folders as that volume spells them —
+ * /System/Volumes/Data/Volumes is the root's /Volumes, where every drive appears. A test cannot scan that
+ * volume, so it stands in: this file's temp folder by the Data volume's spelling (macOS firmlinks /private
+ * there), with one of its folders added to the fixed list by the root's spelling (`setNeverDescendForTests`).
+ */
+const DATA_VOLUME = '/System/Volumes/Data';
+
+for (const engine of ['walker', 'native', 'gdu'] as const) {
+  test(`${engine}: a walk of a folder on the Data volume, by that volume's spelling, does not descend into a fixed folder spelled that way`, async (t) => {
+    if (process.platform !== 'darwin') return t.skip('the Data volume is macOS’s');
+    if (engine === 'native' && !nativeRecording(t)) return;
+    if (engine === 'gdu' && !(await findGduBinary())) return skipOrFailOnCi(t, 'gdu not available on this machine');
+    const f = tree();
+    const onData = DATA_VOLUME + f.root;
+    if (!fs.existsSync(onData)) return t.skip(`${onData} is not this temp folder's Data-volume spelling here`);
+    useTable([]);
+    setNeverDescendForTests([f.other]);
+    if (engine === 'gdu') delete process.env.TREEMAP_NO_GDU;
+    try {
+      const s = await scanWith(onData, 'stay', engine);
+      assert.equal(s.engine, engine === 'gdu' ? 'gdu-turbo' : engine === 'native' ? 'native' : s.engine, `${s.engineReason} — ${s.fallbackReason}`);
+      const other = DATA_VOLUME + f.other;
+      assert.ok(s.boundary?.neverDescend.includes(other), 'the walk was handed the fixed folder in the Data volume’s spelling');
+      const store = storeOf(s);
+      assert.notEqual(store.findByPath(other), -1, 'the folder stays, an empty one');
+      assert.equal(store.childCount(store.findByPath(other)), 0, 'and nothing inside it was listed');
+      assert.equal(store.findByPath(DATA_VOLUME + f.plain), -1);
+      assert.notEqual(store.findByPath(DATA_VOLUME + f.inside), -1, 'the rest is walked');
+    } finally {
+      setNeverDescendForTests(null);
+      process.env.TREEMAP_NO_GDU = '1';
+    }
+  });
+}
+
+test('walker: a walk of a folder on the Data volume whose boundary could not be composed is still handed the Data volume’s spelling of the fixed list', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume is macOS’s');
+  const f = tree();
+  const onData = DATA_VOLUME + f.root;
+  if (!fs.existsSync(onData)) return t.skip(`${onData} is not this temp folder's Data-volume spelling here`);
+  // A drive listed inside whose kind cannot be asked: composing the boundary fails, and the scan takes the unknown one.
+  setBoundaryDepsForTests({ readTable: async () => tableNaming([DATA_VOLUME + f.mnt]), aliases: async () => () => [], isDirectory: async () => { throw new Error('the stat could not be asked'); } });
+  setNeverDescendForTests([f.other]);
+  try {
+    const s = await scanWith(onData, 'stay', 'walker');
+    assert.equal(s.boundary?.mounts, null, 'the boundary is unknown');
+    assert.match(s.boundary?.reason ?? '', /the stat could not be asked/);
+    assert.ok(s.boundary?.neverDescend.includes(DATA_VOLUME + f.other), 'and still names the fixed folder as the Data volume spells it');
+    const store = storeOf(s);
+    assert.equal(store.childCount(store.findByPath(DATA_VOLUME + f.other)), 0);
+  } finally {
+    setNeverDescendForTests(null);
+  }
 });

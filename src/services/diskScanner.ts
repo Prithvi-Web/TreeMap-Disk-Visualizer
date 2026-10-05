@@ -738,7 +738,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
   // on the record, so every engine is handed the same list.
   const rule: BoundaryRule = await getSettings().then((s) => s.scanBoundary, () => DEFAULT_BOUNDARY_RULE);
   const boundary = boundaryRecord(
-    await scanBoundary(rootPath, rule).catch((err: unknown) => unknownBoundary(rule, process.platform, err instanceof Error ? err.message : String(err))),
+    await scanBoundary(rootPath, rule).catch((err: unknown) => unknownBoundary(rule, process.platform, err instanceof Error ? err.message : String(err), rootPath)),
   );
   if (ignore.length > 0) noteSkippedMounts(boundary, rootPath, (p) => matchesAny(ignore, p, path.basename(p)));
 

@@ -403,13 +403,14 @@ function scanDeps(): BoundaryDeps {
  */
 export async function scanBoundary(root: string, rule: BoundaryRule, deps: BoundaryDeps = scanDeps()): Promise<ScanBoundary> {
   const fixed = neverDescendPaths(deps.platform);
+  const stops = fixedStopsFor(fixed, root, deps.platform);
   const table = await deps.readTable();
   if (table.entries === null) {
-    return { rule, source: table.source, reason: table.reason, mounts: null, fixed, neverDescend: [...fixed] };
+    return { rule, source: table.source, reason: table.reason, mounts: null, fixed, neverDescend: [...stops] };
   }
   const realRoot = await deps.realpath(root).catch(() => root);
   const aliases = await deps.aliases().catch(() => (deps.platform === 'darwin' ? dataVolumeAlias : NO_ALIASES));
-  const fixedBelow = fixed.filter((f) => isStrictlyUnder(root, f));
+  const fixedBelow = stops.filter((f) => isStrictlyUnder(root, f));
   const unreachable = (p: string): boolean => fixedBelow.some((f) => isAtOrUnder(f, p));
   const looked = await Promise.all(
     mountPointsUnder(root, realRoot, table.entries, aliases, unreachable).map(async (m): Promise<BoundaryMount | null> => {
@@ -419,14 +420,34 @@ export async function scanBoundary(root: string, rule: BoundaryRule, deps: Bound
     }),
   );
   const mounts = looked.filter((m): m is BoundaryMount => m !== null);
-  const neverDescend = rule === 'stay' ? [...new Set([...fixed, ...mounts.map((m) => m.path)])] : [...fixed];
+  const neverDescend = rule === 'stay' ? [...new Set([...stops, ...mounts.map((m) => m.path)])] : [...stops];
   return { rule, source: table.source, reason: table.reason, mounts, fixed, neverDescend };
 }
 
-/** The boundary of a scan whose table could not even be composed: unknown, with the reason, crossing as before. */
-export function unknownBoundary(rule: BoundaryRule, platform: NodeJS.Platform, reason: string): ScanBoundary {
+/**
+ * The boundary of a scan whose table could not even be composed: unknown, with the reason, crossing as before.
+ * `root`, when given, adds the Data volume's spelling of the fixed list for a root on that volume (`fixedStopsFor`).
+ */
+export function unknownBoundary(rule: BoundaryRule, platform: NodeJS.Platform, reason: string, root?: string): ScanBoundary {
   const fixed = neverDescendPaths(platform);
-  return { rule, source: 'none', reason, mounts: null, fixed, neverDescend: [...fixed] };
+  return { rule, source: 'none', reason, mounts: null, fixed, neverDescend: root === undefined ? [...fixed] : fixedStopsFor(fixed, root, platform) };
+}
+
+/**
+ * The fixed list as a walk of `root` meets it: as the root spells it and — for a root on macOS's Data volume
+ * (/System/Volumes/Data or below) — as that volume spells it too (the SEC-1 review, M2, and its note on the walk).
+ * The firmlinks make the Data volume's /Volumes the root's /Volumes, so a walk of /System/Volumes/Data that is
+ * handed only the root's spelling descends into every drive attached at any time, and its /home is the automount
+ * trigger the list exists to keep a walk out of. Every engine is handed the record's `neverDescend`, and
+ * `exclusionsOf` reads the same spelling for the scanned-root rule.
+ */
+function fixedStopsFor(fixed: readonly string[], root: string, platform: NodeJS.Platform): string[] {
+  return [...fixed, ...dataSpellingOf(fixed, root, platform)];
+}
+
+/** `fixed` as the Data volume spells it, for a root on that volume; else nothing. */
+function dataSpellingOf(fixed: readonly string[], root: string, platform: NodeJS.Platform): string[] {
+  return platform === 'darwin' && isAtOrUnder(DATA_VOLUME, root) ? fixed.map((f) => DATA_VOLUME + f) : [];
 }
 
 /* ───────────────────────────── what the walk did at the boundary (Track U, U-24) ───────────────────────────── */
@@ -602,8 +623,6 @@ export function mountOutcome(record: ScanBoundaryRecord): MountOutcome {
  */
 export function exclusionsOf(record: ScanBoundary | undefined, root: string, platform: NodeJS.Platform = process.platform): string[] {
   const list = record ? record.neverDescend : neverDescendPaths(platform);
-  const onData = platform === 'darwin' && isAtOrUnder(DATA_VOLUME, root)
-    ? (record ? record.fixed : neverDescendPaths(platform)).map((f) => DATA_VOLUME + f)
-    : [];
+  const onData = dataSpellingOf(record ? record.fixed : neverDescendPaths(platform), root, platform);
   return [...new Set([...list, ...onData])].filter((p) => isStrictlyUnder(root, p));
 }
