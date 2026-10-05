@@ -17703,6 +17703,25 @@ function layoutSunburstArcs(root, geo) {
   return arcs;
 }
 
+/** Fewest characters a shortened ring label keeps; below that it is dropped (QA D27). */
+const SUN_LABEL_MIN_CHARS = 3;
+
+/**
+ * A label that fits `maxW` at the context's current font, or null.
+ *
+ * Shortened with "…" when it is too long, and dropped when even three
+ * characters and the ellipsis do not fit — never squeezed. fillText's fourth
+ * argument compresses the glyphs until they fit, and a ring label runs
+ * radially, so its room is the ring's thickness: every real folder name came
+ * out as an unreadable smear (QA D27).
+ */
+function sunFitLabel(ctx, text, maxW) {
+  const fitted = Canvas2D.fitText(ctx, text, maxW);
+  if (fitted === null) return null;
+  if (fitted !== text && fitted.length - 1 < SUN_LABEL_MIN_CHARS) return null;
+  return fitted;
+}
+
 /** Draw one full sunburst frame from prepared arcs (live draw and time-slider animation). */
 function renderSunburstFrame(root, arcs, geo) {
   const ctx = tmBufCtx;
@@ -17722,23 +17741,24 @@ function renderSunburstFrame(root, arcs, geo) {
     ctx.stroke();
   }
 
-  // Labels on arcs wide enough to read.
+  // Labels on arcs wide enough to read, shortened to the ring's thickness —
+  // the room a radial label has — or left off; never squeezed (QA D27).
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '600 10px -apple-system, sans-serif';
   for (const arc of arcs) {
     const sweep = arc.a1 - arc.a0;
     const rMid = (arc.rInner + arc.rOuter) / 2;
     if (sweep * rMid < 30 || geo.ringT < 13) continue;
+    const label = sunFitLabel(ctx, arc.n.name, geo.ringT - 7);
+    if (!label) continue;
     const mid = (arc.a0 + arc.a1) / 2;
     ctx.save();
     ctx.translate(arc.cx + Math.cos(mid) * rMid, arc.cy + Math.sin(mid) * rMid);
     let rot = mid;
     if (rot > Math.PI / 2 && rot < Math.PI * 1.5) rot += Math.PI;
     ctx.rotate(rot);
-    ctx.font = '600 10px -apple-system, sans-serif';
     ctx.fillStyle = 'rgba(0,0,0,0.82)';
-    const maxW = geo.ringT - 7;
-    const label = arc.n.name;
-    ctx.fillText(label, 0, 0, maxW);
+    ctx.fillText(label, 0, 0);
     ctx.restore();
   }
 
@@ -17751,11 +17771,13 @@ function renderSunburstFrame(root, arcs, geo) {
   ctx.fillStyle = cssVar('--text-1');
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = '600 12px -apple-system, sans-serif';
-  const cname = root.name.length > 16 ? root.name.slice(0, 15) + '…' : root.name;
-  ctx.fillText(cname, geo.cx, geo.cy - 7, geo.innerR0 * 1.8);
+  // Shortened to the disc, like the ring labels, rather than squeezed into it.
+  const cname = Canvas2D.fitText(ctx, root.name.length > 16 ? root.name.slice(0, 15) + '…' : root.name, geo.innerR0 * 1.8);
+  if (cname) ctx.fillText(cname, geo.cx, geo.cy - 7);
   ctx.fillStyle = cssVar('--text-2');
   ctx.font = '10px -apple-system, sans-serif';
-  ctx.fillText(formatBytes(root.size), geo.cx, geo.cy + 9, geo.innerR0 * 1.8);
+  const csize = Canvas2D.fitText(ctx, formatBytes(root.size), geo.innerR0 * 1.8);
+  if (csize) ctx.fillText(csize, geo.cx, geo.cy + 9);
 
   state.treemap.arcs = arcs;
   state.treemap.sun = { cx: geo.cx, cy: geo.cy, innerR0: geo.innerR0, outerR: geo.outerR };
