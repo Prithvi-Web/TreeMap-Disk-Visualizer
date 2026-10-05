@@ -119,9 +119,20 @@ function scoreKnown(path) { return reclaim.scores.has(path); }
  * Failed paths are remembered (`reclaim.failed`) and not asked about again
  * in this scan, view and folder; `onFailed`, if given, is told instead, so
  * a legend can say they could not be scored.
+ *
+ * **A chain can be called off** (QA-6 review MEDIUM-2): drilling quickly in
+ * the Reclaim colour mode left every folder's chain running — up to three
+ * 2,000-path batches each, every path a subprocess-backed scoring, in the
+ * same strict lane as the map's own loads and deletes. `signal` cancels the
+ * request in flight and every batch after it; `isCurrent` is asked between
+ * batches, so a chain whose map has gone stops even before anything new
+ * asks. A chain called off either way calls neither callback, and an abort
+ * releases its paths from `pending` AT ONCE — the chain replacing it asks
+ * right after, and would otherwise skip every path still marked in flight
+ * by a request that will never answer for it.
  */
-async function ensureScores(paths, onLanded, onFailed) {
-  if (!state.scanId) return;
+async function ensureScores(paths, onLanded, onFailed, { signal = null, isCurrent = null } = {}) {
+  if (!state.scanId || (signal && signal.aborted)) return;
   const scope = reclaimFailureScope();
   if (reclaim.failedFor !== scope) {
     reclaim.failed.clear();
@@ -137,18 +148,24 @@ async function ensureScores(paths, onLanded, onFailed) {
   }
   if (!wanted.length) return; // nothing fetched, so nothing changed — see above
   for (const p of wanted) reclaim.pending.add(p);
+  const release = () => { for (const p of wanted) reclaim.pending.delete(p); };
+  if (signal) signal.addEventListener('abort', release, { once: true });
 
   const scanAtRequest = state.scanId;
   const outcome = { landed: false, failed: false };
   try {
     for (let i = 0; i < wanted.length; i += RECLAIM_BATCH) {
-      await reclaimScoreBatch(wanted.slice(i, i + RECLAIM_BATCH), scanAtRequest, scope, outcome);
+      await reclaimScoreBatch(wanted.slice(i, i + RECLAIM_BATCH), scanAtRequest, scope, outcome, signal);
       // A scan that changed under a request in flight would otherwise file
       // the previous tree's verdicts against the new one's paths.
       if (state.scanId !== scanAtRequest) return;
+      // Called off, or its map is gone: no more batches, and no callbacks.
+      if ((signal && signal.aborted) || (isCurrent && !isCurrent())) return;
     }
   } finally {
-    for (const p of wanted) reclaim.pending.delete(p);
+    if (signal) signal.removeEventListener('abort', release);
+    // Released by the abort already; the paths may be a newer chain's by now.
+    if (!(signal && signal.aborted)) release();
   }
   if (outcome.landed) {
     if (onLanded) onLanded();
@@ -166,20 +183,25 @@ async function ensureScores(paths, onLanded, onFailed) {
  * most two requests per halving for each refused path. `outcome` records
  * whether anything landed and whether anything failed.
  */
-async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome) {
+async function reclaimScoreBatch(batch, scanAtRequest, scope, outcome, signal = null) {
   let res;
   try {
     res = await api('/api/facts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanId: scanAtRequest, paths: batch, providers: ['reclaimScore'] }),
+      // The fact route stops scoring when the request closes, so this frees the server too.
+      signal: signal || undefined,
     });
   } catch (err) {
+    // Called off (ensureScores): not a failure, and nothing to remember.
+    if (err && err.name === 'AbortError') return;
     if (state.scanId !== scanAtRequest) return;
     if (err && RECLAIM_PATH_REFUSALS.has(err.code) && batch.length > 1) {
       const half = Math.ceil(batch.length / 2);
-      await reclaimScoreBatch(batch.slice(0, half), scanAtRequest, scope, outcome);
-      await reclaimScoreBatch(batch.slice(half), scanAtRequest, scope, outcome);
+      await reclaimScoreBatch(batch.slice(0, half), scanAtRequest, scope, outcome, signal);
+      if (signal && signal.aborted) return;
+      await reclaimScoreBatch(batch.slice(half), scanAtRequest, scope, outcome, signal);
       return;
     }
     // A score is an enrichment, never a blocker: the badge does not appear,

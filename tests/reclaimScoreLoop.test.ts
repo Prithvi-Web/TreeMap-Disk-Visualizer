@@ -30,18 +30,27 @@ import path from 'node:path';
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
-/** `function name(…) {…}`, `async function`, `const name = {…};` (brace matched) or `const NAME = value;`. */
+/** `function name(…) {…}`, `async function`, `const name = {…};` (brace matched) or `const|let NAME = value;`. */
 function declSource(name: string): string {
   let start = INDEX.indexOf(`function ${name}(`);
   if (start > 0 && INDEX.slice(start - 6, start) === 'async ') start -= 6;
   if (start === -1) start = INDEX.indexOf(`const ${name} = {`);
   if (start === -1) {
-    const at = INDEX.indexOf(`const ${name} = `);
+    let at = INDEX.indexOf(`const ${name} = `);
+    if (at === -1) at = INDEX.indexOf(`let ${name} = `);
     assert.notEqual(at, -1, `${name} is declared in the built page`);
     return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
   }
+  let from = INDEX.indexOf(name, start) + name.length;
+  if (INDEX[from] === '(') {
+    // Past the parameter list first: a destructured parameter is a brace.
+    for (let paren = 0; from < INDEX.length; from++) {
+      if (INDEX[from] === '(') paren++;
+      else if (INDEX[from] === ')' && --paren === 0) break;
+    }
+  }
   let depth = 0;
-  for (let i = INDEX.indexOf('{', INDEX.indexOf(name, start) + name.length); i < INDEX.length; i++) {
+  for (let i = INDEX.indexOf('{', from); i < INDEX.length; i++) {
     if (INDEX[i] === '{') depth++;
     else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1) + ';';
   }
@@ -58,16 +67,19 @@ function declSource(name: string): string {
 const SHIPPED = [
   'reclaim', 'RECLAIM_PATH_REFUSALS', 'reclaimFailureScope', 'reclaimAskablePath', 'reclaimAskableNode',
   'ensureScores', 'reclaimScoreBatch', 'fetchScoresForTreemap', 'reclaimCoverageNote',
+  'tmScoreChain', 'tmScoreKey',
 ];
 
 interface Cell { n: { path: string; isTrash?: boolean; freed?: boolean; virtual?: boolean } }
 
 interface Harness {
-  state: { scanId: string; view: string; treemap: { colorMode: string; rootPath: string } };
+  state: { scanId: string; view: string; treemap: { colorMode: string; rootPath: string; mode: string } };
   reclaim: { scores: Map<string, unknown>; pending: Set<string>; failed: Set<string> };
   cells: Cell[];
   /** Every path set the stubbed POST /api/facts was asked about, in order. */
   asked: string[][];
+  /** The AbortSignal each of those requests carried (null when none). */
+  signals: Array<AbortSignal | null>;
   calls: { drawView: number; repaintCells: number; renderTmLegend: number };
   fetchScoresForTreemap: () => void;
   ensureScores: (paths: string[], onLanded?: () => void, onFailed?: () => void) => Promise<void>;
@@ -90,21 +102,27 @@ type Answer = (paths: string[]) => { code?: string; values?: Record<string, unkn
  */
 function harness(answer: Answer, opts: { batch?: number; cap?: number } = {}): Harness {
   const h = {
-    state: { scanId: 's1', view: 'treemap', treemap: { colorMode: 'reclaim', rootPath: '/r' } },
+    state: { scanId: 's1', view: 'treemap', treemap: { colorMode: 'reclaim', rootPath: '/r', mode: 'treemap' } },
     cells: [] as Cell[],
     asked: [] as string[][],
+    signals: [] as Array<AbortSignal | null>,
     calls: { drawView: 0, repaintCells: 0, renderTmLegend: 0 },
   } as Harness;
   let closed = false;
   h.close = () => { closed = true; };
   open.push(h);
-  const api = (url: string, init: { body: string }): Promise<unknown> => new Promise((resolve, reject) => {
+  const api = (url: string, init: { body: string; signal?: AbortSignal }): Promise<unknown> => new Promise((resolve, reject) => {
     if (closed) return; // never settles, and holds nothing open
     assert.equal(url, '/api/facts');
     const paths = (JSON.parse(init.body) as { paths: string[] }).paths;
     h.asked.push(paths);
+    h.signals.push(init.signal ?? null);
+    // As fetch does (and api() passes on): an abort rejects with an AbortError at once.
+    const aborted = () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }));
+    if (init.signal?.aborted) { aborted(); return; }
+    init.signal?.addEventListener('abort', aborted, { once: true });
     setImmediate(() => {
-      if (closed) return;
+      if (closed || init.signal?.aborted) return;
       const a = answer(paths);
       if (a.code) reject(Object.assign(new Error(`refused: ${a.code}`), { code: a.code, status: 400 }));
       else resolve({ providers: { reclaimScore: { available: true, values: a.values ?? {} } } });
@@ -126,7 +144,8 @@ function harness(answer: Answer, opts: { batch?: number; cap?: number } = {}): H
     formatCount: (n: number) => n.toLocaleString('en-US'),
   };
   const keys = Object.keys(deps);
-  const present = SHIPPED.filter((name) => INDEX.includes(`function ${name}(`) || INDEX.includes(`const ${name} = `));
+  const present = SHIPPED.filter((name) => INDEX.includes(`function ${name}(`) || INDEX.includes(`const ${name} = `)
+    || INDEX.includes(`let ${name} = `));
   const src = `'use strict';\n${present.map(declSource).join('\n')}\nreturn { reclaim, ensureScores, fetchScoresForTreemap, reclaimCoverageNote };`;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const out = new Function(...keys, src)(...keys.map((k) => deps[k])) as {
@@ -257,4 +276,109 @@ test('"TreeMap stops at 6,000" is said only when there are cells beyond 6,000', 
   assert.doesNotMatch(h.note(), /stops at/, 'exactly at the cap, nothing is left unasked');
   h.cells = files(12);
   assert.match(h.note(), /stops at 10 at a time/, 'past the cap, the cap is why two cells stay grey');
+});
+
+/* ══════════════ QA-6 review MEDIUM-2 — a chain for a map no longer on screen is cancelled ══════════════ */
+
+test('MEDIUM-2: a drill-in cancels the chain still scoring the folder left behind', async () => {
+  // Up to three sequential 2,000-path batches per folder, each a subprocess-backed
+  // scoring in the same strict lane as map loads and deletes; drilling quickly
+  // left every one of them running.
+  const h = harness(SERVER, { batch: 2 });
+  h.cells = files(6); // three batches
+  h.fetchScoresForTreemap();
+  for (let i = 0; i < 50 && h.asked.length < 2; i++) await turns(1);
+  assert.equal(h.asked.length, 2, 'the first batch landed and the second is out');
+  h.state.treemap.rootPath = '/r/a'; // the drill-in lands, and its draw asks for its own cells
+  h.cells = files(3, '/r/a/x');
+  h.fetchScoresForTreemap();
+  assert.equal(h.signals[1]?.aborted, true, 'the request in flight for the folder left behind is cancelled');
+  await turns(60);
+  assert.deepEqual(h.asked, [['/r/f0', '/r/f1'], ['/r/f2', '/r/f3'], ['/r/a/x0', '/r/a/x1'], ['/r/a/x2']],
+    'nothing more is asked about the folder left behind');
+  assert.equal(h.reclaim.pending.size, 0, 'nothing is left marked in flight');
+  assert.equal(h.calls.drawView, 1,
+    'one repaint, for the new folder\'s scores; the cancelled chain repaints nothing, though its first batch had landed');
+});
+
+test('MEDIUM-2: a cell the cancelled chain held in flight is asked for by its replacement at once', async () => {
+  const h = harness(SERVER, { batch: 2 });
+  h.cells = [{ n: { path: '/r/a/x0' } }, { n: { path: '/r/f1' } }, ...files(2, '/r/g')];
+  h.fetchScoresForTreemap(); // '/r/a/x0' rides in the first batch
+  h.state.treemap.rootPath = '/r/a';
+  h.cells = files(2, '/r/a/x');
+  h.fetchScoresForTreemap();
+  assert.deepEqual(h.asked[1], ['/r/a/x0', '/r/a/x1'],
+    'x0 is not skipped as "in flight": the request holding it was just cancelled, and would never answer for it');
+  // The cancelled chain winds down in microtasks; its replacement's answer has not arrived yet.
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.equal(h.reclaim.pending.has('/r/a/x0'), true,
+    'the replacement still holds x0 in flight — the cancelled chain, ending, did not release it from under it');
+  await turns(60);
+  assert.equal(h.note(), '', 'every cell of the new folder is scored');
+});
+
+test('MEDIUM-2: between batches a chain stops once its map is gone, even before anything new asks', async () => {
+  const h = harness(SERVER, { batch: 2 });
+  h.cells = files(6);
+  h.fetchScoresForTreemap();
+  h.state.treemap.mode = 'circles'; // another renderer — another drawn set
+  await turns(60);
+  assert.deepEqual(h.asked, [['/r/f0', '/r/f1']], 'the batches after the one in flight are never sent');
+  assert.equal(h.calls.drawView, 0, 'and nothing is repainted for a map no longer on screen');
+});
+
+test('MEDIUM-2: repaints of the same map share its chain — a hover does not cancel the scoring under way', async () => {
+  const h = harness(SERVER, { batch: 2 });
+  h.cells = files(4);
+  h.fetchScoresForTreemap();
+  h.fetchScoresForTreemap(); // the same map, asked again
+  assert.equal(h.signals[0]?.aborted, false);
+  await turns(60);
+  assert.equal(h.reclaim.scores.size, 4);
+});
+
+test('MEDIUM-2: a request cancelled by turning Reclaim off is not a failure; turned back on, its cells are scored', async () => {
+  const h = harness(SERVER, { batch: 2 });
+  h.cells = files(4);
+  h.fetchScoresForTreemap();
+  h.state.treemap.colorMode = 'size';
+  h.fetchScoresForTreemap(); // what setTreemapColorMode('size') does now
+  assert.equal(h.signals[0]?.aborted, true, 'switching the colouring off cancels the chain at once');
+  h.state.treemap.colorMode = 'reclaim';
+  h.fetchScoresForTreemap();
+  await turns(60);
+  assert.equal(h.asked.length, 3,
+    'the cancelled chain sends nothing more, even with its map back on screen; its replacement asks for all four in two');
+  assert.equal(h.reclaim.failed.size, 0, 'the cancelled request is not remembered as failed — those cells would read "could not be scored"');
+  assert.equal(h.reclaim.scores.size, 4);
+  assert.equal(h.note(), '');
+});
+
+test('MEDIUM-2: a chain cancelled while it halves a refused batch sends no second half', async () => {
+  const h = harness(SERVER, { batch: 4 });
+  h.cells = [{ n: { path: '/r/f0' } }, { n: { path: '/private/var/db/x' } }, { n: { path: '/r/f2' } }, { n: { path: '/r/f3' } }];
+  h.fetchScoresForTreemap();
+  for (let i = 0; i < 50 && h.asked.length < 2; i++) await turns(1);
+  assert.deepEqual(h.asked, [['/r/f0', '/private/var/db/x', '/r/f2', '/r/f3'], ['/r/f0', '/private/var/db/x']],
+    'refused for one path, the batch is being halved');
+  h.state.treemap.rootPath = '/r/sub';
+  h.cells = [];
+  h.fetchScoresForTreemap(); // the map moved on
+  await turns(60);
+  assert.equal(h.asked.length, 2, 'the other half of a batch nobody is looking at is never sent');
+  assert.equal(h.reclaim.failed.size, 0);
+});
+
+test('MEDIUM-2: choosing a colour mode always lets the score chain know', () => {
+  let asked = 0;
+  const seg = { querySelectorAll: () => [] };
+  const setMode = new Function('$', 'localStorage', 'state', 'isCells', 'repaintCells', 'drawView', 'renderTmLegend', 'fetchScoresForTreemap',
+    `'use strict'; ${declSource('TM_COLOR_MODES')}\n${declSource('setTreemapColorMode')}\nreturn setTreemapColorMode;`)(
+    () => seg, { setItem() {} }, { treemap: { rootPath: '/r', colorMode: 'reclaim' } },
+    () => false, () => {}, () => {}, () => {}, () => { asked++; }) as (m: string) => void;
+  setMode('size');
+  assert.equal(asked, 1, 'turning Reclaim off is how its chain learns to stop now, not after the batch in flight');
+  setMode('reclaim');
+  assert.equal(asked, 2);
 });

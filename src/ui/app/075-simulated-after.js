@@ -611,8 +611,9 @@ function setTreemapColorMode(mode) {
   if (state.treemap.rootPath) { isCells() ? repaintCells() : drawView(); } else renderTmLegend();
   // Painting comes first and the scores follow, so switching mode is instant
   // and the map fills in. Painting behind the fetch would stall the toggle on
-  // a subprocess round trip for every cell on screen.
-  if (mode === 'reclaim') fetchScoresForTreemap();
+  // a subprocess round trip for every cell on screen. Called for every mode:
+  // out of Reclaim it asks for nothing, and cancels the chain still scoring.
+  fetchScoresForTreemap();
 }
 
 /**
@@ -639,7 +640,22 @@ function setTreemapColorMode(mode) {
  */
 const TM_SCORE_CAP = 6000;
 
+/**
+ * The score chain for the map on screen (QA-6 review MEDIUM-2): which map it
+ * is for, and the AbortController that calls it off. Every repaint of the
+ * same map shares it — a hover must not cancel the scoring under way — and
+ * the first ask for another map (a drill-in, an Up, a crumb, another
+ * renderer, Reclaim turned off, a new scan) cancels it, request in flight
+ * included, before anything is asked for the new one.
+ */
+let tmScoreChain = null;
+function tmScoreKey() {
+  return `${state.scanId}\n${state.treemap.rootPath}\n${state.treemap.mode}\n${state.treemap.colorMode}`;
+}
+
 function fetchScoresForTreemap() {
+  const key = tmScoreKey();
+  if (tmScoreChain && tmScoreChain.key !== key) { tmScoreChain.ctrl.abort(); tmScoreChain = null; }
   if (state.treemap.colorMode !== 'reclaim' || !state.scanId) return;
   // Every renderer, because Reclaim is a colour mode and all four paint
   // through the same cellRgb. Their entries are shaped alike: `{ n, ... }`.
@@ -656,6 +672,8 @@ function fetchScoresForTreemap() {
   // Only if the user is still looking at this: a repaint of a view they
   // navigated away from is wasted work, and worse, can land mid-render.
   const stillShown = () => state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath;
+  if (!tmScoreChain) tmScoreChain = { key, ctrl: new AbortController() };
+  const chain = { signal: tmScoreChain.ctrl.signal, isCurrent: () => tmScoreKey() === key };
   void ensureScores(paths, () => {
     if (stillShown()) {
       // Scores land in batches, so this runs several times per folder. Behind
@@ -668,7 +686,7 @@ function fetchScoresForTreemap() {
     // Nothing landed: no repaint (it would ask again), only the legend, which
     // now says these could not be scored instead of "loading".
     if (stillShown()) renderTmLegend();
-  });
+  }, chain);
 }
 $('tmColorSeg').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-mode]');
