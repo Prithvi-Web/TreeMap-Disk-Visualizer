@@ -457,6 +457,39 @@ test('a scan of the Data volume typed through a link in its parents, or in anoth
   }
 });
 
+test('POST /api/facts after a scan of the Data volume: a folder only that volume has is under its root, so it is skipped rather than refusing the batch; the sealed system volume is still refused (the SEC-2 review, MEDIUM-2)', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume and its firmlinks are macOS');
+  // The read-only rule asks only "under some scan's root, listed or not", and the route skips what
+  // no scan listed. It took the listing rule's spelling of a Data volume path, which a scan of the
+  // volume itself answers with "not listed" (the Data volume's own /usr, /.Spotlight-V100, /mnt) —
+  // and so "under no root": one such path, a child the Grid asks about, cost the whole batch a 403.
+  setDataVolumeFoldersForTests(parseFirmlinks(DIAGNOSIS_MAC_FIRMLINKS).map((pair) => pair.system));
+  evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  const home = fs.realpathSync(fileTempDir('treemap-guard-data-medium2-'));
+  const listed = path.join(home, 'x.txt');
+  const own = ['/System/Volumes/Data/usr', '/System/Volumes/Data/.Spotlight-V100', '/System/Volumes/Data/mnt/x'];
+  try {
+    const data = createScanRecord('/System/Volumes/Data');
+    data.status = 'complete';
+    data.finishedAt = Date.now();
+    for (const p of own) assert.equal(insideAnyScanRoot(p), false, `${p} is still never acted on`);
+    const r = await postFacts({ scanId: data.scanId, paths: [listed, ...own], providers: ['size'] });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const size = r.body.providers.size;
+    for (const p of own) assert.ok(!(p in size.values), `${p} has no fact`);
+    assert.equal(size.stats.requested, 4);
+    assert.ok(size.stats.skipped >= own.length, `each of the Data volume's own folders is skipped and counted: ${JSON.stringify(size.stats)}`);
+    assert.equal(size.stats.requested, size.stats.computed + size.stats.skipped + size.stats.failed);
+    const sealed = await postFacts({ scanId: data.scanId, paths: [listed, '/usr/bin/true'], providers: ['size'] });
+    assert.deepEqual([sealed.status, sealed.body.code], [403, 'OUTSIDE_SCAN_ROOT'], 'the sealed system volume is under no scan of the Data volume');
+    const elsewhere = await postFacts({ scanId: data.scanId, paths: [listed, '/System/Volumes/Preboot/x'], providers: ['size'] });
+    assert.deepEqual([elsewhere.status, elsewhere.body.code], [403, 'OUTSIDE_SCAN_ROOT'], 'nor is another volume');
+  } finally {
+    setDataVolumeFoldersForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});
+
 test('the Data volume’s spelling of a path is the root’s only under a firmlinked folder: after a scan of /, the Data volume itself and its own folders (/System/Volumes/Data/.Spotlight-V100, …/mnt, …/usr/bin) were never listed (the SEC-1 review, L1)', async (t) => {
   if (process.platform !== 'darwin') return t.skip('the Data volume and its firmlinks are macOS');
   // Only the firmlinked folders (/Users, /private, /usr/local, …) are one folder under two names.

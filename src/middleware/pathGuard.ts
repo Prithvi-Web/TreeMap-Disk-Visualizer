@@ -242,14 +242,23 @@ function asListedFrom(root: string, where: string): string | null {
  * scan listed it? The read-only rule (`requireInsideScanRootToRead`): a path
  * here that no scan listed is a question the facts route answers by skipping
  * it, not by refusing the batch it rides in.
+ *
+ * Under the root as that scan spelled it (`asListedFrom`), or else as the
+ * path is spelled. `asListedFrom` answers "not listed" for the Data volume's
+ * own folders after a scan of the volume itself (/System/Volumes/Data/usr,
+ * …/.Spotlight-V100), and that is the listing rule's answer, not this one's:
+ * they lie under its root, so they are skipped, and one of them no longer
+ * costs the Grid a whole batch's badges (the SEC-2 review, MEDIUM-2). Its
+ * other "not listed" — a path on the sealed system volume or another volume,
+ * after a scan rooted on the Data volume — is spelled outside that root, so
+ * it stays under none.
  */
 function underAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
   const where = whereUnlessSecondName(p);
   return where !== null && allScans().some((scan) => {
     const root = placeOf(scan.rootPath);
-    const at = asListedFrom(root, where);
-    return at !== null && isInside(root, at);
+    return isInside(root, asListedFrom(root, where) ?? where);
   });
 }
 
