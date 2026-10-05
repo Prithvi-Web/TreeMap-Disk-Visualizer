@@ -544,7 +544,9 @@ export function assertSavedPolicyPath(p: unknown): void {
 
 /** Scan the policy's folder and resolve its match into raw candidates. */
 async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
-  const scan = await startScan(policy.path);
+  // A folder saved as a link is scanned as the link itself, matching nothing,
+  // as before QA D78: every check of the folder was made of that spelling.
+  const scan = await startScan(policy.path, { followLinkRoot: false });
   await waitForScan(scan.scanId);
   const done = getScan(scan.scanId);
   if (!done || done.status !== 'complete' || (!done.store && !done.root)) {

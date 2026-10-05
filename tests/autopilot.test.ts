@@ -26,6 +26,7 @@ import {
   effectiveCap,
   bytesDeletedSince,
   runPolicy,
+  simulatePolicy,
   approvePolicy,
   listRuns,
   undoRun,
@@ -428,6 +429,32 @@ test('a brand-new policy simulates and deletes nothing, however it is configured
     assert.match(result.blockedReason ?? '', /never run/);
     assert.ok(result.items.length > 0, 'and it shows exactly what it would have deleted');
     assert.ok(fs.existsSync(path.join(dir, 'project', 'node_modules')), 'nothing was touched');
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a policy whose folder is a link acts on nothing through it: the scan takes the link as the one file it is, as before (QA D78 — a scan of a link elsewhere follows it)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
+  // A person's scan of a link is of the folder it points to (D78). An unattended
+  // policy is not: every check made of its folder — never a whole drive, notes,
+  // protected paths, TreeMap's own spill folder — was made of the saved spelling,
+  // and a link (~/all -> /) can lead anywhere since.
+  const dir = await mkTmp();
+  try {
+    await writeFile(path.join(dir, 'real', 'project', 'node_modules', 'dep', 'a.bin'), 4096);
+    const link = path.join(dir, 'lnk');
+    fs.symlinkSync(path.join(dir, 'real'), link, 'dir');
+    const match = { kind: 'suggestion', groupIds: ['regen-node-modules'] };
+    const [direct, viaLink] = await savePolicies([
+      { id: 'direct', name: 'Direct', path: path.join(dir, 'real'), match },
+      { id: 'via-link', name: 'Via link', path: link, match },
+    ]);
+    assert.ok((await simulatePolicy(direct)).items.length > 0, 'the folder by its own path matches');
+    const sim = await simulatePolicy(viaLink);
+    assert.deepEqual(sim.items, [], 'through the link, nothing');
+    assert.equal(sim.bytesMatched, 0);
+    assert.ok(fs.existsSync(path.join(dir, 'real', 'project', 'node_modules')), 'nothing was touched');
   } finally {
     await savePolicies([]);
     await fsp.rm(dir, { recursive: true, force: true });

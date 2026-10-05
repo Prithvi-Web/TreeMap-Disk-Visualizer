@@ -639,6 +639,15 @@ export interface ScanOptions {
    * is watching never runs above the setting.
    */
   interactive?: boolean;
+  /**
+   * Follow a root that is a link to a folder (QA D78) — true unless said
+   * otherwise. Autopilot says otherwise: every check of a policy's folder
+   * (never a whole drive, notes, protected paths, the spill folder) was made
+   * of the saved spelling, and an unattended deleter must not act through a
+   * link that can since lead anywhere. Unfollowed, the link is the one file it
+   * is, as every root link was before.
+   */
+  followLinkRoot?: boolean;
 }
 
 /** The folder a scan walks, and the link it was given as, when it was given one (D78). */
@@ -667,14 +676,14 @@ interface ScanRoot {
  * has any: the caller checked the link's own spelling, which can lie inside
  * an allowed root while the folder lies anywhere.
  */
-async function scanRootOf(given: string): Promise<ScanRoot> {
+async function scanRootOf(given: string, followLink = true): Promise<ScanRoot> {
   const stat = await fsp.lstat(given);
   /** The root as given: walked where it really is, a link in the folders above it resolved. */
   const asGiven = async (): Promise<ScanRoot> => {
     await assertWalkAllowed(given, await placeOfRoot(given, stat), false);
     return { rootPath: given, rootStat: stat, linkedFrom: null };
   };
-  if (!stat.isSymbolicLink()) return asGiven();
+  if (!stat.isSymbolicLink() || !followLink) return asGiven();
   let target: string;
   try {
     if (!(await fsp.stat(given)).isDirectory()) return asGiven();
@@ -744,7 +753,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
   ensureEvictor();
 
   // Fail fast on unreadable/nonexistent roots so the API can 4xx properly.
-  const root = await scanRootOf(given);
+  const root = await scanRootOf(given, opts.followLinkRoot !== false);
   const { rootPath, rootStat } = root;
   /** Every engine sentence, led by the link clause when the root was given as a link (D78). */
   const linkClause = linkedRootClause(root);
