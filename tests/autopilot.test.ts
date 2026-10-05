@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 // instructions to delete the user's files.
 import { isolatedDataDir } from './fixtures/dataDir';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
+import { isRestoreCopyFor } from './fixtures/restoreCopy';
 isolatedDataDir('treemap-autopilot-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -671,7 +672,8 @@ test('an undo whose restore fails leaves the run undoable and counted against it
   const dir = await mkTmp();
   try {
     const { runId, policyId, file, bytes } = await plantedRun(dir, 'a.bin', 3 * CHUNK);
-    const removeFault = setCopyFaultForTests((dest, read) => (dest === file && read > CHUNK ? new Error('the disk stopped answering (a test)') : null));
+    // The restore writes beside the file's name until its copy verifies (FG3f #8).
+    const removeFault = setCopyFaultForTests((dest, read) => (isRestoreCopyFor(dest, file) && read > CHUNK ? new Error('the disk stopped answering (a test)') : null));
     let failed: { status: string; error?: string };
     try {
       failed = await settledUndo((await undoRun(runId)).jobId);

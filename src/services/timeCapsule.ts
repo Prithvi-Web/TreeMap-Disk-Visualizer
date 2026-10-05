@@ -14,7 +14,7 @@ import { isEphemeral } from './portableMode';
 import { moveToTrash } from './cleaner';
 import { getSettings } from './settings';
 import { diskUsage } from './diskUsage';
-import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind } from '../utils/copyVerify';
+import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { describeFsError, meansAbsent } from '../utils/errno';
@@ -2233,16 +2233,24 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
 
       job.phase = 'copying';
       job.currentPath = dest;
-      const hash = await copyWithHash(from, dest, {
+      // Written beside its name and put there only once it verifies (FG3f #8): a quit or a kill
+      // part-way leaves no part-copied file at the person's own name.
+      const partial = partialNameFor(dest);
+      const hash = await copyWithHash(from, partial, {
         onBytes: (n) => { job.bytesDone += n; },
         isCancelled: () => job.cancelled,
       });
-      writtenByThisRestore.push(dest);
+      writtenByThisRestore.push(partial);
 
       job.phase = 'verifying';
       if (hash !== member.hash) {
         throw new Error(`${member.rel || manifest.name} no longer matches the fingerprint recorded when it was protected`);
       }
+      await placeWithoutClobber(partial, dest).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== 'EEXIST') throw err;
+        throw new Error(`Something appeared at ${dest} since this restore began, and a restore never writes over what is there, so it stopped.`);
+      });
+      writtenByThisRestore[writtenByThisRestore.length - 1] = dest;
       await applyRecordedTimes(dest, member);
       job.filesDone++;
     }

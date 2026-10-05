@@ -509,6 +509,8 @@ test('nothing outside Cleaner removes a user file', async () => {
       'its own mkdtemp’d mount point, after unmounting, without recursion: a snapshot that did not come off is never walked into',
     'src/utils/copyVerify.ts: rm(dest':
       'the file a copy made at its destination moments earlier, when the copy did not finish, and only while the disk still shows that same file (its device and id): never one that was there first — the exclusive open refused it — nor one put there since (FG3d #1)',
+    'src/utils/copyVerify.ts: rm(partial':
+      'the temporary second name (.treemap-restore-…) of a restored file, made by the restore moments earlier, right after the same file was hard-linked at its own name: the file stays, under its name (FG3f #8)',
   };
   const offenders: string[] = [];
   const namedSeen = new Set<string>();

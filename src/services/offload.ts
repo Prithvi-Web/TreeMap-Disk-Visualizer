@@ -15,7 +15,7 @@ import { moveToTrash } from './cleaner';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
 import { isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
-import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind } from '../utils/copyVerify';
+import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber } from '../utils/copyVerify';
 import { describeFsError, meansAbsent } from '../utils/errno';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
@@ -752,13 +752,20 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
       if (!source) throw new Error('the offloaded copy is missing — is the drive connected?');
 
       await fsp.mkdir(path.dirname(entry.originalPath), { recursive: true });
-      const hash = await copyWithHash(entry.destPath, entry.originalPath, jobProgress(job, true));
+      // Written beside its name and put there only once it verifies (FG3f #8): a quit or a kill
+      // part-way leaves no part-copied file at the person's own name.
+      const partial = partialNameFor(entry.originalPath);
+      const hash = await copyWithHash(entry.destPath, partial, jobProgress(job, true));
 
       job.phase = 'verifying';
       if (hash !== entry.hash) {
-        await fsp.rm(entry.originalPath, { force: true }); // don't leave a damaged copy
+        await fsp.rm(partial, { force: true }); // don't leave a damaged copy
         throw new Error('verification failed — the offloaded copy no longer matches its recorded fingerprint');
       }
+      await placeWithoutClobber(partial, entry.originalPath).catch(async (err: NodeJS.ErrnoException) => {
+        await fsp.rm(partial, { force: true }).catch(() => {});
+        throw err.code === 'EEXIST' ? new Error(`something appeared at ${entry.originalPath} while it was being restored`) : err;
+      });
       const live = store.entries.find((e) => e.id === entry.id);
       if (live) live.restoredAt = Date.now();
       job.filesDone++;

@@ -7,9 +7,10 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleRestorePlace-data-');
 
 import { getCapsuleJob, protectItems, startCapsuleRestore } from '../src/services/timeCapsule';
-import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import { setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
 import { AppError } from '../src/middleware/errorHandler';
 import { waitFor } from './fixtures/waitFor';
+import { isRestoreCopyFor } from './fixtures/restoreCopy';
 
 /**
  * FG3f #5 (LOW). A Time Capsule restore checks once, when it starts, that the item's place is empty
@@ -53,7 +54,7 @@ async function captured(label: string): Promise<{ dir: string; file: string; fol
 function during(when: string, change: () => void): () => void {
   let done = false;
   return setCopyFaultForTests((dest) => {
-    if (!done && dest === when) {
+    if (!done && isRestoreCopyFor(dest, when)) {
       done = true;
       change();
     }
@@ -135,3 +136,97 @@ test('an undisturbed restore still puts back the file and the folder whole', asy
   assert.equal(fs.readFileSync(file, 'utf8'), 'the file');
   assert.equal(fs.readFileSync(path.join(folder, 'sub', 'deep.txt'), 'utf8'), 'deep');
 });
+
+/* ─────────────── FG3f #8: a restore never leaves a part-copied file at its place ─────────────── */
+
+const CHUNK = 64 * 1024;
+
+/** A captured folder holding one big file, removed: its restore copies for several chunks. */
+async function capturedBig(label: string): Promise<{ folder: string; big: string; bytes: Buffer; id: string }> {
+  const dir = fileTempDir(`treemap-capsuleRestorePlace-${label}-`);
+  const folder = path.join(dir, 'proj');
+  const big = path.join(folder, 'big.bin');
+  const bytes = Buffer.alloc(4 * CHUNK, 7);
+  fs.mkdirSync(folder);
+  fs.writeFileSync(big, bytes);
+  const { outcomes } = await protectItems([{ path: folder }]);
+  assert.equal(outcomes[0].protected, true, outcomes[0].detail);
+  fs.rmSync(folder, { recursive: true });
+  return { folder, big, bytes, id: outcomes[0].entryId as string };
+}
+
+/** What stands in `dir` that a restore is writing and has not finished. */
+const partials = (dir: string): string[] => fs.readdirSync(dir).filter((n) => n.startsWith('.treemap-restore-'));
+
+test('while a restore copies a file, nothing stands at the file’s name: a quit or a kill then leaves no part-copied file there', async () => {
+  const { folder, big, bytes, id } = await capturedBig('partial');
+  let atItsName: boolean | null = null;
+  let beside: string[] = [];
+  const unhook = setCopyFaultForTests((dest, read) => {
+    if (path.dirname(dest) !== folder || read <= CHUNK || atItsName !== null) return null;
+    atItsName = fs.existsSync(big);
+    beside = partials(folder);
+    return null;
+  });
+  let job: { status?: string; error?: string };
+  try {
+    job = await settled((await startCapsuleRestore([id])).jobId);
+  } finally {
+    unhook();
+  }
+  assert.equal(atItsName, false, 'part-way through the copy, nothing stands at big.bin');
+  assert.equal(beside.length, 1, `the copy is written beside it, under a name that says so (${beside.join(', ')})`);
+  assert.equal(job.status, 'complete', job.error);
+  assert.ok(fs.readFileSync(big).equals(bytes), 'and once it verifies it is at its name, whole');
+  assert.deepEqual(partials(folder), [], 'with nothing left beside it');
+});
+
+test('a file that appears at the name while the restore copies is never overwritten', async () => {
+  const { folder, big, id } = await capturedBig('appears-at-name');
+  let done = false;
+  const unhook = setCopyFaultForTests((dest, read) => {
+    if (done || path.dirname(dest) !== folder || read <= CHUNK) return null;
+    done = true;
+    fs.writeFileSync(big, 'saved here while the restore ran');
+    return null;
+  });
+  let job: { status?: string; error?: string };
+  try {
+    job = await settled((await startCapsuleRestore([id])).jobId);
+  } finally {
+    unhook();
+  }
+  assert.equal(job.status, 'error', job.error);
+  assert.match(job.error ?? '', /appeared/, job.error);
+  assert.equal(fs.readFileSync(big, 'utf8'), 'saved here while the restore ran', 'what appeared is untouched');
+  assert.deepEqual(partials(folder), [], 'and the copy beside it is gone');
+});
+
+for (const [label, unseen] of [['and nothing is there', false], ['and something is there', true]] as const) {
+  test(`where the volume makes no hard links, the file is renamed into place only when nothing stands there (${label})`, async () => {
+    const { folder, big, bytes, id } = await capturedBig(`no-links-${unseen ? 'taken' : 'free'}`);
+    const unlink = setHardLinkForTests(async () => { throw Object.assign(new Error('operation not supported (a test)'), { code: 'ENOTSUP' }); });
+    let done = false;
+    const unhook = setCopyFaultForTests((dest, read) => {
+      if (!unseen || done || path.dirname(dest) !== folder || read <= CHUNK) return null;
+      done = true;
+      fs.writeFileSync(big, 'saved here while the restore ran');
+      return null;
+    });
+    let job: { status?: string; error?: string };
+    try {
+      job = await settled((await startCapsuleRestore([id])).jobId);
+    } finally {
+      unhook();
+      unlink();
+    }
+    if (unseen) {
+      assert.equal(job.status, 'error', job.error);
+      assert.equal(fs.readFileSync(big, 'utf8'), 'saved here while the restore ran', 'a rename never replaces what stands there');
+    } else {
+      assert.equal(job.status, 'complete', job.error);
+      assert.ok(fs.readFileSync(big).equals(bytes));
+    }
+    assert.deepEqual(partials(folder), []);
+  });
+}

@@ -2,7 +2,9 @@ import fs, { promises as fsp } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import crypto from 'crypto';
 import { pipeline } from 'stream/promises';
+import path from 'path';
 import { identityOf, UNKNOWN } from './placeIdentity';
+import { meansAbsent } from './errno';
 
 /**
  * copyVerify — the copy-and-fingerprint primitive shared by every feature that
@@ -127,6 +129,51 @@ export async function copyWithHash(src: string, dest: string, progress?: CopyPro
     if (left !== null) throw new CopyLeftBehind(dest, left, err);
     throw err;
   }
+}
+
+/**
+ * A name beside `dest` for a restore's copy that is not complete yet (FG3f #8). A restore copied
+ * straight to the item's own name, so a quit or a kill part-way left a part-copied file there — one
+ * that looks like the person's file and is not. Short and fixed rather than built from the name, so
+ * a name already near the volume's limit still fits; plainly TreeMap's.
+ */
+export function partialNameFor(dest: string): string {
+  return path.join(path.dirname(dest), `.treemap-restore-${crypto.randomUUID().slice(0, 8)}`);
+}
+
+/** Test-only: the hard link `placeWithoutClobber` makes, as a volume without them refuses it. */
+let hardLinkForTests: ((existing: string, link: string) => Promise<void>) | null = null;
+export function setHardLinkForTests(fn: (existing: string, link: string) => Promise<void>): () => void {
+  hardLinkForTests = fn;
+  return () => { hardLinkForTests = null; };
+}
+
+/**
+ * Put the complete, verified file at `partial` at `dest`, never over anything (FG3f #8). A hard
+ * link is made at `dest` — which fails with EEXIST if anything stands there, in one step — and the
+ * partial name is then dropped. Where the volume makes no hard links (FAT, exFAT, some network
+ * shares), `dest` is looked at and the file renamed there: a rename replaces what stands at a name,
+ * so only a name seen empty is used. Throws EEXIST when something stands at `dest`, leaving the
+ * partial for the caller to remove.
+ */
+export async function placeWithoutClobber(partial: string, dest: string): Promise<void> {
+  try {
+    await (hardLinkForTests ?? ((a: string, b: string) => fsp.link(a, b)))(partial, dest);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw err;
+    const taken = await fsp.lstat(dest).then(() => true, (look: unknown) => {
+      if (meansAbsent(look)) return false;
+      throw look;
+    });
+    if (taken) throw Object.assign(new Error(`EEXIST: something already stands at ${dest}`), { code: 'EEXIST' });
+    await fsp.rename(partial, dest);
+    return;
+  }
+  // In place under its own name: the partial name is a second name for the same file, and one left
+  // behind is clutter, never a wrong file — so a failure here is logged, not thrown.
+  await fsp.rm(partial, { force: true }).catch((err: unknown) => {
+    console.error(`[treemap] a restored file is in place, but its temporary name ${partial} could not be removed:`, err);
+  });
 }
 
 /**

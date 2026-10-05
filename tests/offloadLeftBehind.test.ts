@@ -14,6 +14,7 @@ import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import type { OffloadJob } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { isRestoreCopyFor, restorePartialsIn } from './fixtures/restoreCopy';
 
 /**
  * FG3f #7 (introduced with FG3d #1's CopyLeftBehind). An offload that stopped part-way — cancelled,
@@ -132,7 +133,8 @@ test('a cancelled offload restore that cannot remove its part-copied file says s
   const ids = (await getOffloadIndex()).entries.filter((e) => e.originalPath === big).map((e) => e.id);
   assert.equal(ids.length, 1);
 
-  const unfault = lockAndCancelAt((d) => d === big, src);
+  // The restore writes beside the file's name until its copy verifies (FG3f #8).
+  const unfault = lockAndCancelAt((d) => isRestoreCopyFor(d, big), src);
   let job: OffloadJob;
   try {
     job = await settled(await startRestore(ids));
@@ -141,7 +143,35 @@ test('a cancelled offload restore that cannot remove its part-copied file says s
     fs.chmodSync(src, 0o700);
   }
   assert.equal(job.status, 'error', `not "cancelled" (${job.status}: ${job.error})`);
-  assert.ok(fs.existsSync(big), 'the case is the one under test: the part-copied file is still there');
-  assert.ok((job.error ?? '').includes(big), `the sentence names it (${job.error})`);
+  const [partial] = restorePartialsIn(src);
+  assert.ok(partial, 'the case is the one under test: the part-copied file is still there, beside the name');
+  assert.ok(!fs.existsSync(big), 'and nothing stands at the name itself');
+  assert.ok((job.error ?? '').includes(partial), `the sentence names it (${job.error})`);
   assert.match(job.error ?? '', /could not be removed/, job.error);
+});
+
+test('while an offload restore copies a file, nothing stands at the file’s name (FG3f #8)', async () => {
+  const { src, small, big, scan } = source('restore-partial');
+  const dest = fileTempDir('treemap-offloadLeftBehind-restore-partial-dest-');
+  const done = await withOpenFileCheck('clear', async () => {
+    const prepared = await prepareOffload(scan, [small, big], dest);
+    return settled(await startOffload(scan, [small, big], dest, prepared));
+  });
+  assert.equal(done.status, 'complete', done.error);
+  const ids = (await getOffloadIndex()).entries.filter((e) => e.originalPath === big).map((e) => e.id);
+  let atItsName: boolean | null = null;
+  const unhook = setCopyFaultForTests((d, read) => {
+    if (atItsName === null && isRestoreCopyFor(d, big) && read > CHUNK) atItsName = fs.existsSync(big);
+    return null;
+  });
+  let job: OffloadJob;
+  try {
+    job = await settled(await startRestore(ids));
+  } finally {
+    unhook();
+  }
+  assert.equal(atItsName, false, 'part-way through the copy, nothing stands at its name');
+  assert.equal(job.status, 'complete', job.error);
+  assert.ok(fs.readFileSync(big).equals(Buffer.alloc(BIG, 2)), 'once it verifies it is there, whole');
+  assert.deepEqual(restorePartialsIn(src), [], 'with nothing left beside it');
 });

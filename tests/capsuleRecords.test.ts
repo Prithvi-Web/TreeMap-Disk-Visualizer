@@ -24,6 +24,7 @@ import { platform } from '../src/platform';
 import { invalidateCapabilities } from '../src/platform/capabilities';
 import type { TimeCapsuleEntry } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
+import { isRestoreCopyFor, restorePartialsIn } from './fixtures/restoreCopy';
 
 /**
  * Follow-up FG3, item 3. The Time Capsule's index (timecapsule.json), each entry's manifest.json and
@@ -505,9 +506,10 @@ test('a restore that fails or is cancelled part-way through a file leaves nothin
       const what = `a ${kind} whose restore ${how}`;
       const { entry, place, bigAt } = partWayEntry(kind, `part-way-${kind}-${how === 'fails' ? 'failed' : 'cancelled'}`);
       let madeMidCopy = false;
+      // The restore writes beside big.txt's name until its copy verifies (FG3f #8): the seam sees that copy.
       const removeFault = setCopyFaultForTests((dest, read) => {
-        if (dest !== bigAt || read <= CHUNK) return null;
-        madeMidCopy = fs.existsSync(dest) && (kind === 'file' || fs.existsSync(path.join(place, 'small.txt')));
+        if (!isRestoreCopyFor(dest, bigAt) || read <= CHUNK) return null;
+        madeMidCopy = fs.existsSync(dest) && !fs.existsSync(bigAt) && (kind === 'file' || fs.existsSync(path.join(place, 'small.txt')));
         if (how === 'fails') return new Error('the disk stopped answering (a test)');
         cancelAllCapsuleJobs();
         return null;
@@ -519,9 +521,10 @@ test('a restore that fails or is cancelled part-way through a file leaves nothin
         removeFault();
       }
       assert.equal(job.status, how === 'fails' ? 'error' : 'cancelled', `${what}: ${job.error}`);
-      assert.ok(madeMidCopy, `${what}: the restore had begun writing at its place when it stopped`);
+      assert.ok(madeMidCopy, `${what}: the restore had begun writing its copy, beside the name, when it stopped`);
       // "nothing was left half-written", as the cancelled restore and both undos say.
       assert.ok(!fs.existsSync(place), `${what}: nothing is left at its place`);
+      assert.deepEqual(restorePartialsIn(path.dirname(bigAt)), [], `${what}: nor beside it`);
 
       const again = await restoreSettled(entry.id, `${what}, tried again`);
       assert.equal(again.status, 'complete', `${what}: it can be tried again, all the way (${again.error})`);
@@ -540,7 +543,7 @@ test('an undo cancelled part-way through a file leaves nothing at its place, and
   // The undo writes where the file was on the disk (FG3d #2): on a Mac, /var is /private/var.
   const reportAt = path.join(fs.realpathSync.native(PLACE), 'report.docx');
   const removeFault = setCopyFaultForTests((dest, read) => {
-    if (dest !== reportAt || read <= CHUNK) return null;
+    if (!isRestoreCopyFor(dest, reportAt) || read <= CHUNK) return null;
     cancelAllCapsuleJobs();
     return null;
   });
@@ -574,9 +577,10 @@ test('a stopped restore that cannot remove what it had made says so, and is neve
       ? partWayEntry('folder', `stuck-${n}`, tmp)
       : partWayEntry('file', `stuck-${n}`, left === 'a folder made on the way' ? madeUp : tmp);
     const locked = left === 'a file put back before it' ? place : tmp;
-    const stuck = left === 'the part-copied file' ? bigAt : left === 'a file put back before it' ? path.join(place, 'small.txt') : madeUp;
+    // The part-copied file is the restore's copy beside big.txt's name (FG3f #8), found once it stops.
+    const stuckAt = (): string => (left === 'the part-copied file' ? restorePartialsIn(path.dirname(bigAt))[0] ?? bigAt : left === 'a file put back before it' ? path.join(place, 'small.txt') : madeUp);
     const removeFault = setCopyFaultForTests((dest, read) => {
-      if (dest !== bigAt || read <= CHUNK) return null;
+      if (!isRestoreCopyFor(dest, bigAt) || read <= CHUNK) return null;
       fs.chmodSync(locked, 0o500);
       cancelAllCapsuleJobs();
       return null;
@@ -589,11 +593,12 @@ test('a stopped restore that cannot remove what it had made says so, and is neve
       fs.chmodSync(locked, 0o700);
     }
     assert.equal(job.status, 'error', `${what}: not "cancelled — nothing was left half-written" (${job.status})`);
+    const stuck = stuckAt();
     assert.ok(fs.existsSync(stuck), `${what}: the case is the one under test — ${stuck} is still there`);
     assert.ok((job.error ?? '').includes(stuck), `${what}: the sentence names what is left (${job.error})`);
     assert.match(job.error ?? '', /could not be removed/, what);
     // Removing it, as the sentence says, lets it be tried again.
-    fs.rmSync(left === 'a folder made on the way' ? madeUp : place, { recursive: true, force: true });
+    fs.rmSync(left === 'a folder made on the way' ? madeUp : left === 'the part-copied file' ? stuck : place, { recursive: true, force: true });
     const again = await restoreSettled(entry.id, `${what}, tried again`);
     assert.equal(again.status, 'complete', `${what}: tried again (${again.error})`);
     assert.equal(fs.readFileSync(bigAt, 'utf8'), BIG);
