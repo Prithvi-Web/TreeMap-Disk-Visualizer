@@ -7,7 +7,7 @@ isolatedDataDir('treemap-emptyFolderCheck-data-');
 
 import {
   driveFor, driveOn, emptyCheckSession, EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, listsEntryTypes, lookBudgetMs, lookClock,
-  openListing, setEmptyCheckForTests, SILENT_DRIVE_MEMORY_MS, stillEmptyFolder, type EmptyCheckDeps, type EmptyVerdict,
+  filesystemOn, openListing, setEmptyCheckForTests, setMountTableReaderForTests, SILENT_DRIVE_MEMORY_MS, stillEmptyFolder, type EmptyCheckDeps, type EmptyVerdict,
 } from '../src/services/emptyFolderCheck';
 import { HANG_GUARD_MS } from './fixtures/waitFor';
 
@@ -532,6 +532,35 @@ test('which drive a path is on: the deepest mount point listed above it, by name
     assert.equal(driveFor(spelling, null, 'win32'), '\\\\server\\share\\', spelling);
   }
   assert.notEqual(driveFor('\\\\?\\UNC\\other\\share\\a', null, 'win32'), driveFor('\\\\?\\UNC\\server\\share\\a', null, 'win32'), 'two shares are two drives');
+});
+
+test('a mount table that cannot be read puts every path on one drive, "/", and has every listing read whole; it is read again only after a minute (U-4b review, INFO)', { skip: process.platform === 'win32' && 'Windows keeps no mount table to read' }, async () => {
+  let reads = 0;
+  let now = 0;
+  const clock = (): number => now;
+  setMountTableReaderForTests(async () => { reads++; throw new Error('mount: could not be run'); }, clock);
+  try {
+    assert.equal(await driveOn('/Volumes/Backup/x'), '/', 'one drive for everything, which only withholds more');
+    assert.equal(await filesystemOn('/Volumes/Backup/x'), null);
+    assert.equal(listsEntryTypes(await filesystemOn('/Users/me'), process.platform), false, 'so every listing is read whole');
+    assert.equal(reads, 1, 'the failure is kept for the minute, not read again for each path');
+    now += 60_000;
+    await driveOn('/x');
+    assert.equal(reads, 2, 'and read again once the minute is up');
+    setMountTableReaderForTests(async () => { reads++; return { source: 'mount', entries: null, reason: 'the table could not be parsed' }; }, clock);
+    assert.equal(await driveOn('/Volumes/Backup/x'), '/', 'a table read as unknown is the same');
+    assert.equal(await filesystemOn('/Volumes/Backup/x'), null);
+    setMountTableReaderForTests(async () => ({
+      source: 'mount',
+      entries: [{ mountPoint: '/', filesystem: 'apfs', options: [] }, { mountPoint: '/Volumes/Backup', filesystem: 'smbfs', options: [] }],
+      reason: null,
+    }), clock);
+    assert.equal(await driveOn('/Volumes/Backup/x'), '/Volumes/Backup');
+    assert.equal(await filesystemOn('/Volumes/Backup/x'), 'smbfs', 'a network share: read whole');
+    assert.equal(await filesystemOn('/Users/me'), 'apfs', 'the boot drive: an entry at a time');
+  } finally {
+    setMountTableReaderForTests(null);
+  }
 });
 
 test('on this machine, a path\'s drive comes from its own mount table', { skip: !['darwin', 'linux', 'win32'].includes(process.platform) && 'no mount table is read here' }, async () => {

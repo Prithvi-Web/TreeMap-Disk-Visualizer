@@ -3,7 +3,7 @@ import type { Dirent } from 'fs';
 import path from 'path';
 import { performance } from 'perf_hooks';
 import { underTestRunner } from './realMachineGuard';
-import { isAtOrUnder, readMountTable } from '../utils/mountBoundaries';
+import { isAtOrUnder, readMountTable, type MountTable } from '../utils/mountBoundaries';
 
 /**
  * Is this folder still empty on disk? (Track U, U-4.)
@@ -211,14 +211,25 @@ interface Mount {
 
 let mountTable: { readAt: number; mounts: Mount[] | null } | null = null;
 let mountTableRead: Promise<Mount[] | null> | null = null;
+const READ_MOUNT_TABLE = (): Promise<MountTable> => readMountTable(process.platform);
+let readTable: () => Promise<MountTable> = READ_MOUNT_TABLE;
+let mountClock: () => number = lookClock;
+
+/** Tests only: read the mount table with `read`, timed on `now`; null puts the machine's table back. Either way the next lookup reads afresh. */
+export function setMountTableReaderForTests(read: (() => Promise<MountTable>) | null, now: () => number = lookClock): void {
+  readTable = read ?? READ_MOUNT_TABLE;
+  mountClock = read ? now : lookClock;
+  mountTable = null;
+  mountTableRead = null;
+}
 
 /** The mounts of this machine, read at most once a minute; null when the table cannot be read. */
 async function currentMounts(): Promise<Mount[] | null> {
-  if (mountTable && lookClock() - mountTable.readAt < MOUNT_TABLE_FRESH_MS) return mountTable.mounts;
-  mountTableRead ??= readMountTable(process.platform)
+  if (mountTable && mountClock() - mountTable.readAt < MOUNT_TABLE_FRESH_MS) return mountTable.mounts;
+  mountTableRead ??= readTable()
     .then((t) => t.entries?.map((e) => ({ mountPoint: e.mountPoint, filesystem: e.filesystem })) ?? null, () => null)
     .then((mounts) => {
-      mountTable = { readAt: lookClock(), mounts };
+      mountTable = { readAt: mountClock(), mounts };
       mountTableRead = null;
       return mounts;
     });
