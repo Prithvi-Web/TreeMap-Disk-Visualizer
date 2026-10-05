@@ -737,7 +737,7 @@ test('D58: every rectangle-map paint refreshes the note under the map', () => {
  * snapshot list answering `snaps` entries; count the redraws it asks for.
  * `during` runs while the snapshot request is out.
  */
-async function timebar(startHidden: boolean, snaps: number, opts: { view?: string; rootPath?: string; during?: (s: any, els: any) => void } = {}) {
+async function timebar(startHidden: boolean, snaps: number, opts: { view?: string; rootPath?: string; during?: (s: any, els: any) => void; calls?: number } = {}) {
   const els: Record<string, { hidden: boolean; value?: string; max?: string }> = {
     tmTimebar: { hidden: startHidden }, tmLiveToggle: { hidden: false }, tmTimeSlider: { hidden: false, value: '0', max: '0' },
   };
@@ -759,7 +759,8 @@ async function timebar(startHidden: boolean, snaps: number, opts: { view?: strin
     updateTimeLabel() {},
     drawView: () => { redraws++; },
   }, 'refreshTimebar');
-  await refresh();
+  // `calls` at once: loadTreemap's call and finishScan's 1.5 s timer call can both be out.
+  await Promise.all(Array.from({ length: opts.calls ?? 1 }, () => refresh()));
   return { redraws, hidden: els.tmTimebar.hidden };
 }
 
@@ -783,6 +784,38 @@ test('D59: a snapshot answer that lands after the map left the scan root does no
     during: (state, els) => { state.treemap.rootPath = '/r/sub'; els.tmTimebar.hidden = true; },
   });
   assert.deepEqual(r, { redraws: 0, hidden: true }, 'the newer load (in a subfolder) owns the bar');
+});
+
+test('LOW-4: two snapshot answers in flight redraw the map once, not twice', async () => {
+  // Each call captured the bar's state BEFORE its await, so when loadTreemap's
+  // call and finishScan's timer call were both out, both saw "hidden → shown"
+  // and both redrew — a Voronoi or Circles re-solve each, up to 200 ms apiece.
+  assert.deepEqual(await timebar(true, 2, { calls: 2 }), { redraws: 1, hidden: false }, 'the bar appeared once: one redraw');
+  assert.deepEqual(await timebar(false, 1, { calls: 2 }), { redraws: 1, hidden: true }, 'and went once: one redraw');
+});
+
+test('LOW-4: a new circle or Voronoi layout ends the level transition still running on the old one', () => {
+  // The zoom's `to` is where the shared node sat in the layout being replaced:
+  // a redraw that re-solved under a running zoom (the time-lapse bar
+  // appearing, a resize) made it jump. loadTreemap starts the new zoom after.
+  const cancelled: number[] = [];
+  const state = { treemap: { mode: 'circles', cells: [] as unknown[], altNote: '', altMs: 0,
+    altZoom: { k: 2, start: 0 } as unknown, altZoomRaf: 7 } };
+  const build = load<(geo: unknown) => void>(['buildCells'], {
+    state,
+    sunburstRoot: () => ({ path: '/r' }),
+    altRefineCancel() {},
+    performance: { now: () => 0 },
+    layoutCirclePack: () => ({ cells: [{ n: { path: '/r/a' } }], done: true, note: '' }),
+    layoutVoronoi: () => { throw new Error('the circles mode lays out circles'); },
+    altRefineSchedule() {}, altRefiningNote: () => '', fxShapeSync() {},
+    cancelAnimationFrame: (id: number) => { cancelled.push(id); },
+  }, 'buildCells');
+  build({ cssW: 800, cssH: 600, dpr: 1 });
+  assert.equal(state.treemap.altZoom, null, 'the running zoom is over');
+  assert.equal(state.treemap.altZoomRaf, 0);
+  assert.deepEqual(cancelled, [7], 'and its frame loop is cancelled, not left to paint the old transform');
+  assert.equal(state.treemap.cells.length, 1, 'the new layout is in place');
 });
 
 /* ══════════════ D63 — the keyboard selection's card goes when the map does ══════════════ */

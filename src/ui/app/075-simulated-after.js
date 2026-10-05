@@ -770,10 +770,6 @@ async function refreshTimebar() {
   $('tmLiveToggle').hidden = isCloudScan(); // live watching is local-disk only
   const h = state.treemap.history;
   if (!state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
-  // The map's height is the window minus everything above it, this bar
-  // included, and the draw that follows this call measures it NOW — before
-  // the snapshot list below has answered.
-  const wasHidden = bar.hidden;
   const root = state.root;
   try {
     const data = await api('/api/snapshots?path=' + encodeURIComponent(root.path));
@@ -785,6 +781,13 @@ async function refreshTimebar() {
   // the newer load has already hidden the bar, and this answer must not
   // bring it back over a subfolder.
   if (state.root !== root || state.treemap.rootPath !== root.path) return;
+  // The map's height is the window minus everything above it, this bar
+  // included, and the map was last measured with the bar as it is NOW: by
+  // the caller's draw, or by another call's redraw that landed while this
+  // one waited. Read before the await, two calls in flight (loadTreemap's
+  // and finishScan's timer's) both saw the bar change and both redrew — a
+  // Voronoi or Circles re-solve each (QA-6 review LOW-4).
+  const wasHidden = bar.hidden;
   // The newest snapshot is the scan you're looking at — history needs two.
   bar.hidden = h.snaps.length < 2;
   if (!bar.hidden) {

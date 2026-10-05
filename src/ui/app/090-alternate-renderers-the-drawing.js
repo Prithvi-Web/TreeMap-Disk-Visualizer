@@ -415,6 +415,13 @@ function altCellPath(ctx, c) {
 function buildCells(geo) {
   const root = sunburstRoot();
   altRefineCancel();
+  // A new layout ends the level transition still running on the old one
+  // (QA-6 review LOW-4): its `to` is where the shared node sat in the layout
+  // being replaced, so a redraw that re-solved under it — the time-lapse bar
+  // appearing, a resize — made the zoom jump. loadTreemap starts the next
+  // transition after this, from the layout this builds.
+  if (state.treemap.altZoomRaf) { cancelAnimationFrame(state.treemap.altZoomRaf); state.treemap.altZoomRaf = 0; }
+  state.treemap.altZoom = null;
   if (!root) { state.treemap.cells = []; state.treemap.altNote = ''; return; }
   const t0 = performance.now();
   const out = state.treemap.mode === 'circles' ? layoutCirclePack(root, geo) : layoutVoronoi(root, geo);
