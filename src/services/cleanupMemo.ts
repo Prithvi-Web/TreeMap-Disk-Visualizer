@@ -2,7 +2,7 @@ import { CleanupSuggestionGroup } from '../models/types';
 import { CompiledIgnore } from '../utils/glob';
 import { ScanStore } from './scanStore';
 import { Rule, RuleCatalog, withMatchedReasons } from './rulePacks';
-import { CleanupWalk, CleanupWalkOptions, collectCleanupSuggestionsAsync } from './cleanupRules';
+import { CleanupWalk, CleanupWalkOptions, collectCleanupSuggestionsAsync, ITEMS_PER_RULE } from './cleanupRules';
 
 /**
  * cleanupMemo — the cleanup rules walked once per scan version (Track U, U-16).
@@ -166,8 +166,8 @@ export async function cleanupSuggestionsFor(
     return { walk, value: walk.groups };
   });
   // The walk's sentence lists every name a rule knows; the served one names
-  // what each group matched (QA D06).
-  return withMatchedReasons(copyGroups(groups), catalog);
+  // what each group matched (QA D06), when its items list every match.
+  return withMatchedReasons(copyGroups(groups), catalog, ITEMS_PER_RULE);
 }
 
 /**

@@ -44,7 +44,8 @@ import { MAX_SLICE_ATTEMPTS, SlicedWalk, SliceOptions, walkInSlices } from './sl
  * scan version.
  */
 
-const ITEMS_PER_RULE = 200;
+/** A group lists at most this many items; its totalSize counts every match. */
+export const ITEMS_PER_RULE = 200;
 const DAY_MS = 86_400_000;
 
 /** Children examined per slice of the async walk: about 18 ms at the rate the diagnosis measured. */

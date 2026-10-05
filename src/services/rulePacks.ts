@@ -526,15 +526,21 @@ export function matchReasonFor(rule: Rule, matched?: { names?: readonly string[]
  * The walk builds a group's sentence from its rule, which lists every name the
  * rule knows; a group holds what actually matched. Applied where groups are
  * served (cleanupMemo), so the walk itself — held byte for byte to the
- * pre-U-16 matcher — is untouched. Names come from the items the group lists
- * (its largest 200), on-disk spelling, each once whatever its case. A group two
- * rules share (one id) is narrowed only when one rule's names cover all of
- * them; otherwise, and for rules not matched by name, the sentence stands.
- * Returns new groups; the input is not edited.
+ * pre-U-16 matcher — is untouched. Names come from the items the group lists,
+ * on-disk spelling, each once whatever its case. A group two rules share (one
+ * id) is narrowed only when one rule's names cover all of them; otherwise, and
+ * for rules not matched by name, the sentence stands.
+ *
+ * Only a group with fewer than `itemCap` items is narrowed (review F1.2): the
+ * walk lists the first `itemCap` matches it meets, in walk order, while its
+ * totalSize counts every one, so a full list may leave out a name whose bytes
+ * the total includes. Such a group keeps the rule's sentence, which may name
+ * more than matched but never less. Returns new groups; the input is not edited.
  */
 export function withMatchedReasons<G extends { id: string; why?: string; items: readonly { name: string }[] }>(
   groups: G[],
   catalog: RuleCatalog,
+  itemCap: number,
 ): G[] {
   const byId = new Map<string, (ProjectDirRule | DirRule | FileRule)[]>();
   for (const r of [...catalog.projectDirectory, ...catalog.directory, ...catalog.file]) {
@@ -542,7 +548,7 @@ export function withMatchedReasons<G extends { id: string; why?: string; items: 
   }
   return groups.map((g) => {
     const rules = byId.get(g.id);
-    if (!rules || g.items.length === 0) return g;
+    if (!rules || g.items.length === 0 || g.items.length >= itemCap) return g;
     const seen = new Set<string>();
     const names: string[] = [];
     for (const item of g.items) {

@@ -330,6 +330,29 @@ test('several matched names are all named, each once whatever its case, in the o
   assert.equal(g!.why, 'A folder named .pytest_cache or .mypy_cache, with no project manifest beside it to say what rebuilds it.');
 });
 
+test('a group cut off at its 200 listed items keeps the rule\'s full sentence — a name past the cut is still in its total (review F1.2)', async () => {
+  // The walk counts every match in totalSize but lists only the first 200 it
+  // meets. Narrowing to the listed names would leave out a folder whose bytes
+  // the group's size includes, and which name is left out would depend on walk order.
+  const projects = (n: number, folder: string, from = 0): Spec[] =>
+    Array.from({ length: n }, (_, i) => [`p${from + i}`, ['package.json', [folder, ['a.js']]]] as Spec);
+  const FULL = 'A folder named .next, .nuxt, .output, .svelte-kit or .angular.';
+  const cut = await served(treeOf(path.resolve('/f12a'), [...projects(200, '.next'), ...projects(1, '.angular', 200)]));
+  const g = cut.find((x) => x.id === 'regen-web-build')!;
+  assert.equal(g.items.length, 200, 'the list stops at 200');
+  assert.ok(!g.items.some((i) => i.name === '.angular'), 'the .angular folder is past the cut');
+  assert.equal(g.totalSize, 201 * 100, 'and its bytes are in the total');
+  assert.equal(g.why, FULL, 'so the sentence still names every folder the rule matches');
+
+  const atCap = await served(treeOf(path.resolve('/f12b'), projects(200, '.next')));
+  assert.equal(atCap.find((x) => x.id === 'regen-web-build')!.why, FULL,
+    'exactly 200 listed cannot tell "all of them" from "the first 200", so it is not narrowed either');
+
+  const under = await served(treeOf(path.resolve('/f12c'), projects(199, '.next')));
+  assert.equal(under.find((x) => x.id === 'regen-web-build')!.why, 'A folder named .next.',
+    'under the cap every match is listed, and the sentence names what matched');
+});
+
 test('a group that two rules share keeps the rule\'s own sentence when its folders came from both (QA D06)', async () => {
   const { withMatchedReasons } = await import('../src/services/rulePacks');
   const catalog = loadRuleCatalogFrom(SHIPPED, 'darwin');
@@ -338,14 +361,14 @@ test('a group that two rules share keeps the rule\'s own sentence when its folde
     items: [{ name: '.next', path: '/x/.next', size: 1, type: 'dir' as const, modifiedAt: 0 }, { name: 'dist', path: '/y/dist', size: 1, type: 'dir' as const, modifiedAt: 0 }],
     why: 'the walk\'s sentence',
   };
-  const [out] = withMatchedReasons([group], catalog);
+  const [out] = withMatchedReasons([group], catalog, 200);
   assert.equal(out.why, 'the walk\'s sentence', 'no one rule matched both names, so nothing is narrowed');
   const input = { ...group, items: [group.items[1]] };
-  const solo = withMatchedReasons([input], catalog)[0];
+  const solo = withMatchedReasons([input], catalog, 200)[0];
   assert.match(solo.why!, /^A folder named dist sitting next to package\.json, /, 'one rule\'s names: narrowed with that rule\'s siblings');
   assert.equal(input.why, 'the walk\'s sentence', 'the input is not edited — the memo hands out copies of one answer');
   assert.notEqual(solo, input, 'a narrowed group is a new object');
-  assert.equal(withMatchedReasons([{ ...group, id: 'old-downloads' }], catalog)[0].why, 'the walk\'s sentence', 'a rule that is not matched by name is left alone');
+  assert.equal(withMatchedReasons([{ ...group, id: 'old-downloads' }], catalog, 200)[0].why, 'the walk\'s sentence', 'a rule that is not matched by name is left alone');
 });
 
 test('matchReasonFor with matched names says those names; without, the pack\'s own spelling (QA D06)', () => {
