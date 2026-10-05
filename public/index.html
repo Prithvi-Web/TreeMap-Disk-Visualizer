@@ -1835,12 +1835,26 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
   /* No live backdrop. The sheet's own scroller lived inside its backdrop-
      filter surface, and Chromium expands damage to the whole of such a
      surface, so every scroll frame re-blurred ~2M device pixels of sheet.
-     The page behind is tinted by the scrim, not blurred, and the sheet is a
-     near-opaque pane: the global-search recipe, 94% of the page background. */
+     The page behind is tinted by the scrim, not blurred, and the sheet is an
+     OPAQUE pane under its sheen. It was 94% of the page background, and with
+     no blur that 6% let dense dashboard text ("8.8 GB", the host name, list
+     rows) read straight through Clean Up, Compare copies and the
+     Move-to-Trash sheet (QA D49). The element's own background is the same
+     colour, a floor under the lens layer (.lg::before paints above it, below
+     the content), so the sheet stays solid even before the glass engine has
+     made it a lens host. tests/floatingSurfaces.test.ts resolves both
+     through each theme's tokens. */
   --lg-backdrop: none;
-  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), color-mix(in srgb, var(--bg-1) 94%, transparent);
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
+  background: var(--bg-1);
   border: 1px solid var(--hairline-2); border-radius: var(--r-lg);
   box-shadow: var(--shadow-3), 0 0 90px rgba(10,132,255,0.05); }
+/* A sheet with no primary button takes focus itself (modalFocusTarget gives
+   it tabindex -1) so a screen reader lands in the dialog. That is not a
+   control, and the global :focus-visible ring drew a thick accent outline
+   around the whole keyboard-shortcuts sheet (QA D69). Tab still moves to its
+   controls, which keep their rings. */
+.modal[tabindex="-1"]:focus, .modal[tabindex="-1"]:focus-visible { outline: none; }
 @keyframes sheetIn { from { transform: translateY(30px) scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
 .modal-head { display: flex; align-items: center; gap: 10px; padding: 20px 22px 0; }
 .modal-head h3 { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
@@ -1998,6 +2012,15 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .tour-card { pointer-events: auto; position: absolute; right: 18px; bottom: 86px;
   width: min(360px, calc(100vw - 32px)); padding: 15px 16px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
+/* The card floats straight on the treemap canvas with no scrim, and its
+   .glass fill is --glass-strong, 72% opaque with no blur: the cell labels
+   behind read through the card's own text (QA D07). It takes the opaque-
+   glass recipe of #rcPopover and #nlPop — the sheen over an OPAQUE base, and
+   no backdrop-filter, which would only filter pixels nobody can see. The
+   light-theme selector is repeated because `:root[data-theme="light"] .glass`
+   outranks a two-class rule. */
+.tour-card.glass, :root[data-theme="light"] .tour-card.glass {
+  background: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1); }
 .tour-card h4 { margin: 0 0 7px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .tour-card p { margin: 0 0 10px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
 .tour-card .tour-row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -2555,16 +2578,49 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 #ctxMenu button:hover .ic { color: #fff; }
 #ctxMenu button.danger:hover { background: var(--danger); }
 #ctxMenu .div { height: 1px; background: var(--hairline); margin: 4px 8px; }
-#toasts { position: fixed; top: 68px; right: 22px; z-index: 300; display: flex; flex-direction: column; gap: 10px; }
-.toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px; max-width: 380px;
+/* Toasts are a bottom snackbar. Top-right, they sat over the view toolbars —
+   Live, Lens, refresh, Export — for 4–12 s after every scan (QA D08). The
+   right-hand side is taken too, by surfaces that come and go: the preview
+   pane, the cart dock (pushed left of the pane while that is open), the
+   coach card. Each sets how far in from the right edge it reaches, the
+   stack centres on the strip between the sidebar and the furthest of them,
+   and a toast is capped to that strip's width. Below a 240-px strip — the
+   pane AND the cart open in a window under ~1220 px — there is no clear room
+   and a toast overlaps them for its few seconds. The stack lifts above the
+   selection bar while that is up, and while a dialog is open it moves to the
+   top of the scrim, clear of the sheet's buttons; that slot names the
+   selection-bar state too, because Move to Trash from the Grid's bar opens a
+   sheet WITH the bar up and the bar's lift (:has(#id), the more specific)
+   would otherwise pin the stack top and bottom at once. The stack itself
+   lets clicks through; only the toasts on it take them. New toasts join the
+   bottom and push older ones up. tests/floatingSurfaces.test.ts evaluates the
+   slot at the desktop window's minimum size and up. */
+body { --toast-l: calc(var(--side-w) + 12px); --tr-pane: 0px; --tr-cart: 0px; --tr-tour: 0px; }
+body:has(#sideNav.collapsed) { --toast-l: calc(var(--side-w-rail) + 12px); }
+body.preview-open { --tr-pane: 330px; }
+body:has(#cartDock.show) { --tr-cart: 388px; }
+body.preview-open:has(#cartDock.show) { --tr-cart: 714px; }
+body:has(#tourOverlay:not([hidden])) { --tr-tour: 378px; }
+#toasts { position: fixed; bottom: 22px; z-index: 300;
+  --toast-r: max(var(--tr-pane), var(--tr-cart), var(--tr-tour));
+  --toast-room: max(240px, calc(100vw - var(--toast-l) - var(--toast-r) - 24px));
+  left: max(calc(var(--toast-l) + (100vw - var(--toast-l) - var(--toast-r)) / 2), calc(var(--toast-l) + 132px));
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  width: max-content; max-width: var(--toast-room); pointer-events: none; }
+body:has(#selectionBar.visible) #toasts { bottom: 90px; }
+body:has(.modal-backdrop.open) #toasts,
+body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bottom: auto; }
+.toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px;
+  max-width: min(380px, var(--toast-room, 380px)); pointer-events: auto;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 22px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-2); animation: toastIn var(--dur-3) var(--ease-spring); line-height: 1.45; }
 .toast .ic { margin-top: 1px; }
 .toast.success .ic { color: var(--ok); }
 .toast.error .ic { color: var(--danger); }
-.toast.out { opacity: 0; transform: translateX(16px); transition: all var(--dur-2) var(--ease); }
-@keyframes toastIn { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+.toast.out { opacity: 0; transform: translateY(10px); transition: all var(--dur-2) var(--ease); }
+@keyframes toastIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
 
 /* ── Duplicates view ── */
 .dup-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }

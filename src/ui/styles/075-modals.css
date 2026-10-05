@@ -25,12 +25,26 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
   /* No live backdrop. The sheet's own scroller lived inside its backdrop-
      filter surface, and Chromium expands damage to the whole of such a
      surface, so every scroll frame re-blurred ~2M device pixels of sheet.
-     The page behind is tinted by the scrim, not blurred, and the sheet is a
-     near-opaque pane: the global-search recipe, 94% of the page background. */
+     The page behind is tinted by the scrim, not blurred, and the sheet is an
+     OPAQUE pane under its sheen. It was 94% of the page background, and with
+     no blur that 6% let dense dashboard text ("8.8 GB", the host name, list
+     rows) read straight through Clean Up, Compare copies and the
+     Move-to-Trash sheet (QA D49). The element's own background is the same
+     colour, a floor under the lens layer (.lg::before paints above it, below
+     the content), so the sheet stays solid even before the glass engine has
+     made it a lens host. tests/floatingSurfaces.test.ts resolves both
+     through each theme's tokens. */
   --lg-backdrop: none;
-  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), color-mix(in srgb, var(--bg-1) 94%, transparent);
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
+  background: var(--bg-1);
   border: 1px solid var(--hairline-2); border-radius: var(--r-lg);
   box-shadow: var(--shadow-3), 0 0 90px rgba(10,132,255,0.05); }
+/* A sheet with no primary button takes focus itself (modalFocusTarget gives
+   it tabindex -1) so a screen reader lands in the dialog. That is not a
+   control, and the global :focus-visible ring drew a thick accent outline
+   around the whole keyboard-shortcuts sheet (QA D69). Tab still moves to its
+   controls, which keep their rings. */
+.modal[tabindex="-1"]:focus, .modal[tabindex="-1"]:focus-visible { outline: none; }
 @keyframes sheetIn { from { transform: translateY(30px) scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
 .modal-head { display: flex; align-items: center; gap: 10px; padding: 20px 22px 0; }
 .modal-head h3 { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }

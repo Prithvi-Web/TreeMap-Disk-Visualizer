@@ -104,6 +104,15 @@
 .tour-card { pointer-events: auto; position: absolute; right: 18px; bottom: 86px;
   width: min(360px, calc(100vw - 32px)); padding: 15px 16px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
+/* The card floats straight on the treemap canvas with no scrim, and its
+   .glass fill is --glass-strong, 72% opaque with no blur: the cell labels
+   behind read through the card's own text (QA D07). It takes the opaque-
+   glass recipe of #rcPopover and #nlPop — the sheen over an OPAQUE base, and
+   no backdrop-filter, which would only filter pixels nobody can see. The
+   light-theme selector is repeated because `:root[data-theme="light"] .glass`
+   outranks a two-class rule. */
+.tour-card.glass, :root[data-theme="light"] .tour-card.glass {
+  background: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1); }
 .tour-card h4 { margin: 0 0 7px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .tour-card p { margin: 0 0 10px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
 .tour-card .tour-row { display: flex; gap: 8px; flex-wrap: wrap; }

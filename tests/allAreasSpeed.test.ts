@@ -79,11 +79,13 @@ test('the reclaim popover, whose base is opaque, does not pay for a blur nobody 
 
 /* ═══════════════ modals ═══════════════ */
 
-test('a modal is a near-opaque pane with no live backdrop, so its scroller is not inside a filter surface', () => {
+test('a modal is an opaque pane with no live backdrop, so its scroller is not inside a filter surface', () => {
   const modal = decls('.modal {');
   assert.match(modal, /--lg-backdrop:\s*none/, 'the sheet does not blur what the scrim already tints');
   assert.doesNotMatch(modal, /--lg-blur:\s*30px/, 'the 30px outlier is gone with the filter');
-  assert.match(modal, /color-mix\(in srgb, var\(--bg-1\) 94%, transparent\)/, 'the global-search recipe: 94% of the page background carries legibility');
+  // 94% of the page background with no blur let dashboard text read through
+  // the sheet (QA D49); tests/floatingSurfaces resolves the opacity per theme.
+  assert.match(modal, /--lg-tint:[^;]*\), var\(--bg-1\);/, 'the sheen sits on the opaque page background, not a 94% mix of it');
 });
 
 test('living-surface effects behind an open sheet are paused, but never the ones inside it', () => {
