@@ -771,6 +771,19 @@ export async function startRestore(ids: string[]): Promise<OffloadJob> {
   return job;
 }
 
+/**
+ * Removes a restore's temporary file after `cause` stopped it, answering the error to throw: `cause`
+ * itself, or — when the file could not be removed — a CopyLeftBehind naming it (FG3g L5). The
+ * removal's failure was swallowed, so a restore that left its temporary file beside the name said
+ * only why it stopped, never what it left there.
+ */
+async function withoutPartial(partial: string, cause: unknown): Promise<unknown> {
+  return fsp.rm(partial, { force: true }).then(
+    () => cause,
+    (err: unknown) => new CopyLeftBehind(partial, describeFsError(err), cause),
+  );
+}
+
 /** Recorded as a restore under way (FG3g L4): the start-up sweep never removes its temporary files. */
 function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<void> {
   return whileRestoring(() => restoreEntries(job, entries));
@@ -806,12 +819,11 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
 
       job.phase = 'verifying';
       if (hash !== entry.hash) {
-        await fsp.rm(partial, { force: true }); // don't leave a damaged copy
-        throw new Error('verification failed — the offloaded copy no longer matches its recorded fingerprint');
+        // Don't leave a damaged copy — and one that could not be removed is named, never forgotten.
+        throw await withoutPartial(partial, new Error('verification failed — the offloaded copy no longer matches its recorded fingerprint'));
       }
       const placed = await placeWithoutClobber(partial, entry.originalPath).catch(async (err: NodeJS.ErrnoException) => {
-        await fsp.rm(partial, { force: true }).catch(() => {});
-        throw err.code === 'EEXIST' ? new Error(`something appeared at ${entry.originalPath} while it was being restored`) : err;
+        throw await withoutPartial(partial, err.code === 'EEXIST' ? new Error(`something appeared at ${entry.originalPath} while it was being restored`) : err);
       });
       if (placed.partialLeft !== null) {
         console.error(`[treemap] a restored file is in place, but its temporary name ${partial} could not be removed: ${placed.partialLeft}`);

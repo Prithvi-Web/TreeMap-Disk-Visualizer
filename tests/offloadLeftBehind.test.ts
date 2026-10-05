@@ -175,3 +175,53 @@ test('while an offload restore copies a file, nothing stands at the file’s nam
   assert.ok(fs.readFileSync(big).equals(Buffer.alloc(BIG, 2)), 'once it verifies it is there, whole');
   assert.deepEqual(restorePartialsIn(src), [], 'with nothing left beside it');
 });
+
+/* ─────────────── FG3g L5: a restore's temporary file that could not be removed is named ─────────────── */
+
+/** An offloaded big file, its original gone, and its record's id. */
+async function offloadedBig(label: string): Promise<{ src: string; big: string; dest: string; id: string }> {
+  const { src, small, big, scan } = source(label);
+  const dest = fileTempDir(`treemap-offloadLeftBehind-${label}-dest-`);
+  const done = await withOpenFileCheck('clear', async () => {
+    const prepared = await prepareOffload(scan, [small, big], dest);
+    return settled(await startOffload(scan, [small, big], dest, prepared));
+  });
+  assert.equal(done.status, 'complete', done.error);
+  const entry = (await getOffloadIndex()).entries.find((e) => e.originalPath === big);
+  assert.ok(entry);
+  return { src, big, dest, id: entry.id };
+}
+
+for (const [label, prepare] of [
+  ['its placement fails', (_: { dest: string }) => undefined],
+  ['its copy no longer matches its fingerprint', ({ dest }: { dest: string }) => {
+    const copy = path.join(dest, 'b-big.bin');
+    fs.writeFileSync(copy, Buffer.alloc(BIG, 9)); // the same size, other bytes: bit rot on the drive
+  }],
+] as const) {
+  test(`an offload restore whose temporary file cannot be removed after ${label} names it, as left behind (FG3g L5)`, { skip: SKIP }, async () => {
+    const { src, big, dest, id } = await offloadedBig(`l5-${label.split(' ')[1]}`);
+    prepare({ dest });
+    // Part-way through the copy, the folder it writes into stops taking new names and removals.
+    let locked = false;
+    const unfault = setCopyFaultForTests((d, read) => {
+      if (!locked && isRestoreCopyFor(d, big) && read > CHUNK) {
+        locked = true;
+        fs.chmodSync(src, 0o500);
+      }
+      return null;
+    });
+    let job: OffloadJob;
+    try {
+      job = await settled(await startRestore([id]));
+    } finally {
+      unfault();
+      fs.chmodSync(src, 0o700);
+    }
+    const [partial] = restorePartialsIn(src);
+    assert.ok(partial, 'the case is the one under test: the temporary file is still there');
+    assert.equal(job.status, 'error');
+    assert.ok((job.error ?? '').includes(partial), `the sentence names it (${job.error})`);
+    assert.match(job.error ?? '', /could not be removed/, job.error);
+  });
+}
