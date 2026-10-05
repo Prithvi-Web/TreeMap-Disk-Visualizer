@@ -264,6 +264,97 @@ function dateShort(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/*
+ * Long text in the PDF (QA D36). pdfmake breaks a line only where Unicode
+ * allows one, and a path offers none: a long path was one unbreakable word,
+ * and a cell whose narrowest possible width is wider than its '*' column
+ * pushes the fixed columns off the page — the paths ran off the right edge and
+ * the Size column was not on the page at all. (A plain paragraph is fine:
+ * pdfmake cuts a word wider than the page there.) So every long string in a
+ * table cell is broken into lines that fit before pdfmake sees it, measured
+ * with Helvetica's own metrics. A '\n' is pdfmake's line break; U+200B is not an option, because
+ * the standard-14 Helvetica is WinAnsi and has no glyph for it.
+ */
+
+/** A4 width less the 40 pt side margins (pageMargins below). */
+const CONTENT_WIDTH_PT = 595.28 - 2 * 40;
+/** The font sizes of the table styles long text is drawn in: 'cell' and 'v' (the default size). */
+const CELL_PT = 8;
+const VALUE_PT = 9;
+/** The fixed columns of each table that has a '*' column, so the widths and the wrap budget cannot drift apart. */
+const SUMMARY_FIXED = [110];
+const FILES_FIXED = [60, 60];
+const FOLDERS_FIXED = [60, 50];
+const TYPES_FIXED = [70, 70];
+
+/**
+ * The width pdfmake gives a table's single '*' column: the content width less
+ * the fixed columns and the cell padding between columns (pdfmake's built-in
+ * 'lightHorizontalLines' pads 8 pt on each side of every inner column edge,
+ * 'noBorders' 4 pt), less 1 pt so rounding can never tip a line over.
+ */
+function starColumnWidth(fixed: readonly number[], layout: 'lightHorizontalLines' | 'noBorders'): number {
+  const gap = layout === 'lightHorizontalLines' ? 16 : 8;
+  return CONTENT_WIDTH_PT - fixed.reduce((a, b) => a + b, 0) - gap * fixed.length - 1;
+}
+
+/**
+ * Helvetica's advance widths (1/1000 em) for ' ' … '~', from the font's AFM —
+ * the metrics pdfmake lays the report out with. Two follow WinAnsi, which the
+ * standard fonts draw in, where it is the wider: ' (222) and ` (333).
+ */
+const HELVETICA_ASCII_WIDTHS: readonly number[] = [
+  278, 278, 355, 556, 556, 889, 667, 222, 333, 333, 389, 584, 278, 333, 278, 278,
+  556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+  1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778,
+  667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556,
+  333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556,
+  556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+];
+/** Any other character counts as the widest glyph in the table, so a line is never wider than measured. */
+const UNMEASURED_CHAR_WIDTH = 1015;
+
+/** The width of `text` in points, drawn in Helvetica at `fontSize`. Exported for tests. */
+export function pdfTextWidth(text: string, fontSize: number): number {
+  let units = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0) as number;
+    units += c >= 32 && c <= 126 ? (HELVETICA_ASCII_WIDTHS[c - 32] as number) : UNMEASURED_CHAR_WIDTH;
+  }
+  return (units * fontSize) / 1000;
+}
+
+/**
+ * `text` broken into lines no wider than `maxWidth` points at `fontSize`,
+ * joined with '\n': after a path separator where it can, mid-segment only
+ * where one segment is wider than a whole line. Removing the '\n's gives back
+ * `text` exactly; text that fits is returned as is. Exported for tests.
+ */
+export function pdfWrap(text: string, maxWidth: number, fontSize: number): string {
+  if (pdfTextWidth(text, fontSize) <= maxWidth) return text;
+  const pieces = text.match(/[^/\\]*[/\\]|[^/\\]+/g) ?? [text];
+  const lines: string[] = [];
+  let line = '';
+  for (const piece of pieces) {
+    if (pdfTextWidth(line + piece, fontSize) <= maxWidth) {
+      line += piece;
+      continue;
+    }
+    if (line) lines.push(line);
+    line = '';
+    // Starts the piece on a line of its own, cut only if even that is too narrow.
+    for (const ch of piece) {
+      if (line && pdfTextWidth(line + ch, fontSize) > maxWidth) {
+        lines.push(line);
+        line = '';
+      }
+      line += ch;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.join('\n');
+}
+
 function buildDoc(
   scan: CompleteScan,
   topFiles: ReturnType<typeof collectLargestFiles>,
@@ -273,7 +364,7 @@ function buildDoc(
 ): TDocumentDefinitions {
   const used = disk ? disk.used : 0;
   const summaryRows: TableCell[][] = [
-    [{ text: 'Scanned folder', style: 'k' }, { text: scan.rootPath, style: 'v' }],
+    [{ text: 'Scanned folder', style: 'k' }, { text: pdfWrap(scan.rootPath, starColumnWidth(SUMMARY_FIXED, 'noBorders'), VALUE_PT), style: 'v' }],
     // English like every date in TreeMap; the machine keeps its clock and time zone.
     [{ text: 'Generated', style: 'k' },
     { text: new Date().toLocaleString(UI_LOCALE, { dateStyle: 'medium', timeStyle: 'short', hourCycle: machineHourCycle() }), style: 'v' }],
@@ -292,7 +383,7 @@ function buildDoc(
     { text: 'TreeMap Disk Report', style: 'title' },
     { text: scan.rootPath, style: 'subtitle' },
     {
-      table: { widths: [110, '*'], body: summaryRows },
+      table: { widths: [...SUMMARY_FIXED, '*'], body: summaryRows },
       layout: 'noBorders',
       margin: [0, 6, 0, 14],
     },
@@ -302,11 +393,11 @@ function buildDoc(
   content.push({
     table: {
       headerRows: 1,
-      widths: ['*', 60, 60],
+      widths: ['*', ...FILES_FIXED],
       body: [
         [th('Path'), th('Size'), th('Modified')],
         ...topFiles.map((f): TableCell[] => [
-          { text: f.path, style: 'cell' },
+          { text: pdfWrap(f.path, starColumnWidth(FILES_FIXED, 'lightHorizontalLines'), CELL_PT), style: 'cell' },
           { text: formatBytes(f.size), style: 'cellR' },
           { text: dateShort(f.modifiedAt), style: 'cellR' },
         ]),
@@ -320,11 +411,11 @@ function buildDoc(
   content.push({
     table: {
       headerRows: 1,
-      widths: ['*', 60, 50],
+      widths: ['*', ...FOLDERS_FIXED],
       body: [
         [th('Path'), th('Size'), th('Files')],
         ...topFolders.map((f): TableCell[] => [
-          { text: f.path, style: 'cell' },
+          { text: pdfWrap(f.path, starColumnWidth(FOLDERS_FIXED, 'lightHorizontalLines'), CELL_PT), style: 'cell' },
           { text: formatBytes(f.size), style: 'cellR' },
           { text: formatCount(f.fileCount), style: 'cellR' },
         ]),
@@ -338,11 +429,11 @@ function buildDoc(
   content.push({
     table: {
       headerRows: 1,
-      widths: ['*', 70, 70],
+      widths: ['*', ...TYPES_FIXED],
       body: [
         [th('Extension'), th('Files'), th('Total Size')],
         ...types.map((t): TableCell[] => [
-          { text: t.ext, style: 'cell' },
+          { text: pdfWrap(t.ext, starColumnWidth(TYPES_FIXED, 'lightHorizontalLines'), CELL_PT), style: 'cell' },
           { text: formatCount(t.count), style: 'cellR' },
           { text: formatBytes(t.totalSize), style: 'cellR' },
         ]),
