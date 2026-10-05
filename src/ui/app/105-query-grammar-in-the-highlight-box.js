@@ -753,8 +753,10 @@ async function downloadReport(format, mode) {
   a.href = url;
   // Load-bearing, not cosmetic: `download` is what forbids navigation. Without
   // it this anchor is the original defect. The name follows the same
-  // convention as every other export the app writes.
-  a.download = exportFileName(format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv');
+  // convention as every other export the app writes, and names the mode: the
+  // attribute wins over the server's -files-/-folders- name, so without it the
+  // two CSVs (and the two workbooks) were saved under one name (D37).
+  a.download = exportFileName(format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv', mode);
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
@@ -762,10 +764,11 @@ async function downloadReport(format, mode) {
   toast(format === 'pdf' ? 'Building PDF report…' : format === 'xlsx' ? 'Building Excel workbook…' : 'Exporting CSV…');
 }
 
-function exportFileName(ext) {
+/** `mode` (files / folders) is part of the name when an export has one. */
+function exportFileName(ext, mode) {
   const base = (state.treemap.rootName || 'treemap').replace(/[^\w.-]+/g, '_');
   const d = new Date(), pad = (n) => String(n).padStart(2, '0');
-  return `treemap-${base}-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.${ext}`;
+  return `treemap-${base}-${mode ? `${mode}-` : ''}${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.${ext}`;
 }
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);

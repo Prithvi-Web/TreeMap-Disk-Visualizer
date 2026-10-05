@@ -234,3 +234,45 @@ test('when the server stopped at its cap, the box says so rather than "the N big
   assert.ok(msg.includes(reason), msg);
   assert.doesNotMatch(msg, /Showing the/, 'a capped count is not presented as the total');
 });
+
+/* ══════════════════ D37: two exports, two file names ══════════════════ */
+
+/**
+ * "CSV — all files" and "CSV — all folders" were both saved as
+ * treemap-Library-20261002.csv: the server's Content-Disposition says
+ * -files- / -folders-, but the page's `download` attribute wins, and it
+ * ignored which one was asked for. The second export overwrote (or was renamed
+ * beside) the first. Same for Excel.
+ */
+async function downloadName(format: string, mode?: string): Promise<string> {
+  const anchors: { download?: string }[] = [];
+  const doc = {
+    createElement: () => { const a: any = { click() {}, remove() {} }; anchors.push(a); return a; },
+    body: { appendChild() {} },
+  };
+  const deps: Record<string, unknown> = {
+    state: { scanId: 's1', root: { path: '/r' }, scanning: false, treemap: { rootName: 'Library' } },
+    toast: () => {},
+    api: async () => ({ status: 'complete' }),
+    document: doc,
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const run = new Function(...keys, `${declOf('exportFileName')}\n${declOf('downloadReport')}\nreturn downloadReport;`)(...keys.map((k) => deps[k]));
+  await run(format, mode);
+  assert.equal(anchors.length, 1, 'one download anchor');
+  return String(anchors[0].download);
+}
+
+test('files and folders exports are saved under different names', async () => {
+  const files = await downloadName('csv', 'files');
+  const folders = await downloadName('csv', 'folders');
+  assert.notEqual(files, folders, `${files} vs ${folders}`);
+  assert.match(files, /^treemap-Library-files-\d{8}\.csv$/, files);
+  assert.match(folders, /^treemap-Library-folders-\d{8}\.csv$/, folders);
+  assert.match(await downloadName('xlsx', 'folders'), /-folders-\d{8}\.xlsx$/);
+});
+
+test('an export with no mode keeps the plain name', async () => {
+  assert.match(await downloadName('pdf'), /^treemap-Library-\d{8}\.pdf$/);
+});
