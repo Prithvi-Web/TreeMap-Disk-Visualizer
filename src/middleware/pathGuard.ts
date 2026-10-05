@@ -183,6 +183,18 @@ export function insideAnyScanRoot(p: string): boolean {
 }
 
 /**
+ * Is `p` under the root of any scan this server has run — whether or not that
+ * scan listed it? The read-only rule (`requireInsideScanRootToRead`): a path
+ * here that no scan listed is a question the facts route answers by skipping
+ * it, not by refusing the batch it rides in.
+ */
+function underAnyScanRoot(p: string): boolean {
+  if (p.startsWith('cloud://')) return false;
+  const where = canonicalDirOf(p);
+  return allScans().some((scan) => isInside(canonicalDirOf(scan.rootPath), where));
+}
+
+/**
  * A path's names, its root first, as a file system may fold them: `foldName`,
  * then upper and lower case once more, so a word-final sigma (ς) and σ are one
  * letter on every platform, as on Windows. A fold only ever refuses more.
@@ -312,8 +324,10 @@ function bodyPaths(req: Request): string[] | AppError {
  * The scanned-root rule over every path a request's body carries (`bodyPaths`), in one
  * place: a cloud path, a path in TreeMap's own spill folder (when `refuseSpill`), a path
  * outside every scanned root, an entry inside an archive. Answers the first refusal, or null.
+ * `readOnly` asks only that the path lie under some scan's root (`underAnyScanRoot`); the
+ * route then answers nothing for a path no scan listed.
  */
-function scanRootRefusal(req: Request, refuseSpill: boolean): AppError | null {
+function scanRootRefusal(req: Request, refuseSpill: boolean, readOnly = false): AppError | null {
   const candidates = bodyPaths(req);
   if (candidates instanceof AppError) return candidates;
   for (const p of candidates) {
@@ -324,7 +338,7 @@ function scanRootRefusal(req: Request, refuseSpill: boolean): AppError | null {
     }
     const spill = refuseSpill ? spillPathRefusal(p) : null;
     if (spill) return spill;
-    if (!insideAnyScanRoot(p)) {
+    if (!(readOnly ? underAnyScanRoot(p) : insideAnyScanRoot(p))) {
       return new AppError(
         403,
         'OUTSIDE_SCAN_ROOT',
@@ -357,10 +371,14 @@ export function requireInsideScanRoot(req: Request, _res: Response, next: NextFu
 /**
  * The same scanned-root rule for a route that only reads (POST /api/facts): a question about
  * the spill folder is answered like any other, since answering it touches nothing there, and
- * one such path must not cost a whole batch of 2,000 its answers.
+ * one such path must not cost a whole batch of 2,000 its answers. For the same reason a path
+ * under a scanned root that no scan listed — a drive a scan did not enter, a folder no walk
+ * descends into (Track U, U-25) — passes here, and the route skips it: it has no answer, and a
+ * mount point among a folder's children must not cost the Grid every badge (TS review R8). A
+ * path under no scanned root at all is still refused.
  */
 export function requireInsideScanRootToRead(req: Request, _res: Response, next: NextFunction): void {
-  const refusal = scanRootRefusal(req, false);
+  const refusal = scanRootRefusal(req, false, true);
   if (refusal) next(refusal);
   else next();
 }

@@ -163,7 +163,9 @@ OpenAPI 3 spec).
      provider that fails is reported `available: false` with its own reason
      while every other provider in the same request still answers. At most
      2000 paths per request (`400 TOO_MANY_PATHS`), every one sanitized and
-     inside a scanned root, and an unknown provider id is
+     inside a scanned root (a path there that no scan listed — a drive a scan
+     did not enter, a folder no walk descends into — is `skipped` for every
+     provider rather than refusing the batch), and an unknown provider id is
      `400 UNKNOWN_PROVIDER` naming the valid ids rather than being ignored.
      The facts live in a sidecar because the scan responses are held
      byte-identical to the pre-rewrite baseline by

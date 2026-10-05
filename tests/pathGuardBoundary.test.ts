@@ -129,6 +129,39 @@ test('after a scan that did not enter a drive, nothing at or beneath it may be a
   assert.ok(fs.existsSync(f.onDrive) && fs.existsSync(f.here), 'a dry run moves nothing');
 });
 
+function postFacts(body: unknown): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const r = http.request(
+      { host: '127.0.0.1', port, path: '/api/facts', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+      (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) }));
+      },
+    );
+    r.on('error', reject);
+    r.end(payload);
+  });
+}
+
+test('POST /api/facts answers a batch holding a drive the scan did not enter: that path is skipped, never a 403 for the batch (TS review R8)', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const f = tree();
+  const s = await scanned(f.root);
+  // The Grid sends every child of the folder it shows, the mount point among them.
+  const r = await postFacts({ scanId: s.scanId, paths: [f.other, f.mnt, f.onDrive], providers: ['size'] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const size = r.body.providers.size;
+  assert.deepEqual(Object.keys(size.values), [f.other], 'only what the scan listed is answered');
+  assert.deepEqual(size.values[f.other], { bytes: 200 });
+  assert.deepEqual(size.stats, { requested: 3, computed: 1, skipped: 2, failed: 0 }, 'the drive and the file on it are skipped, and counted');
+  const outside = path.join(fs.realpathSync(fileTempDir('treemap-guard-facts-outside-')), 'x.txt');
+  const refused = await postFacts({ scanId: s.scanId, paths: [f.other, outside], providers: ['size'] });
+  assert.deepEqual([refused.status, refused.body.code], [403, 'OUTSIDE_SCAN_ROOT'], 'a path under no scanned root is still refused');
+});
+
 test('a spelling of the drive in another case is the same drive where names fold (macOS and Windows)', async (t) => {
   if (NO_TABLE) return t.skip(NO_TABLE);
   if (process.platform !== 'darwin') return t.skip('the case-folding volume is macOS’s default; Linux volumes keep case');

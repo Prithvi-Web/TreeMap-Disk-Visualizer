@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireScan } from './scanRoutes';
-import { guardBodyPathsMax, requireInsideScanRootToRead } from '../middleware/pathGuard';
+import { guardBodyPathsMax, insideAnyScanRoot, requireInsideScanRootToRead } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { computeFacts, factProviderIds } from '../services/facts';
 
@@ -43,7 +43,9 @@ export const MAX_FACT_PATHS = 2000;
  * scanned (§2.3) — the same rule the destructive routes obey, applied to a
  * read-only route on purpose: "which files exist here" is itself information,
  * and scanning is what grants scoped permission to answer questions about a
- * tree.
+ * tree. A path under a scanned root that no scan listed (a drive it did not
+ * enter, a folder no walk descends into) is answered by skipping it, never by
+ * refusing the whole batch.
  *
  * One provider failing never costs the others their answers; see
  * `services/facts/registry.ts`.
@@ -90,7 +92,18 @@ factRouter.post(
     const onClose = (): void => controller.abort();
     res.on('close', onClose);
     try {
-      const providers = await computeFacts(scan.scanId, body.paths, ids, controller.signal);
+      // A path no scan listed — at or beneath a drive a scan did not enter, or a folder no walk
+      // descends into (Track U, U-25) — has no fact: it is skipped for every provider, absent
+      // from `values` and counted in `skipped`, so requested = computed + skipped + failed holds.
+      const unique = [...new Set(body.paths)];
+      const unlisted = new Set(unique.filter((p) => !insideAnyScanRoot(p)));
+      const computed = await computeFacts(scan.scanId, unique.filter((p) => !unlisted.has(p)), ids, controller.signal);
+      const providers = unlisted.size === 0
+        ? computed
+        : Object.fromEntries(Object.entries(computed).map(([id, r]) => [id, {
+          ...r,
+          stats: { ...r.stats, requested: r.stats.requested + unlisted.size, skipped: r.stats.skipped + unlisted.size },
+        }]));
       res.json({ providers });
     } finally {
       res.off('close', onClose);

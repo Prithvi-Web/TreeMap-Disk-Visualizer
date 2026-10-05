@@ -3147,7 +3147,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         ),
       ),
       '400': errorResponse('PATHS_REQUIRED, TOO_MANY_PATHS, PROVIDERS_REQUIRED or UNKNOWN_PROVIDER (which names the valid ids)'),
-      '403': errorResponse('OUTSIDE_SCAN_ROOT — every path must lie inside a root this server scanned'),
+      '403': errorResponse('OUTSIDE_SCAN_ROOT — every path must lie inside a root this server scanned (one there that no scan listed, such as a drive a scan did not enter, is skipped instead)'),
       '404': errorResponse('SCAN_NOT_FOUND — unknown or expired scanId'),
     },
   },
