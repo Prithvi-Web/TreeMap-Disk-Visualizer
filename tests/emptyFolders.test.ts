@@ -13,7 +13,8 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import type { NativeStore, WalkResult } from '../native/index';
 import { FileNode, ScanResult } from '../src/models/types';
-import { collectEmptyFolders, createScanRecord, findEmptyFolders, startScan } from '../src/services/diskScanner';
+import { collectEmptyFolders, createScanRecord, evictExpiredScans, findEmptyFolders, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
+import { aliasNamespaceOf } from '../src/utils/pathSanitizer';
 import { buildStoreFromTree, Flag, ObjectScanStore, PackedScanStore } from '../src/services/scanStore';
 import { markUnlistedPaths } from '../src/services/scanRefusals';
 import { emptyFoldersForScan, GDU_EMPTY_FOLDERS_REASON } from '../src/services/emptyFolders';
@@ -886,4 +887,38 @@ test('openapi describes the two additive fields', async () => {
   assert.ok(schema.properties.withheld, 'withheld is described');
   assert.ok(schema.properties.reason, 'reason is described');
   assert.ok(!schema.required.includes('reason'), 'and reason is sent only when it applies');
+});
+
+/* ─────────────── second names (last: it registers a scan of /) ─────────────── */
+
+test('a scan of / never offers macOS’s second names (/.nofollow, /.resolve, /.vol) as empty folders, nor counts them: a walk lists each as an empty folder, and the sanitizer refuses a delete batch holding one (the SEC-2 review, F4)', { skip: process.platform !== 'darwin' && 'the namespaces are macOS’s' }, async () => {
+  // The batch is refused whole, 400 PATH_BLOCKED, before it becomes an operation (AGENTS.md: a path
+  // rule), so "Select all" in Empty Folders after a scan of / failed for every folder in it.
+  const scan = createScanRecord('/');
+  scan.engine = 'walker';
+  scan.store = buildStoreFromTree(dir('', '/', [
+    dir('.nofollow', '/.nofollow', []),
+    dir('.resolve', '/.resolve', []),
+    dir('.vol', '/.vol', []),
+    dir('sec2-empty', '/sec2-empty', [dir('inner', '/sec2-empty/inner', [])]),
+    dir('keep', '/keep', [file('f', '/keep/f')]),
+  ]), '/');
+  scan.status = 'complete';
+  const looked: string[] = [];
+  // Every folder looks empty on a second look, as the real look finds those three: nothing here reads this Mac's disk.
+  setEmptyCheckForTests({
+    lstat: async (p) => { looked.push(p); return { isDirectory: () => true }; },
+    opendir: async () => ({ read: async () => null, close: async () => {} }),
+    driveOf: async () => '/',
+  });
+  try {
+    const answer = await emptyFoldersForScan(scan, true);
+    assert.deepEqual(answer.folders.map((f) => f.path), ['/sec2-empty'], 'only a folder of its own');
+    assert.equal(answer.totalCount, 2, 'the second names are not counted either');
+    assert.equal(answer.withheld, 0, 'nor withheld: they are not folders that changed since the scan');
+    assert.deepEqual(looked.filter((p) => aliasNamespaceOf(p) !== null), [], 'nor looked at again');
+  } finally {
+    setEmptyCheckForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
 });

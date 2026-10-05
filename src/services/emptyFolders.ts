@@ -2,6 +2,7 @@ import type { EmptyFoldersAnswer, ScanResult } from '../models/types';
 import { findEmptyFolders } from './diskScanner';
 import { storeOf } from './scanStore';
 import { emptyCheckSession } from './emptyFolderCheck';
+import { aliasNamespaceOf } from '../utils/pathSanitizer';
 
 /**
  * GET /api/empty-folders, answered (Track U, U-4): never a folder the scan did
@@ -44,14 +45,19 @@ export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean)
     return { folders: [], totalCount: 0, truncated: false, withheld: 0, reason: GDU_EMPTY_FOLDERS_REASON };
   }
   const found = findEmptyFolders(storeOf(scan), ignoreJunk);
+  // A second name the system gives a path (macOS /.nofollow, /.resolve, /.vol: `aliasNamespaceOf`),
+  // which a walk of / lists as an empty folder, is no folder of its own: never offered nor counted.
+  // The sanitizer refuses a delete naming one, and so refused every batch holding one (the SEC-2 review, F4).
+  const secondName = (f: { path: string }): boolean => aliasNamespaceOf(f.path) !== null;
+  const candidates = found.folders.filter((f) => !secondName(f));
   // A cloud provider's listing lives at the provider: there is no folder on this disk to look at again.
   const still = scan.engine === 'cloud'
-    ? found.folders.map(() => true)
-    : await secondLooks(found.folders.map((f) => f.path), ignoreJunk);
+    ? candidates.map(() => true)
+    : await secondLooks(candidates.map((f) => f.path), ignoreJunk);
   const folders: EmptyFoldersAnswer['folders'] = [];
   let withheld = 0;
-  let totalCount = found.totalCount;
-  found.folders.forEach((f, i) => {
+  let totalCount = found.folders.filter(secondName).reduce((n, f) => n - f.counted, found.totalCount);
+  candidates.forEach((f, i) => {
     if (still[i]) {
       folders.push({ name: f.name, path: f.path });
     } else {
