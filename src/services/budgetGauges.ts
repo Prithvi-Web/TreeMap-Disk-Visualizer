@@ -1,5 +1,5 @@
 import path from 'path';
-import { BudgetEntry, ForecastResult, Snapshot, SnapshotTreeNode } from '../models/types';
+import { BudgetEntry, ForecastResult, Snapshot, SnapshotBoundary, SnapshotTreeNode } from '../models/types';
 import { computeForecast } from './forecast';
 import { listSnapshotRoots, listSnapshots, readSnapshotTrees } from './snapshots';
 import { samePath } from '../utils/osPaths';
@@ -25,9 +25,20 @@ import { samePath } from '../utils/osPaths';
 
 const DAY_MS = 86_400_000;
 
+/**
+ * One measurement of a budget folder: when, how many bytes, and — when its
+ * scan stopped at, or went into, a drive mounted inside the folder — which
+ * (Track U, U-24). computeForecast fits only the run since that last changed.
+ */
+export interface BudgetPoint {
+  t: number;
+  v: number;
+  boundary?: SnapshotBoundary;
+}
+
 export interface BudgetHistorySeries {
   /** (takenAt, bytes) points, oldest first. */
-  points: { t: number; v: number }[];
+  points: BudgetPoint[];
   source: 'own-scans' | 'ancestor-trees' | 'none';
   /** Present for ancestor-derived series: what this history can and cannot claim. */
   caveat?: string;
@@ -93,6 +104,26 @@ function descend(tree: SnapshotTreeNode, segments: string[]): SnapshotTreeNode |
 }
 
 /**
+ * A snapshot's record of the drives mounted inside its root, narrowed to the
+ * drives at or under `folder`: only those change the folder's size, so a drive
+ * left out elsewhere in an ancestor's scan does not restart its history.
+ */
+function boundaryWithin(boundary: SnapshotBoundary | undefined, folder: string): SnapshotBoundary | undefined {
+  if (!boundary) return undefined;
+  const inside = (p: string): boolean => samePath(folder, p) || relativeSegments(folder, p) !== null;
+  if (boundary.rule === 'stay') {
+    const notEntered = boundary.notEntered.filter(inside);
+    return notEntered.length > 0 ? { rule: 'stay', notEntered } : undefined;
+  }
+  const entered = boundary.entered.filter(inside);
+  return entered.length > 0 ? { rule: 'cross', entered } : undefined;
+}
+
+function pointOf(t: number, v: number, boundary: SnapshotBoundary | undefined): BudgetPoint {
+  return boundary ? { t, v, boundary } : { t, v };
+}
+
+/**
  * The size history available for one budget folder. Own snapshots win
  * outright over ancestor-derived points — exact beats approximate, and the
  * two are never mixed into one series because a fit over mixed measurement
@@ -101,7 +132,7 @@ function descend(tree: SnapshotTreeNode, segments: string[]): SnapshotTreeNode |
 export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHistorySeries> {
   const own = await listSnapshots(budgetPath);
   if (own.length > 0) {
-    return { points: own.map((s) => ({ t: s.takenAt, v: s.totalSize })), source: 'own-scans' };
+    return { points: own.map((s) => pointOf(s.takenAt, s.totalSize, boundaryWithin(s.boundary, budgetPath))), source: 'own-scans' };
   }
 
   // No direct history — look for scanned roots the budget folder sits under
@@ -110,7 +141,7 @@ export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHis
   // every point found this way is a real measurement; the approximation is
   // in the coverage, not the values.
   const roots = await listSnapshotRoots();
-  const points: { t: number; v: number }[] = [];
+  const points: BudgetPoint[] = [];
   for (const root of roots) {
     const segments = relativeSegments(root.rootPath, budgetPath);
     if (!segments) continue;
@@ -122,7 +153,7 @@ export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHis
       const tree = trees[s.id];
       if (!tree) continue;
       const node = descend(tree, segments);
-      if (node) points.push({ t: s.takenAt, v: node.s });
+      if (node) points.push(pointOf(s.takenAt, node.s, boundaryWithin(s.boundary, budgetPath)));
     }
   }
   if (points.length === 0) return { points: [], source: 'none' };
@@ -143,7 +174,7 @@ export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHis
 export function computeBudgetProjection(
   budget: { path: string; maxBytes: number },
   currentBytes: number,
-  series: { t: number; v: number }[],
+  series: BudgetPoint[],
   now = Date.now(),
 ): BudgetProjection {
   // Already at or past the limit is a measurement, not a forecast — report
@@ -158,7 +189,8 @@ export function computeBudgetProjection(
   }
 
   // Dress the series up as snapshots so computeForecast can be reused
-  // verbatim, with the remaining headroom standing in for free disk space.
+  // verbatim, with the remaining headroom standing in for free disk space —
+  // and each point's drives, so the fit starts where they last changed.
   const snaps: Snapshot[] = series.map((p, i) => ({
     id: `series-${i}`,
     rootPath: budget.path,
@@ -167,6 +199,7 @@ export function computeBudgetProjection(
     fileCount: 0,
     dirCount: 0,
     topEntries: [],
+    ...(p.boundary ? { boundary: p.boundary } : {}),
   }));
   const f = computeForecast(snaps, budget.maxBytes - currentBytes, now);
   if (f.status === 'ok' && f.fullInDays !== undefined) {

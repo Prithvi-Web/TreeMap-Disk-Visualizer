@@ -246,6 +246,9 @@ export function closestSnapshot<T extends { takenAt: number }>(snaps: T[], at: n
 /**
  * The stored tree closest in time to `at` for this root, plus the snapshot
  * immediately before it (for the diff overlay). Null when no trees exist.
+ * No `prev` when the snapshot before it stopped at other drives mounted inside
+ * the folder (Track U, U-24): it counted another disk, so its sizes are no
+ * overlay for this one — a drive left out would read as files freed.
  */
 export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   snapshot: Snapshot;
@@ -262,7 +265,8 @@ export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   const snapshot = closestSnapshot(withTrees, at);
   if (!snapshot) return null;
   const before = withTrees.filter((s) => s.takenAt < snapshot.takenAt);
-  const prevSnap = before.length ? before[before.length - 1] : null;
+  const last = before.length ? before[before.length - 1] : null;
+  const prevSnap = last && boundaryKeyOf(last.boundary) === boundaryKeyOf(snapshot.boundary) ? last : null;
   return {
     snapshot,
     tree: trees[snapshot.id],

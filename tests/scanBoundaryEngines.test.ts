@@ -690,3 +690,46 @@ test('Trends and What’s new never compare two snapshots that stopped at differ
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+
+/** GET `url` from a fresh server; the body parsed. */
+async function apiGet(url: string): Promise<{ status: number; body: any }> {
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(REPO, 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const port = (server.address() as { port: number }).port;
+    return await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: url }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) }));
+      }).on('error', reject);
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+test('the time slider never overlays a snapshot that stopped at other drives: no previous sizes across a change of boundary, the overlay within one', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const f = tree();
+  useTable([f.mnt]);
+  for (const rule of ['cross', 'stay', 'stay'] as const) {
+    await scanWith(f.root, rule, 'walker');
+    await settled();
+  }
+  const [, stayed, stayedAgain] = await listSnapshots(f.root);
+  const at = (s: Snapshot): string => `/api/snapshots/tree?path=${encodeURIComponent(f.root)}&at=${s.takenAt}`;
+  const across = await apiGet(at(stayed));
+  assert.equal(across.status, 200, JSON.stringify(across.body));
+  assert.equal(across.body.snapshot.id, stayed.id);
+  assert.equal(across.body.prevTakenAt, null, 'the scan before it went into the drive: its sizes are no overlay for this one');
+  assert.ok(
+    (across.body.nodes as { prevSize?: unknown }[]).every((n) => n.prevSize === undefined),
+    'no node carries a previous size (the mount point would read as 1,500 bytes freed)',
+  );
+  const within = await apiGet(at(stayedAgain));
+  assert.equal(within.body.prevTakenAt, stayed.takenAt, 'one boundary: the overlay is drawn');
+  assert.ok((within.body.nodes as { prevSize?: unknown }[]).some((n) => typeof n.prevSize === 'number'));
+});

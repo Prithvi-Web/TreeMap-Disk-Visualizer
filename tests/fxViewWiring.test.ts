@@ -87,6 +87,23 @@ test('trendNetPoints derives consecutive deltas from the SAME series the area dr
   assert.deepEqual(trendNetPoints([snaps[0]]), [], 'one snapshot has no delta — nothing is invented');
 });
 
+test('trendNetPoints draws no delta across a change of the drives a scan stopped at (Track U, U-24)', () => {
+  const trendNetPoints = appFn('trendNetPoints');
+  const stay = { rule: 'stay', notEntered: ['/r/mnt'] };
+  const snaps = [
+    { takenAt: 100, totalSize: 900 }, // went into the drive, as every scan before U-24 did
+    { takenAt: 200, totalSize: 950 },
+    { takenAt: 300, totalSize: 100, boundary: stay }, // stayed out: the drive left the count
+    { takenAt: 400, totalSize: 130, boundary: stay },
+  ];
+  assert.deepEqual(trendNetPoints(snaps), [
+    { t: 200, v: 50 },
+    { t: 400, v: 30 },
+  ], 'the step at 300 is a drive, not a change: never drawn as 850 freed');
+  const crossed = [{ takenAt: 1, totalSize: 5 }, { takenAt: 2, totalSize: 7, boundary: { rule: 'cross', entered: ['/r/mnt'] } }];
+  assert.deepEqual(trendNetPoints(crossed), [{ t: 2, v: 2 }], 'a scan that went in compares with one from before U-24, as the server does');
+});
+
 test('calQuarterOf reads the quarter from the ISO string alone', () => {
   const calQuarterOf = appFn('calQuarterOf');
   assert.equal(calQuarterOf('2026-01-15'), 1);
@@ -207,6 +224,8 @@ test('the reference band pulls the y-domain up to any finite bound', () => {
 test('the net-change strip exists only from three snapshots, and dies on every door', () => {
   const draw = slice('function drawTrendNet(', 'async function renderTrendDeltas(');
   assert.match(draw, /snaps\.length < 3/, 'two snapshots make one delta — not a line');
+  assert.match(draw, /snaps\.length < 3 \|\| points\.length < 2/,
+    'no delta is drawn across a change of drives (Track U, U-24), so fewer than two deltas hide the strip too');
   assert.match(draw, /wrap\.hidden = true;\s*if \(trendNetHandle\) \{ trendNetHandle\.destroy\(\); trendNetHandle = null; \}/,
     'hiding the strip releases the handle');
   assert.match(draw, /if \(trendNetHandle\) trendNetHandle\.update\(spec\);\s*else trendNetHandle = FxCharts\.profitLine\(/,

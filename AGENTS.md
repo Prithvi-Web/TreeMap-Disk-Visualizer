@@ -671,6 +671,8 @@ read-what-you-saw) permission to act.
   space, so its refusals are the disk-full forecast's own: too little
   history, erratic growth and shrinking usage return their reasons instead
   of a date. A series read from shallow snapshot trees says so in `caveat`.
+  Like the forecast, it fits only the scans since the drives mounted inside
+  the budget folder that a scan stopped at last changed (Track U, U-24).
 - **Plain-words translation (v4 §9.6).** `POST /api/nl-query { text }`
   translates natural phrasing into the query grammar and **never executes**
   — no hits, no totals; run the returned `q` through `POST /api/query`

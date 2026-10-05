@@ -1801,7 +1801,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       queryParam('at', 'Unix ms timestamp', int(), true),
     ],
     responses: {
-      '200': jsonResponse('Historical layout', opaque('snapshot, prevTakenAt, root, scanRootPath, maxDepth, minSize, nodes[], tree')),
+      '200': jsonResponse(
+        'Historical layout. prevTakenAt and every prevSize are absent (null) when no earlier snapshot exists, or when the one before stopped at different drives mounted inside the folder (Track U, U-24)',
+        opaque('snapshot, prevTakenAt, root, scanRootPath, maxDepth, minSize, nodes[], tree'),
+      ),
       '404': errorResponse('No snapshot trees recorded'),
     },
   },

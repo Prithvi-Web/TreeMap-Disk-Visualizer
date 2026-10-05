@@ -157,9 +157,18 @@ function drawTrendChart() {
 }
 
 /** Net change between consecutive snapshots — the deltas the profit line
-    draws, derived from the SAME series the area chart plots. */
+    draws, derived from the SAME series the area chart plots. No delta is
+    drawn between two snapshots that stopped at different drives mounted
+    inside the folder (Track U, U-24): the step is a drive, not a change. The
+    key is the server's (`boundaryKeyOf`): the drives a scan left out. */
 function trendNetPoints(snaps) {
-  return snaps.slice(1).map((s, i) => ({ t: s.takenAt, v: s.totalSize - snaps[i].totalSize }));
+  const key = (s) => (s.boundary && s.boundary.rule === 'stay' ? s.boundary.notEntered.join('\n') : '');
+  const out = [];
+  for (let i = 1; i < snaps.length; i++) {
+    if (key(snaps[i]) !== key(snaps[i - 1])) continue;
+    out.push({ t: snaps[i].takenAt, v: snaps[i].totalSize - snaps[i - 1].totalSize });
+  }
+  return out;
 }
 
 /* The compact net-change strip above the deltas: sign-split at zero, accent
@@ -169,13 +178,14 @@ let trendNetHandle = null;
 function drawTrendNet() {
   const snaps = state.trends.snapshots;
   const wrap = $('trendNet');
-  if (snaps.length < 3) {
+  const points = trendNetPoints(snaps);
+  if (snaps.length < 3 || points.length < 2) {
     wrap.hidden = true;
     if (trendNetHandle) { trendNetHandle.destroy(); trendNetHandle = null; }
     return;
   }
   wrap.hidden = false;
-  const spec = { points: trendNetPoints(snaps), height: 120, posName: 'Grew', negName: 'Freed' };
+  const spec = { points, height: 120, posName: 'Grew', negName: 'Freed' };
   if (trendNetHandle) trendNetHandle.update(spec);
   else trendNetHandle = FxCharts.profitLine($('trendNetChart'), spec);
 }

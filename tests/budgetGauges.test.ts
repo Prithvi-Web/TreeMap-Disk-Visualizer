@@ -112,6 +112,19 @@ test('a flat folder reads as stable, never as a breach date', () => {
   assert.equal(p.breachInDays, undefined);
 });
 
+test('a budget\'s history starts again where the drives a scan stopped at changed (Track U, U-24)', () => {
+  // Six scans that went into a drive mounted inside (35 GB of it), growing a GB a day; then two that stayed out.
+  const stay = { rule: 'stay' as const, notEntered: ['/b/sim'] };
+  const series = [
+    ...Array.from({ length: 6 }, (_, i) => pt(10 - i, (135 + i) * GB)),
+    { ...pt(2, 105 * GB), boundary: stay },
+    { ...pt(1, 106 * GB), boundary: stay },
+  ];
+  const p = computeBudgetProjection({ path: '/b', maxBytes: 200 * GB }, 106 * GB, series, NOW);
+  assert.equal(p.status, 'insufficient', `the 35 GB step is a drive, not shrinkage (got ${p.status}: ${p.reason ?? ''})`);
+  assert.match(p.reason ?? '', /6 earlier scans stopped at different drives mounted inside this folder/);
+});
+
 /* ---------- budgetHistorySeries: where the points come from ---------- */
 
 test("budgetHistorySeries prefers the folder's own snapshot history", async () => {
@@ -125,6 +138,30 @@ test("budgetHistorySeries prefers the folder's own snapshot history", async () =
   assert.equal(s.source, 'own-scans');
   assert.deepEqual(s.points, [pt(2, 10 * GB), pt(1, 11 * GB), pt(0, 12 * GB)]);
   assert.equal(s.caveat, undefined);
+});
+
+test('each point carries the drives its scan stopped at — for a folder below the root, only the drives inside that folder (Track U, U-24)', async () => {
+  const bp = '/Users/t/Projects/app';
+  writeSnapshots([
+    snap(bp, 'own-b1', 1, 10 * GB),
+    { ...snap(bp, 'own-b2', 0, 11 * GB), boundary: { rule: 'stay', notEntered: [`${bp}/disk`] } },
+  ]);
+  const own = await budgetHistorySeries(bp);
+  assert.deepEqual(own.points, [pt(1, 10 * GB), { ...pt(0, 11 * GB), boundary: { rule: 'stay', notEntered: [`${bp}/disk`] } }]);
+
+  const root = '/Users/t/Media';
+  const raw = '/Users/t/Media/photos/raw';
+  writeSnapshots([
+    { ...snap(root, 'anc-b1', 1, 100 * GB), boundary: { rule: 'stay', notEntered: ['/Users/t/Media/elsewhere'] } },
+    { ...snap(root, 'anc-b2', 0, 100 * GB), boundary: { rule: 'stay', notEntered: ['/Users/t/Media/elsewhere', `${raw}/card`] } },
+  ]);
+  const tree: SnapshotTreeNode = { n: 'Media', s: 100 * GB, t: 1, c: [{ n: 'photos', s: 60 * GB, t: 1, c: [{ n: 'raw', s: 40 * GB, t: 1 }] }] };
+  writeTrees(root, { 'anc-b1': tree, 'anc-b2': tree });
+  const anc = await budgetHistorySeries(raw);
+  assert.deepEqual(anc.points, [
+    pt(1, 40 * GB), // a drive left out elsewhere in /Users/t/Media changes nothing in raw
+    { ...pt(0, 40 * GB), boundary: { rule: 'stay', notEntered: [`${raw}/card`] } },
+  ]);
 });
 
 test('ancestor snapshot trees yield points only where the folder was recorded', async () => {
