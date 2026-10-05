@@ -493,6 +493,8 @@ function oracle(taken: NativeStore): Adopted {
 function assertSameAdopt(got: Adopted, want: Adopted, what: string): void {
   got.store.sumSizes();
   assert.deepEqual(record(got.scan), record(want.scan), `${what}: the scan record, field for field`);
+  // U-4's mark read directly, not only among ALL_FLAGS: a refused folder left unmarked is offered as empty.
+  assert.deepEqual(unlistedRows(got.store), unlistedRows(want.store), `${what}: the folders marked not listed (U-4)`);
   assertSameStore(got.store, want.store, what);
 }
 

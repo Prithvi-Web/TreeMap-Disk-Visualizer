@@ -11,8 +11,8 @@ import type { ScanResult } from '../../src/models/types';
  * The memory path's adopt as it was before Track U's U-35 sliced it:
  * `adoptNativeStore` and `sparseTotal` from src/services/scan/nativeMemory.ts
  * at af1bfa9 — dafeab4's, with U-4's mark on every refused folder
- * (`markUnlisted`, 8521fb7) — copied verbatim (only `export` added to the
- * function and the oracle's name). tests/nativeCompletion.test.ts holds the
+ * (`markUnlisted`, 8521fb7) — copied verbatim, only the function renamed
+ * (`oracleAdoptNativeStore`). tests/nativeCompletion.test.ts holds the
  * sliced adopt and the drained one to it, record field for record field and
  * store column for store column, `Flag.Unlisted` among the flags, so a slice
  * boundary can never change an answer, nor lose U-4's mark.
