@@ -216,3 +216,24 @@ test('D48: the Apps scatter asks for decimal byte decades', () => {
   const wiring = INDEX.slice(at, INDEX.indexOf('async function loadDuplicates', at));
   assert.match(wiring, /logX: 10, logY: 1000,/, 'base 1000, so every decade prints as a round 1.0 KB / MB / GB');
 });
+
+/* ══════════════ D04 — an empty chart has no axis numbers ══════════════ */
+
+test('D04: with no data a chart says "No data yet." and prints no axis numbers', () => {
+  // QA: the empty Trends chart read "2 B, 1 B, 1 B, 0 B" — an invented [0, 1]
+  // domain from no data, ticked at 0.5 B and rounded by formatBytes, painted
+  // before the empty check. Trends mounts area (sizes) and profitLine (net
+  // change); the Apps view mounts scatter.
+  const mounts: Array<[string, (k: ReturnType<typeof loadKit>) => void]> = [
+    ['area', (k) => k.fx.area(k.canvas, { series: [], height: 300 })],
+    ['area, one empty series', (k) => k.fx.area(k.canvas, { series: [{ name: 'Used', points: [] }], height: 300 })],
+    ['profitLine', (k) => k.fx.profitLine(k.canvas, { points: [] })],
+    ['scatter', (k) => k.fx.scatter(k.canvas, { points: [] })],
+  ];
+  for (const [name, mount] of mounts) {
+    const k = loadKit();
+    mount(k);
+    const said = texts(k.rec().calls).map((c) => c.args[0]);
+    assert.deepEqual(said, ['No data yet.'], `${name}: the empty state is the only text`);
+  }
+});

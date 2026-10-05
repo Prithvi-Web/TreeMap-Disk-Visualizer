@@ -1115,14 +1115,17 @@ const FxCharts = (() => {
       const bandHi = band ? Math.max(band.from, band.to) : 0;
 
       // dotted gridlines + muted byte labels (formatBytes ONLY); ticks
-      // inside the reference band tint toward the accent
+      // inside the reference band tint toward the accent. With no data the
+      // domain is invented ([0, 1] from nothing), so its numbers are not
+      // printed: the empty Trends chart read "2 B, 1 B, 1 B, 0 B" (QA D04).
+      const empty = !m.series.length;
       ctx.textAlign = 'right';
       for (const v of m.ticks) {
         const y = m.Y.to(v);
         if (y < f.padT - 4 || y > plotBot + 4) continue; // a mid-morph tick off the plot
         dottedLine(ctx, f.padL, f.width - f.padR, y, grid);
         ctx.fillStyle = band && v >= bandLo && v <= bandHi ? accent : lab;
-        ctx.fillText(v === 0 ? '0 B' : m.fmtV(v), f.padL - 8, y + 3.5);
+        if (!empty) ctx.fillText(v === 0 ? '0 B' : m.fmtV(v), f.padL - 8, y + 3.5);
       }
       // emphasized rows: solid where the dotted grid whispers
       for (const v of s.highlightRows || []) {
@@ -2044,7 +2047,8 @@ const FxCharts = (() => {
       for (const v of m.ticks) {
         const y = m.Y.to(v);
         dottedLine(ctx, f.padL, f.width - f.padR, y, grid);
-        ctx.fillText(v === 0 ? '0 B' : m.fmtY(v), f.padL - 8, y + 3.5);
+        // no data, no numbers: the domain would be invented (QA D04)
+        if (m.pts.length) ctx.fillText(v === 0 ? '0 B' : m.fmtY(v), f.padL - 8, y + 3.5);
       }
       if (!m.pts.length) {
         ctx.textAlign = 'center';
@@ -2247,7 +2251,8 @@ const FxCharts = (() => {
           dottedLine(ctx, f.padL, f.width - f.padR, y, grid);
         }
         ctx.fillStyle = lab;
-        ctx.fillText(v === 0 ? '0 B' : m.fmtV(v), f.padL - 8, y + 3.5);
+        // no data, no numbers: the domain would be invented (QA D04)
+        if (m.pts.length) ctx.fillText(v === 0 ? '0 B' : m.fmtV(v), f.padL - 8, y + 3.5);
       }
       if (!m.pts.length) {
         ctx.textAlign = 'center';
