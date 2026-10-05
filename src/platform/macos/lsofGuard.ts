@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import { runText, CommandUnavailableError, CommandFailedError } from '../exec';
 import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
+import { meansAbsent } from '../../utils/errno';
 
 /**
  * Open-handle (B2) and zombie-handle (B5) detection on macOS and Linux via
@@ -38,15 +39,6 @@ import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
  * elevated. Reported as a partial answer in the capability reason, never as a
  * confident "nothing has it open".
  */
-
-/**
- * True for the stat failures that mean "nothing is at that path": ENOENT, or
- * ENOTDIR (a parent was replaced by a file). Shared with the Linux /proc pass.
- */
-export function isGoneError(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException | null)?.code;
-  return code === 'ENOENT' || code === 'ENOTDIR';
-}
 
 /** One descriptor as reported by lsof. */
 export interface LsofRecord {
@@ -269,13 +261,15 @@ export async function resolveZombies(
   const out: ZombieHandleInfo[] = [];
   // One stat per distinct path, not per descriptor: a browser can hold hundreds
   // of descriptors on the same handful of files. Only "no such file" means the
-  // path is gone; any other failure (permission denied under a root-only
-  // folder, QA D17) says nothing about the file, so it is unknown, not deleted.
+  // path is gone (`meansAbsent`, not the wider `meansGone`: a path the kernel
+  // will not resolve is not proof of a deletion); any other failure
+  // (permission denied under a root-only folder, QA D17) says nothing about
+  // the file, so it is unknown, not deleted.
   const inoCache = new Map<string, Promise<number | 'gone' | 'unknown'>>();
   const lookup = (p: string): Promise<number | 'gone' | 'unknown'> => {
     let hit = inoCache.get(p);
     if (!hit) {
-      hit = inoAt(p).catch((err: unknown) => (isGoneError(err) ? 'gone' as const : 'unknown' as const));
+      hit = inoAt(p).catch((err: unknown) => (meansAbsent(err) ? 'gone' as const : 'unknown' as const));
       inoCache.set(p, hit);
     }
     return hit;

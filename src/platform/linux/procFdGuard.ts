@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
-import { isGoneError } from '../macos/lsofGuard';
+import { meansAbsent } from '../../utils/errno';
 
 /**
  * Open-handle (B2) and zombie-handle (B5) detection on Linux, straight from
@@ -228,7 +228,7 @@ export async function zombieHandles(
     // the file is still there (QA D17), so an unknown is never claimed.
     const now = await statOf(rec.path).then(
       (st) => st.ino,
-      (err: unknown) => (isGoneError(err) ? 'gone' as const : 'unknown' as const),
+      (err: unknown) => (meansAbsent(err) ? 'gone' as const : 'unknown' as const),
     );
     if (now === 'unknown') continue;
 
