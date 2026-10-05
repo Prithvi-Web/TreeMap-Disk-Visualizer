@@ -822,7 +822,11 @@ test('undo promises the original dates, because it now restores them', () => {
   // promise and the behaviour have to move together, or the dialog is lying in
   // whichever direction it was last edited.
   const body = slice('function cartCommitSummary', 'async function cartUndoRun');
-  assert.match(body, /byte for byte, with their original dates/);
+  // Exactly what the restore puts back (FG3f #10): permissions and the dates a file was last
+  // modified and opened — never "original dates", which reads as every date, creation included,
+  // and nothing sets a creation date back.
+  assert.match(body, /byte for byte, with their permissions and the dates they were last modified and opened/);
+  assert.ok(!body.includes('with their original dates'), 'no promise of every date');
   assert.ok(!body.includes('will read as the moment'), 'the old caveat is gone');
 });
 

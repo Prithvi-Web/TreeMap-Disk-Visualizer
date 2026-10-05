@@ -112,6 +112,12 @@ interface ManifestMember {
    */
   mtimeMs?: number;
   atimeMs?: number;
+  /**
+   * Permission bits (`mode & 0o777`) of a file or folder (FG3f #10): an executable script came back
+   * not executable, a read-only file writable. Optional for the same reason as the times; not part
+   * of `digestOf`.
+   */
+  mode?: number;
 }
 
 interface EntryManifest {
@@ -129,6 +135,8 @@ interface EntryManifest {
    */
   rootMtimeMs?: number;
   rootAtimeMs?: number;
+  /** The captured folder's own permission bits (FG3f #10). */
+  rootMode?: number;
 }
 
 export function capsuleRoot(): string {
@@ -459,6 +467,7 @@ interface WalkedMember {
   /** From the lstat the walk already performs; undefined when it could not. */
   mtimeMs?: number;
   atimeMs?: number;
+  mode?: number;
 }
 
 /**
@@ -514,7 +523,7 @@ async function walkItem(
   }
   if (!stat.isDirectory()) {
     return {
-      members: [{ abs: root, rel: '', kind: 'file', size: stat.size, mtimeMs: stat.mtimeMs, atimeMs: stat.atimeMs }],
+      members: [{ abs: root, rel: '', kind: 'file', size: stat.size, mtimeMs: stat.mtimeMs, atimeMs: stat.atimeMs, mode: stat.mode & 0o777 }],
       bytes: stat.size,
       isFolder: false,
     };
@@ -541,6 +550,7 @@ async function walkItem(
         const entry = members[members.length - 1];
         entry.mtimeMs = dirStat.mtimeMs;
         entry.atimeMs = dirStat.atimeMs;
+        entry.mode = dirStat.mode & 0o777;
       }
     }
     const dirents = await fsp.readdir(dir.abs, { withFileTypes: true });
@@ -555,7 +565,7 @@ async function walkItem(
       } else if (dirent.isFile()) {
         const st = await lstatMember(abs, rel);
         if (!st) continue; // vanished mid-walk — nothing to protect
-        members.push({ abs, rel, kind: 'file', size: st.size, mtimeMs: st.mtimeMs, atimeMs: st.atimeMs });
+        members.push({ abs, rel, kind: 'file', size: st.size, mtimeMs: st.mtimeMs, atimeMs: st.atimeMs, mode: st.mode & 0o777 });
         bytes += st.size;
       }
       // Sockets, FIFOs and devices are deliberately skipped: they carry no
@@ -669,7 +679,7 @@ async function capture(
 
       if (member.kind === 'dir') {
         await fsp.mkdir(dest, { recursive: true });
-        members.push({ rel: member.rel, kind: 'dir', size: 0, hash: '', ...timesOf(member) });
+        members.push({ rel: member.rel, kind: 'dir', size: 0, hash: '', ...timesOf(member), ...modeOf(member) });
         continue;
       }
       if (member.kind === 'symlink') {
@@ -694,13 +704,13 @@ async function capture(
       if (verify !== hash) {
         throw new Error(`the copy of ${member.rel || name} did not match what was read`);
       }
-      members.push({ rel: member.rel, kind: 'file', size: member.size, hash, ...timesOf(member) });
+      members.push({ rel: member.rel, kind: 'file', size: member.size, hash, ...timesOf(member), ...modeOf(member) });
     }
 
     // The captured folder's own times, read from the original before it goes.
     const rootTimes = walked.isFolder
       ? await fsp.lstat(original).then(
-        (st) => ({ rootMtimeMs: st.mtimeMs, rootAtimeMs: st.atimeMs }),
+        (st) => ({ rootMtimeMs: st.mtimeMs, rootAtimeMs: st.atimeMs, rootMode: st.mode & 0o777 }),
         () => ({}),
       )
       : {};
@@ -741,6 +751,11 @@ async function capture(
 function timesOf(member: WalkedMember): { mtimeMs?: number; atimeMs?: number } {
   if (typeof member.mtimeMs !== 'number' || !Number.isFinite(member.mtimeMs)) return {};
   return { mtimeMs: member.mtimeMs, ...(Number.isFinite(member.atimeMs) ? { atimeMs: member.atimeMs } : {}) };
+}
+
+/** The recorded permission bits, or nothing when the walk could not read them (FG3f #10). */
+function modeOf(member: WalkedMember): { mode?: number } {
+  return typeof member.mode === 'number' && Number.isInteger(member.mode) ? { mode: member.mode } : {};
 }
 
 /** One fingerprint over every member, order-independent of the walk. */
@@ -2094,19 +2109,27 @@ async function runRestoreAll(
   planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[],
   beforeComplete?: () => Promise<void>,
 ): Promise<void> {
+  /** Dates and permissions that could not be set back (FG3f #10): the restore finishes, and says so. */
+  const misses: string[] = [];
   for (const { entry, manifest } of planned) {
     if (job.cancelled) {
       job.status = 'cancelled';
       job.finishedAt = Date.now();
       return;
     }
-    await runRestore(job, entry, manifest);
+    await runRestore(job, entry, manifest, misses);
     if (job.status === 'error' || job.status === 'cancelled') return;
   }
   if (beforeComplete) {
     await beforeComplete().catch((err: unknown) => {
       console.error('[treemap] time capsule: recording what a completed restore finished did not succeed:', err);
     });
+  }
+  // A completed job that carries a sentence: the progress stream sends it as the `complete` event's
+  // warning, beside "restored", the way an offload says its originals stayed.
+  if (misses.length > 0) {
+    const more = misses.length > 1 ? `, and ${formatCount(misses.length - 1)} more` : '';
+    job.error = `Everything was put back byte for byte, but ${misses[0]} could not be set back${more}.`;
   }
   job.phase = 'done';
   job.status = 'complete';
@@ -2116,21 +2139,60 @@ async function runRestoreAll(
 /**
  * Put a member's recorded timestamps back.
  *
- * Best-effort by design: the bytes are already home and verified, and a
- * filesystem that refuses `utimes` (or a manifest written before timestamps
- * were recorded) must not turn a successful restore into a failed one. A file
- * with the wrong date is a much smaller problem than a file that was rolled
- * back for it.
+ * Never a reason to undo a restore: the bytes are already home and verified,
+ * and a filesystem that refuses `utimes` (or a manifest written before
+ * timestamps were recorded) must not turn a successful restore into a failed
+ * one. A file with the wrong date is a much smaller problem than a file that
+ * was rolled back for it. But never silent either (FG3f #10): a failure is
+ * answered as a phrase, and the job finishes with a warning naming it.
+ * Modification and access times only — no system lets a program set a file's
+ * creation date back, and nothing here claims to.
  *
  * Symlinks are skipped: `lutimes` is not available everywhere, and a link's
  * own timestamps carry nothing the target's do not.
  */
-async function applyRecordedTimes(dest: string, member: ManifestMember): Promise<void> {
-  if (member.kind === 'symlink') return;
-  if (typeof member.mtimeMs !== 'number') return; // an older manifest
+/**
+ * Test-only: a failure of setting a restored item's dates or permissions back (FG3f #10), as a
+ * volume that refuses `utimes` or `chmod` answers. Error to fail it, null for the real call. The
+ * suite's ForTests idiom: returns the function that removes it.
+ */
+let restoreMetaFaultForTests: ((dest: string, what: 'times' | 'mode') => Error | null) | null = null;
+export function setRestoreMetaFaultForTests(fault: (dest: string, what: 'times' | 'mode') => Error | null): () => void {
+  restoreMetaFaultForTests = fault;
+  return () => { restoreMetaFaultForTests = null; };
+}
+
+async function applyRecordedTimes(dest: string, member: ManifestMember): Promise<string | null> {
+  if (member.kind === 'symlink') return null;
+  if (typeof member.mtimeMs !== 'number') return null; // an older manifest
   const mtime = new Date(member.mtimeMs);
   const atime = typeof member.atimeMs === 'number' ? new Date(member.atimeMs) : mtime;
-  await fsp.utimes(dest, atime, mtime).catch(() => {});
+  try {
+    const fault = restoreMetaFaultForTests?.(dest, 'times') ?? null;
+    if (fault) throw fault;
+    await fsp.utimes(dest, atime, mtime);
+    return null;
+  } catch (err) {
+    return `the dates of ${dest} (${describeFsError(err)})`;
+  }
+}
+
+/**
+ * Put a member's recorded permission bits back (FG3f #10), the way `applyRecordedTimes` puts its
+ * dates back: never a reason to undo a restore whose bytes are home, and never silent — a failure is
+ * answered, and the job finishes with a warning naming it. Links are skipped (a link's own mode
+ * means nothing on most systems), and so is a manifest written before modes were recorded.
+ */
+async function applyRecordedMode(dest: string, member: ManifestMember): Promise<string | null> {
+  if (member.kind === 'symlink' || typeof member.mode !== 'number') return null;
+  try {
+    const fault = restoreMetaFaultForTests?.(dest, 'mode') ?? null;
+    if (fault) throw fault;
+    await fsp.chmod(dest, member.mode & 0o777);
+    return null;
+  } catch (err) {
+    return `the permissions of ${dest} (${describeFsError(err)})`;
+  }
 }
 
 function messageOf(err: unknown): string {
@@ -2149,7 +2211,10 @@ function leftBehindSentence(err: unknown, left: { at: string; why: string }[]): 
     `Remove ${left.length === 1 ? 'it' : 'them'} before trying again; the copy stays in the Time Capsule.`;
 }
 
-async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest): Promise<void> {
+async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest, misses: string[]): Promise<void> {
+  const noteMiss = (miss: string | null): void => {
+    if (miss !== null) misses.push(miss);
+  };
   const dataRoot = payloadRoot(entry.id);
   // Where it was (FG3d #2): its real place when capture recorded one, the path it was asked for otherwise.
   const place = restorePlaceOf(entry);
@@ -2251,7 +2316,8 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
         throw new Error(`Something appeared at ${dest} since this restore began, and a restore never writes over what is there, so it stopped.`);
       });
       writtenByThisRestore[writtenByThisRestore.length - 1] = dest;
-      await applyRecordedTimes(dest, member);
+      noteMiss(await applyRecordedMode(dest, member));
+      noteMiss(await applyRecordedTimes(dest, member));
       job.filesDone++;
     }
 
@@ -2263,15 +2329,21 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
     const dirMembers = manifest.members
       .filter((m) => m.kind === 'dir')
       .sort((a, b) => b.rel.length - a.rel.length);
+    // Its permissions with its dates, after everything inside it (FG3f #10): a read-only folder made
+    // read-only before its contents were written would refuse them.
     for (const member of dirMembers) {
-      await applyRecordedTimes(path.join(place, member.rel), member);
+      noteMiss(await applyRecordedTimes(path.join(place, member.rel), member));
+      noteMiss(await applyRecordedMode(path.join(place, member.rel), member));
     }
     // The item's own folder is the shallowest of all, so it comes last.
-    if (entry.kind === 'folder' && typeof manifest.rootMtimeMs === 'number') {
-      await applyRecordedTimes(place, {
+    if (entry.kind === 'folder') {
+      const own: ManifestMember = {
         rel: '', kind: 'dir', size: 0, hash: '',
-        mtimeMs: manifest.rootMtimeMs, atimeMs: manifest.rootAtimeMs,
-      });
+        ...(typeof manifest.rootMtimeMs === 'number' ? { mtimeMs: manifest.rootMtimeMs, atimeMs: manifest.rootAtimeMs } : {}),
+        ...(typeof manifest.rootMode === 'number' ? { mode: manifest.rootMode } : {}),
+      };
+      noteMiss(await applyRecordedTimes(place, own));
+      noteMiss(await applyRecordedMode(place, own));
     }
 
     // Deliberately does NOT mark the job complete: a job can cover several

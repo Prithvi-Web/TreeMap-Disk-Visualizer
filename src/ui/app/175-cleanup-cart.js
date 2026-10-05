@@ -517,14 +517,16 @@ function cartCommitSummary(result) {
   }
   if (trashed.length || unverified.length) {
     // The capsule verifies content byte for byte AND puts the recorded
-    // timestamps back, so this is a whole-file restore rather than a copy made
-    // today. It was not always: until the dates were recorded, an undo left
-    // everything looking modified just now, and an age-based rule stopped
-    // matching the very files it had just been used to find.
+    // permissions and modified/opened dates back, so this is a whole-file
+    // restore rather than a copy made today. It was not always: until the dates
+    // were recorded, an undo left everything looking modified just now, and an
+    // age-based rule stopped matching the very files it had just been used to
+    // find. Not "original dates" (FG3f #10): that reads as every date, the date
+    // created included, and nothing sets a creation date back.
     html += `<div class="cart-mf-undo"><button class="btn" data-cart-undo="${escapeHtml(result.runId)}">` +
       `${icon('refresh', 14)}Undo this run</button>` +
       `<span class="muted">${trashed.length ? `Puts all ${formatCount(trashed.length)} back where they were` : 'Puts back any of them the Trash has taken'}, from the Time Capsule — ` +
-      `byte for byte, with their original dates.</span></div>`;
+      `byte for byte, with their permissions and the dates they were last modified and opened.</span></div>`;
   }
 
   $('confirmTitle').innerHTML = icon('checkCircle', 18) + 'Done';

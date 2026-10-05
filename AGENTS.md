@@ -368,7 +368,10 @@ OpenAPI 3 spec).
      undoable run**: every item is copied into the Time Capsule and verified
      before anything is trashed, and the response carries a `runId` that
      `POST /api/cart/undo` restores in full — original paths, byte for byte,
-     with their original timestamps, even after the Trash has been emptied.
+     with their permissions and the dates they were last modified and opened
+     (not their creation dates, which nothing sets back), even after the Trash
+     has been emptied; a date or permission that could not be set back finishes
+     the restore with a warning naming it.
      (Directory times are restored after their contents, so writing the
      children back does not re-stamp the folder.) It is a separate route from
      `DELETE /api/files`
