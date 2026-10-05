@@ -1474,13 +1474,15 @@ test('the capsule reads persisted history, so it works with no scan loaded', () 
 });
 
 test('the empty state explains that an empty capsule is the correct state', () => {
-  // Until Autopilot (B1) exists nothing deletes automatically, so this list is
-  // legitimately empty. Saying "nothing here" without saying why would read as
-  // a fault, and would make a user hunt for a feature that is working.
+  // Only Autopilot runs and cleanup-cart commits fill it, so this list is
+  // legitimately empty until one of them has run. Saying "nothing here" without
+  // saying why would read as a fault, and would make a user hunt for a feature
+  // that is working. (Which deletes are copied is held to the server's own
+  // callers in tests/settingsSheetQa.test.ts — QA D72.)
   const code = appCode();
   assert.match(code, /that.s the normal state/i);
-  assert.match(code, /deletes automatically/i, 'it names what fills the capsule');
-  assert.match(code, /delete yourself/i, 'and what deliberately does not');
+  assert.match(code, /<b>Autopilot<\/b> or the <b>cleanup cart<\/b> moves to the Trash/, 'it names what fills the capsule');
+  assert.match(code, /any other way \(right-click, the Grid, ` \+\s*`Duplicates, Clean Up\) go to the Trash only and aren’t copied here/, 'and what deliberately does not');
 });
 
 test('protection that was withheld or withdrawn is shown, never left to a log', () => {

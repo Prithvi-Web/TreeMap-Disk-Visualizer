@@ -93,14 +93,16 @@ function renderCapsule() {
   }
 
   if (!idx.entries.length) {
-    // Empty (§3.5 #1) — and honest about what fills it. Autopilot (B1) is the
-    // only thing that deletes without the user watching, so until it exists
-    // this list is *correctly* empty and says so rather than implying a fault.
+    // Empty (§3.5 #1) — and honest about what fills it: Autopilot runs and
+    // cleanup-cart commits (the two callers of protectAndTrash). Every other
+    // way to the Trash is DELETE /api/files and copies nothing, so a list
+    // that is empty after those is *correctly* empty and says so (QA D72).
     $('capsuleInfo').textContent = '';
     host.innerHTML =
       `<div class="muted" style="line-height:1.6;">Nothing here yet — and that’s the normal state.<br>` +
-      `The Time Capsule keeps a verified copy of anything <b>TreeMap deletes automatically</b>, so you can get it back ` +
-      `even after emptying the Trash. Files you delete yourself go to the Trash as usual and aren’t copied here.</div>`;
+      `The Time Capsule keeps a checked copy of everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash, ` +
+      `so you can undo it even after emptying the Trash. Files you move to the Trash any other way (right-click, the Grid, ` +
+      `Duplicates, Clean Up) go to the Trash only and aren’t copied here.</div>`;
     renderCapsuleEvents(idx.events);
     return;
   }

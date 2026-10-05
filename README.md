@@ -238,7 +238,7 @@ The third option next to *keep* and *trash*: **Offload…** copies files to anot
 <td width="50%" valign="top">
 
 ### 🕰️ Time Capsule
-The safety net for deletions **you didn't watch happen**. Before TreeMap ever deletes something automatically, it copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash — so emptying the Trash doesn't lose it. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (default 10%) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected** — with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files *you* delete go to the Trash as usual and aren't copied here.
+The safety net for **Autopilot** and the **cleanup cart**. Before either moves anything to the Trash, TreeMap copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash — so emptying the Trash doesn't lose it. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (default 10%) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected** — with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash as usual and aren't copied here.
 
 </td>
 </tr>

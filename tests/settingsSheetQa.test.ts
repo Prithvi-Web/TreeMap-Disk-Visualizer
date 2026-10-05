@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { INDEX } from './fixtures/liftFrontend';
 
 /**
@@ -152,4 +154,75 @@ test('an installed entry is offered for removal on open, from the same request (
   await settle();
   assert.equal(dom.$('shellIntegrationBtn').textContent, 'Remove from right-click menu');
   assert.equal(dom.$('shellIntegrationBtn').disabled, false);
+});
+
+/* ══════════════ D72 — the Time Capsule says which deletes it copies ══════════════ */
+
+/**
+ * The truth, read from the server: the services that route a delete through
+ * protectAndTrash (copy, verify, then trash). Every one of them must be named
+ * where the app says what the capsule holds. A new caller fails here until
+ * the wording names it.
+ */
+const CAPSULE_ROUTES: Record<string, string> = {
+  'autopilot.ts': 'Autopilot',
+  'cartCommit.ts': 'cleanup cart',
+};
+/** Ways to move a file to the Trash that go through DELETE /api/files — no capsule copy. */
+const DIRECT_TRASH_WORDS = ['right-click', 'Grid', 'Duplicates', 'Clean Up'];
+
+function capsuleCallers(): string[] {
+  const dir = path.join(__dirname, '..', 'src', 'services');
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.ts') && f !== 'timeCapsule.ts')
+    .filter((f) => /\bprotectAndTrash\(/.test(readFileSync(path.join(dir, f), 'utf8')))
+    .sort();
+}
+
+const plain = (html: string) => html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+
+function assertCapsuleSentence(where: string, text: string): void {
+  for (const word of Object.values(CAPSULE_ROUTES)) {
+    assert.ok(text.includes(word), `${where} names ${word} among what the capsule copies: "${text}"`);
+  }
+  assert.match(text, /aren['’]t copied/, `${where} says plainly what is not copied: "${text}"`);
+  for (const word of DIRECT_TRASH_WORDS) {
+    assert.ok(text.includes(word), `${where} names ${word} as a delete that is not copied: "${text}"`);
+  }
+  assert.doesNotMatch(text, /delete yourself|deletes? (anything )?automatically/i,
+    `${where} no longer says only automatic deletes are copied — the cart is a delete you make yourself: "${text}"`);
+}
+
+test('the capsule copies exactly the deletes of Autopilot and the cleanup cart — read from the server (D72)', () => {
+  assert.deepEqual(capsuleCallers(), Object.keys(CAPSULE_ROUTES).sort(),
+    'the services that copy into the Time Capsule before trashing; a new one must be named in the wording below');
+  // And the routes named as NOT copied really reach DELETE /api/files, never the cart commit.
+  const trashPaths = braced('async function trashPaths(');
+  assert.match(trashPaths, /api(?:Paced)?\('\/api\/files'[\s\S]{0,120}method: 'DELETE'/, 'a direct move to the Trash is DELETE /api/files');
+  assert.doesNotMatch(trashPaths, /cart\/commit/, 'which never goes through the capsule');
+});
+
+test('Settings › Time Capsule names what is copied and what is not (D72)', () => {
+  const head = INDEX.indexOf('></span>Time Capsule</div>');
+  assert.notEqual(head, -1, 'the Settings sheet has a Time Capsule section');
+  const blurb = INDEX.slice(head, INDEX.indexOf('id="capsuleRetentionDays"', head));
+  const at = blurb.indexOf('<div class="muted"');
+  assertCapsuleSentence('Settings', plain(blurb.slice(at, blurb.indexOf('</div>', at))));
+});
+
+test('the empty Time Capsule view names what is copied and what is not (D72)', () => {
+  const start = INDEX.indexOf('Nothing here yet');
+  assert.notEqual(start, -1, 'the empty capsule view has its sentence');
+  const end = INDEX.indexOf('</div>`;', start);
+  // The template's own string joins: ` + ` between literal lines.
+  const text = plain(INDEX.slice(start, end).replace(/`\s*\+\s*`/g, ''));
+  assertCapsuleSentence('The Time Capsule view', text);
+});
+
+test('the README describes the capsule the same way (D72)', () => {
+  const readme = readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const start = readme.indexOf('### 🕰️ Time Capsule');
+  assert.notEqual(start, -1, 'the README has a Time Capsule section');
+  const para = readme.slice(start, readme.indexOf('</td>', start)).replace(/\*/g, '');
+  assertCapsuleSentence('The README', plain(para));
 });
