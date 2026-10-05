@@ -26,7 +26,7 @@ const REPO = path.join(__dirname, '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')) as {
   nativeVersion: string;
   scripts: Record<string, string>;
-  build: { files: string[]; asarUnpack: string[]; asar?: unknown };
+  build: { files: string[]; asarUnpack: string[]; asar?: unknown; win: Record<string, unknown>; portable: { artifactName?: string } };
 };
 
 interface Host { platform: string; arch: string }
@@ -124,9 +124,11 @@ test('dist:portable-mac and dist:portable-linux hand electron-builder its ${…}
     const steps = commands(name, PKG.scripts[name]);
     const builder = steps[only(name, steps, 'electron-builder', isBuilder)];
     // The child inherits this process's environment, so it carries the test
-    // guard (childEnvCarriesGuard); the three names the macros spell are set
-    // empty, as they are in the shell npm starts, so a macro sh expands
-    // vanishes here exactly as it did in the real build.
+    // guard (childEnvCarriesGuard). In the shell npm starts, the three names
+    // the macros spell are unset. Here they are set empty instead, which
+    // overrides anything of those names in the runner's own environment.
+    // sh expands an empty name exactly as it does an unset one, so a macro
+    // sh expands vanishes here exactly as it did in the real build.
     const handed = execFileSync('/bin/sh', ['-c', builder.replace(/^electron-builder/, "printf '%s\\n'")], {
       encoding: 'utf8',
       env: { ...process.env, version: '', arch: '', ext: '' },
@@ -134,6 +136,30 @@ test('dist:portable-mac and dist:portable-linux hand electron-builder its ${…}
     const artifact = handed.find((a) => a.startsWith('--config.artifactName='));
     assert.equal(artifact, '--config.artifactName=TreeMap-Portable-${version}-${arch}.${ext}', `${name}: ${builder}`);
   }
+});
+
+test('dist:portable-win hands electron-builder nothing a shell rewrites, and its exe is named by build.portable.artifactName', () => {
+  const name = 'dist:portable-win';
+  const steps = commands(name, PKG.scripts[name]);
+  const builder = steps[only(name, steps, 'electron-builder', isBuilder)];
+  // npm runs this script through cmd.exe on Windows and through sh on a Mac,
+  // the U-14 cross-build. sh expands a ${…} macro unless it is single-quoted,
+  // and cmd.exe hands single quotes to the program as part of the argument.
+  // So the command holds no macro and no quotes, and reads the same in both.
+  assert.doesNotMatch(builder, /\$\{|['"]/, `${name}: ${builder}`);
+  // The exe's name. electron-builder's own resolver reads the portable
+  // target's artifactName before a top-level one, so no --config.artifactName
+  // on the command line could ever name this exe.
+  const lib = require.resolve('app-builder-lib/out/platformPackager', { paths: [require.resolve('electron-builder')] });
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { PlatformPackager } = require(lib) as { PlatformPackager: { prototype: { artifactPatternConfig(this: unknown, target: unknown, defaultPattern: unknown): { pattern: string } } } };
+  const fromCommandLine = 'TreeMap-Portable-${version}.${ext}';
+  const resolved = PlatformPackager.prototype.artifactPatternConfig.call(
+    { platformSpecificBuildOptions: PKG.build.win, config: { ...PKG.build, artifactName: fromCommandLine } },
+    PKG.build.portable,
+    undefined,
+  );
+  assert.equal(resolved.pattern, '${productName}-${version}.${ext}', 'the portable target\'s own artifactName names the exe, whatever --config.artifactName says');
 });
 
 test('dist:win on a darwin host checks win32-x64, not darwin-arm64', () => {

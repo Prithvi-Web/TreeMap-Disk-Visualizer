@@ -47,7 +47,7 @@
     "fetch:gdu": "node scripts/fetchGdu.js",
     "fetch:gdu:dev": "node scripts/fetchGdu.js --dev",
     "dist:portable-mac": "npm run build && npm run fetch:gdu && npm run build:native && node scripts/check-prebuilt.js --target darwin && electron-builder --mac zip --config.artifactName='TreeMap-Portable-${version}-${arch}.${ext}' --publish never && node scripts/mark-portable.js",
-    "dist:portable-win": "npm run build && npm run fetch:gdu && npm run build:native && node scripts/check-prebuilt.js --target win32-x64 && electron-builder --win portable --x64 --config.artifactName=\"TreeMap-Portable-${version}.${ext}\" --publish never",
+    "dist:portable-win": "npm run build && npm run fetch:gdu && npm run build:native && node scripts/check-prebuilt.js --target win32-x64 && electron-builder --win portable --x64 --publish never",
     "dist:portable-linux": "npm run build && npm run fetch:gdu && npm run build:native && node scripts/check-prebuilt.js --target linux && electron-builder --linux AppImage --config.artifactName='TreeMap-Portable-${version}-${arch}.${ext}' --publish never && node scripts/mark-portable.js",
     "fleet:acceptance": "npm run build && node scripts/fleet-acceptance.js"
   },
