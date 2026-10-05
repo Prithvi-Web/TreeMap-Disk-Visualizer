@@ -295,15 +295,66 @@ function chipFor(node, size = 15) {
 }
 
 /* ───────────────────────────── Theme ───────────────────────────── */
+/* Three choices (QA D67): System — follow the computer's light or dark setting
+   as it changes, the default — or an explicit Light or Dark. 'tm-theme' in
+   localStorage holds 'light' or 'dark'; absent means System. The head script
+   applies the same rule before first paint. The sidebar button flips what you
+   see to an explicit choice; Settings › Theme is the way back to System. */
+const THEME_CHOICES = ['system', 'light', 'dark'];
+const THEME_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
+const osLightQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+function themeStored() {
+  let v = null;
+  try { v = localStorage.getItem('tm-theme'); } catch { v = null; }
+  return v === 'light' || v === 'dark' ? v : 'system';
+}
+// Held here as well as stored: storage that refuses still gets this session's choice.
+let themeChosen = themeStored();
+/** What a choice shows: System is whatever the computer says now. */
+function themeFor(choice, osLight) { return choice === 'system' ? (osLight ? 'light' : 'dark') : choice; }
 function applyThemeButton() {
   const dark = document.documentElement.dataset.theme !== 'light';
-  $('themeToggle').innerHTML = icon(dark ? 'sun' : 'moon', 16);
+  const btn = $('themeToggle');
+  btn.innerHTML = icon(dark ? 'sun' : 'moon', 16);
+  const words = `Theme: ${THEME_LABELS[themeChosen]}${themeChosen === 'system' ? ` (${dark ? 'dark' : 'light'} now)` : ''}` +
+    ` — switch to ${dark ? 'light' : 'dark'}`;
+  btn.title = words;
+  btn.setAttribute('aria-label', words);
+}
+/** Settings › Theme shows the choice, whichever surface made it. */
+function renderThemeChoice() {
+  for (const c of THEME_CHOICES) {
+    const radio = $(`themeChoice-${c}`);
+    if (radio) radio.checked = c === themeChosen;
+  }
+}
+function applyTheme(repaint = true) {
+  const next = themeFor(themeChosen, !!(osLightQuery && osLightQuery.matches));
+  const changed = document.documentElement.dataset.theme !== next;
+  document.documentElement.dataset.theme = next;
+  applyThemeButton();
+  renderThemeChoice();
+  if (changed && repaint) themeRepaint();
+}
+function setThemeChoice(choice) {
+  themeChosen = THEME_CHOICES.includes(choice) ? choice : 'system';
+  try {
+    if (themeChosen === 'system') localStorage.removeItem('tm-theme');
+    else localStorage.setItem('tm-theme', themeChosen);
+  } catch { /* storage refused: applied for this session, not remembered */ }
+  applyTheme();
 }
 $('themeToggle').addEventListener('click', () => {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('tm-theme', next);
-  applyThemeButton();
+  setThemeChoice(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+});
+for (const c of THEME_CHOICES) {
+  const radio = $(`themeChoice-${c}`);
+  if (radio) radio.addEventListener('change', () => { if (radio.checked) setThemeChoice(c); });
+}
+// System follows the computer as it changes, not only when the page loads.
+if (osLightQuery) osLightQuery.addEventListener('change', () => { if (themeChosen === 'system') applyTheme(); });
+/** Repaint every surface that holds the old theme's ink. */
+function themeRepaint() {
   // Colour changed; nothing moved. The two solvers behind §6.2 therefore
   // repaint rather than re-solve — see `repaintCells`.
   if (state.view === 'treemap' && drawnCells().length) { isCells() ? repaintCells() : drawView(); }
@@ -319,8 +370,10 @@ $('themeToggle').addEventListener('click', () => {
   if (trendNetHandle) trendNetHandle.update({});
   if (appsScatterHandle) appsScatterHandle.update({});
   if (capsuleGaugeHandle) capsuleGaugeHandle.update({});
-});
-applyThemeButton();
+}
+// The head script painted the theme already; this only labels the button and
+// checks the Settings row (nothing is drawn yet, so nothing to repaint).
+applyTheme(false);
 
 /* ───────────────────────────── Sidebar ─────────────────────────────
    Expanded glass panel ⇄ icon rail. The preference persists, aria-expanded

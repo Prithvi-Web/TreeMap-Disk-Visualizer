@@ -15,10 +15,16 @@
      The mark is the app's own treemap: three tiles in the size-scale hues. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect x='1' y='1' width='14' height='24' rx='4' fill='%2330D158'/%3E%3Crect x='17' y='1' width='8' height='14' rx='3.5' fill='%23FFD60A'/%3E%3Crect x='17' y='17' width='8' height='8' rx='3.5' fill='%230A84FF'/%3E%3C/svg%3E">
 <script>
-/* Apply saved theme before first paint to avoid a flash. */
-document.documentElement.dataset.theme =
-  localStorage.getItem('tm-theme') ||
-  (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+/* Apply the theme before first paint to avoid a flash. 'tm-theme' holds an
+   explicit 'light' or 'dark'; anything else — nothing stored, a value TreeMap
+   never writes, storage that refuses — is System: follow the computer (QA D67,
+   the same rule as the theme block in the app). */
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem('tm-theme'); } catch (e) { stored = null; }
+  document.documentElement.dataset.theme = stored === 'light' || stored === 'dark' ? stored
+    : (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+})();
 </script>
 <style>
 /* ════════════════════════════ Design tokens ════════════════════════════ */
@@ -4542,7 +4548,31 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <button class="close-x" data-close="settingsModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
-      <div class="set-h"><span data-icon="calendar"></span>Scheduled scans</div>
+      <!-- QA D67 — System (follow the computer, the default), Light or Dark.
+           Saved the moment it is picked, in this browser's storage like the
+           sidebar's theme button, which flips to an explicit Light or Dark;
+           this row is the way back to System. -->
+      <div class="set-h"><span data-icon="sun"></span>Theme</div>
+      <div class="muted" style="margin-bottom:10px;">How TreeMap looks. Picking one saves it straight away.</div>
+      <div id="themeOptions" role="radiogroup" aria-label="Theme">
+        <label class="rule-row budget-row" for="themeChoice-system">
+          <input type="radio" name="themeChoice" id="themeChoice-system" value="system" checked>
+          <span class="budget-name">System</span>
+          <span class="muted budget-help">follows this computer’s light or dark setting, and changes when it does</span>
+        </label>
+        <label class="rule-row budget-row" for="themeChoice-light">
+          <input type="radio" name="themeChoice" id="themeChoice-light" value="light">
+          <span class="budget-name">Light</span>
+          <span class="muted budget-help">always light</span>
+        </label>
+        <label class="rule-row budget-row" for="themeChoice-dark">
+          <input type="radio" name="themeChoice" id="themeChoice-dark" value="dark">
+          <span class="budget-name">Dark</span>
+          <span class="muted budget-help">always dark</span>
+        </label>
+      </div>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="calendar"></span>Scheduled scans</div>
       <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends.</div>
       <div id="schedList"></div>
       <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
@@ -6390,15 +6420,66 @@ function chipFor(node, size = 15) {
 }
 
 /* ───────────────────────────── Theme ───────────────────────────── */
+/* Three choices (QA D67): System — follow the computer's light or dark setting
+   as it changes, the default — or an explicit Light or Dark. 'tm-theme' in
+   localStorage holds 'light' or 'dark'; absent means System. The head script
+   applies the same rule before first paint. The sidebar button flips what you
+   see to an explicit choice; Settings › Theme is the way back to System. */
+const THEME_CHOICES = ['system', 'light', 'dark'];
+const THEME_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
+const osLightQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+function themeStored() {
+  let v = null;
+  try { v = localStorage.getItem('tm-theme'); } catch { v = null; }
+  return v === 'light' || v === 'dark' ? v : 'system';
+}
+// Held here as well as stored: storage that refuses still gets this session's choice.
+let themeChosen = themeStored();
+/** What a choice shows: System is whatever the computer says now. */
+function themeFor(choice, osLight) { return choice === 'system' ? (osLight ? 'light' : 'dark') : choice; }
 function applyThemeButton() {
   const dark = document.documentElement.dataset.theme !== 'light';
-  $('themeToggle').innerHTML = icon(dark ? 'sun' : 'moon', 16);
+  const btn = $('themeToggle');
+  btn.innerHTML = icon(dark ? 'sun' : 'moon', 16);
+  const words = `Theme: ${THEME_LABELS[themeChosen]}${themeChosen === 'system' ? ` (${dark ? 'dark' : 'light'} now)` : ''}` +
+    ` — switch to ${dark ? 'light' : 'dark'}`;
+  btn.title = words;
+  btn.setAttribute('aria-label', words);
+}
+/** Settings › Theme shows the choice, whichever surface made it. */
+function renderThemeChoice() {
+  for (const c of THEME_CHOICES) {
+    const radio = $(`themeChoice-${c}`);
+    if (radio) radio.checked = c === themeChosen;
+  }
+}
+function applyTheme(repaint = true) {
+  const next = themeFor(themeChosen, !!(osLightQuery && osLightQuery.matches));
+  const changed = document.documentElement.dataset.theme !== next;
+  document.documentElement.dataset.theme = next;
+  applyThemeButton();
+  renderThemeChoice();
+  if (changed && repaint) themeRepaint();
+}
+function setThemeChoice(choice) {
+  themeChosen = THEME_CHOICES.includes(choice) ? choice : 'system';
+  try {
+    if (themeChosen === 'system') localStorage.removeItem('tm-theme');
+    else localStorage.setItem('tm-theme', themeChosen);
+  } catch { /* storage refused: applied for this session, not remembered */ }
+  applyTheme();
 }
 $('themeToggle').addEventListener('click', () => {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('tm-theme', next);
-  applyThemeButton();
+  setThemeChoice(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+});
+for (const c of THEME_CHOICES) {
+  const radio = $(`themeChoice-${c}`);
+  if (radio) radio.addEventListener('change', () => { if (radio.checked) setThemeChoice(c); });
+}
+// System follows the computer as it changes, not only when the page loads.
+if (osLightQuery) osLightQuery.addEventListener('change', () => { if (themeChosen === 'system') applyTheme(); });
+/** Repaint every surface that holds the old theme's ink. */
+function themeRepaint() {
   // Colour changed; nothing moved. The two solvers behind §6.2 therefore
   // repaint rather than re-solve — see `repaintCells`.
   if (state.view === 'treemap' && drawnCells().length) { isCells() ? repaintCells() : drawView(); }
@@ -6414,8 +6495,10 @@ $('themeToggle').addEventListener('click', () => {
   if (trendNetHandle) trendNetHandle.update({});
   if (appsScatterHandle) appsScatterHandle.update({});
   if (capsuleGaugeHandle) capsuleGaugeHandle.update({});
-});
-applyThemeButton();
+}
+// The head script painted the theme already; this only labels the button and
+// checks the Settings row (nothing is drawn yet, so nothing to repaint).
+applyTheme(false);
 
 /* ───────────────────────────── Sidebar ─────────────────────────────
    Expanded glass panel ⇄ icon rail. The preference persists, aria-expanded
@@ -27392,6 +27475,7 @@ const CMDK_ACTIONS = [
  * held this list to the real headings (tests/commandPalette.test.ts).
  */
 const CMDK_SETTINGS_SECTIONS = [
+  { name: 'Theme', hint: 'system, light, dark, appearance, follow the computer' },
   { name: 'Scheduled scans', hint: 'schedule, recurring, automatic' },
   { name: 'Scanning budget', hint: 'eco, balanced, turbo, battery, slower, faster' },
   { name: 'Scan engine', hint: 'native, gdu, walker, fastest, engine' },

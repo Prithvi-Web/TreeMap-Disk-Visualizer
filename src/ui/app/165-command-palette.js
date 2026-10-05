@@ -70,6 +70,7 @@ const CMDK_ACTIONS = [
  * held this list to the real headings (tests/commandPalette.test.ts).
  */
 const CMDK_SETTINGS_SECTIONS = [
+  { name: 'Theme', hint: 'system, light, dark, appearance, follow the computer' },
   { name: 'Scheduled scans', hint: 'schedule, recurring, automatic' },
   { name: 'Scanning budget', hint: 'eco, balanced, turbo, battery, slower, faster' },
   { name: 'Scan engine', hint: 'native, gdu, walker, fastest, engine' },

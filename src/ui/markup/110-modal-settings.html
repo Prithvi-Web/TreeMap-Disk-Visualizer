@@ -6,7 +6,31 @@
       <button class="close-x" data-close="settingsModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
-      <div class="set-h"><span data-icon="calendar"></span>Scheduled scans</div>
+      <!-- QA D67 — System (follow the computer, the default), Light or Dark.
+           Saved the moment it is picked, in this browser's storage like the
+           sidebar's theme button, which flips to an explicit Light or Dark;
+           this row is the way back to System. -->
+      <div class="set-h"><span data-icon="sun"></span>Theme</div>
+      <div class="muted" style="margin-bottom:10px;">How TreeMap looks. Picking one saves it straight away.</div>
+      <div id="themeOptions" role="radiogroup" aria-label="Theme">
+        <label class="rule-row budget-row" for="themeChoice-system">
+          <input type="radio" name="themeChoice" id="themeChoice-system" value="system" checked>
+          <span class="budget-name">System</span>
+          <span class="muted budget-help">follows this computer’s light or dark setting, and changes when it does</span>
+        </label>
+        <label class="rule-row budget-row" for="themeChoice-light">
+          <input type="radio" name="themeChoice" id="themeChoice-light" value="light">
+          <span class="budget-name">Light</span>
+          <span class="muted budget-help">always light</span>
+        </label>
+        <label class="rule-row budget-row" for="themeChoice-dark">
+          <input type="radio" name="themeChoice" id="themeChoice-dark" value="dark">
+          <span class="budget-name">Dark</span>
+          <span class="muted budget-help">always dark</span>
+        </label>
+      </div>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="calendar"></span>Scheduled scans</div>
       <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends.</div>
       <div id="schedList"></div>
       <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
