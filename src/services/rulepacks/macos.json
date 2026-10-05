@@ -198,12 +198,12 @@
       "action": "advice",
       "adviceCommand": "Final Cut Pro ▸ File ▸ Delete Generated Library Files",
       "names": [
-        "render files",
-        "transcoded media"
+        "Render Files",
+        "Transcoded Media"
       ],
       "requiresSibling": [
-        "original media",
-        "currentversion.fcpevent"
+        "Original Media",
+        "CurrentVersion.fcpevent"
       ],
       "restoreCommand": "Re-rendered automatically when the project is next played or exported"
     },

@@ -386,6 +386,33 @@ test('matchReasonFor with matched names says those names; without, the pack\'s o
   assert.equal(matchReasonFor(junk, { names: [] }), matchReasonFor(junk), 'an empty list is no narrowing');
 });
 
+test('the media rules name Final Cut and Lightroom folders as those apps spell them (review F1.7)', () => {
+  const catalog = loadRuleCatalogFrom(SHIPPED, 'darwin');
+  const fcp = catalog.projectDirectory.find((r) => r.id === 'media-fcp-render-files')!;
+  assert.equal(matchReasonFor(fcp),
+    'A folder named Render Files or Transcoded Media sitting next to Original Media or CurrentVersion.fcpevent.');
+  assert.equal(matchReasonFor(fcp, { names: ['Render Files'] }),
+    'A folder named Render Files sitting next to Original Media or CurrentVersion.fcpevent.', 'the siblings too, beside a matched name');
+  const previews = catalog.directory.find((r) => r.id === 'media-lightroom-previews')!;
+  assert.match(matchReasonFor(previews), /^A folder named Lightroom Catalog Previews\.lrdata, Lightroom Catalog-v10 Previews\.lrdata, /);
+  const smart = catalog.directory.find((r) => r.id === 'media-lightroom-smart-previews')!;
+  assert.match(matchReasonFor(smart), / or Lightroom Catalog-v14 Smart Previews\.lrdata, with no project manifest/);
+});
+
+test('no name or sibling of several words is written all in lowercase — apps capitalise the folders they make (review F1.7)', () => {
+  // Names are matched case-insensitively and said as the pack writes them
+  // (README), so a lowercase "render files" is printed lowercase.
+  for (const platform of ['darwin', 'win32', 'linux'] as const) {
+    const catalog = loadRuleCatalogFrom(SHIPPED, platform);
+    for (const r of [...catalog.projectDirectory, ...catalog.directory, ...catalog.file]) {
+      const said = [...(r.labels ?? []), ...('siblingLabels' in r ? r.siblingLabels ?? [] : [])];
+      for (const label of said) {
+        if (label.includes(' ')) assert.notEqual(label, label.toLowerCase(), `${r.id}: "${label}" is spelled as the app spells it`);
+      }
+    }
+  }
+});
+
 test('the Reclaim Score\'s "regenerable" reason names the folder it scored, not every name its rule knows (QA D06)', async () => {
   const { computeRuleClaims } = await import('../src/services/reclaimInputs');
   const { resetCleanupMemoForTests } = await import('../src/services/cleanupMemo');
