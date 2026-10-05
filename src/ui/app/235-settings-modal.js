@@ -8,6 +8,9 @@ $('settingsBtn').addEventListener('click', async () => {
   void renderAllocationDiagnostic(); // A2 — independent of settings loading
   renderEngineBudgetHelp();          // Automatic's sentence, in this platform's words
   void loadEngineBudget();           // Phase 2 — its own endpoint, its own failure mode
+  // D2 — the right-click entry, re-read from the OS each time the sheet opens.
+  // Its only caller was lost once (QA D70) and the row sat on "Checking…".
+  void renderShellIntegration();
   try {
     settingsData = await api('/api/settings');
   } catch (e) {
