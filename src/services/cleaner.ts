@@ -8,7 +8,7 @@ import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
 import { assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
 import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
-import { emptyCheckSession } from './emptyFolderCheck';
+import { emptyCheckSession, NOT_EMPTY_CODES } from './emptyFolderCheck';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -174,12 +174,20 @@ export interface TrashOptions {
   /**
    * Every path was offered as an empty folder (Empty Folders, Track U U-4):
    * each is looked at again right before its own Trash step, and one that is
-   * not still an empty folder — it holds something (OS junk such as .DS_Store
-   * aside), a folder in it cannot be read, it does not answer, it is not a
-   * folder — is left where it is and failed with `code: 'FOLDER_NOT_EMPTY'`.
-   * A path that is gone fails as it always did.
+   * not still an empty folder is left where it is and failed with `refused`
+   * and the code that says why (`NOT_EMPTY_CODES`, U-4b L4): it holds
+   * something (`FOLDER_NOT_EMPTY`), a folder in it cannot be read
+   * (`FOLDER_UNREADABLE`), it does not answer (`FOLDER_NO_ANSWER`), it holds
+   * too much to look through (`FOLDER_TOO_MANY_ENTRIES`), it is not a folder
+   * (`NOT_A_FOLDER`). A path that is gone fails as it always did.
    */
   onlyEmptyFolders?: boolean;
+  /**
+   * With `onlyEmptyFolders`: Empty Folders' junk rule — OS junk such as
+   * .DS_Store is not content. True when left out; the pane sends the choice its
+   * list was made with (U-4b L4).
+   */
+  ignoreJunk?: boolean;
   /**
    * Asked of each path at its own turn, right before its Trash step (FG3f): a sentence and a code
    * when it must not be trashed after all — it is then left where it is and failed with
@@ -238,7 +246,7 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
   const failed: CleanResult['failed'] = [];
   // One session of looks for the batch (U-4b M1): a drive that does not answer is asked once, and
   // the looks together stop after 10 s — the Trash steps between them are not looking.
-  const looks = opts.onlyEmptyFolders ? emptyCheckSession(true) : null;
+  const looks = opts.onlyEmptyFolders ? emptyCheckSession(opts.ignoreJunk !== false) : null;
 
   // Sequential on purpose: parallel osascript/powershell invocations are
   // flaky, and trash batches are small (UI sends chunks).
@@ -257,7 +265,7 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
         // At this path's own turn, not before the batch: an earlier step's wait is time for it to fill.
         const look = await looks.look(p);
         if (!look.empty && look.why !== 'gone') {
-          failed.push({ path: p, reason: look.reason, refused: true, code: 'FOLDER_NOT_EMPTY' });
+          failed.push({ path: p, reason: look.reason, refused: true, code: NOT_EMPTY_CODES[look.why] });
           continue;
         }
       }

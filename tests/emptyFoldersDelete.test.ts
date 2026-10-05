@@ -10,7 +10,8 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { startScan } from '../src/services/diskScanner';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
-import { EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, EMPTY_CHECK_MAX_ENTRIES, lookDeadlineMs, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
+import { readAudit } from '../src/services/audit';
+import { EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, EMPTY_CHECK_MAX_ENTRIES, lookDeadlineMs, NOT_EMPTY_CODES, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { canLock } from './fixtures/nativeEdge';
@@ -111,7 +112,8 @@ test('a folder holding a folder that cannot be read is refused', { skip: !canLoc
     const r = await trash({ paths: [at('locked-holder')], onlyEmptyFolders: true });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.deepEqual(r.body.deleted, []);
-    assert.equal(r.body.failed[0].code, 'FOLDER_NOT_EMPTY');
+    assert.equal(r.body.failed[0].code, 'FOLDER_UNREADABLE', 'its own code: it may well be empty, nobody could tell (U-4b L4)');
+    assert.equal(r.body.failed[0].refused, true);
     assert.match(r.body.failed[0].reason, /could not be read/);
     assert.deepEqual(trashed, []);
   } finally {
@@ -130,7 +132,7 @@ test('a folder that is gone is not "not empty": it goes on to the Trash step, wh
 
 test('a file is not an empty folder', async () => {
   const r = await trash({ paths: [at('a-file.txt')], onlyEmptyFolders: true });
-  assert.equal(r.body.failed[0].code, 'FOLDER_NOT_EMPTY');
+  assert.equal(r.body.failed[0].code, 'NOT_A_FOLDER');
   assert.match(r.body.failed[0].reason, /not a folder/);
   assert.deepEqual(trashed, []);
 });
@@ -217,6 +219,7 @@ test('a delete of twenty folders on a drive that does not answer asks it once, a
     assert.equal(r.body.failed.length, 20);
     for (const f of r.body.failed) {
       assert.equal(f.refused, true, 'never handed to the Trash');
+      assert.equal(f.code, 'FOLDER_NO_ANSWER');
       assert.match(f.reason, /did not answer/);
     }
     assert.equal(drive.asked(), 1, 'the first silence answers for the other nineteen: one thread held, not twenty');
@@ -232,6 +235,7 @@ test('a dry run on that drive asks it once, and the real run after it does not a
     const dry = await trash({ paths: twenty, onlyEmptyFolders: true, dryRun: true });
     assert.equal(dry.status, 200, JSON.stringify(dry.body));
     assert.equal(dry.body.notEmpty.length, 20);
+    assert.ok(dry.body.notEmpty.every((n: { code: string }) => n.code === 'FOLDER_NO_ANSWER'), 'the dry run names the same code');
     assert.deepEqual(dry.body.wouldTrash, []);
     assert.equal(drive.asked(), 1);
     const real = await trash({ paths: twenty, onlyEmptyFolders: true });
@@ -261,7 +265,10 @@ test('a delete looks for 10 s at most, and its Trash steps between looks are not
     const result = await moveToTrash(five, { ignoreOpenHandles: true, onlyEmptyFolders: true });
     assert.deepEqual(result.deleted, five.slice(0, 3), '9 s of looking: three folders');
     assert.deepEqual(result.failed.map((f) => f.path), five.slice(3), 'the fourth look ran past 10 s, the fifth never started');
-    for (const f of result.failed) assert.match(f.reason, /10 seconds TreeMap gives to looking at folders again ran out/);
+    for (const f of result.failed) {
+      assert.match(f.reason, /10 seconds TreeMap gives to looking at folders again ran out/);
+      assert.equal(f.code, 'FOLDER_NO_ANSWER');
+    }
     assert.deepEqual(trashed, five.slice(0, 3));
     // A dry run is one request too: one budget for all its looks.
     now = 0;
@@ -280,6 +287,104 @@ test('a delete looks for 10 s at most, and its Trash steps between looks are not
       trashed.push(p);
     });
   }
+});
+
+/* ─────────────── each refusal its own code, the pane's junk rule, the audit (U-4b L4) ─────────────── */
+
+test('a folder too big to look through is refused with its own code', async () => {
+  const wide = at('wide-at-delete');
+  for (let i = 0; i < 5; i++) fs.mkdirSync(path.join(wide, `d${i}`), { recursive: true });
+  setEmptyCheckForTests({ maxEntries: 4 });
+  try {
+    const r = await trash({ paths: [wide], onlyEmptyFolders: true });
+    assert.equal(r.body.failed[0].code, 'FOLDER_TOO_MANY_ENTRIES');
+    assert.equal(r.body.failed[0].refused, true);
+    const dry = await trash({ paths: [wide], onlyEmptyFolders: true, dryRun: true });
+    assert.equal(dry.body.notEmpty[0].code, 'FOLDER_TOO_MANY_ENTRIES');
+    assert.deepEqual(trashed, []);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('the pane\'s junk rule holds at delete: with it off, a folder holding .DS_Store is not empty', async () => {
+  const off = await trash({ paths: [at('junk')], onlyEmptyFolders: true, ignoreJunk: false });
+  assert.equal(off.status, 200, JSON.stringify(off.body));
+  assert.deepEqual(off.body.deleted, []);
+  assert.equal(off.body.failed[0].code, 'FOLDER_NOT_EMPTY');
+  assert.match(off.body.failed[0].reason, /\.DS_Store/);
+  assert.deepEqual(trashed, []);
+  const dry = await trash({ paths: [at('junk')], onlyEmptyFolders: true, ignoreJunk: false, dryRun: true });
+  assert.deepEqual(dry.body.wouldTrash, []);
+  assert.equal(dry.body.notEmpty[0].path, at('junk'));
+  const on = await trash({ paths: [at('junk')], onlyEmptyFolders: true, ignoreJunk: true });
+  assert.deepEqual(on.body.deleted, [at('junk')], 'with it on, junk is not content');
+  trashed.length = 0;
+  const unsaid = await trash({ paths: [at('junk')], onlyEmptyFolders: true });
+  assert.deepEqual(unsaid.body.deleted, [at('junk')], 'left out, the rule is on, as the pane starts');
+});
+
+test('ignoreJunk must be a boolean, and is read only with onlyEmptyFolders', async () => {
+  const notBool = await trash({ paths: [at('still')], onlyEmptyFolders: true, ignoreJunk: 'no' });
+  assert.equal(notBool.status, 400, JSON.stringify(notBool.body));
+  assert.equal(notBool.body.code, 'IGNORE_JUNK_INVALID');
+  const alone = await trash({ paths: [at('still')], ignoreJunk: false });
+  assert.equal(alone.status, 400, 'a caller that meant the check never goes without it');
+  assert.equal(alone.body.code, 'IGNORE_JUNK_INVALID');
+  assert.deepEqual(trashed, []);
+});
+
+test('openapi names every refusal code, in the result and the dry run, and the junk rule in the body', async () => {
+  const doc = (await send('GET', '/api/openapi.json', {})).body;
+  const codes = Object.values(NOT_EMPTY_CODES).sort();
+  const failed = doc.components.schemas.CleanResult.properties.failed.items.properties;
+  assert.deepEqual([...failed.code.enum].sort(), codes);
+  const notEmpty = doc.components.schemas.TrashDryRunManifest.properties.notEmpty.items.properties;
+  assert.deepEqual([...notEmpty.code.enum].sort(), codes);
+  const op = doc.paths['/api/files'].delete;
+  assert.ok(op.requestBody.content['application/json'].schema.properties.ignoreJunk, 'ignoreJunk is described');
+  assert.match(op.responses['400'].description, /IGNORE_JUNK_INVALID/);
+});
+
+/** The audit entries a request appended, oldest first. */
+async function auditOf(request: () => Promise<unknown>): Promise<Array<{ paths: string[]; outcome: string; code?: string; dryRun: boolean }>> {
+  const before = (await readAudit(1000)).length;
+  await request();
+  const after = await readAudit(1000);
+  return after.slice(0, after.length - before).reverse() as never;
+}
+
+test('a folder the look refused is audited as a refusal with its code, never as a partial failure', async () => {
+  const body = { paths: [at('gained'), at('still'), at('a-file.txt')], onlyEmptyFolders: true };
+  const real = await auditOf(() => trash(body));
+  assert.deepEqual(
+    real.map((e) => ({ paths: e.paths, outcome: e.outcome, code: e.code, dryRun: e.dryRun })),
+    [
+      { paths: [at('still')], outcome: 'ok', code: undefined, dryRun: false },
+      { paths: [at('gained')], outcome: 'refused', code: 'FOLDER_NOT_EMPTY', dryRun: false },
+      { paths: [at('a-file.txt')], outcome: 'refused', code: 'NOT_A_FOLDER', dryRun: false },
+    ],
+  );
+  const dry = await auditOf(() => trash({ ...body, dryRun: true }));
+  assert.deepEqual(
+    dry.map((e) => ({ paths: e.paths, outcome: e.outcome, code: e.code, dryRun: e.dryRun })),
+    [
+      { paths: [at('still')], outcome: 'ok', code: undefined, dryRun: true },
+      { paths: [at('gained')], outcome: 'refused', code: 'FOLDER_NOT_EMPTY', dryRun: true },
+      { paths: [at('a-file.txt')], outcome: 'refused', code: 'NOT_A_FOLDER', dryRun: true },
+    ],
+  );
+  // A path the Trash itself failed is still a partial failure, beside the refusal.
+  setTrashStepForTests(async (p) => { throw Object.assign(new Error(`EPERM: ${p}`), { code: 'EPERM' }); });
+  try {
+    const mixed = await auditOf(() => trash(body));
+    assert.deepEqual(mixed.map((e) => [e.outcome, e.code]), [['error', 'PARTIAL_FAILURE'], ['refused', 'FOLDER_NOT_EMPTY'], ['refused', 'NOT_A_FOLDER']]);
+  } finally {
+    setTrashStepForTests(async (p) => { trashed.push(p); });
+  }
+  // Nothing refused: one entry, as it always was.
+  const plain = await auditOf(() => trash({ paths: [at('still')], onlyEmptyFolders: true }));
+  assert.deepEqual(plain.map((e) => [e.paths, e.outcome]), [[[at('still')], 'ok']]);
 });
 
 /* ─────────────── the look itself ─────────────── */

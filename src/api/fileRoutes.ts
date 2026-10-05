@@ -16,7 +16,7 @@ import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { checkOpenHandles } from '../services/openHandleGuard';
-import { emptyCheckSession } from '../services/emptyFolderCheck';
+import { emptyCheckSession, isNotEmptyCode, NOT_EMPTY_CODES, type NotEmptyCode } from '../services/emptyFolderCheck';
 
 export const fileRouter = Router();
 
@@ -35,8 +35,40 @@ fileRouter.post('/files/open-handles', guardBodyPaths, requireInsideScanRoot, as
   res.json(await checkOpenHandles(paths));
 });
 
+/** One request's outcome in the audit trail, split by what decided it (U-4b L4). */
+interface TrashAudit {
+  paths: string[];
+  sizeOf: Map<string, number | null>;
+  dryRun: boolean;
+  /** Paths an "only empty folders" look left where they are, each with its code. */
+  refused: { path: string; code: string }[];
+  /** Other paths that did not go: the Trash's own failures. */
+  failed: number;
+}
+
 /**
- * DELETE /api/files  { paths: string[], dryRun?: boolean, ignoreOpenHandles?: boolean, onlyEmptyFolders?: boolean }
+ * Write a delete's audit entries. What the empty-folder look refused is a
+ * refusal the endpoint itself decided, recorded as one with its code (one
+ * entry per code), as AGENTS.md says of the endpoint's refusals — never folded
+ * into an "error" with PARTIAL_FAILURE. Everything else is one entry, as it
+ * always was: "ok", or "error" with PARTIAL_FAILURE when the Trash failed some.
+ * With nothing refused the trail is exactly what it was.
+ */
+async function auditTrash(a: TrashAudit): Promise<void> {
+  const bytesOf = (ps: string[]): number => ps.reduce((sum, p) => sum + (a.sizeOf.get(p) ?? 0), 0);
+  const entry = { action: 'files.trash', source: 'http' as const, tokenId: tokenIdFor('http'), dryRun: a.dryRun };
+  const refusedPaths = new Set(a.refused.map((r) => r.path));
+  const rest = a.paths.filter((p) => !refusedPaths.has(p));
+  if (rest.length > 0 || a.refused.length === 0) {
+    await appendAudit({ ...entry, paths: rest, bytes: bytesOf(rest), outcome: a.failed === 0 ? 'ok' : 'error', ...(a.failed > 0 ? { code: 'PARTIAL_FAILURE' } : {}) });
+  }
+  const byCode = new Map<string, string[]>();
+  for (const r of a.refused) byCode.set(r.code, [...(byCode.get(r.code) ?? []), r.path]);
+  for (const [code, ps] of byCode) await appendAudit({ ...entry, paths: ps, bytes: bytesOf(ps), outcome: 'refused', code });
+}
+
+/**
+ * DELETE /api/files  { paths: string[], dryRun?: boolean, ignoreOpenHandles?: boolean, onlyEmptyFolders?: boolean, ignoreJunk?: boolean }
  * Moves every path to the system trash (never hard-deletes).
  * -> { deleted: string[], failed: { path, reason }[] }
  * With dryRun: true, reports the exact manifest (paths + known bytes) and
@@ -51,23 +83,34 @@ fileRouter.post('/files/open-handles', guardBodyPaths, requireInsideScanRoot, as
  *
  * `onlyEmptyFolders: true` (Empty Folders sends it, Track U U-4): every path
  * was offered as an empty folder, and each is looked at again right before its
- * own Trash step. One that is not still empty is left where it is, in `failed`
- * with `code: 'FOLDER_NOT_EMPTY'` and `refused: true`; a dry run lists those in
- * `notEmpty` and leaves them out of `wouldTrash`. Anything but a boolean is
- * `400 ONLY_EMPTY_FOLDERS_INVALID`, so a caller that meant the check never
- * goes without it.
+ * own Trash step, in one session of looks (U-4b M1). One that is not still
+ * empty is left where it is, in `failed` with `refused: true` and the code
+ * that says why — FOLDER_NOT_EMPTY, FOLDER_UNREADABLE, FOLDER_NO_ANSWER,
+ * FOLDER_TOO_MANY_ENTRIES, NOT_A_FOLDER (U-4b L4); a dry run lists those in
+ * `notEmpty` and leaves them out of `wouldTrash`. `ignoreJunk` is the junk
+ * rule the list was made with (true when left out). Anything but a boolean is
+ * `400 ONLY_EMPTY_FOLDERS_INVALID` / `400 IGNORE_JUNK_INVALID`, and so is
+ * `ignoreJunk` without `onlyEmptyFolders: true`: a caller that meant the
+ * check never goes without it. Each such refusal is audited as a refusal with
+ * its code.
  */
 fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
-  const { paths, dryRun, ignoreOpenHandles, onlyEmptyFolders } = req.body as {
+  const { paths, dryRun, ignoreOpenHandles, onlyEmptyFolders, ignoreJunk } = req.body as {
     paths: string[];
     dryRun?: boolean;
     ignoreOpenHandles?: boolean;
     onlyEmptyFolders?: unknown;
+    ignoreJunk?: unknown;
   };
   if (onlyEmptyFolders !== undefined && typeof onlyEmptyFolders !== 'boolean') {
     throw new AppError(400, 'ONLY_EMPTY_FOLDERS_INVALID', 'onlyEmptyFolders must be true or false');
   }
+  if (ignoreJunk !== undefined && (typeof ignoreJunk !== 'boolean' || onlyEmptyFolders !== true)) {
+    throw new AppError(400, 'IGNORE_JUNK_INVALID', 'ignoreJunk must be true or false, and is read only with onlyEmptyFolders: true');
+  }
+  const junkIsEmpty = ignoreJunk !== false;
   const sized = paths.map((p) => ({ path: p, bytes: knownSizeOf(p) }));
+  const sizeOf = new Map(sized.map((s) => [s.path, s.bytes]));
   const totalKnownBytes = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
 
   const policy = await getPolicy();
@@ -85,19 +128,20 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
     // A dry run describes, it never refuses — so open files are reported as
     // part of the picture rather than as an error.
     const openHandles = await checkOpenHandles(paths);
-    await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: true, outcome: 'ok' });
     if (onlyEmptyFolders !== true) {
+      await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: true, outcome: 'ok' });
       res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes, openHandles });
       return;
     }
     // The real run's own look, path by path, so the manifest is what it would do — in one
     // session, so a drive that does not answer is asked once (U-4b M1).
-    const notEmpty: { path: string; code: 'FOLDER_NOT_EMPTY'; reason: string }[] = [];
-    const looks = emptyCheckSession(true);
+    const notEmpty: { path: string; code: NotEmptyCode; reason: string }[] = [];
+    const looks = emptyCheckSession(junkIsEmpty);
     for (const p of paths) {
       const look = await looks.look(p);
-      if (!look.empty && look.why !== 'gone') notEmpty.push({ path: p, code: 'FOLDER_NOT_EMPTY', reason: look.reason });
+      if (!look.empty && look.why !== 'gone') notEmpty.push({ path: p, code: NOT_EMPTY_CODES[look.why], reason: look.reason });
     }
+    await auditTrash({ paths, sizeOf, dryRun: true, refused: notEmpty, failed: 0 });
     const left = new Set(notEmpty.map((n) => n.path));
     const wouldTrash = sized.filter((s) => !left.has(s.path));
     res.json({ dryRun: true, wouldTrash, totalKnownBytes: wouldTrash.reduce((sum, s) => sum + (s.bytes ?? 0), 0), openHandles, notEmpty });
@@ -106,7 +150,7 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
 
   let result;
   try {
-    result = await moveToTrash(paths, { ignoreOpenHandles: ignoreOpenHandles === true, onlyEmptyFolders: onlyEmptyFolders === true });
+    result = await moveToTrash(paths, { ignoreOpenHandles: ignoreOpenHandles === true, onlyEmptyFolders: onlyEmptyFolders === true, ignoreJunk: junkIsEmpty });
   } catch (err) {
     // A refusal is a real outcome and belongs in the audit trail beside the
     // policy refusals above — otherwise the log shows a delete that simply
@@ -116,16 +160,10 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
     }
     throw err;
   }
-  await appendAudit({
-    action: 'files.trash',
-    source: 'http',
-    tokenId: tokenIdFor('http'),
-    paths,
-    bytes: totalKnownBytes,
-    dryRun: false,
-    outcome: result.failed.length === 0 ? 'ok' : 'error',
-    ...(result.failed.length > 0 ? { code: 'PARTIAL_FAILURE' } : {}),
-  });
+  const refused = onlyEmptyFolders === true
+    ? result.failed.flatMap((f) => (f.refused && isNotEmptyCode(f.code) ? [{ path: f.path, code: f.code }] : []))
+    : [];
+  await auditTrash({ paths, sizeOf, dryRun: false, refused, failed: result.failed.length - refused.length });
   res.json(result);
 });
 

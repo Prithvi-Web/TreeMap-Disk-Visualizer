@@ -954,8 +954,12 @@ function activeCleanSelection() {
     // An empty folder is worth ~0 bytes by definition, so there is nothing to
     // size — an empty map, not a missing one, so callers need no special case.
     // `onlyEmptyFolders`: the server looks at each again before it trashes it,
-    // and leaves one that is no longer empty (Track U, U-4).
-    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder', sizes: new Map(), onlyEmptyFolders: true };
+    // and leaves one that is no longer empty (Track U, U-4) — by the junk rule
+    // this list was made with (U-4b L4): the box reloads the list when it changes.
+    return {
+      paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder', sizes: new Map(),
+      onlyEmptyFolders: true, ignoreJunk: $('emptyIgnoreJunk').checked,
+    };
   }
   // The Smart pane has three sources that can name the SAME path — an orphaned
   // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
@@ -1063,35 +1067,46 @@ function renderCleanFunnel(freed) {
  * warning: `options.ignoreOpenHandles` is "Delete anyway".
  */
 async function runCleanTrash(selection, options) {
-  const { paths, sizes, onlyEmptyFolders } = selection;
+  const { paths, sizes, onlyEmptyFolders, ignoreJunk } = selection;
   const ignoreOpenHandles = Boolean(options && options.ignoreOpenHandles);
   if (!paths.length) return;
   const btn = $('cleanConfirmBtn');
   btn.disabled = true;
   $('cleanProgress').classList.add('on');
-  let done = 0, failed = 0, notEmpty = 0, blocked = 0, recovered = 0;
+  let done = 0, failed = 0, blocked = 0, recovered = 0;
+  // Folders offered as empty that the server, looking again, could not show empty: left where
+  // they are on purpose, each reason said as itself (Track U, U-4; U-4b L4), never as a failure.
+  const left = { FOLDER_NOT_EMPTY: 0, FOLDER_UNREADABLE: 0, FOLDER_NO_ANSWER: 0, FOLDER_TOO_MANY_ENTRIES: 0, NOT_A_FOLDER: 0 };
+  let leftOut = 0;
   for (let i = 0; i < paths.length; i += 20) {
     const chunk = paths.slice(i, i + 20);
     const result = await trashPaths(chunk, {
       silent: true,
       ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}),
-      ...(onlyEmptyFolders ? { onlyEmptyFolders: true } : {}),
+      ...(onlyEmptyFolders ? { onlyEmptyFolders: true, ignoreJunk: ignoreJunk !== false } : {}),
     });
     done += result.deleted.length;
     for (const p of result.deleted) recovered += sizes.get(p) || 0;
-    // A folder offered as empty that holds something now was left on purpose (Track U, U-4).
-    const changed = result.failed.filter(f => f.code === 'FOLDER_NOT_EMPTY').length;
-    notEmpty += changed;
-    failed += result.failed.length - changed;
+    for (const f of result.failed) {
+      if (Object.prototype.hasOwnProperty.call(left, f.code)) { left[f.code]++; leftOut++; } else failed++;
+    }
     blocked += (result.blocked || []).length;
-    const settled = done + failed + notEmpty + blocked;
+    const settled = done + failed + leftOut + blocked;
     $('cleanProgressFill').style.width = Math.round((settled / paths.length) * 100) + '%';
     btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
   }
   closeModal('cleanModal');
   if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` (${formatBytes(recovered)}) — the space comes back when you empty the Trash` : ''}`);
   if (failed) toast(`${failed} could not be trashed`, 'error');
-  if (notEmpty) toast(`${notEmpty} folder${notEmpty > 1 ? 's are' : ' is'} no longer empty — left where ${notEmpty > 1 ? 'they are' : 'it is'}. Rescan to see what is in ${notEmpty > 1 ? 'them' : 'it'}.`, 'error', 9000);
+  const stays = (many) => `left where ${many ? 'they are' : 'it is'}`;
+  const leftSaid = {
+    FOLDER_NOT_EMPTY: (n, many) => `${n} folder${many ? 's are' : ' is'} no longer empty — ${stays(many)}. Rescan to see what is in ${many ? 'them' : 'it'}.`,
+    FOLDER_UNREADABLE: (n, many) => `${n} folder${many ? 's' : ''} could not be read to make sure ${many ? 'they are' : 'it is'} empty — ${stays(many)}.`,
+    FOLDER_NO_ANSWER: (n, many) => `${n} folder${many ? 's' : ''} did not answer in time — ${stays(many)}. The drive may be asleep or disconnected; try again in a minute.`,
+    FOLDER_TOO_MANY_ENTRIES: (n, many) => `${n} folder${many ? 's hold' : ' holds'} too much to look through — ${stays(many)}. Rescan to see what is in ${many ? 'them' : 'it'}.`,
+    NOT_A_FOLDER: (n, many) => `${n} item${many ? 's are' : ' is'} no longer a folder — ${stays(many)}.`,
+  };
+  for (const code of Object.keys(left)) if (left[code]) toast(leftSaid[code](left[code], left[code] > 1), 'error', 9000);
   // Silent mode suppresses trashPaths' own re-ask dialog, so this is the only
   // place these files get mentioned at all. They are still where they were.
   if (blocked) toast(`${blocked} still in use — left where ${blocked > 1 ? 'they are' : 'it is'}. Close what is using ${blocked > 1 ? 'them' : 'it'} and try again.`, 'error', 9000);

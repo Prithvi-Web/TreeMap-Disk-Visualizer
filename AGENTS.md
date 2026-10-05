@@ -381,9 +381,14 @@ OpenAPI 3 spec).
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
      Trash** — recoverable, never a hard delete. With `onlyEmptyFolders: true`
      each path is looked at again right before its own Trash step, and one
-     that is no longer an empty folder (OS junk such as `.DS_Store` aside) is
-     left where it is, in `failed[]` with `code: "FOLDER_NOT_EMPTY"`; a dry
-     run lists those in `notEmpty`.
+     that cannot be shown still an empty folder is left where it is, in
+     `failed[]` with `refused: true` and a code saying why:
+     `FOLDER_NOT_EMPTY` (it holds something), `FOLDER_UNREADABLE`,
+     `FOLDER_NO_ANSWER` (its drive did not answer, or the 10 s ran out),
+     `FOLDER_TOO_MANY_ENTRIES`, `NOT_A_FOLDER`; a dry run lists those in
+     `notEmpty`. `ignoreJunk` (with it only; true when left out) is the
+     junk rule the list was made with — off, a folder holding `.DS_Store` is
+     not empty.
    - `POST /api/offload` with `{ scanId, paths, dest }` moves data to another
      drive the safe way: copy → verify SHA-256 → only then trash originals;
      any failure rolls back and leaves local data untouched.
@@ -703,7 +708,9 @@ read-what-you-saw) permission to act.
   `audit.jsonl` (timestamp, action, source http/mcp, token id, paths, bytes,
   outcome). The refusals recorded are the ones the endpoint itself decides:
   the agent policy and its byte cap, an open file and the offload plan, each
-  with its code, and a relocation whose move failed, as refused — except
+  with its code, a folder an `onlyEmptyFolders` delete or dry run left where
+  it is (one `refused` entry per code, apart from the paths that went), and
+  a relocation whose move failed, as refused — except
   that `POST /api/security/relocate` and `POST /api/compression/encode` check
   the policy before their audited step, so their policy refusals are not
   recorded. A request refused before that is not recorded, because it never

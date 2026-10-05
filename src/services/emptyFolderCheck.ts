@@ -93,6 +93,29 @@ export type NotEmptyWhy = 'content' | 'unreadable' | 'no-answer' | 'too-many' | 
 
 export type EmptyVerdict = { empty: true } | { empty: false; why: NotEmptyWhy; reason: string };
 
+/**
+ * The code an "only empty folders" delete refuses a folder with, by why the
+ * look could not show it empty (U-4b L4) — each its own, so a caller can tell
+ * a folder that holds something from one nobody could read or that did not
+ * answer. A folder that is gone is not refused: its Trash step says so.
+ */
+export const NOT_EMPTY_CODES = {
+  content: 'FOLDER_NOT_EMPTY',
+  unreadable: 'FOLDER_UNREADABLE',
+  'no-answer': 'FOLDER_NO_ANSWER',
+  'too-many': 'FOLDER_TOO_MANY_ENTRIES',
+  'not-a-folder': 'NOT_A_FOLDER',
+} as const satisfies Record<Exclude<NotEmptyWhy, 'gone'>, string>;
+
+export type NotEmptyCode = (typeof NOT_EMPTY_CODES)[keyof typeof NOT_EMPTY_CODES];
+
+const NOT_EMPTY_CODE_SET: ReadonlySet<string> = new Set(Object.values(NOT_EMPTY_CODES));
+
+/** Is `code` one an "only empty folders" look refuses with? */
+export function isNotEmptyCode(code: string | undefined): code is NotEmptyCode {
+  return code !== undefined && NOT_EMPTY_CODE_SET.has(code);
+}
+
 /** An open folder, read an entry at a time: `fs.Dir`'s shape. */
 export interface FolderListing {
   read(): Promise<Dirent | null>;

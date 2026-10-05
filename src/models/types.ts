@@ -429,8 +429,8 @@ export interface CleanResult {
    * shown to be left in place (FG3b). `refused`: TreeMap itself did not hand the path to the Trash
    * (a name Windows would trim, `trashRefusal`), so the Trash was never asked (FG3d #9). `code`:
    * present with `refused` when a delete asked for empty folders only (`onlyEmptyFolders`) and this
-   * path was not one when its turn came (Track U, U-4), or when the caller's own look at its turn
-   * (`checkEach`, FG3f) stopped it.
+   * path could not be shown one when its turn came (Track U, U-4), saying why (`NOT_EMPTY_CODES`,
+   * U-4b L4), or when the caller's own look at its turn (`checkEach`, FG3f) stopped it.
    */
   failed: { path: string; reason: string; stopped?: true; refused?: true; code?: string }[];
 }

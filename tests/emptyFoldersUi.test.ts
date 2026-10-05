@@ -111,8 +111,9 @@ test('the Empty Folders selection asks for the check; the other panes do not', a
     '#emptyResults .empty-ck': [{ checked: true, dataset: { i: '0' } }],
     '#cleanResults .clean-ck': [{ checked: true, dataset: { i: '0' } }],
   };
-  const select = (cleanPane: string) => runnable(bodyOf('function activeCleanSelection() {'), {
+  const select = (cleanPane: string, junkRule = true) => runnable(bodyOf('function activeCleanSelection() {'), {
     document: { querySelectorAll: (sel: string) => rows[sel] || [] },
+    $: (id: string) => ({ checked: id === 'emptyIgnoreJunk' ? junkRule : false }),
     cleanPane,
     cleanMatches: [{ path: '/r/f', size: 1 }],
     emptyFolders: [{ name: 'a', path: '/r/a' }],
@@ -120,6 +121,10 @@ test('the Empty Folders selection asks for the check; the other panes do not', a
   })();
   assert.equal((await select('empty')).onlyEmptyFolders, true);
   assert.equal((await select('rules')).onlyEmptyFolders, undefined);
+  // U-4b L4: the junk rule the list was made with goes with it (the box reloads the list when it changes).
+  assert.equal((await select('empty', true)).ignoreJunk, true);
+  assert.equal((await select('empty', false)).ignoreJunk, false);
+  assert.equal((await select('rules', false)).ignoreJunk, undefined, 'the other panes have no junk rule');
 });
 
 test('the delete request carries the check only when asked', async () => {
@@ -133,11 +138,15 @@ test('the delete request carries the check only when asked', async () => {
     },
     TRASH_CHUNK: 400,
     toast: () => {}, rescan: () => {}, reofferBlockedTrash: () => {}, formatBytes: () => '',
-  }, 'paths, { silent = false, ignoreOpenHandles = false, onlyEmptyFolders = false } = {}');
+  }, 'paths, { silent = false, ignoreOpenHandles = false, onlyEmptyFolders = false, ignoreJunk = true } = {}');
   await fn(['/r/a'], { silent: true, onlyEmptyFolders: true });
   await fn(['/r/b'], { silent: true });
+  await fn(['/r/c'], { silent: true, onlyEmptyFolders: true, ignoreJunk: false });
   assert.equal(sent[0].onlyEmptyFolders, true, 'asked for');
   assert.ok(!('onlyEmptyFolders' in sent[1]), 'and omitted, never sent as false, otherwise');
+  assert.equal(sent[0].ignoreJunk, true, 'the junk rule rides with the check (U-4b L4)');
+  assert.equal(sent[2].ignoreJunk, false, 'the pane\'s choice, as made');
+  assert.ok(!('ignoreJunk' in sent[1]), 'and never without the check, which the server refuses');
 });
 
 interface TrashResult { deleted: string[]; failed: { path: string; reason: string; code?: string }[]; blocked?: string[] }
@@ -167,6 +176,37 @@ test('Move to Trash from Empty Folders asks the server to look again at each fol
   assert.equal(calls[0].silent, true, 'still silent: the run reports for itself');
   const other = await confirm({ paths: ['/r/f'] }, { deleted: ['/r/f'], failed: [] });
   assert.ok(!other.calls[0].onlyEmptyFolders, 'the other panes do not ask');
+});
+
+test('the junk rule of the list is the one the delete asks the server to use', async () => {
+  const off = await confirm({ paths: ['/r/a'], onlyEmptyFolders: true, ignoreJunk: false }, { deleted: [], failed: [] });
+  assert.equal(off.calls[0].ignoreJunk, false);
+  const on = await confirm({ paths: ['/r/a'], onlyEmptyFolders: true, ignoreJunk: true }, { deleted: [], failed: [] });
+  assert.equal(on.calls[0].ignoreJunk, true);
+  const other = await confirm({ paths: ['/r/f'] }, { deleted: [], failed: [] });
+  assert.ok(!('ignoreJunk' in other.calls[0]), 'the other panes send none');
+});
+
+test('each reason a folder was left where it is is said as itself, never as a failure (U-4b L4)', async () => {
+  const { toasts } = await confirm({ paths: ['/r/a', '/r/b', '/r/c', '/r/d', '/r/e', '/r/f'], onlyEmptyFolders: true }, {
+    deleted: [],
+    failed: [
+      { path: '/r/a', reason: 'it holds new.txt now', code: 'FOLDER_NOT_EMPTY' },
+      { path: '/r/b', reason: 'the folder x inside it could not be read (EACCES)', code: 'FOLDER_UNREADABLE' },
+      { path: '/r/c', reason: 'it did not answer within 2 seconds', code: 'FOLDER_NO_ANSWER' },
+      { path: '/r/d', reason: 'the drive it is on did not answer a moment ago', code: 'FOLDER_NO_ANSWER' },
+      { path: '/r/e', reason: 'it holds more than 1000 entries', code: 'FOLDER_TOO_MANY_ENTRIES' },
+      { path: '/r/f', reason: 'it is not a folder any more', code: 'NOT_A_FOLDER' },
+    ],
+  });
+  const said = toasts.join(' | ');
+  assert.ok(toasts.some((m) => /^1 folder is no longer empty/.test(m)), said);
+  assert.ok(toasts.some((m) => /^1 folder could not be read/.test(m)), said);
+  assert.ok(toasts.some((m) => /^2 folders did not answer in time/.test(m)), said);
+  assert.ok(toasts.some((m) => /^1 folder holds too much to look through/.test(m)), said);
+  assert.ok(toasts.some((m) => /^1 item is no longer a folder/.test(m)), said);
+  assert.ok(toasts.every((m) => /left where/.test(m)), `each says the folder is still there: ${said}`);
+  assert.ok(!toasts.some((m) => /could not be trashed/.test(m)), 'none of them is a failure');
 });
 
 test('a folder that is no longer empty is reported as that, not as a failure', async () => {

@@ -316,10 +316,11 @@ async function apiPaced(url, options, tries = 8) {
 
 /*
  * `onlyEmptyFolders`: every path was offered as an empty folder, and the server
- * looks at each again right before trashing it, leaving one that is no longer
- * empty in `failed` with code FOLDER_NOT_EMPTY (Track U, U-4).
+ * looks at each again right before trashing it, leaving one it cannot show
+ * still empty in `failed` with a code saying why (Track U, U-4; U-4b L4).
+ * `ignoreJunk`: the junk rule the list was made with, sent with that check only.
  */
-async function trashPaths(paths, { silent = false, ignoreOpenHandles = false, onlyEmptyFolders = false } = {}) {
+async function trashPaths(paths, { silent = false, ignoreOpenHandles = false, onlyEmptyFolders = false, ignoreJunk = true } = {}) {
   if (!paths.length) return { deleted: [], failed: [] };
   await ensureNodes(paths); // real sizes for the "recovered" figure
   const recovered = paths.reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
@@ -341,7 +342,7 @@ async function trashPaths(paths, { silent = false, ignoreOpenHandles = false, on
         body: JSON.stringify({
           paths: chunk,
           ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}),
-          ...(onlyEmptyFolders ? { onlyEmptyFolders: true } : {}),
+          ...(onlyEmptyFolders ? { onlyEmptyFolders: true, ignoreJunk } : {}),
         }),
       });
       deleted.push(...result.deleted);
