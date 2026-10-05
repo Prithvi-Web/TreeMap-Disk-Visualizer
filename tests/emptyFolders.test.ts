@@ -17,7 +17,7 @@ import { buildStoreFromTree, Flag, ObjectScanStore, PackedScanStore } from '../s
 import { markUnlistedPaths } from '../src/services/scanRefusals';
 import { emptyFoldersForScan, GDU_EMPTY_FOLDERS_REASON } from '../src/services/emptyFolders';
 import { setEmptyCheckForTests } from '../src/services/emptyFolderCheck';
-import { setNeverDescendForTests } from '../src/utils/mountBoundaries';
+import { boundaryRecord, mountOutcome, setNeverDescendForTests } from '../src/utils/mountBoundaries';
 import { updateSettings } from '../src/services/settings';
 import { ingestColumns, KIND_DIR, REFUSAL_DENIED, REFUSAL_UNREADABLE, REFUSAL_VANISHED } from '../src/services/scan/nativeEngine';
 import { adoptNativeStore } from '../src/services/scan/nativeMemory';
@@ -234,6 +234,24 @@ test('the native columns: a folder the walk refused, saw vanish or could not rea
   assert.equal(scan.deniedDirs, 1, 'and the counts are as before');
   assert.equal(scan.vanishedDirs, 1);
   assert.equal(scan.unreadableDirs, 1);
+});
+
+test('the native columns: a drive mounted beneath a folder the walk refused, saw vanish or could not read was never reached (Track U, TS review R6)', () => {
+  const root = '/r';
+  const scan = createScanRecord(root);
+  const drives = ['/r/denied/d', '/r/vanished/d', '/r/unreadable/d', '/r/fine/d'];
+  scan.boundary = boundaryRecord({
+    rule: 'stay', source: 'mount', reason: null,
+    mounts: drives.map((p) => ({ path: p, filesystem: 'apfs', source: '/dev/disk99s1', underFixed: false })),
+    fixed: [], neverDescend: drives,
+  });
+  const store = new PackedScanStore(root, '/', statToInput('r', true, 0, NOW));
+  ingestColumns(scan, store, handColumns(root, ['denied', 'vanished', 'unreadable', 'fine'], [
+    [1, REFUSAL_DENIED], [2, REFUSAL_VANISHED], [3, REFUSAL_UNREADABLE],
+  ]), root);
+  const o = mountOutcome(scan.boundary);
+  assert.deepEqual(o.unreached.map((m) => m.path).sort(), ['/r/denied/d', '/r/unreadable/d', '/r/vanished/d'], 'nothing got near them, whichever way their folder failed');
+  assert.deepEqual(o.notEntered.map((m) => m.path), ['/r/fine/d']);
 });
 
 /** A memory-mode store as the native build hands it over: the root (0) holding folders `a` (1) and `b` (2), both childless. */

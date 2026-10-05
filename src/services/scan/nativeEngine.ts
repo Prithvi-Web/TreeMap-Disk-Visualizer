@@ -13,7 +13,7 @@ import { adoptNativeStoreInSlices, memoryRoom, memoryStoreOptions, takeNativeSto
 import { completionSliceOptions, cpuClock, cpuMicros, type CompletionSliceOptions } from './completionSlices';
 import { formatCount } from '../../utils/formatCount';
 import { cloudProviderFor } from '../cloudFolders';
-import { markUnlisted, noteRefused } from '../scanRefusals';
+import { markUnlisted, noteRefused, noteUnlistedBelow } from '../scanRefusals';
 import { neverDescendPaths } from '../../utils/mountBoundaries';
 import { budgetSnapshot, isScanPaused, registerPausable, unregisterPausable } from '../engineBudget';
 import { platform } from '../../platform';
@@ -399,6 +399,8 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
     if (why === REFUSAL_DENIED) noteRefused(scan, pathOf(refusalNode[r]));
     else if (why === REFUSAL_VANISHED) scan.vanishedDirs = (scan.vanishedDirs ?? 0) + 1;
     else scan.unreadableDirs = (scan.unreadableDirs ?? 0) + 1;
+    // A drive mounted beneath it was never reached, whichever it was (U-24; noteRefused does the denied).
+    if (why !== REFUSAL_DENIED) noteUnlistedBelow(scan, pathOf(refusalNode[r]));
     // Whichever it was, its node is childless and was never listed (U-4).
     markUnlisted(store, ids[refusalNode[r]]);
   }

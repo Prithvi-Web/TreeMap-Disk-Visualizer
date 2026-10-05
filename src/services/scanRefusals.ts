@@ -29,11 +29,23 @@ export function keepSmallest(list: string[], p: string, cap = REFUSED_EXAMPLES):
  * names it here (the walker, the native ingest and the native memory path),
  * so this is also where a drive mounted beneath it is recorded as never
  * reached (Track U, U-24): it was not "not entered", nothing got near it.
+ * gdu names no refused folder (U-12), and the native memory path names no
+ * unreadable one, so there a drive beneath such a folder reads as reached.
  */
 export function noteRefused(scan: ScanResult, dirPath: string): void {
   scan.deniedDirs = (scan.deniedDirs ?? 0) + 1;
   scan.deniedExamples = scan.deniedExamples ?? [];
   keepSmallest(scan.deniedExamples, dirPath);
+  if (scan.boundary) noteRefusedBelow(scan.boundary, dirPath);
+}
+
+/**
+ * A folder the walk could not list for another reason — unreadable, past the
+ * deadline, vanished mid-walk (the walker and the native ingest): a drive
+ * mounted beneath it was never reached either, so it is not reported as "not
+ * entered" (Track U, TS review R6). Its count is the caller's, as before.
+ */
+export function noteUnlistedBelow(scan: ScanResult, dirPath: string): void {
   if (scan.boundary) noteRefusedBelow(scan.boundary, dirPath);
 }
 

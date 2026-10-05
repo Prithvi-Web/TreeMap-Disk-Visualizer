@@ -26,7 +26,7 @@ import {
 import { forgetScan } from './containerScanner';
 import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
 import { cloudProviderFor } from './cloudFolders';
-import { markUnlisted, markUnlistedPaths, noteRefused } from './scanRefusals';
+import { markUnlisted, markUnlistedPaths, noteRefused, noteUnlistedBelow } from './scanRefusals';
 import { JUNK_FILES } from './emptyFolderCheck';
 import { permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
@@ -1255,6 +1255,8 @@ async function processDirectory(
     if (listed.why === 'denied') noteRefused(scan, dirPath);
     else if (listed.why === 'vanished') scan.vanishedDirs = (scan.vanishedDirs ?? 0) + 1;
     else scan.unreadableDirs = (scan.unreadableDirs ?? 0) + 1;
+    // A drive mounted beneath it was never reached, whichever it was (U-24; noteRefused does the denied).
+    if (listed.why !== 'denied') noteUnlistedBelow(scan, dirPath);
     // Childless in the tree, whatever it holds: never offered as empty (U-4).
     markUnlisted(store, dirId);
     return;

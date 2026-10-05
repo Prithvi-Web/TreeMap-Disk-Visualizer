@@ -448,7 +448,7 @@ export interface BoundaryWalk {
    * only COUNTS a crossing the table missed; it never stops a walk).
    */
   crossedUnlisted: { count: number; examples: string[] };
-  /** Listed mounts beneath a folder the walk was refused: never reached. */
+  /** Listed mounts beneath a folder the walk was refused, or could not list (unreadable, timed out, vanished): never reached. */
   refusedAbove: Set<string>;
   /** Listed mounts at or beneath a folder the scan's "don't scan" patterns skip: never reached. */
   skipped: Set<string>;
@@ -469,7 +469,7 @@ export function restartBoundaryWalk(record: ScanBoundaryRecord): void {
   record.walk.refusedAbove = new Set();
 }
 
-/** A folder the walk was refused: every listed mount beneath it was never reached. */
+/** A folder the walk was refused, or could not list: every listed mount beneath it was never reached. */
 export function noteRefusedBelow(record: ScanBoundaryRecord, dirPath: string): void {
   for (const m of record.mounts ?? []) {
     if (!m.underFixed && isStrictlyUnder(dirPath, m.path)) record.walk.refusedAbove.add(m.path);

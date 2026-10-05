@@ -336,6 +336,32 @@ test('a mount beneath a folder the walk was refused, or one the scan was told no
   }
 });
 
+test('a mount beneath a folder the walk could not read (an injected EIO) is not reached either — not "not entered" (TS review R6)', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const f = tree();
+  const broken = path.join(f.root, 'broken');
+  const behind = path.join(broken, 'drive');
+  fs.mkdirSync(behind, { recursive: true });
+  useTable([f.mnt, behind]);
+  const real = fs.promises.readdir;
+  (fs.promises as { readdir: unknown }).readdir = function (p: fs.PathLike, ...rest: unknown[]) {
+    if (String(p) === broken) {
+      return Promise.reject(Object.assign(new Error(`EIO: i/o error, scandir '${broken}'`), { code: 'EIO', errno: -5, syscall: 'scandir', path: broken }));
+    }
+    return (real as (...a: unknown[]) => Promise<unknown>).call(fs.promises, p, ...rest);
+  };
+  let s: ScanResult;
+  try {
+    s = await scanWith(f.root, 'stay', 'walker');
+  } finally {
+    (fs.promises as { readdir: unknown }).readdir = real;
+  }
+  assert.equal(s.unreadableDirs, 1, 'the failed listing was counted');
+  const o = mountOutcome(s.boundary!);
+  assert.deepEqual(pathsOf(o.notEntered), [f.mnt], 'only a drive the walk got to is "not entered"');
+  assert.deepEqual(pathsOf(o.unreached), [behind], 'the walk never got near it');
+});
+
 /* ─────────────────────────────── incremental rescans ─────────────────────────────── */
 
 test('incremental: a listing cached under cross, then stay with the mount touched — it stays childless', async (t) => {
