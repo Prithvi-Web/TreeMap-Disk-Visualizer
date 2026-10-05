@@ -509,3 +509,54 @@ test('D59: a snapshot answer that lands after the map left the scan root does no
   });
   assert.deepEqual(r, { redraws: 0, hidden: true }, 'the newer load (in a subfolder) owns the bar');
 });
+
+/* ══════════════ D63 — the keyboard selection's card goes when the map does ══════════════ */
+
+test('D63: a press or a focus anywhere but the map takes the map\'s card down; one on the map does not', () => {
+  // QA: after j selected "Archives", its card stayed up over the cart panel
+  // and through Preview after — only map navigation ever hid it.
+  const canvas = { id: 'treemapCanvas' };
+  let hides = 0;
+  const view = { name: 'treemap' };
+  const dismiss = load<(e: { target: unknown }) => void>(['tmTipDismiss'], {
+    state: { get view() { return view.name; } },
+    tmCanvas: canvas,
+    hideTooltip: () => { hides++; },
+  }, 'tmTipDismiss');
+  dismiss({ target: { id: 'cartTab' } });
+  assert.equal(hides, 1, 'a press on the cart tab hides it');
+  dismiss({ target: canvas });
+  assert.equal(hides, 1, 'a press on the map is the map\'s business — hover and click manage the card there');
+  view.name = 'grid';
+  dismiss({ target: { id: 'gridTile' } });
+  assert.equal(hides, 1, 'another view\'s card is not the map\'s to hide');
+});
+
+test('D63: the dismissal is wired to presses, focus moves and the canvas losing focus', () => {
+  assert.ok(INDEX.includes("document.addEventListener('pointerdown', tmTipDismiss, true);"), 'every press, in capture');
+  assert.ok(INDEX.includes("document.addEventListener('focusin', tmTipDismiss, true);"), 'every focus move — Tab into the cart');
+  assert.ok(INDEX.includes("tmCanvas.addEventListener('blur', hideTooltip);"), 'and the map losing focus');
+});
+
+test('D63: entering and leaving the cart preview take the selection\'s card down with the selection', () => {
+  let hides = 0;
+  const base = {
+    hideTooltip: () => { hides++; },
+    isSun: () => false, isCells: () => false, isRectMap: () => true,
+    toast: (m: string) => { throw new Error('refused: ' + m); },
+    formatCount: String,
+    syncCartPreviewChrome() {}, drawTreemap() {}, exitCartPreview() {},
+    tmBuildPreview: () => ({ nodes: [{ path: '/r/x' }], freedBytes: 5, stagedInView: 1, outsideView: 0, outsideBytes: 0 }),
+  };
+  const state = { view: 'treemap', cart: { size: 1 }, treemap: { history: { active: false }, nodes: [{ path: '/r/x' }], hover: null, kbSel: { path: '/r/x' } } };
+  const tmPreview: Record<string, unknown> = { on: false };
+  const enter = load<() => void>(['enterCartPreview'], { ...base, state, tmPreview }, 'enterCartPreview');
+  enter();
+  assert.equal(tmPreview.on, true, 'the preview started');
+  assert.equal(hides, 1, 'and the card of the selection it cleared went with it');
+  const exit = load<(silent?: boolean) => void>(['exitCartPreview'], { ...base, state, tmPreview }, 'exitCartPreview');
+  state.treemap.kbSel = { path: '/r/x' };
+  exit();
+  assert.equal(tmPreview.on, false, 'the preview ended');
+  assert.equal(hides, 2, 'leaving it clears the selection, and its card, too');
+});

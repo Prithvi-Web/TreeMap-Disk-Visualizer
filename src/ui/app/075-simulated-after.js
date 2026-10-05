@@ -348,6 +348,7 @@ function enterCartPreview() {
   state.treemap.nodes = built.nodes;
   state.treemap.hover = null;
   state.treemap.kbSel = null;
+  hideTooltip(); // the selection's card goes with the selection (QA D63)
   syncCartPreviewChrome();
   drawTreemap();
 }
@@ -364,6 +365,7 @@ function exitCartPreview(silent = false) {
   if (saved) state.treemap.nodes = saved;
   state.treemap.hover = null;
   state.treemap.kbSel = null;
+  hideTooltip(); // the selection's card goes with the selection (QA D63)
   syncCartPreviewChrome();
   if (!silent && state.view === 'treemap' && isRectMap()) drawTreemap();
 }

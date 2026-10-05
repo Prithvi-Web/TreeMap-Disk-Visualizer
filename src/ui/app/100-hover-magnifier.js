@@ -275,6 +275,23 @@ function kbShowTip(node) {
   const pct = state.treemap.rootSize > 0 ? (node.size / state.treemap.rootSize) * 100 : 0;
   showTooltip(cx, cy, node, pct);
 }
+/**
+ * The keyboard selection's card belongs to the map (QA D63).
+ *
+ * kbShowTip anchors it to a cell, and only map navigation ever took it down:
+ * after j picked "Archives", its card floated on over the cart panel and
+ * through Preview after. So anything that takes the user somewhere else takes
+ * it down too — a press or a focus landing anywhere but the map while the map
+ * is the view, and the map itself losing focus. A press ON the map is the
+ * map's own business: hover and click already manage the card there.
+ */
+function tmTipDismiss(e) {
+  if (state.view !== 'treemap' || e.target === tmCanvas) return;
+  hideTooltip();
+}
+document.addEventListener('pointerdown', tmTipDismiss, true);
+document.addEventListener('focusin', tmTipDismiss, true);
+tmCanvas.addEventListener('blur', hideTooltip);
 function kbSelect(node) {
   state.treemap.kbSel = node || null;
   presentView();
