@@ -759,14 +759,16 @@ export async function userExcludesFile(base: NodeJS.ProcessEnv = process.env): P
 
 /**
  * `-c core.excludesFile=<the user's>`, read once per process. When it cannot be worked out (no
- * home folder at all), nothing is passed and the next call tries again: a failure is never kept.
+ * home folder at all), the file is named as NOWHERE — not left to git's own default, worked out
+ * from an environment TreeMap sets (FG4e, review L7) — and the next call tries again: a failure is
+ * never kept.
  */
 export function userExcludesArgs(): Promise<string[]> {
   excludesArgs ??= userExcludesFile()
     .then((file) => ['-c', `core.excludesFile=${file}`])
     .catch(() => {
       excludesArgs = null;
-      return [];
+      return ['-c', `core.excludesFile=${NOWHERE}`];
     });
   return excludesArgs;
 }

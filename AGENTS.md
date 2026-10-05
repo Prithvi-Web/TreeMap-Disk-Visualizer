@@ -586,7 +586,8 @@ read-what-you-saw) permission to act.
   -c credential.helper= -c protocol.allow=never` and an environment built
   from scratch (no inherited `GIT_*`, no system or global settings, no
   optional locks, no prompts, no lazy fetch; the user's own global ignore
-  file is passed explicitly). Before anything reads a work tree, the
+  file is passed explicitly, or nowhere when it cannot be worked out). Before
+  anything reads a work tree, the
   repository is vetted: git's own parser lists every setting without
   following includes, and anything not on an allow-list of settings that
   cannot start a program — any `include`, `filter`, `diff`/`merge` driver,

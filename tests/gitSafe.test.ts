@@ -449,14 +449,19 @@ test('real git reads the excludes path from a plain .gitconfig, ~ expanded', asy
   assert.equal(path.resolve(await userExcludesFile(base)), path.join(home, 'my-ignore'));
 });
 
-test('an excludes file that cannot be worked out passes nothing, and is tried again next time', async () => {
+test('an excludes file that cannot be worked out is passed as nowhere, and is tried again next time', async () => {
+  // FG4e, review L7: passing nothing left git to its own default, worked out from an environment
+  // TreeMap sets; naming nowhere — the folder no hook can be in either — says it outright.
+  const hooksPath = GIT_HARDENING.find((a) => a.startsWith('core.hooksPath=')) ?? '';
+  const nowhere = hooksPath.slice('core.hooksPath='.length);
+  assert.ok(nowhere.length > 0, 'nowhere, as the hardening names it');
   resetGitSafeForTests();
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, homedir: os.homedir };
   delete process.env.HOME;
   delete process.env.USERPROFILE;
   (os as { homedir: () => string }).homedir = () => { throw new Error('no home folder for this uid'); };
   try {
-    assert.deepEqual(await userExcludesArgs(), [], 'nothing passed, and no rejection for every repository after');
+    assert.deepEqual(await userExcludesArgs(), ['-c', `core.excludesFile=${nowhere}`], 'nowhere passed, and no rejection for every repository after');
   } finally {
     (os as { homedir: () => string }).homedir = saved.homedir;
     if (saved.HOME !== undefined) process.env.HOME = saved.HOME;
@@ -466,6 +471,7 @@ test('an excludes file that cannot be worked out passes nothing, and is tried ag
   try {
     const args = await userExcludesArgs();
     assert.equal(args[0], '-c', `the failure was not kept: ${JSON.stringify(args)}`);
+    assert.notEqual(args[1], `core.excludesFile=${nowhere}`, `the failure was not kept: ${JSON.stringify(args)}`);
   } finally {
     rec.restore();
     resetGitSafeForTests();
