@@ -10,7 +10,7 @@ isolatedDataDir('treemap-indexAutoPlan-data-');
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { INDEX_AUTO_MAX_ENTRIES, buildIndex, closeIndex, getRoot, listRoots, openIndex, rootFor } from '../src/services/indexEngine';
+import { INDEX_AUTO_MAX_ENTRIES, buildIndex, closeIndex, getRoot, listRoots, openIndex, reclaimsSettled, rootFor } from '../src/services/indexEngine';
 import { lift } from './fixtures/liftFrontend';
 
 /**
@@ -622,6 +622,7 @@ test('a build past its maxEntries stops, is cancelled with the sentence, and lea
     const cancel = await call(base, 'POST', `/api/index/${jobId}/cancel`);
     assert.equal(cancel.json.status, 'cancelled', 'it ended cancelled, not failed');
     assert.equal(getRoot(dir), null, 'the root is discarded');
+    await reclaimsSettled(); // its rows are reclaimed in slices behind the job (Track U review M1)
     assert.equal((handle.prepare("SELECT COUNT(*) c FROM roots WHERE state = 'building'").get() as { c: number }).c, 0, 'no root is left building');
     assert.equal((handle.prepare('SELECT COUNT(*) c FROM nodes').get() as { c: number }).c, rowsBefore, 'and none of its rows are left');
   } finally {

@@ -305,15 +305,15 @@ export function openIndex(): Database.Database {
  *
  * Resuming is not an option: enumeration order carries no resumable cursor, and
  * a partially-populated tree reports folder sizes that are confidently wrong.
- * Deleting is cheap and always correct.
+ * Discarding is always correct — and not by deleting here: each root is set
+ * aside in one statement, out of every reader's sight, and its rows are
+ * reclaimed in slices behind the open (`reclaimLater`). Deleting them here
+ * blocked the first request after a restart for as long as the rows took
+ * (17 µs a row).
  */
 function discardIncompleteBuilds(): void {
   if (!db) return;
-  const stuck = db.prepare("SELECT id, path FROM roots WHERE state = 'building'").all() as { id: number; path: string }[];
-  for (const root of stuck) {
-    db.prepare('DELETE FROM nodes WHERE root_id = ?').run(root.id);
-    db.prepare('DELETE FROM roots WHERE id = ?').run(root.id);
-  }
+  reclaimLeftovers(db);
   // Every surviving root was built by a process that is no longer running, so
   // its watcher is gone and it may have missed changes. Honest state: stale.
   db.prepare("UPDATE roots SET state = 'stale' WHERE state = 'ready'").run();
@@ -458,6 +458,124 @@ function strideSentence(stride: number): string {
 /** Lets the event loop turn: every timer, request and reply queued behind the build runs before it goes on. */
 function yieldToLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+/* ------------------------------------------------------------------ *
+ * Reclaiming a root's rows (Track U review of the index, M1)
+ * ------------------------------------------------------------------ */
+
+/**
+ * How many rows one statement reclaiming a root's rows deletes: about 26 ms
+ * of the thread at the measured 17 µs a row — the budget of one build write
+ * (INDEX_BATCH_ROWS) — where deleting a root's rows in one statement took
+ * 17.2 s for 1,000,000 rows (the real schema and its nine indexes), with
+ * every request, and in the desktop app the window, waiting behind it.
+ */
+export const INDEX_RECLAIM_ROWS = 1_500;
+
+/**
+ * The start of the path a root takes once it is no folder's index any more
+ * — replaced by a build swapped in, discarded at a cap, a cancel or a
+ * failure, or left building by a process that ended — while its rows are
+ * reclaimed. It begins with ASIDE_PREFIX, so every reader that leaves a
+ * capped build out (`listRoots`, `rootFor`, search's range seek) leaves it
+ * out too, and the root's own id makes it unique.
+ */
+const DISCARD_PREFIX = `${ASIDE_PREFIX}discard:`;
+
+/**
+ * Takes root `rootId` out of every reader's sight in one statement, and
+ * frees the folder's path for a build of it. Its rows stay where they are
+ * for `reclaimLater`. It reads 'building' from now on, so a process that
+ * ends before its rows are gone leaves it for the next open to reclaim.
+ */
+function setAside(handle: Database.Database, rootId: number): void {
+  handle.prepare("UPDATE roots SET path = ?, state = 'building' WHERE id = ?").run(`${DISCARD_PREFIX}${String(rootId)}`, rootId);
+}
+
+/** Tests only: what a test can see of the reclaim of a root's rows, and where it can hold one. */
+export interface ReclaimSeams {
+  /** Fewer rows a slice than INDEX_RECLAIM_ROWS. */
+  rows?: number;
+  /** Before each slice of `rootId`'s rows, numbered from 1. A promise holds the reclaim until it settles. */
+  beforeSlice?: (rootId: number, slice: number) => void | Promise<void>;
+  /** After each slice: how many rows it deleted. */
+  afterSlice?: (rootId: number, slice: number, rows: number) => void;
+}
+
+let reclaimSeams: ReclaimSeams | null = null;
+
+/** Tests only: see into, and hold, every reclaim through `seams`; null restores it as it ships. */
+export function setReclaimSeamsForTests(seams: ReclaimSeams | null): void {
+  reclaimSeams = seams;
+}
+
+/** The reclaim running for each root, and the index it runs in. */
+const reclaiming = new Map<number, { handle: Database.Database; done: Promise<void> }>();
+/** Every reclaim not yet settled, whichever index it ran in. */
+const unsettledReclaims = new Set<Promise<void>>();
+
+/**
+ * Deletes the rows of root `rootId`, already set aside, at most
+ * INDEX_RECLAIM_ROWS a statement with a turn of the event loop before each,
+ * then its root row — last, so `ON DELETE CASCADE` finds nothing to delete.
+ * Stops when the index it was given has been closed: the root still reads
+ * 'building', and the next open reclaims the rest.
+ */
+async function reclaimRows(handle: Database.Database, rootId: number): Promise<void> {
+  const seams = reclaimSeams;
+  const rows = seams?.rows ?? INDEX_RECLAIM_ROWS;
+  const slice = handle.prepare('DELETE FROM nodes WHERE rowid IN (SELECT rowid FROM nodes WHERE root_id = ? LIMIT ?)');
+  for (let n = 1; ; n++) {
+    await yieldToLoop();
+    await seams?.beforeSlice?.(rootId, n);
+    if (db !== handle) return;
+    const { changes } = slice.run(rootId, rows);
+    seams?.afterSlice?.(rootId, n, changes);
+    if (changes < rows) {
+      // Nothing is left under it: the slice took fewer than it asked for.
+      handle.prepare('DELETE FROM roots WHERE id = ?').run(rootId);
+      return;
+    }
+  }
+}
+
+/**
+ * Reclaims root `rootId`'s rows behind the caller (`reclaimRows`). Nothing
+ * waits on it; a failure is logged, and the root, still 'building' and set
+ * aside, is reclaimed by the next open.
+ */
+function reclaimLater(handle: Database.Database, rootId: number): void {
+  if (reclaiming.get(rootId)?.handle === handle) return;
+  const done: Promise<void> = reclaimRows(handle, rootId)
+    .catch((err: unknown) => {
+      console.error(`[treemap] the rows of an index that was replaced or discarded (root ${String(rootId)}) were not all reclaimed; the next start reclaims the rest:`, err);
+    })
+    .finally(() => {
+      unsettledReclaims.delete(done);
+      if (reclaiming.get(rootId)?.done === done) reclaiming.delete(rootId);
+    });
+  reclaiming.set(rootId, { handle, done });
+  unsettledReclaims.add(done);
+  trackWrite('index-reclaim', done); // tracked, so `settled()` waits for it; `done` never rejects
+}
+
+/**
+ * Sets aside and reclaims every root left 'building' in `handle`: at an
+ * open, every one — no build of this process writes through a handle that
+ * has just been opened.
+ */
+function reclaimLeftovers(handle: Database.Database): void {
+  const building = handle.prepare("SELECT id, path FROM roots WHERE state = 'building'").all() as { id: number; path: string }[];
+  for (const row of building) {
+    if (!row.path.startsWith(DISCARD_PREFIX)) setAside(handle, row.id);
+    reclaimLater(handle, row.id);
+  }
+}
+
+/** Resolves once no root's rows are being reclaimed (tests; nothing in the app waits on a reclaim). */
+export async function reclaimsSettled(): Promise<void> {
+  while (unsettledReclaims.size > 0) await Promise.all([...unsettledReclaims]);
 }
 
 /** One row of `nodes` as a build writes it, its id chosen by the build (U-D6). */
@@ -714,28 +832,34 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   // Replace any previous index for this root atomically — or, aside, leave it
   // where it is — and set the build's ids aside in the transaction that
   // inserts its 'building' row.
-  handle
-    .transaction(() => {
+  // An explicit build sets the saved root aside here, in one statement, and
+  // its rows are reclaimed in slices while this build walks (M1).
+  const replacedFirst = handle
+    .transaction((): number | null => {
+      let prior: { id: number } | undefined;
       if (!aside) {
-        const prior = handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number } | undefined;
-        if (prior) {
-          handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(prior.id);
-          handle.prepare('DELETE FROM roots WHERE id = ?').run(prior.id);
-        }
+        prior = handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number } | undefined;
+        if (prior) setAside(handle, prior.id);
       }
       handle
         .prepare("INSERT INTO roots (path, state, mechanism) VALUES (?, 'building', ?)")
         .run(buildPath, 'readdir + lstat');
       base = reserveIds(handle, stride);
+      return prior?.id ?? null;
     })
     .call(null);
   seams?.onReserve?.(base, stride);
+  if (replacedFirst !== null) reclaimLater(handle, replacedFirst);
 
   const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(buildPath) as { id: number }).id;
-  /** Drops what this build wrote — its rows, then its root — as a cancel always has. */
+  /**
+   * Drops what this build wrote: out of every reader's sight at once, its
+   * rows reclaimed in slices behind it (M1), the folder's path free for the
+   * next build.
+   */
   const discard = (): void => {
-    handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(rootId);
-    handle.prepare('DELETE FROM roots WHERE id = ?').run(rootId);
+    setAside(handle, rootId);
+    reclaimLater(handle, rootId);
   };
 
   // Every row is written at `base + ordinal`, its entry's number in the walk,
@@ -882,18 +1006,19 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     if (aside) {
       // The swap. The saved root's watcher goes first (on macOS its OS watch
       // is held across this by `buildIndex`), then, in one transaction, the
-      // saved root and its rows go and this build takes the folder's path.
+      // saved root is set aside — one statement, no row deleted — and this
+      // build takes the folder's path. The saved rows are reclaimed in
+      // slices afterwards (M1); until the swap they are the folder's index,
+      // untouched (U-Q4).
       stopWatcher(root);
       staleReasons.delete(root);
     }
-    handle
-      .transaction(() => {
+    const replaced = handle
+      .transaction((): number | null => {
+        let prior: { id: number } | undefined;
         if (aside) {
-          const prior = handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number } | undefined;
-          if (prior) {
-            handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(prior.id);
-            handle.prepare('DELETE FROM roots WHERE id = ?').run(prior.id);
-          }
+          prior = handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number } | undefined;
+          if (prior) setAside(handle, prior.id);
         }
         handle
           .prepare(
@@ -903,8 +1028,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
           .run(root, Date.now(), fileCount, dirCount, totalSize, rootId);
         // A build that finished is the answer to whether the folder fits.
         handle.prepare('DELETE FROM cap_stops WHERE path = ?').run(root);
+        return prior?.id ?? null;
       })
       .call(null);
+    if (replaced !== null) reclaimLater(handle, replaced);
 
     opts.onProgress?.({ phase: 'done', processed: written, currentPath: root });
     if (opts.live !== false) startWatcher(root);

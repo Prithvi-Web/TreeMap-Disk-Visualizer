@@ -19,6 +19,7 @@ import {
   getRoot,
   listRoots,
   openIndex,
+  reclaimsSettled,
   searchIndex,
   stopWatcher,
   type BuildProgress,
@@ -88,6 +89,9 @@ test('a capped rebuild that stops at its cap leaves the saved index and every ro
     assert.deepEqual(getRoot(dir), before, `${label}: the same root — id, state, date, counts and reason`);
     assert.deepEqual(rowsOf(saved.id), rows, `${label}: and every one of its rows`);
     assert.deepEqual(listRoots(), roots, `${label}: no root added or lost`);
+    // What the stopped build wrote is out of sight at once and reclaimed in
+    // slices behind it (Track U review M1); once that has settled, nothing is left.
+    await reclaimsSettled();
     assert.equal(count('SELECT COUNT(*) c FROM nodes'), allRows, `${label}: nothing the stopped build wrote is left`);
     assert.equal(count('SELECT COUNT(*) c FROM roots'), roots.length, `${label}: nor its root`);
   }
@@ -147,6 +151,8 @@ test('while a capped rebuild runs, every reader sees the saved index and never a
   assert.equal(looked, true, 'the walk was looked at in the middle');
   assert.notEqual(built.id, saved.id, 'the finished build replaced the saved root');
   assert.equal(getRoot(dir)!.id, built.id);
+  // The saved rows are reclaimed in slices behind the swap (Track U review M1).
+  await reclaimsSettled();
   assert.equal(count('SELECT COUNT(*) c FROM nodes WHERE root_id = ?', saved.id), 0, 'and the saved rows went with it');
   assert.equal(count('SELECT COUNT(*) c FROM roots'), roots.length, 'one root at the folder, as before');
   assert.equal(searchIndex('q0').total, savedHits, 'search finds the same files once');
@@ -184,6 +190,9 @@ test('a crash in the middle of a capped rebuild leaves the saved index', async (
   assert.equal(after.id, saved.id);
   assert.equal(after.state, 'stale', 'stale, as every index is after a restart');
   assert.deepEqual(rowsOf(saved.id), rows, 'with every row');
+  assert.deepEqual(listRoots().map((r) => r.id).filter((id) => !savedIds.has(id)), [], 'the half-written build is out of sight at once');
+  // Its rows are reclaimed in slices behind the open (Track U review M1).
+  await reclaimsSettled();
   assert.equal(count("SELECT COUNT(*) c FROM roots WHERE state = 'building'"), 0, 'the half-written build was discarded');
   assert.equal(count('SELECT COUNT(*) c FROM roots'), roots, 'no root added or lost');
   assert.equal(count('SELECT COUNT(*) c FROM nodes WHERE root_id NOT IN (SELECT id FROM roots)'), 0, 'and none of its rows is left');
@@ -202,6 +211,7 @@ test('a build stopped at its cap walked one entry past it and no further (findin
   // per wave): an enumerator that kept going would be asked 131 times.
   assert.ok(polled >= 50 && polled <= 52, `the walk handed over at most one entry past the cap (asked ${polled} times)`);
   assert.equal(getRoot(dir), null, 'there was no saved index, and none is made');
+  await reclaimsSettled(); // what it wrote is reclaimed behind it (Track U review M1)
   assert.equal(count("SELECT COUNT(*) c FROM roots WHERE state = 'building'"), 0);
 });
 
@@ -257,6 +267,7 @@ test('/result answers a build stopped at its cap 409 INDEX_CAP_REACHED with the 
     const failed = await settle(base, (await call(base, 'POST', '/api/index/build', { path: missing, maxEntries: 10 })).json.jobId);
     assert.equal(failed.status, 500, 'a build that failed is still a failure');
     assert.equal(failed.json.code, 'INDEX_BUILD_FAILED');
+    await reclaimsSettled(); // reclaimed behind the job (Track U review M1)
     assert.equal(count("SELECT COUNT(*) c FROM roots WHERE state = 'building'"), 0, 'and nothing it began is left behind');
   } finally {
     await close();
