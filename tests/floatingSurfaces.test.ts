@@ -467,3 +467,24 @@ test('a dialog that takes focus itself draws no focus ring around the whole shee
     assert.ok(beats(specificity(sel), specificity(':focus-visible')), `${sel} outranks the global ring`);
   }
 });
+
+/* ══════════════ The global search panel is opaque, like the dialogs (QA-7 follow-up to D49) ══════════════ */
+
+test('the global search panel paints an opaque base in both themes — the Dashboard no longer reads through its results', () => {
+  // It floats over whatever the page shows, often the dense Dashboard; its
+  // fill was 94% of the page background, so text bled through the rows.
+  const dark = declsOf('.gsearch-panel').get('background');
+  const light = declsOf(':root[data-theme="light"] .gsearch-panel').get('background');
+  assert.ok(dark, '.gsearch-panel sets its own background');
+  assert.ok(light, 'and the light theme sets its own');
+  assert.equal(baseAlpha(dark!, DARK), 1, 'dark: the base layer is opaque — was 94% of the page background');
+  assert.equal(baseAlpha(light!, LIGHT), 1, 'light: the base layer is opaque — was 94% of the page background');
+  for (const r of RULES) {
+    for (const sel of r.selectors) {
+      if (!/\.gsearch-panel(?![\w-])/.test(sel.split(/[\s>+~]+/).pop() || '') || /::?(before|after)/.test(sel)) continue;
+      const v = decls(r.body).get('background') ?? decls(r.body).get('background-color');
+      if (v === undefined) continue;
+      for (const [name, tokens] of THEMES) assert.equal(baseAlpha(v, tokens), 1, `${name}: ${sel} keeps the panel opaque: ${v}`);
+    }
+  }
+});
