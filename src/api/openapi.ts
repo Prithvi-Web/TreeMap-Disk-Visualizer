@@ -2318,7 +2318,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     }, ['path'])),
     responses: {
       '202': jsonResponse(
-        'Build started. A request for a folder already being built joins that build when its cap is no tighter (none covers any): alreadyRunning is then true and maxEntries is the cap it joined (null for none). Otherwise it gets a job of its own, which starts once that build has settled and, if that build completed, answers with its index',
+        'Build started. A request for a folder already being built joins that build when its cap is no tighter (none covers any): alreadyRunning is then true and maxEntries is the cap it joined (null for none). A cancelled build is never joined. Otherwise it joins the one job waiting behind that build, whose cap is widened to its own (alreadyRunning true, maxEntries the widened cap), or, with none waiting, gets a job of its own, which starts once that build has settled and, if that build completed, answers with its index',
         obj({ jobId: str(), status: str("'running'"), alreadyRunning: bool(), maxEntries: nullable(int()) }, ['jobId']),
       ),
       '400': errorResponse('MAX_ENTRIES_INVALID — maxEntries is not a positive integer'),
@@ -2405,7 +2405,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'delete',
     path: '/api/index',
-    summary: 'Drop one indexed root (?path=) or the whole index — nothing on disk is touched',
+    summary: 'Drop one indexed root (?path=) or the whole index — nothing on disk is touched. Every build of what is dropped, running or waiting, is cancelled first; removed counts folders\' indexes only',
     tag: 'index',
     destructive: false,
     parameters: [queryParam('path', 'Optional single root to drop', str())],

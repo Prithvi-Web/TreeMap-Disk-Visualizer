@@ -25,6 +25,7 @@ import {
   openIndex,
   reclaimsSettled,
   searchIndex,
+  setBuildSeamsForTests,
   stopAllWatchers,
   stopWatcher,
   type BuildProgress,
@@ -360,20 +361,24 @@ test('a request joins a running build whose cap is no tighter than its own, and 
     assert.deepEqual(Object.keys(looser.json), ['jobId', 'status'], 'a looser cap is not joined to a tighter one: a job of its own');
     const between = await call(base, 'POST', '/api/index/build', { path: dir, maxEntries: 1500 });
     assert.deepEqual(between.json, { jobId: looser.json.jobId, status: 'running', alreadyRunning: true, maxEntries: 2000 });
+    // At most one job waits behind a running build of a folder (Track U
+    // review L3c): a request the waiting job does not cover widens it, so
+    // one walk answers both, instead of a second job queued behind it.
     const uncapped = await call(base, 'POST', '/api/index/build', { path: dir });
-    assert.notEqual(uncapped.json.jobId, looser.json.jobId);
+    assert.deepEqual(uncapped.json, { jobId: looser.json.jobId, status: 'running', alreadyRunning: true, maxEntries: null },
+      'an uncapped request widens the job already waiting, and is told it now has no cap');
     const again = await call(base, 'POST', '/api/index/build', { path: dir });
-    assert.deepEqual(again.json, { jobId: uncapped.json.jobId, status: 'running', alreadyRunning: true, maxEntries: null },
+    assert.deepEqual(again.json, { jobId: looser.json.jobId, status: 'running', alreadyRunning: true, maxEntries: null },
       'an uncapped build is joined by an uncapped one, and says it has no cap');
+    const capped = await call(base, 'POST', '/api/index/build', { path: dir, maxEntries: 5000 });
+    assert.equal(capped.json.jobId, looser.json.jobId, 'and so is any capped one');
     release();
     const a = await settle(base, first.json.jobId);
     const b = await settle(base, looser.json.jobId);
-    const c = await settle(base, uncapped.json.jobId);
     assert.equal(a.status, 200);
     // The first build completed under its cap, so the folder fits every cap
-    // after it: those waiting take its index rather than walk it again.
+    // after it: the job waiting takes its index rather than walk it again.
     assert.deepEqual(b.json, a.json, 'the build waiting on it adopts its index');
-    assert.deepEqual(c.json, a.json, 'and so does the one waiting on that');
     assert.equal(count('SELECT COUNT(*) c FROM roots WHERE path = ?', dir), 1);
   } finally {
     holdIndexBuildsForTests(null);
@@ -499,5 +504,122 @@ test('a throw after the swap has committed leaves the build swapped in: the inde
     assert.equal(now.state, 'ready', `${label}: ready, not failed`);
     await reclaimsSettled();
     assert.equal(count('SELECT COUNT(*) c FROM nodes WHERE root_id = ?', now.id), 9, `${label}: with every row`);
+  }
+});
+
+/* ══════════════════ a cancelled build, and a delete while a build runs (Track U review L3, L6) ══════════════════ */
+
+test('a request never joins a build that was cancelled: it gets a job of its own, and that one builds', async () => {
+  const dir = fixture(5);
+  const { base, close } = await listen();
+  let release!: () => void;
+  holdIndexBuildsForTests(new Promise<void>((resolve) => { release = resolve; }));
+  try {
+    const first = await call(base, 'POST', '/api/index/build', { path: dir, maxEntries: 1000 });
+    await call(base, 'POST', `/api/index/${String(first.json.jobId)}/cancel`);
+    const second = await call(base, 'POST', '/api/index/build', { path: dir, maxEntries: 1000 });
+    assert.notEqual(second.json.jobId, first.json.jobId, 'not the cancelled job');
+    assert.equal(second.json.alreadyRunning, undefined);
+    release();
+    const cancelled = await settle(base, first.json.jobId);
+    assert.equal(cancelled.json.error, 'cancelled');
+    const built = await settle(base, second.json.jobId);
+    assert.equal(built.status, 200, 'the request is answered with an index');
+    assert.equal((built.json.root as IndexedRoot).fileCount, 5);
+  } finally {
+    holdIndexBuildsForTests(null);
+    await close();
+  }
+});
+
+/** Holds every build after its write numbered `at`; `held()` says whether one is held. */
+function holdAfterWrite(t: TestContext, at: number): { held: () => boolean; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let held = false;
+  setBuildSeamsForTests({ afterWrite: (n) => { if (n !== at) return undefined; held = true; return gate; } });
+  t.after(() => { release(); setBuildSeamsForTests(null); });
+  return { held: () => held, release: () => release() };
+}
+
+test('removing a folder\'s index while a build of it runs or waits stops that build: the index stays removed', async (t) => {
+  // Six files beside `sub` and six hundred in it: its writes are 500 files,
+  // then 106, then its two folders — the last, after which comes the swap.
+  for (const heldAt of [1, 3]) {
+    const dir = fixture(6);
+    fs.mkdirSync(path.join(dir, 'sub'));
+    addFiles(path.join(dir, 'sub'), 600, 'f');
+    await buildIndex(dir, { live: false });
+    const { base, close } = await listen();
+    const hold = holdAfterWrite(t, heldAt);
+    try {
+      const capped = await call(base, 'POST', '/api/index/build', { path: dir, maxEntries: 1000 });
+      await waitFor(hold.held, `the capped build being held after write ${String(heldAt)}`);
+      const queued = await call(base, 'POST', '/api/index/build', { path: dir }); // uncapped: waits behind it
+      assert.notEqual(queued.json.jobId, capped.json.jobId);
+      const removed = await call(base, 'DELETE', '/api/index?path=' + encodeURIComponent(dir));
+      assert.deepEqual(removed.json, { removed: 1, path: dir });
+      hold.release();
+      for (const job of [capped, queued]) {
+        const settled = await settle(base, job.json.jobId);
+        assert.equal(settled.json.error, 'cancelled', `held after write ${String(heldAt)}: the build ${job === capped ? 'running' : 'waiting'} is cancelled`);
+      }
+      assert.equal((await statusOf(base, dir)).json.indexed, false, `held after write ${String(heldAt)}: the index stays removed`);
+      assert.equal(getRoot(dir), null);
+      await reclaimsSettled();
+      assert.equal(count("SELECT COUNT(*) c FROM roots WHERE state = 'building'"), 0, 'and nothing the stopped build wrote is left');
+    } finally {
+      hold.release();
+      setBuildSeamsForTests(null);
+      await close();
+    }
+  }
+});
+
+test('removing an index under a running build, by any caller, counts only the folders\' indexes and stops the build: nothing it wrote comes back', async (t) => {
+  for (const whole of [false, true]) {
+    const label = whole ? 'the whole index' : 'one folder\'s index';
+    const dir = fixture(6);
+    fs.mkdirSync(path.join(dir, 'sub'));
+    addFiles(path.join(dir, 'sub'), 600, 'f');
+    await buildIndex(dir, { live: false });
+    const hold = holdAfterWrite(t, 1);
+    const building = buildIndex(dir, { live: false, maxEntries: 1000 });
+    building.catch(() => {}); // settled below
+    await waitFor(hold.held, 'the capped build being held after its first write');
+    const folders = listRoots().length;
+    assert.equal(deleteIndex(whole ? undefined : dir), whole ? folders : 1, `${label}: the count names the folders' indexes, never a build written aside`);
+    hold.release();
+    await assert.rejects(building, { message: 'cancelled' }, `${label}: the build stops`);
+    setBuildSeamsForTests(null);
+    assert.equal(getRoot(dir), null, `${label}: and is not swapped in`);
+    await reclaimsSettled();
+    assert.equal(count("SELECT COUNT(*) c FROM roots WHERE state = 'building'"), 0, `${label}: nothing it wrote is left`);
+    if (whole) assert.equal(count('SELECT COUNT(*) c FROM nodes'), 0);
+  }
+});
+
+test('a job that has started building is never widened: a request it does not cover waits behind it in a job of its own', async (t) => {
+  const dir = fixture(6);
+  fs.mkdirSync(path.join(dir, 'sub'));
+  addFiles(path.join(dir, 'sub'), 600, 'f');
+  const { base, close } = await listen();
+  const hold = holdAfterWrite(t, 1);
+  try {
+    const stops = await call(base, 'POST', '/api/index/build', { path: dir, maxEntries: 10 }); // stops at its cap before any write
+    const next = await call(base, 'POST', '/api/index/build', { path: dir, maxEntries: 2000 }); // waits behind it, then builds
+    assert.equal((await settle(base, stops.json.jobId)).status, 409);
+    await waitFor(hold.held, 'the second build being held after its first write');
+    const uncapped = await call(base, 'POST', '/api/index/build', { path: dir });
+    assert.notEqual(uncapped.json.jobId, next.json.jobId, 'the running job keeps the cap it started with');
+    assert.equal(uncapped.json.alreadyRunning, undefined);
+    hold.release();
+    const built = await settle(base, next.json.jobId);
+    assert.equal(built.status, 200);
+    assert.deepEqual((await settle(base, uncapped.json.jobId)).json, built.json, 'and the job behind it adopts its index');
+  } finally {
+    hold.release();
+    setBuildSeamsForTests(null);
+    await close();
   }
 });

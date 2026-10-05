@@ -560,8 +560,14 @@ function reclaimLater(handle: Database.Database, rootId: number): void {
   trackWrite('index-reclaim', done); // tracked, so `settled()` waits for it; `done` never rejects
 }
 
-/** The roots this process's builds are writing, each with the index it writes in. */
-const activeBuilds = new Map<number, { handle: Database.Database; root: string }>();
+/**
+ * The roots this process's builds are writing, each with the index it
+ * writes in, the folder it builds, and whether that folder's index was
+ * removed under it (`deleteIndex`): such a build stops at its next look, as
+ * a cancelled one does, rather than bring the index back (Track U review
+ * L3b, L6).
+ */
+const activeBuilds = new Map<number, { handle: Database.Database; root: string; aborted: boolean }>();
 
 /**
  * Sets aside and reclaims every root left 'building' in `handle` that no
@@ -861,7 +867,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   if (replacedFirst !== null) reclaimLater(handle, replacedFirst);
 
   const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(buildPath) as { id: number }).id;
-  activeBuilds.set(rootId, { handle, root });
+  const self = { handle, root, aborted: false };
+  activeBuilds.set(rootId, self);
+  /** Whether to stop: cancelled by the caller, or the folder's index removed under it. */
+  const stopped = (): boolean => self.aborted || (opts.isCancelled?.() ?? false);
   /**
    * Drops what this build wrote: out of every reader's sight at once, its
    * rows reclaimed in slices behind it (M1), the folder's path free for the
@@ -924,7 +933,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
 
   try {
     for await (const entry of provider.fastEnumerate(root, {
-      isCancelled: opts.isCancelled,
+      isCancelled: stopped,
       skip: (p) => neverDescend(p),
     })) {
       // One entry more than the build may write: stop the walk here (leaving
@@ -993,7 +1002,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       }
     }
 
-    if (capped || opts.isCancelled?.()) {
+    if (capped || stopped()) {
       discard();
       if (capped) rememberCapStop(handle, root, opts.maxEntries!);
       throw capped ? new IndexCapReached(opts.maxEntries!) : new Error('cancelled');
@@ -1012,7 +1021,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     // as missing.
     const totalSize = folders.length > 0 ? folders.carryTotalsUp() : rootFileBytes;
     for (let start = 0; start < folders.length; start += INDEX_BATCH_ROWS) {
-      if (opts.isCancelled?.()) {
+      if (stopped()) {
         discard();
         throw new Error('cancelled');
       }
@@ -1022,6 +1031,13 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       await write(batch, 'summing', root);
     }
 
+    // A cancel, or the folder's index removed, that arrived during the last
+    // write stops the build here: after this nothing would undo the swap,
+    // and a removed index would come back (Track U review L3b).
+    if (stopped()) {
+      discard();
+      throw new Error('cancelled');
+    }
     // The swap: in one transaction the saved root is set aside — one
     // statement, no row deleted — and this build takes the folder's path.
     // The saved rows are reclaimed in slices afterwards (M1); until the swap
@@ -1151,10 +1167,21 @@ export function deleteIndex(rootPath?: string): number {
   const handle = openIndex();
   let removed: number;
 
+  // A build of what is removed stops at its next look instead of bringing
+  // it back, whoever removes it (L3b, L6). Its rows — gone here, or written
+  // aside — are discarded with it.
+  for (const build of activeBuilds.values()) {
+    if (build.handle === handle && (rootPath === undefined || build.root === rootPath)) build.aborted = true;
+  }
+
   if (rootPath === undefined) {
     stopAllWatchers();
     staleReasons.clear();
-    removed = (handle.prepare('SELECT COUNT(*) c FROM roots').get() as { c: number }).c;
+    // The folders' indexes: never a build written aside, nor a root set
+    // aside while its rows are reclaimed (Track U review L6).
+    removed = (
+      handle.prepare('SELECT COUNT(*) c FROM roots WHERE path < ? OR path >= ?').get(ASIDE_PREFIX, ASIDE_PREFIX_END) as { c: number }
+    ).c;
     handle.prepare('DELETE FROM nodes').run();
     handle.prepare('DELETE FROM roots').run();
     handle.prepare('DELETE FROM cap_stops').run();

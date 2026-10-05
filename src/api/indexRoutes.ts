@@ -62,6 +62,8 @@ interface BuildJob {
   capReached?: boolean;
   /** Settles (never rejects) when the job has; a request queued behind it waits on this. */
   settled?: Promise<void>;
+  /** True while the job waits for the build of its folder ahead of it to settle. */
+  queued: boolean;
 }
 
 const jobs = new Map<string, BuildJob>();
@@ -166,6 +168,7 @@ async function runJob(job: BuildJob, ahead: BuildJob | undefined): Promise<void>
   };
   try {
     if (ahead?.settled) await ahead.settled;
+    job.queued = false;
     if (buildGateForTests) await buildGateForTests;
     if (job.cancelled) {
       end('cancelled', { phase: 'error', error: 'cancelled' });
@@ -214,7 +217,9 @@ async function runJob(job: BuildJob, ahead: BuildJob | undefined): Promise<void>
  *
  * A request for a folder already being built joins that build when its cap
  * is no tighter (`alreadyRunning: true`, with the cap it joined, null for
- * none); otherwise it gets a job of its own that starts once that build has
+ * none); a cancelled build is never joined. Otherwise it joins the one job
+ * waiting behind that build, widening that job's cap to its own, or, with
+ * none waiting, gets a job of its own that starts once that build has
  * settled.
  */
 indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Response) => {
@@ -228,9 +233,24 @@ indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Respon
   assertScanAllowed(await getPolicy(), rootPath);
 
   const running = [...jobs.values()].filter((j) => j.rootPath === rootPath && j.status === 'running');
-  const joined = running.find((j) => capCovers(j.maxEntries, maxEntries));
+  // A cancelled job is never joined: it ends 'cancelled' whatever it is
+  // asked (Track U review L3a). It is still waited behind, below, so two
+  // builds of one folder never run at once.
+  const joinable = running.filter((j) => !j.cancelled);
+  const joined = joinable.find((j) => capCovers(j.maxEntries, maxEntries));
   if (joined) {
     res.status(202).json({ jobId: joined.jobId, status: 'running', alreadyRunning: true, maxEntries: joined.maxEntries ?? null });
+    return;
+  }
+  // At most one job waits behind a running build of a folder (L3c). A
+  // request the waiting job does not cover widens it to its own cap, so one
+  // walk answers both: it has not started, and a looser cap only lets it
+  // write more of the same folder.
+  const waiting = joinable.find((j) => j.queued);
+  if (waiting) {
+    if (maxEntries === undefined) delete waiting.maxEntries;
+    else waiting.maxEntries = maxEntries;
+    res.status(202).json({ jobId: waiting.jobId, status: 'running', alreadyRunning: true, maxEntries: waiting.maxEntries ?? null });
     return;
   }
 
@@ -243,6 +263,7 @@ indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Respon
     currentPath: rootPath,
     startedAt: Date.now(),
     cancelled: false,
+    queued: running.length > 0,
     ...(maxEntries === undefined ? {} : { maxEntries }),
   };
   jobs.set(job.jobId, job);
@@ -464,9 +485,16 @@ indexRouter.post('/index/watch', guardBodyPath, (req: Request, res: Response) =>
  *
  * Not gated behind a confirmation like the destructive endpoints are: nothing
  * on disk is touched, and everything here can be rebuilt from the filesystem.
+ *
+ * Every build of what is removed — running, or waiting to run — is cancelled
+ * first, or it would bring the index back (Track U review L3b); the engine
+ * stops a running one too, whoever removes the index.
  */
 indexRouter.delete('/index', guardQueryPath('path'), (req: Request, res: Response) => {
   const target = req.query.path as string | undefined;
+  for (const job of jobs.values()) {
+    if (job.status === 'running' && (target === undefined || job.rootPath === target)) job.cancelled = true;
+  }
   const removed = deleteIndex(target);
   res.json({ removed, path: target ?? null });
 });
