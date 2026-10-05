@@ -98,7 +98,7 @@ function tree(): Tree {
   return { root, mnt, inside, other, plain };
 }
 
-async function scanWith(root: string, rule: 'stay' | 'cross', engine: 'walker' | 'native', opts: { incremental?: boolean } = {}): Promise<ScanResult> {
+async function scanWith(root: string, rule: 'stay' | 'cross', engine: 'walker' | 'native' | 'gdu', opts: { incremental?: boolean } = {}): Promise<ScanResult> {
   await updateSettings({ scanBoundary: rule, engine });
   const s = await startScan(root, opts);
   await waitFor(() => s.status !== 'running', `the ${engine} scan of ${root} settling`);
@@ -510,6 +510,48 @@ test('Empty Folders never offers a drive the scan did not enter, nor the folder 
   assert.ok(!route.includes(drive) && !route.includes(holder), 'and the route answers the same');
   assert.ok(route.includes(empty));
 });
+
+for (const engine of ['native', 'gdu'] as const) {
+  for (const depth of ['directly in the root', 'two folders down'] as const) {
+    test(`Empty Folders never offers a drive the scan did not enter, nor a folder holding it — ${engine}, the drive ${depth} (the SEC-1 review, L6)`, async (t) => {
+      if (NO_TABLE) return t.skip(NO_TABLE);
+      if (engine === 'native' && !nativeRecording(t)) return;
+      if (engine === 'gdu' && !(await findGduBinary())) return skipOrFailOnCi(t, 'gdu not available on this machine');
+      const root = fs.realpathSync(fileTempDir('treemap-boundary-empty-'));
+      const holder = depth === 'directly in the root' ? root : path.join(root, 'a', 'b');
+      fs.mkdirSync(holder, { recursive: true });
+      // A drive the walk does not enter is, to the volume beneath it, an empty folder.
+      const drive = path.join(holder, 'mnt');
+      fs.mkdirSync(drive);
+      const empty = path.join(root, 'really-empty');
+      fs.mkdirSync(empty);
+      fs.mkdirSync(path.join(root, 'other'));
+      fs.writeFileSync(path.join(root, 'other', 'f.txt'), 'x');
+      useTable([drive]);
+      const saved = process.env.TREEMAP_NO_GDU;
+      if (engine === 'gdu') delete process.env.TREEMAP_NO_GDU;
+      let s: ScanResult;
+      try {
+        s = await scanWith(root, 'stay', engine);
+      } finally {
+        if (saved === undefined) delete process.env.TREEMAP_NO_GDU;
+        else process.env.TREEMAP_NO_GDU = saved;
+        await updateSettings({ scanBoundary: 'stay', engine: 'walker' });
+      }
+      assert.ok(s.engine === engine || s.engine === `${engine}-turbo`, `${s.engine}: ${s.fallbackReason ?? s.engineReason}`);
+      const above = depth === 'directly in the root' ? [] : [holder, path.dirname(holder)];
+      const offered = findEmptyFolders(storeOf(s), true).folders.map((x) => x.path);
+      const route = await emptyFoldersRoute(s.scanId);
+      for (const [what, list] of [['the tree', offered], ['the route', route]] as const) {
+        assert.ok(!list.includes(drive), `${what}: the drive is not empty, it was not looked into (${list.join(', ')})`);
+        for (const p of above) assert.ok(!list.includes(p), `${what}: nor ${p}, which holds it`);
+        // The route offers a gdu scan's folders not at all, and says why (GDU_EMPTY_FOLDERS_REASON, U-12).
+        if (what === 'the route' && engine === 'gdu') assert.deepEqual(list, [], 'a gdu scan offers none from the route');
+        else assert.ok(list.includes(empty), `${what}: a genuinely empty folder is still offered`);
+      }
+    });
+  }
+}
 
 async function emptyFoldersRoute(scanId: string): Promise<string[]> {
   resetRateLimiter();
