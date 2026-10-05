@@ -148,3 +148,126 @@ test('when the system answer fills the path box, the box is re-checked for that 
   const typed = await run('/Users/x/Projects');
   assert.deepEqual(typed.checks, [], 'a box already holding a folder is left as it is');
 });
+
+/* ══════════════ D66 + D57 — reload reopens the scan the server still holds ══════════════ */
+
+type Restore = {
+  run: () => Promise<void>; state: Record<string, unknown>; $: (id: string) => El; asked: string[];
+  started: string[]; finished: Array<{ root: unknown; ms: number; stats: unknown; opts: unknown; boxThen: string; scanIdThen: unknown }>;
+  toasts: string[]; warned: string[];
+};
+const LAST = { scanId: 's9', rootPath: '/Users/x/corpus', totalSize: 8_800_000_000, fileCount: 101_034, finishedAt: 1_700_000_000_000 };
+const STATS = { scanId: 's9', status: 'complete', scanned: 106_664, fileCount: 101_034, dirCount: 5_630, engine: 'native', durationMs: 200 };
+const RESULT = { status: 'complete', scanId: 's9', root: { path: '/Users/x/corpus', size: 8_800_000_000 }, fileCount: 101_034 };
+
+function restore(opts: {
+  answer: (url: string) => unknown; box?: string; focused?: boolean; onResult?: (state: Record<string, unknown>) => void;
+}): Restore {
+  const src = slice('function requestedPath()', 'void restoreLastSession();');
+  const els: Record<string, El> = {};
+  const $ = (id: string) => (els[id] ??= el());
+  $('pathInput').value = opts.box ?? '/Users/x'; // what loadSystem puts there
+  const state: Record<string, unknown> = { root: null, scanning: false, scanId: null };
+  const asked: string[] = [];
+  const started: string[] = [];
+  const finished: Restore['finished'] = [];
+  const toasts: string[] = [];
+  const warned: string[] = [];
+  const api = async (url: string, options?: { method?: string }) => {
+    asked.push((options?.method ?? 'GET') + ' ' + url);
+    const a = opts.answer(url);
+    if (url.endsWith('/result')) opts.onResult?.(state);
+    if (a instanceof Error) throw a;
+    return a;
+  };
+  const document = { activeElement: opts.focused ? $('pathInput') : null };
+  const run = new Function('$', 'state', 'api', 'location', 'document', 'console', 'startScan', 'finishScan', 'maybeShowFastRescan',
+    'rememberScannedRoot', 'toast', 'escapeHtml',
+    `'use strict'; ${src} return restoreLastSession;`)(
+    $, state, api, { search: '' }, document, { warn: (m: string) => warned.push(m) },
+    async (p: string) => { started.push(p); },
+    async (root: unknown, ms: number, stats: unknown, o: unknown) => {
+      finished.push({ root, ms, stats, opts: o, boxThen: $('pathInput').value, scanIdThen: state.scanId });
+      state.root = root;
+    },
+    () => {}, () => {}, (m: string) => toasts.push(m), (s: string) => s,
+  ) as () => Promise<void>;
+  return { run, state, $, asked, started, finished, toasts, warned };
+}
+const gone = () => Object.assign(new Error('Unknown or expired scanId'), { status: 404, code: 'SCAN_NOT_FOUND' });
+
+test('a reload reopens the scan the server still holds — nothing is walked again (QA D57)', async () => {
+  const h = restore({
+    answer: (url) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? STATS : url === '/api/scan/s9/result' ? RESULT : assert.fail(`unexpected ${url}`)),
+  });
+  await h.run();
+  assert.deepEqual(h.asked, ['GET /api/scans', 'GET /api/scan/s9/stats', 'GET /api/scan/s9/result'], 'the list, the counters and the tree: no POST /api/scan');
+  assert.deepEqual(h.started, [], 'no scan started');
+  assert.equal(h.finished.length, 1, 'the tree is painted once, through finishScan');
+  assert.deepEqual(h.finished[0].root, RESULT.root);
+  const { scanId: _id, status: _st, ...stats } = STATS;
+  assert.deepEqual(h.finished[0].stats, stats, 'with the scan\'s own counters, as its complete frame carried them');
+  assert.equal(h.finished[0].ms, 200, 'and its own duration');
+  assert.deepEqual(h.finished[0].opts, { reopenedAt: LAST.finishedAt }, 'said to be a reopened scan, from when it finished');
+  assert.equal(h.finished[0].scanIdThen, 's9', 'the scan\'s id is the one every view asks with');
+  assert.deepEqual(h.toasts, []);
+});
+
+test('after a reload the path box names the folder on screen, not the home folder (QA D66)', async () => {
+  const h = restore({
+    answer: (url) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? STATS : RESULT),
+  });
+  await h.run();
+  assert.equal(h.finished[0].boxThen, '/Users/x/corpus', 'set before the tree is painted: Scan and Enter rescan what the map shows');
+
+  // A person already typing a folder keeps it: what they typed is what Scan should take.
+  const typing = restore({ box: '/Users/x/Movies', focused: true, answer: (url) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? STATS : RESULT) });
+  await typing.run();
+  assert.equal(typing.$('pathInput').value, '/Users/x/Movies');
+});
+
+test('a scan that has gone is scanned again, and the page says so; one that went away mid-ask too (QA D57)', async () => {
+  for (const [what, answer] of [
+    ['the counters answer 404', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? gone() : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
+    ['the tree answers 404', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? STATS : url === '/api/scan/s9/result' ? gone() : { entries: [] })],
+  ] as const) {
+    const h = restore({ answer });
+    await h.run();
+    assert.equal(h.finished.length, 0, `${what}: nothing is painted from it`);
+    assert.ok(h.asked.includes('GET /api/fs/list?path=' + encodeURIComponent(LAST.rootPath)), `${what}: the folder is pre-flighted as before`);
+    assert.deepEqual(h.started, ['/Users/x/corpus'], `${what}: and scanned again through the Scan button's path`);
+    assert.equal(h.toasts.length, 1, `${what}: not silently`);
+    assert.match(h.toasts[0], /^Your last scan of \/Users\/x\/corpus is no longer held — scanning it again\.$/, `${what}: in those words`);
+    assert.equal(h.$('pathInput').value, '/Users/x/corpus', `${what}: the box names it`);
+  }
+});
+
+test('a scan that is still held but could not be reopened is never called "no longer held" (review M2)', async () => {
+  const offline = () => Object.assign(new Error('Couldn’t reach TreeMap — its own server stopped answering.'), { status: 0, code: 'OFFLINE' });
+  const failed = () => Object.assign(new Error('The scan’s first frame could not be sent.'), { status: 500, code: 'INTERNAL' });
+  for (const [what, answer, reason] of [
+    ['the counters could not be reached', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? offline() : { entries: [] }), /server stopped answering/],
+    ['the tree answered 500', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? STATS : url === '/api/scan/s9/result' ? failed() : { entries: [] }), /could not be sent/],
+    ['the counters came back empty', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? null : { entries: [] }), /could not be read/],
+  ] as const) {
+    const h = restore({ answer });
+    await h.run();
+    assert.equal(h.finished.length, 0, `${what}: nothing painted`);
+    assert.deepEqual(h.started, ['/Users/x/corpus'], `${what}: the folder is scanned again, so the reload still shows it`);
+    assert.equal(h.toasts.length, 1);
+    assert.doesNotMatch(h.toasts[0], /no longer held|expired/, `${what}: the scan may well still be held`);
+    assert.match(h.toasts[0], /Couldn’t reopen your last scan of \/Users\/x\/corpus/, `${what}: what happened`);
+    assert.match(h.toasts[0], reason, `${what}: and why`);
+  }
+});
+
+test('the person wins the race: a scan they start while the tree downloads is not painted over', async () => {
+  const h = restore({
+    answer: (url) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? STATS : RESULT),
+    onResult: (state) => { state.scanning = true; },
+  });
+  await h.run();
+  assert.equal(h.finished.length, 0, 'the reopened tree is dropped');
+  assert.deepEqual(h.started, [], 'and nothing is scanned behind their back');
+  assert.equal(h.state.scanId, null, 'nor does its id replace theirs');
+});

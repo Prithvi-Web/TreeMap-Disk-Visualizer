@@ -641,7 +641,12 @@ async function scanStatsFor(scanId, result) {
   }
 }
 
-async function finishScan(root, durationMs, stats) {
+/**
+ * Paint a finished scan. `reopenedAt` is set when the tree is a scan the
+ * server still held, reopened after a reload (QA D57): it finished then, not
+ * now, so the card says when, and there is no "Scan complete" to announce.
+ */
+async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   endScanChrome();
   state.root = root;
   // The id that answers questions about the tree we just put on screen — set
@@ -650,7 +655,7 @@ async function finishScan(root, durationMs, stats) {
   // reads it to put the previous results back when a rescan is abandoned.
   state.settledScanId = state.scanId;
   indexTree(root);
-  state.lastScan = { when: Date.now(), durationMs };
+  state.lastScan = { when: reopenedAt || Date.now(), durationMs, reopened: !!reopenedAt };
   state.treemap.rootPath = root.path;
   state.grid.path = root.path;
   state.grid.selection.clear();
@@ -675,11 +680,13 @@ async function finishScan(root, durationMs, stats) {
   const dirs = stats ? stats.dirCount : null;
 
   $('scanStatus').classList.remove('error');
-  $('scanStatus').innerHTML = icon('checkCircle', 14) +
-    `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
-    `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
-  $('scanAnnounce').textContent = (state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ') +
-    (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
+  $('scanStatus').innerHTML = icon('checkCircle', 14) + (reopenedAt
+    ? `<span class="num">Reopened the scan from ${escapeHtml(formatClock(reopenedAt))} — ` +
+      `${files === null ? '' : `<b>${formatCount(files)}</b> files, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
+    : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
+      `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
+  const said = reopenedAt ? 'Reopened the last scan — ' : state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ';
+  $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
   // scan's numbers, which is the same lie in slower motion: the headline and the
   // engine row go quiet while Files and Folders keep stating another folder's
@@ -692,13 +699,14 @@ async function finishScan(root, durationMs, stats) {
   };
   setStat($('statFiles'), files);
   setStat($('statDirs'), dirs);
-  FxNum.rollText($('statLastScan'), formatClock(Date.now()));
+  FxNum.rollText($('statLastScan'), formatClock(reopenedAt || Date.now()));
   renderDiskNotes();
   // finishScan runs twice per scan by design — the index-first instant paint
   // (scanId still null, see the gate below), then the real completion. One
   // scan gets ONE completion toast, on the pass that actually completed (QA D3).
   // FX: the completion pulse rides the same gate — one crossing, one pulse.
-  if (state.scanId) {
+  // A reopened scan completed before the reload, and was announced then.
+  if (state.scanId && !reopenedAt) {
     // Nothing to celebrate about 0 B in 0 files: on a Mac that is what a
     // folder macOS refused to open looks like, and the refused-folder check
     // (renderRefusedFolders, on TOPIC.scan) speaks for it once it has looked.

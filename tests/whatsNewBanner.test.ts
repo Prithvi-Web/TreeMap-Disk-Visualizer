@@ -55,6 +55,8 @@ function browser() {
  */
 async function scanFinished(b: ReturnType<typeof browser>, opts: {
   engine: string; settings: Settings; snaps: Snap[]; diff?: Record<string, unknown>; scanId?: string | null;
+  /** finishScan was told the scan was reopened after a reload (QA D57). */
+  reopened?: boolean;
 }) {
   const src = slice('/* ─────────────── "What\'s new since last scan" (Dashboard banner) ─────────────── */', "$('whatsNewClose').addEventListener");
   const els: Record<string, El> = {};
@@ -63,7 +65,7 @@ async function scanFinished(b: ReturnType<typeof browser>, opts: {
   const last = opts.snaps[opts.snaps.length - 1];
   const state = {
     root: { path: '/c' }, scanId: opts.scanId === undefined ? 'scan-' + last.id : opts.scanId,
-    scanStats: { engine: opts.engine }, lastScan: { when: last.takenAt },
+    scanStats: { engine: opts.engine }, lastScan: { when: last.takenAt, reopened: opts.reopened === true },
     whatsNew: { seq: 0, dismissed: false },
   };
   const api = async (url: string) => {
@@ -159,6 +161,15 @@ test('the record is per snapshot: reopening the same scan compares the same way,
   const again = await scanFinished(b, { engine: 'turbo-walker', settings: NO_RULES, snaps: [a, bSnap], diff });
   assert.match(again.html, /26 files no longer scanned<\/span>/, 'the scan is described by the rules it ran with');
   assert.match(again.html, /your “Don’t scan” rules changed/);
+  // A scan reopened after a reload that has no record is NOT described by
+  // today's settings: a rule added since would make the next scan with that
+  // rule compare as "the same" and say "freed" again (review M1).
+  const b3 = browser();
+  const old = snap('old', T0, 10_000, 100); // its banner never ran here
+  const reopened = await scanFinished(b3, { engine: 'native', settings: ONE_RULE, snaps: [a, old], reopened: true, diff });
+  assert.equal(b3.store.size, 0, 'nothing recorded for a reopened scan');
+  assert.doesNotMatch(reopened.html, /freed|removed/, 'and it is compared as unknown');
+  assert.ok(!reopened.asked.includes('/api/settings'), 'today\'s settings are not even read for it');
   // A tree painted from the index has no scan behind it, so it records nothing for the snapshot it finds.
   const b2 = browser();
   await scanFinished(b2, { engine: 'index', settings: NO_RULES, snaps: [a], scanId: null });

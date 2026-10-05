@@ -110,7 +110,7 @@ test('dates are English too, with the machine\'s clock and time zone: every date
   assert.match(prelude, /const DATE_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ year:'numeric', month:'short', day:'numeric' \}\);/);
   assert.match(prelude, /const WHEN_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: HOUR_CYCLE \}\);/);
   assert.match(prelude, /const CLOCK_FMT = new Intl\.DateTimeFormat\(UI_LOCALE, \{ hour: '2-digit', minute: '2-digit', hourCycle: HOUR_CYCLE \}\);\nfunction formatClock\(ms\) \{ return CLOCK_FMT\.format\(ms\); \}/, 'a clock alone, same words and clock as formatWhen');
-  assert.match(read('src', 'ui', 'app', '045-persistent-live-index.js'), /rollText\(\$\('statLastScan'\), formatClock\(Date\.now\(\)\)\)/, 'the "last scan" tile goes through it');
+  assert.match(read('src', 'ui', 'app', '045-persistent-live-index.js'), /rollText\(\$\('statLastScan'\), formatClock\((?:reopenedAt \|\| )?Date\.now\(\)\)\)/, 'the "last scan" tile goes through it (a reopened scan\'s own time too, QA D57)');
   const formatClock = lift<(ms: number) => string>(['UI_LOCALE', 'HOUR_CYCLE', 'CLOCK_FMT', 'formatClock'], 'formatClock');
   assert.match(formatClock(Date.UTC(2026, 8, 6, 22, 31)), /^\d\d:\d\d(?: [AP]M)?$/, 'ASCII digits, the machine\'s own clock');
   assert.match(read('src', 'ui', 'app', '135-calendar-heatmap.js'), /toLocaleDateString\(UI_LOCALE, \{ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' \}\)/, 'the heatmap day');

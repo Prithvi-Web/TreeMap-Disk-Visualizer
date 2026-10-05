@@ -7941,8 +7941,11 @@ async function loadWhatsNew() {
   const finishedBy = state.lastScan ? state.lastScan.when : Date.now();
   // This scan's engine, read before the first await: another scan can replace
   // the stats meanwhile. A tree painted from the index says 'index', which
-  // scanCoverageOf refuses: no scan counted it.
-  const engine = state.scanStats ? state.scanStats.engine : null;
+  // scanCoverageOf refuses: no scan counted it. Nor is a scan reopened after a
+  // reload described by today's settings (review M1): a rule added since
+  // would make the next scan with it compare as the same, and say "freed".
+  const reopened = !!(state.lastScan && state.lastScan.reopened);
+  const engine = state.scanStats && !reopened ? state.scanStats.engine : null;
   try {
     let snaps = null;
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -7957,9 +7960,9 @@ async function loadWhatsNew() {
     if (!snaps) return;
     const curr = snaps[snaps.length - 1];
     // What this scan counted, kept beside its snapshot for the next banner.
-    // A scan reopened later is described by what it ran with, not by today's
-    // settings. "Don't scan" rules apply from the next scan, so the settings
-    // read now are the ones this scan ran with.
+    // A scan reopened later is described by what it ran with, or not at all.
+    // "Don't scan" rules apply from the next scan, so for a scan that has just
+    // finished the settings read now are the ones it ran with.
     let after = coverageFor(rootPath, curr.id);
     if (!after && engine) {
       const settings = await api('/api/settings').catch(() => null);
@@ -8968,7 +8971,12 @@ async function scanStatsFor(scanId, result) {
   }
 }
 
-async function finishScan(root, durationMs, stats) {
+/**
+ * Paint a finished scan. `reopenedAt` is set when the tree is a scan the
+ * server still held, reopened after a reload (QA D57): it finished then, not
+ * now, so the card says when, and there is no "Scan complete" to announce.
+ */
+async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   endScanChrome();
   state.root = root;
   // The id that answers questions about the tree we just put on screen — set
@@ -8977,7 +8985,7 @@ async function finishScan(root, durationMs, stats) {
   // reads it to put the previous results back when a rescan is abandoned.
   state.settledScanId = state.scanId;
   indexTree(root);
-  state.lastScan = { when: Date.now(), durationMs };
+  state.lastScan = { when: reopenedAt || Date.now(), durationMs, reopened: !!reopenedAt };
   state.treemap.rootPath = root.path;
   state.grid.path = root.path;
   state.grid.selection.clear();
@@ -9002,11 +9010,13 @@ async function finishScan(root, durationMs, stats) {
   const dirs = stats ? stats.dirCount : null;
 
   $('scanStatus').classList.remove('error');
-  $('scanStatus').innerHTML = icon('checkCircle', 14) +
-    `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
-    `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
-  $('scanAnnounce').textContent = (state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ') +
-    (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
+  $('scanStatus').innerHTML = icon('checkCircle', 14) + (reopenedAt
+    ? `<span class="num">Reopened the scan from ${escapeHtml(formatClock(reopenedAt))} — ` +
+      `${files === null ? '' : `<b>${formatCount(files)}</b> files, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
+    : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
+      `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
+  const said = reopenedAt ? 'Reopened the last scan — ' : state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ';
+  $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
   // scan's numbers, which is the same lie in slower motion: the headline and the
   // engine row go quiet while Files and Folders keep stating another folder's
@@ -9019,13 +9029,14 @@ async function finishScan(root, durationMs, stats) {
   };
   setStat($('statFiles'), files);
   setStat($('statDirs'), dirs);
-  FxNum.rollText($('statLastScan'), formatClock(Date.now()));
+  FxNum.rollText($('statLastScan'), formatClock(reopenedAt || Date.now()));
   renderDiskNotes();
   // finishScan runs twice per scan by design — the index-first instant paint
   // (scanId still null, see the gate below), then the real completion. One
   // scan gets ONE completion toast, on the pass that actually completed (QA D3).
   // FX: the completion pulse rides the same gate — one crossing, one pulse.
-  if (state.scanId) {
+  // A reopened scan completed before the reload, and was announced then.
+  if (state.scanId && !reopenedAt) {
     // Nothing to celebrate about 0 B in 0 files: on a Mac that is what a
     // folder macOS refused to open looks like, and the refused-folder check
     // (renderRefusedFolders, on TOPIC.scan) speaks for it once it has looked.
@@ -34094,11 +34105,15 @@ loadCapabilities();
 loadNotes();
 
 /* Session restore: the app opens where it left off. The newest completed scan
-   comes back through the exact path the Scan button takes — painted instantly
-   from the live index when it can be, with the reconciling rescan running
-   quietly underneath. The welcome screen is only for true first runs. Restore
-   must never make boot worse: every failure is swallowed to a warn and the
-   app simply starts empty, exactly as before this feature existed. */
+   is still in the server's memory — /api/scans lists nothing else — so it is
+   REOPENED: its counters and its first frame, painted through finishScan as
+   its completion was, and no walk (QA D57: every reload used to walk the
+   folder again). Only a scan that has gone by the time it is asked for (its
+   results expired, or the record was evicted) is scanned again, through the
+   exact path the Scan button takes, and the page says so. The welcome screen
+   is only for true first runs. Restore must never make boot worse: every
+   failure is swallowed to a warn and the app simply starts empty, exactly as
+   before this feature existed. */
 /**
  * `?path=<folder>` — scan that folder on boot instead of restoring.
  *
@@ -34134,14 +34149,69 @@ async function restoreLastSession() {
     if (!last || !last.rootPath) return;               // true first run
     if (last.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
     if (state.root || state.scanning) return;          // the user beat us to it
+    const reopen = await reopenScan(last);
+    if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
     // Pre-flight with the picker's own listing endpoint, so a moved or
     // deleted folder falls back to the welcome screen instead of a boot error.
     await api('/api/fs/list?path=' + encodeURIComponent(last.rootPath));
     if (state.root || state.scanning) return;
+    showRestoredPath(last.rootPath);
+    toast(reopen.outcome === 'gone'
+      ? `Your last scan of ${last.rootPath} is no longer held — scanning it again.`
+      : `Couldn’t reopen your last scan of ${last.rootPath} (${reopen.reason}) — scanning it again.`);
     await startScan(last.rootPath);
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
   }
+}
+
+/**
+ * The Scan card names the folder the restore puts on screen (QA D66). Left to
+ * loadSystem it said the home folder beside a map of another, and Scan or
+ * Enter would have walked the home folder. Not while the person is typing in
+ * it: what they typed is what Scan should take.
+ */
+function showRestoredPath(p) {
+  const box = $('pathInput');
+  if (document.activeElement === box) return;
+  box.value = p;
+  maybeShowFastRescan();
+}
+
+/**
+ * Reopen a completed scan the server still holds (QA D57): its counters from
+ * /stats, its tree from /result — the same first frame its stream carried —
+ * painted through finishScan, which is told it is a reopening (no "Scan
+ * complete", and when it finished). Answers `{ outcome }`: 'reopened';
+ * 'superseded' when the person started something while it was being
+ * fetched, which then owns the screen; 'gone' when the record is no longer
+ * there (a 404: expired or evicted); or 'failed', with the `reason`, when the
+ * asking failed in a way that says nothing about whether the scan is still
+ * held (review M2) — the caller scans again either way, and says which.
+ */
+async function reopenScan(last) {
+  const id = encodeURIComponent(last.scanId);
+  const unreadable = 'the server’s answer could not be read';
+  let stats;
+  let result;
+  try {
+    const body = await api(`/api/scan/${id}/stats`);
+    if (!body) return { outcome: 'failed', reason: unreadable };
+    const { scanId: _scanId, status, ...rest } = body;
+    if (status !== 'complete') return { outcome: 'gone' };
+    stats = rest;
+    result = await api(`/api/scan/${id}/result`);
+  } catch (e) {
+    if (e && (e.status === 404 || e.code === 'SCAN_NOT_FOUND')) return { outcome: 'gone' };
+    return { outcome: 'failed', reason: (e && e.message) || unreadable };
+  }
+  if (!result) return { outcome: 'failed', reason: unreadable };
+  if (result.status !== 'complete' || !result.root) return { outcome: 'gone' };
+  if (state.root || state.scanning) return { outcome: 'superseded' };
+  state.scanId = last.scanId;
+  showRestoredPath(last.rootPath);
+  await finishScan(result.root, stats.durationMs, stats, { reopenedAt: last.finishedAt || Date.now() });
+  return { outcome: 'reopened' };
 }
 void restoreLastSession();
 

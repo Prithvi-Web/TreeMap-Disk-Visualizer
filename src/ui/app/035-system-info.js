@@ -287,8 +287,11 @@ async function loadWhatsNew() {
   const finishedBy = state.lastScan ? state.lastScan.when : Date.now();
   // This scan's engine, read before the first await: another scan can replace
   // the stats meanwhile. A tree painted from the index says 'index', which
-  // scanCoverageOf refuses: no scan counted it.
-  const engine = state.scanStats ? state.scanStats.engine : null;
+  // scanCoverageOf refuses: no scan counted it. Nor is a scan reopened after a
+  // reload described by today's settings (review M1): a rule added since
+  // would make the next scan with it compare as the same, and say "freed".
+  const reopened = !!(state.lastScan && state.lastScan.reopened);
+  const engine = state.scanStats && !reopened ? state.scanStats.engine : null;
   try {
     let snaps = null;
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -303,9 +306,9 @@ async function loadWhatsNew() {
     if (!snaps) return;
     const curr = snaps[snaps.length - 1];
     // What this scan counted, kept beside its snapshot for the next banner.
-    // A scan reopened later is described by what it ran with, not by today's
-    // settings. "Don't scan" rules apply from the next scan, so the settings
-    // read now are the ones this scan ran with.
+    // A scan reopened later is described by what it ran with, or not at all.
+    // "Don't scan" rules apply from the next scan, so for a scan that has just
+    // finished the settings read now are the ones it ran with.
     let after = coverageFor(rootPath, curr.id);
     if (!after && engine) {
       const settings = await api('/api/settings').catch(() => null);

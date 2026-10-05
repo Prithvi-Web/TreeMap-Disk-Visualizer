@@ -275,11 +275,15 @@ loadCapabilities();
 loadNotes();
 
 /* Session restore: the app opens where it left off. The newest completed scan
-   comes back through the exact path the Scan button takes — painted instantly
-   from the live index when it can be, with the reconciling rescan running
-   quietly underneath. The welcome screen is only for true first runs. Restore
-   must never make boot worse: every failure is swallowed to a warn and the
-   app simply starts empty, exactly as before this feature existed. */
+   is still in the server's memory — /api/scans lists nothing else — so it is
+   REOPENED: its counters and its first frame, painted through finishScan as
+   its completion was, and no walk (QA D57: every reload used to walk the
+   folder again). Only a scan that has gone by the time it is asked for (its
+   results expired, or the record was evicted) is scanned again, through the
+   exact path the Scan button takes, and the page says so. The welcome screen
+   is only for true first runs. Restore must never make boot worse: every
+   failure is swallowed to a warn and the app simply starts empty, exactly as
+   before this feature existed. */
 /**
  * `?path=<folder>` — scan that folder on boot instead of restoring.
  *
@@ -315,14 +319,69 @@ async function restoreLastSession() {
     if (!last || !last.rootPath) return;               // true first run
     if (last.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
     if (state.root || state.scanning) return;          // the user beat us to it
+    const reopen = await reopenScan(last);
+    if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
     // Pre-flight with the picker's own listing endpoint, so a moved or
     // deleted folder falls back to the welcome screen instead of a boot error.
     await api('/api/fs/list?path=' + encodeURIComponent(last.rootPath));
     if (state.root || state.scanning) return;
+    showRestoredPath(last.rootPath);
+    toast(reopen.outcome === 'gone'
+      ? `Your last scan of ${last.rootPath} is no longer held — scanning it again.`
+      : `Couldn’t reopen your last scan of ${last.rootPath} (${reopen.reason}) — scanning it again.`);
     await startScan(last.rootPath);
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
   }
+}
+
+/**
+ * The Scan card names the folder the restore puts on screen (QA D66). Left to
+ * loadSystem it said the home folder beside a map of another, and Scan or
+ * Enter would have walked the home folder. Not while the person is typing in
+ * it: what they typed is what Scan should take.
+ */
+function showRestoredPath(p) {
+  const box = $('pathInput');
+  if (document.activeElement === box) return;
+  box.value = p;
+  maybeShowFastRescan();
+}
+
+/**
+ * Reopen a completed scan the server still holds (QA D57): its counters from
+ * /stats, its tree from /result — the same first frame its stream carried —
+ * painted through finishScan, which is told it is a reopening (no "Scan
+ * complete", and when it finished). Answers `{ outcome }`: 'reopened';
+ * 'superseded' when the person started something while it was being
+ * fetched, which then owns the screen; 'gone' when the record is no longer
+ * there (a 404: expired or evicted); or 'failed', with the `reason`, when the
+ * asking failed in a way that says nothing about whether the scan is still
+ * held (review M2) — the caller scans again either way, and says which.
+ */
+async function reopenScan(last) {
+  const id = encodeURIComponent(last.scanId);
+  const unreadable = 'the server’s answer could not be read';
+  let stats;
+  let result;
+  try {
+    const body = await api(`/api/scan/${id}/stats`);
+    if (!body) return { outcome: 'failed', reason: unreadable };
+    const { scanId: _scanId, status, ...rest } = body;
+    if (status !== 'complete') return { outcome: 'gone' };
+    stats = rest;
+    result = await api(`/api/scan/${id}/result`);
+  } catch (e) {
+    if (e && (e.status === 404 || e.code === 'SCAN_NOT_FOUND')) return { outcome: 'gone' };
+    return { outcome: 'failed', reason: (e && e.message) || unreadable };
+  }
+  if (!result) return { outcome: 'failed', reason: unreadable };
+  if (result.status !== 'complete' || !result.root) return { outcome: 'gone' };
+  if (state.root || state.scanning) return { outcome: 'superseded' };
+  state.scanId = last.scanId;
+  showRestoredPath(last.rootPath);
+  await finishScan(result.root, stats.durationMs, stats, { reopenedAt: last.finishedAt || Date.now() });
+  return { outcome: 'reopened' };
 }
 void restoreLastSession();
 

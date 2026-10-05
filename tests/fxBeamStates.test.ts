@@ -389,7 +389,9 @@ test('the completion pulse rides finishScan’s scanId gate — never the instan
   // folder macOS refused to open looks like, and must not be toasted as a
   // clean success), so an adjacency regex failed on a change that never moved
   // the pulse. Brace-match the gate instead and ask what is inside it.
-  const open = finish.indexOf('if (state.scanId) {');
+  // A scan reopened after a reload (QA D57) completed before it, and is not
+  // celebrated twice: the gate is a real scanId that has just completed.
+  const open = finish.indexOf('if (state.scanId && !reopenedAt) {');
   assert.notEqual(open, -1, 'finishScan still gates its completion work on a real scanId');
   let depth = 0, end = -1;
   for (let i = finish.indexOf('{', open); i < finish.length; i++) {

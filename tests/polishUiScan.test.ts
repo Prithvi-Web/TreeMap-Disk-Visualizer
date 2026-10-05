@@ -320,7 +320,7 @@ test('without a bridge that opened the pane, the button says the path in words �
  * plus the names later rounds added. `indexBuilds` records the arguments of
  * every background index build it starts.
  */
-function finishScanHarness() {
+function finishScanHarness(over: Record<string, unknown> = {}) {
   const src = slice('async function finishScan', 'function renderDiskNotes()');
   const { $, els } = makeDom();
   const toasts: string[] = [];
@@ -340,10 +340,11 @@ function finishScanHarness() {
     renderGrowthProjection: noop, loadBudgets: noop, refreshTimebar: noop, enableLive: noop, seedNodes: noop,
     setTimeout: noop, fxDonutLoadingSync: noop, renderRefusedFolders: noop, probeRefusedFolders: async () => {},
     armScanExpiry: noop, formatClock: () => '10:31 PM',
+    ...over,
   };
   const finishScan = new Function(...Object.keys(deps), `'use strict'; ${src} return finishScan;`)(
     ...Object.values(deps),
-  ) as (root: unknown, ms: number, stats: unknown) => Promise<void>;
+  ) as (root: unknown, ms: number, stats: unknown, opts?: { reopenedAt?: number }) => Promise<void>;
   return { finishScan, els, toasts, state, indexBuilds };
 }
 
@@ -359,6 +360,31 @@ test('finishScan hands the index build the folder and the scan\'s own stats (Tra
   assert.equal(h.indexBuilds[0][1], stats, 'with the stats that scan finished with');
   await h.finishScan({ path: '', size: 1 }, 50, stats);
   assert.equal(h.indexBuilds.length, 1, 'a tree with no folder path starts none');
+});
+
+test('a scan reopened after a reload says when it ran, and is not announced as a new completion (QA D57)', async () => {
+  const rolled: string[] = [];
+  const pulses: number[] = [];
+  const h = finishScanHarness({
+    formatClock: (ms: number) => `clock(${ms})`,
+    FxNum: { rollText: (_el: unknown, t: string) => { rolled.push(t); } },
+    fxScanDonePulse: () => { pulses.push(1); },
+  });
+  const F = 1_700_000_000_000;
+  await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 200, { fileCount: 101034, durationMs: 200 }, { reopenedAt: F });
+  assert.deepEqual(h.toasts, [], 'no "Scan complete": it completed before the reload, and said so then');
+  assert.deepEqual(pulses, [], 'nor the completion pulse');
+  assert.match(h.els.scanStatus.innerHTML, /Reopened the scan from clock\(1700000000000\) — <b>101034<\/b> files, 8800 B in \/Users\/x\/corpus/,
+    'the card says it is the scan from then, not a scan just made');
+  assert.match(h.els.scanAnnounce.textContent, /^Reopened the last scan — /);
+  assert.deepEqual(rolled, [`clock(${F})`], 'Last scan is when it ran');
+  assert.equal((h.state.lastScan as { when: number }).when, F, 'and What\'s new looks for that scan\'s snapshot');
+  assert.equal((h.state.lastScan as { reopened: boolean }).reopened, true, 'knowing it was reopened, so today\'s settings do not describe it (review M1)');
+  // A scan that has just completed still announces itself.
+  await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 200, { fileCount: 101034, durationMs: 200 });
+  assert.equal(h.toasts.length, 1);
+  assert.match(h.els.scanStatus.innerHTML, /Scanned <b>101034<\/b> files in/);
+  assert.equal((h.state.lastScan as { reopened: boolean }).reopened, false);
 });
 
 test('a refused scan is never toasted as a clean success, and the tour refuses the "clean" card', async () => {
