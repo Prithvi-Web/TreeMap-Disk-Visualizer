@@ -2790,7 +2790,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '202': jsonResponse('Restore started', obj({ jobId: str() }, ['jobId'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
-      '409': errorResponse('PATH_OCCUPIED, ALREADY_RESTORED, PAYLOAD_GONE, MANIFEST_UNREADABLE or CAPSULE_RECORD_INVALID (the entry\'s id, its original place or its manifest\'s names are not what TreeMap records) — restoring never overwrites what is there now, and never follows a record TreeMap did not write'),
+      '409': errorResponse('PATH_OCCUPIED, ALREADY_RESTORED, PAYLOAD_GONE, MANIFEST_UNREADABLE, RESTORE_RUNNING (a restore of that copy is already under way) or CAPSULE_RECORD_INVALID (the entry\'s id, its original place or its manifest\'s names are not what TreeMap records) — restoring never overwrites what is there now, and never follows a record TreeMap did not write'),
     },
   },
   {
@@ -2803,6 +2803,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Forgotten', obj({ deleted: bool(), bytesFreed: int() }, ['deleted', 'bytesFreed'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
+      '409': errorResponse('RESTORE_RUNNING — a restore is reading that copy right now; it can be forgotten once the restore has finished'),
     },
   },
   {
@@ -2929,7 +2930,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         unrestorable: arr(opaque('{ path, reason } — an item of the run whose Time Capsule copy is gone (evicted to make room, or missing), which no undo can put back; the run is then not marked undone')),
       }, ['jobId', 'entryCount'])),
       '404': errorResponse('RUN_NOT_FOUND'),
-      '409': errorResponse('NOTHING_TO_UNDO (the sentence says what the disk showed of each copy still held), ALREADY_UNDONE or CAPSULE_EMPTY — refused rather than half-undone'),
+      '409': errorResponse('NOTHING_TO_UNDO (the sentence says what the disk showed of each copy still held), ALREADY_UNDONE, CAPSULE_EMPTY or RESTORE_RUNNING (an undo or restore of the same copies is already under way) — refused rather than half-undone'),
     },
   },
   {
@@ -3136,7 +3137,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         }, ['jobId', 'entryCount', 'bytesTotal']),
       ),
       '400': errorResponse('RUN_ID_REQUIRED'),
-      '409': errorResponse('ALREADY_UNDONE — an undo already put back everything it could (and the sentence counts any item whose copy is gone); CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — no copy it holds can be put back now, and the sentence says what the disk showed of each: the same file still in its place, never deleted, something else standing there, or a place that could not be looked at'),
+      '409': errorResponse('ALREADY_UNDONE — an undo already put back everything it could (and the sentence counts any item whose copy is gone); CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — no copy it holds can be put back now, and the sentence says what the disk showed of each: the same file still in its place, never deleted, something else standing there, or a place that could not be looked at; RESTORE_RUNNING — an undo or restore of the same copies is already under way'),
     },
   },
 

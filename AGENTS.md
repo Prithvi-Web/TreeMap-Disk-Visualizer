@@ -428,7 +428,9 @@ OpenAPI 3 spec).
      deleted unprotected. The copies of a run still under way (every chunk of
      a chunked commit included) are never evicted to make room, so a batch
      bigger than the capsule leaves its later items undeleted (`CAPSULE_FULL`)
-     rather than dropping its own earlier copies; and right before each item's
+     rather than dropping its own earlier copies. A copy a restore or an undo
+     is reading is held for it the same way until that job ends — never
+     evicted, forgotten or expired from under it; and right before each item's
      trash step its copy is looked for again — one that is gone by then leaves
      the item in place (`CAPSULE_COPY_GONE`) — and the item's metadata is walked
      again and compared with what was copied: a file added, removed, rewritten
@@ -482,7 +484,8 @@ read-what-you-saw) permission to act.
   `POST /api/trash/empty`, `POST /api/system/snapshots/purge` and
   `POST /api/git/gc` each require `{ "confirm": true }`. Two more cannot be
   taken back and take no confirm flag, so confirm with the user first:
-  `DELETE /api/timecapsule/{id}` discards a Time Capsule copy for good, and
+  `DELETE /api/timecapsule/{id}` discards a Time Capsule copy for good
+  (refused with `409 RESTORE_RUNNING` while a restore is reading it), and
   `POST /api/zombie-handles/restart` quits a program, which can lose its
   unsaved work.
 - **The scanned-root rule.** Endpoints that read, open, move or delete a path

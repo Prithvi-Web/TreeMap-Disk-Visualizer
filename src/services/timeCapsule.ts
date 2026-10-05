@@ -436,10 +436,58 @@ function ofRunInFlight(entry: TimeCapsuleEntry): boolean {
   return typeof entry.runId === 'string' && runsInFlight.has(entry.runId);
 }
 
+/**
+ * The copies a restore job is reading, by entry id (FG3g H1): pinned from the moment the restore is
+ * accepted until its job ends, however it ends. Only deletion runs were pinned, so a capture could
+ * evict a copy a running restore had not reached yet — and "Forget" or the expiry sweep could remove
+ * one — and the restore then stopped on a missing file, the copy it was putting back gone. A second
+ * restore of a copy in here is refused, so one id is never held twice.
+ */
+const restoresInFlight = new Set<string>();
+
+/**
+ * Every removal of a copy a record still names (`dropPayload`, and a record dropped before its
+ * folder is), and a restore's look at whether the copies it asks for are there before it pins them,
+ * one at a time (FG3g H1): so a restore never accepts a copy whose removal is under way, and nothing
+ * removes a copy a restore has accepted. Taken inside the index lock where both are held, never the
+ * other way round; a restore is accepted under this lock alone, so it never waits for a capture's copying.
+ */
+const payloadLock = new AsyncMutex();
+
+function withPayloadLock<T>(fn: () => Promise<T>): Promise<T> {
+  return payloadLock.run(fn);
+}
+
+/** Test-only: how many removals of a copy, or restores being accepted, are waiting for the one under way (FG3g H1). */
+export function capsulePayloadWaitersForTests(): number {
+  return payloadLock.waiting;
+}
+
+/**
+ * Test-only: awaited by a capture that must evict, with the ids it is about to evict, after planning
+ * and before removing anything (FG3g H1): a test holds an eviction there to show what overlaps it.
+ * The suite's ForTests idiom: returns the function that removes it.
+ */
+let beforeEvictionForTests: ((victims: string[]) => Promise<void>) | null = null;
+export function setBeforeEvictionForTests(hook: (victims: string[]) => Promise<void>): () => void {
+  beforeEvictionForTests = hook;
+  return () => { beforeEvictionForTests = null; };
+}
+
+/** Whether an entry's copy is in use: by a deletion run under way, or by a restore. Never evicted. */
+function inUse(entry: TimeCapsuleEntry): boolean {
+  return ofRunInFlight(entry) || restoresInFlight.has(entry.id);
+}
+
+/** The refusal of a removal, or of a second restore, of a copy a restore is reading (FG3g H1). */
+function restoreRunning(entry: TimeCapsuleEntry, what: string): AppError {
+  return new AppError(409, 'RESTORE_RUNNING', `“${entry.name}” is being restored right now, so ${what}. Try again once that restore has finished.`);
+}
+
 /** The sentence for an item that does not fit: beside the copies still pinned, or at all. */
 function doesNotFitSentence(bytes: number, capBytes: number, pinnedBytes: number, verb: 'was' | 'will be'): string {
   const beside = pinnedBytes > 0 && bytes <= capBytes
-    ? `, and ${formatBytes(pinnedBytes)} of that holds the copies of items whose deletion is still under way, which are never dropped to make room`
+    ? `, and ${formatBytes(pinnedBytes)} of that holds copies in use — of items whose deletion is still under way, or being restored — which are never dropped to make room`
     : '';
   return `Protecting it needs ${formatBytes(bytes)}, but the Time Capsule can only hold ${formatBytes(capBytes)}${beside}. ` +
     `It ${verb} left alone rather than deleted without a backup.`;
@@ -659,27 +707,33 @@ async function capture(
     return { path: original, protected: false, bytes: 0, code, detail };
   }
 
-  const { evict, fits } = planEviction(store.entries, capBytes, walked.bytes, ofRunInFlight);
-  if (!fits) {
-    const detail = doesNotFitSentence(walked.bytes, capBytes, pinnedBytesOf(store.entries, ofRunInFlight), 'was');
+  // Planned and made under the payload lock (FG3g H1), so the copies a restore has accepted are
+  // pinned, and a restore never accepts one this eviction is removing.
+  const room = await withPayloadLock(async () => {
+    const plan = planEviction(store.entries, capBytes, walked.bytes, inUse);
+    if (!plan.fits) return { fits: false, pinnedBytes: pinnedBytesOf(store.entries, inUse) };
+    if (beforeEvictionForTests && plan.evict.length > 0) await beforeEvictionForTests(plan.evict.map((e) => e.id));
+    // Make room first — the eviction is real and permanent, so it is recorded
+    // where the user can see what it cost them.
+    for (const victim of plan.evict) {
+      await dropPayload(victim);
+      recordEvent(store, {
+        at: Date.now(),
+        kind: 'evicted',
+        name: victim.name,
+        originalPath: victim.originalPath,
+        sizeBytes: victim.sizeBytes,
+        detail: `Removed from the Time Capsule to make room for ${name}. It can no longer be restored from here.`,
+      });
+    }
+    return { fits: true, pinnedBytes: 0 };
+  });
+  if (!room.fits) {
+    const detail = doesNotFitSentence(walked.bytes, capBytes, room.pinnedBytes, 'was');
     recordEvent(store, {
       at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: walked.bytes, detail,
     });
     return { path: original, protected: false, bytes: walked.bytes, code: 'CAPSULE_FULL', detail };
-  }
-
-  // Make room first — the eviction is real and permanent, so it is recorded
-  // where the user can see what it cost them.
-  for (const victim of evict) {
-    await dropPayload(victim);
-    recordEvent(store, {
-      at: Date.now(),
-      kind: 'evicted',
-      name: victim.name,
-      originalPath: victim.originalPath,
-      sizeBytes: victim.sizeBytes,
-      detail: `Removed from the Time Capsule to make room for ${name}. It can no longer be restored from here.`,
-    });
   }
 
   const id = crypto.randomUUID();
@@ -901,9 +955,9 @@ export async function protectItems(
 /** The run id a dry run gives the entries it stands in for the real run's copies (`planProtection`). */
 const PLAN_RUN_ID = 'plan';
 
-/** Pinned in a dry run: the items it has accepted, and the copies of runs still under way. */
+/** Pinned in a dry run: the items it has accepted, and the copies in use — by runs still under way, or restores (FG3g H1). */
 function plannedOrInFlight(entry: TimeCapsuleEntry): boolean {
-  return entry.runId === PLAN_RUN_ID || ofRunInFlight(entry);
+  return entry.runId === PLAN_RUN_ID || inUse(entry);
 }
 
 /** What a dry run says about one item it was asked to protect (v4 §4.4). */
@@ -1435,12 +1489,13 @@ async function dropSupersededUnverified(kept: ProtectionOutcome[]): Promise<void
   const keptIds = new Set(kept.map((o) => o.entryId).filter((id): id is string => typeof id === 'string'));
   if (keptIds.size === 0) return;
   try {
-    const superseded = await withCapsuleStore(async () => {
+    // The records go under the payload lock (FG3g H1): a copy a restore is reading is never dropped.
+    const superseded = await withCapsuleStore(async () => withPayloadLock(async () => {
       const store = await loadStore();
       const newestDigest = new Map(store.entries.filter((e) => keptIds.has(e.id)).map((e) => [e.originalPath, e.digest]));
       const found = new Set<string>();
       for (const e of store.entries) {
-        if (keptIds.has(e.id) || !e.hasPayload || e.restoredAt || !isEntryId(e.id)) continue;
+        if (keptIds.has(e.id) || !e.hasPayload || e.restoredAt || !isEntryId(e.id) || restoresInFlight.has(e.id)) continue;
         if (newestDigest.get(e.originalPath) !== e.digest) continue;
         if (await fsp.lstat(path.join(entryDir(e.id), UNVERIFIED_MARK)).then(() => true, () => false)) found.add(e.id);
       }
@@ -1448,7 +1503,7 @@ async function dropSupersededUnverified(kept: ProtectionOutcome[]): Promise<void
       store.entries = store.entries.filter((e) => !found.has(e.id));
       await saveStore(store);
       return found;
-    });
+    }));
     for (const id of superseded) await fsp.rm(entryDir(id), { recursive: true, force: true });
   } catch (err) {
     console.error('[treemap] time capsule: older unconfirmed copies of the same files could not be dropped:', err);
@@ -1559,29 +1614,36 @@ export async function getCapsuleEntry(id: string): Promise<TimeCapsuleEntry | un
   return store.entries.find((e) => e.id === id);
 }
 
-/** Forget one entry and its payload, at the user's request. */
+/**
+ * Forget one entry and its payload, at the user's request. Refused while a restore is reading its
+ * copy (FG3g H1): forgotten then, it took the copy from under the restore.
+ */
 export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean; bytesFreed: number }> {
-  return withCapsuleStore(async () => {
+  return withCapsuleStore(async () => withPayloadLock(async () => {
     const store = await loadStore();
     const entry = store.entries.find((e) => e.id === id);
     if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+    if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it cannot be forgotten now');
     const bytesFreed = await dropPayload(entry);
     store.entries = store.entries.filter((e) => e.id !== id);
     await saveStore(store);
     return { deleted: true, bytesFreed };
-  });
+  }));
 }
 
 /* ---------------- retention + reconciliation ---------------- */
 
-/** Sweep out everything past the retention window. Returns how many went. */
+/**
+ * Sweep out everything past the retention window. Returns how many went. A copy a restore is
+ * reading is passed over until a later sweep (FG3g H1): swept now, it went from under the restore.
+ */
 export async function pruneExpired(now = Date.now()): Promise<{ removed: number; bytesFreed: number }> {
   const { timeCapsuleRetentionDays } = await getSettings();
   const cutoff = now - timeCapsuleRetentionDays * 86_400_000;
 
-  return withCapsuleStore(async () => {
+  return withCapsuleStore(async () => withPayloadLock(async () => {
     const store = await loadStore();
-    const expired = store.entries.filter((e) => e.capturedAt < cutoff);
+    const expired = store.entries.filter((e) => e.capturedAt < cutoff && !restoresInFlight.has(e.id));
     if (expired.length === 0) return { removed: 0, bytesFreed: 0 };
 
     let bytesFreed = 0;
@@ -1596,10 +1658,11 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
         detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Time Capsule.`,
       });
     }
-    store.entries = store.entries.filter((e) => e.capturedAt >= cutoff);
+    const gone = new Set(expired);
+    store.entries = store.entries.filter((e) => !gone.has(e));
     await saveStore(store);
     return { removed: expired.length, bytesFreed };
-  });
+  }));
 }
 
 /**
@@ -2086,65 +2149,72 @@ export interface RestoreOptions {
 export async function startCapsuleRestore(entryIds: string[], options: RestoreOptions = {}): Promise<TimeCapsuleJob> {
   pruneJobs();
   if (entryIds.length === 0) throw new AppError(400, 'NOTHING_TO_RESTORE', 'No items to restore');
+  // Accepted under the payload lock, and its copies pinned before the lock is let go (FG3g H1): no
+  // removal of a copy is under way while they are looked at, and none starts until the job ends.
+  return withPayloadLock(async () => {
+    const store = await loadStore();
+    const planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[] = [];
 
-  const store = await loadStore();
-  const planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[] = [];
-
-  for (const id of entryIds) {
-    const entry = store.entries.find((e) => e.id === id);
-    if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
-    if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', `“${entry.name}” has already been restored`);
-    if (!entry.hasPayload) {
-      throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
+    // Each once: the same id twice was put back, then read again from the copy its first turn removed.
+    for (const id of new Set(entryIds)) {
+      const entry = store.entries.find((e) => e.id === id);
+      if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+      if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', `“${entry.name}” has already been restored`);
+      if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it is not started a second time');
+      if (!entry.hasPayload) {
+        throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
+      }
+      const refused = recordRefusal(entry);
+      if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
+      const place = restorePlaceOf(entry);
+      // Only "nothing is there" is free (FG3f #5): a look that failed for another reason (EACCES, EIO)
+      // says nothing either way, and was read as an empty place.
+      const occupied = await fsp.lstat(place).then(() => true, (err: unknown) => {
+        if (meansAbsent(err)) return false;
+        throw new AppError(409, 'PATH_UNREADABLE',
+          `TreeMap could not look at ${place} (${describeFsError(err)}), so it cannot tell whether something stands there, and a restore never writes over what is there. Nothing was restored.`);
+      });
+      if (occupied) {
+        throw new AppError(409, 'PATH_OCCUPIED',
+          `Something already exists at ${place}. Move it aside first — restoring will never overwrite what is there now.`);
+      }
+      const manifest = await readManifest(id).catch(() => null);
+      if (!manifest) {
+        throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
+      }
+      const stray = manifestRefusal(manifest, undefined, await restoreNameKeyFor(path.dirname(place)));
+      if (stray) {
+        throw new AppError(409, 'CAPSULE_RECORD_INVALID',
+          `The record of what was captured for “${entry.name}” is not one TreeMap wrote (${stray}), so nothing was restored.`);
+      }
+      planned.push({ entry, manifest });
     }
-    const refused = recordRefusal(entry);
-    if (refused) throw new AppError(409, 'CAPSULE_RECORD_INVALID', `${NOT_OURS} (${refused}), so nothing was restored.`);
-    const place = restorePlaceOf(entry);
-    // Only "nothing is there" is free (FG3f #5): a look that failed for another reason (EACCES, EIO)
-    // says nothing either way, and was read as an empty place.
-    const occupied = await fsp.lstat(place).then(() => true, (err: unknown) => {
-      if (meansAbsent(err)) return false;
-      throw new AppError(409, 'PATH_UNREADABLE',
-        `TreeMap could not look at ${place} (${describeFsError(err)}), so it cannot tell whether something stands there, and a restore never writes over what is there. Nothing was restored.`);
+
+    const job: TimeCapsuleJob = {
+      jobId: crypto.randomUUID(),
+      entryId: planned[0].entry.id,
+      entryIds: planned.map((p) => p.entry.id),
+      status: 'running',
+      phase: 'copying',
+      fileCount: planned.reduce((sum, p) => sum + p.manifest.members.filter((m) => m.kind === 'file').length, 0),
+      filesDone: 0,
+      bytesTotal: planned.reduce((sum, p) => sum + p.entry.sizeBytes, 0),
+      bytesDone: 0,
+      currentPath: '',
+      cancelled: false,
+      startedAt: Date.now(),
+    };
+    jobs.set(job.jobId, job);
+
+    // Pinned in the same turn as the last look at them, and let go when the job ends (`runRestoreAll`).
+    for (const { entry } of planned) restoresInFlight.add(entry.id);
+    void runRestoreAll(job, planned, options.beforeComplete).catch((err: unknown) => {
+      job.status = job.cancelled ? 'cancelled' : 'error';
+      job.error = err instanceof Error ? err.message : String(err);
+      job.finishedAt = Date.now();
     });
-    if (occupied) {
-      throw new AppError(409, 'PATH_OCCUPIED',
-        `Something already exists at ${place}. Move it aside first — restoring will never overwrite what is there now.`);
-    }
-    const manifest = await readManifest(id).catch(() => null);
-    if (!manifest) {
-      throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
-    }
-    const stray = manifestRefusal(manifest, undefined, await restoreNameKeyFor(path.dirname(place)));
-    if (stray) {
-      throw new AppError(409, 'CAPSULE_RECORD_INVALID',
-        `The record of what was captured for “${entry.name}” is not one TreeMap wrote (${stray}), so nothing was restored.`);
-    }
-    planned.push({ entry, manifest });
-  }
-
-  const job: TimeCapsuleJob = {
-    jobId: crypto.randomUUID(),
-    entryId: planned[0].entry.id,
-    entryIds: planned.map((p) => p.entry.id),
-    status: 'running',
-    phase: 'copying',
-    fileCount: planned.reduce((sum, p) => sum + p.manifest.members.filter((m) => m.kind === 'file').length, 0),
-    filesDone: 0,
-    bytesTotal: planned.reduce((sum, p) => sum + p.entry.sizeBytes, 0),
-    bytesDone: 0,
-    currentPath: '',
-    cancelled: false,
-    startedAt: Date.now(),
-  };
-  jobs.set(job.jobId, job);
-
-  void runRestoreAll(job, planned, options.beforeComplete).catch((err: unknown) => {
-    job.status = job.cancelled ? 'cancelled' : 'error';
-    job.error = err instanceof Error ? err.message : String(err);
-    job.finishedAt = Date.now();
+    return job;
   });
-  return job;
 }
 
 /**
@@ -2159,6 +2229,20 @@ export async function startCapsuleRestore(entryIds: string[], options: RestoreOp
  * last entry is home stops nothing, and the job says complete, as it is.
  */
 async function runRestoreAll(
+  job: TimeCapsuleJob,
+  planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[],
+  beforeComplete?: () => Promise<void>,
+): Promise<void> {
+  try {
+    await restoreEach(job, planned, beforeComplete);
+  } finally {
+    // However the job ended — complete, failed, cancelled, or thrown — its copies are no longer in
+    // use by it (FG3g H1). One put back is restored; one it did not reach is held as before.
+    for (const { entry } of planned) restoresInFlight.delete(entry.id);
+  }
+}
+
+async function restoreEach(
   job: TimeCapsuleJob,
   planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[],
   beforeComplete?: () => Promise<void>,
@@ -2455,7 +2539,7 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
   try {
     // With no other writer of the index between its load and its save (FG3f #2): a capture under
     // way saved over "put back" and left the record promising a copy this restore had removed.
-    await withCapsuleStore(async () => {
+    await withCapsuleStore(async () => withPayloadLock(async () => {
       const store = await loadStore();
       const live = store.entries.find((e) => e.id === entry.id);
       if (live) {
@@ -2463,7 +2547,7 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
         await dropPayload(live);
       }
       await saveStore(store);
-    });
+    }));
   } catch (err) {
     console.error('[treemap] capsule bookkeeping after a successful restore failed:', err);
   }
