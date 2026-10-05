@@ -225,6 +225,46 @@ test('the look stops after so many entries, and a folder it could not finish is 
   assert.deepEqual(await stillEmptyFolder(wide, true), { empty: true }, 'five empty folders are well within the real limit');
 });
 
+/**
+ * A listing of `n` entries handed out one read at a time, as `fs.Dir` hands them, counting the reads:
+ * a folder of a million entries must not be read whole before the look gives up on it (U-4b L5).
+ */
+function countedListing(target: string, n: number, kind: 'dir' | 'file') {
+  const seen = { reads: 0, closed: false };
+  const entry = (i: number): fs.Dirent => ({
+    name: `e${i}`, isDirectory: () => kind === 'dir', isFile: () => kind === 'file', isSymbolicLink: () => false,
+  }) as unknown as fs.Dirent;
+  const opendir = async (p: string) => {
+    assert.equal(p, target, 'only the folder offered is opened: the look stops before any folder inside it');
+    return {
+      read: async () => (seen.reads < n ? entry(seen.reads++) : (seen.reads++, null)),
+      close: async () => { seen.closed = true; },
+    };
+  };
+  return { seen, opendir };
+}
+
+test('the look reads a listing only as far as it needs, and closes it', async () => {
+  const target = at('wide-on-another-drive');
+  const isFolder = () => Promise.resolve({ isDirectory: () => true });
+  const folders = countedListing(target, 10_000, 'dir');
+  setEmptyCheckForTests({ lstat: isFolder, opendir: folders.opendir });
+  try {
+    const cut = await stillEmptyFolder(target, true);
+    assert.equal(cut.empty === false && cut.why, 'too-many');
+    assert.equal(folders.seen.reads, EMPTY_CHECK_MAX_ENTRIES + 1, 'one entry past the limit is read, not all 10,000');
+    assert.equal(folders.seen.closed, true, 'and the listing is closed');
+    const files = countedListing(target, 10_000, 'file');
+    setEmptyCheckForTests({ lstat: isFolder, opendir: files.opendir });
+    const full = await stillEmptyFolder(target, true);
+    assert.equal(full.empty === false && full.why, 'content');
+    assert.equal(files.seen.reads, 1, 'the first file settles it');
+    assert.equal(files.seen.closed, true);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
 test('a look that does not answer is not empty, whether the stat or the listing goes silent', async () => {
   const never = (): Promise<never> => new Promise(() => { /* a drive that stopped answering */ });
   const passed = (): { late: Promise<void>; cancel: () => void } => ({ late: Promise.resolve(), cancel: () => {} });
@@ -233,7 +273,7 @@ test('a look that does not answer is not empty, whether the stat or the listing 
     const statSilent = await stillEmptyFolder(at('still'), true);
     assert.equal(statSilent.empty === false && statSilent.why, 'no-answer', 'the folder\'s own stat');
     // The stat answers at once (an answer already there wins the race); the listing never does.
-    setEmptyCheckForTests({ lstat: () => Promise.resolve({ isDirectory: () => true }), readdir: never, deadline: passed });
+    setEmptyCheckForTests({ lstat: () => Promise.resolve({ isDirectory: () => true }), opendir: never, deadline: passed });
     const listSilent = await stillEmptyFolder(at('still'), true);
     assert.equal(listSilent.empty === false && listSilent.why, 'no-answer', 'its listing');
     assert.match(listSilent.empty === false ? listSilent.reason : '', /did not answer/);

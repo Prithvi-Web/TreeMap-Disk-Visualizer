@@ -37,10 +37,21 @@ export type NotEmptyWhy = 'content' | 'unreadable' | 'no-answer' | 'too-many' | 
 
 export type EmptyVerdict = { empty: true } | { empty: false; why: NotEmptyWhy; reason: string };
 
+/** An open folder, read an entry at a time: `fs.Dir`'s shape. */
+export interface FolderListing {
+  read(): Promise<Dirent | null>;
+  close(): Promise<void>;
+}
+
 /** What a look reads the disk and the clock with; a test replaces any of them (`setEmptyCheckForTests`). */
 export interface EmptyCheckDeps {
   lstat: (p: string) => Promise<{ isDirectory(): boolean }>;
-  readdir: (p: string) => Promise<Dirent[]>;
+  /**
+   * A folder's listing, read an entry at a time (U-4b L5): a folder of a
+   * million entries is read only as far as the look needs — the first file, or
+   * one entry past `maxEntries` — never whole before the limit applies.
+   */
+  opendir: (p: string) => Promise<FolderListing>;
   /** A deadline of `ms`: `late` settles when it passes; `cancel` lets it go once the answer came. */
   deadline: (ms: number) => { late: Promise<void>; cancel: () => void };
   maxEntries: number;
@@ -57,7 +68,7 @@ function realDeadline(ms: number): { late: Promise<void>; cancel: () => void } {
 
 const REAL: EmptyCheckDeps = {
   lstat: (p) => fsp.lstat(p),
-  readdir: (p) => fsp.readdir(p, { withFileTypes: true }),
+  opendir: (p) => fsp.opendir(p),
   deadline: realDeadline,
   maxEntries: EMPTY_CHECK_MAX_ENTRIES,
 };
@@ -87,6 +98,27 @@ function codeOf(err: unknown): string {
 }
 
 /**
+ * Read `folder`'s listing an entry at a time, handing each to `visit` until it
+ * answers true (enough is known) or the listing ends; then close it. Once
+ * `gaveUp()` is true — the look stopped waiting for this listing — nothing more
+ * is read or visited, and the listing is closed when its read in flight
+ * answers. The close is not awaited: what it says changes nothing the look
+ * decided, and a close that hangs must not hold the look.
+ */
+async function readListing(d: EmptyCheckDeps, folder: string, visit: (ent: Dirent) => boolean, gaveUp: () => boolean): Promise<void> {
+  const listing = await d.opendir(folder);
+  try {
+    for (;;) {
+      if (gaveUp()) return;
+      const ent = await listing.read();
+      if (ent === null || gaveUp() || visit(ent)) return;
+    }
+  } finally {
+    listing.close().catch(() => { /* already closed, or the drive went away: nothing to do */ });
+  }
+}
+
+/**
  * Whether `dir` is still an empty folder on disk: `{ empty: true }`, or why
  * not. `ignoreJunk` is Empty Folders' junk rule. Never throws.
  */
@@ -107,30 +139,37 @@ export async function stillEmptyFolder(dir: string, ignoreJunk: boolean): Promis
   let examined = 0;
   for (let i = 0; i < queue.length; i++) {
     const folder = queue[i];
-    let entries: Dirent[] | typeof LATE;
-    try {
-      entries = await answered(d, d.readdir(folder));
-    } catch (err) {
-      if (folder === dir && codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
-      return notEmpty('unreadable', `${named(folder)} could not be read (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
-    }
-    if (entries === LATE) {
-      return notEmpty('no-answer', `${named(folder)} did not answer within ${EMPTY_CHECK_DEADLINE_MS / 1000} seconds, so TreeMap cannot tell that it is empty`);
-    }
-    for (const ent of entries) {
+    let found: EmptyVerdict | null = null;
+    // Each entry as it is read: the first that settles the question ends the listing (L5).
+    const visit = (ent: Dirent): boolean => {
       examined++;
       if (examined > d.maxEntries) {
-        return notEmpty('too-many', `it holds more than ${d.maxEntries} entries to look through, so TreeMap did not finish making sure it is empty`);
+        found = notEmpty('too-many', `it holds more than ${d.maxEntries} entries to look through, so TreeMap did not finish making sure it is empty`);
+        return true;
       }
       const full = path.join(folder, ent.name);
       // A folder's entry, never a link to one: a Dirent reports a link as a link.
       if (ent.isDirectory()) {
         queue.push(full);
-        continue;
+        return false;
       }
-      if (ignoreJunk && ent.isFile() && JUNK_FILES.has(ent.name.toLowerCase())) continue;
-      return notEmpty('content', `it holds ${path.relative(dir, full)} now, so it is not empty`);
+      if (ignoreJunk && ent.isFile() && JUNK_FILES.has(ent.name.toLowerCase())) return false;
+      found = notEmpty('content', `it holds ${path.relative(dir, full)} now, so it is not empty`);
+      return true;
+    };
+    let gaveUp = false;
+    let listed: void | typeof LATE;
+    try {
+      listed = await answered(d, readListing(d, folder, visit, () => gaveUp));
+    } catch (err) {
+      if (folder === dir && codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
+      return notEmpty('unreadable', `${named(folder)} could not be read (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
     }
+    if (listed === LATE) {
+      gaveUp = true;
+      return notEmpty('no-answer', `${named(folder)} did not answer within ${EMPTY_CHECK_DEADLINE_MS / 1000} seconds, so TreeMap cannot tell that it is empty`);
+    }
+    if (found) return found;
   }
   return { empty: true };
 }

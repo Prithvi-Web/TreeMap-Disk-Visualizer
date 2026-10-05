@@ -608,9 +608,9 @@ test('a folder the second look cannot read is withheld', async () => {
   const { root, scan } = await settledWalkerScan('second-refused', ['e1/', 'e2/']);
   const refused = path.join(root, 'e1');
   setEmptyCheckForTests({
-    readdir: (p) => (p === refused
+    opendir: (p) => (p === refused
       ? Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }))
-      : fs.promises.readdir(p, { withFileTypes: true })),
+      : fs.promises.opendir(p)),
   });
   try {
     const answer = await emptyFolders(scan.scanId);
