@@ -259,3 +259,22 @@ test('a matched group carries its confidence and its reason', () => {
   assert.equal(g.advisory, undefined, 'a normal group is not advisory');
   assert.equal(g.regenerateCmd, 'npm install');
 });
+
+/* ───────────────────── QA D55: prose for people, not routes ───────────────────── */
+
+test('no shipped rule speaks in API routes — its title and description are shown verbatim in Smart Suggestions (QA D55)', () => {
+  const packs = fs.readdirSync(SHIPPED).filter((f) => f.endsWith('.json'));
+  assert.ok(packs.length >= 4, `every pack is read (${packs.join(', ')})`);
+  let rules = 0;
+  for (const file of packs) {
+    const pack = JSON.parse(fs.readFileSync(path.join(SHIPPED, file), 'utf8')) as { rules: Record<string, unknown>[] };
+    for (const rule of pack.rules) {
+      rules++;
+      for (const field of ['title', 'description'] as const) {
+        const text = String(rule[field] ?? '');
+        assert.doesNotMatch(text, /\/api\/|\b(?:GET|POST|PUT|DELETE) \//, `${file} ${String(rule.id)}.${field} names a route: "${text}"`);
+      }
+    }
+  }
+  assert.ok(rules > 50, `all the rules were read (${rules})`);
+});
