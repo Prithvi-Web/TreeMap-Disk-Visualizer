@@ -1,9 +1,9 @@
 import crypto from 'crypto';
-import { GrowthNotification, ScheduleConfig } from '../models/types';
+import { GrowthNotification, ScanResult, ScheduleConfig, Snapshot } from '../models/types';
 import { startScan, getScan } from './diskScanner';
 import { getSettings, patchSchedule } from './settings';
 import { runDuePolicies } from './autopilot';
-import { listSnapshots } from './snapshots';
+import { boundaryKeyOf, listSnapshots, scanBoundaryKey } from './snapshots';
 import { getForecast } from './forecast';
 import { recordScanJournal } from './journal';
 import { sanitizePath } from '../utils/pathSanitizer';
@@ -147,21 +147,32 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
   // forever (watcher.ts subscribe() only lets a session go idle when its last
   // listener leaves). §B1: the journal rides the one existing timer.
   await recordScanJournal(done, prev).catch((err: unknown) => console.error('[treemap] journal record failed:', err));
+  const alert = growthAlertFor(sched, target, prev, done);
+  if (alert) pushNotification(alert);
+}
 
+/**
+ * The growth alert a scheduled scan of `target` raises against the previous
+ * snapshot, or null. None across a change of boundary (Track U, U-24): a
+ * drive mounted inside the folder that joined or left the count would read as
+ * the folder growing or shrinking by the size of a whole disk.
+ */
+export function growthAlertFor(sched: ScheduleConfig, target: string, prev: Snapshot, done: ScanResult): Omit<GrowthNotification, 'id' | 'at'> | null {
+  if (!done.store) return null;
+  if (scanBoundaryKey(done) !== boundaryKeyOf(prev.boundary)) return null;
   const newSize = done.store.size(done.store.rootId);
   const delta = newSize - prev.totalSize;
   const pct = prev.totalSize > 0 ? (delta / prev.totalSize) * 100 : 0;
   const overBytes = sched.thresholdBytes !== undefined && delta >= sched.thresholdBytes;
   const overPct = sched.thresholdPct !== undefined && pct >= sched.thresholdPct;
-  if (!overBytes && !overPct) return;
-
-  pushNotification({
+  if (!overBytes && !overPct) return null;
+  return {
     path: target,
     message: `${target} grew by ${formatBytes(delta)} (${pct.toFixed(1)}%) since the previous scan`,
     prevSize: prev.totalSize,
     newSize,
     delta,
-  });
+  };
 }
 
 function waitForScan(scanId: string): Promise<void> {

@@ -51,6 +51,7 @@ import { idempotency } from '../middleware/idempotency';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { CompareResult, FileNode, ScanResult } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
+import { assertSameBoundary } from '../services/boundaryReport';
 
 /**
  * insightRoutes — analysis endpoints layered on top of completed scans:
@@ -608,6 +609,7 @@ insightRouter.get('/compare', storageModeGate, (req: Request, res: Response) => 
   if (scanA.rootPath !== scanB.rootPath) {
     throw new AppError(400, 'ROOT_MISMATCH', 'Both scans must cover the same root path');
   }
+  assertSameBoundary(scanA, scanB);
   const storeA = storeOf(scanA);
   const storeB = storeOf(scanB);
   const { entries, truncated } = compareTrees(storeA, storeB);

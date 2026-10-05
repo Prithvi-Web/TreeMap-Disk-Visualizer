@@ -33,6 +33,10 @@ export interface ChildJob {
   outFile: string;
   /** When set, the loader considers only this path (the forced-load-failure case). */
   pinNativeModule?: string;
+  /** The boundary rule, written into the settings file beside the engine (Track U, U-24); absent, the default. */
+  scanBoundary?: 'stay' | 'cross';
+  /** When set, the scan's mount table names exactly these folders — a drive mounted inside, without mounting anything. */
+  mountPoints?: string[];
 }
 
 export interface ChildProbe {
@@ -60,6 +64,8 @@ export interface ChildSuccess {
   wallMs: number;
   /** Set instead of a scan when the engine asked for cannot run here; the parent skips with it. */
   unavailable?: string;
+  /** What became of the drives mounted inside (Track U, U-24), from the scan's own boundary. */
+  boundary?: { rule: string; notEntered: string[]; entered: string[] };
 }
 export interface ChildFailure { ok: false; error: string }
 export type ChildResult = ChildSuccess | ChildFailure;
@@ -79,6 +85,8 @@ function readJob(file: string | undefined): ChildJob {
   }
   if (!Array.isArray(j.hardlinkFamilies)) throw new Error('equivalenceChild: hardlinkFamilies must be an array');
   if (j.pinNativeModule !== undefined && typeof j.pinNativeModule !== 'string') throw new Error('equivalenceChild: pinNativeModule must be a path');
+  if (j.scanBoundary !== undefined && j.scanBoundary !== 'stay' && j.scanBoundary !== 'cross') throw new Error('equivalenceChild: scanBoundary must be stay or cross');
+  if (j.mountPoints !== undefined && (!Array.isArray(j.mountPoints) || !j.mountPoints.every((p) => typeof p === 'string'))) throw new Error('equivalenceChild: mountPoints must be a list of paths');
   return parsed as ChildJob;
 }
 
@@ -89,7 +97,7 @@ async function main(job: ChildJob): Promise<ChildSuccess> {
   if (job.engine === 'gdu') delete process.env.TREEMAP_NO_GDU;
   else process.env.TREEMAP_NO_GDU = '1';
   fs.mkdirSync(job.dataDir, { recursive: true });
-  fs.writeFileSync(path.join(job.dataDir, 'settings.json'), JSON.stringify({ engine: job.engine }));
+  fs.writeFileSync(path.join(job.dataDir, 'settings.json'), JSON.stringify({ engine: job.engine, ...(job.scanBoundary ? { scanBoundary: job.scanBoundary } : {}) }));
 
   // Required only now: these modules read the environment when they load.
   /* eslint-disable @typescript-eslint/no-require-imports */
@@ -101,8 +109,16 @@ async function main(job: ChildJob): Promise<ChildSuccess> {
   const { settled } = require('../../src/utils/backgroundWrites') as typeof import('../../src/utils/backgroundWrites');
   const { canonicalLines, digestOfLines, countersOf } = require('./canonicalTree') as typeof import('./canonicalTree');
   const { setNativeLoadOptionsForTests } = require('../../src/services/engineBudget') as typeof import('../../src/services/engineBudget');
+  const { mountOutcome, setBoundaryDepsForTests } = require('../../src/utils/mountBoundaries') as typeof import('../../src/utils/mountBoundaries');
   /* eslint-enable @typescript-eslint/no-require-imports */
   if (job.pinNativeModule) setNativeLoadOptionsForTests({ path: job.pinNativeModule });
+  const mountPoints = job.mountPoints;
+  if (mountPoints) {
+    setBoundaryDepsForTests({
+      readTable: async () => ({ source: 'mount', entries: mountPoints.map((p) => ({ mountPoint: p, filesystem: 'apfs', options: ['apfs'], source: '/dev/disk99s1' })), reason: null }),
+      aliases: async () => () => [],
+    });
+  }
 
   const settings = (await getSettings()) as unknown as Record<string, unknown>;
   const native = loadNative();
@@ -135,8 +151,10 @@ async function main(job: ChildJob): Promise<ChildSuccess> {
   probe.scanReportsEngineReason = Object.prototype.hasOwnProperty.call(record, 'engineReason') && Object.prototype.hasOwnProperty.call(record, 'fallbackReason');
   await settled();
   cancelAllScans();
+  const outcome = scan.boundary ? mountOutcome(scan.boundary) : null;
   return {
     ok: true,
+    ...(outcome && scan.boundary ? { boundary: { rule: scan.boundary.rule, notEntered: outcome.notEntered.map((m) => m.path), entered: outcome.entered.map((m) => m.path) } } : {}),
     engine: scan.engine ?? 'unset',
     fallbackReason: text(record.fallbackReason),
     engineReason: text(record.engineReason),

@@ -387,3 +387,121 @@ export async function scanBoundary(root: string, rule: BoundaryRule, deps: Bound
   const neverDescend = rule === 'stay' ? [...new Set([...fixed, ...mounts.map((m) => m.path)])] : [...fixed];
   return { rule, source: table.source, reason: table.reason, mounts, fixed, neverDescend };
 }
+
+/** The boundary of a scan whose table could not even be composed: unknown, with the reason, crossing as before. */
+export function unknownBoundary(rule: BoundaryRule, platform: NodeJS.Platform, reason: string): ScanBoundary {
+  const fixed = neverDescendPaths(platform);
+  return { rule, source: 'none', reason, mounts: null, fixed, neverDescend: [...fixed] };
+}
+
+/* ───────────────────────────── what the walk did at the boundary (Track U, U-24) ───────────────────────────── */
+
+/** Example paths kept beside any count here: the five smallest, in sorted order, so two walks of one tree agree. */
+const BOUNDARY_EXAMPLES = 5;
+
+function keepSmallestPath(list: string[], p: string): void {
+  if (list.includes(p)) return;
+  list.push(p);
+  list.sort();
+  if (list.length > BOUNDARY_EXAMPLES) list.length = BOUNDARY_EXAMPLES;
+}
+
+/** What the walk itself recorded at the boundary. */
+export interface BoundaryWalk {
+  /**
+   * Folders the built-in walker descended into although their device differs
+   * from their parent's and the table did not list them (P3-3: a device id
+   * only COUNTS a crossing the table missed; it never stops a walk).
+   */
+  crossedUnlisted: { count: number; examples: string[] };
+  /** Listed mounts beneath a folder the walk was refused: never reached. */
+  refusedAbove: Set<string>;
+  /** Listed mounts at or beneath a folder the scan's "don't scan" patterns skip: never reached. */
+  skipped: Set<string>;
+}
+
+/** A scan's boundary as its record keeps it: the list it was given, and what the walk recorded there. */
+export interface ScanBoundaryRecord extends ScanBoundary {
+  walk: BoundaryWalk;
+}
+
+export function boundaryRecord(b: ScanBoundary): ScanBoundaryRecord {
+  return { ...b, walk: { crossedUnlisted: { count: 0, examples: [] }, refusedAbove: new Set(), skipped: new Set() } };
+}
+
+/** An engine that fell back hands the walk to the next: what the walk recorded starts again; what the start decided stays. */
+export function restartBoundaryWalk(record: ScanBoundaryRecord): void {
+  record.walk.crossedUnlisted = { count: 0, examples: [] };
+  record.walk.refusedAbove = new Set();
+}
+
+/** A folder the walk was refused: every listed mount beneath it was never reached. */
+export function noteRefusedBelow(record: ScanBoundaryRecord, dirPath: string): void {
+  for (const m of record.mounts ?? []) {
+    if (!m.underFixed && isStrictlyUnder(dirPath, m.path)) record.walk.refusedAbove.add(m.path);
+  }
+}
+
+/** The "don't scan" patterns, asked of every folder from below the root down to each listed mount. */
+export function noteSkippedMounts(record: ScanBoundaryRecord, root: string, isSkipped: (p: string) => boolean): void {
+  for (const m of record.mounts ?? []) {
+    if (m.underFixed) continue;
+    for (let p = m.path; isStrictlyUnder(root, p); p = p.slice(0, p.lastIndexOf('/')) || '/') {
+      if (isSkipped(p)) {
+        record.walk.skipped.add(m.path);
+        break;
+      }
+    }
+  }
+}
+
+/** The walker went into a folder on another device that the table did not list. */
+export function noteCrossedUnlisted(record: ScanBoundaryRecord, p: string): void {
+  record.walk.crossedUnlisted.count++;
+  keepSmallestPath(record.walk.crossedUnlisted.examples, p);
+}
+
+/** What became of each listed mount. Every list is taken from the boundary and the walk's records — never from the tree. */
+export interface MountOutcome {
+  /** False when the table could not be read: none of the lists below is a reading. */
+  known: boolean;
+  /** stay: the listed drives the walk reached and did not enter. */
+  notEntered: BoundaryMount[];
+  /** cross: the outermost listed drives the walk entered (a drive inside one is inside its bytes). */
+  entered: BoundaryMount[];
+  /** Listed drives no walk of this root reached: under a fixed folder, beneath a refused or skipped folder, or (stay) inside a drive not entered. */
+  unreached: BoundaryMount[];
+  /** cross: listed drives inside an entered one — entered too, their bytes already inside it. */
+  enteredWithin: BoundaryMount[];
+}
+
+/**
+ * What became of each listed mount, from the list and the walk's own records.
+ *
+ * Never from the shape of the tree: gdu's `-x` drops a mount point's node, and
+ * a spill or aggregate store may hold no row for a small folder, so "no node"
+ * and "a childless node" say nothing about whether a walk went in (U-D12).
+ */
+export function mountOutcome(record: ScanBoundaryRecord): MountOutcome {
+  if (record.mounts === null) return { known: false, notEntered: [], entered: [], unreached: [], enteredWithin: [] };
+  const reached = record.mounts.filter((m) => !m.underFixed && !record.walk.refusedAbove.has(m.path) && !record.walk.skipped.has(m.path));
+  const inside = (m: BoundaryMount): boolean => reached.some((o) => o !== m && isStrictlyUnder(o.path, m.path));
+  const outer = reached.filter((m) => !inside(m));
+  const within = reached.filter(inside);
+  const unreached = record.mounts.filter((m) => !reached.includes(m));
+  if (record.rule === 'stay') return { known: true, notEntered: outer, entered: [], unreached: [...unreached, ...within], enteredWithin: [] };
+  return { known: true, notEntered: [], entered: outer, unreached, enteredWithin: within };
+}
+
+/**
+ * The paths beneath `root` a scan never listed: the fixed folders below the
+ * root and — under `stay` — every listed mount. The scanned-root rule and Live
+ * mode read this; Empty Folders reads the same list as `Flag.Unlisted`, which
+ * `settleComplete` marks from `neverDescend` on every engine's tree (U-4). A
+ * record from before U-24 (no boundary) reads the fixed list, which every
+ * engine has always honoured.
+ */
+export function exclusionsOf(record: ScanBoundary | undefined, root: string, platform: NodeJS.Platform = process.platform): string[] {
+  const list = record ? record.neverDescend : neverDescendPaths(platform);
+  return list.filter((p) => isStrictlyUnder(root, p));
+}

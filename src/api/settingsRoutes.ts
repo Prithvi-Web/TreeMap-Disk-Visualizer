@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
-import { engineSettingRefusal, getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
+import { engineSettingRefusal, getSettings, updateSettings, getIgnoreMatchers, scanBoundaryRefusal } from '../services/settings';
 import { suppressedNoteRoots } from '../services/notes';
 import { cleanupSuggestionsFor } from '../services/cleanupMemo';
 import { ruleCatalogStatus } from '../services/rulePacks';
@@ -32,14 +32,15 @@ settingsRouter.get('/settings', async (_req: Request, res: Response) => {
  * the same rules as scan paths.
  */
 settingsRouter.put('/settings', async (req: Request, res: Response) => {
-  const body = req.body as { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown; engineBudget?: unknown; engine?: unknown };
+  const body = req.body as { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown; engineBudget?: unknown; engine?: unknown; scanBoundary?: unknown };
   if (body.ignore === undefined && body.schedules === undefined && body.budgets === undefined
       && body.forecastThresholdDays === undefined && body.watchIdleMinutes === undefined
       && body.timeCapsuleRetentionDays === undefined && body.timeCapsuleMaxPercent === undefined
       && body.cloud === undefined && body.reclaimWeights === undefined
       && body.cleanupGoalBytes === undefined && body.humanScaleUnits === undefined
-      && body.tourDone === undefined && body.engineBudget === undefined && body.engine === undefined) {
-    throw new AppError(400, 'NOTHING_TO_UPDATE', 'Body must include "ignore", "schedules", "budgets", "forecastThresholdDays", "watchIdleMinutes", "timeCapsuleRetentionDays", "timeCapsuleMaxPercent", "cloud", "reclaimWeights", "cleanupGoalBytes", "humanScaleUnits", "tourDone", "engineBudget" and/or "engine"');
+      && body.tourDone === undefined && body.engineBudget === undefined && body.engine === undefined
+      && body.scanBoundary === undefined) {
+    throw new AppError(400, 'NOTHING_TO_UPDATE', 'Body must include "ignore", "schedules", "budgets", "forecastThresholdDays", "watchIdleMinutes", "timeCapsuleRetentionDays", "timeCapsuleMaxPercent", "cloud", "reclaimWeights", "cleanupGoalBytes", "humanScaleUnits", "tourDone", "engineBudget", "engine" and/or "scanBoundary"');
   }
   // The Scan engine (Phase 3): one of this platform's words, validated like
   // every other API field — a hand-edited file is forgiven to Automatic, a
@@ -47,6 +48,12 @@ settingsRouter.put('/settings', async (req: Request, res: Response) => {
   // refusal says so.
   if (body.engine !== undefined) {
     const refusal = engineSettingRefusal(body.engine);
+    if (refusal !== null) throw new AppError(400, 'BAD_SETTING', refusal);
+  }
+  // Track U, U-24: where a scan stops at a drive mounted inside its folder.
+  // Strict here, forgiving in a hand-edited file, like `engine`.
+  if (body.scanBoundary !== undefined) {
+    const refusal = scanBoundaryRefusal(body.scanBoundary);
     if (refusal !== null) throw new AppError(400, 'BAD_SETTING', refusal);
   }
   if (body.schedules !== undefined) {

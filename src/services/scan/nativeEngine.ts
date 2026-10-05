@@ -723,7 +723,10 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
   let handle: number;
   try {
     handle = mod.scanStart(rootPath, {
-      neverDescend: neverDescendPaths(),
+      // The scan's own list (Track U, U-24): the fixed folders and, under "Stay
+      // on this drive", every drive mounted inside — the walker's, exactly. A
+      // record without a boundary (a test's) walks with the fixed list.
+      neverDescend: scan.boundary?.neverDescend ?? neverDescendPaths(),
       wantAtime: true,
       ...(memory ? { storage: 'memory' as const, store: memoryStoreOptions(memory.store, room) } : {}),
     });

@@ -118,6 +118,10 @@ interface RunOptions {
   env?: Record<string, string>;
   /** The loader considers only this path (see the child). */
   pinNativeModule?: string;
+  /** The boundary rule for this scan (Track U, U-24). */
+  scanBoundary?: 'stay' | 'cross';
+  /** The mount table names exactly these folders (see the child). */
+  mountPoints?: string[];
 }
 
 /** One scan in a fresh process with its own app-data directory; the directory is removed once the child has exited. */
@@ -125,7 +129,12 @@ async function runChild(opts: RunOptions): Promise<ChildSuccess> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-equivalence-data-'));
   const jobFile = path.join(dataDir, 'job.json');
   const outFile = path.join(dataDir, 'result.json');
-  const job: ChildJob = { engine: opts.engine, root: opts.tree.root, dataDir, hardlinkFamilies: opts.tree.hardlinkFamilies, outFile, ...(opts.pinNativeModule ? { pinNativeModule: opts.pinNativeModule } : {}) };
+  const job: ChildJob = {
+    engine: opts.engine, root: opts.tree.root, dataDir, hardlinkFamilies: opts.tree.hardlinkFamilies, outFile,
+    ...(opts.pinNativeModule ? { pinNativeModule: opts.pinNativeModule } : {}),
+    ...(opts.scanBoundary ? { scanBoundary: opts.scanBoundary } : {}),
+    ...(opts.mountPoints ? { mountPoints: opts.mountPoints } : {}),
+  };
   const env: NodeJS.ProcessEnv = { ...process.env, TREEMAP_DATA_DIR: dataDir, ...opts.env };
   if (opts.engine === 'gdu') delete env.TREEMAP_NO_GDU;
   else env.TREEMAP_NO_GDU = '1';
@@ -319,4 +328,121 @@ test(`(d) a forced load failure: TREEMAP_NATIVE_MODULE=${MISSING_MODULE} runs th
   assert.ok((run.fallbackReason as string).includes(MISSING_MODULE), `the reason names the module path: ${run.fallbackReason}`);
   assertSameTree('walker', 'walker after the forced load failure', ref, run);
   t.diagnostic(`fallbackReason: ${run.fallbackReason}`);
+});
+
+/* ----------------------------------- (e), (f) ----------------------------------- */
+
+/*
+ * Track U, U-24: Stay on this drive. Every engine is handed the scan's own
+ * never-descend list, so at a drive mounted inside the folder the native
+ * engine must do exactly what the walker does, under either rule: stop at the
+ * mount point under "stay", walk it under "cross".
+ *
+ * (e) needs no mount: the child's mount table names an ordinary folder, so it
+ * runs wherever the native module does. (f) is the real thing — on macOS the
+ * edge fixture's hdiutil volumes, on Linux CI the tmpfs the workflow mounts and
+ * names in TREEMAP_TEST_NESTED_MOUNT — and is skipped elsewhere with the reason.
+ */
+
+let boundaryBuild: Tree & { mnt: string } | null = null;
+function boundaryTree(): Tree & { mnt: string } {
+  if (boundaryBuild) return boundaryBuild;
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-equivalence-boundary-')));
+  const mnt = path.join(root, 'mnt');
+  fs.mkdirSync(path.join(mnt, 'inside'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'keep'));
+  fs.writeFileSync(path.join(root, 'a.txt'), 'a'.repeat(300));
+  fs.writeFileSync(path.join(root, 'keep', 'b.txt'), 'b'.repeat(4000));
+  fs.writeFileSync(path.join(mnt, 'd.txt'), 'd'.repeat(1200));
+  fs.writeFileSync(path.join(mnt, 'inside', 'c.txt'), 'c'.repeat(9000));
+  boundaryBuild = {
+    name: 'boundary tree',
+    root,
+    mnt,
+    hardlinkFamilies: [],
+    freeze: (fractions) => { freezeTimes(root, { fractions }); },
+  };
+  return boundaryBuild;
+}
+
+after(() => {
+  if (boundaryBuild) fs.rmSync(boundaryBuild.root, { recursive: true, force: true });
+});
+
+/** The walker and the native engine under one rule; skips (or fails on CI) as (c) does when the module cannot walk here. */
+async function bothEngines(t: TestContext, tree: Tree, rule: 'stay' | 'cross', mountPoints?: string[]): Promise<{ walker: ChildSuccess; native: ChildSuccess } | null> {
+  tree.freeze(true);
+  const walker = await runChild({ engine: 'walker', tree, scanBoundary: rule, ...(mountPoints ? { mountPoints } : {}) });
+  assertWalker(walker, tree);
+  const missing = w2Missing(walker.probe);
+  if (missing) {
+    skipOrFailOnCi(t, `${tree.name}: ${missing}`);
+    return null;
+  }
+  if (!walker.probe.moduleHasScanStart) {
+    skipOrFailOnCi(t, `${tree.name}: the native module cannot walk here — ${walker.probe.moduleReason ?? 'no reason recorded'}`);
+    return null;
+  }
+  tree.freeze(true);
+  const native = await runChild({ engine: 'native', tree, scanBoundary: rule, ...(mountPoints ? { mountPoints } : {}) });
+  assert.ok(NATIVE_ENGINES.has(native.engine), `the native engine was forced but the scan ran on ${native.engine}: ${native.fallbackReason ?? native.engineReason ?? 'no reason recorded'}`);
+  return { walker, native };
+}
+
+test('(e) a drive mounted inside, as the mount table names it: the native engine and the walker agree under stay and under cross, and only cross counts the drive', async (t) => {
+  const tree = boundaryTree();
+  const stay = await bothEngines(t, tree, 'stay', [tree.mnt]);
+  if (!stay) return;
+  assertSameTree('walker under stay', 'native under stay', stay.walker, stay.native);
+  assert.deepEqual(stay.walker.boundary, { rule: 'stay', notEntered: [tree.mnt], entered: [] });
+  assert.deepEqual(stay.native.boundary, stay.walker.boundary, 'both engines report the same drive not entered');
+  const cross = await bothEngines(t, tree, 'cross', [tree.mnt]);
+  if (!cross) return;
+  assertSameTree('walker under cross', 'native under cross', cross.walker, cross.native);
+  assert.deepEqual(cross.walker.boundary, { rule: 'cross', notEntered: [], entered: [tree.mnt] });
+  // The drive holds three entries (inside/, inside/c.txt, d.txt): exactly what stay leaves out.
+  assert.equal(cross.walker.lines.length - stay.walker.lines.length, 3, 'stay leaves the drive\'s three entries out, and nothing else');
+  assert.equal(cross.walker.counters.fileCount - stay.walker.counters.fileCount, 2, 'the two files on the drive are counted only under cross');
+  assert.equal(cross.walker.counters.dirCount - stay.walker.counters.dirCount, 1, 'and the folder inside it; the mount point is a folder of the tree either way');
+  t.diagnostic(`stay: ${stay.walker.lines.length} nodes, digest ${stay.walker.digest}; cross: ${cross.walker.lines.length} nodes, digest ${cross.walker.digest}`);
+});
+
+/** A real drive mounted inside a tree: the edge fixture's nested volume on macOS, CI's tmpfs on Linux. */
+async function realNestedMount(): Promise<{ tree: Tree; mount: string } | { skip: string }> {
+  if (process.platform === 'darwin') {
+    const fixture = await edge();
+    const c = fixture.cases.nestedMount;
+    if (!c.built) return { skip: `the edge fixture's nested volume was not built: ${c.reason}` };
+    return { tree: await edgeTree(), mount: c.mountPoint };
+  }
+  if (process.platform === 'linux') {
+    const mount = process.env.TREEMAP_TEST_NESTED_MOUNT;
+    if (!mount) return { skip: 'TREEMAP_TEST_NESTED_MOUNT names no mounted folder here (the Linux CI legs mount a tmpfs and set it)' };
+    const root = path.dirname(fs.realpathSync(mount));
+    fs.mkdirSync(path.join(mount, 'inside'), { recursive: true });
+    fs.writeFileSync(path.join(mount, 'inside', 'on-the-tmpfs.txt'), 't'.repeat(2500));
+    fs.writeFileSync(path.join(root, 'beside.txt'), 'b'.repeat(700));
+    return {
+      tree: { name: 'tmpfs tree', root, hardlinkFamilies: [], freeze: (fractions) => { freezeTimes(root, { fractions }); } },
+      mount: fs.realpathSync(mount),
+    };
+  }
+  return { skip: `no drive can be mounted inside a folder for this test on ${process.platform} (no mount table there)` };
+}
+
+test('(f) a real drive mounted inside: the native engine and the walker agree under stay and under cross, and only cross counts it', async (t) => {
+  const real = await realNestedMount();
+  if ('skip' in real) {
+    // On CI the macOS and Linux legs build one, so a skip there is a broken leg.
+    if (process.platform === 'darwin' || process.platform === 'linux') skipOrFailOnCi(t, real.skip);
+    else t.skip(real.skip);
+    return;
+  }
+  for (const rule of ['stay', 'cross'] as const) {
+    const both = await bothEngines(t, real.tree, rule);
+    if (!both) return;
+    assertSameTree(`walker under ${rule}`, `native under ${rule}`, both.walker, both.native);
+    const listed = rule === 'stay' ? both.walker.boundary?.notEntered : both.walker.boundary?.entered;
+    assert.ok(listed?.includes(real.mount), `under ${rule} the mount table's drive is ${rule === 'stay' ? 'not entered' : 'entered'}: ${JSON.stringify(both.walker.boundary)}`);
+  }
 });

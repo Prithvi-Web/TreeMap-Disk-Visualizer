@@ -1,10 +1,11 @@
 import crypto from 'crypto';
 import { promises as fsp } from 'fs';
 import path from 'path';
-import { FileNode, ScanResult, Snapshot, SnapshotDiff, SnapshotDeltaEntry, SnapshotTreeNode } from '../models/types';
+import { FileNode, ScanResult, Snapshot, SnapshotBoundary, SnapshotDiff, SnapshotDeltaEntry, SnapshotTreeNode } from '../models/types';
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { isEphemeral } from './portableMode';
 import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
+import { mountOutcome } from '../utils/mountBoundaries';
 
 /**
  * Snapshots — lightweight scan history persisted to snapshots.json in the
@@ -269,6 +270,49 @@ export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   };
 }
 
+/* ---------- Comparability across the scan boundary (Track U, U-24) ---------- */
+
+/**
+ * A scan's record of the drives mounted inside its folder, for its snapshot:
+ * under `stay` the ones it did not enter, under `cross` the ones it did. None
+ * when no drive was involved, or the mount table could not be read (the walk
+ * then crossed, as every walk did before U-24).
+ */
+export function snapshotBoundaryOf(scan: ScanResult): SnapshotBoundary | undefined {
+  if (!scan.boundary) return undefined;
+  const outcome = mountOutcome(scan.boundary);
+  if (!outcome.known) return undefined;
+  if (scan.boundary.rule === 'stay') {
+    return outcome.notEntered.length > 0 ? { rule: 'stay', notEntered: outcome.notEntered.map((m) => m.path).sort() } : undefined;
+  }
+  return outcome.entered.length > 0 ? { rule: 'cross', entered: outcome.entered.map((m) => m.path).sort() } : undefined;
+}
+
+/**
+ * Two scans counted the same disk when their keys are equal: the drives a scan
+ * left out, sorted, or '' when it left none out — which is also what every
+ * scan before U-24 did, and what a scan that crosses still does. History never
+ * compares across two keys: the difference would be a drive, not a change.
+ */
+export function boundaryKeyOf(boundary: SnapshotBoundary | undefined): string {
+  return boundary && boundary.rule === 'stay' ? boundary.notEntered.join('\n') : '';
+}
+
+/** `boundaryKeyOf` for a scan in memory. */
+export function scanBoundaryKey(scan: ScanResult): string {
+  return boundaryKeyOf(snapshotBoundaryOf(scan));
+}
+
+/** The snapshots since the boundary last changed: the latest one's run of equal keys, oldest first. */
+export function currentBaseline(snaps: readonly Snapshot[]): Snapshot[] {
+  const sorted = [...snaps].sort((a, b) => a.takenAt - b.takenAt);
+  if (sorted.length === 0) return sorted;
+  const key = boundaryKeyOf(sorted[sorted.length - 1].boundary);
+  let start = sorted.length - 1;
+  while (start > 0 && boundaryKeyOf(sorted[start - 1].boundary) === key) start--;
+  return sorted.slice(start);
+}
+
 /**
  * The saves of this process, one at a time: each reads the history, adds to
  * it, writes it and stamps the counts index before the next begins, so no
@@ -305,6 +349,8 @@ async function writeSnapshot(scan: ScanResult): Promise<Snapshot | null> {
     topEntries,
     hasTree: true,
   };
+  const boundary = snapshotBoundaryOf(scan);
+  if (boundary) snapshot.boundary = boundary;
 
   const store = await load();
   store.snapshots.push(snapshot);

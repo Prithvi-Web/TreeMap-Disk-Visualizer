@@ -174,6 +174,20 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run fetch:gdu:dev
 
+      - name: Mount a drive inside a folder for the scan-boundary tests (Linux)
+        # Track U, U-24: "Stay on this drive" is proven at a real mount point on
+        # Linux as well as at a folder the test's mount table names. A tmpfs
+        # mounted inside a folder under the runner's temp is the drive
+        # tests/nativeEquivalence.test.ts (f) scans under both rules; on macOS the
+        # edge fixture's hdiutil volumes play that part, and Windows keeps no
+        # mount table. Not unmounted: the runner is thrown away.
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.install.outcome == 'success' }}
+        run: |
+          root="$RUNNER_TEMP/treemap-nested-root"
+          mkdir -p "$root/mnt"
+          sudo mount -t tmpfs -o size=16m,mode=0777 tmpfs "$root/mnt"
+          echo "TREEMAP_TEST_NESTED_MOUNT=$root/mnt" >> "$GITHUB_ENV"
+
       - name: Run the test suite
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         # bash on every OS so the tee + pipefail combination means one thing.

@@ -438,7 +438,16 @@ async function populateVolume(mountPoint: string): Promise<string[]> {
   return files;
 }
 
-const noHdiutil = (): string | null => (process.platform === 'darwin' ? null : `hdiutil disk images exist only on macOS (this is ${process.platform})`);
+/**
+ * Why no disk image is mounted here, or null. TREEMAP_TEST_NO_DISK_IMAGES=1
+ * switches the two mounted cases off on a Mac where nothing may be mounted (an
+ * agent's run on a shared machine); every other case still builds, and the
+ * mounted ones are proven where images can be attached (CI's macOS leg).
+ */
+const noHdiutil = (): string | null => {
+  if (process.env.TREEMAP_TEST_NO_DISK_IMAGES === '1') return 'disk images are switched off by TREEMAP_TEST_NO_DISK_IMAGES=1';
+  return process.platform === 'darwin' ? null : `hdiutil disk images exist only on macOS (this is ${process.platform})`;
+};
 
 async function nestedMount(root: string, images: string, mounted: string[]): Promise<EdgeCases['nestedMount']> {
   const why = noHdiutil();

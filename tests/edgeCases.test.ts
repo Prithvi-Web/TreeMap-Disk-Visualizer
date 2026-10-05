@@ -16,6 +16,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startScan, cancelAllScans } from '../src/services/diskScanner';
+import { updateSettings } from '../src/services/settings';
+import { mountOutcome } from '../src/utils/mountBoundaries';
 import { Flag, storeOf, type ScanStore } from '../src/services/scanStore';
 import type { ScanResult } from '../src/models/types';
 import { buildEdgeCases, freezeTimes, DIRECTORY_ATIME_ANCHOR_SECONDS, type EdgeCaseFixture, type EdgeCaseName, type CaseResult } from './fixtures/edgeCases';
@@ -217,6 +219,10 @@ test('a skipped case is a real inability: every case builds except the ones this
     allowed.set('nestedMount', /only on macOS/);
     allowed.set('readOnlyMount', /only on macOS/);
   }
+  if (process.env.TREEMAP_TEST_NO_DISK_IMAGES === '1') {
+    allowed.set('nestedMount', /TREEMAP_TEST_NO_DISK_IMAGES/);
+    allowed.set('readOnlyMount', /TREEMAP_TEST_NO_DISK_IMAGES/);
+  }
   if (process.platform === 'win32') {
     // Each for the reason the builder states. Hard links, zero-byte files,
     // long paths and the NFC/NFD pair get no allowance: they must build here.
@@ -381,19 +387,54 @@ test('a directory the OS refuses to list is counted in deniedDirs with its path 
   assert.equal(store.size(id), 0, 'a refused folder accounts for no bytes');
 });
 
+/**
+ * The walk of the fixture under "Include drives mounted inside it" (Track U,
+ * U-24): the mounted-volume cases below compare it with the default walk,
+ * which stays on the drive. One walk, shared, and the setting put back.
+ */
+let crossingWalk: Promise<ScanResult> | null = null;
+function walkedCrossing(): Promise<ScanResult> {
+  crossingWalk ??= (async () => {
+    await updateSettings({ scanBoundary: 'cross' });
+    try {
+      return await walked(fixture.root);
+    } finally {
+      await updateSettings({ scanBoundary: 'stay' });
+    }
+  })();
+  return crossingWalk;
+}
+
 for (const name of ['nestedMount', 'readOnlyMount'] as const) {
-  test(`${name}: the walker has no device rule (the never-descend list only, P3-3), so it descends and counts the volume — recorded, not judged`, (t) => {
+  test(`${name}: under "Stay on this drive" (the default) the mount table names the volume and the walker stops at it — an empty folder, both its files absent`, (t) => {
     const c = built(t, name);
     if (!c) return;
     const mp = node(c.mountPoint);
+    assert.equal(store.isDir(mp), true, 'the mount point is still a folder of the tree');
+    assert.equal(store.childCount(mp), 0, 'and nothing on the volume is listed');
+    for (const f of c.files) assert.equal(store.findByPath(f), -1, `${f} is on another disk and is not counted`);
+    assert.equal(store.size(mp), 0, 'the volume contributes no bytes');
+    assert.ok(scan.boundary, 'the scan kept its boundary');
+    assert.ok(mountOutcome(scan.boundary).notEntered.some((m) => m.path === c.mountPoint), `the scan says it did not enter ${c.mountPoint}`);
+  });
+
+  test(`${name}: under "Include drives mounted inside it" the walker descends and counts the volume, as it did before U-24 — the table decides, never a device id (P3-3)`, async (t) => {
+    const c = built(t, name);
+    if (!c) return;
+    const crossing = await walkedCrossing();
+    assert.equal(crossing.status, 'complete', crossing.error);
+    const store = storeOf(crossing);
+    const mp = store.findByPath(c.mountPoint);
+    assert.notEqual(mp, -1, `the walker recorded ${c.mountPoint}`);
     assert.equal(store.isDir(mp), true);
     const inside = c.files.map((f) => store.findByPath(f));
-    t.diagnostic(`${name}: mounted at ${c.mountPoint}; the walker ${inside.every((id) => id !== -1) ? `descended into the mount and recorded its ${c.files.length} files` : 'did not record the files inside the mount'} — the legacy walker checks the never-descend list (absolute system paths) and no device id, and the native engine must do the same`);
+    t.diagnostic(`${name}: mounted at ${c.mountPoint}; under cross the walker ${inside.every((id) => id !== -1) ? `descended into the mount and recorded its ${c.files.length} files` : 'did not record the files inside the mount'}`);
     for (const [i, id] of inside.entries()) {
-      assert.notEqual(id, -1, `${c.files[i]} inside the mount is in the tree, as the never-descend rule allows`);
+      assert.notEqual(id, -1, `${c.files[i]} inside the mount is in the tree under cross`);
       assert.equal(store.nodeType(id), 'file');
     }
     assert.ok(store.size(mp) > 0, 'the mounted volume contributes its bytes');
+    assert.ok(mountOutcome(crossing.boundary!).entered.some((m) => m.path === c.mountPoint), `the scan says it entered ${c.mountPoint}`);
     if (name === 'readOnlyMount') {
       // The fixture's claim, checked: the volume refuses a write with EROFS.
       assert.throws(() => fs.writeFileSync(path.join(c.mountPoint, 'probe.txt'), 'x'), (err: unknown) => (err as NodeJS.ErrnoException).code === 'EROFS', 'the read-only mount refuses a write with EROFS');

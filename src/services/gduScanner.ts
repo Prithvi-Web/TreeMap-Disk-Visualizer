@@ -7,7 +7,7 @@ import { FileNode, ScanResult } from '../models/types';
 import { mapGduTreeIntoStore } from './gduMapper';
 import { keepSmallest } from './scanRefusals';
 import { detectContainerKind } from '../utils/containerKind';
-import { neverDescend } from '../utils/mountBoundaries';
+import { neverDescendPaths } from '../utils/mountBoundaries';
 import { PackedScanStore, ScanStore, NodeInput } from './scanStore';
 import { platform } from '../platform';
 import { applyChildBudget, isScanPaused, registerPausable, unregisterPausable, whenResumed } from './engineBudget';
@@ -344,10 +344,15 @@ export async function gduScanIntoStore(
     const rootStat = await fsp.lstat(rootPath);
     const childPath = (name: string): string => (rootPath === '/' ? '/' + name : rootPath + '/' + name);
     const allDirs = entries.filter((e) => e.isDirectory() && !e.isSymbolicLink());
-    // Mount re-entry points and automount triggers never get a shard —
-    // spawning gdu against them double-counts the disk or blocks forever.
-    // They stay visible as empty dirs, exactly like the walker leaves them.
-    const dirs = allDirs.filter((e) => !neverDescend(childPath(e.name)));
+    // The scan's never-descend list (Track U, U-24): mount re-entry points,
+    // automount triggers and — under "Stay on this drive" — a drive mounted
+    // right under the root never get a shard; spawning gdu against them
+    // double-counts the disk, blocks forever or counts another disk as this
+    // one. They stay visible as empty dirs, exactly like the walker leaves
+    // them. A drive mounted deeper is stopped by gdu's own -x, which drops
+    // its mount point from the tree (DESIGN §16).
+    const stop = new Set(scan.boundary?.neverDescend ?? neverDescendPaths());
+    const dirs = allDirs.filter((e) => !stop.has(childPath(e.name)));
 
     const rootName = rootPath.slice(rootPath.lastIndexOf('/') + 1) || rootPath;
     // gdu paths join with '/' on every platform (childPath above) — the store
@@ -362,7 +367,7 @@ export async function gduScanIntoStore(
 
     for (const e of allDirs) {
       const p = childPath(e.name);
-      if (!neverDescend(p)) continue;
+      if (!stop.has(p)) continue;
       store.addNode(store.rootId, {
         name: e.name,
         isDir: true,

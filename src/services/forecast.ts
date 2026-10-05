@@ -1,5 +1,5 @@
 import { Snapshot, ForecastGrower, ForecastResult } from '../models/types';
-import { listSnapshots } from './snapshots';
+import { currentBaseline, listSnapshots } from './snapshots';
 import { diskUsage } from './diskUsage';
 
 /**
@@ -91,7 +91,11 @@ export function computeForecast(
   freeBytes: number,
   now = Date.now(),
 ): Omit<ForecastResult, 'path'> {
-  const sorted = [...snaps].sort((a, b) => a.takenAt - b.takenAt);
+  // Only the scans since the boundary last changed (Track U, U-24): a scan
+  // that stopped at other drives counted another disk, and fitting a line
+  // through both would read the drive as growth or shrinkage.
+  const sorted = currentBaseline(snaps);
+  const earlier = snaps.length - sorted.length;
   const count = sorted.length;
   const spanDays = count >= 2 ? (sorted[count - 1].takenAt - sorted[0].takenAt) / DAY_MS : 0;
   const base = {
@@ -107,7 +111,7 @@ export function computeForecast(
     return {
       ...base,
       status: 'insufficient',
-      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanDays < 0.05 ? 'less than an hour' : `${round2(spanDays)} day${spanDays === 1 ? '' : 's'}`}. Forecasting needs at least ${MIN_SNAPSHOTS} scans spanning ${MIN_SPAN_DAYS}+ days.`,
+      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanDays < 0.05 ? 'less than an hour' : `${round2(spanDays)} day${spanDays === 1 ? '' : 's'}`}. Forecasting needs at least ${MIN_SNAPSHOTS} scans spanning ${MIN_SPAN_DAYS}+ days.${earlier > 0 ? ` ${earlier} earlier scan${earlier === 1 ? '' : 's'} stopped at different drives mounted inside this folder, so ${earlier === 1 ? 'it is' : 'they are'} not compared with these.` : ''}`,
     };
   }
 

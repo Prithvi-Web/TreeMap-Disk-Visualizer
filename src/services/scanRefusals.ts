@@ -1,5 +1,6 @@
 import type { ScanResult } from '../models/types';
 import { Flag, type ScanStore } from './scanStore';
+import { noteRefusedBelow } from '../utils/mountBoundaries';
 
 /**
  * Folders the OS would not let a scan list, counted and named.
@@ -23,11 +24,17 @@ export function keepSmallest(list: string[], p: string, cap = REFUSED_EXAMPLES):
   if (list.length > cap) list.pop();
 }
 
-/** One more folder refused to `scan`. */
+/**
+ * One more folder refused to `scan`. Every engine that names a refused folder
+ * names it here (the walker, the native ingest and the native memory path),
+ * so this is also where a drive mounted beneath it is recorded as never
+ * reached (Track U, U-24): it was not "not entered", nothing got near it.
+ */
 export function noteRefused(scan: ScanResult, dirPath: string): void {
   scan.deniedDirs = (scan.deniedDirs ?? 0) + 1;
   scan.deniedExamples = scan.deniedExamples ?? [];
   keepSmallest(scan.deniedExamples, dirPath);
+  if (scan.boundary) noteRefusedBelow(scan.boundary, dirPath);
 }
 
 /**
@@ -54,10 +61,10 @@ export function markUnlisted(store: ScanStore, id: number): void {
  * tree does not hold either, or whose parent is the root, marks nothing: no
  * folder Empty Folders could offer lost an entry to it.
  *
- * Today `settleComplete` hands it the fixed list (`neverDescendPaths`). Under
- * "Stay on this drive" (U-24) it is handed the scan's own never-descend list,
- * the mounts not entered included, and a not-entered mount is kept out of Empty
- * Folders by this same mark.
+ * `settleComplete` hands it the scan's own never-descend list (U-24): the
+ * fixed folders and, under "Stay on this drive", every drive mounted inside
+ * that the scan did not enter, so a not-entered mount is kept out of Empty
+ * Folders by this same mark on every engine.
  */
 export function markUnlistedPaths(store: ScanStore, paths: readonly string[]): void {
   const root = store.rootPath;

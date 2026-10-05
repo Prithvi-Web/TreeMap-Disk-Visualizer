@@ -6,7 +6,7 @@ import { appDataDir } from './storage';
 import { isEphemeral } from './portableMode';
 import { getAppAttribution } from './appAttribution';
 import { readAudit } from './audit';
-import { buildSnapshotTree, getSnapshotTreeAt } from './snapshots';
+import { boundaryKeyOf, buildSnapshotTree, getSnapshotTreeAt, scanBoundaryKey } from './snapshots';
 import { storeOf } from './scanStore';
 import { isInside } from '../utils/pathSanitizer';
 import { formatBytes } from '../utils/formatBytes';
@@ -291,6 +291,10 @@ export function sentenceFor(who: string, changedPath: string, delta: number, hom
  */
 export async function recordScanJournal(scan: ScanResult, prev: Snapshot): Promise<number> {
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) return 0;
+  // The two scans stopped at different drives mounted inside the folder
+  // (Track U, U-24): the difference is a drive, not something a process did,
+  // and the journal names no culprit for it. The next scan is the baseline.
+  if (scanBoundaryKey(scan) !== boundaryKeyOf(prev.boundary)) return 0;
   const store = storeOf(scan);
   const curr = buildSnapshotTree(store);
 

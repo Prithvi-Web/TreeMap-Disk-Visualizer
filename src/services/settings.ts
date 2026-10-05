@@ -5,6 +5,7 @@ import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 import { DEFAULT_RECLAIM_WEIGHTS, RECLAIM_COMPONENT_IDS, ReclaimWeights } from './reclaimScore';
 import { clearFactCacheForProvider } from './facts/registry';
 import { applyEngineBudgetSetting, normalizeEngineBudget } from './engineBudget';
+import { BOUNDARY_RULES, DEFAULT_BOUNDARY_RULE, type BoundaryRule } from '../utils/mountBoundaries';
 
 /**
  * Settings — the user's ignore list and scheduled scans, persisted to
@@ -46,6 +47,21 @@ export function engineSettingRefusal(raw: unknown, p: NodeJS.Platform = process.
     return `"engine" "ntfs-mft" (the NTFS turbo mode) is available only on Windows; here it must be one of ${quotedList(offered)}`;
   }
   return `"engine" must be one of ${quotedList(offered)}`;
+}
+
+/**
+ * Why an API request's `scanBoundary` is refused, as the sentence a 400
+ * BAD_SETTING carries — or null when it is one of the two words (Track U,
+ * U-24). A hand-edited file is forgiven to the default instead
+ * (`normalizeScanBoundary`).
+ */
+export function scanBoundaryRefusal(raw: unknown): string | null {
+  return BOUNDARY_RULES.includes(raw as BoundaryRule) ? null : '"scanBoundary" must be "stay" or "cross"';
+}
+
+/** Only an explicit "cross" includes the drives mounted inside a folder; anything else stays on the drive (U-Q9). */
+function normalizeScanBoundary(raw: unknown): BoundaryRule {
+  return raw === 'cross' ? 'cross' : DEFAULT_BOUNDARY_RULE;
 }
 
 let cache: AppSettings | null = null;
@@ -236,6 +252,7 @@ export async function getSettings(): Promise<AppSettings> {
       tourDone: raw.tourDone === true,
       engineBudget: normalizeEngineBudget(raw.engineBudget),
       engine: normalizeEngine(raw.engine),
+      scanBoundary: normalizeScanBoundary(raw.scanBoundary),
     };
     // The budget module keeps the live copy — the walker, the gdu engine and
     // the scheduler read it without importing settings — so every load and
@@ -246,7 +263,7 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown; engineBudget?: unknown; engine?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown; engineBudget?: unknown; engine?: unknown; scanBoundary?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -287,6 +304,7 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
       ? normalizeEngineBudget(patch.engineBudget)
       : current.engineBudget,
     engine: patch.engine !== undefined ? normalizeEngine(patch.engine) : current.engine,
+    scanBoundary: patch.scanBoundary !== undefined ? normalizeScanBoundary(patch.scanBoundary) : current.scanBoundary,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {

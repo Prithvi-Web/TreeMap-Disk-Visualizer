@@ -141,7 +141,20 @@ ids are recorded for the hard-link key but never gate descent (**P3-3,
 18 September 2026**: the equivalence gate is absolute, and a device rule
 would diverge from the walker on firmlinks and nested mounts — the edge
 fixture's two `hdiutil` volumes prove the walker descends into both; a
-device-boundary setting for every engine is a Phase 8 question). Symlinks
+device-boundary setting for every engine is a Phase 8 question). **Amended 2
+October 2026 by Track U U-24 (P3-3 stands):** the boundary setting came
+forward, and it is the mount table, not a device id. Each scan reads the
+table once (`scanBoundary`, `src/utils/mountBoundaries.ts`); under "Stay on
+this drive" — the default, the owner's answer to U-Q9 — every drive the
+table shows mounted beneath the root joins the never-descend list, and the
+walker, the native engine and gdu are all handed that one list, so the gate
+still compares like with like (`tests/nativeEquivalence.test.ts` (e), (f)).
+Under "Include drives mounted inside it" the list is the fixed one, as
+before. The built-in walker also compares each folder's `st_dev` with its
+parent's, and a difference the table did not list is **counted**
+(`crossedUnlisted`), never obeyed: firmlinks share `/`'s device (16777234
+on the diagnosis Mac, macOS 15 and 27), Linux bind mounts share their
+source's, and every btrfs subvolume has its own. Symlinks
 are never followed. `(dev, ino)` for `nlink > 1` goes to a side table, and the first
 name seen owns the bytes exactly as today. The key is exact: the walk groups
 names by each file's whole id (`u128`, Windows' 128-bit file id included) and
@@ -947,6 +960,10 @@ assertion.
     - Now: both prune with `overshoot: 'none'` (`src/utils/pruneTree.ts`; `pruneStore` and `prunedExpansion` in `scanStore.ts`; tm-store's `select_prune` as `Overshoot::None`). A popped folder whose children would take the frame past the budget stays `pruned`, with its true size, and the next, smaller folder is tried. The scanned folder's own children always come. So the frame holds at most max(250,000, 1 + the scanned folder's children) nodes, and at a budget of 1 the root alone.
     - The JSON changes only for a tree whose soft-cap frame passed the budget. Where it fitted, the frame is byte for byte as before, and the goldens (a tree of about 200 nodes) are unchanged. A folder left closed opens in the window through `/subtree` (`ensureSubtree`), whose prune keeps the soft cap: there the folder asked for is the prune's root, so all its children come (U-Q7; RISKS R82 stays open for the drill-in).
     - The index preview (`readTree`, 25,000 nodes for the instant open) needed no change. It already withholds any folder whose children would pass the room left, the start folder included, and goes on to the next.
+
+**Added 2 October 2026 by Track U U-24 (built):**
+
+18. **gdu leaves a mount point it did not enter out of the tree.** Under "Stay on this drive" the walker and the native engine keep a drive mounted inside the folder as an empty folder; gdu's `-x` (`--no-cross`) skips the mount point, node and all, unless it sits directly under the root, where the shard filter adds it empty as it does the fixed folders. Recorded, not normalised: the drive is reported as not entered on every engine alike, from the mount table and the walk's records (`mountOutcome`), never from the tree's shape. Under "Include drives mounted inside it" gdu is not used while the table lists a drive the walk can reach (`gduRuleFor`): it would stop at the drive the person asked to count.
 
 The spill folder is not added to the never-descend list, so there is no walker difference there: its files have no names, and no walk can list them (§6.1).
 

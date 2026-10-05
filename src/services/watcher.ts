@@ -7,6 +7,7 @@ import { appDataDir } from './storage';
 import { isInside } from '../utils/pathSanitizer';
 import { ScanStore, Flag, NodeInput } from './scanStore';
 import { watchPath, type WatchLease } from '../platform/watchRegistry';
+import { exclusionsOf, isAtOrUnder } from '../utils/mountBoundaries';
 
 /**
  * Watcher — live disk activity for a completed scan (Live mode).
@@ -53,6 +54,14 @@ interface WatchSession {
   store: ScanStore | null;
   root: FileNode | null;
   stopped: boolean;
+  /**
+   * The paths beneath the root the scan never listed (Track U, U-24): the fixed
+   * never-descend folders and the drives it did not enter. An event there is
+   * another disk's, or a folder the scan never looked into: it is dropped, as
+   * app-data events are, and counted.
+   */
+  exclusions: string[];
+  droppedOutsideBoundary: number;
 }
 
 const sessions = new Map<string, WatchSession>();
@@ -177,6 +186,10 @@ async function onRawEvent(session: WatchSession, absPath: string): Promise<void>
   if (session.stopped) return;
   // The app's own bookkeeping (snapshots, caches) must not read as activity.
   if (isInside(appDataDir(), absPath)) return;
+  if (session.exclusions.some((x) => isAtOrUnder(x, absPath))) {
+    session.droppedOutsideBoundary++;
+    return;
+  }
 
   let size = 0;
   let exists = false;
@@ -339,6 +352,8 @@ export async function ensureWatchSession(scan: ScanResult & { root: FileNode }):
     store: scan.store ?? null,
     root: scan.store ? null : scan.root,
     stopped: false,
+    exclusions: exclusionsOf(scan.boundary, scan.rootPath),
+    droppedOutsideBoundary: 0,
   };
   session.flushTimer.unref();
   session.idleTimer.unref();

@@ -831,8 +831,16 @@ const schemas: Json = {
           + 'installed only for one user, or run as a portable copy, the scan falls back and says why. '
           + 'Not verified on this build.',
       },
+      scanBoundary: {
+        type: 'string',
+        enum: ['stay', 'cross'],
+        description: 'At a drive mounted inside the folder being scanned (a disk image, the iOS Simulator volumes, a separate /home on Linux): '
+          + 'stay ("Stay on this drive", the default) leaves it out — the scan stops at the mount point, which stays as an empty folder, and GET /api/scan/{scanId}/boundary names it; '
+          + 'cross ("Include drives mounted inside it") walks into it as well. The drives come from the operating system\'s mount table, never from device ids. '
+          + 'Applies from the next scan. A value other than these two is refused with 400 BAD_SETTING; a hand-edited file is read as stay.',
+      },
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'timeCapsuleRetentionDays', 'timeCapsuleMaxPercent', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget', 'engine'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'timeCapsuleRetentionDays', 'timeCapsuleMaxPercent', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget', 'engine', 'scanBoundary'],
   ),
 };
 
@@ -1352,6 +1360,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Diff', ref('CompareResult')),
       '400': errorResponse('Scans cover different roots'),
+      '409': errorResponse('BOUNDARY_CHANGED — the two scans stopped at different drives mounted inside the folder (one under "Stay on this drive" left a drive out, the other did not), so a diff would show a drive as files added or removed'),
     },
   },
   {
@@ -2134,8 +2143,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Replace whichever settings lists are present in the body',
     tag: 'settings',
     destructive: true,
-    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone, engineBudget, engine')),
-    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape; BAD_SETTING when engine is not one of auto, native, gdu, walker, ntfs-mft — ntfs-mft only on Windows') },
+    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone, engineBudget, engine, scanBoundary')),
+    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape; BAD_SETTING when engine is not one of auto, native, gdu, walker, ntfs-mft — ntfs-mft only on Windows — or scanBoundary is not stay or cross') },
   },
   /* ------------ the scanning budget (Phase 2) ------------ */
   {

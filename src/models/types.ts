@@ -8,6 +8,7 @@ import type { ReclaimWeights } from '../services/reclaimScore';
 import type { StorageMode } from '../services/storageMode';
 import type { EntryProjection } from '../services/scan/projection';
 import type { MemoryRoom } from '../services/scan/nativeMemory';
+import type { BoundaryRule, ScanBoundaryRecord } from '../utils/mountBoundaries';
 
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
@@ -224,6 +225,15 @@ export interface ScanResult {
    * (DESIGN §12).
    */
   nativePlan?: NativePlan;
+  /**
+   * Where this scan stopped (Track U, U-24): the boundary rule it ran under,
+   * the mounts the table listed beneath its root, the never-descend list every
+   * engine was handed, and what the walk recorded there. Composed once when the
+   * scan starts; absent on a cloud listing and on a record made by hand. Kept
+   * off `buildScanStats`, like every field here not in §2.1's whitelist — it is
+   * served by `GET /api/scan/:id/boundary`.
+   */
+  boundary?: ScanBoundaryRecord;
 }
 
 /** A native scan's plan, made before it walks (Track U, U-30 and U-31). */
@@ -610,7 +620,17 @@ export interface Snapshot {
   topEntries: SnapshotTopEntry[];
   /** True when a deeper tree was stored for the time-slider treemap. */
   hasTree?: boolean;
+  /**
+   * Present only when a drive was mounted inside the scanned folder (Track U,
+   * U-24): under `stay` the drives the scan did not enter, under `cross` the
+   * ones it did. Two snapshots whose boundaries differ counted different
+   * disks, so history never compares across a change (`boundaryKeyOf`).
+   */
+  boundary?: SnapshotBoundary;
 }
+
+/** A snapshot's record of the drives mounted inside its folder. */
+export type SnapshotBoundary = { rule: 'stay'; notEntered: string[] } | { rule: 'cross'; entered: string[] };
 
 /**
  * Compact stored subtree for the time-slider treemap: single-letter keys and
@@ -771,6 +791,13 @@ export interface AppSettings {
    * Automatic.
    */
   engine: EngineSetting;
+  /**
+   * At a drive mounted inside the folder being scanned (Track U, U-24): `stay`
+   * on the drive the scan started on, or `cross` into the mounted one. Default
+   * `stay` — the owner's answer to U-Q9, 2 Oct 2026. A hand-edited value that is
+   * not `cross` reads as `stay`.
+   */
+  scanBoundary: BoundaryRule;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */

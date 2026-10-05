@@ -10,7 +10,19 @@ import { readJsonFile, writeFileChunked } from './storage';
 import { streamTreeJson } from './scanStoreJson';
 import { isEphemeral } from './portableMode';
 import { IO_THREADS } from '../utils/ioThreads';
-import { neverDescend, neverDescendPaths } from '../utils/mountBoundaries';
+import {
+  boundaryRecord,
+  DEFAULT_BOUNDARY_RULE,
+  mountOutcome,
+  neverDescendPaths,
+  noteCrossedUnlisted,
+  noteSkippedMounts,
+  restartBoundaryWalk,
+  scanBoundary,
+  unknownBoundary,
+  type BoundaryRule,
+  type ScanBoundaryRecord,
+} from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
 import { cloudProviderFor } from './cloudFolders';
@@ -463,6 +475,7 @@ function resetCounters(scan: ScanResult): void {
   scan.placeholdersSkipped = 0;
   scan.cpuSeconds = null;
   scan.currentPath = scan.rootPath;
+  if (scan.boundary) restartBoundaryWalk(scan.boundary);
 }
 
 /**
@@ -490,6 +503,8 @@ export interface GduRuleInput {
   /** TREEMAP_NO_GDU is set. */
   noGdu: boolean;
   platform: NodeJS.Platform;
+  /** The boundary rule is `cross` and the mount table lists a drive the walk can reach (Track U, U-24). */
+  crossesMounts?: boolean;
 }
 
 /**
@@ -507,6 +522,9 @@ export function gduRuleFor(o: GduRuleInput): string | null {
   if (!o.rootIsDir) return 'the root is a single file, which needs no gdu process';
   if (o.incremental) return 'this is an incremental rescan, which gdu has no cache for';
   if (o.ignoreCount > 0) return `the scan has ${o.ignoreCount} "don't scan" pattern${o.ignoreCount === 1 ? '' : 's'} gdu cannot express`;
+  // gdu runs with -x and stops at every mount point, so under "Include drives
+  // mounted inside it" it would leave out what the person asked to count.
+  if (o.crossesMounts) return 'the scan includes the drives mounted inside the folder ("Include drives mounted inside it"), and gdu stops at every drive';
   if (o.noGdu) return 'gdu is switched off by TREEMAP_NO_GDU';
   return null;
 }
@@ -532,9 +550,11 @@ function settleComplete(scan: ScanResult, store: ScanStore): void {
   // publish its tree or write the rescan cache and history.
   if (scan.status !== 'running') return;
   // The folders no engine entered look childless in every engine's tree: each
-  // is marked here, the one place every engine settles (Track U, U-4). U-24
-  // hands this the scan's own never-descend list, its mounts not entered too.
-  markUnlistedPaths(store, neverDescendPaths());
+  // is marked here, the one place every engine settles (Track U, U-4), from
+  // the scan's own never-descend list (U-24): the fixed folders and, under
+  // "Stay on this drive", every drive mounted inside that it did not enter.
+  // A record without a boundary (a cloud listing, a test's) has the fixed list.
+  markUnlistedPaths(store, scan.boundary?.neverDescend ?? neverDescendPaths());
   scan.store = store;
   scan.status = 'complete';
   scan.finishedAt = Date.now();
@@ -589,6 +609,15 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
   // The engine the user asked for (Phase 3); the same rule — Automatic when
   // the settings cannot be read.
   const forced: EngineSetting = await getSettings().then((s) => s.engine, () => 'auto' as EngineSetting);
+  // Where the scan stops at a drive mounted inside the folder (Track U, U-24):
+  // the person's rule, then this scan's own reading of the mount table —
+  // composed before any engine is chosen (gdu cannot follow `cross`) and kept
+  // on the record, so every engine is handed the same list.
+  const rule: BoundaryRule = await getSettings().then((s) => s.scanBoundary, () => DEFAULT_BOUNDARY_RULE);
+  const boundary = boundaryRecord(
+    await scanBoundary(rootPath, rule).catch((err: unknown) => unknownBoundary(rule, process.platform, err instanceof Error ? err.message : String(err))),
+  );
+  if (ignore.length > 0) noteSkippedMounts(boundary, rootPath, (p) => matchesAny(ignore, p, path.basename(p)));
 
   // Incremental rescan: load the previous tree so unchanged directories (same
   // mtime) can be substituted from cache instead of re-walked.
@@ -603,7 +632,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     // folder they can read perfectly well. On Windows that is not theoretical:
     // `writeJsonFile` finishes with a rename, and a read racing it gives
     // EPERM/EBUSY.
-    const cachedRoot = await readJsonFile<FileNode | null>(cacheFileName(rootPath), null).catch(() => null);
+    const cachedRoot = await readJsonFile<FileNode | null>(cacheFileName(rootPath, rule), null).catch(() => null);
     if (cachedRoot && cachedRoot.path === rootPath && cachedRoot.type === 'dir') {
       cache = buildDirCache(cachedRoot);
     }
@@ -671,6 +700,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     cloudBytes: 0,
     // Phase 4: the mode the scan is kept in, `memory` until T16's chooser (storageMode.ts).
     storageMode: newScanStorageMode(),
+    boundary,
   };
   defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
@@ -708,6 +738,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     ignoreCount: ignore.length,
     noGdu: process.env.TREEMAP_NO_GDU === '1',
     platform: process.platform,
+    crossesMounts: rule === 'cross' && mountOutcome(boundary).entered.length > 0,
   });
   const gduWanted = !native.eligibility.ok && gduRule === null;
 
@@ -873,9 +904,17 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
 
 const MTIME_CACHE_MAX_NODES = 300_000;
 
-/** Stable per-root cache filename in the app-data directory. */
-function cacheFileName(rootPath: string): string {
-  const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
+/**
+ * Stable per-root cache filename in the app-data directory, keyed by the
+ * boundary rule as well (Track U, U-24): a listing cached by a scan that
+ * stayed on its drive says a drive mounted inside is an empty folder, and a
+ * scan that crosses into it must not believe that. `stay`, the default, keeps
+ * the name every cache already had; a cache from before U-24 is safe there,
+ * because the walk checks every folder it is handed against its own list.
+ */
+function cacheFileName(rootPath: string, rule: BoundaryRule): string {
+  const key = rule === 'cross' ? `${rootPath}\0cross` : rootPath;
+  const h = crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
   return `mtime-cache-${h}.json`;
 }
 
@@ -918,6 +957,10 @@ interface DirJob {
   cached: FileNode | null;
   /** Reached through a cached parent's listing — lstat before trusting it. */
   revalidate: boolean;
+  /** This folder's device, once a stat has read it: the boundary detector compares its children with it. */
+  dev?: number;
+  /** Its parent's device, for a folder reached through a cached listing (whose own stat comes later). */
+  parentDev?: number;
 }
 
 /**
@@ -927,7 +970,7 @@ interface DirJob {
  * fileCount); as before, cloud and hardlink tallies are not re-derived from
  * cached files — their sizes and flags ride along in the nodes themselves.
  */
-function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, dirPath: string, cachedChildren: FileNode[], queue: DirJob[]): void {
+function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, dirPath: string, cachedChildren: FileNode[], queue: DirJob[], dev: number | undefined): void {
   scan.currentPath = dirPath;
   scan.cachedDirs = (scan.cachedDirs ?? 0) + 1;
   for (const child of cachedChildren) {
@@ -935,7 +978,7 @@ function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, d
     const childId = store.addNode(dirId, fileNodeToInput(child));
     if (child.type === 'dir') {
       scan.dirCount++;
-      queue.push({ id: childId, path: child.path, cached: child, revalidate: true });
+      queue.push({ id: childId, path: child.path, cached: child, revalidate: true, parentDev: dev });
     } else {
       scan.fileCount++;
     }
@@ -962,7 +1005,7 @@ export async function saveMtimeCache(scan: ScanResult): Promise<void> {
   // proved it was the one remaining leak onto the host after everything else
   // had been redirected; writeFileChunked refuses such a session too.
   if (isEphemeral()) return;
-  const name = cacheFileName(scan.rootPath);
+  const name = cacheFileName(scan.rootPath, scan.boundary?.rule ?? DEFAULT_BOUNDARY_RULE);
   try {
     const store = scan.store;
     if (!store) {
@@ -991,6 +1034,45 @@ export async function saveMtimeCache(scan: ScanResult): Promise<void> {
 // gate — a sparse file outside a cloud folder is not a placeholder to any of
 // them.
 
+/**
+ * What the walk stops at, and what it knows of the mounts (Track U, U-24): the
+ * scan's never-descend list, the paths the table listed (for the detector),
+ * and the record the walk writes into. A record from before U-24 walks with
+ * the fixed list, as every walk did.
+ */
+interface WalkBounds {
+  stop: ReadonlySet<string>;
+  listed: ReadonlySet<string>;
+  record: ScanBoundaryRecord | null;
+}
+
+function walkBoundsOf(scan: ScanResult): WalkBounds {
+  const record = scan.boundary ?? null;
+  if (!record) return { stop: new Set(neverDescendPaths()), listed: new Set(), record: null };
+  return { stop: new Set(record.neverDescend), listed: new Set((record.mounts ?? []).map((m) => m.path)), record };
+}
+
+/** A folder's device as the boundary detector reads it; replaceable in tests, which cannot mount anything. */
+const statDevice = (_p: string, st: Stats): number => st.dev;
+let walkerDevice: (p: string, st: Stats) => number = statDevice;
+
+/** Test seam: the detector reads a folder's device through `fn`; null puts `st.dev` back. */
+export function setWalkerDeviceForTests(fn: ((p: string, st: Stats) => number) | null): void {
+  walkerDevice = fn ?? statDevice;
+}
+
+/**
+ * The detector (U-D12): a folder the walk goes into whose device differs from
+ * its parent's, and that the mount table did not list, is counted — and walked
+ * all the same. A device id never decides whether to descend (P3-3): firmlinks
+ * share one, Linux bind mounts share their source's, and every btrfs
+ * subvolume has its own.
+ */
+function noteIfCrossed(bounds: WalkBounds, parentDev: number | undefined, dev: number | undefined, dirPath: string): void {
+  if (!bounds.record || parentDev === undefined || dev === undefined || dev === parentDev) return;
+  if (!bounds.listed.has(dirPath)) noteCrossedUnlisted(bounds.record, dirPath);
+}
+
 async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
   const store = new PackedScanStore(
@@ -1005,7 +1087,8 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   if (rootIsDir) {
     // Dirs reached through a cached parent's listing get one fresh lstat
     // before their cached listing is trusted — membership is per-scan.
-    await drainQueue(scan, store, [{ id: store.rootId, path: scan.rootPath, cached: null, revalidate: false }], ignore, cache, new Set<string>());
+    const root: DirJob = { id: store.rootId, path: scan.rootPath, cached: null, revalidate: false, dev: walkerDevice(scan.rootPath, rootStat) };
+    await drainQueue(scan, store, [root], ignore, cache, new Set<string>(), walkBoundsOf(scan));
   }
   if (scan.cancelled) return;
   await rootCheck(scan.rootPath); // ENOENT here is the scan's own error, not a partial result
@@ -1019,7 +1102,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
  * Worker pool: up to CONCURRENCY directories are listed at the same time.
  * Resolves when the queue is empty and every worker has finished.
  */
-function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>): Promise<void> {
+function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>, bounds: WalkBounds): Promise<void> {
   const queue: DirJob[] = [...initial];
   let active = 0;
   // The budget's worker cap: Eco lists two folders at a time, Turbo all of
@@ -1045,7 +1128,7 @@ function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignor
         const job = queue.shift()!;
         const slot = freeSlots.pop() ?? active; // never empty: active < limit ≤ CONCURRENCY
         active++;
-        processDirectory(scan, store, job, queue, ignore, cache, seen, slot)
+        processDirectory(scan, store, job, queue, ignore, cache, seen, slot, bounds)
           .catch((err: unknown) => reject(err))
           .finally(() => {
             active--;
@@ -1102,6 +1185,7 @@ async function processDirectory(
   cache: Map<string, FileNode> | null,
   seen: Set<string>,
   worker: number,
+  bounds: WalkBounds,
 ): Promise<void> {
   if (scan.cancelled) return;
   // Paused: park here until resumed (or cancelled, which releases the gate).
@@ -1110,6 +1194,12 @@ async function processDirectory(
     if (scan.cancelled) return;
   }
   const { id: dirId, path: dirPath } = job;
+  // Track U, U-24: a folder the scan does not descend into is never listed,
+  // however the walk was handed it — a cached listing passes on every child it
+  // had last time, and a drive may have been mounted there since. Its node
+  // stays, an empty folder; nothing inside it is looked at, not even with a
+  // stat (a dead mount answers no stat either).
+  if (dirId !== store.rootId && bounds.stop.has(dirPath)) return;
 
   // Incremental: a directory whose own mtime is unchanged keeps its cached
   // LISTING (its direct entries — a create/delete/rename would have bumped
@@ -1138,8 +1228,10 @@ async function processDirectory(
     }
     store.setModifiedAt(dirId, Math.round(st.mtimeMs));
     store.setAccessedAt(dirId, st.atimeMs > 0 ? Math.round(st.atimeMs) : undefined);
+    job.dev = walkerDevice(dirPath, st);
+    noteIfCrossed(bounds, job.parentDev, job.dev, dirPath);
     if (cachedNode.children && mtimesMatch(cachedMtime, Math.round(st.mtimeMs))) {
-      reuseCachedListing(scan, store, dirId, dirPath, cachedNode.children, queue);
+      reuseCachedListing(scan, store, dirId, dirPath, cachedNode.children, queue, job.dev);
       return;
     }
     // Its listing changed — fall through and re-list from disk.
@@ -1147,7 +1239,7 @@ async function processDirectory(
     // Freshly stat'ed by its parent: compare the disk's mtime to the cache's.
     const cached = cache.get(dirPath);
     if (cached && cached.type === 'dir' && cached.children && mtimesMatch(cached.modifiedAt, store.modifiedAt(dirId))) {
-      reuseCachedListing(scan, store, dirId, dirPath, cached.children, queue);
+      reuseCachedListing(scan, store, dirId, dirPath, cached.children, queue, job.dev);
       return;
     }
   }
@@ -1196,7 +1288,7 @@ async function processDirectory(
 
         if (ent.isDirectory() && !ent.isSymbolicLink()) {
           const stat = await fsp.lstat(fullPath);
-          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true, allocDelta: 0 };
+          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true, allocDelta: 0, dev: walkerDevice(fullPath, stat) };
         }
         // Files, symlinks (not followed — lstat reports the link itself),
         // sockets, fifos: record as a leaf with whatever size lstat reports.
@@ -1249,7 +1341,7 @@ async function processDirectory(
         if (why !== 'vanished') markUnlisted(store, dirId);
         continue;
       }
-      const { input, fullPath, isDir, inoKey, allocDelta } = result.value;
+      const { input, fullPath, isDir, inoKey, allocDelta, dev } = result.value;
       // Dedup hard links sequentially so concurrent workers can't race the set.
       if (inoKey) {
         if (seen.has(inoKey)) {
@@ -1283,10 +1375,15 @@ async function processDirectory(
       scan.scanned++;
       if (isDir) {
         scan.dirCount++;
-        // Mount re-entry points and automount triggers stay visible as empty
-        // dirs but are never walked — descending double-counts the disk or
-        // blocks forever (see utils/mountBoundaries).
-        if (!neverDescend(fullPath)) queue.push({ id: childId, path: fullPath, cached: null, revalidate: false });
+        // The scan's never-descend list (utils/mountBoundaries): mount re-entry
+        // points, automount triggers and — under "Stay on this drive" — every
+        // drive mounted inside the folder stay visible as empty dirs but are
+        // never walked; descending double-counts the disk, blocks forever, or
+        // counts another disk as this one.
+        if (!bounds.stop.has(fullPath)) {
+          noteIfCrossed(bounds, job.dev, dev, fullPath);
+          queue.push({ id: childId, path: fullPath, cached: null, revalidate: false, dev });
+        }
       } else {
         scan.fileCount++;
       }

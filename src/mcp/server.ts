@@ -29,6 +29,7 @@ import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, known
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { OffloadJob, ScanResult } from '../models/types';
 import { assertToolAvailable } from '../services/storageMode';
+import { assertSameBoundary } from '../services/boundaryReport';
 import { MCP_TOOL_NAMES } from './toolNames';
 
 /**
@@ -690,6 +691,7 @@ export function buildMcpServer(): McpServer {
         if (scanA.rootPath !== scanB.rootPath) {
           throw new AppError(400, 'ROOT_MISMATCH', 'Both scans must cover the same root path');
         }
+        assertSameBoundary(scanA, scanB);
         const storeA = storeOf(scanA);
         const storeB = storeOf(scanB);
         const { entries, truncated } = compareTrees(storeA, storeB);
