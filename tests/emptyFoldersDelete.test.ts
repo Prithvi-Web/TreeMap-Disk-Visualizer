@@ -10,11 +10,11 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { startScan } from '../src/services/diskScanner';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
-import { EMPTY_CHECK_MAX_ENTRIES, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
+import { EMPTY_CHECK_DEADLINE_MS, EMPTY_CHECK_MAX_ENTRIES, lookDeadlineMs, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { canLock } from './fixtures/nativeEdge';
-import { waitFor } from './fixtures/waitFor';
+import { HANG_GUARD_MS, waitFor, withinHangGuard } from './fixtures/waitFor';
 
 /**
  * Track U, U-4: the last look before an empty folder goes to the Trash.
@@ -260,6 +260,35 @@ test('the look reads a listing only as far as it needs, and closes it', async ()
     assert.equal(full.empty === false && full.why, 'content');
     assert.equal(files.seen.reads, 1, 'the first file settles it');
     assert.equal(files.seen.closed, true);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('a look waits 2 s for a stat or a listing — under a test runner, as long as the hang guard (U-4b L6)', async () => {
+  // A loaded runner once stalled 6.6 s (Windows CI): a real temp folder must not read as a drive that went silent.
+  assert.equal(EMPTY_CHECK_DEADLINE_MS, 2000);
+  assert.equal(lookDeadlineMs({}), EMPTY_CHECK_DEADLINE_MS, 'the app waits 2 s');
+  assert.equal(lookDeadlineMs({ NODE_TEST_CONTEXT: 'child-v8' }), HANG_GUARD_MS, 'node:test');
+  assert.equal(lookDeadlineMs({ TREEMAP_FORBID_REAL_TRASH: '1' }), HANG_GUARD_MS, 'npm test, and any file that loads the data-dir fixture');
+  // And the looks in this file are given that deadline: each stat and listing asks for it.
+  const asked: number[] = [];
+  setEmptyCheckForTests({ deadline: (ms) => { asked.push(ms); return { late: new Promise<void>(() => {}), cancel: () => {} }; } });
+  try {
+    assert.deepEqual(await stillEmptyFolder(at('nest'), true), { empty: true });
+    assert.ok(asked.length >= 2, `the stat and the listings each had a deadline (${asked.length})`);
+    assert.deepEqual([...new Set(asked)], [HANG_GUARD_MS]);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('the real timer ends a look that does not answer', async () => {
+  setEmptyCheckForTests({ lstat: () => new Promise(() => { /* never answers */ }), deadlineMs: 1 });
+  try {
+    const silent = await withinHangGuard(stillEmptyFolder(at('still'), true), 'a look on the real 1 ms timer');
+    assert.equal(silent.empty === false && silent.why, 'no-answer');
+    assert.match(silent.empty === false ? silent.reason : '', /did not answer within 1 ms/);
   } finally {
     setEmptyCheckForTests(null);
   }

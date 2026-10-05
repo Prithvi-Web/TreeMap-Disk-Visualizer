@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import type { Dirent } from 'fs';
 import path from 'path';
+import { underTestRunner } from './realMachineGuard';
 
 /**
  * Is this folder still empty on disk? (Track U, U-4.)
@@ -29,6 +30,20 @@ export const JUNK_FILES: ReadonlySet<string> = new Set(['.ds_store', 'thumbs.db'
 /** How long one stat or listing may take before the folder is taken as not answering. */
 export const EMPTY_CHECK_DEADLINE_MS = 2_000;
 
+/**
+ * The same wait under a test runner (U-4b L6): the tests' hang guard. Their
+ * looks read real temp folders, and a loaded runner has stalled for 6.6 s
+ * (Windows CI) — a folder must not read as a drive that went silent because
+ * the machine running the test paused. A test of the deadline sets its own
+ * (`deadlineMs`, or `deadline`).
+ */
+export const TEST_RUNNER_DEADLINE_MS = 120_000;
+
+/** How long a look waits for a stat or a listing here: 2 s, or the hang guard under a test runner. */
+export function lookDeadlineMs(env: NodeJS.ProcessEnv = process.env): number {
+  return underTestRunner(env) ? TEST_RUNNER_DEADLINE_MS : EMPTY_CHECK_DEADLINE_MS;
+}
+
 /** The most entries one look goes through, nested folders' included, before it stops short of proving a folder empty. */
 export const EMPTY_CHECK_MAX_ENTRIES = 1_000;
 
@@ -54,6 +69,8 @@ export interface EmptyCheckDeps {
   opendir: (p: string) => Promise<FolderListing>;
   /** A deadline of `ms`: `late` settles when it passes; `cancel` lets it go once the answer came. */
   deadline: (ms: number) => { late: Promise<void>; cancel: () => void };
+  /** How long one stat or listing may take (`lookDeadlineMs`). */
+  deadlineMs: number;
   maxEntries: number;
 }
 
@@ -70,6 +87,7 @@ const REAL: EmptyCheckDeps = {
   lstat: (p) => fsp.lstat(p),
   opendir: (p) => fsp.opendir(p),
   deadline: realDeadline,
+  deadlineMs: lookDeadlineMs(),
   maxEntries: EMPTY_CHECK_MAX_ENTRIES,
 };
 
@@ -84,12 +102,17 @@ const LATE = Symbol('late');
 
 /** `op`'s answer, or LATE when the deadline passes first. A later rejection of `op` is handled by the race. */
 async function answered<T>(d: EmptyCheckDeps, op: Promise<T>): Promise<T | typeof LATE> {
-  const deadline = d.deadline(EMPTY_CHECK_DEADLINE_MS);
+  const deadline = d.deadline(d.deadlineMs);
   try {
     return await Promise.race([op, deadline.late.then((): typeof LATE => LATE)]);
   } finally {
     deadline.cancel();
   }
+}
+
+/** A wait as a sentence says it: "2 seconds", or "1 ms" for a test's. */
+function waitWords(ms: number): string {
+  return ms >= 1000 && ms % 1000 === 0 ? `${ms / 1000} seconds` : `${ms} ms`;
 }
 
 function codeOf(err: unknown): string {
@@ -133,7 +156,7 @@ export async function stillEmptyFolder(dir: string, ignoreJunk: boolean): Promis
     if (codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
     return notEmpty('unreadable', `it could not be looked at (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
   }
-  if (top === LATE) return notEmpty('no-answer', `it did not answer within ${EMPTY_CHECK_DEADLINE_MS / 1000} seconds, so TreeMap cannot tell that it is empty`);
+  if (top === LATE) return notEmpty('no-answer', `it did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
   if (!top.isDirectory()) return notEmpty('not-a-folder', 'it is not a folder any more');
   const queue = [dir];
   let examined = 0;
@@ -167,7 +190,7 @@ export async function stillEmptyFolder(dir: string, ignoreJunk: boolean): Promis
     }
     if (listed === LATE) {
       gaveUp = true;
-      return notEmpty('no-answer', `${named(folder)} did not answer within ${EMPTY_CHECK_DEADLINE_MS / 1000} seconds, so TreeMap cannot tell that it is empty`);
+      return notEmpty('no-answer', `${named(folder)} did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
     }
     if (found) return found;
   }
