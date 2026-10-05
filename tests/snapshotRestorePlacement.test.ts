@@ -316,6 +316,79 @@ test('the folder the copy is made in keeps no access list inherited from the des
   }
 });
 
+/**
+ * FG4e, review L1. Between `mktemp -d` and `cd -P` the name of the folder made to copy into can be
+ * swapped for a link by an account with access-list write rights in the destination folder; `cd -P`
+ * then enters wherever the link leads, and clearing "this" folder's access list as root cleared
+ * that folder's. So the folder entered is judged first — the running account's, 0700, empty (no
+ * entry at all, not only no `item`), its parent the destination folder — and only then is its
+ * access list cleared, and it is judged again. Each folder the link leads to below fails exactly one
+ * of those checks and carries an access-list entry of its own, which must survive.
+ */
+function aclEntries(dir: string): string[] {
+  const run = spawnSync('/bin/ls', ['-led', dir], { encoding: 'utf8', env: process.env });
+  return run.stdout.trim().split('\n').slice(1);
+}
+
+test('a link swapped in for the folder made to copy into is refused before root changes anything where it leads', { skip: !onMac }, () => {
+  const me = os.userInfo().username;
+  const swap = 'mktemp() { d=$(command mktemp "$@") || return 1; mv "$d" "$d.aside"; ln -s "$TM_VICTIM" "$d"; printf "%s\\n" "$d"; }';
+  const cases: Array<{ what: string; make: (dest: string) => string; before?: string }> = [
+    { what: 'a folder elsewhere (its parent is not the destination folder)', make: () => tmp('treemap-place-victimdir-') },
+    { what: 'a folder others can read (not 0700)', make: (dest) => { const d = path.join(dest, 'victim'); fs.mkdirSync(d); fs.chmodSync(d, 0o755); return d; } },
+    {
+      what: 'a folder holding an entry that is not named item',
+      make: (dest) => { const d = path.join(dest, 'victim'); fs.mkdirSync(d); fs.chmodSync(d, 0o700); fs.writeFileSync(path.join(d, 'keep.txt'), 'kept'); return d; },
+    },
+    { what: 'a folder of another account', make: (dest) => { const d = path.join(dest, 'victim'); fs.mkdirSync(d); fs.chmodSync(d, 0o700); return d; }, before: 'id() { echo 4242; }' },
+  ];
+  for (const c of cases) {
+    const dest = tmp('treemap-place-dest-');
+    const target = c.make(dest);
+    if (c.what.startsWith('a folder elsewhere')) fs.chmodSync(target, 0o700);
+    const acl = spawnSync('/bin/chmod', ['+a', `user:${me} allow list,search`, target], { encoding: 'utf8', env: process.env });
+    assert.equal(acl.status, 0, acl.stderr);
+    const held = aclEntries(target);
+    assert.equal(held.length, 1, `${c.what}: the folder the link leads to carries one access-list entry: ${held.join(' | ')}`);
+    try {
+      const before = [swap, c.before ?? ''].join('\n');
+      const { out } = place(dest, 'lost.txt', source(), { before, env: { TM_VICTIM: target } });
+      assert.match(out, /^ERROR the folder made to copy into was changed before anything was copied into it/, `${c.what}: ${out}`);
+      assert.deepEqual(aclEntries(target), held, `${c.what}: its access list is untouched`);
+      assert.equal(fs.existsSync(path.join(dest, 'lost.txt')), false, `${c.what}: nothing placed`);
+    } finally {
+      spawnSync('/bin/chmod', ['-N', target], { env: process.env });
+    }
+  }
+});
+
+test('something put in the folder made to copy into before its access list is cleared is found, and nothing is written through it', { skip: !onMac }, () => {
+  // An access list the folder inherited from the destination folder lets the user write in it until
+  // it is cleared: here a link to another file appears as `item` at that moment.
+  const dest = tmp('treemap-place-dest-');
+  const v = victim();
+  const before = 'chmod() { ln -s "$TM_VICTIM" ./item; command chmod "$@"; }';
+  const { out } = place(dest, 'lost.txt', source(), { before, env: { TM_VICTIM: v.file } });
+  assert.match(out, /^ERROR the folder made to copy into was changed before anything was copied into it/, out);
+  assert.equal(fs.readFileSync(v.file, 'utf8'), v.content, 'the file the planted link leads to is untouched');
+  assert.equal(fs.existsSync(path.join(dest, 'lost.txt')), false, 'nothing placed');
+});
+
+test('an access list that could not be cleared from the folder made to copy into refuses the copy', { skip: !onMac }, () => {
+  const dest = tmp('treemap-place-dest-');
+  const me = os.userInfo().username;
+  const acl = spawnSync('/bin/chmod', ['+a', `user:${me} allow add_file,add_subdirectory,delete_child,file_inherit,directory_inherit`, dest],
+    { encoding: 'utf8', env: process.env });
+  assert.equal(acl.status, 0, acl.stderr);
+  try {
+    const { out } = place(dest, 'lost.txt', source(), { before: 'chmod() { return 1; }' });
+    assert.match(out, /^ERROR the folder made to copy into was changed before anything was copied into it/, out);
+    assert.equal(fs.existsSync(path.join(dest, 'lost.txt')), false, 'nothing placed');
+  } finally {
+    spawnSync('/bin/chmod', ['-N', dest], { env: process.env });
+  }
+});
+
 /* ══════════════════ A copy that cannot be put in place, with its name still free (FG4d, review #7, #13, #18) ══════════════════ */
 
 test('a volume that holds no hard links still receives the file, moved into place and confirmed', { skip: !onMac }, () => {

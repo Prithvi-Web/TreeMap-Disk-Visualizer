@@ -76,9 +76,11 @@ import { meansAbsent } from '../../utils/errno';
  * can write it. `place_copy <source> <name> <uid> <gid>` makes a folder of its own there
  * (`mktemp -d`), enters it by its physical path and works from inside it — `./item` for the copy,
  * `../<name>` for where it goes — so a folder swapped in under that folder's name later is never
- * written to; the folder must be the running account's (root's, as the helper runs) and nobody
- * else's to write in — its access list, which it would inherit from a destination folder the user
- * owns, is cleared — empty, and its parent must still be the destination folder (FG4d, review #3). It
+ * written to; the folder entered must be the running account's (root's, as the helper runs), 0700,
+ * empty — no entry at all — and its parent the destination folder (FG4d, review #3), judged before
+ * anything is changed in it, since a link swapped in for its name before `cd -P` leads elsewhere
+ * (FG4e, review L1); only then is its access list, which it would inherit from a destination folder
+ * the user owns, cleared, and it is judged again with no access-list entry allowed. It
  * copies, unlocks the copy (a Finder-locked item can be neither handed over nor put in place, by
  * root either: FG4d, review #18), hands it to <uid>:<gid>, checks the name again, and places it:
  * a file with `link`, which fails whatever is at the name; a link with `ln -P -h`, a folder with
@@ -117,17 +119,25 @@ leave_stage() {
   if [ -n "$stage" ]; then rmdir -- "$stage" 2>/dev/null; fi
   stage=''
 }
+stage_is_ours() {
+  [ "$(stat -f '%u:%Lp' . 2>/dev/null)" = "$(id -u):700" ] && [ "$(stat -f '%d:%i' .. 2>/dev/null)" = "$dest_id" ] && [ -z "$(ls -A . 2>&1)" ]
+}
+refuse_stage() {
+  if cd .. 2>/dev/null && [ "$(stat -f '%d:%i' . 2>/dev/null)" = "$dest_id" ]; then rmdir -- "$stage" 2>/dev/null; fi
+  stage=''
+  echo "ERROR the folder made to copy into was changed before anything was copied into it, so nothing was copied"
+}
 place_copy() {
   if [ -e "./$2" ] || [ -L "./$2" ]; then
     echo "ERROR something already exists at the destination"; return 1
   fi
   stage=$(mktemp -d ./.treemap-restore.XXXXXX) || { stage=''; echo "ERROR could not make a folder to copy into"; return 1; }
   cd -P -- "$stage" 2>/dev/null || { leave_stage; echo "ERROR the folder made to copy into could not be opened"; return 1; }
+  # Judged before anything is changed in it: its name could have been swapped for a link between
+  # mktemp and cd, and then "." is wherever that link led (FG4e, review L1).
+  if ! stage_is_ours; then refuse_stage; return 1; fi
   chmod -N . 2>/dev/null
-  if [ "$(stat -f '%u:%Lp' .)" != "$(id -u):700" ] || [ "$(stat -f '%d:%i' ..)" != "$dest_id" ] || [ -n "$(ls -led . 2>/dev/null | sed -n 2p)" ] || [ -e ./item ] || [ -L ./item ]; then
-    cd .. 2>/dev/null; rmdir -- "$stage" 2>/dev/null; stage=''
-    echo "ERROR the folder made to copy into was changed before anything was copied into it, so nothing was copied"; return 1
-  fi
+  if ! stage_is_ours || [ -n "$(ls -led . 2>/dev/null | sed -n 2p)" ]; then refuse_stage; return 1; fi
   in_stage=1
   if ! cp -a "$1" ./item 2>/dev/null; then
     leave_stage; echo "ERROR the copy out of the snapshot failed"; return 1
