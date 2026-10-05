@@ -985,6 +985,23 @@ function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, d
   }
 }
 
+/** A folder as the fast-rescan cache holds it: `unlisted` where the scan that wrote it did not list it in full (U-4b L3). */
+type CachedNode = FileNode & { unlisted?: true };
+
+/**
+ * The listing a fast rescan may take from the cache for this folder, or null
+ * to read it from disk (Track U, U-4b L3). Never one the scan that wrote the
+ * cache marked not listed in full — a refusal, a "don't scan" pattern, a
+ * failed stat: reused, it would lose `Flag.Unlisted` and read as complete. And
+ * never an empty one, whatever wrote it: gdu and the native engine's per-entry
+ * refusals leave a folder they could not read as an empty listing with no
+ * mark, and listing a folder that really is empty again costs one call.
+ */
+function reusableListing(cached: FileNode): FileNode[] | null {
+  if ((cached as CachedNode).unlisted === true) return null;
+  return cached.children && cached.children.length > 0 ? cached.children : null;
+}
+
 /** Tries at a whole cache when the tree keeps changing while it is written. */
 const MTIME_CACHE_ATTEMPTS = 3;
 
@@ -1020,7 +1037,7 @@ export async function saveMtimeCache(scan: ScanResult): Promise<void> {
       return;
     }
     for (let attempt = 0; attempt < MTIME_CACHE_ATTEMPTS; attempt++) {
-      if (await writeFileChunked(name, (write) => streamTreeJson(store, store.rootId, write))) return;
+      if (await writeFileChunked(name, (write) => streamTreeJson(store, store.rootId, write, { markUnlisted: true }))) return;
     }
     console.warn(`[treemap] mtime cache not saved: the tree changed while it was being written, ${MTIME_CACHE_ATTEMPTS} times`);
   } catch (err) {
@@ -1230,16 +1247,18 @@ async function processDirectory(
     store.setAccessedAt(dirId, st.atimeMs > 0 ? Math.round(st.atimeMs) : undefined);
     job.dev = walkerDevice(dirPath, st);
     noteIfCrossed(bounds, job.parentDev, job.dev, dirPath);
-    if (cachedNode.children && mtimesMatch(cachedMtime, Math.round(st.mtimeMs))) {
-      reuseCachedListing(scan, store, dirId, dirPath, cachedNode.children, queue, job.dev);
+    const listing = reusableListing(cachedNode);
+    if (listing && mtimesMatch(cachedMtime, Math.round(st.mtimeMs))) {
+      reuseCachedListing(scan, store, dirId, dirPath, listing, queue, job.dev);
       return;
     }
     // Its listing changed — fall through and re-list from disk.
   } else if (cache) {
     // Freshly stat'ed by its parent: compare the disk's mtime to the cache's.
     const cached = cache.get(dirPath);
-    if (cached && cached.type === 'dir' && cached.children && mtimesMatch(cached.modifiedAt, store.modifiedAt(dirId))) {
-      reuseCachedListing(scan, store, dirId, dirPath, cached.children, queue, job.dev);
+    const listing = cached && cached.type === 'dir' ? reusableListing(cached) : null;
+    if (cached && listing && mtimesMatch(cached.modifiedAt, store.modifiedAt(dirId))) {
+      reuseCachedListing(scan, store, dirId, dirPath, listing, queue, job.dev);
       return;
     }
   }

@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -583,6 +584,99 @@ test('walker, fast rescan: a folder the cached listing names but the disk no lon
   const answer = await emptyFolders(again.scanId);
   assert.deepEqual(offered(answer), [path.join(root, 'plain')]);
   assert.equal(answer.withheld, 0, 'kept out by the walk\'s record that it never listed it, before any second look');
+});
+
+/* ─────────────── a fast rescan keeps what the scan did not list (U-4b L3) ─────────────── */
+
+/** The fast-rescan cache of `root` under "Stay on this drive" (diskScanner's cacheFileName). */
+function cacheFileOf(root: string): string {
+  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-${crypto.createHash('sha1').update(root).digest('hex').slice(0, 16)}.json`);
+}
+
+/** A fast rescan of `root`, settled, whose own listings came partly from the cache. */
+async function fastRescan(root: string): Promise<ScanResult> {
+  const again = await startScan(root, { incremental: true });
+  await waitFor(() => again.status !== 'running', 'the fast rescan');
+  assert.equal(again.status, 'complete', again.error);
+  assert.equal(again.engine === 'walker' || again.engine === 'turbo-walker', true, `a fast rescan runs on the walker (${again.engine})`);
+  assert.ok((again.cachedDirs ?? 0) > 0, 'the rescan took a listing from the cache');
+  return again;
+}
+
+const flagged = (scan: ScanResult, p: string): boolean => {
+  const store = scan.store as PackedScanStore;
+  const id = store.findByPath(p);
+  assert.notEqual(id, -1, `${p} is in the tree`);
+  return store.flag(id, Flag.Unlisted);
+};
+
+test('walker, fast rescan: a folder the walk was refused is still not listed, though its parent\'s listing came from the cache', { skip: !canLock && 'a folder cannot be made unlistable here (Windows, or running as root)' }, async (t) => {
+  const root = onDisk('cached-refused', ['locked/secret.bin', 'plain/']);
+  const locked = path.join(root, 'locked');
+  fs.chmodSync(locked, 0o000);
+  try {
+    const first = await scanWith('walker', root);
+    if (!ran(t, first, 'walker')) return;
+    await settled();
+    const again = await fastRescan(root);
+    assert.equal(flagged(again, locked), true, 'the cache\'s empty listing for it was not taken as one');
+    const answer = await emptyFolders(again.scanId);
+    assert.deepEqual(offered(answer), [path.join(root, 'plain')]);
+    assert.equal(answer.withheld, 0, 'kept out by the walk\'s own record, before any second look');
+  } finally {
+    fs.chmodSync(locked, 0o755);
+  }
+});
+
+test('walker, fast rescan: an empty listing in the cache is listed again, whichever engine wrote it', { skip: !canLock && 'a folder cannot be made unlistable here (Windows, or running as root)' }, async (t) => {
+  // gdu and the native engine's per-entry refusals leave a folder they could not read as an empty
+  // listing with no mark at all: the walker reads such a folder again rather than believe it.
+  const root = onDisk('cached-unmarked', ['locked/secret.bin', 'plain/']);
+  const locked = path.join(root, 'locked');
+  fs.chmodSync(locked, 0o000);
+  try {
+    const first = await scanWith('walker', root);
+    if (!ran(t, first, 'walker')) return;
+    await settled();
+    const file = cacheFileOf(root);
+    const written = fs.readFileSync(file, 'utf8');
+    const bare = written.split(',"unlisted":true').join('');
+    assert.ok(bare.includes(`"path":${JSON.stringify(locked)}`) && bare.includes('"children":[]'), 'the cache holds the folder as an empty listing');
+    fs.writeFileSync(file, bare);
+    const again = await fastRescan(root);
+    assert.equal(flagged(again, locked), true);
+    assert.deepEqual(offered(await emptyFolders(again.scanId)), [path.join(root, 'plain')]);
+  } finally {
+    fs.chmodSync(locked, 0o755);
+  }
+});
+
+test('walker, fast rescan: a folder a "don\'t scan" pattern left entries out of is still not listed', async (t) => {
+  const root = onDisk('cached-ignored', ['proj/node_modules/x.js', 'proj/src/', 'plain/']);
+  await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+  try {
+    const first = await scanWith('auto', root);
+    if (!ran(t, first, 'walker')) return;
+    const before = await emptyFolders(first.scanId);
+    assert.deepEqual(offered(before), [path.join(root, 'plain'), path.join(root, 'proj', 'src')]);
+    await settled();
+    const again = await fastRescan(root);
+    assert.equal(flagged(again, path.join(root, 'proj')), true, 'its cached listing — src, without node_modules — was not taken as the whole folder');
+    const answer = await emptyFolders(again.scanId);
+    assert.deepEqual(offered(answer), offered(before), 'the same folders, src among them');
+    assert.equal(answer.withheld, 0, 'proj is never a candidate: it holds node_modules');
+    // The root's own listing is the other way a cached listing is taken (looked up, not revalidated).
+    const top = onDisk('cached-ignored-root', ['node_modules/x.js', 'proj/node_modules/x.js', 'proj/src/', 'keep/a/']);
+    const firstTop = await scanWith('auto', top);
+    if (!ran(t, firstTop, 'walker')) return;
+    await settled();
+    const againTop = await fastRescan(top);
+    assert.equal(flagged(againTop, top), true, 'the root holds node_modules too');
+    assert.equal(flagged(againTop, path.join(top, 'proj')), true);
+    assert.deepEqual(offered(await emptyFolders(againTop.scanId)), [path.join(top, 'keep'), path.join(top, 'proj', 'src')]);
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
 });
 
 test('the native memory path names no unreadable folder, so the second look is what keeps one out', async () => {

@@ -1,4 +1,4 @@
-import { isExpandableId, materializeBare, type ScanStore } from './scanStore';
+import { Flag, isExpandableId, materializeBare, type ScanStore } from './scanStore';
 
 /** About how many characters `streamTreeJson` gathers before each write: a few milliseconds of work. */
 export const TREE_JSON_CHUNK_CHARS = 256 * 1024;
@@ -36,20 +36,28 @@ interface Frame {
  * so a change seen after a write stops the stream: false, and the caller
  * discards what was written. True: the document is complete, and describes
  * the store as it was when its last piece was built.
+ *
+ * `markUnlisted` (the fast-rescan cache's, U-4b L3) adds `"unlisted":true` to
+ * every folder the scan did not list in full (`Flag.Unlisted`), after its own
+ * keys and before `children`: the walker reuses no such listing, so a folder
+ * it was refused, or one a "don't scan" pattern left entries out of, is read
+ * again rather than believed whole. Without it the bytes are the prune's.
  */
 export async function streamTreeJson(
   store: ScanStore,
   id: number,
   write: (chunk: string) => Promise<void>,
-  opts: { chunkChars?: number } = {},
+  opts: { chunkChars?: number; markUnlisted?: boolean } = {},
 ): Promise<boolean> {
   const chunkChars = Math.max(1, opts.chunkChars ?? TREE_JSON_CHUNK_CHARS);
+  const mark = opts.markUnlisted === true;
   const version = store.version;
   const stack: Frame[] = [];
   let buf = '';
   const emit = (nodeId: number, knownPath?: string): void => {
     const node = materializeBare(store, nodeId, knownPath);
-    const json = JSON.stringify(node);
+    const plain = JSON.stringify(node);
+    const json = mark && store.isDir(nodeId) && store.flag(nodeId, Flag.Unlisted) ? `${plain.slice(0, -1)},"unlisted":true}` : plain;
     if (isExpandableId(store, nodeId)) {
       buf += `${json.slice(0, -1)},"children":[`;
       stack.push({ kids: store.childIds(nodeId), next: 0, path: node.path });
