@@ -238,6 +238,15 @@ test('R1: a nested folder that hangs on a drive whose root answers is withheld a
   assert.equal(asked.filter((a) => a === 'list /x/outer/mnt').length, 1, 'one thread held, not one per look');
 });
 
+test('a folder that is its drive\'s own root and does not answer is not asked twice: its silence is the drive\'s', async () => {
+  // An empty share's mount point offered as an empty folder: asking "the root" again would hold a second thread on the same dead path.
+  const asked = hangsAt((p) => p.startsWith('/nas'), {}, (p) => (p.startsWith('/nas') ? '/nas' : '/'));
+  assert.equal(whyOf(await stillEmptyFolder('/nas', true)), 'no-answer');
+  assert.deepEqual(asked, ['stat /nas'], 'one call on the dead root, not two');
+  assert.match(reasonOf(await stillEmptyFolder('/nas/inner', true)), /the drive it is on did not answer a moment ago/, 'and the drive is silent');
+  assert.deepEqual(asked, ['stat /nas']);
+});
+
 test('a look never starts a call on a drive that went silent, even one it meets below the folder it began on (U-4b review, L-2)', async () => {
   const asked = hangsAt((p) => p.startsWith('/nas'), { '/x/top': [dirent('mnt', true)] }, (p) => (p.startsWith('/x/top/mnt') || p.startsWith('/nas') ? '/nas' : '/'));
   assert.equal(whyOf(await stillEmptyFolder('/nas/a', true)), 'no-answer');

@@ -446,7 +446,7 @@ async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<
   hush(silentFolders, where.folder, ctx.d, op);
   // A wait the budget cut short says nothing of the drive.
   if (wait < ctx.d.deadlineMs) return SPENT;
-  await askRoot(ctx, where.drive, op);
+  await askRoot(ctx, where, op);
   return LATE;
 }
 
@@ -457,14 +457,14 @@ async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<
  * that answers — an error is an answer — shows the drive is there, and only
  * the folder that hung stays silent. So one slow folder (a dataless iCloud
  * folder, a busy pool) no longer silences every folder on its drive, and a
- * call that never settles holds only its own folder. A drive not known, or a
- * budget already spent, cannot be asked: the drive is silent with the call,
- * or left for the next request to ask, respectively.
+ * call that never settles holds only its own folder. A drive not known, or
+ * one whose root is the folder that hung, cannot be asked anything new: the
+ * drive is silent with that call. With the budget spent, the next request asks.
  */
-async function askRoot(ctx: LookContext, drive: string, op: Promise<unknown>): Promise<void> {
+async function askRoot(ctx: LookContext, { folder, drive }: Where, op: Promise<unknown>): Promise<void> {
   const { d } = ctx;
   if (isSilent(d, drive)) return;
-  if (drive === '') {
+  if (drive === '' || drive === folder) {
     hush(silentDrives, drive, d, op);
     return;
   }
