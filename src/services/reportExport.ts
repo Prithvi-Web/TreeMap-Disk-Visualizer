@@ -55,17 +55,63 @@ function totalSize(scan: CompleteScan): number {
   return store.size(store.rootId);
 }
 
-/** Stream a CSV of every file, or every folder (recursive sizes), as attachment. */
-export function streamCsv(scan: CompleteScan, mode: 'files' | 'folders', res: Response): void {
+/** How much CSV text (in characters) goes out per res.write(). */
+export const CSV_CHUNK_CHARS = 64 * 1024;
+
+/** Resolves once `res` drains or closes, whichever comes first. */
+function drainedOrClosed(res: Response): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = (): void => { res.off('drain', done); res.off('close', done); resolve(); };
+    res.once('drain', done);
+    res.once('close', done);
+  });
+}
+
+/** One turn of the event loop, so sockets, timers and other requests run between chunks. */
+const yieldTurn = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * Stream a CSV of every file, or every folder (recursive sizes), as attachment.
+ *
+ * QA D35: this used to be one res.write() per row in one synchronous loop, so
+ * a 303,478-file export piled every row up in memory in a single tick (+200 MB)
+ * and the client got an empty reply. Rows now go out in chunks of whole lines
+ * (`chunkChars` of text each); after a write that answers false nothing more
+ * is written until the response drains, the event loop gets a turn between
+ * chunks either way, and a connection that closes stops the export with a log
+ * line instead of a silent short file. The bytes are exactly what they were.
+ */
+export async function streamCsv(
+  scan: CompleteScan,
+  mode: 'files' | 'folders',
+  res: Response,
+  chunkChars: number = CSV_CHUNK_CHARS, // injectable so tests can make many chunks from a small tree
+): Promise<void> {
   res.status(200);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="treemap-${safeBase(scan)}-${mode}-${stamp()}.csv"`);
-  const write = (line: string): void => { res.write(line + '\r\n'); };
 
-  write(mode === 'files' ? 'Path,Bytes,Last Modified,Extension' : 'Path,Bytes,Last Modified,Files');
+  let pending = (mode === 'files' ? 'Path,Bytes,Last Modified,Extension' : 'Path,Bytes,Last Modified,Files') + '\r\n';
+  let rows = 0;
+  /** Sends what is pending; false once the connection is gone and the export must stop. */
+  const flush = async (): Promise<boolean> => {
+    const fits = res.write(pending);
+    pending = '';
+    if (!fits) await drainedOrClosed(res);
+    else await yieldTurn();
+    if (res.destroyed || res.writableEnded) {
+      console.warn(`[export] CSV export (${mode}) stopped after ${formatCount(rows)} rows: the connection closed before it finished.`);
+      return false;
+    }
+    return true;
+  };
+
   for (const row of reportRows(storeOf(scan), mode)) {
-    write(`${csvField(row[0])},${row[1]},${row[2] ? row[2].toISOString() : ''},${typeof row[3] === 'string' ? csvField(row[3]) : row[3]}`);
+    pending += `${csvField(row[0])},${row[1]},${row[2] ? row[2].toISOString() : ''},${typeof row[3] === 'string' ? csvField(row[3]) : row[3]}\r\n`;
+    rows++;
+    if (pending.length >= chunkChars && !(await flush())) return;
   }
+  if (pending) res.write(pending);
   res.end();
 }
 

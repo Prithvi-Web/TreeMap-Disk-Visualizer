@@ -617,7 +617,7 @@ scanRouter.get('/scan/:scanId/export', storageModeGate, async (req: Request, res
     return;
   }
   if (format === 'csv') {
-    streamCsv(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
+    await streamCsv(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
     return;
   }
   if (format === 'xlsx') {

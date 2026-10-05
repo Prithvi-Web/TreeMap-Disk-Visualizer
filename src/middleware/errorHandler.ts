@@ -61,10 +61,15 @@ export function notFoundHandler(_req: Request, res: Response): void {
 }
 
 /** Final Express error handler: every error becomes { error, code } JSON. */
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
   if (res.headersSent) {
-    // Mid-stream (e.g. SSE) — nothing sane to send; just end the response.
-    res.end();
+    // Mid-stream (a download, an SSE stream): no JSON can follow bytes already
+    // sent. Say what failed in the log, and cut the connection rather than
+    // end it — res.end() completes the response, so a download that failed
+    // halfway read as a complete, silently short file, and nothing said why
+    // (QA D35).
+    console.error(`[treemap] error after the response to ${req.method} ${req.path} had started; closing the connection:`, err);
+    res.destroy();
     return;
   }
 
