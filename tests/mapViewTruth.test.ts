@@ -560,3 +560,61 @@ test('D63: entering and leaving the cart preview take the selection\'s card down
   assert.equal(tmPreview.on, false, 'the preview ended');
   assert.equal(hides, 2, 'leaving it clears the selection, and its card, too');
 });
+
+/* ══════════════ D64 — the preview banner sits above the map, not on it ══════════════ */
+
+function previewChrome() {
+  const props: Record<string, string> = {};
+  const wrap = {
+    previewing: false,
+    classList: { toggle(_c: string, on: boolean) { wrap.previewing = on; } },
+    style: { setProperty(k: string, v: string) { props[k] = v; }, removeProperty(k: string) { delete props[k]; } },
+  };
+  const banner = { hidden: true, offsetHeight: 44 };
+  const els: Record<string, unknown> = {
+    cartPreview: { setAttribute() {}, classList: { toggle() {} } },
+    treemapWrap: wrap, tmPreviewBanner: banner, tmPreviewText: { innerHTML: '' },
+  };
+  const tmPreview = { on: true, freedBytes: 5e9, outsideView: 0, outsideBytes: 0 };
+  const sync = load<() => void>(['syncCartPreviewChrome', 'TM_PREVIEW_BANNER_INSET'], {
+    $: (id: string) => els[id], tmPreview,
+    escapeHtml: (s: string) => s, formatBytes: (n: number) => `${n} B`, formatCount: String,
+  }, 'syncCartPreviewChrome');
+  return { sync, props, banner, tmPreview, wrap };
+}
+
+test('D64: the preview pads the map down by its banner\'s measured height', () => {
+  // QA: the absolutely-positioned banner sat over the map's top-left tiles
+  // and hid their labels ("Videos", "holiday-4k.mov").
+  const p = previewChrome();
+  p.sync();
+  assert.equal(p.wrap.previewing, true);
+  assert.equal(p.props['--tm-preview-pad'], '64px', '10 px above the banner, its 44 px, 10 px below');
+  p.banner.offsetHeight = 62; // the text wrapped beside the open cart
+  p.sync();
+  assert.equal(p.props['--tm-preview-pad'], '82px', 'a taller banner pushes the map further');
+  p.tmPreview.on = false;
+  p.sync();
+  assert.equal(p.props['--tm-preview-pad'], undefined, 'leaving the preview gives the room back');
+});
+
+test('D64: the previewing wrap takes that padding, and the map\'s height gives it back', () => {
+  const at = INDEX.indexOf('#treemapWrap.previewing {');
+  assert.notEqual(at, -1);
+  assert.match(INDEX.slice(at, INDEX.indexOf('}', at)), /padding-top:\s*var\(--tm-preview-pad,/,
+    'the wrap is padded by the measure while previewing');
+  // treemapCanvasHeight subtracts the wrap's own top padding, so the padded
+  // map still fits the window above its footer.
+  const height = (padTop: string) => load<(w: unknown) => number>(['treemapCanvasHeight'], {
+    getComputedStyle: (el: { pad?: string }) => (el.pad
+      ? { paddingTop: el.pad, paddingBottom: '10px' }
+      : { marginTop: '12px', paddingBottom: '24px' }),
+    window: { innerHeight: 900 },
+  }, 'treemapCanvasHeight')({
+    pad: padTop,
+    getBoundingClientRect: () => ({ top: 150 }),
+    parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: 30 }) }) },
+    closest: () => ({}),
+  });
+  assert.equal(height('10px') - height('64px'), 54, 'every pixel of padding comes off the map, none off the footer');
+});

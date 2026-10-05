@@ -265,4 +265,6 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .tm-preview-banner .ic { color: var(--warn); flex: none; }
 .tm-preview-banner #tmPreviewText { min-width: 0; line-height: 1.4; }
 .tm-preview-banner b { font-weight: 700; }
-#treemapWrap.previewing { outline: 2px dashed var(--warn); outline-offset: -2px; }
+/* Padded below the banner (QA D64): the JS measures it into --tm-preview-pad. */
+#treemapWrap.previewing { outline: 2px dashed var(--warn); outline-offset: -2px;
+  padding-top: var(--tm-preview-pad, 64px); }

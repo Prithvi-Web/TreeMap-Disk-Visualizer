@@ -370,6 +370,9 @@ function exitCartPreview(silent = false) {
   if (!silent && state.view === 'treemap' && isRectMap()) drawTreemap();
 }
 
+/** .tm-preview-banner's top inset in the map's wrap, and the gap kept below it. */
+const TM_PREVIEW_BANNER_INSET = 10;
+
 /** Banner text, toggle state and the wrap outline — one place, both directions. */
 function syncCartPreviewChrome() {
   const btn = $('cartPreview');
@@ -377,11 +380,12 @@ function syncCartPreviewChrome() {
     btn.setAttribute('aria-pressed', String(tmPreview.on));
     btn.classList.toggle('active', tmPreview.on);
   }
-  $('treemapWrap').classList.toggle('previewing', tmPreview.on);
+  const wrap = $('treemapWrap');
+  wrap.classList.toggle('previewing', tmPreview.on);
   const banner = $('tmPreviewBanner');
   if (!banner) return;
   banner.hidden = !tmPreview.on;
-  if (!tmPreview.on) return;
+  if (!tmPreview.on) { wrap.style.removeProperty('--tm-preview-pad'); return; }
   const outside = tmPreview.outsideView
     ? ` <span class="muted">${formatCount(tmPreview.outsideView)} staged item${tmPreview.outsideView === 1 ? '' : 's'} ` +
       `${tmPreview.outsideBytes ? `(${escapeHtml(formatBytes(tmPreview.outsideBytes))}) ` : ''}` +
@@ -390,6 +394,12 @@ function syncCartPreviewChrome() {
   $('tmPreviewText').innerHTML =
     `<b>Preview — nothing has been deleted.</b> The hatched areas are the ` +
     `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart would free.` + outside;
+  // The banner floats over the map's top edge, and covered the labels of the
+  // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
+  // by the banner's measured height instead — it wraps to two lines beside
+  // the open cart — and treemapCanvasHeight takes that padding off the map,
+  // which enterCartPreview redraws right after this.
+  wrap.style.setProperty('--tm-preview-pad', `${Math.ceil(banner.offsetHeight) + 2 * TM_PREVIEW_BANNER_INSET}px`);
 }
 
 $('cartPreview').addEventListener('click', () => enterCartPreview());
