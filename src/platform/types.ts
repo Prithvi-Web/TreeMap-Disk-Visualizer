@@ -38,6 +38,17 @@ export interface RawEntry {
   ino: number;
   /** Hard-link count. Values above 1 mean the inode has more than one name. */
   nlink: number;
+  /**
+   * The entry's number in the order the enumerator handed it over: the root
+   * 0, then 1, 2, … (plan U-15). A folder is always handed over before its
+   * contents, so a folder's number is below every number inside it.
+   */
+  ordinal: number;
+  /**
+   * The `ordinal` of the folder the entry was listed in; −1 for the root.
+   * With it a consumer places an entry in the tree without a map from paths.
+   */
+  parentOrdinal: number;
 }
 
 export interface EnumerateOptions {

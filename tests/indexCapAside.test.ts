@@ -110,13 +110,16 @@ test('a capped rebuild of a live index that stops at its cap leaves it live: its
 });
 
 test('while a capped rebuild runs, every reader sees the saved index and never a row being written', async () => {
-  // A subfolder makes the build write rows mid-walk: its files need their parent's row.
+  // Six hundred files in a subfolder make the build write rows mid-walk:
+  // it writes its files INDEX_BATCH_ROWS (500) at a time as the walk hands
+  // them over (plan U-15), so by its 560th look at whether to stop it has
+  // written some.
   const dir = fixture(6, 'q');
   fs.mkdirSync(path.join(dir, 'sub'));
-  addFiles(path.join(dir, 'sub'), 30, 'q');
+  addFiles(path.join(dir, 'sub'), 600, 'q');
   const saved = await buildIndex(dir, { live: false });
   const savedHits = searchIndex('q0').total;
-  assert.equal(savedHits, 36, 'the saved index holds six files here and thirty in sub');
+  assert.equal(savedHits, 106, 'the saved index holds six files here, and a hundred of sub\'s six hundred (q000 to q099)');
   const roots = listRoots();
   const known = new Set(roots.map((r) => r.id));
   const unlisted = (): number => (openIndex().prepare('SELECT root_id FROM nodes').all() as { root_id: number }[]).filter((r) => !known.has(r.root_id)).length;
@@ -127,7 +130,7 @@ test('while a capped rebuild runs, every reader sees the saved index and never a
     live: false,
     maxEntries: 1000,
     isCancelled: () => {
-      if (++polls !== 25) return false;
+      if (++polls !== 560) return false;
       // Mid-walk, with rows of the new build already written.
       looked = true;
       assert.equal(count('SELECT COUNT(*) c FROM roots'), roots.length + 1, 'the build writes under a root of its own');
@@ -152,15 +155,29 @@ test('while a capped rebuild runs, every reader sees the saved index and never a
 test('a crash in the middle of a capped rebuild leaves the saved index', async () => {
   const dir = fixture(6);
   fs.mkdirSync(path.join(dir, 'sub'));
-  addFiles(path.join(dir, 'sub'), 30, 'f');
+  addFiles(path.join(dir, 'sub'), 600, 'f');
   const saved = await buildIndex(dir, { live: false });
   const rows = rowsOf(saved.id);
   const roots = count('SELECT COUNT(*) c FROM roots');
+  const savedIds = new Set((openIndex().prepare('SELECT id FROM roots').all() as { id: number }[]).map((r) => r.id));
   let polls = 0;
+  let writtenAtCrash = 0;
   // Closing the database mid-walk is what a killed process leaves behind:
-  // the new build's root 'building' and some of its rows written.
-  const crashed = buildIndex(dir, { live: false, maxEntries: 1000, isCancelled: () => { if (++polls === 25) closeIndex(); return false; } });
+  // the new build's root 'building' and some of its rows written (it writes
+  // 500 files at a time, so by the 560th look it has).
+  const crashed = buildIndex(dir, {
+    live: false,
+    maxEntries: 1000,
+    isCancelled: () => {
+      if (++polls === 560) {
+        writtenAtCrash = (openIndex().prepare('SELECT root_id FROM nodes').all() as { root_id: number }[]).filter((r) => !savedIds.has(r.root_id)).length;
+        closeIndex();
+      }
+      return false;
+    },
+  });
   await assert.rejects(crashed);
+  assert.ok(writtenAtCrash > 0, `the crash came with some of the build's rows written (${String(writtenAtCrash)})`);
   openIndex(); // the next start
   const after = getRoot(dir);
   assert.ok(after, 'the saved index is still the folder\'s');

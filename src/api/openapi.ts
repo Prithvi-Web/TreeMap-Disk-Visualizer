@@ -2332,7 +2332,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'index',
     destructive: false,
     parameters: [pathParam('jobId', 'Job id from POST /api/index/build')],
-    responses: { '200': sseResponse('progress / complete / error / shutdown frames. An error frame for a build stopped at its cap also carries code INDEX_CAP_REACHED and maxEntries') },
+    responses: { '200': sseResponse('progress / complete / error / shutdown frames. A progress frame\'s processed is the rows written so far, and moves with every write of at most 500 rows: phase enumerating while the files are written as the walk finds them, summing while the folders are written last, each with its total. An error frame\'s processed is how many entries the walk had found. An error frame for a build stopped at its cap also carries code INDEX_CAP_REACHED and maxEntries') },
   },
   {
     method: 'get',

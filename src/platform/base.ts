@@ -66,34 +66,43 @@ export abstract class BaseProvider implements PlatformProvider {
    *
    * Yields directories before their contents, so a consumer can build a tree in
    * one pass without buffering.
+   *
+   * Every entry carries its `ordinal` — its number in the order it is
+   * yielded, the root 0 — and its folder's (`parentOrdinal`, −1 for the
+   * root), so a consumer places it in the tree without a map from paths
+   * (plan U-15). Folders are queued for listing in the order they are
+   * yielded, which also makes the order of the whole walk depend on the
+   * listings alone, never on which listing of a wave finished first.
    */
   async *fastEnumerate(root: string, opts: EnumerateOptions = {}): AsyncIterable<RawEntry> {
     const rootStat = await fsp.lstat(root);
     const rootDev = rootStat.dev;
     const concurrency = opts.concurrency ?? (await this.enumerateConcurrency(root));
 
-    const rootEntry = this.toRawEntry(root, path.basename(root) || root, rootStat);
+    let ordinal = 0;
+    const rootEntry = this.toRawEntry(root, path.basename(root) || root, rootStat, -1);
+    rootEntry.ordinal = ordinal++;
     yield rootEntry;
 
-    let frontier: string[] = [root];
+    let frontier: { path: string; ordinal: number }[] = [{ path: root, ordinal: rootEntry.ordinal }];
 
     while (frontier.length > 0) {
       if (opts.isCancelled?.()) return;
 
       const wave = frontier.splice(0, concurrency);
-      const next: string[] = [];
+      const next: { path: string; ordinal: number }[] = [];
 
       const batches = await Promise.all(
         wave.map(async (dir): Promise<RawEntry[]> => {
           let dirents: fs.Dirent[];
           try {
-            dirents = await fsp.readdir(dir, { withFileTypes: true });
+            dirents = await fsp.readdir(dir.path, { withFileTypes: true });
           } catch {
             return []; // unreadable or vanished mid-walk — not fatal
           }
           const out: RawEntry[] = [];
           for (const dirent of dirents) {
-            const full = dir === '/' ? '/' + dirent.name : path.join(dir, dirent.name);
+            const full = dir.path === '/' ? '/' + dirent.name : path.join(dir.path, dirent.name);
             if (opts.skip?.(full)) continue;
             let st: fs.Stats;
             try {
@@ -102,9 +111,7 @@ export abstract class BaseProvider implements PlatformProvider {
               continue; // vanished between readdir and lstat
             }
             if (opts.singleDevice && st.dev !== rootDev) continue;
-            const entry = this.toRawEntry(full, dirent.name, st);
-            out.push(entry);
-            if (entry.isDir && !entry.isSymlink && !neverDescend(full)) next.push(full);
+            out.push(this.toRawEntry(full, dirent.name, st, dir.ordinal));
           }
           return out;
         }),
@@ -118,6 +125,9 @@ export abstract class BaseProvider implements PlatformProvider {
       for (const batch of batches) {
         for (const entry of batch) {
           if (opts.isCancelled?.()) return;
+          // Numbered as it is handed over: an entry nobody receives has none.
+          entry.ordinal = ordinal++;
+          if (entry.isDir && !entry.isSymlink && !neverDescend(entry.path)) next.push({ path: entry.path, ordinal: entry.ordinal });
           yield entry;
         }
       }
@@ -141,8 +151,12 @@ export abstract class BaseProvider implements PlatformProvider {
     return true;
   }
 
-  /** Shape a Node `Stats` into a RawEntry. One place, so the fields cannot drift. */
-  protected toRawEntry(full: string, name: string, st: fs.Stats): RawEntry {
+  /**
+   * Shape a Node `Stats` into a RawEntry. One place, so the fields cannot
+   * drift. `ordinal` is −1 until `fastEnumerate` numbers the entry as it
+   * hands it over.
+   */
+  protected toRawEntry(full: string, name: string, st: fs.Stats, parentOrdinal: number): RawEntry {
     return {
       path: full,
       name,
@@ -155,6 +169,8 @@ export abstract class BaseProvider implements PlatformProvider {
       dev: st.dev,
       ino: st.ino,
       nlink: st.nlink,
+      ordinal: -1,
+      parentOrdinal,
     };
   }
 

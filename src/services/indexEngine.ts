@@ -11,7 +11,7 @@ import { neverDescend } from '../utils/mountBoundaries';
 // become a pattern. Since v3, deletes and scopes work on node ids, so no
 // path ever meets LIKE at all.
 import { parseQuery, extensionOf, escapeLike } from '../utils/searchQuery';
-import type { ChangeEvent, Unsubscribe } from '../platform/types';
+import type { ChangeEvent, RawEntry, Unsubscribe } from '../platform/types';
 import { onWatchDelivery } from '../platform/types';
 import { holdWatchesOf, onWatchSetChange, watchesShareOneStream } from '../platform/watchRegistry';
 import type { FileNode } from '../models/types';
@@ -435,15 +435,230 @@ export function capStopFor(rootPath: string): CapStop | null {
   return row ? { maxEntries: row.max_entries, at: row.stopped_at, reason: capSentence(row.max_entries) } : null;
 }
 
-/** How many rows to insert per transaction. */
-const BATCH = 5_000;
+/**
+ * How many rows each write transaction of a build holds (plan U-15): about
+ * 26 ms of the thread a transaction at the measured 52 µs a row, against
+ * about 260 ms for the 5,000 it was (arithmetic). The event loop turns after
+ * every one, so no request waits behind more than one.
+ */
+export const INDEX_BATCH_ROWS = 500;
+
+/**
+ * How many node ids a build without a cap sets aside (U-D6): 2^32, which
+ * keeps every id below 2^53 — exact in a JavaScript number — for 2^21 such
+ * builds (arithmetic). A capped build sets aside its cap and one more.
+ */
+const UNCAPPED_ID_STRIDE = 2 ** 32;
+
+/** What a build stops with when its walk hands over more entries than it set ids aside for. */
+function strideSentence(stride: number): string {
+  return `The index build stopped at ${formatCount(stride)} items, the most it set aside room for.`;
+}
+
+/** Lets the event loop turn: every timer, request and reply queued behind the build runs before it goes on. */
+function yieldToLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/** One row of `nodes` as a build writes it, its id chosen by the build (U-D6). */
+interface NodeInsert {
+  id: number;
+  root_id: number;
+  parent_id: number | null;
+  name: string;
+  ext: string;
+  is_dir: 0 | 1;
+  size: number;
+  allocated: number | null;
+  mtime: number;
+  flags: number;
+  ino: number;
+  nlink: number;
+}
+
+/**
+ * Tests only: what a test can see of a build, and where it can hold one
+ * (tests/indexBuildBounds.test.ts). Absent, a build runs as it ships.
+ */
+export interface BuildSeams {
+  /** After each write transaction has committed: its number from 1, and its rows. A promise holds the build until it settles. */
+  afterWrite?: (transaction: number, rows: number) => void | Promise<void>;
+  /** The node ids the build set aside (U-D6): the first, and how many. */
+  onReserve?: (base: number, stride: number) => void;
+  /** Fewer ids to set aside than the build would, so a walk can pass them. */
+  stride?: number;
+  /** Once the walk has ended: how many slots each of the build's per-folder columns holds. */
+  onFolders?: (slots: number[]) => void;
+}
+
+let buildSeams: BuildSeams | null = null;
+
+/** Tests only: see into, and hold, every build through `seams`; null restores the build as it ships. */
+export function setBuildSeamsForTests(seams: BuildSeams | null): void {
+  buildSeams = seams;
+}
+
+/**
+ * Sets `stride` node ids aside for one build and returns the first (U-D6).
+ *
+ * The build writes each row at `base + ordinal`, the entry's number in the
+ * walk, so it can name a folder's id before the folder's row exists. Live
+ * watchers of other roots insert on the same connection with AUTOINCREMENT
+ * while it runs (`applyPendingChanges`, `ensureParents`), and an id they took
+ * inside the range would collide with a row the build writes later. Raising
+ * `sqlite_sequence` past the range, in the transaction that inserts the
+ * build's root, gives every AUTOINCREMENT insert after it an id above the
+ * range; the build's own ids, inside it, leave the sequence where it is.
+ */
+function reserveIds(handle: Database.Database, stride: number): number {
+  const row = handle.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'nodes'").get() as { seq: number } | undefined;
+  const base = (row?.seq ?? 0) + 1;
+  const last = base + stride - 1;
+  if (!Number.isSafeInteger(last)) throw new Error('The index has no room left for another build: remove the index, then build it again.');
+  if (row) handle.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'").run(last);
+  else handle.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('nodes', ?)").run(last);
+  return base;
+}
+
+/**
+ * What a build keeps for each folder it meets, by rank — the order it met
+ * them, which is the walk's order — in typed columns of one slot a folder,
+ * and the folders' names. A file is never kept: it is written as it comes,
+ * and its bytes are added to its folder's running total here. So what a
+ * build holds grows with its folders, not with its entries (plan U-15), and
+ * once the walk has ended one pass, deepest first, carries every folder's
+ * total into its parent's: no row is read back and none written twice.
+ */
+class FolderTable {
+  length = 0;
+  private capacity = 1024;
+  private ordinal = new Float64Array(this.capacity);
+  private parentRank = new Int32Array(this.capacity);
+  private total = new Float64Array(this.capacity);
+  /** NaN where the walk could not say (`allocatedSize` null). */
+  private allocated = new Float64Array(this.capacity);
+  private mtime = new Float64Array(this.capacity);
+  private ino = new Float64Array(this.capacity);
+  private nlink = new Float64Array(this.capacity);
+  private flags = new Uint8Array(this.capacity);
+  private readonly names: string[] = [];
+  /** The last folder looked up by its number: a folder's entries are handed over together, so most lookups repeat it. */
+  private lastOrdinal = -1;
+  private lastRank = -1;
+
+  /** Keeps `entry`, a folder, as the next rank. */
+  add(entry: RawEntry, flags: number): void {
+    if (this.length === this.capacity) this.grow();
+    const rank = this.length;
+    // The parent is looked up before this folder takes its slot: it was handed over first.
+    const parentRank = entry.parentOrdinal < 0 ? -1 : this.rankOf(entry.parentOrdinal);
+    this.length++;
+    this.ordinal[rank] = entry.ordinal;
+    this.parentRank[rank] = parentRank;
+    this.total[rank] = 0;
+    this.allocated[rank] = entry.allocatedSize ?? Number.NaN;
+    this.mtime[rank] = entry.modifiedAt;
+    this.ino[rank] = entry.ino;
+    this.nlink[rank] = entry.nlink;
+    this.flags[rank] = flags;
+    this.names.push(entry.name);
+  }
+
+  /** Adds `bytes` to the running total of the folder numbered `ordinal`. */
+  addBytes(ordinal: number, bytes: number): void {
+    this.total[this.rankOf(ordinal)] += bytes;
+  }
+
+  /**
+   * Carries every folder's total into its parent's, deepest first — a folder
+   * always ranks after the folder it is in — and returns the root's total.
+   */
+  carryTotalsUp(): number {
+    for (let rank = this.length - 1; rank > 0; rank--) this.total[this.parentRank[rank]] += this.total[rank];
+    return this.total[0];
+  }
+
+  /** The row of the folder at `rank`, with its total. */
+  row(rank: number, base: number, rootId: number): NodeInsert {
+    const parentRank = this.parentRank[rank];
+    const allocated = this.allocated[rank];
+    return {
+      id: base + this.ordinal[rank],
+      root_id: rootId,
+      parent_id: parentRank < 0 ? null : base + this.ordinal[parentRank],
+      name: this.names[rank],
+      // Directories have no extension in this language, matching the
+      // frontend's `n.type === 'file'` guard.
+      ext: '',
+      is_dir: 1,
+      size: this.total[rank],
+      allocated: Number.isNaN(allocated) ? null : allocated,
+      mtime: this.mtime[rank],
+      flags: this.flags[rank],
+      ino: this.ino[rank],
+      nlink: this.nlink[rank],
+    };
+  }
+
+  /** How many slots the columns hold, and how many names: one a folder (tests/indexBuildBounds.test.ts). */
+  slots(): number[] {
+    return [this.length, this.names.length];
+  }
+
+  /** The rank of the folder numbered `ordinal`. Numbers ascend with rank, so a binary search. */
+  private rankOf(ordinal: number): number {
+    if (ordinal === this.lastOrdinal) return this.lastRank;
+    let lo = 0;
+    let hi = this.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const at = this.ordinal[mid];
+      if (at === ordinal) {
+        this.lastOrdinal = ordinal;
+        this.lastRank = mid;
+        return mid;
+      }
+      if (at < ordinal) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    // The enumerator hands every folder over before anything in it. A row
+    // whose folder is unknown would be invisible to every tree read, so a
+    // broken walk fails the build loudly instead of quietly shrinking it.
+    throw new Error(`index build: the folder numbered ${String(ordinal)} was never handed over`);
+  }
+
+  private grow(): void {
+    this.capacity *= 2;
+    const widen = <T extends Float64Array | Int32Array | Uint8Array>(old: T, make: (n: number) => T): T => {
+      const next = make(this.capacity);
+      next.set(old);
+      return next;
+    };
+    this.ordinal = widen(this.ordinal, (n) => new Float64Array(n));
+    this.parentRank = widen(this.parentRank, (n) => new Int32Array(n));
+    this.total = widen(this.total, (n) => new Float64Array(n));
+    this.allocated = widen(this.allocated, (n) => new Float64Array(n));
+    this.mtime = widen(this.mtime, (n) => new Float64Array(n));
+    this.ino = widen(this.ino, (n) => new Float64Array(n));
+    this.nlink = widen(this.nlink, (n) => new Float64Array(n));
+    this.flags = widen(this.flags, (n) => new Uint8Array(n));
+  }
+}
 
 /**
  * Build (or rebuild) the index for `root`.
  *
  * The whole point of the state machine: rows land under `state='building'`, and
  * only the final statement flips it to 'ready'. A reader therefore never sees a
- * partial tree as usable, and a crash leaves a row that startup discards.
+ * partial tree as usable (no reader serves a building root, plan U-7), and a
+ * crash leaves a row that startup discards.
+ *
+ * The build walks once (plan U-15). Each file is written as the walk hands it
+ * over, at the id it set aside for it (`base + ordinal`, U-D6), and its bytes
+ * go to its folder's running total; the folders are written last, each once,
+ * with its total. It keeps no map from paths and never reads a row back; it
+ * writes at most INDEX_BATCH_ROWS rows a transaction, reports progress after
+ * every one, and lets the event loop turn between them.
  */
 export async function buildIndex(root: string, opts: BuildOptions = {}): Promise<IndexedRoot> {
   // A rebuild replaces the rows, so the watcher on the old ones goes and a
@@ -473,6 +688,7 @@ export async function buildIndex(root: string, opts: BuildOptions = {}): Promise
 async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   const handle = openIndex();
   const provider = platform();
+  const seams = buildSeams;
 
   // A capped build is written aside (`BuildOptions.maxEntries`): the saved
   // root keeps its rows, its watcher and its reason for being stale until
@@ -486,9 +702,14 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     staleReasons.delete(root); // and whatever made the old rows stale
   }
 
+  // The node ids this build sets aside (U-D6): its cap and one more — the
+  // walk stops on the entry past the cap — or 2^32 without one.
+  const stride = seams?.stride ?? (opts.maxEntries !== undefined ? opts.maxEntries + 1 : UNCAPPED_ID_STRIDE);
+  let base = 0;
+
   // Replace any previous index for this root atomically — or, aside, leave it
-  // where it is. This is the transaction that inserts the build's 'building'
-  // row, where U-D6's id reservation belongs when U-15 lands.
+  // where it is — and set the build's ids aside in the transaction that
+  // inserts its 'building' row.
   handle
     .transaction(() => {
       if (!aside) {
@@ -501,8 +722,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       handle
         .prepare("INSERT INTO roots (path, state, mechanism) VALUES (?, 'building', ?)")
         .run(buildPath, 'readdir + lstat');
+      base = reserveIds(handle, stride);
     })
     .call(null);
+  seams?.onReserve?.(base, stride);
 
   const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(buildPath) as { id: number }).id;
   /** Drops what this build wrote — its rows, then its root — as a cancel always has. */
@@ -511,41 +734,45 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     handle.prepare('DELETE FROM roots WHERE id = ?').run(rootId);
   };
 
+  // Every row is written at `base + ordinal`, its entry's number in the walk,
+  // and names its folder the same way: no row is ever read back to learn an
+  // id, and nothing maps paths to ids (plan U-15).
   const insert = handle.prepare(
-    `INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
-     VALUES (@root_id, @parent_id, @name, @ext, @is_dir, @size, @allocated, @mtime, @flags, @ino, @nlink)`,
+    `INSERT INTO nodes (id, root_id, parent_id, name, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
+     VALUES (@id, @root_id, @parent_id, @name, @ext, @is_dir, @size, @allocated, @mtime, @flags, @ino, @nlink)`,
   );
+  const insertAll = handle.transaction((rows: NodeInsert[]) => {
+    for (const row of rows) insert.run(row);
+  });
 
-  /**
-   * path → node id, so a child can name its parent without a query per row.
-   * This is a build-time cache, not storage — the only place the full paths
-   * exist, and it dies with the build.
-   */
-  const idByPath = new Map<string, number>();
   /** Inodes already counted, so a hard link is not double-counted. */
   const seenInodes = new Set<number>();
+  /** The folders met so far, each with the running total of what is in it; written last. */
+  const folders = new FolderTable();
 
+  /** Entries the walk has handed over (what the cap counts, and what an error reports). */
   let processed = 0;
+  /** Rows written so far: what every progress event reports, so the count moves on every write. */
+  let written = 0;
+  let transactions = 0;
   let fileCount = 0;
   let dirCount = 0;
-  let pending: { path: string; row: Record<string, unknown> }[] = [];
+  /** Files waiting for their write: never more than INDEX_BATCH_ROWS. */
+  let files: NodeInsert[] = [];
+  let lastPath = root;
+  /** The bytes of the walked path when it is itself a file, and so has no folder to sum into. */
+  let rootFileBytes = 0;
   /** Set once the walk has passed `opts.maxEntries`: it stops, and the build is discarded. */
   let capped = false;
 
-  const insertMany = handle.transaction((batch: typeof pending) => {
-    for (const item of batch) {
-      // Every insert is a true insert — the rows go under this build's own
-      // root, never over a previous one's — so the returned rowid IS the
-      // node's id. That is what lets v3 drop the old per-batch read-back
-      // query entirely.
-      idByPath.set(item.path, Number(insert.run(item.row).lastInsertRowid));
-    }
-  });
-
-  const flush = (): void => {
-    if (pending.length === 0) return;
-    insertMany(pending);
-    pending = [];
+  /** One write transaction, then its progress event, then a turn of the event loop. */
+  const write = async (rows: NodeInsert[], phase: BuildProgress['phase'], currentPath: string): Promise<void> => {
+    insertAll(rows);
+    written += rows.length;
+    transactions++;
+    opts.onProgress?.({ phase, processed: written, currentPath });
+    await seams?.afterWrite?.(transactions, rows.length);
+    await yieldToLoop();
   };
 
   try {
@@ -559,16 +786,12 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
         capped = true;
         break;
       }
-      const parentPath = entry.path === root ? null : path.dirname(entry.path);
-      // A parent is always emitted before its children (fastEnumerate yields
-      // directories first), but it may still be sitting in `pending`.
-      if (parentPath !== null && !idByPath.has(parentPath)) flush();
+      if (entry.ordinal >= stride) throw new Error(strideSentence(stride));
 
       let size = entry.size;
       let flags = 0;
       if (entry.isSymlink) flags |= FLAG.SYMLINK;
       if (entry.name.charCodeAt(0) === 46) flags |= FLAG.HIDDEN;
-      if (entry.isDir) size = 0; // rolled up after enumeration
 
       // Hard links: count the first name, zero the rest, exactly as the walker
       // does — otherwise a Time Machine-style tree reports several times its
@@ -584,58 +807,67 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       // A file claiming bytes it does not occupy is a cloud placeholder.
       if (!entry.isDir && entry.allocatedSize === 0 && entry.size > 0) flags |= FLAG.PLACEHOLDER;
 
-      let parentId: number | null = null;
-      if (parentPath !== null) {
-        const known = idByPath.get(parentPath);
-        if (known === undefined) {
-          // The enumerator yields every parent before its children, and the
-          // flush above lands any parent still in `pending`. Without a stored
-          // path an orphan row would be invisible to every tree read, so a
-          // broken invariant fails the build loudly instead of quietly
-          // shrinking the tree.
-          throw new Error(`index build: parent of ${entry.path} was never enumerated`);
-        }
-        parentId = known;
+      processed++;
+      lastPath = entry.path;
+      if (entry.isDir) {
+        // Kept, and written once the walk has ended, with its total.
+        folders.add(entry, flags);
+        dirCount++;
+        continue;
       }
 
-      pending.push({
-        path: entry.path,
-        row: {
-          root_id: rootId,
-          parent_id: parentId,
-          name: entry.name,
-          // Directories have no extension in this language, matching the
-          // frontend's `n.type === 'file'` guard.
-          ext: entry.isDir ? '' : extensionOf(entry.name),
-          is_dir: entry.isDir ? 1 : 0,
-          size,
-          allocated: entry.allocatedSize,
-          mtime: entry.modifiedAt,
-          flags,
-          ino: entry.ino,
-          nlink: entry.nlink,
-        },
+      fileCount++;
+      if (entry.parentOrdinal < 0) rootFileBytes = size;
+      else folders.addBytes(entry.parentOrdinal, size);
+      files.push({
+        id: base + entry.ordinal,
+        root_id: rootId,
+        parent_id: entry.parentOrdinal < 0 ? null : base + entry.parentOrdinal,
+        name: entry.name,
+        ext: extensionOf(entry.name),
+        is_dir: 0,
+        size,
+        allocated: entry.allocatedSize,
+        mtime: entry.modifiedAt,
+        flags,
+        ino: entry.ino,
+        nlink: entry.nlink,
       });
-
-      processed++;
-      if (entry.isDir) dirCount++;
-      else fileCount++;
-
-      if (pending.length >= BATCH) {
-        flush();
-        opts.onProgress?.({ phase: 'enumerating', processed, currentPath: entry.path });
+      if (files.length >= INDEX_BATCH_ROWS) {
+        const batch = files;
+        files = [];
+        await write(batch, 'enumerating', entry.path);
       }
     }
-    if (!capped) flush();
 
     if (capped || opts.isCancelled?.()) {
       discard();
       if (capped) rememberCapStop(handle, root, opts.maxEntries!);
       throw capped ? new IndexCapReached(opts.maxEntries!) : new Error('cancelled');
     }
+    if (files.length > 0) {
+      const batch = files;
+      files = [];
+      await write(batch, 'enumerating', lastPath);
+    }
+    seams?.onFolders?.(folders.slots());
 
-    opts.onProgress?.({ phase: 'summing', processed, currentPath: root });
-    const totalSize = rollUpSizes(handle, rootId);
+    // Every folder's total carried into its parent's in one pass, deepest
+    // first; then each folder is written once, with its total. The root
+    // stays 'building' until the last of them, and no reader serves a
+    // building root (plan U-7), so the folders written last are never read
+    // as missing.
+    const totalSize = folders.length > 0 ? folders.carryTotalsUp() : rootFileBytes;
+    for (let start = 0; start < folders.length; start += INDEX_BATCH_ROWS) {
+      if (opts.isCancelled?.()) {
+        discard();
+        throw new Error('cancelled');
+      }
+      const end = Math.min(start + INDEX_BATCH_ROWS, folders.length);
+      const batch: NodeInsert[] = [];
+      for (let rank = start; rank < end; rank++) batch.push(folders.row(rank, base, rootId));
+      await write(batch, 'summing', root);
+    }
 
     if (aside) {
       // The swap. The saved root's watcher goes first (on macOS its OS watch
@@ -664,7 +896,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       })
       .call(null);
 
-    opts.onProgress?.({ phase: 'done', processed, currentPath: root });
+    opts.onProgress?.({ phase: 'done', processed: written, currentPath: root });
     if (opts.live !== false) startWatcher(root);
     return getRoot(root)!;
   } catch (err) {
@@ -684,6 +916,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
         handle.prepare("UPDATE roots SET state = 'error', error = ? WHERE id = ?").run(message, rootId);
       }
     }
+    // How far the walk got: an error is reported in entries, not rows.
     opts.onProgress?.({ phase: 'error', processed, currentPath: root });
     throw err;
   }
@@ -701,44 +934,6 @@ function rememberCapStop(handle: Database.Database, rootPath: string, maxEntries
        ON CONFLICT(path) DO UPDATE SET max_entries = MAX(max_entries, excluded.max_entries), stopped_at = excluded.stopped_at`,
     )
     .run(rootPath, maxEntries, Date.now());
-}
-
-/**
- * Give every directory the recursive sum of its contents.
- *
- * Done in one bottom-up pass rather than a recursive CTE: `fastEnumerate` emits
- * parents before children, so ids ascend with depth, and walking them in
- * descending order visits every child before its parent. That is O(n) with one
- * pass over the table, where the SQL recursive form re-walks each subtree.
- */
-function rollUpSizes(handle: Database.Database, rootId: number): number {
-  const rows = handle
-    .prepare('SELECT id, parent_id, size FROM nodes WHERE root_id = ? ORDER BY id DESC')
-    .all(rootId) as { id: number; parent_id: number | null; size: number }[];
-
-  const totals = new Map<number, number>();
-  for (const row of rows) {
-    const own = row.size + (totals.get(row.id) ?? 0);
-    totals.set(row.id, own);
-    if (row.parent_id !== null) totals.set(row.parent_id, (totals.get(row.parent_id) ?? 0) + own);
-  }
-
-  const update = handle.prepare('UPDATE nodes SET size = ? WHERE id = ?');
-  const applyAll = handle.transaction((entries: [number, number][]) => {
-    for (const [id, total] of entries) update.run(total, id);
-  });
-  // Only directories need writing back; a file's own size is already right.
-  const dirIds = new Set(
-    (handle.prepare('SELECT id FROM nodes WHERE root_id = ? AND is_dir = 1').all(rootId) as { id: number }[]).map(
-      (r) => r.id,
-    ),
-  );
-  applyAll([...totals.entries()].filter(([id]) => dirIds.has(id)));
-
-  const rootRow = handle.prepare('SELECT size FROM nodes WHERE root_id = ? AND parent_id IS NULL').get(rootId) as
-    | { size: number }
-    | undefined;
-  return rootRow?.size ?? 0;
 }
 
 /* ------------------------------------------------------------------ *
