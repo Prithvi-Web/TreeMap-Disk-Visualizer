@@ -84,7 +84,7 @@
            on the drive the scan started on (the default, the owner's answer to
            U-Q9), or go into it. Saved the moment it is picked, like the engine. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="hardDrive"></span>Drives mounted inside a folder</div>
-      <div class="muted" style="margin-bottom:10px;">A disk image or drive mounted inside the folder you scan is a separate disk. Staying on this drive keeps the totals true to the disk you chose.</div>
+      <div class="muted" style="margin-bottom:10px;">A disk image or drive mounted inside the folder you scan is a separate disk. Staying on this drive keeps the totals true to the disk you chose. Picking one saves it straight away.</div>
       <div id="scanBoundary" role="radiogroup" aria-label="Drives mounted inside a folder">
         <label class="rule-row budget-row" for="scanBoundary-stay">
           <input type="radio" name="scanBoundary" id="scanBoundary-stay" value="stay" checked>
@@ -205,7 +205,10 @@
     <div class="modal-foot">
       <span class="muted" id="settingsStatus"></span>
       <div style="flex:1"></div>
-      <button class="btn" data-close="settingsModal">Cancel</button>
+      <!-- Not "Cancel" (QA D73): the budget, engine and drive choices save the
+           moment they are picked, and closing cannot undo them. What closing
+           drops is the edits Save would keep. -->
+      <button class="btn" data-close="settingsModal">Close without saving</button>
       <button class="btn btn-primary" id="settingsSaveBtn"><span data-icon="check"></span>Save</button>
     </div>
   </div>

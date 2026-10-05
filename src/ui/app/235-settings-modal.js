@@ -600,9 +600,11 @@ $('settingsSaveBtn').addEventListener('click', async () => {
     reclaimReset();
     if (state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath) drawView();
     if (state.bigFilesSort === 'reclaim') refreshBigFiles();
-    $('settingsStatus').textContent = 'Saved';
+    // Saved: the sheet's work is done, so it closes (QA D76) — through
+    // closeModal, like every other way out — and the toast says so. A
+    // failure below leaves it open with the edits still in it.
     toast('Settings saved — ignore rules apply from the next scan');
-    setTimeout(() => { if ($('settingsStatus').textContent === 'Saved') $('settingsStatus').textContent = ''; }, 2500);
+    closeModal('settingsModal');
   } catch (e) {
     toast('Save failed: ' + e.message, 'error');
   }

@@ -270,3 +270,81 @@ test('every number box in Settings shows its whole placeholder — "no target" w
     assert.ok(placeholder.length <= 6, `"${placeholder}" fits an 88 px box: ${box}`);
   }
 });
+
+/* ══════════════ D73 — the footer does not promise to undo what already saved ══════════════ */
+
+/** The Settings footer markup. */
+function settingsFooter(): string {
+  const start = INDEX.indexOf('<div class="modal-backdrop" id="settingsModal"');
+  const foot = INDEX.indexOf('<div class="modal-foot">', start);
+  return INDEX.slice(foot, INDEX.indexOf('</div>\n  </div>\n</div>', foot));
+}
+
+test('every choice that saves the moment it is picked says so (D73)', () => {
+  const sheet = settingsSheet();
+  const groups = [...sheet.matchAll(/<div id="(\w+)" role="radiogroup"/g)].map((m) => ({ id: m[1], at: m.index! }));
+  assert.ok(groups.length >= 3, `the budget, engine and drives choices are radio groups (${groups.map((g) => g.id).join(', ')})`);
+  for (const g of groups) {
+    const before = sheet.slice(sheet.lastIndexOf('<div class="set-h"', g.at), g.at);
+    assert.match(plain(before), /Picking one saves it straight away/, `#${g.id} says it saves the moment it is picked: "${plain(before)}"`);
+  }
+});
+
+test('the footer offers "Close without saving", not a Cancel that cannot undo the choices already saved (D73)', () => {
+  const foot = settingsFooter();
+  assert.doesNotMatch(foot, />Cancel</, 'no Cancel: the budget, engine and drive choices were saved when they were picked');
+  assert.match(foot, /<button class="btn" data-close="settingsModal">Close without saving<\/button>/, 'closing drops only the edits Save would keep');
+  assert.match(foot, /id="settingsSaveBtn"/, 'Save is still there');
+});
+
+/* ══════════════ D76 — Save closes the sheet once the server has the settings ══════════════ */
+
+function saveRuntime(api: (url: string, options?: ApiCall['options']) => Promise<unknown>) {
+  const dom = fakeDom({ settingsModal: {} });
+  dom.$('settingsModal').classList.add('open');
+  const handler = braced("$('settingsSaveBtn').addEventListener('click', async () => {");
+  const closed: string[] = [];
+  const toasts: { msg: string; kind?: string }[] = [];
+  const stubs = ['collectSettingsForms', 'renderSchedules', 'renderIgnores', 'renderCleanupGoalFields', 'renderReclaimWeights',
+    'reclaimReset', 'drawView', 'refreshBigFiles'];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(
+    '$', 'api', 'toast', 'closeModal',
+    `'use strict';
+     let settingsData = { ignore: [], schedules: [] };
+     let humanScaleOn = true;
+     const state = { view: 'dashboard', treemap: {}, bigFilesSort: 'size' };
+     ${stubs.map((name) => `function ${name}() {}`).join('\n')}
+     function collectCloudCreds() { return {}; }
+     function collectReclaimWeights() { return {}; }
+     function collectCleanupGoal() { return null; }
+     ${handler});`,
+  )(dom.$, api, (msg: string, kind?: string) => { toasts.push({ msg, kind }); }, (id: string) => {
+    closed.push(id);
+    dom.$(id).classList.remove('open');
+  });
+  const save = dom.$('settingsSaveBtn').listeners.click;
+  assert.ok(save, 'the Save button has a click handler');
+  return { dom, save, closed, toasts };
+}
+
+test('a successful Save closes the sheet through the one close path, and the toast confirms it (D76)', async () => {
+  const { api, calls } = recordingApi({ '/api/settings': { ignore: [], schedules: [] } });
+  const { dom, save, closed, toasts } = saveRuntime(api);
+  await save();
+  await settle();
+  assert.equal(calls.filter((c) => c.url === '/api/settings' && c.options?.method === 'PUT').length, 1, 'one PUT');
+  assert.deepEqual(closed, ['settingsModal'], 'the sheet closes through closeModal, like every other way out');
+  assert.equal(dom.$('settingsModal').classList.contains('open'), false, 'and is no longer open');
+  assert.ok(toasts.some((t) => /^Settings saved/.test(t.msg) && t.kind === undefined), `the toast says so: ${JSON.stringify(toasts)}`);
+});
+
+test('a failed Save keeps the sheet open, with the edits still in it, and says why (D76)', async () => {
+  const api = async () => { throw new Error('disk full'); };
+  const { dom, save, closed, toasts } = saveRuntime(api);
+  await save();
+  await settle();
+  assert.deepEqual(closed, [], 'nothing was saved, so nothing closes');
+  assert.equal(dom.$('settingsModal').classList.contains('open'), true, 'the sheet stays open');
+  assert.ok(toasts.some((t) => t.msg === 'Save failed: disk full' && t.kind === 'error'), `and says why: ${JSON.stringify(toasts)}`);
+});
