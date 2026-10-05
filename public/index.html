@@ -10606,6 +10606,11 @@ const FxCharts = (() => {
   const FX_RAMP_CORE = ['#0A84FF', '#4DA3FF', '#86C1FF', '#B9DBFF'];
   const FX_RAMP_MUTED = ['#5E7FA6', '#46617F', '#8FA6C2', '#31465E'];
 
+  /* The radar's axis labels: how far past the rim they sit, and their size. */
+  const RADAR_LABEL_GAP = 15;
+  const RADAR_LABEL_PX = 10;
+  const RADAR_LABEL_FONT = `500 ${RADAR_LABEL_PX}px -apple-system, "SF Pro Text", sans-serif`;
+
   /* ═════════════════════ pure math (no DOM) ═════════════════════ */
   const math = {
     /** Linear scale: domain → range, with the inverse for hit-testing. */
@@ -11024,6 +11029,28 @@ const FxCharts = (() => {
        inputs always draw the same shape and two files can be compared by
        silhouette alone. */
     radarAngle(i, n) { return -Math.PI / 2 + (i / Math.max(1, n)) * Math.PI * 2; },
+
+    /**
+     * Centre and rim radius for a w×h radar whose axis labels measure
+     * `widths` px. The labels sit OUTSIDE the rim, RADAR_LABEL_GAP past it,
+     * so the rim is the largest that keeps every one of them on the canvas:
+     * the top and bottom labels hang a whole line of RADAR_LABEL_PX text
+     * further out, and a side label runs its own width away from the rim
+     * (centred ones half of it). A flat 22 px top margin drew "Size" from
+     * y = −3 and "Duplicate" past the bottom edge (QA D29); a flat 62 px
+     * side margin was a guess at the longest label rather than a measure.
+     */
+    radarFrame(w, h, widths = []) {
+      const edge = 2;
+      let R = h / 2 - RADAR_LABEL_GAP - RADAR_LABEL_PX - edge - 1;
+      widths.forEach((lw, i) => {
+        const c = Math.abs(Math.cos(math.radarAngle(i, widths.length)));
+        if (c < 1e-6) return; // straight up or down: the vertical bound covers it
+        const run = c < 0.3 ? lw / 2 : lw; // centred labels run half each way
+        R = Math.min(R, (w / 2 - edge - run) / c - RADAR_LABEL_GAP);
+      });
+      return { cx: w / 2, cy: h / 2, R: Math.max(8, R) };
+    },
 
     /**
      * The vertex for axis `i` at value `v` (0–1), or NULL when that signal
@@ -13149,7 +13176,9 @@ const FxCharts = (() => {
       const h = s.size || 200;
       const w = s.width || Math.round(h * 1.4);
       const f = Canvas2D.setup(canvas, w, h);
-      return { ...f, cx: w / 2, cy: h / 2, R: Math.min(h / 2 - 22, w / 2 - 62) };
+      f.ctx.font = RADAR_LABEL_FONT;
+      const widths = axes().map((a) => f.ctx.measureText(a.short || a.label).width);
+      return { ...f, ...math.radarFrame(w, h, widths) };
     }
 
     /** Phase p0..p1 of the shared clock, eased into its own 0..1. */
@@ -13247,11 +13276,11 @@ const FxCharts = (() => {
       if (pLabels > 0) {
         ctx.save();
         ctx.globalAlpha = pLabels;
-        ctx.font = '500 10px -apple-system, "SF Pro Text", sans-serif';
+        ctx.font = RADAR_LABEL_FONT;
         for (let i = 0; i < n; i++) {
           const a = axes()[i];
           const answered = v[i] !== null;
-          const at = math.radarPoint(cx, cy, R + 15, i, n, 1);
+          const at = math.radarPoint(cx, cy, R + RADAR_LABEL_GAP, i, n, 1);
           const ang = math.radarAngle(i, n);
           ctx.textAlign = Math.abs(Math.cos(ang)) < 0.3 ? 'center' : (Math.cos(ang) > 0 ? 'left' : 'right');
           ctx.textBaseline = Math.sin(ang) > 0.6 ? 'top' : (Math.sin(ang) < -0.6 ? 'bottom' : 'middle');
