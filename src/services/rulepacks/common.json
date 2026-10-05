@@ -42,7 +42,7 @@
       "requiresSibling": [
         "requirements.txt",
         "pyproject.toml",
-        "pipfile",
+        "Pipfile",
         "setup.py",
         "setup.cfg",
         ".python-version"
@@ -76,7 +76,7 @@
         "target"
       ],
       "requiresSibling": [
-        "cargo.toml"
+        "Cargo.toml"
       ],
       "evidence": [
         "cachedir.tag",
@@ -140,10 +140,10 @@
       "confidence": "high",
       "ecosystem": "cocoapods",
       "names": [
-        "pods"
+        "Pods"
       ],
       "requiresSibling": [
-        "podfile"
+        "Podfile"
       ],
       "evidence": [
         "manifest.lock",
@@ -251,8 +251,8 @@
       "category": "junk",
       "confidence": "high",
       "names": [
-        ".ds_store",
-        "thumbs.db",
+        ".DS_Store",
+        "Thumbs.db",
         "desktop.ini"
       ]
     },

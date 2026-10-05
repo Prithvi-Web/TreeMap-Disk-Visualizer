@@ -238,7 +238,7 @@ test('every suggestion can explain itself, from what the rule actually matches',
   const nodeModules = catalog.projectDirectory.find((r) => r.id === 'regen-node-modules');
   assert.equal(matchReasonFor(nodeModules!), 'A folder named node_modules.');
   const rust = catalog.projectDirectory.find((r) => r.id === 'regen-rust-target');
-  assert.equal(matchReasonFor(rust!), 'A folder named target sitting next to cargo.toml.');
+  assert.equal(matchReasonFor(rust!), 'A folder named target sitting next to Cargo.toml.', 'in the spelling the pack writes, not the lowercased match key (QA D06)');
   const stale = catalog.staleFiles.find((r) => r.id === 'old-downloads');
   assert.match(matchReasonFor(stale!), /at least 1 MB, untouched for 90\+ days\.$/);
 });
@@ -277,4 +277,103 @@ test('no shipped rule speaks in API routes — its title and description are sho
     }
   }
   assert.ok(rules > 50, `all the rules were read (${rules})`);
+});
+
+/* ───────────────────── QA D06: "why" says what matched ───────────────────── */
+
+/** A folder of folders and files for the walk: [name, children] for a folder, a name for a 100-byte file. */
+type Spec = string | [string, Spec[]];
+function treeOf(root: string, specs: Spec[]): FileNode {
+  const build = (parent: string, spec: Spec): FileNode => {
+    if (typeof spec === 'string') {
+      return { name: spec, path: path.join(parent, spec), size: 100, type: 'file', modifiedAt: 0, isHidden: spec.startsWith('.'), extension: '' };
+    }
+    const [name, kids] = spec;
+    const p = path.join(parent, name);
+    const children = kids.map((k) => build(p, k));
+    return { name, path: p, type: 'dir', modifiedAt: 0, isHidden: name.startsWith('.'), size: children.reduce((a, c) => a + c.size, 0), children };
+  };
+  const children = specs.map((sp) => build(root, sp));
+  return { name: path.basename(root), path: root, type: 'dir', modifiedAt: 0, isHidden: false, size: children.reduce((a, c) => a + c.size, 0), children };
+}
+
+async function served(tree: FileNode) {
+  const { cleanupSuggestionsFor, resetCleanupMemoForTests } = await import('../src/services/cleanupMemo');
+  const { ObjectScanStore } = await import('../src/services/scanStore');
+  resetCleanupMemoForTests();
+  return cleanupSuggestionsFor(ObjectScanStore.wrap(tree), [], loadRuleCatalogFrom(SHIPPED, 'darwin'), []);
+}
+
+test('the served "why" names the folders that matched, not every name the rule knows (QA D06)', async () => {
+  const ROOT = path.resolve('/d06');
+  const groups = await served(treeOf(ROOT, [
+    ['site', ['package.json', ['.next', ['a.js']]]],
+    ['blog', ['package.json', ['.next', ['b.js']]]],
+    ['app', ['Podfile', ['Pods', ['x.a']]]],
+    ['crate', ['Cargo.toml', ['target', ['y.rlib']]]],
+  ]));
+  const why = (id: string) => groups.find((g) => g.id === id)?.why;
+  assert.equal(why('regen-web-build'), 'A folder named .next.', 'only .next matched — not ".next, .nuxt, .output, .svelte-kit or .angular"');
+  assert.equal(why('regen-cocoapods'), 'A folder named Pods sitting next to Podfile.', 'the names as they are on disk and in the pack');
+  assert.equal(why('regen-rust-target'), 'A folder named target sitting next to Cargo.toml.');
+});
+
+test('several matched names are all named, each once whatever its case, in the order of the items (QA D06)', async () => {
+  const ROOT = path.resolve('/d06b');
+  const groups = await served(treeOf(ROOT, [
+    ['a', [['.pytest_cache', ['1', '2', '3']]]],
+    ['b', [['.mypy_cache', ['1']]]],
+    ['c', [['.PYTEST_CACHE', ['1']]]],
+  ]));
+  const g = groups.find((x) => x.id === 'tool-caches');
+  assert.ok(g, 'the tool-caches rule matched');
+  assert.equal(g!.why, 'A folder named .pytest_cache or .mypy_cache, with no project manifest beside it to say what rebuilds it.');
+});
+
+test('a group that two rules share keeps the rule\'s own sentence when its folders came from both (QA D06)', async () => {
+  const { withMatchedReasons } = await import('../src/services/rulePacks');
+  const catalog = loadRuleCatalogFrom(SHIPPED, 'darwin');
+  const group = {
+    id: 'regen-web-build', title: 't', description: 'd', totalSize: 2, category: 'regenerable' as const,
+    items: [{ name: '.next', path: '/x/.next', size: 1, type: 'dir' as const, modifiedAt: 0 }, { name: 'dist', path: '/y/dist', size: 1, type: 'dir' as const, modifiedAt: 0 }],
+    why: 'the walk\'s sentence',
+  };
+  const [out] = withMatchedReasons([group], catalog);
+  assert.equal(out.why, 'the walk\'s sentence', 'no one rule matched both names, so nothing is narrowed');
+  const input = { ...group, items: [group.items[1]] };
+  const solo = withMatchedReasons([input], catalog)[0];
+  assert.match(solo.why!, /^A folder named dist sitting next to package\.json, /, 'one rule\'s names: narrowed with that rule\'s siblings');
+  assert.equal(input.why, 'the walk\'s sentence', 'the input is not edited — the memo hands out copies of one answer');
+  assert.notEqual(solo, input, 'a narrowed group is a new object');
+  assert.equal(withMatchedReasons([{ ...group, id: 'old-downloads' }], catalog)[0].why, 'the walk\'s sentence', 'a rule that is not matched by name is left alone');
+});
+
+test('matchReasonFor with matched names says those names; without, the pack\'s own spelling (QA D06)', () => {
+  const catalog = loadRuleCatalogFrom(SHIPPED, 'darwin');
+  const web = catalog.projectDirectory.find((r) => r.id === 'regen-web-build' && !r.requiresSibling)!;
+  assert.equal(matchReasonFor(web, { names: ['.nuxt'] }), 'A folder named .nuxt.');
+  const venv = catalog.projectDirectory.find((r) => r.id === 'regen-python-venv')!;
+  assert.equal(matchReasonFor(venv), 'A folder named .venv, venv or env sitting next to requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version.');
+  assert.equal(matchReasonFor(venv, { names: ['venv'] }), 'A folder named venv sitting next to requirements.txt, pyproject.toml, Pipfile, setup.py, setup.cfg or .python-version.');
+  const pods = catalog.projectDirectory.find((r) => r.id === 'regen-cocoapods')!;
+  assert.equal(matchReasonFor(pods), 'A folder named Pods sitting next to Podfile.', 'the folder name too, as the pack writes it');
+  const junk = catalog.file.find((r) => r.id === 'os-junk')!;
+  assert.equal(matchReasonFor(junk), 'A file named .DS_Store, Thumbs.db or desktop.ini.', 'a file rule\'s names as the pack writes them');
+  assert.equal(matchReasonFor(junk, { names: ['.DS_Store'] }), 'A file named .DS_Store.');
+  assert.equal(matchReasonFor(junk, { names: [] }), matchReasonFor(junk), 'an empty list is no narrowing');
+});
+
+test('the Reclaim Score\'s "regenerable" reason names the folder it scored, not every name its rule knows (QA D06)', async () => {
+  const { computeRuleClaims } = await import('../src/services/reclaimInputs');
+  const { resetCleanupMemoForTests } = await import('../src/services/cleanupMemo');
+  const { ObjectScanStore } = await import('../src/services/scanStore');
+  resetCleanupMemoForTests();
+  const ROOT = path.resolve('/d06c');
+  const claims = await computeRuleClaims(ObjectScanStore.wrap(treeOf(ROOT, [
+    ['site', ['package.json', ['.svelte-kit', ['a.js']]]],
+    ['crate', ['Cargo.toml', ['target', ['y.rlib']]]],
+  ])));
+  assert.equal(claims.available, true);
+  assert.equal(claims.byPath.get(path.join(ROOT, 'site', '.svelte-kit'))?.why, 'A folder named .svelte-kit.');
+  assert.equal(claims.byPath.get(path.join(ROOT, 'crate', 'target'))?.why, 'A folder named target sitting next to Cargo.toml.');
 });

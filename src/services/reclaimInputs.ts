@@ -134,7 +134,8 @@ export async function computeRuleClaims(store: ScanStore): Promise<RuleClaims> {
       ruleId: rule.id,
       title: rule.title,
       confidence: rule.confidence,
-      why: matchReasonFor(rule),
+      // The name this path matched, not every name its rule knows (QA D06).
+      why: matchReasonFor(rule, { names: [path.basename(nodePath)] }),
       restoreCommand: (rule as ProjectDirRule).restoreCommand,
       claimedPath: nodePath,
     });

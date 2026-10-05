@@ -38,8 +38,11 @@ typo fails loudly instead of silently doing nothing.
 | `stale-files` | files under a path, over a size, past an age | `withinPath`, `olderThanDays`, `minSizeBytes` |
 | `package-cache` | a shared package-manager cache (§C6 only) | `ecosystem`, `paths`, `clearCommand` |
 
-Names and sibling patterns are matched case-insensitively. A sibling pattern
-ending in `.*` matches any extension (`vite.config.*`).
+Names and sibling patterns are matched case-insensitively, and said in the
+"why" sentence as the pack writes them — so write them the way the files are
+usually spelled (`Cargo.toml`, `Podfile`, `.DS_Store`). A served group's "why"
+names the folders it actually matched, not every name the rule knows. A
+sibling pattern ending in `.*` matches any extension (`vite.config.*`).
 
 ### Ecosystem tagging (§C6)
 

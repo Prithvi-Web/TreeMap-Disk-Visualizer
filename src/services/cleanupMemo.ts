@@ -1,7 +1,7 @@
 import { CleanupSuggestionGroup } from '../models/types';
 import { CompiledIgnore } from '../utils/glob';
 import { ScanStore } from './scanStore';
-import { Rule, RuleCatalog } from './rulePacks';
+import { Rule, RuleCatalog, withMatchedReasons } from './rulePacks';
 import { CleanupWalk, CleanupWalkOptions, collectCleanupSuggestionsAsync } from './cleanupRules';
 
 /**
@@ -165,7 +165,9 @@ export async function cleanupSuggestionsFor(
     const walk = await collectCleanupSuggestionsAsync(store, ignore, catalog, undefined, suppressedRoots, walkOptions);
     return { walk, value: walk.groups };
   });
-  return copyGroups(groups);
+  // The walk's sentence lists every name a rule knows; the served one names
+  // what each group matched (QA D06).
+  return withMatchedReasons(copyGroups(groups), catalog);
 }
 
 /**

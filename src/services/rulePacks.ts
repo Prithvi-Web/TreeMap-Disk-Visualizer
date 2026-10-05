@@ -54,8 +54,12 @@ interface RuleBase {
 export interface ProjectDirRule extends RuleBase {
   kind: 'project-directory';
   names: string[]; // lowercased at load
+  /** The names as the pack writes them, for prose ("Pods", not "pods"). */
+  labels?: string[];
   /** Lowercased sibling basenames; a `foo.*` entry matches any `foo.<ext>`. */
   requiresSibling?: string[];
+  /** The siblings as the pack writes them, for prose ("Cargo.toml", not "cargo.toml"). */
+  siblingLabels?: string[];
   restoreCommand: string;
   /**
    * §C6: the manifest that OWNS this directory. Missing ⇒ the parent project is
@@ -77,11 +81,15 @@ export interface ProjectDirRule extends RuleBase {
 export interface DirRule extends RuleBase {
   kind: 'directory';
   names: string[];
+  /** The names as the pack writes them, for prose. */
+  labels?: string[];
 }
 
 export interface FileRule extends RuleBase {
   kind: 'file';
   names: string[];
+  /** The names as the pack writes them, for prose. */
+  labels?: string[];
 }
 
 /** An absolute, OS-specific location. Paths are token-expanded at load. */
@@ -266,12 +274,15 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
     let rule: Rule;
     switch (kind) {
       case 'project-directory': {
-        const names = requireStringArray(packName, `${at}.names`, entry.names).map((n) => n.toLowerCase());
+        // Matched lowercased; said as written (QA D06: "cargo.toml" in prose).
+        const labels = requireStringArray(packName, `${at}.names`, entry.names);
+        const names = labels.map((n) => n.toLowerCase());
         const restoreCommand = requireString(packName, `${at}.restoreCommand`, entry.restoreCommand);
-        const requiresSibling =
+        const siblingLabels =
           entry.requiresSibling === undefined
             ? undefined
-            : requireStringArray(packName, `${at}.requiresSibling`, entry.requiresSibling).map((s) => s.toLowerCase());
+            : requireStringArray(packName, `${at}.requiresSibling`, entry.requiresSibling);
+        const requiresSibling = siblingLabels?.map((s) => s.toLowerCase());
         const ownerManifest =
           entry.ownerManifest === undefined
             ? undefined
@@ -285,13 +296,14 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
         if (base.ecosystem && !evidence) {
           fail(packName, `${at} is tagged with an ecosystem but has no evidence[] to identify it once its owner manifest is gone`);
         }
-        rule = { ...base, kind, names, restoreCommand, requiresSibling, ownerManifest, evidence };
+        rule = { ...base, kind, names, labels, restoreCommand, requiresSibling, siblingLabels, ownerManifest, evidence };
         break;
       }
       case 'directory':
       case 'file': {
-        const names = requireStringArray(packName, `${at}.names`, entry.names).map((n) => n.toLowerCase());
-        rule = { ...base, kind, names } as DirRule | FileRule;
+        const labels = requireStringArray(packName, `${at}.names`, entry.names);
+        const names = labels.map((n) => n.toLowerCase());
+        rule = { ...base, kind, names, labels } as DirRule | FileRule;
         break;
       }
       case 'location': {
@@ -476,20 +488,27 @@ export function loadRuleCatalogFrom(dir: string, platform: NodeJS.Platform): Rul
 /**
  * The plain-English "why is this suggested" sentence, derived from what the
  * rule actually matches so it can never drift from the matching itself.
+ *
+ * `matched.names` narrows a name rule to the names a walk actually found
+ * (QA D06: a group of `.next` folders said "A folder named .next, .nuxt,
+ * .output, .svelte-kit or .angular"); without it the sentence lists every
+ * name the rule knows. Names and siblings are said as the pack writes them.
  */
-export function matchReasonFor(rule: Rule): string {
-  const list = (items: string[]): string =>
+export function matchReasonFor(rule: Rule, matched?: { names?: readonly string[] }): string {
+  const list = (items: readonly string[]): string =>
     items.length === 1 ? items[0] : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+  const named = (r: ProjectDirRule | DirRule | FileRule): readonly string[] =>
+    matched?.names?.length ? matched.names : (r.labels ?? r.names);
 
   switch (rule.kind) {
     case 'project-directory':
       return rule.requiresSibling
-        ? `A folder named ${list(rule.names)} sitting next to ${list(rule.requiresSibling)}.`
-        : `A folder named ${list(rule.names)}.`;
+        ? `A folder named ${list(named(rule))} sitting next to ${list(rule.siblingLabels ?? rule.requiresSibling)}.`
+        : `A folder named ${list(named(rule))}.`;
     case 'directory':
-      return `A folder named ${list(rule.names)}, with no project manifest beside it to say what rebuilds it.`;
+      return `A folder named ${list(named(rule))}, with no project manifest beside it to say what rebuilds it.`;
     case 'file':
-      return `A file named ${list(rule.names)}.`;
+      return `A file named ${list(named(rule))}.`;
     case 'location':
       return rule.paths.length === 1
         ? `The known location ${rule.paths[0]}.`
@@ -499,4 +518,40 @@ export function matchReasonFor(rule: Rule): string {
     case 'stale-files':
       return `Files under ${rule.withinPath} of at least ${Math.round(rule.minSizeBytes / 1_048_576)} MB, untouched for ${rule.olderThanDays}+ days.`;
   }
+}
+
+/**
+ * Each suggestion group's "why", narrowed to the names its items carry (QA D06).
+ *
+ * The walk builds a group's sentence from its rule, which lists every name the
+ * rule knows; a group holds what actually matched. Applied where groups are
+ * served (cleanupMemo), so the walk itself — held byte for byte to the
+ * pre-U-16 matcher — is untouched. Names come from the items the group lists
+ * (its largest 200), on-disk spelling, each once whatever its case. A group two
+ * rules share (one id) is narrowed only when one rule's names cover all of
+ * them; otherwise, and for rules not matched by name, the sentence stands.
+ * Returns new groups; the input is not edited.
+ */
+export function withMatchedReasons<G extends { id: string; why?: string; items: readonly { name: string }[] }>(
+  groups: G[],
+  catalog: RuleCatalog,
+): G[] {
+  const byId = new Map<string, (ProjectDirRule | DirRule | FileRule)[]>();
+  for (const r of [...catalog.projectDirectory, ...catalog.directory, ...catalog.file]) {
+    byId.set(r.id, [...(byId.get(r.id) ?? []), r]);
+  }
+  return groups.map((g) => {
+    const rules = byId.get(g.id);
+    if (!rules || g.items.length === 0) return g;
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const item of g.items) {
+      const key = item.name.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); names.push(item.name); }
+    }
+    const rule = rules.find((r) => names.every((n) => r.names.includes(n.toLowerCase())));
+    if (!rule) return g;
+    const why = matchReasonFor(rule, { names });
+    return why === g.why ? g : { ...g, why };
+  });
 }
