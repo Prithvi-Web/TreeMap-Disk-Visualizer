@@ -285,6 +285,32 @@ test('a file deep inside a claimed folder inherits the rule, and says where from
   }
 });
 
+test('a folder whose name only begins with two dots is in the scan: the why names it from the scan root, as any other (the SEC-1 review, L5)', async () => {
+  const s = await listen();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-dotdot-fixture-'));
+  try {
+    const proj = path.join(root, '..proj');
+    fs.mkdirSync(path.join(proj, 'node_modules', 'left-pad'), { recursive: true });
+    fs.writeFileSync(path.join(proj, 'package.json'), '{"name":"fixture"}');
+    const deep = path.join(proj, 'node_modules', 'left-pad', 'index.js');
+    fs.writeFileSync(deep, Buffer.alloc(FILE_BYTES, 0x61));
+    const started = await req(s.port, 'POST', '/api/scan', { path: root });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const scanId = started.body.scanId as string;
+    await waitFor(() => peekScan(scanId)?.status !== 'running', 'the ..proj scan settling');
+    assert.equal(peekScan(scanId)?.status, 'complete');
+    clearFactCache();
+    clearScanInputs();
+    const rule = (await score(scanId, [deep]))[deep]?.components.find((c) => c.id === 'regenerable');
+    assert.ok(rule && rule.value > 0, 'a file inside node_modules is regenerable');
+    const named = `It sits inside ${path.join('..proj', 'node_modules')}, which TreeMap recognises.`;
+    assert.ok(rule.why.includes(named), `named from the scan root: ${rule.why}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    await s.close();
+  }
+});
+
 test('a stale file scores higher on staleness than a fresh one of the same size', async () => {
   const s = await listen();
   const fx = await scannedFixture(s.port);

@@ -21,6 +21,7 @@ import { recoverabilityProvider } from './recoverabilityProvider';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
 import type { LastUsedInfo } from '../../platform/types';
 import { FactBatch, FactProvider, unavailableBatch } from './types';
+import { isInside } from '../../utils/pathSanitizer';
 
 /**
  * The `reclaimScore` fact provider (v4 §3).
@@ -412,7 +413,8 @@ function duplicatePicture(scanId: string): { forPath: (p: string, bytes: number)
 function displayPath(target: string, scanRoot: string): string {
   if (!scanRoot) return target;
   const rel = path.relative(scanRoot, target);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return target;
+  // `isInside`, not a test for a leading "..": a folder named `..proj` is in the scan (the SEC-1 review, L5).
+  if (!rel || !isInside(scanRoot, target)) return target;
   return rel;
 }
 
