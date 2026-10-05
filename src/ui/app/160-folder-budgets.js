@@ -128,7 +128,7 @@ function openBudgetDialog(node) {
   budgetTarget = node;
   const existing = budgetFor(node.path);
   $('budgetFolderName').textContent = node.name || node.path;
-  $('budgetFolderPath').textContent = node.path;
+  $('budgetFolderPath').textContent = node.path; $('budgetFolderPath').title = node.path;
   const size = (typeof node.size === 'number') ? node.size : (nodeFor(node.path)?.size ?? null);
   $('budgetCurrent').innerHTML = size != null
     ? `Current size: <b>${formatBytes(size)}</b>`
@@ -225,7 +225,7 @@ function openNoteDialog(node) {
   noteTarget = node;
   const existing = noteFor(node.path);
   $('noteFolderName').textContent = node.name || node.path;
-  $('noteFolderPath').textContent = node.path;
+  $('noteFolderPath').textContent = node.path; $('noteFolderPath').title = node.path;
   // .value is an inert sink — the note text never becomes markup here.
   $('noteText').value = existing ? existing.text : '';
   $('noteSuppress').checked = existing ? !!existing.suppress : true;

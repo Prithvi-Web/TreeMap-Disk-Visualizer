@@ -130,6 +130,16 @@
 .bigfile .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bigfile .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; }
+/* direction: rtl above only picks the side that overflows — the HEAD of a long
+   path is clipped and the tail stays readable. The path itself must not be
+   laid out right-to-left: its leading "/" would be drawn at the end
+   ("Users/…/holiday-4k.mov/") and a Hebrew or Arabic folder name would swap
+   whole components. A LEFT-TO-RIGHT ISOLATE (U+2066 … U+2069) around the
+   content keeps every character where an LTR box would put it (QA D51). Every
+   tail-first path box carries this pair and a title with the full path —
+   tests/pathTailBidi.test.ts holds every direction: rtl rule to both. */
+.bigfile .pth::before { content: "\2066"; }
+.bigfile .pth::after { content: "\2069"; }
 .bigfile .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
 .bigfile .bar { height: 100%; border-radius: 2px; }
 .bigfile .actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-1) var(--ease); }

@@ -50,6 +50,9 @@
 .dup-file:last-child { border-bottom: none; }
 .dup-file .pth { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; color: var(--text-2); }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.dup-file .pth::before { content: "\2066"; }
+.dup-file .pth::after { content: "\2069"; }
 .dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
   padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
 .dup-file .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }

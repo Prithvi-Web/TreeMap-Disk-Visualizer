@@ -116,7 +116,7 @@ async function loadVideoCandidates() {
         ${chipFor({ type: 'file', extension: (c.name.split('.').pop() || '').toLowerCase() }, 13)}
         <div class="meta">
           <div class="nm">${escapeHtml(c.name)}</div>
-          <div class="pth">${escapeHtml(c.path)}</div>
+          <div class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</div>
           <div class="vid-why">${escapeHtml(c.reason)}${c.width ? ` · ${c.width}×${c.height}` : ''}${
             c.durationSeconds ? ` · ${Math.round(c.durationSeconds / 60)} min` : ''}</div>
         </div>
@@ -247,7 +247,7 @@ async function loadEmptyFolders() {
           ${chipFor({ type: 'dir' }, 13)}
           <div class="meta">
             <div class="nm">${escapeHtml(f.name)}</div>
-            <div class="pth">${escapeHtml(f.path)}</div>
+            <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
           </div>
           <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
         </div>`).join('') + '</div>';
@@ -285,7 +285,7 @@ async function renderGitRepos() {
     <div class="clean-list">` + notable.map((r) => {
       const name = r.repoPath.split(/[\\/]/).pop() || r.repoPath;
       return `<div class="clean-item">
-        <div class="meta"><div class="nm">${escapeHtml(name)}</div><div class="pth">${escapeHtml(r.repoPath)}</div></div>
+        <div class="meta"><div class="nm">${escapeHtml(name)}</div><div class="pth" title="${escapeHtml(r.repoPath)}">${escapeHtml(r.repoPath)}</div></div>
         <span class="git-bd num">pack ${formatBytes(r.packBytes)} · loose ${formatBytes(r.looseObjectBytes)}${r.lfsBytes ? ` · LFS ${formatBytes(r.lfsBytes)}` : ''}</span>
         <span class="size-badge num">${formatBytes(r.totalBytes)}</span>
         ${r.canGC ? `<button class="pill" data-gc="${escapeHtml(r.repoPath)}">Run git gc</button>` : ''}
@@ -375,7 +375,7 @@ async function renderPackageOrphans() {
           <span class="pkg-tag ${e.kind}">${e.kind === 'orphan' ? 'orphaned' : e.kind === 'cache' ? 'cache' : 'in use'}</span>
           <div class="meta">
             <div class="nm">${escapeHtml(e.name)} ${project}</div>
-            <div class="pth">${escapeHtml(e.path)}</div>
+            <div class="pth" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</div>
             <div class="pkg-why">${escapeHtml(e.reason)}${e.command ? ` · <code>${escapeHtml(e.command)}</code> ${e.kind === 'cache' ? 'to clear' : 'to restore'}` : ''}</div>
           </div>
           <span class="dt num">${formatDate(e.modifiedAt)}</span>
@@ -558,7 +558,7 @@ function renderSmartGroups(catalog) {
           ${chipFor({ type: it.type, extension: it.type === 'file' ? (it.name.split('.').pop() || '').toLowerCase() : undefined }, 13)}
           <div class="meta">
             <div class="nm">${escapeHtml(it.name)}</div>
-            <div class="pth">${escapeHtml(it.path)}</div>
+            <div class="pth" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</div>
           </div>
           <span class="dt num">${formatDate(it.modifiedAt)}</span>
           ${reclaimBadge(it.path, scoreFor(it.path))}
@@ -915,7 +915,7 @@ async function runCleanFind(fetcher) {
         ${chipFor(f, 13)}
         <div class="meta">
           <div class="nm">${escapeHtml(f.name)}</div>
-          <div class="pth">${escapeHtml(f.path)}</div>
+          <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
         </div>
         <span class="dt num">${formatDate(f.modifiedAt)}</span>
         <span class="size-badge num" style="color:${sizeColor(f.size)}">${formatBytes(f.size)}</span>

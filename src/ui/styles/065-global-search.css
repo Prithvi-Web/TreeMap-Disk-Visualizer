@@ -89,6 +89,9 @@
   font-size: 11px; color: var(--text-3); padding: 8px 10px 4px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
 }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.gsearch-group::before { content: "\2066"; }
+.gsearch-group::after { content: "\2069"; }
 .gsearch-hit {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 7px 10px; border-radius: 8px; border: 0; background: none;

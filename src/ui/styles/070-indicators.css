@@ -65,6 +65,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .budget-folder .nm { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .budget-folder .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.budget-folder .pth::before { content: "\2066"; }
+.budget-folder .pth::after { content: "\2069"; }
 .budget-input { display: flex; gap: 8px; }
 .budget-input input { flex: 1; }
 .budget-input select { flex: none; width: 92px; }

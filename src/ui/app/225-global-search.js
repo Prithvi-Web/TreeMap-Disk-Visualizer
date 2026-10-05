@@ -83,7 +83,9 @@ function renderGsearch(result) {
   for (const [folder, hits] of groups) {
     // Long paths are truncated from the LEFT (direction:rtl in CSS): the tail
     // of a path is what identifies it, the "/Users/me/Library/…" head is not.
-    html += `<div class="gsearch-group">${escapeHtml(folder)}</div>`;
+    // The CSS isolates the text left-to-right so the "/" stays first, and the
+    // title carries the whole path the ellipsis cut (QA D51).
+    html += `<div class="gsearch-group" title="${escapeHtml(folder)}">${escapeHtml(folder)}</div>`;
     for (const hit of hits) {
       html +=
         `<button class="gsearch-hit" role="option" aria-selected="false" data-i="${index}" data-path="${escapeHtml(hit.path)}">` +

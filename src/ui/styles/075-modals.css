@@ -53,6 +53,9 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .clean-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .clean-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.clean-item .pth::before { content: "\2066"; }
+.clean-item .pth::after { content: "\2069"; }
 .clean-item .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
 .muted { color: var(--text-2); font-size: 12.5px; }
 #cleanProgress { display: none; margin-top: 12px; }

@@ -1024,6 +1024,16 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .bigfile .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bigfile .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; }
+/* direction: rtl above only picks the side that overflows — the HEAD of a long
+   path is clipped and the tail stays readable. The path itself must not be
+   laid out right-to-left: its leading "/" would be drawn at the end
+   ("Users/…/holiday-4k.mov/") and a Hebrew or Arabic folder name would swap
+   whole components. A LEFT-TO-RIGHT ISOLATE (U+2066 … U+2069) around the
+   content keeps every character where an LTR box would put it (QA D51). Every
+   tail-first path box carries this pair and a title with the full path —
+   tests/pathTailBidi.test.ts holds every direction: rtl rule to both. */
+.bigfile .pth::before { content: "\2066"; }
+.bigfile .pth::after { content: "\2069"; }
 .bigfile .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
 .bigfile .bar { height: 100%; border-radius: 2px; }
 .bigfile .actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-1) var(--ease); }
@@ -1241,6 +1251,9 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .cart-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cart-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; direction: rtl; text-align: left; }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.cart-item .pth::before { content: "\2066"; }
+.cart-item .pth::after { content: "\2069"; }
 .cart-item .sz { color: var(--text-2); white-space: nowrap; font-size: 11.5px; }
 .cart-item.missing { opacity: 0.5; }
 .cart-item .rm { border: none; background: var(--surface-2); color: var(--text-2); width: 22px; height: 22px;
@@ -1567,6 +1580,9 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .pv-kv .k { color: var(--text-3); }
 .pv-foot { padding: 9px 14px; border-top: 1px solid var(--hairline); }
 .pv-foot .pth { font-size: 10.5px; color: var(--text-3); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.pv-foot .pth::before { content: "\2066"; }
+.pv-foot .pth::after { content: "\2069"; }
 .pv-body .tk-kw { color: #c792ea; } .pv-body .tk-str { color: #7fd88f; }
 .pv-body .tk-num { color: #f78c6c; } .pv-body .tk-com { color: var(--text-3); font-style: italic; }
 :root[data-theme="light"] .pv-body .tk-kw { color: #9c27b0; }
@@ -1674,6 +1690,9 @@ body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 3
   font-size: 11px; color: var(--text-3); padding: 8px 10px 4px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
 }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.gsearch-group::before { content: "\2066"; }
+.gsearch-group::after { content: "\2069"; }
 .gsearch-hit {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 7px 10px; border-radius: 8px; border: 0; background: none;
@@ -1751,6 +1770,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .budget-folder .nm { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .budget-folder .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.budget-folder .pth::before { content: "\2066"; }
+.budget-folder .pth::after { content: "\2069"; }
 .budget-input { display: flex; gap: 8px; }
 .budget-input input { flex: 1; }
 .budget-input select { flex: none; width: 92px; }
@@ -1841,6 +1863,9 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .clean-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .clean-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.clean-item .pth::before { content: "\2066"; }
+.clean-item .pth::after { content: "\2069"; }
 .clean-item .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
 .muted { color: var(--text-2); font-size: 12.5px; }
 #cleanProgress { display: none; margin-top: 12px; }
@@ -2593,6 +2618,9 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .dup-file:last-child { border-bottom: none; }
 .dup-file .pth { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; color: var(--text-2); }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.dup-file .pth::before { content: "\2066"; }
+.dup-file .pth::after { content: "\2069"; }
 .dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
   padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
 .dup-file .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
@@ -9017,7 +9045,7 @@ async function renderCloudSafe() {
       `<div style="margin-bottom:14px;">
         <div class="rule-row" style="padding:6px 0;"><b>${label[g.provider] || 'Cloud'}</b><span class="size-badge num" style="margin-left:auto;">${formatCount(g.count)} · ${formatBytes(g.totalSize)}</span></div>
         <div class="clean-list">` + g.files.map((n) =>
-          `<div class="clean-item">${chipFor(n, 13)}<div class="meta"><div class="nm">${escapeHtml(n.name)}</div><div class="pth">${escapeHtml(n.path)}</div></div>` +
+          `<div class="clean-item">${chipFor(n, 13)}<div class="meta"><div class="nm">${escapeHtml(n.name)}</div><div class="pth" title="${escapeHtml(n.path)}">${escapeHtml(n.path)}</div></div>` +
           `<span class="dt num">${formatDate(n.modifiedAt)}</span><span class="size-badge num">${formatBytes(n.size)}</span>` +
           `<button class="icon-btn" data-cart-add="${escapeHtml(n.path)}" aria-label="Add ${escapeHtml(n.name)} to cleanup cart">${icon('plus', 13)}</button></div>`
         ).join('') + `</div>
@@ -26061,7 +26089,7 @@ function openBudgetDialog(node) {
   budgetTarget = node;
   const existing = budgetFor(node.path);
   $('budgetFolderName').textContent = node.name || node.path;
-  $('budgetFolderPath').textContent = node.path;
+  $('budgetFolderPath').textContent = node.path; $('budgetFolderPath').title = node.path;
   const size = (typeof node.size === 'number') ? node.size : (nodeFor(node.path)?.size ?? null);
   $('budgetCurrent').innerHTML = size != null
     ? `Current size: <b>${formatBytes(size)}</b>`
@@ -26158,7 +26186,7 @@ function openNoteDialog(node) {
   noteTarget = node;
   const existing = noteFor(node.path);
   $('noteFolderName').textContent = node.name || node.path;
-  $('noteFolderPath').textContent = node.path;
+  $('noteFolderPath').textContent = node.path; $('noteFolderPath').title = node.path;
   // .value is an inert sink — the note text never becomes markup here.
   $('noteText').value = existing ? existing.text : '';
   $('noteSuppress').checked = existing ? !!existing.suppress : true;
@@ -30724,7 +30752,7 @@ async function loadVideoCandidates() {
         ${chipFor({ type: 'file', extension: (c.name.split('.').pop() || '').toLowerCase() }, 13)}
         <div class="meta">
           <div class="nm">${escapeHtml(c.name)}</div>
-          <div class="pth">${escapeHtml(c.path)}</div>
+          <div class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</div>
           <div class="vid-why">${escapeHtml(c.reason)}${c.width ? ` · ${c.width}×${c.height}` : ''}${
             c.durationSeconds ? ` · ${Math.round(c.durationSeconds / 60)} min` : ''}</div>
         </div>
@@ -30855,7 +30883,7 @@ async function loadEmptyFolders() {
           ${chipFor({ type: 'dir' }, 13)}
           <div class="meta">
             <div class="nm">${escapeHtml(f.name)}</div>
-            <div class="pth">${escapeHtml(f.path)}</div>
+            <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
           </div>
           <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
         </div>`).join('') + '</div>';
@@ -30893,7 +30921,7 @@ async function renderGitRepos() {
     <div class="clean-list">` + notable.map((r) => {
       const name = r.repoPath.split(/[\\/]/).pop() || r.repoPath;
       return `<div class="clean-item">
-        <div class="meta"><div class="nm">${escapeHtml(name)}</div><div class="pth">${escapeHtml(r.repoPath)}</div></div>
+        <div class="meta"><div class="nm">${escapeHtml(name)}</div><div class="pth" title="${escapeHtml(r.repoPath)}">${escapeHtml(r.repoPath)}</div></div>
         <span class="git-bd num">pack ${formatBytes(r.packBytes)} · loose ${formatBytes(r.looseObjectBytes)}${r.lfsBytes ? ` · LFS ${formatBytes(r.lfsBytes)}` : ''}</span>
         <span class="size-badge num">${formatBytes(r.totalBytes)}</span>
         ${r.canGC ? `<button class="pill" data-gc="${escapeHtml(r.repoPath)}">Run git gc</button>` : ''}
@@ -30983,7 +31011,7 @@ async function renderPackageOrphans() {
           <span class="pkg-tag ${e.kind}">${e.kind === 'orphan' ? 'orphaned' : e.kind === 'cache' ? 'cache' : 'in use'}</span>
           <div class="meta">
             <div class="nm">${escapeHtml(e.name)} ${project}</div>
-            <div class="pth">${escapeHtml(e.path)}</div>
+            <div class="pth" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</div>
             <div class="pkg-why">${escapeHtml(e.reason)}${e.command ? ` · <code>${escapeHtml(e.command)}</code> ${e.kind === 'cache' ? 'to clear' : 'to restore'}` : ''}</div>
           </div>
           <span class="dt num">${formatDate(e.modifiedAt)}</span>
@@ -31166,7 +31194,7 @@ function renderSmartGroups(catalog) {
           ${chipFor({ type: it.type, extension: it.type === 'file' ? (it.name.split('.').pop() || '').toLowerCase() : undefined }, 13)}
           <div class="meta">
             <div class="nm">${escapeHtml(it.name)}</div>
-            <div class="pth">${escapeHtml(it.path)}</div>
+            <div class="pth" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</div>
           </div>
           <span class="dt num">${formatDate(it.modifiedAt)}</span>
           ${reclaimBadge(it.path, scoreFor(it.path))}
@@ -31523,7 +31551,7 @@ async function runCleanFind(fetcher) {
         ${chipFor(f, 13)}
         <div class="meta">
           <div class="nm">${escapeHtml(f.name)}</div>
-          <div class="pth">${escapeHtml(f.path)}</div>
+          <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
         </div>
         <span class="dt num">${formatDate(f.modifiedAt)}</span>
         <span class="size-badge num" style="color:${sizeColor(f.size)}">${formatBytes(f.size)}</span>
@@ -31829,7 +31857,9 @@ function renderGsearch(result) {
   for (const [folder, hits] of groups) {
     // Long paths are truncated from the LEFT (direction:rtl in CSS): the tail
     // of a path is what identifies it, the "/Users/me/Library/…" head is not.
-    html += `<div class="gsearch-group">${escapeHtml(folder)}</div>`;
+    // The CSS isolates the text left-to-right so the "/" stays first, and the
+    // title carries the whole path the ellipsis cut (QA D51).
+    html += `<div class="gsearch-group" title="${escapeHtml(folder)}">${escapeHtml(folder)}</div>`;
     for (const hit of hits) {
       html +=
         `<button class="gsearch-hit" role="option" aria-selected="false" data-i="${index}" data-path="${escapeHtml(hit.path)}">` +

@@ -29,6 +29,9 @@
 .pv-kv .k { color: var(--text-3); }
 .pv-foot { padding: 9px 14px; border-top: 1px solid var(--hairline); }
 .pv-foot .pth { font-size: 10.5px; color: var(--text-3); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+/* LTR isolate inside the rtl box: the leading "/" stays first (QA D51 — see 030-dashboard.css). */
+.pv-foot .pth::before { content: "\2066"; }
+.pv-foot .pth::after { content: "\2069"; }
 .pv-body .tk-kw { color: #c792ea; } .pv-body .tk-str { color: #7fd88f; }
 .pv-body .tk-num { color: #f78c6c; } .pv-body .tk-com { color: var(--text-3); font-style: italic; }
 :root[data-theme="light"] .pv-body .tk-kw { color: #9c27b0; }
