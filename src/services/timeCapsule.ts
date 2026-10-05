@@ -1684,8 +1684,13 @@ export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean
 /* ---------------- retention + reconciliation ---------------- */
 
 /**
- * Sweep out everything past the retention window. Returns how many went. A copy a restore is
- * reading is passed over until a later sweep (FG3g H1): swept now, it went from under the restore.
+ * Sweep out every copy past the retention window. Returns how many copies went, and the bytes freed.
+ *
+ * A copy a restore is reading is passed over until a later sweep (FG3g H1): swept now, it went from
+ * under the restore. An expired copy's record is kept — holding nothing, marked `expiredAt` — until
+ * every record of its run has expired (FG3g L3): a run whose copies were taken a little apart (a
+ * chunked cart commit, a long Autopilot run) lost one record before the others, and its undo then
+ * put back the rest and said everything was back. Each expiry is recorded once.
  */
 export async function pruneExpired(now = Date.now()): Promise<{ removed: number; bytesFreed: number }> {
   const { timeCapsuleRetentionDays } = await getSettings();
@@ -1693,12 +1698,13 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
 
   return withCapsuleStore(async () => withPayloadLock(async () => {
     const store = await loadStore();
-    const expired = store.entries.filter((e) => e.capturedAt < cutoff && !restoresInFlight.has(e.id));
-    if (expired.length === 0) return { removed: 0, bytesFreed: 0 };
+    const past = (e: TimeCapsuleEntry): boolean => e.capturedAt < cutoff && !restoresInFlight.has(e.id);
+    const expiring = store.entries.filter((e) => past(e) && e.expiredAt === undefined);
 
     let bytesFreed = 0;
-    for (const entry of expired) {
+    for (const entry of expiring) {
       bytesFreed += await dropPayload(entry);
+      entry.expiredAt = now;
       recordEvent(store, {
         at: now,
         kind: 'expired',
@@ -1708,10 +1714,13 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
         detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Time Capsule.`,
       });
     }
-    const gone = new Set(expired);
+    // A record goes once nothing of its run is left that has not expired.
+    const runsHeld = new Set(store.entries.filter((e) => !past(e) && typeof e.runId === 'string').map((e) => e.runId));
+    const gone = new Set(store.entries.filter((e) => past(e) && !(typeof e.runId === 'string' && runsHeld.has(e.runId))));
+    if (expiring.length === 0 && gone.size === 0) return { removed: 0, bytesFreed: 0 };
     store.entries = store.entries.filter((e) => !gone.has(e));
     await saveStore(store);
-    return { removed: expired.length, bytesFreed };
+    return { removed: expiring.length, bytesFreed };
   }));
 }
 
@@ -2111,8 +2120,8 @@ export function passedOverOf(plan: UndoPlan): { passedOver?: { path: string; rea
 
 /** Said of an item of the run whose copy the Time Capsule no longer holds (FG3f #3). */
 export const COPY_GONE_SENTENCE =
-  'Its Time Capsule copy is gone — removed to make room for later deletions, or missing from the capsule folder — ' +
-  'so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
+  'Its Time Capsule copy is gone — removed to make room for later deletions or once the time copies are kept had passed, ' +
+  'or missing from the capsule folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
 
 /**
  * The run's items an undo cannot put back because their copy is gone, as rows for its answer — or

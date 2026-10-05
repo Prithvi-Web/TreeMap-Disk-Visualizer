@@ -592,6 +592,7 @@ const schemas: Json = {
       policyId: str('Autopilot policy that selected it'),
       reason: str('Why it was deleted, in the rule’s own words'),
       restoredAt: int('Present once copied back and re-verified'),
+      expiredAt: int('Present once the retention window passed and its copy was removed; the record stays, holding nothing, until every record of its run has expired, so an undo names it'),
     },
     ['id', 'name', 'originalPath', 'kind', 'sizeBytes', 'heldBytes', 'hasPayload', 'fileCount', 'digest', 'capturedAt'],
   ),

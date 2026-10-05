@@ -923,6 +923,12 @@ export interface TimeCapsuleEntry {
   reason?: string;
   /** Set once copied back to its original path and re-verified. */
   restoredAt?: number;
+  /**
+   * Set when the retention window passed and its copy was removed (FG3g L3). The record itself is
+   * kept, holding nothing, until every record of its run has expired, so an undo of that run names
+   * the item rather than saying everything is back.
+   */
+  expiredAt?: number;
 }
 
 /**

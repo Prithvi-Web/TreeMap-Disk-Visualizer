@@ -700,7 +700,7 @@ test('an undo that passed over copies for different reasons names each with its 
 });
 
 /** The server's sentence for an item whose copy the Time Capsule no longer holds (FG3f #3). */
-const GONE = 'Its Time Capsule copy is gone — removed to make room for later deletions, or missing from the capsule folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
+const GONE = 'Its Time Capsule copy is gone — removed to make room for later deletions or once the time copies are kept had passed, or missing from the capsule folder — so it cannot be put back from here. If it was deleted, look for it in the system Trash.';
 
 test('a cart undo that could not put back an item whose copy is gone says how many, and never that everything is back (FG3f #3)', async () => {
   const said = (await undoToasts({ jobId: 'j', entryCount: 2, bytesTotal: 10, unrestorable: [{ path: '/x/a.bin', reason: GONE }] })).join(' | ');
