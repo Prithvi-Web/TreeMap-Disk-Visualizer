@@ -35,7 +35,8 @@ const SECOND_LOOKS_AT_ONCE = 4;
 export const GDU_EMPTY_FOLDERS_REASON =
   'This scan ran on gdu, which shows a folder it could not read, and a folder holding only a mounted drive, as an empty folder, ' +
   'so TreeMap cannot tell which folders are really empty and offers none. ' +
-  'Scan again with Settings › Scan engine set to Automatic or Built-in walker to see them.';
+  // Not "Automatic": where the native module is missing, Automatic runs gdu again.
+  'Scan again with Settings › Scan engine set to Built-in walker to see them.';
 
 export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean): Promise<EmptyFoldersAnswer> {
   if (scan.engine === 'gdu-turbo') {

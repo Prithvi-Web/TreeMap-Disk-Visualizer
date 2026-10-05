@@ -657,6 +657,9 @@ test('a gdu scan offers no empty folder, and says why', async () => {
   assert.deepEqual(direct, { folders: [], totalCount: 0, truncated: false, withheld: 0, reason: GDU_EMPTY_FOLDERS_REASON });
   assert.match(GDU_EMPTY_FOLDERS_REASON, /gdu/, 'the reason names the engine');
   assert.match(GDU_EMPTY_FOLDERS_REASON, /Scan engine/, 'and what to do instead');
+  // Automatic picks gdu again wherever the native module is missing: only the built-in walker is sure to list every folder.
+  assert.match(GDU_EMPTY_FOLDERS_REASON, /Scan engine set to Built-in walker to see them\.$/, 'it names the one engine that always runs');
+  assert.doesNotMatch(GDU_EMPTY_FOLDERS_REASON, /Automatic/, 'never Automatic, which can run gdu again');
   const answer = await emptyFolders(scan.scanId);
   assert.deepEqual(answer, direct, 'the route answers the same, reason included');
 });
