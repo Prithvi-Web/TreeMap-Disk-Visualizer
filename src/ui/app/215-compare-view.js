@@ -249,6 +249,10 @@ function renderCompare(r) {
 /* ───────────────────────────── Browse modal ───────────────────────────── */
 let browsePath = null;
 let browseOnPick = null; // when set, "Use this folder" hands the path to this instead of scanning
+// Each listing asked for takes the next number, and only the newest one's
+// answer is shown: a sleeping NAS answers late (review F1.8). Closing the
+// picker retires every listing still on its way — see browseClosed.
+let browseSeq = 0;
 async function openBrowse(start, onPick = null, title = null) {
   browseOnPick = onPick;
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
@@ -267,8 +271,12 @@ function browseOrder(dirs) {
 /** List a folder in the picker. True when it opened; a failure is a toast and
     leaves the picker where it was. */
 async function browseTo(path) {
+  const seq = ++browseSeq;
   try {
     const data = await api('/api/fs/list?path=' + encodeURIComponent(path));
+    // A newer listing was asked for, or the picker closed, while this one was
+    // on its way: its answer is not shown, and it did not open.
+    if (seq !== browseSeq) return false;
     browsePath = data.path;
     $('browseCurrent').value = data.path;
     const list = $('browseList');
@@ -280,9 +288,16 @@ async function browseTo(path) {
     list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
     return true;
   } catch (e) {
-    toast(e.message, 'error');
+    if (seq === browseSeq) toast(e.message, 'error');
     return false;
   }
+}
+/** Every way the picker closes (Escape, the ✕, the scrim, a Use that acted)
+    runs through closeModal, which calls this: a typed path still opening when
+    the sheet goes is never acted on — no pick (an offload destination), no
+    scan, no toast about a sheet that is gone. */
+function browseClosed() {
+  browseSeq++;
 }
 /** The path line as a path. Leading whitespace is paste debris and goes; a
     trailing space is part of a folder's name and stays — the server's own
@@ -302,12 +317,21 @@ $('browseCurrent').addEventListener('keydown', (e) => {
   if (typed) return browseTo(typed);
 });
 $('browseUseBtn').addEventListener('click', async () => {
+  const btn = $('browseUseBtn');
   // A path typed but not opened yet is opened first, and acted on only if it
   // opened: the folder shown before it is never scanned in its place. Until
   // someone edits it the field holds the folder shown, spelled as the server
   // listed it, so a folder picked from the list is never looked up again.
   const typed = browseFieldPath();
-  if (typed && typed !== browsePath && !(await browseTo(typed))) return;
+  if (typed && typed !== browsePath) {
+    // Held while it opens, so a second press cannot act twice.
+    btn.disabled = true;
+    const opened = await browseTo(typed);
+    btn.disabled = false;
+    // Not opened, or overtaken while it opened, by a newer listing or by the
+    // picker closing: nothing is acted on.
+    if (!opened) return;
+  }
   const pick = browseOnPick;
   browseOnPick = null;
   closeModal('browseModal');

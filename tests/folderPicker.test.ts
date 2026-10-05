@@ -22,8 +22,32 @@ const dir = (name: string): Dir => ({ name, path: `/home/u/${name}`, isHidden: n
 
 /* ══════════════ The browse section, evaluated ══════════════ */
 
+/** A brace-matched block of the page from an opening anchor (walks past the parameter list first). */
+function braced(openAnchor: string): string {
+  const start = INDEX.indexOf(openAnchor);
+  assert.notEqual(start, -1, `"${openAnchor}" is in the page`);
+  let p = INDEX.indexOf('(', start), paren = 0;
+  for (; p < INDEX.length; p++) {
+    if (INDEX[p] === '(') paren++;
+    else if (INDEX[p] === ')' && --paren === 0) break;
+  }
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', p); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`"${openAnchor}" never closes`);
+}
+
+/** A listing that answers only when the test says so — a sleeping NAS or external drive. */
+function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => { open = resolve; });
+  return { opened, open };
+}
+
 type FakeEl = {
-  id: string; value: string; textContent: string; innerHTML: string;
+  id: string; value: string; textContent: string; innerHTML: string; disabled: boolean;
   classList: { add(c: string): void; remove(c: string): void };
   listeners: Record<string, (e?: unknown) => unknown>;
   addEventListener(type: string, fn: (e?: unknown) => unknown): void;
@@ -32,7 +56,7 @@ type FakeEl = {
 
 function fakeEl(id: string): FakeEl {
   const el: FakeEl = {
-    id, value: '', textContent: '', innerHTML: '',
+    id, value: '', textContent: '', innerHTML: '', disabled: false,
     classList: { add() {}, remove() {} },
     listeners: {},
     addEventListener(type, fn) { el.listeners[type] = fn; },
@@ -58,18 +82,24 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
   assert.notEqual(start, -1, 'the browse section is in the page');
   const end = INDEX.indexOf('\n});', INDEX.indexOf("$('browseUseBtn').addEventListener('click'", start)) + '\n});'.length;
   const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
+  // The page's own closeModal: Escape, the ✕, the scrim and a Use that acted
+  // all close the picker through it (its other arms are for other sheets).
+  const closeModal = braced('function closeModal(');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
-    '$', 'api', 'toast', 'escapeHtml', 'startScan', 'closeModal',
+    '$', 'api', 'toast', 'escapeHtml', 'startScan',
     `'use strict';
      const state = { system: { homeDir: '/home/u', commonDirs: [] } };
      function icon() { return ''; }
      ${INDEX.slice(start, end)}
-     return { openBrowse, browseTo, path: () => browsePath };`,
-  )($, api, (m: string) => { toasts.push(m); }, escapeHtml, (p: string) => { scanned.push(p); }, () => {}) as {
+     ${closeModal}
+     return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal') };`,
+  )($, api, (m: string) => { toasts.push(m); }, escapeHtml, (p: string) => { scanned.push(p); }) as {
     openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
+    /** The picker dismissed — Escape, the ✕ or the scrim. */
+    close: () => void;
   };
   /** The folder names the list shows, top to bottom (the ".." row aside). */
   const rows = () => [...$('browseList').innerHTML.matchAll(/aria-label="Open ([^"]+)"/g)].map((m) => m[1]);
@@ -202,6 +232,92 @@ test('a typed path loses only its leading whitespace, as the server\'s own rule 
   $('browseCurrent').value = ' /home/u/Screenshots ';
   await use();
   assert.deepEqual(scanned, [SHOT], '"Scan this folder" on a typed path keeps the trailing space too');
+});
+
+/* ══════════════ A typed path that is slow to open (F1.8) ══════════════ */
+
+const NAS = '/Volumes/NAS/backup';
+/** The NAS answers when its gate opens; /data at once; anything else is the home folder. */
+function slowListing(g: ReturnType<typeof gate>) {
+  return (p: string) => {
+    if (p === NAS) return g.opened.then(() => ({ path: NAS, parent: '/Volumes/NAS', dirs: [dir('late')] }));
+    if (p === '/data') return { path: '/data', parent: '/', dirs: [dir('projects')] };
+    return HOME;
+  };
+}
+
+test('a picker dismissed while a typed path is still opening acts on nothing — no pick, no scan (F1.8)', async () => {
+  // Offload to…: type the NAS, press the button, change your mind and press
+  // Escape. The offload job starts on the pick, so a pick after the dismissal
+  // would move files the person had just walked away from.
+  for (const withPick of [true, false]) {
+    const g = gate();
+    const { rt, $, scanned, use } = browseRuntime(slowListing(g));
+    const picked: string[] = [];
+    await rt.openBrowse(null, withPick ? (p) => { picked.push(p); } : undefined);
+    $('browseCurrent').value = NAS;
+    const pending = use();
+    rt.close();
+    g.open();
+    await pending;
+    assert.deepEqual(picked, [], `nothing is picked after the dismissal (${withPick ? 'pick' : 'scan'} door)`);
+    assert.deepEqual(scanned, [], `nothing is scanned after the dismissal (${withPick ? 'pick' : 'scan'} door)`);
+  }
+  // A typed path that fails after the dismissal is not reported either.
+  const g = gate();
+  const { rt, $, toasts, use } = browseRuntime((p) => (p === '/Volumes/gone'
+    ? g.opened.then(() => new Error('No such folder: /Volumes/gone'))
+    : HOME));
+  await rt.openBrowse(null);
+  $('browseCurrent').value = '/Volumes/gone';
+  const pending = use();
+  rt.close();
+  g.open();
+  await pending;
+  assert.deepEqual(toasts, [], 'a failure that lands after the dismissal is not shown');
+});
+
+test('a second press while a typed path opens does nothing — the pick happens once and never falls through to a scan (F1.8)', async () => {
+  const g = gate();
+  const { rt, $, scanned, use } = browseRuntime(slowListing(g));
+  const picked: string[] = [];
+  await rt.openBrowse(null, (p) => { picked.push(p); });
+  $('browseCurrent').value = NAS;
+  const first = use();
+  assert.equal($('browseUseBtn').disabled, true, 'the button is disabled while the typed path opens');
+  const second = use();
+  g.open();
+  await Promise.all([first, second]);
+  assert.deepEqual(picked, [NAS], 'picked once');
+  assert.deepEqual(scanned, [], 'the second press did not scan the offload destination');
+  assert.equal($('browseUseBtn').disabled, false, 'and the button is enabled again for the next time');
+});
+
+test('a slow listing that answers after a newer one never takes over the picker (F1.8)', async () => {
+  const g = gate();
+  const { rt, $, rows, scanned } = browseRuntime(slowListing(g));
+  await rt.openBrowse(null);
+  $('browseCurrent').value = NAS;
+  const enter = $('browseCurrent').listeners.keydown({ key: 'Enter', preventDefault() {} });
+  await rt.browseTo('/data'); // a folder chip, answered first
+  g.open();
+  await enter;
+  assert.equal(rt.path(), '/data', 'the folder asked for last is the one shown');
+  assert.equal($('browseCurrent').value, '/data', 'the field is not overwritten by the late answer');
+  assert.deepEqual(rows(), ['projects'], 'nor is the list');
+
+  // "Scan this folder" on the slow path, then a chip while it opens: the
+  // person moved on, so neither folder is scanned behind their back.
+  const g2 = gate();
+  const second = browseRuntime(slowListing(g2));
+  await second.rt.openBrowse(null);
+  second.$('browseCurrent').value = NAS;
+  const pending = second.use();
+  await second.rt.browseTo('/data');
+  g2.open();
+  await pending;
+  assert.deepEqual(second.scanned, [], 'a superseded typed path is not scanned, and neither is the folder that replaced it');
+  assert.deepEqual(scanned, []);
 });
 
 test('the field says it can be typed in (D05)', () => {

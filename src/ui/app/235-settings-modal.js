@@ -639,6 +639,9 @@ function closeModal(id) {
   // The shared dialog's Cancel and OK label are put back for whichever dialog
   // uses it next (D62).
   if (id === 'confirmModal') confirmFooterReset();
+  // A typed path still opening in the folder picker is not acted on once the
+  // picker is gone: no pick (an offload destination), no scan.
+  if (id === 'browseModal') browseClosed();
   // FX: the job ring dies with the sheet, whichever surface closed it — a beam
   // on a hidden modal would be a claim nobody can see.
   if (id === 'offloadModal') {
