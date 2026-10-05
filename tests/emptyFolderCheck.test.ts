@@ -6,7 +6,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-emptyFolderCheck-data-');
 
 import {
-  driveFor, driveOn, emptyCheckSession, EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, listsEntryTypes, lookBudgetMs,
+  driveFor, driveOn, emptyCheckSession, EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, listsEntryTypes, lookBudgetMs, lookClock,
   openListing, setEmptyCheckForTests, SILENT_DRIVE_MEMORY_MS, stillEmptyFolder, type EmptyCheckDeps, type EmptyVerdict,
 } from '../src/services/emptyFolderCheck';
 import { HANG_GUARD_MS } from './fixtures/waitFor';
@@ -289,17 +289,18 @@ test('a request looks for 10 s at most, counting only while it looks; the wait i
   assert.equal(lookBudgetMs({ NODE_TEST_CONTEXT: 'child-v8' }), 1_200_000);
   assert.ok(lookBudgetMs({ TREEMAP_FORBID_REAL_TRASH: '1' }) > HANG_GUARD_MS);
   let now = 0;
-  const waits: number[] = [];
+  const waits: string[] = [];
   const stats: string[] = [];
+  let last = '';
   setEmptyCheckForTests({
     deadlineMs: EMPTY_CHECK_DEADLINE_MS,
     budgetMs: EMPTY_CHECK_BUDGET_MS,
     now: () => now,
-    driveOf: async () => 'slow',
+    driveOf: async () => { last = 'drive'; return 'slow'; },
     // Each stat takes 3 s of the session's clock, and answers.
-    lstat: async (p) => { stats.push(p); now += 3_000; return { isDirectory: () => true }; },
-    opendir: async () => ({ read: async () => null, close: async () => {} }),
-    deadline: (ms) => { waits.push(ms); return { late: new Promise<void>(() => {}), cancel: () => {} }; },
+    lstat: async (p) => { last = 'stat'; stats.push(p); now += 3_000; return { isDirectory: () => true }; },
+    opendir: async () => { last = 'list'; return { read: async () => null, close: async () => {} }; },
+    deadline: (ms) => { waits.push(`${last} ${ms}`); return { late: new Promise<void>(() => {}), cancel: () => {} }; },
   });
   const session = emptyCheckSession(true);
   const verdicts: EmptyVerdict[] = [];
@@ -310,7 +311,124 @@ test('a request looks for 10 s at most, counting only while it looks; the wait i
   assert.deepEqual(verdicts.map(whyOf), ['empty', 'empty', 'empty', 'no-answer', 'no-answer'], '9 s of looking, then 12 s: d is cut, e never starts');
   assert.deepEqual(stats, ['/s/a', '/s/b', '/s/c', '/s/d'], 'nothing is asked once the 10 s are spent');
   assert.match(reasonOf(verdicts[4]), /the 10 seconds TreeMap gives to looking at folders again ran out/);
-  assert.deepEqual(waits, [2000, 2000, 2000, 2000, 2000, 1000, 1000], 'each call waits 2 s, or what is left of the 10 s when that is less');
+  assert.deepEqual(waits, [
+    'drive 10000', 'stat 2000', 'list 2000',
+    'drive 7000', 'stat 2000', 'list 2000',
+    'drive 4000', 'stat 2000', 'list 1000',
+    'drive 1000', 'stat 1000',
+  ], 'each call waits 2 s, or what is left of the 10 s when that is less; the drive lookup waits what is left (U-4c L3)');
+});
+
+/** Let `n` turns of the event loop pass: a count, never a time. */
+async function turns(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+test('the drive lookup counts in the budget: the first in a minute may wait on the mount table (U-4b review, L3)', async () => {
+  let now = 0;
+  const stats: string[] = [];
+  setEmptyCheckForTests({
+    budgetMs: EMPTY_CHECK_BUDGET_MS,
+    now: () => now,
+    driveOf: async () => { now += 4_000; return '/s'; }, // /sbin/mount, read again, may take up to 5 s
+    lstat: async (p) => { stats.push(p); now += 3_000; return aFolder; },
+    opendir: async () => listingOf([]),
+    deadline: () => ({ late: new Promise<void>(() => {}), cancel: () => {} }),
+  });
+  const session = emptyCheckSession(true);
+  assert.equal(whyOf(await session.look('/s/a')), 'empty', '7 s of the 10');
+  const b = await session.look('/s/b');
+  assert.match(reasonOf(b), /the 10 seconds TreeMap gives to looking at folders again ran out/, 'its lookup ran the 10 s out');
+  assert.deepEqual(stats, ['/s/a'], 'b itself was never asked');
+});
+
+test('a drive lookup that does not answer is cut by the budget, never waited for unbounded (U-4b review, L3)', async () => {
+  setEmptyCheckForTests({
+    driveOf: () => new Promise<string>(() => { /* the mount table read hangs */ }),
+    deadline: () => ({ late: Promise.resolve(), cancel: () => {} }), // the budget's deadline has passed
+  });
+  const verdict = await Promise.race([stillEmptyFolder('/s/hang', true), turns(50).then(() => null)]);
+  assert.ok(verdict, 'the look answered: it did not wait for the lookup');
+  assert.match(reasonOf(verdict), /ran out before it made sure this one is empty/);
+});
+
+test('waiting for another request\'s first look on a drive counts in this request\'s budget (U-4b review, L3)', async () => {
+  let now = 0;
+  const events: string[] = [];
+  let answerA: () => void = () => {};
+  let last = '';
+  setEmptyCheckForTests({
+    deadlineMs: EMPTY_CHECK_BUDGET_MS, // so a call's wait is what is left of the budget, and shows it
+    budgetMs: EMPTY_CHECK_BUDGET_MS,
+    now: () => now,
+    driveOf: async () => '/x',
+    lstat: (p) => {
+      last = `stat ${p}`;
+      if (p !== '/x/a') return Promise.resolve(aFolder);
+      return new Promise((resolve) => { answerA = () => resolve(aFolder); });
+    },
+    opendir: async (p) => { last = `list ${p}`; return listingOf([]); },
+    deadline: (ms) => { events.push(`${last}: wait ${ms}`); last = ''; return { late: new Promise<void>(() => {}), cancel: () => {} }; },
+  });
+  const a = emptyCheckSession(true).look('/x/a'); // request A's look goes first on the drive, and hangs
+  await turns(5);
+  const b = emptyCheckSession(true).look('/x/b'); // request B's waits for it
+  await turns(5);
+  now += 6_000; // six seconds of B's waiting
+  answerA();
+  assert.equal(whyOf(await a), 'empty');
+  assert.equal(whyOf(await b), 'empty');
+  assert.ok(events.includes('stat /x/b: wait 4000'), `B's own stat had the 4 s its budget had left (${events.join(' | ')})`);
+});
+
+test('a drive lookup for a folder met below the one looked at is cut by the budget too (U-4b review, L3)', async () => {
+  let last = '';
+  setEmptyCheckForTests({
+    driveOf: (p) => {
+      last = p === '/x/top' ? 'drive' : '';
+      return p === '/x/top' ? Promise.resolve('/') : new Promise<string>(() => { /* the lookup for inner hangs */ });
+    },
+    lstat: async () => { last = 'stat'; return aFolder; },
+    opendir: async (p) => { last = 'list'; return listingOf(p === '/x/top' ? [dirent('inner', true)] : []); },
+    // Only the hanging lookup's wait has its deadline pass.
+    deadline: () => {
+      const late = last === '' ? Promise.resolve() : new Promise<void>(() => {});
+      last = 'used';
+      return { late, cancel: () => {} };
+    },
+  });
+  const verdict = await Promise.race([stillEmptyFolder('/x/top', true), turns(50).then(() => null)]);
+  assert.ok(verdict, 'the look answered: it did not wait for the lookup');
+  assert.match(reasonOf(verdict), /ran out before it made sure this one is empty/);
+});
+
+test('a wait for another request\'s first look on a drive ends when this request\'s budget does (U-4b review, L3)', async () => {
+  let last = '';
+  setEmptyCheckForTests({
+    driveOf: async () => { last = 'drive'; return '/x'; },
+    lstat: (p) => { last = `stat ${p}`; return new Promise(() => { /* request A's look hangs, and its deadline never passes */ }); },
+    // Only a wait no call was just started for — the wait for another look — has its deadline pass.
+    deadline: () => {
+      const late = last === '' ? Promise.resolve() : new Promise<void>(() => {});
+      last = '';
+      return { late, cancel: () => {} };
+    },
+  });
+  void emptyCheckSession(true).look('/x/a');
+  await turns(5);
+  const b = await Promise.race([emptyCheckSession(true).look('/x/b'), turns(50).then(() => null)]);
+  assert.ok(b, 'request B answered while A still waits');
+  assert.match(reasonOf(b), /ran out before it made sure this one is empty/);
+});
+
+test('the clock a look is timed on is monotonic: performance.now, never the wall clock (U-4b review, L3)', () => {
+  // A step of the wall clock back once stretched the budget and a drive's silence; forward, spent it.
+  Object.defineProperty(performance, 'now', { value: () => 42, configurable: true, writable: true });
+  try {
+    assert.equal(lookClock(), 42, 'read from performance.now');
+  } finally {
+    delete (performance as unknown as { now?: unknown }).now;
+  }
 });
 
 /* ─────────────── "gone" is only ever the folder itself (U-4c L1) ─────────────── */

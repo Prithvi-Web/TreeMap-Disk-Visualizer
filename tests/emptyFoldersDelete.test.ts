@@ -248,7 +248,8 @@ test('moveToTrash itself looks again, right before each folder\'s own Trash step
 
 /* ─────────────── a drive that does not answer (U-4b M1) ─────────────── */
 
-const passedDeadline = (): { late: Promise<void>; cancel: () => void } => ({ late: Promise.resolve(), cancel: () => {} });
+/** A call's deadline (the hang guard's, here) has passed; the request's budget, a longer wait, has not (U-4c L3: the drive lookup waits on it). */
+const passedDeadline = (ms: number): { late: Promise<void>; cancel: () => void } => ({ late: ms <= HANG_GUARD_MS ? Promise.resolve() : new Promise<void>(() => {}), cancel: () => {} });
 const neverPasses = (): { late: Promise<void>; cancel: () => void } => ({ late: new Promise<void>(() => {}), cancel: () => {} });
 
 /** Every stat hangs, as on a dead network mount, its root's too; `asked` counts the threads such stats would hold. */
@@ -551,8 +552,10 @@ test('a look waits 2 s for a stat or a listing — under a test runner, as long 
   setEmptyCheckForTests({ deadline: (ms) => { asked.push(ms); return { late: new Promise<void>(() => {}), cancel: () => {} }; } });
   try {
     assert.deepEqual(await stillEmptyFolder(at('nest'), true), { empty: true });
-    assert.ok(asked.length >= 2, `the stat and the listings each had a deadline (${asked.length})`);
-    assert.deepEqual([...new Set(asked)], [HANG_GUARD_MS]);
+    const calls = asked.filter((ms) => ms === HANG_GUARD_MS);
+    assert.ok(calls.length >= 2, `the stat and the listings each had a deadline (${asked.length})`);
+    // The rest are the drive lookup's: it waits what is left of the request's budget, longer still (U-4c L3).
+    assert.deepEqual(asked.filter((ms) => ms < HANG_GUARD_MS), [], 'no call is given less');
   } finally {
     setEmptyCheckForTests(null);
   }
@@ -571,7 +574,7 @@ test('the real timer ends a look that does not answer', async () => {
 
 test('a look that does not answer is not empty, whether the stat or the listing goes silent', async () => {
   const never = (): Promise<never> => new Promise(() => { /* a drive that stopped answering */ });
-  const passed = (): { late: Promise<void>; cancel: () => void } => ({ late: Promise.resolve(), cancel: () => {} });
+  const passed = passedDeadline;
   try {
     setEmptyCheckForTests({ lstat: never, deadline: passed });
     const statSilent = await stillEmptyFolder(at('still'), true);

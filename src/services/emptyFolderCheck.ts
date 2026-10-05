@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import type { Dirent } from 'fs';
 import path from 'path';
+import { performance } from 'perf_hooks';
 import { underTestRunner } from './realMachineGuard';
 import { isAtOrUnder, readMountTable } from '../utils/mountBoundaries';
 
@@ -174,6 +175,15 @@ export function driveFor(p: string, mountPoints: readonly string[] | null, platf
   return drive;
 }
 
+/**
+ * The clock looks are timed on — the budget, a silence's minute, the mount
+ * table's freshness: monotonic (U-4b review, L3). A wall clock stepped back
+ * stretched them, stepped forward spent them.
+ */
+export function lookClock(): number {
+  return performance.now();
+}
+
 /** How long a read mount table is used before it is read again: a drive attached since is a new name. */
 const MOUNT_TABLE_FRESH_MS = 60_000;
 
@@ -188,11 +198,11 @@ let mountTableRead: Promise<Mount[] | null> | null = null;
 
 /** The mounts of this machine, read at most once a minute; null when the table cannot be read. */
 async function currentMounts(): Promise<Mount[] | null> {
-  if (mountTable && Date.now() - mountTable.readAt < MOUNT_TABLE_FRESH_MS) return mountTable.mounts;
+  if (mountTable && lookClock() - mountTable.readAt < MOUNT_TABLE_FRESH_MS) return mountTable.mounts;
   mountTableRead ??= readMountTable(process.platform)
     .then((t) => t.entries?.map((e) => ({ mountPoint: e.mountPoint, filesystem: e.filesystem })) ?? null, () => null)
     .then((mounts) => {
-      mountTable = { readAt: Date.now(), mounts };
+      mountTable = { readAt: lookClock(), mounts };
       mountTableRead = null;
       return mounts;
     });
@@ -273,7 +283,7 @@ const REAL: EmptyCheckDeps = {
   deadline: realDeadline,
   deadlineMs: lookDeadlineMs(),
   budgetMs: lookBudgetMs(),
-  now: () => Date.now(),
+  now: lookClock,
   driveOf: driveOn,
   maxEntries: EMPTY_CHECK_MAX_ENTRIES,
 };
@@ -448,6 +458,23 @@ async function askRoot(ctx: LookContext, drive: string, op: Promise<unknown>): P
   }
 }
 
+/**
+ * `work`, or SPENT once what is left of the session's budget runs out first
+ * (U-4b review, L3): a drive lookup — the first a minute may wait on `mount` —
+ * and a wait for another look's first call on a drive are bounded by the
+ * budget, as every call is. `work` never rejects.
+ */
+async function budgeted<T>(ctx: Pick<LookContext, 'd' | 'left'>, work: Promise<T>): Promise<T | typeof SPENT> {
+  const left = ctx.left();
+  if (left <= 0) return SPENT;
+  const deadline = ctx.d.deadline(left);
+  try {
+    return await Promise.race([work, deadline.late.then((): typeof SPENT => SPENT)]);
+  } finally {
+    deadline.cancel();
+  }
+}
+
 /** Which drive `p` is on, or '' when that cannot be told. */
 async function driveSafely(d: EmptyCheckDeps, p: string): Promise<string> {
   try {
@@ -571,7 +598,8 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
     let gaveUp = false;
     let listed: void | typeof LATE | typeof SPENT | typeof HUSHED;
     // A folder below may be a mount of its own: its silence is its own drive's (U-4c M1).
-    const drive = folder === dir ? ctx.drive : await driveSafely(d, folder);
+    const drive = folder === dir ? ctx.drive : await budgeted(ctx, driveSafely(d, folder));
+    if (drive === SPENT) return budgetSpent(d);
     try {
       listed = await answered(ctx, { folder, drive }, () => readListing(d, folder, visit, () => gaveUp));
     } catch (err) {
@@ -612,37 +640,43 @@ export function emptyCheckSession(ignoreJunk: boolean): EmptyCheckSession {
   /** Drives a look of this session has heard from: its other looks there need not wait. */
   const heard = new Set<string>();
   const left = (): number => d.budgetMs - (spent + (running > 0 ? d.now() - runningSince : 0));
-  const timed = async (drive: string, dir: string): Promise<EmptyVerdict> => {
+  /** `work`, counted in the budget while it runs: the drive lookup and a wait for another look are looking too (L3). */
+  const timed = async (work: () => Promise<EmptyVerdict>): Promise<EmptyVerdict> => {
     if (running++ === 0) runningSince = d.now();
     try {
-      return await lookAt({ d, drive, left }, dir, ignoreJunk);
+      return await work();
     } finally {
       if (--running === 0) spent += d.now() - runningSince;
     }
   };
+  const lookOn = (drive: string, dir: string): Promise<EmptyVerdict> => lookAt({ d, drive, left }, dir, ignoreJunk);
   return {
     async look(dir: string): Promise<EmptyVerdict> {
       if (left() <= 0) return budgetSpent(d);
-      const drive = await driveSafely(d, dir);
-      for (;;) {
-        if (isSilent(d, drive)) return notEmpty('no-answer', DRIVE_SILENT);
-        if (heard.has(drive)) return timed(drive, dir);
-        const first = probing.get(drive);
-        if (!first) break;
-        await first; // ends when that look answers or goes silent: it is bounded by its own deadline
-      }
-      // This look is the drive's first: the others wait for it.
-      let done = (): void => {};
-      const mine = new Promise<void>((resolve) => { done = resolve; });
-      probing.set(drive, mine);
-      try {
-        const verdict = await timed(drive, dir);
-        if (!isSilent(d, drive)) heard.add(drive);
-        return verdict;
-      } finally {
-        if (probing.get(drive) === mine) probing.delete(drive);
-        done();
-      }
+      return timed(async () => {
+        const drive = await budgeted({ d, left }, driveSafely(d, dir));
+        if (drive === SPENT) return budgetSpent(d);
+        for (;;) {
+          if (isSilent(d, drive)) return notEmpty('no-answer', DRIVE_SILENT);
+          if (heard.has(drive)) return lookOn(drive, dir);
+          const first = probing.get(drive);
+          if (!first) break;
+          // Ends when that look answers or goes silent; this request's own budget bounds the wait.
+          if ((await budgeted({ d, left }, first)) === SPENT) return budgetSpent(d);
+        }
+        // This look is the drive's first: the others wait for it.
+        let done = (): void => {};
+        const mine = new Promise<void>((resolve) => { done = resolve; });
+        probing.set(drive, mine);
+        try {
+          const verdict = await lookOn(drive, dir);
+          if (!isSilent(d, drive)) heard.add(drive);
+          return verdict;
+        } finally {
+          if (probing.get(drive) === mine) probing.delete(drive);
+          done();
+        }
+      });
     },
   };
 }

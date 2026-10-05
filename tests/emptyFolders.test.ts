@@ -18,7 +18,7 @@ import { aliasNamespaceOf } from '../src/utils/pathSanitizer';
 import { buildStoreFromTree, Flag, ObjectScanStore, PackedScanStore } from '../src/services/scanStore';
 import { markUnlistedPaths } from '../src/services/scanRefusals';
 import { emptyFoldersForScan, GDU_EMPTY_FOLDERS_REASON } from '../src/services/emptyFolders';
-import { EMPTY_CHECK_BUDGET_MS, setEmptyCheckForTests } from '../src/services/emptyFolderCheck';
+import { EMPTY_CHECK_BUDGET_MS, setEmptyCheckForTests, TEST_RUNNER_DEADLINE_MS } from '../src/services/emptyFolderCheck';
 import { boundaryRecord, mountOutcome, setNeverDescendForTests } from '../src/utils/mountBoundaries';
 import { updateSettings } from '../src/services/settings';
 import { ingestColumns, KIND_DIR, REFUSAL_DENIED, REFUSAL_UNREADABLE, REFUSAL_VANISHED } from '../src/services/scan/nativeEngine';
@@ -822,7 +822,8 @@ test('a second look that does not answer withholds that folder and every one not
       asked.push(p);
       return new Promise(() => { /* a folder on a drive that stopped answering, its root too */ });
     },
-    deadline: () => ({ late: Promise.resolve(), cancel: () => {} }),
+    // A call's deadline has passed; the request's budget, a longer wait, has not (the drive lookup waits on it).
+    deadline: (ms) => ({ late: ms <= TEST_RUNNER_DEADLINE_MS ? Promise.resolve() : new Promise<void>(() => {}), cancel: () => {} }),
   });
   try {
     const answer = await emptyFolders(scan.scanId);
