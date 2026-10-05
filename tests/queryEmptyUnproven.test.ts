@@ -118,6 +118,23 @@ test('the walker names every folder it did not list, so its own counts leave chi
   assert.equal(yes.degraded.has('undecided'), false);
 });
 
+test('emptyUnproven is said only where a childless folder was left undecided: one another term decides is not doubted (U-4b review, L-4)', async () => {
+  const scan = scanOf(at('g', '/g', [
+    at('e1', '/g/e1', []),
+    at('keep', '/g/keep', [at('f.txt', '/g/keep/f.txt')]),
+  ]), { engine: 'gdu-turbo' });
+  // Every folder here is far below 1 GB: size decides each one, whatever empty: would say.
+  const big = await run(scan, 'size>1gb empty:yes');
+  assert.deepEqual(big.dirs, []);
+  assert.equal(big.degraded.has('undecided'), false, 'every item is decided by its size');
+  assert.equal(big.degraded.has('emptyUnproven'), false, 'so no childless folder was left undecided, and none is blamed');
+  // The same where a fact is looked up file by file (the second pass): decided false before it, never doubted.
+  assert.equal((await run(scan, 'size>1gb empty:yes created>2000-01-01')).degraded.has('emptyUnproven'), false);
+  // Where one is left undecided, it is said — in either pass.
+  assert.ok((await run(scan, 'type:dir empty:yes')).degraded.has('emptyUnproven'));
+  assert.ok((await run(scan, 'type:dir empty:yes created>2000-01-01')).degraded.has('emptyUnproven'));
+});
+
 test('a query that does not ask about empty: hears nothing about it', async () => {
   const scan = scanOf(at('g', '/g', [at('e1', '/g/e1', [])]), { engine: 'gdu-turbo' });
   const dirs = await run(scan, 'type:dir');

@@ -409,8 +409,10 @@ export async function executeAgainstScan(
 
   const wantsCreated = astUsesCreated(ast);
   const childlessDoubt = childlessUnproven(scan);
-  // Said only when it applies: the query asks about empty:, and a childless folder met it.
+  // Said only when it applies: the query asks about empty:, and a childless folder it cannot vouch
+  // for was left undecided — not merely met: one another term decides (size>1gb) is no doubt (L-4).
   let childlessUndecided = 0;
+  const doubted = new WeakSet<EvalNode>();
   const asksEmpty = childlessDoubt !== null && astUsesEmpty(ast);
   // Pass two costs something only when the query needs a fact fetched, or a
   // creation date statted, file by file. Otherwise every pass-one verdict is
@@ -479,7 +481,7 @@ export async function executeAgainstScan(
       // of a scan that cannot name all such folders (`childlessUnproven`).
       childCount: isDir ? knownChildCount(store, id, childlessDoubt === null) : undefined,
     };
-    if (asksEmpty && isDir && store.hasChildArray(id) && store.childCount(id) === 0) childlessUndecided++;
+    if (asksEmpty && isDir && store.hasChildArray(id) && store.childCount(id) === 0) doubted.add(node);
 
     // Deliberately NO facts here, and deliberately no stat. `created:` is left
     // undecided so the term evaluates to 'maybe' and the node survives to pass
@@ -489,7 +491,10 @@ export async function executeAgainstScan(
     const verdict = evaluateMaybe(ast, { node, facts: {}, now }, home);
     if (!costly) {
       if (verdict === true) { matched++; kept.offer(hitOf(node)); }
-      else if (verdict === 'maybe') undecided++;
+      else if (verdict === 'maybe') {
+        undecided++;
+        if (doubted.has(node)) childlessUndecided++;
+      }
     } else if (verdict !== false && candidates.length < CANDIDATE_CAP) candidates.push(node);
     else if (verdict !== false) capped = true;
 
@@ -519,6 +524,7 @@ export async function executeAgainstScan(
     // a date the stat could not read is already counted with its reason.
     const verdict = evaluateMaybe(ast, { node, facts, now }, home);
     if (verdict === 'maybe' && !statGap) undecided++;
+    if (verdict === 'maybe' && doubted.has(node)) childlessUndecided++;
     if (verdict !== true) continue;
     matched++;
     kept.offer(hitOf(node));
