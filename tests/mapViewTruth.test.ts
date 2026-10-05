@@ -843,7 +843,10 @@ function previewChrome() {
   const wrap = {
     previewing: false,
     classList: { toggle(_c: string, on: boolean) { wrap.previewing = on; } },
-    style: { setProperty(k: string, v: string) { props[k] = v; }, removeProperty(k: string) { delete props[k]; } },
+    style: {
+      setProperty(k: string, v: string) { props[k] = v; }, removeProperty(k: string) { delete props[k]; },
+      getPropertyValue: (k: string) => props[k] ?? '',
+    },
   };
   const banner = { hidden: true, offsetHeight: 44 };
   const els: Record<string, unknown> = {
@@ -851,11 +854,16 @@ function previewChrome() {
     treemapWrap: wrap, tmPreviewBanner: banner, tmPreviewText: { innerHTML: '' },
   };
   const tmPreview = { on: true, freedBytes: 5e9, outsideView: 0, outsideBytes: 0 };
-  const sync = load<() => void>(['syncCartPreviewChrome', 'TM_PREVIEW_BANNER_INSET'], {
+  const observers: Array<() => void> = [];
+  class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe() { observers.push(this.cb); } }
+  const counts = { draws: 0 };
+  const sync = load<() => void>(['syncCartPreviewChrome', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'tmPreviewWatch'], {
     $: (id: string) => els[id], tmPreview,
     escapeHtml: (s: string) => s, formatBytes: (n: number) => `${n} B`, formatCount: String,
+    ResizeObserver: FakeRO, state: { view: 'treemap' }, isRectMap: () => true,
+    drawTreemap: () => { counts.draws++; },
   }, 'syncCartPreviewChrome');
-  return { sync, props, banner, tmPreview, wrap };
+  return { sync, props, banner, tmPreview, wrap, observers, counts };
 }
 
 test('D64: the preview pads the map down by its banner\'s measured height', () => {
@@ -871,6 +879,33 @@ test('D64: the preview pads the map down by its banner\'s measured height', () =
   p.tmPreview.on = false;
   p.sync();
   assert.equal(p.props['--tm-preview-pad'], undefined, 'leaving the preview gives the room back');
+});
+
+test('LOW-3: the pad follows the banner while the preview is up — the cart dock opening, a resize — one redraw per change', () => {
+  // The banner narrows beside the open cart dock (max-width: calc(100% - 402px))
+  // and on a resize, and wraps to more lines; measured only on enter and exit,
+  // the pad went stale and the banner covered the top row again.
+  const p = previewChrome();
+  p.sync();
+  assert.equal(p.props['--tm-preview-pad'], '64px');
+  assert.equal(p.observers.length, 1, 'the banner is watched for its size');
+  p.observers[0](); // the observer's first call, as it is installed
+  assert.equal(p.counts.draws, 0, 'nothing changed, nothing is redrawn');
+  p.banner.offsetHeight = 62; // the cart dock opened: the banner wrapped to two lines
+  p.observers[0]();
+  assert.equal(p.props['--tm-preview-pad'], '82px', 're-measured');
+  assert.equal(p.counts.draws, 1, 'and the map redrawn under the new pad');
+  p.observers[0]();
+  assert.equal(p.counts.draws, 1, 'a callback with no change of height redraws nothing');
+  p.tmPreview.on = false;
+  p.sync();
+  p.banner.offsetHeight = 44;
+  p.observers[0]();
+  assert.equal(p.props['--tm-preview-pad'], undefined, 'out of the preview nothing is padded');
+  assert.equal(p.counts.draws, 1, 'or redrawn');
+  p.tmPreview.on = true;
+  p.sync();
+  assert.equal(p.observers.length, 1, 'one observer however many times the preview starts');
 });
 
 test('D64: the previewing wrap takes that padding, and the map\'s height gives it back', () => {

@@ -399,7 +399,38 @@ function syncCartPreviewChrome() {
   // by the banner's measured height instead — it wraps to two lines beside
   // the open cart — and treemapCanvasHeight takes that padding off the map,
   // which enterCartPreview redraws right after this.
-  wrap.style.setProperty('--tm-preview-pad', `${Math.ceil(banner.offsetHeight) + 2 * TM_PREVIEW_BANNER_INSET}px`);
+  tmPreviewPadSync();
+  tmPreviewWatch(banner);
+}
+
+/**
+ * Pad the wrap by the banner's height now; answers whether the pad changed.
+ * Nothing to do outside the preview, where syncCartPreviewChrome took it off.
+ */
+function tmPreviewPadSync() {
+  const banner = $('tmPreviewBanner');
+  if (!tmPreview.on || !banner || banner.hidden) return false;
+  const wrap = $('treemapWrap');
+  const pad = `${Math.ceil(banner.offsetHeight) + 2 * TM_PREVIEW_BANNER_INSET}px`;
+  if (wrap.style.getPropertyValue('--tm-preview-pad') === pad) return false;
+  wrap.style.setProperty('--tm-preview-pad', pad);
+  return true;
+}
+
+/**
+ * Keep the pad true while the preview is up (QA-6 review LOW-3). The banner
+ * changes height without the preview starting or ending: it narrows and wraps
+ * beside the open cart dock (body.cart-open), and on a window resize. Measured
+ * only on enter and exit, the pad went stale and the banner sat on the top
+ * row again — or left a gap. One observer per banner; a change redraws the
+ * map under the new pad, and a callback with no change of height does nothing.
+ */
+function tmPreviewWatch(banner) {
+  if (banner._tmPadRo || typeof ResizeObserver === 'undefined') return;
+  banner._tmPadRo = new ResizeObserver(() => {
+    if (tmPreviewPadSync() && state.view === 'treemap' && isRectMap()) drawTreemap();
+  });
+  banner._tmPadRo.observe(banner);
 }
 
 $('cartPreview').addEventListener('click', () => enterCartPreview());
