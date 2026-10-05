@@ -248,6 +248,8 @@ export type RepoVetting =
 export interface VetOptions {
   /** Whether a path lies inside a scanned folder. Absent, every redirect is refused. */
   insideScannedRoot?: (p: string) => boolean;
+  /** The request's own signal: once it is aborted, the vetting stops at its next step and starts no git (FG4e, review L3). */
+  signal?: AbortSignal;
 }
 
 /** UTF-8, strictly: a byte that is not UTF-8 is an error, and a leading BOM is kept as text. */
@@ -282,6 +284,14 @@ function shown(text: string): string {
 }
 
 const refused = (reason: string): RepoVetting => ({ ok: false, kind: 'refused', reason });
+
+/** What a read-ahead step answers once the request is cancelled; vetRepository then answers `cancelled`. */
+const CANCELLED = 'the check was stopped because the request was cancelled';
+/** A vetting the request's cancellation stopped: not a refusal, since nothing was judged (FG4e, review L3). */
+const cancelled: RepoVetting = { ok: false, kind: 'error', reason: CANCELLED };
+
+/** The work one vetting has done so far, shared by every alternates file it reads (FG4e, review L3). */
+interface VetWork { entries: number }
 
 /**
  * Git's refusal of a repository another account owns, as git prints it with no language set —
@@ -411,6 +421,12 @@ const ALTERNATES_DEPTH = 5;
 const ALTERNATES_LIMIT = 64 * 1024;
 /** A git folder with more top-level entries than this is not looked through, and the repository is refused. */
 const TOP_LEVEL_LIMIT = 10_000;
+/**
+ * How many `alternates` entries one vetting reads, in all its files together (FG4e, review L3).
+ * Each file is bounded and so is the depth, but every borrowed folder may borrow from many more,
+ * each line one resolution; past this the repository is refused. Git itself follows any number.
+ */
+export const ALTERNATES_ENTRY_BUDGET = 256;
 
 const C_ESCAPES: Readonly<Record<string, number>> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"': 34 };
 
@@ -457,7 +473,7 @@ function unquoteC(line: string): { bytes: Buffer; trailing: boolean } | null {
  * from the objects folder. A file that is not plain — a link, a pipe, a junction — is refused by
  * what `lstat` says it is, before it is opened, on every platform (FG4d, review #10).
  */
-async function alternatesRefusal(objects: string, opts: VetOptions, depth: number, seen: Set<string>): Promise<string | null> {
+async function alternatesRefusal(objects: string, opts: VetOptions, depth: number, seen: Set<string>, work: VetWork): Promise<string | null> {
   if (seen.has(objects)) return null;
   seen.add(objects);
   const file = path.join(objects, 'info', 'alternates');
@@ -472,13 +488,18 @@ async function alternatesRefusal(objects: string, opts: VetOptions, depth: numbe
   if (text === null) return inexact(file);
   for (const line of text.split('\n')) {
     if (line === '' || line.startsWith('#')) continue;
+    if (opts.signal?.aborted) return CANCELLED;
+    work.entries += 1;
+    if (work.entries > ALTERNATES_ENTRY_BUDGET) {
+      return `${shown(file)} and the folders it borrows from name more than ${String(ALTERNATES_ENTRY_BUDGET)} object folders in all, too many to check, so TreeMap did not run Git on it.`;
+    }
     const quoted = line.startsWith('"') ? unquoteC(line) : null;
     if (quoted?.trailing) return `${shown(file)} holds a line TreeMap cannot read as Git does, so TreeMap did not run Git on it.`;
     const entry = quoted ? exactText(quoted.bytes) : line;
     if (entry === null) return inexact(file);
     const leads = await pointerLeads(entry, objects, opts);
     if ('refusal' in leads) return leads.refusal;
-    const deeper = await alternatesRefusal(leads.to, opts, depth + 1, seen);
+    const deeper = await alternatesRefusal(leads.to, opts, depth + 1, seen, work);
     if (deeper) return deeper;
   }
   return null;
@@ -496,6 +517,7 @@ async function topLevelLinkRefusal(dir: string, opts: VetOptions): Promise<strin
   for await (const entry of await fsp.opendir(dir, { encoding: 'buffer' } as unknown as fs.OpenDirOptions)) {
     if (++count > TOP_LEVEL_LIMIT) return `${shown(dir)} holds too many entries to check, so TreeMap did not run Git on it.`;
     if (!entry.isSymbolicLink()) continue;
+    if (opts.signal?.aborted) return CANCELLED;
     const name = entry.name as unknown as Buffer;
     const text = await linkText(Buffer.concat([prefix, name]));
     if (text === undefined) return inexact(path.join(dir, name.toString('utf8')));
@@ -546,8 +568,9 @@ async function pointerRefusal(root: string, opts: VetOptions): Promise<{ refusal
     commonDir = leads.to;
   }
   const seen = new Set<string>();
+  const work: VetWork = { entries: 0 };
   for (const dir of new Set([gitDir, commonDir])) {
-    const why = (await topLevelLinkRefusal(dir, opts)) ?? (await alternatesRefusal(path.join(dir, 'objects'), opts, 0, seen));
+    const why = (await topLevelLinkRefusal(dir, opts)) ?? (await alternatesRefusal(path.join(dir, 'objects'), opts, 0, seen, work));
     if (why) return { refusal: why };
   }
   return { gitDir, commonDir };
@@ -563,6 +586,8 @@ export async function vetRepository(root: string, opts: VetOptions = {}): Promis
   const pointer = await pointerRefusal(root, opts).catch((err: unknown) => ({
     refusal: `Where ${shown(root)}/.git points could not be read (${err instanceof Error ? err.message : String(err)}), so TreeMap did not run Git on it.`,
   }));
+  // A read-ahead the request's cancellation stopped proved nothing either way (FG4e, review L3).
+  if (opts.signal?.aborted) return cancelled;
   if (pointer && 'refusal' in pointer) return refused(pointer.refusal);
   const where = await whereGitWorks(root);
   if (!where.ok) return where;
@@ -583,6 +608,7 @@ export async function vetRepository(root: string, opts: VetOptions = {}): Promis
       return refused(`Git keeps this project's data at ${shown(dir)}, outside every folder you scanned, so TreeMap did not run Git on it.`);
     }
   }
+  if (opts.signal?.aborted) return cancelled;
   const listed = await runGit(['-C', root, 'config', '--list', '--show-origin', '--no-includes', '-z'], { repoRoot: root });
   if (!listed.ok) return { ok: false, kind: 'error', reason: listed.error };
   const entries = parseConfigList(listed.stdout);

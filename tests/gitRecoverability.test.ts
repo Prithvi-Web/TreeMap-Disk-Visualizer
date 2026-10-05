@@ -540,6 +540,38 @@ test('through the provider, the same redirect into a scanned folder is read', as
   }
 });
 
+test('through the provider, a request cancelled while a repository is vetted stops the vetting and starts no git in it', async () => {
+  // FG4e, review L3: the provider hands its request's signal to the vetting, which stops at its next
+  // alternates entry. Counted by the resolutions of the borrowed folder after the cancellation.
+  const scanned = tmp('treemap-gitrec-prov-abort-');
+  createScanRecord(scanned);
+  const project = path.join(scanned, 'project');
+  const shared = path.join(project, 'shared', 'objects');
+  fs.mkdirSync(path.join(project, '.git', 'objects', 'info'), { recursive: true });
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(project, '.git', 'objects', 'info', 'alternates'), `${shared}\n`.repeat(50));
+  const file = path.join(project, 'a.txt');
+  fs.writeFileSync(file, 'a');
+  const STOP_AT = 5;
+  const controller = new AbortController();
+  const promises = fs.promises as unknown as { realpath: (...args: unknown[]) => Promise<unknown> };
+  const realpath = promises.realpath;
+  let resolved = 0;
+  promises.realpath = async (...args: unknown[]) => {
+    if (String(args[0]) === shared && ++resolved === STOP_AT) controller.abort();
+    return realpath.apply(fs.promises, args);
+  };
+  const rec = scriptedRepo(project, plainListing());
+  try {
+    await recoverabilityProvider.compute('no-scan', [file], controller.signal);
+  } finally {
+    promises.realpath = realpath;
+    rec.restore();
+  }
+  assert.equal(resolved, STOP_AT, 'nothing was resolved once the request was cancelled');
+  assert.deepEqual(commandsOf(rec.calls).filter((c) => c !== '--version'), [], 'git was not started in the repository');
+});
+
 /* ══════════════════ Real git: layouts ordinary commands make are read (review #15, #20) ══════════════════ */
 
 test('a recursive clone and a submodule checkout are read, not refused for the settings git wrote', async () => {

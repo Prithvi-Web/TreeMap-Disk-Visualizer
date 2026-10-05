@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-gitPointers-data-');
 
-import { vetRepository } from '../src/services/gitSafe';
+import { ALTERNATES_ENTRY_BUDGET, vetRepository } from '../src/services/gitSafe';
 import { readRepoState } from '../src/services/gitRecoverability';
 import type { GitRecoverability } from '../src/services/recoverabilityTypes';
 import { commandsOf, recordGit } from './fixtures/gitRecorder';
@@ -495,6 +495,143 @@ test('a git folder with more than 10,000 entries at its top is not looked throug
   assert.equal(!vetting.ok && vetting.kind, 'refused', JSON.stringify(vetting));
   assert.match(!vetting.ok ? vetting.reason : '', /too many entries/);
   assert.deepEqual(calls, []);
+});
+
+/**
+ * FG4e, review L3. Each alternates file is bounded (64 KiB, five folders deep), but not the vetting
+ * as a whole: every borrowed folder can borrow from many more, each line one resolution. So one
+ * vetting reads at most ALTERNATES_ENTRY_BUDGET entries across all its files, and stops at the next
+ * entry once its request is cancelled. Counted by the resolutions the system is asked for.
+ */
+function countResolutions(of: string, onEach?: (n: number) => void): { count: () => number; restore: () => void } {
+  const promises = fs.promises as unknown as { realpath: (...args: unknown[]) => Promise<unknown> };
+  const realpath = promises.realpath;
+  let n = 0;
+  promises.realpath = async (...args: unknown[]) => {
+    if (String(args[0]).includes(of)) {
+      n += 1;
+      onEach?.(n);
+    }
+    return realpath.apply(fs.promises, args);
+  };
+  return { count: () => n, restore: () => { promises.realpath = realpath; } };
+}
+
+/** `root` borrowing from `lenders` folders, each of which borrows `lines` times from one shared folder: all inside `root`. */
+function fanOut(lenders: number, lines: number): string {
+  const root = fakeRepo();
+  const shared = path.join(root, 'shared', 'objects');
+  fs.mkdirSync(shared, { recursive: true });
+  const named: string[] = [];
+  for (let i = 0; i < lenders; i++) {
+    const lender = path.join(root, 'lenders', `l${String(i)}`, 'objects');
+    fs.mkdirSync(path.join(lender, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(lender, 'info', 'alternates'), `${shared}\n`.repeat(lines));
+    named.push(lender);
+  }
+  alternates(root, named.map((l) => `${l}\n`).join(''));
+  return root;
+}
+
+test('one vetting reads a bounded number of alternates entries across all its files together', async () => {
+  const LINES = 20;
+  // Each lender costs its own entry and its LINES: one lender more than the budget allows in all,
+  // though no file is near its own bound.
+  const over = fanOut(Math.ceil(ALTERNATES_ENTRY_BUDGET / (LINES + 1)) + 1, LINES);
+  const spy = countResolutions(over);
+  let refused: Awaited<ReturnType<typeof vetRecorded>>;
+  try {
+    refused = await vetRecorded(over, under(over));
+  } finally {
+    spy.restore();
+  }
+  assert.equal(!refused.vetting.ok && refused.vetting.kind, 'refused', JSON.stringify(refused.vetting));
+  assert.match(!refused.vetting.ok ? refused.vetting.reason : '', new RegExp(`more than ${String(ALTERNATES_ENTRY_BUDGET)} object folders in all`));
+  assert.equal(spy.count(), ALTERNATES_ENTRY_BUDGET, 'no entry past the budget was resolved');
+  assert.deepEqual(refused.calls, [], 'git was never started');
+
+  // The same shape within the budget goes on to the vetting.
+  const within = fanOut(Math.floor(ALTERNATES_ENTRY_BUDGET / (LINES + 1)), LINES);
+  const read = await vetRecorded(within, under(within));
+  assert.equal(read.vetting.ok, true, JSON.stringify(read.vetting));
+});
+
+test('a vetting whose request is cancelled stops at the next alternates entry and starts no git', async () => {
+  const root = fakeRepo();
+  const shared = path.join(root, 'shared', 'objects');
+  fs.mkdirSync(shared, { recursive: true });
+  alternates(root, `${shared}\n`.repeat(50));
+  const STOP_AT = 5;
+  const controller = new AbortController();
+  const spy = countResolutions(shared, (n) => { if (n === STOP_AT) controller.abort(); });
+  const rec = answeringFor(root);
+  let vetting: Awaited<ReturnType<typeof vetRepository>>;
+  try {
+    vetting = await vetRepository(root, { insideScannedRoot: under(root), signal: controller.signal });
+  } finally {
+    rec.restore();
+    spy.restore();
+  }
+  assert.equal(!vetting.ok && vetting.kind, 'error', JSON.stringify(vetting));
+  assert.match(!vetting.ok ? vetting.reason : '', /cancelled/);
+  assert.equal(spy.count(), STOP_AT, 'nothing was resolved once the request was cancelled');
+  assert.deepEqual(rec.calls, [], 'git was never started');
+
+  // Cancelled before it began: nothing read, nothing started.
+  const early = countResolutions(shared);
+  const rec2 = answeringFor(root);
+  try {
+    const before = await vetRepository(root, { insideScannedRoot: under(root), signal: AbortSignal.abort() });
+    assert.equal(!before.ok && before.kind, 'error', JSON.stringify(before));
+  } finally {
+    rec2.restore();
+    early.restore();
+  }
+  assert.equal(early.count(), 0);
+  assert.deepEqual(rec2.calls, []);
+});
+
+test('a cancelled vetting also stops among the links at the top of the git folder, and before git reads the settings', async (t) => {
+  const root = fakeRepo();
+  const shared = path.join(root, 'shared');
+  fs.mkdirSync(shared);
+  try {
+    for (let i = 0; i < 20; i++) fs.symlinkSync(shared, path.join(root, '.git', `l${String(i)}`), 'dir');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  const STOP_AT = 5;
+  const controller = new AbortController();
+  const spy = countResolutions(shared, (n) => { if (n === STOP_AT) controller.abort(); });
+  const rec = answeringFor(root);
+  let vetting: Awaited<ReturnType<typeof vetRepository>>;
+  try {
+    vetting = await vetRepository(root, { insideScannedRoot: under(root), signal: controller.signal });
+  } finally {
+    rec.restore();
+    spy.restore();
+  }
+  assert.equal(!vetting.ok && vetting.kind, 'error', JSON.stringify(vetting));
+  assert.equal(spy.count(), STOP_AT, 'no link was resolved once the request was cancelled');
+  assert.deepEqual(rec.calls, [], 'git was never started');
+
+  // Cancelled while git says where the repository is: its settings are not read.
+  const plain = fakeRepo();
+  const late = new AbortController();
+  const rec2 = recordGit((sub) => {
+    if (sub[0] === 'rev-parse') { late.abort(); return { stdout: `${plain}\n${path.join(plain, '.git')}\n.git\n` }; }
+    if (sub[0] === 'config') return { stdout: PLAIN };
+    return { code: 128, stderr: `the recorder: only the vetting was expected (${sub.join(' ')})` };
+  });
+  try {
+    const stopped = await vetRepository(plain, { insideScannedRoot: under(plain), signal: late.signal });
+    assert.equal(!stopped.ok && stopped.kind, 'error', JSON.stringify(stopped));
+    assert.match(!stopped.ok ? stopped.reason : '', /cancelled/);
+  } finally {
+    rec2.restore();
+  }
+  assert.deepEqual(commandsOf(rec2.calls), ['rev-parse'], 'the settings were not read once the request was cancelled');
 });
 
 test('a link at the top of the common folder a linked worktree shares is judged too', async (t) => {

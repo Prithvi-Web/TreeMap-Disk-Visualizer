@@ -103,7 +103,9 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
 
       for (const [root, repoPaths] of pathsByRepo) {
         if (signal.aborted) break;
-        const vetting = await vetRepository(root, { insideScannedRoot: insideAnyScanRoot });
+        // The request's signal goes in too: the read-ahead of a repository's alternates is bounded,
+        // and a cancelled request stops it at its next entry (FG4e, review L3).
+        const vetting = await vetRepository(root, { insideScannedRoot: insideAnyScanRoot, signal });
         if (!vetting.ok) {
           const reason = vetting.kind === 'refused' ? vetting.reason : `Git could not read the project at ${root} (${vetting.reason}).`;
           for (const p of repoPaths) gitUnavailableByPath.set(p, reason);
