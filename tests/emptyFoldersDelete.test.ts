@@ -464,6 +464,63 @@ test('a folder the look refused is audited as a refusal with its code, never as 
   assert.deepEqual(plain.map((e) => [e.paths, e.outcome]), [[[at('still')], 'ok']]);
 });
 
+test('a path sent twice, refused at its first turn and trashed at its second, is audited both ways (U-4b review, L-6)', async () => {
+  const twice = at('twice');
+  fs.mkdirSync(twice, { recursive: true });
+  let listings = 0;
+  const entry = { name: 'arrived.txt', isDirectory: () => false, isFile: () => true } as unknown as fs.Dirent;
+  // At its first turn it holds a file; by its second, the file is gone.
+  setEmptyCheckForTests({
+    opendir: async () => {
+      const rest = ++listings === 1 ? [entry] : [];
+      return { read: async () => rest.shift() ?? null, close: async () => {} };
+    },
+  });
+  try {
+    const entries = await auditOf(() => trash({ paths: [twice, twice], onlyEmptyFolders: true }));
+    assert.deepEqual(trashed, [twice], 'trashed at its second turn');
+    assert.deepEqual(
+      entries.map((e) => ({ paths: e.paths, outcome: e.outcome, code: e.code })),
+      [
+        { paths: [twice], outcome: 'ok', code: undefined },
+        { paths: [twice], outcome: 'refused', code: 'FOLDER_NOT_EMPTY' },
+      ],
+      'the trash is recorded, not hidden behind the refusal of the same name',
+    );
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
+test('a dry run whose caller hangs up while it looks is still audited (U-4b review, L-6)', async () => {
+  let started: () => void = () => {};
+  const looking = new Promise<void>((resolve) => { started = resolve; });
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  setEmptyCheckForTests({
+    opendir: async (p) => {
+      started();
+      await gate;
+      return fs.promises.opendir(p);
+    },
+  });
+  try {
+    const before = (await readAudit(1000)).length;
+    const payload = JSON.stringify({ paths: [at('still')], onlyEmptyFolders: true, dryRun: true, ignoreOpenHandles: true });
+    const r = http.request({ host: '127.0.0.1', port, path: '/api/files', method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } });
+    r.on('error', () => { /* the hang-up below */ });
+    r.end(payload);
+    await looking;
+    r.destroy(); // the caller is gone while the look runs
+    release();
+    await waitFor(async () => (await readAudit(1000)).length > before, 'the dry run\'s audit entry');
+    const [latest] = await readAudit(1);
+    assert.deepEqual([latest.paths, latest.outcome, latest.dryRun], [[at('still')], 'ok', true]);
+  } finally {
+    setEmptyCheckForTests(null);
+  }
+});
+
 /* ─────────────── the look itself ─────────────── */
 
 test('the look: what makes a folder not empty, each with its reason', async () => {

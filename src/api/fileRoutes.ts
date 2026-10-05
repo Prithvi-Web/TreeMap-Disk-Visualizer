@@ -57,8 +57,16 @@ interface TrashAudit {
 async function auditTrash(a: TrashAudit): Promise<void> {
   const bytesOf = (ps: string[]): number => ps.reduce((sum, p) => sum + (a.sizeOf.get(p) ?? 0), 0);
   const entry = { action: 'files.trash', source: 'http' as const, tokenId: tokenIdFor('http'), dryRun: a.dryRun };
-  const refusedPaths = new Set(a.refused.map((r) => r.path));
-  const rest = a.paths.filter((p) => !refusedPaths.has(p));
+  // One refusal takes one occurrence of its path out (the U-4b review, L-6): a path sent twice,
+  // refused at one turn and trashed at the other, is in both entries.
+  const refusalsLeft = new Map<string, number>();
+  for (const r of a.refused) refusalsLeft.set(r.path, (refusalsLeft.get(r.path) ?? 0) + 1);
+  const rest = a.paths.filter((p) => {
+    const left = refusalsLeft.get(p) ?? 0;
+    if (left === 0) return true;
+    refusalsLeft.set(p, left - 1);
+    return false;
+  });
   if (rest.length > 0 || a.refused.length === 0) {
     await appendAudit({ ...entry, paths: rest, bytes: bytesOf(rest), outcome: a.failed === 0 ? 'ok' : 'error', ...(a.failed > 0 ? { code: 'PARTIAL_FAILURE' } : {}) });
   }
