@@ -235,31 +235,81 @@ export function setHardLinkForTests(fn: (existing: string, link: string) => Prom
 }
 
 /**
+ * Test-only: called with `dest` right before a volume without hard links has the file renamed into
+ * place (FG3g L4), so a test can put something at the name in that moment. The suite's ForTests
+ * idiom: returns the function that removes it.
+ */
+let beforeRenameIntoPlaceForTests: ((dest: string) => void) | null = null;
+export function setBeforeRenameIntoPlaceForTests(fn: (dest: string) => void): () => void {
+  beforeRenameIntoPlaceForTests = fn;
+  return () => { beforeRenameIntoPlaceForTests = null; };
+}
+
+/**
  * Put the complete, verified file at `partial` at `dest`, never over anything (FG3f #8). A hard
  * link is made at `dest` — which fails with EEXIST if anything stands there, in one step — and the
  * partial name is then dropped. Where the volume makes no hard links (FAT, exFAT, some network
- * shares), `dest` is looked at and the file renamed there: a rename replaces what stands at a name,
- * so only a name seen empty is used. Throws EEXIST when something stands at `dest`, leaving the
- * partial for the caller to remove.
+ * shares), the file is renamed into a name held for it (`renameIntoHeldName`). Throws EEXIST when
+ * something stands at `dest`, leaving the partial for the caller to remove.
+ *
+ * Answers `partialLeft`: why the partial name could not be dropped once the file was in place, or
+ * null (FG3g L4). It is a second name for the restored file, never a wrong file — but it is the
+ * restore's to remove, and one it forgets was left at the item's place for good: a rollback did not
+ * remove it and a retry found the place occupied with no word of why.
  */
-export async function placeWithoutClobber(partial: string, dest: string): Promise<void> {
+export async function placeWithoutClobber(partial: string, dest: string): Promise<{ partialLeft: string | null }> {
   try {
     await (hardLinkForTests ?? ((a: string, b: string) => fsp.link(a, b)))(partial, dest);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw err;
-    const taken = await fsp.lstat(dest).then(() => true, (look: unknown) => {
-      if (meansAbsent(look)) return false;
-      throw look;
-    });
-    if (taken) throw Object.assign(new Error(`EEXIST: something already stands at ${dest}`), { code: 'EEXIST' });
-    await fsp.rename(partial, dest);
-    return;
+    await renameIntoHeldName(partial, dest);
+    return { partialLeft: null };
   }
-  // In place under its own name: the partial name is a second name for the same file, and one left
-  // behind is clutter, never a wrong file — so a failure here is logged, not thrown.
-  await fsp.rm(partial, { force: true }).catch((err: unknown) => {
-    console.error(`[treemap] a restored file is in place, but its temporary name ${partial} could not be removed:`, err);
-  });
+  const partialLeft = await fsp.rm(partial, { force: true }).then(() => null, (err: unknown) => (err instanceof Error ? err.message : String(err)));
+  return { partialLeft };
+}
+
+/** The error a placement answers when something stands at its name. */
+function standsThere(dest: string): Error {
+  return Object.assign(new Error(`EEXIST: something already stands at ${dest}`), { code: 'EEXIST' });
+}
+
+/** A file's device and id, or null when nothing (or not a plain empty file) is there. */
+async function emptyFileIdentity(at: string): Promise<string | null> {
+  const st = await fsp.lstat(at, { bigint: true }).catch(() => null);
+  return st !== null && st.isFile() && st.size === 0n ? `${st.dev}:${st.ino}` : null;
+}
+
+/**
+ * Where the volume makes no hard links: a rename replaces whatever stands at a name, so the name is
+ * held first — an empty file made there exclusively, which fails with EEXIST if anything stands
+ * there — and the file is renamed over it only if that is still the same empty file right before
+ * the rename (FG3g L4). The name used to be looked at and then renamed into, and a file that
+ * appeared between the look and the rename was replaced. One written into the placeholder, or put in
+ * its place, since is left as it is (EEXIST). Where nothing can be told apart — a volume whose file
+ * ids are not stable — a write into the placeholder in the instant before the rename is the one
+ * thing still replaced; a volume with hard links never takes this path.
+ */
+async function renameIntoHeldName(partial: string, dest: string): Promise<void> {
+  const held = await fsp.open(dest, 'wx');
+  let id: string | null = null;
+  try {
+    const st = await held.stat({ bigint: true });
+    id = `${st.dev}:${st.ino}`;
+  } finally {
+    await held.close().catch(() => {});
+    // Made here a moment ago and never told apart: removed rather than left at the person's name.
+    if (id === null) await fsp.rm(dest, { force: true }).catch(() => {});
+  }
+  beforeRenameIntoPlaceForTests?.(dest);
+  if (await emptyFileIdentity(dest) !== id) throw standsThere(dest);
+  try {
+    await fsp.rename(partial, dest);
+  } catch (err) {
+    // The placeholder is this placement's own: removed while it is still the same empty file.
+    if (await emptyFileIdentity(dest) === id) await fsp.rm(dest, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 /**

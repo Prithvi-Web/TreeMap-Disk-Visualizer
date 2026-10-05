@@ -2513,11 +2513,17 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       if (hash !== member.hash) {
         throw new Error(`${member.rel || manifest.name} no longer matches the fingerprint recorded when it was protected`);
       }
-      await placeWithoutClobber(partial, dest).catch((err: NodeJS.ErrnoException) => {
+      const placed = await placeWithoutClobber(partial, dest).catch((err: NodeJS.ErrnoException) => {
         if (err.code !== 'EEXIST') throw err;
         throw new Error(`Something appeared at ${dest} since this restore began, and a restore never writes over what is there, so it stopped.`);
       });
       writtenByThisRestore[writtenByThisRestore.length - 1] = dest;
+      // A partial name the placement could not drop is still this restore's (FG3g L4): a rollback
+      // removes it, or names it. Forgotten, it stayed at the item's place, unnamed, after a rollback.
+      if (placed.partialLeft !== null) {
+        writtenByThisRestore.push(partial);
+        console.error(`[treemap] a restored file is in place, but its temporary name ${partial} could not be removed: ${placed.partialLeft}`);
+      }
       noteMiss(await applyRecordedMode(dest, member));
       noteMiss(await applyRecordedTimes(dest, member));
       job.filesDone++;

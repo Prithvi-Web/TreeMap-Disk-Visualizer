@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleRestorePlace-data-');
 
 import { getCapsuleJob, protectItems, startCapsuleRestore } from '../src/services/timeCapsule';
-import { setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
+import { setBeforeRenameIntoPlaceForTests, setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
 import { AppError } from '../src/middleware/errorHandler';
 import { waitFor } from './fixtures/waitFor';
 import { isRestoreCopyFor } from './fixtures/restoreCopy';
@@ -230,3 +230,84 @@ for (const [label, unseen] of [['and nothing is there', false], ['and something 
     assert.deepEqual(partials(folder), []);
   });
 }
+
+/* ─────────────── FG3g L4: where the volume makes no hard links, the name is held before the rename ─────────────── */
+
+for (const [label, put] of [
+  ['written at the name', (big: string) => fs.writeFileSync(big, 'saved here in that moment')],
+  ['renamed into the name', (big: string) => {
+    const saved = `${big}.saving`;
+    fs.writeFileSync(saved, 'saved here in that moment');
+    fs.renameSync(saved, big);
+  }],
+] as const) {
+  test(`where the volume makes no hard links, a file ${label} just before the rename is never replaced`, async () => {
+    const { folder, big, id } = await capturedBig(`no-links-gap-${label.split(' ')[0]}`);
+    const unlink = setHardLinkForTests(async () => { throw Object.assign(new Error('operation not supported (a test)'), { code: 'ENOTSUP' }); });
+    const unhook = setBeforeRenameIntoPlaceForTests((dest) => {
+      if (dest === big) put(big);
+    });
+    let job: { status?: string; error?: string };
+    try {
+      job = await settled((await startCapsuleRestore([id])).jobId);
+    } finally {
+      unhook();
+      unlink();
+    }
+    assert.equal(job.status, 'error', 'the restore stopped rather than write over it');
+    assert.match(job.error ?? '', /appeared/, job.error);
+    assert.equal(fs.readFileSync(big, 'utf8'), 'saved here in that moment', 'what was put there is untouched');
+    assert.deepEqual(partials(folder), [], 'and the copy beside it is gone');
+  });
+}
+
+test('where the volume makes no hard links, a rename that fails leaves no empty file held at the name', async () => {
+  const { folder, big, id } = await capturedBig('no-links-rename-fails');
+  const unlink = setHardLinkForTests(async () => { throw Object.assign(new Error('operation not supported (a test)'), { code: 'ENOTSUP' }); });
+  // The copy waiting to be renamed goes, so the rename fails with the name already held.
+  const unhook = setBeforeRenameIntoPlaceForTests((dest) => {
+    if (dest === big) for (const name of partials(folder)) fs.rmSync(path.join(folder, name));
+  });
+  let job: { status?: string; error?: string };
+  try {
+    job = await settled((await startCapsuleRestore([id])).jobId);
+  } finally {
+    unhook();
+    unlink();
+  }
+  assert.equal(job.status, 'error');
+  assert.equal(fs.existsSync(big), false, 'the name it held is free again');
+  assert.equal(fs.existsSync(folder), false, 'and the folder the restore made is gone with it');
+});
+
+test('a temporary name the restore could not drop is still its own: a rollback removes it or names it, never leaves it unnamed', { skip: SKIP_MODES }, async () => {
+  const dir = fileTempDir('treemap-capsuleRestorePlace-partial-left-');
+  const folder = path.join(dir, 'proj');
+  const sub = path.join(folder, 'sub');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(path.join(sub, 'one.txt'), 'one');
+  fs.writeFileSync(path.join(sub, 'two.txt'), 'two');
+  const { outcomes } = await protectItems([{ path: folder }]);
+  assert.equal(outcomes[0].protected, true, outcomes[0].detail);
+  fs.rmSync(folder, { recursive: true });
+  let first = true;
+  // The first file is put in place; then its folder stops taking removals and new files, so its
+  // temporary name stays, and the second file cannot be written: the restore rolls back.
+  const unlink = setHardLinkForTests(async (existing, link) => {
+    await fs.promises.link(existing, link);
+    if (first) {
+      first = false;
+      fs.chmodSync(sub, 0o500);
+    }
+  });
+  let job: { status?: string; error?: string };
+  try {
+    job = await settled((await startCapsuleRestore([outcomes[0].entryId as string])).jobId);
+  } finally {
+    unlink();
+    if (fs.existsSync(sub)) fs.chmodSync(sub, 0o755);
+  }
+  assert.equal(job.status, 'error');
+  assert.match(job.error ?? '', /\.treemap-restore-/, `the temporary name is named among what could not be removed (${job.error})`);
+  assert.match(job.error ?? '', /and 1 more thing it had made/, job.error);
+});

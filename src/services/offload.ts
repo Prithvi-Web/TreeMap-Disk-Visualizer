@@ -803,10 +803,13 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
         await fsp.rm(partial, { force: true }); // don't leave a damaged copy
         throw new Error('verification failed — the offloaded copy no longer matches its recorded fingerprint');
       }
-      await placeWithoutClobber(partial, entry.originalPath).catch(async (err: NodeJS.ErrnoException) => {
+      const placed = await placeWithoutClobber(partial, entry.originalPath).catch(async (err: NodeJS.ErrnoException) => {
         await fsp.rm(partial, { force: true }).catch(() => {});
         throw err.code === 'EEXIST' ? new Error(`something appeared at ${entry.originalPath} while it was being restored`) : err;
       });
+      if (placed.partialLeft !== null) {
+        console.error(`[treemap] a restored file is in place, but its temporary name ${partial} could not be removed: ${placed.partialLeft}`);
+      }
       putBack.set(entry.id, Date.now());
       job.filesDone++;
     } catch (err) {
