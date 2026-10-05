@@ -138,6 +138,26 @@ test('executablePathsOf: a pid missing from the output is null, and 1,200 pids a
   assert.deepEqual(unread, [], 'every chunk\'s answers are read, not only the last one\'s');
 });
 
+test('executablePathsOf: a ps call that fails leaves only its own 500 pids unknown, and the chunk after it is still asked', async () => {
+  const many = range(20_000, 1200);
+  const ps = fakePs(new Map(many.map((pid) => [pid, `/opt/p${pid}/bin/p${pid}`])));
+  let calls = 0;
+  const run = async (cmd: string, args: string[]): Promise<string> => {
+    calls++;
+    if (calls === 2) throw new CommandFailedError('ps', 'ps exited with code 1', '', '', 1);
+    return ps.run(cmd, args);
+  };
+  const paths = await executablePathsOf(many, run);
+  assert.equal(calls, 3, 'the third chunk is asked after the second one\'s ps failed');
+  const answered = (pids: number[]): number => pids.filter((pid) => paths.get(pid) === `/opt/p${pid}/bin/p${pid}`).length;
+  const unknown = (pids: number[]): number => pids.filter((pid) => paths.get(pid) === null).length;
+  assert.deepEqual(
+    [answered(many.slice(0, 500)), unknown(many.slice(500, 1000)), answered(many.slice(1000))],
+    [500, 500, 200],
+    'the first chunk answered, the failed chunk unknown (nothing guessed), the last chunk answered',
+  );
+});
+
 test('a ps that fails leaves every bundle unknown and the report still answers', async () => {
   const pids = range(2000, 5);
   const failures: Array<[string, () => Promise<string>]> = [
