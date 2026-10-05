@@ -1148,7 +1148,7 @@ subscribe(TOPIC.scan, (scanId) => {
    writes only text: a drive may be named anything. */
 
 /** The note for a /boundary answer — its sentence, and whether Settings can change it — or null when there is nothing to say. */
-function mountsNoteText(b, rootPath) {
+function mountsNoteText(b) {
   if (!b || !b.rule) return null;
   if (!b.notEntered || !b.mounts) {
     if (!b.reason) return null;
@@ -1179,9 +1179,10 @@ function mountsNoteText(b, rootPath) {
   const views = listed.filter((m) => VIEWS.includes(m.filesystem));
   const disks = listed.filter((m) => !VIEWS.includes(m.filesystem));
   const diskCount = n - views.length; // past the fifty the answer lists, a drive is read as a disk
-  const root = String(rootPath || '');
-  const insideRoot = (p) => (root === '/' ? String(p).startsWith('/') : p === root || String(p).startsWith(root + '/'));
-  const counted = views.every((m) => insideRoot(m.source));
+  // Already counted only when the scan listed what the view shows again: the
+  // server says so (`sourceListed`), since a folder under /Volumes or on a
+  // drive not entered is inside the root and was still never counted.
+  const counted = views.every((m) => m.sourceListed === true);
   if (diskCount > 0) {
     let text = `${formatCount(diskCount)} drive${plural(diskCount, '', 's')} mounted inside this folder ${plural(diskCount, 'was', 'were')} not scanned — ${names(disks, diskCount)}. ` +
       `${plural(diskCount, 'It is a separate disk, so its files are', 'They are separate disks, so their files are')} not part of this disk’s total.`;
@@ -1202,7 +1203,7 @@ function mountsNoteText(b, rootPath) {
 function renderMountsNote(b) {
   const row = $('mountsNote');
   if (!row) return;
-  const note = mountsNoteText(b, state.root ? state.root.path : '');
+  const note = mountsNoteText(b);
   if (!note) {
     row.hidden = true;
     return;

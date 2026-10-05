@@ -78,7 +78,11 @@ OpenAPI 3 spec).
      be acted on (the scanned-root rule). `"cross"` ("Include drives mounted
      inside it") walks into them. Unknown is `null` with a `reason`, never an
      empty list; `entered.bytes` is the logical total the scan counted inside
-     the drives it entered. MCP `scan_path` adds a `drivesMountedInside`
+     the drives it entered. Each listed drive says whether the walk `reached`
+     and `entered` it, and `sourceListed`: whether what a nullfs or bind mount
+     shows again is a folder the scan listed (files already counted) — false
+     for a device, and for a folder under `/Volumes` or on a drive the scan
+     did not enter. MCP `scan_path` adds a `drivesMountedInside`
      sentence whenever a drive was left out or counted.
    - `GET /api/volumes` — attached external drives with free/total bytes; a
      drive whose stats cannot be read is listed with nulls and a reason.

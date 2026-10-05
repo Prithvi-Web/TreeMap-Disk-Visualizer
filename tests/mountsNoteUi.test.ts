@@ -29,9 +29,9 @@ function slice(a: string, b: string): string {
 type Note = { text: string; settings: boolean } | null;
 const mountsNoteText = lift<(b: unknown, root: string) => Note>(['UI_LOCALE', 'formatCount', 'lastPathSegment', 'mountsNoteText'], 'mountsNoteText');
 
-interface Mount { path: string; filesystem: string; source: string; reached: boolean; entered: boolean; bytes: number | null }
+interface Mount { path: string; filesystem: string; source: string; reached: boolean; entered: boolean; bytes: number | null; sourceListed: boolean }
 
-const disk = (p: string, over: Partial<Mount> = {}): Mount => ({ path: p, filesystem: 'apfs', source: '/dev/disk7s1', reached: true, entered: false, bytes: null, ...over });
+const disk = (p: string, over: Partial<Mount> = {}): Mount => ({ path: p, filesystem: 'apfs', source: '/dev/disk7s1', reached: true, entered: false, bytes: null, sourceListed: false, ...over });
 
 /** A /boundary answer under stay with these drives not entered, in the route's order (sorted by path). */
 function stay(mounts: Mount[]): Record<string, unknown> {
@@ -90,10 +90,16 @@ test('one disk reads in the singular; seven name five, then how many more', () =
   assert.equal(mountsNoteText(stay(seven), '/r')?.text, '7 drives mounted inside this folder were not scanned — d1, d2, d3, d4, d5 and 2 more. They are separate disks, so their files are not part of this disk’s total.');
 });
 
-test('a nullfs or bind mount is a second view of a folder: already counted when it is inside the scan, not counted here when it is not', () => {
-  const inside = disk('/private/var/folders/zz/P/X/4B95', { filesystem: 'nullfs', source: '/Applications/Clocks.app/Wrapper' });
-  assert.equal(mountsNoteText(stay([inside]), '/')?.text, '1 drive mounted inside this folder was not scanned — 4B95. It is a second view of a folder already counted, so it was not counted again.');
-  assert.equal(mountsNoteText(stay([inside]), '/private/var/folders/zz/P')?.text, '1 drive mounted inside this folder was not scanned — 4B95. It is a second view of another folder, so it was not counted here.');
+test('a nullfs or bind mount is a second view of a folder: already counted when the scan listed it, not counted here when it did not', () => {
+  const view = (sourceListed: boolean): Mount => disk('/private/var/folders/zz/P/X/4B95', { filesystem: 'nullfs', source: '/Applications/Clocks.app/Wrapper', sourceListed });
+  assert.equal(mountsNoteText(stay([view(true)]), '/')?.text, '1 drive mounted inside this folder was not scanned — 4B95. It is a second view of a folder already counted, so it was not counted again.');
+  assert.equal(mountsNoteText(stay([view(false)]), '/private/var/folders/zz/P')?.text, '1 drive mounted inside this folder was not scanned — 4B95. It is a second view of another folder, so it was not counted here.');
+});
+
+test('a view of a folder inside the scanned one that the scan did not list — under /Volumes, or on a drive it did not enter — is not "already counted" (TS review R10)', () => {
+  // An app run from a disk image: macOS shows it again at a translocation point, its source under /Volumes.
+  const fromImage = disk('/private/var/folders/zz/P/AppTranslocation/U/d', { filesystem: 'nullfs', source: '/Volumes/Installer/Tool.app', sourceListed: false });
+  assert.equal(mountsNoteText(stay([fromImage]), '/')?.text, '1 drive mounted inside this folder was not scanned — d. It is a second view of another folder, so it was not counted here.');
 });
 
 test('the diagnosis Mac’s shape — three disks and one nullfs view — says both', () => {
@@ -101,7 +107,7 @@ test('the diagnosis Mac’s shape — three disks and one nullfs view — says b
     disk('/Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-AC21E6AE'),
     disk(`${SIM}/iOS_22E238`),
     disk(`${SIM}/iOS_23F77`),
-    disk('/private/var/folders/zz/P/X/4B95', { filesystem: 'nullfs', source: '/Applications/Clocks.app/Wrapper' }),
+    disk('/private/var/folders/zz/P/X/4B95', { filesystem: 'nullfs', source: '/Applications/Clocks.app/Wrapper', sourceListed: true }),
   ]), '/');
   assert.equal(note?.text, '3 drives mounted inside this folder were not scanned — SimRuntimeBundle-AC21E6AE, iOS_22E238, iOS_23F77. They are separate disks, so their files are not part of this disk’s total. Also not scanned: 4B95, a second view of a folder already counted.');
 });

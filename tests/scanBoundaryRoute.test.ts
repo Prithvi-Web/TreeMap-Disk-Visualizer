@@ -101,7 +101,7 @@ test('a stay scan: the rule, the drives not entered (five examples, sorted), and
   assert.equal(b.mountsListed, 7);
   assert.deepEqual(b.mounts.map((m: any) => m.path), [...mounts].sort());
   for (const m of b.mounts) {
-    assert.deepEqual(m, { path: m.path, filesystem: 'apfs', source: '/dev/disk99s1', reached: true, entered: false, bytes: null }, 'reached, not entered, nothing counted inside');
+    assert.deepEqual(m, { path: m.path, filesystem: 'apfs', source: '/dev/disk99s1', reached: true, entered: false, bytes: null, sourceListed: false }, 'reached, not entered, nothing counted inside');
   }
 });
 
@@ -151,6 +151,33 @@ test('a mount under a folder no walk descends into is listed as not reached — 
   assert.equal(volumes.entered, false);
   const sim = b.mounts.find((m: any) => m.path.endsWith('iOS_22E238'));
   assert.deepEqual([sim.reached, sim.entered], [true, false]);
+});
+
+test('a nullfs or bind view says whether what it shows again is a folder the scan listed (TS review R10)', async () => {
+  const slash = createScanRecord('/');
+  slash.status = 'complete';
+  const sim = '/Library/Developer/CoreSimulator/Volumes/iOS_22E238';
+  const at = (x: string): string => `/private/var/folders/zz/T/AppTranslocation/${x}/d`;
+  const view = (p: string, source: string) => ({ path: p, filesystem: 'nullfs', source, underFixed: false });
+  const mounts = [
+    { path: sim, filesystem: 'apfs', source: '/dev/disk7s1', underFixed: false },
+    view(at('A'), '/Applications/Clocks.app/Wrapper'),
+    view(at('B'), '/Volumes/Installer/Tool.app'),
+    view(at('C'), `${sim}/Applications/Sim.app`),
+    view(at('D'), '/System/Volumes/Data/Applications/Clocks.app/Wrapper'),
+  ];
+  slash.boundary = boundaryRecord({
+    rule: 'stay', source: 'mount', reason: null, mounts,
+    fixed: ['/System/Volumes', '/Volumes', '/dev'],
+    neverDescend: ['/System/Volumes', '/Volumes', '/dev', ...mounts.map((m) => m.path)],
+  });
+  const b = (await get(`/api/scan/${slash.scanId}/boundary`)).body;
+  const listed = (p: string): unknown => b.mounts.find((m: any) => m.path === p).sourceListed;
+  assert.equal(listed(sim), false, 'a device is no folder');
+  assert.equal(listed(at('A')), true, 'a folder the walk of / listed: its files were counted');
+  assert.equal(listed(at('B')), false, 'a folder under /Volumes, which no walk of / descends into: an app run from a disk image');
+  assert.equal(listed(at('C')), false, 'a folder on a drive the scan did not enter');
+  if (process.platform === 'darwin') assert.equal(listed(at('D')), true, 'the Data volume’s spelling of a listed folder is that folder');
 });
 
 test('a record made without a boundary answers rule null with the reason — never an empty list', async () => {

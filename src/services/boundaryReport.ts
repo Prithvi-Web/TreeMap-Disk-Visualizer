@@ -1,5 +1,15 @@
 import type { ScanResult, Snapshot } from '../models/types';
-import { mountOutcome, type BoundaryMount, type BoundaryRule, type MountOutcome, type MountTableSource } from '../utils/mountBoundaries';
+import {
+  dataVolumeAlias,
+  exclusionsOf,
+  isAtOrUnder,
+  mountOutcome,
+  type BoundaryMount,
+  type BoundaryRule,
+  type MountOutcome,
+  type MountTableSource,
+  type ScanBoundary,
+} from '../utils/mountBoundaries';
 import { storeOf } from './scanStore';
 import { storageModeOf } from './storageMode';
 import { boundaryKeyOf, scanBoundaryKey, snapshotBoundaryOf } from './snapshots';
@@ -148,6 +158,13 @@ export interface BoundaryMountRow {
   entered: boolean;
   /** The logical bytes the scan counted inside: null where it did not enter, or cannot look the total up. */
   bytes: number | null;
+  /**
+   * What is mounted there is a folder this scan listed — inside its root, and
+   * not at or beneath a folder it never descended into — so a nullfs or bind
+   * view of it shows files already counted. False for a device, and for a
+   * folder under /Volumes or on a drive the scan did not enter (TS review R10).
+   */
+  sourceListed: boolean;
 }
 
 /** The route's answer. Every list is null — with `reason` — where it is not known, never empty (U-D13). */
@@ -174,6 +191,7 @@ export function boundaryResponse(scan: ScanResult): BoundaryResponse {
   const reached = new Set([...o.notEntered, ...o.entered, ...o.enteredWithin].map((m) => m.path));
   const entered = new Set([...o.entered, ...o.enteredWithin].map((m) => m.path));
   const sizeOf = enteredSizes(scan);
+  const sourceListed = listedFolderTest(record, scan.rootPath);
   const all = [...record.mounts].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const mounts = all.slice(0, BOUNDARY_MOUNTS_CAP).map((m) => ({
     path: m.path,
@@ -182,6 +200,7 @@ export function boundaryResponse(scan: ScanResult): BoundaryResponse {
     reached: reached.has(m.path),
     entered: entered.has(m.path),
     bytes: entered.has(m.path) && sizeOf ? sizeOf(m.path) : null,
+    sourceListed: sourceListed(m.source),
   }));
   const { mounts: _enteredMounts, ...enteredCount } = report.entered;
   return {
@@ -191,6 +210,22 @@ export function boundaryResponse(scan: ScanResult): BoundaryResponse {
     crossedUnlisted,
     mountsListed: all.length,
     mounts,
+  };
+}
+
+/**
+ * Whether a mount's source is a folder the scan listed: a path (never a
+ * device's name) inside the root, and not at or beneath one of the scan's
+ * exclusions. On macOS a source the table spells on the Data volume is asked
+ * in the root's spelling too, as the walk met it.
+ */
+function listedFolderTest(record: ScanBoundary, root: string): (source: string) => boolean {
+  const exclusions = exclusionsOf(record, root);
+  const listed = (p: string): boolean => isAtOrUnder(root, p) && !exclusions.some((x) => isAtOrUnder(x, p));
+  return (source) => {
+    if (!source.startsWith('/')) return false;
+    const spellings = process.platform === 'darwin' ? [source, ...dataVolumeAlias(source)] : [source];
+    return spellings.some(listed);
   };
 }
 
