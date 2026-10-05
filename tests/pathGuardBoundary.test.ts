@@ -15,7 +15,7 @@ import { buildMcpServer } from '../src/mcp/server';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { insideAnyScanRoot, setDataVolumeFoldersForTests } from '../src/middleware/pathGuard';
-import { isInside } from '../src/utils/pathSanitizer';
+import { isInside, sanitizePath } from '../src/utils/pathSanitizer';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
@@ -398,6 +398,58 @@ test('a scan of the Data volume never lists /Volumes, where every drive appears:
       assert.equal(insideAnyScanRoot(path.join(home, 'x.txt')), true, `${label}: a file on the Data volume is still inside`);
       const r = await deleteDryRun(['/Volumes/NewlyMounted/secret.txt']);
       assert.deepEqual([r.status, r.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${label}: ${JSON.stringify(r.body)}`);
+    }
+  } finally {
+    setDataVolumeFoldersForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});
+
+test('a scan of the Data volume typed through a link in its parents, or in another case, never lists /Volumes either: its exclusions are taken where its root really is (the SEC-2 review, F1)', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume and its firmlinks are macOS');
+  // The rule judges a root where it really is (/System/Volumes/Data), while the fixed folders were
+  // spelled from the root as typed, which the sanitizer keeps — so a root typed any other way
+  // dropped them again, and with them every drive mounted after the scan began (or every drive,
+  // when the table could not be read). Every Mac has /Volumes/<its boot volume> → /, which makes
+  // /Volumes/Macintosh HD/System/Volumes/Data such a spelling; a link made here to /System stands
+  // in for it, so nothing depends on what this Mac's volumes are called.
+  const pairs = parseFirmlinks(DIAGNOSIS_MAC_FIRMLINKS);
+  setDataVolumeFoldersForTests(pairs.map((pair) => pair.system));
+  const home = fs.realpathSync(fileTempDir('treemap-guard-data-f1-'));
+  fs.symlinkSync('/System', path.join(home, 'boot'));
+  const roots = [path.join(home, 'boot', 'Volumes', 'Data')];
+  // The boot volume folds case on every Mac by default; where it does, /System/volumes is that folder too.
+  if (fs.realpathSync.native('/System/volumes') === '/System/Volumes') roots.push('/System/volumes/Data');
+  const tables = [
+    { label: 'the table read at the start', entries: parseBsdMount(`${DIAGNOSIS_MAC_MOUNT}/dev/disk20s1 on /Volumes/Backup (apfs, local, journaled)\n`) },
+    { label: 'the table unknown', entries: null },
+  ];
+  try {
+    for (const root of roots) {
+      assert.equal(sanitizePath(root), root, 'the sanitizer keeps the root as typed, and so does the record');
+      for (const { label, entries } of tables) {
+        evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+        const boundary = await scanBoundary(root, 'stay', {
+          platform: 'darwin',
+          readTable: async () => ({ source: 'mount', entries, reason: entries === null ? 'mount could not be run' : null }),
+          realpath: async (p: string) => (p === root ? '/System/Volumes/Data' : p),
+          aliases: async () => firmlinkAliases(pairs),
+          isDirectory: async () => true,
+        });
+        const data = createScanRecord(root);
+        data.status = 'complete';
+        data.finishedAt = Date.now();
+        data.boundary = boundaryRecord(boundary);
+        for (const p of [
+          '/Volumes/NewlyMounted/secret.txt', '/Volumes/NewlyMounted', '/Volumes', '/System/Volumes/Data/Volumes/NewlyMounted/x',
+          '/System/Volumes/Data/Volumes', path.join(root, 'Volumes', 'NewlyMounted', 'x'), '/Volumes/Backup/secret.txt',
+        ]) {
+          assert.equal(insideAnyScanRoot(p), false, `${root}, ${label}: ${p}`);
+        }
+        assert.equal(insideAnyScanRoot(path.join(home, 'x.txt')), true, `${root}, ${label}: a file on the Data volume is still inside`);
+        const r = await deleteDryRun(['/Volumes/NewlyMounted/secret.txt']);
+        assert.deepEqual([r.status, r.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${root}, ${label}: ${JSON.stringify(r.body)}`);
+      }
     }
   } finally {
     setDataVolumeFoldersForTests(null);

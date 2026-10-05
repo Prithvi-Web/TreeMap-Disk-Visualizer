@@ -277,15 +277,24 @@ const NAMES_JOIN = '\u0000';
  * the disk "beneath" it after a scan of / (the U-25 security review, F1). The
  * boundary never changes once a scan has started, so the keys are made once
  * per record and spelling of its root.
+ *
+ * The fixed folders are also taken from where the root really is, not only as
+ * it was typed (the SEC-2 review, F1). The record keeps the root as typed, and
+ * a root typed through a link in its parents (`/Volumes/Macintosh HD/System/
+ * Volumes/Data`) or in another case (`/System/volumes/Data`) is the Data
+ * volume all the same — but none of the fixed folders, nor their Data volume
+ * spellings, lay strictly below the typed string, so /Volumes, where every
+ * drive appears, was dropped again, and with it every drive mounted after the
+ * scan began (or every drive, when the table could not be read).
  */
 const exclusionKeys = new WeakMap<ScanResult, { root: string; keys: Set<string> }>();
 
 function exclusionKeysOf(scan: ScanResult, root: string): Set<string> {
   const known = exclusionKeys.get(scan);
   if (known && known.root === root) return known.keys;
-  const keys = new Set(
-    exclusionsOf(scan.boundary, scan.rootPath).map((never) => foldedNames(path.join(root, path.relative(scan.rootPath, never))).join(NAMES_JOIN)),
-  );
+  const asWalked = exclusionsOf(scan.boundary, scan.rootPath).map((never) => path.join(root, path.relative(scan.rootPath, never)));
+  const whereRootIs = root === scan.rootPath ? [] : exclusionsOf(scan.boundary, root);
+  const keys = new Set([...asWalked, ...whereRootIs].map((never) => foldedNames(never).join(NAMES_JOIN)));
   exclusionKeys.set(scan, { root, keys });
   return keys;
 }

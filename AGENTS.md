@@ -488,8 +488,9 @@ read-what-you-saw) permission to act.
   listed when the scan started: a drive mounted inside the folder later is not
   known to that scan until it is scanned again (on macOS, `/Volumes`, where
   drives appear, is excluded whatever is mounted there). A scan of the Data
-  volume itself (`/System/Volumes/Data`) covers only what the root shows of
-  that volume — its firmlinked folders (`/Users`, `/Applications`,
+  volume itself (`/System/Volumes/Data`, however its root is typed: through a
+  link in its parents such as `/Volumes/Macintosh HD/System/Volumes/Data`, or
+  in another case) covers only what the root shows of that volume — its firmlinked folders (`/Users`, `/Applications`,
   `/private`, …) — never the sealed system volume or another volume, and
   never anything in that volume's own spelling of a fixed folder: its
   `/Volumes` is the root's, so no drive there is covered — one mounted after
