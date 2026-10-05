@@ -257,9 +257,10 @@ test('a commit or a clear resets the page, because it is a different list now', 
 /**
  * QA item 5: saving a new cleanup target in Settings left the in-memory
  * `cartGoalBytes` stale, so the dock meter showed the old target until a
- * reload. The fix is one function — `adoptCartGoal` — that boot, every
- * Settings paint (open AND save) and the clear button all ride, so the
- * server-side normalization tested above meets exactly one client policy.
+ * reload. The fix is one function — `adoptCartGoal` — that boot and every
+ * Settings paint (open AND save) ride, so the server-side normalization tested
+ * above meets exactly one client policy. The clear button only empties the
+ * box: like every other field it takes effect on Save (review F1.10).
  */
 function loadAdoptCartGoal() {
   const start = INDEX.indexOf('function adoptCartGoal(');
@@ -294,7 +295,7 @@ test('adoptCartGoal keeps the boot path honesty policy: nonsense is no target', 
   assert.equal(h.rendered.length, 7, 'every adoption repaints, even to hide');
 });
 
-test('boot, the Settings paints and the clear button all ride adoptCartGoal', () => {
+test('boot and every Settings paint ride adoptCartGoal; the clear button waits for Save', () => {
   const load = CODE.slice(CODE.indexOf('async function loadCartGoal'), CODE.indexOf('function renderCartGoal'));
   assert.ok(load.length > 100, 'the loadCartGoal slice is non-empty');
   assert.match(load, /adoptCartGoal\(s\.cleanupGoalBytes\)/, 'boot adopts the fetched answer');
@@ -304,7 +305,9 @@ test('boot, the Settings paints and the clear button all ride adoptCartGoal', ()
   assert.match(fields, /adoptCartGoal\(settingsData\.cleanupGoalBytes\)/,
     'every Settings paint — open AND save — adopts the server answer');
   const clear = CODE.slice(CODE.indexOf("$('cleanupGoalClear')"), CODE.indexOf('function renderReclaimWeights'));
-  assert.match(clear, /adoptCartGoal\(null\)/, 'clearing the box hides the meter immediately');
+  assert.ok(clear.length > 50, 'the clear handler slice is non-empty');
+  assert.doesNotMatch(clear, /adoptCartGoal/,
+    'clearing the box is an edit Save keeps — the meter follows the save, so "Close without saving" leaves it as it was (review F1.10)');
 });
 
 test('the save path repaints the target from the PUT response, not the form', () => {

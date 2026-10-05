@@ -304,6 +304,23 @@ test('the footer offers "Close without saving", not a Cancel that cannot undo th
   assert.match(foot, /id="settingsSaveBtn"/, 'Save is still there');
 });
 
+test('"Clear target" is an edit like the others: the live target and its meter stay until Save, so closing without saving drops it (review F1.10)', () => {
+  // It used to hide the cart's target meter on the spot while the stored
+  // target stayed — "Close without saving" then left the two disagreeing
+  // until Settings was reopened or the page reloaded.
+  const dom = fakeDom({ cleanupGoalValue: { value: '50' } });
+  const adopted: unknown[] = [];
+  const handler = braced("$('cleanupGoalClear').addEventListener('click', () => {");
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('$', 'adoptCartGoal', `'use strict'; ${handler});`)(dom.$, (bytes: unknown) => { adopted.push(bytes); return null; });
+  const clear = dom.$('cleanupGoalClear').listeners.click;
+  assert.ok(clear, 'Clear target has a click handler');
+  clear();
+  assert.equal(dom.$('cleanupGoalValue').value, '', 'the box is emptied');
+  assert.deepEqual(adopted, [], 'the live target is not touched — Save carries the change to the meter');
+  assert.match(dom.$('settingsStatus').textContent, /press Save to keep it/, 'and the sheet says Save is what keeps it');
+});
+
 /* ══════════════ D76 — Save closes the sheet once the server has the settings ══════════════ */
 
 function saveRuntime(api: (url: string, options?: ApiCall['options']) => Promise<unknown>) {

@@ -122,10 +122,11 @@ let cartGoalBytes = null;
    loadCartGoal reads the truth at boot and the Settings save keeps it live. */
 let humanScaleOn = true;
 
-/** ONE honesty policy for the live target: boot, every Settings paint (open
-    AND save) and the clear button all funnel the server's answer through
-    here, so the dock meter can never disagree with the dialog — a freshly
-    saved target must never leave the meter on the stale value (QA item 5). */
+/** ONE honesty policy for the live target: boot and every Settings paint
+    (open AND save) funnel the server's answer through here, so the dock meter
+    can never disagree with the dialog — a freshly saved target must never
+    leave the meter on the stale value (QA item 5). Clear target is an edit,
+    not a save, and does not come here (review F1.10). */
 function adoptCartGoal(bytes) {
   cartGoalBytes = typeof bytes === 'number' && bytes > 0 ? bytes : null;
   renderCartGoal(cartTotalBytes());

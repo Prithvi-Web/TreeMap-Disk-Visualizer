@@ -215,9 +215,11 @@ function collectCleanupGoal() {
   return Math.round(raw * (Number($('cleanupGoalUnit').value) || 1073741824));
 }
 
+// An edit like every other field here: Save carries it to the cart's meter
+// (renderCleanupGoalFields), so "Close without saving" leaves the target and
+// the meter as they were (review F1.10).
 $('cleanupGoalClear').addEventListener('click', () => {
   $('cleanupGoalValue').value = '';
-  adoptCartGoal(null);
   $('settingsStatus').textContent = 'Target cleared — press Save to keep it';
 });
 
