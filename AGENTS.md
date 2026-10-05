@@ -582,8 +582,12 @@ read-what-you-saw) permission to act.
   the blocklist and the scanned-root rule. On Windows it is a device or
   object-manager spelling (`\\?\Volume{…}\`, `\\?\GLOBALROOT\…`,
   `\\.\PhysicalDrive0`, `\\.\C:`, `\??\…`); behind `\\?\` or `\\.\` only a
-  drive-letter path (`\\?\C:\…`) or a UNC path (`\\?\UNC\server\share\…`)
-  passes. The scanned-root rule refuses such a spelling on its own as well
+  drive-letter path (`\\?\C:\…`, the drive's root `\\?\C:\` included) or a
+  UNC path (`\\?\UNC\server\share\…`) passes. This machine's own admin
+  shares (`\\localhost\C$\…`, `\\127.0.0.1\c$`, `\\<its name>\ADMIN$`, also
+  behind `\\?\UNC\`) are its drives again, and a name with a colon past the
+  root is an NTFS stream (`System32::$INDEX_ALLOCATION` is the folder
+  itself): both are second names too. The scanned-root rule refuses such a spelling on its own as well
   (`OUTSIDE_SCAN_ROOT` to a caller that skipped the sanitizer), including
   through a link whose target is spelled that way — a link in the path's
   folders, or the path itself being such a link, which both rules refuse

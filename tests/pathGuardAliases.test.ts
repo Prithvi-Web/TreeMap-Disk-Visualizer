@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
@@ -16,7 +17,7 @@ import { createApp } from '../src/server';
 import { ENDPOINTS } from '../src/api/openapi';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
-import { aliasNamespaceOf, PathRejectedError, sanitizePath } from '../src/utils/pathSanitizer';
+import { aliasNamespaceOf, judgeSpelling, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
@@ -188,6 +189,70 @@ test('Windows: a device or object-manager spelling is refused unless a drive-let
     assert.equal(aliasNamespaceOf(p, 'win32'), null, p);
   }
   assert.equal(aliasNamespaceOf('\\\\?\\GLOBALROOT\\x', 'darwin'), null, 'on macOS that is a relative name like any other');
+});
+
+test('Windows: a drive’s root behind \\\\?\\ or \\\\.\\ is the drive’s root folder, though resolving drops its separator; the volume itself, typed with none, is still refused (the SEC-2 review, F5)', () => {
+  // path.win32.resolve('\\\\?\\C:\\') is '\\\\?\\C:' — the spelling of the volume device — so the
+  // sanitizer refused the root folder of every drive spelled behind a long-path prefix.
+  for (const p of ['\\\\?\\C:\\', '\\\\.\\C:\\', '//?/c:/', '\\\\?\\D:\\', '\\\\?\\C:\\.', '\\\\?\\C:\\Windows\\..']) {
+    const verdict = judgeSpelling(p, 'win32');
+    assert.deepEqual([verdict.secondName, verdict.blocked], [null, false], `${p}: ${JSON.stringify(verdict)}`);
+    assert.match(verdict.resolved, /^\\\\[?.]\\[a-z]:\\$/i, `${p} resolves to the drive’s root folder: ${verdict.resolved}`);
+  }
+  for (const p of ['\\\\?\\C:', '\\\\.\\C:', '\\\\.\\C:.', '//?/c:']) {
+    assert.notEqual(judgeSpelling(p, 'win32').secondName, null, `${p}: the volume itself`);
+  }
+  assert.equal(resolveAsTyped('\\\\?\\C:', 'win32'), '\\\\?\\C:', 'typed without a separator, the device is still spelled as the device');
+  assert.equal(judgeSpelling('\\\\?\\C:\\Windows\\System32', 'win32').blocked, true, 'the blocklist still sees through the prefix');
+  assert.deepEqual(judgeSpelling('\\\\?\\C:\\Users\\me', 'win32'), { resolved: '\\\\?\\C:\\Users\\me', secondName: null, blocked: false });
+});
+
+test('Windows: this machine’s own admin shares and an NTFS stream name are second names, refused by the sanitizer and the scanned-root rule; another machine’s share and an ordinary share are paths (the SEC-2 review, LOW-3)', () => {
+  // \\localhost\C$\Windows\System32\config\SAM is C:\Windows\System32\config\SAM, and
+  // C:\Windows\System32::$INDEX_ALLOCATION is the folder itself, yet neither string starts with a
+  // blocked one. `own` stands for this machine's names, so the test reads no real ones.
+  const own = ['MYPC', '192.168.1.20'];
+  const refused = [
+    '\\\\localhost\\C$\\Windows\\System32\\config\\SAM',
+    '\\\\LOCALHOST\\c$',
+    '\\\\127.0.0.1\\c$\\windows\\system32',
+    '\\\\127.0.0.2\\D$\\x',
+    '\\\\?\\UNC\\localhost\\C$\\Windows\\System32\\config\\SAM',
+    '\\\\.\\UNC\\127.0.0.1\\C$\\x',
+    '\\\\?\\UNC\\.\\C$\\x',
+    '\\\\localhost.\\C$\\x',
+    '//localhost/c$/windows',
+    '\\\\mypc\\C$\\Users',
+    '\\\\MyPC.corp.example.com\\C$\\Users',
+    '\\\\192.168.1.20\\C$\\Users',
+    '\\\\localhost\\ADMIN$\\System32',
+    '\\\\0--1.ipv6-literal.net\\C$\\x',
+    'C:\\Windows\\System32::$INDEX_ALLOCATION',
+    'C:\\Windows::$INDEX_ALLOCATION\\System32',
+    '\\\\?\\C:\\Windows\\System32::$INDEX_ALLOCATION',
+    'C:\\Windows\\System32:$I30:$INDEX_ALLOCATION',
+    'c:/windows/system32::$index_allocation',
+    'C:\\Users\\me\\f.txt:Zone.Identifier',
+    '\\\\server\\share\\f.txt::$DATA',
+  ];
+  for (const p of refused) {
+    assert.notEqual(aliasNamespaceOf(p, 'win32', own), null, `${p}: a second name`);
+    assert.notEqual(judgeSpelling(p, 'win32', own).secondName, null, `${p}: refused by the sanitizer`);
+  }
+  for (const p of [
+    '\\\\server\\C$\\x', '\\\\fileserver\\D$\\backups', '\\\\192.168.1.21\\C$\\x', '\\\\mypc2\\C$\\x', '\\\\localhost\\share\\x',
+    '\\\\mypc\\Users\\x', '\\\\?\\UNC\\server\\share\\x', 'C:\\Users\\x', 'C:', 'C:foo', '\\\\?\\C:\\Users',
+  ]) {
+    assert.equal(aliasNamespaceOf(p, 'win32', own), null, p);
+  }
+  // Asked nothing, the rule knows this machine by its own name.
+  assert.notEqual(aliasNamespaceOf(`\\\\${os.hostname()}\\C$\\x`, 'win32'), null, `this machine, ${os.hostname()}, by its own name`);
+  // TreeMap's own cloud identifiers are no spelling of the OS's: the colon there is the scheme's.
+  for (const p of ['cloud://gdrive/x/empty', 'cloud://onedrive/a:b']) assert.equal(aliasNamespaceOf(p, 'win32', own), null, p);
+  for (const p of ['/Users/me/a:b', '/x/f.txt::$DATA', '/localhost/C$/x']) {
+    assert.equal(aliasNamespaceOf(p, 'darwin'), null, `${p}: on macOS a name`);
+    assert.equal(aliasNamespaceOf(p, 'linux'), null, `${p}: on Linux a name`);
+  }
 });
 
 /* ─────────────── The sanitizer ─────────────── */
@@ -452,4 +517,5 @@ test('every MCP tool that takes a path refuses a second name of a scanned path: 
 test('the capability manifest states the rule', async () => {
   const caps = (await request('GET', '/api/capabilities')).body;
   assert.match(String(caps.safety.pathSanitization), /second name the system gives it \(macOS \/\.nofollow, \/\.resolve, \/\.vol;.*400 PATH_BLOCKED/);
+  assert.match(String(caps.safety.pathSanitization), /own admin shares such as \\\\localhost\\C\$, or an NTFS stream name such as ::\$INDEX_ALLOCATION\)/, 'and Windows’ (the SEC-2 review, LOW-3)');
 });

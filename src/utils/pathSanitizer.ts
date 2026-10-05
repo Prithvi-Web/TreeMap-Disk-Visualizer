@@ -61,11 +61,48 @@ const WIN32_FILE_BEHIND_PREFIX = /^[\\/]{2}[?.][\\/](?:[a-z]:[\\/]|unc[\\/][^\\/
 /** `\\?\` or `\\.\` in front of a drive letter: the same path as the drive-letter spelling, to the blocklist. */
 const WIN32_PREFIX_BEFORE_DRIVE = /^[\\/]{2}[?.][\\/](?=[a-z]:[\\/])/i;
 
-export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.platform): string | null {
+/** A UNC path's host and share, also behind `\\?\UNC\` or `\\.\UNC\`. */
+const WIN32_UNC_SHARE = /^[\\/]{2}(?:[?.][\\/]unc[\\/])?([^\\/]+)[\\/]([^\\/]+)(?=[\\/]|$)/i;
+/** The shares Windows makes of every drive (`C$`) and of the Windows folder (`ADMIN$`). */
+const WIN32_ADMIN_SHARE = /^(?:[a-z]|admin)\$$/i;
+/** A host that is always this machine: loopback by name or address. */
+const WIN32_LOOPBACK_HOST = /^(?:localhost|127(?:\.\d{1,3}){3}|::1|\[::1\]|0--1\.ipv6-literal\.net)$/i;
+const IPV4_LITERAL = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+/** This machine's own names and addresses, as a UNC path may name it: asked only of an admin share's host. */
+function ownHostNames(): string[] {
+  const addresses = Object.values(os.networkInterfaces()).flatMap((list) => (list ?? []).map((i) => i.address));
+  return [os.hostname(), process.env.COMPUTERNAME ?? '', ...addresses].filter((n) => n.length > 0);
+}
+
+/**
+ * Whether a UNC host is this machine (the SEC-2 review, LOW-3): loopback, `.`, or one of its own
+ * names — compared by the first label, so `mypc.corp.example.com` is `MYPC` — or addresses.
+ */
+function isThisMachine(host: string, ownHosts: readonly string[] | undefined): boolean {
+  const h = host.toLowerCase().replace(/(.)\.$/, '$1'); // a fully qualified name's final dot, never `.` itself
+  if (h === '.' || WIN32_LOOPBACK_HOST.test(h)) return true;
+  const literal = IPV4_LITERAL.test(h) || h.includes(':');
+  return (ownHosts ?? ownHostNames()).some((own) => {
+    const o = own.toLowerCase();
+    if (literal || IPV4_LITERAL.test(o) || o.includes(':')) return o === h;
+    return o.split('.')[0] === h.split('.')[0];
+  });
+}
+
+export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): string | null {
   if (platform === 'darwin') return DARWIN_ALIAS_ROOT.exec(p)?.[0] ?? null;
-  if (platform !== 'win32') return null;
+  if (platform !== 'win32' || p.startsWith('cloud://')) return null; // a cloud identifier's colon is its scheme's
   if (WIN32_OBJECT_NAMESPACE.test(p)) return p.slice(0, 4);
   if (WIN32_DEVICE_PREFIX.test(p) && !WIN32_FILE_BEHIND_PREFIX.test(p)) return p.slice(0, 4);
+  // This machine's own admin share is its drive (or Windows folder) again: \\localhost\C$\x is C:\x.
+  const share = WIN32_UNC_SHARE.exec(p);
+  if (share && WIN32_ADMIN_SHARE.test(share[2]) && isThisMachine(share[1], ownHosts)) return share[0];
+  // A name with a colon past the root is an NTFS stream of a file or folder, never a path's own
+  // name: `System32::$INDEX_ALLOCATION` is the folder itself, `f.txt:x` a stream inside the file.
+  const rest = p.slice(path.win32.parse(p).root.length);
+  const colon = rest.indexOf(':');
+  if (colon !== -1) return rest.slice(colon).split(/[\\/]/)[0];
   return null;
 }
 
@@ -75,25 +112,68 @@ export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.
  * every file API. This file deliberately stopped trimming the tail — a trailing
  * space is legal filename DATA on POSIX — so the blocklist has to do the
  * normalisation Windows itself would do, or the space walks a blocked path
- * straight past a string comparison.
+ * straight past a string comparison. Windows' separator, whatever this OS's is,
+ * so Windows' rules are tested on every OS.
  */
 function win32Normalize(p: string): string {
   return p
     .toLowerCase()
-    .split(path.sep)
+    .split(path.win32.sep)
     .map((seg) => seg.replace(/[ .]+$/, ''))
-    .join(path.sep);
+    .join(path.win32.sep);
 }
 
-function isBlocked(resolved: string): boolean {
+function isBlocked(resolved: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): boolean {
   // A second name (`aliasNamespaceOf`) lands where no string here can tell: refused wherever it
   // appears — as typed, or where a link in the parents leads.
-  if (aliasNamespaceOf(resolved) !== null) return true;
-  if (process.platform === 'win32') {
+  if (aliasNamespaceOf(resolved, platform, ownHosts) !== null) return true;
+  if (platform === 'win32') {
     const lower = win32Normalize(resolved.replace(WIN32_PREFIX_BEFORE_DRIVE, ''));
-    return WINDOWS_BLOCKLIST.some((b) => lower === b || lower.startsWith(b + path.sep));
+    return WINDOWS_BLOCKLIST.some((b) => lower === b || lower.startsWith(b + path.win32.sep));
   }
   return UNIX_BLOCKLIST.some((b) => resolved === b || resolved.startsWith(b + '/'));
+}
+
+/** A drive behind `\\?\` or `\\.\` with no separator after it: the volume device itself, as spelled. */
+const WIN32_BARE_DRIVE_BEHIND_PREFIX = /^[\\/]{2}[?.][\\/][a-z]:$/i;
+
+/**
+ * `p` resolved to an absolute path, by `platform`'s rules (`path.resolve`) — except that on Windows a
+ * drive's root folder behind `\\?\` or `\\.\` keeps its separator. Resolving drops it
+ * (`\\?\C:\` → `\\?\C:`), which spells the volume device, not its root folder, and the sanitizer
+ * refused the root of every drive spelled that way (the SEC-2 review, F5). Typed without the
+ * separator, it is the device, and stays refused.
+ */
+export function resolveAsTyped(p: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return path.posix.resolve(p);
+  const resolved = path.win32.resolve(p);
+  return WIN32_BARE_DRIVE_BEHIND_PREFIX.test(resolved) && WIN32_FILE_BEHIND_PREFIX.test(p) ? `${resolved}${path.win32.sep}` : resolved;
+}
+
+/** What `sanitizePath` decides from a path's spelling alone (`judgeSpelling`). */
+export interface SpellingVerdict {
+  /** The path resolved (`resolveAsTyped`): what `sanitizePath` returns when nothing is refused. */
+  resolved: string;
+  /** The second name it is spelled through, as typed or once resolved (`aliasNamespaceOf`), and that spelling; or null. */
+  secondName: { alias: string; named: string } | null;
+  /** Whether the resolved spelling is on the blocklist, read as the platform reads names. */
+  blocked: boolean;
+}
+
+/**
+ * The half of `sanitizePath`'s verdict that needs no file system call: `p` (its `~` already
+ * expanded) resolved, a second name it is spelled through, and the blocklist on the resolved
+ * spelling. Pure — `platform` picks the rules and the resolution, so Windows' are tested on every
+ * OS — and `ownHosts` stands in for this machine's names where a test needs others.
+ */
+export function judgeSpelling(p: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): SpellingVerdict {
+  const resolved = resolveAsTyped(p, platform);
+  // Asked of the typed path too, since resolving on Windows turns `\??\x` into a folder of the
+  // current drive and would hide what was asked for.
+  const named = aliasNamespaceOf(p, platform, ownHosts) !== null ? p : resolved;
+  const alias = aliasNamespaceOf(named, platform, ownHosts);
+  if (alias !== null) return { resolved, secondName: { alias, named }, blocked: true };
+  return { resolved, secondName: null, blocked: isBlocked(resolved, platform, ownHosts) };
 }
 
 /** Node's realpath.native can hand back a Windows extended-length prefix; the
@@ -429,15 +509,12 @@ export function sanitizePath(input: unknown): string {
     p = path.join(os.homedir(), p.slice(1));
   }
 
-  const resolved = path.resolve(p);
   // A second name (`aliasNamespaceOf`) first, and before any file system call: nothing below can
-  // say where one lands. Asked of the typed path too, since resolving on Windows turns `\??\x`
-  // into a folder of the current drive and would hide what was asked for.
-  const named = aliasNamespaceOf(p) !== null ? p : resolved;
-  const alias = aliasNamespaceOf(named);
-  if (alias !== null) {
+  // say where one lands (`judgeSpelling`).
+  const { resolved, secondName, blocked } = judgeSpelling(p);
+  if (secondName !== null) {
     throw new PathRejectedError(
-      `"${named}" names a path through ${alias}, a second name the system gives it. TreeMap acts on a path only by its own name.`,
+      `"${secondName.named}" names a path through ${secondName.alias}, a second name the system gives it. TreeMap acts on a path only by its own name.`,
       'PATH_BLOCKED',
     );
   }
@@ -451,7 +528,7 @@ export function sanitizePath(input: unknown): string {
   // which matters because paths are sanitized twice on most requests (pathGuard
   // middleware, then again inside the service).
   const canonical = canonicalize(resolved);
-  if (isBlocked(resolved) || (canonical !== resolved && isBlocked(canonical)) || isBlockedByIdentity(resolved)) {
+  if (blocked || (canonical !== resolved && isBlocked(canonical)) || isBlockedByIdentity(resolved)) {
     throw new PathRejectedError(`Scanning "${resolved}" is not allowed`, 'PATH_BLOCKED');
   }
   return resolved;
