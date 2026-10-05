@@ -178,27 +178,18 @@ test('a path offered by two smart sources is one entry, sized once', async () =>
 
 /* ══════════════════ 3. The completion report ══════════════════ */
 
-const CONFIRM_ARROW = "$('cleanConfirmBtn').addEventListener('click', async () => {";
-const CONFIRM_NAMED = 'async function runCleanTrash() {';
-
 /**
- * The body of the Move-to-Trash handler, whether it is a named function or an
- * inline arrow on the listener. What is pinned below is the report it produces;
- * where the app chooses to keep it is not this test's business.
+ * The run that follows a confirmed Move to Trash. It is handed the selection
+ * the dialog was opened for, and the dialog's own answer about open files —
+ * it never reads the panes again once the user has said yes (D53).
  */
-function confirmBody(): string {
-  if (INDEX.includes(CONFIRM_NAMED)) return bodyOf(CONFIRM_NAMED);
-  const start = INDEX.indexOf(CONFIRM_ARROW);
-  assert.notEqual(start, -1, 'the Move to Trash handler is findable');
-  const open = start + CONFIRM_ARROW.length - 1;
-  return INDEX.slice(open + 1, matchingBrace(open));
-}
+const CONFIRM_NAMED = 'async function runCleanTrash(selection, options) {';
 
 interface TrashResult { deleted: string[]; failed: { path: string; reason: string }[]; blocked?: string[] }
 
-/** Run the Move-to-Trash handler against one canned `trashPaths` outcome. */
+/** Run the confirmed Move-to-Trash against one canned `trashPaths` outcome. */
 async function runConfirm(sel: { paths: string[]; sizes: Map<string, number> }, result: TrashResult) {
-  const body = confirmBody();
+  const body = bodyOf(CONFIRM_NAMED);
   const { els, $ } = makeDom();
   const toasts: { msg: string; kind?: string }[] = [];
   const trashed: string[][] = [];
@@ -206,7 +197,6 @@ async function runConfirm(sel: { paths: string[]; sizes: Map<string, number> }, 
   const bytes = [...sel.sizes.values()].reduce((s, v) => s + v, 0);
   const fn = runnable(body, {
     $,
-    activeCleanSelection: () => ({ ...sel, bytes, noun: 'item' }),
     trashPaths: async (chunk: string[]) => { trashed.push(chunk); return result; },
     closeModal: () => {},
     toast: (msg: string, kind?: string) => { toasts.push({ msg, kind }); },
@@ -214,8 +204,8 @@ async function runConfirm(sel: { paths: string[]; sizes: Map<string, number> }, 
     icon: () => '',
     REDUCED: true,
     rescan: () => { rescans++; },
-  });
-  await fn();
+  }, 'selection, options');
+  await fn({ ...sel, bytes, noun: 'item' }, {});
   return { toasts, trashed, rescans, els, bytes };
 }
 
@@ -331,4 +321,164 @@ test('a real failure is still red', async () => {
   const shown = await findWith(Object.assign(new Error('The server answered 500.'), { code: 'HTTP_500', status: 500 }));
   assert.equal(shown.length, 1);
   assert.equal(shown[0].kind, 'error', 'a failure that IS a failure must not be softened');
+});
+
+/* ═══════ 4. Move to Trash asks first, in the dialog every other view uses (D53) ═══════ */
+
+/**
+ * Clean Up's "Move N to Trash" used to be bound straight to the run: one click
+ * trashed every ticked row — and every pane opens with its rows ticked — with
+ * no dialog at all, while the pane's own copy said "Nothing is removed until
+ * you confirm" and the shared dialog's markup said no view can delete without
+ * it. The run also passed `silent`, which turns off trashPaths' own re-ask, so
+ * the open-file check (B2) never ran either.
+ *
+ * Pinned here by running the real pieces together: whatever function the
+ * button is bound to, the real `confirmTrash` out of the built page, and the
+ * real run — sharing the one `onConfirmTrash` the app's OK button reads. Only
+ * the edges are stubbed, and `trashPaths` records rather than deletes.
+ */
+
+/** The whole declaration of one named function, `async` included, header to closing brace. */
+function declOf(name: string): string {
+  const m = new RegExp(`(?:async\\s+)?function ${name}\\s*\\(`).exec(INDEX);
+  assert.ok(m, `function ${name} exists in the built page`);
+  const open = INDEX.indexOf(') {', m!.index) + 2;
+  return INDEX.slice(m!.index, matchingBrace(open) + 1);
+}
+
+/** The name of the function the Move to Trash button runs. */
+function cleanTrashHandler(): string {
+  const m = /\$\('cleanConfirmBtn'\)\.addEventListener\('click',\s*([A-Za-z_$][\w$]*)\)/.exec(INDEX);
+  assert.ok(m, 'the Move to Trash button is bound to a named function');
+  return m![1];
+}
+
+type Sel = { paths: string[]; sizes: Map<string, number>; bytes: number; noun: string };
+function sel(paths: string[]): Sel {
+  return { paths, sizes: new Map(paths.map((p) => [p, 100])), bytes: 100 * paths.length, noun: 'item' };
+}
+
+/** A DOM whose class lists remember, so "the dialog is open" can be read back. */
+function classDom() {
+  const els: Record<string, El & { classes: Set<string> }> = {};
+  const $ = (id: string) => (els[id] ||= (() => {
+    const classes = new Set<string>();
+    return {
+      innerHTML: '', textContent: '', checked: false, disabled: false, hidden: false, style: {}, classes,
+      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); } },
+    };
+  })());
+  return { els, $ };
+}
+
+function cleanUpHarness(opts: { cloud?: boolean } = {}) {
+  const { els, $ } = classDom();
+  let selection = sel(opts.cloud ? ['cloud://drive/a', 'cloud://drive/b'] : ['/r/a', '/r/b', '/r/c']);
+  const trashCalls: { paths: string[]; opts: Record<string, unknown> }[] = [];
+  const cloudCalls: string[][] = [];
+  const preflights: string[][] = [];
+  const handler = cleanTrashHandler();
+  const deps: Record<string, unknown> = {
+    $,
+    activeCleanSelection: () => selection,
+    isCloudScan: () => Boolean(opts.cloud),
+    trashPaths: async (paths: string[], o: Record<string, unknown>) => {
+      trashCalls.push({ paths: [...paths], opts: o });
+      return { deleted: [...paths], failed: [] };
+    },
+    cloudTrashPaths: async (paths: string[]) => { cloudCalls.push([...paths]); },
+    checkOpenHandlesFor: async (paths: string[]) => { preflights.push([...paths]); },
+    resetOpenHandleWarning: () => {},
+    ensureNodes: async () => {},
+    nodeFor: () => ({ name: 'x', size: 100 }),
+    cloudProviderOfScan: () => ({ name: 'Drive', trashLabel: 'its trash' }),
+    escapeHtml: (s: string) => s,
+    icon: () => '',
+    formatBytes: (n: number) => `${n}B`,
+    closeModal: () => {},
+    toast: () => {},
+    REDUCED: true,
+    rescan: () => {},
+  };
+  const keys = Object.keys(deps);
+  // One scope, so the three functions share `onConfirmTrash` and
+  // `confirmPaths` exactly as they do in the page.
+  const src = `
+    let onConfirmTrash = null;
+    let confirmPaths = [];
+    ${declOf('confirmTrash')}
+    ${declOf('runCleanTrash')}
+    ${handler === 'runCleanTrash' ? '' : declOf(handler)}
+    return {
+      click: () => ${handler}(),
+      callback: () => onConfirmTrash,
+      confirmTrash,
+    };`;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, src)(...keys.map((k) => deps[k]));
+  return {
+    page, els, $, trashCalls, cloudCalls, preflights,
+    reselect(paths: string[]) { selection = sel(paths); },
+    dialogOpen: () => $('confirmModal').classes.has('open'),
+    closeDialog: () => { $('confirmModal').classes.delete('open'); },
+  };
+}
+
+test('Move to Trash opens the shared "Move to Trash?" dialog and trashes nothing on the click', async () => {
+  const h = cleanUpHarness();
+  await h.page.click();
+  assert.equal(h.trashCalls.length, 0, 'a click must not trash anything — the user has not confirmed yet');
+  assert.ok(h.dialogOpen(), 'the shared confirmation dialog is open');
+  assert.match(h.els.confirmTitle.innerHTML, /Move to Trash\?/, 'and it is the one every other view uses');
+  assert.match(h.els.confirmText.innerHTML, /3 items/, 'naming what is about to go');
+  assert.deepEqual(h.preflights, [['/r/a', '/r/b', '/r/c']], 'the open-file check (B2) runs for exactly that selection');
+});
+
+test('cancelling the dialog deletes nothing, and a later dialog cannot fire the cancelled delete', async () => {
+  const h = cleanUpHarness();
+  await h.page.click();
+  h.closeDialog(); // Cancel, ×, the scrim and Escape all just close it
+  assert.equal(h.trashCalls.length, 0, 'nothing was trashed');
+  // The next view to ask (Duplicates, Grid, right-click…) goes through
+  // confirmTrash, which must leave no trace of the Clean Up callback behind.
+  await h.page.confirmTrash(['/elsewhere/z']);
+  assert.equal(h.page.callback(), null, 'the cancelled Clean Up delete is gone, not waiting on the next OK');
+  assert.equal(h.trashCalls.length, 0, 'still nothing trashed');
+});
+
+test('OK trashes exactly what the dialog showed, and carries "Delete anyway" through', async () => {
+  const h = cleanUpHarness();
+  await h.page.click();
+  // A pane that finishes loading behind the dialog must not widen the delete.
+  h.reselect(['/r/a', '/r/b', '/r/c', '/r/late-arrival']);
+  const ok = h.page.callback();
+  assert.equal(typeof ok, 'function', 'OK runs the Clean Up delete');
+  await ok({ ignoreOpenHandles: true });
+  assert.equal(h.trashCalls.length, 1);
+  assert.deepEqual(h.trashCalls[0].paths, ['/r/a', '/r/b', '/r/c'], 'the selection the dialog was opened for, and nothing else');
+  assert.equal(h.trashCalls[0].opts.ignoreOpenHandles, true,
+    'the user\'s "Delete anyway" reaches the server — dropped, the server refuses the same batch for ever');
+  assert.equal(h.trashCalls[0].opts.silent, true, 'the run still reports for itself');
+});
+
+test('without "Delete anyway" the open-file guard stays on', async () => {
+  const h = cleanUpHarness();
+  await h.page.click();
+  const ok = h.page.callback();
+  assert.equal(typeof ok, 'function', 'OK runs the Clean Up delete');
+  await ok({ ignoreOpenHandles: false });
+  assert.equal(h.trashCalls.length, 1);
+  assert.ok(!h.trashCalls[0].opts.ignoreOpenHandles, 'no override was chosen, so none is sent');
+});
+
+test('a cloud scan keeps the dialog\'s own cloud delete: its files go to the provider\'s trash', async () => {
+  const h = cleanUpHarness({ cloud: true });
+  await h.page.click();
+  assert.ok(h.dialogOpen(), 'the dialog still asks first');
+  const ok = h.page.callback();
+  assert.equal(typeof ok, 'function', 'OK runs a delete');
+  await ok({});
+  assert.equal(h.trashCalls.length, 0, 'a cloud path is never sent to the local Trash route');
+  assert.deepEqual(h.cloudCalls, [['cloud://drive/a', 'cloud://drive/b']]);
 });

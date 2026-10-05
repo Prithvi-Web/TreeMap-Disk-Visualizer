@@ -31408,9 +31408,14 @@ function renderCleanFunnel(freed) {
  * path, rather than quoting the selection's total: the total was computed
  * before anything was deleted, so on any run that did not delete everything it
  * credits the user with space still sitting on the disk.
+ *
+ * Runs only from the shared dialog's OK (see confirmCleanTrash), with the
+ * selection that dialog was opened for and the user's answer to its open-file
+ * warning: `options.ignoreOpenHandles` is "Delete anyway".
  */
-async function runCleanTrash() {
-  const { paths, sizes, onlyEmptyFolders } = activeCleanSelection();
+async function runCleanTrash(selection, options) {
+  const { paths, sizes, onlyEmptyFolders } = selection;
+  const ignoreOpenHandles = Boolean(options && options.ignoreOpenHandles);
   if (!paths.length) return;
   const btn = $('cleanConfirmBtn');
   btn.disabled = true;
@@ -31418,7 +31423,11 @@ async function runCleanTrash() {
   let done = 0, failed = 0, notEmpty = 0, blocked = 0, recovered = 0;
   for (let i = 0; i < paths.length; i += 20) {
     const chunk = paths.slice(i, i + 20);
-    const result = await trashPaths(chunk, onlyEmptyFolders ? { silent: true, onlyEmptyFolders: true } : { silent: true });
+    const result = await trashPaths(chunk, {
+      silent: true,
+      ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}),
+      ...(onlyEmptyFolders ? { onlyEmptyFolders: true } : {}),
+    });
     done += result.deleted.length;
     for (const p of result.deleted) recovered += sizes.get(p) || 0;
     // A folder offered as empty that holds something now was left on purpose (Track U, U-4).
@@ -31439,7 +31448,29 @@ async function runCleanTrash() {
   if (blocked) toast(`${blocked} still in use — left where ${blocked > 1 ? 'they are' : 'it is'}. Close what is using ${blocked > 1 ? 'them' : 'it'} and try again.`, 'error', 9000);
   if (done) rescan();
 }
-$('cleanConfirmBtn').addEventListener('click', runCleanTrash);
+
+/**
+ * Move to Trash asks first, in the one dialog every other view uses (D53).
+ *
+ * This button used to run the delete on the click: every pane opens with its
+ * rows ticked, so one click trashed them all, and with no B2 check either —
+ * the run is silent, which also turns off trashPaths' own re-ask. Now the
+ * click only opens "Move to Trash?" (which starts the open-file check), and
+ * OK runs the delete for the selection taken HERE: a pane still loading
+ * behind the dialog cannot add rows to what was confirmed.
+ *
+ * The callback is installed after confirmTrash, which clears it first. A
+ * cloud scan keeps the dialog's own callback: its files go to the provider's
+ * trash, never to the local Trash route.
+ */
+async function confirmCleanTrash() {
+  const selection = activeCleanSelection();
+  if (!selection.paths.length) return;
+  await confirmTrash(selection.paths);
+  if (isCloudScan()) return;
+  onConfirmTrash = ({ ignoreOpenHandles } = {}) => runCleanTrash(selection, { ignoreOpenHandles });
+}
+$('cleanConfirmBtn').addEventListener('click', confirmCleanTrash);
 
 /* ─────────────────────── Global search (A4) ───────────────────────
    Searches everything TreeMap has indexed, not just the current view — which

@@ -146,9 +146,9 @@ async function confirm(selection: Record<string, unknown>, result: TrashResult) 
   const { $ } = makeDom();
   const toasts: string[] = [];
   const calls: Array<Record<string, unknown>> = [];
-  const fn = runnable(bodyOf('async function runCleanTrash() {'), {
+  // The selection is the one the shared dialog was opened for (D53), handed in rather than re-read.
+  const fn = runnable(bodyOf('async function runCleanTrash(selection, options) {'), {
     $,
-    activeCleanSelection: () => ({ bytes: 0, noun: 'empty folder', sizes: new Map(), ...selection }),
     trashPaths: async (_chunk: string[], opts: Record<string, unknown>) => { calls.push(opts); return result; },
     closeModal: () => {},
     toast: (msg: string) => { toasts.push(msg); },
@@ -156,8 +156,8 @@ async function confirm(selection: Record<string, unknown>, result: TrashResult) 
     icon: () => '',
     REDUCED: true,
     rescan: () => {},
-  });
-  await fn();
+  }, 'selection, options');
+  await fn({ bytes: 0, noun: 'empty folder', sizes: new Map(), ...selection }, {});
   return { toasts, calls };
 }
 
