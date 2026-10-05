@@ -203,18 +203,43 @@ test('topology bars moved onto the kit recipe with the danger exception intact',
   assert.match(fn, /fx-bar-fill/, 'the ramp-gradient fill');
   assert.match(fn, /fxBarStyle\(rank\)/, 'colored by section rank on the shared ramp');
   assert.match(fn, /pct > 85 \? 'background:var\(--danger\);'/, 'a disk past 85% keeps the solid warning');
-  // Free space is stated only when the platform reported both sides.
-  assert.match(fn, /typeof v\.usedBytes === 'number' && typeof v\.sizeBytes === 'number'/,
-    'the free figure is gated on both bytes being real');
-  assert.match(fn, /formatBytes\(v\.sizeBytes - v\.usedBytes\)/, 'and is arithmetic on those, never a guess');
+});
+
+/** topoSection lifted from the built page, with byte-exact stand-ins for its helpers. */
+function liftTopoSection(): (s: Record<string, unknown>, rank?: number) => string {
+  const src = slice('function topoSection(', 'function wireTopologyActions(');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('formatBytes', 'escapeHtml', 'fxBarStyle', 'TOPO_VISIBLE_VOLUMES',
+    `'use strict'; ${src} return topoSection;`)((n: number) => n + ' B', (s: string) => String(s), () => '', 6) as
+    (s: Record<string, unknown>, rank?: number) => string;
+}
+
+test('a volume’s free figure is the free space the platform reported, never ceiling minus own use (QA D16)', () => {
+  // An APFS volume's sizeBytes is the SHARED container ceiling and usedBytes
+  // that one volume's consumption, so their difference is "container minus my
+  // own use" — Preboot showed 450 GB free on a disk with 208 GB free. The real
+  // answer is already in the API: freeBytes, from statfs.
+  const topoSection = liftTopoSection();
+  const apfs = (id: string, used: number) => ({
+    id, name: id, mountPoint: '/' + id, kind: 'apfs', sizeBytes: 494e9, usedBytes: used, freeBytes: 208e9,
+  });
+  const html = topoSection({ title: 'APPLE SSD', tag: 'SSD', capacity: 494e9, vols: [apfs('Data', 250e9), apfs('Preboot', 12e9)] });
+  const frees = [...html.matchAll(/<span class="free num"[^>]*>([^<]*)<\/span>/g)].map((m) => m[1]);
+  assert.deepEqual(frees, ['208000000000 B free', '208000000000 B free'],
+    'each volume shows the free space it can actually use');
+  assert.doesNotMatch(html, /482000000000 B free|244000000000 B free/, 'never the ceiling minus its own use');
+
+  // Free space the platform could not read is left out — not derived.
+  const unread = topoSection({ title: 'USB', tag: null, capacity: 64e9,
+    vols: [{ id: 'disk4s1', name: 'STICK', mountPoint: '/Volumes/STICK', kind: 'partition', sizeBytes: 64e9, usedBytes: 10e9, freeBytes: null }] });
+  assert.doesNotMatch(unread, /class="free num"/, 'an unknown free figure is not shown at all');
+  assert.doesNotMatch(unread, /54000000000 B free/, 'and is never made up from ceiling − used');
 });
 
 test('a pool member without volumes of its own says it is part of the pool, never "No volumes on this disk."', () => {
   // Issue #35 was filed over that sentence; under a Storage Spaces or RAID
   // member it is false — the member's bytes are in the combined section below.
-  const src = slice('function topoSection(', 'function wireTopologyActions(');
-  const topoSection = new Function('formatBytes', 'escapeHtml', 'fxBarStyle', 'TOPO_VISIBLE_VOLUMES',
-    `'use strict'; ${src} return topoSection;`)((n: number) => n + ' B', (s: string) => String(s), () => '', 6) as (s: Record<string, unknown>, rank?: number) => string;
+  const topoSection = liftTopoSection();
   const member = topoSection({ title: 'WDC WD40EFRX', tag: 'HDD', capacity: 4e12, vols: [], inPool: true });
   assert.match(member, /Part of the pool below\./);
   assert.doesNotMatch(member, /No volumes on this disk/);

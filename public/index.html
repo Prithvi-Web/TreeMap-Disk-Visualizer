@@ -7304,10 +7304,13 @@ function topoSection({ title, tag, capacity, vols, inPool = false }, rank = 0) {
     const nm = v.name || v.id;
     const mount = v.mountPoint ? escapeHtml(v.mountPoint) : 'not mounted';
     const sz = typeof v.usedBytes === 'number' ? formatBytes(v.usedBytes) : '–';
-    // Free space only when the platform reported both sides — a free figure
-    // subtracted from an unknown ceiling would be a made-up number.
-    const free = typeof v.usedBytes === 'number' && typeof v.sizeBytes === 'number' && v.sizeBytes >= v.usedBytes
-      ? `<span class="free num" title="Space still free on this volume">${formatBytes(v.sizeBytes - v.usedBytes)} free</span>`
+    // Free space is the figure the platform reported for this volume (statfs),
+    // never sizeBytes − usedBytes: on a pool (APFS container, Storage Spaces,
+    // ZFS) sizeBytes is the SHARED ceiling and usedBytes this volume's own
+    // share, so their difference is not free space at all (QA D16). Unread
+    // stays unshown — a derived stand-in would be a made-up number.
+    const free = typeof v.freeBytes === 'number' && v.freeBytes >= 0
+      ? `<span class="free num" title="Space this volume can still use — volumes that share a container share it">${formatBytes(v.freeBytes)} free</span>`
       : '';
     return `<div class="topo-vol"${i >= TOPO_VISIBLE_VOLUMES ? ' hidden' : ''}>` +
       `<span class="nm" title="${escapeHtml(nm)}">${escapeHtml(nm)}</span>` +
