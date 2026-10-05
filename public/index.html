@@ -9739,14 +9739,16 @@ async function loadTreemap(rootPath, animate = false) {
       exitHistoryState();
       refreshTimebar();
       tmSetEmpty(''); // the rectangle map's note does not describe these renderers
-      if (isSun()) { drawSunburst(); }
-      else {
-        drawCells();
-        // §6.2's zoom between levels. `shared` is whichever of the two roots
-        // contains the other — the one node on screen both before and after,
-        // and therefore the only thing the eye can follow across the change.
-        if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
-      }
+      // Through drawView, never the renderer's own draw: drawView is where the
+      // Reclaim colour mode asks for the scores of what was just drawn. Drawn
+      // directly, a drill-in, an Up, a crumb or a renderer switch kept the
+      // previous layout's scores — Voronoi's 210 on a 9,432-cell treemap,
+      // painted grey under a legend blaming a cap nobody reached (QA D28).
+      drawView();
+      // §6.2's zoom between levels. `shared` is whichever of the two roots
+      // contains the other — the one node on screen both before and after,
+      // and therefore the only thing the eye can follow across the change.
+      if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
     } else {
       let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
@@ -9769,7 +9771,7 @@ async function loadTreemap(rootPath, animate = false) {
       maybeInjectTrash();
       exitHistoryState();
       refreshTimebar();
-      drawTreemap();
+      drawView(); // the scores follow the drawn set — see the branch above
     }
   } catch (e) {
     toast('Treemap failed: ' + e.message, 'error');
@@ -9898,10 +9900,12 @@ function reclaimCoverageNote() {
   let total = 0;
   let scored = 0;
   let unscorable = 0;
+  let loading = 0;
   for (const r of drawn) {
     const p = r.n && r.n.path;
     if (!p || r.n.freed) continue; // §4.3 — not a file, so not part of coverage
     total++;
+    if (reclaim.pending.has(p)) { loading++; continue; }
     if (!reclaim.scores.has(p)) continue;
     if (reclaim.scores.get(p) === null) unscorable++;
     else scored++;
@@ -9913,8 +9917,17 @@ function reclaimCoverageNote() {
       ? ` ${formatCount(unscorable)} of ${formatCount(total)} could not be scored.`
       : '';
   }
-  return ` Scored ${formatCount(scored)} of ${formatCount(total)} on screen`
-    + (total > TM_SCORE_CAP ? ` — TreeMap stops at ${formatCount(TM_SCORE_CAP)} at a time; drill in to score the rest.` : '; the rest are still loading.');
+  // "Stops at 6,000" is a claim that TreeMap stopped ASKING, so it is made
+  // only when what was asked — answered or still in flight — reached the
+  // cap. A larger map than the cap is not enough: the QA screen said it over
+  // 210 scores carried in from another layout, with nothing asked at all.
+  const capped = scored + unscorable + loading >= TM_SCORE_CAP;
+  const cap = ` — TreeMap stops at ${formatCount(TM_SCORE_CAP)} at a time; drill in to score the rest.`;
+  const head = ` Scored ${formatCount(scored)} of ${formatCount(total)} on screen`;
+  if (loading > 0) {
+    return `${head}; ${formatCount(loading)} more ${loading === 1 ? 'is' : 'are'} loading` + (capped ? cap : '.');
+  }
+  return head + (capped ? cap : '; the rest are still loading.');
 }
 
 /**
