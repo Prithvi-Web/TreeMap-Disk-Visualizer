@@ -190,3 +190,47 @@ test('the cart total counts a folder and a file inside it once', () => {
   const total = new Function(...keys, `${helpers}\n${declOf('cartTotalBytes')}\nreturn cartTotalBytes();`)(...keys.map((k) => deps[k]));
   assert.equal(total, 107, 'a.mov is inside V, so its 60 bytes are already in V’s 100');
 });
+
+/* ══════════════════ D31: the message under the box ══════════════════ */
+
+/** The message the box shows for one /api/query answer. */
+async function messageFor(answer: Record<string, unknown>): Promise<string> {
+  const said: string[] = [];
+  const state = {
+    scanId: 's1', root: { path: '/r' }, cart: new Set<string>(),
+    treemap: { matchedPaths: null, queryMode: 'bare', matchTotal: null, matches: 3, rootPath: '/r' },
+  };
+  const deps: Record<string, unknown> = {
+    $: () => ({ hidden: true }),
+    state,
+    api: async () => answer,
+    seedNodes: () => {}, renderSearchOverlay: () => {}, presentView: () => {},
+    tmSetQueryMessage: (text: string) => { said.push(text); },
+    tmUndrawnMessage: () => 'undrawn',
+    tmSyncStageButton: () => {},
+    tmStageable: () => ({ paths: [], noun: 'file', root: false, folders: 0, nested: 0 }),
+    tmClearHits: () => {},
+    formatCount: (n: number) => Number(n).toLocaleString('en-US'),
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const run = new Function(...keys, `let tmLastHits = null; let tmQuerySeq = 0;\n${declOf('tmRunGrammarQuery')}\nreturn tmRunGrammarQuery;`)(...keys.map((k) => deps[k]));
+  await run('size>0');
+  return said[said.length - 1];
+}
+
+const manyHits = (n: number) => Array.from({ length: n }, (_, i) => hit(`/r/f${i}`, false, n - i));
+
+test('"Showing the 1000 biggest of 20000 matches." — the numbers are formatted', async () => {
+  const msg = await messageFor({ hits: manyHits(1000), total: 465_602, truncated: true, degraded: [] });
+  assert.equal(msg, 'Showing the 1,000 biggest of 465,602 matches.');
+});
+
+test('when the server stopped at its cap, the box says so rather than "the N biggest of M"', async () => {
+  const reason = 'This query needs facts TreeMap looks up file by file, so it checked only the first 20,000 possible matches it came to.';
+  const msg = await messageFor({
+    hits: manyHits(1000), total: 20_000, truncated: true, degraded: [{ provider: 'capped', reason }],
+  });
+  assert.ok(msg.includes(reason), msg);
+  assert.doesNotMatch(msg, /Showing the/, 'a capped count is not presented as the total');
+});

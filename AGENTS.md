@@ -281,7 +281,11 @@ OpenAPI 3 spec).
      definite match is returned, so `-dupe:yes` matches nothing rather than
      everything, and an unknown can shrink a result but never grow one —
      `degraded` then counts the files left undecided (`undecided`), so "could
-     not tell" never reads as "did not match". `used:never` is the case to
+     not tell" never reads as "did not match". `total` counts every match in
+     the scan — except for a query that needs a fact looked up, or a creation
+     date read, file by file: that one examines at most the first 20,000
+     possible matches the walk meets, and when it stops there `degraded`
+     carries `capped` and `total` is a floor, not the count. `used:never` is the case to
      know: no reader records that a file was never opened — a missing
      last-opened date means openings are not recorded there — so it matches
      no file, says so in `degraded`, and is refused in a policy where it

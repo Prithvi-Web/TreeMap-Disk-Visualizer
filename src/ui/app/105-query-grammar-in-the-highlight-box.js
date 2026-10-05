@@ -250,13 +250,17 @@ async function tmRunGrammarQuery(q) {
     // supply is visible, rather than an empty highlight that reads as
     // "nothing matched". Which of the three gaps it is, and whether the Depth
     // advice can help at all, is tmUndrawnMessage's job.
+    //
+    // A degraded answer speaks first: when the server stopped at its candidate
+    // cap (`capped`), its total is a floor, and "the N biggest of M" would
+    // present the cap as the count (D31).
     const degraded = out.degraded || [];
     const drawn = state.treemap.matches;
     const found = out.total;
     if (degraded.length) {
       tmSetQueryMessage(degraded.map((d) => d.reason).join(' '), false);
     } else if (out.truncated) {
-      tmSetQueryMessage(`Showing the ${state.treemap.matchedPaths.size} biggest of ${found} matches.`, false);
+      tmSetQueryMessage(`Showing the ${formatCount(state.treemap.matchedPaths.size)} biggest of ${formatCount(found)} matches.`, false);
     } else if (found > drawn) {
       tmSetQueryMessage(tmUndrawnMessage(found, drawn, tmLastHits.paths, state.treemap.rootPath), false);
     } else {

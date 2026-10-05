@@ -40,6 +40,12 @@ import type { ReclaimScoreFactValue } from '../facts';
 /** Candidates whose facts we are willing to fetch for one query. */
 const CANDIDATE_CAP = 20_000;
 
+/**
+ * The fact providers pass two fetches file by file — the cost the cap above
+ * bounds. Any other field the grammar has is answered from the tree itself.
+ */
+const FETCHED_PROVIDERS = new Set(['lastUsed', 'recoverability', 'reclaimScore']);
+
 /** Facts are requested in batches this size — the route's own per-request cap. */
 const FACT_BATCH = 2000;
 
@@ -118,7 +124,7 @@ async function fetchFacts(
   const out = new Map<string, EvalFacts>();
   for (const p of paths) out.set(p, {});
 
-  const providers = [...needed].filter((n) => n === 'lastUsed' || n === 'recoverability' || n === 'reclaimScore');
+  const providers = [...needed].filter((n) => FETCHED_PROVIDERS.has(n));
   if (providers.length === 0) return out;
 
   for (let i = 0; i < paths.length; i += FACT_BATCH) {
@@ -265,6 +271,49 @@ export function isOnlyHasBeenOpened(ast: Ast): boolean {
 
 /* -------------------------------- execution -------------------------------- */
 
+/**
+ * The first `k` items of a stream in `cmp` order, never holding more than `k`.
+ *
+ * A heap with the kept item that sorts LAST at its root: a newcomer either
+ * sorts before that one and takes its place, or is dropped. So a query can
+ * count every match in a million-node scan and still keep only the page it
+ * was asked for.
+ */
+function firstK<T>(k: number, cmp: (a: T, b: T) => number): { offer(item: T): void; sorted(): T[] } {
+  const heap: T[] = [];
+  const swap = (i: number, j: number): void => { const t = heap[i]; heap[i] = heap[j]; heap[j] = t; };
+  const up = (i: number): void => {
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (cmp(heap[i], heap[parent]) <= 0) return;
+      swap(i, parent);
+      i = parent;
+    }
+  };
+  const down = (i: number): void => {
+    for (;;) {
+      const l = 2 * i + 1;
+      const r = l + 1;
+      let last = i;
+      if (l < heap.length && cmp(heap[l], heap[last]) > 0) last = l;
+      if (r < heap.length && cmp(heap[r], heap[last]) > 0) last = r;
+      if (last === i) return;
+      swap(i, last);
+      i = last;
+    }
+  };
+  return {
+    offer(item: T): void {
+      if (k <= 0) return;
+      if (heap.length < k) { heap.push(item); up(heap.length - 1); return; }
+      if (cmp(item, heap[0]) >= 0) return;
+      heap[0] = item;
+      down(0);
+    },
+    sorted: (): T[] => [...heap].sort(cmp),
+  };
+}
+
 const SORTERS: Record<SortKey, (a: QueryHit, b: QueryHit) => number> = {
   // Ties broken by path so paging is stable — without it, two equal-sized
   // files can swap places between page 1 and page 2 and one is never seen.
@@ -308,6 +357,16 @@ export async function executeAgainstScan(
   }
 
   const wantsCreated = astUsesCreated(ast);
+  // Pass two costs something only when the query needs a fact fetched, or a
+  // creation date statted, file by file. Otherwise every pass-one verdict is
+  // already final: the walk counts every match exactly and keeps only the page
+  // asked for, with no cap — so the first 20,000 the walk happened to meet are
+  // never passed off as the total, or as "the biggest" (D31).
+  const costly = wantsCreated || [...needed].some((n) => FETCHED_PROVIDERS.has(n));
+  const kept = firstK<QueryHit>(opts.offset + opts.limit, SORTERS[opts.sort]);
+  const hitOf = (n: EvalNode): QueryHit => ({ path: n.path, name: n.name, size: n.size, isDir: n.isDir, mtimeMs: n.mtimeMs });
+  let matched = 0;
+  let undecided = 0;
   let statsSpent = 0;
   let statsCapped = 0;
   let statsFailed = 0;
@@ -371,7 +430,10 @@ export async function executeAgainstScan(
     // and then pass two re-statted every candidate, halving the cap and
     // returning a total of zero on a large scan.
     const verdict = evaluateMaybe(ast, { node, facts: {}, now }, home);
-    if (verdict !== false && candidates.length < CANDIDATE_CAP) candidates.push(node);
+    if (!costly) {
+      if (verdict === true) { matched++; kept.offer(hitOf(node)); }
+      else if (verdict === 'maybe') undecided++;
+    } else if (verdict !== false && candidates.length < CANDIDATE_CAP) candidates.push(node);
     else if (verdict !== false) capped = true;
 
     if (isDir) {
@@ -388,8 +450,6 @@ export async function executeAgainstScan(
     factsByPath = await fetchFacts(scanId, candidates.map((c) => c.path), needed, opts.signal, degraded);
   }
 
-  const hits: QueryHit[] = [];
-  let undecided = 0;
   for (const node of candidates) {
     if (opts.signal.aborted) { aborted = true; break; }
     const facts = factsByPath.get(node.path) ?? {};
@@ -403,11 +463,11 @@ export async function executeAgainstScan(
     const verdict = evaluateMaybe(ast, { node, facts, now }, home);
     if (verdict === 'maybe' && !statGap) undecided++;
     if (verdict !== true) continue;
-    hits.push({ path: node.path, name: node.name, size: node.size, isDir: node.isDir, mtimeMs: node.mtimeMs });
+    matched++;
+    kept.offer(hitOf(node));
   }
 
-  hits.sort(SORTERS[opts.sort]);
-  const page = hits.slice(opts.offset, opts.offset + opts.limit);
+  const page = kept.sorted().slice(opts.offset);
 
   if (statsCapped > 0) {
     degraded.set('created', `Creation dates were read for ${formatCount(statsSpent)} items; ${formatCount(statsCapped)} more were skipped. No scan records creation times, so each one costs a separate read.`);
@@ -415,9 +475,13 @@ export async function executeAgainstScan(
   if (statsFailed > 0) {
     degraded.set('createdUnreadable', `${formatCount(statsFailed)} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so ${statsFailed === 1 ? 'it is' : 'they are'} not in these results.`);
   }
+  if (capped) {
+    degraded.set('capped', `This query needs facts TreeMap looks up file by file, so it checked only the first ${formatCount(CANDIDATE_CAP)} possible matches it came to, in folder order. There may be more matches than the ${formatCount(matched)} counted here, and "biggest" means the biggest of those.`);
+  }
   if (undecided > 0) {
     const one = undecided === 1;
-    degraded.set('undecided', `${formatCount(undecided)} item${one ? '' : 's'} could not be decided — a fact this query needs was not available for ${one ? 'it' : 'them'} — so ${one ? 'it is' : 'they are'} not in these results.`);
+    // Past the cap, only the candidates kept were judged: a floor, said as one.
+    degraded.set('undecided', `${capped ? 'At least ' : ''}${formatCount(undecided)} item${one ? '' : 's'} could not be decided — a fact this query needs was not available for ${one ? 'it' : 'them'} — so ${one ? 'it is' : 'they are'} not in these results.`);
   }
   if (aborted) {
     // A half-finished walk must never be handed back as a confident total.
@@ -425,8 +489,8 @@ export async function executeAgainstScan(
   }
 
   return {
-    total: hits.length,
-    truncated: aborted || capped || opts.offset + page.length < hits.length,
+    total: matched,
+    truncated: aborted || capped || opts.offset + page.length < matched,
     hits: page,
     degraded: [...degraded].map(([provider, reason]) => ({ provider, reason })),
     examined,
