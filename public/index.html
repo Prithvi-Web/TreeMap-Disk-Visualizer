@@ -4753,9 +4753,12 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
            that share storage is visible rather than hidden inside a total.
            The map and every scan total count the size a file claims (the
            goldens hold those responses byte-identical, DESIGN §12), so the
-           sentence says so rather than claiming otherwise (QA D71, D10). -->
+           sentence says so rather than claiming otherwise (QA D71, D10).
+           The second figure only where it was measured: on Windows, and for
+           an index built from a scan, the panel says "Not measured" and
+           shows no figure (review F1.3). -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>How TreeMap measures space</div>
-      <div class="muted" style="margin-bottom:10px;">TreeMap's map and totals count the size each file claims. This panel compares that with the space the files actually take up on disk, for the folder you last scanned.</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap's map and totals count the size each file claims. Where this computer can measure it, this panel shows the space the files actually take up on disk next to that, for the folder you last scanned.</div>
       <div id="allocationDiag" class="alloc-diag">Scan a folder to see this.</div>
 
       <!-- D2 · The right-click entry. Installed and removed from the same

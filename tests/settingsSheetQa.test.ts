@@ -251,6 +251,13 @@ test('Settings no longer claims the totals measure occupied space — they count
   const panel = braced('async function renderAllocationDiagnostic(');
   assert.match(panel, /row\('Size the files claim'/, 'the claimed size is a row of the panel');
   assert.match(panel, /row\('Space actually used'/, 'and so is the space used');
+  // …but only where it was measured: on Windows, and for an index built from
+  // a scan, the server refuses (409 ALLOCATION_NOT_MEASURED) and the panel
+  // draws no figure. The sentence promises no comparison it cannot make (review F1.3).
+  assert.match(panel, /e\.code === 'ALLOCATION_NOT_MEASURED'[\s\S]{0,400}'Not measured for this index\. '/,
+    'the panel has a state with no figure at all');
+  assert.doesNotMatch(text, /This panel compares/, `no unconditional promise of a comparison: "${text}"`);
+  assert.match(text, /where this computer can measure it/i, `it says the second figure depends on the computer: "${text}"`);
 });
 
 /* ══════════════ D74 — the cleanup target's empty state fits its box ══════════════ */
