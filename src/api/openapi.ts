@@ -3016,7 +3016,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             q: str('The translated query — present when ok'),
             matched: arr(obj({ phrase: str(), term: str(), note: str() }, ['phrase', 'term'])),
             unmatched: arr(str('Words the table could not place — shown, not swallowed')),
-            reason: str('Present when ok:false'),
+            reason: str('Present when ok:false: nothing was understood, the sentence uses a field TreeMap can never answer (duplicates, "never opened" — the query would match nothing), or it comes to nothing but type: (it would list every file)'),
           },
           ['ok', 'source'],
         ),

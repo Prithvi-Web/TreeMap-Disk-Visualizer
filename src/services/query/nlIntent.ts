@@ -43,6 +43,17 @@
  * visible list of genuinely non-semantic stopwords is dropped. Surfacing the
  * leftovers is the honest failure mode: the user sees exactly which part of
  * their sentence the translator did not understand, before running anything.
+ *
+ * ── What is refused ──
+ *
+ * Two translations would parse and still be no answer, so they are refused
+ * with a reason instead (QA D32, D33). A phrase whose field TreeMap can never
+ * answer ("duplicate", "never opened": execute.ts `unanswerableFields`) would
+ * make the whole query match nothing, and leaving the word out would quietly
+ * widen it ("duplicate photos" is not every photo) — the entry carries
+ * `unanswerable`, and the reason says what to do instead. And a translation
+ * of nothing but `type:` ("files", or "files" beside words the table does
+ * not know) is no filter at all: it lists every file.
  */
 
 /* --------------------------------- types --------------------------------- */
@@ -73,6 +84,13 @@ export interface NlPhrase {
   example: string;
   /** Shown next to the translation when the mapping is an approximation. */
   note?: string;
+  /**
+   * Set when TreeMap can never answer this entry's field (execute.ts
+   * `unanswerableFields`): a sentence using it is refused with this reason
+   * rather than translated to a query that matches nothing (QA D33). The
+   * term stays, so the entry starts working when the executor learns it.
+   */
+  unanswerable?: string;
 }
 
 /* ------------------------------ number words ------------------------------ */
@@ -125,6 +143,42 @@ const UNIT = String.raw`(years?|months?|weeks?|days?)`;
 const ABOUT = String.raw`(?:the\s+last\s+|over\s+|more\s+than\s+)?`;
 const OPEN_VERBS = String.raw`(?:opened|used|touched|accessed|watched|played)`;
 
+/*
+ * Sizes in plain words (QA D32): "over 500 MB", "bigger than 100 megabytes",
+ * "at most 20 MiB". Decimal like the grammar (1 MB = 1,000,000 bytes, the
+ * owner's decision); the binary units keep their own names. A thousands comma
+ * is accepted and dropped; a number past twelve digits is not a size anyone
+ * means, and stays unmatched rather than becoming a term the grammar rejects.
+ */
+const SIZE = String.raw`(\d{1,3}(?:,\d{3})+|\d{1,12})(\.\d{1,6})?\s*` +
+  String.raw`(bytes?|b|kilobytes?|kb|kib|megabytes?|megs?|mb|mib|gigabytes?|gigs?|gb|gib|terabytes?|tb|tib)\b`;
+
+function sizeTerm(op: '>' | '>=' | '<' | '<=', m: RegExpExecArray): string {
+  const unit = m[3].toLowerCase();
+  const grammarUnit = /^[kmgt]ib$/.test(unit) ? unit
+    : unit.startsWith('b') ? 'b'
+      : unit.startsWith('k') ? 'kb'
+        : unit.startsWith('m') ? 'mb'
+          : unit.startsWith('g') ? 'gb'
+            : 'tb';
+  return `size${op}${m[1].replace(/,/g, '')}${m[2] ?? ''}${grammarUnit}`;
+}
+
+const SIZE_NOTE = 'sizes are decimal: 1 MB = 1,000,000 bytes';
+
+/** Why a duplicate phrase is refused: execute.ts cannot answer dupe: (QA D33). */
+const DUPES_UNANSWERABLE =
+  'TreeMap cannot filter by duplicates yet, so a search with it would match no file. ' +
+  'The Duplicates view finds duplicate files; leave that word out to search for the rest.';
+
+/** Why "never opened" is refused: no reader records that a file was never opened (execute.ts). */
+const NEVER_OPENED_UNANSWERABLE =
+  'TreeMap cannot tell that a file was never opened (a missing last-opened date means openings are not recorded), ' +
+  'so a search with it would match no file. Try "not opened in a year".';
+
+/** Sentences that translate to queries TreeMap answers — the refusals' teaching examples. */
+const TRY_INSTEAD = 'Try something like "big videos I have not opened in a year" or "old installers in my downloads".';
+
 /* -------------------------------- the table -------------------------------- */
 
 /**
@@ -135,6 +189,36 @@ const OPEN_VERBS = String.raw`(?:opened|used|touched|accessed|watched|played)`;
  */
 export const NL_PHRASES: readonly NlPhrase[] = [
   /* ---- 1. phrases that must win their words first ---- */
+  {
+    // Sizes first: "bigger"/"larger" are not "big"/"large", and "over" here
+    // needs a number and a unit, so "in over a year" is left to the durations.
+    pattern: new RegExp(String.raw`\b(?:(?:bigger|larger|greater|more)\s+than|over|above)\s+` + SIZE, 'i'),
+    term: (m) => sizeTerm('>', m),
+    label: 'over 500 MB / bigger than 2 GB',
+    example: 'over 500 MB',
+    note: SIZE_NOTE,
+  },
+  {
+    pattern: new RegExp(String.raw`\bat\s+least\s+` + SIZE, 'i'),
+    term: (m) => sizeTerm('>=', m),
+    label: 'at least 1 GB',
+    example: 'at least 1 GB',
+    note: SIZE_NOTE,
+  },
+  {
+    pattern: new RegExp(String.raw`\b(?:(?:smaller|less)\s+than|under|below)\s+` + SIZE, 'i'),
+    term: (m) => sizeTerm('<', m),
+    label: 'under 10 MB / smaller than 2 GB',
+    example: 'under 10 MB',
+    note: SIZE_NOTE,
+  },
+  {
+    pattern: new RegExp(String.raw`\bat\s+most\s+` + SIZE, 'i'),
+    term: (m) => sizeTerm('<=', m),
+    label: 'at most 100 MB',
+    example: 'at most 100 MB',
+    note: SIZE_NOTE,
+  },
   {
     pattern: /\bsafe\s+to\s+(?:delete|remove|trash|clean\s+up)\b/i,
     term: 'score>70',
@@ -184,6 +268,7 @@ export const NL_PHRASES: readonly NlPhrase[] = [
     term: 'used:never',
     label: 'never opened / never used / unopened',
     example: 'never opened',
+    unanswerable: NEVER_OPENED_UNANSWERABLE,
   },
   {
     // Above the bare "old" entry so the explicit duration wins.
@@ -302,6 +387,7 @@ export const NL_PHRASES: readonly NlPhrase[] = [
     term: 'dupe:no',
     label: 'not duplicated / unique',
     example: 'unique',
+    unanswerable: DUPES_UNANSWERABLE,
   },
 
   /* ---- 2. single-word mappings ---- */
@@ -310,6 +396,7 @@ export const NL_PHRASES: readonly NlPhrase[] = [
     term: 'dupe:yes',
     label: 'duplicates / dupes',
     example: 'duplicates',
+    unanswerable: DUPES_UNANSWERABLE,
   },
   {
     pattern: /\b(?:videos?|movies?|films?)\b/i,
@@ -375,13 +462,15 @@ export const NL_PHRASES: readonly NlPhrase[] = [
     pattern: /\b(?:folders?|directories|dirs?)\b/i,
     term: 'type:dir',
     label: 'folders / directories',
-    example: 'folders',
+    // Alone it is no filter (every folder) and is refused; the probe carries one.
+    example: 'big folders',
   },
   {
     pattern: /\bfiles?\b/i,
     term: 'type:file',
     label: 'files',
-    example: 'files',
+    // Alone it is no filter (every file) and is refused; the probe carries one.
+    example: 'old files',
   },
 ];
 
@@ -456,11 +545,18 @@ export function translateNlQuery(text: string): NlTranslation {
   }
 
   if (found.length === 0) {
-    return {
-      ok: false,
-      reason: 'No known phrasings found. Try something like ' +
-        '"big videos I have not opened in a year" or "duplicate photos in my downloads".',
-    };
+    return { ok: false, reason: `No known phrasings found. ${TRY_INSTEAD}` };
+  }
+
+  // A field TreeMap can never answer sinks the whole query (QA D33): refuse,
+  // and say why and what to do, once per reason, naming the words.
+  const deadEnds = new Map<string, string>();
+  for (const f of [...found].sort((a, b) => a.start - b.start)) {
+    const why = f.entry.unanswerable;
+    if (why !== undefined && !deadEnds.has(why)) deadEnds.set(why, f.m[0]);
+  }
+  if (deadEnds.size > 0) {
+    return { ok: false, reason: [...deadEnds].map(([why, phrase]) => `"${phrase}": ${why}`).join(' ') };
   }
 
   // Compose in input order, not table order: the query should read back in
@@ -523,6 +619,15 @@ export function translateNlQuery(text: string): NlTranslation {
     // apostrophes survive so "i've" still hits the stopword list.
     .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
     .filter((w) => w.length > 0 && !STOPWORD_SET.has(w.toLowerCase()));
+
+  // Nothing but type: is no filter (QA D32): "files bigger than 100 megabytes"
+  // used to become type:file alone — every file — when the size was not understood.
+  if (qParts.every((c) => c.startsWith('type:'))) {
+    const what = qParts.includes('type:file') ? 'file' : 'folder';
+    const said = matched.map((m) => `"${m.phrase}"`).join(', ');
+    const missed = unmatched.length > 0 ? ` Not understood: ${unmatched.join(', ')}.` : '';
+    return { ok: false, reason: `Only ${said} was understood, and on its own that lists every ${what}.${missed} ${TRY_INSTEAD}` };
+  }
 
   return { ok: true, q: qParts.join(' '), matched, unmatched };
 }

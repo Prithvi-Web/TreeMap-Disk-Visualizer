@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parse } from '../src/services/query/parse';
+import { unanswerableFields } from '../src/services/query/execute';
 import { NL_PHRASES, NL_STOPWORDS, translateNlQuery } from '../src/services/query/nlIntent';
 import type { NlMatch } from '../src/services/query/nlIntent';
 
@@ -41,6 +42,22 @@ function assertParses(q: string, context: string): void {
     p.ok, true,
     `${context}: "${q}" must parse through the Phase 2 grammar` + (p.ok ? '' : ` — got: ${(p as { error: string }).error}`),
   );
+}
+
+/** The executor can answer every term of `q` on some machine (execute.ts unanswerableFields). */
+function assertAnswerable(q: string, context: string): void {
+  const p = parse(q);
+  assert.ok(p.ok, `${context}: "${q}" must parse`);
+  if (!p.ok) return;
+  const dead = unanswerableFields(p.ast).map((u) => u.named);
+  assert.deepEqual(dead, [], `${context}: "${q}" uses a field TreeMap can never answer, so it would match nothing`);
+}
+
+/** Translate and demand a refusal, returning its reason. */
+function refusedT(text: string): string {
+  const r = translateNlQuery(text);
+  assert.equal(r.ok, false, `expected "${text}" to be refused, got ${JSON.stringify(r)}`);
+  return (r as { ok: false; reason: string }).reason;
 }
 
 /** Space-split terms of a composed query, for order-independent membership. */
@@ -89,23 +106,37 @@ test('every entry in NL_PHRASES composes into a query that parses', () => {
     const termText = typeof entry.term === 'function' ? entry.term(m as RegExpExecArray) : entry.term;
     assertParses(termText, `entry "${entry.label}"`);
 
+    // An entry whose field the executor can never answer says so, and only
+    // such an entry (QA D33): the mark and execute.ts cannot drift apart.
+    const p = parse(termText);
+    const dead = p.ok ? unanswerableFields(p.ast).length > 0 : false;
+    assert.equal(entry.unanswerable !== undefined, dead,
+      `entry "${entry.label}" (${termText}) ${dead ? 'is unanswerable but not marked' : 'is marked unanswerable but the executor answers it'}`);
+
     // And end-to-end: the example fed through the whole translator, where an
-    // earlier entry could in principle steal its words. It must still succeed.
+    // earlier entry could in principle steal its words. It must still succeed —
+    // or, for a field TreeMap cannot answer, be refused with the entry's reason.
+    if (entry.unanswerable !== undefined) {
+      assert.ok(refusedT(entry.example).includes(entry.unanswerable), `"${entry.example}" is refused with its entry's reason`);
+      continue;
+    }
     const r = okT(entry.example);
-    assertParses(r.q, `example "${entry.example}"`);
+    assertAnswerable(r.q, `example "${entry.example}"`);
   }
 });
 
 /* ============================ mandated phrasings ============================ */
 
-test('duplicate photos in my downloads', () => {
-  const r = okT('duplicate photos in my downloads');
-  const terms = termsOf(r.q);
-  assert.ok(terms.includes('dupe:yes'), r.q);
-  assert.ok(terms.includes('ext:jpg,jpeg,png,heic,gif,webp'), r.q);
-  assert.ok(terms.includes('in:~/Downloads'), r.q);
-  assert.deepEqual(r.unmatched, []);
-  assertParses(r.q, 'duplicates sentence');
+test('duplicate photos in my downloads: refused in plain words, never a query that matches nothing (QA D33)', () => {
+  // TreeMap cannot filter by duplicates yet (execute.ts), so dupe:yes ANDed
+  // with anything matches no file. Dropping the word would be worse: "photos
+  // in my downloads" is every photo there, not the duplicates that were asked
+  // for. So the sentence is refused, and the reason says where duplicates are found.
+  for (const text of ['duplicate photos in my downloads', 'unique photos', 'big videos that are not duplicated']) {
+    const reason = refusedT(text);
+    assert.match(reason, /cannot filter by duplicates yet/, text);
+    assert.match(reason, /Duplicates view/, text);
+  }
 });
 
 test('old zips', () => {
@@ -119,14 +150,56 @@ test('old zips', () => {
   assertParses(r.q, 'old zips');
 });
 
-test('files I never opened', () => {
-  // Pinning the exact composed string documents two shipped decisions at once:
-  // terms compose in input-position order, and "files" maps to type:file.
-  const r = okT('files I never opened');
-  assert.equal(r.q, 'type:file used:never');
-  assert.equal(r.matched.length, 2);
-  assert.deepEqual(r.unmatched, []);
-  assertParses(r.q, 'never opened');
+test('files I never opened: refused with the phrasing that works (the same dead end as D33)', () => {
+  // No reader records that a file was never opened (execute.ts): used:never
+  // matches no file. The reason teaches the phrasing TreeMap can answer.
+  const reason = refusedT('files I never opened');
+  assert.match(reason, /never opened/);
+  assert.match(reason, /not opened in a year/);
+  assert.ok(okT('not opened in a year'), 'and that phrasing translates');
+});
+
+test('"files" alone is not a filter: a translation that would list every file is refused (QA D32)', () => {
+  // "files bigger than 100 megabytes" used to translate to type:file alone —
+  // every file — because the size phrase was not understood.
+  for (const text of ['files', 'folders', 'files from my vacation']) {
+    const reason = refusedT(text);
+    assert.match(reason, /every (?:file|folder)/, text);
+  }
+  assert.match(refusedT('files from my vacation'), /from, vacation/, 'the words not understood are named');
+  // A qualifier with a real filter still translates.
+  assert.equal(okT('old files').q, 'modified>1y type:file');
+});
+
+test('numeric sizes in plain words become decimal size terms (QA D32)', () => {
+  const cases: [string, string][] = [
+    ['over 500 MB', 'size>500mb'],
+    ['bigger than 100 MB', 'size>100mb'],
+    ['files bigger than 100 megabytes', 'type:file size>100mb'],
+    ['larger than 2 terabytes', 'size>2tb'],
+    ['more than 750KB', 'size>750kb'],
+    ['above 1.5 GB', 'size>1.5gb'],
+    ['at least 4 gigs', 'size>=4gb'],
+    ['smaller than 2 gb', 'size<2gb'],
+    ['less than 10 megs', 'size<10mb'],
+    ['under 1,000 KB', 'size<1000kb'],
+    ['below 300 bytes', 'size<300b'],
+    ['at most 20 MiB', 'size<=20mib'],
+    ['videos over 2 GB not opened in over a year', 'ext:mp4,mov,mkv,avi,webm size>2gb used>1y'],
+  ];
+  for (const [text, q] of cases) {
+    const r = okT(text);
+    assert.equal(r.q, q, text);
+    assert.deepEqual(r.unmatched, [], `${text}: every word understood`);
+    assertAnswerable(r.q, text);
+  }
+  // Decimal, as the grammar is (the owner's decision): 500 MB is 500,000,000 bytes.
+  const p = parse(okT('over 500 MB').q);
+  assert.ok(p.ok && p.ast.kind === 'term' && p.ast.term.kind === 'size');
+  if (p.ok && p.ast.kind === 'term' && p.ast.term.kind === 'size') assert.equal(p.ast.term.bytes, 500_000_000);
+  // A number too long to be a size is left for the person to see, never a broken query.
+  const long = translateNlQuery('over 1234567890123456789 GB');
+  if (long.ok) assertParses(long.q, 'a very long number');
 });
 
 test('videos I have not opened in two years', () => {
@@ -140,9 +213,13 @@ test('gibberish is refused with a reason that names working examples', () => {
   const r = translateNlQuery('qwerty asdf');
   assert.equal(r.ok, false);
   const reason = (r as { ok: false; reason: string }).reason;
-  // The reason must teach, not just refuse: two phrasings that genuinely work.
-  assert.match(reason, /big videos I have not opened in a year/);
-  assert.match(reason, /duplicate photos in my downloads/);
+  // The reason must teach, not just refuse: phrasings that genuinely work —
+  // each one translates to a query TreeMap can answer (QA D33: the old
+  // example, "duplicate photos in my downloads", matched nothing).
+  const examples = [...reason.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  assert.ok(examples.length >= 2, reason);
+  assert.ok(examples.includes('big videos I have not opened in a year'), reason);
+  for (const example of examples) assertAnswerable(okT(example).q, `the hint's example "${example}"`);
 });
 
 test('an empty or all-stopword input is refused, not translated to nothing', () => {
@@ -165,8 +242,10 @@ test('words the table does not know surface in unmatched', () => {
 test('same input, same output — twice, on both branches', () => {
   // No Date.now(), no randomness, no shared regex state: the translator is a
   // pure function, and deepEqual over full results proves it end to end.
-  const rich = 'big old duplicate movies never opened small in my downloads';
+  const rich = 'big old movies over 2 GB not opened in a year small in my downloads';
   assert.deepEqual(translateNlQuery(rich), translateNlQuery(rich));
+  const refused = 'duplicate movies never opened';
+  assert.deepEqual(translateNlQuery(refused), translateNlQuery(refused));
   assert.deepEqual(translateNlQuery('qwerty asdf'), translateNlQuery('qwerty asdf'));
 });
 
@@ -272,10 +351,10 @@ test('a sweep of natural sentences: every translation and every shown term parse
   // on every per-phrase term, because the UI shows both.
   const sentences = [
     'big videos I have not opened in a year',
-    'duplicate photos in my downloads',
+    'old installers in my downloads',
     'old zips',
     'small files on my desktop',
-    'music never played',
+    'music not played in two years',
     'installers in downloads',
     'documents not backed up',
     'dirty repos',
@@ -284,17 +363,20 @@ test('a sweep of natural sentences: every translation and every shown term parse
     'photos in the cloud',
     'local only videos',
     'junk files',
-    'unique photos',
+    'photos over 20 MB',
     "videos I haven't watched in five years",
     'unused for a year',
     'older than two years',
     'pdfs on my desktop',
     'recent screenshots',
-    'big old duplicate movies never opened small in my downloads',
+    'big old movies not opened in a year small in my downloads',
+    'files bigger than 100 megabytes',
+    'videos under 500 MB on my desktop',
   ];
   for (const sentence of sentences) {
     const r = okT(sentence);
     assertParses(r.q, sentence);
+    assertAnswerable(r.q, sentence);
     for (const m of r.matched) {
       assertParses(m.term, `${sentence} → phrase "${m.phrase}"`);
     }

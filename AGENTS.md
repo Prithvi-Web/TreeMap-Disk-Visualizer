@@ -818,8 +818,13 @@ read-what-you-saw) permission to act.
 - **Plain-words translation (v4 §9.6).** `POST /api/nl-query { text }`
   translates natural phrasing into the query grammar and **never executes**
   — no hits, no totals; run the returned `q` through `POST /api/query`
-  yourself, after showing it. The deterministic phrase table is the whole
-  feature and it is entirely offline — tests/nlQuery.test.ts statically
+  yourself, after showing it. Sizes in words are decimal like the grammar
+  ("over 500 MB" → `size>500mb`). It answers `ok: false` with a reason,
+  rather than a query that cannot be what was asked, for a sentence using a
+  field TreeMap can never answer (duplicates, "never opened": the query would
+  match nothing, and dropping the word would widen it) and for one that comes
+  to nothing but `type:` ("files" alone lists every file). The
+  deterministic phrase table is the whole feature and it is entirely offline — tests/nlQuery.test.ts statically
   scans every file under src/services/query/ plus the route itself and
   asserts none contains network code. (An optional local
   Ollama passthrough shipped briefly and was removed at the owner's
