@@ -3,6 +3,7 @@ import path from 'path';
 import { ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { appDataPathRefusal, insideAnyScanRoot, spillPathRefusal } from '../middleware/pathGuard';
+import { isInside } from '../utils/pathSanitizer';
 
 /**
  * securityHygieneScanner — secrets in the wrong place (§C5).
@@ -242,12 +243,6 @@ export interface SecurityReport {
 
 const MAX_FINDINGS = 500;
 
-/** True when `child` sits inside `parent` (or is it). */
-function isUnder(child: string, parent: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-}
-
 /** Lowercased path segments of `p`, for ancestor matching. */
 function segments(p: string): string[] {
   return p.split(/[\\/]+/).filter(Boolean).map((s) => s.toLowerCase());
@@ -421,7 +416,8 @@ export function collectSecurityFindings(
         // surprising place to put someone's file, and the rename would fail
         // across filesystems anyway. And never for a file a program owns.
         suggestedPath:
-          !appOwned && pattern.suggestedHome && isUnder(childPath, homeDir)
+          // The shared containment test: a bare check for a leading ".." read "~/..data" as outside home.
+          !appOwned && pattern.suggestedHome && isInside(homeDir, childPath)
             ? path.join(homeDir, pattern.suggestedHome)
             : undefined,
         exposed: Boolean(syncFolder || exposedFolder),

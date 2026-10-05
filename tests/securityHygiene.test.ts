@@ -255,6 +255,22 @@ test('a home destination is only suggested for a file that is already under home
   assert.equal(relocationTargetFor(elsewhere), null);
 });
 
+test('a folder whose name starts with ".." is inside home, and a sibling of home is not (shared isInside)', () => {
+  // A bare `startsWith('..')` read "~/..data" as outside home (F6 fixed that test
+  // everywhere else; this scanner kept its own copy).
+  const dotted = findingsFor([file('id_rsa', path.join(HOME, '..data'))])[0];
+  assert.ok(dotted, 'still flagged');
+  assert.equal(dotted.suggestedPath, path.join(HOME, '.ssh'), 'a key in ~/..data is under home, so ~/.ssh is offered');
+
+  const sibling = collectSecurityFindings(
+    treeWith(path.dirname(HOME), [file('id_rsa', path.join(path.dirname(HOME), 'other-user'))]),
+    [],
+    HOME,
+  ).findings[0];
+  assert.ok(sibling, 'a key beside home is flagged');
+  assert.equal(sibling.suggestedPath, undefined, 'but it is not under home, so no home destination is offered');
+});
+
 test('a file an installed program owns is listed, but never called serious and never offered a move', () => {
   // The real case this came from: Google Drive ships its own CA bundle at
   // Library/Application Support/Google/DriveFS/Resources/roots.pem. It matches
