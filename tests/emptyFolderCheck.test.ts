@@ -308,7 +308,7 @@ test('a request looks for 10 s at most, counting only while it looks; the wait i
     verdicts.push(await session.look(p));
     now += 100_000; // a Trash step between looks: not looking, so not counted
   }
-  assert.deepEqual(verdicts.map(whyOf), ['empty', 'empty', 'empty', 'no-answer', 'no-answer'], '9 s of looking, then 12 s: d is cut, e never starts');
+  assert.deepEqual(verdicts.map(whyOf), ['empty', 'empty', 'empty', 'out-of-time', 'out-of-time'], '9 s of looking, then 12 s: d is cut, e never starts — TreeMap\'s time, not the drive (L-5)');
   assert.deepEqual(stats, ['/s/a', '/s/b', '/s/c', '/s/d'], 'nothing is asked once the 10 s are spent');
   assert.match(reasonOf(verdicts[4]), /the 10 seconds TreeMap gives to looking at folders again ran out/);
   assert.deepEqual(waits, [

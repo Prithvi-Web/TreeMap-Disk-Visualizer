@@ -327,7 +327,8 @@ test('a delete looks for 10 s at most, and its Trash steps between looks are not
     assert.deepEqual(result.failed.map((f) => f.path), five.slice(3), 'the fourth look ran past 10 s, the fifth never started');
     for (const f of result.failed) {
       assert.match(f.reason, /10 seconds TreeMap gives to looking at folders again ran out/);
-      assert.equal(f.code, 'FOLDER_NO_ANSWER');
+      // TreeMap's own time ran out: its own code, so the page never blames the drive (U-4b review, L-5).
+      assert.equal(f.code, 'FOLDER_NOT_CHECKED');
     }
     assert.deepEqual(trashed, five.slice(0, 3));
     // A dry run is one request too: one budget for all its looks.
@@ -342,6 +343,7 @@ test('a delete looks for 10 s at most, and its Trash steps between looks are not
     const dry = await trash({ paths: five, onlyEmptyFolders: true, dryRun: true });
     assert.deepEqual(dry.body.wouldTrash.map((w: { path: string }) => w.path), five.slice(0, 3));
     assert.deepEqual(dry.body.notEmpty.map((n: { path: string }) => n.path), five.slice(3));
+    assert.ok(dry.body.notEmpty.every((n: { code: string }) => n.code === 'FOLDER_NOT_CHECKED'), 'the dry run names the same code');
   } finally {
     setEmptyCheckForTests(null);
     setTrashStepForTests(async (p) => {

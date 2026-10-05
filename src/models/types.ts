@@ -612,6 +612,8 @@ export interface EmptyFoldersResult {
 export interface EmptyFoldersAnswer extends EmptyFoldersResult {
   /** Folders the tree offered that a second look did not find still empty (or could not look at): left out of `folders`, with their nested ones out of `totalCount`. */
   withheld: number;
+  /** How many of `withheld` were left out for each reason the second look gave (U-4b review, L-5): `{}` when none was. */
+  withheldBy: Partial<Record<'content' | 'unreadable' | 'no-answer' | 'out-of-time' | 'too-many' | 'not-a-folder' | 'gone', number>>;
   /** Why nothing is offered, for a scan whose tree cannot tell an empty folder from one it never read (gdu); absent otherwise. */
   reason?: string;
 }

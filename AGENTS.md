@@ -340,7 +340,9 @@ OpenAPI 3 spec).
      out (a "don't scan" pattern, a failed stat) is not empty, and neither is
      any folder above it. Each folder offered was also looked at again on disk
      just now; one that holds something, refuses or does not answer is left
-     out and counted in `withheld`. A folder that does not answer is not
+     out and counted in `withheld`, and `withheldBy` counts them by reason
+     (`content`, `unreadable`, `no-answer`, `out-of-time`, `too-many`,
+     `not-a-folder`, `gone`). A folder that does not answer is not
      asked again until its call answers, and the root of the drive it is on
      is asked: a drive whose root does not answer either is asked once, and
      until the root answers every folder on it is withheld unasked — in later
@@ -420,7 +422,8 @@ OpenAPI 3 spec).
      that cannot be shown still an empty folder is left where it is, in
      `failed[]` with `refused: true` and a code saying why:
      `FOLDER_NOT_EMPTY` (it holds something), `FOLDER_UNREADABLE`,
-     `FOLDER_NO_ANSWER` (its drive did not answer, or the 10 s ran out),
+     `FOLDER_NO_ANSWER` (it or its drive did not answer), `FOLDER_NOT_CHECKED`
+     (the 10 s TreeMap gives to looking ran out first),
      `FOLDER_TOO_MANY_ENTRIES`, `NOT_A_FOLDER`; a dry run lists those in
      `notEmpty`. `ignoreJunk` (with it only; true when left out) is the
      junk rule the list was made with — off, a folder holding `.DS_Store` is

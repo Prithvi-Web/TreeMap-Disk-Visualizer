@@ -51,6 +51,18 @@ function makeDom() {
 
 /* ─────────────── the pane ─────────────── */
 
+/** The page's own whyLeftOut (U-4b review, L-5), out of the built page with the table it reads. */
+function pageWhyLeftOut(formatCount: (n: number) => string): (by: unknown, withheld: number) => string {
+  const tableAt = INDEX.indexOf('const WITHHELD_SAID = [');
+  assert.notEqual(tableAt, -1, 'the reasons table is in the built page');
+  const tableEnd = INDEX.indexOf('];', tableAt) + 2;
+  const fnAt = INDEX.indexOf('function whyLeftOut(by, withheld) {');
+  assert.notEqual(fnAt, -1, 'whyLeftOut is in the built page');
+  const fnEnd = matchingBrace(INDEX.indexOf('{', fnAt)) + 1;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('formatCount', `${INDEX.slice(tableAt, tableEnd)}\n${INDEX.slice(fnAt, fnEnd)}\nreturn whyLeftOut;`)(formatCount);
+}
+
 async function renderPane(data: Record<string, unknown>): Promise<string> {
   const { els, $ } = makeDom();
   const fn = runnable(bodyOf('async function loadEmptyFolders() {'), {
@@ -62,6 +74,7 @@ async function renderPane(data: Record<string, unknown>): Promise<string> {
     escapeHtml: (s: string) => String(s).replace(/</g, '&lt;'),
     chipFor: () => '',
     formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
+    whyLeftOut: pageWhyLeftOut((n: number) => (n ?? 0).toLocaleString('en-US')),
     refreshCartButtons: () => {},
     updateCleanSummary: () => {},
   });
@@ -89,6 +102,20 @@ test('folders left out after the second look are counted on the pane, beside wha
   assert.match(html, /3 more/, 'how many were left out');
   assert.match(html, /left out/);
   assert.match(html, /class="empty-ck"/, 'and the offered folders are still listed');
+});
+
+test('the pane says why the folders it left out were left out, where the server says (U-4b review, L-5)', async () => {
+  const html = await renderPane({
+    folders: [{ name: 'a', path: '/r/a' }], totalCount: 1, truncated: false, withheld: 4,
+    withheldBy: { content: 2, 'no-answer': 1, 'out-of-time': 1 },
+  });
+  assert.match(html, /4 more folders/);
+  assert.match(html, /2 held something/);
+  assert.match(html, /1 did not answer/);
+  assert.match(html, /1 was not looked at before the 10 seconds TreeMap gives to looking ran out/);
+  assert.doesNotMatch(html, /could not be read/, 'only the reasons that applied');
+  const all = await renderPane({ folders: [], totalCount: 0, truncated: false, withheld: 1, withheldBy: { unreadable: 1 } });
+  assert.match(all, /1 folder looked empty to the scan but was left out: looked at again, it could not be read\./);
 });
 
 test('when every candidate was left out the pane says that, not "tidy already"', async () => {
@@ -197,9 +224,14 @@ test('each reason a folder was left where it is is said as itself, never as a fa
       { path: '/r/d', reason: 'the drive it is on did not answer a moment ago', code: 'FOLDER_NO_ANSWER' },
       { path: '/r/e', reason: 'it holds more than 1000 entries', code: 'FOLDER_TOO_MANY_ENTRIES' },
       { path: '/r/f', reason: 'it is not a folder any more', code: 'NOT_A_FOLDER' },
+      { path: '/r/g', reason: 'the 10 seconds TreeMap gives to looking at folders again ran out', code: 'FOLDER_NOT_CHECKED' },
     ],
   });
   const said = toasts.join(' | ');
+  // TreeMap's own 10 s ran out: said as that, never as a drive asleep or disconnected (U-4b review, L-5).
+  const notChecked = toasts.find((m) => /^1 folder was not checked/.test(m)) ?? '';
+  assert.match(notChecked, /10 seconds/, said);
+  assert.doesNotMatch(notChecked, /asleep|disconnected|did not answer/);
   assert.ok(toasts.some((m) => /^1 folder is no longer empty/.test(m)), said);
   assert.ok(toasts.some((m) => /^1 folder could not be read/.test(m)), said);
   assert.ok(toasts.some((m) => /^2 folders did not answer in time/.test(m)), said);

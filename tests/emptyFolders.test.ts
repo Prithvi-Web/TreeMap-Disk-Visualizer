@@ -414,6 +414,7 @@ interface Answer {
   totalCount: number;
   truncated: boolean;
   withheld: number;
+  withheldBy: Record<string, number>;
   reason?: string;
 }
 
@@ -501,7 +502,8 @@ for (const engine of ['walker', 'native'] as const) {
     assert.deepEqual(offered(answer), ['e1', 'junk', 'nest'].map((n) => path.join(root, n)), 'the topmost empty folders, the second look agreeing');
     assert.equal(answer.totalCount, 5, 'e1, junk, nest, nest/a and nest/a/b');
     assert.equal(answer.withheld, 0, 'nothing changed since the scan, so nothing is withheld');
-    assert.deepEqual(Object.keys(answer), ['folders', 'totalCount', 'truncated', 'withheld'], 'the answer keeps its keys and adds one');
+    assert.deepEqual(answer.withheldBy, {}, 'and no reason for any');
+    assert.deepEqual(Object.keys(answer), ['folders', 'totalCount', 'truncated', 'withheld', 'withheldBy'], 'the answer keeps its keys and adds two: withheld, and why (U-4b review, L-5)');
   });
 
   test(`${engine}: a never-descend folder is never offered, and totalCount excludes it`, async (t) => {
@@ -807,6 +809,7 @@ test('a folder the second look cannot read is withheld', async () => {
     const answer = await emptyFolders(scan.scanId);
     assert.deepEqual(offered(answer), [path.join(root, 'e2')]);
     assert.equal(answer.withheld, 1);
+    assert.deepEqual(answer.withheldBy, { unreadable: 1 }, 'and why (U-4b review, L-5)');
   } finally {
     setEmptyCheckForTests(null);
   }
@@ -866,6 +869,7 @@ test('one folder that does not answer, on a drive whose root does, is withheld a
     const answer = await emptyFolders(scan.scanId);
     assert.deepEqual(offered(answer), names.filter((n) => n !== 'e3').map((n) => path.join(root, n)));
     assert.equal(answer.withheld, 1, 'only the folder that did not answer');
+    assert.deepEqual(answer.withheldBy, { 'no-answer': 1 });
   } finally {
     setEmptyCheckForTests(null);
   }
@@ -889,6 +893,7 @@ test('the second look stops after 10 s of looking: one budget for the whole answ
     // The first folder goes alone (6 s); the next stat runs the 10 s out, and nothing more is asked.
     assert.equal(answer.folders.length, 1, JSON.stringify(answer));
     assert.equal(answer.withheld, names.length - 1);
+    assert.deepEqual(answer.withheldBy, { 'out-of-time': names.length - 1 }, 'each withheld because the 10 s ran out (U-4b review, L-5)');
     assert.equal(asked, 2);
   } finally {
     setEmptyCheckForTests(null);
@@ -907,7 +912,7 @@ test('a gdu scan offers no empty folder, and says why', async () => {
   ]), path.sep);
   scan.status = 'complete';
   const direct = await emptyFoldersForScan(scan, true);
-  assert.deepEqual(direct, { folders: [], totalCount: 0, truncated: false, withheld: 0, reason: GDU_EMPTY_FOLDERS_REASON });
+  assert.deepEqual(direct, { folders: [], totalCount: 0, truncated: false, withheld: 0, withheldBy: {}, reason: GDU_EMPTY_FOLDERS_REASON });
   assert.match(GDU_EMPTY_FOLDERS_REASON, /gdu/, 'the reason names the engine');
   assert.match(GDU_EMPTY_FOLDERS_REASON, /Scan engine/, 'and what to do instead');
   // Automatic picks gdu again wherever the native module is missing: only the built-in walker is sure to list every folder.
@@ -950,8 +955,9 @@ test('a real gdu scan offers no empty folder, and says why', { skip: process.pla
 test('openapi describes the two additive fields', async () => {
   const doc = (await get('/api/openapi.json')).body;
   const schema = doc.components.schemas.EmptyFoldersResult;
-  assert.deepEqual(schema.required, ['folders', 'totalCount', 'truncated', 'withheld'], 'withheld is always sent');
+  assert.deepEqual(schema.required, ['folders', 'totalCount', 'truncated', 'withheld', 'withheldBy'], 'withheld, and why, are always sent');
   assert.ok(schema.properties.withheld, 'withheld is described');
+  assert.ok(schema.properties.withheldBy, 'withheldBy is described (U-4b review, L-5)');
   assert.ok(schema.properties.reason, 'reason is described');
   assert.ok(!schema.required.includes('reason'), 'and reason is sent only when it applies');
 });

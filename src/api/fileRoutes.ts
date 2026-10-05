@@ -93,7 +93,7 @@ async function auditTrash(a: TrashAudit): Promise<void> {
  * was offered as an empty folder, and each is looked at again right before its
  * own Trash step, in one session of looks (U-4b M1). One that is not still
  * empty is left where it is, in `failed` with `refused: true` and the code
- * that says why — FOLDER_NOT_EMPTY, FOLDER_UNREADABLE, FOLDER_NO_ANSWER,
+ * that says why — FOLDER_NOT_EMPTY, FOLDER_UNREADABLE, FOLDER_NO_ANSWER, FOLDER_NOT_CHECKED,
  * FOLDER_TOO_MANY_ENTRIES, NOT_A_FOLDER (U-4b L4); a dry run lists those in
  * `notEmpty` and leaves them out of `wouldTrash`. `ignoreJunk` is the junk
  * rule the list was made with (true when left out). Anything but a boolean is

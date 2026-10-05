@@ -96,7 +96,7 @@ export const SILENT_DRIVE_MEMORY_MS = 60_000;
 export const EMPTY_CHECK_MAX_ENTRIES = 1_000;
 
 /** Why a folder is not shown to be empty. */
-export type NotEmptyWhy = 'content' | 'unreadable' | 'no-answer' | 'too-many' | 'not-a-folder' | 'gone';
+export type NotEmptyWhy = 'content' | 'unreadable' | 'no-answer' | 'out-of-time' | 'too-many' | 'not-a-folder' | 'gone';
 
 export type EmptyVerdict = { empty: true } | { empty: false; why: NotEmptyWhy; reason: string };
 
@@ -104,12 +104,15 @@ export type EmptyVerdict = { empty: true } | { empty: false; why: NotEmptyWhy; r
  * The code an "only empty folders" delete refuses a folder with, by why the
  * look could not show it empty (U-4b L4) — each its own, so a caller can tell
  * a folder that holds something from one nobody could read or that did not
- * answer. A folder that is gone is not refused: its Trash step says so.
+ * answer — or that TreeMap's own time for looking ran out on (`out-of-time`,
+ * the U-4b review's L-5: no drive is to blame for that). A folder that is gone
+ * is not refused: it fails as gone.
  */
 export const NOT_EMPTY_CODES = {
   content: 'FOLDER_NOT_EMPTY',
   unreadable: 'FOLDER_UNREADABLE',
   'no-answer': 'FOLDER_NO_ANSWER',
+  'out-of-time': 'FOLDER_NOT_CHECKED',
   'too-many': 'FOLDER_TOO_MANY_ENTRIES',
   'not-a-folder': 'NOT_A_FOLDER',
 } as const satisfies Record<Exclude<NotEmptyWhy, 'gone'>, string>;
@@ -545,7 +548,7 @@ async function readListing(d: EmptyCheckDeps, folder: string, visit: (ent: Diren
 const notEmpty = (why: NotEmptyWhy, reason: string): EmptyVerdict => ({ empty: false, why, reason });
 
 function budgetSpent(d: EmptyCheckDeps): EmptyVerdict {
-  return notEmpty('no-answer', `the ${waitWords(d.budgetMs)} TreeMap gives to looking at folders again ran out before it made sure this one is empty`);
+  return notEmpty('out-of-time', `the ${waitWords(d.budgetMs)} TreeMap gives to looking at folders again ran out before it made sure this one is empty`);
 }
 
 /** Opening `dir` said it is not there: so it is gone if a fresh stat says so too; anything else is not shown empty (U-4c L1). */

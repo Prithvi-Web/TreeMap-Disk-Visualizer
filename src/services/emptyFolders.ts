@@ -1,7 +1,7 @@
 import type { EmptyFoldersAnswer, ScanResult } from '../models/types';
 import { findEmptyFolders } from './diskScanner';
 import { storeOf } from './scanStore';
-import { emptyCheckSession } from './emptyFolderCheck';
+import { emptyCheckSession, type EmptyVerdict } from './emptyFolderCheck';
 
 /**
  * GET /api/empty-folders, answered (Track U, U-4): never a folder the scan did
@@ -25,7 +25,9 @@ import { emptyCheckSession } from './emptyFolderCheck';
  *    folder, so its tree cannot tell an empty folder from one it never read.
  *    U-12 lifts this once gdu's refusals are read from its log.
  *
- * The answer keeps the shape it had and only adds: `withheld` always,
+ * The answer keeps the shape it had and only adds: `withheld` always, with
+ * `withheldBy` saying how many were left out for each reason (the U-4b
+ * review, L-5: the page said "did not answer" for TreeMap's own 10 s), and
  * `reason` only for a scan that offers nothing because of what it is.
  */
 
@@ -41,7 +43,7 @@ export const GDU_EMPTY_FOLDERS_REASON =
 
 export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean): Promise<EmptyFoldersAnswer> {
   if (scan.engine === 'gdu-turbo') {
-    return { folders: [], totalCount: 0, truncated: false, withheld: 0, reason: GDU_EMPTY_FOLDERS_REASON };
+    return { folders: [], totalCount: 0, truncated: false, withheld: 0, withheldBy: {}, reason: GDU_EMPTY_FOLDERS_REASON };
   }
   // A second name the system gives a path (macOS /.nofollow, /.resolve, /.vol), which a walk of /
   // lists as an empty folder, is never among them nor counted: `findEmptyFolders` owns it like a
@@ -49,36 +51,40 @@ export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean)
   const found = findEmptyFolders(storeOf(scan), ignoreJunk);
   const candidates = found.folders;
   // A cloud provider's listing lives at the provider: there is no folder on this disk to look at again.
-  const still = scan.engine === 'cloud'
-    ? candidates.map(() => true)
+  const verdicts: EmptyVerdict[] = scan.engine === 'cloud'
+    ? candidates.map(() => ({ empty: true }))
     : await secondLooks(candidates.map((f) => f.path), ignoreJunk);
   const folders: EmptyFoldersAnswer['folders'] = [];
   let withheld = 0;
+  // Why each was left out, counted (the U-4b review, L-5): the page says it rather than guessing.
+  const withheldBy: EmptyFoldersAnswer['withheldBy'] = {};
   let totalCount = found.totalCount;
   candidates.forEach((f, i) => {
-    if (still[i]) {
+    const verdict = verdicts[i];
+    if (verdict.empty) {
       folders.push({ name: f.name, path: f.path });
     } else {
       withheld++;
+      withheldBy[verdict.why] = (withheldBy[verdict.why] ?? 0) + 1;
       totalCount -= f.counted;
     }
   });
-  return { folders, totalCount, truncated: found.truncated, withheld };
+  return { folders, totalCount, truncated: found.truncated, withheld, withheldBy };
 }
 
 /**
- * Each path looked at again, in order: true where it is still an empty folder.
- * One session: a silent drive's folders, and every folder past the session's
- * budget, answer at once without being asked.
+ * Each path looked at again, in order: its verdict. One session: a silent
+ * drive's folders, and every folder past the session's budget, answer at once
+ * without being asked.
  */
-async function secondLooks(paths: readonly string[], ignoreJunk: boolean): Promise<boolean[]> {
+async function secondLooks(paths: readonly string[], ignoreJunk: boolean): Promise<EmptyVerdict[]> {
   const session = emptyCheckSession(ignoreJunk);
-  const still = paths.map(() => false);
+  const still: EmptyVerdict[] = paths.map(() => ({ empty: false, why: 'out-of-time', reason: 'not looked at' }));
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < paths.length) {
       const i = next++;
-      still[i] = (await session.look(paths[i])).empty;
+      still[i] = await session.look(paths[i]);
     }
   };
   await Promise.all(Array.from({ length: Math.min(SECOND_LOOKS_AT_ONCE, paths.length) }, worker));
