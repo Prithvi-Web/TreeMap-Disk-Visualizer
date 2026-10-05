@@ -1042,20 +1042,33 @@ function lastPathSegment(p) {
   return parts.length ? parts[parts.length - 1] : String(p);
 }
 
-/** Paint (or hide) the "could not be read" row from whatever we know. */
+/**
+ * Paint (or hide) the "could not be read" row from whatever we know.
+ *
+ * A count of 0 from the server is an answer, not a silence (QA D46): reading
+ * it as "nothing said" fell back to the PREVIOUS scan's refusals, so a clean
+ * scan of another folder went on saying "69 folders could not be read … Give
+ * TreeMap Full Disk Access". And a refusal belongs to the scan it was found
+ * in — `scanId` is stamped on it, and one from any other scan is not shown.
+ */
 function renderRefusedFolders() {
   const row = $('accessRow');
   const stats = state.scanStats || {};
-  // The server's count wins when it sent one; otherwise whatever the probe found.
-  const fromServer = stats.refused && stats.refused.dirs > 0 ? stats.refused : null;
-  const found = fromServer || state.scanRefused;
+  // The server's count wins when it sent one, zero included; otherwise
+  // whatever this scan's own probe found.
+  const answered = !!stats.refused && typeof stats.refused.dirs === 'number';
+  if (answered) {
+    state.scanRefused = stats.refused.dirs > 0
+      ? { dirs: stats.refused.dirs, examples: [...(stats.refused.examples || [])], root: false, scanId: state.scanId }
+      : null;
+  }
+  // Another scan's refusals are dropped, not merely hidden: the tour reads
+  // state.scanRefused too (170), and would repeat them as this scan's.
+  if (state.scanRefused && state.scanRefused.scanId !== state.scanId) state.scanRefused = null;
+  const found = state.scanRefused;
   if (!found || !found.dirs) {
     row.hidden = true;
-    if (!state.scanRefused || fromServer) state.scanRefused = null;
     return;
-  }
-  if (fromServer) {
-    state.scanRefused = { dirs: fromServer.dirs, examples: [...(fromServer.examples || [])], root: false };
   }
   const mac = (state.system || {}).platform === 'darwin';
   const names = (found.examples || []).map(lastPathSegment).filter(Boolean);
@@ -1116,7 +1129,7 @@ async function probeRefusedFolders() {
   if (scanId !== state.scanId) return;
   if (!refused.length) return;
 
-  state.scanRefused = { dirs: refused.length, examples: refused, root: rootRefused };
+  state.scanRefused = { dirs: refused.length, examples: refused, root: rootRefused, scanId };
   renderRefusedFolders();
   if (rootRefused) {
     const mac = (state.system || {}).platform === 'darwin';

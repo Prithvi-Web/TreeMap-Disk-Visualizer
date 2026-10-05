@@ -109,18 +109,21 @@ test('the page formatBytes rolls 1024 of a unit into the next unit, like the ser
 type RefusedHarness = {
   render: () => void; probe: () => Promise<void>;
   els: Record<string, El>; state: Record<string, unknown>; toasts: string[]; asked: string[];
+  $: (id: string) => El;
 };
 
 function refusedHarness(opts: {
   stats: Record<string, unknown> | null; root: Record<string, unknown>; scanId: string | null;
   platform?: string; refuse?: string[]; missing?: string[];
+  /** What the previous scan left in `state.scanRefused` (null when omitted). */
+  scanRefused?: Record<string, unknown> | null;
 }): RefusedHarness {
   const src = slice('/* ── Refused folders ── */', '/* ── end refused folders ── */');
   const { $, els } = makeDom();
   const toasts: string[] = [];
   const asked: string[] = [];
   const state: Record<string, unknown> = {
-    scanStats: opts.stats, root: opts.root, scanId: opts.scanId, scanRefused: null,
+    scanStats: opts.stats, root: opts.root, scanId: opts.scanId, scanRefused: opts.scanRefused ?? null,
     system: { platform: opts.platform || 'darwin', homeDir: '/Users/x' },
     pathIndex: new Map(Object.entries((opts.root.children as Array<{ path: string }> | undefined || []).reduce((m, c) => ({ ...m, [c.path]: c }), {}))),
   };
@@ -136,7 +139,7 @@ function refusedHarness(opts: {
     $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n), () => {}, { scan: 'scan' },
     { treemapDesktop: null, open: () => {} },
   ) as { render: () => void; probe: () => Promise<void> };
-  return { render: fns.render, probe: fns.probe, els, state, toasts, asked };
+  return { render: fns.render, probe: fns.probe, els, state, toasts, asked, $ };
 }
 
 test('the server\'s refused count paints the dashboard row, names the folders, and says what to do on a Mac', () => {
@@ -175,6 +178,44 @@ test('no refusals means no row — and an older server without the field is tole
   const zero = refusedHarness({ stats: { refused: { dirs: 0, examples: [] } }, root: { path: '/Users/x', size: 5e9 }, scanId: 's1' });
   zero.render();
   assert.equal(zero.els.accessRow.hidden, true, 'dirs: 0 is "nothing refused"');
+});
+
+test('a clean scan clears the last scan\'s refused folders: the server\'s 0 is an answer, and a refusal belongs to its own scan (QA D46)', () => {
+  // QA D46: after a /System/Library scan (69 refused) the corpus scan reported
+  // refused.dirs 0, and the Scan card kept saying "69 folders could not be
+  // read … Give TreeMap Full Disk Access": a 0 fell back to the old count.
+  const seventyBefore = { dirs: 69, examples: ['/System/Library/AssetsV2', '/System/Library/Caches'], root: false, scanId: 's1' };
+  const corpus = { path: '/Users/x/corpus', size: 5e9 };
+  const clean = refusedHarness({ stats: { fileCount: 10, refused: { dirs: 0, examples: [] } }, root: corpus, scanId: 's2', scanRefused: seventyBefore });
+  clean.$('accessRow').hidden = false; // as the last scan left it
+  clean.render();
+  assert.equal(clean.els.accessRow.hidden, true, 'the server counted 0 refusals for this scan: the row goes');
+  assert.equal(clean.state.scanRefused, null, 'and the tour no longer reads the last scan\'s 69');
+  // The server's count wins whenever it sent one, zero included — even over
+  // what a probe said about the same scan.
+  const zeroWins = refusedHarness({ stats: { refused: { dirs: 0, examples: [] } }, root: corpus, scanId: 's2', scanRefused: { ...seventyBefore, scanId: 's2' } });
+  zeroWins.$('accessRow').hidden = false;
+  zeroWins.render();
+  assert.equal(zeroWins.els.accessRow.hidden, true, 'refused.dirs 0 is an answer, not a silence');
+  assert.equal(zeroWins.state.scanRefused, null);
+
+  // A server that sent no count, before this scan's own probe has answered:
+  // the last scan's refusals still describe the last scan, not this one.
+  const unsaid = refusedHarness({ stats: { fileCount: 10 }, root: corpus, scanId: 's2', scanRefused: seventyBefore });
+  unsaid.$('accessRow').hidden = false;
+  unsaid.render();
+  assert.equal(unsaid.els.accessRow.hidden, true, 'another scan\'s refusals are never shown for this one');
+  assert.equal(unsaid.state.scanRefused, null, 'nor left for the tour to read as this scan\'s');
+
+  // What the probe found for THIS scan is shown, and what the server counts is stamped with the scan it came from.
+  const probed = refusedHarness({ stats: { fileCount: 10 }, root: corpus, scanId: 's2', scanRefused: { ...seventyBefore, dirs: 1, scanId: 's2' } });
+  probed.render();
+  assert.equal(probed.els.accessRow.hidden, false, 'this scan\'s own probe answer still paints');
+  assert.match(probed.$('accessText').textContent, /^1 folder could not be read/);
+  const counted = refusedHarness({ stats: { refused: { dirs: 3, examples: ['/Users/x/corpus/a'] } }, root: corpus, scanId: 's2', scanRefused: seventyBefore });
+  counted.render();
+  assert.match(counted.$('accessText').textContent, /^3 folders could not be read — a$/, 'the server\'s count, not the last scan\'s');
+  assert.equal((counted.state.scanRefused as { scanId: string } | null)?.scanId, 's2', 'stamped with the scan it describes');
 });
 
 test('with no refused field, a 0-byte root is probed — a 403 turns "clean" into "could not read"', async () => {
