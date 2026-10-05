@@ -23,6 +23,7 @@ import { isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanit
 import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from '../utils/placeIdentity';
 import { collapseBatch, deepestFirst, shallowestFirst } from './capsuleBatch';
 import { restoreNameKeyFor } from '../utils/volumeNames';
+import { AsyncMutex } from '../utils/asyncMutex';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -250,6 +251,36 @@ async function loadStoreWithProvenance(): Promise<{ store: CapsuleStore; parsed:
       events: Array.isArray(raw.events) ? raw.events : [],
     },
   };
+}
+
+/**
+ * Every read-modify-write of the index, one at a time (FG3f #2): load, change, save, with nothing
+ * else's save in between. A capture that loaded the index, copied for minutes and saved it erased
+ * whatever had been recorded meanwhile — another run's copies (a cart commit overlapping an Autopilot
+ * run), a restore's "put back", a "Forget", an expiry. Every `saveStore` call is inside one
+ * (tests/capsuleConcurrency.test.ts reads this file to hold it so); a read alone needs none, since
+ * a save replaces the file whole (tmp + rename). Never nested: see AsyncMutex.
+ */
+const indexLock = new AsyncMutex();
+
+function withCapsuleStore<T>(fn: () => Promise<T>): Promise<T> {
+  return indexLock.run(fn);
+}
+
+/** Test-only: how many read-modify-writes of the index are waiting for the one under way (FG3f). */
+export function capsuleStoreWaitersForTests(): number {
+  return indexLock.waiting;
+}
+
+/**
+ * Test-only: awaited by `protectItems` right after it has loaded the index, before it copies
+ * anything (FG3f), with the run's id: a test holds a capture there to show what overlaps it. The
+ * suite's ForTests idiom: returns the function that removes it.
+ */
+let afterIndexLoadForTests: ((runId: string) => Promise<void>) | null = null;
+export function setAfterIndexLoadForTests(hook: (runId: string) => Promise<void>): () => void {
+  afterIndexLoadForTests = hook;
+  return () => { afterIndexLoadForTests = null; };
 }
 
 async function saveStore(store: CapsuleStore): Promise<void> {
@@ -793,11 +824,14 @@ export async function protectItems(
 ): Promise<{ runId: string; outcomes: ProtectionOutcome[] }> {
   const runId = context.runId ?? crypto.randomUUID();
   // In flight while it copies (FG3f #1): its own earlier copies are pinned, so a later item that
-  // does not fit beside them is refused rather than making room by evicting them.
-  return whileInFlight(runId, async () => {
+  // does not fit beside them is refused rather than making room by evicting them. And the index
+  // is held from its load to its save (FG3f #2): another writer waits rather than having its
+  // change saved over by this capture's.
+  return whileInFlight(runId, () => withCapsuleStore(async () => {
     const settings = await getSettings();
 
     const store = await loadStore();
+    if (afterIndexLoadForTests) await afterIndexLoadForTests(runId);
     const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
     const outcomes: ProtectionOutcome[] = [];
     for (const request of requests) {
@@ -809,7 +843,7 @@ export async function protectItems(
     // never recorded.
     await saveStore(store);
     return { runId, outcomes };
-  });
+  }));
 }
 
 /** The run id a dry run gives the entries it stands in for the real run's copies (`planProtection`). */
@@ -1296,17 +1330,20 @@ async function dropSupersededUnverified(kept: ProtectionOutcome[]): Promise<void
   const keptIds = new Set(kept.map((o) => o.entryId).filter((id): id is string => typeof id === 'string'));
   if (keptIds.size === 0) return;
   try {
-    const store = await loadStore();
-    const newestDigest = new Map(store.entries.filter((e) => keptIds.has(e.id)).map((e) => [e.originalPath, e.digest]));
-    const superseded = new Set<string>();
-    for (const e of store.entries) {
-      if (keptIds.has(e.id) || !e.hasPayload || e.restoredAt || !isEntryId(e.id)) continue;
-      if (newestDigest.get(e.originalPath) !== e.digest) continue;
-      if (await fsp.lstat(path.join(entryDir(e.id), UNVERIFIED_MARK)).then(() => true, () => false)) superseded.add(e.id);
-    }
-    if (superseded.size === 0) return;
-    store.entries = store.entries.filter((e) => !superseded.has(e.id));
-    await saveStore(store);
+    const superseded = await withCapsuleStore(async () => {
+      const store = await loadStore();
+      const newestDigest = new Map(store.entries.filter((e) => keptIds.has(e.id)).map((e) => [e.originalPath, e.digest]));
+      const found = new Set<string>();
+      for (const e of store.entries) {
+        if (keptIds.has(e.id) || !e.hasPayload || e.restoredAt || !isEntryId(e.id)) continue;
+        if (newestDigest.get(e.originalPath) !== e.digest) continue;
+        if (await fsp.lstat(path.join(entryDir(e.id), UNVERIFIED_MARK)).then(() => true, () => false)) found.add(e.id);
+      }
+      if (found.size === 0) return found;
+      store.entries = store.entries.filter((e) => !found.has(e.id));
+      await saveStore(store);
+      return found;
+    });
     for (const id of superseded) await fsp.rm(entryDir(id), { recursive: true, force: true });
   } catch (err) {
     console.error('[treemap] time capsule: older unconfirmed copies of the same files could not be dropped:', err);
@@ -1343,24 +1380,27 @@ async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<strin
       console.error('[treemap] time capsule: a copy of an item the Trash refused could not be marked:', err);
     });
   }
-  let store: CapsuleStore | null = null;
-  try {
-    failIfInjected('load');
-    store = await loadStore();
-  } catch (err) {
-    report('reading the index', err);
-  }
-  if (store !== null) {
+  // Read and written as one, with no other writer between (FG3f #2).
+  const dropped = await withCapsuleStore(async () => {
+    let store: CapsuleStore;
+    try {
+      failIfInjected('load');
+      store = await loadStore();
+    } catch (err) {
+      report('reading the index', err);
+      return false;
+    }
     store.entries = store.entries.filter((e) => !ids.has(e.id));
     try {
       failIfInjected('save');
       await saveStore(store);
+      return true;
     } catch (err) {
       report('writing the index', err);
-      store = null;
+      return false;
     }
-  }
-  if (store === null) return problem; // the entries stay, each marked, so its folder stays too
+  });
+  if (!dropped) return problem; // the entries stay, each marked, so its folder stays too
   for (const id of ids) {
     try {
       failIfInjected('drop');
@@ -1416,13 +1456,15 @@ export async function getCapsuleEntry(id: string): Promise<TimeCapsuleEntry | un
 
 /** Forget one entry and its payload, at the user's request. */
 export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean; bytesFreed: number }> {
-  const store = await loadStore();
-  const entry = store.entries.find((e) => e.id === id);
-  if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
-  const bytesFreed = await dropPayload(entry);
-  store.entries = store.entries.filter((e) => e.id !== id);
-  await saveStore(store);
-  return { deleted: true, bytesFreed };
+  return withCapsuleStore(async () => {
+    const store = await loadStore();
+    const entry = store.entries.find((e) => e.id === id);
+    if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+    const bytesFreed = await dropPayload(entry);
+    store.entries = store.entries.filter((e) => e.id !== id);
+    await saveStore(store);
+    return { deleted: true, bytesFreed };
+  });
 }
 
 /* ---------------- retention + reconciliation ---------------- */
@@ -1432,25 +1474,27 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
   const { timeCapsuleRetentionDays } = await getSettings();
   const cutoff = now - timeCapsuleRetentionDays * 86_400_000;
 
-  const store = await loadStore();
-  const expired = store.entries.filter((e) => e.capturedAt < cutoff);
-  if (expired.length === 0) return { removed: 0, bytesFreed: 0 };
+  return withCapsuleStore(async () => {
+    const store = await loadStore();
+    const expired = store.entries.filter((e) => e.capturedAt < cutoff);
+    if (expired.length === 0) return { removed: 0, bytesFreed: 0 };
 
-  let bytesFreed = 0;
-  for (const entry of expired) {
-    bytesFreed += await dropPayload(entry);
-    recordEvent(store, {
-      at: now,
-      kind: 'expired',
-      name: entry.name,
-      originalPath: entry.originalPath,
-      sizeBytes: entry.sizeBytes,
-      detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Time Capsule.`,
-    });
-  }
-  store.entries = store.entries.filter((e) => e.capturedAt >= cutoff);
-  await saveStore(store);
-  return { removed: expired.length, bytesFreed };
+    let bytesFreed = 0;
+    for (const entry of expired) {
+      bytesFreed += await dropPayload(entry);
+      recordEvent(store, {
+        at: now,
+        kind: 'expired',
+        name: entry.name,
+        originalPath: entry.originalPath,
+        sizeBytes: entry.sizeBytes,
+        detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Time Capsule.`,
+      });
+    }
+    store.entries = store.entries.filter((e) => e.capturedAt >= cutoff);
+    await saveStore(store);
+    return { removed: expired.length, bytesFreed };
+  });
 }
 
 /**
@@ -1465,85 +1509,120 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
 export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entriesLost: number }> {
   const root = capsuleRoot();
   await fsp.mkdir(root, { recursive: true }).catch(() => {});
-  // `loadStore` now REFUSES an unparseable index rather than answering with an
-  // empty one, so this is the only place that has to know the difference —
-  // and it knows it by being told, not by asking a second time.
-  let store: CapsuleStore;
-  let indexParsed: boolean;
-  try {
-    ({ store, parsed: indexParsed } = await loadStoreWithProvenance());
-  } catch (err) {
-    if (!(err instanceof CapsuleIndexUnreadableError)) throw err;
+  // Held for the whole sweep (FG3f #2): a capture under way has written its copy's folder and not
+  // yet its entry, and the sweep would take that folder for an orphan and remove it.
+  return withCapsuleStore(async () => {
+    // `loadStore` now REFUSES an unparseable index rather than answering with an
+    // empty one, so this is the only place that has to know the difference —
+    // and it knows it by being told, not by asking a second time.
+    let store: CapsuleStore;
+    let indexParsed: boolean;
+    try {
+      ({ store, parsed: indexParsed } = await loadStoreWithProvenance());
+    } catch (err) {
+      if (!(err instanceof CapsuleIndexUnreadableError)) throw err;
+      const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
+      const stranded = onDisk.filter((d) => d.isDirectory()).length;
+      // Nothing is written, moved or deleted. Every one of those three was
+      // measured to end with the payloads gone — writing the fallback makes the
+      // next sweep delete them, and so does renaming the index aside, because an
+      // absent index is a decided "first run". The sweep stays blocked until a
+      // person acts. The cost is stale folders in one directory; the
+      // alternative is destroying the only copy of files this app promised to
+      // protect.
+      console.error(
+        `[treemap] capsule reconcile: ${err.message} ` +
+          `${String(stranded)} recovery folders are on disk and were LEFT ALONE.`,
+      );
+      return { orphansRemoved: 0, entriesLost: 0 };
+    }
+
+    const known = new Set(store.entries.map((e) => e.id));
+    let orphansRemoved = 0;
+    // A directory listing that could not be read is not an empty capsule —
+    // and `[]` here is harmless only because nothing is deleted from it.
     const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
-    const stranded = onDisk.filter((d) => d.isDirectory()).length;
-    // Nothing is written, moved or deleted. Every one of those three was
-    // measured to end with the payloads gone — writing the fallback makes the
-    // next sweep delete them, and so does renaming the index aside, because an
-    // absent index is a decided "first run". The sweep stays blocked until a
-    // person acts. The cost is stale folders in one directory; the
-    // alternative is destroying the only copy of files this app promised to
-    // protect.
-    console.error(
-      `[treemap] capsule reconcile: ${err.message} ` +
-        `${String(stranded)} recovery folders are on disk and were LEFT ALONE.`,
-    );
-    return { orphansRemoved: 0, entriesLost: 0 };
-  }
+    const payloadDirs = onDisk.filter((d) => d.isDirectory());
 
-  const known = new Set(store.entries.map((e) => e.id));
-  let orphansRemoved = 0;
-  // A directory listing that could not be read is not an empty capsule —
-  // and `[]` here is harmless only because nothing is deleted from it.
-  const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
-  const payloadDirs = onDisk.filter((d) => d.isDirectory());
+    // The one deletion in this function.
+    //
+    // "Every directory here is an orphan" is a conclusion drawn entirely from
+    // the index, so it is only as good as the index — and one unreadable index
+    // would `rm -rf` the protected copy of every file the user has ever deleted
+    // through TreeMap, unattended, from a maintenance timer. `loadStore` is what
+    // makes that impossible: it refuses an unparseable index rather than
+    // answering with an empty one, and the caller above returns without
+    // touching anything.
+    //
+    // What reaches here is an index that PARSED. Zero entries is then a decided
+    // fact — a capsule the user emptied — and the sweep proceeds, so stale
+    // directories are still cleaned up rather than accumulating for ever.
+    // A MISSING index is not authority to delete either, and this is the half
+    // that was left open: the refusal above covers a corrupt file, and the
+    // remedy a user is most likely to reach for on being told a file is broken
+    // is to move it out of the way — which makes it absent, which used to read
+    // as a first run, which deleted every payload. Measured, from the exact
+    // sentence this app printed.
+    //
+    // A real first run has no index AND no payload folders, so it loses
+    // nothing. Payload folders with no index means the capsule has been used
+    // and its record is gone: the folders are named by entries in that file, so
+    // deleting them destroys the only copies while restoring them needs a human
+    // either way.
+    if (!indexParsed && payloadDirs.length > 0) {
+      console.error(
+        `[treemap] capsule reconcile: no index at ${path.join(appDataDir(), INDEX_FILE)}, but ` +
+          `${String(payloadDirs.length)} recovery folders are on disk. They were LEFT ALONE — an index that is ` +
+          'missing is not permission to delete what it would have described.',
+      );
+      return { orphansRemoved: 0, entriesLost: 0 };
+    }
 
-  // The one deletion in this function.
-  //
-  // "Every directory here is an orphan" is a conclusion drawn entirely from
-  // the index, so it is only as good as the index — and one unreadable index
-  // would `rm -rf` the protected copy of every file the user has ever deleted
-  // through TreeMap, unattended, from a maintenance timer. `loadStore` is what
-  // makes that impossible: it refuses an unparseable index rather than
-  // answering with an empty one, and the caller above returns without
-  // touching anything.
-  //
-  // What reaches here is an index that PARSED. Zero entries is then a decided
-  // fact — a capsule the user emptied — and the sweep proceeds, so stale
-  // directories are still cleaned up rather than accumulating for ever.
-  // A MISSING index is not authority to delete either, and this is the half
-  // that was left open: the refusal above covers a corrupt file, and the
-  // remedy a user is most likely to reach for on being told a file is broken
-  // is to move it out of the way — which makes it absent, which used to read
-  // as a first run, which deleted every payload. Measured, from the exact
-  // sentence this app printed.
-  //
-  // A real first run has no index AND no payload folders, so it loses
-  // nothing. Payload folders with no index means the capsule has been used
-  // and its record is gone: the folders are named by entries in that file, so
-  // deleting them destroys the only copies while restoring them needs a human
-  // either way.
-  if (!indexParsed && payloadDirs.length > 0) {
-    console.error(
-      `[treemap] capsule reconcile: no index at ${path.join(appDataDir(), INDEX_FILE)}, but ` +
-        `${String(payloadDirs.length)} recovery folders are on disk. They were LEFT ALONE — an index that is ` +
-        'missing is not permission to delete what it would have described.',
-    );
-    return { orphansRemoved: 0, entriesLost: 0 };
-  }
+    for (const dirent of payloadDirs) {
+      if (known.has(dirent.name)) continue;
+      const orphanCapsuleDir = path.join(root, dirent.name);
+      await fsp.rm(orphanCapsuleDir, { recursive: true, force: true }).catch(() => {});
+      orphansRemoved++;
+    }
 
-  for (const dirent of payloadDirs) {
-    if (known.has(dirent.name)) continue;
-    const orphanCapsuleDir = path.join(root, dirent.name);
-    await fsp.rm(orphanCapsuleDir, { recursive: true, force: true }).catch(() => {});
-    orphansRemoved++;
-  }
-
-  let entriesLost = 0;
-  for (const entry of store.entries) {
-    if (!entry.hasPayload) continue;
-    // A record whose id TreeMap did not give never had a folder of TreeMap's, so it holds no copy
-    // however the place its id spells looks — and that place is not looked at (FG3).
-    if (!isEntryId(entry.id)) {
+    let entriesLost = 0;
+    for (const entry of store.entries) {
+      if (!entry.hasPayload) continue;
+      // A record whose id TreeMap did not give never had a folder of TreeMap's, so it holds no copy
+      // however the place its id spells looks — and that place is not looked at (FG3).
+      if (!isEntryId(entry.id)) {
+        entry.heldBytes = 0;
+        entry.hasPayload = false;
+        entriesLost++;
+        recordEvent(store, {
+          at: Date.now(),
+          kind: 'lost',
+          name: entry.name,
+          originalPath: entry.originalPath,
+          sizeBytes: entry.sizeBytes,
+          detail: `${NOT_OURS} (its id is not one TreeMap gives), so it holds no copy that could be restored.`,
+        });
+        continue;
+      }
+      // "Could not stat it" is not "it is gone", and here the difference is
+      // one-way: `hasPayload = false` is never revisited (the line above skips
+      // such entries on every later sweep) and `startCapsuleRestore` refuses
+      // them outright. So a single `EIO` from a capsule on an external or
+      // network volume permanently retires a payload that is sitting there
+      // intact — and writes a log line telling the user it cannot be restored,
+      // which is not true.
+      let missing: boolean;
+      try {
+        await fsp.stat(entryDir(entry.id));
+        missing = false;
+      } catch (err) {
+        // `meansAbsent`, not the wider stat predicate: `hasPayload = false` is
+        // ONE-WAY — later sweeps skip such entries and Restore refuses them — so
+        // a wrong "gone" retires an intact payload for good.
+        if (!meansAbsent(err)) continue; // ask again next sweep; the entry is already correct
+        missing = true;
+      }
+      if (!missing) continue;
       entry.heldBytes = 0;
       entry.hasPayload = false;
       entriesLost++;
@@ -1553,46 +1632,15 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
         name: entry.name,
         originalPath: entry.originalPath,
         sizeBytes: entry.sizeBytes,
-        detail: `${NOT_OURS} (its id is not one TreeMap gives), so it holds no copy that could be restored.`,
+        detail: 'Its copy is missing from the Time Capsule folder, so it can no longer be restored.',
       });
-      continue;
     }
-    // "Could not stat it" is not "it is gone", and here the difference is
-    // one-way: `hasPayload = false` is never revisited (the line above skips
-    // such entries on every later sweep) and `startCapsuleRestore` refuses
-    // them outright. So a single `EIO` from a capsule on an external or
-    // network volume permanently retires a payload that is sitting there
-    // intact — and writes a log line telling the user it cannot be restored,
-    // which is not true.
-    let missing: boolean;
-    try {
-      await fsp.stat(entryDir(entry.id));
-      missing = false;
-    } catch (err) {
-      // `meansAbsent`, not the wider stat predicate: `hasPayload = false` is
-      // ONE-WAY — later sweeps skip such entries and Restore refuses them — so
-      // a wrong "gone" retires an intact payload for good.
-      if (!meansAbsent(err)) continue; // ask again next sweep; the entry is already correct
-      missing = true;
-    }
-    if (!missing) continue;
-    entry.heldBytes = 0;
-    entry.hasPayload = false;
-    entriesLost++;
-    recordEvent(store, {
-      at: Date.now(),
-      kind: 'lost',
-      name: entry.name,
-      originalPath: entry.originalPath,
-      sizeBytes: entry.sizeBytes,
-      detail: 'Its copy is missing from the Time Capsule folder, so it can no longer be restored.',
-    });
-  }
 
-  // Never persist a store that came from an index we could not read: every
-  // field of it is a fallback, and writing it makes the fallback the truth.
-  if (orphansRemoved > 0 || entriesLost > 0) await saveStore(store);
-  return { orphansRemoved, entriesLost };
+    // Never persist a store that came from an index we could not read: every
+    // field of it is a fallback, and writing it makes the fallback the truth.
+    if (orphansRemoved > 0 || entriesLost > 0) await saveStore(store);
+    return { orphansRemoved, entriesLost };
+  });
 }
 
 let maintenanceTimer: NodeJS.Timeout | null = null;
@@ -2170,13 +2218,17 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
    * copy costs space; rolling back costs the user their file.
    */
   try {
-    const store = await loadStore();
-    const live = store.entries.find((e) => e.id === entry.id);
-    if (live) {
-      live.restoredAt = Date.now();
-      await dropPayload(live);
-    }
-    await saveStore(store);
+    // With no other writer of the index between its load and its save (FG3f #2): a capture under
+    // way saved over "put back" and left the record promising a copy this restore had removed.
+    await withCapsuleStore(async () => {
+      const store = await loadStore();
+      const live = store.entries.find((e) => e.id === entry.id);
+      if (live) {
+        live.restoredAt = Date.now();
+        await dropPayload(live);
+      }
+      await saveStore(store);
+    });
   } catch (err) {
     console.error('[treemap] capsule bookkeeping after a successful restore failed:', err);
   }

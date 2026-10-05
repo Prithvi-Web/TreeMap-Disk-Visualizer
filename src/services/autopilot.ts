@@ -33,6 +33,7 @@ import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRoo
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertFeatureAvailable } from './storageMode';
+import { AsyncMutex } from '../utils/asyncMutex';
 
 /**
  * Autopilot — scheduled cleanup with safety rails (B1).
@@ -106,6 +107,25 @@ async function saveStore(store: AutopilotStore): Promise<void> {
   if (store.runs.length > MAX_RUNS) store.runs = store.runs.slice(0, MAX_RUNS);
   await writeJsonFile(STORE_FILE, store);
 }
+
+/**
+ * Every read-modify-write of autopilot.json, one at a time (FG3f #2): a run's record, an approval,
+ * a saved policy list and an undo's stamp each load the whole document and save it whole, and two
+ * that overlapped dropped one's change — a run record, or an approval. Every `saveStore` call is
+ * inside one (tests/capsuleConcurrency.test.ts reads this file to hold it so). Never nested.
+ */
+const storeLock = new AsyncMutex();
+
+function withAutopilotStore<T>(fn: () => Promise<T>): Promise<T> {
+  return storeLock.run(fn);
+}
+
+/**
+ * Policies whose run is under way in this process (FG3f #2). A policy stays due until its run
+ * records it, and a run can outlast the scheduler's 60-second tick — a scan of a large folder, a
+ * capture of gigabytes — so the next tick started the same policy again over the same files.
+ */
+const policiesInFlight = new Set<string>();
 
 /* ---------------- policy validation (pure — tested) ---------------- */
 
@@ -270,24 +290,26 @@ export async function savePolicies(raw: unknown): Promise<AutopilotPolicy[]> {
     ids.add(id);
   }
 
-  const store = await loadStore();
-  const byId = new Map(store.policies.map((p) => [p.id, p]));
-  const next: AutopilotPolicy[] = [];
-  for (const entry of raw) {
-    const id = (entry as { id?: unknown })?.id;
-    const existing = typeof id === 'string' ? byId.get(id) : undefined;
-    const policy = normalizePolicy(entry, existing);
+  return withAutopilotStore(async () => {
+    const store = await loadStore();
+    const byId = new Map(store.policies.map((p) => [p.id, p]));
+    const next: AutopilotPolicy[] = [];
+    for (const entry of raw) {
+      const id = (entry as { id?: unknown })?.id;
+      const existing = typeof id === 'string' ? byId.get(id) : undefined;
+      const policy = normalizePolicy(entry, existing);
 
-    // Changing what a policy matches, or where it runs, invalidates the
-    // approval that was granted for the old one — otherwise "approve a tiny
-    // dry run, then edit the policy to match everything" would walk straight
-    // past the rail that exists to prevent exactly that.
-    if (existing && !sameScope(existing, policy)) delete policy.approvedAt;
-    next.push(policy);
-  }
-  store.policies = next;
-  await saveStore(store);
-  return next;
+      // Changing what a policy matches, or where it runs, invalidates the
+      // approval that was granted for the old one — otherwise "approve a tiny
+      // dry run, then edit the policy to match everything" would walk straight
+      // past the rail that exists to prevent exactly that.
+      if (existing && !sameScope(existing, policy)) delete policy.approvedAt;
+      next.push(policy);
+    }
+    store.policies = next;
+    await saveStore(store);
+    return next;
+  });
 }
 
 /** Do two versions of a policy select the same things in the same place? */
@@ -652,8 +674,23 @@ export interface RunOptions {
  * Always writes a run record, including when it decides not to delete — a
  * policy that silently does nothing is indistinguishable from one that is
  * broken, and the user needs to be able to tell those apart.
+ *
+ * One run per policy at a time (FG3f #2): a policy whose run is still under way is refused with
+ * POLICY_RUNNING, never started again over the same files.
  */
 export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}): Promise<AutopilotRun> {
+  if (policiesInFlight.has(policy.id)) {
+    throw new AppError(409, 'POLICY_RUNNING', `“${policy.name}” is still running; it is not started again until that run has finished.`);
+  }
+  policiesInFlight.add(policy.id);
+  try {
+    return await runPolicyNow(policy, opts);
+  } finally {
+    policiesInFlight.delete(policy.id);
+  }
+}
+
+async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<AutopilotRun> {
   const store = await loadStore();
   const now = Date.now();
 
@@ -670,14 +707,14 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     skipped: [],
   };
 
-  const record = async (): Promise<AutopilotRun> => {
+  const record = (): Promise<AutopilotRun> => withAutopilotStore(async () => {
     const fresh = await loadStore();
     fresh.runs.unshift(run);
     const live = fresh.policies.find((p) => p.id === policy.id);
     if (live) live.lastRunAt = now;
     await saveStore(fresh);
     return run;
-  };
+  });
 
   // Cooldown first: it is the cheapest check and the only one that should not
   // cost a full scan of the user's folder.
@@ -687,10 +724,12 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     run.blockedReason = `Waiting out its cooldown — next run in about ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`;
     // A cooldown block is not a run: it must not restart the clock, or a
     // frequent tick would push the next real run away forever.
-    const fresh = await loadStore();
-    fresh.runs.unshift(run);
-    await saveStore(fresh);
-    return run;
+    return withAutopilotStore(async () => {
+      const fresh = await loadStore();
+      fresh.runs.unshift(run);
+      await saveStore(fresh);
+      return run;
+    });
   }
 
   let candidates: Candidate[];
@@ -861,16 +900,19 @@ function toRunItem(c: Candidate): AutopilotRunItem {
  * policy's scope changed since, the approval would be for something else.
  */
 export async function approvePolicy(policyId: string): Promise<AutopilotPolicy> {
-  const store = await loadStore();
-  const policy = store.policies.find((p) => p.id === policyId);
-  if (!policy) throw new AppError(404, 'POLICY_NOT_FOUND', 'No such policy');
-  policy.approvedAt = Date.now();
-  // The dry run that earned this approval stamped `lastRunAt`, which would
-  // otherwise leave the user waiting out a full cooldown right after saying
-  // "yes, do it". Clearing it lets the next tick pick the policy up.
-  delete policy.lastRunAt;
-  await saveStore(store);
-  return policy;
+  return withAutopilotStore(async () => {
+    const store = await loadStore();
+    const policy = store.policies.find((p) => p.id === policyId);
+    if (!policy) throw new AppError(404, 'POLICY_NOT_FOUND', 'No such policy');
+    policy.approvedAt = Date.now();
+    // The dry run that earned this approval stamped `lastRunAt`, which would
+    // otherwise leave the user waiting out a full cooldown right after saying
+    // "yes, do it". Clearing it lets the next tick pick the policy up — and a
+    // policy still running is not started again by it (`runPolicy`, FG3f #2).
+    delete policy.lastRunAt;
+    await saveStore(store);
+    return policy;
+  });
 }
 
 export async function listRuns(limit = 50): Promise<AutopilotRun[]> {
@@ -929,11 +971,13 @@ export async function undoRun(runId: string): Promise<AutopilotUndo> {
 
 /** Stamp a run undone, read afresh: other runs may have been recorded while its undo ran. */
 async function markUndone(runId: string): Promise<void> {
-  const store = await loadStore();
-  const run = store.runs.find((r) => r.id === runId);
-  if (!run || run.undoneAt) return;
-  run.undoneAt = Date.now();
-  await saveStore(store);
+  await withAutopilotStore(async () => {
+    const store = await loadStore();
+    const run = store.runs.find((r) => r.id === runId);
+    if (!run || run.undoneAt) return;
+    run.undoneAt = Date.now();
+    await saveStore(store);
+  });
 }
 
 /** What `undoRun` started. `puttingBack` is for the audit line, and is not part of the HTTP answer. */
@@ -951,12 +995,19 @@ export interface AutopilotUndo {
 /**
  * Run every policy that is due. Called by the existing Scheduler's tick rather
  * than a second timer of its own (§B1: extend the Scheduler, don't duplicate).
+ *
+ * A tick comes every minute whether the last one has finished or not (FG3f #2),
+ * so a policy whose run is still under way is passed over, and each policy is
+ * read afresh at its turn: a run that finished while this pass ran another one
+ * has stamped its `lastRunAt`, and the pass must not run it a second time.
  */
 export async function runDuePolicies(now = Date.now()): Promise<AutopilotRun[]> {
-  const store = await loadStore();
+  const ids = (await loadStore()).policies.map((p) => p.id);
   const out: AutopilotRun[] = [];
-  for (const policy of store.policies) {
-    if (!policy.enabled) continue;
+  for (const id of ids) {
+    if (policiesInFlight.has(id)) continue;
+    const policy = (await loadStore()).policies.find((p) => p.id === id);
+    if (!policy || !policy.enabled) continue;
     const due = !policy.lastRunAt || now - policy.lastRunAt >= policy.cooldownDays * 86_400_000;
     if (!due) continue;
     try {
