@@ -523,6 +523,15 @@ test('which drive a path is on: the deepest mount point listed above it, by name
   assert.equal(driveFor('/Volumes/Backup/x', null, 'darwin'), '/', 'a table that could not be read: one drive for everything, which only withholds more');
   assert.equal(driveFor('D:\\a\\b', null, 'win32'), 'd:\\');
   assert.equal(driveFor('\\\\server\\share\\a', null, 'win32'), '\\\\server\\share\\');
+  // One drive, one key, however it is spelled (the U-4b review, L4): separators, case, and the
+  // extended-length prefixes, under which every share once shared the key \\?\UNC\.
+  for (const spelling of ['C:\\x', 'C:/x', 'c:\\x\\y', '\\\\?\\C:\\x', '\\\\.\\C:\\x', '//?/C:/x']) {
+    assert.equal(driveFor(spelling, null, 'win32'), 'c:\\', spelling);
+  }
+  for (const spelling of ['\\\\server\\share\\a', '//server/share/a', '\\\\SERVER\\Share\\a', '\\\\?\\UNC\\server\\share\\a', '//?/UNC/server/share/a']) {
+    assert.equal(driveFor(spelling, null, 'win32'), '\\\\server\\share\\', spelling);
+  }
+  assert.notEqual(driveFor('\\\\?\\UNC\\other\\share\\a', null, 'win32'), driveFor('\\\\?\\UNC\\server\\share\\a', null, 'win32'), 'two shares are two drives');
 });
 
 test('on this machine, a path\'s drive comes from its own mount table', { skip: !['darwin', 'linux', 'win32'].includes(process.platform) && 'no mount table is read here' }, async () => {

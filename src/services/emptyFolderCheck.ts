@@ -169,7 +169,7 @@ function realDeadline(ms: number): { late: Promise<void>; cancel: () => void } {
  * one, which only withholds more.
  */
 export function driveFor(p: string, mountPoints: readonly string[] | null, platform: NodeJS.Platform): string {
-  if (platform === 'win32') return path.win32.parse(p).root.toLowerCase() || p;
+  if (platform === 'win32') return windowsDriveKey(p);
   let drive = '/';
   for (const m of mountPoints ?? []) if (m.length > drive.length && isAtOrUnder(m, p)) drive = m;
   return drive;
@@ -182,6 +182,19 @@ export function driveFor(p: string, mountPoints: readonly string[] | null, platf
  */
 export function lookClock(): number {
   return performance.now();
+}
+
+/**
+ * A Windows path's drive or share as one key, however the path spells it (the
+ * U-4b review, L4): `/` read as `\`, case folded, and the extended-length
+ * prefixes taken off — under `\\?\UNC\` every share once had the one key
+ * `\\?\UNC\`, and `C:/x` and `C:\x` were two drives.
+ */
+function windowsDriveKey(p: string): string {
+  let q = p.replace(/\//g, '\\');
+  if (/^\\\\[?.]\\UNC\\/i.test(q)) q = `\\\\${q.slice('\\\\?\\UNC\\'.length)}`;
+  else if (/^\\\\[?.]\\[a-z]:/i.test(q)) q = q.slice('\\\\?\\'.length);
+  return (path.win32.parse(q).root || q).toLowerCase();
 }
 
 /** How long a read mount table is used before it is read again: a drive attached since is a new name. */
