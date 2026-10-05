@@ -5,7 +5,7 @@ import { appDataDir } from './storage';
 import { trackWrite } from '../utils/backgroundWrites';
 import { isEphemeral } from './portableMode';
 import { platform } from '../platform';
-import { neverDescend } from '../utils/mountBoundaries';
+import { isAtOrUnder, isStrictlyUnder, neverDescend, neverDescendPaths } from '../utils/mountBoundaries';
 // `escapeLike` guards the one LIKE query left (the substring search): `_` and
 // `%` are LIKE wildcards, and a real filename containing either must not
 // become a pattern. Since v3, deletes and scopes work on node ids, so no
@@ -324,6 +324,8 @@ export function closeIndex(): void {
   stopAllWatchers();
   // Every root is stale on the next open for the reason that open gives.
   staleReasons.clear();
+  // And what each index leaves out is the next process's to work out again.
+  rootExclusions.clear();
   if (db) {
     try {
       db.close();
@@ -371,6 +373,16 @@ export interface BuildOptions {
    * cancelled or fails leaves the folder with no index.
    */
   maxEntries?: number;
+  /**
+   * The paths the walk must not enter (Track U, U-24): what a scan of the
+   * folder is handed under the person's "Stay on this drive" setting
+   * (`scanBoundary`) — the fixed never-descend folders and, under `stay`,
+   * every drive mounted inside the folder. The route composes it from the
+   * folder and the setting; absent, the fixed list alone, as before. Each is
+   * left out of the index, as the fixed folders always were, and the root's
+   * live watcher drops every change at or under one beneath the folder.
+   */
+  neverDescend?: readonly string[];
 }
 
 /**
@@ -996,7 +1008,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     stopWatcher(root); // a rebuild invalidates any watcher on the old rows
     staleReasons.delete(root); // and whatever made the old rows stale
   }
-  if (replacedFirst !== null) reclaimLater(handle, replacedFirst);
+  if (replacedFirst !== null) {
+    rootExclusions.delete(replacedFirst);
+    reclaimLater(handle, replacedFirst);
+  }
 
   const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(buildPath) as { id: number }).id;
   const self = { handle, root, aborted: false };
@@ -1038,6 +1053,8 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     for (const row of rows) insert.run(row);
   });
 
+  /** What the walk leaves out (U-24): the boundary the caller composed, or the fixed list. */
+  const leftOut = opts.neverDescend ? new Set(opts.neverDescend) : null;
   /** Inodes already counted, so a hard link is not double-counted. */
   const seenInodes = new Set<number>();
   /** The folders met so far, each with the running total of what is in it; written last. */
@@ -1073,7 +1090,7 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   try {
     for await (const entry of provider.fastEnumerate(root, {
       isCancelled: stopped,
-      skip: (p) => neverDescend(p),
+      skip: leftOut ? (p) => leftOut.has(p) : (p) => neverDescend(p),
     })) {
       // One entry more than the build may write: stop the walk here (leaving
       // the loop ends the enumerator) rather than write it.
@@ -1209,7 +1226,12 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       stopWatcher(root);
       staleReasons.delete(root);
     }
-    if (replaced !== null) reclaimLater(handle, replaced);
+    if (replaced !== null) {
+      rootExclusions.delete(replaced);
+      reclaimLater(handle, replaced);
+    }
+    // What this index leaves out, for its watcher, whenever it is started.
+    rootExclusions.set(rootId, exclusionsUnder(root, opts.neverDescend ?? neverDescendPaths()));
 
     opts.onProgress?.({ phase: 'done', processed: written, currentPath: root });
     if (opts.live !== false) startWatcher(root);
@@ -1317,6 +1339,7 @@ export function deleteIndex(rootPath?: string): number {
   if (rootPath === undefined) {
     stopAllWatchers();
     staleReasons.clear();
+    rootExclusions.clear();
     // The folders' indexes: never a build written aside, nor a root set
     // aside while its rows are reclaimed (Track U review L6).
     removed = (
@@ -1338,6 +1361,7 @@ export function deleteIndex(rootPath?: string): number {
     reclaimLeftovers(handle, false);
     const row = handle.prepare('SELECT id FROM roots WHERE path = ?').get(rootPath) as { id: number } | undefined;
     if (!row) return 0;
+    rootExclusions.delete(row.id);
     handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(row.id);
     handle.prepare('DELETE FROM roots WHERE id = ?').run(row.id);
     removed = 1;
@@ -1471,6 +1495,21 @@ export function pathOfNode(nodeId: number): string | null {
  * ------------------------------------------------------------------ */
 
 const watchers = new Map<string, Unsubscribe>();
+
+/**
+ * The paths beneath its folder each index leaves out (Track U, U-24), by
+ * its root's id — the index, not the folder: a later build of the folder is
+ * another index — set by the build that made it in this process. Its
+ * watcher drops a change at or under one, as Live mode does for a scan
+ * (`watcher.ts`), so a drive the build did not enter never comes into the
+ * index through its watcher.
+ */
+const rootExclusions = new Map<number, readonly string[]>();
+
+/** The paths of `list` strictly beneath `rootPath` (`exclusionsOf`, for a list rather than a scan's record). */
+function exclusionsUnder(rootPath: string, list: readonly string[]): string[] {
+  return list.filter((p) => isStrictlyUnder(rootPath, p));
+}
 
 /** How a root's watcher is named in the watch registry, so its own watches can be told from the rest. */
 function watchOwner(rootPath: string): string {
@@ -1754,26 +1793,34 @@ function enqueueChange(rootPath: string, change: PendingChange): void {
 }
 
 /**
- * Whether the index of `rootPath` is one file — a file, or a link (never
- * followed, M-1). It holds nothing a watch could add to, and a watch on a
- * link reports the folder it points at, whose changes would be written under
- * a row that is no folder.
+ * Whether an index whose top row is `row` is one file — a file, or a link
+ * (never followed, M-1). It holds nothing a watch could add to, and a watch
+ * on a link reports the folder it points at, whose changes would be written
+ * under a row that is no folder.
  */
-function indexedAsLeaf(rootPath: string): boolean {
-  const row = openIndex()
-    .prepare('SELECT n.is_dir FROM roots r JOIN nodes n ON n.root_id = r.id AND n.parent_id IS NULL WHERE r.path = ?')
-    .get(rootPath) as { is_dir: number } | undefined;
-  return row !== undefined && row.is_dir !== 1;
+function indexedAsLeaf(row: { is_dir: number | null } | undefined): boolean {
+  return row !== undefined && row.is_dir !== null && row.is_dir !== 1;
 }
 
-export function startWatcher(rootPath: string): boolean {
+/**
+ * Attach a live watcher to the index of `rootPath`. A change at or under a
+ * path its build left out is dropped (U-24): the build's own list when this
+ * process built the index, else `neverDescendList` — the route's reading of
+ * the boundary for an index an earlier process built — else the fixed list.
+ */
+export function startWatcher(rootPath: string, neverDescendList?: readonly string[]): boolean {
   if (watchers.has(rootPath)) return true;
-  if (indexedAsLeaf(rootPath)) return false;
+  const row = openIndex()
+    .prepare('SELECT r.id, n.is_dir FROM roots r LEFT JOIN nodes n ON n.root_id = r.id AND n.parent_id IS NULL WHERE r.path = ?')
+    .get(rootPath) as { id: number; is_dir: number | null } | undefined;
+  if (indexedAsLeaf(row)) return false;
+  const excluded = (row ? rootExclusions.get(row.id) : undefined) ?? exclusionsUnder(rootPath, neverDescendList ?? neverDescendPaths());
   try {
     const unsubscribe = platform().subscribeToChanges(
       rootPath,
       (event) => {
         if (isOwnState(event.path)) return; // the index must never chase its own writes
+        if (excluded.some((x) => isAtOrUnder(x, event.path))) return; // another drive, or a folder the build left out
         enqueueChange(rootPath, { path: event.path, kind: event.kind, attempts: 0 });
       },
       watchOwner(rootPath),

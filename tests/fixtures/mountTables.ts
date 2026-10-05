@@ -1,3 +1,5 @@
+import type { MountTable } from '../../src/utils/mountBoundaries';
+
 /**
  * Mount tables as the operating systems print them (Track U, U-23).
  *
@@ -92,3 +94,16 @@ export const LINUX_PROC_MOUNTS = [
   '/dev/sda2 /etc/hosts ext4 rw,relatime 0 0',
   '',
 ].join('\n');
+
+/**
+ * A table, as `readMountTable` answers it, that names exactly `paths` as
+ * mount points — ordinary folders a test made, so nothing is mounted. For
+ * `setBoundaryDepsForTests({ readTable })`.
+ */
+export function mountTableNaming(paths: readonly string[]): MountTable {
+  return {
+    source: 'mount',
+    entries: paths.map((p) => ({ mountPoint: p, filesystem: 'apfs', options: ['apfs', 'local'], source: '/dev/disk99s1' })),
+    reason: null,
+  };
+}

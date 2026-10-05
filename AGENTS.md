@@ -369,7 +369,10 @@ OpenAPI 3 spec).
      follows a link. A build without `maxEntries` replaces the folder's saved
      index at its start, so one that is cancelled or fails leaves the folder
      with no index; only a capped build keeps the saved one until it is
-     swapped in. The index progress stream keeps
+     swapped in. A build honours the "Stay on this drive" setting as a scan
+     does: under `stay` it leaves out every drive mounted inside the folder
+     (composed from the folder and the setting — no scan needed), and the
+     index's live watcher drops changes there. The index progress stream keeps
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS

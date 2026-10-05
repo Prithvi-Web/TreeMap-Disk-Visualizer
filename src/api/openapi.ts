@@ -2371,7 +2371,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/index/build',
-    summary: 'Build (or rebuild) the persistent index for a folder — progress via SSE',
+    summary: 'Build (or rebuild) the persistent index for a folder — progress via SSE. Honours the scanBoundary setting as a scan does: under stay, a drive mounted inside the folder is left out',
     tag: 'index',
     destructive: false,
     requestBody: jsonBody(obj({
