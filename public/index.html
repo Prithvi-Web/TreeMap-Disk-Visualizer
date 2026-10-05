@@ -8747,24 +8747,43 @@ function followScanProgress(scanId, path, fast, t0) {
   //    grace is /result fetched, once. "running" starts the grace again.
   //  - A stream that has closed goes straight to /result: nothing else can
   //    deliver it.
+  // When is the server dead (finding L6 of the U-1/U-2 review)? Five in a
+  // row of what can only mean it is not there: a refused connection (status
+  // 0) or a 5xx. Anything it sends — a frame on the stream, any HTTP answer —
+  // is proof of life and starts the count again. A poll that is merely slow
+  // (abandoned in flight) or that came back with nothing readable counts
+  // only once nothing at all has arrived for SILENCE_FLOOR_MS: completion
+  // bursts of 7.4–40.8 s were measured at 9.46M items, and five slow polls
+  // (~75–90 s) used to declare a LIVE scan dead. A /result is never
+  // abandoned and asked for again — it is the whole first frame, and on a
+  // slow link that is minutes; its stretches in flight count the same way.
   const QUIET_MS = 6000;
   const IN_FLIGHT_TICKS = 5;
   const RESULT_IN_FLIGHT_TICKS = 40;
   const FRAME_GRACE_TICKS = 10;
+  const SILENCE_FLOOR_MS = 120000;
+  // An unreadable /result is the whole first frame serialized for nothing:
+  // it is asked for again this many ticks later, not every tick (review L4).
+  const RESULT_RETRY_TICKS = 10;
   const NO_ANSWER = 'Couldn’t reach TreeMap — its own server stopped answering. Check the app is still running, then try again.';
   let lastSseAt = performance.now();
+  let lastLifeAt = lastSseAt; // the last frame or answer of any kind
   let finished = false;
   let lastAnnounced = 0; // seconds — the live region speaks once every ten
-  // Consecutive polls nobody answered. A refused connection (status 0), an
-  // unreadable body, a proxy's 502–504 or a poll abandoned in flight all mean
-  // the server is not there to finish this scan; five in a row ends the
-  // wait, because chrome that spins forever over a dead server is a lie.
+  // Counted toward the five that end the wait: chrome that spins forever
+  // over a dead server is a lie.
   let dead = 0;
-  let poll = null; // { controller, ticks, limit } while a request is out
+  let poll = null; // { controller, ticks, limit, result } while a request is out
   let completeTicks = 0;
+  let tickNo = 0;
+  let resultNotBefore = 0; // the tick an unreadable /result may be asked for again
   const stop = () => { finished = true; clearInterval(watchdog); if (poll) poll.controller.abort(); closeEventSource(); };
+  const alive = () => { dead = 0; lastLifeAt = performance.now(); };
   const noAnswer = (message) => {
     if (++dead >= 5 && !finished) { stop(); failScan(message); }
+  };
+  const slowOrUnreadable = (message) => {
+    if (performance.now() - lastLifeAt >= SILENCE_FLOOR_MS) noAnswer(message);
   };
   // Only a body with a status is an answer. null — an empty 2xx, or a body
   // that could not be read — is nobody answering: taken as an answer, it
@@ -8777,11 +8796,13 @@ function followScanProgress(scanId, path, fast, t0) {
    * once, not again — and scanStatsFor's otherwise.
    */
   const completeFromResult = async (mine, statsBody) => {
+    if (tickNo < resultNotBefore) return;
     mine.limit = RESULT_IN_FLIGHT_TICKS;
     mine.ticks = 0;
+    mine.result = true;
     const r = await api(`/api/scan/${scanId}/result`, { signal: mine.controller.signal });
-    if (!answered(r)) { noAnswer(NO_ANSWER); return; }
-    dead = 0;
+    if (!answered(r)) { resultNotBefore = tickNo + RESULT_RETRY_TICKS; slowOrUnreadable(NO_ANSWER); return; }
+    alive();
     if (r.status === 'complete' && !finished) {
       stop();
       if (!isCloud) rememberScannedRoot(path);
@@ -8798,24 +8819,26 @@ function followScanProgress(scanId, path, fast, t0) {
   };
   const watchdog = setInterval(async () => {
     if (!state.scanning || finished) { clearInterval(watchdog); return; }
+    tickNo++;
     if (poll) {
-      // Never a second request beside one in flight.
+      // Never a second request beside one in flight. A /stats this slow is
+      // abandoned and asked again next tick; a /result keeps its place.
       if (++poll.ticks >= poll.limit) {
         poll.ticks = 0;
-        poll.controller.abort();
-        noAnswer(NO_ANSWER);
+        if (!poll.result) poll.controller.abort();
+        slowOrUnreadable(NO_ANSWER);
       }
       return;
     }
     const open = state.es === es && es.readyState !== EventSource.CLOSED;
     if (open && performance.now() - lastSseAt < QUIET_MS) return;
-    const mine = { controller: new AbortController(), ticks: 0, limit: IN_FLIGHT_TICKS };
+    const mine = { controller: new AbortController(), ticks: 0, limit: IN_FLIGHT_TICKS, result: false };
     poll = mine;
     try {
       if (!open) { await completeFromResult(mine, null); return; }
       const s = await api(`/api/scan/${scanId}/stats`, { signal: mine.controller.signal });
-      if (!answered(s)) { noAnswer(NO_ANSWER); return; }
-      dead = 0;
+      if (!answered(s)) { slowOrUnreadable(NO_ANSWER); return; }
+      alive();
       if (s.status === 'running') { completeTicks = 0; return; }
       if (s.status === 'complete' && ++completeTicks <= FRAME_GRACE_TICKS) return; // the frame is on its way
       // Complete past the grace, or failed: /result has the tree, or the
@@ -8833,11 +8856,20 @@ function followScanProgress(scanId, path, fast, t0) {
         failScan(e.status === 404 ? 'The scan expired — please run it again.' : e.message);
         return;
       }
-      if (e.status === 0 || e.code === 'BAD_RESPONSE' || (e.status >= 502 && e.status <= 504)) {
+      // Headers and then nothing readable: not a refusal, and no answer.
+      if (e.code === 'BAD_RESPONSE') {
+        if (mine.result) resultNotBefore = tickNo + RESULT_RETRY_TICKS;
+        slowOrUnreadable(e.message);
+        return;
+      }
+      // Refused (status 0) or a 5xx: the server is not there. A 4xx but a 429
+      // (404 is answered above) is a refusal that waiting cannot turn into
+      // this scan's answer — an auth layer's 401, a 403 (review L5).
+      if (e.status === 0 || e.status >= 501 || (e.status >= 400 && e.status !== 429)) {
         noAnswer(e.message); // api()'s own sentence: check the app is still running
         return;
       }
-      dead = 0;
+      alive();
       /* otherwise: still running or transient (a 429, a 202) — keep waiting */
     } finally {
       if (poll === mine) poll = null;
@@ -8849,6 +8881,7 @@ function followScanProgress(scanId, path, fast, t0) {
   state.abortScan = () => { finished = true; clearInterval(watchdog); if (poll) poll.controller.abort(); };
   es.onmessage = async (ev) => {
     lastSseAt = performance.now();
+    alive(); // any frame is the server alive (L6)
     if (finished) return;
     const msg = JSON.parse(ev.data);
     if (msg.type === 'progress') {

@@ -158,7 +158,7 @@ test('a progress message before every tick makes no request in 20 ticks', async 
   assert.equal(d.calls.length, 0, 'an unchanged frame repeated is still a message');
 });
 
-test('a /stats that never settles makes one request in 10 ticks, is aborted after 5 ticks in flight, and counts toward dead', async () => {
+test('a /stats that never settles makes one request in 10 ticks, is aborted after 5 ticks in flight, and counts toward dead only past two minutes of silence (L6)', async () => {
   const d = drive(() => HANG);
   await d.tick(); // 3 s: not yet quiet
   await d.tick();
@@ -170,11 +170,13 @@ test('a /stats that never settles makes one request in 10 ticks, is aborted afte
   assert.equal(d.calls[0].signal!.aborted, true, 'the fifth tick in flight abandons it');
   await d.ticks(4);
   assert.equal(d.calls.length, 1, 'one request in ten ticks: never a second beside one in flight');
-  // Each five ticks in flight is one "nobody answered"; five of them end the scan, as five dead polls always have.
-  await d.ticks(15);
-  assert.deepEqual(d.failed, [], 'four abandoned polls are still "transient"');
+  // Every five ticks in flight is one slow poll. A completion burst measured
+  // up to 40.8 s on a 9.46M-item disk: slow polls count toward the five only
+  // once nothing — no frame, no answer — has arrived for two minutes (tick 40).
+  await d.ticks(50); // tick 61: slow polls at ticks 42, 47, 52, 57 counted
+  assert.deepEqual(d.failed, [], 'four counted slow polls are still "transient"');
   await d.tick();
-  assert.equal(d.failed.length, 1, 'the fifth ends the scan');
+  assert.equal(d.failed.length, 1, 'the fifth ends the scan, at tick 62');
   assert.match(d.failed[0], /stopped answering/, 'saying the server stopped answering');
   assert.equal(d.timerCleared(), true);
 });
@@ -263,22 +265,27 @@ test('a /result still arriving is not abandoned after five ticks: it carries the
   assert.equal(d.calls[0].signal!.aborted, false, 'a 238.6 MB tree can take longer than fifteen seconds to arrive');
 });
 
-test('a /result in flight is abandoned on its fortieth tick, and five abandoned end the scan (finding 12)', async () => {
+test('a /result in flight is never abandoned or asked for again; each forty ticks it is out past two minutes of silence counts, and five end the scan (finding 12, L6)', async () => {
+  // On a slow (remote) link the whole first frame can take minutes. Abandoned
+  // on its fortieth tick it was asked for again at once, from the start, up
+  // to five times (L6). It keeps its place now; a dead server still never
+  // spins for ever.
   const hung = drive(() => HANG);
   hung.closeStream();
-  await hung.ticks(40); // one tick asks, thirty-nine wait
-  assert.equal(hung.calls[0].signal!.aborted, false, 'thirty-nine ticks in flight: still arriving');
-  await hung.tick();
-  assert.equal(hung.calls[0].signal!.aborted, true, 'the fortieth abandons it: a dead server never spins for ever');
+  await hung.ticks(80);
+  assert.equal(hung.calls.length, 1, 'one /result, never a second');
+  assert.equal(hung.calls[0].signal!.aborted, false, 'and it is not abandoned while it may still be arriving');
 
   const d = drive(() => ABORTABLE);
   d.closeStream();
-  await d.ticks(204);
-  assert.deepEqual(d.failed, [], 'four abandoned downloads are still "transient"');
-  assert.equal(d.urls(RESULT).length, 5, 'one /result at a time, each given its forty ticks');
+  await d.ticks(200); // asked at tick 1; stretches counted at ticks 41, 81, 121, 161
+  assert.deepEqual(d.failed, [], 'four counted stretches are still "transient"');
+  assert.equal(d.urls(RESULT).length, 1, 'still the one /result');
+  assert.equal(d.calls[0].signal!.aborted, false);
   await d.tick();
   assert.equal(d.failed.length, 1, 'the fifth ends the scan');
   assert.match(d.failed[0], /stopped answering/);
+  assert.equal(d.calls[0].signal!.aborted, true, 'and only then is the download dropped');
 });
 
 test('a poll in flight is abandoned when Stop is pressed, and when the complete frame arrives (finding 11)', async () => {
@@ -302,23 +309,45 @@ test('a poll in flight is abandoned when Stop is pressed, and when the complete 
   assert.equal(framed.finished.length, 1, 'and the scan finishes once, from the frame');
 });
 
-test('a poll answered with nothing readable counts toward the five, never as an answer (finding 2)', async () => {
+test('a poll answered with nothing readable is never an answer, and counts toward the five once nothing has arrived for two minutes (finding 2, L6)', async () => {
   // api() hands back null for a 2xx whose body could not be read. Taken as an
-  // answer it reset the count the tick had just added, so a server that sends
-  // headers and then nothing was asked again for ever.
+  // answer it reset the count, so a server that sends headers and then
+  // nothing was asked again for ever (finding 2). It is not a refusal either
+  // (L6): it counts only past the silence floor, as a slow poll does.
+  // An unreadable /result is the whole first frame serialized for nothing:
+  // it is asked for again ten ticks later, not every tick (review L4).
   const closed = drive(() => null);
   closed.closeStream();
-  await closed.ticks(4);
-  assert.deepEqual(closed.failed, [], 'four empty /result answers are still "transient"');
+  await closed.ticks(10);
+  assert.equal(closed.urls(RESULT).length, 1, 'one unreadable /result, then a wait');
   await closed.tick();
+  assert.equal(closed.urls(RESULT).length, 2, 'asked again at tick 11');
+  await closed.ticks(69); // asked at 21, 31, 41 (counted: past two minutes), 51, 61, 71
+  assert.deepEqual(closed.failed, [], 'four counted empty /result answers are still "transient"');
+  await closed.tick(); // tick 81
   assert.equal(closed.failed.length, 1, 'the fifth ends the scan');
   assert.match(closed.failed[0], /stopped answering/);
+  assert.equal(closed.urls(RESULT).length, 9, 'nine first frames in four minutes, not eighty');
+  const garbled = drive(() => httpError(200, 'BAD_RESPONSE', 'TreeMap couldn’t read the answer its own server sent.'));
+  garbled.closeStream();
+  await garbled.ticks(10);
+  assert.equal(garbled.urls(RESULT).length, 1, 'a body that is not JSON waits the same');
 
   const open = drive(() => null);
-  await open.ticks(5); // the first tick is not yet quiet
-  assert.deepEqual(open.failed, [], 'four empty /stats answers are still "transient"');
+  await open.ticks(43);
+  assert.deepEqual(open.failed, [], 'four counted empty /stats answers are still "transient"');
   await open.tick();
   assert.equal(open.failed.length, 1, 'the fifth ends the scan');
+
+  // Nor does an empty answer wipe out refusals counted before it.
+  const offline = httpError(0, 'OFFLINE', 'Couldn’t reach TreeMap');
+  const mixed = drive((_url, n) => (n === 5 ? null : offline));
+  await mixed.ticks(5); // ticks 2-5: four refusals
+  assert.deepEqual(mixed.failed, []);
+  await mixed.tick(); // the empty answer
+  assert.deepEqual(mixed.failed, [], 'an empty answer is not counted before the floor');
+  await mixed.tick(); // the fifth refusal
+  assert.equal(mixed.failed.length, 1, 'and is no answer: the fifth refusal ends the scan');
 });
 
 test('api() passes on an abort that lands while the body is arriving, as it does one before the headers (finding 2)', async () => {
@@ -380,10 +409,61 @@ test('a /stats "error" fetches /result for the message, and the scan fails with 
   assert.deepEqual(d.failed, ['The folder could not be read.']);
 });
 
+test('five refused polls end the scan; any frame or answer between them starts the count again (L6)', async () => {
+  // Refused, a 5xx or a status 0 is the server not there. Anything it sends —
+  // a frame on the stream, a 429, a 202 — is the server alive, and the
+  // count starts again: refusals separated by healthy stretches no longer
+  // add up to a dead scan.
+  const offline = httpError(0, 'OFFLINE', 'Couldn’t reach TreeMap');
+  const framed = drive(() => offline);
+  await framed.ticks(5); // ticks 2-5: four refusals
+  assert.deepEqual(framed.failed, []);
+  await framed.message({ type: 'progress', scanned: 5, currentPath: '/Users/x/a' });
+  await framed.ticks(2); // quiet again on the second
+  await framed.ticks(3); // four more refusals in all
+  assert.deepEqual(framed.failed, [], 'a frame between them: four, then four, is never five');
+  await framed.tick();
+  assert.equal(framed.failed.length, 1, 'five in a row end it');
+  assert.match(framed.failed[0], /reach TreeMap/, 'in the transport\'s own words');
+
+  const answeredBetween = drive((_url, n) => (n === 5 ? httpError(429, 'RATE_LIMITED') : offline));
+  await answeredBetween.ticks(10); // tick 1 is not yet quiet; then four refusals, a 429, four refusals
+  assert.deepEqual(answeredBetween.failed, [], 'an HTTP answer between them starts the count again');
+  await answeredBetween.tick();
+  assert.equal(answeredBetween.failed.length, 1);
+
+  const unavailable = drive(() => httpError(507, 'HTTP_507'));
+  await unavailable.ticks(5);
+  assert.deepEqual(unavailable.failed, []);
+  await unavailable.tick();
+  assert.equal(unavailable.failed.length, 1, 'any 5xx but the scan\'s own 500 counts as down, not as an answer');
+
+  // A refusal that can never turn into the scan's answer — a 401 from an
+  // auth layer, a 403, a 400 — is not proof of life either (review L5).
+  const unauthorized = drive(() => httpError(401, 'UNAUTHORIZED', 'This TreeMap needs its access token.'));
+  await unauthorized.ticks(5);
+  assert.deepEqual(unauthorized.failed, []);
+  await unauthorized.tick();
+  assert.deepEqual(unauthorized.failed, ['This TreeMap needs its access token.'], 'five end the scan, in the server\'s words');
+});
+
+test('a busy server that answers slowly between frames is never declared dead (L6)', async () => {
+  // Completion bursts of 7.4–40.8 s were measured at 9.46M items; abandoned
+  // /stats counted at once, five of them (~75–90 s) declared a LIVE scan dead.
+  const d = drive(() => ABORTABLE);
+  for (let cycle = 0; cycle < 4; cycle++) {
+    await d.ticks(36); // ~108 s of silence: six /stats abandoned, none counted
+    await d.message({ type: 'progress', scanned: 100 + cycle, currentPath: '/Users/x/a' });
+  }
+  assert.deepEqual(d.failed, [], 'four bursts of nearly two minutes each are not a dead server');
+  assert.ok(d.urls(STATS).length >= 20, `and the server was asked, slowly, all along (${d.urls(STATS).length} times)`);
+});
+
 test('the watchdog constants are the plan\'s: 5 ticks in flight, 10 ticks of grace, 6 s of quiet', () => {
   const src = slice('function followScanProgress(', 'async function startCloudScan(');
   assert.match(src, /const IN_FLIGHT_TICKS = 5;/);
   assert.match(src, /const RESULT_IN_FLIGHT_TICKS = 40;/, 'the /result allowance, the one departure from the plan (U-2 review, finding 12)');
   assert.match(src, /const FRAME_GRACE_TICKS = 10;/);
   assert.match(src, /const QUIET_MS = 6000;/);
+  assert.match(src, /const SILENCE_FLOOR_MS = 120000;/, 'slow and unreadable polls count only past two minutes of silence (L6)');
 });

@@ -666,8 +666,11 @@ test('five unreachable polls in a row end the scan as failed instead of spinning
 test('a single transient miss between good polls does not count toward giving up', async () => {
   const src = slice('function followScanProgress(', 'async function startCloudScan(');
   assert.match(src, /dead = 0/, 'a good answer resets the count');
-  assert.match(src, /e\.status === 0 \|\| e\.code === 'BAD_RESPONSE' \|\| \(e\.status >= 502 && e\.status <= 504\)/,
-    'only "nobody answered" shapes count — a 429 or a 202 is still a live server');
+  // L6: only a refusal or a 5xx counts at once; an unreadable answer only past
+  // the silence floor; a 429 or a 202 is a live server (tests/scanWatchdog).
+  assert.match(src, /if \(e\.status === 0 \|\| e\.status >= 501 \|\| \(e\.status >= 400 && e\.status !== 429\)\) \{\s*noAnswer\(e\.message\)/,
+    'only "nobody there" shapes count at once — a 429 or a 202 is still a live server');
+  assert.match(src, /if \(e\.code === 'BAD_RESPONSE'\) \{[^}]*slowOrUnreadable\(e\.message\);\s*return;\s*\}/);
 });
 
 /* ══════════════ states-errors-6 — three lists that failed say so, with a retry ══════════════ */
