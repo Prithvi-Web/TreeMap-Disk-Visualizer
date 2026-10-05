@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, livesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, livesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
 import { DATA_VOLUME, exclusionsOf, isAtOrUnder, parseFirmlinks } from '../utils/mountBoundaries';
@@ -194,7 +194,11 @@ function whereUnlessSecondName(p: string): string | null {
   // As typed first: on Windows realpath may re-spell a volume's GUID name with its drive letter.
   if (aliasNamespaceOf(p) !== null) return null;
   const where = placeOf(p);
-  return aliasNamespaceOf(where) === null ? where : null;
+  if (aliasNamespaceOf(where) !== null) return null;
+  // A link that itself leads through one: the sanitizer refuses it, and so does this rule (the
+  // SEC-2 review, F3). A link in the parents that realpath cannot follow is judged where its target
+  // says it leads, inside placeOf (pathSanitizer's whereLinkLeads).
+  return linkLeadsThroughSecondName(p) ? null : where;
 }
 
 /**

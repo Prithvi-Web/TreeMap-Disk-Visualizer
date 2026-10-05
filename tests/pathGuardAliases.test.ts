@@ -248,7 +248,10 @@ test('after a scan of / that did not enter a drive, a second name of that drive 
     const link = path.join(T, 'to-drive');
     fs.symlinkSync(`/.nofollow${mnt}`, link);
     assert.equal(insideAnyScanRoot(path.join(link, 'f.txt')), false, 'a file beneath a link that leads through /.nofollow');
-    assert.equal(insideAnyScanRoot(link), true, 'the link itself lives in the scan, and trashing it removes the link');
+    // The link itself lives in the scan, but the sanitizer judges a link where it leads and refuses it,
+    // and opening or previewing it would follow it there: the rule agrees (the SEC-2 review, F3).
+    assert.equal(insideAnyScanRoot(link), false, 'nor the link itself');
+    assert.equal(rejection(link), 'PATH_BLOCKED', 'which the sanitizer refuses too');
     // End to end, a dry run of each: refused by the sanitizer before the rule is asked.
     const alias = `/.nofollow${path.join(mnt, 'f.txt')}`;
     const r = await request('DELETE', '/api/files', { paths: [alias], dryRun: true });
@@ -260,6 +263,61 @@ test('after a scan of / that did not enter a drive, a second name of that drive 
     scan = await startScan(T);
     await waitFor(() => scan.status !== 'running', `the scan of ${T}, again`);
   }
+});
+
+/* ─────────────── Links realpath cannot follow (the SEC-2 review, F3) ─────────────── */
+
+test('a link whose target is spelled through /.nofollow, /.resolve or /.vol is judged where it says it leads, though realpath cannot follow the last two: the sanitizer and the scanned-root rule both refuse it, beneath it and as itself', { skip: !DARWIN && 'the namespaces are macOS’s' }, async () => {
+  // realpath gives a /.nofollow target back unchanged, but fails on a /.resolve target (EINVAL) and a
+  // /.vol one (ENOENT); the failure was answered with the link's own spelling, so `via-resolve/f.txt`
+  // and `via-vol/f.txt` read as files of the scan, and the links themselves passed the sanitizer.
+  // Today's kernel does not follow these names through a link's target, so the grant dangled — it is
+  // refused all the same, as the /.nofollow one always was.
+  const dir = path.join(T, 'f3-aliases');
+  const target = path.join(dir, 'target');
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, 'f.txt'), 'f');
+  const st = fs.lstatSync(target);
+  // lstat and readlink go through /.resolve to a link there, so the chase must stop at the second
+  // name rather than read on to the scanned folder the hop leads to.
+  fs.symlinkSync(target, path.join(dir, 'hop'));
+  const links: Record<string, string> = {
+    'via-nofollow': `/.nofollow${target}`,
+    'via-resolve': `/.resolve/1${target}`,
+    'via-vol': `/.vol/${st.dev}/${st.ino}`,
+    'via-resolve-hop': `/.resolve/1${path.join(dir, 'hop')}`,
+  };
+  for (const [name, to] of Object.entries(links)) fs.symlinkSync(to, path.join(dir, name));
+  for (const name of Object.keys(links)) {
+    const link = path.join(dir, name);
+    assert.equal(rejection(path.join(link, 'f.txt')), 'PATH_BLOCKED', `${name}/f.txt: the sanitizer`);
+    assert.equal(insideAnyScanRoot(path.join(link, 'f.txt')), false, `${name}/f.txt: the scanned-root rule`);
+    assert.equal(rejection(link), 'PATH_BLOCKED', `${name}: the link itself, to the sanitizer`);
+    assert.equal(insideAnyScanRoot(link), false, `${name}: the link itself, to the scanned-root rule — the two agree`);
+  }
+  const r = await request('DELETE', '/api/files', { paths: [path.join(dir, 'via-resolve', 'f.txt')], dryRun: true });
+  assert.deepEqual([r.status, r.body.code], [400, 'PATH_BLOCKED'], JSON.stringify(r.body));
+  // The target by its own name, and a link realpath does follow, are ordinary paths of the scan.
+  fs.symlinkSync(target, path.join(dir, 'via-plain'));
+  for (const p of [path.join(target, 'f.txt'), path.join(dir, 'via-plain', 'f.txt'), path.join(dir, 'via-plain')]) {
+    assert.equal(rejection(p), null, p);
+    assert.equal(insideAnyScanRoot(p), true, p);
+  }
+});
+
+test('a link realpath cannot follow because its target is missing is judged where the target says it leads, never as a folder of the scan', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+  // Answered with the link's own spelling, `dangling/x` read as a file of the scan; a folder made at
+  // the target between the check and the act would then take the act (the SEC-2 review, F3).
+  const dir = path.join(T, 'f3-dangling');
+  fs.mkdirSync(dir);
+  const outside = path.join(DEST, 'not-made-yet');
+  fs.symlinkSync(outside, path.join(dir, 'out'));
+  fs.symlinkSync(path.join(dir, 'later'), path.join(dir, 'in'));
+  assert.equal(insideAnyScanRoot(path.join(dir, 'out', 'x.txt')), false, 'beneath a link that leads out of the scan, to nothing yet');
+  assert.equal(insideAnyScanRoot(path.join(dir, 'out', 'sub', 'x.txt')), false, 'and deeper');
+  assert.equal(insideAnyScanRoot(path.join(dir, 'in', 'x.txt')), true, 'one that leads to a place in the scan is in the scan');
+  assert.equal(insideAnyScanRoot(path.join(dir, 'out')), true, 'the link itself lives in the scan, and trashing it removes the link');
+  assert.equal(rejection(path.join(dir, 'out')), null, 'which the sanitizer passes too: its target is an ordinary path');
 });
 
 /* ─────────────── Every route and tool that takes a path ─────────────── */

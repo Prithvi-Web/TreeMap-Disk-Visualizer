@@ -582,7 +582,11 @@ read-what-you-saw) permission to act.
   drive-letter path (`\\?\C:\…`) or a UNC path (`\\?\UNC\server\share\…`)
   passes. The scanned-root rule refuses such a spelling on its own as well
   (`OUTSIDE_SCAN_ROOT` to a caller that skipped the sanitizer), including
-  through a link whose target is spelled that way.
+  through a link whose target is spelled that way — a link in the path's
+  folders, or the path itself being such a link, which both rules refuse
+  alike. A link realpath cannot follow (its target is missing, it loops, or
+  its target is spelled through `/.resolve` or `/.vol`) is judged where its
+  target says it leads, never as a folder of the scan it sits in.
 - **Cloud and archive paths.** `cloud://` paths never touch the local
   filesystem — their deletes go to the provider's own trash via
   `POST /api/cloud/trash`. Entries *inside* archives are listings, not files

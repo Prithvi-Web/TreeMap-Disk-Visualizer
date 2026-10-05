@@ -141,10 +141,13 @@ function canonDir(dir: string): string {
   return value;
 }
 
-function canonDirUncached(dir: string): string {
+function canonDirUncached(dir: string, hops = 0): string {
   try {
     return strip(fs.realpathSync.native(dir));
   } catch (err) {
+    // A link realpath could not follow is judged where it says it leads, never as a folder here.
+    const led = whereLinkLeads(dir, hops);
+    if (led !== null) return led;
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return dir;
   }
   // ENOENT: climb toward the root looking for a real ancestor to canonicalise,
@@ -154,6 +157,48 @@ function canonDirUncached(dir: string): string {
   const parent = path.dirname(dir);
   if (parent === dir) return dir; // a root that will not resolve: nothing above it
   return path.join(canonDir(parent), path.basename(dir));
+}
+
+/**
+ * Where the link at `p` says it leads, for a link realpath cannot follow (the SEC-2 review, F3): a
+ * target that is missing, a loop, or a target spelled through a second name — realpath fails on a
+ * `/.resolve/…` target (EINVAL) and a `/.vol/…` one (ENOENT). Answering those with the link's own
+ * spelling made everything beneath the link read as a folder of its own folder: inside a scan, and
+ * past the blocklist and the alias test. Its target is read and resolved from the folder the link is
+ * in, then judged where that is, link by link. A target spelled through a second name is answered as
+ * spelled, so the alias test sees it; past the kernel's own limit of links (a loop) the last target
+ * read is the answer — nothing lies beneath a loop, and every call there fails. Null when `p` is not
+ * a link.
+ */
+function whereLinkLeads(p: string, hops: number): string | null {
+  const target = linkTargetOf(p);
+  if (target === null) return null;
+  if (aliasNamespaceOf(target) !== null || hops >= MAX_LINK_HOPS) return target;
+  return canonDirUncached(target, hops + 1);
+}
+
+/**
+ * Whether `p` is itself a link that leads through a second name (`aliasNamespaceOf`): where
+ * realpath says it leads, or where its target says when realpath cannot follow it
+ * (`whereLinkLeads`). The sanitizer judges a link where it leads and refuses that one; the
+ * scanned-root rule asks this so that it agrees (the SEC-2 review, F3) — opening or previewing the
+ * link would follow it. One lstat, and a realpath only for a link.
+ */
+export function linkLeadsThroughSecondName(p: string): boolean {
+  let leaf: fs.Stats | undefined;
+  try {
+    leaf = fs.lstatSync(p, { throwIfNoEntry: false });
+  } catch {
+    return false; // unreadable: judged by its parents alone, as before
+  }
+  if (!leaf?.isSymbolicLink()) return false;
+  let led: string | null;
+  try {
+    led = strip(fs.realpathSync.native(p));
+  } catch {
+    led = whereLinkLeads(p, 0);
+  }
+  return led !== null && aliasNamespaceOf(led) !== null;
 }
 
 /**
@@ -321,10 +366,13 @@ function canonicalize(resolved: string): string {
     // says where the link lives, and that is the fact the blocklist is about.
     return isBlocked(candidate) ? candidate : viaLink;
   } catch {
-    // A dangling link or a symlink loop points at nothing, so it is not a
-    // blocklist bypass; the canonical parent plus the link's own name is the
-    // most that can honestly be said about it.
-    return candidate;
+    // realpath could not follow the link — its target is missing, it loops, or the target is
+    // spelled through a second name realpath cannot resolve (/.resolve, /.vol): it is judged where
+    // its target says it leads (`whereLinkLeads`, the SEC-2 review, F3), the more restrictive answer
+    // winning as above. Anything else realpath refused keeps the canonical parent plus its own name.
+    const led = leaf?.isSymbolicLink() ? whereLinkLeads(resolved, 0) : null;
+    if (led === null) return candidate;
+    return isBlocked(candidate) ? candidate : stripDataVolume(led);
   }
 }
 
