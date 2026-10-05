@@ -515,49 +515,94 @@ const reclaiming = new Map<number, { handle: Database.Database; done: Promise<vo
 /** Every reclaim not yet settled, whichever index it ran in. */
 const unsettledReclaims = new Set<Promise<void>>();
 
+/** One root's reclaim: the index it runs in, its next slice's number less one, and its promise with how to settle it. */
+interface Reclaim {
+  handle: Database.Database;
+  rootId: number;
+  slices: number;
+  seams: ReclaimSeams | null;
+  done: Promise<void>;
+  settle: () => void;
+}
+
 /**
- * Deletes the rows of root `rootId`, already set aside, at most
- * INDEX_RECLAIM_ROWS a statement with a turn of the event loop before each,
- * then its root row — last, so `ON DELETE CASCADE` finds nothing to delete.
- * Stops when the index it was given has been closed: the root still reads
- * 'building', and the next open reclaims the rest.
+ * Every reclaim not yet finished, oldest first: ONE queue, whatever the
+ * number of roots (review of 5 Oct 2026, L-2). Each reclaim looping on its
+ * own ran one slice each in the same turn of the event loop — six roots at
+ * once, six slices, about 150 ms between two polls at the real slice — so
+ * one pump runs one slice a turn, of the oldest, between them all.
  */
-async function reclaimRows(handle: Database.Database, rootId: number): Promise<void> {
-  const seams = reclaimSeams;
-  const rows = seams?.rows ?? INDEX_RECLAIM_ROWS;
-  const slice = handle.prepare('DELETE FROM nodes WHERE rowid IN (SELECT rowid FROM nodes WHERE root_id = ? LIMIT ?)');
-  for (let n = 1; ; n++) {
-    await yieldToLoop();
-    await seams?.beforeSlice?.(rootId, n);
-    if (db !== handle) return;
-    const { changes } = slice.run(rootId, rows);
-    seams?.afterSlice?.(rootId, n, changes);
-    if (changes < rows) {
-      // Nothing is left under it: the slice took fewer than it asked for.
-      handle.prepare('DELETE FROM roots WHERE id = ?').run(rootId);
-      return;
+const reclaimQueue: Reclaim[] = [];
+let reclaimPumping = false;
+
+/**
+ * One slice of `job`'s rows — at most INDEX_RECLAIM_ROWS in one statement —
+ * and, once nothing is left under it, its root row: last, so `ON DELETE
+ * CASCADE` finds nothing to delete. Answers whether the reclaim is over.
+ * It is over, quietly, when the index it was given has been closed: the
+ * root still reads 'building', and the next open reclaims the rest.
+ */
+async function reclaimSlice(job: Reclaim): Promise<boolean> {
+  const rows = job.seams?.rows ?? INDEX_RECLAIM_ROWS;
+  const n = ++job.slices;
+  await job.seams?.beforeSlice?.(job.rootId, n);
+  if (db !== job.handle) return true;
+  const { changes } = job.handle
+    .prepare('DELETE FROM nodes WHERE rowid IN (SELECT rowid FROM nodes WHERE root_id = ? LIMIT ?)')
+    .run(job.rootId, rows);
+  job.seams?.afterSlice?.(job.rootId, n, changes);
+  if (changes < rows) {
+    // Nothing is left under it: the slice took fewer than it asked for.
+    job.handle.prepare('DELETE FROM roots WHERE id = ?').run(job.rootId);
+    return true;
+  }
+  return false;
+}
+
+/** Runs the queue to its end: a turn of the event loop, then one slice of the oldest reclaim. Never rejects. */
+async function pumpReclaims(): Promise<void> {
+  reclaimPumping = true;
+  try {
+    while (reclaimQueue.length > 0) {
+      await yieldToLoop();
+      const job = reclaimQueue[0];
+      let over: boolean;
+      try {
+        over = await reclaimSlice(job);
+      } catch (err) {
+        console.error(`[treemap] the rows of an index that was replaced or discarded (root ${String(job.rootId)}) were not all reclaimed; the next build, delete or start reclaims the rest:`, err);
+        over = true;
+      }
+      if (over) {
+        reclaimQueue.shift();
+        unsettledReclaims.delete(job.done);
+        if (reclaiming.get(job.rootId)?.done === job.done) reclaiming.delete(job.rootId);
+        job.settle();
+      }
     }
+  } finally {
+    reclaimPumping = false;
   }
 }
 
 /**
- * Reclaims root `rootId`'s rows behind the caller (`reclaimRows`). Nothing
- * waits on it; a failure is logged, and the root, still 'building' and set
- * aside, is reclaimed by the next build, delete or open (`reclaimLeftovers`).
+ * Reclaims root `rootId`'s rows behind the caller, in its turn in the one
+ * queue (`pumpReclaims`). Nothing waits on it; a failure is logged, and the
+ * root, still 'building' and set aside, is reclaimed by the next build,
+ * delete or open (`reclaimLeftovers`).
  */
 function reclaimLater(handle: Database.Database, rootId: number): void {
   if (reclaiming.get(rootId)?.handle === handle) return;
-  const done: Promise<void> = reclaimRows(handle, rootId)
-    .catch((err: unknown) => {
-      console.error(`[treemap] the rows of an index that was replaced or discarded (root ${String(rootId)}) were not all reclaimed; the next build, delete or start reclaims the rest:`, err);
-    })
-    .finally(() => {
-      unsettledReclaims.delete(done);
-      if (reclaiming.get(rootId)?.done === done) reclaiming.delete(rootId);
-    });
+  let settle!: () => void;
+  const done = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  reclaimQueue.push({ handle, rootId, slices: 0, seams: reclaimSeams, done, settle });
   reclaiming.set(rootId, { handle, done });
   unsettledReclaims.add(done);
   trackWrite('index-reclaim', done); // tracked, so `settled()` waits for it; `done` never rejects
+  // Tracked too, so `settled()` waits for the pump as for each reclaim; it never rejects.
+  if (!reclaimPumping) trackWrite('index-reclaim-pump', pumpReclaims());
 }
 
 /**

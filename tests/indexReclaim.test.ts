@@ -114,6 +114,8 @@ function watchReclaims(t: TestContext, opts: { rootId?: () => number | undefined
     /** Waits until a reclaim is held. */
     whenHeld: () => waitFor(() => heldFor !== null, 'a reclaim being held before its slice'),
     slices: (rootId: number): Slice[] => slices.filter((s) => s.rootId === rootId),
+    /** Every slice of every reclaim, in the order they ran. */
+    all: (): Slice[] => [...slices],
   };
 }
 
@@ -236,6 +238,34 @@ test('a build stopped at its cap, cancelled, or failed is out of sight at once, 
     assert.equal(rowsUnder(doomed), 0, `${how}: every row it wrote is reclaimed`);
     assert.equal(rootRow(doomed), undefined, `${how}: and its root`);
   }
+});
+
+/* ══════════════════ several reclaims at once (review of 5 Oct 2026, L-2) ══════════════════ */
+
+test('several reclaims at once take turns in one queue: one slice an event-loop turn between them all, never one slice each in the same turn', async (t) => {
+  await reclaimsSettled();
+  const ids: number[] = [];
+  for (const name of ['k1', 'k2', 'k3']) {
+    const dir = folder(name);
+    addFiles(dir, 250); // 251 rows with the folder: slices of 100, 100 and 51
+    ids.push((await buildIndex(dir, { live: false })).id);
+  }
+  // What a crash leaves: three roots still building, reclaimed together by the next open.
+  const mark = openIndex().prepare("UPDATE roots SET state = 'building' WHERE id = ?");
+  for (const id of ids) mark.run(id);
+  closeIndex();
+
+  const watch = watchReclaims(t, { at: Number.MAX_SAFE_INTEGER, rows: 100 });
+  openIndex();
+  await reclaimsSettled();
+  const slices = watch.all();
+  for (const id of ids) assert.deepEqual(watch.slices(id).map((s) => s.rows), [100, 100, 51], `root ${String(id)} is reclaimed whole, in slices`);
+  assert.equal(slices.length, 9);
+  for (let i = 1; i < slices.length; i++) {
+    assert.ok(slices[i].tick > slices[i - 1].tick,
+      `the event loop turned between slice ${String(i)} (root ${String(slices[i - 1].rootId)}) and slice ${String(i + 1)} (root ${String(slices[i].rootId)}): ticks ${String(slices[i - 1].tick)} then ${String(slices[i].tick)}`);
+  }
+  for (const id of ids) assert.equal(rootRow(id), undefined);
 });
 
 /* ══════════════════ the open after a crash ══════════════════ */
