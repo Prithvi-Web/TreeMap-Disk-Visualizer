@@ -494,6 +494,70 @@ test('pressing "Scan my home folder" changes the card: a scanning step, entered 
   function block() { return slice('/* ───────────────────── v4 §9.2', '/* ───────────── end §9.2'); }
 });
 
+/* ══════════════ QA D22 — a new scan takes down the last scan's facts ══════════════ */
+
+/** beginScanChrome and restoreDashboardPanels out of the built page, with the dashboard's facts as the last scan left them. */
+function chromeHarness(scanStats: Record<string, unknown> | null) {
+  const begin = slice('function beginScanChrome(', 'function endScanChrome(');
+  const restore = braced('function restoreDashboardPanels(');
+  const { $, els } = makeDom();
+  for (const id of ['sparseRow', 'hardlinkRow', 'cloudRow', 'engineRow', 'indexBadge', 'indexLine']) $(id).hidden = false;
+  $('statFiles').textContent = '101,034'; $('statFiles').dataset.v = '101034';
+  $('statDirs').textContent = '5,630'; $('statDirs').dataset.v = '5630';
+  const calls: string[] = [];
+  const counted: Array<[string, number]> = [];
+  const state: Record<string, unknown> = {
+    scanning: false, scanGen: 0, whatsNew: { seq: 0 }, scanStats,
+    largest: [], bigFolders: [], types: [], donut: {},
+  };
+  const noop = () => {};
+  const deps: Record<string, unknown> = {
+    $, state, setScanButtonMode: noop, icon: () => '', REDUCED: true, fxStateBeam: noop, fxOrbShow: noop, fxScanHeroSync: noop,
+    tourScanStarted: noop, escapeHtml: (x: string) => x, skeletonRows: () => '<i>skeleton</i>', fxDonutLoadingSync: noop,
+    switchView: noop, // renderIndexBadge is the page's own: the slice carries its declaration
+    renderDiskNotes: () => { calls.push('notes'); }, renderBigFiles: noop, renderBigFolders: noop, renderDonut: noop,
+    countUp: (e: El, n: number) => { counted.push([e === $('statFiles') ? 'files' : 'dirs', n]); },
+  };
+  // The slice carries 045's own `indexLineGen` and renderIndexLine: the generation a background index build checks before it paints.
+  const fns = new Function(...Object.keys(deps), `'use strict'; ${begin} ${restore} return { beginScanChrome, restoreDashboardPanels, gen: () => indexLineGen };`)(
+    ...Object.values(deps),
+  ) as { beginScanChrome: (o?: { quiet?: boolean; message?: string }) => void; restoreDashboardPanels: () => void; gen: () => number };
+  return { ...fns, els, calls, counted, state };
+}
+
+test('a new scan takes down the last scan\'s facts instead of standing them beside its skeletons (QA D22)', () => {
+  const h = chromeHarness({ fileCount: 101034, dirCount: 5630, engine: 'native', durationMs: 200, scanned: 106664, sparseFiles: 4 });
+  h.beginScanChrome();
+  for (const id of ['sparseRow', 'hardlinkRow', 'cloudRow', 'engineRow']) {
+    assert.equal(h.els[id].hidden, true, `${id}: the last scan's line is not this scan's`);
+  }
+  assert.equal(h.els.statFiles.textContent, '–', 'Quick Stats no longer says 101,034 files');
+  assert.equal(h.els.statDirs.textContent, '–');
+  assert.equal(Number(h.els.statFiles.dataset.v), 0, 'and the roll restarts from nothing, not from the old count');
+  assert.equal(h.els.indexBadge.hidden, true, '"Index live — always current" is not claimed for a folder being scanned');
+  assert.equal(h.els.indexLine.hidden, true, 'nor the last folder\'s indexing line');
+  assert.equal(h.gen(), 1, 'and a build of the last folder still running may not paint either back beside the skeletons (review L2)');
+
+  // Stopped or failed: the previous tree stays on screen, and so do the facts about it.
+  h.restoreDashboardPanels();
+  assert.ok(h.calls.includes('notes'), 'the sparse, hard-link, cloud and engine lines are painted again from the stats still held');
+  assert.deepEqual(h.counted, [['files', 101034], ['dirs', 5630]], 'and the tiles count back up to them');
+  const none = chromeHarness(null);
+  none.beginScanChrome();
+  none.restoreDashboardPanels();
+  assert.equal(none.els.statFiles.textContent, '–', 'with no scan behind the screen, the tiles stay blank');
+  assert.deepEqual(none.counted, []);
+});
+
+test('a quiet refresh behind a painted tree leaves its facts where they are (QA D22)', () => {
+  const h = chromeHarness({ fileCount: 101034, dirCount: 5630 });
+  h.beginScanChrome({ quiet: true, message: 'Starting scan…' });
+  for (const id of ['sparseRow', 'hardlinkRow', 'cloudRow', 'engineRow']) assert.equal(h.els[id].hidden, false, `${id} stays`);
+  assert.equal(h.els.statFiles.textContent, '101,034');
+  assert.equal(h.els.indexBadge.hidden, false, 'the badge describes the tree still on screen');
+  assert.equal(h.gen(), 0, 'and its index build goes on speaking for it');
+});
+
 /* ══════════════ states-errors-1 — a quiet rescan that fails ends the chrome ══════════════ */
 
 test('a failed background rescan clears the spinner, the skeletons and the Stop button — and says so', () => {

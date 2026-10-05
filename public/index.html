@@ -8080,6 +8080,14 @@ function restoreDashboardPanels() {
   else $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
   if (state.types.length) { state.donut.animated = false; renderDonut(); }
   else { $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>'; fxDonutLoadingSync(false); }
+  // And the lines and tiles beginScanChrome took down (QA D22), from the
+  // stats of the tree still on screen; blank when there is none.
+  renderDiskNotes();
+  const s = state.scanStats;
+  for (const [id, n] of [['statFiles', s ? s.fileCount : null], ['statDirs', s ? s.dirCount : null]]) {
+    if (typeof n === 'number') countUp($(id), n);
+    else { $(id).dataset.v = 0; $(id).textContent = '–'; }
+  }
 }
 
 /**
@@ -8324,6 +8332,19 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // invalidate any in-flight snapshot poll so it can't repaint mid-scan.
   state.whatsNew.seq++;
   $('whatsNewCard').hidden = true;
+  // So are its facts (QA D22): "4 files claim 7.1 GB…", the engine line,
+  // Quick Stats' counts and "Index live — always current" stood beside the
+  // skeletons until finishScan repainted them. Blanked the way finishScan
+  // blanks a tile it has no number for; restoreDashboardPanels puts the lines
+  // and tiles back when the scan is stopped or fails, as the last tree stays
+  // on screen. The index badge and line stay down until the next scan paints
+  // them: a background build of the last folder no longer speaks (the
+  // generation moves on, review L2), and its claim was not re-checked.
+  for (const id of ['sparseRow', 'hardlinkRow', 'cloudRow', 'engineRow']) $(id).hidden = true;
+  for (const id of ['statFiles', 'statDirs']) { $(id).dataset.v = 0; $(id).textContent = '–'; }
+  renderIndexBadge(null);
+  indexLineGen++;
+  renderIndexLine(null);
   $('emptyState').style.display = 'none';
   switchView('dashboard');
 }
