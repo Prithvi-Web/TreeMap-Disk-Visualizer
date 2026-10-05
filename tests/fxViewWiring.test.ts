@@ -100,8 +100,16 @@ test('trendNetPoints draws no delta across a change of the drives a scan stopped
     { t: 200, v: 50 },
     { t: 400, v: 30 },
   ], 'the step at 300 is a drive, not a change: never drawn as 850 freed');
-  const crossed = [{ takenAt: 1, totalSize: 5 }, { takenAt: 2, totalSize: 7, boundary: { rule: 'cross', entered: ['/r/mnt'] } }];
-  assert.deepEqual(trendNetPoints(crossed), [{ t: 2, v: 2 }], 'a scan that went in compares with one from before U-24, as the server does');
+  // A crossing scan's key names the drives it went into (the SEC-1 review, L2): a snapshot with no
+  // boundary is also what the next crossing scan records once the drive is unplugged.
+  const into = { rule: 'cross', entered: ['/r/mnt'] };
+  const crossed = [
+    { takenAt: 1, totalSize: 5 },
+    { takenAt: 2, totalSize: 1505, boundary: into }, // went into the drive
+    { takenAt: 3, totalSize: 1510, boundary: into },
+    { takenAt: 4, totalSize: 10 }, // the drive was gone
+  ];
+  assert.deepEqual(trendNetPoints(crossed), [{ t: 3, v: 5 }], 'a drive in and out of the count is never drawn as growth or as 1,500 freed');
 });
 
 test('calQuarterOf reads the quarter from the ISO string alone', () => {

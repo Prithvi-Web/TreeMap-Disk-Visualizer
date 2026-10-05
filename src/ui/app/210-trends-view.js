@@ -160,9 +160,15 @@ function drawTrendChart() {
     draws, derived from the SAME series the area chart plots. No delta is
     drawn between two snapshots that stopped at different drives mounted
     inside the folder (Track U, U-24): the step is a drive, not a change. The
-    key is the server's (`boundaryKeyOf`): the drives a scan left out. */
+    key is the server's (`boundaryKeyOf`): the drives a scan left out, or the
+    ones a crossing scan went into (the SEC-1 review, L2). */
 function trendNetPoints(snaps) {
-  const key = (s) => (s.boundary && s.boundary.rule === 'stay' ? s.boundary.notEntered.join('\n') : '');
+  const key = (s) => {
+    const b = s.boundary;
+    if (!b) return '';
+    if (b.rule === 'stay') return b.notEntered.join('\n');
+    return b.entered.length === 0 ? '' : ['entered', ...b.entered].join('\n');
+  };
   const out = [];
   for (let i = 1; i < snaps.length; i++) {
     if (key(snaps[i]) !== key(snaps[i - 1])) continue;

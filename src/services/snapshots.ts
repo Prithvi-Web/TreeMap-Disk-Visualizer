@@ -294,12 +294,19 @@ export function snapshotBoundaryOf(scan: ScanResult): SnapshotBoundary | undefin
 
 /**
  * Two scans counted the same disk when their keys are equal: the drives a scan
- * left out, sorted, or '' when it left none out — which is also what every
- * scan before U-24 did, and what a scan that crosses still does. History never
- * compares across two keys: the difference would be a drive, not a change.
+ * left out, sorted; or, for a scan that crossed, the drives it went into, under
+ * a mark of their own (one drive counted and the same drive left out are two
+ * disks); or '' when no drive was involved — which is also what every scan
+ * before U-24 recorded, so that history compares among itself as it did.
+ * History never compares across two keys: the difference would be a drive,
+ * not a change. A crossing scan's drives are in its key (the SEC-1 review, L2):
+ * the next crossing scan, after the drive was unplugged, records no boundary,
+ * and '' for both read the drive's bytes as space freed.
  */
 export function boundaryKeyOf(boundary: SnapshotBoundary | undefined): string {
-  return boundary && boundary.rule === 'stay' ? boundary.notEntered.join('\n') : '';
+  if (!boundary) return '';
+  if (boundary.rule === 'stay') return boundary.notEntered.join('\n');
+  return boundary.entered.length === 0 ? '' : ['entered', ...boundary.entered].join('\n');
 }
 
 /** `boundaryKeyOf` for a scan in memory. */

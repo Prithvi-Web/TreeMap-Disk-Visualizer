@@ -16,7 +16,7 @@ import { findGduBinary, gduScan } from '../src/services/gduScanner';
 import { getSettings, updateSettings } from '../src/services/settings';
 import { storeOf, buildStoreFromTree, Flag } from '../src/services/scanStore';
 import { settled } from '../src/utils/backgroundWrites';
-import { listSnapshots } from '../src/services/snapshots';
+import { boundaryKeyOf, currentBaseline, listSnapshots } from '../src/services/snapshots';
 import { recordScanJournal, readJournal } from '../src/services/journal';
 import { computeForecast } from '../src/services/forecast';
 import { growthAlertFor } from '../src/services/scheduler';
@@ -460,10 +460,12 @@ test('a scheduled scan raises no growth alert across a change of boundary, and s
   // The previous scan stayed on the drive: 1,500 bytes fewer, the drive's file.
   const stayedBefore = snapshotFor(f.root, Date.now() - 86_400_000, 800, { rule: 'stay', notEntered: [f.mnt] });
   assert.equal(growthAlertFor(sched, f.root, stayedBefore, crossed), null, 'the drive joining the count is not growth');
-  const crossedBefore = snapshotFor(f.root, Date.now() - 86_400_000, 800);
+  // A previous scan that went into the same drive (a crossing scan records the drives it went into: the SEC-1 review, L2).
+  const crossedBefore = snapshotFor(f.root, Date.now() - 86_400_000, 800, { rule: 'cross', entered: [f.mnt] });
   const alert = growthAlertFor(sched, f.root, crossedBefore, crossed);
   assert.ok(alert, 'the same boundary, and the folder grew: that is an alert');
   assert.equal(alert.delta, storeOf(crossed).size(storeOf(crossed).rootId) - 800);
+  assert.equal(growthAlertFor(sched, f.root, snapshotFor(f.root, Date.now() - 86_400_000, 800), crossed), null, 'one that met no drive: the drive joining the count is not growth');
 });
 
 test('the forecast fits only the scans since the boundary last changed', () => {
@@ -730,6 +732,49 @@ test('Trends and What’s new never compare two snapshots that stopped at differ
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }
+});
+
+test('a drive a crossing scan went into and the next one did not find is a change of boundary, not growth or space freed: 409 BOUNDARY_CHANGED; the same drive twice compares (the SEC-1 review, L2)', async (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
+  const f = tree();
+  useTable([f.mnt]);
+  await scanWith(f.root, 'cross', 'walker');
+  await settled();
+  await scanWith(f.root, 'cross', 'walker');
+  await settled();
+  useTable([]); // the drive was unplugged: the folder the walk meets is no longer a drive
+  try {
+    await scanWith(f.root, 'cross', 'walker');
+    await settled();
+  } finally {
+    useTable([f.mnt]);
+  }
+  const [withDrive, again, without] = await listSnapshots(f.root);
+  assert.deepEqual(withDrive.boundary, { rule: 'cross', entered: [f.mnt] });
+  assert.equal(without.boundary, undefined, 'a scan that met no drive records none — as every scan before U-24 did');
+  const across = await apiGet(`/api/snapshots/compare?a=${again.id}&b=${without.id}`);
+  assert.deepEqual([across.status, across.body.code], [409, 'BOUNDARY_CHANGED'], JSON.stringify(across.body));
+  assert.match(across.body.error, /the first went into 1 drive mounted inside it, the second left no drive out/);
+  const within = await apiGet(`/api/snapshots/compare?a=${withDrive.id}&b=${again.id}`);
+  assert.equal(within.status, 200, JSON.stringify(within.body));
+});
+
+test('the boundary key: a crossing scan names the drives it went into, and a snapshot with no boundary keeps the empty key, so history from before U-24 compares as it did (the SEC-1 review, L2)', () => {
+  const x = '/r/mnt';
+  const y = '/r/other-drive';
+  const crossX = { rule: 'cross' as const, entered: [x] };
+  assert.equal(boundaryKeyOf(undefined), '', 'before U-24, or no drive met');
+  assert.notEqual(boundaryKeyOf({ ...crossX, entered: [x] }), boundaryKeyOf(undefined), 'a drive went in, then was gone');
+  assert.notEqual(boundaryKeyOf(crossX), boundaryKeyOf({ rule: 'cross', entered: [y] }), 'another drive');
+  assert.notEqual(boundaryKeyOf(crossX), boundaryKeyOf({ rule: 'stay', notEntered: [x] }), 'one drive counted, and the same drive left out, are two disks');
+  assert.equal(boundaryKeyOf(crossX), boundaryKeyOf({ rule: 'cross', entered: [x] }), 'the same drive twice');
+  assert.equal(boundaryKeyOf({ rule: 'cross', entered: [] }), '', 'no drive went in: as a scan that met none');
+  assert.equal(boundaryKeyOf({ rule: 'stay', notEntered: [x, y] }), `${x}\n${y}`, 'a stay key is as it was');
+  const snap = (takenAt: number, boundary?: Snapshot['boundary']): Snapshot => ({ id: String(takenAt), rootPath: '/r', takenAt, totalSize: takenAt, fileCount: 1, dirCount: 1, topEntries: [], ...(boundary ? { boundary } : {}) });
+  const ids = (list: Snapshot[]): string[] => list.map((s) => s.id);
+  assert.deepEqual(ids(currentBaseline([snap(1), snap(2), snap(3)])), ['1', '2', '3'], 'history from before U-24 is one run, as it was');
+  assert.deepEqual(ids(currentBaseline([snap(1), snap(2, crossX), snap(3, crossX)])), ['2', '3'], 'the forecast starts where the drive went in');
+  assert.deepEqual(ids(currentBaseline([snap(1, crossX), snap(2, crossX), snap(3)])), ['3'], 'and again where it was gone');
 });
 
 /** GET `url` from a fresh server; the body parsed. */

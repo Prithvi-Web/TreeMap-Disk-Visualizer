@@ -131,8 +131,12 @@ export function assertSameSnapshotBoundary(a: Snapshot, b: Snapshot): void {
 }
 
 function boundaryChanged(what: string, rootPath: string, a: Snapshot['boundary'], b: Snapshot['boundary']): AppError {
-  const left = (out: Snapshot['boundary']): string =>
-    out && out.rule === 'stay' ? `left out ${out.notEntered.length} drive${out.notEntered.length === 1 ? '' : 's'} mounted inside it` : 'left no drive out';
+  const drives = (list: readonly string[]): string => `${list.length} drive${list.length === 1 ? '' : 's'} mounted inside it`;
+  const left = (out: Snapshot['boundary']): string => {
+    if (out?.rule === 'stay') return `left out ${drives(out.notEntered)}`;
+    if (out?.rule === 'cross' && out.entered.length > 0) return `went into ${drives(out.entered)}`;
+    return 'left no drive out';
+  };
   return new AppError(
     409,
     'BOUNDARY_CHANGED',

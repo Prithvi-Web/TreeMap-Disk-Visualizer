@@ -1405,7 +1405,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Diff', ref('CompareResult')),
       '400': errorResponse('Scans cover different roots'),
-      '409': errorResponse('BOUNDARY_CHANGED — the two scans stopped at different drives mounted inside the folder (one under "Stay on this drive" left a drive out, the other did not), so a diff would show a drive as files added or removed'),
+      '409': errorResponse('BOUNDARY_CHANGED — the two scans stopped at different drives mounted inside the folder (one under "Stay on this drive" left a drive out that the other did not, or one went into a drive the other did not find), so a diff would show a drive as files added or removed'),
     },
   },
   {
