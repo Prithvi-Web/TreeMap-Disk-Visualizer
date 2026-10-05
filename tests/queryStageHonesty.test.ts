@@ -130,6 +130,11 @@ test('-type:dir is not a request for folders', async () => {
   assert.deepEqual(cart, ['/r/a.mov']);
 });
 
+test('neither is type:dir inside a negated group: a query with -( … ) stages files only', async () => {
+  const { cart } = await queryThenStage('-(type:dir name:x) size>1gb', [hit('/r/V', true), hit('/r/a.mov', false)]);
+  assert.deepEqual(cart, ['/r/a.mov'], 'when in doubt, the narrower thing is staged');
+});
+
 test('the button offers what it will stage, by count and by noun', async () => {
   const { button } = await queryThenStage('size>1gb', [
     hit('/r', true), hit('/r/V', true), hit('/r/V/a.mov', false), hit('/r/b.dmg', false),
@@ -288,10 +293,11 @@ test('an export with no mode keeps the plain name', async () => {
  * finds nothing and the text has a word shaped like a field, the box names it,
  * says it is not a field, and offers the nearest real one.
  */
-async function bareMessage(q: string, matches: number): Promise<{ said: string[]; routedToGrammar: boolean }> {
+async function bareMessage(q: string, matches: number, view: 'treemap' | 'sunburst' = 'treemap'): Promise<{ said: string[]; routedToGrammar: boolean }> {
   const said: string[] = [];
   let routedToGrammar = false;
-  const state = { treemap: { query: '', queryMode: 'grammar', matchedPaths: null, matchTotal: null, matches: 99 } };
+  // In the sunburst the count is whatever the last map left: a stale 0 here.
+  const state = { treemap: { query: '', queryMode: 'grammar', matchedPaths: null, matchTotal: null, matches: view === 'sunburst' ? 0 : 99 } };
   const deps: Record<string, unknown> = {
     state,
     tmCancelQueries: () => {},
@@ -299,7 +305,7 @@ async function bareMessage(q: string, matches: number): Promise<{ said: string[]
     tmSetQueryMessage: (text: string) => { said.push(text); },
     tmValidateQuery: async () => { routedToGrammar = true; return false; },
     tmRunGrammarQuery: async () => {},
-    isSun: () => false,
+    isSun: () => view === 'sunburst',
     isCells: () => false,
     renderSearchOverlay: () => { state.treemap.matches = matches; },
     presentTreemap: () => {},
@@ -343,6 +349,13 @@ test('a short word is only matched to a field one edit away', async () => {
 test('a longer word is matched to a field two edits away', async () => {
   const msg = (await bareMessage('elswere:proven', 0)).said.pop()!;
   assert.match(msg, /did you mean “elsewhere”/, msg);
+});
+
+test('the sunburst, which counts no matches, never claims none were found', async () => {
+  // presentSunburst draws no search highlight and leaves the match count as
+  // the last map left it, so "no file name here contains" would be a guess.
+  const { said } = await bareMessage('sise>1gb', 0, 'sunburst');
+  assert.equal(said.filter(Boolean).length, 0, JSON.stringify(said));
 });
 
 test('a filename search that found something is left alone', async () => {

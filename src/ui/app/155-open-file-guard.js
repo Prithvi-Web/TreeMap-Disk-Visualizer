@@ -263,8 +263,15 @@ function setConfirmButton(label) {
  * too; closeModal runs this on every close of the dialog, so none of that
  * outlives the dialog that made it — a "Close" label must never sit on the
  * next dialog's delete (Empty the Trash does not relabel its button).
+ *
+ * It also abandons the open-file check still out for the dialog that closed.
+ * Answering after a Cancel, that check relabelled OK "Delete anyway" and armed
+ * the override for whichever dialog opened next. The override the user chose
+ * in THIS dialog is untouched: the OK handler closes the dialog first and
+ * reads it afterwards.
  */
 function confirmFooterReset() {
+  openHandleSeq++;
   const cancel = $('confirmCancel');
   if (cancel) cancel.hidden = false;
   setConfirmButton('Move to Trash');

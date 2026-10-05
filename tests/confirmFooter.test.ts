@@ -145,3 +145,97 @@ test('after a report closes, the next asking dialog has its Cancel and its delet
   assert.equal(h.cancelShown(), true);
   assert.match(h.okLabel(), /Move to Trash/);
 });
+
+/* ═══════ an open-file answer that lands after Cancel is dropped ═══════ */
+
+/**
+ * The dialog asks the server, in the background, whether anything has the
+ * selection open (B2). Clean Up now asks for every selection — possibly
+ * thousands of paths, so the answer can take a while (D53). Closing the
+ * dialog did not abandon that question: an answer landing after Cancel
+ * relabelled the closed dialog's OK "Delete anyway" and armed the override,
+ * and the next dialog that does not reset the guard — Empty the Trash — opened
+ * with that label. Closing the dialog now drops any answer still on its way.
+ */
+function constOf(name: string): string {
+  const m = new RegExp(`const ${name} = [^\\n]*;`).exec(INDEX);
+  assert.ok(m, `const ${name} exists in the built page`);
+  return m![0];
+}
+
+function lateAnswerHarness() {
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= (() => {
+    const classes = new Set<string>();
+    return {
+      innerHTML: '', textContent: '', className: '', hidden: false, disabled: false, style: {}, classes,
+      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); } },
+    };
+  })());
+  let answer: (v: unknown) => void = () => {};
+  const trashed: { paths: string[]; opts: Record<string, unknown> }[] = [];
+  const deps: Record<string, unknown> = {
+    $,
+    api: () => new Promise((resolve) => { answer = resolve; }),
+    trashPaths: async (paths: string[], opts: Record<string, unknown>) => { trashed.push({ paths: [...paths], opts }); return { deleted: [], failed: [] }; },
+    ensureNodes: async () => {},
+    nodeFor: () => ({ name: 'a', size: 1 }),
+    icon: () => '',
+    escapeHtml: (s: string) => s,
+    formatBytes: (n: number) => `${n}B`,
+    formatCount: (n: number) => String(n),
+    cloudProviderOfScan: () => ({ name: 'Drive', trashLabel: 'its trash' }),
+    cloudTrashPaths: async () => {},
+    clearInterval: () => {}, cloudConnectPoll: 0, fxOrbHide: () => {}, cleanFunnelDrop: () => {},
+    FxBeam: { attach: () => {} }, activeJob: null, askSettle: () => {}, toast: () => {},
+  };
+  const keys = Object.keys(deps);
+  const src = `
+    let openHandleSeq = 0, confirmIgnoreOpenHandles = false, confirmPaths = [], onConfirmTrash = null;
+    ${constOf('TRASH_CHUNK')}
+    ${constOf('OPEN_HANDLE_PREFLIGHT_CHUNKS')}
+    ${['setConfirmButton', 'confirmFooterReset', 'baseName', 'renderOpenHandleWarning', 'checkOpenHandlesFor',
+      'resetOpenHandleWarning', 'confirmTrash', 'closeModal'].map(declOf).join('\n')}
+    return {
+      confirmTrash, closeModal, override: () => confirmIgnoreOpenHandles,
+      ok: async () => {${okBody()}},
+    };`;
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, src)(...keys.map((k) => deps[k]));
+  return { page, $, trashed, answer: (v: unknown) => answer(v) };
+}
+
+/** The shared OK button's click handler, out of the built page. */
+function okBody(): string {
+  const anchor = "$('confirmOk').addEventListener('click', async () => {";
+  const start = INDEX.indexOf(anchor);
+  assert.notEqual(start, -1, 'the OK handler is findable');
+  const open = start + anchor.length - 1;
+  return INDEX.slice(open + 1, matchingBrace(open));
+}
+
+/** Let a resolved request's continuations run: event-loop turns, not a clock. */
+const turns = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+
+test('an open-file answer that arrives after Cancel neither relabels the dialog nor arms "Delete anyway"', async () => {
+  const h = lateAnswerHarness();
+  await h.page.confirmTrash(['/r/a']);
+  h.page.closeModal('confirmModal'); // Cancel, while the check is still out
+  h.answer({ checked: true, complete: true, conflicts: [{ path: '/r/a', pid: 7, processName: 'Editor' }] });
+  await turns();
+  assert.doesNotMatch(h.$('confirmOk').innerHTML, /Delete anyway/, 'the next dialog to open would show this label');
+  assert.equal(h.page.override(), false, 'and no override is armed for it');
+});
+
+test('an answer that arrives while the dialog is open still warns', async () => {
+  const h = lateAnswerHarness();
+  await h.page.confirmTrash(['/r/a']);
+  h.answer({ checked: true, complete: true, conflicts: [{ path: '/r/a', pid: 7, processName: 'Editor' }] });
+  await turns();
+  assert.match(h.$('confirmOk').innerHTML, /Delete anyway/, 'the warning the user is looking at');
+  assert.equal(h.page.override(), true);
+  // Pressing it: the dialog closes first (which abandons checks), and the
+  // choice the user made in it still reaches the delete.
+  await h.page.ok();
+  assert.deepEqual(h.trashed, [{ paths: ['/r/a'], opts: { ignoreOpenHandles: true } }], '"Delete anyway" is what was sent');
+});

@@ -109,10 +109,13 @@ const TM_ASKS_FOR_DIRS_RE = /(^|[\s(])(type\s*[:=]\s*"?dir"?|empty\s*[:=]\s*"?ye
  *   - never the scanned folder;
  *   - files only, unless the query asks for folders (TM_ASKS_FOR_DIRS_RE);
  *   - never a hit inside another staged hit: it goes with that folder.
- * What was left out is counted, so the toast can say so.
+ * What was left out is counted, so the toast can say so. A query with a
+ * negated group, `-( … )`, is read as files only: the regex cannot tell
+ * whether a `type:dir` inside one is asked for or ruled out, and staging the
+ * narrower thing is the safe way to be wrong.
  */
 function tmStageable(hits, q, rootPath) {
-  const wantsDirs = TM_ASKS_FOR_DIRS_RE.test(q);
+  const wantsDirs = TM_ASKS_FOR_DIRS_RE.test(q) && !/-\s*\(/.test(q);
   const picked = [];
   let root = false, folders = 0;
   for (const h of hits) {
@@ -406,7 +409,9 @@ function tmApplyQuery(raw) {
     else if (isCells()) { renderSearchOverlay(); renderCellsStatus(); presentCells(); }
     else { renderSearchOverlay(); presentTreemap(); }
     // D30 — found nothing, and a word in it is shaped like a field: say so.
-    const hint = q && !(state.treemap.matches > 0) ? tmUnknownFieldHint(q) : null;
+    // Not over the sunburst, which draws no search highlight and counts no
+    // matches, so "found nothing" would be a guess.
+    const hint = q && !isSun() && !(state.treemap.matches > 0) ? tmUnknownFieldHint(q) : null;
     if (hint) tmSetQueryMessage(hint, false);
     return;
   }
