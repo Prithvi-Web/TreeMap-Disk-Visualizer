@@ -650,8 +650,13 @@ test('walker, fast rescan: a folder the cached listing names but the disk no lon
 
 /* ─────────────── a fast rescan keeps what the scan did not list (U-4b L3) ─────────────── */
 
-/** The fast-rescan cache of `root` under "Stay on this drive" (diskScanner's cacheFileName). */
+/** The fast-rescan cache of `root` under "Stay on this drive" (diskScanner's cacheFileName): format 2 since U-4c L2. */
 function cacheFileOf(root: string): string {
+  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-v2-${crypto.createHash('sha1').update(root).digest('hex').slice(0, 16)}.json`);
+}
+
+/** Where a cache from before U-4c L2 lies: the name every cache had until then. */
+function legacyCacheFileOf(root: string): string {
   return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-${crypto.createHash('sha1').update(root).digest('hex').slice(0, 16)}.json`);
 }
 
@@ -736,6 +741,33 @@ test('walker, fast rescan: a folder a "don\'t scan" pattern left entries out of 
     assert.equal(flagged(againTop, top), true, 'the root holds node_modules too');
     assert.equal(flagged(againTop, path.join(top, 'proj')), true);
     assert.deepEqual(offered(await emptyFolders(againTop.scanId)), [path.join(top, 'keep'), path.join(top, 'proj', 'src')]);
+  } finally {
+    await updateSettings({ ignore: [] });
+  }
+});
+
+test('walker, fast rescan: a cache written before folders were marked is never read — its partial listings would lose the mark (U-4c L2)', async (t) => {
+  // A cache from before U-4b L3 holds a folder a "don't scan" pattern left entries out of as a listing
+  // with children and no `unlisted` key. Reused, the folder read as listed in full, and the next cache
+  // was written from that tree: the mark was lost for good, until the folder's own time changed.
+  const root = onDisk('cached-old-format', ['proj/node_modules/x.js', 'proj/src/', 'plain/']);
+  await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
+  try {
+    const first = await scanWith('auto', root);
+    if (!ran(t, first, 'walker')) return;
+    await settled();
+    // The same listings as an old build wrote them: under the old name, nothing marked.
+    const current = fs.existsSync(cacheFileOf(root)) ? cacheFileOf(root) : legacyCacheFileOf(root);
+    const written = fs.readFileSync(current, 'utf8');
+    assert.ok(written.includes('"unlisted":true'), 'this build marks proj');
+    fs.writeFileSync(legacyCacheFileOf(root), written.split(',"unlisted":true').join(''));
+    if (current !== legacyCacheFileOf(root)) fs.rmSync(current);
+    const again = await startScan(root, { incremental: true });
+    await waitFor(() => again.status !== 'running', 'the fast rescan');
+    assert.equal(again.status, 'complete', again.error);
+    assert.equal(again.cachedDirs ?? 0, 0, 'the old cache was not read: one full walk');
+    assert.equal(flagged(again, path.join(root, 'proj')), true, 'proj is still not listed in full');
+    assert.deepEqual(offered(await emptyFolders(again.scanId)), [path.join(root, 'plain'), path.join(root, 'proj', 'src')]);
   } finally {
     await updateSettings({ ignore: [] });
   }

@@ -31,9 +31,10 @@ import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
  *  - second-precision caches written by gdu scans still match (the tolerance).
  */
 
+/** diskScanner's cacheFileName under "Stay on this drive": format 2 since U-4c L2. */
 function cacheFileFor(rootPath: string): string {
   const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
-  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-${h}.json`);
+  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-v2-${h}.json`);
 }
 
 /**

@@ -1088,14 +1088,22 @@ const MTIME_CACHE_MAX_NODES = 300_000;
  * Stable per-root cache filename in the app-data directory, keyed by the
  * boundary rule as well (Track U, U-24): a listing cached by a scan that
  * stayed on its drive says a drive mounted inside is an empty folder, and a
- * scan that crosses into it must not believe that. `stay`, the default, keeps
- * the name every cache already had; a cache from before U-24 is safe there,
- * because the walk checks every folder it is handed against its own list.
+ * scan that crosses into it must not believe that. A cache from before U-24
+ * is safe under `stay`, because the walk checks every folder it is handed
+ * against its own list.
+ *
+ * The name carries the cache's format (U-4c L2): format 2 marks a folder the
+ * scan did not list in full (`unlisted`, U-4b L3). An older cache holds such a
+ * folder's partial listing unmarked — reused, it would read as complete, and
+ * the next cache would be written from that tree — so it is never read: the
+ * first fast rescan after the change walks in full.
  */
+const MTIME_CACHE_FORMAT = 2;
+
 function cacheFileName(rootPath: string, rule: BoundaryRule): string {
   const key = rule === 'cross' ? `${rootPath}\0cross` : rootPath;
   const h = crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
-  return `mtime-cache-${h}.json`;
+  return `mtime-cache-v${MTIME_CACHE_FORMAT}-${h}.json`;
 }
 
 /** Index every directory of a cached tree by path for O(1) substitution. */

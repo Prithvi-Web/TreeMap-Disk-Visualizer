@@ -140,7 +140,7 @@ consumer accepts either a legacy object tree or a store.
 
 ### 3.5 The incremental ("fast rescan") cache
 
-* File: `<appData>/mtime-cache-<sha1(rootPath)[0:16]>.json` — **the whole scan tree as a `FileNode` JSON**, written only when the scan has at most **300,000 nodes** (`MTIME_CACHE_MAX_NODES`, `:504`, `:576-597`). Above that, no cache is written and every rescan is a full scan.
+* File: `<appData>/mtime-cache-v2-<sha1(rootPath)[0:16]>.json` (the format in the name since U-4c L2; an older cache is never read) — **the whole scan tree as a `FileNode` JSON**, written only when the scan has at most **300,000 nodes** (`MTIME_CACHE_MAX_NODES`, `:504`, `:576-597`). Above that, no cache is written and every rescan is a full scan.
 * Key: the directory's **own mtime only** — no size, no inode, no device. A cached value is accepted at exact-millisecond equality or, because gdu records whole seconds, when the cached value equals the fresh one floored to the second (`mtimesMatch`, `:533-537`).
 * Reuse rule: a directory whose mtime matches has its **direct listing** substituted from the cache, and each cached subdirectory is enqueued for its own revalidating `lstat`. Nothing is reused on an ancestor's mtime, because "a dir's mtime lives in its own inode and never propagates upward" (`:708-716`). The documented trade-off: in-place edits of a file (same name, new bytes) go unnoticed, which is why the mode is opt-in.
 * Only the walker honours the cache; a scan with a cache is not gdu-eligible. Cloud and hard-link tallies are not re-derived from cached files (`:556-559`). A fast rescan therefore under-counts the allocation line (recorded as known gap 1 in `NEXT_SESSION_PROMPT.md`).

@@ -171,9 +171,9 @@ test('the NTFS turbo mode is never used for a fast-rescan request, though the na
 
 /* ─────────────── what a fast rescan counts from the folders it reuses ─────────────── */
 
-/** The fast-rescan cache of `root` under "Stay on this drive" (diskScanner's cacheFileName). */
+/** The fast-rescan cache of `root` under "Stay on this drive" (diskScanner's cacheFileName): format 2 since U-4c L2. */
 function cacheFileOf(root: string): string {
-  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-${crypto.createHash('sha1').update(root).digest('hex').slice(0, 16)}.json`);
+  return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-v2-${crypto.createHash('sha1').update(root).digest('hex').slice(0, 16)}.json`);
 }
 
 const PARTIAL = /a fast rescan reuses the listings of folders that have not changed, which record no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh/;
