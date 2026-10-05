@@ -278,7 +278,13 @@ async function browseTo(path) {
     // on its way: its answer is not shown, and it did not open.
     if (seq !== browseSeq) return false;
     browsePath = data.path;
-    $('browseCurrent').value = data.path;
+    const field = $('browseCurrent');
+    field.value = data.path;
+    // An unfocused field shows the START of its value, and the end of a long
+    // path is the folder about to be scanned or picked: scroll to it. The
+    // tooltip holds the whole path (review F1.9).
+    field.title = data.path;
+    field.scrollLeft = field.scrollWidth;
     const list = $('browseList');
     const rows = [];
     if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);

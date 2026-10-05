@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { INDEX, lift } from './fixtures/liftFrontend';
 
 /**
@@ -48,6 +49,7 @@ function gate() {
 
 type FakeEl = {
   id: string; value: string; textContent: string; innerHTML: string; disabled: boolean;
+  title: string; scrollLeft: number; readonly scrollWidth: number;
   classList: { add(c: string): void; remove(c: string): void };
   listeners: Record<string, (e?: unknown) => unknown>;
   addEventListener(type: string, fn: (e?: unknown) => unknown): void;
@@ -57,6 +59,9 @@ type FakeEl = {
 function fakeEl(id: string): FakeEl {
   const el: FakeEl = {
     id, value: '', textContent: '', innerHTML: '', disabled: false,
+    title: '', scrollLeft: 0,
+    // A laid-out text field's content is as wide as its text (7 px a character here).
+    get scrollWidth() { return el.value.length * 7; },
     classList: { add() {}, remove() {} },
     listeners: {},
     addEventListener(type, fn) { el.listeners[type] = fn; },
@@ -318,6 +323,21 @@ test('a slow listing that answers after a newer one never takes over the picker 
   await pending;
   assert.deepEqual(second.scanned, [], 'a superseded typed path is not scanned, and neither is the folder that replaced it');
   assert.deepEqual(scanned, []);
+});
+
+/* ══════════════ A long path shows its end (F1.9) ══════════════ */
+
+test('a path longer than the field shows its end — the folder that "Scan this folder" acts on — after every listing (F1.9)', async () => {
+  // An unfocused text field shows the START of its value; at about seventy
+  // characters the folder name at the end was clipped off.
+  const LONG = '/Users/someone/Desktop/Claude Code/Treemap/node_modules/.cache/babel-loader';
+  const { rt, $ } = browseRuntime((p) => (p === LONG ? { path: LONG, parent: path.dirname(LONG), dirs: [] } : HOME));
+  const field = $('browseCurrent');
+  await rt.openBrowse(null);
+  assert.equal(field.scrollLeft, '/home/u'.length * 7, 'scrolled to the end of the first listing');
+  await rt.browseTo(LONG);
+  assert.equal(field.scrollLeft, LONG.length * 7, 'and to the end of the next — the current folder is the part on screen');
+  assert.equal(field.title, LONG, 'the whole path is the field\'s tooltip');
 });
 
 test('the field says it can be typed in (D05)', () => {
