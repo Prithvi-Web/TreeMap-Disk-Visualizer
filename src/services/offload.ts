@@ -15,7 +15,7 @@ import { moveToTrash } from './cleaner';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
 import { isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
-import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
+import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind } from '../utils/copyVerify';
 import { describeFsError, meansAbsent } from '../utils/errno';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
@@ -383,15 +383,37 @@ async function ensureDirs(plan: PlannedCopy[]): Promise<string[]> {
   return created;
 }
 
-/** Undo everything this job wrote at the destination. */
-async function rollback(created: string[], createdDirs: string[], job: OffloadJob): Promise<void> {
+/**
+ * Undo everything this job wrote at the destination. Answers what it could not remove, each with
+ * why (FG3f #7): swallowed, a removal that failed let a stopped job say everything was rolled back.
+ */
+async function rollback(created: string[], createdDirs: string[], job: OffloadJob): Promise<{ at: string; why: string }[]> {
   job.phase = 'rolling-back';
+  const left: { at: string; why: string }[] = [];
   for (const f of created.reverse()) {
-    try { await fsp.rm(f, { force: true }); } catch { /* best effort */ }
+    await fsp.rm(f, { force: true }).catch((err: unknown) => { left.push({ at: f, why: messageOf(err) }); });
   }
   for (const d of [...createdDirs].sort((a, b) => b.length - a.length)) {
-    try { await fsp.rm(d, { recursive: true, force: true }); } catch { /* best effort */ }
+    await fsp.rm(d, { recursive: true, force: true }).catch((err: unknown) => { left.push({ at: d, why: messageOf(err) }); });
   }
+  return left;
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * A stopped offload that could not remove everything it had copied, as a sentence (FG3f #7): what
+ * stopped it, and the first thing left at the destination. The originals are never touched before
+ * every copy verifies, so none was deleted.
+ */
+function offloadLeftBehindSentence(err: unknown, cancelled: boolean, left: { at: string; why: string }[]): string {
+  const cause = err instanceof CopyLeftBehind ? err.cause : err;
+  const what = cancelled || cause instanceof CopyCancelled ? 'The offload was cancelled' : `The offload stopped (${messageOf(cause)})`;
+  const more = left.length > 1 ? ` and ${formatCount(left.length - 1)} more thing${left.length === 2 ? '' : 's'} it had copied` : '';
+  return `${what}, but what it had already copied to ${left[0].at}${more} could not be removed (${left[0].why}). ` +
+    `Remove ${left.length === 1 ? 'it' : 'them'} from the destination yourself; nothing was deleted from this computer.`;
 }
 
 /* ---------------- offload ---------------- */
@@ -664,9 +686,15 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     job.status = 'complete';
     job.finishedAt = Date.now();
   } catch (err) {
-    await rollback(createdFiles, createdDirs, job);
-    job.status = err instanceof CopyCancelled || job.cancelled ? 'cancelled' : 'error';
-    if (job.status === 'error') job.error = err instanceof Error ? err.message : String(err);
+    // What the copy itself could not remove (CopyLeftBehind), and what the rollback could not: a job
+    // that leaves anything behind is an error naming it, never "cancelled — everything rolled back".
+    const left = [
+      ...(err instanceof CopyLeftBehind ? [{ at: err.dest, why: err.why }] : []),
+      ...await rollback(createdFiles, createdDirs, job),
+    ];
+    const cancelled = err instanceof CopyCancelled || job.cancelled;
+    job.status = cancelled && left.length === 0 ? 'cancelled' : 'error';
+    if (job.status === 'error') job.error = left.length > 0 ? offloadLeftBehindSentence(err, cancelled, left) : messageOf(err);
     job.finishedAt = Date.now();
   }
 }
@@ -707,6 +735,8 @@ export async function startRestore(ids: string[]): Promise<OffloadJob> {
 
 async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<void> {
   const failures: string[] = [];
+  /** Restores that stopped and could not remove what they had begun writing (FG3f #7). */
+  const leftBehind: string[] = [];
   const store = await loadManifest();
   for (const entry of entries) {
     if (job.cancelled) break;
@@ -733,13 +763,17 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
       if (live) live.restoredAt = Date.now();
       job.filesDone++;
     } catch (err) {
-      failures.push(`${entry.name}: ${err instanceof Error ? err.message : String(err)}`);
+      (err instanceof CopyLeftBehind ? leftBehind : failures).push(`${entry.name}: ${messageOf(err)}`);
     }
   }
   await saveManifest(store);
   job.phase = 'done';
   job.finishedAt = Date.now();
-  if (job.cancelled) {
+  if (leftBehind.length > 0) {
+    // Never "cancelled": a cancel that left a part-copied file is not one that left nothing.
+    job.status = 'error';
+    job.error = `${leftBehind.length} of ${entries.length} could not be restored, and what was begun could not be removed — ${leftBehind[0]}. Remove it before trying again; its offloaded copy is untouched.`;
+  } else if (job.cancelled) {
     job.status = 'cancelled';
   } else if (failures.length) {
     job.status = 'error';
