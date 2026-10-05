@@ -39,6 +39,22 @@ window.addEventListener('blur', () => {
   presentView();
 });
 
+/**
+ * Keys the map must leave to something else (QA-6 review MEDIUM-1). Every one
+ * of them while #ctxMenu is open: its entries are what the arrows move between
+ * (ctxMenuKeydown), and h/j/k/l, Backspace or Enter must not move, climb or
+ * drill the map behind it. And Enter or Space on a button or a link — the "…"
+ * crumb, an entry of its menu — is that control's own press: the map's Enter
+ * called preventDefault() and drilled instead, so the "…" menu could neither
+ * be opened nor used from the keyboard.
+ */
+function tmMapKeyYields(e) {
+  if ($('ctxMenu').style.display === 'block') return true;
+  if (e.key !== 'Enter' && e.key !== ' ') return false;
+  const t = e.target;
+  return !!(t && typeof t.closest === 'function' && t.closest('button, a[href], [role="button"], [role="menuitem"]'));
+}
+
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
@@ -62,6 +78,8 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Tab') modalTrapTab(e, sheet);
     return;
   }
+  // An open menu's arrows, Home, End and Tab are the menu's (QA-6 review MEDIUM-1).
+  if (ctxMenuKeydown(e)) return;
   if (e.key === '?' && !typing && !mod) { e.preventDefault(); toggleShortcuts(); return; }
   if (mod && e.key.toLowerCase() === 'r') {
     // Claimed unconditionally. Letting it through when there was no root
@@ -117,7 +135,7 @@ document.addEventListener('keydown', (e) => {
   }
   // Feature 6 — keyboard navigation in the treemap / sunburst view.
   if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath
-      && !state.treemap.history.active && !tmPreview.on) {
+      && !state.treemap.history.active && !tmPreview.on && !tmMapKeyYields(e)) {
     switch (e.key) {
       case '/': e.preventDefault(); $('tmSearch').focus(); return;
       case 'h': case 'ArrowLeft': case 'Backspace': e.preventDefault(); kbUp(); return;
@@ -146,7 +164,8 @@ document.addEventListener('keydown', (e) => {
       closeModal(openModal.id); // one funnel — per-modal teardown lives there
       return;
     }
-    if ($('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
+    // Focus goes back to whatever opened the menu, not to <body> (QA-6 review MEDIUM-1).
+    if ($('ctxMenu').style.display === 'block') { ctxMenuFocusOpener(hideCtxMenu()); return; }
     // The drawer sits OVER the map, so it is the thing Escape means: before
     // this, Escape climbed a folder behind an open cart and left it open.
     if ($('cartDock').classList.contains('open')) { cartDockToggle(false, { focus: true }); return; }

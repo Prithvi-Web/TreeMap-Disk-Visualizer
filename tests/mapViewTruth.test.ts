@@ -29,8 +29,17 @@ function declSource(name: string): string {
     return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
   }
   assert.notEqual(start, -1, `${name} is declared in the built page`);
+  let from = INDEX.indexOf(name, start) + name.length;
+  if (INDEX[from] === '(') {
+    // Past the parameter list first: a destructured parameter is a brace, and
+    // `function ctxMenuShow(menu, { label, … })` would otherwise close on it.
+    for (let paren = 0; from < INDEX.length; from++) {
+      if (INDEX[from] === '(') paren++;
+      else if (INDEX[from] === ')' && --paren === 0) break;
+    }
+  }
   let depth = 0;
-  for (let i = INDEX.indexOf('{', INDEX.indexOf(name, start) + name.length); i < INDEX.length; i++) {
+  for (let i = INDEX.indexOf('{', from); i < INDEX.length; i++) {
     if (INDEX[i] === '{') depth++;
     else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1) + ';';
   }
@@ -225,31 +234,55 @@ test('D26: the tour describes the click the map actually performs', () => {
 const unesc = (s: string) => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/**
+ * Where keyboard focus is, for the fake elements below: `focus()` moves it,
+ * and the code under test reads it back through `document.activeElement`.
+ */
+const fakeDoc = {
+  body: { tagName: 'BODY' } as unknown,
+  active: null as unknown,
+  get activeElement() { return fakeDoc.active; },
+};
+
 type FakeBtn = {
-  path: string | null; more: boolean; nm: string | null; text: string; current: boolean;
+  tagName: string; path: string | null; more: boolean; nm: string | null; text: string; current: boolean; disabled: boolean;
+  attrs: Record<string, string>;
   dataset: { p?: string }; listeners: Record<string, Array<(e: unknown) => void>>;
   addEventListener(t: string, f: (e: unknown) => void): void; click(): void;
-  getBoundingClientRect(): { left: number; bottom: number }; focus(): void;
+  getBoundingClientRect(): { left: number; bottom: number }; focus(): void; scrollIntoView(): void;
+  setAttribute(k: string, v: string): void; getAttribute(k: string): string | null; hasAttribute(k: string): boolean;
+  closest(sel: string): FakeBtn | null;
 };
 
 function parseButtons(html: string): FakeBtn[] {
   const out: FakeBtn[] = [];
   for (const m of html.matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/g)) {
-    const attrs = m[1];
-    const p = /data-p="([^"]*)"/.exec(attrs);
+    const attrText = m[1];
+    const attrs: Record<string, string> = {};
+    for (const a of attrText.matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[a[1]] = unesc(a[2] ?? '');
+    const p = /data-p="([^"]*)"/.exec(attrText);
     const nm = /<span class="crumb-nm">([\s\S]*?)<\/span>/.exec(m[2]);
     const b: FakeBtn = {
+      tagName: 'BUTTON',
       path: p ? unesc(p[1]) : null,
-      more: /data-crumb-more/.test(attrs),
+      more: /data-crumb-more/.test(attrText),
       nm: nm ? unesc(nm[1]) : null,
       text: unesc(m[2].replace(/<[^>]*>/g, '')),
-      current: /aria-current="true"/.test(attrs),
+      current: /aria-current="true"/.test(attrText),
+      disabled: 'disabled' in attrs,
+      attrs,
       dataset: p ? { p: unesc(p[1]) } : {},
       listeners: {},
       addEventListener(t, f) { (b.listeners[t] ||= []).push(f); },
       click() { for (const f of b.listeners.click || []) f({ stopPropagation() {}, preventDefault() {}, currentTarget: b }); },
       getBoundingClientRect: () => ({ left: 0, bottom: 30 }),
-      focus() {},
+      focus() { fakeDoc.active = b; },
+      scrollIntoView() {},
+      setAttribute(k, v) { b.attrs[k] = String(v); },
+      getAttribute(k) { return k in b.attrs ? b.attrs[k] : null; },
+      hasAttribute(k) { return k in b.attrs; },
+      // Every fake element is a button, and nothing in it is a link: enough for `closest('button, …')`.
+      closest(sel: string) { return /(^|,\s*)button\b/.test(sel) ? b : null; },
     };
     out.push(b);
   }
@@ -274,6 +307,7 @@ function makeHost(width: number) {
     get firstElementChild() {
       return h.buttons.length ? { getBoundingClientRect: () => ({ left: h.clientWidth - h.natural() }) } : null;
     },
+    contains: (el: unknown) => h.buttons.includes(el as FakeBtn),
     getBoundingClientRect: () => ({ left: 0, right: h.clientWidth }),
     querySelectorAll(sel: string) {
       if (sel === 'button[data-p]') return h.buttons.filter((b) => b.path !== null);
@@ -290,28 +324,85 @@ function makeHost(width: number) {
 
 const DEEP = '/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime/7f2d3a5b8c9e1f0a/AssetData';
 
-function crumbsHarness() {
-  const picked: string[] = [];
-  const observers: Array<{ cb: () => void; el: unknown }> = [];
-  const menu = { html: '', buttons: [] as FakeBtn[], style: {} as Record<string, string>, offsetHeight: 120,
+/** The page's own document-level keydown handler — the anonymous one holding the map's keys — cut out by brace matching. */
+function pageKeydownSource(): string {
+  const anchor = "document.addEventListener('keydown', (e) => {\n  const mod = e.metaKey || e.ctrlKey;";
+  const at = INDEX.indexOf(anchor);
+  assert.notEqual(at, -1, 'the page keydown handler is where this test thinks it is');
+  const start = INDEX.indexOf('(e) => {', at);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail('the keydown handler never closes');
+}
+
+type FakeMenu = {
+  html: string; buttons: FakeBtn[]; style: Record<string, string>; offsetHeight: number; attrs: Record<string, string>;
+  innerHTML: string; querySelectorAll(sel: string): FakeBtn[]; querySelector(sel: string): FakeBtn | null;
+  setAttribute(k: string, v: string): void; getAttribute(k: string): string | null; contains(el: unknown): boolean;
+};
+
+function fakeMenu(): FakeMenu {
+  const menu: FakeMenu = { html: '', buttons: [], style: {}, offsetHeight: 120, attrs: {},
     set innerHTML(v: string) { menu.html = v; menu.buttons = parseButtons(v); },
     get innerHTML() { return menu.html; },
-    querySelectorAll: () => menu.buttons, querySelector: () => menu.buttons[0] || null };
+    querySelectorAll: (sel: string) => (sel === '.div' ? [] : menu.buttons),
+    querySelector: () => menu.buttons[0] || null,
+    setAttribute(k, v) { menu.attrs[k] = String(v); },
+    getAttribute(k) { return k in menu.attrs ? menu.attrs[k] : null; },
+    contains: (el: unknown) => menu.buttons.includes(el as FakeBtn) };
+  return menu;
+}
+
+/** The menu's machinery, shared by the "…" crumb, the right-click menu and Export (QA-6 review MEDIUM-1). */
+const CTX_MENU_DECLS = ['ctxMenuOpener', 'ctxMenuReturn', 'ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuKeydown'];
+
+type KeyEv = { key: string; target: unknown; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean;
+  defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
+const keyEv = (key: string, target: unknown = fakeDoc.active): KeyEv => {
+  const ev: KeyEv = { key, target, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, defaultPrevented: false,
+    preventDefault() { ev.defaultPrevented = true; }, stopPropagation() {} };
+  return ev;
+};
+
+function crumbsHarness() {
+  const picked: string[] = [];
+  const focusAtPick: unknown[] = [];
+  const observers: Array<{ cb: () => void; el: unknown }> = [];
+  const menu = fakeMenu();
+  const map = { drill: 0, up: 0, move: 0 };
+  fakeDoc.active = fakeDoc.body;
   class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(el: unknown) { observers.push({ cb: this.cb, el }); } }
-  const render = load<(host: unknown, p: string, onPick: (p: string) => void) => void>(
-    ['renderCrumbs', 'breadcrumbsFor', 'crumbsPaint', 'crumbFolded', 'crumbsOverflow', 'crumbsWatch', 'showCrumbMenu', 'CRUMB_FADE_PX'], {
-      state: { root: { path: '/System', name: 'System' } },
+  const { render, keydown } = load<{ render: (host: unknown, p: string, onPick: (p: string) => void) => void; keydown: (e: KeyEv) => void }>(
+    ['renderCrumbs', 'breadcrumbsFor', 'crumbsPaint', 'crumbFolded', 'crumbsOverflow', 'crumbsWatch', 'showCrumbMenu', 'CRUMB_FADE_PX',
+      ...CTX_MENU_DECLS, 'tmMapKeyYields'], {
+      state: {
+        root: { path: '/System', name: 'System' }, view: 'treemap', lasso: { on: false }, grid: { selection: new Set() },
+        treemap: { rootPath: DEEP, history: { active: false }, kbSel: null },
+      },
+      document: fakeDoc,
       icon: () => '<svg></svg>',
       escapeHtml: esc,
       hideTooltip() {},
-      hideCtxMenu() {},
       nodeFor: () => null,
       openBudgetDialog() {},
       $: (id: string) => { assert.equal(id, 'ctxMenu'); return menu; },
       window: { innerWidth: 1440, innerHeight: 900 },
       ResizeObserver: FakeRO,
-    }, 'renderCrumbs');
-  return { render, picked, onPick: (p: string) => { picked.push(p); }, menu, observers };
+      // The rest of the page's keydown handler, as far as the keys below reach it.
+      tablistKeydown: () => false,
+      topModal: () => null,
+      tmPreview: { on: false },
+      kbDrill: () => { map.drill++; },
+      kbUp: () => { map.up++; },
+      kbMove: () => { map.move++; },
+    }, `{ render: renderCrumbs, keydown: (${pageKeydownSource()}) }`);
+  return {
+    render, keydown, map, picked, focusAtPick, menu, observers,
+    onPick: (p: string) => { picked.push(p); focusAtPick.push(fakeDoc.active); },
+  };
 }
 
 /** Every path the trail offers: the visible crumbs, plus whatever the "…" menu lists. */
@@ -401,6 +492,153 @@ test('D25: the name inside a crumb ellipsizes (text-overflow does nothing on the
   for (const d of [/min-width:\s*0/, /overflow:\s*hidden/, /text-overflow:\s*ellipsis/, /white-space:\s*nowrap/]) {
     assert.match(rule, d, `.crumb-nm declares ${d}`);
   }
+});
+
+/* ══════════════ QA-6 review MEDIUM-1 — the "…" menu works from the keyboard ══════════════ */
+
+/** A narrow trail, so only "…" and the folder on screen are left: the harness, and the "…" crumb. */
+function foldedTrail() {
+  const h = crumbsHarness();
+  const host = makeHost(150);
+  h.render(host, DEEP, h.onPick);
+  const more = host.buttons.find((b) => b.more);
+  assert.ok(more, 'the trail folded into "…"');
+  return { h, host, more: more! };
+}
+
+test('MEDIUM-1: Enter on "…" is the button\'s own press — it opens the menu instead of drilling the map', () => {
+  const { h, more } = foldedTrail();
+  const onMap = keyEv('Enter', fakeDoc.body);
+  h.keydown(onMap);
+  assert.equal(h.map.drill, 1, 'control: Enter with nothing focused drills the map, as before');
+  assert.equal(onMap.defaultPrevented, true);
+  more.focus();
+  const onMore = keyEv('Enter');
+  h.keydown(onMore);
+  assert.equal(h.map.drill, 1, 'Enter on "…" no longer drills the map behind it');
+  assert.equal(onMore.defaultPrevented, false, 'and the button\'s click — what Enter on a button is — is not cancelled');
+  more.click(); // the press Enter makes
+  assert.equal(h.menu.style.display, 'block', 'the menu opens');
+  assert.equal(fakeDoc.active, h.menu.buttons[0], 'with its first folder focused');
+});
+
+test('MEDIUM-1: inside the menu the arrows, Home and End move between its folders, and the map behind it stays put', () => {
+  const { h, more } = foldedTrail();
+  more.click();
+  const items = h.menu.buttons;
+  assert.equal(items.length, 5);
+  const press = (key: string) => { const ev = keyEv(key); h.keydown(ev); return ev; };
+  assert.equal(press('ArrowDown').defaultPrevented, true, 'the menu takes the arrow');
+  assert.equal(fakeDoc.active, items[1], 'ArrowDown: the next folder');
+  press('ArrowDown'); press('ArrowDown'); press('ArrowDown');
+  assert.equal(fakeDoc.active, items[4]);
+  press('ArrowDown');
+  assert.equal(fakeDoc.active, items[0], 'and wraps from the last to the first');
+  press('ArrowUp');
+  assert.equal(fakeDoc.active, items[4], 'ArrowUp wraps the other way');
+  press('Home');
+  assert.equal(fakeDoc.active, items[0], 'Home: the first');
+  press('End');
+  assert.equal(fakeDoc.active, items[4], 'End: the last');
+  for (const key of ['h', 'j', 'k', 'l', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter']) press(key);
+  assert.deepEqual(h.map, { drill: 0, up: 0, move: 0 }, 'no key pressed in the menu moves, climbs or drills the map');
+  // A menu a right-click opened has not taken focus: the first arrow takes it in.
+  fakeDoc.active = fakeDoc.body;
+  press('ArrowDown');
+  assert.equal(fakeDoc.active, items[0], 'ArrowDown from outside the menu lands on its first folder');
+  fakeDoc.active = fakeDoc.body;
+  press('ArrowUp');
+  assert.equal(fakeDoc.active, items[4], 'ArrowUp from outside it, on its last');
+  fakeDoc.active = fakeDoc.body;
+  press('j');
+  assert.equal(h.map.move, 0, 'and while it is open the map keys wait, wherever focus is');
+});
+
+test('MEDIUM-1: Escape, or a folder picked, closes the menu and gives focus back to "…"', () => {
+  const { h, host, more } = foldedTrail();
+  more.click();
+  h.keydown(keyEv('ArrowDown'));
+  h.keydown(keyEv('Escape'));
+  assert.equal(h.menu.style.display, 'none', 'Escape closes it');
+  assert.equal(fakeDoc.active, more, 'and focus is back on "…", not on <body>');
+  assert.deepEqual(h.picked, [], 'nothing was picked');
+  more.click();
+  h.keydown(keyEv('End'));
+  const last = fakeDoc.active as FakeBtn;
+  const enter = keyEv('Enter');
+  h.keydown(enter);
+  assert.equal(enter.defaultPrevented, false, 'Enter on a folder in the menu is that folder\'s press');
+  assert.equal(h.map.drill, 0);
+  last.click(); // the press Enter makes
+  assert.deepEqual(h.picked, [last.path], 'it opens the folder picked');
+  assert.equal(h.focusAtPick[0], more, 'focus was on "…" before the map moved');
+  assert.equal(h.menu.style.display, 'none');
+  // The load redraws the trail: focus stays in it rather than dropping to <body>.
+  h.render(host, last.path as string, h.onPick);
+  assert.ok(host.contains(fakeDoc.active), 'after the crumbs are redrawn, focus is still on a crumb');
+});
+
+test('MEDIUM-1: Tab out of the menu closes it, and the Tab goes on from "…"', () => {
+  const { h, more } = foldedTrail();
+  more.click();
+  h.keydown(keyEv('ArrowDown'));
+  const tab = keyEv('Tab');
+  h.keydown(tab);
+  assert.equal(h.menu.style.display, 'none', 'a menu Tabbed out of does not stay open, holding the map keys');
+  assert.equal(fakeDoc.active, more, 'focus is back on "…"');
+  assert.equal(tab.defaultPrevented, false, 'and the Tab itself still moves focus on, from there');
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+});
+
+test('MEDIUM-1: "…" says whether its menu is open, the menu is named and made of menu items, and a second click closes it', () => {
+  const { h, more } = foldedTrail();
+  assert.equal(more.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(more.getAttribute('aria-expanded'), 'false', 'closed, and says so');
+  more.click();
+  assert.equal(more.getAttribute('aria-expanded'), 'true', 'open, and says so');
+  assert.match(h.menu.getAttribute('aria-label') || '', /folders above/i, 'the menu has an accessible name');
+  assert.ok(h.menu.buttons.every((b) => b.getAttribute('role') === 'menuitem'), 'every entry is a menuitem');
+  more.click();
+  assert.equal(h.menu.style.display, 'none', 'a second click on "…" closes what the first opened');
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+});
+
+test('MEDIUM-1: the right-click menu is named and made of menu items too', () => {
+  const menu = fakeMenu();
+  const { show, keydown } = load<{ show: (x: number, y: number, node: unknown) => void; keydown: (e: KeyEv) => boolean }>(
+    ['showCtxMenu', 'ctxTarget', ...CTX_MENU_DECLS], {
+    $: (id: string) => { assert.equal(id, 'ctxMenu'); return menu; },
+    document: fakeDoc,
+    window: { innerWidth: 1440, innerHeight: 900 },
+    state: { system: { platform: 'darwin' } },
+    icon: () => '<svg></svg>',
+    escapeHtml: esc,
+    cartHas: () => false, budgetFor: () => null, noteFor: () => null,
+  }, '{ show: showCtxMenu, keydown: ctxMenuKeydown }');
+  fakeDoc.active = fakeDoc.body;
+  show(40, 50, { path: '/r/movie.mov', name: 'movie.mov', type: 'file' });
+  assert.equal(menu.style.display, 'block');
+  assert.equal(menu.getAttribute('aria-label'), 'Actions for movie.mov');
+  assert.ok(menu.buttons.length > 3 && menu.buttons.every((b) => b.getAttribute('role') === 'menuitem'), 'every entry is a menuitem');
+  // A text field keeps its own arrows while a right-click menu is up.
+  fakeDoc.active = { tagName: 'INPUT' };
+  const inField = keyEv('ArrowDown');
+  assert.equal(keydown(inField), false, 'ArrowDown in a text field is the field\'s');
+  assert.equal(inField.defaultPrevented, false);
+  // An entry that cannot be used is not stepped onto.
+  fakeDoc.active = fakeDoc.body;
+  show(40, 50, { path: '/r/a.zip/inner.txt', name: 'inner.txt', type: 'file', virtual: true });
+  assert.equal(menu.buttons.length, 2, 'Copy path, and the disabled note about the archive');
+  keydown(keyEv('ArrowDown'));
+  assert.equal(fakeDoc.active, menu.buttons[0]);
+  keydown(keyEv('ArrowDown'));
+  assert.equal(fakeDoc.active, menu.buttons[0], 'the disabled entry is skipped');
+  keydown(keyEv('End'));
+  assert.equal(fakeDoc.active, menu.buttons[0], 'End too');
+  // Export builds its menu inline in a listener; it goes through the same door.
+  const at = INDEX.indexOf("$('tmExportBtn').addEventListener('click'");
+  const exportHandler = INDEX.slice(at, INDEX.indexOf("menu.querySelectorAll('button')", at));
+  assert.match(exportHandler, /ctxMenuShow\(menu, \{ label: '[^']+'/, 'the Export menu is shown named, through ctxMenuShow');
 });
 
 /* ══════════════ D58 — the 20,000-node cap is stated, not left as a blank ══════════════ */

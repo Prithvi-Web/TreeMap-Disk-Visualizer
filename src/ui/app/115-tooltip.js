@@ -298,9 +298,7 @@ function showCtxMenu(x, y, node) {
       <button data-act="copy">${icon('copy', 15)}Copy path</button>
       <div class="div"></div>
       <button data-act="cloudtrash" class="danger">${icon('trash', 15)}Move to ${escapeHtml(provider.name)}'s trash</button>`;
-    menu.style.display = 'block';
-    menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
-    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+    ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
     menu.querySelector('[data-act="copy"]').addEventListener('click', () => { hideCtxMenu(); copyPath(node.path); });
     menu.querySelector('[data-act="cloudtrash"]').addEventListener('click', () => { hideCtxMenu(); confirmTrash([node.path]); });
     return;
@@ -312,9 +310,7 @@ function showCtxMenu(x, y, node) {
       <button data-act="copy">${icon('copy', 15)}Copy path</button>
       <div class="div"></div>
       <button disabled style="opacity:.55;cursor:var(--cur-dot)">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
-    menu.style.display = 'block';
-    menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
-    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+    ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
     menu.querySelector('[data-act="copy"]').addEventListener('click', () => { hideCtxMenu(); copyPath(node.path); });
     return;
   }
@@ -334,9 +330,7 @@ function showCtxMenu(x, y, node) {
     ${node.isTrash ? '' : `<button data-act="note">${icon('doc', 15)}${noteFor(node.path) ? 'Edit note…' : 'Add note…'}</button>`}` : ''}
     <div class="div"></div>
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
-  menu.style.display = 'block';
-  menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+  ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
     hideCtxMenu();
@@ -357,7 +351,88 @@ function showCtxMenu(x, y, node) {
     if (act === 'trash') confirmTrash([ctxTarget.path]);
   }));
 }
-function hideCtxMenu() { $('ctxMenu').style.display = 'none'; }
+
+/* ── #ctxMenu is a menu, whoever fills it (QA-6 review MEDIUM-1) ──
+   Three things show it — this right-click menu, Export, and the "…" crumb's
+   folded folders — and each used to show it on its own, as an unnamed box of
+   plain buttons the keyboard could reach only by Tab. ctxMenuShow is the one
+   door: the menu gets a name and its entries the menuitem role, the control
+   that opened it says so (aria-expanded), and focus is remembered so the
+   keyboard closes — Escape, a pick, Tab — put it back where it was rather
+   than on <body>. ctxMenuKeydown gives it the arrows, Home and End. */
+/** The control whose menu is showing (it carries aria-expanded), or null for a right-click at a point. */
+let ctxMenuOpener = null;
+/** Where focus goes back to when the keyboard closes the menu: the opener, or what had focus when it opened. */
+let ctxMenuReturn = null;
+
+/** Show #ctxMenu, already filled, at (x, y), named `label` for assistive technology. */
+function ctxMenuShow(menu, { label, opener = null, x, y }) {
+  if (ctxMenuOpener && ctxMenuOpener !== opener) ctxMenuOpener.setAttribute('aria-expanded', 'false');
+  menu.setAttribute('aria-label', label);
+  menu.querySelectorAll('button').forEach((b) => b.setAttribute('role', 'menuitem'));
+  menu.querySelectorAll('.div').forEach((d) => d.setAttribute('role', 'separator'));
+  menu.style.display = 'block';
+  menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+  ctxMenuOpener = opener;
+  ctxMenuReturn = opener || document.activeElement || null;
+  if (opener) opener.setAttribute('aria-expanded', 'true');
+}
+
+/**
+ * Close the menu. Answers where focus belongs now, for the closes the
+ * keyboard made — ctxMenuFocusOpener(hideCtxMenu()) — and is otherwise a
+ * plain close: a click elsewhere or a scroll leaves focus where it went.
+ */
+function hideCtxMenu() {
+  $('ctxMenu').style.display = 'none';
+  if (ctxMenuOpener) ctxMenuOpener.setAttribute('aria-expanded', 'false');
+  const back = ctxMenuReturn;
+  ctxMenuOpener = null;
+  ctxMenuReturn = null;
+  return back;
+}
+
+/** Focus `el` (what hideCtxMenu answered) if it is still on the page. */
+function ctxMenuFocusOpener(el) {
+  if (el && el.isConnected !== false && typeof el.focus === 'function') el.focus({ preventScroll: true });
+}
+
+/**
+ * The open menu's keys, ahead of every other meaning (the page's keydown
+ * handler asks first). ArrowDown and ArrowUp step through the entries and
+ * wrap, Home and End go to the ends — from inside the menu, or from wherever
+ * focus is when a right-click opened it without taking focus. Tab leaves it:
+ * the menu closes, focus goes back to its opener, and the Tab goes on from
+ * there. Escape and Enter are not handled here: Escape is the page's Escape
+ * chain, and Enter on an entry is that button's own press. Answers whether
+ * the key was the menu's.
+ */
+function ctxMenuKeydown(e) {
+  const menu = $('ctxMenu');
+  if (menu.style.display !== 'block') return false;
+  const active = document.activeElement;
+  const inside = menu.contains(active);
+  if (e.key === 'Tab') {
+    if (inside) ctxMenuFocusOpener(hideCtxMenu());
+    return false;
+  }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return false;
+  // A text field keeps its own arrows, Home and End.
+  if (!inside && /^(INPUT|TEXTAREA|SELECT)$/.test((active && active.tagName) || '')) return false;
+  const items = [...menu.querySelectorAll('button')].filter((b) => !b.disabled);
+  if (!items.length) return false;
+  const at = items.indexOf(active);
+  const last = items.length - 1;
+  const next = e.key === 'Home' ? 0
+    : e.key === 'End' ? last
+    : e.key === 'ArrowDown' ? (at + 1) % items.length // from outside (-1), the first
+    : (at <= 0 ? last : at - 1);
+  e.preventDefault();
+  items[next].focus({ preventScroll: true });
+  if (typeof items[next].scrollIntoView === 'function') items[next].scrollIntoView({ block: 'nearest' });
+  return true;
+}
 document.addEventListener('click', (e) => { if (!$('ctxMenu').contains(e.target)) hideCtxMenu(); });
 document.addEventListener('scroll', hideCtxMenu, true);
 

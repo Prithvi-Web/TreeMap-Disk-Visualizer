@@ -719,10 +719,9 @@ $('tmExportBtn').addEventListener('click', (e) => {
     <button data-exp="xlsx-files">${icon('grid', 15)}Excel — all files</button>
     <button data-exp="xlsx-folders">${icon('grid', 15)}Excel — all folders</button>
     <button data-exp="pdf">${icon('download', 15)}PDF report</button>` : '');
-  menu.style.display = 'block';
   const r = e.currentTarget.getBoundingClientRect();
-  menu.style.left = Math.min(r.left, window.innerWidth - 230) + 'px';
-  menu.style.top = Math.min(r.bottom + 6, window.innerHeight - menu.offsetHeight - 8) + 'px';
+  // A named menu of menu items, focus back on Export when the keyboard closes it (QA-6 review MEDIUM-1).
+  ctxMenuShow(menu, { label: 'Export the map', opener: e.currentTarget, x: r.left, y: r.bottom + 6 });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     hideCtxMenu();
     const exp = b.dataset.exp;

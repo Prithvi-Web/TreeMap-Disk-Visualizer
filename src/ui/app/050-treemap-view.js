@@ -104,12 +104,24 @@ const CRUMB_FADE_PX = 34; // the .crumbs mask's fade width — a crumb inside it
 
 /** Shared breadcrumb renderer (treemap + grid + city). */
 function renderCrumbs(host, path, onPick) {
+  // Focus in the trail stays in it (QA-6 review MEDIUM-1): the buttons are
+  // rebuilt, and a crumb or "…" picked from the keyboard used to hand focus to
+  // <body> the moment the map it opened redrew them. The same crumb if it is
+  // still drawn, else "…", else the folder on screen.
+  const active = document.activeElement;
+  const kept = active && active !== document.body && host.contains(active) ? { p: active.dataset ? active.dataset.p : undefined } : null;
   const crumbs = breadcrumbsFor(path);
   let fold = 0;
   crumbsPaint(host, crumbs, fold, onPick);
   while (fold < crumbs.length - 1 && crumbsOverflow(host)) crumbsPaint(host, crumbs, ++fold, onPick);
   host._crumbs = { path, onPick, width: host.clientWidth };
   crumbsWatch(host);
+  if (kept) {
+    const buttons = [...host.querySelectorAll('button')];
+    const to = (kept.p && buttons.find((b) => b.dataset.p === kept.p))
+      || host.querySelector('[data-crumb-more]') || buttons[buttons.length - 1];
+    if (to) to.focus({ preventScroll: true });
+  }
 }
 
 /** Is crumb `i` of `n` folded into the "…" menu when `fold` of them are? */
@@ -149,7 +161,7 @@ function crumbsPaint(host, crumbs, fold, onPick) {
   crumbs.forEach((c, i) => {
     if (crumbFolded(i, n, fold)) {
       if (c === folded[0]) {
-        parts.push(`<button class="crumb-more" data-crumb-more aria-haspopup="menu" ` +
+        parts.push(`<button class="crumb-more" data-crumb-more aria-haspopup="menu" aria-expanded="false" aria-controls="ctxMenu" ` +
           `aria-label="${folded.length} more folder${folded.length === 1 ? '' : 's'}" ` +
           `title="${escapeHtml(folded.map((f) => f.name).join(' › '))}">…</button>`);
       }
@@ -179,21 +191,30 @@ function crumbsPaint(host, crumbs, fold, onPick) {
     more.addEventListener('click', (e) => {
       e.stopPropagation(); // the document's click handler closes #ctxMenu
       hideTooltip();
+      // A toggle, as its aria-expanded says: a second press closes what the first opened.
+      if (ctxMenuOpener === more && $('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
       showCrumbMenu(more, folded, onPick);
     });
   }
 }
 
-/** The folded ancestors, root first, as a menu under the "…" crumb — #ctxMenu, like the Export menu. */
+/**
+ * The folded ancestors, root first, as a menu under the "…" crumb — #ctxMenu,
+ * like the Export menu, and a menu to the keyboard as much as to the pointer
+ * (QA-6 review MEDIUM-1): it opens with its first folder focused, the arrows,
+ * Home and End move through it (ctxMenuKeydown), and Escape or a pick puts
+ * focus back on "…" before the map moves.
+ */
 function showCrumbMenu(anchor, folded, onPick) {
   const menu = $('ctxMenu');
   menu.innerHTML = folded.map((c) =>
     `<button data-p="${escapeHtml(c.path)}" title="${escapeHtml(c.path)}">${icon('folder', 15)}${escapeHtml(c.name)}</button>`).join('');
-  menu.style.display = 'block';
   const r = anchor.getBoundingClientRect();
-  menu.style.left = Math.min(r.left, window.innerWidth - 230) + 'px';
-  menu.style.top = Math.min(r.bottom + 6, window.innerHeight - menu.offsetHeight - 8) + 'px';
-  menu.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { hideCtxMenu(); onPick(b.dataset.p); }));
+  ctxMenuShow(menu, { label: 'Folders above this one', opener: anchor, x: r.left, y: r.bottom + 6 });
+  menu.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    ctxMenuFocusOpener(hideCtxMenu());
+    onPick(b.dataset.p);
+  }));
   const first = menu.querySelector('button');
   if (first) first.focus({ preventScroll: true });
 }
