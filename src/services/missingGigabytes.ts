@@ -804,6 +804,17 @@ function mountedInsideLine(scan: ScanResult): StatementLine {
       crossed.count,
     );
   }
+  // Windows keeps no table to read (U-23): its own sentence says why, and the
+  // engines do not follow a volume mounted in a folder there, so nothing on
+  // another disk is counted — but how many such drives exist is not known, and
+  // "no drive is mounted" would claim a reading nobody made (TS review R11).
+  if (report.source === 'none' && report.reason) {
+    return {
+      id: 'mountedInside', label, bytes: 0, available: true,
+      detail: `${report.reason} So nothing on another disk is counted above.`,
+      count: null, notes: [], remedy: null,
+    };
+  }
   if (report.rule === 'stay') {
     const n = report.notEntered.count;
     return {

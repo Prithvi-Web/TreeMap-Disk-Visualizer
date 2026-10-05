@@ -27,7 +27,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { startScan } from '../src/services/diskScanner';
 import { updateSettings } from '../src/services/settings';
-import { setBoundaryDepsForTests, type MountTable } from '../src/utils/mountBoundaries';
+import { boundaryRecord, readMountTable, setBoundaryDepsForTests, type MountTable } from '../src/utils/mountBoundaries';
 import { formatBytes } from '../src/utils/formatBytes';
 import { platform } from '../src/platform';
 
@@ -905,5 +905,21 @@ test('no boundary on the record, or a table that could not be read: unknown with
   const line = lineOf(s, 'mountedInside');
   assert.equal(line.bytes, null);
   assert.match(line.reason ?? '', /\/sbin\/mount did not answer within 5 s/);
+  assertBalances(s);
+});
+
+test('Windows: no mount table is read, so the line says why there is nothing to count rather than "no drive is mounted" (TS review R11)', async () => {
+  // What a scan on Windows records: the table it read is Windows' own sentence, with no entries.
+  const table = await readMountTable('win32');
+  assert.ok(table.reason, 'Windows says why it has no table');
+  const scan = scanFixture({ store: storeOfSize(GB) });
+  scan.boundary = boundaryRecord({ rule: 'stay', source: table.source, reason: table.reason, mounts: [], fixed: [], neverDescend: [] });
+  const s = await buildStatement(scan, sourcesFixture());
+  const line = lineOf(s, 'mountedInside');
+  assert.equal(line.bytes, 0, 'the engines do not follow a folder-mounted volume there, so nothing on another disk is counted');
+  assert.equal(line.available, true);
+  assert.equal(line.count, null, 'how many drives are mounted in folders is not known: no table was read');
+  assert.ok(line.detail.includes(table.reason!), `the detail is Windows' own sentence: ${line.detail}`);
+  assert.doesNotMatch(line.detail, /No drive is mounted inside/, 'nothing was read that could say so');
   assertBalances(s);
 });
