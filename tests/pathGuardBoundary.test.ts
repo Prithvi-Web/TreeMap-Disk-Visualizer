@@ -15,6 +15,7 @@ import { buildMcpServer } from '../src/mcp/server';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
+import { isInside } from '../src/utils/pathSanitizer';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
@@ -273,4 +274,23 @@ test('a drive named with a word-final sigma is the same drive in either sigma (t
   } finally {
     evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
   }
+});
+
+test('a name that only begins with two dots (..data, as Kubernetes mounts a ConfigMap) is inside its folder, not a way out of it (the U-25 security review, F6)', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-guard-dotdot-'));
+  assert.equal(isInside(root, path.join(root, '..data')), true);
+  assert.equal(isInside(root, path.join(root, '..data', 'config.yaml')), true);
+  assert.equal(isInside(root, path.join(root, '...')), true, 'three dots are a name too');
+  assert.equal(isInside(root, path.dirname(root)), false, '.. itself still leaves');
+  assert.equal(isInside(root, path.join(path.dirname(root), 'sibling')), false);
+  assert.equal(isInside(root, `${root}-sibling`), false, 'a name that merely starts like the folder is not in it');
+  const dotted = path.join(root, '..data');
+  fs.mkdirSync(dotted);
+  const file = path.join(dotted, 'config.yaml');
+  fs.writeFileSync(file, 'k: v');
+  await scanned(root);
+  const r = await deleteDryRun([file]);
+  assert.equal(r.status, 200, `a file the scan listed under ..data is acted on: ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.wouldTrash?.[0]?.path, file);
+  assert.ok(fs.existsSync(file), 'a dry run moves nothing');
 });

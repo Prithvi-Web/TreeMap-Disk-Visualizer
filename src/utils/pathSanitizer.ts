@@ -401,11 +401,15 @@ export async function realPlaceOf(p: string): Promise<string | null> {
 const realpathNative = (p: string): Promise<string> =>
   new Promise((resolve, reject) => fs.realpath.native(p, (err, out) => (err ? reject(err) : resolve(out))));
 
-/** True when `child` is `parent` itself or located anywhere beneath it. */
+/**
+ * True when `child` is `parent` itself or located anywhere beneath it. Only
+ * `..` itself leaves: a name that merely begins with two dots (`..data`, as
+ * Kubernetes mounts a ConfigMap; `...`) is a name inside the folder (the U-25
+ * security review, F6), and refusing it only ever refused a file a scan listed.
+ */
 export function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
-  if (rel === '') return true;
-  return !rel.startsWith('..') && !path.isAbsolute(rel);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
 /**
@@ -551,7 +555,7 @@ export function liesInside(folder: unknown, p: unknown): boolean {
   } catch {
     where = canonicalDirOf(p);
   }
-  return where !== root && isAtOrUnder(root, where);
+  return where !== root && isInside(root, where);
 }
 
 /** Whether two paths name one existing entry: the same device and id, links not followed. */
@@ -591,11 +595,11 @@ export function spillCandidateTest(root: string): (p: string) => boolean {
   } catch {
     return () => true; // doubt: a folder that could not be resolved
   }
-  if (isAtOrUnder(appData, scanned)) return () => true; // the scan lies in app-data
-  if (!isAtOrUnder(scanned, appData)) return () => false; // app-data lies outside the scan
+  if (isInside(appData, scanned)) return () => true; // the scan lies in app-data
+  if (!isInside(scanned, appData)) return () => false; // app-data lies outside the scan
   // App-data as the scan spells it: the scan's own root, then app-data's place below it.
   const listed = path.join(foldForCompare(root), path.relative(scanned, appData));
-  return (p) => isAtOrUnder(listed, foldForCompare(p));
+  return (p) => isInside(listed, foldForCompare(p));
 }
 
 /** Where a folder really is: every link resolved, its last name included, asked afresh (no memo). */
@@ -603,11 +607,3 @@ function realLocationOf(p: string): string {
   return stripDataVolume(strip(fs.realpathSync.native(p)));
 }
 
-/**
- * `child` is `parent` or anywhere under it. Unlike `isInside`, whose `startsWith('..')` reads
- * a name that merely begins with two dots (`..x`) as outside, only `..` itself leaves.
- */
-function isAtOrUnder(parent: string, child: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
-}
