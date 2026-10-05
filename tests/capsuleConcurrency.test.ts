@@ -212,6 +212,21 @@ test('a restore that finishes while a capture is under way stays recorded as res
   assert.ok(await entryFor(c), 'and the capture under way kept its own copy');
 });
 
+test('a capture that throws lets the index go and unpins its run: the next commit runs, and the first trashed nothing (FG3f review R3)', async () => {
+  const x = file('throws', 'x.bin');
+  const y = file('throws', 'y.bin');
+  const unhook = setAfterIndexLoadForTests(async () => { throw new Error('a failure inside the capture (a test)'); });
+  try {
+    await assert.rejects(withOpenFileCheck('clear', () => commitCart([x])), /a failure inside the capture/);
+  } finally {
+    unhook();
+  }
+  const done = await withinHangGuard(withOpenFileCheck('clear', () => commitCart([y])), 'the next commit, once the failed capture has let the index go');
+  assert.deepEqual(done.trashed, [y]);
+  assert.ok(fs.existsSync(x), 'the first commit trashed nothing');
+  assert.equal(capsuleStoreWaitersForTests(), 0, 'and nothing is left waiting for the index');
+});
+
 /* ─────────────── autopilot.json ─────────────── */
 
 test('three approvals at once are all kept', async () => {
