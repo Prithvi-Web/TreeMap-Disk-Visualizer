@@ -74,16 +74,20 @@ OpenAPI 3 spec).
      folder — a disk image, the iOS Simulator's volumes, a separate `/home`
      on Linux — read from the operating system's mount table when the scan
      starts, never from device ids; the mount point stays in the tree as an
-     empty folder, nothing inside it is counted, and nothing inside it may
-     be acted on (the scanned-root rule). `"cross"` ("Include drives mounted
-     inside it") walks into them. Unknown is `null` with a `reason`, never an
+     empty folder (on a gdu scan only where it sits directly in the scanned
+     folder: gdu's `-x` leaves a deeper one out of the tree, and the folder
+     holding it is then marked not listed), nothing inside it is counted,
+     and nothing inside it may be acted on (the scanned-root rule).
+     `"cross"` ("Include drives mounted inside it") walks into them. Unknown
+     is `null` with a `reason`, never an
      empty list; `entered.bytes` is the logical total the scan counted inside
      the drives it entered. Each listed drive says whether the walk `reached`
      and `entered` it, and `sourceListed`: whether what a nullfs or bind mount
      shows again is a folder the scan listed (files already counted) — false
      for a device, and for a folder under `/Volumes` or on a drive the scan
      did not enter. MCP `scan_path` adds a `drivesMountedInside`
-     sentence whenever a drive was left out or counted.
+     sentence whenever a drive was left out or counted, or the mount table
+     could not be read (then saying so).
    - `GET /api/volumes` — attached external drives with free/total bytes; a
      drive whose stats cannot be read is listed with nulls and a reason.
    - `GET /api/scan/{scanId}/calendar` — bytes and file counts per local day

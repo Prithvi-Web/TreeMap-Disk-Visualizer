@@ -212,7 +212,7 @@ function scanSummary(scan: ScanResult): Record<string, unknown> {
     durationMs: (scan.finishedAt ?? scan.startedAt) - scan.startedAt,
     incremental: scan.incremental === true,
     topEntries,
-    // Track U, U-26: the drives mounted inside that the scan did not enter, or entered.
+    // Track U, U-26: the drives mounted inside that the scan did not enter, or entered, or that the table could not be read.
     ...(drives ? { drivesMountedInside: drives } : {}),
   };
 }

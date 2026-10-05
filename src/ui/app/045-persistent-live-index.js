@@ -1141,7 +1141,8 @@ subscribe(TOPIC.scan, (scanId) => {
    the iOS Simulator's runtime volumes, a nullfs view an app makes of its own
    bundle — is a separate disk, and under "Stay on this drive" (Settings, the
    default) no scan goes into it. Its mount point stays in the tree as an
-   empty folder, which says nothing by itself: this row names the drives the
+   empty folder (gdu leaves one deeper than the folder's own children out of
+   the tree), which says nothing by itself: this row names the drives the
    scan stayed out of, or, under "Include drives mounted inside it", the ones
    it counted, or why it could not tell. It reads GET /api/scan/:id/boundary
    once a scan has painted (TOPIC.scan), never in front of the paint, and
