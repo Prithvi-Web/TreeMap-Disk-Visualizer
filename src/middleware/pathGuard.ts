@@ -315,18 +315,32 @@ function exclusionKeysOf(scan: ScanResult, root: string): Set<string> {
 /** macOS's list of the Data volume's folders that the root shows (firmlinks): /Users, /Applications, /private, … */
 const FIRMLINKS_FILE = '/usr/share/firmlinks';
 
-/** The Data volume's folders as the root spells them, read once; empty when the list cannot be read. */
+/**
+ * The folders every macOS since Catalina (10.15) firmlinks from the Data volume, as the root spells
+ * them: the list where /usr/share/firmlinks cannot be read, or names none (the SEC-2 review, LOW-1).
+ * With no list at all, no Data volume spelling was the root's, while the sanitizer and the spill and
+ * app-data rules take the prefix off every such spelling — so the layers disagreed about one file.
+ * Only folders on every version: one firmlinked on some (/System/Library/Caches, /usr/libexec/cups)
+ * is left out, since reading the Data volume's own folder of that name as the root's would grant
+ * what a scan of / never listed.
+ */
+export const DEFAULT_DATA_VOLUME_FOLDERS: readonly string[] = Object.freeze(['/Applications', '/Library', '/Users', '/Volumes', '/cores', '/opt', '/private', '/usr/local']);
+
+/** The Data volume's folders as the root spells them, read once; the default list when the file cannot be read. */
 let dataVolumeFolders: readonly string[] | null = null;
 let dataVolumeFoldersForTests: readonly string[] | null = null;
+let firmlinksFileForTests: string | null = null;
 
 function dataVolumeFolderList(): readonly string[] {
   if (dataVolumeFoldersForTests) return dataVolumeFoldersForTests;
   if (dataVolumeFolders === null) {
+    let read: string[] = [];
     try {
-      dataVolumeFolders = parseFirmlinks(fs.readFileSync(FIRMLINKS_FILE, 'utf8')).map((pair) => pair.system);
+      read = parseFirmlinks(fs.readFileSync(firmlinksFileForTests ?? FIRMLINKS_FILE, 'utf8')).map((pair) => pair.system);
     } catch {
-      dataVolumeFolders = []; // unknown: no Data volume spelling is read as the root's, and a scan of that volume grants nothing
+      // unreadable: the default list below
     }
+    dataVolumeFolders = read.length > 0 ? read : DEFAULT_DATA_VOLUME_FOLDERS;
   }
   return dataVolumeFolders;
 }
@@ -334,6 +348,12 @@ function dataVolumeFolderList(): readonly string[] {
 /** Tests only: the Data volume's folders, in place of this Mac's firmlinks; null puts them back. */
 export function setDataVolumeFoldersForTests(list: readonly string[] | null): void {
   dataVolumeFoldersForTests = list;
+}
+
+/** Tests only: read the firmlinks from `file` in place of /usr/share/firmlinks, afresh; null puts this Mac's back. */
+export function setFirmlinksFileForTests(file: string | null): void {
+  firmlinksFileForTests = file;
+  dataVolumeFolders = null;
 }
 
 /**

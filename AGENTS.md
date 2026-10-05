@@ -500,6 +500,9 @@ read-what-you-saw) permission to act.
   volume itself and its own folders (`/System/Volumes/Data/.Spotlight-V100`,
   `…/mnt`, `…/usr/bin`) are not `/`, `/.Spotlight-V100`, `/mnt` or
   `/usr/bin`, and lie under `/System/Volumes`, which a scan of `/` never lists.
+  Where `/usr/share/firmlinks` cannot be read, or names nothing, the folders
+  every macOS since 10.15 firmlinks stand in (`/Applications`, `/Library`,
+  `/Users`, `/Volumes`, `/cores`, `/opt`, `/private`, `/usr/local`).
 - **TreeMap's own spill folder.** `<appData>/scan-spill` is reserved for the
   working files of very large scans (Phase 4; no scan writes there yet). Every
   endpoint and MCP tool that takes a path

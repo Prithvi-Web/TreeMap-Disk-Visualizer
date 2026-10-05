@@ -14,7 +14,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer } from '../src/mcp/server';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { insideAnyScanRoot, setDataVolumeFoldersForTests } from '../src/middleware/pathGuard';
+import { insideAnyScanRoot, setDataVolumeFoldersForTests, setFirmlinksFileForTests } from '../src/middleware/pathGuard';
 import { isInside, sanitizePath } from '../src/utils/pathSanitizer';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -453,6 +453,44 @@ test('a scan of the Data volume typed through a link in its parents, or in anoth
     }
   } finally {
     setDataVolumeFoldersForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});
+
+test('where /usr/share/firmlinks cannot be read, the folders every macOS firmlinks stand in: the Data volume’s spelling of a scanned file is still that file, and nothing else is read as the root’s (the SEC-2 review, LOW-1)', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume and its firmlinks are macOS');
+  // With no list, no Data volume spelling was the root's: a scan of a home folder refused
+  // /System/Volumes/Data/Users/me/f, while the sanitizer, the spill and the app-data rules all
+  // read it as /Users/me/f — the layers disagreed about one file.
+  const lists = fs.realpathSync(fileTempDir('treemap-guard-low1-list-'));
+  setFirmlinksFileForTests(path.join(lists, 'no-such-firmlinks'));
+  evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  const home = fs.realpathSync(fileTempDir('treemap-guard-low1-'));
+  assert.ok(home.startsWith('/private/'), `the temp folder is under /private: ${home}`);
+  const inData = path.join('/System/Volumes/Data', home, 'f.txt');
+  try {
+    const rec = createScanRecord(home);
+    rec.status = 'complete';
+    rec.finishedAt = Date.now();
+    assert.equal(insideAnyScanRoot(path.join(home, 'f.txt')), true);
+    assert.equal(insideAnyScanRoot(inData), true, 'the Data volume’s spelling of a file in the scan');
+    // A list that can be read is the list; one that names nothing is no list, and the default stands in.
+    const file = path.join(lists, 'firmlinks');
+    fs.writeFileSync(file, '/Users\tUsers\n');
+    setFirmlinksFileForTests(file);
+    assert.equal(insideAnyScanRoot(inData), false, 'a list naming only /Users does not make /private the root’s');
+    fs.writeFileSync(file, '');
+    setFirmlinksFileForTests(file);
+    assert.equal(insideAnyScanRoot(inData), true, 'an empty list: the default');
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+    const slash = createScanRecord('/');
+    slash.status = 'complete';
+    slash.finishedAt = Date.now();
+    assert.equal(insideAnyScanRoot('/System/Volumes/Data/usr/local/bin/x'), true, '/usr/local is firmlinked on every macOS');
+    assert.equal(insideAnyScanRoot('/System/Volumes/Data/usr/bin/x'), false, 'the Data volume’s own /usr/bin is not /usr/bin');
+    assert.equal(insideAnyScanRoot('/System/Volumes/Data/System/Library/Caches/x'), false, 'a folder firmlinked only on some versions is not assumed');
+  } finally {
+    setFirmlinksFileForTests(null);
     evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
   }
 });
