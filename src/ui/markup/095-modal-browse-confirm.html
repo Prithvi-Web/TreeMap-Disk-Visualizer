@@ -38,3 +38,26 @@
     </div>
   </div>
 </div>
+
+<!-- ═══════════ Ask modal (D65) ═══════════
+     One question with a typed one-line answer: a saved view's name, a fleet
+     pairing code, a folder for a paired machine to scan. window.prompt() is
+     not implemented in Electron — it returns nothing there — so every such
+     question asks through this sheet (askText). -->
+<div class="modal-backdrop" id="askModal" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+  <div class="modal" style="width:430px;">
+    <div class="modal-head">
+      <h3 id="askTitle">Name this</h3>
+      <button class="close-x" data-close="askModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <label for="askInput" id="askLabel" class="muted" style="display:block;margin-bottom:7px;font-size:12.5px;"></label>
+      <input type="text" id="askInput" autofocus autocomplete="off" spellcheck="false" style="width:100%;">
+    </div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn" data-close="askModal">Cancel</button>
+      <button class="btn btn-primary" id="askOk">OK</button>
+    </div>
+  </div>
+</div>

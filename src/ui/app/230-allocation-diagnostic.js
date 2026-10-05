@@ -242,7 +242,7 @@ async function showPairingCode() {
 }
 
 async function pairWithMachine(address, port) {
-  const code = prompt(`Enter the six-digit code showing on ${address}:`);
+  const code = await askText({ title: 'Pair with this machine', label: `Enter the six-digit code showing on ${address}:`, ok: 'Pair' });
   if (!code) return;
   try {
     await api('/api/fleet/peers', {
@@ -266,7 +266,7 @@ async function forgetPeer(id) {
 }
 
 async function triggerPeerScan(id) {
-  const path = prompt('Which folder should that machine scan?');
+  const path = await askText({ title: 'Scan on that machine', label: 'Which folder should that machine scan?', ok: 'Ask it to scan' });
   if (!path) return;
   try {
     await api(`/api/fleet/peers/${encodeURIComponent(id)}/trigger-scan`, {

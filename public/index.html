@@ -4289,6 +4289,29 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   </div>
 </div>
 
+<!-- ═══════════ Ask modal (D65) ═══════════
+     One question with a typed one-line answer: a saved view's name, a fleet
+     pairing code, a folder for a paired machine to scan. window.prompt() is
+     not implemented in Electron — it returns nothing there — so every such
+     question asks through this sheet (askText). -->
+<div class="modal-backdrop" id="askModal" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+  <div class="modal" style="width:430px;">
+    <div class="modal-head">
+      <h3 id="askTitle">Name this</h3>
+      <button class="close-x" data-close="askModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <label for="askInput" id="askLabel" class="muted" style="display:block;margin-bottom:7px;font-size:12.5px;"></label>
+      <input type="text" id="askInput" autofocus autocomplete="off" spellcheck="false" style="width:100%;">
+    </div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn" data-close="askModal">Cancel</button>
+      <button class="btn btn-primary" id="askOk">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Budget modal (Feature 15) ═══════════ -->
 <div class="modal-backdrop" id="budgetModal" role="dialog" aria-modal="true" aria-labelledby="budgetTitle">
   <div class="modal" style="width:440px;">
@@ -20577,10 +20600,49 @@ function renderSavedViews() {
   tmSyncQueryBar();
 }
 
+/* ── Asking for one line of text (D65) ──
+   window.prompt() is not implemented in Electron — it returns nothing — so
+   Save view, the fleet's pairing code and a paired machine's scan folder did
+   nothing at all in the desktop app. They ask through #askModal instead, a
+   sheet like any other, so the focus and inert net (235) applies to it. */
+let askResolve = null;
+
+/**
+ * Ask one question with a typed answer. Resolves with the trimmed text, or
+ * null when the sheet is closed any way but OK — Cancel, ×, the scrim and
+ * Escape all reach closeModal, which settles it — or OK is pressed with
+ * nothing typed: what prompt() answered as null or ''.
+ */
+function askText({ title, label, value = '', ok = 'OK' }) {
+  askSettle(null); // a question still open is answered "no", never left waiting
+  $('askTitle').textContent = title;
+  $('askLabel').textContent = label;
+  $('askInput').value = value;
+  $('askOk').textContent = ok;
+  $('askModal').classList.add('open');
+  return new Promise((resolve) => { askResolve = resolve; });
+}
+
+/** Answer the open question, once; a later answer finds nothing to settle. */
+function askSettle(answer) {
+  const resolve = askResolve;
+  askResolve = null;
+  if (resolve) resolve(answer);
+}
+$('askOk').addEventListener('click', () => {
+  askSettle($('askInput').value.trim() || null);
+  closeModal('askModal');
+});
+$('askInput').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  $('askOk').click();
+});
+
 async function saveCurrentView() {
   const q = ($('tmSearch').value || '').trim();
   if (!q) { toast('Type a query first, then save it as a view.', 'error'); return; }
-  const name = window.prompt('Name this view', q.slice(0, 40));
+  const name = await askText({ title: 'Save view', label: 'Name this view', value: q.slice(0, 40), ok: 'Save view' });
   if (!name) return;
   try {
     await api('/api/queries', {
@@ -31967,7 +32029,7 @@ async function showPairingCode() {
 }
 
 async function pairWithMachine(address, port) {
-  const code = prompt(`Enter the six-digit code showing on ${address}:`);
+  const code = await askText({ title: 'Pair with this machine', label: `Enter the six-digit code showing on ${address}:`, ok: 'Pair' });
   if (!code) return;
   try {
     await api('/api/fleet/peers', {
@@ -31991,7 +32053,7 @@ async function forgetPeer(id) {
 }
 
 async function triggerPeerScan(id) {
-  const path = prompt('Which folder should that machine scan?');
+  const path = await askText({ title: 'Scan on that machine', label: 'Which folder should that machine scan?', ok: 'Ask it to scan' });
   if (!path) return;
   try {
     await api(`/api/fleet/peers/${encodeURIComponent(id)}/trigger-scan`, {
@@ -32736,6 +32798,9 @@ function closeModal(id) {
   // The Smart pane's funnel is a live handle inside this sheet; every way of
   // closing the sheet funnels through here, so this is its one exit door.
   if (id === 'cleanModal') cleanFunnelDrop();
+  // An ask sheet closed any way but its OK is a "no" (D65); after OK this
+  // finds the question already answered.
+  if (id === 'askModal') askSettle(null);
   // FX: the job ring dies with the sheet, whichever surface closed it — a beam
   // on a hidden modal would be a claim nobody can see.
   if (id === 'offloadModal') {

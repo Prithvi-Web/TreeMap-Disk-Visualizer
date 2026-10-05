@@ -552,10 +552,49 @@ function renderSavedViews() {
   tmSyncQueryBar();
 }
 
+/* ── Asking for one line of text (D65) ──
+   window.prompt() is not implemented in Electron — it returns nothing — so
+   Save view, the fleet's pairing code and a paired machine's scan folder did
+   nothing at all in the desktop app. They ask through #askModal instead, a
+   sheet like any other, so the focus and inert net (235) applies to it. */
+let askResolve = null;
+
+/**
+ * Ask one question with a typed answer. Resolves with the trimmed text, or
+ * null when the sheet is closed any way but OK — Cancel, ×, the scrim and
+ * Escape all reach closeModal, which settles it — or OK is pressed with
+ * nothing typed: what prompt() answered as null or ''.
+ */
+function askText({ title, label, value = '', ok = 'OK' }) {
+  askSettle(null); // a question still open is answered "no", never left waiting
+  $('askTitle').textContent = title;
+  $('askLabel').textContent = label;
+  $('askInput').value = value;
+  $('askOk').textContent = ok;
+  $('askModal').classList.add('open');
+  return new Promise((resolve) => { askResolve = resolve; });
+}
+
+/** Answer the open question, once; a later answer finds nothing to settle. */
+function askSettle(answer) {
+  const resolve = askResolve;
+  askResolve = null;
+  if (resolve) resolve(answer);
+}
+$('askOk').addEventListener('click', () => {
+  askSettle($('askInput').value.trim() || null);
+  closeModal('askModal');
+});
+$('askInput').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  $('askOk').click();
+});
+
 async function saveCurrentView() {
   const q = ($('tmSearch').value || '').trim();
   if (!q) { toast('Type a query first, then save it as a view.', 'error'); return; }
-  const name = window.prompt('Name this view', q.slice(0, 40));
+  const name = await askText({ title: 'Save view', label: 'Name this view', value: q.slice(0, 40), ok: 'Save view' });
   if (!name) return;
   try {
     await api('/api/queries', {

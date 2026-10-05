@@ -628,6 +628,9 @@ function closeModal(id) {
   // The Smart pane's funnel is a live handle inside this sheet; every way of
   // closing the sheet funnels through here, so this is its one exit door.
   if (id === 'cleanModal') cleanFunnelDrop();
+  // An ask sheet closed any way but its OK is a "no" (D65); after OK this
+  // finds the question already answered.
+  if (id === 'askModal') askSettle(null);
   // FX: the job ring dies with the sheet, whichever surface closed it — a beam
   // on a hidden modal would be a claim nobody can see.
   if (id === 'offloadModal') {
