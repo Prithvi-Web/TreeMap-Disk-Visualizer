@@ -543,13 +543,13 @@ async function reclaimRows(handle: Database.Database, rootId: number): Promise<v
 /**
  * Reclaims root `rootId`'s rows behind the caller (`reclaimRows`). Nothing
  * waits on it; a failure is logged, and the root, still 'building' and set
- * aside, is reclaimed by the next open.
+ * aside, is reclaimed by the next build, delete or open (`reclaimLeftovers`).
  */
 function reclaimLater(handle: Database.Database, rootId: number): void {
   if (reclaiming.get(rootId)?.handle === handle) return;
   const done: Promise<void> = reclaimRows(handle, rootId)
     .catch((err: unknown) => {
-      console.error(`[treemap] the rows of an index that was replaced or discarded (root ${String(rootId)}) were not all reclaimed; the next start reclaims the rest:`, err);
+      console.error(`[treemap] the rows of an index that was replaced or discarded (root ${String(rootId)}) were not all reclaimed; the next build, delete or start reclaims the rest:`, err);
     })
     .finally(() => {
       unsettledReclaims.delete(done);
@@ -560,14 +560,19 @@ function reclaimLater(handle: Database.Database, rootId: number): void {
   trackWrite('index-reclaim', done); // tracked, so `settled()` waits for it; `done` never rejects
 }
 
+/** The roots this process's builds are writing, each with the index it writes in. */
+const activeBuilds = new Map<number, { handle: Database.Database; root: string }>();
+
 /**
- * Sets aside and reclaims every root left 'building' in `handle`: at an
- * open, every one — no build of this process writes through a handle that
- * has just been opened.
+ * Sets aside and reclaims every root left 'building' in `handle` that no
+ * build of this process is writing there: one a process that ended left (at
+ * an open, every one is), or one whose discard failed (Track U review L1).
+ * Run at every open, at the start of every build and by `deleteIndex`.
  */
 function reclaimLeftovers(handle: Database.Database): void {
   const building = handle.prepare("SELECT id, path FROM roots WHERE state = 'building'").all() as { id: number; path: string }[];
   for (const row of building) {
+    if (activeBuilds.get(row.id)?.handle === handle) continue;
     if (!row.path.startsWith(DISCARD_PREFIX)) setAside(handle, row.id);
     reclaimLater(handle, row.id);
   }
@@ -815,10 +820,8 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   const aside = opts.maxEntries !== undefined;
   const buildPath = aside ? `${ASIDE_PREFIX}${process.pid}:${++asideSeq}:${root}` : root;
 
-  if (!aside) {
-    stopWatcher(root); // a rebuild invalidates any watcher on the old rows
-    staleReasons.delete(root); // and whatever made the old rows stale
-  }
+  // A discard that failed before is retried here (Track U review L1).
+  reclaimLeftovers(handle);
 
   // The node ids this build sets aside (U-D6): its cap and one more — the
   // walk stops on the entry past the cap — or 2^32 without one, and never
@@ -849,17 +852,31 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     })
     .call(null);
   seams?.onReserve?.(base, stride);
+  if (!aside) {
+    // After the commit, never before it: a build that cannot begin leaves
+    // the saved root its watcher and its reason for being stale (L1).
+    stopWatcher(root); // a rebuild invalidates any watcher on the old rows
+    staleReasons.delete(root); // and whatever made the old rows stale
+  }
   if (replacedFirst !== null) reclaimLater(handle, replacedFirst);
 
   const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(buildPath) as { id: number }).id;
+  activeBuilds.set(rootId, { handle, root });
   /**
    * Drops what this build wrote: out of every reader's sight at once, its
    * rows reclaimed in slices behind it (M1), the folder's path free for the
    * next build.
    */
   const discard = (): void => {
-    setAside(handle, rootId);
-    reclaimLater(handle, rootId);
+    try {
+      setAside(handle, rootId);
+      reclaimLater(handle, rootId);
+    } catch (err) {
+      // Left 'building', out of sight wherever it was: the next build, a
+      // delete or the next open discards it (L1). The build still ends with
+      // its own answer — a stop, a cancel, its own failure.
+      console.error(`[treemap] an index build of ${root} could not be discarded; the next build, delete or start discards it:`, err);
+    }
   };
 
   // Every row is written at `base + ordinal`, its entry's number in the walk,
@@ -892,6 +909,8 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   let rootFileBytes = 0;
   /** Set once the walk has passed `opts.maxEntries`: it stops, and the build is discarded. */
   let capped = false;
+  /** Set once the build is the folder's index: nothing after that may undo it (Track U review L2). */
+  let committed = false;
 
   /** One write transaction, then its progress event, then a turn of the event loop. */
   const write = async (rows: NodeInsert[], phase: BuildProgress['phase'], currentPath: string): Promise<void> => {
@@ -1003,16 +1022,10 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       await write(batch, 'summing', root);
     }
 
-    if (aside) {
-      // The swap. The saved root's watcher goes first (on macOS its OS watch
-      // is held across this by `buildIndex`), then, in one transaction, the
-      // saved root is set aside — one statement, no row deleted — and this
-      // build takes the folder's path. The saved rows are reclaimed in
-      // slices afterwards (M1); until the swap they are the folder's index,
-      // untouched (U-Q4).
-      stopWatcher(root);
-      staleReasons.delete(root);
-    }
+    // The swap: in one transaction the saved root is set aside — one
+    // statement, no row deleted — and this build takes the folder's path.
+    // The saved rows are reclaimed in slices afterwards (M1); until the swap
+    // they are the folder's index, untouched (U-Q4).
     const replaced = handle
       .transaction((): number | null => {
         let prior: { id: number } | undefined;
@@ -1031,24 +1044,32 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
         return prior?.id ?? null;
       })
       .call(null);
+    committed = true;
+    if (aside) {
+      // The saved root's watcher goes once the swap has committed, never
+      // before: a swap that fails leaves the saved root its watcher and its
+      // reason for being stale (L1). On macOS its OS watch is held across
+      // this by `buildIndex`, and handed to the watcher started below.
+      stopWatcher(root);
+      staleReasons.delete(root);
+    }
     if (replaced !== null) reclaimLater(handle, replaced);
 
     opts.onProgress?.({ phase: 'done', processed: written, currentPath: root });
     if (opts.live !== false) startWatcher(root);
     return getRoot(root)!;
   } catch (err) {
+    // Committed, this build is the folder's index: a throw after that (the
+    // caller's own progress handler, say) must not discard it (L2).
+    if (committed) throw err;
     const message = err instanceof Error ? err.message : String(err);
     if (message !== 'cancelled' && !(err instanceof IndexCapReached)) {
       if (aside) {
         // Nothing half-written is kept, and the saved index stays the
         // folder's. A database that has gone away (closed under the build, a
         // process ending) leaves the row 'building', which the next open
-        // discards.
-        try {
-          discard();
-        } catch {
-          /* see above */
-        }
+        // discards; `discard` logs any failure.
+        discard();
       } else {
         handle.prepare("UPDATE roots SET state = 'error', error = ? WHERE id = ?").run(message, rootId);
       }
@@ -1056,6 +1077,8 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
     // How far the walk got: an error is reported in entries, not rows.
     opts.onProgress?.({ phase: 'error', processed, currentPath: root });
     throw err;
+  } finally {
+    activeBuilds.delete(rootId);
   }
 }
 
@@ -1144,6 +1167,8 @@ export function deleteIndex(rootPath?: string): number {
     staleReasons.delete(rootPath);
     // Deleting a folder's index starts it afresh: its next scan may build again.
     handle.prepare('DELETE FROM cap_stops WHERE path = ?').run(rootPath);
+    // A discard that failed before is retried here too (L1), behind the delete.
+    reclaimLeftovers(handle);
     const row = handle.prepare('SELECT id FROM roots WHERE path = ?').get(rootPath) as { id: number } | undefined;
     if (!row) return 0;
     handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(row.id);

@@ -291,3 +291,28 @@ test('a reclaim cut short by a close stops there, and the next open reclaims the
   assert.deepEqual(second.slices(saved.id).map((s) => s.rows), [100, 100, 1], 'and reclaims it in slices');
   assert.equal(rootRow(saved.id), undefined);
 });
+
+test('a build that starts while another is running leaves that one alone: only a root no build is writing is reclaimed', async (t) => {
+  await reclaimsSettled();
+  const held = folder('held');
+  fs.mkdirSync(path.join(held, 'sub'));
+  addFiles(path.join(held, 'sub'), 1200);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let isHeld = false;
+  setBuildSeamsForTests({ afterWrite: (n) => { if (n !== 1) return undefined; isHeld = true; return gate; } });
+  t.after(() => { release(); setBuildSeamsForTests(null); });
+  const first = buildIndex(held, { live: false, maxEntries: 5000 });
+  await waitFor(() => isHeld, 'the first build being held after its first write');
+  setBuildSeamsForTests(null);
+
+  const other = folder('other');
+  addFiles(other, 3);
+  await buildIndex(other, { live: false }); // starts — and looks for leftovers — while the first is held
+  release();
+  const built = await first;
+  assert.equal(built.state, 'ready', 'the first build was not taken for a leftover');
+  assert.equal(built.fileCount, 1200);
+  await reclaimsSettled();
+  assert.equal(rowsUnder(built.id), 1202, 'and keeps every row it wrote');
+});

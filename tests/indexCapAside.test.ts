@@ -1,5 +1,7 @@
 import { test, after } from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -11,16 +13,19 @@ isolatedDataDir('treemap-indexCapAside-data-');
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { holdIndexBuildsForTests } from '../src/api/indexRoutes';
+import { setSharedStreamForTests, setWatchImplForTests, watchPath } from '../src/platform/watchRegistry';
 import {
   IndexCapReached,
   buildIndex,
   capStopFor,
   closeIndex,
+  deleteIndex,
   getRoot,
   listRoots,
   openIndex,
   reclaimsSettled,
   searchIndex,
+  stopAllWatchers,
   stopWatcher,
   type BuildProgress,
   type IndexedRoot,
@@ -373,5 +378,126 @@ test('a request joins a running build whose cap is no tighter than its own, and 
   } finally {
     holdIndexBuildsForTests(null);
     await close();
+  }
+});
+
+/* ══════════════════ the swap: what it leaves when it fails, or when something throws after it (Track U review L1, L2, L7) ══════════════════ */
+
+/** Every watch through a stand-in for fs.watch: nothing waits on the OS. */
+function standInWatches(t: TestContext): void {
+  class StandInWatch extends EventEmitter {
+    close(): void {}
+  }
+  setWatchImplForTests(() => new StandInWatch());
+  t.after(() => {
+    stopAllWatchers();
+    setWatchImplForTests(null);
+    setSharedStreamForTests(null);
+  });
+}
+
+/** A live root made stale by another watch attaching on a shared stream: watched, and with a reason of its own. */
+function liveAndStale(t: TestContext, dir: string): void {
+  setSharedStreamForTests(true);
+  const lease = watchPath(fileTempDir('treemap-indexCapAside-other-'), { recursive: true, owner: 'test:other' }, () => {});
+  t.after(() => lease.close());
+  const root = getRoot(dir)!;
+  assert.equal(root.state, 'stale');
+  assert.match(root.staleReason ?? '', /another folder/);
+  assert.equal(root.live, true);
+}
+
+/** Fails, in the index's own connection, every statement that sets a root 'ready': the swap's, and an explicit build's last. */
+function failTheSwap(t: TestContext): void {
+  openIndex().exec("CREATE TEMP TRIGGER fail_swap BEFORE UPDATE OF state ON roots WHEN NEW.state = 'ready' BEGIN SELECT RAISE(ABORT, 'injected: the swap failed'); END");
+  t.after(() => { openIndex().exec('DROP TRIGGER IF EXISTS temp.fail_swap'); });
+}
+
+test('a swap that fails leaves the saved index exactly as it was: its rows, its watcher, and its reason for being stale', async (t) => {
+  standInWatches(t);
+  setSharedStreamForTests(false);
+  const dir = fixture(6);
+  fs.mkdirSync(path.join(dir, 'sub'));
+  addFiles(path.join(dir, 'sub'), 600, 'f');
+  await buildIndex(dir); // live
+  liveAndStale(t, dir);
+  const before = getRoot(dir)!;
+  const rows = rowsOf(before.id);
+
+  failTheSwap(t);
+  await assert.rejects(buildIndex(dir, { maxEntries: 1000 }), { message: 'injected: the swap failed' });
+  assert.deepEqual(getRoot(dir), before, 'the same root: id, state, counts, its watcher (live) and its reason for being stale');
+  assert.deepEqual(rowsOf(before.id), rows, 'and every one of its rows');
+  await reclaimsSettled();
+  assert.equal(count("SELECT COUNT(*) c FROM roots WHERE state = 'building'"), 0, 'what the failed build wrote is discarded');
+  assert.equal(count('SELECT COUNT(*) c FROM nodes WHERE root_id NOT IN (SELECT id FROM roots)'), 0);
+});
+
+test('an explicit rebuild that cannot begin leaves the saved index its watcher and its reason for being stale', async (t) => {
+  standInWatches(t);
+  setSharedStreamForTests(false);
+  const dir = fixture(6);
+  await buildIndex(dir); // live
+  liveAndStale(t, dir);
+  const before = getRoot(dir)!;
+  // No room left for another build's ids: the first transaction fails.
+  const handle = openIndex();
+  const seq = (handle.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'nodes'").get() as { seq: number }).seq;
+  handle.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'").run(Number.MAX_SAFE_INTEGER - 10);
+  t.after(() => { openIndex().prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'").run(seq); });
+  await assert.rejects(buildIndex(dir), /no room left/);
+  assert.deepEqual(getRoot(dir), before, 'still watched, still stale for the reason it had');
+});
+
+test('a discard that fails is logged, the stop still answers with its own sentence, and the next build or a delete reclaims what it left', async (t) => {
+  for (const retry of ['the next build', 'a delete'] as const) {
+    await reclaimsSettled();
+    const dir = fixture(6);
+    fs.mkdirSync(path.join(dir, 'sub'));
+    addFiles(path.join(dir, 'sub'), 600, 'f');
+    const handle = openIndex();
+    handle.exec("CREATE TEMP TRIGGER fail_discard BEFORE UPDATE OF path ON roots WHEN NEW.path LIKE 'building-aside:discard:%' BEGIN SELECT RAISE(ABORT, 'injected: the discard failed'); END");
+    const logged = t.mock.method(console, 'error', () => {});
+    try {
+      await assert.rejects(buildIndex(dir, { live: false, maxEntries: 550 }), IndexCapReached, `${retry}: the stop answers as a stop`);
+    } finally {
+      handle.exec('DROP TRIGGER IF EXISTS temp.fail_discard');
+      logged.mock.restore();
+    }
+    assert.equal(logged.mock.callCount(), 1, `${retry}: the failed discard is logged`);
+    assert.match(String(logged.mock.calls[0].arguments[0]), /could not be discarded/);
+    const left = handle.prepare("SELECT id FROM roots WHERE state = 'building'").all() as { id: number }[];
+    assert.equal(left.length, 1, `${retry}: the build's root is left building`);
+    assert.ok(count('SELECT COUNT(*) c FROM nodes WHERE root_id = ?', left[0].id) >= 500, 'with the rows it wrote');
+    assert.ok(!listRoots().some((r) => r.id === left[0].id), 'and out of every reader\'s sight');
+
+    if (retry === 'the next build') await buildIndex(fixture(2), { live: false });
+    else deleteIndex(fixture(2)); // a folder with no index: the delete still reclaims what was left
+    await reclaimsSettled();
+    assert.equal(count('SELECT COUNT(*) c FROM roots WHERE id = ?', left[0].id), 0, `${retry} reclaims what the failed discard left`);
+    assert.equal(count('SELECT COUNT(*) c FROM nodes WHERE root_id = ?', left[0].id), 0);
+  }
+});
+
+test('a throw after the swap has committed leaves the build swapped in: the index is the folder\'s, and nothing undoes it', async () => {
+  for (const capped of [true, false]) {
+    const label = capped ? 'a capped build' : 'an explicit build';
+    const dir = fixture(8);
+    const saved = await buildIndex(dir, { live: false });
+    const thrown = new Error('the caller\'s own progress handler threw');
+    await assert.rejects(
+      buildIndex(dir, {
+        live: false,
+        ...(capped ? { maxEntries: 100 } : {}),
+        onProgress: (p) => { if (p.phase === 'done') throw thrown; },
+      }),
+      thrown,
+    );
+    const now = getRoot(dir);
+    assert.ok(now, `${label}: the folder still has an index`);
+    assert.notEqual(now.id, saved.id, `${label}: the one swapped in`);
+    assert.equal(now.state, 'ready', `${label}: ready, not failed`);
+    await reclaimsSettled();
+    assert.equal(count('SELECT COUNT(*) c FROM nodes WHERE root_id = ?', now.id), 9, `${label}: with every row`);
   }
 });

@@ -171,6 +171,29 @@ test('rebuilding a live root hands its OS watch over rather than closing it, so 
   assert.equal(state(a), 'ready', 'and the other root was never interrupted');
 });
 
+test('a capped build swapped in over a live root hands its OS watch over too, so no other root goes stale', async (t) => {
+  // The page's own builds after a scan are capped, and written aside until
+  // the swap (Track U review L7): the swap must hand the watch over exactly
+  // as an explicit rebuild does.
+  cleanUp(t);
+  class StandInWatch extends EventEmitter {
+    close(): void {}
+  }
+  setWatchImplForTests(() => new StandInWatch());
+  t.after(() => setWatchImplForTests(null));
+  const [a, b] = await liveRoots(2);
+  const watchesBefore = openWatches().length;
+  setSharedStreamForTests(true);
+
+  const changes = await changesDuring(() => buildIndex(b, { live: true, maxEntries: 1000 }));
+  assert.deepEqual(changes, [], 'no OS watch was closed or opened by the capped build or its swap');
+  assert.equal(openWatches().length, watchesBefore);
+  const swapped = getRoot(b)!;
+  assert.equal(swapped.state, 'ready');
+  assert.equal(swapped.live, true, 'the build swapped in is watched');
+  assert.equal(state(a), 'ready', 'and the other root was never interrupted');
+});
+
 /** A finished scan of `dir` — all that Live mode reads from one. */
 const scanOf = (dir: string, scanId: string): ScanResult & { root: FileNode } =>
   ({
