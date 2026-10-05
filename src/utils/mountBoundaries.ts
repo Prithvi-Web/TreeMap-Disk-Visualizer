@@ -317,18 +317,43 @@ export interface BoundaryDeps {
 /** A dead network mount must not hold a scan's start: a mount whose kind is not known by then is kept. */
 const MOUNT_STAT_TIMEOUT_MS = 2_000;
 
-async function isDirectoryBounded(p: string): Promise<boolean | null> {
-  let timer: NodeJS.Timeout | undefined;
-  const late = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), MOUNT_STAT_TIMEOUT_MS);
-    timer.unref();
-  });
-  try {
-    return await Promise.race([fsp.stat(p).then((st) => st.isDirectory(), () => null), late]);
-  } finally {
-    clearTimeout(timer);
-  }
+/**
+ * `isDirectory` for the boundary, bounded: a mount point whose stat has not
+ * answered within `timeoutMs` is unknown (null), and kept. The race abandons
+ * the stat; it cannot cancel it, and a dead hard-mounted network share holds a
+ * thread of libuv's small pool for as long as it hangs. So a stat still out on
+ * a path is shared: a later scan's look waits on that one and never parks
+ * another thread (TS review R9). It leaves the map when it answers, and no
+ * answer is kept — a drive may be mounted there by the next scan.
+ */
+export function boundedIsDirectory(stat: (p: string) => Promise<{ isDirectory(): boolean }>, timeoutMs: number): (p: string) => Promise<boolean | null> {
+  const inFlight = new Map<string, Promise<boolean | null>>();
+  return async (p) => {
+    let look = inFlight.get(p);
+    if (!look) {
+      const started: Promise<boolean | null> = stat(p)
+        .then((st) => st.isDirectory(), () => null)
+        .then((answer) => {
+          if (inFlight.get(p) === started) inFlight.delete(p);
+          return answer;
+        });
+      inFlight.set(p, started);
+      look = started;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+      timer.unref();
+    });
+    try {
+      return await Promise.race([look, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 }
+
+const isDirectoryBounded = boundedIsDirectory((p) => fsp.stat(p), MOUNT_STAT_TIMEOUT_MS);
 
 async function liveAliases(platform: NodeJS.Platform): Promise<AliasRule> {
   if (platform !== 'darwin') return NO_ALIASES;

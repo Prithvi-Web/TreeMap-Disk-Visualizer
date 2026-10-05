@@ -7,6 +7,7 @@ isolatedDataDir('treemap-scanBoundary-data-');
 
 import { parseBsdMount, parseProcMounts, type MountEntry } from '../src/platform/atime';
 import {
+  boundedIsDirectory,
   dataVolumeAlias,
   firmlinkAliases,
   liveMountTableDeps,
@@ -299,4 +300,28 @@ test('the fixture names no account: “mounted by” and the temporary-folder ha
   assert.deepEqual([...new Set(hashes)], ['USER_TEMP_PLACEHOLDER']);
   const user = os.userInfo().username;
   if (user.length >= 6) assert.ok(!DIAGNOSIS_MAC_MOUNT.includes(user), 'this machine’s account name is not in the fixture');
+});
+
+test('a mount point whose stat never answers holds one I/O thread, however many scans ask about it (TS review R9)', async () => {
+  // A dead hard-mounted NFS share: its stat never answers. The bounded look gives up on it,
+  // but cannot cancel it, and each stat parks one of libuv's few threads while it hangs.
+  const asked: string[] = [];
+  const answers = new Map<string, (st: { isDirectory(): boolean }) => void>();
+  const stat = (p: string): Promise<{ isDirectory(): boolean }> => {
+    asked.push(p);
+    return new Promise((resolve) => { answers.set(p, resolve); });
+  };
+  const isDirectory = boundedIsDirectory(stat, 1);
+  assert.equal(await isDirectory('/mnt/dead'), null, 'not known in time: kept, the safe side');
+  assert.equal(await isDirectory('/mnt/dead'), null);
+  assert.equal(await isDirectory('/mnt/dead'), null);
+  assert.deepEqual(asked, ['/mnt/dead'], 'a later scan waits on the stat still out, it never starts another');
+  assert.equal(await isDirectory('/mnt/other'), null);
+  assert.deepEqual(asked, ['/mnt/dead', '/mnt/other'], 'another mount point is its own question');
+  answers.get('/mnt/dead')!({ isDirectory: () => true }); // the share comes back
+  await new Promise((r) => setImmediate(r));
+  assert.equal(await isDirectory('/mnt/dead'), null, 'its next look is a fresh stat, which hangs again here');
+  assert.deepEqual(asked, ['/mnt/dead', '/mnt/other', '/mnt/dead'], 'an answer is never kept: a drive may be mounted there since');
+  const answered = boundedIsDirectory(async () => ({ isDirectory: () => false }), 1);
+  assert.equal(await answered('/etc/hosts'), false, 'an answer in time is the answer');
 });
