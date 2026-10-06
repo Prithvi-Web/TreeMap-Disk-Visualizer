@@ -481,13 +481,19 @@ OpenAPI 3 spec).
      of the item (a dry run's too), each file it copies, and its look again
      right before the item's trash step — has a 60-second stall limit, past
      which that item is left undeleted; and while two such calls are still
-     waiting on a volume that stopped answering, nothing more is started —
-     the rest of the run is left undeleted (`CAPSULE_COPY_FAILED`), and a
-     dry run says so. Two looks have no limit yet: where each item of the
-     batch is on the disk, taken before anything is copied, and what stands
-     at each path, noted just before the Trash is asked. A path on a volume
-     that never answers there holds the request — nothing is deleted while
-     it waits. Older copies are
+     waiting on a volume that stopped answering, nothing more is started:
+     an item not yet copied is left undeleted as `CAPSULE_COPY_FAILED` (and
+     a dry run says so), and one whose turn comes at its look right before
+     its trash step as `CAPSULE_UNREADABLE`. Four looks have no limit yet.
+     Two come before anything is deleted — where each item of the batch is
+     on the disk, taken before anything is copied, and what stands at each
+     path, noted just before the Trash is asked: a path that never answers
+     there holds the request, and nothing is deleted while it waits. Two
+     come after the trash step has run — what stands at the place of an
+     item whose trash step reported a failure, and at a path inside an item
+     that went to the Trash: a path that never answers there holds the
+     response though items are already in the Trash. Their copies are kept,
+     and held from eviction until the request ends. Older copies are
      evicted to make room only once the new copy is whole and verified, so an
      item whose copy fails costs no older copy. A run's copies are never evicted to make room while
      a request of that run is under way — its own, or a later chunk of the
