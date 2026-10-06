@@ -108,3 +108,30 @@ test('RISKS R95 says engineReason speaks of the room only where a projection siz
   assert.match(r95, /that the tree was walked again/, 'only the walk again is');
   assert.match(r95, /no route serves/, 'and the projection\'s reason is not served');
 });
+
+/* ─────────────── DESIGN §14: which module a dist build compiles ─────────────── */
+
+test('DESIGN §14 says a dist build compiles the module for the machine it runs on and refuses to package another target\'s, as the scripts do (review F1.3)', () => {
+  // The code: build-native.js takes no target — it reads no argument and
+  // builds and installs process.platform/process.arch's module — and every
+  // dist script runs it and then check-prebuilt.js for the target it
+  // packages, with afterPack.js holding the packaged copy to the same checks.
+  const buildNative = read('scripts', 'build-native.js');
+  assert.doesNotMatch(buildNative, /process\.argv|--target/, 'build-native.js takes no target');
+  assert.match(buildNative, /library = libraryFileName\(process\.platform\)/, 'it builds this machine\'s library');
+  assert.match(buildNative, /prebuiltDir\(REPO, process\.platform, process\.arch\)/, 'and installs it as this machine\'s module');
+  const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string>; build: { afterPack?: string } };
+  const dists = Object.entries(pkg.scripts).filter(([name]) => name === 'dist' || name.startsWith('dist:'));
+  assert.ok(dists.length >= 4, `the dist scripts are found (${dists.map(([n]) => n).join(', ')})`);
+  for (const [name, command] of dists) {
+    assert.match(command, /npm run build:native && node scripts\/check-prebuilt\.js\b/, `${name} builds this machine's module, then checks the packaged target's`);
+  }
+  assert.equal(pkg.build.afterPack, 'scripts/afterPack.js', 'afterPack.js checks the packaged copy');
+
+  const bullet = lineStarting(read('docs', 'engine', 'DESIGN.md'), '* Web-mode users');
+  assert.doesNotMatch(bullet, /for the target it packages/, 'not a cross-build build-native cannot do');
+  assert.match(bullet, /compiles the module for the machine it runs on/, 'this machine\'s module');
+  assert.match(bullet, /refuses to package unless `native\/prebuilt` holds the packaged target's module/, 'another target\'s is refused');
+  assert.match(bullet, /`scripts\/check-prebuilt\.js` and `scripts\/afterPack\.js`/, 'by the two checks');
+  assert.match(bullet, /installer for another OS comes from that OS's build/, 'so another OS\'s installer is built there');
+});
