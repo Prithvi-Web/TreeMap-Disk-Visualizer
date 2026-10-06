@@ -1423,15 +1423,15 @@ test('LOW-2: the floor the note names is the one the map is asked for', async ()
   await loadTreemap('/r');
   const floor = load<number>(['TM_MIN_SIZE'], {}, 'TM_MIN_SIZE');
   assert.match(url, new RegExp(`[?&]minSize=${floor}&`), 'loadTreemap asks for the floor TM_MIN_SIZE names');
-  const live = INDEX.slice(INDEX.indexOf('async function liveRelayout('), INDEX.indexOf('animateTreemapTo(data.nodes)'));
-  assert.match(live, /minSize=\$\{TM_MIN_SIZE\}/, 'and so does the live re-layout');
+  // The live re-layout asks with the floor the map on screen was asked with,
+  // not TM_MIN_SIZE whatever it was (POL item 4): the tests after mapAndNote.
 });
 
 /**
  * The real loadTreemap and liveRelayout over a stubbed server, and the real
  * note for whatever they left on screen. `serve(minSize)` answers each ask.
  */
-function mapAndNote(serve: (minSize: number) => { root: { path: string; name: string; size: number }; nodes: TmNode[] }) {
+function mapAndNote(serve: (minSize: number, state: { treemap: { rootPath: string } }) => { root: { path: string; name: string; size: number }; nodes: TmNode[] }) {
   const asked: number[] = [];
   const state = {
     scanId: 's1', root: { path: '/r' }, pathIndex: new Map(), view: 'treemap', scanning: false,
@@ -1443,7 +1443,7 @@ function mapAndNote(serve: (minSize: number) => { root: { path: string; name: st
     ['loadTreemap', 'liveRelayout', ...CAP_NOTE_DECLS], {
       state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {},
       $: () => ({ classList: { add() {}, remove() {} }, disabled: false }),
-      api: async (u: string) => { const m = Number(/[?&]minSize=(\d+)/.exec(u)![1]); asked.push(m); return serve(m); },
+      api: async (u: string) => { const m = Number(/[?&]minSize=(\d+)/.exec(u)![1]); asked.push(m); return serve(m, state); },
       toast: (m: string) => { throw new Error('the page reported: ' + m); },
       renderCrumbs() {}, maybeInjectTrash() {}, exitHistoryState() {}, refreshTimebar() {}, drawView() {},
       animateTreemapTo: (nodes: TmNode[]) => { state.treemap.nodes = nodes; },
@@ -1471,18 +1471,62 @@ test('LOW-2: a map loadTreemap asked for again with no floor does not say it hid
   assert.match(big.note(), /That figure counts files under 4096 B too, which the map does not draw; the Grid view lists them\./);
 });
 
-test('LOW-2: the live re-layout records the floor it asks with, and the note follows it (QA-6b review F1.2)', async () => {
-  // Live mode on that folder of small files, while they grow past 4 KB.
-  let grown = false;
-  const h = mapAndNote((m) => (grown
-    ? { root: { path: '/r', name: 'r', size: 25600 * 5000 }, nodes: files(20000, 5000) }
-    : { root: { path: '/r', name: 'r', size: 25600 * 250 }, nodes: m <= 250 ? files(20000, 250) : [] }));
+test('the live re-layout asks with the floor the map on screen was asked with: a folder of small files stays drawn in Live mode (POL item 4)', async () => {
+  // loadTreemap drew a folder of 250-byte files with no floor; every Live tick
+  // then asked with the 4 KB floor, got no rectangles back, and morphed the
+  // map to nothing.
+  const root = { path: '/r', name: 'r', size: 25600 * 250 };
+  const h = mapAndNote((m) => ({ root, nodes: m <= 250 ? files(20000, 250) : [] }));
   await h.loadTreemap('/r');
-  grown = true;
-  assert.doesNotMatch(h.note(), /files under/, 'control: the retry map claims no floor');
+  assert.deepEqual(h.asked, [4096, 1], 'control: the map on screen was asked with no floor');
   await h.liveRelayout();
-  assert.deepEqual(h.asked, [4096, 1, 4096], 'control: the live re-layout asks with the 4 KB floor');
-  assert.match(h.note(), /counts files under 4096 B too/, 'so the map it lays out says so');
+  assert.deepEqual({ asked: h.asked, drawn: h.state.treemap.nodes.length, floor: h.state.treemap.minSize },
+    { asked: [4096, 1, 1], drawn: 20000, floor: 1 }, 'the re-layout asks with that floor and lays the same files out');
+});
+
+test('LOW-2: the live re-layout records the floor it asks with, and the note follows it — asked again with none when the floor leaves nothing, as loadTreemap is (QA-6b review F1.2, POL item 4)', async () => {
+  // Live mode on a folder of 5 KB files, while they shrink under 4 KB.
+  let shrunk = false;
+  const h = mapAndNote((m) => (shrunk
+    ? { root: { path: '/r', name: 'r', size: 25600 * 250 }, nodes: m <= 250 ? files(20000, 250) : [] }
+    : { root: { path: '/r', name: 'r', size: 25600 * 5000 }, nodes: files(20000, 5000) }));
+  await h.loadTreemap('/r');
+  await h.liveRelayout();
+  assert.deepEqual(h.asked, [4096, 4096], 'control: a map asked with the 4 KB floor is re-laid out with it');
+  assert.match(h.note(), /counts files under 4096 B too/, 'control: and says so');
+  shrunk = true;
+  h.state.live.dirty = 1; // the watcher saw the change
+  await h.liveRelayout();
+  assert.deepEqual({ asked: h.asked, drawn: h.state.treemap.nodes.length },
+    { asked: [4096, 4096, 4096, 1], drawn: 20000 }, 'the floor drew nothing of a folder that holds bytes, so it asked again with none');
+  assert.doesNotMatch(h.note(), /files under/, 'and the map it lays out claims no floor');
+});
+
+test('a live re-layout that lands after the map moved to another folder is dropped, not drawn over that folder (POL item 4)', async () => {
+  // The re-layout can now ask twice; a drill-in landing in between must not
+  // have the old folder's rectangles morphed onto it.
+  // `moveOnAsk`: the live re-layout's ask (1st, or 2nd — the one with no
+  // floor) during which the map moves. Files are 5 KB while the map loads,
+  // and 250 B after, so the 4 KB ask draws nothing and is asked again.
+  const run = async (moveOnAsk: number): Promise<{ asked: number[]; drawn: number }> => {
+    let live = 0;
+    const h = mapAndNote((m, state) => {
+      if (live > 0 && ++live - 1 === moveOnAsk) state.treemap.rootPath = '/r/elsewhere';
+      return live > 0
+        ? { root: { path: '/r', name: 'r', size: 25600 * 250 }, nodes: m <= 250 ? files(20000, 250) : [] }
+        : { root: { path: '/r', name: 'r', size: 25600 * 5000 }, nodes: files(20000, 5000) };
+    });
+    await h.loadTreemap('/r');
+    assert.equal(h.state.treemap.nodes.length, 20000, 'control: the map was drawn');
+    h.state.treemap.nodes = [];
+    live = 1;
+    await h.liveRelayout();
+    return { asked: h.asked, drawn: h.state.treemap.nodes.length };
+  };
+  assert.deepEqual({ first: await run(1), second: await run(2) }, {
+    first: { asked: [4096, 4096], drawn: 0 },
+    second: { asked: [4096, 4096, 1], drawn: 0 },
+  }, 'nothing was laid out for the folder the map left, during either ask');
 });
 
 test('LOW-2: the note is recomputed when only the floor changed (QA-6b review F1.2)', () => {
