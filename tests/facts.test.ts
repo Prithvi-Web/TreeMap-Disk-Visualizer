@@ -304,6 +304,56 @@ test('a path outside every scanned root is refused', async () => {
   }
 });
 
+test('a link the sanitizer refuses only for where it leads — to /dev, to /.vol or /.resolve — is skipped like a path no scan listed, and the batch still answers; a path refused by its own spelling, a link outside every scan, and the same link on an act-on route are still refused (the SEC-3 brief, item 3)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  // A scan lists a link as itself and never follows it, so a folder holding one planted link —
+  // ~/.bash_history -> /dev/null is common, and since the SEC-2 review (F3) a link to /.vol or
+  // /.resolve is refused too — cost the Grid every badge of that folder: the guard mapped
+  // sanitizePath over the batch and answered 400 for all 2,000 paths.
+  const { port, close } = await listen();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-facts-links-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-facts-links-outside-'));
+  fs.writeFileSync(path.join(root, 'small.txt'), Buffer.alloc(11, 0x61));
+  const leads: Record<string, string> = { 'to-dev': '/dev/null' };
+  if (process.platform === 'darwin') {
+    const st = fs.statSync(root);
+    Object.assign(leads, { 'to-vol': `/.vol/${st.dev}/${st.ino}`, 'to-resolve': `/.resolve/1${fs.realpathSync(root)}` });
+  }
+  for (const [name, to] of Object.entries(leads)) fs.symlinkSync(to, path.join(root, name));
+  fs.symlinkSync('/dev/null', path.join(outside, 'to-dev'));
+  try {
+    const started = await req(port, 'POST', '/api/scan', { path: root });
+    assert.equal(started.status, 202, `scan refused: ${JSON.stringify(started.body)}`);
+    const scanId = started.body.scanId as string;
+    await waitFor(() => peekScan(scanId)?.status !== 'running', 'the scan settling');
+    assert.equal(peekScan(scanId)?.status, 'complete');
+    clearFactCache();
+    const links = Object.keys(leads).map((name) => path.join(root, name));
+    const small = path.join(root, 'small.txt');
+    const r = await req(port, 'POST', '/api/facts', { scanId, paths: [small, ...links], providers: ['size'] });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const size = r.body.providers.size;
+    assert.deepEqual(Object.keys(size.values), [small], 'the links have no fact: absent, never a zero');
+    assert.deepEqual(size.stats, { requested: 1 + links.length, computed: 1, skipped: links.length, failed: 0 });
+    // What is still refused: a path whose own spelling the sanitizer refuses, a link that lives outside
+    // every scan, and the same links on a route that acts on what it is given (AGENTS.md: a path rule).
+    const refusals: Record<string, { status: number; body: any }> = {
+      'typed /dev/null': await req(port, 'POST', '/api/facts', { scanId, paths: [small, '/dev/null'], providers: ['size'] }),
+      outside: await req(port, 'POST', '/api/facts', { scanId, paths: [small, path.join(outside, 'to-dev')], providers: ['size'] }),
+      act: await req(port, 'DELETE', '/api/files', { paths: [small, ...links], dryRun: true }),
+    };
+    const expected: Record<string, [number, string]> = { 'typed /dev/null': [400, 'PATH_BLOCKED'], outside: [403, 'OUTSIDE_SCAN_ROOT'], act: [400, 'PATH_BLOCKED'] };
+    if (process.platform === 'darwin') {
+      refusals['typed /.vol'] = await req(port, 'POST', '/api/facts', { scanId, paths: [small, '/.vol/1/2'], providers: ['size'] });
+      expected['typed /.vol'] = [400, 'PATH_BLOCKED'];
+    }
+    assert.deepEqual(Object.fromEntries(Object.entries(refusals).map(([k, v]) => [k, [v.status, v.body?.code]])), expected);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+    await close();
+  }
+});
+
 test('an unknown provider id is refused, and the error names the valid ids', async () => {
   const { port, close } = await listen();
   const fixture = await scannedFixture(port);

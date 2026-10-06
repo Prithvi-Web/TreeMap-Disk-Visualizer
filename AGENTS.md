@@ -190,7 +190,11 @@ OpenAPI 3 spec).
      2000 paths per request (`400 TOO_MANY_PATHS`), every one sanitized and
      inside a scanned root (a path there that no scan listed — a drive a scan
      did not enter, a folder no walk descends into — is `skipped` for every
-     provider rather than refusing the batch), and an unknown provider id is
+     provider rather than refusing the batch, and so is a link the scan listed
+     as itself that the sanitizer refuses only for where it leads — to `/dev`,
+     `/.vol` or `/.resolve` — while a path refused by its own spelling still
+     refuses the batch, as either kind does on every route that acts on
+     paths), and an unknown provider id is
      `400 UNKNOWN_PROVIDER` naming the valid ids rather than being ignored.
      The facts live in a sidecar because the scan responses are held
      byte-identical to the pre-rewrite baseline by

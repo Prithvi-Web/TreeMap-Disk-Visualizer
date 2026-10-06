@@ -684,6 +684,32 @@ function canonicalize(resolved: string): string {
  *   resolved) so that /var/db and /private/var/db get the same answer
  */
 export function sanitizePath(input: unknown): string {
+  const { resolved, leadsRefused } = judgePath(input);
+  if (leadsRefused) throw leadsRefused;
+  return resolved;
+}
+
+/**
+ * `sanitizePath` for a question that only reads (POST /api/facts): the same verdict, except that a
+ * path refused only for where it LEADS — its spelling passes, but a link in it, or the path itself,
+ * leads onto the blocklist, through a second name, or nowhere a walk can place — comes back with
+ * `answerable: false` instead of throwing. A scan lists a link as itself and never follows it, so one
+ * planted link in a folder (~/.bash_history -> /dev/null, a link to /.vol or /.resolve) refused the
+ * whole batch of that folder's facts (the SEC-3 brief, item 3); the caller skips such a path, as it
+ * skips one no scan listed. A path refused by its own spelling still throws, as from `sanitizePath`.
+ */
+export function sanitizePathToRead(input: unknown): { path: string; answerable: boolean } {
+  const { resolved, leadsRefused } = judgePath(input);
+  return { path: resolved, answerable: leadsRefused === null };
+}
+
+/**
+ * `sanitizePath`'s work: throws the refusal a path's spelling earns (not a path, a null byte, a second
+ * name, the blocklist as spelled); answers, beside the path resolved, the refusal it earns only for
+ * where it leads (the canonical form on the blocklist or through a second name, or the same folder as
+ * a blocked one under another name), or null.
+ */
+function judgePath(input: unknown): { resolved: string; leadsRefused: PathRejectedError | null } {
   if (typeof input !== 'string' || input.trim().length === 0) {
     throw new PathRejectedError('Path must be a non-empty string', 'PATH_INVALID');
   }
@@ -719,7 +745,7 @@ export function sanitizePath(input: unknown): string {
     if (!/^cloud:\/\/[a-z]+(\/[^\0]*)?$/.test(trimmed) || trimmed.includes('..')) {
       throw new PathRejectedError('Malformed cloud path', 'PATH_INVALID');
     }
-    return trimmed;
+    return { resolved: trimmed, leadsRefused: null };
   }
 
   let p = trimmed;
@@ -745,11 +771,12 @@ export function sanitizePath(input: unknown): string {
   // itself, and re-canonicalising the same string reaches the same verdict —
   // which matters because paths are sanitized twice on most requests (pathGuard
   // middleware, then again inside the service).
+  if (blocked) throw new PathRejectedError(`Scanning "${resolved}" is not allowed`, 'PATH_BLOCKED');
   const canonical = canonicalize(resolved);
-  if (blocked || (canonical !== resolved && isBlocked(canonical)) || isBlockedByIdentity(resolved)) {
-    throw new PathRejectedError(`Scanning "${resolved}" is not allowed`, 'PATH_BLOCKED');
+  if ((canonical !== resolved && isBlocked(canonical)) || isBlockedByIdentity(resolved)) {
+    return { resolved, leadsRefused: new PathRejectedError(`Scanning "${resolved}" is not allowed`, 'PATH_BLOCKED') };
   }
-  return resolved;
+  return { resolved, leadsRefused: null };
 }
 
 /**

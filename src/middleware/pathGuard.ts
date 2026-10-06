@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, livesAt, rootLivesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName } from '../utils/pathSanitizer';
+import { sanitizePath, sanitizePathToRead, isInside, livesAt, rootLivesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
 import { DATA_VOLUME, exclusionsBelow, isAtOrUnder, parseFirmlinks } from '../utils/mountBoundaries';
@@ -53,14 +53,9 @@ export const DEFAULT_MAX_BODY_PATHS = 500;
  */
 export function guardBodyPathsMax(max: number) {
   return (req: Request, _res: Response, next: NextFunction): void => {
-    const body = req.body as Record<string, unknown> | undefined;
-    const paths = body?.paths;
-    if (!Array.isArray(paths) || paths.length === 0) {
-      next(new AppError(400, 'PATHS_REQUIRED', 'Request body must include a non-empty "paths" array'));
-      return;
-    }
-    if (paths.length > max) {
-      next(new AppError(400, 'TOO_MANY_PATHS', `At most ${max} paths per request`));
+    const paths = cappedBodyPaths(req, max);
+    if (paths instanceof AppError) {
+      next(paths);
       return;
     }
     (req.body as Record<string, unknown>).paths = paths.map((p) => sanitizePath(p));
@@ -68,8 +63,50 @@ export function guardBodyPathsMax(max: number) {
   };
 }
 
+/** req.body.paths when it is a non-empty list of at most `max`; otherwise the refusal. */
+function cappedBodyPaths(req: Request, max: number): unknown[] | AppError {
+  const paths = (req.body as Record<string, unknown> | undefined)?.paths;
+  if (!Array.isArray(paths) || paths.length === 0) return new AppError(400, 'PATHS_REQUIRED', 'Request body must include a non-empty "paths" array');
+  if (paths.length > max) return new AppError(400, 'TOO_MANY_PATHS', `At most ${max} paths per request`);
+  return paths;
+}
+
 /** Sanitize req.body.paths (array of paths), capped at 500. */
 export const guardBodyPaths = guardBodyPathsMax(DEFAULT_MAX_BODY_PATHS);
+
+/** The paths of a read-only request that the sanitizer refused only for where they lead (`guardBodyPathsToRead`). */
+const unanswerable = new WeakMap<Request, ReadonlySet<string>>();
+
+/**
+ * `guardBodyPathsMax` for a route that only reads (POST /api/facts). A path the sanitizer refuses
+ * only for where it LEADS (`sanitizePathToRead`) — a link the scan listed as itself, to /dev, /.vol
+ * or /.resolve — is kept as spelled, resolved, and named in `unanswerablePaths` for the route to
+ * skip: one planted link cost a folder's whole batch its answers (the SEC-3 brief, item 3). A path
+ * refused by its own spelling still refuses the batch, and the routes that act on paths keep
+ * `guardBodyPaths`, which refuses either kind (AGENTS.md).
+ */
+export function guardBodyPathsToRead(max: number) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    const paths = cappedBodyPaths(req, max);
+    if (paths instanceof AppError) {
+      next(paths);
+      return;
+    }
+    const refused = new Set<string>();
+    (req.body as Record<string, unknown>).paths = paths.map((p) => {
+      const judged = sanitizePathToRead(p); // throws PathRejectedError -> errorHandler, as sanitizePath does
+      if (!judged.answerable) refused.add(judged.path);
+      return judged.path;
+    });
+    unanswerable.set(req, refused);
+    next();
+  };
+}
+
+/** The paths `guardBodyPathsToRead` kept that have no answer: refused only for where they lead. */
+export function unanswerablePaths(req: Request): ReadonlySet<string> {
+  return unanswerable.get(req) ?? new Set();
+}
 
 /**
  * Decode one query-string component the way express's default ("simple")
@@ -283,10 +320,15 @@ function asListedFrom(root: string, where: string): string | null {
  * other "not listed" — a path on the sealed system volume or another volume,
  * after a scan rooted on the Data volume — is spelled outside that root, so
  * it stays under none.
+ *
+ * `asItself`, for a path the route skips because the sanitizer refused it
+ * only for where it leads (`unanswerablePaths`): judged where it lives itself
+ * (`placeOf`) — a link a scan listed as itself — since the only question left
+ * is whether it lies under a scanned root at all (the SEC-3 brief, item 3).
  */
-function underAnyScanRoot(p: string): boolean {
+function underAnyScanRoot(p: string, asItself = false): boolean {
   if (p.startsWith('cloud://')) return false;
-  const where = whereUnlessSecondName(p);
+  const where = asItself ? placeOf(p) : whereUnlessSecondName(p);
   return where !== null && allScans().some((scan) => {
     const root = rootPlaceOf(scan.rootPath);
     const at = asTheRoot(p, where, root);
@@ -479,11 +521,13 @@ function bodyPaths(req: Request): string[] | AppError {
  * place: a cloud path, a path in TreeMap's own spill folder (when `refuseSpill`), a path
  * outside every scanned root, an entry inside an archive. Answers the first refusal, or null.
  * `readOnly` asks only that the path lie under some scan's root (`underAnyScanRoot`); the
- * route then answers nothing for a path no scan listed.
+ * route then answers nothing for a path no scan listed, nor for one the sanitizer refused only for
+ * where it leads (`unanswerablePaths`), which is judged by where it lives itself.
  */
 function scanRootRefusal(req: Request, refuseSpill: boolean, readOnly = false): AppError | null {
   const candidates = bodyPaths(req);
   if (candidates instanceof AppError) return candidates;
+  const unanswerableHere = unanswerablePaths(req);
   for (const p of candidates) {
     // Cloud entries never touch this filesystem — their deletes go through
     // POST /api/cloud/trash to the provider's own trash.
@@ -492,7 +536,7 @@ function scanRootRefusal(req: Request, refuseSpill: boolean, readOnly = false): 
     }
     const spill = refuseSpill ? spillPathRefusal(p) : null;
     if (spill) return spill;
-    if (!(readOnly ? underAnyScanRoot(p) : insideAnyScanRoot(p))) {
+    if (!(readOnly ? underAnyScanRoot(p, unanswerableHere.has(p)) : insideAnyScanRoot(p))) {
       return new AppError(
         403,
         'OUTSIDE_SCAN_ROOT',

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireScan } from './scanRoutes';
-import { guardBodyPathsMax, insideAnyScanRoot, requireInsideScanRootToRead } from '../middleware/pathGuard';
+import { guardBodyPathsToRead, insideAnyScanRoot, requireInsideScanRootToRead, unanswerablePaths } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { computeFacts, factProviderIds } from '../services/facts';
 
@@ -45,14 +45,16 @@ export const MAX_FACT_PATHS = 2000;
  * and scanning is what grants scoped permission to answer questions about a
  * tree. A path under a scanned root that no scan listed (a drive it did not
  * enter, a folder no walk descends into) is answered by skipping it, never by
- * refusing the whole batch.
+ * refusing the whole batch — and so is a path the sanitizer refuses only for where it
+ * leads (a link the scan listed as itself, to /dev, /.vol or /.resolve: the SEC-3 brief,
+ * item 3), while a path refused by its own spelling still refuses the batch.
  *
  * One provider failing never costs the others their answers; see
  * `services/facts/registry.ts`.
  */
 factRouter.post(
   '/facts',
-  guardBodyPathsMax(MAX_FACT_PATHS),
+  guardBodyPathsToRead(MAX_FACT_PATHS),
   requireInsideScanRootToRead,
   async (req: Request, res: Response) => {
     const body = req.body as { scanId?: unknown; paths: string[]; providers?: unknown };
@@ -95,8 +97,10 @@ factRouter.post(
       // A path no scan listed — at or beneath a drive a scan did not enter, or a folder no walk
       // descends into (Track U, U-25) — has no fact: it is skipped for every provider, absent
       // from `values` and counted in `skipped`, so requested = computed + skipped + failed holds.
+      // So is a path the sanitizer refused only for where it leads: it has no answer either.
       const unique = [...new Set(body.paths)];
-      const unlisted = new Set(unique.filter((p) => !insideAnyScanRoot(p)));
+      const refused = unanswerablePaths(req);
+      const unlisted = new Set(unique.filter((p) => refused.has(p) || !insideAnyScanRoot(p)));
       const computed = await computeFacts(scan.scanId, unique.filter((p) => !unlisted.has(p)), ids, controller.signal);
       const providers = unlisted.size === 0
         ? computed
