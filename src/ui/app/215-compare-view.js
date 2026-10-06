@@ -262,49 +262,41 @@ let browseSeq = 0;
 function asPath(text) {
   return String(text ?? '').replace(/^\s+/, '');
 }
-/** List a path someone typed or pasted: as typed first, and only when no
-    folder has that name and it ends in whitespace, without the whitespace. A
-    double-click selection often carries a stray space, invisible in the field
-    and in "Path does not exist"; had it been part of a name, the folder would
-    have been found (review F2.9). Resolves to the listing and the spelling
-    that found it; any other failure is the first answer's. */
-async function listTyped(p) {
-  const list = (q) => api('/api/fs/list?path=' + encodeURIComponent(q));
+/** The folder a path that names none probably meant: the same path without
+    the whitespace at its end, when the path was refused as not found and a
+    folder has the shorter name. A double-click selection often carries a stray
+    space, invisible in the field and in "Path does not exist". Null when there
+    is no such folder or it cannot be looked up. It is only ever OFFERED
+    (offerMeant), never used in the path's place: "Screenshots " that has gone
+    is not "Screenshots", and a scan, a pick or a policy acts on exactly the
+    path typed or stored (QA4a R4-1). */
+async function meantFolder(p, err) {
+  const bare = p.replace(/\s+$/, '');
+  if (!err || err.code !== 'PATH_NOT_FOUND' || !bare || bare === p) return null;
   try {
-    return { data: await list(p), spelled: p };
-  } catch (e) {
-    const bare = p.replace(/\s+$/, '');
-    if (!e || e.code !== 'PATH_NOT_FOUND' || !bare || bare === p) throw e;
-    return { data: await list(bare), spelled: bare };
-  }
-}
-/** What a person last typed or pasted into each path box (its input event).
-    A value the page put there since (a pick, Recent, the last scan, a saved
-    policy) is a folder's own spelling, never paste debris: that folder may
-    have gone, and the one without its trailing space is another folder. */
-const typedPaths = new WeakMap();
-for (const id of ['pathInput', 'apPath']) {
-  const box = $(id);
-  box.addEventListener('input', () => typedPaths.set(box, box.value));
-}
-/** True when the box holds what a person typed, not what the page put there. */
-function boxTyped(box) {
-  return typedPaths.get(box) === box.value;
-}
-/** The folder a path box names, to scan or to clean: the box read by asPath,
-    and, only where a person typed it, its trailing whitespace dropped when
-    listTyped finds no folder with it. Only such a path is looked up; one that
-    cannot be is left as typed, for the scan or the policy to report. */
-async function boxPath(box) {
-  const p = asPath(box.value);
-  if (!boxTyped(box) || p === p.replace(/\s+$/, '')) return p;
-  try {
-    return (await listTyped(p)).spelled;
+    return (await api('/api/fs/list?path=' + encodeURIComponent(bare))).path || bare;
   } catch {
-    return p;
+    return null;
   }
 }
-async function openBrowse(start, onPick = null, title = null, startTyped = false) {
+/** "No such folder" for the path as typed — its stray space shows before the
+    closing quote — with the folder it probably meant as the one choice. */
+function offerMeant(p, meant, choose) {
+  toastAction(`No folder is named “${p}”`, `Did you mean “${meant}”?`, choose, 'error');
+}
+/** Before a path box's folder is scanned or saved: the folder it probably
+    meant (meantFolder) when the path names none, or null to go ahead with the
+    path exactly as it is. Only a path ending in whitespace is looked up. */
+async function boxMeant(p) {
+  if (p === p.replace(/\s+$/, '')) return null;
+  try {
+    await api('/api/fs/list?path=' + encodeURIComponent(p));
+    return null;
+  } catch (e) {
+    return meantFolder(p, e);
+  }
+}
+async function openBrowse(start, onPick = null, title = null) {
   browseOnPick = onPick;
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
   $('browseModal').classList.add('open');
@@ -312,17 +304,20 @@ async function openBrowse(start, onPick = null, title = null, startTyped = false
   chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
     `<button class="pill" data-p="${escapeHtml(d)}">${icon('folder', 12)}${escapeHtml(d.split(/[\\/]/).pop() || d)}</button>`).join('');
   chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
-  // A start from a path box a person typed in is a typed path (listTyped).
-  await browseTo(start || state.system?.homeDir || '/', !!start && startTyped);
+  // A start from a path box is a typed path: one that names no folder offers
+  // the folder it probably meant (meantFolder).
+  await browseTo(start || state.system?.homeDir || '/', !!start);
 }
 /** Ordinary folders first, dot-folders after them, each in the server's order
     (QA D05: in a home folder .agents, .cache… pushed Documents below the fold). */
 function browseOrder(dirs) {
   return [...dirs.filter((d) => !d.isHidden), ...dirs.filter((d) => d.isHidden)];
 }
-/** List a folder in the picker. True when it opened; a failure is a toast and
-    leaves the picker where it was. `typed`: someone typed it (listTyped); a
-    folder the server listed is never looked up under another name. */
+/** List a folder in the picker, exactly as given. True when it opened; a
+    failure is a toast and leaves the picker where it was. `typed`: a path from
+    a box or the path line, which on "no such folder" offers the folder it
+    probably meant (meantFolder) — offered, never opened in its place. A folder
+    the server listed is never looked up under another name. */
 async function browseTo(path, typed = false) {
   const seq = ++browseSeq;
   // A newer listing (a chip, a row, the picker opened again) overtakes any
@@ -331,7 +326,7 @@ async function browseTo(path, typed = false) {
   // NAS can keep the old listing waiting for minutes (review F2.3, F2.5).
   $('browseUseBtn').disabled = false;
   try {
-    const data = typed ? (await listTyped(path)).data : await api('/api/fs/list?path=' + encodeURIComponent(path));
+    const data = await api('/api/fs/list?path=' + encodeURIComponent(path));
     // A newer listing was asked for, or the picker closed, while this one was
     // on its way: its answer is not shown, and it did not open.
     if (seq !== browseSeq) return false;
@@ -352,7 +347,11 @@ async function browseTo(path, typed = false) {
     list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
     return true;
   } catch (e) {
-    if (seq === browseSeq) toast(e.message, 'error');
+    // An overtaken listing is not looked up further: nothing would show it.
+    const meant = typed && seq === browseSeq ? await meantFolder(path, e) : null;
+    if (seq !== browseSeq) return false;
+    if (meant) offerMeant(path, meant, () => browseTo(meant));
+    else toast(e.message, 'error');
     return false;
   }
 }
@@ -369,8 +368,7 @@ function browseClosed() {
 function browseFieldPath() {
   return asPath($('browseCurrent').value);
 }
-$('browseBtn').addEventListener('click', () =>
-  openBrowse(asPath($('pathInput').value) || null, null, null, boxTyped($('pathInput'))));
+$('browseBtn').addEventListener('click', () => openBrowse(asPath($('pathInput').value) || null));
 $('emptyBrowseBtn').addEventListener('click', () => openBrowse(null));
 // The path line is the picker's typing route (QA D05) — before the first scan
 // the Scan card's path box is not on screen, so this sheet is the only door.

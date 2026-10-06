@@ -40,6 +40,9 @@ function braced(openAnchor: string): string {
   return assert.fail(`"${openAnchor}" never closes`);
 }
 
+/** Every callback already queued has run (a turn of the event loop, not a clock). */
+const settle = () => new Promise<void>((resolve) => { setImmediate(resolve); });
+
 /** A listing that answers only when the test says so — a sleeping NAS or external drive. */
 function gate() {
   let open!: () => void;
@@ -70,12 +73,21 @@ function fakeEl(id: string): FakeEl {
   return el;
 }
 
+/** A toast with one button (the page's toastAction): what it said, its button, and a click on it. */
+type Offer = { msg: string; label: string; kind: string; choose: () => Promise<unknown> };
+function offerRecorder(offers: Offer[]) {
+  return (msg: string, label: string, fn: () => unknown, kind = 'success') => {
+    offers.push({ msg, label, kind, choose: () => Promise.resolve(fn()) });
+  };
+}
+
 function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
   const els = new Map<string, FakeEl>();
   const $ = (id: string) => { if (!els.has(id)) els.set(id, fakeEl(id)); return els.get(id)!; };
   const asked: string[] = [];
   const scanned: string[] = [];
   const toasts: string[] = [];
+  const offers: Offer[] = [];
   const api = async (url: string) => {
     asked.push(url);
     const p = decodeURIComponent(url.slice(url.indexOf('path=') + 5));
@@ -92,14 +104,14 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
   const closeModal = braced('function closeModal(');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
-    '$', 'api', 'toast', 'escapeHtml', 'startScan',
+    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan',
     `'use strict';
      const state = { system: { homeDir: '/home/u', commonDirs: [] } };
      function icon() { return ''; }
      ${INDEX.slice(start, end)}
      ${closeModal}
      return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal') };`,
-  )($, api, (m: string) => { toasts.push(m); }, escapeHtml, (p: string) => { scanned.push(p); }) as {
+  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }) as {
     openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
@@ -110,7 +122,7 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
   const rows = () => [...$('browseList').innerHTML.matchAll(/aria-label="Open ([^"]+)"/g)].map((m) => m[1]);
   /** A click on "Scan this folder" (or "Use this folder" when a pick is pending). */
   const use = () => $('browseUseBtn').listeners.click() as Promise<void>;
-  return { rt, $, asked, scanned, toasts, rows, use };
+  return { rt, $, asked, scanned, toasts, offers, rows, use };
 }
 
 const HOME = { path: '/home/u', parent: '/home', dirs: ['.agents', '.antigravity', 'Desktop', '.cache', 'Documents', 'Downloads'].map(dir) };
@@ -404,29 +416,60 @@ const strictListing = (p: string) => {
   return notFound();
 };
 
-test('a typed or pasted path whose trailing space names no folder opens the folder without it — Enter, Scan and a pick (review F2.9)', async () => {
-  // A double-click selection in a terminal or a chat often carries a space;
-  // it is invisible in the field and in "Path does not exist".
-  const { rt, $, asked, scanned, use } = browseRuntime(strictListing);
+test('a typed path whose trailing space names no folder is never opened as the folder without it: the picker says so and offers that folder, which opens only when clicked — Enter, Scan and a pick (QA4a R4-1)', async () => {
+  // A double-click selection in a terminal or a chat often carries a space,
+  // invisible in the field and in "Path does not exist". But "Screenshots "
+  // that has gone is not "Screenshots": the person chooses, nothing swaps.
+  const { rt, $, asked, scanned, toasts, offers, use } = browseRuntime(strictListing);
   await rt.openBrowse(null);
   $('browseCurrent').value = DOCS + ' ';
   await $('browseCurrent').listeners.keydown({ key: 'Enter', preventDefault() {} });
-  assert.deepEqual(asked.slice(-2), [list(DOCS + ' '), list(DOCS)], 'as typed first, then without the space');
-  assert.equal(rt.path(), DOCS, 'the folder that exists is the one shown');
+  assert.deepEqual(asked.slice(-2), [list(DOCS + ' '), list(DOCS)], 'as typed first, then the folder without the space is looked up');
+  assert.equal(rt.path(), '/home/u', 'but not opened: the picker stays where it was');
+  assert.equal(offers.length, 1, 'the person is told, with the folder offered');
+  assert.equal(offers[0].msg, `No folder is named “${DOCS} ”`, '"no such folder", for the path as typed — its space shows before the quote');
+  assert.equal(offers[0].label, `Did you mean “${DOCS}”?`, 'and the folder it probably meant is the choice');
+  assert.equal(offers[0].kind, 'error', 'shown as an error');
+  assert.deepEqual(toasts, [], 'one answer, not a plain "Path does not exist" beside it');
+  await offers[0].choose();
+  assert.equal(rt.path(), DOCS, 'clicking it opens that folder');
   assert.equal($('browseCurrent').value, DOCS, 'spelled as the server listed it');
+
   await rt.openBrowse(null);
   $('browseCurrent').value = DOCS + ' \t';
   await use();
-  assert.deepEqual(scanned, [DOCS], '"Scan this folder" scans it');
+  assert.deepEqual(scanned, [], '"Scan this folder" scans nothing in its place — nor the folder shown before it');
+  assert.equal(offers.length, 2, 'it offers the folder too');
+  assert.equal(offers[1].label, `Did you mean “${DOCS}”?`);
+  assert.equal($('browseUseBtn').disabled, false, 'and the button is live again');
+  await offers.at(-1)!.choose();
+  await use();
+  assert.deepEqual(scanned, [DOCS], 'the folder offered is scanned once chosen and pressed');
+
   const picked: string[] = [];
   await rt.openBrowse(null, (p) => { picked.push(p); });
   $('browseCurrent').value = DOCS + ' ';
   await use();
-  assert.deepEqual(picked, [DOCS], 'and a pick for Offload or Autopilot takes it');
+  assert.deepEqual(picked, [], 'a pick for Offload or Autopilot takes nothing in its place');
+  assert.equal(offers.length, 3, 'and offers the folder as well');
 });
 
-test('a trailing space is dropped only from a typed path, only after "no such folder", and never from one that exists (review F1.1, F2.9)', async () => {
-  const { rt, $, asked, scanned, toasts, use } = browseRuntime(strictListing);
+test('a typed path overtaken while it opens is not looked up without its space, and offers nothing (QA4a R4-1)', async () => {
+  const g = gate();
+  const { rt, $, asked, offers, toasts } = browseRuntime((p) => (p === DOCS + ' ' ? g.opened.then(() => notFound()) : strictListing(p)));
+  await rt.openBrowse(null);
+  $('browseCurrent').value = DOCS + ' ';
+  const enter = $('browseCurrent').listeners.keydown({ key: 'Enter', preventDefault() {} });
+  await rt.browseTo(DOCS); // a chip or a row, answered first
+  g.open();
+  await enter;
+  assert.equal(asked.filter((u) => u === list(DOCS)).length, 1, 'only the chip asked for the folder — the overtaken path was not looked up again');
+  assert.deepEqual(offers, [], 'nothing is offered for a listing nobody is waiting for');
+  assert.deepEqual(toasts, []);
+});
+
+test('a folder is looked up without its trailing space only for a typed path, only after "no such folder", and is never opened in its place (review F1.1, F2.9, QA4a R4-1)', async () => {
+  const { rt, $, asked, scanned, toasts, offers, use } = browseRuntime(strictListing);
   await rt.openBrowse(null);
   $('browseCurrent').value = SHOT;
   await use();
@@ -446,6 +489,7 @@ test('a trailing space is dropped only from a typed path, only after "no such fo
   await use();
   assert.deepEqual(scanned, [SHOT], 'neither spelling exists: nothing is scanned');
   assert.equal(toasts[toasts.length - 1], 'Path does not exist', 'and the person is told');
+  assert.deepEqual(offers, [], 'nothing is offered where no folder has either spelling, nor for a row or a locked folder');
 });
 
 /* ══════════════ The boxes a folder is picked into (F2.1, F2.4, F2.8) ══════════════ */
@@ -486,6 +530,7 @@ function boxesRuntime(listing: (p: string) => unknown) {
   const sent: { url: string; body: { policy?: { path: string }; policies?: { path: string }[] } }[] = [];
   const scanned: [string, { incremental?: boolean }][] = [];
   const toasts: string[] = [];
+  const offers: Offer[] = [];
   const api = async (url: string, opts?: { body?: string }) => {
     if (url.startsWith('/api/fs/list')) {
       asked.push(url);
@@ -511,34 +556,42 @@ function boxesRuntime(listing: (p: string) => unknown) {
     braced('function closeModal('),
     between('function scannedRoots()', 'async function showFastRescanStat'),
     between("$('scanBtn').addEventListener('click'", "window.addEventListener('beforeunload'"),
+    braced('function openPolicyEditor('),
     between('/** Read the dialog back into the wire shape the API validates. */', 'registerView({'),
   ].join('\n');
   const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
   const noop = () => {};
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
-    '$', 'api', 'toast', 'escapeHtml', 'startScan', 'stopScan', 'localStorage', 'document',
-    'fxOrbShow', 'fxOrbHide', 'formatBytes', 'formatCount', 'loadAutopilot', 'openPolicyEditor', 'setApMatchKind',
+    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'stopScan', 'localStorage', 'document',
+    'fxOrbShow', 'fxOrbHide', 'formatBytes', 'formatCount', 'loadAutopilot', 'setApMatchKind', 'renderApGroupList', 'validateApQuery',
     `'use strict';
      const state = { scanning: false, system: { homeDir: '/home/u', commonDirs: [] }, autopilot: { policies: [] } };
      const GB = 1024 * 1024 * 1024;
      let apDraft = null;
      function icon() { return ''; }
      ${src}
-     return { openBrowse, browseTo, path: () => browsePath, rememberScannedRoot };`,
-  )($, api, (m: string) => { toasts.push(m); }, escapeHtml, (p: string, o: { incremental?: boolean }) => { scanned.push([p, o]); }, noop,
-    localStorage, document, noop, noop, String, String, noop, noop, noop) as {
+     return { openBrowse, browseTo, path: () => browsePath, rememberScannedRoot, openPolicyEditor };`,
+  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml,
+    (p: string, o: { incremental?: boolean }) => { scanned.push([p, o]); }, noop,
+    localStorage, document, noop, noop, String, String, noop, noop, noop, noop) as {
     openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
     rememberScannedRoot: (p: string) => void;
+    /** The page's own editor, opened on a saved policy (or a new one, with null). */
+    openPolicyEditor: (policy: Record<string, unknown> | null) => void;
   };
   /** A click on a button whose handler may be async; resolves when it has run. */
   const click = (id: string) => Promise.resolve($(id).listeners.click());
   /** A person typing or pasting into a box: its value, then its input event. */
   const type = (id: string, text: string) => { $(id).value = text; void $(id).listeners.input?.(); };
   const policy = (url: string) => sent.filter((s) => s.url === url).at(-1)!.body;
-  return { rt, $, asked, scanned, toasts, click, type, policy };
+  /** The folders of every policy list saved, one list per save. */
+  const saved = () => sent.filter((s) => s.url === '/api/autopilot/policies').map((s) => s.body.policies!.map((p) => p.path));
+  /** How many times the policy list was saved. */
+  const saves = () => saved().length;
+  return { rt, $, asked, scanned, toasts, offers, click, type, policy, saved, saves };
 }
 
 test('a folder picked into the Scan card keeps its trailing space when Scan and Browse… read the box again, and Fast rescan knows it (review F2.4, F2.8)', async () => {
@@ -576,50 +629,96 @@ test('a folder picked for an Autopilot policy is previewed, saved and browsed as
   assert.equal(asked.at(-1), list(SHOT), 'Browse… opens the picker at it again');
 });
 
-test('a stray trailing space typed into the Scan card or the Autopilot folder is dropped only when no folder has it (review F2.9)', async () => {
-  const { rt, asked, scanned, toasts, click, type, policy } = boxesRuntime(strictListing);
+test('a stray trailing space typed into the Scan card or the Autopilot folder is never dropped: where no folder has it and one without it exists, nothing is scanned or saved, and that folder is offered (QA4a R4-1)', async () => {
+  const { rt, $, asked, scanned, toasts, offers, click, type, policy, saves } = boxesRuntime(strictListing);
   type('pathInput', '   ');
   await click('scanBtn');
   assert.equal(toasts.at(-1), 'Enter a folder path first', 'a box of spaces is an empty box');
   assert.equal(scanned.length, 0, 'and nothing is scanned');
   type('pathInput', '  ' + DOCS + ' ');
   await click('scanBtn');
-  assert.deepEqual(scanned.map(([p]) => p), [DOCS], 'the folder that exists is scanned');
+  assert.deepEqual(asked, [list(DOCS + ' '), list(DOCS)], 'Scan looks the path up as typed, then without the space');
+  assert.equal(scanned.length, 0, 'and scans nothing in its place');
+  assert.equal(offers.length, 1, 'the person is told, with the folder offered');
+  assert.equal(offers[0].msg, `No folder is named “${DOCS} ”`, '"no such folder", for the path as typed');
+  assert.equal(offers[0].label, `Did you mean “${DOCS}”?`);
+  await offers[0].choose();
+  assert.equal($('pathInput').value, DOCS, 'clicking it puts that folder in the box');
+  assert.deepEqual(scanned.map(([p]) => p), [DOCS], 'and scans it');
   type('pathInput', SHOT);
   await click('scanBtn');
   assert.deepEqual(scanned.map(([p]) => p), [DOCS, SHOT], 'a folder whose name ends in a space is scanned as typed');
   type('pathInput', '/locked ');
   await click('scanBtn');
-  assert.deepEqual(scanned.at(-1)![0], '/locked ', 'one that cannot be looked up is left as typed, for the scan to report');
+  assert.deepEqual(scanned.at(-1)![0], '/locked ', 'one that cannot be looked up is scanned as typed, for the scan to report');
+  type('pathInput', '/home/u/Nope ');
+  await click('scanBtn');
+  assert.deepEqual(scanned.at(-1)![0], '/home/u/Nope ', 'where neither spelling is a folder it is scanned as typed, and the scan says so');
+  assert.equal(offers.length, 1, 'nothing is offered for either');
   const lookups = asked.length;
   type('pathInput', DOCS);
   await click('scanBtn');
   assert.equal(asked.length, lookups, 'a path with nothing at its end to doubt is not looked up');
+
   type('pathInput', DOCS + ' ');
+  const beforeBrowse = offers.length;
   await click('browseBtn');
-  assert.equal(rt.path(), DOCS, 'Browse… opens the folder that exists');
+  assert.notEqual(rt.path(), DOCS, 'Browse… does not open the folder without the space in its place');
+  assert.equal(offers.length, beforeBrowse + 1, 'it offers it');
+  assert.equal(offers.at(-1)!.label, `Did you mean “${DOCS}”?`);
+  await offers.at(-1)!.choose();
+  assert.equal(rt.path(), DOCS, 'and opens it when chosen');
+
   type('apPath', DOCS + ' ');
+  const offered = offers.length;
   await click('apSaveBtn');
-  assert.deepEqual(policy('/api/autopilot/policies').policies!.map((p) => p.path), [DOCS], 'a policy is saved for the folder that exists');
+  assert.equal(saves(), 0, 'a policy is not saved for the folder without the space');
+  assert.equal(offers.length, offered + 1, 'Save answers with an offer of its own');
+  assert.equal(offers.at(-1)!.msg, `No folder is named “${DOCS} ”`, 'the Autopilot editor says "no such folder" too');
+  assert.equal(offers.at(-1)!.label, `Did you mean “${DOCS}”?`, 'with the folder offered');
+  await offers.at(-1)!.choose();
+  await settle();
+  assert.equal($('apPath').value, DOCS, 'clicking it puts that folder in the box');
+  assert.equal(saves(), 0, 'and saves nothing — saving a standing cleanup is the person\'s own press');
+  await click('apSaveBtn');
+  assert.deepEqual(policy('/api/autopilot/policies').policies!.map((p) => p.path), [DOCS], 'which saves the folder chosen');
 });
 
-test('a box the page filled itself — a pick, Recent, the last scan, a saved policy — is a folder\'s own spelling: its trailing space is never dropped, even when that folder has gone (review F2.9)', async () => {
-  // "Gone " was scanned, or saved in a policy, and has since been removed;
-  // "Gone" beside it is another folder. Only a person's typing carries a
-  // stray space, so only typing is looked up without it.
-  const GONE = '/home/u/Gone ';
-  const { $, asked, scanned, toasts, click, policy } = boxesRuntime(strictListing);
-  $('pathInput').value = GONE; // Recent, or the last scan, fills the box
+test('a stray trailing space after a folder scanned before is never scanned as that folder: the folder is offered, and chosen it is scanned with Fast rescan offered for it, never ticked for the person (QA4a R4-2, QA D45)', async () => {
+  const { rt, $, scanned, offers, click, type } = boxesRuntime(strictListing);
+  rt.rememberScannedRoot(DOCS);
+  type('pathInput', DOCS + ' ');
+  assert.equal($('fastRescanWrap').hidden, true, 'Fast rescan is not offered for a path never scanned, exactly as typed');
   await click('scanBtn');
-  assert.deepEqual(scanned.map(([p]) => p), [GONE], 'Scan asks for that folder, and the scan says it is gone — never scanning its sibling');
-  assert.equal(asked.length, 0, 'it is not looked up under another name');
-  await click('browseBtn');
-  assert.deepEqual(asked, [list(GONE)], 'Browse… opens the picker at it, and only at it');
-  assert.equal(toasts.at(-1), 'Path does not exist');
-  $('apPath').value = GONE; // a saved policy, opened for editing
+  assert.deepEqual(scanned, [], 'no full scan of the folder without the space');
+  await offers.at(-1)!.choose();
+  assert.equal($('fastRescanWrap').hidden, false, 'the folder chosen was scanned before: Fast rescan is offered for it');
+  assert.ok(!$('fastRescan').checked, 'offered, never ticked for the person — it can be the slow path (QA D45)');
+  assert.deepEqual(scanned, [[DOCS, { incremental: false }]], 'so the click scans it as Scan would with the box unticked: in full');
+});
+
+test('a path the page put in a box — a pick, Recent, the last scan, a saved policy — is never altered, even where its folder has gone and a person once typed the same text (QA4a R4-1)', async () => {
+  // "Gone " was typed, scanned and saved in a policy, and has since been
+  // removed; "Gone" beside it is another folder. 79089e3 remembered the typing
+  // and, when the page later put the same text in the box, read it as typed
+  // and pointed the policy at "Gone" — an unattended cleanup of another folder.
+  const GONE = '/home/u/Gone ';
+  const { rt, $, asked, scanned, offers, click, type, saved } = boxesRuntime(strictListing);
+  type('apPath', GONE); // typed once, when the folder still existed
+  rt.openPolicyEditor({ id: 'p1', name: 'Old shots', path: GONE, match: { kind: 'custom' }, enabled: true });
+  assert.equal($('apPath').value, GONE, 'the editor shows the policy\'s folder');
   await click('apSaveBtn');
-  assert.deepEqual(policy('/api/autopilot/policies').policies!.map((p) => p.path), [GONE],
-    'saving it again keeps its folder — the sibling would be trashed on schedule');
+  assert.deepEqual(saved(), [[GONE]], 'saving it again keeps its folder — the sibling would be trashed on schedule');
+  assert.deepEqual(asked, [], 'its own folder is not looked up under another name');
+  assert.equal(offers.length, 0, 'nor questioned');
+
+  type('pathInput', GONE); // typed once
+  $('pathInput').value = GONE; // Recent, or the last scan, puts the same text in the box
+  await click('scanBtn');
+  assert.deepEqual(scanned, [], 'Scan never scans the sibling in its place');
+  assert.equal(offers.at(-1)!.label, 'Did you mean “/home/u/Gone”?', 'it says the folder is not there, and the sibling is only offered');
+  assert.equal($('pathInput').value, GONE, 'the box keeps the path the page put there');
   await click('apBrowseBtn');
-  assert.deepEqual(asked, [list(GONE), list(GONE)], 'and its Browse… opens at it, and only at it');
+  assert.notEqual(rt.path(), '/home/u/Gone', 'Browse… from the policy never opens the sibling in its place');
+  assert.equal($('apPath').value, GONE, 'and the policy\'s folder is untouched');
 });

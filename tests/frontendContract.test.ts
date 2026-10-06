@@ -1697,8 +1697,7 @@ test('preview never saves, and is available before a policy exists', () => {
   const code = appCode();
   assert.match(code, /\/api\/autopilot\/simulate/);
   const fn = code.slice(code.indexOf("$('apPreviewBtn')"), code.indexOf("$('apSaveBtn')"));
-  // Awaited: the editor resolves the folder box first (review F2.1, F2.9).
-  assert.match(fn, /policy: await policyFromEditor\(\)/, 'it previews the unsaved draft');
+  assert.match(fn, /policy: policyFromEditor\(\)/, 'it previews the unsaved draft');
   assert.ok(!/method:\s*'PUT'/.test(fn), 'previewing must not write anything');
 });
 

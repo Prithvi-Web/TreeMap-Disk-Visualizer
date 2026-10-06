@@ -346,7 +346,7 @@ $('apRuleQuery').addEventListener('input', () => {
 });
 
 /** Read the dialog back into the wire shape the API validates. */
-async function policyFromEditor() {
+function policyFromEditor() {
   const kind = document.querySelector('#apMatchSeg button[aria-selected="true"]').dataset.apmatch;
   let match;
   if (kind === 'suggestion') {
@@ -366,10 +366,10 @@ async function policyFromEditor() {
   return {
     ...(apDraft && apDraft.id ? { id: apDraft.id } : {}),
     name: $('apName').value.trim() || 'Untitled policy',
-    // The folder the box names (boxPath). Trimmed, a folder picked as
-    // "Screenshots " was saved as its sibling "Screenshots", and the policy
-    // would trash files there on schedule (review F2.1).
-    path: await boxPath($('apPath')),
+    // The folder exactly as the box holds it (asPath). Trimmed, a folder picked
+    // as "Screenshots " was saved as its sibling "Screenshots", and the policy
+    // would trash files there on schedule (review F2.1, QA4a R4-1).
+    path: asPath($('apPath').value),
     match,
     maxBytesPerRun: gb('apMaxRun'),
     maxBytesPerWeek: gb('apMaxWeek'),
@@ -384,8 +384,7 @@ document.querySelectorAll('#apMatchSeg button').forEach(b =>
   b.addEventListener('click', () => setApMatchKind(b.dataset.apmatch)));
 $('apAddBtn').addEventListener('click', () => openPolicyEditor(null));
 $('apBrowseBtn').addEventListener('click', () =>
-  openBrowse(asPath($('apPath').value) || null, (picked) => { $('apPath').value = picked; }, 'Folder this policy cleans',
-    boxTyped($('apPath'))));
+  openBrowse(asPath($('apPath').value) || null, (picked) => { $('apPath').value = picked; }, 'Folder this policy cleans'));
 
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');
@@ -396,7 +395,7 @@ $('apPreviewBtn').addEventListener('click', async () => {
   try {
     const result = await api('/api/autopilot/simulate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ policy: await policyFromEditor() }),
+      body: JSON.stringify({ policy: policyFromEditor() }),
     });
     const rows = result.items.slice(0, 12).map(i => `
       <div class="ap-run-item"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(i.name)}</span>
@@ -417,7 +416,19 @@ $('apPreviewBtn').addEventListener('click', async () => {
 });
 
 $('apSaveBtn').addEventListener('click', async () => {
-  const edited = await policyFromEditor();
+  const edited = policyFromEditor();
+  // A folder that names none, where the same path without its trailing space
+  // does, is not saved in its place: "no such folder", with that folder
+  // offered, and a click puts it in the box for the person to save. The
+  // policy's own stored folder is saved as stored, never looked up under
+  // another name (QA4a R4-1).
+  if (edited.path !== (apDraft && apDraft.path)) {
+    const meant = await boxMeant(edited.path);
+    if (meant) {
+      offerMeant(edited.path, meant, () => { $('apPath').value = meant; });
+      return;
+    }
+  }
   const others = (state.autopilot.policies || []).filter(p => p.id !== edited.id);
   try {
     await api('/api/autopilot/policies', {

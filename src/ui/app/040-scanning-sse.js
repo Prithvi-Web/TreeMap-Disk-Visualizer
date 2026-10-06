@@ -217,8 +217,9 @@ async function refreshFastRescanPlan() {
 }
 function maybeShowFastRescan() {
   const wrap = $('fastRescanWrap'); if (!wrap) return;
-  // Read as the Scan button reads it (asPath): a root remembered as
-  // "Screenshots " is known by that name (review F2.4).
+  // Read as the Scan button reads it (asPath), so it speaks for exactly the
+  // path Scan will scan: a root remembered as "Screenshots " is known by that
+  // name (review F2.4), and "Documents " is not "Documents" (QA4a R4-2).
   const p = asPath($('pathInput').value);
   const show = !!p && scannedRoots().has(p) && fastRescanNative !== true;
   wrap.hidden = !show;

@@ -1387,15 +1387,29 @@ function scanResultsExpired(err, url) {
 }
 /* ── end results expire ── */
 
-$('scanBtn').addEventListener('click', async () => {
+$('scanBtn').addEventListener('click', () => {
   if (state.scanning) { void stopScan(); return; } // the same button is Stop mid-scan
-  // The folder the box names (boxPath): a trailing space is part of a name —
-  // the picker, Recent and the last scan fill this box as the server spells a
-  // folder (review F2.4, F2.8) — unless no folder has it (F2.9).
-  const p = await boxPath($('pathInput'));
-  if (!p) { toast('Enter a folder path first', 'error'); return; }
-  startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
+  return scanTheBox();
 });
+/** Scan the folder the Scan card's box names, exactly as it is (asPath): a
+    trailing space is part of a name — the picker, Recent and the last scan fill
+    this box as the server spells a folder (review F2.4, F2.8). A path that
+    names no folder where the same path without its trailing space does is not
+    scanned in its place: "no such folder", with that folder offered, and a
+    click on it scans it — with Fast rescan then offered for it where it was
+    scanned before, since that box is read the same way (QA4a R4-1, R4-2), and
+    never ticked for the person, so that click scans it in full (QA D45). */
+async function scanTheBox() {
+  const box = $('pathInput');
+  const p = asPath(box.value);
+  if (!p) { toast('Enter a folder path first', 'error'); return; }
+  const meant = await boxMeant(p);
+  if (meant) {
+    offerMeant(p, meant, () => { box.value = meant; maybeShowFastRescan(); return scanTheBox(); });
+    return;
+  }
+  startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
+}
 // Enter starts a scan and only ever starts one. It used to be free of this
 // check because the button was disabled mid-scan; now that the button is Stop,
 // an unguarded Enter in the path field would cancel the running scan instead.
