@@ -315,8 +315,10 @@ loadNotes();
    its completion was, and no walk (QA D57: every reload used to walk the
    folder again). Only a scan that has gone by the time it is asked for (its
    results expired, or the record was evicted) is scanned again, through the
-   exact path the Scan button takes, and the page says so. The welcome screen
-   is only for true first runs. Restore must never make boot worse: every
+   exact path the Scan button takes, and the page says so — and so is the
+   newest folder in the history when nothing is held at all, after the
+   expiry or a relaunch (B38). The welcome screen is only for true first
+   runs: no history at all. Restore must never make boot worse: every
    failure is swallowed to a warn and the app simply starts empty, exactly as
    before this feature existed. */
 /**
@@ -354,11 +356,22 @@ async function restoreLastSession() {
       return;
     }
     const { scans } = await api('/api/scans');
-    const last = scans && scans[0];
-    if (!last || !last.rootPath) return;               // true first run
+    let last = scans && scans[0];
+    if (!last || !last.rootPath) {
+      // Nothing held: the scans expired (30 minutes after they finished), or
+      // the desktop app was relaunched — they live in the server's memory and
+      // die with it. The history on disk still names the folder last scanned,
+      // so this is the "gone" case, not a first run (B38: the welcome screen
+      // came up beside seven snapshots and a live index of the folder). Only
+      // an empty — or unreadable — history is a first run.
+      const history = await api('/api/snapshots').catch(() => null);
+      const newest = history && Array.isArray(history.roots) ? history.roots[0] : null;
+      if (!newest || !newest.rootPath) return;          // true first run
+      last = { rootPath: newest.rootPath, scanId: null };
+    }
     if (last.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
     if (state.root || state.scanning) return;          // the user beat us to it
-    const reopen = await reopenScan(last);
+    const reopen = last.scanId ? await reopenScan(last) : { outcome: 'gone' };
     if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
     // Pre-flight with the picker's own listing endpoint, so a moved or
     // deleted folder falls back to the welcome screen instead of a boot error.

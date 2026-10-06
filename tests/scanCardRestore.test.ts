@@ -294,3 +294,44 @@ test('the person wins the race: a scan they start while the tree downloads is no
   assert.deepEqual(h.started, [], 'and nothing is scanned behind their back');
   assert.equal(h.state.scanId, null, 'nor does its id replace theirs');
 });
+
+/* ══════════════ B38 — expired, or a relaunch: the history still names the folder ══════════════ */
+
+test('with no scan held — expired, or the app relaunched — the newest folder in the history is scanned again, and the page says so (B38)', async () => {
+  // B38: /api/scans lists in-memory scans only, so after the 30-minute expiry
+  // (and on every relaunch of the desktop app) it was empty, and the page
+  // took the "true first run" return: the welcome screen, with seven history
+  // snapshots and a live index of the folder on the server.
+  const ROOTS = { roots: [
+    { rootPath: '/Users/x/corpus', count: 7, latestAt: 1_700_000_100_000, latestSize: 8_800_000_000 },
+    { rootPath: '/Users/x/Mail', count: 1, latestAt: 1_700_000_000_000, latestSize: 36_000_000 },
+  ] };
+  const h = restore({
+    answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? ROOTS : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)),
+  });
+  await h.run();
+  assert.deepEqual(h.asked, ['GET /api/scans', 'GET /api/snapshots', 'GET /api/fs/list?path=' + encodeURIComponent('/Users/x/corpus')],
+    'the history is asked only because nothing is held, and the folder is pre-flighted as before');
+  assert.deepEqual(h.started, ['/Users/x/corpus'], 'the newest folder in the history is scanned again, through the Scan button\'s path');
+  assert.deepEqual(h.toasts, ['Your last scan of /Users/x/corpus is no longer held — scanning it again.'], 'and the page says so');
+  assert.equal(h.$('pathInput').value, '/Users/x/corpus', 'the box names it');
+  assert.equal(h.finished.length, 0, 'nothing is reopened: there is no scan to reopen');
+});
+
+test('only an empty history is a first run; a cloud folder or an unreadable history starts empty, as before (B38)', async () => {
+  const first = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? { roots: [] } : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)) });
+  await first.run();
+  assert.deepEqual(first.started, [], 'no history: the welcome screen');
+  assert.deepEqual(first.toasts, []);
+  // fs/list answers in both of these, so nothing but the rule under test stands between them and a scan.
+  const cloud = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? { roots: [{ rootPath: 'cloud://gdrive/', count: 1, latestAt: 1, latestSize: 1 }] } : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)) });
+  await cloud.run();
+  assert.deepEqual(cloud.started, [], 'a cloud account is never restored on its own — its sign-in may be gone');
+  const broken = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? new Error('history unreadable') : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)) });
+  await broken.run();
+  assert.deepEqual(broken.started, [], 'an unreadable history starts empty');
+  assert.deepEqual(broken.toasts, [], 'without a word at boot');
+  const moved = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? { roots: [{ rootPath: '/Volumes/gone', count: 1, latestAt: 1, latestSize: 1 }] } : url.startsWith('/api/fs/list') ? new Error('That folder no longer exists.') : assert.fail(`unexpected ${url}`)) });
+  await moved.run();
+  assert.deepEqual(moved.started, [], 'a folder that has gone falls back to the welcome screen, not a boot error');
+});
