@@ -77,6 +77,7 @@ async function renderPane(data: Record<string, unknown>): Promise<string> {
     whyLeftOut: pageWhyLeftOut((n: number) => (n ?? 0).toLocaleString('en-US')),
     refreshCartButtons: () => {},
     updateCleanSummary: () => {},
+    loadEmptyFoldersSeq: 0, // the page's own counter of loads (final review F1.8)
   });
   await fn();
   return els.emptyResults.innerHTML;
@@ -129,6 +130,67 @@ test('an answer with nothing withheld and no reason is the pane it always was', 
   assert.match(await renderPane({ folders: [], totalCount: 0, truncated: false, withheld: 0 }), /tidy already/);
   assert.match(await renderPane({ folders: [], totalCount: 0, truncated: false }), /tidy already/, 'an older server sends neither field');
   assert.doesNotMatch(await renderPane({ folders: [{ name: 'a', path: '/r/a' }], totalCount: 1, truncated: false, withheld: 0 }), /left out/);
+});
+
+/* ─────────────── loads that overlap (final review F1.8) ─────────────── */
+
+/**
+ * The page's loadEmptyFolders, every load's answer handed out by the test in
+ * any order. Each answer waits for the server's second look on disk (U-4) —
+ * up to 10 s on a slow drive — so toggling "ignore junk" twice inside that
+ * starts two loads whose answers can arrive the other way round.
+ */
+function loadsByHand() {
+  const { els, $ } = makeDom();
+  const pending: Array<{ url: string; answer: (data: unknown) => void; fail: (err: Error) => void }> = [];
+  const deps: Record<string, unknown> = {
+    $,
+    api: (url: string) => new Promise((resolve, reject) => { pending.push({ url, answer: resolve, fail: reject }); }),
+    state: { scanId: 's1' },
+    skeletonRows: () => '',
+    icon: () => '',
+    escapeHtml: (s: string) => String(s).replace(/</g, '&lt;'),
+    chipFor: () => '',
+    formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
+    whyLeftOut: pageWhyLeftOut((n: number) => (n ?? 0).toLocaleString('en-US')),
+    refreshCartButtons: () => {},
+    updateCleanSummary: () => {},
+    loadEmptyFoldersSeq: 0,
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `let emptyFolders = []; return { load: async function () {${bodyOf('async function loadEmptyFolders() {')}\n}, folders: () => emptyFolders };`)(
+    ...keys.map((k) => deps[k]),
+  ) as { load: () => Promise<void>; folders: () => Array<{ path: string }> };
+  return { pane: () => els.emptyResults.innerHTML, $, pending, ...page };
+}
+
+const listOf = (...paths: string[]) => ({ folders: paths.map((p) => ({ name: path.basename(p), path: p })), totalCount: paths.length, truncated: false, withheld: 0 });
+
+test('a load answered after a newer one is dropped: the list is the one for the junk rule the box shows (final review F1.8)', async () => {
+  const h = loadsByHand();
+  h.$('emptyIgnoreJunk').checked = false;
+  const older = h.load(); // "ignore junk" off
+  h.$('emptyIgnoreJunk').checked = true;
+  const newer = h.load(); // and on again, while the first is still looking
+  h.pending[1].answer(listOf('/r/kept'));
+  await newer;
+  h.pending[0].answer(listOf('/r/junk-only-1', '/r/junk-only-2'));
+  await older;
+  assert.doesNotMatch(h.pane(), /junk-only/, 'the older answer does not paint over the newer');
+  assert.deepEqual(h.folders().map((f) => f.path), ['/r/kept'], 'nor become the list Select all and the trash read');
+});
+
+test('a load that fails after a newer one answered does not replace the list with its error (final review F1.8)', async () => {
+  const h = loadsByHand();
+  const older = h.load();
+  const newer = h.load();
+  h.pending[1].answer(listOf('/r/kept'));
+  await newer;
+  h.pending[0].fail(new Error('the older look gave up'));
+  await older;
+  assert.doesNotMatch(h.pane(), /gave up/, 'the newer list stays');
+  assert.match(h.pane(), /\/r\/kept/);
 });
 
 /* ─────────────── the selection, the request and the report ─────────────── */

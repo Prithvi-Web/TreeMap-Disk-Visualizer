@@ -92,6 +92,7 @@ async function renderEmptyPane(data: { folders: { name: string; path: string }[]
     formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
     refreshCartButtons: () => {},
     updateCleanSummary: () => {},
+    loadEmptyFoldersSeq: 0, // the page's own counter of loads (final review F1.8)
   });
   await fn();
   const html = els.emptyResults.innerHTML;

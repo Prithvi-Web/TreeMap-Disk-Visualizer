@@ -235,11 +235,21 @@ function whyLeftOut(by, withheld) {
   return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
+/**
+ * Each load of the Empty Folders list takes the next number, and only the
+ * latest paints (final review F1.8): every answer waits for the server's
+ * second look on disk (U-4), up to 10 s on a slow drive, so "ignore junk"
+ * toggled twice can see the older answer last — a list for the rule the box
+ * no longer shows, with its Select-all count.
+ */
+let loadEmptyFoldersSeq = 0;
 async function loadEmptyFolders() {
   const host = $('emptyResults');
   host.innerHTML = skeletonRows(4, 30);
+  const seq = ++loadEmptyFoldersSeq;
   try {
     const data = await api(`/api/empty-folders?scanId=${state.scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
+    if (seq !== loadEmptyFoldersSeq) return; // a newer load owns the list
     emptyFolders = data.folders;
     // Track U, U-4: folders the scan saw empty that the server, looking again
     // on disk, did not find still empty — said, never dropped in silence. And a
@@ -287,6 +297,7 @@ async function loadEmptyFolders() {
     refreshCartButtons();
     updateCleanSummary();
   } catch (e) {
+    if (seq !== loadEmptyFoldersSeq) return; // a stale failure must not replace a newer list
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
 }
