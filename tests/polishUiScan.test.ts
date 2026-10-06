@@ -1089,3 +1089,40 @@ test('clearDonut takes the ring off: the handle is destroyed and the canvas, cen
   assert.equal(destroyed, 1, 'with no ring held there is nothing to destroy');
   assert.equal(cleared.length, 2, 'but the canvas is wiped all the same');
 });
+
+test('one file is "1 file" — the status line, the toast, the announcement, the reopened line and the engine row (B34)', async () => {
+  // B34: scanning …/Installer.dmg said "Scanned 1 files", "across 1 files" and "scanned 1 items".
+  const h = finishScanHarness();
+  await h.finishScan({ path: '/Users/x/Installer.dmg', size: 2e9 }, 10, { fileCount: 1, dirCount: 0, scanned: 1, engine: 'native', durationMs: 10 });
+  assert.match(h.els.scanStatus.innerHTML, /Scanned <b>1<\/b> file in /, 'the status line');
+  assert.deepEqual(h.toasts, ['Scan complete — 2000000000 B across 1 file'], 'the toast');
+  assert.match(h.els.scanAnnounce.textContent, /— 1 file, /, 'what a screen reader hears');
+  await h.finishScan({ path: '/Users/x/Installer.dmg', size: 2e9 }, 10, { fileCount: 1, durationMs: 10 }, { reopenedAt: 1 });
+  assert.match(h.els.scanStatus.innerHTML, /<b>1<\/b> file, /, 'the reopened line');
+  await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 10, { fileCount: 2, durationMs: 10 });
+  assert.match(h.els.scanStatus.innerHTML, /Scanned <b>2<\/b> files in /, 'two are still files');
+  assert.match(h.toasts[h.toasts.length - 1], /across 2 files$/);
+
+  const src = braced('function renderDiskNotes(');
+  const { $, els } = makeDom();
+  const state = { scanStats: { engine: 'native', durationMs: 10, scanned: 1 }, treemap: {} };
+  new Function('$', 'state', 'formatCount', 'formatBytes', 'engineBudgetNote', 'engineReasonTitle', 'fxTmPillBeamsSync',
+    `'use strict'; ${src} return renderDiskNotes;`)($, state, String, String, () => '', () => '', () => {})();
+  assert.match(els.engineText.textContent, /scanned 1 item in /, 'the engine row');
+});
+
+test('an index nobody is watching says so — not that TreeMap was closed, seconds after it built it (B34)', () => {
+  // B34: the index the scan of a single file had just built answered
+  // { state: 'ready', live: false } — a file cannot be watched as a folder
+  // root — and the badge said "it wasn't watching while TreeMap was closed".
+  const render = braced('function renderIndexBadge(');
+  const escapeHtml = new Function(`'use strict'; ${braced('function escapeHtml(')} return escapeHtml;`)() as (s: string) => string;
+  const { $, els } = makeDom();
+  const run = new Function('$', 'escapeHtml', `'use strict'; ${render} return renderIndexBadge;`)($, escapeHtml) as (info: unknown) => void;
+  run({ indexed: true, path: '/Users/x/Installer.dmg', root: { path: '/Users/x/Installer.dmg', state: 'ready', live: false } });
+  assert.equal(els.indexBadge.cls.has('stale'), true, 'still amber: changes can be missed');
+  assert.doesNotMatch(els.indexBadge.innerHTML, /closed/, 'TreeMap was not closed');
+  assert.match(els.indexBadge.innerHTML, /isn’t being watched for changes/, 'it says what is true: nothing is watching it');
+  run({ indexed: true, root: { state: 'stale', live: false } });
+  assert.match(els.indexBadge.innerHTML, /while TreeMap was closed/, 'a stale index with no reason keeps the sentence it always had');
+});

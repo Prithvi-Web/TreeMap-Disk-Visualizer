@@ -8687,7 +8687,13 @@ function renderIndexBadge(info) {
     (stale
       ? (why
         ? 'Index may be out of date. ' + escapeHtml(why) + refresh
-        : 'Index may be out of date — it wasn’t watching while TreeMap was closed.' + refresh)
+        // Built, and nothing watching it while TreeMap runs — a single file
+        // cannot be watched as a folder root, and a watch can fail to attach.
+        // "While TreeMap was closed" said seconds after the build was false
+        // (B34); that sentence is for a stale index that gives no reason.
+        : info.root.state === 'ready'
+          ? 'Index may be out of date — it isn’t being watched for changes.' + refresh
+          : 'Index may be out of date — it wasn’t watching while TreeMap was closed.' + refresh)
       : 'Index live — always current') +
     '</span>';
   el.title = stale
@@ -9380,6 +9386,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   state.scanStats = stats || null;
   const files = stats ? stats.fileCount : null;
   const dirs = stats ? stats.dirCount : null;
+  const filesWord = files === 1 ? 'file' : 'files'; // a scan of one file is "1 file" (B34)
 
   // QA D12: one duration, in the engine row's format. The server's own
   // (`stats.durationMs`, which the engine row states too) when it sent one;
@@ -9389,11 +9396,11 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   $('scanStatus').classList.remove('error');
   $('scanStatus').innerHTML = icon('checkCircle', 14) + (reopenedAt
     ? `<span class="num">Reopened the scan from ${escapeHtml(formatClock(reopenedAt))} — ` +
-      `${files === null ? '' : `<b>${formatCount(files)}</b> files, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
-    : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
+      `${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord}, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
+    : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord} `}` +
       `in ${(tookMs / 1000).toFixed(1)} s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
   const said = reopenedAt ? 'Reopened the last scan — ' : state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ';
-  $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
+  $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} ${filesWord}, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
   // scan's numbers, which is the same lie in slower motion: the headline and the
   // engine row go quiet while Files and Folders keep stating another folder's
@@ -9421,7 +9428,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
     const refusedDirs = stats && stats.refused && stats.refused.dirs > 0 ? stats.refused.dirs : 0;
     const empty = root.size === 0 && !files;
     if (!empty) {
-      toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}` +
+      toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} ${filesWord}`}` +
         (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : ''));
     }
     fxScanDonePulse();
@@ -9582,7 +9589,7 @@ function renderDiskNotes() {
       const label = { native: 'Native engine', 'gdu-turbo': 'gdu', 'turbo-walker': 'Built-in walker', 'ntfs-mft': 'NTFS turbo', walker: 'Built-in walker', cloud: 'Cloud metadata listing', index: 'Saved index' }[s.engine] || s.engine;
       const verb = s.engine === 'index' ? 'read' : 'scanned';
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
-      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
+      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} ${s.scanned === 1 ? 'item' : 'items'} in ${(s.durationMs / 1000).toFixed(1)} s` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
       // the fallback reason when something faster could not run.
