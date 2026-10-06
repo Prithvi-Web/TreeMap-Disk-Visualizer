@@ -143,13 +143,16 @@ function countAbandoned(work: Promise<unknown>): void {
 /**
  * `work`'s outcome — or, once `stallMs` passes before it settles, `onStall`'s (its value, or what it
  * throws), judged by the same timer as a copy's stall limit (FG3h A, FG3g review F1.2). The work
- * cannot be stopped and goes on unawaited, counted in `abandonedCallsUnsettled` until it settles.
+ * cannot be stopped and goes on unawaited, counted in `abandonedCallsUnsettled` until it settles —
+ * unless `counted` is false, for a caller that bounds the calls it leaves waiting itself (FG3g review
+ * F3.3: the Offloaded tab's look, one per drive). The count is what stops the Time Capsule starting
+ * copies, so a look a person can repeat by opening a tab must not add to it.
  */
-export async function withinStallLimit<T>(work: Promise<T>, stallMs: number, onStall: () => T): Promise<T> {
+export async function withinStallLimit<T>(work: Promise<T>, stallMs: number, onStall: () => T, opts: { counted?: boolean } = {}): Promise<T> {
   let disarm = (): void => {};
   const expired = new Promise<T>((resolve, reject) => {
     disarm = (stallTimerForTests ?? realStallTimer)(stallMs, () => {
-      countAbandoned(work);
+      if (opts.counted !== false) countAbandoned(work);
       try {
         resolve(onStall());
       } catch (err) {

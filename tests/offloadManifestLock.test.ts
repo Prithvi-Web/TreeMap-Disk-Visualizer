@@ -14,6 +14,7 @@ import {
   setDestManifestWriteForTests, startOffload, startRestore,
 } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
+import { protectItems } from '../src/services/timeCapsule';
 import { abandonedCallsUnsettled, setHardLinkForTests, setStallTimerForTests } from '../src/utils/copyVerify';
 import type { OffloadEntry, OffloadJob } from '../src/models/types';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
@@ -468,4 +469,57 @@ test('the Offloaded tab\'s look at a destination that does not answer holds no r
   assert.equal(lastSeen(quiet), quietNow?.lastSeenAt, 'a destination that answers is recorded as seen');
   assert.ok((JSON.parse(fs.readFileSync(manifestFile, 'utf8')) as { entries: OffloadEntry[] }).entries.some((e) => e.originalPath === o),
     'and saving "last seen" kept the offload saved meanwhile');
+});
+
+/* ─────────────── FG3g review F3.3: the tab's looks count against nothing else, and are one per drive ─────────────── */
+
+test('the Offloaded tab\'s looks at drives that do not answer are not the Time Capsule\'s calls, and a view while one is out starts no other: a deletion still goes, and views look once per drive until it returns', async () => {
+  const { src, paths: [a, b] } = files('look-shared', 'a.bin', 'b.bin');
+  const nasA = fileTempDir('treemap-offloadManifestLock-look-shared-a-');
+  const nasB = fileTempDir('treemap-offloadManifestLock-look-shared-b-');
+  assert.equal((await offload(src, a, nasA)).status, 'complete');
+  assert.equal((await offload(src, b, nasB)).status, 'complete');
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier call left waiting returning');
+  const timers: { ms: number; fire: () => void }[] = [];
+  const untimer = setStallTimerForTests((ms, onExpire) => {
+    timers.push({ ms, fire: onExpire });
+    return () => {};
+  });
+  const asked = new Map<string, number>();
+  let answer!: (mounted: boolean) => void;
+  const answered = new Promise<boolean>((resolve) => { answer = resolve; });
+  const unlook = setDestinationLookForTests((root) => {
+    if (root !== nasA && root !== nasB) return null;
+    asked.set(root, (asked.get(root) ?? 0) + 1);
+    return answered; // two drives that stopped answering
+  });
+  const mountedOf = (index: Awaited<ReturnType<typeof getOffloadIndex>>): (boolean | undefined)[] =>
+    [nasA, nasB].map((root) => index.destinations.find((d) => d.root === root)?.mounted);
+  try {
+    const first = getOffloadIndex();
+    await waitFor(() => asked.size === 2, 'the tab looking at both quiet drives');
+    for (const timer of timers) timer.fire(); // both limits pass with the drives still quiet
+    assert.deepEqual(mountedOf(await withinHangGuard(first, 'the tab answering once the limits passed')), [false, false]);
+    assert.equal(abandonedCallsUnsettled(), 0, 'the looks left waiting are not counted as calls the Time Capsule left waiting');
+    const local = path.join(fileTempDir('treemap-offloadManifestLock-look-shared-local-'), 'local.txt');
+    fs.writeFileSync(local, 'a file on a disk that answers');
+    const [outcome] = (await protectItems([{ path: local }])).outcomes;
+    assert.equal(outcome.protected, true, `a copy is still made, so a deletion still goes: ${outcome.detail ?? ''}`);
+    for (let view = 0; view < 3; view++) {
+      // Any limit a later view arms passes at once, so a look it started is counted, never waited on.
+      const armedBefore = timers.length;
+      let answeredView = false;
+      const viewing = getOffloadIndex().finally(() => { answeredView = true; });
+      await waitFor(() => answeredView || timers.length > armedBefore, 'a later view answering, or arming a limit');
+      for (const timer of timers.slice(armedBefore)) timer.fire();
+      assert.deepEqual(mountedOf(await withinHangGuard(viewing, 'a later view answering')), [false, false], 'a later view shows them not connected');
+    }
+    assert.deepEqual([asked.get(nasA), asked.get(nasB)], [1, 1], 'and starts no other look at a drive whose look is still out');
+  } finally {
+    answer(true);
+    unlook();
+    untimer();
+  }
+  // The drives answer: their looks return, and the next view looks again.
+  await waitFor(async () => mountedOf(await getOffloadIndex()).every((m) => m === true), 'a view after the looks returned seeing both drives');
 });

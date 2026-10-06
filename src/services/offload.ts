@@ -959,12 +959,30 @@ export function setDestinationLookForTests(look: (root: string) => Promise<boole
 const DESTINATION_LOOK_STALL_MS = 10_000;
 
 /**
+ * Each destination's answer while its look is still out, by root (FG3g review F3.3): a view meanwhile
+ * shares it — not connected, once the limit passed — and starts no other look at that drive.
+ */
+const destinationLooksOut = new Map<string, Promise<boolean>>();
+
+/**
  * Whether a destination's folder is there now. A look at another drive, so it is bounded: one that
  * does not answer within the limit is shown as not connected, its look left to return on its own.
+ * One look per drive at a time, and not counted with the calls the Time Capsule left waiting (FG3g
+ * review F3.3): each view of the tab started a fresh look, each one left waiting counted there, and
+ * two quiet drives — or one viewed twice — stopped every cart commit and Autopilot deletion with a
+ * sentence that blamed the volume being deleted from, while the looks held worker threads unbounded.
  */
 function destinationMounted(root: string): Promise<boolean> {
+  const out = destinationLooksOut.get(root);
+  if (out !== undefined) return out;
   const look = destinationLookForTests?.(root) ?? fsp.stat(root).then(() => true, () => false);
-  return withinStallLimit(look, DESTINATION_LOOK_STALL_MS, () => false);
+  const answer = withinStallLimit(look, DESTINATION_LOOK_STALL_MS, () => false, { counted: false });
+  destinationLooksOut.set(root, answer);
+  const returned = (): void => {
+    if (destinationLooksOut.get(root) === answer) destinationLooksOut.delete(root);
+  };
+  look.then(returned, returned);
+  return answer;
 }
 
 export async function getOffloadIndex(): Promise<OffloadIndex> {
