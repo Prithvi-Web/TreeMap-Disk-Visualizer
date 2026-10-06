@@ -177,6 +177,16 @@ test('get_largest returns files largest-first with raw + formatted sizes', async
   assert.equal(s.count, 3);
 });
 
+test('get_largest and reclaim_ranked ignore entries under 1 MB by default — 1,000,000 bytes, as every size is printed (QA D09)', async () => {
+  const largest = (await call('get_largest', { scanId, kind: 'files', limit: 10 })).structuredContent!;
+  const names = largest.files.map((f: { name: string }) => f.name);
+  assert.ok(names.includes('mid.bin'), `a 1,000,000-byte file is 1 MB, so it is listed: ${names.join(', ')}`);
+  assert.ok(!names.includes('dup-a.bin'), 'and a 500 KB one is not');
+  const ranked = (await call('reclaim_ranked', { scanId, limit: 10 })).structuredContent!;
+  assert.ok(ranked.entries.some((e: { path: string }) => e.path.endsWith(`${path.sep}mid.bin`)), 'reclaim_ranked starts from the same floor');
+  assert.match(ranked.note, /at or above 1\.0 MB/);
+});
+
 test('get_largest folders reports recursive sizes', async () => {
   const r = await call('get_largest', { scanId, kind: 'folders', limit: 5, minSizeBytes: 0 });
   assert.ok(!r.isError);

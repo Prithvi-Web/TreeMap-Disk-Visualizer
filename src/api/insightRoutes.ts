@@ -43,6 +43,7 @@ import {
 import { sseSend } from '../utils/sse';
 import { randomUUID } from 'crypto';
 import { sanitizePath } from '../utils/pathSanitizer';
+import { ONE_MB } from '../utils/formatBytes';
 import { getPolicy, assertPathsAllowed } from '../services/policy';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
@@ -209,7 +210,7 @@ insightRouter.get('/apps', storageModeGate, async (req: Request, res: Response) 
 });
 
 /**
- * GET /api/large-folders?scanId=&limit=20&minSize=1048576
+ * GET /api/large-folders?scanId=&limit=20&minSize=1000000 (the default: 1 MB, decimal — QA D09)
  *
  * 202 while the scan runs, NOT 409.
  *
@@ -233,7 +234,7 @@ insightRouter.get('/large-folders', async (req: Request, res: Response) => {
   }
   const scan = requireCompleteScan(req, req.query.scanId);
   const limit = clampInt(req.query.limit, 20, 1, 500);
-  const minSize = clampInt(req.query.minSize, 1_048_576, 0, Number.MAX_SAFE_INTEGER);
+  const minSize = clampInt(req.query.minSize, ONE_MB, 0, Number.MAX_SAFE_INTEGER);
   // Walked in slices (U-17): after a whole-disk scan this walk held the loop for 1.1 s.
   res.json({ folders: await collectLargestFoldersAsync(storeOf(scan), limit, minSize) });
 });

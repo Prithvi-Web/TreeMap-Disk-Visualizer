@@ -1320,7 +1320,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Largest files in a completed scan',
     tag: 'insights',
     destructive: false,
-    parameters: [scanIdQuery, queryParam('limit', '1–1000 (default 50)', int()), queryParam('minSize', 'Bytes (default 1048576)', int())],
+    parameters: [scanIdQuery, queryParam('limit', '1–1000 (default 50)', int()), queryParam('minSize', 'Bytes (default 1000000 — 1 MB; sizes are decimal)', int())],
     responses: { '200': jsonResponse('Largest files', obj({ files: arr(ref('LargeFile')) }, ['files'])), '202': running202 },
   },
   {
@@ -1329,7 +1329,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Largest folders in a completed scan',
     tag: 'insights',
     destructive: false,
-    parameters: [scanIdQuery, queryParam('limit', '1–500 (default 20)', int()), queryParam('minSize', 'Bytes (default 1048576)', int())],
+    parameters: [scanIdQuery, queryParam('limit', '1–500 (default 20)', int()), queryParam('minSize', 'Bytes (default 1000000 — 1 MB; sizes are decimal)', int())],
     responses: { '200': jsonResponse('Largest folders', obj({ folders: arr(ref('LargeFolder')) }, ['folders'])), '202': running202 },
   },
   {

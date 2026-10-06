@@ -35,3 +35,6 @@ export function formatBytes(n: number, decimals = 1): string {
   if (unit === 0) return `${Math.round(value)} B`;
   return `${value.toFixed(decimals)} ${UNITS[unit]}`;
 }
+
+/** One megabyte as formatBytes counts it — the "1 MB" floor of the largest-files and largest-folders lists. */
+export const ONE_MB = 1_000_000;

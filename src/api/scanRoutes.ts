@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { formatCount } from '../utils/formatCount';
+import { ONE_MB } from '../utils/formatBytes';
 import { startScan, getScan, cancelScan, collectLargestFilesAsync, collectFileTypesAsync, scanExpiresAt, scanIdOf } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
@@ -700,7 +701,7 @@ scanRouter.get('/scan/:scanId/calendar', storageModeGate, (req: Request, res: Re
   res.json({ scanId: scan.scanId, rootPath: scan.rootPath, ...result });
 });
 
-/** GET /api/large-files?scanId=x&limit=50&minSize=1048576 — walked in slices (U-17). */
+/** GET /api/large-files?scanId=x&limit=50&minSize=1000000 — walked in slices (U-17). minSize defaults to 1 MB, decimal (QA D09). */
 scanRouter.get('/large-files', async (req: Request, res: Response) => {
   const scan = requireScan(req, String(req.query.scanId ?? ''));
   if (scan.status === 'running') {
@@ -710,7 +711,7 @@ scanRouter.get('/large-files', async (req: Request, res: Response) => {
   if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
 
   const limit = clampInt(req.query.limit, 50, 1, 1000);
-  const minSize = clampInt(req.query.minSize, 1_048_576, 0, Number.MAX_SAFE_INTEGER);
+  const minSize = clampInt(req.query.minSize, ONE_MB, 0, Number.MAX_SAFE_INTEGER);
   res.json({ files: await collectLargestFilesAsync(storeOf(scan), limit, minSize) });
 });
 

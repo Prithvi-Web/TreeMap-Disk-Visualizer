@@ -24,7 +24,7 @@ import { insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath, assertNotS
 import { isVirtualPath } from '../services/containerScanner';
 import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
-import { formatBytes } from '../utils/formatBytes';
+import { formatBytes, ONE_MB } from '../utils/formatBytes';
 import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { OffloadJob, ScanResult } from '../models/types';
@@ -360,7 +360,7 @@ export function buildMcpServer(): McpServer {
         scanId: z.string().min(1).describe('A completed scan from scan_path'),
         kind: z.enum(['files', 'folders']).default('files').describe('Rank files or folders'),
         limit: z.number().int().min(1).max(500).default(25).describe('How many entries to return'),
-        minSizeBytes: z.number().int().min(0).default(1_048_576).describe('Ignore entries smaller than this'),
+        minSizeBytes: z.number().int().min(0).default(ONE_MB).describe('Ignore entries smaller than this (default 1 MB = 1,000,000 bytes)'),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -412,7 +412,7 @@ export function buildMcpServer(): McpServer {
         scanId: z.string().min(1).describe('A completed scan from scan_path'),
         kind: z.enum(['files', 'folders']).default('files').describe('Rank files or folders'),
         limit: z.number().int().min(1).max(200).default(25).describe('How many ranked entries to return'),
-        minSizeBytes: z.number().int().min(0).default(1_048_576).describe('Ignore entries smaller than this'),
+        minSizeBytes: z.number().int().min(0).default(ONE_MB).describe('Ignore entries smaller than this (default 1 MB = 1,000,000 bytes)'),
         candidates: z.number().int().min(1).max(2000).default(500)
           .describe('How many of the largest entries to score before ranking. Higher is slower and more thorough.'),
         minScore: z.number().min(0).max(100).default(0).describe('Only return entries scoring at least this'),

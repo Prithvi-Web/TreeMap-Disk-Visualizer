@@ -282,8 +282,38 @@ test('the three dashboard routes answer from the sliced walks, with the old answ
     assert.equal(files.status, 200, JSON.stringify(files.body));
     assert.equal(JSON.stringify(files.body.files), JSON.stringify(oracleLargestFiles(pair.packed, 10, 1)), 'largest files as before');
     assert.equal(JSON.stringify(types.body.types), JSON.stringify(oracleFileTypes(pair.packed)), 'file types as before');
-    assert.equal(JSON.stringify(folders.body.folders), JSON.stringify(oracleLargestFolders(pair.packed, 10, MIB)), 'largest folders as before (the route\'s 1 MiB default)');
+    assert.equal(JSON.stringify(folders.body.folders), JSON.stringify(oracleLargestFolders(pair.packed, 10, 1_000_000)), 'largest folders as before (the route\'s 1 MB default)');
     assert.equal(slicedWalkCountsForTests().walks, 3, 'each list came from a sliced walk');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('the routes\' default floor is 1 MB in the decimal units every size is printed in: 1,000,000 bytes (QA D09)', async () => {
+  // The Dashboard asks for the largest folders with no minSize and, when none
+  // is over the floor, says "No folders above 1 MB found." — so the floor is
+  // the 1 MB that sentence and every printed size mean.
+  const root = fileTempDir('treemap-collectorSlices-floor-');
+  const file = (dir: string, name: string, size: number): FileNode =>
+    ({ name, path: path.join(dir, name), type: 'file', size, modifiedAt: 0, isHidden: false, extension: 'bin' });
+  const dir = (name: string, kids: FileNode[]): FileNode => ({
+    name, path: path.join(root, name), type: 'dir', modifiedAt: 0, isHidden: false,
+    size: kids.reduce((s, k) => s + k.size, 0), children: kids,
+  });
+  const one = dir('one', [file(path.join(root, 'one'), 'exactly.bin', 1_000_000)]);
+  const under = dir('under', [file(path.join(root, 'under'), 'short.bin', 999_999)]);
+  const scan = createScanRecord(root);
+  scan.store = buildStoreFromTree({ name: path.basename(root), path: root, type: 'dir', modifiedAt: 0, isHidden: false, size: one.size + under.size, children: [one, under] });
+  scan.status = 'complete';
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const files = await get(port, `/api/large-files?scanId=${scan.scanId}&limit=10`);
+    const folders = await get(port, `/api/large-folders?scanId=${scan.scanId}&limit=10`);
+    assert.deepEqual((files.body.files as { name: string }[]).map((f) => f.name), ['exactly.bin'], 'a 1,000,000-byte file is 1 MB, and 999,999 bytes are not');
+    assert.deepEqual((folders.body.folders as { name: string }[]).map((f) => f.name), ['one'], 'and so for folders');
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
