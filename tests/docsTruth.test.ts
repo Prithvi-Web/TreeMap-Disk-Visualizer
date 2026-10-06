@@ -7,7 +7,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-docsTruth-data-');
 
 import { FAST_PATH_UNAVAILABLE, nativeEligibility, nativeRule, type EligibilityInput } from '../src/services/scan/nativeEngine';
-import { MEMORY_CAP_ROWS, RESERVE_FACTOR, memoryRoomFor } from '../src/services/scan/nativeMemory';
+import { MEMORY_CAP_ROWS, RESERVE_FACTOR, memoryRoomFor, noRestartRefusal } from '../src/services/scan/nativeMemory';
 
 /**
  * The engineering record and the agents' contract — docs/PLATFORM_NOTES.md,
@@ -134,4 +134,30 @@ test('DESIGN §14 says a dist build compiles the module for the machine it runs 
   assert.match(bullet, /refuses to package unless `native\/prebuilt` holds the packaged target's module/, 'another target\'s is refused');
   assert.match(bullet, /`scripts\/check-prebuilt\.js` and `scripts\/afterPack\.js`/, 'by the two checks');
   assert.match(bullet, /installer for another OS comes from that OS's build/, 'so another OS\'s installer is built there');
+});
+
+/* ─────────────── README: where a failed native walk says why ─────────────── */
+
+test('the README says where each end of a failed native walk says why: the engine line for a walk again, the scan\'s own message for a refusal (review F1.4)', () => {
+  // The code: in startScan's native catch, P4-14's refusal is thrown before
+  // the walker's reason is recorded (noteFallback, why.push), so the scan
+  // ends with it as its error and no engine line carries it; only a walk
+  // again in the built-in walker records the reason the engine line is
+  // painted from (tests/nativeNoFallbackAboveTmem.test.ts runs both ends).
+  const fromRefusal = from(read('src', 'services', 'diskScanner.ts'), 'const refusal = noRestartRefusal(');
+  const block = fromRefusal.slice(0, fromRefusal.indexOf('scan.engine = WALKER_ENGINE;'));
+  const thrown = block.indexOf('if (refusal !== null) throw refusal;');
+  assert.ok(thrown >= 0, 'a refusal is thrown');
+  assert.ok(thrown < block.indexOf('noteFallback(scan, reason);') && thrown < block.indexOf('why.push(said(reason));'), 'before the walker\'s reason is recorded');
+  const refusal = noRestartRefusal(new Error('the test breaks the walk'), 11, null, 10);
+  assert.ok(refusal instanceof Error, 'past T_mem the refusal is an error the scan ends with');
+  assert.match(refusal.message, /To scan it anyway/, 'and it says how to scan it anyway');
+
+  const readme = read('README.md');
+  const start = readme.indexOf('**The native scan engine lists a whole folder');
+  assert.ok(start >= 0, 'the README has its native engine paragraph');
+  const para = readme.slice(start, readme.indexOf('\n', start));
+  assert.doesNotMatch(para, /Either way the Dashboard's engine line says why/, 'not the engine line for both ends');
+  assert.match(para, /the built-in walker scans again from the start, and the Dashboard's engine line says why/, 'a walk again: the engine line');
+  assert.match(para, /the scan ends instead, with a message that gives the reason and how to scan it anyway/, 'a refusal: the scan\'s own message');
 });
