@@ -352,3 +352,50 @@ test('an offload whose destination drive never answers while its record is writt
   assert.match(done?.error ?? '', /TreeMap's own record of them is kept/, done?.error);
   assert.ok(await recordOf(c), 'the app-data record, which Restore reads, is saved');
 });
+
+/* ─────────────── FG3g review F2.1: one drive's record is written one write at a time ─────────────── */
+
+test('two offloads to one drive write its record one at a time: the second waits for the first, and the record lists both', async () => {
+  const { src, paths: [one, two] } = files('dest-pair', 'one.bin', 'two.bin');
+  const dest = fileTempDir('treemap-offloadManifestLock-dest-pair-');
+  const timers: { ms: number; fire: () => void }[] = [];
+  const untimer = setStallTimerForTests((ms, onExpire) => {
+    timers.push({ ms, fire: onExpire });
+    return () => {};
+  });
+  // Each write of the drive's record is held at its start until released; `began` counts those begun.
+  let began = 0;
+  const gates: (() => void)[] = [];
+  const unhook = setDestManifestWriteForTests(async (root) => {
+    if (root !== dest) return;
+    began++;
+    await new Promise<void>((resolve) => { gates.push(resolve); });
+  });
+  const jobs: string[] = [];
+  try {
+    for (const [i, f] of [one, two].entries()) {
+      const scan = scanOf(src, [f]);
+      await withOpenFileCheck('clear', async () => {
+        const prepared = await prepareOffload(scan, [f], dest);
+        jobs.push((await startOffload(scan, [f], dest, prepared)).jobId);
+        // Its write of the drive's record is under way or waiting: either way it armed that write's limit.
+        await waitFor(() => timers.length > i, `offload ${i + 1} at its write of the drive's record`);
+      });
+    }
+    assert.equal(began, 1, 'one write of the drive\'s record is under way; the other waits its turn, so neither saves over the other');
+    gates[0]();
+    await waitFor(() => began === 2, 'the second write beginning once the first has finished');
+    gates[1]();
+    for (const id of jobs) {
+      const job = await settled(id);
+      assert.equal(job.status, 'complete', job.error);
+      assert.equal(job.error, undefined, 'and each record was written');
+    }
+  } finally {
+    for (const open of gates) open();
+    unhook();
+    untimer();
+  }
+  const onDrive = JSON.parse(fs.readFileSync(path.join(dest, 'treemap-offload-manifest.json'), 'utf8')) as { entries: OffloadEntry[] };
+  assert.deepEqual(onDrive.entries.map((e) => e.originalPath).sort(), [one, two].sort(), 'the drive\'s own record lists both offloads');
+});

@@ -141,6 +141,32 @@ export function offloadManifestWaitersForTests(): number {
   return manifestLock.waiting;
 }
 
+/**
+ * The writes of one drive's own record, one at a time, by the destination's root (FG3g review F2.1).
+ * A write reads the record, merges this destination's entries into it and renames a new one over
+ * it, so two that overlapped — two offloads to one drive finishing close together, or one that
+ * stalled after its read and went on after another's rename — each wrote what it had read, and the
+ * later rename dropped the other's entry. Taken only around that write and never with the manifest
+ * lock: a drive that stops answering holds the next write of its own record, and nothing else.
+ */
+const destRecordLocks = new Map<string, { lock: AsyncMutex; users: number }>();
+
+async function withDestRecord<T>(destRoot: string, fn: () => Promise<T>): Promise<T> {
+  const key = path.resolve(destRoot);
+  let slot = destRecordLocks.get(key);
+  if (slot === undefined) {
+    slot = { lock: new AsyncMutex(), users: 0 };
+    destRecordLocks.set(key, slot);
+  }
+  slot.users++;
+  try {
+    return await slot.lock.run(fn);
+  } finally {
+    slot.users--;
+    if (slot.users === 0) destRecordLocks.delete(key);
+  }
+}
+
 /** The largest record on a drive this reads whole; a larger one is kept as it is, beside a new one. */
 const MAX_DEST_MANIFEST_BYTES = 32 * 1024 * 1024;
 
@@ -751,10 +777,11 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       job.error = job.error ? `${job.error} Also: ${bookkeeping}` : bookkeeping;
     }
     if (onDrive !== null) {
-      // This destination's entries as just saved, merged into the drive's own record. Best effort, and
-      // never a reason to roll back; a drive that does not answer is left to finish on its own.
+      // This destination's entries as just saved, merged into the drive's own record — one write of
+      // that record at a time (FG3g review F2.1). Best effort, and never a reason to roll back; a drive
+      // that does not answer is left to finish on its own, the limit counting the wait for its turn.
       // Nothing here may throw: past the trash step a throw rolls back, deleting the verified copies.
-      const writing = writeDestManifest(destDir, onDrive).catch((err: unknown) =>
+      const writing = withDestRecord(destDir, () => writeDestManifest(destDir, onDrive)).catch((err: unknown) =>
         `The record on the destination could not be written (${describeFsError(err)}); the copies are in place, and TreeMap's own record of them is kept.`);
       const unwritten = await withinStallLimit(writing, DEST_RECORD_STALL_MS, () =>
         `The record on the destination was not written: the drive did not answer for ${Math.round(DEST_RECORD_STALL_MS / 1000)} seconds, ` +

@@ -443,9 +443,11 @@ OpenAPI 3 spec).
      drive the safe way: copy → verify SHA-256 → only then trash originals;
      any failure rolls back and leaves local data untouched. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
-     drive's own copy of it is written after, and a drive that does not
-     answer for 60 seconds is left to finish on its own while the job says
-     so. Within a process one save of that record runs at a time; the MCP
+     drive's own copy of it is written after, one write of each drive's
+     record at a time, and a drive that does not answer for 60 seconds is
+     left to finish on its own while the job says so (the next write of that
+     drive's record waits its turn, counted in its own 60 seconds). Within a
+     process one save of the app-data record runs at a time; the MCP
      server is a second process with no share in that lock. Each save goes
      through a temp file of its own process and a rename, so the record is
      always one whole document, but an offload or restore finishing in the
