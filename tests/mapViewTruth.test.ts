@@ -383,18 +383,35 @@ function makeHost(width: number) {
 
 const DEEP = '/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime/7f2d3a5b8c9e1f0a/AssetData';
 
-/** The page's own document-level keydown handler — the anonymous one holding the map's keys — cut out by brace matching. */
-function pageKeydownSource(): string {
-  const anchor = "document.addEventListener('keydown', (e) => {\n  const mod = e.metaKey || e.ctrlKey;";
+/** The arrow function `(e) => {…}` registered right after `anchor` in the built page, cut out by brace matching. */
+function listenerAfter(anchor: string, what: string): string {
   const at = INDEX.indexOf(anchor);
-  assert.notEqual(at, -1, 'the page keydown handler is where this test thinks it is');
+  assert.notEqual(at, -1, `${what} is where this test thinks it is`);
   const start = INDEX.indexOf('(e) => {', at);
   let depth = 0;
   for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
     if (INDEX[i] === '{') depth++;
     else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
   }
-  return assert.fail('the keydown handler never closes');
+  return assert.fail(`${what} never closes`);
+}
+
+/** The page's own document-level keydown handler — the anonymous one holding the map's keys. */
+function pageKeydownSource(): string {
+  return listenerAfter("document.addEventListener('keydown', (e) => {\n  const mod = e.metaKey || e.ctrlKey;", 'the page keydown handler');
+}
+
+/** The Export button's own click listener, which fills #ctxMenu and shows it (QA-6b review F1.7). */
+function exportClickSource(): string {
+  return listenerAfter("$('tmExportBtn').addEventListener('click', (e) => {", 'the Export click listener');
+}
+
+/** The Export button as the markup draws it, its attributes the page's own. */
+function exportButton(): FakeBtn {
+  const at = INDEX.indexOf('id="tmExportBtn"');
+  assert.notEqual(at, -1, 'the Export button is in the built page');
+  const [btn] = parseButtons(INDEX.slice(INDEX.lastIndexOf('<button', at), INDEX.indexOf('</button>', at) + '</button>'.length));
+  return btn;
 }
 
 type FakeMenu = {
@@ -451,16 +468,35 @@ function crumbsHarness() {
   const observers: Array<{ cb: () => void; el: unknown }> = [];
   const menu = fakeMenu();
   const map = { drill: 0, up: 0, move: 0 };
+  /** What an entry of the Export or right-click menu did when it was picked. */
+  const acts: string[] = [];
+  const act = (name: string) => (p?: unknown) => { acts.push(typeof p === 'string' ? `${name} ${p}` : name); };
   const canvas = { tagName: 'CANVAS', focus() { fakeDoc.active = canvas; } };
   fakeDoc.active = fakeDoc.body;
   class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(el: unknown) { observers.push({ cb: this.cb, el }); } }
-  const { render, keydown } = load<{ render: (host: unknown, p: string, onPick: (p: string) => void) => void; keydown: (e: KeyEv) => void }>(
+  type Page = {
+    render: (host: unknown, p: string, onPick: (p: string) => void) => void; keydown: (e: KeyEv) => void;
+    exportClick: (e: unknown) => void; showCtxMenu: (x: number, y: number, node: unknown) => void;
+  };
+  const { render, keydown, exportClick, showCtxMenu } = load<Page>(
     ['renderCrumbs', 'breadcrumbsFor', 'crumbsPaint', 'crumbFolded', 'crumbsOverflow', 'crumbsWatch', 'showCrumbMenu', 'CRUMB_FADE_PX',
-      ...CTX_MENU_DECLS, 'tmMapKeyYields', 'tmMapTakeFocus'], {
+      ...CTX_MENU_DECLS, 'tmMapKeyYields', 'tmMapTakeFocus', 'showCtxMenu', 'ctxTarget'], {
       state: {
+        scanId: 's1', scanning: false,
         root: { path: '/System', name: 'System' }, view: 'treemap', lasso: { on: false }, grid: { selection: new Set() },
-        treemap: { rootPath: DEEP, history: { active: false }, kbSel: null },
+        system: { platform: 'darwin' },
+        treemap: { rootPath: DEEP, history: { active: false, snaps: [] }, kbSel: null },
       },
+      // The Export menu's own world: a map is drawn, the PNG and SVG entries are offered.
+      drawnCells: () => [{}],
+      isRectMap: () => true,
+      HTMLCanvasElement: { prototype: {} },
+      toast: (m: string) => { throw new Error('the page reported: ' + m); },
+      exportTreemapPNG: act('png'), exportTreemapSVG: act('svg'), exportTimelapseGif: act('gif'), exportTimelapseWebm: act('webm'),
+      downloadReport: act('report'),
+      // The right-click menu's.
+      cartHas: () => false, budgetFor: () => null, noteFor: () => null,
+      openInOS: act('open'), copyPath: act('copy'), openPreview: act('preview'), cartToggle: act('cart'), confirmTrash: act('trash'),
       document: fakeDoc,
       icon: () => '<svg></svg>',
       escapeHtml: esc,
@@ -478,9 +514,9 @@ function crumbsHarness() {
       kbUp: () => { map.up++; },
       kbMove: () => { map.move++; },
       tmCanvas: canvas,
-    }, `{ render: renderCrumbs, keydown: (${pageKeydownSource()}) }`);
+    }, `{ render: renderCrumbs, keydown: (${pageKeydownSource()}), exportClick: (${exportClickSource()}), showCtxMenu }`);
   return {
-    render, keydown, map, canvas, picked, focusAtPick, menu, observers,
+    render, keydown, exportClick, showCtxMenu, acts, map, canvas, picked, focusAtPick, menu, observers,
     onPick: (p: string) => { picked.push(p); focusAtPick.push(fakeDoc.active); },
   };
 }
@@ -797,10 +833,34 @@ test('MEDIUM-1: the right-click menu is named and made of menu items too', () =>
   assert.equal(fakeDoc.active, menu.buttons[0], 'the disabled entry is skipped');
   keydown(keyEv('End'));
   assert.equal(fakeDoc.active, menu.buttons[0], 'End too');
-  // Export builds its menu inline in a listener; it goes through the same door.
-  const at = INDEX.indexOf("$('tmExportBtn').addEventListener('click'");
-  const exportHandler = INDEX.slice(at, INDEX.indexOf("menu.querySelectorAll('button')", at));
-  assert.match(exportHandler, /ctxMenuShow\(menu, \{ label: '[^']+'/, 'the Export menu is shown named, through ctxMenuShow');
+});
+
+test('MEDIUM-1: Export says it opens a menu and whether it is open, and Escape gives focus back to it (QA-6b review F1.7)', () => {
+  // Driven through Export's own click listener: a regex over its source stayed
+  // green with the opener left out, and nothing read the button's markup.
+  const h = crumbsHarness();
+  const btn = exportButton();
+  assert.equal(btn.getAttribute('aria-haspopup'), 'menu', 'the markup says Export opens a menu');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'and that it is closed');
+  btn.focus();
+  const enter = keyEv('Enter');
+  h.keydown(enter);
+  assert.equal(enter.defaultPrevented, false, 'Enter on Export is Export\'s press');
+  assert.equal(h.map.drill, 0);
+  h.exportClick({ stopPropagation() {}, currentTarget: btn }); // the press Enter makes
+  assert.equal(h.menu.style.display, 'block', 'the menu opens');
+  assert.equal(btn.getAttribute('aria-expanded'), 'true', 'and Export says it is open');
+  assert.equal(h.menu.getAttribute('aria-label'), 'Export the map', 'the menu is named');
+  assert.deepEqual(h.menu.buttons.map((b) => b.dataset.exp), ['png', 'svg', 'csv-files', 'csv-folders', 'xlsx-files', 'xlsx-folders', 'pdf'],
+    'the map\'s two image formats, and the reports a finished scan offers');
+  assert.ok(h.menu.buttons.every((b) => b.getAttribute('role') === 'menuitem'), 'as menu items');
+  h.keydown(keyEv('ArrowDown'));
+  assert.equal(fakeDoc.active, h.menu.buttons[0], 'ArrowDown from Export goes into the menu');
+  h.keydown(keyEv('Escape'));
+  assert.equal(h.menu.style.display, 'none', 'Escape closes it');
+  assert.equal(fakeDoc.active, btn, 'and focus is back on Export, not on <body>');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'which says the menu is closed');
+  assert.deepEqual(h.acts, [], 'nothing was exported');
 });
 
 /* ══════════════ QA-6 review LOW-4 — #ctxMenu fits the window ══════════════ */
