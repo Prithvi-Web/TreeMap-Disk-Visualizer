@@ -368,16 +368,17 @@ function underDarwinAutomount(p: string): boolean {
  * peer's to name either.
  *
  * And on a Mac, not at or under an automount folder (`DARWIN_AUTOMOUNT_ROOTS`), whichever way the path
- * climbs there — `~/../..` included, `~` read as this machine's home folder.
+ * climbs there — `~/../..` included, `~` read as `home`, this machine's home folder.
  *
- * Pure — `platform` picks the rules (process.platform's when none is named), so Windows' and macOS's are
- * tested on every OS; nothing here asks the file system.
+ * Pure — `platform` picks the rules (process.platform's when none is named) and `home` is the folder `~`
+ * names (os.homedir() when none is), so Windows' and macOS's rules are tested on every OS, under a Mac's
+ * home rather than the host's (a Linux runner's is /home/runner); nothing here asks the file system.
  */
-export function peerScanRootRefusal(given: string, platform: NodeJS.Platform = process.platform): PathRejectedError | null {
+export function peerScanRootRefusal(given: string, platform: NodeJS.Platform = process.platform, home: string = os.homedir()): PathRejectedError | null {
   const typed = given.replace(/^\s+/, '');
   const darwin = platform === 'darwin';
   if (typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\')) {
-    return darwin && underDarwinAutomount(path.posix.join(os.homedir(), typed.slice(1))) ? new PathRejectedError(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH') : null;
+    return darwin && underDarwinAutomount(path.posix.join(home, typed.slice(1))) ? new PathRejectedError(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH') : null;
   }
   const windows = platform === 'win32';
   if (!(windows ? path.win32 : path.posix).isAbsolute(typed)) {

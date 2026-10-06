@@ -364,12 +364,14 @@ test('on Windows a scan another machine asks for must be rooted on one of this m
     'C:Users': 'PATH_INVALID', 'C:': 'PATH_INVALID', 'Documents': 'PATH_INVALID', '..\\elsewhere': 'PATH_INVALID',
   });
   // On macOS and Linux //server/share is /server/share, a folder of this machine, and a share is a mount the user made.
-  assert.deepEqual(codes('darwin', ['/Volumes/share', '//server/share', '~', 'Documents']), { '/Volumes/share': null, '//server/share': null, '~': null, 'Documents': 'PATH_INVALID' });
+  // `~` is read under a Mac's own home folder, never the host's: a Linux runner's is /home/runner.
+  assert.deepEqual(Object.fromEntries(['/Volumes/share', '//server/share', '~', 'Documents'].map((p) => [p, peerScanRootRefusal(p, 'darwin', '/Users/me')?.code ?? null])),
+    { '/Volumes/share': null, '//server/share': null, '~': null, 'Documents': 'PATH_INVALID' });
   assert.deepEqual(codes('linux', ['/mnt/share', '//server/share', '../x']), { '/mnt/share': null, '//server/share': null, '../x': 'PATH_INVALID' });
 });
 
 test('on a Mac a scan another machine asks for is refused at or under /net, /Network and /home — autofs mounts a network share there as soon as anything looks the name up, and a share that does not answer holds the scan — in any case and however the path is spelled; elsewhere, and on other systems, nothing changes (POL item 1)', () => {
-  const codes = (platform: NodeJS.Platform, paths: string[]) => Object.fromEntries(paths.map((p) => [p, peerScanRootRefusal(p, platform)?.code ?? null]));
+  const codes = (platform: NodeJS.Platform, paths: string[]) => Object.fromEntries(paths.map((p) => [p, peerScanRootRefusal(p, platform, '/Users/me')?.code ?? null]));
   assert.deepEqual(codes('darwin', [
     '/net', '/net/nas/share', '/Network', '/Network/Servers/nas', '/home', '/home/someone', '/NET/nas', '/network/x', 'ｎｅｔ',
     '/tmp/../net/nas', '//net/nas', '/net/', '  /net/nas',
@@ -381,8 +383,16 @@ test('on a Mac a scan another machine asks for is refused at or under /net, /Net
     '/tmp/../net/nas': 'AUTOMOUNT_PATH', '//net/nas': 'AUTOMOUNT_PATH', '/net/': 'AUTOMOUNT_PATH', '  /net/nas': 'AUTOMOUNT_PATH',
     '/netx': null, '/networks': null, '/Users/me/net': null, '/Volumes/net': null, '/homes': null, '/': null, '/Users/me': null, '~/x': null,
   });
-  // `~` is this machine's home, and climbing out of it reaches the root like any other path.
-  if (process.platform !== 'win32') assert.equal(peerScanRootRefusal('~/../../../../../../../../net/nas', 'darwin')?.code, 'AUTOMOUNT_PATH', 'a home path climbed out to /net');
+  // `~` is this machine's home — the one named, never the host's own, so the table reads the same on a
+  // Linux runner (HOME=/home/runner) as on a Mac — and climbing out of it reaches the root like any other path.
+  const homeCodes = (home: string, paths: string[]) => Object.fromEntries(paths.map((p) => [p, peerScanRootRefusal(p, 'darwin', home)?.code ?? null]));
+  assert.deepEqual(homeCodes('/Users/me', ['~', '~/x', '~\\x', '~/../../net/nas', '~/../../Users/x']), {
+    '~': null, '~/x': null, '~\\x': null, '~/../../net/nas': 'AUTOMOUNT_PATH', '~/../../Users/x': null,
+  });
+  assert.deepEqual(homeCodes('/home/someone', ['~', '~/x', '~/../../Users/x']), {
+    '~': 'AUTOMOUNT_PATH', '~/x': 'AUTOMOUNT_PATH', // a home folder auto_home mounts
+    '~/../../Users/x': null,
+  });
   // Linux and Windows read these as before: a folder of this machine, or (on Windows) no drive.
   assert.deepEqual(codes('linux', ['/net/nas', '/Network/x', '/home/me']), { '/net/nas': null, '/Network/x': null, '/home/me': null });
   assert.deepEqual(codes('win32', ['/net/nas', 'C:\\net\\nas']), { '/net/nas': 'PATH_BLOCKED', 'C:\\net\\nas': null });
