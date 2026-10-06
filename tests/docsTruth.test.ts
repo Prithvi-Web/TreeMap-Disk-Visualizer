@@ -334,24 +334,32 @@ function phase4Refs(statement: string): string[] {
 /**
  * `doc` as statements: each sentence of a paragraph, a list item or a table
  * row, with struck-through text left out and each run of whitespace made one
- * space.
+ * space. A list item that opens with a bold date ("- **25 Sep 2026:** …") is a
+ * dated entry: its statements carry that day, because they record what was
+ * true on it.
  */
-function statements(doc: string): string[] {
-  const out: string[] = [];
+function statements(doc: string): Array<{ text: string; dated: number | null }> {
+  const out: Array<{ text: string; dated: number | null }> = [];
+  const dateOpens = new RegExp(`^\\s*(?:[-*+]|\\d+\\.) \\*\\*(\\d{1,2} ${MONTH} \\d{4})\\b`);
   for (const block of doc.replace(/~~[\s\S]*?~~/g, '').split(/\n\s*\n/)) {
     for (const item of block.split(/\n(?=\s*(?:[-*+]|\d+\.) |\|)/)) {
-      for (const text of item.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/)) if (text !== '') out.push(text);
+      const date = dateOpens.exec(item);
+      const dated = date ? dayOf(date[1]) : null;
+      for (const text of item.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/)) if (text !== '') out.push({ text, dated });
     }
   }
   return out;
 }
 
-test('DESIGN, RISKS and the roadmap call nothing still to be decided that the Phase 4 plan records as decided, however a sentence words it (review F2.2, F3.2, F3.3)', () => {
+test('DESIGN, RISKS, the roadmap and the Phase 4 plan itself call nothing still to be decided that the plan records as decided, however a sentence words it (review F2.2, F3.1-F3.3)', () => {
   // The record: each question of the plan's §S.11 carries its status, and the
   // P4-x rules its entry names. A statement that says a decision is still to
   // come ("pending the owner", "awaits your answer", "has not yet decided")
   // and names a question the owner decided — by its Q, or by a rule that
-  // question decides — is stale, wherever the words sit in the sentence.
+  // question decides — is stale, wherever the words sit in the sentence. The
+  // plan's own rule rows are read too (P4-6a called Q5 pending after §S.11
+  // recorded it decided). A dated entry records what was true on its day, so
+  // it is stale only when it is dated after the decision.
   const { decidedOn, rulesOf } = phase4Questions();
   for (const q of ['Q1', 'Q3', 'Q5', 'Q6', 'Q10', 'Q13', 'Q16']) {
     assert.ok(decidedOn.has(q), `the plan's decided questions are read: ${q} (read: ${[...decidedOn.keys()].join(', ')})`);
@@ -364,10 +372,14 @@ test('DESIGN, RISKS and the roadmap call nothing still to be decided that the Ph
   assert.equal(decidedDay('P4-6a'), dayOf('28 Sep 2026'), 'Q5 decides P4-6a (its status names it), on 28 Sep 2026');
 
   const stale: string[] = [];
-  for (const file of [['docs', 'engine', 'DESIGN.md'], ['docs', 'engine', 'RISKS.md'], ['ULTRA-ROADMAP.md']]) {
-    for (const text of statements(read(...file))) {
+  const files = [['docs', 'engine', 'DESIGN.md'], ['docs', 'engine', 'RISKS.md'], ['ULTRA-ROADMAP.md'], ['docs', 'superpowers', 'plans', '2026-09-18-phase4-storage.md']];
+  for (const file of files) {
+    for (const { text, dated } of statements(read(...file))) {
       if (!PENDING.test(text)) continue;
-      const decided = phase4Refs(text).filter((ref) => decidedDay(ref) !== undefined);
+      const decided = phase4Refs(text).filter((ref) => {
+        const day = decidedDay(ref);
+        return day !== undefined && (dated === null || dated > day);
+      });
       if (decided.length > 0) stale.push(`${file.join('/')} (${[...new Set(decided)].join(', ')}): ${text.slice(0, 160)}`);
     }
   }
