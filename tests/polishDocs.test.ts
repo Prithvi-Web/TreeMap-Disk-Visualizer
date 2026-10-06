@@ -466,3 +466,22 @@ test('the CHANGELOG states the limitations a downloader will hit', () => {
   // must not trip this — only right-click paired with Open is the dead bypass.
   assert.doesNotMatch(entry, /right[- ]click[^.]{0,40}\bOpen\b/i, 'never the bypass Apple removed');
 });
+
+test('the README says what runs when the native engine cannot, with the thresholds nativeMemory.ts holds', () => {
+  // The paragraph used to say only "where the native module cannot load, the
+  // built-in walker runs" — before gdu came first in that chain, and before
+  // P4-14 (Track U U-32) stopped a large tree from being walked again from
+  // zero. The figures come from the constants the refusal is computed from.
+  const src = read('src', 'services', 'scan', 'nativeMemory.ts');
+  const tMem = Number(/export const T_MEM_ENTRIES = ([\d_]+);/.exec(src)?.[1].replace(/_/g, ''));
+  const margin = Number(/export const T_MEM_MARGIN = ([\d.]+);/.exec(src)?.[1]);
+  assert.ok(Number.isFinite(tMem) && Number.isFinite(margin) && margin > 0, 'T_MEM_ENTRIES and T_MEM_MARGIN are read from nativeMemory.ts');
+  const grouped = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const start = README.indexOf('**The native scan engine lists a whole folder');
+  assert.ok(start >= 0, 'the README has its native engine paragraph');
+  const para = README.slice(start, README.indexOf('\n', start));
+  assert.match(para, /cannot load, gdu runs/, 'gdu comes before the walker when the module cannot load');
+  assert.doesNotMatch(para, /cannot load, the built-in walker runs/, 'not the chain before gdu came first');
+  assert.ok(para.includes(`counted more than ${grouped(tMem)} items`), `a walk past T_mem (${grouped(tMem)}) is not restarted`);
+  assert.ok(para.includes(`last scan counted more than ${grouped(tMem / margin)}`), `nor one whose last scan × ${margin} passes T_mem`);
+});
