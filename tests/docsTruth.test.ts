@@ -8,6 +8,7 @@ isolatedDataDir('treemap-docsTruth-data-');
 
 import { FAST_PATH_UNAVAILABLE, nativeEligibility, nativeRule, type EligibilityInput } from '../src/services/scan/nativeEngine';
 import { MEMORY_CAP_ROWS, RESERVE_FACTOR, memoryRoomFor, noRestartRefusal } from '../src/services/scan/nativeMemory';
+import { ENDPOINTS } from '../src/api/openapi';
 
 /**
  * The engineering record and the agents' contract — docs/PLATFORM_NOTES.md,
@@ -200,4 +201,116 @@ test('ULTRA-ROADMAP says P4-14 is built above T_mem in memory mode (Track U U-32
   }
   assert.ok(p414.every((l) => l.includes('U-32')), 'each line that names P4-14 says U-32 built it');
   assert.doesNotMatch(doc, /nothing enforces `T_mem` yet/, 'T_mem is enforced where a native walk fails');
+});
+
+/* ─────────────── AGENTS.md: the sentences the 5.2.0 docs batch changed ─────────────── */
+
+/** AGENTS.md with every run of whitespace made one space, so a sentence can be matched across its line wraps. */
+const agents = (): string => read('AGENTS.md').replace(/\s+/g, ' ');
+
+/** The text of `doc` between `start` and the next `end` after it, hard-failing when either is missing. */
+function between(doc: string, start: string, end: string): string {
+  const a = doc.indexOf(start);
+  assert.notEqual(a, -1, `"${start}" exists`);
+  const b = doc.indexOf(end, a + start.length);
+  assert.notEqual(b, -1, `"${end}" follows "${start}"`);
+  return doc.slice(a + start.length, b);
+}
+
+test('AGENTS.md lists exactly the engines a scan can report, as ScanResult\'s union names them (review F1.6)', () => {
+  const union = /\n  engine\?: ((?:'[a-z-]+'(?: \| )?)+);/.exec(read('src', 'models', 'types.ts'));
+  assert.ok(union, "ScanResult's engine union is found in types.ts");
+  const engines = [...union[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]).sort();
+  const listed = between(agents(), '`/stats.engine` names the engine that ran — ', ' — and `engineReason`');
+  assert.deepEqual([...listed.matchAll(/`([a-z-]+)`/g)].map((m) => m[1]).sort(), engines, `AGENTS.md lists the union's engines: ${listed}`);
+});
+
+test('AGENTS.md says what a fast-rescan request does as startScan does it (review F1.6)', () => {
+  // The code: the request is skipped where the native engine walks, the
+  // skip is said in engineReason, and the answer's incremental is whether a
+  // cache was read (POST /api/scan's answer and the stats both carry it).
+  const scanner = read('src', 'services', 'diskScanner.ts');
+  assert.match(scanner, /const fastRescanSkipped = opts\.incremental === true && nativeWalk !== null;\n\s*const incremental = opts\.incremental === true && !fastRescanSkipped;/, 'skipped where the native engine walks');
+  assert.match(scanner, /\.\.\.\(fastRescanSkipped \? \[FAST_RESCAN_NOT_USED\] : \[\]\)/, 'and said in engineReason');
+  assert.match(scanner, /\n\s*incremental: !!cache,\n/, 'the record\'s incremental is whether a cache was read');
+  assert.match(read('src', 'api', 'scanRoutes.ts'), /res\.status\(202\)\.json\(\{ scanId: scan\.scanId, incremental: scan\.incremental === true \}\)/, 'and POST /api/scan\'s answer carries it');
+  const text = agents();
+  assert.match(text, /`incremental: true` asks for a fast rescan, which only the built-in walker does/, 'the walker\'s');
+  assert.match(text, /where the native engine walks the folder the request is not used, and `engineReason` says so/, 'not used where the native engine walks');
+  assert.match(text, /The answer's `incremental` says whether saved listings were reused/, 'the answer says what happened');
+});
+
+test('AGENTS.md describes the mountedInside line as mountedInsideLine builds it (review F1.6)', () => {
+  // The behaviour is tests/missingGigabytes.test.ts's (U-28); this holds the
+  // sentence to the branches that produce it.
+  const source = read('src', 'services', 'missingGigabytes.ts');
+  const body = between(source, 'function mountedInsideLine(scan: ScanResult): StatementLine {', '\n}\n');
+  assert.match(body, /const unknown = \(reason: string, count: number \| null, more\?: string\): StatementLine => \(\{\s*id: 'mountedInside', label, bytes: null, available: false, reason,/, 'an unknown line is null with its reason');
+  assert.match(body, /if \(report\.rule === null\) \{\s*return unknown\(/, 'unknown where the scan did not read the table');
+  assert.match(body, /if \(!report\.known\) \{\s*return unknown\(/, 'unknown where the table could not be read');
+  assert.match(body, /if \(crossed\.count > 0\) \{\s*return unknown\(/, 'unknown where the walk went onto a device the table does not list');
+  const windows = between(body, "if (report.source === 'none' && report.reason) {", '\n  }\n');
+  assert.match(windows, /^\s*return \{\s*id: 'mountedInside', label, bytes: 0, available: true,[\s\S]*\n\s*count: null,/, 'Windows: a measured 0 with no count');
+  const stay = between(body, "if (report.rule === 'stay') {", '\n  }\n');
+  assert.match(stay, /^\s*const n = report\.notEntered\.count;\s*return \{\s*id: 'mountedInside', label, bytes: 0, available: true,[\s\S]*\n\s*count: n,/, 'stay: a measured 0 with the count');
+  assert.match(body, /const n = report\.entered\.count;[\s\S]*?return unknown\(/, 'cross into a drive: unknown');
+  const text = agents();
+  assert.match(text, /`mountedInside`, the drives mounted inside the scanned folder\. Under "Stay on this drive" it is a measured 0, since the scan entered none, with their count \(`null` on Windows, which keeps no mount table\)\./);
+  assert.match(text, /It is unknown, with the reason, after a scan that entered any \(`"cross"`\)/);
+  assert.match(text, /when the mount table could not be read or the scan did not read it; and when the walk went onto a device the table does not list\./);
+});
+
+test('AGENTS.md says how the index readers answer an index that is not finished, as the routes and the spec do (review F1.6)', () => {
+  const routes = read('src', 'api', 'indexRoutes.ts');
+  const tree = between(routes, "indexRouter.get('/index/tree'", 'const maxNodes');
+  assert.match(tree, /res\.status\(202\)\.json\(\{ status: 'running', root \}\)/, '/api/index/tree: 202 running while building');
+  assert.match(tree, /throw new AppError\(500, 'INDEX_BUILD_FAILED'/, 'and 500 after a failed build');
+  const unread = between(routes, 'function answeredUnread(', '\n}\n');
+  assert.match(unread, /res\.status\(202\)\.json\(\{ status: 'building' \}\)/, 'allocation: 202 building');
+  assert.match(unread, /throw new AppError\(500, 'INDEX_BUILD_FAILED'/, 'and 500 after a failed build');
+  assert.equal((routes.match(/if \(answeredUnread\(root, res\)\) return;/g) ?? []).length, 2, 'both allocation routes ask it first');
+  assert.match(read('src', 'services', 'indexEngine.ts'), /const roots = listRoots\(\)\.filter\(\(r\) => r\.state === 'ready' \|\| r\.state === 'stale'\);/, 'search reads finished roots only');
+  const accountant = read('src', 'services', 'allocationAccountant.ts');
+  assert.match(accountant, /if \(!allocationMeasured\(root\)\) throw new AppError\(409, 'ALLOCATION_NOT_MEASURED'/, '409 where allocation was not measured');
+  assert.match(accountant, /return root\.mechanism !== MECHANISM_FROM_SCAN && platform\(\)\.blocksAreMeaningful;/, 'which is Windows (no blocks) or an index built from a scan');
+  assert.match(read('src', 'platform', 'windows', 'index.ts'), /override get blocksAreMeaningful\(\): boolean \{\s*return false;/, 'Windows reports no blocks');
+
+  // The spec says the same, so an agent reading either is told one thing.
+  const spec = (p: string) => {
+    const e = ENDPOINTS.find((x) => x.method === 'get' && x.path === p);
+    assert.ok(e, `${p} is described`);
+    return e.responses as Record<string, { description: string; content?: { 'application/json': { schema: { properties?: Record<string, unknown> } } } }>;
+  };
+  const treeSpec = spec('/api/index/tree');
+  assert.match(treeSpec['500']?.description ?? '', /INDEX_BUILD_FAILED/, 'the spec gives /api/index/tree its 500');
+  assert.deepEqual(Object.keys(treeSpec['202']?.content?.['application/json'].schema.properties ?? {}).sort(), ['root', 'status'], "the spec's 202 for /api/index/tree is the body the route sends");
+  for (const p of ['/api/allocation', '/api/allocation/file']) {
+    const r = spec(p);
+    assert.ok(r['202'], `${p}: 202`);
+    assert.match(r['409']?.description ?? '', /ALLOCATION_NOT_MEASURED/, `${p}: 409`);
+    assert.match(r['500']?.description ?? '', /INDEX_BUILD_FAILED/, `${p}: 500`);
+  }
+
+  const text = agents();
+  assert.match(text, /while a folder's index is being built `GET \/api\/index\/tree` answers `202` with `status: "running"`/);
+  assert.match(text, /`GET \/api\/allocation` and `\/api\/allocation\/file` answer `202 \{ status: "building" \}`/);
+  assert.match(text, /`\/api\/search` searches only finished indexes/);
+  assert.match(text, /after a failed build the tree and allocation routes answer `500 INDEX_BUILD_FAILED`/);
+  assert.match(text, /answer `409 ALLOCATION_NOT_MEASURED`, with a sentence and no number, where TreeMap did not measure what the files occupy — on Windows, which reports no blocks/);
+});
+
+test('the Track U plan names as AGENTS.md\'s readers only tests that read it (review F1.6)', () => {
+  // U-40's row named nine tests "AGENTS.md's readers"; each names AGENTS.md
+  // in a comment only. A reader is a test whose code (not a comment) names
+  // the file.
+  const COMMENT = /^\s*(?:\/\/|\/\*|\*)/;
+  const readsAgents = (name: string): boolean =>
+    read('tests', name).split('\n').some((l) => !COMMENT.test(l) && /['"]AGENTS\.md['"]/.test(l));
+  assert.ok(readsAgents('docsTruth.test.ts'), 'this file reads AGENTS.md');
+  const row = lineStarting(read('docs', 'superpowers', 'plans', '2026-09-30-trackU-owner-issues.md'), '| U-40 ');
+  const claimed = /AGENTS\.md's readers \(([^)]*)\)/.exec(row);
+  for (const name of claimed ? claimed[1].split(/,\s*/) : []) {
+    assert.ok(readsAgents(`${name}.test.ts`), `${name} is called a reader of AGENTS.md but does not read it`);
+  }
+  assert.match(row, /`tests\/docsTruth\.test\.ts` now holds/, 'the row names the test that does');
 });

@@ -87,6 +87,12 @@ const running202 = jsonResponse(
   obj({ status: str("Always 'running'"), scanned: int(), currentPath: str() }, ['status']),
 );
 
+/** GET /api/index/tree's answer while the index that holds the folder is being built: the root's record, no tree. */
+const indexBuilding202 = jsonResponse(
+  'The index that holds this folder is still being built — no tree is read from a partial index; retry when it is ready',
+  obj({ status: str("Always 'running'"), root: opaque('The indexed root as it stands: path, state, counters') }, ['status', 'root']),
+);
+
 /** The allocation routes' answer while the index that holds the path is being built (plan U-7): no figure. */
 const allocationBuilding202 = jsonResponse(
   'The index that holds this path is still being built — nothing is summed from a partial index; retry when it is ready',
@@ -2476,8 +2482,9 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     ],
     responses: {
       '200': jsonResponse('Indexed tree', opaque('root FileNode plus state/live/builtAt and counters')),
-      '202': running202,
+      '202': indexBuilding202,
       '404': errorResponse('INDEX_NOT_BUILT — that folder has not been indexed yet'),
+      '500': errorResponse('INDEX_BUILD_FAILED — the build of the index that holds this folder failed'),
     },
   },
   {
