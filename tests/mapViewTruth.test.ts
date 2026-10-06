@@ -302,10 +302,13 @@ type ClickEv = { target: unknown; currentTarget: unknown; propagationStopped: bo
  * click handler, which a click bubbles up to. The doubles used to hand every
  * listener a stopPropagation() that did nothing and never reached the
  * document, so a menu whose opening click closed it again stayed green
- * (QA-6b review F2.2).
+ * (QA-6b review F2.2). `at` is the element whose listeners `own` are — the
+ * `currentTarget` they see — when the click landed on something inside it,
+ * such as a button's icon: then `target` is that icon and only `at` is the
+ * button (final review F1.3).
  */
-function dispatchClick(target: unknown, own: Array<(e: unknown) => void> = []): ClickEv {
-  const ev: ClickEv = { target, currentTarget: target, propagationStopped: false,
+function dispatchClick(target: unknown, own: Array<(e: unknown) => void> = [], at: unknown = target): ClickEv {
+  const ev: ClickEv = { target, currentTarget: at, propagationStopped: false,
     stopPropagation() { ev.propagationStopped = true; }, preventDefault() {} };
   for (const f of own) f(ev);
   if (!ev.propagationStopped && fakeDoc.clickHandler) {
@@ -627,11 +630,19 @@ function crumbsHarness(opts: { view?: string; selection?: string[] } = {}) {
   return {
     render, keydown, showCtxMenu, acts, actFocus, map, gridMoves, canvas, picked, focusAtPick, menu, observers,
     onPick: (p: string) => { picked.push(p); focusAtPick.push(fakeDoc.active); },
-    /** The Export button as the markup draws it, with Export's own click listener on it: press it with click(). */
-    exportBtn(): FakeBtn {
+    /**
+     * The Export button as the markup draws it, with Export's own click
+     * listener on it: press it with click(), or with pressIcon() where a
+     * pointer lands on its icon — the click's target is then the icon's svg,
+     * and only its currentTarget is the button (final review F1.3).
+     */
+    exportBtn(): FakeBtn & { pressIcon(): void } {
       const btn = exportButton();
       btn.addEventListener('click', exportClick);
-      return btn;
+      assert.match(INDEX.slice(INDEX.indexOf('id="tmExportBtn"'), INDEX.indexOf('</button>', INDEX.indexOf('id="tmExportBtn"'))),
+        /<span data-icon="[\w-]+"><\/span>/, 'control: Export draws an icon inside itself, which a pointer can land on');
+      const iconEl = fakeEl('svg', { class: 'ic' });
+      return Object.assign(btn, { pressIcon: () => { dispatchClick(iconEl, btn.listeners.click || [], btn); } });
     },
     /** A click on something that is not one of the fakes' buttons — the map, the page — which only bubbles. */
     clickOn: (target: unknown) => dispatchClick(target),
@@ -1200,6 +1211,15 @@ test('MEDIUM-1: Export is a toggle, as its aria-expanded says — a second press
   assert.equal(fakeDoc.active, btn, 'focus stays on Export');
   btn.click();
   assert.equal(h.menu.style.display, 'block', 'a third press opens it again');
+  assert.equal(btn.getAttribute('aria-expanded'), 'true');
+  // A pointer lands on Export's icon as often as on its label: the click's
+  // target is then the svg, and only its currentTarget is the button the menu
+  // was opened from (final review F1.3).
+  btn.pressIcon();
+  assert.equal(h.menu.style.display, 'none', 'a press on Export\'s icon closes the menu Export opened');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'and Export says so');
+  btn.pressIcon();
+  assert.equal(h.menu.style.display, 'block', 'and the next press on it opens the menu again');
   assert.equal(btn.getAttribute('aria-expanded'), 'true');
   assert.deepEqual(h.acts, [], 'nothing was exported along the way');
   // A menu another control opened is not Export's to close: a press of Export
