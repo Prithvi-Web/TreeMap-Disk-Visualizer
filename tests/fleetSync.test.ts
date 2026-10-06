@@ -21,6 +21,7 @@ import { allScans, getScan } from '../src/services/diskScanner';
 import { appDataDir } from '../src/services/storage';
 import { POLICY_FILE } from '../src/services/policy';
 import { AppError } from '../src/middleware/errorHandler';
+import { createApp } from '../src/server';
 
 /**
  * §D1 — LAN fleet view.
@@ -771,6 +772,31 @@ test('a scan another machine asks for is held to agent-policy.json’s allowedRo
   }
 });
 
+/** GET /api/fleet as the fleet panel asks it: the real app, on a port of its own, its JSON body. */
+async function fleetPanelReply(): Promise<unknown> {
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const { port } = server.address() as { port: number };
+    return await new Promise<unknown>((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: '/api/fleet' }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(buf));
+          } catch (err) {
+            reject(new Error(`GET /api/fleet answered ${res.statusCode} with no JSON: ${String(err)}`));
+          }
+        });
+      }).on('error', reject);
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
 test('the listener FleetRuntime starts hands a paired peer’s scan to startPeerScan — its own hooks, not a copy — so allowedRoots holds for it; its summary is this machine’s for the config it runs with, and a guesser it reports reaches the fleet panel (the SEC-2c review, F2.6; the SEC-2d review, F3.6)', async () => {
   // The test above hands startPeerScan to the harness itself, so the one line wiring it into the listener
   // (FleetRuntime.apply) was pinned by nothing: putting back the old hook, which asked no policy, left this
@@ -801,9 +827,22 @@ test('the listener FleetRuntime starts hands a paired peer’s scan to startPeer
     fleetRuntime().clearPairingAbuse();
     hooks.onPairingAbuse?.('192.168.1.9');
     const summary = await hooks.summary();
+    // What the panel reads is GET /api/fleet's `pairingStopped`: the route is driven too, since the
+    // runtime's own record reached no panel while that line was missing (the final review, F1.6).
+    const panel = await fleetPanelReply();
     assert.deepEqual(
-      { 'the guesser the fleet panel is told of': fleetRuntime().pairingAbuse()?.address, label: summary.label, instanceId: summary.instanceId },
-      { 'the guesser the fleet panel is told of': '192.168.1.9', label: 'tm-fleet-hooks-label', instanceId: cfg.instanceId },
+      {
+        'the guesser the runtime records': fleetRuntime().pairingAbuse()?.address,
+        'the guesser GET /api/fleet tells the panel of': (panel as { pairingStopped?: { address?: string } | null }).pairingStopped?.address,
+        label: summary.label,
+        instanceId: summary.instanceId,
+      },
+      {
+        'the guesser the runtime records': '192.168.1.9',
+        'the guesser GET /api/fleet tells the panel of': '192.168.1.9',
+        label: 'tm-fleet-hooks-label',
+        instanceId: cfg.instanceId,
+      },
     );
   } finally {
     fleetRuntime().clearPairingAbuse();
