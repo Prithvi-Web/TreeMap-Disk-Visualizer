@@ -14,7 +14,7 @@ import { readJsonFile, writeJsonFile } from './storage';
 import { moveToTrash } from './cleaner';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
-import { canonicalDirOf, foldName, isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, realPlaceNow, sanitizePath } from '../utils/pathSanitizer';
+import { canonicalDirOf, isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, realPlaceNow, sanitizePath } from '../utils/pathSanitizer';
 import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber, withinStallLimit } from '../utils/copyVerify';
 import { describeFsError, meansAbsent } from '../utils/errno';
 import { formatBytes } from '../utils/formatBytes';
@@ -526,17 +526,19 @@ export function setOffloadDiskUsageForTests(fn: typeof diskUsage): () => void {
 }
 
 /**
- * Where `p` really is, its names folded as a file system may fold them (`foldName`): realpath's answer
- * (every link followed, the last name too), or where it lives when realpath cannot answer — a folder a
- * copy will make (`canonicalDirOf`: the links in its parents resolved). A fold only refuses more here.
+ * Where `p` really is, as its names: realpath's answer (every link followed, the last name too, each
+ * name as the volume stores it — so another case of a folder is that folder), or where it lives when
+ * realpath cannot answer — a folder a copy will make (`canonicalDirOf`: the links in its parents
+ * resolved). Compared exactly, never folded: on a volume that keeps case, `Photos` and `photos` are two
+ * folders, and an offload from one to the other is no copy into itself.
  */
 function placeNamesOf(p: string): string[] {
   const at = realPlaceNow(p) ?? path.normalize(canonicalDirOf(p));
   const { root } = path.parse(at);
-  return [root, ...at.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map((name) => foldName(name).toUpperCase().toLowerCase());
+  return [root, ...at.slice(root.length).split(path.sep).filter((name) => name.length > 0)];
 }
 
-/** Whether the folded names `inner` are `outer`'s, or lie beneath them. */
+/** Whether the names `inner` are `outer`'s, or lie beneath them. */
 function namesWithin(outer: string[], inner: string[]): boolean {
   return outer.length <= inner.length && outer.every((name, i) => name === inner[i]);
 }
