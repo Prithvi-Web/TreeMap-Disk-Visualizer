@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { ScanResult, NearDupeCluster, NearDupeJob } from '../models/types';
 import { storeOf, Flag } from './scanStore';
 import { stillLocal } from './dataLocality';
+import { formatCount } from '../utils/formatCount';
 
 /** The fields a candidate image needs once the cap has landed. */
 interface CandidateImage {
@@ -200,16 +201,41 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   }));
   job.toHash = images.length;
 
-  // Hash each image; null = unreadable/undecodable (dropped silently).
+  // Hash each image; null = unreadable/undecodable — counted, never dropped
+  // silently (B20): "looks tidy" over images nobody could read is the claim
+  // nobody checked.
   const concurrency = decoder === 'sharp' ? 4 : 2;
   const hashes = await mapConcurrent(images, concurrency, (f) => hashImage(f.path, decoder), job);
   if (job.cancelled) return;
 
   type Entry = { file: CandidateImage; hash: DHash };
   const entries: Entry[] = [];
+  const unreadableByExt = new Map<string, number>();
   for (let i = 0; i < images.length; i++) {
     const h = hashes[i];
-    if (h) entries.push({ file: images[i]!, hash: h });
+    if (h) {
+      entries.push({ file: images[i]!, hash: h });
+      continue;
+    }
+    const name = images[i]!.name;
+    const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
+    unreadableByExt.set(ext, (unreadableByExt.get(ext) ?? 0) + 1);
+  }
+  job.compared = entries.length;
+  job.unreadable = images.length - entries.length;
+  job.unreadableTypes = [...unreadableByExt]
+    .map(([extension, count]) => ({ extension, count }))
+    .sort((a, b) => b.count - a.count || a.extension.localeCompare(b.extension));
+  if (entries.length === 0 && job.unreadable > 0) {
+    // Every image it tried failed to decode — all HEIC on a Mac, whose bundled
+    // decoder reads HEIF only as .avif. Unknown, like a locality it could not confirm.
+    const types = job.unreadableTypes.slice(0, 3).map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ');
+    const what = job.unreadable === 1 ? 'the 1 image here' : `the ${formatCount(job.unreadable)} images here`;
+    job.available = false;
+    job.reason = `No image was compared: ${what} could not be read (${types}). Near-duplicates are unknown here, not none.` +
+      (job.reason ? ` ${job.reason}` : '');
+    finishEmpty(job);
+    return;
   }
 
   // Cluster by Hamming distance ≤ threshold with union-find (transitive groups).

@@ -593,6 +593,12 @@ export interface NearDupeJob {
   totalReclaimable?: number;
   /** True when more images existed than the clustering cap allowed. */
   truncated?: boolean;
+  /** Images fingerprinted and compared, once the pass has run (B20). */
+  compared?: number;
+  /** Images handed to the decoder that it could not read: not compared, and never silently dropped (B20). */
+  unreadable?: number;
+  /** The unreadable images by extension, most first (B20) — e.g. a Mac library of .heic photos. */
+  unreadableTypes?: { extension: string; count: number }[];
   error?: string;
   startedAt: number;
   finishedAt?: number;

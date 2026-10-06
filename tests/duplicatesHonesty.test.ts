@@ -183,6 +183,9 @@ test('a cloud scan does not inherit the previous local scan’s trash line', () 
 interface NearState {
   available: boolean;
   reason?: string;
+  compared?: number;
+  unreadable?: number;
+  unreadableTypes?: { extension: string; count: number }[];
   clusters: unknown[];
   clusterCount: number;
   totalReclaimable: number;
@@ -226,7 +229,7 @@ function renderNear(near: NearState): { summary: string; body: string; appended:
 }
 
 const LEFT_OUT = '3 images were not compared: TreeMap could not confirm their data is on this disk, and opening one could download it.';
-const none: NearState = { available: true, clusters: [], clusterCount: 0, totalReclaimable: 0, truncated: false };
+const none: NearState = { available: true, compared: 5, unreadable: 0, unreadableTypes: [], clusters: [], clusterCount: 0, totalReclaimable: 0, truncated: false };
 
 test('near-duplicates: images the pass could not vouch for are named, and an empty result is not called tidy', () => {
   // The job leaves out any image it could not confirm is on this disk (opening
@@ -246,6 +249,32 @@ test('near-duplicates: images the pass could not vouch for are named, and an emp
   assert.match(tidy.body, /tidy/, 'with every image compared, an empty result is a finding');
   assert.equal(tidy.summary, 'No near-duplicate images found.');
   assert.ok(!renderNear({ ...none, clusters: [{}], clusterCount: 1 }).body.includes('not compared'), 'and no note is invented');
+});
+
+test('near-duplicates: images that could not be read are counted, and the library is not called tidy over them (B20)', () => {
+  const heic = { ...none, compared: 40, unreadable: 5300, unreadableTypes: [{ extension: 'heic', count: 5300 }] };
+  const empty = renderNear(heic);
+  assert.match(empty.body, /5300 images could not be read, so they were not compared \(5300 \.heic\)/, `the gap is named: ${empty.body}`);
+  assert.doesNotMatch(empty.body, /tidy/, 'and the library is not called tidy');
+  assert.match(empty.summary, /among the images compared/, `the summary says what was searched: ${empty.summary}`);
+
+  const one = renderNear({ ...none, unreadable: 1, unreadableTypes: [{ extension: 'png', count: 1 }], clusters: [{}], clusterCount: 1 });
+  assert.match(one.body, /1 image could not be read, so it was not compared \(1 \.png\)/, `a result with groups names it too: ${one.body}`);
+  assert.equal(one.appended, 1, 'and still lists the groups');
+
+  // Nothing compared at all is not a finding either.
+  const nothing = renderNear({ ...none, compared: 0 });
+  assert.doesNotMatch(nothing.body, /tidy/, `no image compared is not a tidy library: ${nothing.body}`);
+  assert.match(nothing.body, /no images here to compare/, 'it says there was nothing to compare');
+  assert.equal(nothing.summary, 'No images were compared.');
+
+  assert.ok(!renderNear(none).body.includes('could not be read'), 'and no note is invented when every image was read');
+
+  // The loader carries the counts from the answer to the view.
+  const load = source('loadNearDupes');
+  for (const field of ['compared', 'unreadable', 'unreadableTypes']) {
+    assert.match(load, new RegExp(`state\\.near\\.${field} = data\\.${field};`), `the loader keeps ${field}`);
+  }
 });
 
 test('near-duplicates: the reason is shown as text, never as markup', () => {

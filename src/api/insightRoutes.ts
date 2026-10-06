@@ -145,6 +145,10 @@ insightRouter.get('/near-duplicates', storageModeGate, (req: Request, res: Respo
     clusterCount: job.clusterCount ?? 0,
     totalReclaimable: job.totalReclaimable ?? 0,
     truncated: job.truncated ?? false,
+    // What was looked at and what could not be read (B20), as Shrink Video says it.
+    compared: job.compared ?? 0,
+    unreadable: job.unreadable ?? 0,
+    unreadableTypes: job.unreadableTypes ?? [],
     tookMs: (job.finishedAt ?? job.startedAt) - job.startedAt,
   });
 });

@@ -449,6 +449,9 @@ async function loadNearDupes(force = false) {
       state.near.clusterCount = data.clusterCount;
       state.near.totalReclaimable = data.totalReclaimable;
       state.near.truncated = data.truncated;
+      state.near.compared = data.compared;
+      state.near.unreadable = data.unreadable;
+      state.near.unreadableTypes = data.unreadableTypes;
       renderNearDupes();
     } catch (e) {
       state.near.status = 'error';

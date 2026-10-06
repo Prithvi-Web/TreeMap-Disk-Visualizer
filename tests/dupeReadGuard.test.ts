@@ -491,3 +491,74 @@ test('a superseded near-duplicate job stops asking at its next chunk', async () 
     realNative();
   }
 });
+
+/* ───────────── B20: an image that could not be read is counted, never dropped silently ───────────── */
+
+// broken.png ("this is not a picture") clears the 4 KB floor and no decoder reads it.
+test('B20: the near-duplicate pass says how many images it compared and how many it could not read', needsSharp, async () => {
+  const b = await scanned();
+  noModule();
+  try {
+    const job = await finished(getNearDupeJob(b.scan, 4));
+    assert.deepEqual(
+      [job.available, job.compared, job.unreadable, job.unreadableTypes],
+      [true, 4, 1, [{ extension: 'png', count: 1 }]],
+      'four pictures fingerprinted; broken.png could not be read, and is counted rather than vanishing',
+    );
+    assert.equal(job.reason, undefined, 'the reason stays the locality note (none here); the counts carry the rest');
+  } finally {
+    realNative();
+  }
+});
+
+test('B20: when no image could be read, near-duplicates are unknown — never an empty "tidy" list (HEIC on a Mac)', needsSharp, async () => {
+  // The bundled decoder reads HEIF only as .avif, so a Mac photo library of
+  // .heic files decodes nothing; the page called that library tidy.
+  const dir = fileTempDir('tm-near-unreadable-');
+  const scan = createScanRecord(dir);
+  const store = new PackedScanStore(dir, path.sep, { name: path.basename(dir), isDir: true, size: 0, modifiedAt: 0, isHidden: false });
+  // Counted most first, which is not name order: 3 .png, 2 .webp, 1 .heic.
+  for (const name of ['IMG_0001.heic', 'scan-1.png', 'scan-2.png', 'scan-3.png', 'shot-1.webp', 'shot-2.webp']) {
+    fs.writeFileSync(path.join(dir, name), 'not a decodable picture\n'.repeat(400));
+    store.addNode(store.rootId, {
+      name, isDir: false, size: fs.statSync(path.join(dir, name)).size, modifiedAt: 1, isHidden: false, extension: path.extname(name).slice(1),
+    });
+  }
+  store.finalize();
+  store.sumSizes();
+  scan.store = store;
+  scan.status = 'complete';
+  noModule();
+  try {
+    const job = await finished(getNearDupeJob(scan, 4));
+    assert.deepEqual(
+      [job.available, job.compared, job.unreadable, job.unreadableTypes, job.clusters, job.clusterCount],
+      [false, 0, 6, [{ extension: 'png', count: 3 }, { extension: 'webp', count: 2 }, { extension: 'heic', count: 1 }], [], 0],
+      'unavailable: an empty list here would say "no near-duplicates", which nobody checked',
+    );
+    assert.equal(job.reason,
+      'No image was compared: the 6 images here could not be read (3 .png, 2 .webp, 1 .heic). Near-duplicates are unknown here, not none.');
+  } finally {
+    realNative();
+  }
+});
+
+test('B20: GET /api/near-duplicates carries the compared and unreadable counts', needsSharp, async () => {
+  const b = await scanned();
+  noModule();
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const port = (server.address() as { port: number }).port;
+    // The route answers from the job it would start; finished here first, so one GET reads it.
+    await finished(getNearDupeJob(b.scan, 7));
+    const r = await get(port, `/api/near-duplicates?scanId=${b.scan.scanId}&threshold=7`);
+    assert.equal(r.status, 200);
+    const body = r.body as Record<string, unknown>;
+    assert.deepEqual([body.compared, body.unreadable, body.unreadableTypes], [4, 1, [{ extension: 'png', count: 1 }]]);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    realNative();
+  }
+});

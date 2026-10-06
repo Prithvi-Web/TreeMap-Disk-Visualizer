@@ -30823,6 +30823,9 @@ async function loadNearDupes(force = false) {
       state.near.clusterCount = data.clusterCount;
       state.near.totalReclaimable = data.totalReclaimable;
       state.near.truncated = data.truncated;
+      state.near.compared = data.compared;
+      state.near.unreadable = data.unreadable;
+      state.near.unreadableTypes = data.unreadableTypes;
       renderNearDupes();
     } catch (e) {
       state.near.status = 'error';
@@ -31176,12 +31179,23 @@ function renderNearDupes() {
   }
   const clusters = n.clusters;
   // Images the pass could not confirm were on this disk were never compared,
-  // and the job says how many: a hole in the answer, never a finding.
-  const leftOut = n.reason
-    ? `<div class="nd-note">${icon('alert', 14)} ${escapeHtml(n.reason)}</div>` : '';
+  // and the job says how many: a hole in the answer, never a finding. So are
+  // images the decoder could not read (B20) — every .heic on a Mac.
+  const unread = Number(n.unreadable) || 0;
+  const unreadTypes = (n.unreadableTypes || []).slice(0, 3)
+    .map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ');
+  const leftOut = (n.reason
+    ? `<div class="nd-note">${icon('alert', 14)} ${escapeHtml(n.reason)}</div>` : '') +
+    (unread ? `<div class="nd-note">${icon('alert', 14)} ${formatCount(unread)} image${unread === 1 ? '' : 's'} could not be read, ` +
+      `so ${unread === 1 ? 'it was' : 'they were'} not compared${unreadTypes ? ` (${escapeHtml(unreadTypes)})` : ''}.</div>` : '');
   if (!clusters.length) {
-    $('ndSummary').textContent = n.reason ? 'No near-duplicate images found among the images compared.' : 'No near-duplicate images found.';
-    body.innerHTML = leftOut || `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`;
+    const compared = Number(n.compared) || 0;
+    $('ndSummary').textContent = !compared ? 'No images were compared.'
+      : leftOut ? 'No near-duplicate images found among the images compared.' : 'No near-duplicate images found.';
+    // "Tidy" only when images were actually looked at, and none were left out.
+    body.innerHTML = leftOut || (compared
+      ? `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`
+      : `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('image', 15)} There were no images here to compare.</div></div>`);
     updateNdToolbar();
     return;
   }
