@@ -14,7 +14,7 @@ import { readJsonFile, writeJsonFile } from './storage';
 import { moveToTrash } from './cleaner';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
-import { isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
+import { canonicalDirOf, foldName, isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, realPlaceNow, sanitizePath } from '../utils/pathSanitizer';
 import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber, withinStallLimit } from '../utils/copyVerify';
 import { describeFsError, meansAbsent } from '../utils/errno';
 import { formatBytes } from '../utils/formatBytes';
@@ -525,6 +525,26 @@ export function setOffloadDiskUsageForTests(fn: typeof diskUsage): () => void {
   return () => { diskUsageForTests = null; };
 }
 
+/**
+ * Where `p` really is, its names folded as a file system may fold them (`foldName`): realpath's answer
+ * (every link followed, the last name too), or where it lives when realpath cannot answer — a folder a
+ * copy will make (`canonicalDirOf`: the links in its parents resolved). A fold only refuses more here.
+ */
+function placeNamesOf(p: string): string[] {
+  const at = realPlaceNow(p) ?? path.normalize(canonicalDirOf(p));
+  const { root } = path.parse(at);
+  return [root, ...at.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map((name) => foldName(name).toUpperCase().toLowerCase());
+}
+
+/** Whether the folded names `inner` are `outer`'s, or lie beneath them. */
+function namesWithin(outer: string[], inner: string[]): boolean {
+  return outer.length <= inner.length && outer.every((name, i) => name === inner[i]);
+}
+
+function destInsideSource(): AppError {
+  return new AppError(400, 'DEST_INSIDE_SOURCE', 'The destination is inside a folder being offloaded');
+}
+
 /** The exact manifest an offload would execute — what dryRun reports. */
 export interface PreparedOffload {
   plan: PlannedCopy[];
@@ -553,15 +573,20 @@ export async function prepareOffload(
     if (store.flag(id, Flag.Virtual)) throw new AppError(403, 'VIRTUAL_PATH', 'Entries inside an archive can’t be offloaded — offload the archive itself');
     nodes.push(store.prune(id, { maxNodes: Number.MAX_SAFE_INTEGER }).root);
   }
-  // A destination inside a selected folder (or vice versa) would eat itself.
-  for (const node of nodes) {
-    if (node.path === destDir || isInside(node.path, destDir)) {
-      throw new AppError(400, 'DEST_INSIDE_SOURCE', 'The destination is inside a folder being offloaded');
+  // A destination inside a selected folder (or vice versa) would eat itself: the copy is verified,
+  // then the selection is trashed with the copy in it. Judged where each really is (`placeNamesOf`),
+  // as the text alone let another case, a link or the Data volume's long spelling of a folder inside
+  // the selection through — the dry run too (the final review, F1.9, F1.14).
+  const destNames = placeNamesOf(destDir);
+  const sourceNames = nodes.map((node) => placeNamesOf(node.path));
+  nodes.forEach((node, i) => {
+    if (node.path === destDir || isInside(node.path, destDir) || namesWithin(sourceNames[i], destNames)) {
+      throw destInsideSource();
     }
-    if (isInside(destDir, node.path)) {
+    if (isInside(destDir, node.path) || namesWithin(destNames, sourceNames[i])) {
       throw new AppError(400, 'SOURCE_INSIDE_DEST', 'That selection already lives inside the destination');
     }
-  }
+  });
   const destStat = await fsp.stat(destDir).catch(() => null);
   if (!destStat || !destStat.isDirectory()) {
     throw new AppError(400, 'DEST_NOT_A_FOLDER', 'The destination must be an existing folder');
@@ -583,9 +608,20 @@ export async function prepareOffload(
   // reaches under a fold (ſtuff for stuff) is found here, where each target's folders are resolved.
   // About 33 µs a target (measured), so about a third of a second at the MAX_FILES_PER_JOB cap: paid
   // once, before anything is copied, which is where a refusal belongs.
+  // And no copy lands in the selection: a planned name the volume folds onto a link in `dest` (ſtuff
+  // for stuff) leads wherever that link does, the selection included (F1.9).
+  const folderLands = new Map<string, boolean>(); // one realpath a destination folder, not one a file
   for (const copy of plan) {
     assertNotSpillPath(copy.dest);
     assertNotAppDataPath(copy.dest);
+    const folder = path.dirname(copy.dest);
+    let inSource = folderLands.get(folder);
+    if (inSource === undefined) {
+      const lands = placeNamesOf(folder);
+      inSource = sourceNames.some((source) => namesWithin(source, lands));
+      folderLands.set(folder, inSource);
+    }
+    if (inSource) throw destInsideSource();
   }
   const bytesTotal = plan.reduce((s, p) => s + p.size, 0);
 
