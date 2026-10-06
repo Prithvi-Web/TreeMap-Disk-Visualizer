@@ -1359,6 +1359,157 @@ test('MEDIUM-1: a focused crumb shows its whole focus ring inside the trail that
     'the focus rule comes after it, so a focused folder on screen is tinted like any other focused crumb');
 });
 
+/* ── Colours, as a browser resolves them (final review F1.1, F1.2) ── */
+
+type Rgba = [number, number, number, number];
+
+/**
+ * The design tokens one theme resolves: every top-level `:root { … }` block,
+ * and for the light theme every `:root[data-theme="light"] { … }` block over
+ * them. Each block is cut at its MATCHING brace — a one-line block such as
+ * `:root { --side-w: 232px; }` otherwise runs on into the rules after it.
+ */
+function themeTokens(theme: 'dark' | 'light'): Map<string, string> {
+  const blocks = (opener: string): string[] => {
+    const out: string[] = [];
+    for (let at = INDEX.indexOf(`\n${opener} {`); at !== -1; at = INDEX.indexOf(`\n${opener} {`, at + 1)) {
+      const open = INDEX.indexOf('{', at);
+      let depth = 0;
+      for (let i = open; i < INDEX.length; i++) {
+        if (INDEX[i] === '{') depth++;
+        else if (INDEX[i] === '}' && --depth === 0) { out.push(INDEX.slice(open + 1, i)); break; }
+      }
+    }
+    return out;
+  };
+  const tokensIn = (list: string[]) => {
+    const out = new Map<string, string>();
+    for (const b of list) for (const m of b.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) if (!out.has(m[1])) out.set(m[1], m[2].trim());
+    return out;
+  };
+  const out = tokensIn(blocks(':root'));
+  assert.ok(out.size > 0, 'control: the page defines its design tokens on :root');
+  if (theme === 'light') {
+    const light = tokensIn(blocks(':root[data-theme="light"]'));
+    assert.ok(light.size > 0, 'control: the page has a light theme');
+    for (const [k, v] of light) out.set(k, v);
+  }
+  return out;
+}
+
+/** A colour value with every var() resolved against `tokens`; undefined when a token is not defined. */
+function resolveColor(value: string, tokens: Map<string, string>): string | undefined {
+  let v = value.trim();
+  for (let hops = 0; hops < 10; hops++) {
+    const m = /^var\((--[\w-]+)\)$/.exec(v);
+    if (!m) return v;
+    const next = tokens.get(m[1]);
+    if (next === undefined) return undefined;
+    v = next.trim();
+  }
+  return assert.fail(`${value} never resolves`);
+}
+
+/**
+ * A CSS colour as [r, g, b, alpha 0-1], in every spelling a stylesheet may use
+ * for one: `transparent`, #rgb, #rgba, #rrggbb, #rrggbbaa, and rgb()/rgba()
+ * with commas or spaces, a `/ alpha`, and an alpha as a number or a percent.
+ * Anything else fails the test: a spelling it cannot read is not one it may pass.
+ */
+function parseColor(value: string): Rgba {
+  const v = value.trim().toLowerCase();
+  if (v === 'transparent') return [0, 0, 0, 0];
+  const hex = /^#([0-9a-f]{3,8})$/.exec(v);
+  if (hex && [3, 4, 6, 8].includes(hex[1].length)) {
+    const h = hex[1].length <= 4 ? [...hex[1]].map((c) => c + c).join('') : hex[1];
+    const n = (i: number) => parseInt(h.slice(i, i + 2), 16);
+    return [n(0), n(2), n(4), h.length === 8 ? n(6) / 255 : 1];
+  }
+  const fn = /^rgba?\(([^)]*)\)$/.exec(v);
+  if (fn) {
+    const parts = fn[1].trim().split(/\s*[,/]\s*|\s+/).filter(Boolean);
+    if (parts.length === 3 || parts.length === 4) {
+      const num = (s: string, scale: number) => (s.endsWith('%') ? (Number(s.slice(0, -1)) / 100) * scale : Number(s));
+      const out: Rgba = [num(parts[0], 255), num(parts[1], 255), num(parts[2], 255), parts.length === 4 ? num(parts[3], 1) : 1];
+      if (out.every((x) => Number.isFinite(x))) return out;
+    }
+  }
+  return assert.fail(`a colour this test can read: ${value}`);
+}
+
+/** `top` painted over an opaque `ground`. */
+function over(top: Rgba, ground: Rgba): Rgba {
+  const a = top[3];
+  return [0, 1, 2].map((i) => top[i] * a + ground[i] * (1 - a)).concat(1) as Rgba;
+}
+
+/** WCAG 2.x contrast ratio of two opaque colours. */
+function contrastRatio(x: Rgba, y: Rgba): number {
+  const lum = (c: Rgba) => {
+    const lin = (u: number) => { const s = u / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  };
+  const [hi, lo] = [lum(x), lum(y)].sort((a, b) => b - a);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** The value a rule of the built page gives `prop` (a longhand, not a shorthand), or undefined. */
+function declaredIn(selector: string, prop: string): string | undefined {
+  if (!INDEX.includes(`${selector} {`)) return undefined;
+  const m = new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([^;}]+)`).exec(cssRule(selector).slice(selector.length));
+  return m ? m[1].trim() : undefined;
+}
+
+test('a focused or hovered crumb\'s name reads at 4.5:1 or better on its tint in both themes, and the folder on screen keeps its own colour when focused (final review F1.1)', () => {
+  // The tint, --accent-soft, is the dark theme's #0A84FF at 16% in BOTH
+  // themes. Under the light theme's darker --accent (#0069D6) a focused
+  // crumb's 12.5 px name measured 4.20:1 on the card ground — below the 4.5:1
+  // the tokens file sets for light text this size. Crumbs sit on the card
+  // ground that file measures against: --glass over --bg-1.
+  for (const theme of ['dark', 'light'] as const) {
+    const tokens = themeTokens(theme);
+    const paint = (selector: string, prop: string) => {
+      const value = declaredIn(selector, prop);
+      assert.ok(value, `${selector} sets its ${prop}`);
+      const resolved = resolveColor(value!, tokens);
+      assert.ok(resolved, `${value} is defined in the ${theme} theme`);
+      return parseColor(resolved!);
+    };
+    const token = (name: string) => {
+      const resolved = resolveColor(`var(${name})`, tokens);
+      assert.ok(resolved, `${name} is defined in the ${theme} theme`);
+      return parseColor(resolved!);
+    };
+    const ground = over(token('--glass'), token('--bg-1'));
+    /** The text colour the last of `rules` (lowest precedence first) that sets one gives a crumb. */
+    const textOf = (rules: string[]) => {
+      const winner = [...rules].reverse().find((r) => declaredIn(r, 'color') !== undefined);
+      assert.ok(winner, `a crumb has a text colour (${rules.join(' < ')})`);
+      return { rule: winner!, rgba: paint(winner!, 'color') };
+    };
+    for (const [state, rules] of [
+      ['focused', ['.crumbs button', '.crumbs button:focus-visible']],
+      ['under the pointer', ['.crumbs button', '.crumbs button:hover']],
+    ] as const) {
+      const tint = over(paint(rules[1], 'background'), ground);
+      const text = textOf([...rules]);
+      const ratio = contrastRatio(over(text.rgba, tint), tint);
+      assert.ok(ratio >= 4.5, `${theme}: a crumb ${state} shows its name at ${ratio.toFixed(2)}:1 on its tint (${text.rule}) — the bar is 4.5:1`);
+    }
+    // The folder on screen, focused (renderCrumbs puts focus there when there
+    // is no "…"): precedence lowest first — its own rule and the focus rule tie
+    // at (0,2,1) and the focus rule comes later (asserted above), and a rule
+    // for both at once outranks them.
+    const own = textOf(['.crumbs button', '.crumbs button[aria-current="true"]']);
+    const focused = textOf(['.crumbs button', '.crumbs button[aria-current="true"]', '.crumbs button:focus-visible',
+      '.crumbs button[aria-current="true"]:focus-visible']);
+    assert.deepEqual(focused.rgba, own.rgba, `${theme}: the folder on screen keeps its own colour when focused, not a link's (${focused.rule})`);
+    const tint = over(paint('.crumbs button:focus-visible', 'background'), ground);
+    const ratio = contrastRatio(over(focused.rgba, tint), tint);
+    assert.ok(ratio >= 4.5, `${theme}: and reads at ${ratio.toFixed(2)}:1 on the tint`);
+  }
+});
+
 test('LOW-4: scrolling the menu\'s list does not close it; a scroll anywhere else does', () => {
   // The capture-phase scroll listener closed the menu on ANY scroll — its own list's included.
   const menu = fakeMenu();

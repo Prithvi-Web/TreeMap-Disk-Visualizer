@@ -71,7 +71,12 @@
    a flex container, so the folder on screen was cut at the 220px ceiling with
    no ellipsis (QA D25). min-width: 0 lets the span shrink below its text. */
 .crumbs .crumb-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.crumbs button:hover { background: var(--accent-soft); }
+/* On the tint a crumb's name takes the deeper --accent-ink: --accent-soft is
+   the dark blue at 16% in both themes, and plain --accent on it measured
+   4.20:1 (light) and 4.31:1 (dark) on the card ground, under the 4.5:1 a
+   12.5px label needs. --accent-ink reads 4.8:1 and 6:1 there (final review
+   F1.1). */
+.crumbs button:hover { background: var(--accent-soft); color: var(--accent-ink); }
 .crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
   border-color: var(--hairline); pointer-events: none; }
 /* A focused crumb is marked inside its own box, as #ctxMenu's entries are
@@ -79,8 +84,10 @@
    mask — and has no padding, so the page's ring, drawn 2px outside, lost its
    top and bottom: "…", the keyboard's way in and where focus comes back
    from its menu, showed two thin side bars. After the folder on screen's
-   own background, so the tint marks it too when focus lands there. */
-.crumbs button:focus-visible { outline-offset: -2px; background: var(--accent-soft); }
+   own background, so the tint marks it too when focus lands there — and
+   that folder keeps its own colour, not a link's. */
+.crumbs button:focus-visible { outline-offset: -2px; background: var(--accent-soft); color: var(--accent-ink); }
+.crumbs button[aria-current="true"]:focus-visible { color: var(--text-1); }
 .crumbs .sep { color: var(--text-3); display: inline-flex; flex: none; }
 .tm-toolbar label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .tm-toolbar .field { position: relative; }
