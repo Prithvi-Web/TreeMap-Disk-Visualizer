@@ -174,6 +174,9 @@ test('the dry run gives the same verdict: never more than the cap, and the copie
   const plan = await planCartCommit([a, b, c]);
   assert.deepEqual(plan.items.map((i) => [path.basename(i.path), i.willDelete]), [['a.bin', true], ['b.bin', true], ['c.bin', false]]);
   assert.equal(plan.items[2].code, 'CAPSULE_FULL');
+  // In the words the real run uses, naming what holds the room and only that (FG3g review F2.14).
+  assert.match(plan.items[2].reason ?? '', /195\.3 KB of copies of items whose deletion is still under way/, plan.items[2].reason);
+  assert.doesNotMatch(plan.items[2].reason ?? '', /being restored|could not be confirmed/, plan.items[2].reason);
   assert.ok(plan.bytesWouldFree <= plan.capsule.capBytes, `${plan.bytesWouldFree} planned against a ${plan.capsule.capBytes} cap`);
   assert.deepEqual(plan.evicts.map((e) => e.id), [oldId], 'only the older copy is named as dropped');
 
@@ -421,4 +424,44 @@ test('a capture whose making room fails once its copy is whole removes that copy
   assert.deepEqual(fs.readdirSync(capsuleRoot()).sort(), [id1, id2].sort(), 'no copy of s is left on disk, where nothing would count it or remove it until the next start');
   assert.deepEqual((await getCapsuleIndex()).entries.map((e) => e.id).sort(), [id1, id2].sort(), 'and the index records none');
   assert.ok(fs.readFileSync(s).equals(Buffer.alloc(ITEM, 3)), 's is untouched');
+});
+
+/* ─────────────── FG3g review F2.10: an item that cannot fit is refused before anything is copied ─────────────── */
+
+/** Counts the reads of each copy into the capsule of a file named `name` (each chunk read is one). */
+function countCopiesOf(name: string): { chunks: () => number; remove: () => void } {
+  let chunks = 0;
+  const remove = setCopyFaultForTests((dest) => {
+    if (dest.startsWith(capsuleRoot()) && path.basename(dest) === name) chunks++;
+    return null;
+  });
+  return { chunks: () => chunks, remove };
+}
+
+test('an item bigger than the whole capsule is refused without a byte of it copied', async () => {
+  const big = path.join(fileTempDir('treemap-capsuleCapacity-too-big-'), 'big.bin');
+  fs.writeFileSync(big, Buffer.alloc(CAP + ITEM, 7));
+  const counted = countCopiesOf('big.bin');
+  let outcome: Awaited<ReturnType<typeof protectItems>>['outcomes'][number];
+  try {
+    [outcome] = (await protectItems([{ path: big }])).outcomes;
+  } finally {
+    counted.remove();
+  }
+  assert.equal(outcome.code, 'CAPSULE_FULL', outcome.detail);
+  assert.equal(counted.chunks(), 0, 'nothing of it was copied into the capsule: no copy is made that cannot be kept');
+});
+
+test('an item that cannot fit beside the copies its own run holds is refused without a byte of it copied', async () => {
+  const [a, b, c] = files('no-copy-pinned', ['a.bin', 'b.bin', 'c.bin']);
+  const counted = countCopiesOf('c.bin');
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await withOpenFileCheck('clear', () => commitCart([a, b, c]));
+  } finally {
+    counted.remove();
+  }
+  assert.equal(result.skipped.find((s) => s.path === c)?.code, 'CAPSULE_FULL', JSON.stringify(result.skipped));
+  assert.equal(counted.chunks(), 0, 'nothing of it was copied: the room beside the run\'s own copies was planned first');
+  assert.ok(fs.existsSync(c));
 });
