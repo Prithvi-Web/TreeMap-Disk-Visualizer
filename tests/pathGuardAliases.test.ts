@@ -552,6 +552,70 @@ test('a loop of links costs a few file-system calls, not a round of the loop for
   assert.deepEqual(cost, { sanitizePath: 'a few', insideAnyScanRoot: 'a few', isAppDataPath: 'a few' });
 });
 
+test('a path longer than the system takes is answered as spelled at the cost of a few file-system calls — never climbed name by name, which held the server for seconds and then overflowed the stack (the SEC-2c review, F2.2)', () => {
+  // The climb toward a real folder went on through every realpath failure, ENAMETOOLONG too, one name at
+  // a time: a path of 20,000 names (40 kB, well inside a 1 MB request body) blocked the event loop for
+  // seconds and then threw RangeError (Maximum call stack size exceeded) — a 500 with a stack in the log.
+  // No call takes such a spelling, so nothing can be acted on through it. Counted, not timed.
+  const long = path.join(T, ...Array<string>(20_000).fill('a'), 'f.txt');
+  const asks: Record<string, () => unknown> = {
+    sanitizePath: () => sanitizePath(long) === long,
+    insideAnyScanRoot: () => typeof insideAnyScanRoot(long),
+  };
+  let calls = 0;
+  const realpath = fs.realpathSync.native;
+  const sync = fs as unknown as { lstatSync: (...args: unknown[]) => unknown };
+  const lstat = sync.lstatSync;
+  fs.realpathSync.native = ((...args: Parameters<typeof realpath>) => {
+    calls += 1;
+    return realpath(...args);
+  }) as typeof realpath;
+  sync.lstatSync = (...args: unknown[]) => {
+    calls += 1;
+    return lstat(...args);
+  };
+  const answers: Record<string, unknown> = {};
+  try {
+    for (const [name, ask] of Object.entries(asks)) {
+      calls = 0;
+      try {
+        answers[name] = ask();
+      } catch (err) {
+        answers[name] = `threw ${err instanceof Error ? err.name : String(err)}`;
+      }
+      answers[`${name}, its cost`] = calls <= 8 ? 'a few calls' : `${calls} realpaths and lstats`;
+    }
+  } finally {
+    fs.realpathSync.native = realpath;
+    sync.lstatSync = lstat;
+  }
+  // Only a spelling the system itself refuses is answered that way. A realpath that refuses a short
+  // spelling for the length of where it leads — glibc before 2.33 limits its answer to PATH_MAX, while
+  // the kernel's own lookup has no such limit — still climbs to the link, judged where it leads.
+  const dir = path.join(T, 'f22');
+  const out = path.join(DEST, 'f22-out');
+  fs.mkdirSync(dir);
+  fs.mkdirSync(out);
+  const far = path.join(dir, 'far');
+  fs.symlinkSync(out, far);
+  fs.realpathSync.native = ((p: fs.PathLike, ...rest: unknown[]) => {
+    if (String(p).startsWith(far)) throw Object.assign(new Error(`ENAMETOOLONG: name too long, realpath '${String(p)}'`), { code: 'ENAMETOOLONG' });
+    return (realpath as (...a: unknown[]) => string)(p, ...rest);
+  }) as typeof realpath;
+  try {
+    answers['beneath a link whose real place realpath will not spell'] = insideAnyScanRoot(path.join(far, 'x.txt'));
+  } finally {
+    fs.realpathSync.native = realpath;
+  }
+  assert.deepEqual(answers, {
+    sanitizePath: true, // as spelled, as a path a realpath refuses for its length always was
+    'sanitizePath, its cost': 'a few calls',
+    insideAnyScanRoot: 'boolean',
+    'insideAnyScanRoot, its cost': 'a few calls',
+    'beneath a link whose real place realpath will not spell': false, // DEST is outside the scan
+  });
+});
+
 test('a chain of links is followed link by link to a second name at its end: a link to a link to /.resolve or /.vol is refused beneath it and as itself', { skip: !DARWIN && 'the namespaces are macOS’s' }, () => {
   // Every link the F3 test makes leads to a second name in one step, so nothing pinned that the walk
   // goes on through a link to the next one: a walk that stopped at the first target passed it all

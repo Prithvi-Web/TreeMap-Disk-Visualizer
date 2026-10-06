@@ -195,28 +195,32 @@ const canonCache = new Map<string, { value: string; at: number }>();
 
 /** Canonical form of a DIRECTORY path, memoised. */
 function canonDir(dir: string): string {
-  const now = Date.now();
-  const hit = canonCache.get(dir);
-  if (hit !== undefined && now - hit.at < CANON_CACHE_TTL_MS) return hit.value;
-
+  const hit = remembered(dir);
+  if (hit !== undefined) return hit;
   const value = canonDirUncached(dir);
+  remember(dir, value);
+  return value;
+}
+
+/** The memo's answer for `dir` while it is fresh, or undefined. */
+function remembered(dir: string): string | undefined {
+  const hit = canonCache.get(dir);
+  return hit !== undefined && Date.now() - hit.at < CANON_CACHE_TTL_MS ? hit.value : undefined;
+}
+
+/** Remember `value` for `dir` as the newest entry; past the cap, the oldest goes. */
+function remember(dir: string, value: string): void {
   canonCache.delete(dir); // re-insert so this entry counts as the newest
-  canonCache.set(dir, { value, at: now });
+  canonCache.set(dir, { value, at: Date.now() });
   if (canonCache.size > CANON_CACHE_MAX) {
     const oldest = canonCache.keys().next().value;
     if (oldest !== undefined) canonCache.delete(oldest);
   }
-  return value;
 }
 
 function canonDirUncached(dir: string): string {
-  try {
-    return strip(fs.realpathSync.native(dir));
-  } catch {
-    // A link realpath could not follow is judged where it says it leads, never as a folder here.
-    const led = whereLinkLeads(dir);
-    if (led !== null) return led;
-  }
+  const own = folderPlace(dir);
+  if (own !== CLIMB) return own;
   // Not a link, and realpath failed: climb toward the root looking for a real
   // ancestor to canonicalise, then re-attach the rest. A missing name (ENOENT)
   // is the common case — "/var/db/not-yet.sqlite" must stay blocked though
@@ -226,11 +230,66 @@ function canonDirUncached(dir: string): string {
   // names below such a link a folder of its own folder (the SEC-2b review,
   // F1.7). Climbing reaches the link, which is then judged where it leads. A
   // folder that cannot be searched (EACCES) gets its real parents this way too.
-  // Recursing through canonDir memoises every level of the climb, so a second
-  // missing sibling costs nothing.
-  const parent = path.dirname(dir);
-  if (parent === dir) return dir; // a root that will not resolve: nothing above it
-  return joinUnder(canonDir(parent), path.basename(dir));
+  // A loop, not a recursion, so no path is too deep for the stack (the SEC-2c
+  // review, F2.2); every level of the climb is remembered on the way back, so a
+  // second missing sibling costs nothing.
+  const levels = [dir];
+  let found: string | undefined;
+  while (found === undefined) {
+    const at = levels[levels.length - 1];
+    const parent = path.dirname(at);
+    if (parent === at) {
+      found = at; // a root that will not resolve: nothing above it
+      break;
+    }
+    levels.push(parent);
+    found = remembered(parent);
+    if (found !== undefined) break;
+    const place = folderPlace(parent);
+    if (place !== CLIMB) {
+      remember(parent, place);
+      found = place;
+    }
+  }
+  let place = found;
+  for (let i = levels.length - 2; i >= 0; i--) {
+    place = joinUnder(place, path.basename(levels[i]));
+    if (i > 0) remember(levels[i], place); // `dir` itself is canonDir's to remember
+  }
+  return place;
+}
+
+/** `folderPlace`'s answer for a folder only its parents can place. */
+const CLIMB = Symbol('climb');
+
+/**
+ * Where the folder `dir` is when it can answer for itself: realpath's answer; where a link realpath
+ * cannot follow leads (`whereLinkLeads`); or `dir` as spelled when not even lstat takes that spelling
+ * (ENAMETOOLONG: longer than the system's limit on a path, or a name longer than its limit on a name).
+ * No call acts through such a spelling, so there is no place to find — and climbing toward one a name
+ * at a time, as every other failure climbs, held the server for seconds and then overflowed the
+ * stack on a path a request may make a megabyte long (the SEC-2c review, F2.2). A realpath that
+ * refuses only the length of where a spelling leads (glibc before 2.33) climbs like any failure.
+ * CLIMB when the parents must answer.
+ */
+function folderPlace(dir: string): string | typeof CLIMB {
+  try {
+    return strip(fs.realpathSync.native(dir));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENAMETOOLONG' && spellingTooLong(dir)) return dir;
+  }
+  // A link realpath could not follow is judged where it says it leads, never as a folder here.
+  return whereLinkLeads(dir) ?? CLIMB;
+}
+
+/** Whether the system refuses `p`'s spelling itself: lstat answers ENAMETOOLONG. */
+function spellingTooLong(p: string): boolean {
+  try {
+    fs.lstatSync(p, { throwIfNoEntry: false });
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENAMETOOLONG';
+  }
 }
 
 /**
