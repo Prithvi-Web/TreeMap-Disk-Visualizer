@@ -259,3 +259,54 @@ test('a paired machine\'s scan folder is asked for in the page', async () => {
   await no.fn('peer-1');
   assert.equal(no.calls.length, 0);
 });
+
+/* ══════════════════ B28 — Save view with nothing to save; deleting a view can be undone ══════════════════ */
+
+test('Save view is not offered while the box is empty — it would save nothing (B28)', () => {
+  // B28: with the box cleared, Save view stayed offered (enabled, same
+  // tooltip) beside the saved chips, and pressing it did nothing visible.
+  const els: Record<string, { hidden: boolean; value: string; childElementCount: number; title: string; disabled: boolean }> = {};
+  const $ = (id: string) => (els[id] ??= { hidden: false, value: '', childElementCount: 0, title: '', disabled: false });
+  $('tmSavedViews').childElementCount = 1; // a saved chip keeps the bar up
+  $('tmQueryErr').hidden = true;
+  $('tmStageMatches').hidden = true;
+  const sync = new Function('$', 'state', `${declOf('tmSyncQueryBar')}\nreturn tmSyncQueryBar;`)($, { view: 'treemap' }) as () => void;
+  $('tmSearch').value = '   ';
+  sync();
+  assert.equal($('tmQueryBar').hidden, false, 'the bar stays for its saved chips');
+  assert.equal($('tmSaveView').hidden, true, 'Save view is not offered with nothing to save');
+  $('tmSearch').value = 'size>1gb';
+  sync();
+  assert.equal($('tmSaveView').hidden, false, 'and comes back as soon as there is a query to save');
+  // The box's own input event re-syncs at once, not only when a debounced query lands.
+  assert.match(listenerBody("$('tmSearch').addEventListener('input', (e) =>"), /tmSyncQueryBar\(\)/, 'typing or clearing re-syncs the bar');
+});
+
+test('deleting a saved view says so and can be undone — it comes back with its name, query and colour (B28)', async () => {
+  // B28: the chip's × deleted the view at once, with no toast and nothing to undo.
+  const view = { id: 'v1', name: 'QA big old videos', q: 'size>1gb used>1y', pinned: true, colour: '#ff9f0a' };
+  const calls: Call[] = [];
+  const toasts: string[] = [];
+  const actions: Array<{ msg: string; label: string; fn: () => unknown }> = [];
+  let reloads = 0;
+  const deps: Record<string, unknown> = {
+    state: { savedViews: [view] },
+    api: async (url: string, opts?: { method?: string; body?: string }) => { calls.push({ url: `${opts?.method ?? 'GET'} ${url}`, body: opts?.body ? JSON.parse(opts.body) : undefined }); return {}; },
+    loadSavedViews: async () => { reloads++; },
+    toast: (m: string) => { toasts.push(m); },
+    toastAction: (msg: string, label: string, fn: () => unknown) => { actions.push({ msg, label, fn }); },
+  };
+  const keys = Object.keys(deps);
+  const del = new Function(...keys, `${declOf('deleteSavedView')}\nreturn deleteSavedView;`)(...keys.map((k) => deps[k])) as (id: string) => Promise<void>;
+  await del('v1');
+  assert.deepEqual(calls.map((c) => c.url), ['DELETE /api/queries/v1'], 'the view is deleted');
+  assert.equal(reloads, 1, 'and the chips are re-read');
+  assert.equal(actions.length, 1, 'the delete is said, with an action');
+  assert.match(actions[0].msg, /QA big old videos/, 'naming the view');
+  assert.equal(actions[0].label, 'Undo');
+  await actions[0].fn();
+  const post = calls.find((c) => c.url === 'POST /api/queries');
+  assert.ok(post, 'Undo saves it again');
+  assert.deepEqual(post!.body, { name: 'QA big old videos', q: 'size>1gb used>1y', pinned: true, colour: '#ff9f0a' }, 'as it was');
+  assert.equal(reloads, 2, 'and the chip comes back');
+});

@@ -190,6 +190,11 @@ function tmSyncQueryBar() {
   const hasMessage = !$('tmQueryErr').hidden;
   const hasStage = !$('tmStageMatches').hidden;
   bar.hidden = !(hasViews || hasMessage || hasStage) || state.view !== 'treemap';
+  // Save view saves the query in the box. With nothing typed there is nothing
+  // to save, and the bar stays up for its saved chips: the button was offered
+  // anyway and a press did nothing visible (B28).
+  const save = $('tmSaveView');
+  if (save) save.hidden = !($('tmSearch').value || '').trim();
 }
 
 /**
@@ -425,6 +430,7 @@ function tmApplyQuery(raw) {
 $('tmSearch').addEventListener('input', (e) => {
   clearTimeout(tmQueryDeb);
   const raw = e.target.value;
+  tmSyncQueryBar(); // Save view follows the box at once (B28)
   void tmRenderHints(raw);
   // 150 ms for a grammar query, per §2.4 — long enough that a fast typist makes
   // one request, short enough that the underline feels immediate.
@@ -677,6 +683,29 @@ async function saveCurrentView() {
   }
 }
 
+/**
+ * Delete a saved view from its chip's ×. One click, as before — and then said,
+ * with an Undo that saves it again as it was (B28: it went with no toast and
+ * nothing to undo). A view is a query, not a file, so undo is the right rail.
+ */
+async function deleteSavedView(id) {
+  const view = (state.savedViews || []).find((v) => v.id === id) || null;
+  try {
+    await api('/api/queries/' + encodeURIComponent(id), { method: 'DELETE' });
+    await loadSavedViews(true);
+  } catch (err) { toast('Could not delete that view: ' + err.message, 'error'); return; }
+  if (!view) return;
+  toastAction(`Deleted the saved view “${view.name}”`, 'Undo', async () => {
+    try {
+      await api('/api/queries', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: view.name, q: view.q, pinned: view.pinned, ...(view.colour ? { colour: view.colour } : {}) }),
+      });
+      await loadSavedViews(true);
+    } catch (err) { toast('Could not bring that view back: ' + err.message, 'error'); }
+  });
+}
+
 $('tmSaveView').addEventListener('click', saveCurrentView);
 $('tmSavedViews').addEventListener('click', async (e) => {
   const remove = e.target.closest('[data-view-rm]');
@@ -685,10 +714,7 @@ $('tmSavedViews').addEventListener('click', async (e) => {
     // delegate that closes the autocomplete, so deleting a chip with the
     // panel open left it hanging.
     e.preventDefault();
-    try {
-      await api('/api/queries/' + encodeURIComponent(remove.dataset.viewRm), { method: 'DELETE' });
-      await loadSavedViews(true);
-    } catch (err) { toast('Could not delete that view: ' + err.message, 'error'); }
+    await deleteSavedView(remove.dataset.viewRm);
     return;
   }
   const chip = e.target.closest('[data-view-q]');
