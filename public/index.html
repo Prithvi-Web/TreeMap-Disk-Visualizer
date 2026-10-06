@@ -10810,9 +10810,10 @@ const tmSearchCtx = tmSearchBuffer.getContext('2d');
  * request's minSize). One number for the request, the live re-layout and the
  * sentence that admits it (tmNodeCapNote). The floor a map on screen was
  * actually asked with is state.treemap.minSize — loadTreemap drops this one
- * for a folder of small files (QA-6b review F1.2).
+ * for a folder of small files (QA-6b review F1.2). 4 KB in the decimal units
+ * the sentence prints it in (QA D09): 4096 read as "files under 4.1 KB".
  */
-const TM_MIN_SIZE = 4096;
+const TM_MIN_SIZE = 4000;
 
 let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
