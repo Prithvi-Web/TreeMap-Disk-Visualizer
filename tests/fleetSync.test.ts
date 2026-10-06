@@ -368,6 +368,63 @@ test('on Windows a scan another machine asks for must be rooted on one of this m
   assert.deepEqual(codes('linux', ['/mnt/share', '//server/share', '../x']), { '/mnt/share': null, '//server/share': null, '../x': 'PATH_INVALID' });
 });
 
+test('on a Mac a scan another machine asks for is refused at or under /net, /Network and /home — autofs mounts a network share there as soon as anything looks the name up, and a share that does not answer holds the scan — in any case and however the path is spelled; elsewhere, and on other systems, nothing changes (POL item 1)', () => {
+  const codes = (platform: NodeJS.Platform, paths: string[]) => Object.fromEntries(paths.map((p) => [p, peerScanRootRefusal(p, platform)?.code ?? null]));
+  assert.deepEqual(codes('darwin', [
+    '/net', '/net/nas/share', '/Network', '/Network/Servers/nas', '/home', '/home/someone', '/NET/nas', '/network/x', 'ｎｅｔ',
+    '/tmp/../net/nas', '//net/nas', '/net/', '  /net/nas',
+    '/netx', '/networks', '/Users/me/net', '/Volumes/net', '/homes', '/', '/Users/me', '~/x',
+  ]), {
+    '/net': 'AUTOMOUNT_PATH', '/net/nas/share': 'AUTOMOUNT_PATH', '/Network': 'AUTOMOUNT_PATH', '/Network/Servers/nas': 'AUTOMOUNT_PATH',
+    '/home': 'AUTOMOUNT_PATH', '/home/someone': 'AUTOMOUNT_PATH', '/NET/nas': 'AUTOMOUNT_PATH', '/network/x': 'AUTOMOUNT_PATH',
+    'ｎｅｔ': 'PATH_INVALID', // not absolute
+    '/tmp/../net/nas': 'AUTOMOUNT_PATH', '//net/nas': 'AUTOMOUNT_PATH', '/net/': 'AUTOMOUNT_PATH', '  /net/nas': 'AUTOMOUNT_PATH',
+    '/netx': null, '/networks': null, '/Users/me/net': null, '/Volumes/net': null, '/homes': null, '/': null, '/Users/me': null, '~/x': null,
+  });
+  // `~` is this machine's home, and climbing out of it reaches the root like any other path.
+  if (process.platform !== 'win32') assert.equal(peerScanRootRefusal('~/../../../../../../../../net/nas', 'darwin')?.code, 'AUTOMOUNT_PATH', 'a home path climbed out to /net');
+  // Linux and Windows read these as before: a folder of this machine, or (on Windows) no drive.
+  assert.deepEqual(codes('linux', ['/net/nas', '/Network/x', '/home/me']), { '/net/nas': null, '/Network/x': null, '/home/me': null });
+  assert.deepEqual(codes('win32', ['/net/nas', 'C:\\net\\nas']), { '/net/nas': 'PATH_BLOCKED', 'C:\\net\\nas': null });
+});
+
+test('with macOS stood in for process.platform, the receiver refuses a peer’s /net path before anything touches it — no realpath, lstat or stat — answers 400 AUTOMOUNT_PATH in words of its own, and no scan starts (POL item 1)', async () => {
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  scansStarted.length = 0;
+  const touched: string[] = [];
+  const writable = fs as { lstatSync: typeof fs.lstatSync; statSync: typeof fs.statSync };
+  const realpath = fs.realpathSync.native;
+  const lstat = fs.lstatSync;
+  const stat = fs.statSync;
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  const answers: unknown[] = [];
+  fs.realpathSync.native = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`realpath ${String(p)}`); return (realpath as (...a: unknown[]) => string)(p, ...rest); }) as typeof realpath;
+  writable.lstatSync = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`lstat ${String(p)}`); return (lstat as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof lstat;
+  writable.statSync = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`stat ${String(p)}`); return (stat as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof stat;
+  Object.defineProperty(process, 'platform', { ...real, value: 'darwin' });
+  try {
+    for (const p of ['/net/tm-no-such-host/share', '/Network/Servers/tm-no-such-host']) {
+      const r = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } });
+      answers.push([p, r.status, r.body?.code, /^That machine/.test(String(r.body?.error))]);
+    }
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+    fs.realpathSync.native = realpath;
+    writable.lstatSync = lstat;
+    writable.statSync = stat;
+  }
+  assert.deepEqual(answers, [
+    ['/net/tm-no-such-host/share', 400, 'AUTOMOUNT_PATH', true],
+    ['/Network/Servers/tm-no-such-host', 400, 'AUTOMOUNT_PATH', true],
+  ]);
+  assert.deepEqual(touched.filter((t) => /tm-no-such-host|\/net\b|\/Network\b/.test(t)), [], 'nothing asked the file system about the share');
+  assert.deepEqual(scansStarted, [], 'no scan was started');
+});
+
 test('every sentence a peer reads about this machine’s refusal of its folder speaks of “that machine”, as the asker shows it as is — never “this machine”, which there names the asker (SEC-3 review, wording)', async () => {
   const cfg = defaultConfig();
   const offer = beginPairing();
@@ -377,6 +434,7 @@ test('every sentence a peer reads about this machine’s refusal of its folder s
     'not absolute': String(peerScanRootRefusal('Documents', 'win32')?.message),
     'a share, on Windows': String(peerScanRootRefusal('\\\\srv\\share', 'win32')?.message),
     'no drive, on Windows': String(peerScanRootRefusal('/Users/x', 'win32')?.message),
+    'an automount folder, on a Mac': String(peerScanRootRefusal('/net/nas', 'darwin')?.message),
   };
   for (const p of [process.platform === 'win32' ? 'C:\\Windows\\System32' : '/dev', 'Documents']) {
     sentences[`the receiver, ${p}`] = String((await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } })).body?.error);

@@ -3,7 +3,7 @@ import http from 'http';
 import os from 'os';
 import path from 'path';
 import { readJsonFile, writeJsonFile } from '../storage';
-import { PathRejectedError, sanitizePath } from '../../utils/pathSanitizer';
+import { PathRejectedError, foldName, sanitizePath } from '../../utils/pathSanitizer';
 import { AppError } from '../../middleware/errorHandler';
 import { FleetSummary, serialiseSummary } from './fleetSummary';
 
@@ -334,8 +334,26 @@ const PEER_PATH_REFUSALS: Readonly<Record<string, string>> = Object.freeze({
 const PEER_ABSOLUTE_ONLY = 'That machine scans only an absolute path on it, or ~ for its home folder';
 const PEER_DRIVE_ONLY = 'That machine scans only a folder on one of its own drives, such as C:\\Users: a network share, a device or a path with no drive is not the asker’s to name';
 
+const PEER_AUTOMOUNT = 'That machine does not scan /net, /Network or /home for another machine: on a Mac those folders mount network shares as soon as anything looks inside them, and a share that does not answer would hold the scan';
+
 /** A Windows path rooted on one of the machine's drives: `C:\…`, also behind `\\?\` or `\\.\`. */
 const WIN32_DRIVE_ROOTED = /^(?:[\\/]{2}[?.][\\/])?[a-z]:[\\/]/i;
+
+/**
+ * macOS's automount folders (autofs, /etc/auto_master): /net (a folder for every host on the network),
+ * /Network (its Servers map) and /home (auto_home). Looking a name up below one mounts a network share,
+ * and a share that does not answer holds that look — the sanitizer's realpath is synchronous, so the
+ * server with it — and then the scan, for as long as it does not answer (POL item 1). A person may still
+ * scan one from the TreeMap window; another machine may not name one. Every scan's walk stays out of
+ * them for the same reason (mountBoundaries' DARWIN_SKIP). Matched folded, as the boot volume compares.
+ */
+const DARWIN_AUTOMOUNT_ROOTS = new Set(['net', 'network', 'home']);
+
+/** Whether the absolute POSIX path `p` (`..` resolved, no file system call) is at or under one of macOS's automount folders. */
+function underDarwinAutomount(p: string): boolean {
+  const first = path.posix.resolve(p).split('/')[1] ?? '';
+  return DARWIN_AUTOMOUNT_ROOTS.has(foldName(first, 'darwin'));
+}
 
 /**
  * The refusal the spelling alone of a folder another machine asks for earns, before anything asks the
@@ -347,18 +365,29 @@ const WIN32_DRIVE_ROOTED = /^(?:[\\/]{2}[?.][\\/])?[a-z]:[\\/]/i;
  * an SMB session to any server it named — signing in there with the user's NTLM credentials — the
  * moment anything looked at the path (the SEC-3 brief, item 6b). A drive a person mapped to a share is
  * a drive letter, and still scans; any other root (a device name, the current drive's `\`) is not the
- * peer's to name either. Pure — `platform` picks the rules (process.platform's when none is named), so
- * Windows' are tested on every OS; nothing here is resolved.
+ * peer's to name either.
+ *
+ * And on a Mac, not at or under an automount folder (`DARWIN_AUTOMOUNT_ROOTS`), whichever way the path
+ * climbs there — `~/../..` included, `~` read as this machine's home folder.
+ *
+ * Pure — `platform` picks the rules (process.platform's when none is named), so Windows' and macOS's are
+ * tested on every OS; nothing here asks the file system.
  */
 export function peerScanRootRefusal(given: string, platform: NodeJS.Platform = process.platform): PathRejectedError | null {
   const typed = given.replace(/^\s+/, '');
-  if (typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\')) return null;
+  const darwin = platform === 'darwin';
+  if (typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\')) {
+    return darwin && underDarwinAutomount(path.posix.join(os.homedir(), typed.slice(1))) ? new PathRejectedError(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH') : null;
+  }
   const windows = platform === 'win32';
   if (!(windows ? path.win32 : path.posix).isAbsolute(typed)) {
     return new PathRejectedError(PEER_ABSOLUTE_ONLY, 'PATH_INVALID');
   }
   if (windows && !WIN32_DRIVE_ROOTED.test(typed)) {
     return new PathRejectedError(PEER_DRIVE_ONLY, 'PATH_BLOCKED');
+  }
+  if (darwin && underDarwinAutomount(typed)) {
+    return new PathRejectedError(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH');
   }
   return null;
 }
