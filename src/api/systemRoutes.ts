@@ -174,6 +174,13 @@ systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request,
 const FS_LIST_MAX_DIRS = 500;
 
 /**
+ * Folder names in the picker's order, letter case aside — made once. localeCompare given options makes
+ * a collator on every call, and the sort runs over every subfolder on the event loop: 50,000 of them
+ * held the server for about 1.5 s, against about 80 ms with one collator (POL item 2 review, F1.3).
+ */
+const FOLDER_NAME_ORDER = new Intl.Collator(undefined, { sensitivity: 'base' });
+
+/**
  * GET /api/fs/list?path=<dir>
  * Subdirectories of a folder — powers the Browse picker in the UI.
  * Defaults to the home directory when no path is given.
@@ -200,7 +207,7 @@ systemRouter.get('/fs/list', guardQueryPath('path'), async (req: Request, res: R
       path: path.join(target, e.name),
       isHidden: e.name.startsWith('.'),
     }))
-    .sort((a, b) => Number(a.isHidden) - Number(b.isHidden) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    .sort((a, b) => Number(a.isHidden) - Number(b.isHidden) || FOLDER_NAME_ORDER.compare(a.name, b.name));
 
   const parent = path.dirname(target);
   res.json({

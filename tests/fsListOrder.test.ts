@@ -74,6 +74,40 @@ test('a folder with more than 500 subfolders sends the first 500 in the order th
   assert.deepEqual(r.body.dirs[0], { name: 'd000', path: path.join(dir, 'd000'), isHidden: false }, 'each folder as before');
 });
 
+test('a listing orders its folders with one collator made once, never one per comparison — localeCompare with options makes a collator on every call, and over 50,000 subfolders that held the server for a second and a half (POL item 2 review, F1.3)', async () => {
+  // The sort runs on every subfolder, on the event loop, before the cut. Counted, not timed: during one
+  // listing nothing calls String.prototype.localeCompare and no Intl.Collator is made.
+  const dir = fs.realpathSync(fileTempDir('treemap-fslist-collator-'));
+  const names = Array.from({ length: 520 }, (_, i) => `${i % 2 ? 'b' : 'B'}${pad(519 - i)}`);
+  for (const name of [...names, '.z', '.A']) fs.mkdirSync(path.join(dir, name));
+  const counts = { localeCompare: 0, collatorsMade: 0 };
+  const realLocaleCompare = String.prototype.localeCompare;
+  const RealCollator = Intl.Collator;
+  const intl = Intl as unknown as { Collator: typeof Intl.Collator };
+  let r: { status: number; body: any };
+  String.prototype.localeCompare = function (this: string, ...args: unknown[]) {
+    counts.localeCompare++;
+    return (realLocaleCompare as (...a: unknown[]) => number).apply(this, args);
+  } as typeof String.prototype.localeCompare;
+  intl.Collator = new Proxy(RealCollator, {
+    construct(target, args) { counts.collatorsMade++; return Reflect.construct(target, args); },
+    apply(target, self, args) { counts.collatorsMade++; return Reflect.apply(target, self, args); },
+  });
+  try {
+    r = await listing(dir);
+  } finally {
+    String.prototype.localeCompare = realLocaleCompare;
+    intl.Collator = RealCollator;
+  }
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(counts, { localeCompare: 0, collatorsMade: 0 });
+  // The order is the one localeCompare gave, letter case aside: by name, ordinary folders first.
+  const expected = [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  assert.deepEqual({ first: r.body.dirs.slice(0, 3).map((d: { name: string }) => d.name), total: r.body.total },
+    { first: expected.slice(0, 3), total: 522 });
+  assert.deepEqual(r.body.dirs.map((d: { name: string }) => d.name), expected.slice(0, 500));
+});
+
 test('a folder with 500 or fewer subfolders sends every one, dot-folders last, with total equal to the count sent (POL item 2)', async () => {
   const dir = fs.realpathSync(fileTempDir('treemap-fslist-few-'));
   for (const name of ['b', '.cache', 'A', '.agents', 'c']) fs.mkdirSync(path.join(dir, name));
