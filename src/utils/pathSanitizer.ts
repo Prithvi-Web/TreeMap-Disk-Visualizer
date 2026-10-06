@@ -185,7 +185,22 @@ export function judgeSpelling(p: string, platform?: NodeJS.Platform, ownHosts?: 
 /** Node's realpath.native can hand back a Windows extended-length prefix; the
  *  blocklist is written in ordinary drive-letter form. */
 function strip(p: string): string {
-  return process.platform === 'win32' && p.startsWith('\\\\?\\') ? p.slice(4) : p;
+  return fromExtendedLengthPath(p);
+}
+
+/**
+ * `p` without a Windows extended-length prefix, read as Windows reads it: `\\?\C:\x` is `C:\x`, and
+ * `\\?\UNC\server\share\x` is `\\server\share\x`. Taking four characters off every such path made the
+ * second `UNC\server\share\x`, a relative name: a mapped drive or subst into this machine's
+ * `\\localhost\C$` came back from realpath as a string neither the admin-share rule nor the blocklist
+ * reads as C:\ (the SEC-3 brief, item 5). Any other name behind the prefix (`\\?\Volume{…}\`) keeps
+ * it, a device spelling and so a second name (`aliasNamespaceOf`). Pure; `platform` picks the rules
+ * (process.platform's when none is named), so Windows' are tested on every OS.
+ */
+export function fromExtendedLengthPath(p: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32' || !p.startsWith('\\\\?\\')) return p;
+  if (/^[\\/]{2}\?[\\/]unc[\\/]/i.test(p)) return `\\\\${p.slice(8)}`;
+  return /^[\\/]{2}\?[\\/][a-z]:/i.test(p) ? p.slice(4) : p;
 }
 
 /**

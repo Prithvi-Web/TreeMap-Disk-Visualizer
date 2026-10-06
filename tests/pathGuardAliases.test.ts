@@ -17,7 +17,7 @@ import { createApp } from '../src/server';
 import { ENDPOINTS } from '../src/api/openapi';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
-import { aliasNamespaceOf, canonicalDirOf, isAppDataPath, judgeSpelling, liesInside, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
+import { aliasNamespaceOf, canonicalDirOf, fromExtendedLengthPath, isAppDataPath, judgeSpelling, liesInside, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
 import { appDataDir } from '../src/services/storage';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cleaner';
@@ -388,6 +388,23 @@ test('Windows: print$ is this machine’s admin share too — its printer driver
     ...anotherMachine.filter((p) => aliasNamespaceOf(p, 'win32', own) !== null).map((p) => `${p}: refused as this machine's`),
   ];
   assert.deepEqual(wrong, []);
+});
+
+test('Windows: a path realpath hands back behind \\\\?\\ is read as Windows reads it — \\\\?\\UNC\\srv\\share\\x is \\\\srv\\share\\x, so this machine’s admin share there is still seen, and \\\\?\\C:\\x is C:\\x; any other name behind the prefix keeps it, and stays a second name (the SEC-3 brief, item 5)', () => {
+  // Taking four characters off every such path turned \\?\UNC\localhost\C$\Windows into
+  // UNC\localhost\C$\Windows, a relative name that neither the admin-share rule nor the blocklist
+  // reads as C:\Windows (and \\?\Volume{…}\x into Volume{…}\x, past the device-namespace rule).
+  const given = ['\\\\?\\UNC\\srv\\share\\x', '\\\\?\\unc\\localhost\\C$\\Windows', '\\\\?\\C:\\Users\\me', '\\\\?\\c:\\', '\\\\?\\Volume{0a1b}\\x', 'C:\\x', '\\\\srv\\share'];
+  assert.deepEqual(given.map((p) => fromExtendedLengthPath(p, 'win32')), [
+    '\\\\srv\\share\\x', '\\\\localhost\\C$\\Windows', 'C:\\Users\\me', 'c:\\', '\\\\?\\Volume{0a1b}\\x', 'C:\\x', '\\\\srv\\share',
+  ]);
+  const own: string[] = [];
+  assert.deepEqual(
+    ['\\\\?\\UNC\\localhost\\C$\\Windows', '\\\\?\\Volume{0a1b}\\x'].map((p) => aliasNamespaceOf(fromExtendedLengthPath(p, 'win32'), 'win32', own) !== null),
+    [true, true],
+    'this machine’s admin share and a volume by its GUID, as realpath may hand them back, are second names',
+  );
+  assert.equal(fromExtendedLengthPath('\\\\?\\UNC\\srv\\share\\x', 'darwin'), '\\\\?\\UNC\\srv\\share\\x', 'elsewhere it is a name like any other');
 });
 
 /* ─────────────── The sanitizer ─────────────── */
