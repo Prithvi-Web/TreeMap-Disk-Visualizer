@@ -121,12 +121,14 @@ export function setDestManifestWriteForTests(hook: (destRoot: string) => Promise
  * is touched while it is held (FG3g review F1.2): the record on the destination is written after.
  *
  * The lock is this process's own (FG3h B). The MCP server is a second process that can offload into
- * the same app data, and nothing coordinates the two: each save replaces the file whole (tmp and
- * rename, through one fixed tmp name), so two saves in the same instant — one per process — keep only
- * one of them, and the other's entries are missing from the record (their copies stand at the
- * destination, listed in the drive's own record; restoredAt lost is a restore offered again, which
- * refuses as occupied). Each read-modify-write here is a read and a write of one small file, so the
- * window is that long; AGENTS.md says so.
+ * the same app data, and nothing coordinates the two read-modify-writes. Each save goes through a
+ * temp file named for its process and a rename (`writeJsonFile`, FG3g review F2.5), so the file is
+ * always one whole document — never a torn one, which a reader takes for corrupt and starts again
+ * from empty. Two saves in the same instant, one per process, keep only the later: the other's
+ * entries are missing from the record (their copies stand at the destination, where the drive's own
+ * record lists them unless its two writes crossed the same way; restoredAt lost is a restore offered
+ * again, which refuses as occupied). Each read-modify-write here is a read and a write of one small
+ * file, so the window is that long; AGENTS.md says so.
  */
 const manifestLock = new AsyncMutex();
 

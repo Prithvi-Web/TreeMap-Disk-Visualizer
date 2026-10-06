@@ -39,6 +39,20 @@ export function appDataDir(): string {
 const writeQueues = new Map<string, Promise<void>>();
 
 /**
+ * The temporary file a write of `file` goes through, named for this process (FG3g review F2.5). Two
+ * TreeMap processes share one app-data folder — the app and the MCP server beside it — and with one
+ * fixed name a save in one truncated and wrote into the very temp file the other was half-way through:
+ * the file came out torn, a reader took it for corrupt and started from empty, and the next save of
+ * offload-manifest.json kept only its own entries. Now each save writes a whole file of its own and
+ * the rename puts one whole document in place; when two processes save at once the later rename
+ * wins. Within a process, writes of one name are already one at a time (`writeQueues`), so the
+ * process id alone keeps them apart. One a crash left stays until a write under that id replaces it.
+ */
+function tmpPathFor(file: string): string {
+  return `${file}.${process.pid}.tmp`;
+}
+
+/**
  * Read a JSON file from the app-data dir.
  *
  * `fallback` is for the two DECIDED facts: the file is not there yet
@@ -197,9 +211,9 @@ export function writeJsonFile(name: string, data: unknown): Promise<void> {
       const dir = appDataDir();
       await fsp.mkdir(dir, { recursive: true });
       const file = path.join(dir, name);
-      const tmp = file + '.tmp';
-      await fsp.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
-      await replaceWith(tmp, file);
+      const tmpPath = tmpPathFor(file);
+      await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+      await replaceWith(tmpPath, file);
     });
   writeQueues.set(name, next);
   return next;
@@ -246,7 +260,7 @@ export function writeFileChunked(
       const file = path.join(dir, name);
       // Named for tests/openHandleGuard's own-storage rule: the one path this
       // may remove is the tmp file it created a moment ago in app-data.
-      const tmpPath = file + '.tmp';
+      const tmpPath = tmpPathFor(file);
       const handle = await fsp.open(tmpPath, 'w');
       let complete = false;
       let failed = false;

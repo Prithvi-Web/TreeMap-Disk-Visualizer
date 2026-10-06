@@ -338,7 +338,9 @@ test('a tree that never stops changing keeps the previous cache, and says why', 
     console.warn = warn;
   }
   assert.equal(await fsp.readFile(file, 'utf8'), 'the previous cache');
-  assert.equal(fs.existsSync(`${file}.tmp`), false, 'no half-written file is left');
+  // Its temp file is named for the process that writes it (FG3g review F2.5): any beside it counts.
+  const temps = fs.readdirSync(path.dirname(file)).filter((n) => n.startsWith(`${path.basename(file)}.`) && n.endsWith('.tmp'));
+  assert.deepEqual(temps, [], 'no half-written file is left');
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /changed while it was being written, 3 times/);
 });

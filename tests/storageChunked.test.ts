@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor, withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('treemap-storageChunked-data-');
 
 /**
@@ -201,5 +203,46 @@ test('a rename that fails removes the tmp file and rejects, for both writers', a
     await assert.rejects(writeJsonFile('whole.json', { a: 1 }));
     assert.deepEqual(leftovers(dir), [], 'no tmp file stays');
     assert.ok(fs.existsSync(path.join(dir, 'chunked.json', 'keep')) && fs.existsSync(path.join(dir, 'whole.json', 'keep')), 'what was there is untouched');
+  });
+});
+
+/* ─────────────── FG3g review F2.5: two processes saving one file at once ─────────────── */
+
+const tsxCli = path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+const WRITER = path.join(__dirname, 'fixtures', 'storageWriterChild.ts');
+
+/**
+ * The app and the MCP server are two processes saving into one app-data folder, and nothing
+ * coordinates them. Every save went through one fixed temp name, so a save in one process truncated
+ * and wrote into the very temp file the other was half-way through: the file came out torn, a reader
+ * took it for corrupt and started from empty, and the next save of offload-manifest.json kept only
+ * its own entries. Here a real second process is held half-way through its save while this one saves.
+ */
+test('a save by another TreeMap process at the same moment never tears the file: each writes a temp file of its own, and the file is one whole document', async () => {
+  await withDataDir(async (dir) => {
+    const { writeJsonFile } = await import('../src/services/storage');
+    const first = `{"who":"the other process","pad":"${'c'.repeat(2000)}`;
+    const rest = `${'c'.repeat(2000)}"}`;
+    const child = spawn(process.execPath, [tsxCli, WRITER, dir, 'shared.json', first, rest], {
+      env: { ...process.env, TREEMAP_DATA_DIR: dir },
+      stdio: ['pipe', 'pipe', 'inherit'],
+    });
+    let out = '';
+    child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
+    const exited = new Promise<void>((resolve) => { child.once('exit', () => resolve()); });
+    try {
+      await waitFor(() => out.includes('HALF') || child.exitCode !== null, 'the other process half-way through its save');
+      assert.match(out, /HALF/, out);
+      await writeJsonFile('shared.json', { who: 'this process', pad: 'p'.repeat(6000) });
+      assert.equal((JSON.parse(fs.readFileSync(path.join(dir, 'shared.json'), 'utf8')) as { who: string }).who, 'this process', 'this process\'s save is in place, whole');
+      child.stdin.write('GO\n');
+      await withinHangGuard(exited, 'the other process finishing its save');
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+    }
+    assert.match(out, /DONE/, `the other process's save finished: ${out}`);
+    const text = fs.readFileSync(path.join(dir, 'shared.json'), 'utf8');
+    assert.deepEqual(JSON.parse(text), { who: 'the other process', pad: 'c'.repeat(4000) }, 'the file is the later save\'s whole document, never a mix of the two');
+    assert.deepEqual(leftovers(dir), [], 'and neither temp file stays');
   });
 });

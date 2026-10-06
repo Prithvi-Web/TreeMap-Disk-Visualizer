@@ -445,10 +445,13 @@ OpenAPI 3 spec).
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
      drive's own copy of it is written after, and a drive that does not
      answer for 60 seconds is left to finish on its own while the job says
-     so. One process writes that record at a time; the MCP server is a
-     second process with no share in that lock, so an offload or restore
-     finishing in the same instant in both could lose one record — the
-     copies then stand at the destination, listed in the drive's own record.
+     so. Within a process one save of that record runs at a time; the MCP
+     server is a second process with no share in that lock. Each save goes
+     through a temp file of its own process and a rename, so the record is
+     always one whole document, but an offload or restore finishing in the
+     same instant in both keeps only the later save — the other's copies
+     then stand at the destination, where the drive's own record lists them
+     unless its two writes crossed the same way.
    - `POST /api/cart/commit` with `{ paths }` is the same delete **as one
      undoable run**: every item is copied into the Time Capsule and verified
      before anything is trashed, and the response carries a `runId` that
