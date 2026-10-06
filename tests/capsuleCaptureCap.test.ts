@@ -84,20 +84,54 @@ function folder(label: string): { dir: string; inner: string } {
   return { dir, inner };
 }
 
+/** What a held call is: its kind (lstat, readdir, readlink, stat) and the path it is on. */
+interface HeldCall { what: string; abs: string }
+
+/**
+ * Holds each call on the item that `matches` picks — by its kind, its path, and how many calls of
+ * that kind on that path came before it (0 for the first) — so it does not answer until `answer` is
+ * called; every other call goes to the disk. `asked` lists the paths held, in order, and `calls`
+ * what each was.
+ */
+function holdCalls(matches: (what: string, abs: string, nth: number) => boolean): { asked: string[]; calls: HeldCall[]; answer: () => void; remove: () => void } {
+  const asked: string[] = [];
+  const calls: HeldCall[] = [];
+  const seen = new Map<string, number>();
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => { answer = resolve; });
+  const remove = setSourceCallForTests((what, abs) => {
+    const key = `${what}\0${abs}`;
+    const nth = seen.get(key) ?? 0;
+    seen.set(key, nth + 1);
+    if (!matches(what, abs, nth)) return null;
+    asked.push(abs);
+    calls.push({ what, abs });
+    return answered.then(() => { throw Object.assign(new Error('the volume answered at last (a test)'), { code: 'EIO' }); });
+  });
+  return { asked, calls, answer, remove };
+}
+
 /**
  * Holds every call on the items named in `paths` (each a call a walk or capture makes): it does not
  * answer until `answer` is called. `asked` lists the paths asked about, in order.
  */
-function holdCallsOn(paths: string[]): { asked: string[]; answer: () => void; remove: () => void } {
-  const asked: string[] = [];
-  let answer!: () => void;
-  const answered = new Promise<void>((resolve) => { answer = resolve; });
-  const remove = setSourceCallForTests((_what, abs) => {
-    if (!paths.includes(abs)) return null;
-    asked.push(abs);
-    return answered.then(() => { throw Object.assign(new Error('the volume answered at last (a test)'), { code: 'EIO' }); });
-  });
-  return { asked, answer, remove };
+function holdCallsOn(paths: string[]): { asked: string[]; calls: HeldCall[]; answer: () => void; remove: () => void } {
+  return holdCalls((_what, abs) => paths.includes(abs));
+}
+
+/**
+ * Drives `committing` to its end, firing the stall limit of each held call as it is asked — every
+ * one, so a call asked a second time is seen rather than left to hang the test.
+ */
+async function fireEachHeldCall<T>(committing: Promise<T>, hold: { asked: string[] }): Promise<T> {
+  let done = false;
+  committing.then(() => { done = true; }, () => { done = true; });
+  for (let fired = 0; ; fired++) {
+    await waitFor(() => hold.asked.length > fired || done, 'a held call being asked, or the commit finishing');
+    if (hold.asked.length <= fired) break;
+    newestArmed()?.fire(); // the limit passes with no answer
+  }
+  return withinHangGuard(committing, 'the commit finishing once each limit passed');
 }
 
 /** Records every call on the items named in `paths`, answering each as the disk does. */
@@ -155,6 +189,54 @@ test('a capture whose walk of an item gets no answer is stopped at the limit: th
   assert.ok(fs.existsSync(inner), 'the item whose walk got no answer is still in place, whole');
   assert.deepEqual(result.trashed, [normal], 'and the item after it was protected and deleted');
   assert.deepEqual((await getCapsuleIndex()).entries.filter((e) => e.runId === result.runId).map((e) => e.originalPath), [normal]);
+});
+
+test('a folder inside an item that gets no answer is asked once: one call is left waiting, not two, and the rest of the run goes on (FG3g review F2.2)', async () => {
+  const first = file('quiet-sub-first', 'first.txt', 'an ordinary file before the folder');
+  const { dir } = folder('quiet-sub');
+  const sub = path.join(dir, 'sub');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'deep.txt'), 'a file in a folder that stops answering');
+  const last = file('quiet-sub-last', 'last.txt', 'an ordinary file after the folder');
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier call left waiting returning');
+  const hold = holdCallsOn([sub]);
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await withOpenFileCheck('clear', () => fireEachHeldCall(commitCart([first, dir, last]), hold));
+    assert.deepEqual(hold.calls.map((c) => c.what), ['lstat'], 'the folder that did not answer its look was not asked for its listing as well');
+    assert.equal(abandonedCallsUnsettled(), 1, 'one call left waiting, on the one quiet folder');
+  } finally {
+    hold.answer();
+    hold.remove();
+  }
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'the call left waiting returning');
+  const row = result.skipped.find((s) => s.path === dir);
+  assert.equal(row?.code, 'CAPSULE_UNREADABLE', JSON.stringify(result.skipped));
+  assert.match(row?.reason ?? '', /made no progress for 60 seconds/, row?.reason);
+  assert.ok(fs.existsSync(path.join(sub, 'deep.txt')), 'the item holding the quiet folder is in place, whole');
+  assert.deepEqual([...result.trashed].sort(), [first, last].sort(), 'and the items before and after it were protected and deleted');
+});
+
+test('a folder inside an item whose own look fails at once - an answer, not a silence - is still copied whole, only its times unrecorded', async () => {
+  const { dir } = folder('failed-look');
+  const sub = path.join(dir, 'sub');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'deep.txt'), 'a file in a folder whose look fails');
+  const remove = setSourceCallForTests((what, abs) => (what === 'lstat' && abs === sub
+    ? Promise.reject(Object.assign(new Error('an i/o error (a test)'), { code: 'EIO' }))
+    : null));
+  let outcome: Awaited<ReturnType<typeof protectItems>>['outcomes'][number];
+  try {
+    [outcome] = (await protectItems([{ path: dir }])).outcomes;
+  } finally {
+    remove();
+  }
+  assert.equal(outcome.protected, true, outcome.detail);
+  const manifest = JSON.parse(fs.readFileSync(path.join(capsuleRoot(), outcome.entryId as string, 'manifest.json'), 'utf8')) as { members: { rel: string; kind: string; mtimeMs?: number }[] };
+  const ofSub = manifest.members.find((m) => m.rel === 'sub');
+  assert.equal(ofSub?.kind, 'dir');
+  assert.equal(ofSub?.mtimeMs, undefined, 'its times, which could not be read, are not recorded');
+  assert.ok(manifest.members.some((m) => m.rel === path.join('sub', 'deep.txt')), 'and what it holds was copied');
 });
 
 test('a single file whose look gets no answer is left undeleted at the limit, saying so', async () => {

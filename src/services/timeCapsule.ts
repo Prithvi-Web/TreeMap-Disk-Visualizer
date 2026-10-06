@@ -800,7 +800,14 @@ async function walkItem(
     // the one a person waits on with the confirmation dialog not yet open,
     // so it does not pay for something only the capture needs.
     if (opts.withDirTimes && dir.rel) {
-      const dirStat = await onItem('lstat', dir.abs, () => fsp.lstat(dir.abs)).catch(() => null);
+      // A look that got no answer within the limit fails the walk (FG3g review F2.2): read as "no
+      // times", it went on to ask the same folder for its listing — a second call left waiting on one
+      // quiet folder, which alone reached the cap and stopped the rest of the run. Any other failure
+      // leaves the folder's times unrecorded, as before; its listing, asked next, says the rest.
+      const dirStat = await onItem('lstat', dir.abs, () => fsp.lstat(dir.abs)).catch((err: unknown) => {
+        if ((err as NodeJS.ErrnoException | null)?.code === 'ETIMEDOUT') throw err;
+        return null;
+      });
       if (dirStat) {
         const entry = members[members.length - 1];
         entry.mtimeMs = dirStat.mtimeMs;
