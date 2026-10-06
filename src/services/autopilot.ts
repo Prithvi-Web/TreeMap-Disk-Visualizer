@@ -162,7 +162,7 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
   // reasonable target. A standing instruction to delete things unattended is
   // not: pointed at the filesystem root it would eventually consider every
   // file on the machine. Narrower roots stay the user's choice.
-  if (nodePath.parse(policyPath).root === policyPath) {
+  if (isWholeDrive(policyPath)) {
     throw new AppError(400, 'POLICY_PATH_TOO_BROAD',
       'Pick a folder rather than the whole drive — an automatic cleanup pointed at the root of the disk would eventually consider every file on it');
   }
@@ -236,7 +236,31 @@ function refuseLinkFolder(policyPath: string): void {
   throw new AppError(400, 'POLICY_PATH_IS_LINK',
     `"${policyPath}" is ${leadsTo === null ? 'a link whose target could not be read' : `a link to "${leadsTo}"`}. ` +
     'An Autopilot policy works only in a folder given by its own path, which cannot be pointed somewhere else after you approve the policy. ' +
-    (leadsTo === null ? 'Choose the folder itself.' : `Choose "${leadsTo}" itself.`));
+    linkFolderAdvice(leadsTo));
+}
+
+/** A policy's folder that is a whole drive (`/`, `C:\`): never saved (POLICY_PATH_TOO_BROAD). */
+function isWholeDrive(p: string): boolean {
+  return nodePath.parse(p).root === p;
+}
+
+/**
+ * What a link policy's refusal tells the person to choose: where the link leads, only when a policy can
+ * be saved there (POL item 5 review, F1.5) — not a whole drive (~/all -> / advised "/", refused as too
+ * broad), nor another link (a loop's readlink names the next link of it, refused as this one is). A
+ * target the sanitizer refuses needs no test here: the sanitizer judges a link by where it leads, so
+ * such a link never reaches this.
+ */
+function linkFolderAdvice(leadsTo: string | null): string {
+  if (leadsTo === null) return 'Choose the folder itself.';
+  if (isWholeDrive(leadsTo)) return 'That is a whole drive, which no policy may work in: choose a folder on it instead.';
+  let isLink = false;
+  try {
+    isLink = fs.lstatSync(leadsTo, { throwIfNoEntry: false })?.isSymbolicLink() === true;
+  } catch {
+    // Unreadable: it may still be the folder the person means, as with any folder a policy names.
+  }
+  return isLink ? 'Choose the folder itself.' : `Choose "${leadsTo}" itself.`;
 }
 
 /**

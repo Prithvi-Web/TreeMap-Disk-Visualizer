@@ -508,6 +508,54 @@ test('a policy cannot be saved with a folder that is a link: 400 POLICY_PATH_IS_
   }
 });
 
+test('the folder a link policy’s refusal tells the person to choose is one a policy can be saved with — never a whole drive, nor another link — and where there is none it names none (POL item 5 review, F1.5)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
+  // "~/all" -> "/" was refused as "… Choose "/" itself.", and choosing "/" is POLICY_PATH_TOO_BROAD. A
+  // loop (a -> b -> a) named "b", itself a link, refused the same way again.
+  const dir = fs.realpathSync(await mkTmp());
+  try {
+    const real = path.join(dir, 'real');
+    fs.mkdirSync(real);
+    const links: Record<string, string> = {
+      'to-real': real,
+      'to-nothing': path.join(dir, 'not-made'),
+      'to-root': '/',
+      'loop-a': path.join(dir, 'loop-b'),
+      'loop-b': path.join(dir, 'loop-a'),
+    };
+    for (const [name, target] of Object.entries(links)) fs.symlinkSync(target, path.join(dir, name), 'dir');
+    const match = { kind: 'custom', minBytes: 1 };
+    const verdicts: Record<string, unknown> = {};
+    for (const name of ['to-real', 'to-nothing', 'to-root', 'loop-a']) {
+      const said = await savePolicies([{ name: 'Via link', path: path.join(dir, name), match }])
+        .then(() => 'saved', (err: unknown) => (err instanceof AppError ? `${err.code}: ${err.message}` : String(err)));
+      const advised = /Choose "([^"]+)" itself\.$/.exec(said)?.[1] ?? null;
+      // Following the advice saves: it is the folder the person can choose.
+      const followed = advised === null ? null : await savePolicies([{ name: 'Chosen', path: advised, match }])
+        .then(() => 'saved', (err: unknown) => (err instanceof AppError ? err.code : String(err)));
+      verdicts[name] = {
+        code: said.split(':')[0],
+        advised: advised === null ? null : path.relative(dir, advised) || advised,
+        followed,
+        wholeDrive: /a whole drive/.test(said),
+      };
+    }
+    assert.deepEqual(verdicts, {
+      'to-real': { code: 'POLICY_PATH_IS_LINK', advised: 'real', followed: 'saved', wholeDrive: false },
+      'to-nothing': { code: 'POLICY_PATH_IS_LINK', advised: 'not-made', followed: 'saved', wholeDrive: false },
+      'to-root': { code: 'POLICY_PATH_IS_LINK', advised: null, followed: null, wholeDrive: true },
+      'loop-a': { code: 'POLICY_PATH_IS_LINK', advised: null, followed: null, wholeDrive: false },
+    });
+    // Each still says where the link leads.
+    const sentence = (name: string) => savePolicies([{ name: 'Via link', path: path.join(dir, name), match }])
+      .then(() => 'saved', (err: unknown) => String((err as Error).message));
+    assert.match(await sentence('to-root'), /is a link to "\/"\. .*a whole drive.*choose a folder on it instead\.$/);
+    assert.match(await sentence('loop-a'), new RegExp(`is a link to "${path.join(dir, 'loop-b').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\. .*Choose the folder itself\\.$`));
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('approving clears the cooldown the dry run started', async () => {
   const [policy] = await savePolicies([{
     id: 'approve-me', name: 'p', path: os.tmpdir(),
