@@ -27727,8 +27727,14 @@ function renderBudgetWidget() {
   // are the honesty contract, the gauge is only the shape of them.
   list.querySelectorAll('canvas.budget-gauge').forEach((cv, i) => {
     const b = items[i];
+    const share = b.maxBytes > 0 ? b.actualBytes / b.maxBytes : 1;
+    // The ring is full at the budget; the number is not. The kit hands its
+    // label the ring's eased fill (0…1), so a folder at 136% read "100%"
+    // beside "over by 3.6 MB" (B25): scaled here, it counts up to 136%.
+    const past = Math.max(1, share);
     budgetGauges.push(FxCharts.gauge(cv, {
-      value: b.maxBytes > 0 ? b.actualBytes / b.maxBytes : 1,
+      value: share,
+      formatValue: (v) => Math.round(v * past * 100) + '%',
       size: 56, notches: 28, danger: b.overBy > 0,
       // The accent ramp per notch; danger overrides it whole — an over-budget
       // gauge stays solid red, never a prettier gradient of the same fact.
@@ -27800,7 +27806,16 @@ async function commitBudget() {
     const merged = [...cur.filter(b => b.path !== target.path), { path: target.path, maxBytes }];
     await saveBudgetList(merged);
     closeModal('budgetModal');
-    toast(`Budget set — ${target.name || target.path} ≤ ${formatBytes(maxBytes)}`);
+    // Said as a fact about the folder, the size the dialog showed against
+    // the budget: "2 ≤ 10.0 MB" read as "within it" for a folder already at
+    // 13.6 MB (B25). With no size known, nothing is claimed about it.
+    const name = target.name || target.path;
+    const size = typeof target.size === 'number' ? target.size : (nodeFor(target.path)?.size ?? null);
+    toast(size === null
+      ? `Budget set — ${name} may hold up to ${formatBytes(maxBytes)}`
+      : size > maxBytes
+        ? `Budget set — ${name} is already over it: ${formatBytes(size)} of ${formatBytes(maxBytes)}`
+        : `Budget set — ${name} is ${formatBytes(size)} of its ${formatBytes(maxBytes)}`);
     await loadBudgets();
   } catch (e) { toast('Could not save budget: ' + e.message, 'error'); }
 }

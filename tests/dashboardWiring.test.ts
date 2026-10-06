@@ -518,3 +518,59 @@ test('the System card\'s disk figures are read again whenever a scan lands (B18)
   assert.equal(els.sysFree.textContent, '195 B', 'a failed read keeps the figures it had');
   assert.equal((state.system as { homeDir: string }).homeDir, '/Users/x', 'and the app\'s copy');
 });
+
+/* ══════════════ B25 — a folder already over its budget is said to be over it ══════════════ */
+
+test('a budget gauge over its budget reads its real share — "136%", never "100%" beside "over by 3.6 MB" (B25)', () => {
+  const fn = slice('function renderBudgetWidget(', 'let budgetTarget');
+  const specs: Array<Record<string, unknown>> = [];
+  const list = { innerHTML: '', classList: { remove() {} }, querySelectorAll: (sel: string) => (sel === 'canvas.budget-gauge' ? [{}, {}] : []) };
+  const card = { hidden: true };
+  const $ = (id: string) => (id === 'budgetList' ? list : id === 'budgetCard' ? card : null);
+  const state = { budgets: { list: [
+    { path: '/p/originals/2', name: '2', maxBytes: 10_000_000, actualBytes: 13_600_000, overBy: 3_600_000 },
+    { path: '/p/Music', name: 'Music', maxBytes: 10_000_000, actualBytes: 5_000_000, overBy: 0 },
+  ] } };
+  const FxCharts = { gauge: (_cv: unknown, spec: Record<string, unknown>) => { specs.push(spec); return { destroy() {} }; }, ramp: () => ['#000', '#fff'] };
+  new Function('$', 'state', 'FxCharts', 'formatBytes', 'escapeHtml', 'icon', 'budgetProjectionLine', 'nodeFor', 'openBudgetDialog',
+    'fxBudgetGaugesDrop', 'budgetGauges',
+    `'use strict'; ${fn} renderBudgetWidget();`)(
+    $, state, FxCharts, (n: number) => `${n} B`, (s: string) => s, () => '', () => '', () => null, () => {}, () => {}, [],
+  );
+  assert.equal(specs.length, 2);
+  // What the ring prints: the caller's formatValue, or the kit's own default (FxCharts.gauge) when none is passed.
+  const fmt = (s: Record<string, unknown>, v: number) =>
+    (typeof s.formatValue === 'function' ? s.formatValue as (x: number) => string : (x: number) => Math.round(x * 100) + '%')(v);
+  assert.equal(fmt(specs[0], 1), '136%', 'the full ring of an over-budget folder says how far over: 13.6 of 10');
+  assert.equal(fmt(specs[0], 0.5), '68%', 'and counts up to it in proportion while the ring fills');
+  assert.equal(specs[0].danger, true, 'still the danger red');
+  assert.equal(fmt(specs[1], 0.5), '50%', 'a folder within its budget reads as before');
+});
+
+test('saving a budget on a folder already over it says so — never "≤", which reads as "within" (B25)', async () => {
+  const src = slice('async function commitBudget(', 'async function removeBudget(');
+  const run = async (target: Record<string, unknown>, value: string, sizeFromScan: number | null = null) => {
+    const toasts: string[] = [];
+    const els: Record<string, { value: string }> = { budgetValue: { value }, budgetUnit: { value: '1000000' } };
+    const commit = new Function('$', 'toast', 'currentSavedBudgets', 'saveBudgetList', 'closeModal', 'formatBytes', 'loadBudgets', 'nodeFor', 'target',
+      `'use strict'; let budgetTarget = target; ${src} return commitBudget;`)(
+      (id: string) => els[id], (m: string) => toasts.push(m), async () => [], async () => [], () => {}, (n: number) => `${n} B`, async () => {},
+      () => (sizeFromScan === null ? null : { size: sizeFromScan }), target,
+    ) as () => Promise<void>;
+    await commit();
+    return toasts;
+  };
+  const over = await run({ path: '/p/originals/2', name: '2', size: 13_600_000 }, '10');
+  assert.equal(over.length, 1);
+  assert.doesNotMatch(over[0], /≤/, 'no "≤": the folder is not within it');
+  assert.match(over[0], /already over/, 'it is already over the budget');
+  assert.match(over[0], /13600000 B of 10000000 B/, 'by the numbers the dialog showed');
+  const within = await run({ path: '/p/Music', name: 'Music', size: 5_000_000 }, '10');
+  assert.doesNotMatch(within[0], /over|≤/, 'within: neither "over" nor "≤"');
+  assert.match(within[0], /Music is 5000000 B of its 10000000 B/, 'within: how much of it is used');
+  const fromScan = await run({ path: '/p/x', name: 'x', size: null }, '10', 12_000_000);
+  assert.match(fromScan[0], /already over/, 'the size the scan holds counts when the menu did not carry one');
+  const unknown = await run({ path: '/p/y', name: 'y', size: null }, '10');
+  assert.doesNotMatch(unknown[0], /≤|over|of its/, 'with no size known, nothing is claimed about it');
+  assert.match(unknown[0], /10000000 B/);
+});
