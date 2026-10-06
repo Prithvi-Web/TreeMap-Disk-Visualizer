@@ -427,6 +427,42 @@ test('a link realpath cannot follow because its target is missing is judged wher
   assert.equal(rejection(path.join(dir, 'out')), null, 'which the sanitizer passes too: its target is an ordinary path');
 });
 
+test('a link whose target climbs back up through another link (`sub/../x`) is judged where the system reads it — above where sub leads — not in the link’s own folder, though realpath cannot follow it while x is missing', { skip: WINDOWS && 'Windows reads a relative link’s `..` against the link’s own folder, and making a link needs a privilege the runner may not hold' }, () => {
+  // The target was resolved from its text, so `sub/..` cancelled out and `out/y` read as a file of the
+  // scan; once x is made where the system reads the link, a delete of `out/y` lands outside every scan
+  // (the SEC-2b review, F1.1). The blocklist read it the same way.
+  const dir = path.join(T, 'f11');
+  fs.mkdirSync(path.join(dir, 'plain'), { recursive: true });
+  const deep = path.join(DEST, 'f11-deep');
+  fs.mkdirSync(deep);
+  fs.symlinkSync(deep, path.join(dir, 'sub')); // a live link out of the scan
+  fs.symlinkSync(['sub', '..', 'f11-x'].join(path.sep), path.join(dir, 'out')); // read as DEST/f11-x, not made yet
+  fs.symlinkSync(['plain', '..', 'f11-in'].join(path.sep), path.join(dir, 'in')); // read as dir/f11-in: in the scan
+  fs.symlinkSync('/dev/fd', path.join(dir, 'devfd'));
+  fs.symlinkSync(['devfd', '..', 'f11-nothing'].join(path.sep), path.join(dir, 'to-dev')); // read as /dev/f11-nothing (Linux: under /proc)
+  const answers = {
+    'out/y, the scanned-root rule': insideAnyScanRoot(path.join(dir, 'out', 'y')),
+    'out/z/y, the scanned-root rule': insideAnyScanRoot(path.join(dir, 'out', 'z', 'y')),
+    'out/y, the sanitizer': rejection(path.join(dir, 'out', 'y')),
+    'out itself, the scanned-root rule': insideAnyScanRoot(path.join(dir, 'out')),
+    'in/y, the scanned-root rule': insideAnyScanRoot(path.join(dir, 'in', 'y')),
+    'to-dev, the sanitizer': rejection(path.join(dir, 'to-dev')),
+    'to-dev/x, the sanitizer': rejection(path.join(dir, 'to-dev', 'x')),
+  };
+  assert.deepEqual(answers, {
+    'out/y, the scanned-root rule': false,
+    'out/z/y, the scanned-root rule': false,
+    'out/y, the sanitizer': null, // DEST is an ordinary folder
+    'out itself, the scanned-root rule': true, // the link lives in the scan, and trashing it removes the link
+    'in/y, the scanned-root rule': true,
+    'to-dev, the sanitizer': 'PATH_BLOCKED',
+    'to-dev/x, the sanitizer': 'PATH_BLOCKED',
+  });
+  // Where the system does read it, once x is there.
+  fs.mkdirSync(path.join(DEST, 'f11-x'));
+  assert.equal(fs.realpathSync.native(path.join(dir, 'out')), path.join(DEST, 'f11-x'), 'the system’s own realpath (Node’s other one reads a link’s text alone)');
+});
+
 /* ─────────────── Every route and tool that takes a path ─────────────── */
 
 /** Field names that carry a path on this API. */

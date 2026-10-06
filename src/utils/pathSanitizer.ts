@@ -232,12 +232,12 @@ function canonDir(dir: string): string {
   return value;
 }
 
-function canonDirUncached(dir: string, hops = 0): string {
+function canonDirUncached(dir: string): string {
   try {
     return strip(fs.realpathSync.native(dir));
   } catch {
     // A link realpath could not follow is judged where it says it leads, never as a folder here.
-    const led = whereLinkLeads(dir, hops);
+    const led = whereLinkLeads(dir);
     if (led !== null) return led;
   }
   // Not a link, and realpath failed: climb toward the root looking for a real
@@ -261,17 +261,129 @@ function canonDirUncached(dir: string, hops = 0): string {
  * target that is missing, a loop, or a target spelled through a second name — realpath fails on a
  * `/.resolve/…` target (EINVAL) and a `/.vol/…` one (ENOENT). Answering those with the link's own
  * spelling made everything beneath the link read as a folder of its own folder: inside a scan, and
- * past the blocklist and the alias test. Its target is read and resolved from the folder the link is
- * in, then judged where that is, link by link. A target spelled through a second name is answered as
- * spelled, so the alias test sees it; past the kernel's own limit of links (a loop) the last target
- * read is the answer — nothing lies beneath a loop, and every call there fails. Null when `p` is not
- * a link.
+ * past the blocklist and the alias test. Its target is walked as the system walks it (`walkNames`),
+ * from the folder the link really is in (`startOf`). Null when `p` is not a link.
  */
-function whereLinkLeads(p: string, hops: number): string | null {
-  const target = linkTargetOf(p);
+function whereLinkLeads(p: string): string | null {
+  const target = readLinkAt(p);
   if (target === null) return null;
-  if (aliasNamespaceOf(target) !== null || hops >= MAX_LINK_HOPS) return target;
-  return canonDirUncached(target, hops + 1);
+  if (aliasNamespaceOf(target) !== null) return target;
+  const { at, names } = startOf(canonDir(path.dirname(p)), target);
+  return walkNames(at, names, newLinkWalk());
+}
+
+/** The text of the link at `p`; null when `p` is not a link, or cannot be read (then judged as spelled). */
+function readLinkAt(p: string): string | null {
+  try {
+    const entry = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (entry === undefined || !entry.isSymbolicLink()) return null;
+    return fs.readlinkSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Links one judgement follows before it stops: at least as many as any system follows in one lookup
+ * (macOS 32, Linux 40), so a chain the system follows to its end is never cut short here.
+ */
+const MAX_LINK_HOPS = 40;
+/** Names one judgement walks through link targets before it stops, whatever they spell: a bound on its work. */
+const MAX_WALK_NAMES = 4096;
+
+/** What one judgement's walk through links may still spend (`walkNames`). */
+interface LinkWalk {
+  links: number;
+  names: number;
+}
+function newLinkWalk(): LinkWalk {
+  return { links: MAX_LINK_HOPS, names: MAX_WALK_NAMES };
+}
+
+/** A path's names below its root; `.` and empty names name the folder they are in, so they go. */
+function namesIn(p: string): string[] {
+  return p.split(process.platform === 'win32' ? /[\\/]/ : '/').filter((name) => name !== '' && name !== '.');
+}
+
+/**
+ * Where a walk of the link text `target` starts, and its names: a link in the folder `realFolder`
+ * (where it really is) is read from there, or from the root when its target is absolute.
+ *
+ * macOS and Linux take a target's `..` from where the walk really is, name by name, so in
+ * `sub/../x` the `..` is the folder above where the link `sub` leads (`walkNames`). Reading `..` off
+ * the text cancelled `sub` instead, and judged the link in its own folder while the system reads it
+ * elsewhere: a link whose x was not made yet was "in the scan", and once x was made a delete beneath
+ * it landed outside every scan; a link into app-data that way was not app-data (the SEC-2b review,
+ * F1.1). Windows reads a relative link's `..` against the link's own folder, so there the text is
+ * resolved first, and only the names left are walked.
+ */
+function startOf(realFolder: string, target: string): { at: string; names: string[] } {
+  if (process.platform === 'win32') {
+    const whole = path.win32.resolve(realFolder, target);
+    const { root } = path.win32.parse(whole);
+    return { at: root, names: namesIn(whole.slice(root.length)) };
+  }
+  return { at: target.startsWith('/') ? '/' : realFolder, names: namesIn(target) };
+}
+
+/**
+ * `names` walked from the real folder `at` as the system looks a path up: each name in turn; a link
+ * read and its target's names walked in its place, from the folder the walk is in or from the root
+ * (`startOf`); `..` the folder above where the walk really is. Everything the walk passes through is
+ * a real folder, so the answer is real up to where it ends, and as the volume spells it (realpath of
+ * that part, once).
+ *
+ * It ends early, with the names left joined as spelled: at a name that is not there (as if the rest
+ * were made as plain folders — what a check before a folder is made must assume) or cannot be looked
+ * at; at a second name (`aliasNamespaceOf`), answered as spelled so the alias test sees it; and past
+ * the system's own limit of links or the bound on names (`LinkWalk`), where nothing lies beneath —
+ * every call there fails.
+ */
+function walkNames(at: string, names: readonly string[], walk: LinkWalk): string {
+  const pending = [...names];
+  let here = at;
+  const settle = (rest: readonly string[]): string => {
+    let real = here;
+    try {
+      real = strip(fs.realpathSync.native(here));
+    } catch {
+      // as walked
+    }
+    return path.join(real, ...rest);
+  };
+  while (pending.length > 0) {
+    const name = pending.shift() as string;
+    if (name === '..') {
+      here = path.dirname(here);
+      continue;
+    }
+    const next = path.join(here, name);
+    if (aliasNamespaceOf(next) !== null) return path.join(next, ...pending);
+    if (walk.names-- <= 0) return settle([name, ...pending]);
+    let entry: fs.Stats | undefined;
+    try {
+      entry = fs.lstatSync(next, { throwIfNoEntry: false });
+    } catch {
+      entry = undefined;
+    }
+    if (entry === undefined) return settle([name, ...pending]);
+    if (!entry.isSymbolicLink()) {
+      here = next;
+      continue;
+    }
+    if (walk.links-- <= 0) return settle([name, ...pending]);
+    let target: string;
+    try {
+      target = fs.readlinkSync(next);
+    } catch {
+      return settle([name, ...pending]);
+    }
+    if (aliasNamespaceOf(target) !== null) return path.join(target, ...pending);
+    const start = startOf(here, target);
+    here = start.at;
+    pending.unshift(...start.names);
+  }
+  return settle([]);
 }
 
 /**
@@ -293,7 +405,7 @@ export function linkLeadsThroughSecondName(p: string): boolean {
   try {
     led = strip(fs.realpathSync.native(p));
   } catch {
-    led = whereLinkLeads(p, 0);
+    led = whereLinkLeads(p);
   }
   return led !== null && aliasNamespaceOf(led) !== null;
 }
@@ -467,7 +579,7 @@ function canonicalize(resolved: string): string {
     // spelled through a second name realpath cannot resolve (/.resolve, /.vol): it is judged where
     // its target says it leads (`whereLinkLeads`, the SEC-2 review, F3), the more restrictive answer
     // winning as above. Anything else realpath refused keeps the canonical parent plus its own name.
-    const led = leaf?.isSymbolicLink() ? whereLinkLeads(resolved, 0) : null;
+    const led = leaf?.isSymbolicLink() ? whereLinkLeads(resolved) : null;
     if (led === null) return candidate;
     return isBlocked(candidate) ? candidate : stripDataVolume(led);
   }
@@ -705,9 +817,6 @@ export function isSpillPath(p: string): boolean {
   return at.below.length === 1 && sameEntry(at.where, path.join(at.appData, SPILL_DIR));
 }
 
-/** Links a destination is followed through before it is refused as a doubt; the kernel's own limit is about as long. */
-const MAX_LINK_HOPS = 40;
-
 /**
  * Is `p` TreeMap's own app-data folder or anything in it, as a place something would be WRITTEN
  * (FG1)? App-data holds the files TreeMap trusts: its settings, the Autopilot policies and their
@@ -732,15 +841,20 @@ export function isAppDataPath(p: string): boolean {
   return true; // a loop, or a chain no system follows: doubt refuses
 }
 
-/** Where the link at `p` leads (resolved from the folder the link really is in), or null when `p` is not a link. */
+/**
+ * Where the link at `p` leads, one link at a time (for `isAppDataPath`): its target walked as the
+ * system walks it from the folder the link really is in (`startOf`, `walkNames`), every link on the
+ * way followed but the target's own last name, left as spelled for the next hop to read. Null when
+ * `p` is not a link.
+ */
 function linkTargetOf(p: string): string | null {
-  try {
-    const st = fs.lstatSync(p, { throwIfNoEntry: false });
-    if (st === undefined || !st.isSymbolicLink()) return null;
-    return path.resolve(canonDir(path.dirname(p)), fs.readlinkSync(p));
-  } catch {
-    return null; // unreadable: judged as spelled
-  }
+  const target = readLinkAt(p);
+  if (target === null) return null;
+  if (aliasNamespaceOf(target) !== null) return target;
+  const { at, names } = startOf(canonDir(path.dirname(p)), target);
+  const last = names[names.length - 1];
+  if (last === undefined || last === '..') return walkNames(at, names, newLinkWalk());
+  return path.join(walkNames(at, names.slice(0, -1), newLinkWalk()), last);
 }
 
 /**

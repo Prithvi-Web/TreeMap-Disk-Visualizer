@@ -70,6 +70,24 @@ fs.symlinkSync(USER, TO_USER, 'junction');
 fs.symlinkSync(path.join('..', 'app-data'), path.join(LINKS, 'relative-to-app'), 'dir');
 const LINKS_ELSEWHERE = path.join(fileTempDir('treemap-appDataGuard-elsewhere-'), 'to-links');
 fs.symlinkSync(LINKS, LINKS_ELSEWHERE, 'junction');
+/**
+ * Relative links whose `..` follows a link (the SEC-2b review, F1.1): macOS and Linux read `hop/..` as
+ * the folder above where hop leads — app-data — not as the links folder, which reading the text alone
+ * said. One to a file app-data has, one to a file not made yet. (Windows reads a relative link's `..`
+ * against the link's own folder, so these are asked only elsewhere.)
+ */
+fs.symlinkSync(path.join(APP, 'sub'), path.join(LINKS, 'hop'), 'junction');
+const UP_TO_KEPT = path.join(LINKS, 'up-to-kept');
+fs.symlinkSync(['hop', '..', 'kept.txt'].join(path.sep), UP_TO_KEPT, 'file');
+const UP_TO_LATER = path.join(LINKS, 'up-to-later');
+fs.symlinkSync(['hop', '..', 'planted-later.json'].join(path.sep), UP_TO_LATER, 'file');
+/**
+ * And one the text alone read as app-data while the system does not: from the home folder,
+ * `to-stuff/..` is the user's folder, so this names user/app-data/f.json — not app-data/f.json.
+ */
+fs.symlinkSync(path.join(USER, 'stuff'), path.join(HOME, 'to-stuff'), 'junction');
+const NOT_REALLY_APP = path.join(HOME, 'not-really-app');
+fs.symlinkSync(['to-stuff', '..', 'app-data', 'f.json'].join(path.sep), NOT_REALLY_APP, 'file');
 /** Destinations outside app-data: an ordinary one, and one holding a link to app-data under a name the volume folds. */
 const DEST = fileTempDir('treemap-appDataGuard-dest-');
 const FOLD_DEST = fileTempDir('treemap-appDataGuard-folddest-');
@@ -186,6 +204,14 @@ test('app-data and everything in it is recognised as a destination, however it i
     'cloud://gdrive/app-data/x.json',
   ];
   for (const p of outside) assert.equal(isAppDataPath(p), false, `${p} is not app-data`);
+  // A `..` that follows a link is where the system reads it — above where the link leads — not where
+  // the text alone says (the SEC-2b review, F1.1). Windows reads it the text's way.
+  if (process.platform !== 'win32') {
+    assert.deepEqual(
+      { upToKept: isAppDataPath(UP_TO_KEPT), upToLater: isAppDataPath(UP_TO_LATER), notReallyApp: isAppDataPath(NOT_REALLY_APP) },
+      { upToKept: true, upToLater: true, notReallyApp: false },
+    );
+  }
 });
 
 test('the capability manifest states the rule', async () => {

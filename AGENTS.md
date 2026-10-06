@@ -622,7 +622,11 @@ read-what-you-saw) permission to act.
   folders, or the path itself being such a link, which both rules refuse
   alike. A link realpath cannot follow (its target is missing, it loops, or
   its target is spelled through `/.resolve` or `/.vol`) is judged where its
-  target says it leads, never as a folder of the scan it sits in.
+  target says it leads, never as a folder of the scan it sits in — and read
+  as the system reads it: on macOS and Linux a `..` in the target is the
+  folder above where the names before it really lead (`sub/../x` with `sub`
+  a link is beside `sub`'s target, not beside the link), so a link is not
+  "in the scan" because its text cancels out.
 - **Cloud and archive paths.** `cloud://` paths never touch the local
   filesystem — their deletes go to the provider's own trash via
   `POST /api/cloud/trash`. Entries *inside* archives are listings, not files
