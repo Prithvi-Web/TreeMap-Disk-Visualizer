@@ -569,7 +569,7 @@ test('a call that misses its deadline while the drive\'s root is being asked wai
  */
 function byHand(driveOf: (p: string) => string, atOnce: (p: string) => boolean, over: Partial<EmptyCheckDeps> = {}) {
   const asked: string[] = [];
-  const calls: Array<{ path: string; answer: () => void }> = [];
+  const calls: Array<{ path: string; answer: () => void; fail: (code: string) => void }> = [];
   const deadlines: Array<{ of: string; ms: number; pass: () => void }> = [];
   let last = '';
   setEmptyCheckForTests({
@@ -578,7 +578,7 @@ function byHand(driveOf: (p: string) => string, atOnce: (p: string) => boolean, 
       asked.push(p);
       last = p;
       if (atOnce(p)) return Promise.resolve(aFolder);
-      return new Promise((resolve) => { calls.push({ path: p, answer: () => resolve(aFolder) }); });
+      return new Promise((resolve, reject) => { calls.push({ path: p, answer: () => resolve(aFolder), fail: (code) => reject(failure(code)) }); });
     },
     opendir: async () => { last = ''; return listingOf([]); },
     deadline: (ms) => {
@@ -826,6 +826,32 @@ test('a call on a drive\'s own root that a request\'s budget cut short, and that
   await turns(20);
   assert.match(reasonOf(inner() ?? { empty: true }), /^the drive it is on did not answer a moment ago/);
   assert.deepEqual(h.asked, ['/nas'], 'one call on the dead root, not two');
+});
+
+test('a call its request\'s budget cut short that fails with a drive\'s own error inside the rest of its deadline ends its folder\'s turn, and leaves nothing unhandled (final review F1.2)', async () => {
+  // A dying NFS or SMB mount: the call is cut by the request's 1.5 s, then the drive fails it
+  // (ESTALE) inside the rest of its 2 s, while another request waits for the folder's turn.
+  const unhandled: unknown[] = [];
+  const onUnhandled = (err: unknown): void => { unhandled.push(err); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    let slowAsked = 0;
+    const h = byHand(() => '/', (p) => p === '/x/slow' && ++slowAsked > 1, CUT);
+    const a = watch(stillEmptyFolder('/x/slow', true));
+    await turns(20);
+    const b = watch(stillEmptyFolder('/x/slow', true)); // another request, its budget its own
+    await turns(20);
+    h.passDeadlineOf('/x/slow'); // a's 1.5 s run out with the call still out
+    await turns(20);
+    assert.equal(whyOf(a() ?? { empty: true }), 'out-of-time');
+    assert.equal(b(), null, 'b waits through the rest of the call\'s 2 s');
+    h.callsOn('/x/slow')[0].fail('ESTALE'); // the drive fails the call inside them
+    await turns(20);
+    assert.deepEqual(unhandled.map(String), [], 'the rest of the deadline handles the failure: no rejection is left unhandled, which would end the server');
+    assert.deepEqual(b(), { empty: true }, 'the call answered (with a failure) inside its 2 s: its turn ended, and b asked the folder in turn');
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 
 test('within a request, the first look on a drive goes alone: four at once ask a silent drive once', async () => {
