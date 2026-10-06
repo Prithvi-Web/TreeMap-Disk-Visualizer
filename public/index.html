@@ -10259,6 +10259,10 @@ function renderBigFiles() {
   const rows = state.bigFilesSort === 'reclaim'
     ? [...state.largest].sort(byReclaimDesc((f) => f.path))
     : state.largest;
+  // ONE measure column per row: the score, once there is one, takes the
+  // percent-of-largest's place. Added beside it, the badge squeezed the name
+  // column to 66 px and six of ten rows read "dup-gro…" (QA B03); the bar and
+  // the size badge still say how big each file is.
   host.innerHTML = rows.map((f, i) => `
     <div class="bigfile">
       ${chipFor(f)}
@@ -10267,8 +10271,7 @@ function renderBigFiles() {
         <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
       </div>
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
-      <span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>
-      ${reclaimBadge(f.path, scoreFor(f.path)) || (state.bigFilesSort === 'reclaim' && scoreKnown(f.path) ? '<span class="rc-none" title="None of the six signals could be read for this file">not scored</span>' : '')}
+      ${reclaimBadge(f.path, scoreFor(f.path)) || (state.bigFilesSort === 'reclaim' && scoreKnown(f.path) ? '<span class="rc-none" title="None of the six signals could be read for this file">not scored</span>' : `<span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>`)}
       <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
         <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
