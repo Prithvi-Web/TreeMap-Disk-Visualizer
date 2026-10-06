@@ -1,7 +1,7 @@
 import type { ScanResult, Snapshot } from '../models/types';
 import {
   dataVolumeAlias,
-  exclusionsOf,
+  exclusionsBelow,
   isAtOrUnder,
   mountOutcome,
   type BoundaryMount,
@@ -14,6 +14,7 @@ import { storeOf } from './scanStore';
 import { storageModeOf } from './storageMode';
 import { boundaryKeyOf, scanBoundaryKey, snapshotBoundaryOf } from './snapshots';
 import { AppError } from '../middleware/errorHandler';
+import { rootLivesAt } from '../utils/pathSanitizer';
 
 /**
  * What a scan did at the drives mounted inside its folder (Track U, U-24), in
@@ -221,11 +222,19 @@ export function boundaryResponse(scan: ScanResult): BoundaryResponse {
  * Whether a mount's source is a folder the scan listed: a path (never a
  * device's name) inside the root, and not at or beneath one of the scan's
  * exclusions. On macOS a source the table spells on the Data volume is asked
- * in the root's spelling too, as the walk met it.
+ * in the root's spelling too, as the walk met it. The table spells a source
+ * where it really is, so the root is asked both as typed and where it really
+ * is, each with the exclusions spelled from it (`exclusionsBelow`): a Data
+ * volume root typed through a link in its parents or in another case listed
+ * none of the table's sources before (the SEC-2b review, F1.6).
  */
-function listedFolderTest(record: ScanBoundary, root: string): (source: string) => boolean {
-  const exclusions = exclusionsOf(record, root);
-  const listed = (p: string): boolean => isAtOrUnder(root, p) && !exclusions.some((x) => isAtOrUnder(x, p));
+function listedFolderTest(record: ScanBoundary, typedRoot: string): (source: string) => boolean {
+  const realRoot = rootLivesAt(typedRoot);
+  const tests = [...new Set([typedRoot, realRoot])].map((root) => {
+    const exclusions = exclusionsBelow(record, typedRoot, realRoot, root);
+    return (p: string): boolean => isAtOrUnder(root, p) && !exclusions.some((x) => isAtOrUnder(x, p));
+  });
+  const listed = (p: string): boolean => tests.some((test) => test(p));
   return (source) => {
     if (!source.startsWith('/')) return false;
     const spellings = process.platform === 'darwin' ? [source, ...dataVolumeAlias(source)] : [source];

@@ -180,6 +180,33 @@ test('a nullfs or bind view says whether what it shows again is a folder the sca
   if (process.platform === 'darwin') assert.equal(listed(at('D')), true, 'the Data volume’s spelling of a listed folder is that folder');
 });
 
+test('after a scan of the Data volume typed another way — through a link in its parents, or in another case — a nullfs view’s source is judged where the root really is, as for the root typed as it is', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume is macOS’s');
+  // The report compared the table's sources, spelled as the system spells them, with the root as typed,
+  // and took the folders the scan never listed from that spelling too: for such a root no source was
+  // ever a folder it listed (the SEC-2b review, F1.6).
+  const home = fs.realpathSync(fileTempDir('treemap-boundary-route-data-'));
+  fs.symlinkSync('/System', path.join(home, 'boot'));
+  const roots = ['/System/Volumes/Data', path.join(home, 'boot', 'Volumes', 'Data')];
+  if (fs.realpathSync.native('/System/volumes') === '/System/Volumes') roots.push('/System/volumes/Data');
+  if (fs.realpathSync.native('/System/Volumes/data') === '/System/Volumes/Data') roots.push('/System/Volumes/data');
+  const at = (x: string): string => `/private/var/folders/zz/T/AppTranslocation/${x}/d`;
+  const view = (p: string, source: string) => ({ path: p, filesystem: 'nullfs', source, underFixed: false });
+  const mounts = [view(at('A'), '/System/Volumes/Data/Applications/Clocks.app/Wrapper'), view(at('B'), '/System/Volumes/Data/Volumes/Installer/Tool.app')];
+  const fixed = ['/System/Volumes', '/Volumes', '/dev'];
+  const answers: Record<string, { listed: unknown; underVolumes: unknown }> = {};
+  for (const root of roots) {
+    resetRateLimiter();
+    const data = createScanRecord(root);
+    data.status = 'complete';
+    data.boundary = boundaryRecord({ rule: 'stay', source: 'mount', reason: null, mounts, fixed, neverDescend: [...fixed, ...mounts.map((m) => m.path)] });
+    const b = (await get(`/api/scan/${data.scanId}/boundary`)).body;
+    const listed = (p: string): unknown => b.mounts.find((m: any) => m.path === p).sourceListed;
+    answers[root] = { listed: listed(at('A')), underVolumes: listed(at('B')) };
+  }
+  assert.deepEqual(answers, Object.fromEntries(roots.map((root) => [root, { listed: true, underVolumes: false }])));
+});
+
 test('a record made without a boundary answers rule null with the reason — never an empty list', async () => {
   const old = createScanRecord(fs.realpathSync(fileTempDir('treemap-boundary-route-old-')));
   old.status = 'complete';

@@ -4,7 +4,7 @@ import { Request, Response, NextFunction } from 'express';
 import { sanitizePath, isInside, livesAt, rootLivesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
-import { DATA_VOLUME, exclusionsOf, isAtOrUnder, parseFirmlinks } from '../utils/mountBoundaries';
+import { DATA_VOLUME, exclusionsBelow, isAtOrUnder, parseFirmlinks } from '../utils/mountBoundaries';
 import type { ScanResult } from '../models/types';
 import { isVirtualPath } from '../services/containerScanner';
 import { AppError } from './errorHandler';
@@ -318,9 +318,7 @@ const exclusionKeys = new WeakMap<ScanResult, { root: string; keys: Set<string> 
 function exclusionKeysOf(scan: ScanResult, root: string): Set<string> {
   const known = exclusionKeys.get(scan);
   if (known && known.root === root) return known.keys;
-  const asWalked = exclusionsOf(scan.boundary, scan.rootPath).map((never) => path.join(root, path.relative(scan.rootPath, never)));
-  const whereRootIs = root === scan.rootPath ? [] : exclusionsOf(scan.boundary, root);
-  const keys = new Set([...asWalked, ...whereRootIs].map((never) => foldedNames(never).join(NAMES_JOIN)));
+  const keys = new Set(exclusionsBelow(scan.boundary, scan.rootPath, root, root).map((never) => foldedNames(never).join(NAMES_JOIN)));
   exclusionKeys.set(scan, { root, keys });
   return keys;
 }

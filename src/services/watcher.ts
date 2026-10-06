@@ -4,10 +4,10 @@ import { FileNode, ScanResult, WatchEvent, WatchEventKind, WatchStreamEvent } fr
 import { findNodeByPath } from '../utils/treemap';
 import { getSettings } from './settings';
 import { appDataDir } from './storage';
-import { isInside } from '../utils/pathSanitizer';
+import { isInside, rootLivesAt } from '../utils/pathSanitizer';
 import { ScanStore, Flag, NodeInput } from './scanStore';
 import { watchPath, type WatchLease } from '../platform/watchRegistry';
-import { exclusionsOf, isAtOrUnder } from '../utils/mountBoundaries';
+import { exclusionsBelow, isAtOrUnder } from '../utils/mountBoundaries';
 
 /**
  * Watcher — live disk activity for a completed scan (Live mode).
@@ -352,7 +352,9 @@ export async function ensureWatchSession(scan: ScanResult & { root: FileNode }):
     store: scan.store ?? null,
     root: scan.store ? null : scan.root,
     stopped: false,
-    exclusions: exclusionsOf(scan.boundary, scan.rootPath),
+    // As its events are spelled, from the root as typed — and decided where the root really is too,
+    // so a Data volume root typed another way still drops its /Volumes (the SEC-2b review, F1.6).
+    exclusions: exclusionsBelow(scan.boundary, scan.rootPath, rootLivesAt(scan.rootPath), scan.rootPath),
     droppedOutsideBoundary: 0,
   };
   session.flushTimer.unref();

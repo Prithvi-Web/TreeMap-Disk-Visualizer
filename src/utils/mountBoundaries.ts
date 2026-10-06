@@ -1,4 +1,5 @@
 import { promises as fsp } from 'fs';
+import path from 'path';
 import { parseBsdMount, parseProcMounts, type MountEntry } from '../platform/atime';
 import { runText, type RunOptions } from '../platform/exec';
 
@@ -625,4 +626,19 @@ export function exclusionsOf(record: Pick<ScanBoundary, 'neverDescend' | 'fixed'
   const list = record ? record.neverDescend : neverDescendPaths(platform);
   const onData = dataSpellingOf(record ? record.fixed : neverDescendPaths(platform), root, platform);
   return [...new Set([...list, ...onData])].filter((p) => isStrictlyUnder(root, p));
+}
+
+/**
+ * `exclusionsOf` for a scan whose root was typed `typedRoot` and lies at `realRoot` (every link
+ * resolved, its own name as the volume stores it), spelled from `from`, one of the two. The record's
+ * drives are spelled as the walk spelled them, from the typed root; the fixed folders are decided
+ * where the root really is, since a Data volume root typed through a link in its parents or in
+ * another case is that volume all the same, and never lists its /Volumes. Both are taken, each moved
+ * to `from`: the scanned-root rule asks where the root really is, Live mode as its events are
+ * spelled (from the typed root), the boundary report as the table spells a mount's source (the
+ * SEC-2b review, F1.6). With the two roots one spelling it is `exclusionsOf`.
+ */
+export function exclusionsBelow(record: ScanBoundary | undefined, typedRoot: string, realRoot: string, from: string, platform: NodeJS.Platform = process.platform): string[] {
+  const movedFrom = (base: string) => (never: string): string => path.join(from, path.relative(base, never));
+  return [...new Set([...exclusionsOf(record, typedRoot, platform).map(movedFrom(typedRoot)), ...exclusionsOf(record, realRoot, platform).map(movedFrom(realRoot))])];
 }

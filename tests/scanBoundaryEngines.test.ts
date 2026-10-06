@@ -651,6 +651,47 @@ test('Live mode drops a change inside a drive the scan did not enter — the tre
   }
 });
 
+test('Live mode after a scan of the Data volume typed another way — through a link in its parents, or in another case — drops a change under that volume’s /Volumes, where every drive appears, as it does for the root typed as it is', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the Data volume is macOS’s');
+  // Live mode took the folders the scan never listed from the root as typed, so for such a root it had
+  // none, and a file on a drive under /Volumes — one mounted later, or any when the table was unknown —
+  // was added to the live tree (the SEC-2b review, F1.6). A link here to /System stands in for
+  // /Volumes/<the boot volume>, which every Mac has.
+  const home = fs.realpathSync(fileTempDir('treemap-live-data-volume-'));
+  fs.symlinkSync('/System', path.join(home, 'boot'));
+  const roots = ['/System/Volumes/Data', path.join(home, 'boot', 'Volumes', 'Data')];
+  if (fs.realpathSync.native('/System/volumes') === '/System/Volumes') roots.push('/System/volumes/Data');
+  if (fs.realpathSync.native('/System/Volumes/data') === '/System/Volumes/Data') roots.push('/System/Volumes/data');
+  const listeners: WatchListener[] = [];
+  setWatchImplForTests((_target, _opts, listener) => {
+    listeners.push(listener);
+    return { close() {}, on() { return undefined; } };
+  });
+  const dropped: Record<string, number> = {};
+  try {
+    for (const root of roots) {
+      const s = createScanRecord(root);
+      s.status = 'complete';
+      s.finishedAt = Date.now();
+      s.root = { name: path.basename(root), path: root, size: 0, type: 'dir', modifiedAt: 0, isHidden: false, children: [] };
+      const fixed = ['/System/Volumes', '/Volumes', '/dev'];
+      s.boundary = { ...handRecord(root, 'stay', []), mounts: null, fixed, neverDescend: fixed }; // the table unknown
+      listeners.length = 0;
+      const session = await ensureWatchSession(s as ScanResult & { root: FileNode });
+      const stop = subscribe(session, () => {});
+      try {
+        listeners[0]('rename', path.join('Volumes', 'MountedLater', 'b.bin')); // dropped, or not, before anything is looked at
+        dropped[root] = session.droppedOutsideBoundary;
+      } finally {
+        stop();
+      }
+    }
+  } finally {
+    setWatchImplForTests(null);
+  }
+  assert.deepEqual(dropped, Object.fromEntries(roots.map((root) => [root, 1])));
+});
+
 /* ─────────────────────────────── CI ─────────────────────────────── */
 
 test('the Linux test legs mount a tmpfs inside a folder before the suite, and name it in TREEMAP_TEST_NESTED_MOUNT', () => {
