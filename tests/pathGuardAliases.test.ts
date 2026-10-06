@@ -314,6 +314,13 @@ test('Windows: this machine is known however its address is written — the shor
     '\\\\localhost\\C$.\\Windows',
     '\\\\localhost\\C$ \\Windows',
     '\\\\127.0.0.1\\ADMIN$..\\System32',
+    // A host's own trailing space or dots, the unspecified IPv6 address and its IPv4-mapped form, and a
+    // dotted quad inside IPv6 (the SEC-2c review, F2.8: each was a branch no spelling here reached).
+    '\\\\localhost \\C$\\x',
+    '\\\\localhost..\\C$\\x',
+    '\\\\--.ipv6-literal.net\\C$\\x', // ::
+    '\\\\--ffff-0-0.ipv6-literal.net\\C$\\x', // ::ffff:0.0.0.0
+    '\\\\[::ffff:127.0.0.1]\\C$\\x',
   ];
   const anotherMachine = [
     '\\\\10.1\\C$\\x', // 10.0.0.1
@@ -326,6 +333,7 @@ test('Windows: this machine is known however its address is written — the shor
     '\\\\localhost\\C$x\\y',
     '\\\\localhost\\share.\\x',
     '\\\\256.0.0.1\\C$\\x',
+    '\\\\[::ffff:10.0.0.1]\\C$\\x', // a dotted quad inside IPv6 that is another machine's
   ];
   const wrong = [
     ...thisMachine.filter((p) => judgeSpelling(p, 'win32', own).secondName === null).map((p) => `${p}: passed as another machine's`),
@@ -694,7 +702,10 @@ test('a chain of links as long as any system follows is followed to its end, out
     for (let i = links - 1; i >= 0; i--) fs.symlinkSync(i === links - 1 ? end : path.join(dir, `${prefix}${i + 1}`), path.join(dir, `${prefix}${i}`));
     return path.join(dir, `${prefix}0`);
   };
-  const out = chain('d', 39, path.join(DEST, 'f18-not-made')); // Linux follows all 39; macOS stops at 32
+  // Linux follows all 40 (MAXSYMLINKS); macOS stops at 32. The walk reads the first link before it spends
+  // its budget, so 40 links cost 39 of it, and a budget cut to 38 answered this chain "in the scan" (the
+  // SEC-2c review, F2.9: the chain was 39 links, and no budget above 37 failed it).
+  const out = chain('d', 40, path.join(DEST, 'f18-not-made'));
   const tooLong = chain('c', 45, path.join(DEST, 'f18-not-made-either')); // no system follows 45
   const readlink = fs.readlinkSync;
   let readlinks = 0;
@@ -719,6 +730,46 @@ test('a chain of links as long as any system follows is followed to its end, out
     'c0, the scanned-root rule': true, // the link itself lives in the scan, and trashing it removes the link
     'readlinks for c0, the sanitizer': 'bounded by the budget of links',
   });
+});
+
+test('a walk through link targets that spell more names than its bound ends there: one lstat a name, and no more names than the bound, however many a chain of long targets spells (the SEC-2c review, F2.9)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+  // The bound on names (MAX_WALK_NAMES) caps one judgement's work whatever link targets spell, and nothing
+  // pinned it: without it, 31 links (fewer than any system's limit) whose targets each spell 201 real
+  // names cost an lstat for every one of them. Counted, not timed; built from real folders, since a name
+  // that is not there ends a walk at once.
+  const dir = path.join(T, 'f29-names');
+  fs.mkdirSync(path.join(dir, 'a'), { recursive: true });
+  const chain = (prefix: string): string => {
+    const links = 31;
+    for (let i = links - 1; i >= 0; i--) {
+      const next = i === links - 1 ? `${prefix}-not-made` : `${prefix}${i + 1}`;
+      // 200 rounds of `a/../` and a link's name: under the 1023 bytes macOS allows a link's target.
+      fs.symlinkSync(`${'a/../'.repeat(200)}${next}`, path.join(dir, `${prefix}${i}`));
+    }
+    return path.join(dir, `${prefix}0`, 'x');
+  };
+  const asks: Record<string, () => unknown> = {
+    sanitizePath: ((p: string) => () => sanitizePath(p))(chain('s')),
+    insideAnyScanRoot: ((p: string) => () => insideAnyScanRoot(p))(chain('i')),
+  };
+  const sync = fs as unknown as { lstatSync: (...args: unknown[]) => unknown };
+  const lstat = sync.lstatSync;
+  let lstats = 0;
+  sync.lstatSync = (...args: unknown[]) => {
+    lstats += 1;
+    return lstat(...args);
+  };
+  const answers: Record<string, unknown> = {};
+  try {
+    for (const [name, ask] of Object.entries(asks)) {
+      lstats = 0;
+      ask();
+      answers[name] = lstats <= 4096 + 64 ? 'bounded by the names one walk may spend' : `${lstats} lstats`;
+    }
+  } finally {
+    sync.lstatSync = lstat;
+  }
+  assert.deepEqual(answers, { sanitizePath: 'bounded by the names one walk may spend', insideAnyScanRoot: 'bounded by the names one walk may spend' });
 });
 
 /* ─────────────── Every route and tool that takes a path ─────────────── */
