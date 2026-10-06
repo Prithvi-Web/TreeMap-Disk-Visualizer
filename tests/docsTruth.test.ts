@@ -184,3 +184,20 @@ test('ULTRA-ROADMAP names every release granted ahead of the phases in its stand
     assert.match(step11, new RegExp(`\\(${ver} excepted`), `step 11 names ${v}`);
   }
 });
+
+test('ULTRA-ROADMAP says P4-14 is built above T_mem in memory mode (Track U U-32), as startScan does (found with review F1.5)', () => {
+  // The code: a native walk that fails part-way above T_mem is refused a
+  // walk again in the built-in walker (noRestartRefusal; startScan throws it,
+  // the README test above). The roadmap still called P4-14 "decided, not
+  // built" in three places, and said nothing enforces T_mem.
+  const refusal = noRestartRefusal(new Error('the test breaks the walk'), 11, null, 10);
+  assert.ok(refusal instanceof Error, 'P4-14 is built: a failure above T_mem ends the scan');
+  const doc = read('ULTRA-ROADMAP.md');
+  const p414 = doc.split('\n').filter((l) => l.includes('P4-14'));
+  assert.ok(p414.length >= 3, 'the roadmap names P4-14');
+  for (const line of p414) {
+    assert.doesNotMatch(line, /decided,? (?:but )?not built|Decided, not built/, `not "not built": ${line.slice(0, 80)}…`);
+  }
+  assert.ok(p414.every((l) => l.includes('U-32')), 'each line that names P4-14 says U-32 built it');
+  assert.doesNotMatch(doc, /nothing enforces `T_mem` yet/, 'T_mem is enforced where a native walk fails');
+});
