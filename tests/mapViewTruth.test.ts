@@ -215,6 +215,11 @@ test('D26: the step is separator-aware: Windows paths, a drive root, and archive
     ['C:\\Users\\me\\AppData'], 'a Windows tree steps on its own separator');
   assert.deepEqual(clickOn({ n: { path: '/Users/me/x', type: 'dir' } }, '/').loaded, ['/Users'],
     'from the filesystem root the next level is /Users, not "" or "//Users"');
+  // A Windows drive root ends in its separator too, and is the case a scan of C:\ lands in.
+  assert.deepEqual(clickOn({ n: { path: 'C:\\Users\\me\\x', type: 'dir' } }, 'C:\\').loaded, ['C:\\Users'],
+    'from a drive root the next level is C:\\Users, not "C:" or "C:\\\\Users"');
+  assert.deepEqual(clickOn({ n: { path: 'C:\\pagefile.sys', type: 'file' } }, 'C:\\').previewed, ['C:\\pagefile.sys'],
+    'a file directly on the drive opens its preview');
   assert.deepEqual(clickOn({ n: { path: '/r/z.zip/inner/x.txt', type: 'file', virtual: true } }).loaded, ['/r/z.zip'],
     'an entry inside an opened archive opens the archive first');
   assert.deepEqual(clickOn({ n: { path: '/r/z.zip', type: 'file', container: true } }).expanded, ['/r/z.zip'],
@@ -290,10 +295,31 @@ function parseButtons(html: string): FakeBtn[] {
 }
 
 /**
+ * The `.crumbs` rule's numbers, read from the built page: the width of the
+ * mask's fade, the gap between items, and a button's ceiling. The fit tests
+ * measure against these rather than against copies of the product's own
+ * constants, so a fade the CSS widens is a fade the trail must clear.
+ */
+function crumbsCss() {
+  const at = INDEX.indexOf('.crumbs { display: flex;');
+  assert.notEqual(at, -1, 'the .crumbs rule is in the built page');
+  const rule = INDEX.slice(at, INDEX.indexOf('}', at));
+  const fades = [...rule.matchAll(/mask-image:\s*linear-gradient\(to right, transparent 0, #000 (\d+)px\)/g)].map((m) => Number(m[1]));
+  assert.equal(fades.length, 2, 'the fade is declared for -webkit-mask-image and mask-image');
+  assert.equal(fades[0], fades[1], 'both draw the same fade');
+  const gap = /gap:\s*(\d+)px/.exec(rule);
+  const btnAt = INDEX.indexOf('.crumbs button {');
+  const maxW = /max-width:\s*(\d+)px/.exec(INDEX.slice(btnAt, INDEX.indexOf('}', btnAt)));
+  assert.ok(gap && maxW, 'the gap and the button ceiling are declared in px');
+  return { fade: fades[0], gap: Number(gap![1]), maxW: Number(maxW![1]) };
+}
+
+/**
  * A crumb host that lays its buttons out the way `.crumbs` does: one line,
  * packed to the END, so a trail wider than the host overflows past its START
- * edge — the first button's left edge goes negative. Widths are a fixed
- * model (7 px a character, the 220 px ceiling, 15 px separators).
+ * edge — the first button's left edge goes negative. Text widths are a model
+ * (7 px a character, 15 px separators, 30 px for "…"); the gap and a button's
+ * ceiling are the CSS's own (crumbsCss).
  */
 function makeHost(width: number) {
   const h = {
@@ -301,8 +327,8 @@ function makeHost(width: number) {
     set innerHTML(v: string) { h.html = v; h.buttons = parseButtons(v); h.seps = (v.match(/class="sep"/g) || []).length; },
     get innerHTML() { return h.html; },
     natural(): number {
-      const items = h.buttons.map((b) => (b.more ? 30 : Math.min(220, 20 + b.text.length * 7)));
-      return items.reduce((a, w) => a + w, 0) + h.seps * 15 + 3 * Math.max(0, items.length + h.seps - 1);
+      const items = h.buttons.map((b) => (b.more ? 30 : Math.min(crumbsCss().maxW, 20 + b.text.length * 7)));
+      return items.reduce((a, w) => a + w, 0) + h.seps * 15 + crumbsCss().gap * Math.max(0, items.length + h.seps - 1);
     },
     get firstElementChild() {
       return h.buttons.length ? { getBoundingClientRect: () => ({ left: h.clientWidth - h.natural() }) } : null;
@@ -420,8 +446,8 @@ test('D25: a deep trail that does not fit folds its ancestors into "…" — cle
   const ancestors = ['/System', '/System/Library', '/System/Library/AssetsV2',
     '/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime',
     '/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime/7f2d3a5b8c9e1f0a'];
-  assert.ok(host.clientWidth - host.natural() >= 34,
-    `the trail fits clear of the 34 px fade instead of being sliced mid-word (needs ${host.natural()} px of ${host.clientWidth})`);
+  assert.ok(host.clientWidth - host.natural() >= crumbsCss().fade,
+    `the trail fits clear of the ${crumbsCss().fade} px fade instead of being sliced mid-word (needs ${host.natural()} px of ${host.clientWidth})`);
   assert.ok(host.buttons.some((b) => b.more), 'something had to fold, and it folded into the "…" crumb');
   assert.equal(host.buttons[0].path, '/System', 'the middle folds first: the root stays on screen while it fits');
   const cur = host.buttons[host.buttons.length - 1];
@@ -443,7 +469,7 @@ test('D25: "fits" means clear of the fade, not merely inside the box', () => {
   const h = crumbsHarness();
   const host = makeHost(630);
   h.render(host, DEEP, h.onPick);
-  assert.ok(host.clientWidth - host.natural() >= 34, `clear of the fade (left edge at ${host.clientWidth - host.natural()} px)`);
+  assert.ok(host.clientWidth - host.natural() >= crumbsCss().fade, `clear of the fade (left edge at ${host.clientWidth - host.natural()} px)`);
 });
 
 test('D25: a trail that fits is drawn whole — nothing folds that did not have to', () => {
@@ -475,7 +501,7 @@ test('D25: the trail re-fits when the toolbar changes width, and a hidden toolba
   host.clientWidth = 420; // the view is shown
   h.observers[0].cb();
   assert.ok(host.buttons.some((b) => b.more), 'shown at 420 px, the trail folds');
-  assert.ok(host.clientWidth - host.natural() >= 34, 'and fits');
+  assert.ok(host.clientWidth - host.natural() >= crumbsCss().fade, 'and fits');
   const painted = host.html;
   host.html = 'untouched';
   h.observers[0].cb();
@@ -483,6 +509,14 @@ test('D25: the trail re-fits when the toolbar changes width, and a hidden toolba
   host.html = painted;
   h.render(host, DEEP, h.onPick);
   assert.equal(h.observers.length, 1, 'one observer per host, however many renders');
+});
+
+test('D25: the fold clears the fade the CSS draws — the product\'s fade width is the mask\'s, not a copy that can drift', () => {
+  // The fit tests above used to measure against 34, the product's own
+  // CRUMB_FADE_PX: a mask widened in the CSS would have left the trail
+  // folding to a fade it no longer matched, with every test still green.
+  const fadePx = load<number>(['CRUMB_FADE_PX'], {}, 'CRUMB_FADE_PX');
+  assert.equal(fadePx, crumbsCss().fade, `CRUMB_FADE_PX (${fadePx}) is the .crumbs mask's fade (${crumbsCss().fade} px)`);
 });
 
 test('D25: the name inside a crumb ellipsizes (text-overflow does nothing on the flex button itself)', () => {
@@ -985,6 +1019,60 @@ test('LOW-3: the pad follows the banner while the preview is up — the cart doc
   p.tmPreview.on = true;
   p.sync();
   assert.equal(p.observers.length, 1, 'one observer however many times the preview starts');
+});
+
+test('D64: the map the preview draws is shorter by the banner\'s pad, re-measured, and gets the room back on exit', () => {
+  // The test below checks treemapCanvasHeight's subtraction, which predates
+  // D64. This drives the preview's own order — the pad is set BEFORE the map
+  // is drawn, re-measured when the banner rewraps, and taken off before the
+  // exit redraw — through the real functions, with the CSS as a stub:
+  // #treemapWrap.previewing { padding-top: var(--tm-preview-pad, 64px) }.
+  const props: Record<string, string> = {};
+  const wrap = {
+    previewing: false,
+    classList: { toggle(_c: string, on: boolean) { wrap.previewing = on; } },
+    style: {
+      setProperty(k: string, v: string) { props[k] = v; }, removeProperty(k: string) { delete props[k]; },
+      getPropertyValue: (k: string) => props[k] ?? '',
+    },
+    getBoundingClientRect: () => ({ top: 150 }),
+    parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: 30 }) }) },
+    closest: () => ({}),
+  };
+  const banner = { hidden: true, offsetHeight: 44 };
+  const els: Record<string, unknown> = {
+    cartPreview: { setAttribute() {}, classList: { toggle() {} } },
+    treemapWrap: wrap, tmPreviewBanner: banner, tmPreviewText: { innerHTML: '' },
+  };
+  const observers: Array<() => void> = [];
+  class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe() { observers.push(this.cb); } }
+  const heights: number[] = [];
+  let heightOf: (w: unknown) => number = () => NaN;
+  const nodes = [{ path: '/r/x' }];
+  const state = { view: 'treemap', cart: { size: 1 }, treemap: { history: { active: false }, nodes, hover: null, kbSel: null } };
+  const out = load<{ enter: () => void; exit: () => void; heightOf: (w: unknown) => number }>(
+    ['enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'tmPreviewWatch', 'treemapCanvasHeight'], {
+      $: (id: string) => els[id], state, tmPreview: { on: false },
+      isSun: () => false, isCells: () => false, isRectMap: () => true,
+      toast: (m: string) => { throw new Error('refused: ' + m); },
+      formatCount: String, formatBytes: (n: number) => `${n} B`, escapeHtml: (x: string) => x, hideTooltip() {},
+      tmBuildPreview: () => ({ nodes: [{ path: '/r/y' }], freedBytes: 5, stagedInView: 1, outsideView: 0, outsideBytes: 0 }),
+      drawTreemap: () => { heights.push(heightOf(wrap)); },
+      window: { innerHeight: 900 },
+      getComputedStyle: (el: unknown) => (el === wrap
+        ? { paddingTop: wrap.previewing ? (props['--tm-preview-pad'] ?? '64px') : '10px', paddingBottom: '10px' }
+        : { marginTop: '12px', paddingBottom: '24px' }),
+      ResizeObserver: FakeRO,
+    }, '{ enter: enterCartPreview, exit: exitCartPreview, heightOf: treemapCanvasHeight }');
+  heightOf = out.heightOf;
+  const full = heightOf(wrap);
+  out.enter();
+  assert.deepEqual(heights, [full - 54], 'drawn under the preview: its 64 px pad (44 px banner, 10 px either side) for the 10 px it had');
+  banner.offsetHeight = 62; // the cart dock opened beside it: the banner wrapped
+  observers[0]();
+  assert.deepEqual(heights, [full - 54, full - 72], 're-measured and redrawn 18 px shorter');
+  out.exit();
+  assert.deepEqual(heights, [full - 54, full - 72, full], 'and the exit redraw has every pixel back');
 });
 
 test('D64: the previewing wrap takes that padding, and the map\'s height gives it back', () => {
