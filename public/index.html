@@ -1915,6 +1915,12 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .rule-row .ic { color: var(--text-3); }
 .rule-row input[type="number"] { width: 88px; }
 .rule-row input[type="text"] { flex: 1; }
+/* A search .field (icon + box) that a rule row grows: it has to be a row
+   itself, or its input keeps its intrinsic ~172 px however wide the field
+   gets — the Offloaded and Time Capsule searches read "Search by name or
+   origi" inside a 420 px field (QA B01). */
+.rule-row > .field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rule-row > .field > input[type="text"] { flex: 1; min-width: 0; }
 .clean-list { margin-top: 8px; max-height: 270px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
 .clean-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12.5px;
   border-bottom: 1px solid var(--hairline); }

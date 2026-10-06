@@ -89,3 +89,45 @@ test('a Largest Files row holds ONE measure column — the score badge takes the
     }
   }
 });
+
+/* ══════════════ B01 — a search field told to grow hands its width to its input ══════════════ */
+
+/** The built stylesheet, comments removed, as { selectors, body } rules. */
+const SHEET = INDEX.slice(INDEX.indexOf('<style>') + 7, INDEX.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, ' ');
+const RULES = [...SHEET.matchAll(/([^{}]*)\{([^{}]*)\}/g)]
+  .map((m) => ({ selectors: m[1].trim().split(',').map((s) => s.trim().replace(/\s+/g, ' ')), body: m[2] }))
+  .filter((r) => r.selectors[0] && !r.selectors[0].startsWith('@'));
+/** Declarations of every rule naming exactly one of `selectors`, in source order. */
+function declsFor(...selectors: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of RULES) {
+    if (!r.selectors.some((s) => selectors.includes(s))) continue;
+    for (const d of r.body.split(';')) {
+      const i = d.indexOf(':');
+      if (i !== -1) out.set(d.slice(0, i).trim(), d.slice(i + 1).trim());
+    }
+  }
+  return out;
+}
+
+test('the Offloaded and Time Capsule search boxes fill their field — the placeholder is not cut to "Search by name or origi" (B01)', () => {
+  // The field is flex:1 up to 420 px inside a .rule-row, but it was a plain
+  // block: its icon sat inline and the input kept its intrinsic ~172 px.
+  const fields = [...INDEX.matchAll(/<div class="rule-row"[^>]*>\s*<div class="field" style="flex:1;max-width:(\d+)px;">\s*<span data-icon="search"><\/span>\s*<input type="text" id="(\w+)" placeholder="([^"]+)"/g)];
+  assert.deepEqual(fields.map((m) => m[2]).sort(), ['capsuleSearch', 'offloadSearch'], 'both search rows were found');
+  const field = declsFor('.rule-row > .field');
+  assert.equal(field.get('display'), 'flex', 'the field lays its icon and input out in a row');
+  assert.equal(field.get('min-width'), '0', 'and may shrink inside a narrow card');
+  const input = declsFor('.rule-row > .field > input[type="text"]');
+  assert.match(input.get('flex') || '', /^1( 1 0(%|px)?)?$/, 'the input takes every pixel the field has after the icon');
+  assert.equal(input.get('min-width'), '0', 'and gives them back when the card is narrow');
+  const gap = Number((/^(\d+)px$/.exec(field.get('gap') || '') || [])[1]);
+  assert.ok(gap > 0, 'with a gap between the icon and the box');
+  for (const [, maxW, id, placeholder] of fields) {
+    // The input gets the field's width less the 16 px icon and the gap; at
+    // 13 px a placeholder character is at most ~6.6 px, plus 12 px padding a side.
+    const inputW = Number(maxW) - 16 - gap;
+    const needed = placeholder.length * 6.6 + 24 + 2;
+    assert.ok(inputW >= needed, `#${id}: a ${inputW}px box shows all of "${placeholder}" (needs ~${needed.toFixed(0)}px)`);
+  }
+});
