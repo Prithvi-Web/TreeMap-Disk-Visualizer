@@ -8,10 +8,10 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleCaptureStall-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { capsuleStoreWaitersForTests, deleteCapsuleEntry, getCapsuleIndex, protectItems } from '../src/services/timeCapsule';
+import { capsuleStoreWaitersForTests, deleteCapsuleEntry, getCapsuleIndex, protectItems, setSourceCallForTests } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart } from '../src/services/cartCommit';
-import { copyWithHash, CopyStalled, setCopyFaultForTests, setStallTimerForTests } from '../src/utils/copyVerify';
+import { abandonedCallsUnsettled, copyWithHash, CopyStalled, setCopyFaultForTests, setStallTimerForTests } from '../src/utils/copyVerify';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
 
@@ -29,7 +29,10 @@ import { withOpenFileCheck } from './fixtures/openFileCheck';
  * (setStallTimerForTests) and fires itself, once the copy is seen to be stuck. "A read that never
  * answers" is real: a named pipe with no writer, whose open does not return until this file opens
  * it for writing at the end, once that open is seen waiting (`release`) — so nothing is left pending
- * when the file's tests are done. Nothing
+ * when the file's tests are done. A capture's walk arms a timer of its own for each look at the item,
+ * so a capture's copy is taken to have begun only once the walk's look has returned (`watchLooks`).
+ * And a copy stopped at its limit is counted as a call left waiting until its read returns: two of
+ * them stop the run (FG3h A2). Nothing
  * reaches the machine's Trash: the trash step moves each file into this file's own folder.
  */
 
@@ -92,6 +95,34 @@ async function release(fifo: string): Promise<void> {
 /** The newest stall timer still armed: "no progress for the whole limit" is declared by firing it. */
 function newestArmed(): { ms: number; fire: () => void; cancelled: boolean } | undefined {
   return [...armed].reverse().find((t) => !t.cancelled);
+}
+
+/**
+ * Watches a capture's first look at each of `paths` (its walk's lstat), answered as the disk answers
+ * it (FG3g review F2.8). Every call a capture's walk makes on an item arms a stall timer of its own,
+ * through the same seam a copy's does (FG3h A1) — so "a timer is armed" says a pipe's copy began only
+ * once the walk's look at it has returned, its timer let go by then. With `hold`, each look answers
+ * only once `answer` is called, so a test can make the moment when the walk's timer is the one armed.
+ */
+function watchLooks(paths: string[], opts: { hold?: boolean } = {}): {
+  asked: (p: string) => boolean;
+  returned: () => string[];
+  answer: (p: string) => void;
+  remove: () => void;
+} {
+  const asked = new Set<string>();
+  const returned: string[] = [];
+  const gates = new Map<string, () => void>();
+  const remove = setSourceCallForTests((what, abs) => {
+    if (what !== 'lstat' || !paths.includes(abs) || asked.has(abs)) return null;
+    asked.add(abs);
+    const gate = opts.hold === true ? new Promise<void>((resolve) => { gates.set(abs, resolve); }) : Promise.resolve();
+    return gate.then(() => fs.promises.lstat(abs, { bigint: true })).then((st) => {
+      returned.push(abs);
+      return st;
+    });
+  });
+  return { asked: (p) => asked.has(p), returned: () => [...returned], answer: (p) => gates.get(p)?.(), remove };
 }
 
 function file(label: string, name: string, content: string): string {
@@ -225,10 +256,17 @@ test('a capture whose copy stalls leaves that item undeleted, goes on to the nex
   let forgot: Promise<unknown> | null = null;
   let result: Awaited<ReturnType<typeof commitCart>>;
   let copyStarted = false;
+  // The walk's own look at the pipe answers only when this test says (FG3g review F2.8): while it is
+  // out, the timer armed is the walk's, not the copy's — the moment a wait for "any timer armed" took
+  // for the copy, firing the walk's timer instead and never starting the copy it then waited on.
+  const look = watchLooks([fifo], { hold: true });
   try {
     result = await withOpenFileCheck('clear', async () => {
       const committing = commitCart([fifo, normal]);
-      await waitFor(() => newestArmed() !== undefined, 'the copy of the pipe starting');
+      await waitFor(() => look.asked(fifo), 'the walk looking at the pipe');
+      assert.ok(newestArmed() !== undefined, 'the walk\'s own look has a stall timer armed');
+      look.answer(fifo);
+      await waitFor(() => look.returned().includes(fifo) && newestArmed() !== undefined, 'the copy of the pipe starting, once the walk\'s look has returned');
       copyStarted = true;
       forgot = deleteCapsuleEntry(held.entryId as string);
       await waitFor(() => capsuleStoreWaitersForTests() > 0, 'the "Forget" waiting for the capture, which holds the index');
@@ -236,6 +274,8 @@ test('a capture whose copy stalls leaves that item undeleted, goes on to the nex
       return withinHangGuard(committing, 'the commit finishing');
     });
   } finally {
+    look.answer(fifo);
+    look.remove();
     if (copyStarted) await release(fifo); // the copy's open of it may not have been entered yet
   }
   assert.deepEqual(await (forgot as unknown as Promise<unknown>), { deleted: true, bytesFreed: Buffer.byteLength('a copy someone will forget') }, 'the "Forget" ran once the capture let the index go');
@@ -247,4 +287,60 @@ test('a capture whose copy stalls leaves that item undeleted, goes on to the nex
   assert.deepEqual(result.trashed, [normal], 'and the item after it was protected and deleted');
   const copies = (await getCapsuleIndex()).entries.filter((e) => e.runId === result.runId);
   assert.deepEqual(copies.map((e) => e.originalPath), [normal], 'no copy of the stalled item is kept');
+});
+
+/* ─────────────── FG3h A2 for copies (FG3g review F2.9): a stopped copy's read is counted ─────────────── */
+
+test('a copy stopped at its stall limit is counted as a call left waiting until its read returns', { skip: NO_FIFO }, async () => {
+  armed = [];
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier read left waiting returning');
+  const fifo = namedPipe('counted');
+  const look = watchLooks([fifo]);
+  let copyStarted = false;
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await withOpenFileCheck('clear', async () => {
+      const committing = commitCart([fifo]);
+      await waitFor(() => look.returned().includes(fifo) && newestArmed() !== undefined, 'the copy of the pipe starting');
+      copyStarted = true;
+      newestArmed()?.fire(); // the stall limit passes with nothing read
+      return withinHangGuard(committing, 'the commit finishing');
+    });
+    assert.equal(abandonedCallsUnsettled(), 1, 'the stopped copy, its read still waiting on the pipe, is counted');
+  } finally {
+    look.remove();
+    if (copyStarted) await release(fifo);
+  }
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'the copy\'s read returning, and no longer counted');
+  assert.equal(result.skipped.find((s) => s.path === fifo)?.code, 'CAPSULE_COPY_FAILED', JSON.stringify(result.skipped));
+});
+
+test('two copies stopped at their stall limit stop the run: the item after them is left undeleted at once, and nothing is asked of it', { skip: NO_FIFO }, async () => {
+  armed = [];
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier read left waiting returning');
+  const pipes = [namedPipe('cap-one'), namedPipe('cap-two')];
+  const normal = file('cap', 'normal.txt', 'an ordinary file, asked for after two copies that stalled');
+  const look = watchLooks([...pipes, normal]);
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await withOpenFileCheck('clear', async () => {
+      const committing = commitCart([...pipes, normal]);
+      for (const pipe of pipes) {
+        await waitFor(() => look.returned().includes(pipe) && newestArmed() !== undefined, `the copy of ${path.basename(path.dirname(pipe))} starting`);
+        newestArmed()?.fire(); // the stall limit passes with nothing read
+      }
+      return withinHangGuard(committing, 'the commit finishing');
+    });
+    assert.equal(abandonedCallsUnsettled(), 2, 'both stopped copies are counted');
+  } finally {
+    look.remove();
+    for (const pipe of look.returned().filter((p) => pipes.includes(p))) await release(pipe);
+  }
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'both reads returning');
+  const row = result.skipped.find((s) => s.path === normal);
+  assert.equal(row?.code, 'CAPSULE_COPY_FAILED', JSON.stringify(result.skipped));
+  assert.match(row?.reason ?? '', /still waiting on 2 calls/, row?.reason);
+  assert.equal(look.asked(normal), false, 'nothing was asked of it: no further call was started');
+  assert.deepEqual(result.trashed, [], 'nothing was trashed');
+  assert.ok(fs.existsSync(normal), 'the item after them is still in place');
 });
