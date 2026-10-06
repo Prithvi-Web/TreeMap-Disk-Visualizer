@@ -12,6 +12,7 @@ import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { getSettings } from '../src/services/settings';
 import type { TimeCapsuleEntry } from '../src/models/types';
+import { buildOpenApiDocument } from '../src/api/openapi';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
 
@@ -111,4 +112,19 @@ test('once every copy of a run has expired, all its records go in the same sweep
   const swept = await pruneExpired(Date.now() + (timeCapsuleRetentionDays + 1) * DAY);
   assert.ok(swept.removed >= 2);
   assert.deepEqual(await ofRun(committed.runId), [], 'the whole run\'s records go together');
+});
+
+test('the contract names every kind of item an undo reports it cannot put back: evicted, expired, missing, and a record TreeMap did not make (FG3g review F1.5)', () => {
+  const descriptions: string[] = [];
+  const visit = (node: unknown): void => {
+    if (typeof node === 'string' && node.includes('which no undo can put back')) descriptions.push(node);
+    else if (node !== null && typeof node === 'object') for (const v of Object.values(node)) visit(v);
+  };
+  visit(buildOpenApiDocument());
+  assert.equal(descriptions.length, 2, `the cart undo and the Autopilot undo each describe it: ${JSON.stringify(descriptions)}`);
+  for (const d of descriptions) {
+    for (const kind of [/evicted to make room/, /expired/, /missing from the capsule folder/, /a record in the run that TreeMap did not make/]) {
+      assert.match(d, kind, d);
+    }
+  }
 });

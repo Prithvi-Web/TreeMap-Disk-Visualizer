@@ -130,8 +130,9 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
  * paths it came from. Progress streams over the capsule's own SSE endpoint —
  * `GET /api/timecapsule/jobs/{jobId}/progress` — because it is the capsule's
  * restore, not a second one (§10: no new pathway). An item whose copy is gone
- * since (evicted to make room) is named in `unrestorable`, never passed over in
- * silence (FG3f #3).
+ * since (evicted to make room, expired, or missing from the capsule folder) — or
+ * a record in the run TreeMap did not make (FG3g L9) — is named in
+ * `unrestorable`, never passed over in silence (FG3f #3).
  *
  * Idempotency-Key'd, so a retried undo cannot start a second restore of the
  * same run.
