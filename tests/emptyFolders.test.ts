@@ -793,6 +793,10 @@ test('walker, fast rescan: a cache written before folders were marked is never r
     assert.equal(again.cachedDirs ?? 0, 0, 'the old cache was not read: one full walk');
     assert.equal(flagged(again, path.join(root, 'proj')), true, 'proj is still not listed in full');
     assert.deepEqual(offered(await emptyFolders(again.scanId)), [path.join(root, 'plain'), path.join(root, 'proj', 'src')]);
+    // Nothing reads an old cache any more: as the scan completes it leaves app-data (the U-4c review, F1.2).
+    await settled();
+    assert.equal(fs.existsSync(legacyCacheFileOf(root)), false, 'the old cache is gone from app-data');
+    assert.equal(fs.existsSync(cacheFileOf(root)), true, 'and the new one is there');
   } finally {
     await updateSettings({ ignore: [] });
   }

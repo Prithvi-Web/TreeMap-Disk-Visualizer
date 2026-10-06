@@ -7,6 +7,7 @@ import { trackWrite } from '../utils/backgroundWrites';
 import { getIgnoreMatchers, getSettings } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { readJsonFile, writeFileChunked } from './storage';
+import { dropLegacyMtimeCaches } from './legacyMtimeCaches';
 import { streamTreeJson } from './scanStoreJson';
 import { isEphemeral } from './portableMode';
 import { IO_THREADS } from '../utils/ioThreads';
@@ -608,9 +609,11 @@ function settleComplete(scan: ScanResult, store: ScanStore): void {
   scan.finishedAt = Date.now();
   scan.currentPath = scan.rootPath;
   if (!keepsScan(scan)) return;
+  // The caches of the format before U-4c L2 are never read: they leave app-data
+  // after the cache is written, inside the same tracked write (the U-4c review, F1.2, F2.1).
   trackWrite('saveMtimeCache', saveMtimeCache(scan).catch((err: unknown) => {
     console.error('[treemap] mtime cache save failed:', err);
-  }));
+  }).then(() => dropLegacyMtimeCaches()));
   trackWrite('saveSnapshot', saveSnapshot(scan).catch((err: unknown) => {
     console.error('[treemap] snapshot save failed:', err);
   }));
