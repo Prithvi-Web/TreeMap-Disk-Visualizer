@@ -608,7 +608,7 @@ test('a failed background rescan clears the spinner, the skeletons and the Stop 
 
 test('nothing above the 4 KB floor: the map re-asks without the floor, and an empty answer is said out loud', () => {
   const load = braced('async function loadTreemap(');
-  const floorAt = load.indexOf('minSize=4096');
+  const floorAt = load.indexOf('minSize=${TM_MIN_SIZE}'); // TM_MIN_SIZE is 4096 (QA-6 review LOW-2)
   const retryAt = load.indexOf('minSize=1&');
   assert.ok(floorAt !== -1 && retryAt > floorAt, 'the floor is dropped when it would draw nothing');
   assert.match(load.slice(floorAt, retryAt), /!data\.nodes\.length && data\.root\.size > 0/, 'only when the folder has bytes the floor hid');

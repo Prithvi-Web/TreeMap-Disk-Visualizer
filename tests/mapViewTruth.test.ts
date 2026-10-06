@@ -105,7 +105,7 @@ async function loadInMode(mode: string, colorMode = 'reclaim'): Promise<Calls> {
     fetchScoresForTreemap: count('fetchScoresForTreemap'),
   };
   const loadTreemap = load<(p: string, animate?: boolean) => Promise<void>>(
-    ['loadTreemap', 'drawView'], deps, 'loadTreemap', 'let tmLoadSeq = 0;');
+    ['loadTreemap', 'drawView', 'TM_MIN_SIZE'], deps, 'loadTreemap', 'let tmLoadSeq = 0;');
   await loadTreemap('/r/a', true);
   return calls;
 }
@@ -682,9 +682,9 @@ test('LOW-4: the menu scrolls inside a short window, and scrolling it does not c
 
 type TmNode = { path: string; size: number; depth: number; expanded: boolean; isTrash?: boolean };
 
-function capNote(nodes: TmNode[], rootSize: number): string {
-  const note = load<() => string>(['tmNodeCapNote', 'tmDrawnTree', 'tmParentPath', 'TM_SERVER_NODE_CAP', 'tmCapMemo'], {
-    state: { treemap: { rootPath: '/r', rootSize, nodes } },
+function capNote(nodes: TmNode[], rootSize: number, history = false): string {
+  const note = load<() => string>(['tmNodeCapNote', 'tmDrawnTree', 'tmParentPath', 'TM_SERVER_NODE_CAP', 'TM_MIN_SIZE', 'tmCapMemo'], {
+    state: { treemap: { rootPath: '/r', rootSize, nodes, history: { active: history } } },
     formatCount: fmtCount,
     formatBytes: (n: number) => `${n} B`,
   }, 'tmNodeCapNote');
@@ -698,7 +698,7 @@ test('D58: a map cut at the server\'s 20,000 nodes says so, and how much has no 
   // QA: a folder of 25,600 files drew 20,000 and left a blank rectangle for
   // the rest, with "20,000 nodes · 20,000 drawn" as the only words.
   const note = capNote(files(20000, 250), 25600 * 250);
-  assert.match(note, /stops at 20,000 items/, 'the cap is named');
+  assert.match(note, /holds at most 20,000 items, and this folder reached that/, 'the cap is named');
   assert.match(note, /1400000 B has no rectangle here/, 'the 5,600 undrawn files are 1.4 MB of blank map, stated exactly');
   assert.match(note, /drill in, or open the Grid view/, 'and the way to see them');
 });
@@ -719,6 +719,52 @@ test('D58: under the cap the map says nothing extra — and the Trash cell is no
   assert.equal(capNote(files(19999, 250), 19999 * 250 + 5000), '', '19,999 nodes were not cut by a 20,000 cap');
   const withTrash = [...files(19999, 250), { path: '\0trash', size: 1e9, depth: 1, expanded: false, isTrash: true }];
   assert.equal(capNote(withTrash, 19999 * 250), '', 'the injected Trash cell does not make 19,999 into 20,000');
+});
+
+test('LOW-2: the page\'s 20,000 is the server\'s — read from both routes that cap a treemap', () => {
+  // The response is golden-locked, so it cannot say it was cut: the page has
+  // to know the number, and a copy nothing checks drifts the day either changes.
+  const cap = load<number>(['TM_SERVER_NODE_CAP'], {}, 'TM_SERVER_NODE_CAP');
+  const routes: Array<[string, RegExp]> = [
+    ['src/api/scanRoutes.ts', /buildTreemapFromStore\(store, rootId, \{[^}]*maxNodes: ([\d_]+)/], // the live map
+    ['src/api/insightRoutes.ts', /buildTreemap\(root, \{[^}]*maxNodes: ([\d_]+)/], // the time slider's
+  ];
+  for (const [file, re] of routes) {
+    const m = re.exec(readFileSync(path.join(__dirname, '..', file), 'utf8'));
+    assert.ok(m, `${file} still caps the treemap with a maxNodes literal`);
+    assert.equal(Number(m![1].replace(/_/g, '')), cap, `${file}'s maxNodes is the page's TM_SERVER_NODE_CAP`);
+  }
+});
+
+test('LOW-2: exactly 20,000 items with every byte drawn is not called cut', () => {
+  // `sent >= 20000` also fired on a folder of exactly 20,000 items. A cut
+  // always leaves bytes undrawn — the items it left out are at least 4 KB —
+  // so a full map that reached the cap with nothing undrawn says nothing.
+  assert.equal(capNote(files(20000, 250), 20000 * 250), '');
+});
+
+test('LOW-2: the undrawn figure says it counts files under the 4 KB floor, which no drill-in reveals', () => {
+  const note = capNote(files(20000, 250), 25600 * 250);
+  assert.match(note, /That figure counts files under 4096 B too, which the map does not draw; the Grid view lists them\./);
+  // The time slider's map is laid out with no floor (minSize: 0).
+  const history = capNote(files(20000, 250), 25600 * 250, true);
+  assert.match(history, /holds at most 20,000 items/);
+  assert.doesNotMatch(history, /under 4096 B/, 'a history map has no floor to mention');
+});
+
+test('LOW-2: the floor the note names is the one the map is asked for', async () => {
+  let url = '';
+  const state = { scanId: 's1', root: { path: '/r' }, pathIndex: new Map(),
+    treemap: { mode: 'treemap', colorMode: 'size', rootPath: '/r', maxDepth: 4, nodes: [], history: { scrubbing: false } } };
+  const loadTreemap = load<(p: string) => Promise<void>>(['loadTreemap', 'TM_MIN_SIZE'], {
+    state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {}, $: () => ({ classList: { add() {}, remove() {} } }),
+    api: async (u: string) => { url = u; throw new Error('stop here'); }, toast() {},
+  }, 'loadTreemap', 'let tmLoadSeq = 0;');
+  await loadTreemap('/r');
+  const floor = load<number>(['TM_MIN_SIZE'], {}, 'TM_MIN_SIZE');
+  assert.match(url, new RegExp(`[?&]minSize=${floor}&`), 'loadTreemap asks for the floor TM_MIN_SIZE names');
+  const live = INDEX.slice(INDEX.indexOf('async function liveRelayout('), INDEX.indexOf('animateTreemapTo(data.nodes)'));
+  assert.match(live, /minSize=\$\{TM_MIN_SIZE\}/, 'and so does the live re-layout');
 });
 
 test('D58: every rectangle-map paint refreshes the note under the map', () => {

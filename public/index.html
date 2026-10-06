@@ -9958,6 +9958,13 @@ const tmBufCtx = tmBuffer.getContext('2d');
 const tmSearchBuffer = document.createElement('canvas');
 const tmSearchCtx = tmSearchBuffer.getContext('2d');
 
+/**
+ * The rectangle map's floor: files smaller than this get no rectangle (the
+ * request's minSize). One number for the request, the live re-layout and the
+ * sentence that admits it (tmNodeCapNote).
+ */
+const TM_MIN_SIZE = 4096;
+
 let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
   if (!state.scanId) return;
@@ -10010,7 +10017,7 @@ async function loadTreemap(rootPath, animate = false) {
       // and therefore the only thing the eye can follow across the change.
       if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
     } else {
-      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
+      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
       // The 4 KB floor keeps a big folder's map legible; in a folder of
       // dotfiles, scripts or one small file it hides everything, and a blank
@@ -10332,8 +10339,10 @@ function treemapCanvasHeight(wrap) {
 
 /**
  * The server's ceiling on one treemap response: `maxNodes: 20_000` where
- * src/api/scanRoutes.ts builds the map. The response is golden-locked (§12),
- * so nothing in it can say the map was cut — the page has to know the number.
+ * src/api/scanRoutes.ts builds the live map and src/api/insightRoutes.ts the
+ * time slider's. The response is golden-locked (§12), so nothing in it can
+ * say the map was cut — the page has to know the number, and
+ * tests/mapViewTruth.test.ts reads both literals so the copies cannot drift.
  */
 const TM_SERVER_NODE_CAP = 20000;
 let tmCapMemo = { nodes: null, rootSize: -1, note: '' };
@@ -10348,9 +10357,17 @@ let tmCapMemo = { nodes: null, rootSize: -1, note: '' };
  *
  * The bytes with no rectangle are exact from the drawn set alone: every
  * outlined folder (the root included) minus what was drawn inside it. That
- * also counts the files under the 4 KB floor, which have no rectangle either,
- * so the sentence stays true. Below the cap it says nothing — the line on
- * every map would be noise. The injected Trash cell is not a server node.
+ * also counts the files under the 4 KB floor (TM_MIN_SIZE), which no
+ * drill-in reveals, so the sentence says so and where they are listed
+ * (QA-6 review LOW-2); the time slider's map has no floor and does not say
+ * it. Below the cap it says nothing — the line on every map would be noise.
+ * The injected Trash cell is not a server node.
+ *
+ * Reaching the cap is not proof of a cut: a folder of exactly 20,000 items
+ * fills it too. A cut always leaves bytes undrawn — every item it leaves out
+ * is at least the floor, inside a folder that is outlined — so a map that
+ * reached the cap with nothing undrawn was not cut, and says nothing; one
+ * with bytes undrawn says it reached the cap, which is true either way.
  */
 function tmNodeCapNote() {
   const nodes = state.treemap.nodes;
@@ -10366,9 +10383,12 @@ function tmNodeCapNote() {
     for (const c of kids.get(p.path) || []) drawn += c.size;
     blank += Math.max(0, p.size - drawn);
   }
-  const note = `The map stops at ${formatCount(TM_SERVER_NODE_CAP)} items`
-    + (blank > 0 ? `: ${formatBytes(blank)} has no rectangle here` : '')
-    + ' — drill in, or open the Grid view, to see the rest.';
+  const floored = !(state.treemap.history && state.treemap.history.active);
+  const note = blank > 0
+    ? `The map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that: `
+      + `${formatBytes(blank)} has no rectangle here — drill in, or open the Grid view, to see the rest.`
+      + (floored ? ` That figure counts files under ${formatBytes(TM_MIN_SIZE)} too, which the map does not draw; the Grid view lists them.` : '')
+    : '';
   tmCapMemo = { nodes, rootSize: state.treemap.rootSize, note };
   return note;
 }
@@ -17957,7 +17977,7 @@ async function liveRelayout() {
   if (isSun()) { animateSunburstTo(sunburstRoot()); return; }
   if (isCells()) { drawCells(); return; } // re-solved from the tree the watcher just updated
   try {
-    const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(state.treemap.rootPath)}`);
+    const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(state.treemap.rootPath)}`);
     if (!live.on) return;
     state.treemap.rootSize = data.root.size;
     animateTreemapTo(data.nodes);

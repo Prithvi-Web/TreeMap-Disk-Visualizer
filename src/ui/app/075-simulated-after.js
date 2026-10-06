@@ -1336,7 +1336,7 @@ async function liveRelayout() {
   if (isSun()) { animateSunburstTo(sunburstRoot()); return; }
   if (isCells()) { drawCells(); return; } // re-solved from the tree the watcher just updated
   try {
-    const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(state.treemap.rootPath)}`);
+    const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(state.treemap.rootPath)}`);
     if (!live.on) return;
     state.treemap.rootSize = data.root.size;
     animateTreemapTo(data.nodes);
