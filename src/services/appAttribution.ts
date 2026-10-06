@@ -178,16 +178,32 @@ function normKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
-/** "com.google.Chrome" → "Chrome"; "google-chrome" → "Google Chrome" is curated. */
+/**
+ * "com.google.Chrome" → "Chrome"; "google-chrome" → "Google Chrome" is curated.
+ * A dot inside an app's own name ("zoom.us", "Python 3.11") is part of the
+ * name, so only a reverse-DNS id is cut to its last label (B14).
+ */
 function prettify(raw: string): string {
+  if (raw.includes('.') && !looksLikeBundleId(raw)) return raw;
   const last = raw.includes('.') ? raw.split('.').pop()! : raw;
   const spaced = last.replace(/[-_]+/g, ' ').trim();
   return spaced.length <= 1 ? raw : spaced.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Looks like a reverse-DNS bundle id (com.vendor.App) rather than a name. */
+/** Top-level domains that open a two-label reverse-DNS id ("com.apple"). */
+const REVERSE_DNS_ROOTS = new Set([
+  'com', 'org', 'net', 'io', 'co', 'app', 'dev', 'me', 'edu', 'gov', 'de', 'uk', 'fr', 'jp', 'ru', 'cn',
+]);
+
+/**
+ * Looks like a reverse-DNS bundle id (com.vendor.App) rather than a name:
+ * three dotted labels or more, or two opening with a top-level domain — so
+ * "zoom.us" is the app's own name, not an id whose last label is "us".
+ */
 function looksLikeBundleId(name: string): boolean {
-  return /^[a-z0-9-]+(\.[a-z0-9_-]+){1,}$/i.test(name) && name.includes('.') && !name.endsWith('.app');
+  if (!/^[a-z0-9-]+(\.[a-z0-9_-]+){1,}$/i.test(name) || name.toLowerCase().endsWith('.app')) return false;
+  const labels = name.split('.');
+  return labels.length >= 3 || REVERSE_DNS_ROOTS.has(labels[0].toLowerCase());
 }
 
 /** Resolve a raw child dir name to { key, display } given the names map. */

@@ -143,6 +143,47 @@ test('macOS: unknown bundle id falls back to a prettified name', () => {
   assert.equal(r.appsFolderScanned, false); // no Applications dir in this scan
 });
 
+test('macOS: a dot in an app\'s own name is not a bundle id — zoom.us.app is "zoom.us", not "Us" (B14)', () => {
+  // zoom.us.app's CFBundleName is "zoom.us"; its Application Support folder
+  // carries the same name. Only a reverse-DNS id (com.vendor.App) is cut to
+  // its last segment.
+  const root = dir('/', [
+    dir('/Applications', [
+      dir('/Applications/zoom.us.app', [file('/Applications/zoom.us.app/bin', 400)]),
+    ]),
+    dir(H, [
+      dir(j('Library'), [
+        dir(j('Library', 'Application Support'), [
+          dir(j('Library', 'Application Support', 'zoom.us'), [
+            file(j('Library', 'Application Support', 'zoom.us', 'data'), 60),
+          ]),
+          dir(j('Library', 'Application Support', 'Python 3.11'), [
+            file(j('Library', 'Application Support', 'Python 3.11', 'data'), 7),
+          ]),
+        ]),
+        dir(j('Library', 'Caches'), [
+          // still reverse-DNS ids: two labels opening with a TLD, or three labels
+          dir(j('Library', 'Caches', 'com.Acme'), [file(j('Library', 'Caches', 'com.Acme', 'c'), 3)]),
+          dir(j('Library', 'Caches', 'ch.example.Notes'), [file(j('Library', 'Caches', 'ch.example.Notes', 'c'), 2)]),
+        ]),
+      ]),
+    ]),
+  ]);
+  const r = attributeTree(root, ctxFor('darwin', H));
+  const names = r.apps.map((a) => a.name).sort();
+  assert.ok(!names.includes('Us'), `no app is named "Us": ${JSON.stringify(names)}`);
+  assert.ok(!names.includes('11'), `a version number is not a name: ${JSON.stringify(names)}`);
+  assert.ok(names.includes('Python 3.11'), `a dotted version stays in the name: ${JSON.stringify(names)}`);
+  assert.ok(names.includes('Acme'), `com.Acme is still an id: ${JSON.stringify(names)}`);
+  assert.ok(names.includes('Notes'), `ch.example.Notes is still an id: ${JSON.stringify(names)}`);
+  const zoom = r.apps.find((a) => a.name === 'zoom.us');
+  assert.ok(zoom, `zoom.us keeps its whole name: ${JSON.stringify(names)}`);
+  // the bundle and its data folder are one app
+  assert.equal(zoom.totalBytes, 460);
+  assert.equal(zoom.bytesByCategory.app, 400);
+  assert.equal(zoom.bytesByCategory.data, 60);
+});
+
 /* ---------------- Windows ---------------- */
 
 const WH = 'C:\\Users\\t';
