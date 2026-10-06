@@ -47,10 +47,11 @@ import { isAtOrUnder, readMountTable, type MountTable } from '../utils/mountBoun
  *    being asked waits for that answer.
  *  - **A drive holds at most `MAX_HELD_PER_DRIVE` calls that did not answer
  *    (the U-4c review, F1.1).** Each holds a thread of the pool. A drive with
- *    two of its calls still out — two slow folders, or a folder and its root —
- *    is silent until one of them answers, though its root answers: else a mount
- *    whose root answers while every folder below hangs would take one thread
- *    per folder asked, every request, until the pool was full.
+ *    two of its folders' calls still out is silent until one of them answers,
+ *    though its root answers: else a mount whose root answers while every
+ *    folder below hangs would take one thread per folder asked, every request,
+ *    until the pool was full. (A root that does not answer silences its drive
+ *    by itself, above, so a folder and its root are two threads at most too.)
  *  - **The first look on a drive goes alone, and so does every look on a
  *    drive with a call out.** Within a session, looks on a drive not yet heard
  *    from wait for that drive's first look to answer — or to go silent —
