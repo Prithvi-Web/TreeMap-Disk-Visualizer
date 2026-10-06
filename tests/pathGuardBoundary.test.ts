@@ -534,7 +534,26 @@ test('a scan root typed with its last name in another case covers the folder it 
       answers['the read-only rule: a sibling'] = sibling.body.code ?? sibling.status;
       Object.assign(expected, { 'the read-only rule: the root and its files, by either spelling': true, 'the read-only rule: a sibling': 'OUTSIDE_SCAN_ROOT' });
     } else {
+      // On a volume that keeps case, another case names another folder: PROJECTS beside the scanned
+      // Projects is neither the root nor in it, to the act rule and to the read-only rule alike. Nothing
+      // asserted it, so a root compared without case passed here and on Linux (the SEC-2d review, F3.3).
       t.diagnostic('this volume keeps case, so a root in another case names another folder');
+      fs.mkdirSync(path.join(home, 'PROJECTS'));
+      fs.writeFileSync(path.join(home, 'PROJECTS', 'a.txt'), 'a');
+      const scanned = createScanRecord(path.join(home, 'Projects'));
+      scanned.status = 'complete';
+      scanned.finishedAt = Date.now();
+      answers['the root itself'] = insideAnyScanRoot(path.join(home, 'Projects'));
+      answers['another folder, by the root’s name in another case'] = insideAnyScanRoot(path.join(home, 'PROJECTS'));
+      answers['a file in that folder'] = insideAnyScanRoot(path.join(home, 'PROJECTS', 'a.txt'));
+      for (const [what, p] of [['that folder', path.join(home, 'PROJECTS')], ['a file in it', path.join(home, 'PROJECTS', 'a.txt')]]) {
+        const read = await postFacts({ scanId: scanned.scanId, paths: [p], providers: ['size'] });
+        answers[`the read-only rule: ${what}`] = read.body.code ?? read.status;
+      }
+      Object.assign(expected, {
+        'the root itself': true, 'another folder, by the root’s name in another case': false, 'a file in that folder': false,
+        'the read-only rule: that folder': 'OUTSIDE_SCAN_ROOT', 'the read-only rule: a file in it': 'OUTSIDE_SCAN_ROOT',
+      });
     }
     assert.deepEqual(answers, expected);
   } finally {
