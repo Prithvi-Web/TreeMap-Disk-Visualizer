@@ -124,7 +124,7 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: 
      ${closeModal}
      return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal') };`,
   )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }, (n: number) => n.toLocaleString('en-US'), doc) as {
-    openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
+    openBrowse: (start: string | null, onPick?: ((p: string) => void) | null, title?: string | null, useLabel?: string | null) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
     /** The picker dismissed — Escape, the ✕ or the scrim. */
@@ -302,6 +302,44 @@ test('choosing a folder for Offload or Autopilot obeys the same rule: a typed pa
   await use();
   assert.deepEqual(picked, ['/data', '/home/u'], 'with nothing typed, the folder shown is picked');
   assert.deepEqual(scanned, [], 'a pick never starts a scan');
+});
+
+test('the picker\'s one button says what it does where it was opened — "Scan this folder" only when it scans, "Use this folder" for a pick, "Offload to this folder" for an offload (final review F1.7)', async () => {
+  // The label was static markup: opened for "Offload to…" the only button
+  // read "Scan this folder" and started an offload that trashes the
+  // originals; opened for the Autopilot folder it read the same and only
+  // filled the box. The sentence was false in both.
+  const { rt, $ } = browseRuntime(typedListing);
+  const label = () => $('browseUseBtn').innerHTML.replace(/<[^>]*>/g, '');
+  assert.match(INDEX, /<button class="btn btn-primary" id="browseUseBtn"><span data-icon="check"><\/span>Scan this folder<\/button>/,
+    'control: the markup draws the button as "Scan this folder"');
+  $('browseUseBtn').innerHTML = 'Scan this folder'; // as the markup draws it
+  await rt.openBrowse(null);
+  assert.equal(label(), 'Scan this folder', 'opened to scan, it says it scans');
+  await rt.openBrowse('/home/u', () => {}, 'Folder this policy cleans');
+  assert.equal(label(), 'Use this folder', 'opened for a pick, it says it uses the folder — nothing is scanned');
+  await rt.openBrowse(null);
+  assert.equal(label(), 'Scan this folder', 'opened to scan again, it says so again');
+  await rt.openBrowse(null, () => {}, 'Offload to…', 'Offload to this folder');
+  assert.equal(label(), 'Offload to this folder', 'a caller may name its own action');
+
+  // The real "Offload…" entry: its pick copies, verifies and trashes the originals.
+  const opened: unknown[][] = [];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const flow = new Function('state', 'toast', 'hideCtxMenu', 'openBrowse', 'runOffloadJob',
+    `'use strict'; ${braced('function startOffloadFlow(')} return startOffloadFlow;`,
+  )({ scanId: 's1', root: { path: '/home/u' } }, () => {}, () => {}, (...a: unknown[]) => { opened.push(a); }, () => {}) as (paths: string[]) => void;
+  flow(['/home/u/a.mov']);
+  assert.equal(opened.length, 1, 'control: Offload… opens the picker');
+  assert.equal(opened[0][3], 'Offload to this folder', 'and its button names the offload, not a scan');
+
+  // The Autopilot editor's Browse… asks for a pick; the Scan card's for a scan.
+  const boxes = boxesRuntime(strictListing);
+  const boxLabel = () => boxes.$('browseUseBtn').innerHTML.replace(/<[^>]*>/g, '');
+  await boxes.click('apBrowseBtn');
+  assert.equal(boxLabel(), 'Use this folder', 'from the policy editor it reads "Use this folder"');
+  await boxes.click('browseBtn');
+  assert.equal(boxLabel(), 'Scan this folder', 'from the Scan card, "Scan this folder"');
 });
 
 /* ══════════════ A trailing space is part of a folder's name (F1.1) ══════════════ */

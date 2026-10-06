@@ -23221,7 +23221,9 @@ function startOffloadFlow(paths) {
   if (!state.scanId || !state.root) { toast('Run a scan first', 'error'); return; }
   if (paths[0].startsWith('cloud://')) { toast('Offload moves local files to another drive — it doesn’t apply to cloud scans', 'error'); return; }
   hideCtxMenu();
-  openBrowse(null, (dest) => runOffloadJob(paths, dest), 'Offload to…');
+  // The picker's button names the offload — copy, verify, then trash the
+  // originals — not a scan (final review F1.7).
+  openBrowse(null, (dest) => runOffloadJob(paths, dest), 'Offload to…', 'Offload to this folder');
 }
 
 async function runOffloadJob(paths, dest) {
@@ -32440,9 +32442,15 @@ function boxMeant(p) {
     .then(() => null, (e) => meantFolder(p, e));
   return Promise.race([lookup, late]).finally(() => clearTimeout(timer));
 }
-async function openBrowse(start, onPick = null, title = null) {
+/** Open the folder picker. `onPick` takes the folder chosen in place of a
+    scan; `useLabel` names what the one action button then does. The button
+    says "Scan this folder" only when it scans: static, it read so for an
+    offload — which trashes the originals — and for the Autopilot folder,
+    which only fills a box (final review F1.7). */
+async function openBrowse(start, onPick = null, title = null, useLabel = null) {
   browseOnPick = onPick;
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
+  $('browseUseBtn').innerHTML = icon('check', 16) + escapeHtml(useLabel || (onPick ? 'Use this folder' : 'Scan this folder'));
   $('browseModal').classList.add('open');
   const chips = $('browseChips');
   chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>

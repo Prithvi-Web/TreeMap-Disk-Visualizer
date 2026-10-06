@@ -16,7 +16,9 @@ function startOffloadFlow(paths) {
   if (!state.scanId || !state.root) { toast('Run a scan first', 'error'); return; }
   if (paths[0].startsWith('cloud://')) { toast('Offload moves local files to another drive — it doesn’t apply to cloud scans', 'error'); return; }
   hideCtxMenu();
-  openBrowse(null, (dest) => runOffloadJob(paths, dest), 'Offload to…');
+  // The picker's button names the offload — copy, verify, then trash the
+  // originals — not a scan (final review F1.7).
+  openBrowse(null, (dest) => runOffloadJob(paths, dest), 'Offload to…', 'Offload to this folder');
 }
 
 async function runOffloadJob(paths, dest) {

@@ -342,9 +342,15 @@ function boxMeant(p) {
     .then(() => null, (e) => meantFolder(p, e));
   return Promise.race([lookup, late]).finally(() => clearTimeout(timer));
 }
-async function openBrowse(start, onPick = null, title = null) {
+/** Open the folder picker. `onPick` takes the folder chosen in place of a
+    scan; `useLabel` names what the one action button then does. The button
+    says "Scan this folder" only when it scans: static, it read so for an
+    offload — which trashes the originals — and for the Autopilot folder,
+    which only fills a box (final review F1.7). */
+async function openBrowse(start, onPick = null, title = null, useLabel = null) {
   browseOnPick = onPick;
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
+  $('browseUseBtn').innerHTML = icon('check', 16) + escapeHtml(useLabel || (onPick ? 'Use this folder' : 'Scan this folder'));
   $('browseModal').classList.add('open');
   const chips = $('browseChips');
   chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
