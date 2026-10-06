@@ -31986,6 +31986,11 @@ async function browseTo(path, typed = false) {
     field.scrollLeft = field.scrollWidth;
     const list = $('browseList');
     const rows = [];
+    // The server sends at most 500 subfolders — the first 500 in this order —
+    // and how many there are; a cut list says so above the folders (POL item 2).
+    if (typeof data.total === 'number' && data.total > data.dirs.length) {
+      rows.push(`<div class="muted" role="note" style="padding:8px 12px; font-size:12px;">Showing the first ${formatCount(data.dirs.length)} of ${formatCount(data.total)} folders. Type a path above to open one that is not listed.</div>`);
+    }
     if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
     rows.push(...browseOrder(data.dirs).map(d =>
       `<button class="browse-item" data-p="${escapeHtml(d.path)}" aria-label="Open ${escapeHtml(d.name)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));

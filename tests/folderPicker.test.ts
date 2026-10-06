@@ -104,14 +104,14 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
   const closeModal = braced('function closeModal(');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
-    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan',
+    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'formatCount',
     `'use strict';
      const state = { system: { homeDir: '/home/u', commonDirs: [] } };
      function icon() { return ''; }
      ${INDEX.slice(start, end)}
      ${closeModal}
      return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal') };`,
-  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }) as {
+  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }, (n: number) => n.toLocaleString('en-US')) as {
     openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
@@ -133,6 +133,33 @@ test('ordinary folders are listed first and dot-folders after them, each keeping
   const { rt, rows } = browseRuntime(() => HOME);
   await rt.openBrowse(null);
   assert.deepEqual(rows(), ['Desktop', 'Documents', 'Downloads', '.agents', '.antigravity', '.cache']);
+});
+
+test('a listing the server cut says so above its folders, with how many there are; one it did not cut says nothing (POL item 2)', async () => {
+  // GET /api/fs/list sends at most 500 subfolders, the first 500 in this
+  // order, and `total` for all of them. Nothing said a folder of 1,234 showed
+  // 500, and the rest could only be reached by typing their path.
+  const BIG = '/home/u/big';
+  const listings: Record<string, unknown> = {
+    [BIG]: { path: BIG, parent: '/home/u', dirs: ['a', 'b', '.c'].map(dir), total: 1234 },
+    '/home/u/all': { path: '/home/u/all', parent: '/home/u', dirs: ['a', 'b'].map(dir), total: 2 },
+  };
+  const { rt, $, rows } = browseRuntime((p) => listings[p] ?? HOME);
+  const said = async (p: string) => { await rt.browseTo(p); return $('browseList').innerHTML; };
+  const cut = await said(BIG);
+  assert.deepEqual({
+    note: /Showing the first 3 of 1,234 folders\. Type a path above to open one that is not listed\./.test(cut),
+    above: cut.indexOf('Showing') < cut.indexOf('aria-label="Open a"'),
+    rows: rows(),
+    whole: /Showing/.test(await said('/home/u/all')),
+    older: /Showing/.test(await said('/home/u')),
+  }, {
+    note: true,
+    above: true,
+    rows: ['a', 'b', '.c'],
+    whole: false, // every folder was sent
+    older: false, // an answer with no total says nothing
+  });
 });
 
 test('the ordering is one function, stable, and keeps every folder (D05)', () => {

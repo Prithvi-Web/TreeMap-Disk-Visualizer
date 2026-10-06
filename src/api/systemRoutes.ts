@@ -170,10 +170,19 @@ systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request,
   }
 });
 
+/** The most subfolders one listing sends; `total` says how many there are. */
+const FS_LIST_MAX_DIRS = 500;
+
 /**
  * GET /api/fs/list?path=<dir>
  * Subdirectories of a folder — powers the Browse picker in the UI.
  * Defaults to the home directory when no path is given.
+ *
+ * Sorted in the order the picker shows them — ordinary folders first, then
+ * dot-folders (its browseOrder), each by name — and only then cut, so the 500
+ * sent are the first 500 shown. Cut first, they were whichever 500 the
+ * directory read met first (POL item 2). `total` counts every subfolder, so
+ * the picker can say the list was cut.
  */
 systemRouter.get('/fs/list', guardQueryPath('path'), async (req: Request, res: Response) => {
   const target = (req.query.path as string | undefined) ?? os.homedir();
@@ -184,20 +193,20 @@ systemRouter.get('/fs/list', guardQueryPath('path'), async (req: Request, res: R
   }
 
   const entries = await fsp.readdir(target, { withFileTypes: true });
-  const dirs = entries
+  const all = entries
     .filter((e) => e.isDirectory() && !e.isSymbolicLink())
-    .slice(0, 500)
     .map((e) => ({
       name: e.name,
       path: path.join(target, e.name),
       isHidden: e.name.startsWith('.'),
     }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    .sort((a, b) => Number(a.isHidden) - Number(b.isHidden) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
   const parent = path.dirname(target);
   res.json({
     path: target,
     parent: parent === target ? null : parent,
-    dirs,
+    dirs: all.slice(0, FS_LIST_MAX_DIRS),
+    total: all.length,
   });
 });

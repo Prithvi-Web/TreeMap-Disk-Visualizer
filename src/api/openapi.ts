@@ -2207,9 +2207,11 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           {
             path: str(),
             parent: nullable(str()),
-            dirs: arr(obj({ name: str(), path: str(), isHidden: bool() }, ['name', 'path', 'isHidden'])),
+            dirs: arr(obj({ name: str(), path: str(), isHidden: bool() }, ['name', 'path', 'isHidden']),
+              'At most 500 subfolders, the first 500 in the order the picker shows them: ordinary folders first, then dot-folders, each by name. Links are not listed.'),
+            total: int('How many subfolders there are; more than dirs holds when the list was cut at 500'),
           },
-          ['path', 'parent', 'dirs'],
+          ['path', 'parent', 'dirs', 'total'],
         ),
       ),
     },
