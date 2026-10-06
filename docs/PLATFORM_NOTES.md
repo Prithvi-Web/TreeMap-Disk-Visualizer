@@ -9,6 +9,21 @@ The rule this document exists to serve: **TreeMap never prints a number it
 cannot vouch for.** Where a mechanism is missing, the feature says so in plain
 language rather than degrading into a confident wrong answer.
 
+## Size units: decimal on every platform
+
+TreeMap prints every size in decimal units — 1 KB = 1,000 bytes, 1 MB =
+1,000,000 bytes, 1 GB = 1,000,000,000 bytes — on macOS, Windows and Linux
+alike (QA D09, the owner's decision of 5 Oct 2026). That is what Finder shows
+(decimal since Mac OS X 10.6), what drive makers print on the box, what
+`df -H` prints, and what the query grammar reads (`size>1gb`). It is not what
+Windows Explorer (under the same KB/MB/GB labels) or `du -h` and `df -h` (as
+K/M/G) show: they divide by 1,024, so for the same bytes TreeMap's figure is
+2.4% larger in KB, 4.9% in MB, 7.4% in GB and 10% in TB. Both come from the same byte
+count; nothing is measured differently, and every API answer carries the raw
+bytes beside the formatted string. Binary quantities inside the code (I/O
+buffers, block sizes, V8's string limit) keep their binary values and are
+named in KiB and MiB.
+
 ## Mechanism preference order (§2.3)
 
 1. A well-maintained npm package wrapping the syscall.

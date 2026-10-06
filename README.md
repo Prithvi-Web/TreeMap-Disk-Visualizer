@@ -63,6 +63,8 @@ TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen v
 
 **Getting around:** **⌘K** (Ctrl+K) opens a command palette over everything — every view, the Clean Up surface, the deep settings sections (type "weights" and land on the Reclaim sliders), the common actions (scan, rescan, empty the cart, export), your saved views, and the folders you've scanned before; anything it doesn't recognise becomes a file search, and closing it puts focus back exactly where it was. First launch offers a **four-step tour**: pick a folder, learn the map, then up to three quick wins — each one a real Smart Suggestion with its size and its reason, staged **only when you click** and committed never; it ends at the cart with everything still undeleted. Skippable at every step, and it never returns once finished (Settings has a "show it again" button; a read-only portable session persists nothing, so it honestly forgets).
 
+**Sizes are decimal**, as Finder counts them: 1 KB = 1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 1,000,000,000 bytes — on screen, in exports and reports, in the API's and the MCP tools' formatted strings, in every box where you type a size (budgets, Autopilot limits, the cleanup target), and in the search box (`size>500mb` is 500,000,000 bytes; `kib`, `mib` and `gib` are there for the 1,024-based units). Windows Explorer divides by 1,024 under the same labels, so it shows the same files smaller — by about 7% at gigabyte sizes.
+
 <div align="center">
   <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
 </div>
