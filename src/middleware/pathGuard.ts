@@ -180,7 +180,7 @@ export function guardQueryPath(...params: string[]) {
 export function insideAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false; // never on this filesystem
   const where = whereUnlessSecondName(p);
-  return where !== null && allScans().some((scan) => listedBy(scan, where));
+  return where !== null && allScans().some((scan) => listedBy(scan, p, where));
 }
 
 /**
@@ -221,6 +221,20 @@ function placeOf(p: string): string {
  */
 function rootPlaceOf(root: string): string {
   return placeFrom(rootLivesAt(root));
+}
+
+/**
+ * `where` (`placeOf` of `p`), or the scan's `root` itself when `p` names the root's own folder by
+ * another spelling of its last name. A path keeps its last name as typed, while a root that is a
+ * folder has the volume's own (`rootPlaceOf`), so on a volume that folds case the root a scan named
+ * `PROJECTS` was outside it by that name, the files in it inside (the SEC-2c review, F2.3). Asked of
+ * the file system only for a path beside the root, and judged as the root is (`rootPlaceOf`): a
+ * folder by the name the volume stores, a link as itself — so a link beside the root that leads to
+ * it is not the root, and on a volume that keeps case another folder is another folder.
+ */
+function asTheRoot(p: string, where: string, root: string): string {
+  if (where === root || path.dirname(where) !== path.dirname(root)) return where;
+  return rootPlaceOf(p) === root ? root : where;
 }
 
 /** `placeOf` from where the path lives: the Data volume's prefix off where the firmlinks show the rest. */
@@ -275,7 +289,8 @@ function underAnyScanRoot(p: string): boolean {
   const where = whereUnlessSecondName(p);
   return where !== null && allScans().some((scan) => {
     const root = rootPlaceOf(scan.rootPath);
-    return isInside(root, asListedFrom(root, where) ?? where);
+    const at = asTheRoot(p, where, root);
+    return isInside(root, asListedFrom(root, at) ?? at);
   });
 }
 
@@ -368,16 +383,17 @@ export function setFirmlinksFileForTests(file: string | null): void {
 }
 
 /**
- * Whether `where` (`placeOf` of a path) is something `scan` listed: under its
- * root as that scan spelled it (`asListedFrom`), and not at or beneath a folder
+ * Whether `p`, living at `where` (`placeOf`), is something `scan` listed: under its
+ * root as that scan spelled it (`asListedFrom`; the root itself by any spelling of
+ * its last name, `asTheRoot`), and not at or beneath a folder
  * the scan never descended into (`exclusionsOf`). Names are compared as a file
  * system may fold them, so the drive's name in another case is the drive; on a
  * volume that keeps case that also refuses a look-alike folder, which only ever
  * refuses more.
  */
-function listedBy(scan: ScanResult, where: string): boolean {
+function listedBy(scan: ScanResult, p: string, where: string): boolean {
   const root = rootPlaceOf(scan.rootPath);
-  const at = asListedFrom(root, where);
+  const at = asListedFrom(root, asTheRoot(p, where, root));
   if (at === null || !isInside(root, at)) return false;
   const keys = exclusionKeysOf(scan, root);
   if (keys.size === 0) return true;

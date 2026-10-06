@@ -464,6 +464,17 @@ test('a scan of the Data volume typed through a link in its parents, or in anoth
         );
         const r = await deleteDryRun(['/Volumes/NewlyMounted/secret.txt']);
         assert.deepEqual([r.status, r.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${root}, ${label}: ${JSON.stringify(r.body)}`);
+        // The read-only rule (POST /api/facts) reads the root the same way: the file by each spelling,
+        // and the root itself, are under it — skipped or answered, never a 403 for the batch — while
+        // the sealed system volume is under no scan of the Data volume (the SEC-2c review, F2.7).
+        const read = await postFacts({
+          scanId: data.scanId,
+          paths: [path.join(home, 'x.txt'), path.join('/System/Volumes/Data', home, 'x.txt'), path.join(root, home, 'x.txt'), root],
+          providers: ['size'],
+        });
+        assert.equal(read.status, 200, `${root}, ${label}: ${JSON.stringify(read.body)}`);
+        const sealed = await postFacts({ scanId: data.scanId, paths: [path.join(home, 'x.txt'), '/usr/bin/true'], providers: ['size'] });
+        assert.deepEqual([sealed.status, sealed.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${root}, ${label}: ${JSON.stringify(sealed.body)}`);
       }
     }
   } finally {
@@ -475,19 +486,21 @@ test('a scan of the Data volume typed through a link in its parents, or in anoth
 test('a scan root typed with its last name in another case covers the folder it names, by either spelling; a root that is a link covers the link, never what it leads to', async (t) => {
   const home = fs.realpathSync(fileTempDir('treemap-guard-root-case-'));
   fs.mkdirSync(path.join(home, 'Projects'));
+  fs.mkdirSync(path.join(home, 'Projects2'));
   fs.mkdirSync(path.join(home, 'elsewhere'));
   fs.symlinkSync(path.join(home, 'elsewhere'), path.join(home, 'link-root'));
+  fs.symlinkSync(path.join(home, 'Projects'), path.join(home, 'to-projects'));
   const folds = fs.existsSync(path.join(home, 'PROJECTS'));
   try {
     evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
     const linked = createScanRecord(path.join(home, 'link-root'));
     linked.status = 'complete';
     linked.finishedAt = Date.now();
-    const answers: Record<string, boolean> = {
+    const answers: Record<string, unknown> = {
       'the link the scan listed': insideAnyScanRoot(path.join(home, 'link-root')),
       'what it leads to': insideAnyScanRoot(path.join(home, 'elsewhere', 'x.txt')),
     };
-    const expected: Record<string, boolean> = { 'the link the scan listed': true, 'what it leads to': false };
+    const expected: Record<string, unknown> = { 'the link the scan listed': true, 'what it leads to': false };
     if (folds) {
       // Its files' folders read back by the volume's own name, while the root's last name stayed as
       // typed: every file the scan listed was outside it (the SEC-2b review, F1.3).
@@ -497,7 +510,29 @@ test('a scan root typed with its last name in another case covers the folder it 
       answers['a file, as the scan spelled it'] = insideAnyScanRoot(path.join(home, 'PROJECTS', 'a.txt'));
       answers['a file, by its own name'] = insideAnyScanRoot(path.join(home, 'Projects', 'a.txt'));
       answers['a sibling'] = insideAnyScanRoot(path.join(home, 'Projects2', 'a.txt'));
-      Object.assign(expected, { 'a file, as the scan spelled it': true, 'a file, by its own name': true, 'a sibling': false });
+      // And the root itself, by any spelling of its last name: a path keeps its last name as typed,
+      // and the root's became the volume's own, so the root as the scan names it was refused (the
+      // SEC-2c review, F2.3). A sibling folder, or a link beside the root that leads to it, is not it.
+      answers['the root itself, as the scan spelled it'] = insideAnyScanRoot(path.join(home, 'PROJECTS'));
+      answers['the root itself, by its own name'] = insideAnyScanRoot(path.join(home, 'Projects'));
+      answers['the root itself, in a third case'] = insideAnyScanRoot(path.join(home, 'projects'));
+      answers['a sibling folder'] = insideAnyScanRoot(path.join(home, 'Projects2'));
+      answers['a link beside the root, to it'] = insideAnyScanRoot(path.join(home, 'to-projects'));
+      Object.assign(expected, {
+        'a file, as the scan spelled it': true, 'a file, by its own name': true, 'a sibling': false,
+        'the root itself, as the scan spelled it': true, 'the root itself, by its own name': true, 'the root itself, in a third case': true,
+        'a sibling folder': false, 'a link beside the root, to it': false,
+      });
+      // The read-only rule (POST /api/facts) reads the root as the listing rule does (the SEC-2c review, F2.7).
+      const read = await postFacts({
+        scanId: typed.scanId,
+        paths: [path.join(home, 'PROJECTS', 'a.txt'), path.join(home, 'Projects', 'a.txt'), path.join(home, 'PROJECTS'), path.join(home, 'Projects'), path.join(home, 'projects')],
+        providers: ['size'],
+      });
+      answers['the read-only rule: the root and its files, by either spelling'] = read.status === 200 || JSON.stringify(read.body);
+      const sibling = await postFacts({ scanId: typed.scanId, paths: [path.join(home, 'Projects2', 'a.txt')], providers: ['size'] });
+      answers['the read-only rule: a sibling'] = sibling.body.code ?? sibling.status;
+      Object.assign(expected, { 'the read-only rule: the root and its files, by either spelling': true, 'the read-only rule: a sibling': 'OUTSIDE_SCAN_ROOT' });
     } else {
       t.diagnostic('this volume keeps case, so a root in another case names another folder');
     }
