@@ -16,7 +16,7 @@ import {
   resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode,
 } from '../src/services/fleet/fleetSync';
 import { FleetSummary, SUMMARY_FIELDS, buildSummary, isForbiddenSummaryField, serialiseSummary } from '../src/services/fleet/fleetSummary';
-import { startPeerScan } from '../src/services/fleet/fleetRuntime';
+import { fleetRuntime, startPeerScan } from '../src/services/fleet/fleetRuntime';
 import { allScans, getScan } from '../src/services/diskScanner';
 import { appDataDir } from '../src/services/storage';
 import { POLICY_FILE } from '../src/services/policy';
@@ -383,6 +383,36 @@ test('a scan another machine asks for is held to agent-policy.json’s allowedRo
     const scan = getScan(started.body.scanId);
     await waitFor(() => scan?.status !== 'running', 'the scan inside the allowed root');
     assert.deepEqual([scan?.rootPath, scan?.status], [allowed, 'complete']);
+  } finally {
+    fs.rmSync(policyFile, { force: true });
+  }
+});
+
+test('the listener FleetRuntime starts hands a paired peer’s scan to startPeerScan — its own hooks, not a copy — so allowedRoots holds for it (the SEC-2c review, F2.6)', async () => {
+  // The test above hands startPeerScan to the harness itself, so the one line wiring it into the listener
+  // (FleetRuntime.apply) was pinned by nothing: putting back the old hook, which asked no policy, left this
+  // file green. apply() binds a LAN socket and advertises on mDNS, so the wiring is read from its source
+  // — the hooks it starts the listener with are `this.peerHooks(cfg)` — and those hooks are driven here.
+  const runtimeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'fleet', 'fleetRuntime.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
+  assert.deepEqual(
+    (runtimeSource.match(/startPeerServer\([^;]*\)/g) ?? []).map((call) => call.replace(/\s+/g, ' ')),
+    ['startPeerServer(cfg, this.peerHooks(cfg), addresses)'],
+    'apply() starts the listener with the runtime’s own hooks, and nothing else starts one',
+  );
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  const allowed = fs.realpathSync(fileTempDir('tm-fleet-hooks-allowed-'));
+  const elsewhere = fs.realpathSync(fileTempDir('tm-fleet-hooks-elsewhere-'));
+  const policyFile = path.join(appDataDir(), POLICY_FILE);
+  fs.writeFileSync(policyFile, JSON.stringify({ allowedRoots: [allowed] }));
+  try {
+    const { startScan } = fleetRuntime().peerHooks(cfg);
+    const refused = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: elsewhere }, startScan });
+    assert.deepEqual([refused.status, refused.body?.code], [403, 'POLICY_ROOT_NOT_ALLOWED'], JSON.stringify(refused.body));
+    assert.deepEqual(allScans().filter((s) => s.rootPath === elsewhere).map((s) => s.scanId), [], 'nothing was scanned');
   } finally {
     fs.rmSync(policyFile, { force: true });
   }

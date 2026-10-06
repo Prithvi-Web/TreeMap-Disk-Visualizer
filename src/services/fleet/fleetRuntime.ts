@@ -1,7 +1,7 @@
 import { diskUsage } from '../diskUsage';
 import { allScans } from '../diskScanner';
 import { storeOf } from '../scanStore';
-import { FleetConfig, RunningPeerServer, lanAddresses, loadFleetConfig, startPeerServer } from './fleetSync';
+import { FleetConfig, PeerServerHooks, RunningPeerServer, lanAddresses, loadFleetConfig, startPeerServer } from './fleetSync';
 import { ScanResult } from '../../models/types';
 import { DiscoveredPeer, MdnsResponder } from './mdns';
 import { buildSummary, FleetSummary } from './fleetSummary';
@@ -95,6 +95,22 @@ class FleetRuntime {
     });
   }
 
+  /**
+   * The hooks the peer listener runs with (`apply`). Their own method so the
+   * wiring can be tested without binding a LAN socket: a paired peer's scan
+   * goes through `startPeerScan`, the one place agent-policy.json's
+   * allowedRoots is asked on that path (the SEC-2c review, F2.6).
+   */
+  peerHooks(cfg: FleetConfig): PeerServerHooks {
+    return {
+      summary: () => this.summary(cfg),
+      // The peer server refuses the guesser; saying so out loud is this
+      // machine's job, and the fleet panel is where the code was shown.
+      onPairingAbuse: (address: string) => { this.abuse = { address, at: Date.now() }; },
+      startScan: startPeerScan,
+    };
+  }
+
   /** Bring the socket and the advertisement in line with the config. */
   async apply(cfg: FleetConfig): Promise<void> {
     if (!cfg.enabled) {
@@ -109,13 +125,7 @@ class FleetRuntime {
       throw new Error('This machine has no local-network address, so the fleet view cannot start.');
     }
 
-    this.server = await startPeerServer(cfg, {
-      summary: () => this.summary(cfg),
-      // The peer server refuses the guesser; saying so out loud is this
-      // machine's job, and the fleet panel is where the code was shown.
-      onPairingAbuse: (address: string) => { this.abuse = { address, at: Date.now() }; },
-      startScan: startPeerScan,
-    }, addresses);
+    this.server = await startPeerServer(cfg, this.peerHooks(cfg), addresses);
 
     this.mdns = new MdnsResponder({
       instanceName: cfg.instanceId.slice(0, 8),
