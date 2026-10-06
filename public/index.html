@@ -10059,12 +10059,14 @@ const CRUMB_FADE_PX = 34; // the .crumbs mask's fade width — a crumb inside it
 
 /** Shared breadcrumb renderer (treemap + grid + city). */
 function renderCrumbs(host, path, onPick) {
-  // Focus in the trail stays in it (QA-6 review MEDIUM-1): the buttons are
-  // rebuilt, and a crumb or "…" picked from the keyboard used to hand focus to
-  // <body> the moment the map it opened redrew them. The same crumb if it is
-  // still drawn, else "…", else the folder on screen.
+  // Focus on "…" stays in the trail (QA-6 review MEDIUM-1): Escape or a
+  // pick from its menu puts focus back on "…", and the buttons are rebuilt
+  // when the map it opened lands — which used to hand focus to <body>. It
+  // goes to the new "…", else the folder on screen. Only "…": a crumb a
+  // pointer pressed holds focus too, and keeping it there would turn the
+  // next Enter from the map's into a reload of that folder.
   const active = document.activeElement;
-  const kept = active && active !== document.body && host.contains(active) ? { p: active.dataset ? active.dataset.p : undefined } : null;
+  const kept = !!active && host.contains(active) && active.hasAttribute('data-crumb-more');
   const crumbs = breadcrumbsFor(path);
   let fold = 0;
   crumbsPaint(host, crumbs, fold, onPick);
@@ -10072,9 +10074,8 @@ function renderCrumbs(host, path, onPick) {
   host._crumbs = { path, onPick, width: host.clientWidth };
   crumbsWatch(host);
   if (kept) {
-    const buttons = [...host.querySelectorAll('button')];
-    const to = (kept.p && buttons.find((b) => b.dataset.p === kept.p))
-      || host.querySelector('[data-crumb-more]') || buttons[buttons.length - 1];
+    const buttons = host.querySelectorAll('button');
+    const to = host.querySelector('[data-crumb-more]') || buttons[buttons.length - 1];
     if (to) to.focus({ preventScroll: true });
   }
 }

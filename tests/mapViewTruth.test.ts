@@ -614,6 +614,20 @@ test('MEDIUM-1: Escape, or a folder picked, closes the menu and gives focus back
   assert.ok(host.contains(fakeDoc.active), 'after the crumbs are redrawn, focus is still on a crumb');
 });
 
+test('MEDIUM-1: a crumb a pointer pressed does not hold focus in the redrawn trail — Enter goes back to the map', () => {
+  // Focus is kept across the redraw for "…" (the keyboard's way through the
+  // menu). A click leaves focus on the crumb it pressed; keeping it there
+  // would have made the next Enter reload that folder instead of reaching the map.
+  const h = crumbsHarness();
+  const host = makeHost(1400); // wide: every crumb is drawn, no "…"
+  h.render(host, DEEP, h.onPick);
+  const lib = host.buttons.find((b) => b.path === '/System/Library')!;
+  lib.focus();
+  lib.click();
+  h.render(host, '/System/Library', h.onPick); // the load redraws the trail
+  assert.equal(host.contains(fakeDoc.active), false, 'focus was not put back on a crumb');
+});
+
 test('MEDIUM-1: the map keys used from a button beside the map hand focus to the map, so Enter after j or k still drills', () => {
   // Enter on a focused button is now that button's press. A click leaves
   // focus on the button it pressed — a crumb, Refresh, a renderer segment —
