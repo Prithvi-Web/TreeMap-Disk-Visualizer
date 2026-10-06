@@ -1280,85 +1280,6 @@ function cssAt(selector: string): number {
   return at;
 }
 
-/** Every custom property the page's top-level :root blocks define, with its value. */
-function rootTokens(): Map<string, string> {
-  const out = new Map<string, string>();
-  for (let at = INDEX.indexOf('\n:root {'); at !== -1; at = INDEX.indexOf('\n:root {', at + 1)) {
-    const block = INDEX.slice(at, INDEX.indexOf('\n}', at));
-    for (const m of block.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) if (!out.has(m[1])) out.set(m[1], m[2].trim());
-  }
-  assert.ok(out.size > 0, 'control: the page defines its design tokens on :root');
-  return out;
-}
-
-/**
- * A control marked by focus inside the box that clips it (QA-6b review F2.1,
- * F3.1, F3.2): the ring — the page's, unless `selector` draws its own —
- * reaches no further past the control's edge than the `room` its clipping box
- * leaves, is neither switched off nor made transparent, and the control's
- * background turns to a tint the page defines: a misspelled token computes to
- * transparent, which is no tint at all.
- */
-function assertFocusMarkedInside(selector: string, room: number, what: string): void {
-  const pageAt = INDEX.indexOf('\n:focus-visible {');
-  assert.notEqual(pageAt, -1, 'control: the page draws one focus ring for every control');
-  const page = INDEX.slice(pageAt, INDEX.indexOf('}', pageAt));
-  const own = INDEX.includes(`${selector} {`) ? cssRule(selector) : '';
-  const px = (re: RegExp) => { const m = re.exec(own) || re.exec(page); return m ? Number(m[1]) : NaN; };
-  const width = px(/outline(?:-width)?:\s*(\d+)px/);
-  const offset = px(/outline-offset:\s*(-?\d+)px/);
-  assert.ok(width > 0 && !/outline(?:-style)?:\s*(none|hidden|0)\b/.test(own), `a focused ${what} is ringed (${width} px)`);
-  assert.doesNotMatch(own, /outline(?:-color)?:[^;]*\btransparent\b/, `and its ring is not made transparent: ${own}`);
-  assert.ok(width + offset <= room,
-    `the ring reaches ${width + offset} px past the ${what}'s edge, and the box that clips it leaves ${room} px before it clips`);
-  const bg = /background(?:-color)?:\s*([^;]+);/.exec(own);
-  assert.ok(bg, `and focus is not shown by the ring alone: a focused ${what}'s background changes too`);
-  const token = /^var\((--[\w-]+)\)$/.exec(bg![1].trim());
-  assert.ok(token, `to one of the page's tints, not a colour of its own or none (${bg![1]})`);
-  const value = rootTokens().get(token![1]);
-  assert.ok(value !== undefined, `${token![1]} is a token the page defines — an undefined one computes to transparent`);
-  assert.doesNotMatch(value!, /^transparent$|,\s*0(?:\.0*)?\s*\)$/, `and ${token![1]} is a tint you can see (${value})`);
-}
-
-test('LOW-4: a focused menu entry shows its whole focus ring inside the list that clips it, and more than the ring (QA-6b review F2.1, F3.1)', () => {
-  // .ctx-list scrolls (overflow-y:auto makes overflow-x auto too) and its
-  // entries are full width, so it clips right at their edges. The page's ring
-  // is drawn outside the box it marks — 2 px wide, 2 px out — and was cut off
-  // at every edge: a menu of one entry showed no focus at all, and arrowing
-  // through a longer one, nothing said which entry was active (WCAG 2.4.7).
-  const pad = /padding:\s*([^;]+);/.exec(cssRule('#ctxMenu .ctx-list'));
-  const room = pad ? Math.min(...(pad[1].match(/-?\d+/g) || ['0']).map(Number)) : 0;
-  assertFocusMarkedInside('#ctxMenu button:focus-visible', room, 'menu entry');
-  // Both rules are (1,1,1), so the later wins where both apply. :hover must:
-  // it sets white text with its accent fill, and a focus tint after it left
-  // that white text on the pale tint of an entry the pointer was over.
-  assert.match(cssRule('#ctxMenu button:hover'), /color:\s*#fff/, 'control: an entry under the pointer has white text on the accent');
-  assert.ok(cssAt('#ctxMenu button:focus-visible') < cssAt('#ctxMenu button:hover'),
-    'the focus rule comes before :hover, so an entry both focused and under the pointer keeps the accent behind its white text');
-});
-
-test('MEDIUM-1: a focused crumb shows its whole focus ring inside the trail that clips it, and more than the ring (QA-6b review F3.2)', () => {
-  // .crumbs clips (overflow:hidden, and the fade's mask) and has no padding:
-  // its 30 px crumbs fill it top to bottom, and the folder on screen sits flush
-  // with its right edge. The page's ring, drawn 2 px outside the box it marks,
-  // lost its top and bottom to that clip, so "…" — the keyboard's way into the
-  // folded folders, and where focus comes back from their menu — was marked
-  // by two thin side bars. The City's and the Grid's trails are the same rule.
-  const host = cssRule('.crumbs');
-  assert.match(host, /overflow:\s*hidden/, 'control: the trail clips what does not fit in it');
-  assert.deepEqual([...INDEX.matchAll(/<div class="crumbs" id="(\w+)"><\/div>/g)].map((m) => m[1]), ['tmCrumbs', 'cityCrumbs', 'gridCrumbs'],
-    'control: the map\'s, the City\'s and the Grid\'s trails are all .crumbs');
-  const pad = /padding:\s*([^;]+);/.exec(host);
-  const room = pad ? Math.min(...(pad[1].match(/-?\d+/g) || ['0']).map(Number)) : 0;
-  assertFocusMarkedInside('.crumbs button:focus-visible', room, 'crumb');
-  // With no "…", focus lands on the folder on screen (renderCrumbs). Its rule
-  // gives it a background of its own at the same specificity, (0,2,1), so the
-  // tint shows there only if the focus rule comes later.
-  assert.match(cssRule('.crumbs button[aria-current="true"]'), /background:/, 'control: the folder on screen has a background of its own');
-  assert.ok(cssAt('.crumbs button[aria-current="true"]') < cssAt('.crumbs button:focus-visible'),
-    'the focus rule comes after it, so a focused folder on screen is tinted like any other focused crumb');
-});
-
 /* ── Colours, as a browser resolves them (final review F1.1, F1.2) ── */
 
 type Rgba = [number, number, number, number];
@@ -1459,6 +1380,99 @@ function declaredIn(selector: string, prop: string): string | undefined {
   const m = new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([^;}]+)`).exec(cssRule(selector).slice(selector.length));
   return m ? m[1].trim() : undefined;
 }
+
+/**
+ * A control marked by focus inside the box that clips it (QA-6b review F2.1,
+ * F3.1, F3.2): the ring is the page's own, moved inside by `selector` and
+ * reaching no further past the control's edge than the `room` its clipping
+ * box leaves, and the control's background turns to a tint the page defines.
+ *
+ * Checked as a browser resolves it, in both themes, not by spelling (final
+ * review F1.2): a guard that looked for the words `transparent` and `none`
+ * passed `outline-color: rgba(0,0,0,0)`, `outline-width: 0` and a ring the
+ * colour of the tint, and a token of `#0A84FF00` or `rgb(10 132 255 / 0)`.
+ * So the rule may set no outline of its own but its offset — the page's ring
+ * stays the ring — and that ring and the tint are resolved to colours: the
+ * ring opaque and standing 3:1 off the tint it is drawn on (WCAG 1.4.11), the
+ * tint not see-through. A misspelled token computes to transparent, which is
+ * no tint at all.
+ */
+function assertFocusMarkedInside(selector: string, room: number, what: string): void {
+  const pageAt = INDEX.indexOf('\n:focus-visible {');
+  assert.notEqual(pageAt, -1, 'control: the page draws one focus ring for every control');
+  const page = INDEX.slice(pageAt, INDEX.indexOf('}', pageAt));
+  const own = cssRule(selector).slice(selector.length);
+  const outlines = [...own.matchAll(/(?:^|[;{\s])(outline(?:-[\w-]+)?)\s*:/g)].map((m) => m[1]);
+  assert.deepEqual(outlines.filter((p) => p !== 'outline-offset'), [],
+    `a focused ${what} keeps the page's ring: its rule moves it inside (outline-offset) and sets no outline of its own: ${own}`);
+  const ring = /(?:^|[;{\s])outline:\s*(\d+(?:\.\d+)?)px\s+(solid|double|dashed|dotted)\s+([^;]+);/.exec(page);
+  assert.ok(ring, `control: the page's ring is a drawn outline of a width, a style and a colour: ${page}`);
+  const width = Number(ring![1]);
+  assert.ok(width > 0, `control: the page's ring has a width (${width} px)`);
+  const offsetDecl = /outline-offset:\s*(-?\d+(?:\.\d+)?)px/.exec(own);
+  assert.ok(offsetDecl, `a focused ${what}'s rule moves the ring (outline-offset)`);
+  const offset = Number(offsetDecl![1]);
+  assert.ok(width + offset <= room,
+    `the ring reaches ${width + offset} px past the ${what}'s edge, and the box that clips it leaves ${room} px before it clips`);
+  const bg = /(?:^|[;{\s])background(?:-color)?:\s*([^;]+);/.exec(own);
+  assert.ok(bg, `and focus is not shown by the ring alone: a focused ${what}'s background changes too`);
+  const token = /^var\((--[\w-]+)\)$/.exec(bg![1].trim());
+  assert.ok(token, `to one of the page's tints, not a colour of its own or none (${bg![1]})`);
+  for (const theme of ['dark', 'light'] as const) {
+    const tokens = themeTokens(theme);
+    const value = resolveColor(bg![1], tokens);
+    assert.ok(value !== undefined, `${token![1]} is a token the ${theme} theme defines — an undefined one computes to transparent`);
+    const tint = parseColor(value!);
+    assert.ok(tint[3] > 0, `${theme}: and ${token![1]} is a tint you can see, not a see-through one (${value})`);
+    const ground = over(parseColor(resolveColor('var(--glass)', tokens)!), parseColor(resolveColor('var(--bg-1)', tokens)!));
+    const tinted = over(tint, ground);
+    const ringValue = resolveColor(ring![3], tokens);
+    assert.ok(ringValue !== undefined, `${theme}: the page's ring colour (${ring![3]}) is defined`);
+    const ringColor = parseColor(ringValue!);
+    assert.equal(ringColor[3], 1, `${theme}: the page's ring is opaque (${ringValue})`);
+    const ratio = contrastRatio(ringColor, tinted);
+    assert.ok(ratio >= 3, `${theme}: and stands ${ratio.toFixed(2)}:1 off the ${what}'s tint it is drawn on — 3:1 is the bar`);
+  }
+}
+
+test('LOW-4: a focused menu entry shows its whole focus ring inside the list that clips it, and more than the ring (QA-6b review F2.1, F3.1)', () => {
+  // .ctx-list scrolls (overflow-y:auto makes overflow-x auto too) and its
+  // entries are full width, so it clips right at their edges. The page's ring
+  // is drawn outside the box it marks — 2 px wide, 2 px out — and was cut off
+  // at every edge: a menu of one entry showed no focus at all, and arrowing
+  // through a longer one, nothing said which entry was active (WCAG 2.4.7).
+  const pad = /padding:\s*([^;]+);/.exec(cssRule('#ctxMenu .ctx-list'));
+  const room = pad ? Math.min(...(pad[1].match(/-?\d+/g) || ['0']).map(Number)) : 0;
+  assertFocusMarkedInside('#ctxMenu button:focus-visible', room, 'menu entry');
+  // Both rules are (1,1,1), so the later wins where both apply. :hover must:
+  // it sets white text with its accent fill, and a focus tint after it left
+  // that white text on the pale tint of an entry the pointer was over.
+  assert.match(cssRule('#ctxMenu button:hover'), /color:\s*#fff/, 'control: an entry under the pointer has white text on the accent');
+  assert.ok(cssAt('#ctxMenu button:focus-visible') < cssAt('#ctxMenu button:hover'),
+    'the focus rule comes before :hover, so an entry both focused and under the pointer keeps the accent behind its white text');
+});
+
+test('MEDIUM-1: a focused crumb shows its whole focus ring inside the trail that clips it, and more than the ring (QA-6b review F3.2)', () => {
+  // .crumbs clips (overflow:hidden, and the fade's mask) and has no padding:
+  // its 30 px crumbs fill it top to bottom, and the folder on screen sits flush
+  // with its right edge. The page's ring, drawn 2 px outside the box it marks,
+  // lost its top and bottom to that clip, so "…" — the keyboard's way into the
+  // folded folders, and where focus comes back from their menu — was marked
+  // by two thin side bars. The City's and the Grid's trails are the same rule.
+  const host = cssRule('.crumbs');
+  assert.match(host, /overflow:\s*hidden/, 'control: the trail clips what does not fit in it');
+  assert.deepEqual([...INDEX.matchAll(/<div class="crumbs" id="(\w+)"><\/div>/g)].map((m) => m[1]), ['tmCrumbs', 'cityCrumbs', 'gridCrumbs'],
+    'control: the map\'s, the City\'s and the Grid\'s trails are all .crumbs');
+  const pad = /padding:\s*([^;]+);/.exec(host);
+  const room = pad ? Math.min(...(pad[1].match(/-?\d+/g) || ['0']).map(Number)) : 0;
+  assertFocusMarkedInside('.crumbs button:focus-visible', room, 'crumb');
+  // With no "…", focus lands on the folder on screen (renderCrumbs). Its rule
+  // gives it a background of its own at the same specificity, (0,2,1), so the
+  // tint shows there only if the focus rule comes later.
+  assert.match(cssRule('.crumbs button[aria-current="true"]'), /background:/, 'control: the folder on screen has a background of its own');
+  assert.ok(cssAt('.crumbs button[aria-current="true"]') < cssAt('.crumbs button:focus-visible'),
+    'the focus rule comes after it, so a focused folder on screen is tinted like any other focused crumb');
+});
 
 test('a focused or hovered crumb\'s name reads at 4.5:1 or better on its tint in both themes, and the folder on screen keeps its own colour when focused (final review F1.1)', () => {
   // The tint, --accent-soft, is the dark theme's #0A84FF at 16% in BOTH
