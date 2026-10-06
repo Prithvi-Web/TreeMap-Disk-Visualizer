@@ -609,3 +609,71 @@ test('both channel setters sanitise before they store', () => {
     );
   }
 });
+
+/* ════ B12 — the Type colour has a key ════ */
+
+type TypeKey = { shown: Array<{ tint: string; label: string }>; more: number };
+const typeKeyKit = lift<{ cityTypeKey: (blocks: unknown[], max?: number) => TypeKey; EXT_KIND: Record<string, string>; KIND: Record<string, { tint: string }>; kindFor: (n: unknown) => { tint: string } }>(
+  // Consts in declaration order: CITY_KIND_NAME is built from KIND.
+  ['KIND', 'EXT_KIND', 'CITY_KIND_WORD', 'CITY_KIND_NAME', 'kindFor', 'cityTypeKey'], '({ cityTypeKey, EXT_KIND, KIND, kindFor })',
+);
+// The page fills EXT_KIND from its extension lists at load; the four this test needs, filled the same way.
+Object.assign(typeKeyKit.EXT_KIND, { mov: 'video', zip: 'archive', txt: 'doc', mp3: 'audio' });
+const blk = (path: string, type: string, size: number, extension?: string) => ({ n: { path, type, size, extension } });
+
+test('B12: the Type key names every colour the city draws, biggest first, in the colour it is drawn', () => {
+  // B12: the whole /Applications city was blue with a few orange and yellow
+  // specks, and nothing on screen said what blue, orange or yellow meant.
+  const { cityTypeKey, KIND, kindFor } = typeKeyKit;
+  // Drawn order is not size order: the key must sort, not inherit the paint order.
+  const blocks = [
+    blk('/r/B', 'dir', 100), blk('/r/z.bin', 'file', 10, 'bin'), blk('/r/y.zip', 'file', 50, 'zip'),
+    blk('/r/x.mov', 'file', 500, 'mov'), blk('/r/A.app', 'dir', 900), blk('/r/notes.txt', 'file', 5, 'txt'),
+  ];
+  const key = cityTypeKey(blocks);
+  assert.deepEqual(key.shown.map((e) => e.label), ['folders / documents', 'video', 'archives', 'other files'],
+    'one swatch per colour drawn, by the bytes it covers; a colour two kinds share says both');
+  assert.equal(key.more, 0);
+  for (const b of blocks) {
+    const tint = kindFor(b.n).tint;
+    assert.ok(key.shown.some((e) => e.tint === tint), `${b.n.path}: its colour (${tint}) is in the key`);
+  }
+  assert.equal(key.shown[0].tint, KIND.dir.tint, 'folders are their own blue — a folder\'s colour is "folder", not what it holds');
+  const capped = cityTypeKey(blocks, 2);
+  assert.deepEqual(capped.shown.map((e) => e.label), ['folders / documents', 'video']);
+  assert.equal(capped.more, 2, 'and how many more colours there are is said, not dropped');
+  assert.deepEqual(cityTypeKey([]), { shown: [], more: 0 }, 'an empty city has an empty key');
+});
+
+test('B12: the legend shows the Type key only in Type mode, and works it out once per city, not once per frame', () => {
+  const start = INDEX.indexOf('function renderCityChrome(');
+  assert.notEqual(start, -1);
+  let depth = 0, end = start;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const src = INDEX.slice(start, end);
+  const els: Record<string, { innerHTML: string; textContent: string; hidden: boolean }> = {};
+  const $ = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', hidden: true });
+  let keyed = 0;
+  const blocks = [blk('/r/A', 'dir', 1)];
+  const state = { city: { colour: 'type', height: 'staleness', blocks, drawn: 1, total: 1 }, treemap: { rootSize: 1 } };
+  const render = new Function('$', 'state', 'formatCount', 'formatBytes', 'escapeHtml', 'CITY_HEIGHT_LABEL', 'CITY_COLOUR_LABEL',
+    'C_RC_LOW', 'C_AMBER', 'C_TEAL', 'ageRgb', 'cityTypeKey', `'use strict'; ${src} return renderCityChrome;`)(
+    $, state, String, String, (s: string) => s, CITY_HEIGHT_LABEL, CITY_COLOUR_LABEL, [1, 2, 3], [4, 5, 6], [7, 8, 9], () => [0, 0, 0],
+    () => { keyed++; return { shown: [{ tint: '#0A84FF', label: 'folders' }, { tint: '#BF5AF2', label: 'video' }], more: 3 }; },
+  ) as () => void;
+  render();
+  render();
+  assert.match(els.cityLegend.innerHTML, /<i class="sw" style="background:#0A84FF"><\/i>folders/, 'a swatch in the colour drawn, named');
+  assert.match(els.cityLegend.innerHTML, /<i class="sw" style="background:#BF5AF2"><\/i>video/);
+  assert.match(els.cityLegend.innerHTML, /\+3 more/, 'and how many more');
+  assert.equal(keyed, 1, 'two frames of the same city, one key');
+  state.city.blocks = [blk('/r/B', 'dir', 1)];
+  render();
+  assert.equal(keyed, 2, 'a new city, a new key');
+  state.city.colour = 'reclaim';
+  render();
+  assert.doesNotMatch(els.cityLegend.innerHTML, /class="sw"/, 'the reclaim colour keeps its ramp, with no type swatches');
+});

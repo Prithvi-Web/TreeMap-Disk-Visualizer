@@ -24678,7 +24678,7 @@ const CITY_HEIGHT_LABEL = {
 };
 const CITY_COLOUR_LABEL = {
   reclaim: 'how safe and worthwhile it is to reclaim',
-  type: 'what kind of files it holds',
+  type: 'what kind of item it is',
   age: 'how recently it changed',
 };
 
@@ -24983,6 +24983,32 @@ function cityRgb(n, mode) {
   // and "not worth reclaiming" must not paint the same grey.
   if (score === undefined || score === null) return C_RC_UNSCORED;
   return reclaimRgb(typeof score === 'object' ? score.score : score);
+}
+
+/* The Type colour's key (B12). Folders draw in their own blue — a folder's
+   colour says "folder", not what it holds — and one tint can stand for two
+   kinds (folders and documents share #0A84FF), so the key goes by colour. */
+const CITY_KIND_WORD = { dir: 'folders', image: 'images', video: 'video', audio: 'audio', archive: 'archives', code: 'code', pdf: 'PDFs', doc: 'documents', app: 'apps', disk: 'disk images', font: 'fonts', file: 'other files' };
+const CITY_KIND_NAME = new Map(Object.entries(KIND).map(([name, k]) => [k, name]));
+/**
+ * One swatch per colour the city draws in Type mode, biggest first by the
+ * bytes it covers, named for every kind that wears it; `more` counts the
+ * colours past `max`, so none is dropped without a word. Read through
+ * kindFor, exactly as cityRgb paints, so the key cannot name a colour the
+ * map does not use.
+ */
+function cityTypeKey(blocks, max = 6) {
+  const byTint = new Map();
+  for (const b of blocks) {
+    const k = kindFor(b.n);
+    const word = CITY_KIND_WORD[CITY_KIND_NAME.get(k)] || 'other files';
+    const e = byTint.get(k.tint) || { tint: k.tint, words: [], bytes: 0 };
+    if (!e.words.includes(word)) e.words.push(word);
+    e.bytes += b.n.size || 0;
+    byTint.set(k.tint, e);
+  }
+  const all = [...byTint.values()].sort((a, b) => b.bytes - a.bytes);
+  return { shown: all.slice(0, max).map((e) => ({ tint: e.tint, label: e.words.join(' / ') })), more: Math.max(0, all.length - max) };
 }
 
 /**
@@ -26083,11 +26109,21 @@ function renderCityChrome() {
       : c.colour === 'age'
         ? `linear-gradient(90deg, rgb(${ageRgb(Date.now()).join(',')}), rgb(${ageRgb(Date.now() - 3 * 365 * 86400000).join(',')}))`
         : '';
+    // Type is a set of colours, not a ramp: its key is one swatch per colour
+    // drawn (B12 — nothing said what the city's blue, orange or yellow meant).
+    // Worked out once per city, not on every frame drawCity paints.
+    let typeKey = '';
+    if (c.colour === 'type') {
+      if (c.typeKeyFor !== c.blocks) { c.typeKey = cityTypeKey(c.blocks); c.typeKeyFor = c.blocks; }
+      typeKey = `<span class="tml-item tm-legend-bands">` +
+        c.typeKey.shown.map((e) => `<span class="ab"><i class="sw" style="background:${e.tint}"></i>${escapeHtml(e.label)}</span>`).join('') +
+        (c.typeKey.more ? `<span class="ab">+${formatCount(c.typeKey.more)} more</span>` : '') + `</span>`;
+    }
     legend.innerHTML =
       `<span class="tml-item"><b>Footprint</b> = size on disk</span>` +
       `<span class="tml-item"><b>Height</b> = ${escapeHtml(heightLabel)}</span>` +
       `<span class="tml-item city-ramp"><b>Color</b> = ${escapeHtml(colourLabel)}` +
-      (ramp ? `<i style="background:${ramp}"></i>` : '') + `</span>`;
+      (ramp ? `<i style="background:${ramp}"></i>` : '') + `</span>` + typeKey;
   }
 
   const status = $('cityStatus');

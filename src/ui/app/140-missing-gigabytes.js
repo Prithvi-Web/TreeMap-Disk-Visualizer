@@ -298,7 +298,7 @@ const CITY_HEIGHT_LABEL = {
 };
 const CITY_COLOUR_LABEL = {
   reclaim: 'how safe and worthwhile it is to reclaim',
-  type: 'what kind of files it holds',
+  type: 'what kind of item it is',
   age: 'how recently it changed',
 };
 
