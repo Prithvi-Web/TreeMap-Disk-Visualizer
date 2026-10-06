@@ -658,8 +658,10 @@ test('a call waiting its turn on a drive with two calls out starts once one answ
   assert.deepEqual(await b, { empty: true });
 });
 
-test('a call waiting its turn waits as far as its own request\'s budget goes, never unbounded (the U-4c review, F2.4)', async () => {
-  const h = byHand(() => '/d', (p) => p === '/d/ok');
+test('a call waiting its turn waits as far as its own request\'s budget goes, never unbounded (the U-4c review, F2.4, F3.3)', async () => {
+  // A budget of 3 s against a call's 2 s, on a clock that does not move: a wait bounded by a call's
+  // deadline, not by what is left of the budget, is told apart by its length.
+  const h = byHand(() => '/d', (p) => p === '/d/ok', { budgetMs: 3_000, deadlineMs: 2_000, now: () => 0 });
   const session = emptyCheckSession(true);
   assert.deepEqual(await session.look('/d/ok'), { empty: true });
   void session.look('/d/a');
@@ -669,12 +671,30 @@ test('a call waiting its turn waits as far as its own request\'s budget goes, ne
   const c = watch(stillEmptyFolder('/d/c', true)); // another request, with a budget of its own
   await turns(20);
   assert.equal(c(), null, 'c waits its turn');
-  const waits = h.deadlines.slice(mark).filter((x) => x.of === '');
-  assert.ok(waits.length > 0, 'its waits are bounded by its budget');
-  for (const w of waits) w.pass();
+  const waits = h.deadlines.slice(mark);
+  assert.deepEqual(waits.map((x) => `${x.of || '-'}:${x.ms}`), ['-:3000', '-:3000'], 'its drive lookup, then its wait for a turn: each bounded by what is left of its budget, all 3 s of it — not a call\'s 2 s (the U-4c review, F3.3)');
+  waits[1].pass(); // the wait for a turn runs to the end of c's budget
   await turns(20);
-  assert.match(reasonOf(c() ?? { empty: true }), /TreeMap gives to looking at folders again ran out/, 'and end when that runs out');
+  assert.match(reasonOf(c() ?? { empty: true }), /the 3 seconds TreeMap gives to looking at folders again ran out/, 'and ends when that runs out');
   assert.deepEqual(h.asked, ['/d/ok', '/d/a', '/d/b'], 'c was never asked');
+});
+
+test('a call that waited its turn is given what is left of its request\'s budget once its turn comes, not what was left when it began to wait (the U-4c review, F3.3)', async () => {
+  let now = 0;
+  const h = byHand(() => '/d', (p) => p === '/d/ok' || p === '/d/c', { budgetMs: 3_000, deadlineMs: 2_000, now: () => now });
+  const s = emptyCheckSession(true);
+  assert.deepEqual(await s.look('/d/ok'), { empty: true });
+  void s.look('/d/a');
+  void s.look('/d/b');
+  await turns(20);
+  const c = watch(emptyCheckSession(true).look('/d/c')); // another request, 3 s of budget, waits its turn
+  await turns(20);
+  assert.equal(c(), null, 'c waits its turn');
+  now = 2_900; // 2.9 s of c's request go by waiting: 100 ms are left
+  h.callsOn('/d/a')[0].answer(); // a turn comes free
+  await turns(20);
+  assert.deepEqual(c(), { empty: true }, 'its turn came, and it answered');
+  assert.deepEqual(h.deadlines.filter((x) => x.of === '/d/c').map((x) => x.ms), [100], 'c\'s own stat was waited for the 100 ms left, so its request keeps to its 3 s');
 });
 
 test('a call that waits for another request\'s probe of its drive\'s root waits as far as its own budget goes (the U-4c review, F2.5)', async () => {
