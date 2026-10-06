@@ -272,6 +272,11 @@ function browseOrder(dirs) {
     leaves the picker where it was. */
 async function browseTo(path) {
   const seq = ++browseSeq;
+  // A newer listing (a chip, a row, the picker opened again) overtakes any
+  // press of "Scan this folder" still opening a typed path, and that press
+  // will act on nothing, so the button it held is handed back here. A sleeping
+  // NAS can keep the old listing waiting for minutes (review F2.3, F2.5).
+  $('browseUseBtn').disabled = false;
   try {
     const data = await api('/api/fs/list?path=' + encodeURIComponent(path));
     // A newer listing was asked for, or the picker closed, while this one was
@@ -304,6 +309,7 @@ async function browseTo(path) {
     scan, no toast about a sheet that is gone. */
 function browseClosed() {
   browseSeq++;
+  $('browseUseBtn').disabled = false; // the press it held is retired with it
 }
 /** The path line as a path. Leading whitespace is paste debris and goes; a
     trailing space is part of a folder's name and stays — the server's own
@@ -330,10 +336,14 @@ $('browseUseBtn').addEventListener('click', async () => {
   // listed it, so a folder picked from the list is never looked up again.
   const typed = browseFieldPath();
   if (typed && typed !== browsePath) {
-    // Held while it opens, so a second press cannot act twice.
+    // Held while it opens, so a second press cannot act twice. Only this
+    // press's own listing hands it back: a newer listing or the picker
+    // closing already has, and a newer press may be holding it now.
+    const opening = browseTo(typed);
+    const mine = browseSeq;
     btn.disabled = true;
-    const opened = await browseTo(typed);
-    btn.disabled = false;
+    const opened = await opening;
+    if (mine === browseSeq) btn.disabled = false;
     // Not opened, or overtaken while it opened, by a newer listing or by the
     // picker closing: nothing is acted on.
     if (!opened) return;

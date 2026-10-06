@@ -167,6 +167,7 @@ test('"Scan this folder" opens a typed path first, and scans it only if it opene
   await use();
   assert.deepEqual(scanned, [], 'a path that does not open is never scanned — nor is the folder shown before it');
   assert.ok(toasts.some((t) => /No such folder/.test(t)), 'and the reason is shown');
+  assert.equal($('browseUseBtn').disabled, false, 'and the button is live again, to correct the path and press it (review F2.6)');
   $('browseCurrent').value = '/data';
   await use();
   assert.deepEqual(scanned, ['/data'], 'a typed path that opens is the one scanned');
@@ -187,6 +188,7 @@ test('choosing a folder for Offload or Autopilot obeys the same rule: a typed pa
   await use();
   assert.deepEqual(picked, [], 'a typed path that does not open is not picked — nor the folder shown before it');
   assert.ok(toasts.some((t) => /No such folder/.test(t)), 'and the reason is shown');
+  assert.equal($('browseUseBtn').disabled, false, '"Use this folder" is live again too (review F2.6)');
   $('browseCurrent').value = '/data';
   await use();
   assert.deepEqual(picked, ['/data'], 'a typed path that opens is the one picked');
@@ -319,10 +321,48 @@ test('a slow listing that answers after a newer one never takes over the picker 
   second.$('browseCurrent').value = NAS;
   const pending = second.use();
   await second.rt.browseTo('/data');
+  assert.equal(second.$('browseUseBtn').disabled, false,
+    'the picker shows /data now, and its button is live while the NAS has still not answered (review F2.6)');
   g2.open();
   await pending;
   assert.deepEqual(second.scanned, [], 'a superseded typed path is not scanned, and neither is the folder that replaced it');
   assert.deepEqual(scanned, []);
+  assert.equal(second.$('browseUseBtn').disabled, false, 'and the late answer leaves it live');
+});
+
+test('a picker dismissed while a typed path hangs comes back with a live button, and the old answer never releases a newer press\'s hold (review F2.3, F2.5)', async () => {
+  // Type a sleeping NAS, press "Scan this folder", give up with Escape and
+  // open the picker again: the NAS may not answer for minutes, and nothing in
+  // the reopened sheet is waiting on it.
+  const g = gate();
+  const g2 = gate();
+  const OTHER = '/Volumes/other';
+  const { rt, $, scanned, use } = browseRuntime((p) => {
+    if (p === NAS) return g.opened.then(() => ({ path: NAS, parent: '/Volumes/NAS', dirs: [] }));
+    if (p === OTHER) return g2.opened.then(() => ({ path: OTHER, parent: '/Volumes', dirs: [] }));
+    return HOME;
+  });
+  await rt.openBrowse(null);
+  $('browseCurrent').value = NAS;
+  const first = use();
+  assert.equal($('browseUseBtn').disabled, true, 'held while the NAS is asked');
+  rt.close();
+  assert.equal($('browseUseBtn').disabled, false, 'a dismissed picker holds nothing');
+  await rt.openBrowse(null); // Browse… again, the NAS still silent
+  assert.equal($('browseUseBtn').disabled, false, 'the reopened picker\'s button is live while the old listing hangs');
+
+  // A second slow path, pressed in the reopened picker, holds the button
+  // until its own listing answers — the first one settling is not that.
+  $('browseCurrent').value = OTHER;
+  const second = use();
+  assert.equal($('browseUseBtn').disabled, true, 'the new press holds it');
+  g.open();
+  await first;
+  assert.deepEqual(scanned, [], 'the dismissed press acts on nothing when its answer lands');
+  assert.equal($('browseUseBtn').disabled, true, 'nor does it release a hold that is not its own');
+  g2.open();
+  await second;
+  assert.deepEqual(scanned, [OTHER], 'the press made in the reopened picker acts once its own listing answers');
 });
 
 /* ══════════════ A long path shows its end (F1.9) ══════════════ */
