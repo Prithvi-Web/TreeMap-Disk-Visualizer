@@ -195,7 +195,8 @@ test('ULTRA-ROADMAP says how the Track U gate stands for every release granted a
   // Otherwise the release reads as a breach of the gate.
   const doc = read('ULTRA-ROADMAP.md');
   const gateRow = lineStarting(read('docs', 'superpowers', 'plans', '2026-09-30-trackU-owner-issues.md'), '| Track U gate |');
-  const notRun = /^\| Track U gate \| not run \|/.test(gateRow);
+  // "not run", "not run yet", "not run (…)": the gate has not been run. Anything else ("run 8 Oct: …", "not met …") records a run.
+  const notRun = /^\| Track U gate \| not run\b/.test(gateRow);
   const granted = [...doc.matchAll(/^ {2}- \*\*Changed for (\d+\.\d+\.\d+) \([^)]+\):\*\*/gm)].map((m) => m[1]);
   assert.ok(granted.length >= 1, 'the Release bullet records a release granted ahead of the phases');
 
@@ -223,8 +224,15 @@ test('ULTRA-ROADMAP says how the Track U gate stands for every release granted a
     assert.ok(exception, `the exceptions you approved list ${v}`);
     assert.match(exception, /the phases, not the Track U gate/, `the exception for ${v} does not cover the gate`);
     for (const [where, text] of conditions) {
-      const stands = notRun ? 'the gate has not been run, and' : '(?!the gate has not been run)[^)]*';
-      assert.match(text, new RegExp(`\\(${ver}: ${stands} whether ${ver} waits for it is your decision; see the Release bullet at the top\\)`), `${where} says how the gate stands for ${v}`);
+      if (notRun) {
+        assert.match(text, new RegExp(`\\(${ver}: the gate has not been run, and whether ${ver} waits for it is your decision; see the Release bullet at the top\\)`), `${where} says how the gate stands for ${v}`);
+        continue;
+      }
+      // The plan records the gate run: the condition says how it stands for
+      // this release in its own words (what the run recorded), and no longer
+      // that it has not been run.
+      assert.match(text, new RegExp(`\\(${ver}: [^)]*\\bgate\\b[^)]*\\)`), `${where} says how the gate stands for ${v}`);
+      assert.doesNotMatch(text, new RegExp(`\\(${ver}: [^)]*\\bhas not been run\\b`), `the plan's row records the gate run, so ${where} does not say it was not (${gateRow.slice(0, 60)})`);
     }
   }
 });
