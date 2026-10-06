@@ -82,24 +82,28 @@ function makeDom() {
   return { $: (id: string) => (els[id] ??= el()), els };
 }
 
-/* ══════════════ data-truth-3 (mirror) — the page's formatBytes never prints 1024 of a unit ══════════════ */
+/* ══════════════ data-truth-3 (mirror) — the page's formatBytes is decimal and never prints 1000 of a unit ══════════════ */
 
-test('the page formatBytes rolls 1024 of a unit into the next unit, like the server copy must', () => {
+test('the page formatBytes counts in decimal units, as Finder does (QA D09), and rolls 1000 of a unit into the next', () => {
   const src = braced('function formatBytes(');
   const fb = new Function('UNITS', `'use strict'; ${src} return formatBytes;`)(['B', 'KB', 'MB', 'GB', 'TB', 'PB']) as (n: number, d?: number) => string;
-  assert.equal(fb(1048575), '1.0 MB', 'a hair under a mebibyte rounds up — into MB, not "1024.0 KB"');
-  assert.equal(fb(1023.6), '1.0 KB', 'bytes that round to 1024 are a kibibyte');
-  assert.equal(fb(1099511000000, 0), '1 TB', 'the tray\'s zero-decimal form rolls too');
-  assert.equal(fb(1073741000), '1.0 MB'.replace('MB', 'GB'), 'and gibibytes');
-  assert.equal(fb(1023.4), '1023 B', 'a value that does not round up stays where it is');
-  assert.equal(fb(1536), '1.5 KB');
+  assert.equal(fb(3_200_000_000), '3.2 GB', 'Finder\'s figure for 3,200,000,000 bytes');
+  assert.equal(fb(1000), '1.0 KB', 'a kilobyte is 1,000 bytes');
+  assert.equal(fb(999), '999 B');
+  assert.equal(fb(999_950), '1.0 MB', 'a hair under a megabyte rounds up — into MB, not "1000.0 KB"');
+  assert.equal(fb(999.6), '1.0 KB', 'bytes that round to 1000 are a kilobyte');
+  assert.equal(fb(999_600_000_000_000, 0), '1 PB', 'the tray\'s zero-decimal form rolls too');
+  assert.equal(fb(999_960_000), '1.0 GB', 'and gigabytes');
+  assert.equal(fb(999.4), '999 B', 'a value that does not round up stays where it is');
+  assert.equal(fb(1500), '1.5 KB');
+  assert.equal(fb(1_048_576), '1.0 MB', 'a mebibyte is 1.05 MB');
   assert.equal(fb(500), '500 B');
   assert.equal(fb(0), '0 B');
-  assert.equal(fb(1024 ** 5 * 1023.99), '1024.0 PB', 'the last unit has nowhere to roll — it is allowed to say 1024');
-  for (let e = 10; e <= 40; e++) {
+  assert.equal(fb(1000 ** 5 * 999.99), '1000.0 PB', 'the last unit has nowhere to roll — it is allowed to say 1000');
+  for (let e = 3; e <= 15; e++) {
     for (const f of [0.99995, 0.99999, 1]) {
-      const s = fb(2 ** e * f);
-      assert.doesNotMatch(s, /^1024(\.\d+)? [KMGT]B$/, `${2 ** e * f} → "${s}"`);
+      const s = fb(10 ** e * f);
+      assert.doesNotMatch(s, /^1000(\.\d+)? [KMGT]B$/, `${10 ** e * f} → "${s}"`);
     }
   }
 });

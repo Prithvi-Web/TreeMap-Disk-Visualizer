@@ -133,7 +133,7 @@ test('a batch the cap cannot hold whole: the later item is left in place, and no
   assert.equal(left.code, 'CAPSULE_FULL');
   assert.match(left.reason ?? '', /left alone rather than deleted without a backup/);
   // What holds the room is named, and only that (FG3h D): this run's own copies.
-  assert.match(left.reason ?? '', /195\.3 KB of copies of items whose deletion is still under way/, left.reason);
+  assert.match(left.reason ?? '', /200\.0 KB of copies of items whose deletion is still under way/, left.reason);
   assert.doesNotMatch(left.reason ?? '', /being restored|could not be confirmed/, left.reason);
   assert.ok(fs.existsSync(c), 'the third is still where it was');
   assert.equal(result.bytesFreed, 2 * ITEM);
@@ -175,7 +175,7 @@ test('the dry run gives the same verdict: never more than the cap, and the copie
   assert.deepEqual(plan.items.map((i) => [path.basename(i.path), i.willDelete]), [['a.bin', true], ['b.bin', true], ['c.bin', false]]);
   assert.equal(plan.items[2].code, 'CAPSULE_FULL');
   // In the words the real run uses, naming what holds the room and only that (FG3g review F2.14).
-  assert.match(plan.items[2].reason ?? '', /195\.3 KB of copies of items whose deletion is still under way/, plan.items[2].reason);
+  assert.match(plan.items[2].reason ?? '', /200\.0 KB of copies of items whose deletion is still under way/, plan.items[2].reason);
   assert.doesNotMatch(plan.items[2].reason ?? '', /being restored|could not be confirmed/, plan.items[2].reason);
   assert.ok(plan.bytesWouldFree <= plan.capsule.capBytes, `${plan.bytesWouldFree} planned against a ${plan.capsule.capBytes} cap`);
   assert.deepEqual(plan.evicts.map((e) => e.id), [oldId], 'only the older copy is named as dropped');

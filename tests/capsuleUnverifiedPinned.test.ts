@@ -101,13 +101,13 @@ test('an item that would fit only by evicting unconfirmed copies is left undelet
     // The dry run says what the real run will, naming what holds the room (FG3g review F2.14).
     const plan = await planCartCommit([big]);
     assert.equal(plan.items[0].code, 'CAPSULE_FULL', JSON.stringify(plan.items[0]));
-    assert.match(plan.items[0].reason ?? '', /195\.3 KB of copies of items whose trash step could not be confirmed/, plan.items[0].reason);
+    assert.match(plan.items[0].reason ?? '', /200\.0 KB of copies of items whose trash step could not be confirmed/, plan.items[0].reason);
     assert.doesNotMatch(plan.items[0].reason ?? '', /being restored|still under way/, plan.items[0].reason);
     assert.match(plan.items[0].reason ?? '', /It will be left alone rather than deleted without a backup/, plan.items[0].reason);
     const result = await withOpenFileCheck('clear', () => commitCart([big]));
     const row = result.skipped.find((s) => s.path === big);
     assert.equal(row?.code, 'CAPSULE_FULL', JSON.stringify(result.skipped));
-    assert.match(row?.reason ?? '', /195\.3 KB of copies of items whose trash step could not be confirmed/, row?.reason);
+    assert.match(row?.reason ?? '', /200\.0 KB of copies of items whose trash step could not be confirmed/, row?.reason);
     // What holds the room is named, and only that (FG3h D): nothing here is being restored or under way.
     assert.doesNotMatch(row?.reason ?? '', /being restored|still under way/, row?.reason);
     assert.ok(fs.existsSync(big), 'and it is still in place');

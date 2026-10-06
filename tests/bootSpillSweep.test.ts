@@ -88,7 +88,7 @@ test('boot removes a dead process\'s leftover, keeps a live process\'s, and says
     assert.equal(fs.existsSync(dead), false, 'the dead owner\'s leftover is gone');
     assert.equal(fs.existsSync(live), true, 'this live process\'s file is kept');
     assert.equal(lines.length, 1, `one line: ${JSON.stringify(lines)}`);
-    assert.match(lines[0], /spill sweep: removed 1 file \(1000 B\), kept 1$/);
+    assert.match(lines[0], /spill sweep: removed 1 file \(1\.0 KB\), kept 1$/);
   } finally {
     running?.shutdown();
   }

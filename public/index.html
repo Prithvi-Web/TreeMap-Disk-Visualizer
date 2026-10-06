@@ -5107,16 +5107,20 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 /* ───────────────────────────── Utilities ───────────────────────────── */
 const $ = (id) => document.getElementById(id);
 const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Sizes are decimal, as Finder counts them and as the query box reads `mb`:
+   1 KB = 1,000 bytes, 1 MB = 1,000,000, 1 GB = 1,000,000,000 (QA D09). Every
+   size on the page goes through here; mirrors src/utils/formatBytes.ts, and
+   tests/polishServerNumbers.test.ts holds the two to the same output. */
 const UNITS = ['B','KB','MB','GB','TB','PB'];
 function formatBytes(n, d = 1) {
   if (!Number.isFinite(n) || n < 0) return '0 B';
   let v = n, u = 0;
-  while (v >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
-  // Rounding can carry a value up to exactly 1024 of its unit — "1024.0 KB",
-  // "1024 B" — a figure no unit system prints. Roll it into the next unit,
-  // which is what the rounded number means. Mirrors src/utils/formatBytes.ts.
+  while (v >= 1000 && u < UNITS.length - 1) { v /= 1000; u++; }
+  // Rounding can carry a value up to exactly 1000 of its unit — "1000.0 KB",
+  // "1000 B" — a figure no unit system prints. Roll it into the next unit,
+  // which is what the rounded number means.
   const shown = u === 0 ? Math.round(v) : Number(v.toFixed(d));
-  if (shown >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
+  if (shown >= 1000 && u < UNITS.length - 1) { v /= 1000; u++; }
   return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
 /* The interface is in English, so what it writes is English: counts "1,234"
@@ -11867,8 +11871,9 @@ const FxCharts = (() => {
      * skipped evenly when they outnumber `count`.
      *
      * The axis never rounds up to the next full power. It used to, and on a
-     * base-1024 byte axis that costs a whole decade: a 17 GB largest app
-     * produced a "1.0 TB" ceiling with a third of the plot permanently empty,
+     * byte axis (whose decades are 1000 apart, sizes being decimal) that costs
+     * a whole decade: a 17 GB largest app produced a "1.0 TB" ceiling with a
+     * third of the plot permanently empty,
      * and the number at the top belonged to nothing in the data. The top of
      * an axis is a claim about the data, so it states the data.
      */
@@ -31897,8 +31902,8 @@ async function freeSpaceNow() {
   try { return (await api('/api/system')).freeDisk; } catch { return null; }
 }
 
-/** Under a megabyte is churn, not a result: a disk in use drifts on its own. */
-const DUP_FREED_MIN = 1024 * 1024;
+/** Under a megabyte (1,000,000 bytes — sizes are decimal) is churn, not a result: a disk in use drifts on its own. */
+const DUP_FREED_MIN = 1_000_000;
 
 /**
  * What a duplicates trash actually did, from two readings of the free space.

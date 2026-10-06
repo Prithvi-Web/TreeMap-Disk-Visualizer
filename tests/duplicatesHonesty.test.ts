@@ -18,7 +18,8 @@ import { INDEX, lift } from './fixtures/liftFrontend';
  * Trash did would swap a wrong number for a wrong explanation.
  */
 
-const MB = 1024 * 1024;
+/** Sizes are decimal (QA D09): 1 MB is 1,000,000 bytes. */
+const MB = 1_000_000;
 
 /* ── the measured sentence ── */
 
@@ -53,7 +54,7 @@ test('a duplicates trash reports what was measured, and blames the Trash rather 
 test('churn below a megabyte is never reported as a result, and a negative delta never prints 0 B', () => {
   const dupFreedText = freedText();
   // A disk in use drifts on its own; under a megabyte is noise, not an outcome.
-  assert.match(dupFreedText(1, 500 * MB, 500 * MB + 900 * 1024), /hasn’t changed/,
+  assert.match(dupFreedText(1, 500 * MB, 500 * MB + 900_000), /hasn’t changed/,
     'just under the floor is still "nothing happened"');
   assert.match(dupFreedText(1, 500 * MB, 500 * MB + MB), /went up by 1\.0 MB/, 'and the floor itself counts');
   // formatBytes prints '0 B' for anything negative, so the gate must be on the

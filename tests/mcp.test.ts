@@ -35,11 +35,13 @@ function write(rel: string, content: Buffer | string): string {
   return p;
 }
 
-const BIG = 2 * 1024 * 1024;
-const DUP = 512 * 1024;
+// Decimal sizes (QA D09): 1 MB is 1,000,000 bytes, as every formatted size prints them.
+const BIG = 2_000_000;
+const DUP = 500_000;
+const MID = 1_000_000;
 const bigPath = write('big.bin', Buffer.alloc(BIG, 1));
 write('small.txt', 'ten bytes!');
-write('sub/mid.bin', Buffer.alloc(1024 * 1024, 2));
+write('sub/mid.bin', Buffer.alloc(MID, 2));
 write('dup-a.bin', Buffer.alloc(DUP, 3));
 write('dup-b.bin', Buffer.alloc(DUP, 3));
 write('proj/package.json', '{}');
@@ -181,7 +183,7 @@ test('get_largest folders reports recursive sizes', async () => {
   const s = r.structuredContent!;
   const sub = s.folders.find((f: { name: string }) => f.name === 'sub');
   assert.ok(sub, 'sub folder is ranked');
-  assert.equal(sub.size, 1024 * 1024);
+  assert.equal(sub.size, MID);
   assert.equal(sub.fileCount, 1);
 });
 
@@ -189,10 +191,10 @@ test('find_duplicates finds the identical pair and its reclaimable bytes', async
   const s = await settle('find_duplicates', { scanId, minSizeBytes: 1 }, () => ({ scanId, minSizeBytes: 1 }));
   assert.equal(s.status, 'complete');
   const dupGroup = s.groups.find((g: { count: number; size: number }) => g.size === DUP);
-  assert.ok(dupGroup, 'the 512 KB duplicate pair is reported');
+  assert.ok(dupGroup, 'the 500 KB duplicate pair is reported');
   assert.equal(dupGroup.count, 2);
   assert.equal(dupGroup.reclaimable, DUP);
-  assert.equal(dupGroup.reclaimableFormatted, '512.0 KB');
+  assert.equal(dupGroup.reclaimableFormatted, '500.0 KB');
 });
 
 test('find_duplicates still hashing says which pass its counts are for (QA D52)', async () => {

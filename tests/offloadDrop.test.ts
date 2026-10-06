@@ -208,6 +208,9 @@ test('a platform with no drive discovery says so — an empty dock is never a si
    seam because no test can make a real volume have 20 MB free on three
    operating systems, and patching the module export does nothing under tsx. */
 
+/** Sizes are decimal (QA D09): 1 MB is 1,000,000 bytes, as the sentence prints them. */
+const MB = 1_000_000;
+
 function scanOfOneClaimedFile(dir: string, filePath: string, size: number) {
   const scan = createScanRecord(dir);
   scan.status = 'complete';
@@ -225,10 +228,10 @@ test('a destination without room says what is needed and what is free, in units 
   // prepareOffload plans from the scan tree and never stats the source, so the
   // file on disk can be a token: the 30 MB is the size the scan claims.
   fs.writeFileSync(movie, 'placeholder');
-  const scan = scanOfOneClaimedFile(src, movie, 30 * 1024 * 1024);
+  const scan = scanOfOneClaimedFile(src, movie, 30 * MB);
 
   const restore = setOffloadDiskUsageForTests(async () => ({
-    total: 1024 * 1024 * 1024, free: 20 * 1024 * 1024, used: 1004 * 1024 * 1024,
+    total: 1000 * MB, free: 20 * MB, used: 980 * MB,
   }));
   try {
     await assert.rejects(
@@ -257,10 +260,10 @@ test('a destination that is only just too small never reads as though it had roo
   const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-margin-dest-'));
   const movie = path.join(src, 'movie.mov');
   fs.writeFileSync(movie, 'placeholder');
-  const scan = scanOfOneClaimedFile(src, movie, 30 * 1024 * 1024);
+  const scan = scanOfOneClaimedFile(src, movie, 30 * MB);
 
   const restore = setOffloadDiskUsageForTests(async () => ({
-    total: 1024 * 1024 * 1024, free: 31_800_000, used: 1024 * 1024 * 1024 - 31_800_000,
+    total: 1000 * MB, free: 30_300_000, used: 1000 * MB - 30_300_000,
   }));
   try {
     await assert.rejects(

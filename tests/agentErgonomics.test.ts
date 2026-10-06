@@ -30,8 +30,9 @@ function write(rel: string, content: Buffer | string): string {
   fs.writeFileSync(p, content);
   return p;
 }
-write('huge.bin', Buffer.alloc(2 * 1024 * 1024, 1));
-write('docs/mid.bin', Buffer.alloc(512 * 1024, 2));
+// Decimal sizes (QA D09): 2,000,000 bytes print as 2.0 MB.
+write('huge.bin', Buffer.alloc(2_000_000, 1));
+write('docs/mid.bin', Buffer.alloc(500_000, 2));
 write('proj/package.json', '{}');
 write('proj/node_modules/dep/index.js', 'module.exports = 1;');
 write('junk/.DS_Store', Buffer.alloc(6148, 0));
@@ -161,7 +162,7 @@ test('agent summary: raw+formatted bytes, stable ids, deterministic order, real 
     assert.equal(s.totals.fileCount, 5);
 
     assert.equal(s.largestFiles[0].name, 'huge.bin', 'largest first');
-    assert.equal(s.largestFiles[0].size, 2 * 1024 * 1024);
+    assert.equal(s.largestFiles[0].size, 2_000_000);
     assert.equal(s.largestFiles[0].sizeFormatted, '2.0 MB');
     const fileSizes = s.largestFiles.map((f: { size: number }) => f.size);
     assert.deepEqual(fileSizes, [...fileSizes].sort((a, b) => b - a), 'files size-desc');

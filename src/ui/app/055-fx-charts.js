@@ -60,8 +60,9 @@ const FxCharts = (() => {
      * skipped evenly when they outnumber `count`.
      *
      * The axis never rounds up to the next full power. It used to, and on a
-     * base-1024 byte axis that costs a whole decade: a 17 GB largest app
-     * produced a "1.0 TB" ceiling with a third of the plot permanently empty,
+     * byte axis (whose decades are 1000 apart, sizes being decimal) that costs
+     * a whole decade: a 17 GB largest app produced a "1.0 TB" ceiling with a
+     * third of the plot permanently empty,
      * and the number at the top belonged to nothing in the data. The top of
      * an axis is a claim about the data, so it states the data.
      */

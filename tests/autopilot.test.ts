@@ -686,7 +686,7 @@ test('an unexpectedly large match stops the run instead of being trimmed and exe
     const result = await runPolicy((await listPolicies())[0]);
     assert.equal(result.status, 'awaiting-approval');
     assert.equal(result.bytesDeleted, 0);
-    assert.match(result.blockedReason ?? '', /more than the 1000 B|more than the 1000/);
+    assert.match(result.blockedReason ?? '', /more than the 1\.0 KB you asked/, 'the 1,000-byte limit, in decimal units (QA D09)');
     assert.ok(fs.existsSync(path.join(dir, 'proj', 'node_modules')), 'nothing was deleted');
   } finally {
     await savePolicies([]);

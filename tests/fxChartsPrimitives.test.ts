@@ -40,9 +40,9 @@ function loadFxCharts(): any {
     const UNITS = ['B','KB','MB','GB','TB','PB'];
     function formatBytes(n, d = 1) {
       if (!Number.isFinite(n) || n < 0) return '0 B';
-      if (n < 1024) return Math.round(n) + ' B';
+      if (n < 1000) return Math.round(n) + ' B'; // the page's decimal units (QA D09)
       let v = n, u = 0;
-      while (v >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
+      while (v >= 1000 && u < UNITS.length - 1) { v /= 1000; u++; }
       return v.toFixed(d) + ' ' + UNITS[u];
     }
     function cssVar() { return ''; }

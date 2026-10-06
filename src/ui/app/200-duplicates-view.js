@@ -330,8 +330,8 @@ async function freeSpaceNow() {
   try { return (await api('/api/system')).freeDisk; } catch { return null; }
 }
 
-/** Under a megabyte is churn, not a result: a disk in use drifts on its own. */
-const DUP_FREED_MIN = 1024 * 1024;
+/** Under a megabyte (1,000,000 bytes — sizes are decimal) is churn, not a result: a disk in use drifts on its own. */
+const DUP_FREED_MIN = 1_000_000;
 
 /**
  * What a duplicates trash actually did, from two readings of the free space.

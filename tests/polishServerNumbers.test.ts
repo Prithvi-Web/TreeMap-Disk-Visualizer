@@ -30,24 +30,40 @@ import type { ScanResult } from '../src/models/types';
 
 /* ───────────────────────────── formatBytes ───────────────────────────── */
 
-test('formatBytes never prints 1024.0 of a unit; it rolls to the next one', () => {
-  assert.equal(formatBytes(1048570), '1.0 MB');
-  assert.equal(formatBytes(1048575), '1.0 MB');
-  assert.equal(formatBytes(1073741000), '1.0 GB');
-  assert.equal(formatBytes(1099511000000), '1.0 TB');
-  assert.equal(formatBytes(1099511000000, 0), '1 TB');
-  assert.equal(formatBytes(1023.6), '1.0 KB', 'rounding a byte count up to 1024 is a kilobyte');
-  assert.equal(formatBytes(1023.4), '1023 B');
-  assert.equal(formatBytes(1023), '1023 B');
-  assert.equal(formatBytes(1024), '1.0 KB');
-  assert.equal(formatBytes(1536), '1.5 KB', 'the existing convention is untouched');
+test('formatBytes counts in decimal units, as Finder does: 1 KB = 1,000 B, 1 MB = 1,000,000 B, 1 GB = 1,000,000,000 B (QA D09)', () => {
+  // The owner's answer (5 Oct 2026, "Match Finder"). The query grammar was
+  // already decimal, so a 700,000,000-byte file used to read "667.6 MB" and
+  // still match `size>680mb`.
+  assert.equal(formatBytes(3_200_000_000), '3.2 GB', 'Finder\'s figure for 3,200,000,000 bytes');
+  assert.equal(formatBytes(700_000_000), '700.0 MB', 'QA\'s raw-footage.mkv');
+  assert.equal(formatBytes(1000), '1.0 KB');
+  assert.equal(formatBytes(999), '999 B');
+  assert.equal(formatBytes(1500), '1.5 KB');
+  assert.equal(formatBytes(1_000_000), '1.0 MB');
+  assert.equal(formatBytes(1_000_000_000), '1.0 GB');
+  assert.equal(formatBytes(1_000_000_000_000), '1.0 TB');
+  assert.equal(formatBytes(1000 ** 5), '1.0 PB');
+  assert.equal(formatBytes(1024), '1.0 KB', '1,024 bytes are 1.024 KB');
+  assert.equal(formatBytes(1_048_576), '1.0 MB', 'a mebibyte is 1.05 MB');
+  assert.equal(formatBytes(5 * 1024 ** 3), '5.4 GB', 'five gibibytes are 5.37 GB');
   assert.equal(formatBytes(0), '0 B');
   assert.equal(formatBytes(-5), '0 B');
-  assert.equal(formatBytes(1024 ** 5 * 1023.99), '1024.0 PB', 'the last unit has nothing to roll into');
-  // Every value in [1023.95, 1024) of every unit used to print 1024.0.
+  assert.equal(formatBytes(Number.NaN), '0 B');
+});
+
+test('formatBytes never prints 1000.0 of a unit; it rolls to the next one', () => {
+  assert.equal(formatBytes(999_950), '1.0 MB', '999.95 KB rounds to 1000.0 KB, which is a megabyte');
+  assert.equal(formatBytes(999_949), '999.9 KB', 'a value that does not round up stays where it is');
+  assert.equal(formatBytes(999_960_000), '1.0 GB');
+  assert.equal(formatBytes(999_999_000_000), '1.0 TB');
+  assert.equal(formatBytes(999_600_000_000_000, 0), '1 PB', 'the tray\'s zero-decimal form rolls too');
+  assert.equal(formatBytes(999.6), '1.0 KB', 'rounding a byte count up to 1000 is a kilobyte');
+  assert.equal(formatBytes(999.4), '999 B');
+  assert.equal(formatBytes(1000 ** 5 * 999.99), '1000.0 PB', 'the last unit has nothing to roll into');
+  // Every value in [999.95, 1000) of every unit would print 1000.0.
   for (let unit = 1; unit < 5; unit++) {
-    const s = formatBytes(1024 ** unit * 1023.97);
-    assert.doesNotMatch(s, /^1024/, `unit ${unit}: ${s}`);
+    const s = formatBytes(1000 ** unit * 999.97);
+    assert.doesNotMatch(s, /^1000/, `unit ${unit}: ${s}`);
   }
 });
 
@@ -64,7 +80,8 @@ test('the page\'s copy of formatBytes agrees with the server\'s (src/ui/app/000-
   }
   const fn = src.slice(start, end);
   const page = vm.runInNewContext(`${unitsLine}; ${fn}; formatBytes`) as (n: number, d?: number) => string;
-  for (const n of [0, 1023, 1023.6, 1024, 1536, 1048570, 1048575, 1073741000, 1099511000000, 5 * 1024 ** 3, 1024 ** 5 * 1023.99]) {
+  for (const n of [0, 999, 999.4, 999.6, 1000, 1024, 1500, 999_949, 999_950, 1_048_576, 700_000_000, 999_960_000,
+    3_200_000_000, 5 * 1024 ** 3, 999_999_000_000, 999_600_000_000_000, 1000 ** 5 * 999.99]) {
     assert.equal(page(n), formatBytes(n), `page vs server for ${n}`);
     assert.equal(page(n, 0), formatBytes(n, 0), `page vs server for ${n}, 0 decimals`);
   }
@@ -134,21 +151,21 @@ function scanFixture(over: Partial<ScanResult> = {}): ScanResult {
   } as ScanResult;
 }
 
-test('the statement\'s notes print bytes the way the rest of the app does (binary units)', async () => {
-  const s = await buildStatement(scanFixture({ hardlinkedBytes: 6291456 }), sources());
+test('the statement\'s notes print bytes the way the rest of the app does (decimal units)', async () => {
+  const s = await buildStatement(scanFixture({ hardlinkedBytes: 6_000_000 }), sources());
   const scanned = s.lines.find((l) => l.id === 'scanned')!;
   const hardlinkNote = scanned.notes.find((n) => /more than one name/.test(n))!;
   assert.ok(hardlinkNote, 'the hard-link note is there');
   assert.match(hardlinkNote, /6\.0 MB/, `the dashboard chip prints the same bytes as 6.0 MB: ${hardlinkNote}`);
-  assert.doesNotMatch(hardlinkNote, /6\.3 MB/);
+  assert.doesNotMatch(hardlinkNote, /5\.7 MB/, 'not the binary figure for the same bytes');
 
   const other = s.lines.find((l) => l.id === 'otherVolumes')!;
   const preboot = other.notes.find((n) => n.startsWith('Preboot'))!;
-  assert.match(preboot, /8\.4 GB/, `9e9 bytes are 8.4 GB in binary units: ${preboot}`);
+  assert.match(preboot, /9\.0 GB/, `9e9 bytes are 9.0 GB in decimal units, as Finder says: ${preboot}`);
   const vmNote = other.notes.find((n) => n.startsWith('VM'))!;
-  assert.match(vmNote, /1\.9 GB/, vmNote);
+  assert.match(vmNote, /2\.0 GB/, vmNote);
   // Every byte figure in every note re-derives from a source figure with formatBytes.
-  const allowed = new Set([formatBytes(6291456), formatBytes(9 * GB), formatBytes(2 * GB), formatBytes(0)]);
+  const allowed = new Set([formatBytes(6_000_000), formatBytes(9 * GB), formatBytes(2 * GB), formatBytes(0)]);
   for (const line of s.lines) {
     for (const note of line.notes) {
       for (const m of note.matchAll(/\d+(?:\.\d+)? [KMGT]B/g)) {

@@ -7,16 +7,20 @@
 /* ───────────────────────────── Utilities ───────────────────────────── */
 const $ = (id) => document.getElementById(id);
 const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Sizes are decimal, as Finder counts them and as the query box reads `mb`:
+   1 KB = 1,000 bytes, 1 MB = 1,000,000, 1 GB = 1,000,000,000 (QA D09). Every
+   size on the page goes through here; mirrors src/utils/formatBytes.ts, and
+   tests/polishServerNumbers.test.ts holds the two to the same output. */
 const UNITS = ['B','KB','MB','GB','TB','PB'];
 function formatBytes(n, d = 1) {
   if (!Number.isFinite(n) || n < 0) return '0 B';
   let v = n, u = 0;
-  while (v >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
-  // Rounding can carry a value up to exactly 1024 of its unit — "1024.0 KB",
-  // "1024 B" — a figure no unit system prints. Roll it into the next unit,
-  // which is what the rounded number means. Mirrors src/utils/formatBytes.ts.
+  while (v >= 1000 && u < UNITS.length - 1) { v /= 1000; u++; }
+  // Rounding can carry a value up to exactly 1000 of its unit — "1000.0 KB",
+  // "1000 B" — a figure no unit system prints. Roll it into the next unit,
+  // which is what the rounded number means.
   const shown = u === 0 ? Math.round(v) : Number(v.toFixed(d));
-  if (shown >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
+  if (shown >= 1000 && u < UNITS.length - 1) { v /= 1000; u++; }
   return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
 /* The interface is in English, so what it writes is English: counts "1,234"

@@ -34,6 +34,8 @@ const menu = require(path.join(REPO, 'electron', 'lib', 'menu.js'));
  * needs a finally of its own to clean up.
  */
 const mkTmp = (): string => fileTempDir('tm-desktop-');
+/** Sizes are decimal (QA D09): 1 GB is 1,000,000,000 bytes, as the notices print them. */
+const GB = 1e9;
 
 /* ═══════════════════════ security-electron-2: the API token ═══════════════════════ */
 
@@ -256,7 +258,7 @@ test('menu clicks reach the right actions', () => {
 test('a growth alert is headlined by the folder and the number, never "folder growing fast"', () => {
   const n = desktop.growthNotification({
     path: '/Users/x/Downloads', message: '/Users/x/Downloads grew by 4.2 GB (8.1%) since the previous scan',
-    prevSize: 52 * 1024 ** 3, newSize: 56.2 * 1024 ** 3, delta: 4.2 * 1024 ** 3,
+    prevSize: 52 * GB, newSize: 56.2 * GB, delta: 4.2 * GB,
   }, formatBytes);
   assert.equal(n.title, 'Downloads grew 4.2 GB since the last scan');
   assert.match(n.body, /\/Users\/x\/Downloads/);
@@ -269,8 +271,8 @@ test('a growth alert is headlined by the folder and the number, never "folder gr
 });
 
 test('a disk-full forecast gets its own headline with the days that matter', () => {
-  const free = 120 * 1024 ** 3;
-  const perDay = 10 * 1024 ** 3;
+  const free = 120 * GB;
+  const perDay = 10 * GB;
   const n = desktop.growthNotification({
     path: '/Users/x', message: 'At current growth, the disk holding /Users/x is full in ~12 days — top culprits: a, b',
     prevSize: free, newSize: free, delta: perDay,
@@ -297,7 +299,7 @@ test('progressBarValue maps the page contract onto Electron: 0…1 shows, above 
 });
 
 test('scanFinishedNotice: says what finished and how much; silent when the user pressed Stop', () => {
-  const ok = desktop.scanFinishedNotice({ ok: true, path: '/Volumes/Archive', files: 128400, bytes: 42.1 * 1024 ** 3 }, formatBytes);
+  const ok = desktop.scanFinishedNotice({ ok: true, path: '/Volumes/Archive', files: 128400, bytes: 42.1 * GB }, formatBytes);
   assert.equal(ok.title, 'Finished scanning Archive');
   assert.match(ok.body, /128,400 items/);
   assert.match(ok.body, /42\.1 GB/);
@@ -688,7 +690,7 @@ test('main: scan progress drives the dock bar; a finish while unfocused bounces 
     h.stub.ipcMain.fire('treemap:scan-progress', 0.3);
     h.stub.ipcMain.fire('treemap:scan-progress', 'junk');
     assert.deepEqual(w.progress, [2, 0.3, -1]);
-    h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: '/Volumes/Archive', files: 10, bytes: 1024 ** 3 });
+    h.stub.ipcMain.fire('treemap:scan-finished', { ok: true, path: '/Volumes/Archive', files: 10, bytes: GB });
     assert.equal(w.progress.at(-1), -1, 'the bar is cleared when the scan ends');
     assert.deepEqual(h.stub.app.dockBounces, ['informational']);
     assert.equal(FakeNotification.shown.length, 1);
@@ -815,7 +817,7 @@ test('main: a growth alert arrives under the folder-and-number headline', async 
   const dir = mkTmp();
   const h = await loadMain({ dataDir: dir });
   try {
-    h.growth({ path: '/Users/x/Downloads', message: '/Users/x/Downloads grew by 4.2 GB (8.1%) since the previous scan', prevSize: 52 * 1024 ** 3, newSize: 56.2 * 1024 ** 3, delta: 4.2 * 1024 ** 3 });
+    h.growth({ path: '/Users/x/Downloads', message: '/Users/x/Downloads grew by 4.2 GB (8.1%) since the previous scan', prevSize: 52 * GB, newSize: 56.2 * GB, delta: 4.2 * GB });
     assert.equal(FakeNotification.shown.length, 1);
     assert.equal(FakeNotification.shown[0].title, 'Downloads grew 4.2 GB since the last scan');
     assert.doesNotMatch(String(FakeNotification.shown[0].body), /^\//);
