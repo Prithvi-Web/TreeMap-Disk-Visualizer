@@ -516,6 +516,7 @@ test('the reclaim breakdown scrolls inside its panel, never the panel itself: th
     scrollerScrolls: scroller.get('overflow-y'),
     contained: scroller.get('overscroll-behavior'),
     ringRoom: room.length > 0 && room.every((p) => p >= reach),
+    corners: scroller.get('border-radius'),
   }, {
     panelScrolls: [],
     panelCapped: false,
@@ -524,6 +525,9 @@ test('the reclaim breakdown scrolls inside its panel, never the panel itself: th
     scrollerScrolls: 'auto',
     contained: 'contain',
     ringRoom: true,
+    // Its clip follows the panel's rounded corners, as the panel's own did: a
+    // scrollbar that takes room (Windows, Linux) stays inside them.
+    corners: 'inherit',
   });
   // Everything the panel shows is written inside the scroller: the template
   // opens with it, and the <div> that closes it is the template's last.

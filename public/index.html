@@ -2014,9 +2014,10 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
    see-through sheet — #ctxMenu's .ctx-list, for the same reason. No taller
    than the panel's 70vh less its 1px border above and below. It carries the
    panel's padding, so a focus ring inside — drawn outside what it marks —
-   is never cut off by the edge that clips the scroll. */
+   is never cut off by the edge that clips the scroll. Its clip follows the
+   panel's rounded corners, so a scrollbar that takes room stays inside them. */
 #rcPopover .rc-pop-scroll { max-height: calc(70vh - 2px); overflow-y: auto; overscroll-behavior: contain;
-  padding: 12px 14px; }
+  padding: 12px 14px; border-radius: inherit; }
 /* ── v4 §9.6: the plain-words popover — rcPopover's opaque-glass recipe, for
    the same reason: it sits straight on the map with no scrim. ── */
 #nlPop { position: fixed; z-index: 211; width: min(380px, calc(100vw - 24px)); padding: 12px 14px;
