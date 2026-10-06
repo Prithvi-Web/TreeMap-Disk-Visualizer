@@ -13,10 +13,16 @@
 export class AsyncMutex {
   private tail: Promise<void> = Promise.resolve();
   private queued = 0;
+  private holding = false;
 
   /** How many callers are waiting their turn, the holder not counted. */
   get waiting(): number {
     return this.queued;
+  }
+
+  /** Whether a caller holds it now or is waiting for it: a new caller would wait (FG3h A4). */
+  get busy(): boolean {
+    return this.holding || this.queued > 0;
   }
 
   /** Runs `fn` once every earlier caller's `fn` has settled, and answers what it answers. */
@@ -29,9 +35,11 @@ export class AsyncMutex {
     this.queued++;
     return turn.then(async () => {
       this.queued--;
+      this.holding = true;
       try {
         return await fn();
       } finally {
+        this.holding = false;
         release();
       }
     });

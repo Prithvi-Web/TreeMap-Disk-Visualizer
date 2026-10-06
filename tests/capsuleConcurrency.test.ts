@@ -208,10 +208,56 @@ test('a restore that finishes while a capture is under way stays recorded as res
   await waitFor(() => getCapsuleJob(jobId)?.status !== 'running', 'the restore finishing');
   assert.equal(getCapsuleJob(jobId)?.status, 'complete', getCapsuleJob(jobId)?.error);
   assert.equal(fs.readFileSync(e, 'utf8'), 'the content of e.txt', 'the file is back');
+  // Recorded once the capture let the index go (FG3h A4): the job did not wait for that.
+  await waitFor(async () => (await getCapsuleIndex()).entries.some((x) => x.id === id && x.restoredAt), 'the restore being recorded');
   const restored = (await getCapsuleIndex()).entries.find((x) => x.id === id);
   assert.ok(restored?.restoredAt, 'the index still says it was put back');
   assert.equal(restored?.hasPayload, false, 'and that its copy, which the restore removed, is gone');
   assert.ok(await entryFor(c), 'and the capture under way kept its own copy');
+});
+
+test('a restore finishes without waiting for a capture under way, and is recorded once the capture lets the index go (FG3h A4)', async () => {
+  const e = file('a4', 'e.txt');
+  const { outcomes } = await protectItems([{ path: e }]);
+  const id = outcomes[0].entryId as string;
+  fs.rmSync(e); // as if trashed and the Trash emptied
+  let arrive!: () => void;
+  const reached = new Promise<void>((resolve) => { arrive = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  // A capture holds the index for as long as it copies — here, until the test lets it go.
+  const unhook = setAfterIndexLoadForTests(async () => {
+    arrive();
+    await gate;
+  });
+  let capturing: Promise<unknown> | null = null;
+  let forgetting: Promise<unknown> | null = null;
+  try {
+    capturing = protectItems([{ path: file('a4', 'c.txt') }]);
+    await withinHangGuard(reached, 'the capture holding the index');
+    const { jobId } = await startCapsuleRestore([id]);
+    await waitFor(() => getCapsuleJob(jobId)?.status !== 'running' || capsuleStoreWaitersForTests() > 0,
+      'the restore finishing, or waiting for the capture');
+    assert.equal(getCapsuleJob(jobId)?.status, 'complete', `the restore's job did not wait for the capture (${getCapsuleJob(jobId)?.error})`);
+    assert.equal(fs.readFileSync(e, 'utf8'), 'the content of e.txt', 'the file is back');
+    // Until the capture lets the index go, the copy is still held for the restore that put it back.
+    await assert.rejects(startCapsuleRestore([id]), (err: unknown) => {
+      assert.ok(err instanceof AppError, String(err));
+      assert.equal(err.code, 'ALREADY_RESTORED', err.message);
+      assert.match(err.message, /has just been put back/);
+      return true;
+    });
+    // A Forget asked now waits its turn for the index behind the record of what was put back.
+    forgetting = deleteCapsuleEntry(id).then((r) => r, (err: unknown) => err);
+    await waitFor(() => capsuleStoreWaitersForTests() >= 2, 'the record and the Forget both waiting for the index');
+  } finally {
+    release();
+    unhook();
+  }
+  await withinHangGuard(capturing as Promise<unknown>, 'the capture finishing');
+  // By its turn the record is written and the copy let go: forgotten, with nothing left to free.
+  assert.deepEqual(await withinHangGuard(forgetting as Promise<unknown>, 'the Forget'), { deleted: true, bytesFreed: 0 },
+    'the Forget found the copy put back, recorded and let go - never refused as still being restored');
 });
 
 test('a capture that throws lets the index go and unpins its run: the next commit runs, and the first trashed nothing (FG3f review R3)', async () => {

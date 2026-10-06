@@ -2807,7 +2807,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '202': jsonResponse('Restore started', obj({ jobId: str() }, ['jobId'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
-      '409': errorResponse('PATH_OCCUPIED, ALREADY_RESTORED, PAYLOAD_GONE, MANIFEST_UNREADABLE, RESTORE_RUNNING (a restore of that copy is already under way) or CAPSULE_RECORD_INVALID (the entry\'s id, its original place or its manifest\'s names are not what TreeMap records) — restoring never overwrites what is there now, and never follows a record TreeMap did not write'),
+      '409': errorResponse('PATH_OCCUPIED, ALREADY_RESTORED (put back already, or just now and still being recorded), PAYLOAD_GONE, MANIFEST_UNREADABLE, RESTORE_RUNNING (a restore of that copy is already under way) or CAPSULE_RECORD_INVALID (the entry\'s id, its original place or its manifest\'s names are not what TreeMap records) — restoring never overwrites what is there now, and never follows a record TreeMap did not write'),
     },
   },
   {

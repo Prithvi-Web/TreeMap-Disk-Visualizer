@@ -482,6 +482,13 @@ function ofRunInFlight(entry: TimeCapsuleEntry): boolean {
 const restoresInFlight = new Set<string>();
 
 /**
+ * Copies a restore has put back whose record is still to be written, by entry id (FG3h A4): a restore
+ * that finishes while a capture holds the index records what it put back once the index is free,
+ * without its job waiting — and its copy stays pinned in `restoresInFlight` until then.
+ */
+const recordingRestored = new Set<string>();
+
+/**
  * Every removal of a copy a record still names (`dropPayload`, and a record dropped before its
  * folder is), and a restore's look at whether the copies it asks for are there before it pins them,
  * one at a time (FG3g H1): so a restore never accepts a copy whose removal is under way, and nothing
@@ -2419,6 +2426,10 @@ function acceptable(store: CapsuleStore, id: string): TimeCapsuleEntry {
   const entry = store.entries.find((e) => e.id === id);
   if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
   if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', `“${entry.name}” has already been restored`);
+  if (recordingRestored.has(entry.id)) {
+    throw new AppError(409, 'ALREADY_RESTORED',
+      `“${entry.name}” has just been put back; the Time Capsule records that once a deletion under way has finished`);
+  }
   if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it is not started a second time');
   if (!entry.hasPayload) {
     throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
@@ -2540,8 +2551,9 @@ async function runRestoreAll(
     } finally {
       // However the job ended — complete, failed, cancelled, or thrown — its copies are no longer in
       // use by it (FG3g H1), and are let go in the same turn its outcome is set, before anything else
-      // is awaited: a retry the moment the job says it failed is never refused as still running.
-      for (const { entry } of planned) restoresInFlight.delete(entry.id);
+      // is awaited: a retry the moment the job says it failed is never refused as still running. A
+      // copy whose record is still to be written stays pinned until it is (FG3h A4).
+      for (const { entry } of planned) if (!recordingRestored.has(entry.id)) restoresInFlight.delete(entry.id);
     }
   });
 }
@@ -2847,10 +2859,12 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
    * A failure here is logged and nothing else. The capsule keeping a redundant
    * copy costs space; rolling back costs the user their file.
    */
-  try {
-    // With no other writer of the index between its load and its save (FG3f #2): a capture under
-    // way saved over "put back" and left the record promising a copy this restore had removed.
-    await withCapsuleStore(async () => withPayloadLock(async () => {
+  // With no other writer of the index between its load and its save (FG3f #2): a capture under way
+  // saved over "put back" and left the record promising a copy this restore had removed. A copy
+  // whose record waited (below) is let go inside that same turn of the lock, so a Forget or an
+  // eviction queued behind it never finds it still pinned.
+  const record = (deferred: boolean): Promise<void> => withCapsuleStore(async () => withPayloadLock(async () => {
+    try {
       const store = await loadStore();
       const live = store.entries.find((e) => e.id === entry.id);
       if (live) {
@@ -2858,8 +2872,23 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
         await dropPayload(live);
       }
       await saveStore(store);
-    }));
-  } catch (err) {
+    } finally {
+      if (deferred) {
+        recordingRestored.delete(entry.id);
+        restoresInFlight.delete(entry.id);
+      }
+    }
+  })).catch((err: unknown) => {
     console.error('[treemap] capsule bookkeeping after a successful restore failed:', err);
+  });
+  if (!indexLock.busy) {
+    await record(false);
+    return;
   }
+  // The index is held — a capture copying, for as long as its copies take (FG3h A4): the restore's job
+  // went on waiting for it, its dialog still "restoring" with every byte home. Now what it put back is
+  // recorded once the index is free, and the job goes on; the copy stays pinned until then, so nothing
+  // evicts, forgets or restores it a second time meanwhile.
+  recordingRestored.add(entry.id);
+  void record(true);
 }
