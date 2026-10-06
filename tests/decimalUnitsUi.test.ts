@@ -531,24 +531,38 @@ test('Settings → "How TreeMap measures space" says sizes are decimal, and what
   assert.match(words, /size>1gb/, 'the search box reads the same units');
 });
 
-test('the docs claim raw bytes where the answers carry them — beside a formatted size field — and say a size inside a sentence is the formatted figure only (review F1.3)', () => {
+test('the docs promise a formatted string beside a size only where the answers give one, and say a size inside a sentence is the formatted figure only (review F1.3, F2.1, F2.2)', () => {
   // PLATFORM_NOTES said "every API answer carries the raw bytes beside the
   // formatted string". A sentence that prints a size does not: DEST_FULL's
   // message ("this needs 30.0 MB … only 30.3 MB is free") and the gdu
   // fallback's reason carry two formatted figures and no byte count, so an
-  // agent trusting the sentence would compare rounded strings.
+  // agent trusting the sentence would compare rounded strings (F1.3).
+  // The first fix still promised a formatted twin beside every size FIELD.
+  // Over HTTP only /api/agent/summary adds one at all (GET /api/large-files'
+  // `size` is raw bytes alone), and several MCP fields have none — offload's
+  // dry-run copies[].size and progress bytesDone, compare_scans' sizeA and
+  // sizeB, forecast's topGrowers[].bytesPerDay (F2.1, F2.2).
   const doc = (file: string) => readFileSync(path.join(__dirname, '..', file), 'utf8');
   const notes = doc('docs/PLATFORM_NOTES.md');
   const at = notes.indexOf('## Size units');
   assert.notEqual(at, -1, 'PLATFORM_NOTES has its units section');
   const units = notes.slice(at, notes.indexOf('\n## ', at + 1)).replace(/\s+/g, ' ');
   assert.doesNotMatch(units, /every API answer carries the raw bytes/, 'no claim the error and reason sentences do not keep');
-  assert.match(units, /a size as a field[^.]*raw bytes[^.]*beside the formatted string/, 'the claim the size fields keep');
-  assert.match(units, /a size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/, 'and what a sentence gives instead');
+  assert.doesNotMatch(units, /raw bytes stand beside the formatted string/, 'no claim that a formatted string stands beside every size field');
+  assert.match(units, /A size an API answer gives as a field is a raw byte count/, 'what a size field is, everywhere');
+  assert.match(units, /`GET \/api\/agent\/summary` is the one HTTP route that adds formatted strings/, 'the one HTTP answer that adds a formatted string');
+  assert.match(units, /`GET \/api\/large-files`/, 'and a route that does not, by name');
+  assert.match(units, /MCP tools add a formatted twin beside many size fields, not all/, 'the MCP tools add one beside many, not all');
+  assert.match(units, /[Aa] size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/, 'and what a sentence gives instead');
 
   const agents = doc('AGENTS.md');
   const mcp = agents.slice(agents.indexOf('## MCP specifics'), agents.indexOf('\n## ', agents.indexOf('## MCP specifics') + 1)).replace(/\s+/g, ' ');
-  assert.doesNotMatch(mcp, /All sizes come back as raw bytes/, 'AGENTS.md\'s MCP line makes the same claim only of size fields');
-  assert.match(mcp, /Every size field comes back as raw bytes plus a human-formatted string/);
+  assert.doesNotMatch(mcp, /All sizes come back as raw bytes/, 'AGENTS.md\'s MCP line makes no claim of every size');
+  assert.doesNotMatch(mcp, /Every size field comes back as raw bytes plus/, 'nor promises every size field a formatted twin');
+  assert.match(mcp, /A size field is a raw byte count/);
+  assert.match(mcp, /not every size field has one/);
+  for (const field of ['`copies[].size`', '`bytesDone`', '`sizeA`', '`sizeB`', '`topGrowers[].bytesPerDay`']) {
+    assert.ok(mcp.includes(field), `AGENTS.md names ${field} among the size fields with no formatted twin`);
+  }
   assert.match(mcp, /A size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/);
 });

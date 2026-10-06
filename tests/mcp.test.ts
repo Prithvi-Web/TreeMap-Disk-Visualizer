@@ -183,6 +183,25 @@ test('the server tells an agent which units its formatted sizes are in (QA D09)'
   assert.match(said, /1 GB = 1,000,000,000 bytes/, said);
 });
 
+test('the server promises a formatted string beside a size only where its answers give one (review F2.1, F2.2)', async () => {
+  // The instructions said "Sizes come as raw bytes plus a formatted string".
+  // An offload dry run's copies carry `size` and nothing beside it, as do
+  // offload's bytesDone, compare_scans' sizeA/sizeB and forecast's topGrowers.
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-dest-'));
+  try {
+    const r = await call('offload', { scanId, paths: [bigPath], dest, dryRun: true });
+    assert.ok(!r.isError, JSON.stringify(r.content));
+    const copy = r.structuredContent!.copies[0];
+    assert.equal(copy.size, BIG, 'control: a size field, in raw bytes');
+    assert.deepEqual(Object.keys(copy).filter((k) => k !== 'size' && /size/i.test(k)), [], 'with no formatted twin beside it');
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+  const said = client.getInstructions() ?? '';
+  assert.doesNotMatch(said, /Sizes come as raw bytes plus a formatted string/, 'no promise of a formatted twin beside every size');
+  assert.match(said, /Size fields are raw bytes; many carry a formatted twin named after them[^.]*, not all/, said);
+});
+
 test('get_largest and reclaim_ranked ignore entries under 1 MB by default — 1,000,000 bytes, as every size is printed (QA D09)', async () => {
   const largest = (await call('get_largest', { scanId, kind: 'files', limit: 10 })).structuredContent!;
   const names = largest.files.map((f: { name: string }) => f.name);

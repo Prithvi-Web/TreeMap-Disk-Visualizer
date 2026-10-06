@@ -287,8 +287,9 @@ export function buildMcpServer(): McpServer {
         'get_largest / cleanup_suggestions / find_duplicates against that scanId, then — only when the ' +
         'user has confirmed — trash_paths or offload, ideally after a dryRun:true pass. ' +
         'Deletes always go to the OS Trash (recoverable); nothing outside a scanned root can be touched. ' +
-        'Sizes come as raw bytes plus a formatted string in decimal units (1 KB = 1,000 bytes, ' +
-        '1 MB = 1,000,000 bytes, 1 GB = 1,000,000,000 bytes), as Finder counts them.',
+        'Size fields are raw bytes; many carry a formatted twin named after them (sizeFormatted, ' +
+        'bytesFormatted, …), not all, so read the raw field. Formatted strings are in decimal units ' +
+        '(1 KB = 1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 1,000,000,000 bytes), as Finder counts them.',
     },
   );
 
