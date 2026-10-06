@@ -1079,6 +1079,69 @@ test('a folder whose opening fails ENOENT is gone only when a fresh stat of it f
   assert.deepEqual(stats, ['/x/odd', '/x/odd']);
 });
 
+/* ─────────────── the fresh stat of a folder whose opening said it is not there (U-4c review, round 3: F3.5) ─────────────── */
+
+test('a folder whose opening fails ENOENT, and whose fresh stat then does not answer, did not answer: it is never taken as gone (the U-4c review, F3.5)', async () => {
+  let statsOfIt = 0;
+  const h = byHand(() => '/d', (p) => p === '/d' || (p === '/d/g' && ++statsOfIt === 1), {
+    deadlineMs: 2_000,
+    opendir: async () => { throw enoent('opendir'); },
+  });
+  const look = watch(stillEmptyFolder('/d/g', true));
+  await turns(20);
+  assert.deepEqual(h.asked, ['/d/g', '/d/g'], 'its stat, then — its opening said it is not there — a fresh one, which hangs');
+  h.deadlines.filter((x) => x.of === '/d/g')[1].pass(); // the fresh stat's deadline
+  await turns(20);
+  const verdict = look() ?? { empty: true };
+  assert.equal(whyOf(verdict), 'no-answer', 'nothing showed it is not there');
+  assert.equal(reasonOf(verdict), 'it did not answer within 2 seconds, so TreeMap cannot tell that it is empty');
+});
+
+test('a folder whose opening fails ENOENT once the request\'s budget is spent is not looked at again, and is never taken as gone (the U-4c review, F3.5)', async () => {
+  let now = 0;
+  const h = byHand(() => '/d', () => true, {
+    budgetMs: 3_000,
+    deadlineMs: 2_000,
+    now: () => now,
+    opendir: async () => { now += 3_000; throw enoent('opendir'); }, // the opening takes what was left, and says it is not there
+  });
+  const verdict = await stillEmptyFolder('/d/g', true);
+  assert.deepEqual(h.asked, ['/d/g'], 'no fresh stat: the budget was spent');
+  assert.equal(whyOf(verdict), 'out-of-time');
+  assert.match(reasonOf(verdict), /^the 3 seconds TreeMap gives to looking at folders again ran out/);
+});
+
+test('a folder whose opening fails ENOENT after its drive went silent is not looked at again on that drive, and is never taken as gone (the U-4c review, F3.5)', async () => {
+  // While g's opening is out, another request's call on the drive misses its deadline and so does the
+  // drive's root: when the opening then says g is not there, the fresh stat would be a call on a silent drive.
+  let failOpening = (): void => {};
+  const h = byHand(() => '/d', (p) => p === '/d/ok' || p === '/d/g', {
+    opendir: async (p) => {
+      if (p === '/d/g') await new Promise<void>((resolve) => { failOpening = resolve; });
+      if (p === '/d/g') throw enoent('opendir');
+      return listingOf([]);
+    },
+  });
+  const s = emptyCheckSession(true);
+  assert.deepEqual(await s.look('/d/ok'), { empty: true }, 'the drive is heard from');
+  const hung = watch(s.look('/d/h1'));
+  await turns(20);
+  const look = watch(stillEmptyFolder('/d/g', true)); // another request: its stat answers, its opening waits
+  await turns(20);
+  assert.deepEqual(h.asked, ['/d/ok', '/d/h1', '/d/g']);
+  h.passDeadlineOf('/d/h1'); // h1 misses its deadline: the drive's root is asked
+  await turns(20);
+  h.passDeadlineOf('/d'); // and the root misses its own: the drive is silent
+  await turns(20);
+  assert.match(reasonOf(hung() ?? { empty: true }), /^it did not answer within/);
+  failOpening();
+  await turns(20);
+  assert.deepEqual(h.asked, ['/d/ok', '/d/h1', '/d/g', '/d'], 'no fresh stat of g on the silent drive');
+  const verdict = look() ?? { empty: true };
+  assert.equal(whyOf(verdict), 'no-answer', 'not gone: nothing showed it is not there');
+  assert.equal(reasonOf(verdict), 'the drive it is on did not answer a moment ago, so TreeMap did not look at it again and cannot tell that it is empty');
+});
+
 test('a folder inside the one looked at that is not there any more makes it unreadable, never gone', async () => {
   setEmptyCheckForTests({
     driveOf: async () => '/',
