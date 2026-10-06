@@ -1994,8 +1994,8 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
    here let the donut legend behind the panel show straight through the
    breakdown. Same treatment as #ctxMenu and #tooltip, which are the two
    floating surfaces this one behaves like. */
-#rcPopover { position: fixed; z-index: 211; width: min(460px, calc(100vw - 24px)); max-height: 70vh;
-  overflow: auto; padding: 12px 14px;
+#rcPopover { position: fixed; z-index: 211; width: min(460px, calc(100vw - 24px));
+  padding: 0;
   /* The shared strong tint is ~68% opaque, which is right for #ctxMenu (small)
      and for .modal (which sits on a dimmed backdrop). This panel is ~460x600
      and sits straight on the content, with no scrim — at 68% the rows behind
@@ -2008,6 +2008,15 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-3); }
 #rcPopover[hidden] { display: none; }
+/* The breakdown scrolls here, never #rcPopover itself (POL item 3): the
+   panel's opaque fill and its ring are its .lg::before and ::after, and a
+   scrolling panel carried them away with the rows, leaving text over a
+   see-through sheet — #ctxMenu's .ctx-list, for the same reason. No taller
+   than the panel's 70vh less its 1px border above and below. It carries the
+   panel's padding, so a focus ring inside — drawn outside what it marks —
+   is never cut off by the edge that clips the scroll. */
+#rcPopover .rc-pop-scroll { max-height: calc(70vh - 2px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 12px 14px; }
 /* ── v4 §9.6: the plain-words popover — rcPopover's opaque-glass recipe, for
    the same reason: it sits straight on the map with no scrim. ── */
 #nlPop { position: fixed; z-index: 211; width: min(380px, calc(100vw - 24px)); padding: 12px 14px;
@@ -29202,7 +29211,11 @@ function openReclaimWhy(path, anchorEl, point) {
   }
   rcPopoverPath = path;
   rcPopoverOpener = anchorEl || null;
+  // Everything scrolls inside .rc-pop-scroll, never the panel, whose opaque
+  // fill and ring would scroll away with the rows (POL item 3). The close
+  // button is inside it too, so the keys that scroll still scroll it.
   pop.innerHTML = `
+    <div class="rc-pop-scroll">
     <div class="rc-pop-head">
       <span class="rc-badge conf-${escapeHtml(fact.confidence)}" style="color:${reclaimColor(fact.score)}" aria-hidden="true">${fact.confidence === 'high' ? '' : '~'}${fact.score}</span>
       <b id="rcPopTitle" title="${escapeHtml(path)}">${escapeHtml(path.split(/[\\/]/).filter(Boolean).pop() || path)}</b>
@@ -29210,7 +29223,8 @@ function openReclaimWhy(path, anchorEl, point) {
       <button class="icon-btn" id="rcPopClose" aria-label="Close the score breakdown">${icon('x', 14)}</button>
     </div>
     <div class="rc-radar-wrap"><canvas id="rcRadar" width="280" height="200" role="img"></canvas></div>
-    ${reclaimWhyHtml(fact)}`;
+    ${reclaimWhyHtml(fact)}
+    </div>`;
   pop.hidden = false;
 
   /* The same six signals the rows spell out, read as one shape. Mounted after

@@ -365,7 +365,11 @@ function openReclaimWhy(path, anchorEl, point) {
   }
   rcPopoverPath = path;
   rcPopoverOpener = anchorEl || null;
+  // Everything scrolls inside .rc-pop-scroll, never the panel, whose opaque
+  // fill and ring would scroll away with the rows (POL item 3). The close
+  // button is inside it too, so the keys that scroll still scroll it.
   pop.innerHTML = `
+    <div class="rc-pop-scroll">
     <div class="rc-pop-head">
       <span class="rc-badge conf-${escapeHtml(fact.confidence)}" style="color:${reclaimColor(fact.score)}" aria-hidden="true">${fact.confidence === 'high' ? '' : '~'}${fact.score}</span>
       <b id="rcPopTitle" title="${escapeHtml(path)}">${escapeHtml(path.split(/[\\/]/).filter(Boolean).pop() || path)}</b>
@@ -373,7 +377,8 @@ function openReclaimWhy(path, anchorEl, point) {
       <button class="icon-btn" id="rcPopClose" aria-label="Close the score breakdown">${icon('x', 14)}</button>
     </div>
     <div class="rc-radar-wrap"><canvas id="rcRadar" width="280" height="200" role="img"></canvas></div>
-    ${reclaimWhyHtml(fact)}`;
+    ${reclaimWhyHtml(fact)}
+    </div>`;
   pop.hidden = false;
 
   /* The same six signals the rows spell out, read as one shape. Mounted after

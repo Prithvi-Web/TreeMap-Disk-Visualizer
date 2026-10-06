@@ -488,3 +488,61 @@ test('the global search panel paints an opaque base in both themes — the Dashb
     }
   }
 });
+
+/* ══════════════ The reclaim breakdown scrolls inside its panel (POL item 3) ══════════════ */
+
+test('the reclaim breakdown scrolls inside its panel, never the panel itself: the opaque backing and the ring stay under the text, and a focus ring inside is not clipped (POL item 3)', () => {
+  // #rcPopover is a lensed surface: its opaque fill is .lg::before and its
+  // ring .lg::after, both absolutely positioned against it. As the scroll
+  // container (overflow:auto) it carried them away with the rows, and a
+  // scrolled breakdown showed its text over a see-through sheet. Everything
+  // it shows scrolls in .rc-pop-scroll instead, as #ctxMenu's entries scroll
+  // in .ctx-list (QA-6b review F1.11). The scroller carries the panel's
+  // padding, so the page's focus ring — drawn outside what it marks — has
+  // room inside the box that clips it.
+  assert.match(INDEX, /\['#rcPopover',/, 'control: #rcPopover is one of the liquid-glass engine\'s surfaces');
+  const panel = declsOf('#rcPopover');
+  const scroller = declsOf('#rcPopover .rc-pop-scroll');
+  const ring = declsOf(':focus-visible');
+  const px = (v: string | undefined): number => Number(/(-?\d+(?:\.\d+)?)px/.exec(v ?? '')?.[1] ?? NaN);
+  const reach = px(ring.get('outline')) + px(ring.get('outline-offset'));
+  assert.ok(reach > 0, `control: the page's ring reaches ${reach} px past what it marks`);
+  const room = (scroller.get('padding') ?? '').split(/\s+/).map(px);
+  assert.deepEqual({
+    panelScrolls: [...panel.keys()].filter((k) => /^overflow/.test(k)),
+    panelCapped: panel.has('max-height'),
+    panelPadding: panel.get('padding'),
+    scrollerCap: scroller.get('max-height'),
+    scrollerScrolls: scroller.get('overflow-y'),
+    contained: scroller.get('overscroll-behavior'),
+    ringRoom: room.length > 0 && room.every((p) => p >= reach),
+  }, {
+    panelScrolls: [],
+    panelCapped: false,
+    panelPadding: '0',
+    scrollerCap: `calc(70vh - ${2 * px(panel.get('border'))}px)`, // the panel's 70vh, less its border above and below
+    scrollerScrolls: 'auto',
+    contained: 'contain',
+    ringRoom: true,
+  });
+  // Everything the panel shows is written inside the scroller: the template
+  // opens with it, and the <div> that closes it is the template's last.
+  const open = INDEX.slice(INDEX.indexOf('function openReclaimWhy('), INDEX.indexOf('function closeReclaimWhy('));
+  const from = open.indexOf('pop.innerHTML = `');
+  assert.notEqual(from, -1, 'control: openReclaimWhy writes the panel from one template');
+  const template = open.slice(from + 'pop.innerHTML = `'.length, open.indexOf('`;', from)).trim();
+  let depth = 0;
+  let closedAt = -1;
+  for (const tag of template.matchAll(/<div\b|<\/div>/g)) {
+    depth += tag[0] === '</div>' ? -1 : 1;
+    if (depth === 0) { closedAt = tag.index!; break; }
+  }
+  assert.deepEqual({
+    opensWith: template.startsWith('<div class="rc-pop-scroll">'),
+    closesLast: closedAt === template.length - '</div>'.length,
+    holds: ['<div class="rc-pop-head">', 'id="rcPopClose"', '<div class="rc-radar-wrap">', '${reclaimWhyHtml(fact)}'].every((part) => {
+      const at = template.indexOf(part);
+      return at > 0 && at < closedAt;
+    }),
+  }, { opensWith: true, closesLast: true, holds: true }, 'the head, its close button, the radar and the rows are all inside .rc-pop-scroll');
+});
