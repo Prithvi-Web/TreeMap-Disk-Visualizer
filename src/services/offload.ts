@@ -565,6 +565,30 @@ export interface PreparedOffload {
   bytesTotal: number;
   /** What the scan listed of the selection: each selected folder, and every file it listed under one (final review F1.5). */
   listed: ListedSelection;
+  /**
+   * The selection's outermost items, each once, in the order given: what goes to the Trash once every
+   * copy verifies (final review F1.8). An item inside another selected one is in its plan already.
+   */
+  topPaths: string[];
+}
+
+/**
+ * `nodes` without any that lies inside another of them, or repeats one (final review F1.8): a folder
+ * and a file inside it are one set of files. Planned both ways, the file was copied twice, counted
+ * twice in the confirm and the free-space check, recorded twice, and its own trash step failed once the
+ * folder's had taken it ("it is no longer there"). The paths are the scan's own spellings.
+ */
+function outermostNodes(nodes: FileNode[]): FileNode[] {
+  const selected = new Set(nodes.map((n) => n.path));
+  const seen = new Set<string>();
+  return nodes.filter((node) => {
+    if (seen.has(node.path)) return false;
+    seen.add(node.path);
+    for (let dir = path.dirname(node.path); ; dir = path.dirname(dir)) {
+      if (selected.has(dir)) return false;
+      if (path.dirname(dir) === dir) return true; // reached the file system's root
+    }
+  });
 }
 
 /** The selected folders, and every file the scan listed under them (copied, or a hard link's second name it deliberately skips). */
@@ -635,13 +659,16 @@ export async function prepareOffload(
   // selection materializes as a bounded subtree for the copy planner — the
   // same magnitude as the plan itself, never the whole scan.
   const store = storeOf(scan);
-  const nodes: FileNode[] = [];
+  const resolved: FileNode[] = [];
   for (const p of paths) {
     const id = store.findByPath(p);
     if (id === -1) throw new AppError(404, 'PATH_NOT_FOUND', `"${p}" is not in this scan`);
     if (store.flag(id, Flag.Virtual)) throw new AppError(403, 'VIRTUAL_PATH', 'Entries inside an archive can’t be offloaded — offload the archive itself');
-    nodes.push(store.prune(id, { maxNodes: Number.MAX_SAFE_INTEGER }).root);
+    resolved.push(store.prune(id, { maxNodes: Number.MAX_SAFE_INTEGER }).root);
   }
+  // Each selection once, by its outermost item (final review F1.8).
+  const nodes = outermostNodes(resolved);
+  const topPaths = nodes.map((n) => n.path);
   // A link is never copied through: opened, it was copied as whatever it names — from outside every
   // scanned root too, sized as the link's own few bytes for the free-space check and the byte cap — and
   // a link to a folder failed the whole job (the final review, F1.10). The scan lists a link as itself.
@@ -761,14 +788,14 @@ export async function prepareOffload(
   // multi-gigabyte verified copy to be told a file was open. Asking now costs
   // one enumeration and lets them close the app before anything is written.
   // Copying a file that is open is safe in itself — only the delete is at risk.
-  const openHandles = await checkOpenHandles(paths);
+  const openHandles = await checkOpenHandles(topPaths);
   if (openHandles.conflicts.length > 0) {
     throw new AppError(409, 'OPEN_HANDLE_CONFLICT', describeConflicts(openHandles.conflicts), {
       conflicts: openHandles.conflicts,
     });
   }
 
-  return { plan, bytesTotal, listed };
+  return { plan, bytesTotal, listed, topPaths };
 }
 
 export async function startOffload(
@@ -780,7 +807,7 @@ export async function startOffload(
   prepared?: PreparedOffload,
 ): Promise<OffloadJob> {
   pruneJobs();
-  const { plan, bytesTotal, listed } = prepared ?? (await prepareOffload(scan, paths, destDir));
+  const { plan, bytesTotal, listed, topPaths } = prepared ?? (await prepareOffload(scan, paths, destDir));
 
   const job: OffloadJob = {
     jobId: crypto.randomUUID(),
@@ -798,7 +825,7 @@ export async function startOffload(
   };
   jobs.set(job.jobId, job);
 
-  void runOffload(job, plan, paths, destDir, listed).catch((err: unknown) => {
+  void runOffload(job, plan, topPaths, destDir, listed).catch((err: unknown) => {
     job.status = job.cancelled ? 'cancelled' : 'error';
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();

@@ -32,9 +32,12 @@ async function runOffloadJob(paths, dest) {
       // denying — the two appeared together, the false one last.
       if (!ev || !ev.warning) toast('Offloaded and verified — originals are in the Trash');
       // What just left the disk leaves the cart with it — a stale entry
-      // would brick the next dock drop with PATH_NOT_FOUND (QA D1).
+      // would brick the next dock drop with PATH_NOT_FOUND (QA D1) — and so
+      // does whatever was staged inside a folder that went (final review F1.8).
       let removedFromCart = 0;
-      for (const p of paths) if (state.cart.delete(p)) removedFromCart++;
+      for (const p of [...state.cart]) {
+        if (paths.some((top) => p === top || tmIsInside(p, top)) && state.cart.delete(p)) removedFromCart++;
+      }
       if (removedFromCart) { saveCart(); void renderCart(); refreshCartButtons(); }
       refreshDock(); // the destination's free space just changed (QA D6)
       loadOffloadIndex();
@@ -117,8 +120,13 @@ async function dockDrop(volPath) {
   // Cart entries that are not in THIS scan (already offloaded, or staged from
   // an older scan) would 404 the whole plan and brick the drop (QA D1). They
   // are skipped, said out loud below, and everything else still moves.
-  const paths = all.filter((p) => state.pathIndex.has(p));
-  const staleCount = all.length - paths.length;
+  const inScan = all.filter((p) => state.pathIndex.has(p));
+  const staleCount = all.length - inScan.length;
+  // A folder and an item staged inside it are one set of files, sent once by
+  // the folder (final review F1.8): sent both, the server planned the item
+  // twice — the dialog over-counted, and the job warned that an original
+  // "couldn't be moved to the Trash" after its folder had taken it.
+  const paths = outermostPaths(inScan);
   if (!paths.length) {
     toast('Nothing in the cart is part of this scan — rescan the folder, or clear the stale entries in Review', 'error');
     return;

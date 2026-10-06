@@ -806,7 +806,7 @@ export function buildMcpServer(): McpServer {
             fileCount: prepared.plan.length,
             bytesTotal: prepared.bytesTotal,
             bytesTotalFormatted: formatBytes(prepared.bytesTotal),
-            wouldTrashAfterVerify: paths,
+            wouldTrashAfterVerify: prepared.topPaths,
             copies: prepared.plan.slice(0, 100).map((c) => ({ src: c.src, dest: c.dest, size: c.size })),
             copiesTruncated: prepared.plan.length > 100,
             note: 'Dry run — nothing was copied, verified or trashed.',

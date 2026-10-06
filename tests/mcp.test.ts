@@ -362,6 +362,20 @@ test('offload dryRun returns the exact copy plan and writes nothing', async () =
   }
 });
 
+test('offload dryRun plans a folder and a file inside it once, and names the folder alone as what would be trashed (final review F1.8)', async () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-dest-'));
+  const sub = path.join(fixtureRoot, 'sub');
+  try {
+    const r = await call('offload', { scanId, paths: [sub, path.join(sub, 'mid.bin')], dest, dryRun: true });
+    assert.ok(!r.isError, JSON.stringify(r.content));
+    const s = r.structuredContent!;
+    assert.equal(s.fileCount, 1, 'mid.bin once');
+    assert.deepEqual(s.wouldTrashAfterVerify, [sub]);
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
+
 test('unknown scanId comes back as a clean, coded error', async () => {
   const r = await call('get_largest', { scanId: 'nope', kind: 'files' });
   assert.equal(r.isError, true);

@@ -94,7 +94,7 @@ offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoo
         fileCount: prepared.plan.length,
         bytesTotal: prepared.bytesTotal,
         dest,
-        wouldTrashAfterVerify: body.paths,
+        wouldTrashAfterVerify: prepared.topPaths,
         copies: prepared.plan.slice(0, 100).map((c) => ({ src: c.src, dest: c.dest, size: c.size })),
         copiesTruncated: prepared.plan.length > 100,
       });
