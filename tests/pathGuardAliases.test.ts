@@ -407,6 +407,28 @@ test('Windows: a path realpath hands back behind \\\\?\\ is read as Windows read
   assert.equal(fromExtendedLengthPath('\\\\?\\UNC\\srv\\share\\x', 'darwin'), '\\\\?\\UNC\\srv\\share\\x', 'elsewhere it is a name like any other');
 });
 
+test('Windows: a colon in a UNC path’s share name, or in its host outside an IPv6 address’s brackets, is a second name — \\\\localhost\\C$::$INDEX_ALLOCATION\\… is a stream of the share’s own root, which both rules read as part of the root (the SEC-3 brief, item 7)', () => {
+  // parse() reads `\\localhost\C$::$INDEX_ALLOCATION\` as the root, so the stream rule (a colon past
+  // the root) never saw it, and the admin-share rule saw a share named `C$::$INDEX_ALLOCATION`. SMB
+  // would refuse such a share — but no rule here should rest on that.
+  const own = ['MYPC'];
+  const refused = [
+    '\\\\localhost\\C$::$INDEX_ALLOCATION\\Windows\\System32',
+    '\\\\localhost\\C$:$I30:$INDEX_ALLOCATION\\x',
+    '\\\\?\\UNC\\localhost\\C$::$INDEX_ALLOCATION\\x',
+    '\\\\server\\share::$DATA',
+    '\\\\server\\share:stream\\x',
+    '\\\\srv:445\\share\\x',
+    '\\\\::1\\share\\x',
+  ];
+  const paths = ['\\\\[::ffff:10.0.0.1]\\share\\x', '\\\\server\\share\\x', '\\\\fe80--1s4.ipv6-literal.net\\share\\x', '\\\\?\\UNC\\server\\share\\x'];
+  const wrong = [
+    ...refused.filter((p) => judgeSpelling(p, 'win32', own).secondName === null).map((p) => `${p}: passed`),
+    ...paths.filter((p) => aliasNamespaceOf(p, 'win32', own) !== null).map((p) => `${p}: refused`),
+  ];
+  assert.deepEqual(wrong, []);
+});
+
 /* ─────────────── The sanitizer ─────────────── */
 
 test('the sanitizer refuses every second name, PATH_BLOCKED: past the blocklist, onto another drive, or onto a scanned file', { skip: !DARWIN && 'the namespaces are macOS’s; Windows has its own test below' }, () => {

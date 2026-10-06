@@ -628,7 +628,8 @@ read-what-you-saw) permission to act.
   `\\127.1\`, `\\2130706433\`, `\\fe80--1s4.ipv6-literal.net\` — and the
   share with a trailing dot or space, `C$.`) are its drives again, and a name with a colon past the
   root is an NTFS stream (`System32::$INDEX_ALLOCATION` is the folder
-  itself): both are second names too. The scanned-root rule refuses such a spelling on its own as well
+  itself), as is a colon in a UNC path's share name or host
+  (`\\localhost\C$::$INDEX_ALLOCATION\`): both are second names too. The scanned-root rule refuses such a spelling on its own as well
   (`OUTSIDE_SCAN_ROOT` to a caller that skipped the sanitizer), including
   through a link whose target is spelled that way — a link in the path's
   folders, or the path itself being such a link, which both rules refuse

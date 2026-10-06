@@ -90,7 +90,13 @@ export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.
   if (WIN32_OBJECT_NAMESPACE.test(p)) return p.slice(0, 4);
   if (WIN32_DEVICE_PREFIX.test(p) && !WIN32_FILE_BEHIND_PREFIX.test(p)) return p.slice(0, 4);
   // This machine's own admin share is its drive (or Windows folder) again: \\localhost\C$\x is C:\x.
-  const share = WIN32_UNC_SHARE.exec(p);
+  // A drive behind `\\?\` or `\\.\` is no share (`?` no host, `C:` no share name).
+  const share = WIN32_PREFIX_BEFORE_DRIVE.test(p) ? null : WIN32_UNC_SHARE.exec(p);
+  // A colon in a share's name, or in a host outside an IPv6 address's brackets, is in no name Windows
+  // gives either: `\\localhost\C$::$INDEX_ALLOCATION\x` names a stream of the share's own root, and
+  // parse() reads it as part of the root — past the stream rule below and the admin-share rule alike
+  // (the SEC-3 brief, item 7).
+  if (share && (share[2].includes(':') || (share[1].includes(':') && !/^\[[^\]]*\]$/.test(share[1])))) return share[0];
   // Win32 drops a name's trailing dots and spaces, so `C$.` is `C$` (the SEC-2b review, F1.4).
   if (share && WIN32_ADMIN_SHARE.test(share[2].replace(/[ .]+$/, '')) && isThisMachine(share[1], ownHosts)) return share[0];
   // A name with a colon past the root is an NTFS stream of a file or folder, never a path's own
