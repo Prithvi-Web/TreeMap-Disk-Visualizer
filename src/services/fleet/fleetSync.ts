@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import fs from 'fs';
 import http from 'http';
 import os from 'os';
 import path from 'path';
@@ -311,7 +312,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
  * `PathRejectedError`.
  */
 function remoteScanRoot(given: string): string {
-  const refusal = peerScanRootRefusal(given);
+  const refusal = peerScanRootRefusal(given) ?? peerAutomountByLinks(given);
   if (refusal) throw refusal;
   try {
     return sanitizePath(given);
@@ -334,7 +335,7 @@ const PEER_PATH_REFUSALS: Readonly<Record<string, string>> = Object.freeze({
 const PEER_ABSOLUTE_ONLY = 'That machine scans only an absolute path on it, or ~ for its home folder';
 const PEER_DRIVE_ONLY = 'That machine scans only a folder on one of its own drives, such as C:\\Users: a network share, a device or a path with no drive is not the asker’s to name';
 
-const PEER_AUTOMOUNT = 'That machine does not scan /net, /Network or /home for another machine: on a Mac those folders mount network shares as soon as anything looks inside them, and a share that does not answer would hold the scan';
+const PEER_AUTOMOUNT = 'That machine does not scan /net, /Network or /home for another machine, by any of their names or through a link: on a Mac those folders mount network shares as soon as anything looks inside them, and a share that does not answer would hold the scan';
 
 /** A Windows path rooted on one of the machine's drives: `C:\…`, also behind `\\?\` or `\\.\`. */
 const WIN32_DRIVE_ROOTED = /^(?:[\\/]{2}[?.][\\/])?[a-z]:[\\/]/i;
@@ -349,10 +350,83 @@ const WIN32_DRIVE_ROOTED = /^(?:[\\/]{2}[?.][\\/])?[a-z]:[\\/]/i;
  */
 const DARWIN_AUTOMOUNT_ROOTS = new Set(['net', 'network', 'home']);
 
-/** Whether the absolute POSIX path `p` (`..` resolved, no file system call) is at or under one of macOS's automount folders. */
+/**
+ * The Data volume's names, folded: /System/Volumes/Data/home is /home (where /home links, and where
+ * auto_home is mounted), as the sanitizer's stripDataVolume reads every path.
+ */
+const DARWIN_DATA_VOLUME = ['system', 'volumes', 'data'];
+
+/**
+ * Whether the absolute POSIX path `p` (`..` resolved, no file system call) is at or under one of macOS's
+ * automount folders, by its own name or the Data volume's (`DARWIN_DATA_VOLUME`).
+ */
 function underDarwinAutomount(p: string): boolean {
-  const first = path.posix.resolve(p).split('/')[1] ?? '';
-  return DARWIN_AUTOMOUNT_ROOTS.has(foldName(first, 'darwin'));
+  const names = path.posix.resolve(p).split('/').filter((name) => name.length > 0).map((name) => foldName(name, 'darwin'));
+  const onData = names.length > DARWIN_DATA_VOLUME.length && DARWIN_DATA_VOLUME.every((name, i) => names[i] === name);
+  return DARWIN_AUTOMOUNT_ROOTS.has(names[onData ? DARWIN_DATA_VOLUME.length : 0] ?? '');
+}
+
+/** What `reachesDarwinAutomount` asks of the file system: the fs module's own, or a stand-in in tests. */
+export interface LinkWalkIo {
+  lstat(p: string): { isSymbolicLink(): boolean };
+  readlink(p: string): string;
+}
+
+// Asked at call time, so a test that stands in for fs.lstatSync sees every lookup.
+const FS_LINK_WALK_IO: LinkWalkIo = { lstat: (p) => fs.lstatSync(p), readlink: (p) => fs.readlinkSync(p) };
+
+/** More links than this in one path is a loop, which the sanitizer refuses on its own (macOS stops at 32). */
+const MAX_LINKS_FOLLOWED = 40;
+
+/**
+ * Whether the absolute POSIX path `p`, resolved one name at a time and following each link in it as the
+ * sanitizer's realpath would (a link's `..` from where the link leads), reaches one of macOS's automount
+ * folders: the boot volume's own entry in /Volumes (a link to /), /home (a link to the Data volume's),
+ * or any link a person made. Answered before any name is looked up inside one, so the walk itself mounts
+ * nothing; every name it looks up is one the sanitizer would look up too (POL item 1 review, F1.1).
+ * A name that cannot be looked up (missing, unreadable, not a folder) or a loop ends the walk with
+ * false: nothing past it can be reached, and the sanitizer then answers as it does for any such path.
+ */
+export function reachesDarwinAutomount(p: string, io: LinkWalkIo = FS_LINK_WALK_IO): boolean {
+  const pending = path.posix.resolve(p).split('/').filter((name) => name.length > 0).reverse(); // the next name last
+  let at = '/';
+  let links = 0;
+  for (;;) {
+    if (underDarwinAutomount(at)) return true;
+    const name = pending.pop();
+    if (name === undefined) return false;
+    if (name === '.') continue;
+    if (name === '..') {
+      at = path.posix.dirname(at);
+      continue;
+    }
+    const next = path.posix.join(at, name);
+    let target: string;
+    try {
+      if (!io.lstat(next).isSymbolicLink()) {
+        at = next;
+        continue;
+      }
+      if (++links > MAX_LINKS_FOLLOWED) return false;
+      target = io.readlink(next);
+    } catch {
+      return false;
+    }
+    pending.push(...target.split('/').filter((part) => part.length > 0).reverse());
+    if (target.startsWith('/')) at = '/';
+  }
+}
+
+/**
+ * On a Mac, the refusal a folder another machine asks for earns when a link in it leads into an
+ * automount folder (`reachesDarwinAutomount`) — asked after `peerScanRootRefusal` has passed its
+ * spelling, and before the sanitizer looks at it. Null elsewhere, and on every other system.
+ */
+function peerAutomountByLinks(given: string): PathRejectedError | null {
+  if (process.platform !== 'darwin') return null;
+  const typed = given.replace(/^\s+/, '');
+  const absolute = typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\') ? path.posix.join(os.homedir(), typed.slice(1)) : typed;
+  return reachesDarwinAutomount(absolute) ? new PathRejectedError(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH') : null;
 }
 
 /**

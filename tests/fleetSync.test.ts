@@ -13,7 +13,7 @@ process.env.TREEMAP_NO_GDU = '1'; // one test runs a real scan of a small folder
 import {
   DEFAULT_FLEET_PORT, FleetConfig, PAIRING_WINDOW_MS, beginPairing, cancelPairing,
   defaultConfig, handlePeerRequest, isPrivateIPv4, lanAddresses, pairingOffer,
-  peerScanRootRefusal, resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode,
+  peerScanRootRefusal, reachesDarwinAutomount, resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode,
 } from '../src/services/fleet/fleetSync';
 import { FleetSummary, SUMMARY_FIELDS, buildSummary, isForbiddenSummaryField, serialiseSummary } from '../src/services/fleet/fleetSummary';
 import { fleetRuntime, startPeerScan } from '../src/services/fleet/fleetRuntime';
@@ -396,6 +396,120 @@ test('on a Mac a scan another machine asks for is refused at or under /net, /Net
   // Linux and Windows read these as before: a folder of this machine, or (on Windows) no drive.
   assert.deepEqual(codes('linux', ['/net/nas', '/Network/x', '/home/me']), { '/net/nas': null, '/Network/x': null, '/home/me': null });
   assert.deepEqual(codes('win32', ['/net/nas', 'C:\\net\\nas']), { '/net/nas': 'PATH_BLOCKED', 'C:\\net\\nas': null });
+});
+
+test('on a Mac the automount folders are refused under the Data volume’s spelling too — /home is a link to /System/Volumes/Data/home, where auto_home is mounted — in any case; the rest of the Data volume, and other systems, are unchanged (POL item 1 review, F1.1)', () => {
+  const codes = (platform: NodeJS.Platform, paths: string[], home = '/Users/me') => Object.fromEntries(paths.map((p) => [p, peerScanRootRefusal(p, platform, home)?.code ?? null]));
+  assert.deepEqual(codes('darwin', [
+    '/System/Volumes/Data/home', '/System/Volumes/Data/home/x', '/System/Volumes/Data/net/nas', '/System/Volumes/Data/Network/Servers/x',
+    '/system/volumes/data/HOME/x', '/System/Volumes/Data/./home/x', '/Users/../System/Volumes/Data/net/nas',
+    '/System/Volumes/Data', '/System/Volumes/Data/Users/me', '/System/Volumes/Data/homes', '/System/Volumes/Preboot/home', '/System/Volumes/home/x', '/System/home',
+  ]), {
+    '/System/Volumes/Data/home': 'AUTOMOUNT_PATH', '/System/Volumes/Data/home/x': 'AUTOMOUNT_PATH', '/System/Volumes/Data/net/nas': 'AUTOMOUNT_PATH',
+    '/System/Volumes/Data/Network/Servers/x': 'AUTOMOUNT_PATH', '/system/volumes/data/HOME/x': 'AUTOMOUNT_PATH',
+    '/System/Volumes/Data/./home/x': 'AUTOMOUNT_PATH', '/Users/../System/Volumes/Data/net/nas': 'AUTOMOUNT_PATH',
+    '/System/Volumes/Data': null, '/System/Volumes/Data/Users/me': null, '/System/Volumes/Data/homes': null,
+    '/System/Volumes/Preboot/home': null, '/System/Volumes/home/x': null, '/System/home': null,
+  });
+  assert.deepEqual(codes('darwin', ['~', '~/x'], '/System/Volumes/Data/home/me'), { '~': 'AUTOMOUNT_PATH', '~/x': 'AUTOMOUNT_PATH' }, 'a home folder auto_home mounts, by its Data-volume name');
+  assert.deepEqual(codes('linux', ['/System/Volumes/Data/home/x']), { '/System/Volumes/Data/home/x': null });
+});
+
+test('on a Mac a folder whose path reaches an automount folder through a link — the boot volume’s own entry in /Volumes, /home itself, a link a person made, relative or chained — is refused before any name inside it is looked up; a link elsewhere, a loop and a missing name are left to the sanitizer (POL item 1 review, F1.1)', () => {
+  // A stand-in Mac: what lstat and readlink answer for each path, and a record of every lookup.
+  const links: Record<string, string> = {
+    '/home': '/System/Volumes/Data/home',
+    '/Volumes/Macintosh HD': '/',
+    '/Users/me/to-net': '/net',
+    '/Users/me/hop': '/Users/me/to-net',
+    '/Users/me/rel': '../../System/Volumes/Data/home',
+    '/Users/me/rel2': '../me/to-net', // read from /Users/me, where the link is — from / it leads nowhere
+    '/Users/me/to-data': '/System/Volumes/Data',
+    '/Users/me/dotdot': '/Volumes/Macintosh HD/Users/..',
+    '/Users/me/to-docs': '/Users/me/Documents',
+    '/Users/me/loop': '/Users/me/loop',
+  };
+  const dirs = new Set(['/Users', '/Users/me', '/Users/me/Documents', '/System', '/System/Volumes', '/System/Volumes/Data',
+    '/System/Volumes/Data/home', '/System/Volumes/Data/Users', '/Volumes', '/net', '/Network', '/Network/Servers']);
+  const automounts = ['/net', '/Network', '/Network/Servers', '/System/Volumes/Data/home'];
+  const looked: string[] = [];
+  const io = {
+    lstat(p: string) {
+      looked.push(p);
+      if (p in links) return { isSymbolicLink: () => true };
+      if (dirs.has(p)) return { isSymbolicLink: () => false };
+      throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    },
+    readlink(p: string) { looked.push(`readlink ${p}`); return links[p]; },
+  };
+  const verdicts = Object.fromEntries([
+    '/Volumes/Macintosh HD/home/x', '/Volumes/Macintosh HD/net/nas', '/Volumes/Macintosh HD/Network/Servers/x',
+    '/Users/me/to-net', '/Users/me/to-net/nas', '/Users/me/hop/nas', '/Users/me/rel/someone', '/Users/me/rel2/nas', '/Users/me/to-data/home/x',
+    '/Users/me/dotdot/home/x', '/home/x',
+    '/Volumes/Macintosh HD/Users/me/Documents', '/Users/me/to-docs/x', '/Users/me/loop/x', '/Users/me/missing/x', '/Users/me',
+  ].map((p) => [p, reachesDarwinAutomount(p, io)]));
+  assert.deepEqual(verdicts, {
+    '/Volumes/Macintosh HD/home/x': true, '/Volumes/Macintosh HD/net/nas': true, '/Volumes/Macintosh HD/Network/Servers/x': true,
+    '/Users/me/to-net': true, '/Users/me/to-net/nas': true, '/Users/me/hop/nas': true, '/Users/me/rel/someone': true, '/Users/me/rel2/nas': true,
+    '/Users/me/to-data/home/x': true, '/Users/me/dotdot/home/x': true, '/home/x': true,
+    '/Volumes/Macintosh HD/Users/me/Documents': false, '/Users/me/to-docs/x': false, '/Users/me/loop/x': false,
+    '/Users/me/missing/x': false, '/Users/me': false,
+  });
+  const inside = looked.filter((p) => automounts.some((a) => path.posix.dirname(p.replace(/^readlink /, '')) === a));
+  assert.deepEqual(inside, [], 'no name was looked up inside an automount folder');
+});
+
+test('with macOS stood in for process.platform, the receiver refuses a peer’s folder that a link leads into /home, before any name inside it is looked up — 400 AUTOMOUNT_PATH in words of its own, no scan — while a link to an ordinary folder still scans (POL item 1 review, F1.1)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  scansStarted.length = 0;
+  const tmp = fs.realpathSync(fileTempDir('tm-fleet-automount-link-'));
+  fs.mkdirSync(path.join(tmp, 'real'));
+  fs.symlinkSync('/home', path.join(tmp, 'to-home')); // /home: auto_home's on a Mac (by its link), an ordinary folder on Linux
+  fs.symlinkSync(path.join(tmp, 'real'), path.join(tmp, 'to-real'));
+  const touched: string[] = [];
+  const writable = fs as { lstatSync: typeof fs.lstatSync; statSync: typeof fs.statSync; readlinkSync: typeof fs.readlinkSync };
+  const realpath = fs.realpathSync.native;
+  const { lstatSync: lstat, statSync: stat, readlinkSync: readlink } = writable;
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  const answers: unknown[] = [];
+  fs.realpathSync.native = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`realpath ${String(p)}`); return (realpath as (...a: unknown[]) => string)(p, ...rest); }) as typeof realpath;
+  writable.lstatSync = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`lstat ${String(p)}`); return (lstat as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof lstat;
+  writable.statSync = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`stat ${String(p)}`); return (stat as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof stat;
+  writable.readlinkSync = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`readlink ${String(p)}`); return (readlink as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof readlink;
+  const homeBefore = process.env.HOME;
+  const ask = async (platform: string, p: string) => {
+    Object.defineProperty(process, 'platform', { ...real, value: platform });
+    const r = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } });
+    answers.push([platform, p.startsWith(tmp) ? path.relative(tmp, p) : p, r.status, r.body?.code ?? null, r.status === 400 ? /^That machine/.test(String(r.body?.error)) : null]);
+  };
+  try {
+    process.env.HOME = tmp; // os.homedir() reads it: `~` is the stand-in home, never the real one
+    for (const p of [path.join(tmp, 'to-home', 'tm-no-such-user'), path.join(tmp, 'to-home'), '~/to-home', path.join(tmp, 'to-real')]) await ask('darwin', p);
+    // On Linux /home is an ordinary folder: a link to it is scanned as before. (The folder itself, never a
+    // name inside it, so on a Mac host nothing is looked up inside auto_home either.)
+    await ask('linux', path.join(tmp, 'to-home'));
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+    if (homeBefore === undefined) delete process.env.HOME;
+    else process.env.HOME = homeBefore;
+    fs.realpathSync.native = realpath;
+    writable.lstatSync = lstat;
+    writable.statSync = stat;
+    writable.readlinkSync = readlink;
+  }
+  assert.deepEqual(answers, [
+    ['darwin', path.join('to-home', 'tm-no-such-user'), 400, 'AUTOMOUNT_PATH', true],
+    ['darwin', 'to-home', 400, 'AUTOMOUNT_PATH', true],
+    ['darwin', '~/to-home', 400, 'AUTOMOUNT_PATH', true],
+    ['darwin', 'to-real', 202, null, null],
+    ['linux', 'to-home', 202, null, null],
+  ]);
+  assert.deepEqual(touched.filter((t) => t.includes('tm-no-such-user')), [], 'no name inside the automount folder was looked up');
+  assert.deepEqual(scansStarted, [path.join(tmp, 'to-real'), path.join(tmp, 'to-home')], 'only the ordinary folders were scanned');
 });
 
 test('with macOS stood in for process.platform, the receiver refuses a peer’s /net path before anything touches it — no realpath, lstat or stat — answers 400 AUTOMOUNT_PATH in words of its own, and no scan starts (POL item 1)', async () => {
