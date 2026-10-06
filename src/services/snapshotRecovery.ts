@@ -3,7 +3,8 @@ import path from 'path';
 import { platform } from '../platform';
 import { capabilityState } from '../platform/capabilities';
 import { sanitizePath } from '../utils/pathSanitizer';
-import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
+import { assertNotAppDataPath, assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
+import { assertBytesCap, assertPathsAllowed, getPolicy, knownSizeOf } from './policy';
 import { moveToTrash } from './cleaner';
 import { AppError } from '../middleware/errorHandler';
 import type { SnapshotCandidate, SnapshotSearchResult, SnapshotRestoreOutcome } from '../models/types';
@@ -162,6 +163,22 @@ export interface RestoreRequest {
  * The destination is checked *before* any privileged work, so a user is never
  * asked for a password only to be told afterwards that the target was taken.
  */
+/**
+ * The file a restore with `overwrite` replaces goes to the Trash first: a delete, held to the rules
+ * DELETE /api/files holds a path to (the final review, F1.12, F1.16) — inside a root this server
+ * scanned, and allowed by agent-policy.json (allowedRoots, protectedPaths, the byte cap). Refused
+ * before anything privileged runs and before anything is moved to the Trash.
+ */
+async function assertMayReplace(destination: string): Promise<void> {
+  if (!insideAnyScanRoot(destination)) {
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT',
+      `${destination} is outside every scanned root, so TreeMap did not replace it — scan its folder first, or restore beside it.`);
+  }
+  const policy = await getPolicy();
+  assertPathsAllowed(policy, [destination]);
+  assertBytesCap(policy, knownSizeOf(destination));
+}
+
 export async function restoreFromSnapshot(request: RestoreRequest): Promise<SnapshotRestoreOutcome> {
   const original = sanitizePath(request.path);
   const destination = request.destination
@@ -265,6 +282,7 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     // throwing, so ignoring it meant a file that could not be trashed was
     // treated as cleared — and then handed to a recovery path that overwrites
     // it as root.
+    await assertMayReplace(destination);
     const trashed = await moveToTrash([destination]);
     if (trashed.failed.length > 0) {
       throw new AppError(409, 'DESTINATION_NOT_CLEARED',

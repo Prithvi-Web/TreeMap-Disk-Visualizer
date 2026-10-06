@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-snapshotRestorePlacement-data-');
 
 import {
@@ -18,6 +19,7 @@ import { WindowsProvider } from '../src/platform/windows';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { platform } from '../src/platform';
 import { restoreFromSnapshot } from '../src/services/snapshotRecovery';
+import { startScan } from '../src/services/diskScanner';
 import { AppError } from '../src/middleware/errorHandler';
 import { RealMachineRefusal, takeRealMachineRefusalsForTests } from '../src/services/realMachineGuard';
 import type { VolumeSnapshotRef } from '../src/platform/types';
@@ -921,6 +923,9 @@ test('with overwrite, a restore that stops after the Trash step says the replace
   const dir = tmp('treemap-place-overwrite-');
   const existing = path.join(dir, 'notes.txt');
   fs.writeFileSync(existing, 'newer work');
+  // The file a restore replaces is held to the rules a delete is: its folder is scanned (the final review, F1.12).
+  const scan = await startScan(dir);
+  await waitFor(() => scan.status !== 'running', `the scan of ${dir}`);
   const trashed: string[] = [];
   setTrashStepForTests(async (p) => { trashed.push(p); });
   setAdminPromptForTests(async () => { throw new Error('0:12: execution error: User canceled. (-128)'); });

@@ -746,7 +746,10 @@ read-what-you-saw) permission to act.
 - **Snapshot restores never write through an existing name.**
   `POST /api/system/snapshots/restore` checks its destination before the
   administrator prompt — and, with `overwrite: true`, before the file there is
-  moved to the Trash — and the copy checks again when it runs: on macOS the
+  moved to the Trash — and the copy checks again when it runs. The file an
+  `overwrite` replaces is held to the rules a delete is, before anything is
+  moved: inside a scanned root (`403 OUTSIDE_SCAN_ROOT`) and allowed by
+  agent-policy.json (`403 POLICY_*`, the byte cap included). On macOS the
   destination folder must belong to the user or root, and neither group nor
   others may change it, else `409 DESTINATION_FOLDER_REFUSED` (checked again by
   the root helper, which enters the folder by its physical path); a folder the

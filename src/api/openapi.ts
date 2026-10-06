@@ -2870,10 +2870,12 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       content: { 'application/json': { schema: obj({
         path: str('The original path to recover'),
         destination: str('Where to write it; defaults to a dated sibling of the original'),
-        overwrite: bool('Replace an existing file at the destination. Off by default — a snapshot copy is older than whatever is there now'),
+        overwrite: bool('Replace an existing file at the destination. Off by default — a snapshot copy is older than whatever is there now. The file replaced goes to the Trash first, held to the rules a delete is: inside a scanned root, and allowed by agent-policy.json'),
       }, ['path']) } },
     },
     responses: {
+      '400': errorResponse('PATH_REQUIRED without a path; PATH_INVALID or PATH_BLOCKED for the path or the destination'),
+      '403': errorResponse('SPILL_PATH for the path or the destination; APP_DATA_PATH for the destination; with overwrite, for the file it would replace, OUTSIDE_SCAN_ROOT, or POLICY_ROOT_NOT_ALLOWED, POLICY_PROTECTED_PATH or POLICY_BYTES_EXCEEDED from agent-policy.json'),
       '200': jsonResponse('Recovered', obj(
         {
           restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()), sizeBytes: int(),
