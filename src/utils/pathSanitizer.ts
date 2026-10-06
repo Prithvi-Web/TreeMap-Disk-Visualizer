@@ -268,8 +268,9 @@ function whereLinkLeads(p: string): string | null {
   const target = readLinkAt(p);
   if (target === null) return null;
   if (aliasNamespaceOf(target) !== null) return target;
-  const { at, names } = startOf(canonDir(path.dirname(p)), target);
-  return walkNames(at, names, newLinkWalk());
+  const folder = canonDir(path.dirname(p));
+  const { at, names } = startOf(folder, target);
+  return walkNames(at, names, newLinkWalk(path.join(folder, path.basename(p))));
 }
 
 /** The text of the link at `p`; null when `p` is not a link, or cannot be read (then judged as spelled). */
@@ -291,13 +292,21 @@ const MAX_LINK_HOPS = 40;
 /** Names one judgement walks through link targets before it stops, whatever they spell: a bound on its work. */
 const MAX_WALK_NAMES = 4096;
 
-/** What one judgement's walk through links may still spend (`walkNames`). */
+/**
+ * One judgement's walk through links (`walkNames`): what it may still spend, and every link it has
+ * read with the names still to walk after it. The same link with the same names left is a loop,
+ * certain, and the walk ends there: going round until the budget ran out cost about forty realpaths
+ * and readlinks a path, twice a path in the scanned-root rule, and a batch of such links held the
+ * server for minutes (the SEC-2b review, F1.2).
+ */
 interface LinkWalk {
   links: number;
   names: number;
+  seen: Set<string>;
 }
-function newLinkWalk(): LinkWalk {
-  return { links: MAX_LINK_HOPS, names: MAX_WALK_NAMES };
+/** A fresh walk; `from`, the link it starts from (where it really is), counts as read with nothing after it. */
+function newLinkWalk(from?: string): LinkWalk {
+  return { links: MAX_LINK_HOPS, names: MAX_WALK_NAMES, seen: new Set(from === undefined ? [] : [from]) };
 }
 
 /** A path's names below its root; `.` and empty names name the folder they are in, so they go. */
@@ -335,9 +344,9 @@ function startOf(realFolder: string, target: string): { at: string; names: strin
  *
  * It ends early, with the names left joined as spelled: at a name that is not there (as if the rest
  * were made as plain folders — what a check before a folder is made must assume) or cannot be looked
- * at; at a second name (`aliasNamespaceOf`), answered as spelled so the alias test sees it; and past
- * the system's own limit of links or the bound on names (`LinkWalk`), where nothing lies beneath —
- * every call there fails.
+ * at; at a second name (`aliasNamespaceOf`), answered as spelled so the alias test sees it; and at
+ * a loop, certain, or past the system's own limit of links or the bound on names (`LinkWalk`), where
+ * nothing lies beneath — every call there fails.
  */
 function walkNames(at: string, names: readonly string[], walk: LinkWalk): string {
   const pending = [...names];
@@ -371,7 +380,9 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
       here = next;
       continue;
     }
-    if (walk.links-- <= 0) return settle([name, ...pending]);
+    const read = [next, ...pending].join('\0'); // NUL is in no name
+    if (walk.seen.has(read) || walk.links-- <= 0) return settle([name, ...pending]);
+    walk.seen.add(read);
     let target: string;
     try {
       target = fs.readlinkSync(next);
@@ -832,13 +843,17 @@ export function isSpillPath(p: string): boolean {
 export function isAppDataPath(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
   let current = p;
+  const visited = new Set<string>(); // where each hop lives: one seen again is a loop, certain (F1.2)
   for (let hop = 0; hop <= MAX_LINK_HOPS; hop++) {
     if (namesBelowAppData(current) !== null) return true;
+    const at = livesAt(current);
+    if (visited.has(at)) return true; // a loop leads nowhere a write could land: doubt refuses
+    visited.add(at);
     const next = linkTargetOf(current);
     if (next === null) return false;
     current = next;
   }
-  return true; // a loop, or a chain no system follows: doubt refuses
+  return true; // a chain no system follows: doubt refuses
 }
 
 /**
@@ -851,10 +866,12 @@ function linkTargetOf(p: string): string | null {
   const target = readLinkAt(p);
   if (target === null) return null;
   if (aliasNamespaceOf(target) !== null) return target;
-  const { at, names } = startOf(canonDir(path.dirname(p)), target);
+  const folder = canonDir(path.dirname(p));
+  const { at, names } = startOf(folder, target);
+  const walk = newLinkWalk(path.join(folder, path.basename(p)));
   const last = names[names.length - 1];
-  if (last === undefined || last === '..') return walkNames(at, names, newLinkWalk());
-  return path.join(walkNames(at, names.slice(0, -1), newLinkWalk()), last);
+  if (last === undefined || last === '..') return walkNames(at, names, walk);
+  return path.join(walkNames(at, names.slice(0, -1), walk), last);
 }
 
 /**

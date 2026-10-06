@@ -17,7 +17,7 @@ import { createApp } from '../src/server';
 import { ENDPOINTS } from '../src/api/openapi';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
-import { aliasNamespaceOf, judgeSpelling, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
+import { aliasNamespaceOf, isAppDataPath, judgeSpelling, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
@@ -461,6 +461,48 @@ test('a link whose target climbs back up through another link (`sub/../x`) is ju
   // Where the system does read it, once x is there.
   fs.mkdirSync(path.join(DEST, 'f11-x'));
   assert.equal(fs.realpathSync.native(path.join(dir, 'out')), path.join(DEST, 'f11-x'), 'the system’s own realpath (Node’s other one reads a link’s text alone)');
+});
+
+test('a loop of links costs a few file-system calls, not a round of the loop for every link the system allows: the walk ends where the loop is certain', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+  // Each guard walked a two-link loop until its budget of links ran out — about forty realpaths and
+  // readlinks a path, twice per path in the scanned-root rule — so a batch of such links held the
+  // server for minutes (the SEC-2b review, F1.2). Counted, not timed.
+  const dir = path.join(T, 'f12-loop');
+  fs.mkdirSync(dir);
+  const a = path.join(dir, 'a');
+  fs.symlinkSync(path.join(dir, 'b'), a);
+  fs.symlinkSync(a, path.join(dir, 'b'));
+  const asks: Record<string, () => unknown> = {
+    sanitizePath: () => sanitizePath(a),
+    insideAnyScanRoot: () => insideAnyScanRoot(a),
+    isAppDataPath: () => isAppDataPath(a),
+  };
+  const verdicts = Object.fromEntries(Object.entries(asks).map(([name, ask]) => [name, ask()])); // and the folders' answers are now remembered
+  assert.deepEqual(verdicts, { sanitizePath: a, insideAnyScanRoot: true, isAppDataPath: true }, 'the verdicts a loop always had: the link itself is a path of the scan, and no place to write');
+  const calls = { realpath: 0, readlink: 0 };
+  const realpath = fs.realpathSync.native;
+  const readlink = fs.readlinkSync;
+  fs.realpathSync.native = ((...args: Parameters<typeof realpath>) => {
+    calls.realpath += 1;
+    return realpath(...args);
+  }) as typeof realpath;
+  fs.readlinkSync = ((...args: Parameters<typeof readlink>) => {
+    calls.readlink += 1;
+    return readlink(...args);
+  }) as typeof readlink;
+  const cost: Record<string, string> = {};
+  try {
+    for (const [name, ask] of Object.entries(asks)) {
+      calls.realpath = 0;
+      calls.readlink = 0;
+      ask();
+      cost[name] = calls.realpath <= 3 && calls.readlink <= 3 ? 'a few' : `${calls.realpath} realpaths, ${calls.readlink} readlinks`;
+    }
+  } finally {
+    fs.realpathSync.native = realpath;
+    fs.readlinkSync = readlink;
+  }
+  assert.deepEqual(cost, { sanitizePath: 'a few', insideAnyScanRoot: 'a few', isAppDataPath: 'a few' });
 });
 
 /* ─────────────── Every route and tool that takes a path ─────────────── */
