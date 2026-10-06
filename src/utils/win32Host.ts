@@ -43,7 +43,7 @@ function ipv4PartOf(part: string): number | null {
 }
 
 /** A host as an IPv4 address the way inet_aton reads it: one to four parts, the last filling the bytes left. Null when it is none. */
-export function ipv4Of(host: string): number | null {
+function ipv4Of(host: string): number | null {
   const parts = host.split('.');
   if (parts.length > 4) return null;
   const values = parts.map(ipv4PartOf);
@@ -55,7 +55,7 @@ export function ipv4Of(host: string): number | null {
 }
 
 /** A host as an IPv6 address — bracketed, or under `.ipv6-literal.net` — as its eight groups; null when it is none. */
-export function ipv6Of(host: string): number[] | null {
+function ipv6Of(host: string): number[] | null {
   let h = host;
   const literal = /^(.*)\.ipv6-literal\.net$/.exec(h);
   if (literal) h = literal[1].replace(/-/g, ':').replace(/s.*$/, ''); // `s` starts a zone, and is no hex digit

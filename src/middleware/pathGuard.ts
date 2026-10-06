@@ -219,7 +219,7 @@ function placeOf(p: string): string {
  * last name in another case is the folder it names — /System/Volumes/data is the Data volume (the
  * SEC-2b review, F1.3, F1.5).
  */
-export function rootPlaceOf(root: string): string {
+function rootPlaceOf(root: string): string {
   return placeFrom(rootLivesAt(root));
 }
 
