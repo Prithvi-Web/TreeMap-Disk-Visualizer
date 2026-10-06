@@ -388,7 +388,7 @@ test('a scan another machine asks for is held to agent-policy.json’s allowedRo
   }
 });
 
-test('the listener FleetRuntime starts hands a paired peer’s scan to startPeerScan — its own hooks, not a copy — so allowedRoots holds for it (the SEC-2c review, F2.6)', async () => {
+test('the listener FleetRuntime starts hands a paired peer’s scan to startPeerScan — its own hooks, not a copy — so allowedRoots holds for it; its summary is this machine’s for the config it runs with, and a guesser it reports reaches the fleet panel (the SEC-2c review, F2.6; the SEC-2d review, F3.6)', async () => {
   // The test above hands startPeerScan to the harness itself, so the one line wiring it into the listener
   // (FleetRuntime.apply) was pinned by nothing: putting back the old hook, which asked no policy, left this
   // file green. apply() binds a LAN socket and advertises on mDNS, so the wiring is read from its source
@@ -400,7 +400,7 @@ test('the listener FleetRuntime starts hands a paired peer’s scan to startPeer
     ['startPeerServer(cfg, this.peerHooks(cfg), addresses)'],
     'apply() starts the listener with the runtime’s own hooks, and nothing else starts one',
   );
-  const cfg = defaultConfig();
+  const cfg = { ...defaultConfig(), label: 'tm-fleet-hooks-label' };
   const offer = beginPairing();
   const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
   cfg.allowRemoteScan = true;
@@ -409,11 +409,21 @@ test('the listener FleetRuntime starts hands a paired peer’s scan to startPeer
   const policyFile = path.join(appDataDir(), POLICY_FILE);
   fs.writeFileSync(policyFile, JSON.stringify({ allowedRoots: [allowed] }));
   try {
-    const { startScan } = fleetRuntime().peerHooks(cfg);
-    const refused = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: elsewhere }, startScan });
+    const hooks = fleetRuntime().peerHooks(cfg);
+    const refused = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: elsewhere }, startScan: hooks.startScan });
     assert.deepEqual([refused.status, refused.body?.code], [403, 'POLICY_ROOT_NOT_ALLOWED'], JSON.stringify(refused.body));
     assert.deepEqual(allScans().filter((s) => s.rootPath === elsewhere).map((s) => s.scanId), [], 'nothing was scanned');
+    // The other two hooks were moved into peerHooks with it and driven by nothing: dropping the guesser
+    // warning, or answering with another config's summary, left this file green (the SEC-2d review, F3.6).
+    fleetRuntime().clearPairingAbuse();
+    hooks.onPairingAbuse?.('192.168.1.9');
+    const summary = await hooks.summary();
+    assert.deepEqual(
+      { 'the guesser the fleet panel is told of': fleetRuntime().pairingAbuse()?.address, label: summary.label, instanceId: summary.instanceId },
+      { 'the guesser the fleet panel is told of': '192.168.1.9', label: 'tm-fleet-hooks-label', instanceId: cfg.instanceId },
+    );
   } finally {
+    fleetRuntime().clearPairingAbuse();
     fs.rmSync(policyFile, { force: true });
   }
 });
