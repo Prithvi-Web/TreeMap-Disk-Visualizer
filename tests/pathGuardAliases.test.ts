@@ -17,7 +17,8 @@ import { createApp } from '../src/server';
 import { ENDPOINTS } from '../src/api/openapi';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
-import { aliasNamespaceOf, isAppDataPath, judgeSpelling, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
+import { aliasNamespaceOf, isAppDataPath, judgeSpelling, liesInside, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
+import { appDataDir } from '../src/services/storage';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
@@ -573,6 +574,51 @@ test('a chain of links is followed link by link to a second name at its end: a l
     }
   }
   assert.deepEqual(granted, []);
+});
+
+test('a `..` after a second name in a link’s target is the system’s to read, never cancelled by its text: a link to /.vol/<dev>/<ino>/../../../<a scanned folder> — absolute, reached through `..`, or through another link — is refused beneath it and as itself (the SEC-2c review, F2.1)', { skip: !DARWIN && 'the namespaces are macOS’s' }, () => {
+  // The walk stopped at the second name and joined the names left with path.join, which cancelled
+  // `/.vol/1/2/..` against its own text — and so did every later join of a child name onto such a
+  // place — so `/.vol/1/2/../../../<a scanned folder>` read as that folder: inside the scan and past
+  // the alias test, while the kernel reads that `..` as the folder above inode 2, wherever it is.
+  // Typed directly, the same spelling was refused. (A /.nofollow target is left out: the kernel
+  // itself resolves `/.nofollow/..` to /, so realpath answers it, as it should be answered.)
+  const dir = path.join(T, 'f21');
+  const real = path.join(dir, 'dir');
+  fs.mkdirSync(path.join(real, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(real, 'f.txt'), 'f');
+  fs.writeFileSync(path.join(real, 'sub', 'g.txt'), 'g');
+  const up = (n: number): string[] => Array<string>(n).fill('..');
+  const toRoot = up(dir.split('/').filter((name) => name !== '').length); // from dir up to /
+  // Joined by hand: path.join would cancel the very `..`s under test.
+  const links: Record<string, string> = {
+    'abs-vol': ['', '.vol', '1', '2', ...up(3), real.slice(1)].join('/'),
+    'rel-vol': [...toRoot, '.vol', '1', '2', ...up(3), real.slice(1)].join('/'),
+    'abs-resolve': ['', '.resolve', '1', ...up(2), real.slice(1)].join('/'),
+    chain: 'abs-vol',
+    through: ['abs-vol', 'sub'].join('/'),
+  };
+  for (const [name, to] of Object.entries(links)) fs.symlinkSync(to, path.join(dir, name));
+  const granted: string[] = [];
+  for (const name of Object.keys(links)) {
+    for (const below of ['', 'f.txt', path.join('sub', 'g.txt')]) {
+      const p = path.join(dir, name, below);
+      if (rejection(p) !== 'PATH_BLOCKED') granted.push(`${name}/${below}: the sanitizer`);
+      if (insideAnyScanRoot(p)) granted.push(`${name}/${below}: the scanned-root rule`);
+      if (below !== '' && liesInside(T, p)) granted.push(`${name}/${below}: liesInside`);
+    }
+  }
+  assert.deepEqual(granted, [], 'beneath such a link, and the link itself, nothing is a path of the scan');
+  // Typed, the spelling always was a second name; the folder by its own name is a path of the scan.
+  assert.equal(rejection(`${links['abs-vol']}/f.txt`), 'PATH_BLOCKED');
+  assert.deepEqual([rejection(path.join(real, 'f.txt')), insideAnyScanRoot(path.join(real, 'f.txt'))], [null, true]);
+  // The app-data rule read such a link as where the text cancels to, and still does: no place to write.
+  const data = fs.realpathSync(appDataDir());
+  fs.symlinkSync(['', '.vol', '1', '2', ...up(3), data.slice(1)].join('/'), path.join(dir, 'to-app-data'));
+  assert.deepEqual(
+    [isAppDataPath(path.join(dir, 'to-app-data')), isAppDataPath(path.join(dir, 'to-app-data', 'settings.json'))],
+    [true, true],
+  );
 });
 
 test('a chain of links as long as any system follows is followed to its end, out of the scan; a longer one ends, with bounded work, and its first link is still a path of the scan', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {

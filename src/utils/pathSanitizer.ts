@@ -230,7 +230,19 @@ function canonDirUncached(dir: string): string {
   // missing sibling costs nothing.
   const parent = path.dirname(dir);
   if (parent === dir) return dir; // a root that will not resolve: nothing above it
-  return path.join(canonDir(parent), path.basename(dir));
+  return joinUnder(canonDir(parent), path.basename(dir));
+}
+
+/**
+ * `names` joined under `place`, as `path.join` does — except under a second name
+ * (`aliasNamespaceOf`), where they are joined as spelled. A `..` there is the system's to read: on
+ * macOS `/.vol/<dev>/<ino>/..` is the folder above that inode, wherever it is. `path.join` cancelled
+ * it against the text instead, so `/.vol/1/2/../../../<a scanned folder>` read as that folder — inside
+ * the scan and past the alias test — wherever a walk or a join of a child name met such a place (the
+ * SEC-2c review, F2.1). Kept as spelled, the place stays a second name, refused by both rules.
+ */
+function joinUnder(place: string, ...names: string[]): string {
+  return aliasNamespaceOf(place) === null ? path.join(place, ...names) : [place, ...names].join(path.sep);
 }
 
 /**
@@ -344,7 +356,7 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
       continue;
     }
     const next = path.join(here, name);
-    if (aliasNamespaceOf(next) !== null) return path.join(next, ...pending);
+    if (aliasNamespaceOf(next) !== null) return joinUnder(next, ...pending);
     if (walk.names-- <= 0) return settle([name, ...pending]);
     let entry: fs.Stats | undefined;
     try {
@@ -366,7 +378,7 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
     } catch {
       return settle([name, ...pending]);
     }
-    if (aliasNamespaceOf(target) !== null) return path.join(target, ...pending);
+    if (aliasNamespaceOf(target) !== null) return joinUnder(target, ...pending);
     const start = startOf(here, target);
     here = start.at;
     pending.unshift(...start.names);
@@ -522,7 +534,7 @@ function canonicalize(resolved: string): string {
   const parent = path.dirname(resolved);
   if (parent === resolved) return canonDir(resolved); // "/" or "C:\" itself
 
-  const candidate = stripDataVolume(path.join(canonDir(parent), path.basename(resolved)));
+  const candidate = stripDataVolume(joinUnder(canonDir(parent), path.basename(resolved)));
 
   let leaf: fs.Stats | undefined;
   try {
@@ -684,7 +696,7 @@ export function canonicalDirOf(p: string): string {
 export function livesAt(p: string): string {
   const parent = path.dirname(p);
   if (parent === p) return canonDir(p); // "/" or "C:\" itself
-  return path.join(canonDir(parent), path.basename(p));
+  return joinUnder(canonDir(parent), path.basename(p));
 }
 
 /**
@@ -795,7 +807,9 @@ function appDataNames(): { at: string; folded: string[] } {
  */
 function namesBelowAppData(p: string): { where: string; appData: string; below: string[] } | null {
   const { at, folded } = appDataNames();
-  const where = canonicalDirOf(p);
+  // A second name's `..` is kept as spelled (`joinUnder`) so the alias rules refuse it; this rule
+  // reads it as its text cancels, as it always did — the sanitizer refuses every such path first.
+  const where = path.normalize(canonicalDirOf(p));
   const names = namesOf(where);
   if (names.length < folded.length) return null;
   const own = folded.length - 1;
@@ -890,6 +904,8 @@ export function liesInside(folder: unknown, p: unknown): boolean {
   } catch {
     where = canonicalDirOf(p);
   }
+  // Through a second name no text says where it lies (`joinUnder`): outside, whatever it spells.
+  if (aliasNamespaceOf(where) !== null) return false;
   return where !== root && isInside(root, where);
 }
 
