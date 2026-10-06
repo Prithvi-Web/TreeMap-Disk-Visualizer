@@ -699,9 +699,12 @@ function noteFocus(el) { lastFocus = el; }
 document.addEventListener('focusin', (e) => {
   noteFocus(e.target);
   // Belt and braces over inert: focus that lands outside the top sheet (a
-  // programmatic .focus() somewhere in the page) is pulled back in.
+  // programmatic .focus() somewhere in the page) is pulled back in. #toasts
+  // is the exception, as it is to inert: an offer made in answer to a press
+  // in the sheet takes focus there, the one way a keyboard reaches it (final
+  // review F1.10). Tab from it goes back into the sheet (modalTrapTab).
   const top = topModal();
-  if (top && !top.contains(e.target)) modalFocusInto(top);
+  if (top && !top.contains(e.target) && !$('toasts').contains(e.target)) modalFocusInto(top);
 });
 
 /* Which sheet is on top, bottom to top.

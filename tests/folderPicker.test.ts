@@ -80,10 +80,10 @@ function fakeEl(id: string): FakeEl {
 }
 
 /** A toast with one button (the page's toastAction): what it said, its button, and a click on it. */
-type Offer = { msg: string; label: string; kind: string; choose: () => Promise<unknown> };
+type Offer = { msg: string; label: string; kind: string; focus: boolean; choose: () => Promise<unknown> };
 function offerRecorder(offers: Offer[]) {
-  return (msg: string, label: string, fn: () => unknown, kind = 'success') => {
-    offers.push({ msg, label, kind, choose: () => Promise.resolve(fn()) });
+  return (msg: string, label: string, fn: () => unknown, kind = 'success', _ms?: number, opts?: { focus?: boolean }) => {
+    offers.push({ msg, label, kind, focus: !!opts?.focus, choose: () => Promise.resolve(fn()) });
   };
 }
 
@@ -938,8 +938,10 @@ function toastRuntime() {
   const $ = (id: string) => { assert.equal(id, 'toasts', 'a toast goes in #toasts'); return host; };
   const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  // The counter that names each toast's message for its button, where the page has one.
+  const seqDecl = INDEX.includes('let toastActionSeq = 0;') ? 'let toastActionSeq = 0;' : '';
   const toastAction = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout',
-    `'use strict'; ${braced('function toastAction(')} return toastAction;`,
+    `'use strict'; ${seqDecl} ${braced('function toastAction(')} return toastAction;`,
   )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout) as
     (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean }) => void;
   return { toastAction, doc, shown, timers, fire };
@@ -997,6 +999,73 @@ test('an offer says in words what the path ends with, its button is a short verb
   assert.ok(span, 'a toast\'s message has a rule of its own');
   assert.match(span![1], /min-width:\s*0/, 'its message may shrink below its longest word');
   assert.match(span![1], /overflow-wrap:\s*anywhere/, 'and breaks a path anywhere to fit');
+});
+
+test('an offer takes focus, so a keyboard reaches it with a sheet open or not, and hands focus back when it goes; a sheet lets focus stay in a toast (final review F1.10)', async () => {
+  // The only way to take the folder offered was a toast's button, and with
+  // the policy editor or the picker open the keyboard could not get there:
+  // Tab cycles inside the sheet and a focusin guard pulls focus back into it.
+  const { toastAction, doc, shown, fire } = toastRuntime();
+  const box = { isConnected: true, focus() { doc.activeElement = box; } };
+  box.focus(); // the person pressed Save, Scan or Enter in a path box
+  let ran = 0;
+  toastAction('No folder is named “/x ” — the path ends with a space. Did you mean “/x”?', 'Use that folder', () => { ran++; }, 'error', 12000, { focus: true });
+  const btn = shown[0].button!;
+  assert.equal(doc.activeElement, btn, 'the offer\'s button takes focus as it appears');
+  const described = btn.attrs['aria-describedby'];
+  assert.ok(described, 'and is described by the message, which a screen reader reads with it');
+  assert.ok(shown[0].html.includes(`<span id="${described}">No folder is named`), `the message is the element it names (${described})`);
+  fire();
+  assert.ok(!shown[0].cls.has('out'), 'a toast holding focus does not time out from under it');
+  btn.click();
+  assert.equal(ran, 1, 'control: the choice is made');
+  assert.equal(doc.activeElement, box, 'and focus goes back where it was');
+
+  toastAction('No folder is named “/y ”', 'Use that folder', () => { ran++; }, 'error', 12000, { focus: true });
+  assert.equal(doc.activeElement, shown[1].button, 'control: a second offer takes focus');
+  const other = { isConnected: true, focus() { doc.activeElement = other; } };
+  other.focus(); // the person tabbed away
+  fire();
+  assert.ok(shown[1].cls.has('out'), 'once focus has left it, the toast times out as any other');
+  assert.equal(doc.activeElement, other, 'and focus stays where the person put it');
+  const ids = new Set(shown.map((t) => t.button!.attrs['aria-describedby']));
+  assert.equal(ids.size, 2, 'each toast names its own message');
+
+  toastAction('Results expire soon', 'Scan again', () => {}, 'success', 20000);
+  assert.equal(doc.activeElement, other, 'a toast nobody asked for leaves focus where it is');
+
+  // Every offer is an answer to the person's own press, so each takes focus.
+  const { offers, click, type } = boxesRuntime(strictListing);
+  type('pathInput', DOCS + ' ');
+  await click('scanBtn');
+  type('apPath', DOCS + ' ');
+  await click('apSaveBtn');
+  await click('browseBtn');
+  assert.equal(offers.length, 3, 'control: the Scan card, the Autopilot editor and the picker each made an offer');
+  assert.deepEqual(offers.map((o) => o.focus), [true, true, true], 'each offer takes focus');
+
+  // The page's focusin guard, evaluated: focus outside the top sheet is pulled
+  // back into it — except into #toasts, where an offer made from the sheet sits.
+  const guardAt = INDEX.indexOf("document.addEventListener('focusin', (e) => {\n  noteFocus(e.target);");
+  assert.notEqual(guardAt, -1, 'the page has its focusin guard');
+  const guard = INDEX.slice(guardAt, INDEX.indexOf('\n});', guardAt) + '\n});'.length);
+  const inSheet = { id: 'save' };
+  const inToast = { id: 'offer' };
+  const onPage = { id: 'map' };
+  const sheet = { contains: (x: unknown) => x === inSheet };
+  const toasts = { contains: (x: unknown) => x === inToast };
+  const pulled: unknown[] = [];
+  const heard: { focusin?: (e: { target: unknown }) => void } = {};
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('document', '$', 'noteFocus', 'topModal', 'modalFocusInto', `'use strict'; ${guard}`)(
+    { addEventListener: (t: string, f: (e: { target: unknown }) => void) => { if (t === 'focusin') heard.focusin = f; } },
+    (id: string) => { assert.equal(id, 'toasts'); return toasts; },
+    () => {}, () => sheet, (s: unknown) => { pulled.push(s); });
+  assert.ok(heard.focusin, 'control: the guard listens for focusin');
+  heard.focusin!({ target: onPage });
+  assert.deepEqual(pulled, [sheet], 'control: focus that lands on the page under a sheet is pulled back into it');
+  heard.focusin!({ target: inToast });
+  assert.deepEqual(pulled, [sheet], 'focus on an offer\'s button stays there');
 });
 
 test('Scan reads Fast rescan when pressed, and a lookup that does not answer in time scans the path exactly as typed (QA4a R4-3)', async () => {

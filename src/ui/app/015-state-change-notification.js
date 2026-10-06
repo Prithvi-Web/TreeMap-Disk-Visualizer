@@ -163,17 +163,29 @@ async function ensureNodes(paths) {
   }
 }
 
+/** Each toast with a button names its message for that button (aria-describedby). */
+let toastActionSeq = 0;
 /**
  * A toast with one button — for the cases where the right next step is a
  * single click away (scan again, try again). `fn` runs once and the toast
  * goes with it. Same surface and lifetime as toast(), so it reads as one
  * family; longer by default because it is asking for a decision.
+ *
+ * `focus`: the button takes focus as the toast appears, and focus goes back
+ * where it was when the toast goes — for an answer to a press the person
+ * just made (offerMeant). #toasts is the last thing in the page, and with a
+ * sheet open Tab cycles inside the sheet, so a keyboard could not reach the
+ * choice at all (final review F1.10). A toast holding focus does not time out
+ * from under it.
  */
-function toastAction(msg, label, fn, kind = 'success', ms = 12000) {
+function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = false } = {}) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
-  el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>' +
-    '<button class="pill" type="button" style="margin-left:10px;flex:none;">' + escapeHtml(label) + '</button>';
+  const msgId = 'toastMsg' + (++toastActionSeq);
+  el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + `<span id="${msgId}">` + escapeHtml(msg) + '</span>' +
+    `<button class="pill" type="button" aria-describedby="${msgId}" style="margin-left:10px;flex:none;">` + escapeHtml(label) + '</button>';
+  const btn = el.querySelector('button');
+  const back = focus ? document.activeElement : null;
   // Gone once, and its choice made once: the toast stays on screen, and
   // clickable, for the 320ms it fades, so a double-click — or a click as it
   // times out — ran `fn` again (final review F1.12).
@@ -181,10 +193,18 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000) {
   const gone = () => {
     if (done) return;
     done = true;
+    const held = el.contains(document.activeElement);
     el.classList.add('out');
     setTimeout(() => el.remove(), 320);
+    if (held && back && back.isConnected !== false && back.focus) back.focus({ preventScroll: true });
   };
-  el.querySelector('button').addEventListener('click', () => { if (done) return; gone(); fn(); });
+  btn.addEventListener('click', () => { if (done) return; gone(); fn(); });
   $('toasts').appendChild(el);
-  setTimeout(gone, ms);
+  if (focus) btn.focus({ preventScroll: true });
+  const expire = () => {
+    if (done) return;
+    if (el.contains(document.activeElement)) { setTimeout(expire, ms); return; }
+    gone();
+  };
+  setTimeout(expire, ms);
 }

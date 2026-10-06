@@ -306,10 +306,12 @@ function trailingBlanks(p) {
     and the folder it probably meant as the one choice. The paths ride in the
     message, which wraps; the button is a short verb for what choosing does
     there (`label`) — a path in it could not shrink, and hung off the toast
-    and past the window's edge (final review F1.9). */
+    and past the window's edge (final review F1.9). It answers the person's
+    own press, so its button takes focus: from inside a sheet the keyboard
+    could not reach it otherwise (final review F1.10). */
 function offerMeant(p, meant, choose, label = 'Use that folder') {
   toastAction(`No folder is named “${p}” — the path ends with ${trailingBlanks(p)}. Did you mean “${meant}”?`,
-    label, choose, 'error');
+    label, choose, 'error', 12000, { focus: true });
 }
 /** How long Scan or Save waits on a path box's lookup (boxMeant) before
     going ahead with the path exactly as it is: a sleeping network drive can
