@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('treemap-storageChunked-data-');
 
@@ -266,3 +266,103 @@ for (const { writer, held } of WRITERS) {
     });
   });
 }
+
+/* ─────────────── FG3g review F3.2, F3.7: what a killed save left is removed at the next start ─────────────── */
+
+/** A pid no process has (tests/spillSweep.test.ts pins it): `process.kill` takes nothing larger. */
+const NO_SUCH_PID = 2 ** 31 - 1;
+
+/**
+ * Each save writes a temp file named for its own process, so a later save — by another process, as
+ * every later start is — never replaces one a killed or crashed save left: a scan's cache, tens of
+ * megabytes, stayed half-written for good in a disk-space tool's own folder. The start sweep removes
+ * those, and only those: here a real save is killed half-way, beside a save of a process still
+ * running and every other kind of name the sweep must leave alone.
+ */
+test('the start sweep removes the temp file a killed save left, and keeps one of a process still running, this process\'s own, and every other name', async () => {
+  await withDataDir(async (dir) => {
+    const { sweepDeadSaveTemps, writeFileChunked } = await import('../src/services/storage');
+    const half = (name: string): { child: ReturnType<typeof spawn>; out: () => string; pid: () => number; closed: Promise<void> } => {
+      const child = spawn(process.execPath, [tsxCli, WRITER, dir, name, `{"pad":"${'k'.repeat(1000)}`, '"}'], {
+        env: { ...process.env, TREEMAP_DATA_DIR: dir },
+        stdio: ['pipe', 'pipe', 'inherit'],
+      });
+      let out = '';
+      child.stdout?.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
+      const closed = new Promise<void>((resolve) => { child.once('close', () => resolve()); });
+      // The writer's own process id, which names its temp file: tsx runs it under the process spawned here.
+      const pid = (): number => Number(/HALF (\d+)\n/.exec(out)?.[1]);
+      return { child, out: () => out, pid, closed };
+    };
+    const killed = half('cache.json');
+    const running = half('live.json');
+    try {
+      await waitFor(() => killed.pid() > 0 && running.pid() > 0, 'both saves half-way, each having said its process id');
+      process.kill(killed.pid(), 'SIGKILL'); // the writer killed part-way, as a crash or a forced quit leaves it
+      await withinHangGuard(killed.closed, 'the killed save\'s process ending');
+      const deadLeft = `cache.json.${String(killed.pid())}.tmp`;
+      const liveLeft = `live.json.${String(running.pid())}.tmp`;
+      assert.deepEqual(leftovers(dir).sort(), [deadLeft, liveLeft].sort(), 'each save\'s temp file, under its own process\'s id');
+      const keep = [
+        liveLeft,
+        `settings.json.${String(process.pid)}.tmp`, // this process's own
+        'notes.json.tmp', // no process id: not a name a save makes now
+        `notes.json.0${String(NO_SUCH_PID)}.tmp`, // not a process id as one is written
+        `notes.txt.${String(NO_SUCH_PID)}.tmp`, // not a .json store
+        `folder.json.${String(NO_SUCH_PID)}.tmp`, // a folder, not a file
+        `link.json.${String(NO_SUCH_PID)}.tmp`, // a link, never followed
+      ];
+      fs.writeFileSync(path.join(dir, keep[1]), 'mine');
+      fs.writeFileSync(path.join(dir, keep[2]), 'old');
+      fs.writeFileSync(path.join(dir, keep[3]), 'odd');
+      fs.writeFileSync(path.join(dir, keep[4]), 'text');
+      fs.mkdirSync(path.join(dir, keep[5]));
+      const target = path.join(fileTempDir('treemap-storageChunked-link-target-'), 'kept.txt');
+      fs.writeFileSync(target, 'what the link leads to');
+      fs.symlinkSync(target, path.join(dir, keep[6]));
+      const dead2 = `snapshots.json.${String(NO_SUCH_PID)}.tmp`;
+      fs.writeFileSync(path.join(dir, dead2), 'half a snapshot');
+
+      const swept = await sweepDeadSaveTemps();
+
+      assert.deepEqual([...swept.removed].sort(), [deadLeft, dead2].sort(), 'the temp files of processes that are gone are removed');
+      for (const name of [deadLeft, dead2]) assert.equal(fs.existsSync(path.join(dir, name)), false, `${name} is gone`);
+      assert.deepEqual(swept.failed, []);
+      for (const name of keep) assert.ok(fs.lstatSync(path.join(dir, name)), `${name} is kept`);
+      assert.ok(fs.existsSync(target), 'and what the link leads to is untouched');
+      // The save still running finishes, its file whole.
+      running.child.stdin?.write('GO\n');
+      await withinHangGuard(running.closed, 'the running save finishing');
+      assert.match(running.out(), /DONE/, running.out());
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'live.json'), 'utf8')), { pad: 'k'.repeat(1000) });
+      // And a later save of the killed one's file is whole, with nothing of the killed save left.
+      assert.equal(await writeFileChunked('cache.json', async (write) => { await write('{"again":true}'); return true; }), true);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'cache.json'), 'utf8')), { again: true });
+    } finally {
+      for (const { child } of [killed, running]) if (child.exitCode === null && child.signalCode === null) child.kill();
+    }
+  });
+});
+
+const NO_MODES = process.platform === 'win32'
+  ? 'a folder\'s mode does not stop a removal on Windows'
+  : process.getuid?.() === 0 ? 'running as root, a folder\'s mode stops nothing' : false;
+
+test('a temp file the start sweep cannot remove is left and named with the reason, and the sweep goes on', { skip: NO_MODES }, async () => {
+  await withDataDir(async (dir) => {
+    const { sweepDeadSaveTemps } = await import('../src/services/storage');
+    const stuck = `fleet.json.${String(NO_SUCH_PID)}.tmp`;
+    fs.writeFileSync(path.join(dir, stuck), 'half');
+    fs.chmodSync(dir, 0o500); // nothing in it may be removed
+    let swept: Awaited<ReturnType<typeof sweepDeadSaveTemps>>;
+    try {
+      swept = await sweepDeadSaveTemps();
+    } finally {
+      fs.chmodSync(dir, 0o700);
+    }
+    assert.deepEqual(swept.removed, []);
+    assert.deepEqual(swept.failed.map((f) => f.name), [stuck], 'it is named');
+    assert.match(swept.failed[0]?.why ?? '', /EACCES|permission/i, swept.failed[0]?.why);
+    assert.ok(fs.existsSync(path.join(dir, stuck)), 'and left where it is');
+  });
+});

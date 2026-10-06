@@ -1,7 +1,8 @@
 /*
  * A second TreeMap process saving one app-data file (FG3g review F2.5), as the MCP server beside the
- * app does. In `chunked` mode (the default) it begins a chunked save of `name`, prints HALF once its
- * first chunk is written, waits for a line on stdin, writes the rest and prints DONE — or ERR with the
+ * app does. In `chunked` mode (the default) it begins a chunked save of `name`, prints HALF and its
+ * own process id (tsx runs this file in a process of its own, under the one the parent started) once
+ * its first chunk is written, waits for a line on stdin, writes the rest and prints DONE — or ERR with the
  * reason. In `json` mode (FG3g review F3.5) it saves `first + rest`, parsed, with writeJsonFile, and is
  * held the same way between writing its temp file and renaming it into place. The parent
  * (tests/storageChunked.test.ts) saves the same file in between.
@@ -33,7 +34,7 @@ function holdFirstRename(): void {
   (fs.promises as { rename: unknown }).rename = async (from: fs.PathLike, to: fs.PathLike): Promise<void> => {
     if (!held) {
       held = true;
-      process.stdout.write('HALF\n');
+      process.stdout.write(`HALF ${String(process.pid)}\n`);
       await go;
     }
     return realRename(from, to);
@@ -47,7 +48,7 @@ function save(): Promise<unknown> {
   }
   return writeFileChunked(name, async (write) => {
     await write(first);
-    process.stdout.write('HALF\n');
+    process.stdout.write(`HALF ${String(process.pid)}\n`);
     await go;
     await write(rest);
     return true;

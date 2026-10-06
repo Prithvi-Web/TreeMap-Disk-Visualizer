@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { isEphemeral } from './portableMode';
 import { meansAbsent } from '../utils/errno';
+import { processIsAlive } from './spillSweep';
 
 /**
  * Storage — tiny JSON-file persistence in the platform's app-data directory.
@@ -46,10 +47,60 @@ const writeQueues = new Map<string, Promise<void>>();
  * offload-manifest.json kept only its own entries. Now each save writes a whole file of its own and
  * the rename puts one whole document in place; when two processes save at once the later rename
  * wins. Within a process, writes of one name are already one at a time (`writeQueues`), so the
- * process id alone keeps them apart. One a crash left stays until a write under that id replaces it.
+ * process id alone keeps them apart. One a kill or a crash left is removed at the next start
+ * (`sweepDeadSaveTemps`).
  */
 function tmpPathFor(file: string): string {
   return `${file}.${process.pid}.tmp`;
+}
+
+/** A save's temp file name (`tmpPathFor`) of a store in app-data: `<name>.json.<pid>.tmp`, the pid as Node writes one. */
+const SAVE_TEMP = /^.+\.json\.([1-9]\d{0,9})\.tmp$/;
+/** The largest pid `process.kill` takes. */
+const MAX_PID = 2 ** 31 - 1;
+
+/** What `sweepDeadSaveTemps` removed, and what it could not. */
+export interface SaveTempSweep {
+  removed: string[];
+  failed: { name: string; why: string }[];
+}
+
+/**
+ * Removes what saves left in app-data when the process making them was killed, crashed or lost
+ * power part-way (FG3g review F3.2, F3.7); run once at start. Each save's temp file is named for its
+ * own process (`tmpPathFor`), so a later save — another process, as every later start is — never
+ * replaced one a dead process left: each interrupted save of a scan's cache, up to tens of
+ * megabytes, stayed for good in the folder of a tool for finding wasted space.
+ *
+ * Only a plain file (never a link or a folder) directly in app-data whose name is exactly a save's
+ * temp name, and never one whose process is still running — this one's own among them: another
+ * TreeMap — the MCP server beside the app — may be half-way through that save. A pid a live process
+ * has reused keeps its file until that process ends; doubt keeps a file (`processIsAlive`).
+ */
+export async function sweepDeadSaveTemps(): Promise<SaveTempSweep> {
+  const swept: SaveTempSweep = { removed: [], failed: [] };
+  if (isEphemeral()) return swept; // a read-only portable session writes nothing, removes nothing
+  const dir = appDataDir();
+  let names: string[];
+  try {
+    names = await fsp.readdir(dir);
+  } catch (err) {
+    if (meansAbsent(err)) return swept; // no app-data yet: nothing was ever saved
+    throw err;
+  }
+  for (const name of names) {
+    const pid = Number(SAVE_TEMP.exec(name)?.[1]);
+    if (!(pid > 0) || pid > MAX_PID || processIsAlive(pid)) continue; // this process, among the living, keeps its own
+    const leftover = path.join(dir, name);
+    try {
+      if (!(await fsp.lstat(leftover)).isFile()) continue;
+      await fsp.rm(leftover);
+      swept.removed.push(name);
+    } catch (err) {
+      if (!meansAbsent(err)) swept.failed.push({ name, why: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return swept;
 }
 
 /**

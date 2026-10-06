@@ -38,6 +38,13 @@ function leftover(pid: number, column: string, bytes: number): string {
   return file;
 }
 
+/** A save's temp file (`<name>.<pid>.tmp`, FG3g review F2.5) in app-data, as a save that `pid` began left it. */
+function saveLeftover(pid: number, name: string): string {
+  const file = path.join(APP, `${name}.${String(pid)}.tmp`);
+  fs.writeFileSync(file, '{"half":');
+  return file;
+}
+
 /** The lines the server logs about the spill sweep while `fn` runs. */
 async function sweepLines<T>(fn: () => Promise<T>): Promise<{ value: T; lines: string[] }> {
   const lines: string[] = [];
@@ -160,6 +167,7 @@ test('the boot does not wait for the sweep', async () => {
 
 test('a read-only portable session sweeps nothing: its app-data is not TreeMap\'s to write', async () => {
   const dead = leftover(NEVER, 'names', 5);
+  const deadSave = saveLeftover(NEVER, 'settings.json'); // nor a save's temp file (FG3g review F3.2)
   // Read-only as the D3 tests make one: the data folder inside a regular file, so every OS
   // refuses it. process.env still names APP, so an unskipped sweep would remove `dead`.
   const blocker = path.join(fileTempDir('treemap-bootSpillSweep-ro-'), 'not-a-folder');
@@ -172,8 +180,10 @@ test('a read-only portable session sweeps nothing: its app-data is not TreeMap\'
     const { lines } = await sweepLines(async () => {
       running = await boot();
       await running.spillSweep;
+      await running.saveTempSweep;
     });
     assert.equal(fs.existsSync(dead), true, 'nothing was swept');
+    assert.equal(fs.existsSync(deadSave), true, 'not even a save\'s temp file');
     assert.equal(lines.length, 1, `one line: ${JSON.stringify(lines)}`);
     assert.match(lines[0], /spill sweep skipped: this portable session is read-only/);
   } finally {
@@ -194,4 +204,21 @@ test('the one line says what the sweep did, names at most three refusals, and sa
     describeSweep({ removed: 0, bytes: 0, kept: 0, refused: [], unreadable: 'the folder can be written by other users' }),
     'spill sweep: the folder was not looked into: the folder can be written by other users',
   );
+});
+
+/* ─────────────── FG3g review F3.2, F3.7: saves' temp files a dead process left ─────────────── */
+
+test('boot removes a save\'s temp file a dead process left in app-data, and keeps one of a live process', async () => {
+  const dead = saveLeftover(NEVER, 'offload-manifest.json');
+  const live = saveLeftover(process.pid, 'timecapsule.json');
+  let running: RunningServer | undefined;
+  try {
+    running = await boot();
+    await running.saveTempSweep;
+    assert.equal(fs.existsSync(dead), false, 'the dead process\'s temp file is gone');
+    assert.equal(fs.existsSync(live), true, 'this live process\'s is kept');
+  } finally {
+    running?.shutdown();
+    fs.rmSync(live, { force: true });
+  }
 });

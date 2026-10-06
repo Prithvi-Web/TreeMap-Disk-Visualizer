@@ -41,7 +41,7 @@ import { cancelAllCapsuleJobs, startCapsuleMaintenance, stopCapsuleMaintenance }
 import { startScheduler, stopScheduler } from './services/scheduler';
 import { cancelAllEncodeJobs, drainEncodeClients } from './services/compressionAdvisor';
 import { sweepSpillDir, SweepReport } from './services/spillSweep';
-import { appDataDir } from './services/storage';
+import { appDataDir, sweepDeadSaveTemps } from './services/storage';
 import { isEphemeral } from './services/portableMode';
 import { formatBytes } from './utils/formatBytes';
 
@@ -178,6 +178,11 @@ export interface RunningServer {
    * never rejects, and nothing waits for it but a test.
    */
   spillSweep: Promise<void>;
+  /**
+   * Settles once the boot sweep of saves' temporary files has run, failed or been skipped
+   * (`bootSaveTempSweep`); it never rejects, and nothing waits for it but a test.
+   */
+  saveTempSweep: Promise<void>;
 }
 
 type BootSweep = (appDataDir: string) => Promise<SweepReport>;
@@ -224,6 +229,26 @@ function bootSpillSweep(): Promise<void> {
     .then((report) => console.log(`[treemap] ${describeSweep(report)}`))
     .catch((err: unknown) => {
       console.warn(`[treemap] spill sweep failed and was skipped: ${err instanceof Error ? err.message : String(err)}`);
+    });
+}
+
+/**
+ * The boot sweep of saves' temporary files in app-data (FG3g review F3.2, F3.7): what a TreeMap
+ * process killed or crashed part-way through a save left (`sweepDeadSaveTemps`), once per start,
+ * on the turn after the server is listening. Like the spill sweep it never holds the start up and
+ * fails nothing; in a read-only portable session the sweep itself removes nothing.
+ */
+function bootSaveTempSweep(): Promise<void> {
+  return new Promise<void>((resolve) => setImmediate(resolve))
+    .then(() => sweepDeadSaveTemps())
+    .then(({ removed, failed }) => {
+      if (removed.length > 0) {
+        console.log(`[treemap] removed ${removed.length} temporary file${removed.length === 1 ? '' : 's'} a save left when a TreeMap process stopped part-way`);
+      }
+      for (const f of failed) console.warn(`[treemap] left ${f.name}, a save's temporary file, which could not be removed: ${f.why}`);
+    })
+    .catch((err: unknown) => {
+      console.warn(`[treemap] the sweep of saves' temporary files failed and was skipped: ${err instanceof Error ? err.message : String(err)}`);
     });
 }
 
@@ -287,7 +312,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
       const addr = server.address();
       const port = typeof addr === 'object' && addr ? addr.port : (opts.port ?? 0);
       // Once, at boot, and only once the server is listening: it never holds the start up.
-      resolve({ server, port, shutdown, spillSweep: bootSpillSweep() });
+      resolve({ server, port, shutdown, spillSweep: bootSpillSweep(), saveTempSweep: bootSaveTempSweep() });
     });
   });
 }
