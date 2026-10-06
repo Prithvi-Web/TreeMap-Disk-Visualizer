@@ -504,6 +504,38 @@ for (const answer of LOOK_LINK_ANSWERS) {
   });
 }
 
+/**
+ * A link that is no longer a link by its read right before the trash step (the final review, F1.1):
+ * a file renamed over it after the walk. The disk answered (readlink: EINVAL, "not a link"), so it is a
+ * change, CAPSULE_CHANGED — never a look that failed, blamed on the disk as CAPSULE_UNREADABLE.
+ */
+for (const now of ['file', 'folder'] as const) {
+  test(`a link that became a ${now} by its read right before the trash step is said to have changed, and left in place - never "something went wrong on the disk"`, { skip: NO_LINKS }, async () => {
+    const { dir, link } = folderWithLink(`look-link-became-${now}`);
+    let reads = 0;
+    const remove = setSourceCallForTests((what, abs) => {
+      if (what !== 'readlink' || abs !== link || reads++ !== 3) return null; // the walk's, the copy's, the look's own walk, then this one
+      fs.rmSync(link);
+      if (now === 'file') fs.writeFileSync(link, 'a file where the link was');
+      else fs.mkdirSync(link);
+      return null; // the real read, of what stands there now
+    });
+    let result: Awaited<ReturnType<typeof commitCart>>;
+    try {
+      result = await withOpenFileCheck('clear', () => commitCart([dir]));
+    } finally {
+      remove();
+    }
+    assert.equal(reads, 4, 'the look right before the trash step read the link');
+    assert.deepEqual(result.trashed, [], 'it was not deleted');
+    assert.ok(fs.lstatSync(link), 'it is still in place');
+    const row = result.skipped.find((s) => s.path === dir);
+    assert.equal(row?.code, 'CAPSULE_CHANGED', row?.reason);
+    assert.match(row?.reason ?? '', /it changed after it was copied \(link is no longer a link\)/, row?.reason);
+    assert.doesNotMatch(row?.reason ?? '', /went wrong on the disk/, row?.reason);
+  });
+}
+
 test('a folder of links whose targets do not answer leaves one call waiting, not one per link: it is left undeleted, and the next item still goes (FG3g review F3.1)', { skip: NO_LINKS }, async () => {
   await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier call left waiting returning');
   const { dir } = folder('links-quiet');

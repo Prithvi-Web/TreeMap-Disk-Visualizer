@@ -1793,6 +1793,9 @@ async function copyIncompleteness(entryId: string, manifest: EntryManifest): Pro
   return problems.length === 1 ? problems[0] : `${problems[0]}, and ${formatCount(problems.length - 1)} more`;
 }
 
+/** `changeSinceCopy`'s answer for a link a file or folder now stands in place of. */
+const NOT_A_LINK = Symbol('not a link');
+
 /**
  * What differs between an item as its manifest records it and as it is walked now, as a phrase
  * naming the first difference and how many more, or null when nothing does (FG3f #4). Compared:
@@ -1803,7 +1806,9 @@ async function copyIncompleteness(entryId: string, manifest: EntryManifest): Pro
  * that costs a deletion, never a file — and `definite` is false when that is the only kind of
  * change seen, since it does not show the copy differs from what is there (FG3g review F1.3).
  * Throws when a link cannot be read again (FG3g review F3.6): that is a look that failed, not a
- * change — every failure was read as a different target, and reported as one.
+ * change — every failure was read as a different target, and reported as one. A read the disk answers
+ * with "not a link" (EINVAL: a file or folder renamed over it since the walk) is a change, said as one
+ * (final review F1.1), never blamed on the disk.
  */
 async function changeSinceCopy(
   manifest: EntryManifest,
@@ -1826,12 +1831,16 @@ async function changeSinceCopy(
     } else if (now.kind === 'file' && typeof was.ctimeMs === 'number' && was.ctimeMs !== now.ctimeMs) {
       changeTimeOnly.push(`the change time of ${nameOf(now.rel)} moved`);
     } else if (now.kind === 'symlink') {
-      // Gone since the walk is a change of its own; any other failure is thrown.
+      // Gone since the walk is a change of its own, and so is a link a file or folder now stands in
+      // place of (EINVAL, "not a link": the disk answered, final review F1.1); any other failure is
+      // thrown, a look that failed.
       const target = await onItem('readlink', now.abs, () => fsp.readlink(now.abs)).catch((err: unknown) => {
         if (meansAbsent(err)) return null;
+        if ((err as NodeJS.ErrnoException | null)?.code === 'EINVAL') return NOT_A_LINK;
         throw err;
       });
       if (target === null) changes.push(`${nameOf(now.rel)} was removed`);
+      else if (target === NOT_A_LINK) changes.push(`${nameOf(now.rel)} is no longer a link`);
       else if (target !== was.target) changes.push(`${nameOf(now.rel)} points somewhere else`);
     }
   }
