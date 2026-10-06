@@ -400,10 +400,11 @@ function fxDriveGaugeDrop() {
 function smartDeviceFor(topo, rootPath) {
   if (!topo || typeof rootPath !== 'string' || !rootPath) return null;
   // A mount point is a folder boundary, never a string prefix: /Volumes/Database
-  // is not inside /Volumes/Data.
+  // is not inside /Volumes/Data. "\" separates only a Windows path (POL item 7):
+  // on macOS and Linux it is a character a name may hold.
   const under = (p, mount) => {
     if (p === mount) return true;
-    const sep = mount.includes('\\') ? '\\' : '/';
+    const sep = /^(?:[A-Za-z]:|\\\\)/.test(mount) ? '\\' : '/';
     return p.startsWith(mount.endsWith(sep) ? mount : mount + sep);
   };
   const vol = (topo.logicalVolumes || [])

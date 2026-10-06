@@ -241,12 +241,16 @@ function showCrumbMenu(anchor, folded, onPick) {
   if (first) first.focus({ preventScroll: true });
 }
 
+/* "\" separates only a Windows path — a drive's or a share's — as tmParentPath
+   reads it (POL item 7): on macOS and Linux it is a character a name may hold,
+   and guessed from the root's path, "/x/y" below "/data/a\b" was one crumb, so
+   Up jumped to the root. */
 function breadcrumbsFor(path) {
   const root = state.root;
   if (!root) return [];
   const crumbs = [{ name: root.name, path: root.path }];
   if (path === root.path) return crumbs;
-  const sep = root.path.includes('\\') ? '\\' : '/';
+  const sep = /^(?:[A-Za-z]:|\\\\)/.test(root.path) ? '\\' : '/';
   const rel = path.slice(root.path.length).split(sep).filter(Boolean);
   let acc = root.path;
   for (const part of rel) {

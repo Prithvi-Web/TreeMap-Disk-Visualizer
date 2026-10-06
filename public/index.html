@@ -9632,7 +9632,9 @@ async function probeRefusedFolders() {
   if (!root) return;
   const scanId = state.scanId;
   const home = (state.system || {}).homeDir || '';
-  const sep = String(root.path).includes('\\') ? '\\' : '/';
+  // "\" separates only a Windows path (POL item 7): a home folder "/Users/a\b" is asked about as
+  // "/Users/a\b/Desktop", never "/Users/a\b\Desktop".
+  const sep = /^(?:[A-Za-z]:|\\\\)/.test(String(root.path)) ? '\\' : '/';
   const readNothing = (node) => !node || (!node.size && !(node.children || []).length);
 
   const candidates = [];
@@ -10355,12 +10357,16 @@ function showCrumbMenu(anchor, folded, onPick) {
   if (first) first.focus({ preventScroll: true });
 }
 
+/* "\" separates only a Windows path — a drive's or a share's — as tmParentPath
+   reads it (POL item 7): on macOS and Linux it is a character a name may hold,
+   and guessed from the root's path, "/x/y" below "/data/a\b" was one crumb, so
+   Up jumped to the root. */
 function breadcrumbsFor(path) {
   const root = state.root;
   if (!root) return [];
   const crumbs = [{ name: root.name, path: root.path }];
   if (path === root.path) return crumbs;
-  const sep = root.path.includes('\\') ? '\\' : '/';
+  const sep = /^(?:[A-Za-z]:|\\\\)/.test(root.path) ? '\\' : '/';
   const rel = path.slice(root.path.length).split(sep).filter(Boolean);
   let acc = root.path;
   for (const part of rel) {
@@ -18028,14 +18034,17 @@ const LIVE_PULSE_MS = 1200;
 const LIVE_WINDOW_MS = 60_000;
 const LIVE_RELAYOUT_MS = 8000;
 
-/** Mirror a live change into the client tree so sunburst/tooltips stay true. */
+/** Mirror a live change into the client tree so sunburst/tooltips stay true.
+    "\" separates only a Windows path, as tmParentPath reads it (POL item 7):
+    read as one in "/data/a\b/f", the change also grew the sibling "/data/a". */
 function applyLiveDelta(ev) {
   const node = state.pathIndex.get(ev.path);
   if (node && node.type === 'file') node.size = ev.kind === 'deleted' ? 0 : ev.size;
   if (!state.root) return;
   let p = ev.path;
+  const windows = /^(?:[A-Za-z]:|\\\\)/.test(p);
   for (;;) {
-    const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    const cut = windows ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
     if (cut <= 0) break;
     p = p.slice(0, cut);
     const dir = state.pathIndex.get(p);
@@ -18044,13 +18053,15 @@ function applyLiveDelta(ev) {
   }
 }
 
-/** Match an event path to the deepest visible region (rect or arc). */
+/** Match an event path to the deepest visible region (rect or arc), "\" a
+    separator only in a Windows path, as applyLiveDelta climbs. */
 function liveRegionFor(path_, byPath) {
   let p = path_;
+  const windows = /^(?:[A-Za-z]:|\\\\)/.test(p);
   for (;;) {
     const hit = byPath.get(p);
     if (hit) return hit;
-    const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    const cut = windows ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
     if (cut <= 0) return null;
     p = p.slice(0, cut);
   }
@@ -29726,10 +29737,11 @@ function fxDriveGaugeDrop() {
 function smartDeviceFor(topo, rootPath) {
   if (!topo || typeof rootPath !== 'string' || !rootPath) return null;
   // A mount point is a folder boundary, never a string prefix: /Volumes/Database
-  // is not inside /Volumes/Data.
+  // is not inside /Volumes/Data. "\" separates only a Windows path (POL item 7):
+  // on macOS and Linux it is a character a name may hold.
   const under = (p, mount) => {
     if (p === mount) return true;
-    const sep = mount.includes('\\') ? '\\' : '/';
+    const sep = /^(?:[A-Za-z]:|\\\\)/.test(mount) ? '\\' : '/';
     return p.startsWith(mount.endsWith(sep) ? mount : mount + sep);
   };
   const vol = (topo.logicalVolumes || [])
@@ -31631,9 +31643,12 @@ function snapNewerUnreadText(newerUnread) {
   return `${which} could not be opened (${newerUnread.reason}), so this copy came from an older one and may not be the newest.`;
 }
 
-/** What the panel says when the folder the copy would go into is refused: the folder, why, and what is left to do. */
+/** What the panel says when the folder the copy would go into is refused: the folder, why, and what is left to do.
+    "\" separates only a Windows path (POL item 7), so the folder of "/data/a\b/f.txt" is "/data/a\b". */
 function snapFolderRefusedText(targetPath) {
-  const cut = Math.max(targetPath.lastIndexOf('/'), targetPath.lastIndexOf('\\'));
+  const cut = /^(?:[A-Za-z]:|\\\\)/.test(targetPath)
+    ? Math.max(targetPath.lastIndexOf('/'), targetPath.lastIndexOf('\\'))
+    : targetPath.lastIndexOf('/');
   const folder = cut > 0 ? targetPath.slice(0, cut) : targetPath;
   return `This panel puts a recovered copy beside the original, in ${folder}, and TreeMap will not write a copy made ` +
     'as administrator there: another account owns that folder, or other accounts can change it. Trying again here ' +

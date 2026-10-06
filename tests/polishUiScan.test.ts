@@ -117,6 +117,8 @@ function refusedHarness(opts: {
   platform?: string; refuse?: string[]; missing?: string[];
   /** What the previous scan left in `state.scanRefused` (null when omitted). */
   scanRefused?: Record<string, unknown> | null;
+  /** The home folder the server reports ('/Users/x' when omitted). */
+  homeDir?: string;
 }): RefusedHarness {
   const src = slice('/* ── Refused folders ── */', '/* ── end refused folders ── */');
   const { $, els } = makeDom();
@@ -124,7 +126,7 @@ function refusedHarness(opts: {
   const asked: string[] = [];
   const state: Record<string, unknown> = {
     scanStats: opts.stats, root: opts.root, scanId: opts.scanId, scanRefused: opts.scanRefused ?? null,
-    system: { platform: opts.platform || 'darwin', homeDir: '/Users/x' },
+    system: { platform: opts.platform || 'darwin', homeDir: opts.homeDir ?? '/Users/x' },
     pathIndex: new Map(Object.entries((opts.root.children as Array<{ path: string }> | undefined || []).reduce((m, c) => ({ ...m, [c.path]: c }), {}))),
   };
   const api = async (url: string) => {
@@ -216,6 +218,30 @@ test('a clean scan clears the last scan\'s refused folders: the server\'s 0 is a
   counted.render();
   assert.match(counted.$('accessText').textContent, /^3 folders could not be read — a$/, 'the server\'s count, not the last scan\'s');
   assert.equal((counted.state.scanRefused as { scanId: string } | null)?.scanId, 's2', 'stamped with the scan it describes');
+});
+
+test('a home scan probes the protected folders inside the home folder however its name is spelled — on macOS and Linux a backslash in it is part of the name; on Windows it is the separator (POL item 7 review, F1.2)', async () => {
+  // The separator was guessed from the root's path: "\" whenever it held one, so a home folder
+  // "/Users/a\b" was asked about as "/Users/a\b\Desktop", a folder that is not there.
+  const probed = async (home: string, platform: string, refuse: string[]) => {
+    const h = refusedHarness({
+      stats: { fileCount: 10 }, root: { path: home, size: 5e9, children: [{ path: `${home}${platform === 'win32' ? '\\' : '/'}Music`, size: 5e9 }] },
+      scanId: 's1', platform, homeDir: home, refuse,
+    });
+    await h.probe();
+    return {
+      asked: h.asked.map((u) => decodeURIComponent(u.split('path=')[1] || '')),
+      refused: (h.state.scanRefused as { examples: string[] } | null)?.examples ?? null,
+    };
+  };
+  assert.deepEqual(await probed('/Users/a\\b', 'darwin', ['/Users/a\\b/Desktop']), {
+    asked: ['/Users/a\\b/Desktop', '/Users/a\\b/Documents', '/Users/a\\b/Downloads'],
+    refused: ['/Users/a\\b/Desktop'],
+  });
+  assert.deepEqual(await probed('C:\\Users\\x', 'win32', ['C:\\Users\\x\\Documents']), {
+    asked: ['C:\\Users\\x\\Desktop', 'C:\\Users\\x\\Documents', 'C:\\Users\\x\\Downloads'],
+    refused: ['C:\\Users\\x\\Documents'],
+  });
 });
 
 test('with no refused field, a 0-byte root is probed — a 403 turns "clean" into "could not read"', async () => {

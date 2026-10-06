@@ -363,9 +363,12 @@ function snapNewerUnreadText(newerUnread) {
   return `${which} could not be opened (${newerUnread.reason}), so this copy came from an older one and may not be the newest.`;
 }
 
-/** What the panel says when the folder the copy would go into is refused: the folder, why, and what is left to do. */
+/** What the panel says when the folder the copy would go into is refused: the folder, why, and what is left to do.
+    "\" separates only a Windows path (POL item 7), so the folder of "/data/a\b/f.txt" is "/data/a\b". */
 function snapFolderRefusedText(targetPath) {
-  const cut = Math.max(targetPath.lastIndexOf('/'), targetPath.lastIndexOf('\\'));
+  const cut = /^(?:[A-Za-z]:|\\\\)/.test(targetPath)
+    ? Math.max(targetPath.lastIndexOf('/'), targetPath.lastIndexOf('\\'))
+    : targetPath.lastIndexOf('/');
   const folder = cut > 0 ? targetPath.slice(0, cut) : targetPath;
   return `This panel puts a recovered copy beside the original, in ${folder}, and TreeMap will not write a copy made ` +
     'as administrator there: another account owns that folder, or other accounts can change it. Trying again here ' +

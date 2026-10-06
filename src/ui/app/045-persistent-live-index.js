@@ -1144,7 +1144,9 @@ async function probeRefusedFolders() {
   if (!root) return;
   const scanId = state.scanId;
   const home = (state.system || {}).homeDir || '';
-  const sep = String(root.path).includes('\\') ? '\\' : '/';
+  // "\" separates only a Windows path (POL item 7): a home folder "/Users/a\b" is asked about as
+  // "/Users/a\b/Desktop", never "/Users/a\b\Desktop".
+  const sep = /^(?:[A-Za-z]:|\\\\)/.test(String(root.path)) ? '\\' : '/';
   const readNothing = (node) => !node || (!node.size && !(node.children || []).length);
 
   const candidates = [];

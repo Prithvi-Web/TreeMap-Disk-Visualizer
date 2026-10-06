@@ -1203,14 +1203,17 @@ const LIVE_PULSE_MS = 1200;
 const LIVE_WINDOW_MS = 60_000;
 const LIVE_RELAYOUT_MS = 8000;
 
-/** Mirror a live change into the client tree so sunburst/tooltips stay true. */
+/** Mirror a live change into the client tree so sunburst/tooltips stay true.
+    "\" separates only a Windows path, as tmParentPath reads it (POL item 7):
+    read as one in "/data/a\b/f", the change also grew the sibling "/data/a". */
 function applyLiveDelta(ev) {
   const node = state.pathIndex.get(ev.path);
   if (node && node.type === 'file') node.size = ev.kind === 'deleted' ? 0 : ev.size;
   if (!state.root) return;
   let p = ev.path;
+  const windows = /^(?:[A-Za-z]:|\\\\)/.test(p);
   for (;;) {
-    const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    const cut = windows ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
     if (cut <= 0) break;
     p = p.slice(0, cut);
     const dir = state.pathIndex.get(p);
@@ -1219,13 +1222,15 @@ function applyLiveDelta(ev) {
   }
 }
 
-/** Match an event path to the deepest visible region (rect or arc). */
+/** Match an event path to the deepest visible region (rect or arc), "\" a
+    separator only in a Windows path, as applyLiveDelta climbs. */
 function liveRegionFor(path_, byPath) {
   let p = path_;
+  const windows = /^(?:[A-Za-z]:|\\\\)/.test(p);
   for (;;) {
     const hit = byPath.get(p);
     if (hit) return hit;
-    const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    const cut = windows ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
     if (cut <= 0) return null;
     p = p.slice(0, cut);
   }

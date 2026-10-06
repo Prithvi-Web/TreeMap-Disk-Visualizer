@@ -27,6 +27,11 @@ const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), '
 
 /** Lift named function declarations out of the app script and evaluate them. */
 function lift<T>(names: string[], returns: string): T {
+  return new Function(`${declsOf(names)}\nreturn ${returns};`)() as T;
+}
+
+/** The source of named function declarations in the app script, in the order named. */
+function declsOf(names: string[]): string {
   const parts: string[] = [];
   for (const name of names) {
     const start = INDEX.indexOf(`function ${name}(`);
@@ -46,7 +51,7 @@ function lift<T>(names: string[], returns: string): T {
     assert.ok(end > open, `function ${name} has a balanced body`);
     parts.push(INDEX.slice(start, end));
   }
-  return new Function(`${parts.join('\n')}\nreturn ${returns};`)() as T;
+  return parts.join('\n');
 }
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -199,6 +204,79 @@ test('on macOS and Linux a backslash is a character of a folder’s name, never 
     'share: one level down': '\\\\srv\\share\\b',
     'cloud: inside': true,
   });
+});
+
+test('on macOS and Linux a backslash in a folder’s name is part of the name everywhere the page splits a path — the breadcrumbs and Up, Live mode’s sizes and pulses, the drive behind a folder, the restore sentence — while Windows paths read as before (POL item 7 review, F1.2)', () => {
+  // Item 7 fixed tmIsInside, tmParentPath and tmStepToward; these guessed "\" too, whenever the root's
+  // path held one. With root "/data/a\b/proj", "/x/y" below it was one crumb named "/x/y", so Up from
+  // two levels down jumped to the root; and a write inside "/data/a\b" also grew its sibling "/data/a".
+  type Crumb = { name: string; path: string };
+  const crumbs = (root: { name: string; path: string }, p: string): Crumb[] =>
+    (new Function('state', `${declsOf(['breadcrumbsFor'])}\nreturn breadcrumbsFor;`)({ root }) as (q: string) => Crumb[])(p);
+  const posixRoot = { name: 'proj', path: '/data/a\\b/proj' };
+  const deep = crumbs(posixRoot, '/data/a\\b/proj/x/y');
+  assert.deepEqual({
+    crumbs: deep.map((c) => `${c.name} ${c.path}`),
+    up: deep[deep.length - 2]?.path, // treemapUp, kbUp, Escape and the sunburst's centre climb to this one
+    nameWithBackslash: crumbs(posixRoot, '/data/a\\b/proj/c\\d/e').map((c) => c.name),
+    atTheRoot: crumbs({ name: '/', path: '/' }, '/a\\b/c').map((c) => `${c.name} ${c.path}`),
+    windows: crumbs({ name: 'me', path: 'C:\\Users\\me' }, 'C:\\Users\\me\\x\\y').map((c) => `${c.name} ${c.path}`),
+    windowsDrive: crumbs({ name: 'C:\\', path: 'C:\\' }, 'C:\\x').map((c) => `${c.name} ${c.path}`),
+    share: crumbs({ name: 'share', path: '\\\\srv\\share' }, '\\\\srv\\share\\x').map((c) => c.path),
+  }, {
+    crumbs: ['proj /data/a\\b/proj', 'x /data/a\\b/proj/x', 'y /data/a\\b/proj/x/y'],
+    up: '/data/a\\b/proj/x',
+    nameWithBackslash: ['proj', 'c\\d', 'e'],
+    atTheRoot: ['/ /', 'a\\b /a\\b', 'c /a\\b/c'],
+    windows: ['me C:\\Users\\me', 'x C:\\Users\\me\\x', 'y C:\\Users\\me\\x\\y'],
+    windowsDrive: ['C:\\ C:\\', 'x C:\\x'],
+    share: ['\\\\srv\\share', '\\\\srv\\share\\x'],
+  });
+
+  // Live mode: a change's bytes go to every folder above it, and its pulse to the nearest one drawn.
+  type Node = { type: string; size: number };
+  const live = (root: string, nodes: Record<string, Node>, ev: Record<string, unknown>): Record<string, number> => {
+    const pathIndex = new Map(Object.entries(nodes));
+    (new Function('state', `${declsOf(['applyLiveDelta'])}\nreturn applyLiveDelta;`)({ root: { path: root }, pathIndex }) as (e: unknown) => void)(ev);
+    return Object.fromEntries([...pathIndex].map(([p, n]) => [p, n.size]));
+  };
+  const liveRegionFor = lift<(p: string, byPath: Map<string, string>) => string | null>(['liveRegionFor'], 'liveRegionFor');
+  assert.deepEqual({
+    posix: live('/data', {
+      '/data': { type: 'dir', size: 100 }, '/data/a': { type: 'dir', size: 10 },
+      '/data/a\\b': { type: 'dir', size: 20 }, '/data/a\\b/f': { type: 'file', size: 5 },
+    }, { path: '/data/a\\b/f', kind: 'modified', size: 15, delta: 10 }),
+    windows: live('C:\\d', {
+      'C:\\d': { type: 'dir', size: 100 }, 'C:\\d\\a': { type: 'dir', size: 10 }, 'C:\\d\\a\\f': { type: 'file', size: 5 },
+    }, { path: 'C:\\d\\a\\f', kind: 'modified', size: 10, delta: 5 }),
+    pulse: liveRegionFor('/data/a\\b/f', new Map([['/data', 'D'], ['/data/a', 'A']])),
+    pulseInside: liveRegionFor('/data/a\\b/f', new Map([['/data/a\\b', 'AB'], ['/data/a', 'A']])),
+    pulseWindows: liveRegionFor('C:\\d\\a\\f', new Map([['C:\\d', 'D']])),
+  }, {
+    posix: { '/data': 110, '/data/a': 10, '/data/a\\b': 30, '/data/a\\b/f': 15 }, // "/data/a" is a sibling: untouched
+    windows: { 'C:\\d': 105, 'C:\\d\\a': 15, 'C:\\d\\a\\f': 10 },
+    pulse: 'D',
+    pulseInside: 'AB',
+    pulseWindows: 'D',
+  });
+
+  // The drive behind a folder: a mount point is a folder boundary, "\" a separator only on Windows.
+  const smartDeviceFor = lift<(topo: unknown, p: string) => string | null>(['smartDeviceFor'], 'smartDeviceFor');
+  const topo = { logicalVolumes: [{ mountPoint: '/', physicalDiskIds: ['disk0'] }, { mountPoint: '/Volumes/a\\b', physicalDiskIds: ['disk4'] }], physicalDisks: [{ id: 'disk0' }, { id: 'disk4' }] };
+  const winTopo = { logicalVolumes: [{ mountPoint: 'C:\\', physicalDiskIds: ['/dev/w0'] }, { mountPoint: 'D:\\Data', physicalDiskIds: ['/dev/w1'] }], physicalDisks: [{ id: 'a' }, { id: 'b' }] };
+  assert.deepEqual({
+    inside: smartDeviceFor(topo, '/Volumes/a\\b/x'),
+    sibling: smartDeviceFor(topo, '/Volumes/a\\b\\x'), // a folder of /Volumes named "a\b\x", on the boot disk
+    windows: smartDeviceFor(winTopo, 'D:\\Data\\x'),
+    windowsLonger: smartDeviceFor(winTopo, 'D:\\Database\\x'),
+  }, { inside: '/dev/disk4', sibling: '/dev/disk0', windows: '/dev/w1', windowsLonger: null });
+
+  // The restore panel's sentence names the folder the copy would go into.
+  const snapFolderRefusedText = lift<(p: string) => string>(['snapFolderRefusedText'], 'snapFolderRefusedText');
+  assert.deepEqual({
+    posix: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('/data/a\\b/f\\g.txt'))?.[1], // the file "f\g.txt"
+    windows: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('C:\\x\\f.txt'))?.[1],
+  }, { posix: '/data/a\\b', windows: 'C:\\x' });
 });
 
 /* ══════════════ the rules §4.3 states, asserted against the source ══════════════ */
