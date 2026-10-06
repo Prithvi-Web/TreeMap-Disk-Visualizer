@@ -329,11 +329,12 @@ function saveRuntime(api: (url: string, options?: ApiCall['options']) => Promise
   const handler = braced("$('settingsSaveBtn').addEventListener('click', async () => {");
   const closed: string[] = [];
   const toasts: { msg: string; kind?: string }[] = [];
+  const plan = { reread: 0 };
   const stubs = ['collectSettingsForms', 'renderSchedules', 'renderIgnores', 'renderCleanupGoalFields', 'renderReclaimWeights',
     'reclaimReset', 'drawView', 'refreshBigFiles'];
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(
-    '$', 'api', 'toast', 'closeModal',
+    '$', 'api', 'toast', 'closeModal', 'refreshFastRescanPlan',
     `'use strict';
      let settingsData = { ignore: [], schedules: [] };
      let humanScaleOn = true;
@@ -352,10 +353,10 @@ function saveRuntime(api: (url: string, options?: ApiCall['options']) => Promise
   )(dom.$, api, (msg: string, kind?: string) => { toasts.push({ msg, kind }); }, (id: string) => {
     closed.push(id);
     dom.$(id).classList.remove('open');
-  });
+  }, async () => { plan.reread++; });
   const save = dom.$('settingsSaveBtn').listeners.click;
   assert.ok(save, 'the Save button has a click handler');
-  return { dom, save, closed, toasts };
+  return { dom, save, closed, toasts, plan };
 }
 
 test('a successful Save closes the sheet through the one close path, and the toast confirms it (D76)', async () => {
@@ -367,6 +368,22 @@ test('a successful Save closes the sheet through the one close path, and the toa
   assert.deepEqual(closed, ['settingsModal'], 'the sheet closes through closeModal, like every other way out');
   assert.equal(dom.$('settingsModal').classList.contains('open'), false, 'and is no longer open');
   assert.ok(toasts.some((t) => /^Settings saved/.test(t.msg) && t.kind === undefined), `the toast says so: ${JSON.stringify(toasts)}`);
+});
+
+test('a saved "Don\'t scan" list re-reads the Fast-rescan plan at once, so the box follows it without a scan or a reload (QA D45)', async () => {
+  // A "Don't scan" pattern moves the next scan off the native engine, and
+  // that decides whether the Fast-rescan box is offered. The plan was read at
+  // boot and after a scan only, so the box stayed as it was until then.
+  const { api } = recordingApi({ '/api/settings': { ignore: [{ pattern: 'node_modules', scope: 'scan' }], schedules: [] } });
+  const ok = saveRuntime(api);
+  await ok.save();
+  await settle();
+  assert.equal(ok.plan.reread, 1, 'once the server has the settings, the plan is read again');
+
+  const failed = saveRuntime(async () => { throw new Error('disk full'); });
+  await failed.save();
+  await settle();
+  assert.equal(failed.plan.reread, 0, 'nothing was saved, so there is nothing to re-read');
 });
 
 test('a failed Save keeps the sheet open, with the edits still in it, and says why (D76)', async () => {

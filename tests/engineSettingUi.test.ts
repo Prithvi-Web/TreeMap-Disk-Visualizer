@@ -223,14 +223,14 @@ type ApiCall = { url: string; options?: { method?: string; body?: string } };
 type Runtime = { renderScanEngine: (engine: unknown) => void; saveScanEngine: (engine: string) => Promise<void>; settings: () => { engine?: string } };
 
 /** The Scan engine block, evaluated with api/$/toast/settingsData injected — the real wiring included. */
-function engineRuntime(api: (url: string, options?: ApiCall['options']) => Promise<unknown>, toast: (msg: string, kind?: string) => void, settingsData: { engine?: string }) {
+function engineRuntime(api: (url: string, options?: ApiCall['options']) => Promise<unknown>, toast: (msg: string, kind?: string) => void, settingsData: { engine?: string }, refreshFastRescanPlan: () => Promise<void> = async () => {}) {
   const src = slice('/* ── Scan engine', '/* ── Scanning budget');
   const dom = makeDom();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
-    'api', '$', 'toast', 'settingsData',
+    'api', '$', 'toast', 'settingsData', 'refreshFastRescanPlan',
     `'use strict'; ${src}\nreturn { renderScanEngine, saveScanEngine, settings: () => settingsData };`,
-  )(api, dom.$, toast, settingsData) as Runtime;
+  )(api, dom.$, toast, settingsData, refreshFastRescanPlan) as Runtime;
   return { ...rt, dom };
 }
 
@@ -279,6 +279,24 @@ test('a failed save puts the radio back on the stored engine and says why in a t
   assert.equal(toasts.length, 1);
   assert.equal(toasts[0].kind, 'error');
   assert.match(toasts[0].msg, /must be one of/, 'the server’s own reason is shown');
+});
+
+test('a saved engine choice re-reads the Fast-rescan plan at once — the box follows it without a scan or a reload (QA D45)', async () => {
+  // The box is offered only where the next scan would not run on the native
+  // engine, and refreshFastRescanPlan is what reads that. It ran at boot and
+  // after a scan, so choosing the walker here left the box hidden until then.
+  let reread = 0;
+  const { api } = recordingApi(async (call) => ({ ...JSON.parse(call.options!.body!), ignore: [], schedules: [] }));
+  const rt = engineRuntime(api, () => {}, { engine: 'auto' }, async () => { reread++; });
+  rt.renderScanEngine('auto');
+  await rt.dom.pick('walker');
+  assert.equal(reread, 1, 'the plan is read again once the server has the new engine');
+
+  let rereadAfterRefusal = 0;
+  const refused = engineRuntime(async () => { throw new Error('no'); }, () => {}, { engine: 'auto' }, async () => { rereadAfterRefusal++; });
+  refused.renderScanEngine('auto');
+  await refused.dom.pick('walker');
+  assert.equal(rereadAfterRefusal, 0, 'a refused save changed nothing, so there is nothing to re-read');
 });
 
 /* ══════════════ 3. The Dashboard engine row ══════════════ */

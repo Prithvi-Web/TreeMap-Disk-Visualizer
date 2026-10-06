@@ -35290,6 +35290,9 @@ async function saveScanEngine(engine) {
     });
     renderScanEngine(settingsData.engine);
     toast(`Scan engine: ${SCAN_ENGINE_LABELS[settingsData.engine] || settingsData.engine} — from the next scan`);
+    // The engine decides whether the Fast-rescan box is offered (QA D45):
+    // read the plan again now, not at the next scan or reload.
+    void refreshFastRescanPlan();
   } catch (e) {
     // The radio moved under the pointer before the server had its say: put it
     // back on what is actually stored, and say why.
@@ -35884,6 +35887,9 @@ $('settingsSaveBtn').addEventListener('click', async () => {
     // Saved: the sheet's work is done, so it closes (QA D76) — through
     // closeModal, like every other way out — and the toast says so. A
     // failure below leaves it open with the edits still in it.
+    // A "Don't scan" rule moves the next scan off the native engine, which
+    // decides whether the Fast-rescan box is offered (QA D45): read it again now.
+    void refreshFastRescanPlan();
     toast('Settings saved — ignore rules apply from the next scan');
     closeModal('settingsModal');
   } catch (e) {

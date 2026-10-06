@@ -307,8 +307,8 @@ function engineRuntime(opts: {
   const api = opts.api ?? (async () => assert.fail('nothing here should save'));
   const toast = opts.toast ?? (() => {});
   const settingsData = opts.settingsData ?? {};
-  const params = ['api', '$', 'toast', 'settingsData'];
-  const args: unknown[] = [api, dom.$, toast, settingsData];
+  const params = ['api', '$', 'toast', 'settingsData', 'refreshFastRescanPlan'];
+  const args: unknown[] = [api, dom.$, toast, settingsData, async () => {}];
   if (opts.state !== UNDECLARED) { params.push('state'); args.push(opts.state); }
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
