@@ -83,16 +83,21 @@ async function loadManifest(): Promise<ManifestStore> {
   };
 }
 
-/** Trim to the cap: restored entries age out first, then the oldest. */
+/**
+ * Trim to the cap by ageing out restored entries, the oldest first — never an active one (final review
+ * F1.9). An active entry is the only way Restore finds a file whose original is in the Trash and whose
+ * copy is on another drive: dropping the oldest of them, as this did once the record passed the cap (two
+ * offloads of 6,000 and 5,000 files), lost files' way back with no word. So the cap bounds restored
+ * entries only, and active ones are kept however many there are.
+ */
 export function trimManifest(entries: OffloadEntry[], cap: number): OffloadEntry[] {
   if (entries.length <= cap) return entries;
-  const keep = [...entries].sort((a, b) => {
-    const aRestored = a.restoredAt ? 1 : 0;
-    const bRestored = b.restoredAt ? 1 : 0;
-    if (aRestored !== bRestored) return aRestored - bRestored; // active first
-    return b.offloadedAt - a.offloadedAt; // then newest first
-  });
-  return keep.slice(0, cap);
+  const active = entries.filter((e) => !e.restoredAt);
+  const room = Math.max(0, cap - active.length);
+  const keptRestored = new Set(
+    entries.filter((e) => e.restoredAt).sort((a, b) => b.offloadedAt - a.offloadedAt).slice(0, room),
+  );
+  return entries.filter((e) => !e.restoredAt || keptRestored.has(e));
 }
 
 async function saveManifest(store: ManifestStore): Promise<void> {

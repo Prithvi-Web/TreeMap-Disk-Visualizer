@@ -96,6 +96,23 @@ test('trimManifest drops restored entries before active ones', () => {
   assert.equal(trimManifest(entries, 5).length, 3);
 });
 
+test('trimManifest never drops an active entry, however many there are: only restored ones age out (final review F1.9)', () => {
+  const entry = (id: string, offloadedAt: number, restoredAt?: number): OffloadEntry => ({
+    id, name: id, originalPath: '/' + id, destPath: '/d/' + id, destRoot: '/d',
+    size: 1, hash: 'x', offloadedAt, restoredAt,
+  });
+  // An offload of 6 files, then one of 5, under a cap of 10: every file of both is still offloaded.
+  const first = Array.from({ length: 6 }, (_, i) => entry(`first-${i}`, 1));
+  const second = Array.from({ length: 5 }, (_, i) => entry(`second-${i}`, 2));
+  const restored = [entry('restored-old', 0, 1), entry('restored-new', 3, 4)];
+  const kept = trimManifest([...first, ...restored, ...second], 10);
+  assert.deepEqual(kept.filter((e) => !e.restoredAt).map((e) => e.id).sort(), [...first, ...second].map((e) => e.id).sort(),
+    'the record Restore reads keeps every file still offloaded');
+  assert.deepEqual(kept.filter((e) => e.restoredAt), [], 'restored entries make room first, all of them when the active ones fill the cap');
+  const roomy = trimManifest([...first.slice(0, 3), ...restored], 4);
+  assert.deepEqual(roomy.map((e) => e.id).sort(), ['first-0', 'first-1', 'first-2', 'restored-new'], 'with room left, the newest restored ones stay');
+});
+
 test('hashFile matches an independently computed SHA-256', async () => {
   const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-offload-'));
   const f = path.join(tmp, 'sample.bin');
