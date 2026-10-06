@@ -528,11 +528,12 @@ async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<
  */
 async function askRoot(ctx: LookContext, { folder, drive }: Where, op: Promise<unknown>): Promise<void> {
   const { d } = ctx;
-  if (isSilent(d, drive)) return;
+  // The root that hung, or a drive not known: silent until this call answers, whatever else holds it.
   if (drive === '' || drive === folder) {
     hush(silentDrives, drive, d, op);
     return;
   }
+  if (isSilent(d, drive)) return;
   const asking = askingRoot.get(drive);
   if (asking) {
     await budgeted(ctx, asking);

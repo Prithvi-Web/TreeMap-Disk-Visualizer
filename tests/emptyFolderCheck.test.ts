@@ -421,6 +421,39 @@ test('a second folder that hangs on one drive silences it until one of the two a
   assert.deepEqual(stats.slice(5), ['/x/slow3', '/'], 'none out, one hangs: its drive\'s root is asked afresh');
 });
 
+test('a drive\'s own root offered while the drive already holds a call, and hanging, keeps the drive silent until that root answers', async () => {
+  // The root is asked about once as a probe (it answers), then offered as an empty folder (it hangs).
+  const stats: string[] = [];
+  const answerOf = new Map<string, () => void>();
+  let rootAsked = 0;
+  let lastHung = false;
+  setEmptyCheckForTests({
+    driveOf: async (p) => (p.startsWith('/nas') ? '/nas' : '/'),
+    lstat: (p) => {
+      stats.push(p);
+      lastHung = p === '/nas/a' || (p === '/nas' && ++rootAsked > 1);
+      if (!lastHung) return Promise.resolve(aFolder);
+      return new Promise((resolve) => { answerOf.set(p, () => resolve(aFolder)); });
+    },
+    opendir: async () => listingOf([]),
+    deadline: () => {
+      const late = lastHung ? Promise.resolve() : new Promise<void>(() => {});
+      lastHung = false;
+      return { late, cancel: () => {} };
+    },
+  });
+  assert.match(reasonOf(await stillEmptyFolder('/nas/a', true)), /it did not answer within/);
+  assert.match(reasonOf(await stillEmptyFolder('/nas', true)), /it did not answer within/);
+  assert.deepEqual(stats, ['/nas/a', '/nas', '/nas'], 'a hangs, the probe of the root answers; then the root itself, offered, hangs');
+  answerOf.get('/nas/a')!(); // a answers at last: one call out on the drive, and it is the root's own
+  await settle();
+  assert.match(reasonOf(await stillEmptyFolder('/nas/b', true)), /the drive it is on did not answer a moment ago/);
+  assert.deepEqual(stats.slice(3), [], 'b is not asked while the drive\'s own root has not answered');
+  answerOf.get('/nas')!();
+  await settle();
+  assert.deepEqual(await stillEmptyFolder('/nas/b', true), { empty: true }, 'the root answered: the drive is heard again');
+});
+
 test('four looks at once that hang on a drive heard from ask its root once, not four times', async () => {
   const stats: string[] = [];
   let lastHung = false;
