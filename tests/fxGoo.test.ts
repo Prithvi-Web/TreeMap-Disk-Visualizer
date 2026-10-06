@@ -760,3 +760,32 @@ test('the tail is the library droplet: laggy 170/22 chase, force-clamped lag, on
   assert.match(SRC, /stiffness: 380,\s*damping: 18/, 'MOVE_DEFAULTS 380/18 drive the slider chase');
   assert.match(SRC, /force: c01\(t && t\.force, MOVE\.force\)/, 'untuned instances resolve force straight to MOVE');
 });
+
+/**
+ * QA B07: the Largest Files Size/Reclaim control's silhouette SVG ended at
+ * x = 1534 in a 1440 px window. An <svg> with no width/height attributes has
+ * a 300 × 150 box, and `inset: 0` does not stretch a replaced element — so a
+ * control at the right of a card pushed `main` 105 px past its own width,
+ * and a scroll-into-view left the whole Dashboard 94 px to the left, its
+ * first column under the sidebar. The silhouette has to take its HOST's box;
+ * the liquid may still paint outside it (overflow: visible, which is ink and
+ * never scrollable overflow).
+ */
+test('the goo silhouette takes its host’s box, never SVG’s 300×150 default (B07)', () => {
+  const html = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const sheet = html.slice(html.indexOf('<style>') + 7, html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const decl = new Map<string, string>();
+  for (const m of sheet.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    if (!m[1].split(',').map((s) => s.trim()).includes('.fxgoo-sil')) continue;
+    for (const d of m[2].split(';')) { const i = d.indexOf(':'); if (i !== -1) decl.set(d.slice(0, i).trim(), d.slice(i + 1).trim()); }
+  }
+  assert.equal(decl.get('position'), 'absolute', 'the silhouette is laid over its host');
+  assert.equal(decl.get('inset'), '0', 'pinned to its four edges');
+  // Either the stylesheet sizes it, or the builder gives it the attributes.
+  const build = SRC.slice(SRC.indexOf('function buildSilhouette('), SRC.indexOf('function bezierEase('));
+  assert.ok(build.length > 200, 'the silhouette builder was found');
+  const attrSized = /svgEl\('svg', \{[^}]*\bwidth: '100%'[^}]*\bheight: '100%'/.test(build);
+  assert.ok(attrSized || (decl.get('width') === '100%' && decl.get('height') === '100%'),
+    `the silhouette is sized to its host (width ${decl.get('width') ?? 'auto'}, height ${decl.get('height') ?? 'auto'}) — an unsized <svg> is 300×150`);
+  assert.equal(decl.get('overflow'), 'visible', 'the liquid still paints past the edges it is sized to');
+});

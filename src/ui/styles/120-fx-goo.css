@@ -18,6 +18,12 @@
 :root[data-theme="light"] { --goo-ink: #d7dadf; --goo-ink-2: #e1e3e8; }
 
 .fxgoo-sil { position: absolute; inset: 0; overflow: visible; pointer-events: none; z-index: 0;
+  /* Sized to the host: an <svg> with no width/height is a 300x150 box, and
+     inset: 0 does not stretch a replaced element. The Largest Files sort
+     control's silhouette ran 94 px past <main>, which then scrolled sideways
+     under the sidebar (QA B07). The liquid still paints past these edges
+     (overflow: visible is ink, never scrollable overflow). */
+  width: 100%; height: 100%;
   /* --shadow-1 is single-layer, spread-free box-shadow syntax, which is also
      valid drop-shadow() syntax — themes switch the shadow for free. */
   filter: drop-shadow(var(--shadow-1)); }
