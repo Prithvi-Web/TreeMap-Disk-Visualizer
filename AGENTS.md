@@ -441,7 +441,14 @@ OpenAPI 3 spec).
      not empty.
    - `POST /api/offload` with `{ scanId, paths, dest }` moves data to another
      drive the safe way: copy → verify SHA-256 → only then trash originals;
-     any failure rolls back and leaves local data untouched.
+     any failure rolls back and leaves local data untouched. The record
+     Restore reads (`offload-manifest.json`, app-data) is saved first; the
+     drive's own copy of it is written after, and a drive that does not
+     answer for 60 seconds is left to finish on its own while the job says
+     so. One process writes that record at a time; the MCP server is a
+     second process with no share in that lock, so an offload or restore
+     finishing in the same instant in both could lose one record — the
+     copies then stand at the destination, listed in the drive's own record.
    - `POST /api/cart/commit` with `{ paths }` is the same delete **as one
      undoable run**: every item is copied into the Time Capsule and verified
      before anything is trashed, and the response carries a `runId` that

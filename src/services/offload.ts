@@ -15,7 +15,7 @@ import { moveToTrash } from './cleaner';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
 import { isAppDataPath, isInside, isSpillPath, liesInside, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
-import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber } from '../utils/copyVerify';
+import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber, withinStallLimit } from '../utils/copyVerify';
 import { describeFsError, meansAbsent } from '../utils/errno';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
@@ -44,6 +44,12 @@ const MANIFEST_FILE = 'offload-manifest.json';
 const DEST_MANIFEST = 'treemap-offload-manifest.json';
 const MAX_MANIFEST_ENTRIES = 10_000;
 const MAX_FILES_PER_JOB = 10_000;
+/**
+ * How long the record on a destination drive may take before the job goes on without it (FG3g review
+ * F1.2). Written after the app-data record is saved and the manifest let go, so a drive that stops
+ * answering holds nothing else — and with this, not the job either.
+ */
+const DEST_RECORD_STALL_MS = 60_000;
 /** Keep a little headroom beyond the plan's byte total. */
 const FREE_SPACE_MARGIN = 1.02;
 const JOB_TTL_MS = 30 * 60_000;
@@ -94,13 +100,33 @@ async function saveManifest(store: ManifestStore): Promise<void> {
 }
 
 /**
+ * Test-only: awaited with the destination root at the start of each write of the record on a drive
+ * (FG3g review F1.2), so a test holds one there as a drive that stops answering. The suite's ForTests
+ * idiom: returns the function that removes it.
+ */
+let destManifestWriteForTests: ((destRoot: string) => Promise<void>) | null = null;
+export function setDestManifestWriteForTests(hook: (destRoot: string) => Promise<void>): () => void {
+  destManifestWriteForTests = hook;
+  return () => { destManifestWriteForTests = null; };
+}
+
+/**
  * Every read-modify-write of the manifest, one at a time (FG3g M3): load, change, save, with nothing
  * else's save in between. A restore loaded the manifest when it started, copied for as long as the
  * copies took and saved what it had loaded — so an offload that finished meanwhile was erased from
  * the record (its originals in the Trash, its copies at the destination, and Restore unable to list
  * them), and two overlapping restores lost each other's "restored". Every `saveManifest` call is
  * inside one (tests/offloadManifestLock.test.ts reads this file to hold it so); a read alone needs
- * none, since a save replaces the file whole. Never nested: see AsyncMutex.
+ * none, since a save replaces the file whole. Never nested: see AsyncMutex. Nothing on another drive
+ * is touched while it is held (FG3g review F1.2): the record on the destination is written after.
+ *
+ * The lock is this process's own (FG3h B). The MCP server is a second process that can offload into
+ * the same app data, and nothing coordinates the two: each save replaces the file whole (tmp and
+ * rename, through one fixed tmp name), so two saves in the same instant — one per process — keep only
+ * one of them, and the other's entries are missing from the record (their copies stand at the
+ * destination, listed in the drive's own record; restoredAt lost is a restore offered again, which
+ * refuses as occupied). Each read-modify-write here is a read and a write of one small file, so the
+ * window is that long; AGENTS.md says so.
  */
 const manifestLock = new AsyncMutex();
 
@@ -206,6 +232,7 @@ function serializeRecord(record: { fields: Record<string, unknown>; entries: unk
  * record, and the answer says so.
  */
 async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): Promise<string | null> {
+  if (destManifestWriteForTests) await destManifestWriteForTests(destRoot);
   const file = path.join(destRoot, DEST_MANIFEST);
   const notWritten = (why: string): string => `The record on the destination was not written: ${why}, and TreeMap does not replace what it did not make.`;
   let tmpPath: string | null = null;
@@ -682,10 +709,13 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     // the same reasoning the OPEN_HANDLE_CONFLICT branch above already
     // applies, and it holds with more force here because the originals are
     // already gone.
+    let onDrive: OffloadEntry[] | null = null;
     try {
-      // Loaded, added to and saved with no other writer between (FG3g M3) — and the destination's
-      // own copy of the record written from that same document.
-      const unwritten = await withOffloadManifest(async () => {
+      // Loaded, added to and saved with no other writer between (FG3g M3) — and only that (FG3g
+      // review F1.2): the destination's own copy of the record is written after the manifest is let
+      // go. Written inside, a drive that stopped answering held every other offload's record — saved
+      // only after its originals are in the Trash — and every restore's, and the Offloaded tab.
+      onDrive = await withOffloadManifest(async () => {
         const store = await loadManifest();
         const now = Date.now();
         for (const r of results) {
@@ -702,9 +732,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
         }
         store.destinations[destDir] = { lastSeenAt: now };
         await saveManifest(store);
-        return writeDestManifest(destDir, store.entries);
+        return store.entries.filter((e) => e.destRoot === destDir);
       });
-      if (unwritten) job.error = job.error ? `${job.error} Also: ${unwritten}` : unwritten;
     } catch (err) {
       // The files are where they should be; only the record of them failed.
       // Say so precisely, because it is the record that Restore reads.
@@ -718,6 +747,17 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
         `The offload record could not be saved (${err instanceof Error ? err.message : String(err)}). ` +
         `The files are copied and verified at ${destDir}; Restore may not list them until this is fixed.`;
       job.error = job.error ? `${job.error} Also: ${bookkeeping}` : bookkeeping;
+    }
+    if (onDrive !== null) {
+      // This destination's entries as just saved, merged into the drive's own record. Best effort, and
+      // never a reason to roll back; a drive that does not answer is left to finish on its own.
+      // Nothing here may throw: past the trash step a throw rolls back, deleting the verified copies.
+      const writing = writeDestManifest(destDir, onDrive).catch((err: unknown) =>
+        `The record on the destination could not be written (${describeFsError(err)}); the copies are in place, and TreeMap's own record of them is kept.`);
+      const unwritten = await withinStallLimit(writing, DEST_RECORD_STALL_MS, () =>
+        `The record on the destination was not written: the drive did not answer for ${Math.round(DEST_RECORD_STALL_MS / 1000)} seconds, ` +
+        'so TreeMap went on without it. The copies are in place, and TreeMap\'s own record of them is kept.');
+      if (unwritten) job.error = job.error ? `${job.error} Also: ${unwritten}` : unwritten;
     }
 
     job.phase = 'done';

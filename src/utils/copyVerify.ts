@@ -115,6 +115,56 @@ export function setStallTimerForTests(timer: StallTimer): () => void {
   return () => { stallTimerForTests = null; };
 }
 
+/**
+ * File-system calls a caller stopped waiting for at their stall limit that have not returned yet
+ * (FG3h A). Such a call cannot be interrupted: it holds a worker thread of the pool every file call
+ * shares (and often a handle) until the volume answers, so a few of them left waiting starve every
+ * later file call in the process. Counted here so a caller can stop starting more (`abandonedCallsUnsettled`).
+ */
+let abandonedUnsettled = 0;
+
+/** How many calls left waiting at their stall limit have not returned yet (FG3h A). */
+export function abandonedCallsUnsettled(): number {
+  return abandonedUnsettled;
+}
+
+/** Counts `work` as abandoned until it settles. */
+function countAbandoned(work: Promise<unknown>): void {
+  abandonedUnsettled++;
+  let counted = true;
+  const settle = (): void => {
+    if (!counted) return;
+    counted = false;
+    abandonedUnsettled--;
+  };
+  work.then(settle, settle);
+}
+
+/**
+ * `work`'s outcome — or, once `stallMs` passes before it settles, `onStall`'s (its value, or what it
+ * throws), judged by the same timer as a copy's stall limit (FG3h A, FG3g review F1.2). The work
+ * cannot be stopped and goes on unawaited, counted in `abandonedCallsUnsettled` until it settles.
+ */
+export async function withinStallLimit<T>(work: Promise<T>, stallMs: number, onStall: () => T): Promise<T> {
+  let disarm = (): void => {};
+  const expired = new Promise<T>((resolve, reject) => {
+    disarm = (stallTimerForTests ?? realStallTimer)(stallMs, () => {
+      countAbandoned(work);
+      try {
+        resolve(onStall());
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+  work.catch(() => {}); // answered below, or — once the limit passed — no longer waited for
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    disarm();
+  }
+}
+
 /** Options of one copy. */
 export interface CopyOptions {
   /** Stop the copy (CopyStalled) when its source makes no progress for this long (FG3g M2). */
@@ -145,6 +195,7 @@ export async function copyWithHash(src: string, dest: string, progress?: CopyPro
   const expired = new Promise<never>((_, reject) => { answerStalled = reject; });
   const timer = stallTimerForTests ?? realStallTimer;
   let disarm = (): void => {};
+  let copying: Promise<string> | null = null;
   const arm = (): void => {
     disarm = timer(stallMs, () => {
       if (progressed) {
@@ -153,11 +204,13 @@ export async function copyWithHash(src: string, dest: string, progress?: CopyPro
         return;
       }
       stalled = true;
+      // Its read is left waiting in a worker thread until the volume answers (FG3h A).
+      if (copying !== null) countAbandoned(copying);
       answerStalled(new CopyStalled(src, stallMs));
     });
   };
   arm();
-  const copying = copyOnce(src, dest, {
+  copying = copyOnce(src, dest, {
     onBytes: (n) => {
       progressed = true;
       progress?.onBytes?.(n);
