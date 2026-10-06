@@ -128,7 +128,7 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     <div class="t-line num"><span class="t-strong" style="color:${sizeColor(node.size)}">${formatBytes(node.size)}</span>` +
     (pctOfRoot !== null && pctOfRoot >= 0.05 ? ` · ${pctOfRoot.toFixed(1)}% of this view` : '') +
     (node.logicalSize ? ` · ${formatBytes(node.logicalSize)} uncompressed` : '') +
-    (node.container && !node.children ? ' · click to look inside' : '') +
+    (containerListable(node) && !node.children ? ' · click to look inside' : '') +
     ` · modified ${formatDate(node.modifiedAt)}` +
     // Only meaningful while sorting the grid by atime — and atime is best-effort
     // (absent for gdu/cloud scans and noatime mounts), so missing shows as "—".

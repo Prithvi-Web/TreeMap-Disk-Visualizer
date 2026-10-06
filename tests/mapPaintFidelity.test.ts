@@ -142,7 +142,7 @@ const GREEN = [48, 209, 88];
 function mapFill() {
   const rec = recordingCtx();
   const state = { treemap: { nodes: [TILE], hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
-  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmDepthFade', 'mix'], {
+  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmDepthFade', 'mix', 'containerListable'], {
     $: () => ({ clientWidth: 120 }),
     treemapCanvasHeight: () => 100,
     window: { devicePixelRatio: 1 },

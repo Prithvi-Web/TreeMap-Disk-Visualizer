@@ -711,7 +711,7 @@ function drawTreemap() {
   // Pass 7: container badges (Feature 23) — drillable archives get a dashed
   // indigo border and a small box glyph. Virtual entries inside stay plain.
   for (const r of px) {
-    if (!r.n.container || r.n.virtual) continue;
+    if (!containerListable(r.n) || r.n.virtual) continue;
     ctx.strokeStyle = 'rgba(94,92,230,0.9)';
     ctx.setLineDash([5, 3]);
     ctx.lineWidth = 1.5;

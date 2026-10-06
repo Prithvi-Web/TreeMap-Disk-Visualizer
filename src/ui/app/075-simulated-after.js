@@ -586,9 +586,21 @@ function tmOnCanvasClick(e) {
   const step = tmStepToward(state.treemap.rootPath, hit.n.path);
   if (step && step !== hit.n.path) { hideTooltip(); loadTreemap(step, true); return; }
   // Feature 23 — containers drill into their virtual contents.
-  if (hit.n.container && hit.n.type === 'file' && !hit.n.virtual) { hideTooltip(); expandContainerNode(hit.n); return; }
+  // A .dmg is not one the server can list (B37): it previews like a file.
+  if (containerListable(hit.n) && hit.n.type === 'file' && !hit.n.virtual) { hideTooltip(); expandContainerNode(hit.n); return; }
   if (hit.n.type === 'dir') { hideTooltip(); loadTreemap(hit.n.path, true); }
   else if (!hit.n.virtual) { hideTooltip(); openPreview(hit.n); }
+}
+
+/**
+ * Whether the server can list this container's contents (B37). A .dmg is
+ * tagged so it reads as a disk image, but it cannot be listed without
+ * mounting it and POST /api/container/expand refuses it every time — so on
+ * the map it is a plain file: no dashed border, no "look inside", and a click
+ * opens its preview.
+ */
+function containerListable(n) {
+  return !!(n && n.container) && n.container !== 'dmg';
 }
 
 /** Feature 23 — open a container: parse once server-side, then drill in. */

@@ -177,12 +177,12 @@ test('D28: "TreeMap stops at 6,000" is said only when the asking actually reache
 
 /* ══════════════ D26 — one level per click (owner, 5 Oct 2026) ══════════════ */
 
-type Hit = { n: { path: string; type: 'dir' | 'file'; container?: boolean; virtual?: boolean; isTrash?: boolean }; center?: boolean };
+type Hit = { n: { path: string; type: 'dir' | 'file'; container?: boolean | string; virtual?: boolean; isTrash?: boolean }; center?: boolean };
 
 /** Click the map over `hit` while `rootPath` is on screen; report what the click did. */
 function clickOn(hit: Hit, rootPath = '/r') {
   const did = { loaded: [] as string[], previewed: [] as string[], expanded: [] as string[] };
-  const click = load<(e: unknown) => void>(['tmOnCanvasClick', 'tmStepToward', 'tmIsInside'], {
+  const click = load<(e: unknown) => void>(['tmOnCanvasClick', 'tmStepToward', 'tmIsInside', 'containerListable'], {
     state: { treemap: { rootPath, history: { active: false } } },
     tmPreview: { on: false },
     hideTooltip() {},
@@ -224,6 +224,45 @@ test('D26: the step is separator-aware: Windows paths, a drive root, and archive
     'an entry inside an opened archive opens the archive first');
   assert.deepEqual(clickOn({ n: { path: '/r/z.zip', type: 'file', container: true } }).expanded, ['/r/z.zip'],
     'an archive on screen still opens through the container route');
+});
+
+/* ══════════════ B37 — a .dmg is a plain file on the map ══════════════ */
+
+test('B37: a .dmg on screen previews like a plain file — the server cannot list one, so the click never asks it to', () => {
+  const dmg = clickOn({ n: { path: '/r/Installer.dmg', type: 'file', container: 'dmg' } });
+  assert.deepEqual(dmg.expanded, [], 'no POST /api/container/expand, which answers 422 for every .dmg');
+  assert.deepEqual(dmg.previewed, ['/r/Installer.dmg'], 'it opens its preview, as any file does');
+  assert.deepEqual(clickOn({ n: { path: '/r/disc.iso', type: 'file', container: 'iso' } }).expanded, ['/r/disc.iso'],
+    'a disc image the server can list still opens through the container route');
+});
+
+test('B37: the tooltip never invites a click "to look inside" a .dmg', () => {
+  const tip = { innerHTML: '', style: {} as Record<string, string>, dataset: {} as Record<string, string>, offsetWidth: 0, offsetHeight: 0 };
+  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable'], {
+    $: () => tip,
+    icon: () => '',
+    escapeHtml: (s: unknown) => String(s),
+    formatBytes: (n: number) => `${n} B`,
+    sizeColor: () => '#fff',
+    formatDate: () => 'then',
+    state: { view: 'treemap', grid: {}, treemap: {} },
+    kindFor: () => ({ tint: '#000', icon: 'file' }),
+    resolveAllocation() {}, resolveScore() {}, resolveHumanScale() {},
+    allocationTooltipLine: () => '', reclaimTooltipLine: () => '', humanScaleTooltipLine: () => '', noteTooltipLine: () => '',
+    window: { innerWidth: 1000, innerHeight: 800 },
+  }, 'showTooltip');
+  const file = (name: string, container: string) => ({ name, path: `/r/${name}`, type: 'file', size: 5, modifiedAt: 0, container });
+  show(1, 1, file('Installer.dmg', 'dmg'));
+  assert.doesNotMatch(tip.innerHTML, /look inside/, 'a .dmg cannot be looked inside without mounting it');
+  show(1, 1, file('a.zip', 'zip'));
+  assert.match(tip.innerHTML, /click to look inside/, 'an archive the server can list still says so');
+});
+
+test('B37: the dashed "drillable" border is drawn only on containers the server can list', () => {
+  const draw = declSource('drawTreemap');
+  const pass = draw.slice(draw.indexOf('Pass 7'), draw.indexOf('Pass 7') + 600);
+  assert.match(pass, /if \(!containerListable\(r\.n\) \|\| r\.n\.virtual\) continue;/,
+    'the badge pass asks the same question as the click');
 });
 
 test('D26: the tour describes the click the map actually performs', () => {
