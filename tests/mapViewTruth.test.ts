@@ -252,12 +252,44 @@ const fakeDoc = {
 type FakeBtn = {
   tagName: string; path: string | null; more: boolean; nm: string | null; text: string; current: boolean; disabled: boolean;
   attrs: Record<string, string>;
-  dataset: { p?: string }; listeners: Record<string, Array<(e: unknown) => void>>;
+  /** Every `data-*` attribute, camel-cased, as the DOM's dataset has them. */
+  dataset: Record<string, string>; listeners: Record<string, Array<(e: unknown) => void>>;
+  /** Every scrollIntoView() call's options, in order. */
+  scrolls: unknown[];
   addEventListener(t: string, f: (e: unknown) => void): void; click(): void;
-  getBoundingClientRect(): { left: number; bottom: number }; focus(): void; scrollIntoView(): void;
+  getBoundingClientRect(): { left: number; bottom: number }; focus(): void; scrollIntoView(o?: unknown): void;
   setAttribute(k: string, v: string): void; getAttribute(k: string): string | null; hasAttribute(k: string): boolean;
-  closest(sel: string): FakeBtn | null;
+  closest(sel: string): unknown;
 };
+
+/**
+ * `el.closest(sel)` for the fakes, which have no parents: the element itself,
+ * matched against each selector of a comma list — a tag name, `[attr]` and
+ * `[attr="value"]` (QA-6b review F1.9). It used to answer the button for any
+ * list that mentioned `button`, so `a[href]` and the ARIA roles were never tried.
+ */
+function fakeClosest<T extends { tagName: string; attrs: Record<string, string> }>(el: T, sel: string): T | null {
+  for (const one of sel.split(',')) {
+    const m = /^\s*([a-z]*)((?:\[[^\]]+\])*)\s*$/i.exec(one);
+    if (!m) throw new Error(`the fake closest() cannot read ${JSON.stringify(one)}`);
+    if (m[1] && m[1].toUpperCase() !== el.tagName) continue;
+    const conds = [...m[2].matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+    if (conds.every(([, k, v]) => k in el.attrs && (v === undefined || el.attrs[k] === v))) return el;
+  }
+  return null;
+}
+
+/** A fake element that is not a button: a link, a `div` with a role, a menu's separator. */
+function fakeEl(tagName: string, attrs: Record<string, string> = {}) {
+  const el = {
+    tagName, attrs,
+    setAttribute(k: string, v: string) { el.attrs[k] = String(v); },
+    getAttribute(k: string) { return k in el.attrs ? el.attrs[k] : null; },
+    closest(sel: string) { return fakeClosest(el, sel); },
+    focus() { fakeDoc.active = el; },
+  };
+  return el;
+}
 
 function parseButtons(html: string): FakeBtn[] {
   const out: FakeBtn[] = [];
@@ -276,18 +308,19 @@ function parseButtons(html: string): FakeBtn[] {
       current: /aria-current="true"/.test(attrText),
       disabled: 'disabled' in attrs,
       attrs,
-      dataset: p ? { p: unesc(p[1]) } : {},
+      dataset: Object.fromEntries(Object.entries(attrs).filter(([k]) => k.startsWith('data-'))
+        .map(([k, v]) => [k.slice(5).replace(/-(\w)/g, (_, c: string) => c.toUpperCase()), v])),
+      scrolls: [],
       listeners: {},
       addEventListener(t, f) { (b.listeners[t] ||= []).push(f); },
       click() { for (const f of b.listeners.click || []) f({ stopPropagation() {}, preventDefault() {}, currentTarget: b }); },
       getBoundingClientRect: () => ({ left: 0, bottom: 30 }),
       focus() { fakeDoc.active = b; },
-      scrollIntoView() {},
+      scrollIntoView(o) { b.scrolls.push(o); },
       setAttribute(k, v) { b.attrs[k] = String(v); },
       getAttribute(k) { return k in b.attrs ? b.attrs[k] : null; },
       hasAttribute(k) { return k in b.attrs; },
-      // Every fake element is a button, and nothing in it is a link: enough for `closest('button, …')`.
-      closest(sel: string) { return /(^|,\s*)button\b/.test(sel) ? b : null; },
+      closest(sel: string) { return fakeClosest(b, sel); },
     };
     out.push(b);
   }
@@ -365,20 +398,39 @@ function pageKeydownSource(): string {
 }
 
 type FakeMenu = {
-  html: string; buttons: FakeBtn[]; style: Record<string, string>; offsetHeight: number; attrs: Record<string, string>;
-  innerHTML: string; querySelectorAll(sel: string): FakeBtn[]; querySelector(sel: string): FakeBtn | null;
+  html: string; buttons: FakeBtn[]; divs: Array<ReturnType<typeof fakeEl>>; style: Record<string, string>; offsetHeight: number;
+  attrs: Record<string, string>;
+  innerHTML: string; querySelectorAll(sel: string): unknown[]; querySelector(sel: string): FakeBtn | null;
   setAttribute(k: string, v: string): void; getAttribute(k: string): string | null; contains(el: unknown): boolean;
 };
 
+/**
+ * #ctxMenu: its buttons and its `.div` dividers are parsed from what is
+ * written into it, and only the selectors the page uses on it are answered
+ * — anything else throws rather than quietly answering the buttons.
+ */
 function fakeMenu(): FakeMenu {
-  const menu: FakeMenu = { html: '', buttons: [], style: {}, offsetHeight: 120, attrs: {},
-    set innerHTML(v: string) { menu.html = v; menu.buttons = parseButtons(v); },
+  const menu: FakeMenu = { html: '', buttons: [], divs: [], style: {}, offsetHeight: 120, attrs: {},
+    set innerHTML(v: string) {
+      menu.html = v;
+      menu.buttons = parseButtons(v);
+      menu.divs = [...v.matchAll(/<div class="div"><\/div>/g)].map(() => fakeEl('DIV', { class: 'div' }));
+    },
     get innerHTML() { return menu.html; },
-    querySelectorAll: (sel: string) => (sel === '.div' ? [] : menu.buttons),
-    querySelector: () => menu.buttons[0] || null,
+    querySelectorAll(sel: string) {
+      if (sel === 'button') return menu.buttons;
+      if (sel === '.div') return menu.divs;
+      throw new Error('unexpected selector ' + sel);
+    },
+    querySelector(sel: string) {
+      if (sel === 'button') return menu.buttons[0] || null;
+      const act = /^\[data-act="([^"]+)"\]$/.exec(sel);
+      if (act) return menu.buttons.find((b) => b.dataset.act === act[1]) || null;
+      throw new Error('unexpected selector ' + sel);
+    },
     setAttribute(k, v) { menu.attrs[k] = String(v); },
     getAttribute(k) { return k in menu.attrs ? menu.attrs[k] : null; },
-    contains: (el: unknown) => el === menu || menu.buttons.includes(el as FakeBtn) };
+    contains: (el: unknown) => el === menu || menu.buttons.includes(el as FakeBtn) || menu.divs.includes(el as ReturnType<typeof fakeEl>) };
   return menu;
 }
 
@@ -563,7 +615,19 @@ test('MEDIUM-1: inside the menu the arrows, Home and End move between its folder
   more.click();
   const items = h.menu.buttons;
   assert.equal(items.length, 5);
-  const press = (key: string) => { const ev = keyEv(key); h.keydown(ev); return ev; };
+  // Focus moves with preventScroll, so in a menu that scrolls (LOW-4) every
+  // step has to bring its entry into view itself (QA-6b review F1.9).
+  const scrolls = () => items.reduce((n, b) => n + b.scrolls.length, 0);
+  const press = (key: string) => {
+    const before = scrolls();
+    const ev = keyEv(key);
+    h.keydown(ev);
+    if (ev.defaultPrevented) {
+      assert.equal(scrolls(), before + 1, `${key} scrolls one entry into view`);
+      assert.deepEqual((fakeDoc.active as FakeBtn).scrolls.at(-1), { block: 'nearest' }, `${key}: the entry it focused, the least scroll that shows it`);
+    }
+    return ev;
+  };
   assert.equal(press('ArrowDown').defaultPrevented, true, 'the menu takes the arrow');
   assert.equal(fakeDoc.active, items[1], 'ArrowDown: the next folder');
   press('ArrowDown'); press('ArrowDown'); press('ArrowDown');
@@ -576,6 +640,7 @@ test('MEDIUM-1: inside the menu the arrows, Home and End move between its folder
   assert.equal(fakeDoc.active, items[0], 'Home: the first');
   press('End');
   assert.equal(fakeDoc.active, items[4], 'End: the last');
+  assert.equal(scrolls(), 8, 'one scroll for each of the eight steps');
   for (const key of ['h', 'j', 'k', 'l', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter']) press(key);
   assert.deepEqual(h.map, { drill: 0, up: 0, move: 0 }, 'no key pressed in the menu moves, climbs or drills the map');
   // A menu a right-click opened has not taken focus: the first arrow takes it in.
@@ -626,6 +691,27 @@ test('MEDIUM-1: a crumb a pointer pressed does not hold focus in the redrawn tra
   lib.click();
   h.render(host, '/System/Library', h.onPick); // the load redraws the trail
   assert.equal(host.contains(fakeDoc.active), false, 'focus was not put back on a crumb');
+});
+
+test('MEDIUM-1: Enter on a link, or on anything with a button or menu-item role, is that control\'s press — not the map\'s', () => {
+  // tmMapKeyYields asks closest('button, a[href], [role="button"], [role="menuitem"]'):
+  // each kind is tried as itself, not as a button (QA-6b review F1.9).
+  const h = crumbsHarness();
+  const plain = fakeEl('DIV');
+  plain.focus();
+  h.keydown(keyEv('Enter'));
+  assert.equal(h.map.drill, 1, 'control: Enter on an element that is no control drills the map');
+  for (const el of [fakeEl('A', { href: '/help' }), fakeEl('DIV', { role: 'button' }), fakeEl('DIV', { role: 'menuitem' })]) {
+    el.focus();
+    const ev = keyEv('Enter');
+    h.keydown(ev);
+    assert.equal(h.map.drill, 1, `Enter on ${el.tagName} ${JSON.stringify(el.attrs)} does not drill the map`);
+    assert.equal(ev.defaultPrevented, false, 'and its own press is not cancelled');
+  }
+  const bare = fakeEl('A');
+  bare.focus();
+  h.keydown(keyEv('Enter'));
+  assert.equal(h.map.drill, 2, 'an <a> with no href is no link: Enter on it is the map\'s');
 });
 
 test('MEDIUM-1: the map keys used from a button beside the map hand focus to the map, so Enter after j or k still drills', () => {
@@ -694,6 +780,8 @@ test('MEDIUM-1: the right-click menu is named and made of menu items too', () =>
   assert.equal(menu.style.display, 'block');
   assert.equal(menu.getAttribute('aria-label'), 'Actions for movie.mov');
   assert.ok(menu.buttons.length > 3 && menu.buttons.every((b) => b.getAttribute('role') === 'menuitem'), 'every entry is a menuitem');
+  assert.ok(menu.divs.length >= 1, 'control: the menu has a divider, before Move to Trash');
+  assert.ok(menu.divs.every((d) => d.getAttribute('role') === 'separator'), 'and every divider is a separator to assistive technology');
   // A text field keeps its own arrows while a right-click menu is up.
   fakeDoc.active = { tagName: 'INPUT' };
   const inField = keyEv('ArrowDown');
