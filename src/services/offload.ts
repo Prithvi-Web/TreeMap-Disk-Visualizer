@@ -21,7 +21,7 @@ import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
 import { AsyncMutex } from '../utils/asyncMutex';
-import { recordRestorePartial, whileRestoring } from './restoreLeftovers';
+import { recordRestorePartial, restorePlacementHooks, whileRestoring } from './restoreLeftovers';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -822,7 +822,7 @@ async function restoreEntries(job: OffloadJob, entries: OffloadEntry[]): Promise
         // Don't leave a damaged copy — and one that could not be removed is named, never forgotten.
         throw await withoutPartial(partial, new Error('verification failed — the offloaded copy no longer matches its recorded fingerprint'));
       }
-      const placed = await placeWithoutClobber(partial, entry.originalPath).catch(async (err: NodeJS.ErrnoException) => {
+      const placed = await placeWithoutClobber(partial, entry.originalPath, restorePlacementHooks(entry.originalPath)).catch(async (err: NodeJS.ErrnoException) => {
         throw await withoutPartial(partial, err.code === 'EEXIST' ? new Error(`something appeared at ${entry.originalPath} while it was being restored`) : err);
       });
       if (placed.partialLeft !== null) {

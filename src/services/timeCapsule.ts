@@ -24,7 +24,7 @@ import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from
 import { collapseBatch, deepestFirst, shallowestFirst } from './capsuleBatch';
 import { restoreNameKeyFor } from '../utils/volumeNames';
 import { AsyncMutex } from '../utils/asyncMutex';
-import { recordRestorePartial, sweepRestoreLeftovers, whileRestoring } from './restoreLeftovers';
+import { recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers, whileRestoring } from './restoreLeftovers';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -2631,7 +2631,8 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       if (hash !== member.hash) {
         throw new Error(`${member.rel || manifest.name} no longer matches the fingerprint recorded when it was protected`);
       }
-      const placed = await placeWithoutClobber(partial, dest).catch((err: NodeJS.ErrnoException) => {
+      // The empty file a volume without hard links holds at the name is recorded too (FG3g review F1.1).
+      const placed = await placeWithoutClobber(partial, dest, restorePlacementHooks(dest)).catch((err: NodeJS.ErrnoException) => {
         if (err.code !== 'EEXIST') throw err;
         throw new Error(`Something appeared at ${dest} since this restore began, and a restore never writes over what is there, so it stopped.`);
       });

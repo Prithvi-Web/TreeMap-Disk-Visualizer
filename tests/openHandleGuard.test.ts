@@ -512,7 +512,7 @@ test('nothing outside Cleaner removes a user file', async () => {
     'src/services/restoreLeftovers.ts: rm(journalPath(':
       'TreeMap’s own record of restores’ temporary files, in app-data, once nothing is left in it (FG3g L4)',
     'src/services/restoreLeftovers.ts: rm(record.path':
-      'a restore’s temporary file (.treemap-restore-…) that a quit or a kill left, at start: only a name of that shape that TreeMap itself recorded, only while the disk still shows the same plain file the restore made (its device and id), and never while a restore is under way (FG3g L4)',
+      'a restore’s temporary file (.treemap-restore-…) that a quit or a kill left, at start: only a name of that shape that TreeMap itself recorded, only while the disk still shows the same plain file the restore made (its device and id), and never while a restore is under way (FG3g L4) — or the empty file a restore held at an item’s own name for a rename, only while it is still that same file and still empty, and never once its placement was settled (FG3g review F1.1); never a record of another TreeMap still running (FG3h D)',
     'src/utils/copyVerify.ts: rm(partial':
       'the temporary second name (.treemap-restore-…) of a restored file, made by the restore moments earlier, right after the same file was hard-linked at its own name: the file stays, under its name (FG3f #8)',
   };

@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createScanRecord } from '../src/services/diskScanner';
 import { cancelAllOffloadJobs, getOffloadIndex, getOffloadJob, prepareOffload, startOffload, startRestore } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
-import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import { setBeforeRenameIntoPlaceForTests, setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
 import type { OffloadJob } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -225,3 +225,22 @@ for (const [label, prepare] of [
     assert.match(job.error ?? '', /could not be removed/, job.error);
   });
 }
+
+test('an offload restore on a volume without hard links whose held name cannot be removed after a failed rename names it as left behind (FG3g review F1.1)', { skip: SKIP }, async () => {
+  const { src, big, id } = await offloadedBig('held');
+  const unlink = setHardLinkForTests(async () => { throw Object.assign(new Error('operation not supported (a test)'), { code: 'ENOTSUP' }); });
+  const unhook = setBeforeRenameIntoPlaceForTests((at) => {
+    if (at === big) fs.chmodSync(src, 0o500); // the folder stops taking renames and removals in that instant
+  });
+  let job: OffloadJob;
+  try {
+    job = await settled(await startRestore([id]));
+  } finally {
+    unhook();
+    unlink();
+    fs.chmodSync(src, 0o700);
+  }
+  assert.equal(job.status, 'error');
+  assert.equal(fs.statSync(big).size, 0, 'the case is the one under test: the empty file held at the name is still there');
+  assert.ok((job.error ?? '').includes(`the empty file held at ${big} could not be removed`), `the sentence names it (${job.error})`);
+});

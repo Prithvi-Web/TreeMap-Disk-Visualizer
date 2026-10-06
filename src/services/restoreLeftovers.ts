@@ -4,6 +4,8 @@ import { appDataDir } from './storage';
 import { isEphemeral } from './portableMode';
 import { AsyncMutex } from '../utils/asyncMutex';
 import { describeFsError, meansAbsent } from '../utils/errno';
+import { PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
+import type { PlacementHooks } from '../utils/copyVerify';
 
 /**
  * Restore leftovers (FG3g L4).
@@ -21,6 +23,20 @@ import { describeFsError, meansAbsent } from '../utils/errno';
  *
  * One line per file (JSON Lines), appended: a restore of fifty thousand files records fifty thousand
  * lines, never fifty thousand rewrites of one document. A line a crash cut short is skipped.
+ *
+ * Where a volume makes no hard links, a restore also holds the item's own name with an empty file
+ * before it renames the copy over it (FG3g L4) — and that empty file is recorded too, before the
+ * rename (FG3g review F1.1, FG3h D): a kill in between left a 0-byte file at the person's own name
+ * that nothing ever removed. A held name is removed only while it is still that same file and still
+ * empty, and its record is settled (a line saying so) once the file is in place over it.
+ *
+ * Each record names the process that wrote it (FG3h D): the "never while a restore runs" guard is
+ * this process's own, and a second TreeMap on the same app data (the MCP server beside the app) could
+ * otherwise sweep a temporary file the first is still writing. A record of a process still running
+ * is left for a later start. The journal is shared by such processes but its tidying is not
+ * coordinated between them: one process's tidying can drop a line another appended in the same
+ * instant. That costs at most a leftover nothing sweeps — never a removal, since every removal is of
+ * a recorded file still standing as it was made, by a process that has ended.
  */
 
 const JOURNAL = 'restore-leftovers.jsonl';
@@ -36,6 +52,17 @@ interface Made {
   path: string;
   /** `dev:ino`, as copyWithHash read it from the file it had just made. */
   id: string;
+  /** An empty file holding an item's own name for a rename (FG3g review F1.1); absent for a temporary copy. */
+  kind?: 'placeholder';
+  /** The process that recorded it (FG3h D); absent in records written before. */
+  pid?: number;
+}
+
+/** A line saying a held name's placement finished: the record of that path and file is settled. */
+interface Settled {
+  path: string;
+  id: string;
+  settled: true;
 }
 
 /** Every change to the journal, one at a time. */
@@ -52,11 +79,28 @@ function journalPath(): string {
  * what lets a later start tidy up after a crash, and a restore is never refused for want of it.
  */
 export async function recordRestorePartial(partial: string, identity: string): Promise<void> {
+  await append({ path: partial, id: identity, pid: process.pid });
+}
+
+/**
+ * What a restore passes to `placeWithoutClobber` for `dest` (FG3g review F1.1): the empty file held
+ * at the item's own name is recorded before the rename, and settled once the file is in place over
+ * it. Never throws, as `recordRestorePartial`.
+ */
+export function restorePlacementHooks(dest: string): Required<PlacementHooks> {
+  return {
+    onHeld: (identity) => append({ path: dest, id: identity, kind: 'placeholder', pid: process.pid }),
+    onPlacedOverHeld: (identity) => append({ path: dest, id: identity, settled: true }),
+  };
+}
+
+/** Appends one line. Never throws: a restore is never refused for want of its record. */
+async function append(line: Made | Settled): Promise<void> {
   if (isEphemeral()) return;
   await lock.run(async () => {
     try {
       await fsp.mkdir(appDataDir(), { recursive: true });
-      await fsp.appendFile(journalPath(), `${JSON.stringify({ path: partial, id: identity } satisfies Made)}\n`, 'utf8');
+      await fsp.appendFile(journalPath(), `${JSON.stringify(line)}\n`, 'utf8');
     } catch (err) {
       console.error('[treemap] a restore\'s temporary file could not be recorded for the sweep after a crash:', err);
     }
@@ -78,7 +122,11 @@ export async function whileRestoring<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** What the journal records, skipping any line that is not a whole record. */
+/**
+ * What the journal records, skipping any line that is not a whole record of a name TreeMap gives —
+ * a temporary copy's `.treemap-restore-…` name, or (for a held name) a full path spelled as TreeMap
+ * records one, outside the system folders it never writes — and every record a later line settled.
+ */
 async function readJournal(): Promise<Made[]> {
   let text: string;
   try {
@@ -90,16 +138,47 @@ async function readJournal(): Promise<Made[]> {
   const made: Made[] = [];
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
+    let record: Partial<Made & Settled>;
     try {
-      const record = JSON.parse(line) as Partial<Made>;
-      if (typeof record.path === 'string' && path.isAbsolute(record.path) && PARTIAL_NAME.test(path.basename(record.path)) && typeof record.id === 'string') {
-        made.push({ path: record.path, id: record.id });
-      }
+      record = JSON.parse(line) as Partial<Made & Settled>;
     } catch {
-      // A line a crash cut short: nothing can be told of it.
+      continue; // A line a crash cut short: nothing can be told of it.
     }
+    if (record === null || typeof record !== 'object' || typeof record.path !== 'string' || typeof record.id !== 'string') continue;
+    const { path: at, id } = record;
+    if (record.settled === true) {
+      for (let i = made.length - 1; i >= 0; i--) if (made[i].path === at && made[i].id === id) made.splice(i, 1);
+      continue;
+    }
+    const placeholder = record.kind === 'placeholder';
+    if (!path.isAbsolute(at) || !(placeholder ? isRecordablePlace(at) : PARTIAL_NAME.test(path.basename(at)))) continue;
+    made.push({
+      path: at, id,
+      ...(placeholder ? { kind: 'placeholder' as const } : {}),
+      ...(Number.isInteger(record.pid) && (record.pid as number) > 0 ? { pid: record.pid } : {}),
+    });
   }
   return made;
+}
+
+/** Whether `at` is spelled as TreeMap records a place it restores to, and not a system folder it never writes. */
+function isRecordablePlace(at: string): boolean {
+  try {
+    return sanitizePath(at) === at;
+  } catch (err) {
+    if (err instanceof PathRejectedError) return false;
+    throw err;
+  }
+}
+
+/** Whether the process `pid` is running now (one TreeMap cannot signal still counts as running). */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 /** The journal as `made`, replaced whole (tmp + rename), or removed when nothing is left in it. */
@@ -113,11 +192,16 @@ async function writeJournal(made: Made[]): Promise<void> {
   await fsp.rename(tmp, journalPath());
 }
 
-/** What stands at a recorded name now: the file that was made, nothing, something else, or unknown. */
+/**
+ * What stands at a recorded name now: the file that was made, nothing, something else, or unknown. A
+ * held name is the file that was made only while it is also still empty: one written into since is
+ * not the restore's to remove.
+ */
 async function standing(record: Made): Promise<'made' | 'absent' | 'other' | { unknown: string }> {
   try {
     const st = await fsp.lstat(record.path, { bigint: true });
-    return st.isFile() && `${st.dev}:${st.ino}` === record.id ? 'made' : 'other';
+    const same = st.isFile() && `${st.dev}:${st.ino}` === record.id && (record.kind !== 'placeholder' || st.size === 0n);
+    return same ? 'made' : 'other';
   } catch (err) {
     return meansAbsent(err) ? 'absent' : { unknown: describeFsError(err) };
   }
@@ -141,9 +225,10 @@ async function compact(): Promise<void> {
 
 /**
  * At start: removes the temporary files restores left — only names recorded here, and only while
- * each is still the file it was made as. Never while a restore is under way in this process. A name
- * whose place cannot be looked at keeps its record for a later start; one that is something else
- * now is left alone, and its record dropped.
+ * each is still the file it was made as. Never while a restore is under way in this process, and
+ * never a record of another process still running (FG3h D): kept for a later start. A name whose
+ * place cannot be looked at keeps its record for a later start; one that is something else now is
+ * left alone, and its record dropped.
  */
 export async function sweepRestoreLeftovers(): Promise<{ removed: string[]; kept: { path: string; why: string }[] }> {
   if (isEphemeral()) return { removed: [], kept: [] };
@@ -155,6 +240,11 @@ export async function sweepRestoreLeftovers(): Promise<{ removed: string[]; kept
     for (const record of await readJournal()) {
       const now = await standing(record);
       if (now === 'absent') continue;
+      if (now === 'made' && record.pid !== undefined && record.pid !== process.pid && isRunning(record.pid)) {
+        kept.push({ path: record.path, why: 'the TreeMap that recorded it is still running, and may still be restoring it' });
+        stay.push(record);
+        continue;
+      }
       if (now === 'other') {
         kept.push({ path: record.path, why: 'something else stands at that name now' });
         continue;

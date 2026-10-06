@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { pipeline } from 'stream/promises';
 import path from 'path';
 import { identityOf, UNKNOWN } from './placeIdentity';
-import { meansAbsent } from './errno';
+import { describeFsError, meansAbsent } from './errno';
 
 /**
  * copyVerify — the copy-and-fingerprint primitive shared by every feature that
@@ -56,9 +56,13 @@ export class CopyCancelled extends Error {
  * that reads `CopyCancelled` as "rolled back, nothing left" never says so of this one.
  */
 export class CopyLeftBehind extends Error {
-  constructor(readonly dest: string, readonly why: string, cause: unknown) {
+  /**
+   * `made` says what is left at `dest`: the part of a copy, or (FG3g review F1.1) the empty file a
+   * placement held at an item's own name for its rename.
+   */
+  constructor(readonly dest: string, readonly why: string, cause: unknown, made: 'part' | 'held' = 'part') {
     super(`${cause instanceof CopyCancelled ? 'It was cancelled' : cause instanceof Error ? cause.message : String(cause)}, ` +
-      `and the part already copied to ${dest} could not be removed (${why})`, { cause });
+      `and ${made === 'held' ? 'the empty file held at' : 'the part already copied to'} ${dest} could not be removed (${why})`, { cause });
     this.name = 'CopyLeftBehind';
   }
 }
@@ -258,24 +262,33 @@ export function setBeforeRenameIntoPlaceForTests(fn: (dest: string) => void): ()
   return () => { beforeRenameIntoPlaceForTests = null; };
 }
 
+/** What a placement tells its caller about the empty file it holds at a name (FG3g review F1.1). */
+export interface PlacementHooks {
+  /** Awaited with the held file's `dev:ino` once it is made, before the rename: a restore records it. */
+  onHeld?: (identity: string) => Promise<void>;
+  /** Awaited with the same identity once the file is in place over it: a restore settles that record. */
+  onPlacedOverHeld?: (identity: string) => Promise<void>;
+}
+
 /**
  * Put the complete, verified file at `partial` at `dest`, never over anything (FG3f #8). A hard
  * link is made at `dest` — which fails with EEXIST if anything stands there, in one step — and the
  * partial name is then dropped. Where the volume makes no hard links (FAT, exFAT, some network
  * shares), the file is renamed into a name held for it (`renameIntoHeldName`). Throws EEXIST when
- * something stands at `dest`, leaving the partial for the caller to remove.
+ * something stands at `dest`, leaving the partial for the caller to remove — or `CopyLeftBehind`
+ * naming `dest` when the empty file it held there could not be removed or looked at.
  *
  * Answers `partialLeft`: why the partial name could not be dropped once the file was in place, or
  * null (FG3g L4). It is a second name for the restored file, never a wrong file — but it is the
  * restore's to remove, and one it forgets was left at the item's place for good: a rollback did not
  * remove it and a retry found the place occupied with no word of why.
  */
-export async function placeWithoutClobber(partial: string, dest: string): Promise<{ partialLeft: string | null }> {
+export async function placeWithoutClobber(partial: string, dest: string, hooks: PlacementHooks = {}): Promise<{ partialLeft: string | null }> {
   try {
     await (hardLinkForTests ?? ((a: string, b: string) => fsp.link(a, b)))(partial, dest);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw err;
-    await renameIntoHeldName(partial, dest);
+    await renameIntoHeldName(partial, dest, hooks);
     return { partialLeft: null };
   }
   const partialLeft = await fsp.rm(partial, { force: true }).then(() => null, (err: unknown) => (err instanceof Error ? err.message : String(err)));
@@ -287,10 +300,24 @@ function standsThere(dest: string): Error {
   return Object.assign(new Error(`EEXIST: something already stands at ${dest}`), { code: 'EEXIST' });
 }
 
-/** A file's device and id, or null when nothing (or not a plain empty file) is there. */
-async function emptyFileIdentity(at: string): Promise<string | null> {
-  const st = await fsp.lstat(at, { bigint: true }).catch(() => null);
-  return st !== null && st.isFile() && st.size === 0n ? `${st.dev}:${st.ino}` : null;
+/**
+ * What stands at `at` now, against the empty file a placement held there (`id`): that file, still
+ * empty (`held`); nothing (`absent`); anything else (`other`) — or `{ unknown }` when it could not
+ * be looked at (FG3g review F1.1), which is none of those: read as "something else", a look that
+ * failed for a moment (EIO, EACCES) was refused as EEXIST while the held file stayed at the name.
+ */
+async function heldAt(at: string, id: string): Promise<'held' | 'absent' | 'other' | { unknown: string }> {
+  try {
+    const st = await fsp.lstat(at, { bigint: true });
+    return st.isFile() && st.size === 0n && `${st.dev}:${st.ino}` === id ? 'held' : 'other';
+  } catch (err) {
+    return meansAbsent(err) ? 'absent' : { unknown: describeFsError(err) };
+  }
+}
+
+/** Removes the held file at `dest`, answering null or why it could not be removed. */
+async function removeHeld(dest: string): Promise<string | null> {
+  return fsp.rm(dest, { force: true }).then(() => null, (err: unknown) => describeFsError(err));
 }
 
 /**
@@ -302,27 +329,49 @@ async function emptyFileIdentity(at: string): Promise<string | null> {
  * its place, since is left as it is (EEXIST). Where nothing can be told apart — a volume whose file
  * ids are not stable — a write into the placeholder in the instant before the rename is the one
  * thing still replaced; a volume with hard links never takes this path.
+ *
+ * The held file is this placement's own until the rename (FG3g review F1.1): its caller is told of it
+ * (`hooks.onHeld`, so a restore records it for the sweep after a kill), and a placement that does not
+ * finish removes it while it is still that empty file — or, when it cannot be removed or looked at,
+ * throws `CopyLeftBehind` naming it. A removal that failed was swallowed, and the person found an
+ * empty file under their own name that nothing named, and a retry refused as occupied.
  */
-async function renameIntoHeldName(partial: string, dest: string): Promise<void> {
+async function renameIntoHeldName(partial: string, dest: string, hooks: PlacementHooks): Promise<void> {
   const held = await fsp.open(dest, 'wx');
-  let id: string | null = null;
+  let id: string;
   try {
     const st = await held.stat({ bigint: true });
     id = `${st.dev}:${st.ino}`;
-  } finally {
+  } catch (err) {
     await held.close().catch(() => {});
-    // Made here a moment ago and never told apart: removed rather than left at the person's name.
-    if (id === null) await fsp.rm(dest, { force: true }).catch(() => {});
+    // Made here a moment ago and never told apart: removed rather than left at the person's name, or named.
+    const why = await removeHeld(dest);
+    if (why !== null) throw new CopyLeftBehind(dest, why, err, 'held');
+    throw err;
   }
+  await held.close().catch(() => {});
+  await hooks.onHeld?.(id);
   beforeRenameIntoPlaceForTests?.(dest);
-  if (await emptyFileIdentity(dest) !== id) throw standsThere(dest);
+  const before = await heldAt(dest, id);
+  if (before === 'absent' || before === 'other') throw standsThere(dest);
+  if (before !== 'held') {
+    throw new CopyLeftBehind(dest, 'it could not be told from anything put there since, so it was left as it is',
+      new Error(`its place could not be looked at right before the file was put there (${before.unknown})`), 'held');
+  }
   try {
     await fsp.rename(partial, dest);
   } catch (err) {
-    // The placeholder is this placement's own: removed while it is still the same empty file.
-    if (await emptyFileIdentity(dest) === id) await fsp.rm(dest, { force: true }).catch(() => {});
+    // Removed while it is still the same empty file; named when it cannot be removed, or looked at.
+    const now = await heldAt(dest, id);
+    if (now === 'held') {
+      const why = await removeHeld(dest);
+      if (why !== null) throw new CopyLeftBehind(dest, why, err, 'held');
+    } else if (now !== 'absent' && now !== 'other') {
+      throw new CopyLeftBehind(dest, `it could not be looked at (${now.unknown})`, err, 'held');
+    }
     throw err;
   }
+  await hooks.onPlacedOverHeld?.(id);
 }
 
 /**

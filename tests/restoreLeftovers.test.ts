@@ -2,13 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 const DATA = isolatedDataDir('treemap-restoreLeftovers-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { getCapsuleJob, protectItems, startCapsuleMaintenance, startCapsuleRestore, stopCapsuleMaintenance } from '../src/services/timeCapsule';
-import { recordRestorePartial, sweepRestoreLeftovers } from '../src/services/restoreLeftovers';
+import { recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers } from '../src/services/restoreLeftovers';
 import { createScanRecord } from '../src/services/diskScanner';
 import { getOffloadIndex, getOffloadJob, prepareOffload, startOffload, startRestore } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -216,4 +217,70 @@ test('the tidying after a restore keeps the record of a temporary file still the
   assert.deepEqual(swept.removed.sort(), [...planted].sort(), 'the next start removes them');
   assert.ok(!fs.existsSync(stillThere) && !fs.existsSync(unseen));
   assert.deepEqual(records(), []);
+});
+
+test('an empty file a restore held at an item\'s own name is removed at the next start only while it is still that empty file, and never once it was settled (FG3g review F1.1, FG3h D)', async () => {
+  const dir = fileTempDir('treemap-restoreLeftovers-held-');
+  const left = path.join(dir, 'report.docx'); // the person's own name: held, then a kill
+  const grown = path.join(dir, 'notes.txt'); // held, then written into by something else
+  const settledName = path.join(dir, 'empty.txt'); // held, and the file put over it is as empty
+  for (const p of [left, grown, settledName]) fs.writeFileSync(p, '');
+  for (const p of [left, grown, settledName]) await restorePlacementHooks(p).onHeld(identity(p));
+  fs.writeFileSync(grown, 'written into the held name since'); // the same file, no longer empty
+  await restorePlacementHooks(settledName).onPlacedOverHeld(identity(settledName));
+  const swept = await sweepRestoreLeftovers();
+  assert.deepEqual(swept.removed, [left], JSON.stringify(swept));
+  assert.equal(fs.existsSync(left), false, 'the empty file a kill left at the name is gone');
+  assert.equal(fs.readFileSync(grown, 'utf8'), 'written into the held name since', 'one written into since is never removed');
+  assert.ok(fs.existsSync(settledName), 'and one whose placement finished is never taken for a leftover, though as empty and the same id');
+  assert.deepEqual(records(), [], 'nothing is left to record');
+});
+
+test('a held name\'s record is acted on only while it names an empty file: a planted one for a file with content is never acted on', async () => {
+  const precious = path.join(fileTempDir('treemap-restoreLeftovers-planted-held-'), 'thesis.docx');
+  fs.writeFileSync(precious, 'a file a record was planted for');
+  fs.appendFileSync(JOURNAL, `${JSON.stringify({ path: precious, id: identity(precious), kind: 'placeholder' })}\n`);
+  const swept = await sweepRestoreLeftovers();
+  assert.deepEqual(swept.removed, []);
+  assert.equal(fs.readFileSync(precious, 'utf8'), 'a file a record was planted for');
+});
+
+test('the start-up sweep never removes what another TreeMap still running recorded; it removes what one that has ended left (FG3h D)', async () => {
+  const dir = fileTempDir('treemap-restoreLeftovers-pid-');
+  const live = path.join(dir, '.treemap-restore-cccc0001');
+  const ended = path.join(dir, '.treemap-restore-cccc0002');
+  fs.writeFileSync(live, 'a restore under way in another TreeMap');
+  fs.writeFileSync(ended, 'left by a TreeMap that has ended');
+  // A process that has ended: its id is no longer running (a child, run to its end).
+  const gone = spawnSync(process.execPath, ['-e', ''], { env: { ...process.env } }).pid;
+  assert.ok(typeof gone === 'number');
+  fs.appendFileSync(JOURNAL, `${JSON.stringify({ path: live, id: identity(live), pid: process.ppid })}\n`); // the runner that started this file: running
+  fs.appendFileSync(JOURNAL, `${JSON.stringify({ path: ended, id: identity(ended), pid: gone })}\n`);
+  const swept = await sweepRestoreLeftovers();
+  assert.deepEqual(swept.removed, [ended], JSON.stringify(swept));
+  assert.ok(fs.existsSync(live), 'the live restore\'s temporary file is still there');
+  assert.match(swept.kept.find((k) => k.path === live)?.why ?? '', /still running/, JSON.stringify(swept.kept));
+  assert.deepEqual(records().map((r) => r.path), [live], 'and its record stays for a later start');
+  fs.rmSync(live);
+  await sweepRestoreLeftovers(); // gone now: the record goes
+  assert.deepEqual(records(), []);
+});
+
+test('every record a restore writes names the process that wrote it', async () => {
+  const { file, id } = await capturedFile('pid', 'the content of a file whose restore is recorded');
+  let pids: (number | undefined)[] = [];
+  const unhook = setCopyFaultForTests(() => {
+    if (pids.length === 0) {
+      pids = fs.readFileSync(JOURNAL, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { path: string; pid?: number })
+        .filter((r) => path.dirname(r.path) === path.dirname(file)).map((r) => r.pid);
+    }
+    return null;
+  });
+  try {
+    const job = await settled((await startCapsuleRestore([id])).jobId);
+    assert.equal(job.status, 'complete', job.error);
+  } finally {
+    unhook();
+  }
+  assert.ok(pids.length > 0 && pids.every((p) => p === process.pid), JSON.stringify(pids));
 });

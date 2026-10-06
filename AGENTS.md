@@ -452,7 +452,11 @@ OpenAPI 3 spec).
      the restore with a warning naming it. Each file is written beside its
      name (`.treemap-restore-…`) and put there only once it verifies; one a
      quit or a kill left is removed at the next start — only names TreeMap
-     recorded, and only while each is still the file it made.
+     recorded, only while each is still the file it made, and never one
+     another TreeMap still running recorded. On a volume without hard links
+     the item's own name is held with an empty file for the rename; that is
+     recorded too, removed at the next start only while it is still that
+     empty file, and named when a failed restore cannot remove it.
      (Directory times are restored after their contents, so writing the
      children back does not re-stamp the folder.) It is a separate route from
      `DELETE /api/files`

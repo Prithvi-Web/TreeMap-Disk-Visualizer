@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
-isolatedDataDir('treemap-capsuleRestorePlace-data-');
+const DATA = isolatedDataDir('treemap-capsuleRestorePlace-data-');
 
 import { getCapsuleJob, protectItems, startCapsuleRestore } from '../src/services/timeCapsule';
+import { sweepRestoreLeftovers } from '../src/services/restoreLeftovers';
 import { setBeforeRenameIntoPlaceForTests, setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
 import { AppError } from '../src/middleware/errorHandler';
 import { waitFor } from './fixtures/waitFor';
@@ -310,4 +311,81 @@ test('a temporary name the restore could not drop is still its own: a rollback r
   assert.equal(job.status, 'error');
   assert.match(job.error ?? '', /\.treemap-restore-/, `the temporary name is named among what could not be removed (${job.error})`);
   assert.match(job.error ?? '', /and 1 more thing it had made/, job.error);
+});
+
+/* ─────────────── FG3g review F1.1: the empty file held at the name is the restore's own to name ─────────────── */
+
+/** The restore journal's records, as written (restore-leftovers.jsonl in app-data). */
+function journal(): { path: string; id: string; kind?: string }[] {
+  const file = path.join(DATA, 'restore-leftovers.jsonl');
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { path: string; id: string; kind?: string });
+}
+
+function identity(p: string): string {
+  const st = fs.lstatSync(p, { bigint: true });
+  return `${st.dev}:${st.ino}`;
+}
+
+const escaped = (p: string): RegExp => new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+for (const [label, mode, why] of [
+  ['the rename and the removal both fail', 0o500, 'its folder stops taking renames and removals'],
+  ['its place cannot be looked at', 0o600, 'its folder can no longer be looked into'],
+] as const) {
+  test(`where the volume makes no hard links and ${label}, the empty file held at the name is named, recorded, and removed at the next start`, { skip: SKIP_MODES }, async () => {
+    const { folder, big, id } = await capturedBig(`no-links-held-${mode.toString(8)}`);
+    const unlink = setHardLinkForTests(async () => { throw Object.assign(new Error('operation not supported (a test)'), { code: 'ENOTSUP' }); });
+    let held: { recorded: boolean; empty: boolean } | null = null;
+    const unhook = setBeforeRenameIntoPlaceForTests((dest) => {
+      if (dest !== big) return;
+      const record = journal().find((r) => r.path === big);
+      held = { recorded: record?.kind === 'placeholder' && record.id === identity(big), empty: fs.statSync(big).size === 0 };
+      fs.chmodSync(folder, mode); // in that instant, as the test's name says
+    });
+    let job: { status?: string; error?: string };
+    try {
+      job = await settled((await startCapsuleRestore([id])).jobId);
+    } finally {
+      unhook();
+      unlink();
+      fs.chmodSync(folder, 0o755);
+    }
+    assert.deepEqual(held, { recorded: true, empty: true }, 'the empty file held at the name was recorded, as the file it is, before the rename');
+    assert.equal(job.status, 'error', job.error);
+    assert.doesNotMatch(job.error ?? '', /appeared/, 'nothing appeared there: it is the restore\'s own');
+    assert.match(job.error ?? '', escaped(`what it had already made at ${big}`), `the empty file at the name is named (${job.error})`);
+    assert.equal(fs.statSync(big).size, 0, 'it is still there, empty');
+    const swept = await sweepRestoreLeftovers(); // what the next start does
+    assert.ok(swept.removed.includes(big), `the next start removes it (${JSON.stringify(swept)})`);
+    assert.equal(fs.existsSync(big), false);
+    assert.deepEqual(partials(folder), [], 'and the copy beside it, recorded too');
+  });
+}
+
+test('where the volume makes no hard links, a held name\'s record is settled once the file is in place over it, so no later start takes it for a leftover', async () => {
+  const { folder, ids } = await captured('no-links-settled');
+  const top = path.join(folder, 'top.txt');
+  const deep = path.join(folder, 'sub', 'deep.txt');
+  const unlink = setHardLinkForTests(async () => { throw Object.assign(new Error('operation not supported (a test)'), { code: 'ENOTSUP' }); });
+  type Line = { path: string; kind?: string; settled?: boolean };
+  let lines: Line[] | null = null;
+  // While the next file copies, the first is in place: its held name's record is settled by then.
+  const unhook = setCopyFaultForTests((dest) => {
+    if (lines === null && isRestoreCopyFor(dest, deep)) {
+      lines = fs.readFileSync(path.join(DATA, 'restore-leftovers.jsonl'), 'utf8').split('\n').filter(Boolean)
+        .map((l) => JSON.parse(l) as { path: string; kind?: string; settled?: boolean }).filter((r) => r.path === top);
+    }
+    return null;
+  });
+  let job: { status?: string; error?: string };
+  try {
+    job = await settled((await startCapsuleRestore([ids[1]])).jobId);
+  } finally {
+    unhook();
+    unlink();
+  }
+  assert.equal(job.status, 'complete', job.error);
+  const seen = (lines as Line[] | null) ?? []; // set inside the seam's callback
+  assert.deepEqual(seen.map((r) => (r.settled === true ? 'settled' : r.kind)), ['placeholder', 'settled'], JSON.stringify(seen));
 });
