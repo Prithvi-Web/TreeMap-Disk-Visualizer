@@ -266,7 +266,8 @@ async function forgetPeer(id) {
 }
 
 async function triggerPeerScan(id) {
-  const path = await askText({ title: 'Scan on that machine', label: 'Which folder should that machine scan?', ok: 'Ask it to scan' });
+  // A folder: whitespace at its end is part of its name (final review F1.8).
+  const path = await askText({ title: 'Scan on that machine', label: 'Which folder should that machine scan?', ok: 'Ask it to scan', path: true });
   if (!path) return;
   try {
     await api(`/api/fleet/peers/${encodeURIComponent(id)}/trigger-scan`, {

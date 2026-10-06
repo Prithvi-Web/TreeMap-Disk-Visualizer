@@ -618,15 +618,23 @@ function renderSavedViews() {
    nothing at all in the desktop app. They ask through #askModal instead, a
    sheet like any other, so the focus and inert net (235) applies to it. */
 let askResolve = null;
+/** Whether the open question asks for a folder (askText's `path`). */
+let askIsPath = false;
 
 /**
  * Ask one question with a typed answer. Resolves with the trimmed text, or
  * null when the sheet is closed any way but OK — Cancel, ×, the scrim and
  * Escape all reach closeModal, which settles it — or OK is pressed with
  * nothing typed: what prompt() answered as null or ''.
+ *
+ * `path`: the answer is a folder, read as every path box is (asPath) —
+ * leading whitespace goes, and whitespace at its end stays, part of the
+ * folder's name. Trimmed, "Screenshots " was asked for as its sibling
+ * "Screenshots" (final review F1.8).
  */
-function askText({ title, label, value = '', ok = 'OK' }) {
+function askText({ title, label, value = '', ok = 'OK', path = false }) {
   askSettle(null); // a question still open is answered "no", never left waiting
+  askIsPath = path;
   $('askTitle').textContent = title;
   $('askLabel').textContent = label;
   $('askInput').value = value;
@@ -642,7 +650,8 @@ function askSettle(answer) {
   if (resolve) resolve(answer);
 }
 $('askOk').addEventListener('click', () => {
-  askSettle($('askInput').value.trim() || null);
+  const text = $('askInput').value;
+  askSettle((askIsPath ? asPath(text) : text.trim()) || null);
   closeModal('askModal');
 });
 $('askInput').addEventListener('keydown', (e) => {

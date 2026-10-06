@@ -342,6 +342,20 @@ test('the picker\'s one button says what it does where it was opened — "Scan t
   assert.equal(boxLabel(), 'Scan this folder', 'from the Scan card, "Scan this folder"');
 });
 
+test('a folder named by ?path= keeps the whitespace at its end — the deep link is read as every path box is, never trimmed into its sibling (final review F1.8)', () => {
+  // The VS Code extension's one channel: "Scan with TreeMap" on a folder
+  // named "Screenshots " put "Screenshots" in the box and scanned it — and
+  // granted the scanned-root permission to that sibling.
+  const fn = between('function requestedPath()', 'async function restoreLastSession');
+  const asPath = lift<(s: string) => string>(['asPath'], 'asPath');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const read = (search: string) => new Function('location', 'asPath', `'use strict'; ${fn} return requestedPath();`)({ search }, asPath) as string | null;
+  assert.equal(read('?path=' + encodeURIComponent('/Users/me/Screenshots ')), '/Users/me/Screenshots ', 'the trailing space is part of the name');
+  assert.equal(read('?path=' + encodeURIComponent('  /Users/me/Screenshots')), '/Users/me/Screenshots', 'leading whitespace is paste debris');
+  assert.equal(read('?path=' + encodeURIComponent('   ')), null, 'a blank path names nothing');
+  assert.equal(read(''), null, 'control: no path asked for');
+});
+
 /* ══════════════ A trailing space is part of a folder's name (F1.1) ══════════════ */
 
 const SHOT = '/home/u/Screenshots ';

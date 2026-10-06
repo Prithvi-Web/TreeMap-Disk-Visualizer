@@ -21890,15 +21890,23 @@ function renderSavedViews() {
    nothing at all in the desktop app. They ask through #askModal instead, a
    sheet like any other, so the focus and inert net (235) applies to it. */
 let askResolve = null;
+/** Whether the open question asks for a folder (askText's `path`). */
+let askIsPath = false;
 
 /**
  * Ask one question with a typed answer. Resolves with the trimmed text, or
  * null when the sheet is closed any way but OK — Cancel, ×, the scrim and
  * Escape all reach closeModal, which settles it — or OK is pressed with
  * nothing typed: what prompt() answered as null or ''.
+ *
+ * `path`: the answer is a folder, read as every path box is (asPath) —
+ * leading whitespace goes, and whitespace at its end stays, part of the
+ * folder's name. Trimmed, "Screenshots " was asked for as its sibling
+ * "Screenshots" (final review F1.8).
  */
-function askText({ title, label, value = '', ok = 'OK' }) {
+function askText({ title, label, value = '', ok = 'OK', path = false }) {
   askSettle(null); // a question still open is answered "no", never left waiting
+  askIsPath = path;
   $('askTitle').textContent = title;
   $('askLabel').textContent = label;
   $('askInput').value = value;
@@ -21914,7 +21922,8 @@ function askSettle(answer) {
   if (resolve) resolve(answer);
 }
 $('askOk').addEventListener('click', () => {
-  askSettle($('askInput').value.trim() || null);
+  const text = $('askInput').value;
+  askSettle((askIsPath ? asPath(text) : text.trim()) || null);
   closeModal('askModal');
 });
 $('askInput').addEventListener('keydown', (e) => {
@@ -34242,7 +34251,8 @@ async function forgetPeer(id) {
 }
 
 async function triggerPeerScan(id) {
-  const path = await askText({ title: 'Scan on that machine', label: 'Which folder should that machine scan?', ok: 'Ask it to scan' });
+  // A folder: whitespace at its end is part of its name (final review F1.8).
+  const path = await askText({ title: 'Scan on that machine', label: 'Which folder should that machine scan?', ok: 'Ask it to scan', path: true });
   if (!path) return;
   try {
     await api(`/api/fleet/peers/${encodeURIComponent(id)}/trigger-scan`, {
@@ -35566,11 +35576,15 @@ loadNotes();
  * two things the Browse… picker does with what it returns. Every path check
  * that matters is the server's, which refuses anything outside what it will
  * scan regardless of who asked.
+ *
+ * Read as every path box is (asPath): leading whitespace goes, and whitespace
+ * at its end stays — it is part of a folder's name, and a trim turned
+ * "Screenshots " into its sibling "Screenshots", scanned in its place (final
+ * review F1.8).
  */
 function requestedPath() {
   try {
-    const p = new URLSearchParams(location.search).get('path');
-    return p && p.trim() ? p.trim() : null;
+    return asPath(new URLSearchParams(location.search).get('path')) || null;
   } catch { return null; }
 }
 

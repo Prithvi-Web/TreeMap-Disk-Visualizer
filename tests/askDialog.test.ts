@@ -115,10 +115,12 @@ function askHarness() {
     activeJob: null,
     toast: () => {},
     confirmFooterReset: () => {},
+    asPath: new Function(`${declOf('asPath')}\nreturn asPath;`)(),
   };
   const keys = Object.keys(deps);
   const src = `
     let askResolve = null;
+    ${INDEX.includes('let askIsPath = false;') ? 'let askIsPath = false;' : ''}
     ${declOf('askSettle')}
     ${declOf('askText')}
     ${declOf('closeModal')}
@@ -143,6 +145,25 @@ test('OK answers with the trimmed text and closes the sheet', async () => {
   h.page.ok();
   assert.equal(await settled(answer), 'Big files');
   assert.ok(!h.open(), 'and it closes');
+});
+
+test('a folder asked for keeps the whitespace at its end — part of its name — and loses only the leading paste debris, as every path box reads one; other answers are trimmed (final review F1.8)', async () => {
+  // "Scan on that machine" trimmed its answer, so a folder named
+  // "Screenshots " was asked for as its sibling "Screenshots" — scanned, and
+  // granted the scanned-root permission, in its place.
+  const h = askHarness();
+  const folder = h.page.askText({ title: 'Scan on that machine', label: 'Which folder?', path: true });
+  h.$('askInput').value = '  /Users/me/Screenshots ';
+  h.page.ok();
+  assert.equal(await settled(folder), '/Users/me/Screenshots ', 'the trailing space stays, the leading whitespace goes');
+  const blank = h.page.askText({ title: 'Scan on that machine', label: 'Which folder?', path: true });
+  h.$('askInput').value = '   ';
+  h.page.ok();
+  assert.equal(await settled(blank), null, 'a blank folder is a cancel');
+  const name = h.page.askText({ title: 'Save view', label: 'Name this view' });
+  h.$('askInput').value = '  Big files  ';
+  h.page.ok();
+  assert.equal(await settled(name), 'Big files', 'the next question, not a path, is trimmed again');
 });
 
 test('Enter in the field is OK', async () => {
@@ -233,6 +254,7 @@ test('a paired machine\'s scan folder is asked for in the page', async () => {
   const post = yes.calls.find((c) => /\/trigger-scan$/.test(c.url));
   assert.ok(post, 'the folder reaches the request');
   assert.equal(post!.body.path, '/Users/me/Movies');
+  assert.equal(yes.asked[0].path, true, 'asked for as a path, so a trailing space in its name stays (final review F1.8)');
   const no = caller('triggerPeerScan', null);
   await no.fn('peer-1');
   assert.equal(no.calls.length, 0);

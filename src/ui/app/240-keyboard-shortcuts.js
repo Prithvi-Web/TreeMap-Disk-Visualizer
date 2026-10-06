@@ -332,11 +332,15 @@ loadNotes();
  * two things the Browse… picker does with what it returns. Every path check
  * that matters is the server's, which refuses anything outside what it will
  * scan regardless of who asked.
+ *
+ * Read as every path box is (asPath): leading whitespace goes, and whitespace
+ * at its end stays — it is part of a folder's name, and a trim turned
+ * "Screenshots " into its sibling "Screenshots", scanned in its place (final
+ * review F1.8).
  */
 function requestedPath() {
   try {
-    const p = new URLSearchParams(location.search).get('path');
-    return p && p.trim() ? p.trim() : null;
+    return asPath(new URLSearchParams(location.search).get('path')) || null;
   } catch { return null; }
 }
 
