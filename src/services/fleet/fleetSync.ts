@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { readJsonFile, writeJsonFile } from '../storage';
 import { PathRejectedError, sanitizePath } from '../../utils/pathSanitizer';
+import { AppError } from '../../middleware/errorHandler';
 import { FleetSummary, serialiseSummary } from './fleetSummary';
 
 /**
@@ -489,7 +490,16 @@ export async function handlePeerRequest(
       send(res, 400, { error: err.message, code: err.code });
       return;
     }
-    const started = await hooks.startScan(root);
+    let started: { scanId: string };
+    try {
+      started = await hooks.startScan(root);
+    } catch (err) {
+      // This machine's own refusal — agent-policy.json's allowedRoots — is the peer's answer too,
+      // as POST /api/scan gives it; anything else stays the server's own failure.
+      if (!(err instanceof AppError) || err.status !== 403) throw err;
+      send(res, 403, { error: err.message, code: err.code });
+      return;
+    }
     // The scanId only; the RESULT is never pushed anywhere. A peer sees the
     // outcome as a summary, exactly like any other, or not at all.
     send(res, 202, { scanId: started.scanId });

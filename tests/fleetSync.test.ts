@@ -5,8 +5,10 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('tm-fleet-');
+process.env.TREEMAP_NO_GDU = '1'; // one test runs a real scan of a small folder, on the walker
 
 import {
   DEFAULT_FLEET_PORT, FleetConfig, PAIRING_WINDOW_MS, beginPairing, cancelPairing,
@@ -14,6 +16,10 @@ import {
   resetFleetConfig, secretMatches, verifyPairingCode,
 } from '../src/services/fleet/fleetSync';
 import { FleetSummary, SUMMARY_FIELDS, buildSummary, isForbiddenSummaryField, serialiseSummary } from '../src/services/fleet/fleetSummary';
+import { startPeerScan } from '../src/services/fleet/fleetRuntime';
+import { allScans, getScan } from '../src/services/diskScanner';
+import { appDataDir } from '../src/services/storage';
+import { POLICY_FILE } from '../src/services/policy';
 
 /**
  * §D1 — LAN fleet view.
@@ -51,7 +57,7 @@ async function call(
   cfg: FleetConfig,
   method: string,
   url: string,
-  opts: { body?: unknown; secret?: string; from?: string; onPairingAbuse?: (address: string) => void } = {},
+  opts: { body?: unknown; secret?: string; from?: string; onPairingAbuse?: (address: string) => void; startScan?: (root: string) => Promise<{ scanId: string }> } = {},
 ): Promise<{ status: number; body: any }> {
   const payload = opts.body === undefined ? undefined : JSON.stringify(opts.body);
   const req = new http.IncomingMessage(null as never);
@@ -72,7 +78,10 @@ async function call(
 
   const done = handlePeerRequest(req, res, cfg, {
     async summary() { return summary({ acceptsRemoteScan: cfg.allowRemoteScan }); },
-    async startScan(root: string) { scansStarted.push(root); return { scanId: 'scan-1' }; },
+    async startScan(root: string) {
+      scansStarted.push(root);
+      return opts.startScan ? opts.startScan(root) : { scanId: 'scan-1' };
+    },
     onPairingAbuse: opts.onPairingAbuse,
   });
   if (payload) { req.emit('data', Buffer.from(payload)); }
@@ -337,6 +346,32 @@ test('a scan another machine asks for is judged by this machine’s own path rul
   for (const p of ['~', '~/x']) statuses.push((await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } })).status);
   assert.deepEqual(statuses, [202, 202]);
   assert.deepEqual(scansStarted, [tmp, os.homedir(), path.join(os.homedir(), 'x')]);
+});
+
+test('a scan another machine asks for is held to agent-policy.json’s allowedRoots, as one asked for here is: outside them 403 POLICY_ROOT_NOT_ALLOWED and nothing is scanned; inside them it starts', async () => {
+  // AGENTS.md: allowedRoots "confines both scanning and destruction". POST /api/scan, the MCP scan_path
+  // tool, the index and Autopilot asked it; the scan a paired peer starts did not.
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  const allowed = fs.realpathSync(fileTempDir('tm-fleet-allowed-'));
+  fs.writeFileSync(path.join(allowed, 'a.txt'), 'a');
+  const elsewhere = fs.realpathSync(fileTempDir('tm-fleet-elsewhere-'));
+  const policyFile = path.join(appDataDir(), POLICY_FILE);
+  fs.writeFileSync(policyFile, JSON.stringify({ allowedRoots: [allowed] }));
+  try {
+    const refused = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: elsewhere }, startScan: startPeerScan });
+    assert.deepEqual([refused.status, refused.body?.code], [403, 'POLICY_ROOT_NOT_ALLOWED'], JSON.stringify(refused.body));
+    assert.deepEqual(allScans().filter((s) => s.rootPath === elsewhere), [], 'nothing was scanned');
+    const started = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: allowed }, startScan: startPeerScan });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const scan = getScan(started.body.scanId);
+    await waitFor(() => scan?.status !== 'running', 'the scan inside the allowed root');
+    assert.deepEqual([scan?.rootPath, scan?.status], [allowed, 'complete']);
+  } finally {
+    fs.rmSync(policyFile, { force: true });
+  }
 });
 
 test('there is no route that deletes, reads a file, or lists a directory', async () => {

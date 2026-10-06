@@ -5,6 +5,7 @@ import { FleetConfig, RunningPeerServer, lanAddresses, loadFleetConfig, startPee
 import { ScanResult } from '../../models/types';
 import { DiscoveredPeer, MdnsResponder } from './mdns';
 import { buildSummary, FleetSummary } from './fleetSummary';
+import { assertScanAllowed, getPolicy } from '../policy';
 
 /**
  * fleetRuntime — owns the socket, and therefore owns the opt-in (§D1).
@@ -113,17 +114,7 @@ class FleetRuntime {
       // The peer server refuses the guesser; saying so out loud is this
       // machine's job, and the fleet panel is where the code was shown.
       onPairingAbuse: (address: string) => { this.abuse = { address, at: Date.now() }; },
-      startScan: async (path: string) => {
-        // `path` was judged by the receiver (fleetSync's /fleet/scan) with this
-        // machine's path rules — sanitizePath, as POST /api/scan applies it —
-        // because startScan itself sanitizes nothing (the SEC-2 review, F2).
-        // agent-policy.json's allowedRoots is not asked here: it confines the
-        // API's and the MCP tools' callers, and a peer's scan is a separate
-        // opt-in. Imported lazily to keep the fleet module out of the boot path.
-        const { startScan } = await import('../diskScanner');
-        const scan = await startScan(path, {});
-        return { scanId: scan.scanId };
-      },
+      startScan: startPeerScan,
     }, addresses);
 
     this.mdns = new MdnsResponder({
@@ -179,6 +170,25 @@ class FleetRuntime {
     if (mdns) await mdns.stop().catch(() => undefined);
     if (server) await server.close().catch(() => undefined);
   }
+}
+
+/**
+ * The scan a paired peer asks this machine for (fleetSync's /fleet/scan, the
+ * hook `startScan`). `root` was judged by the receiver with this machine's
+ * path rules — sanitizePath, as POST /api/scan applies it — because
+ * diskScanner's startScan itself sanitizes nothing (the SEC-2 review, F2).
+ * And agent-policy.json's allowedRoots, which "confines both scanning and
+ * destruction", holds for it as for a scan asked for here (POST /api/scan, the
+ * MCP scan_path tool, Autopilot): a root outside them is refused 403
+ * POLICY_ROOT_NOT_ALLOWED before anything is scanned, and the receiver answers
+ * the peer with that refusal. Imported lazily to keep the fleet module out of
+ * the boot path.
+ */
+export async function startPeerScan(root: string): Promise<{ scanId: string }> {
+  assertScanAllowed(await getPolicy(), root);
+  const { startScan } = await import('../diskScanner');
+  const scan = await startScan(root, {});
+  return { scanId: scan.scanId };
 }
 
 let runtime: FleetRuntime | null = null;
