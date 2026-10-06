@@ -8434,16 +8434,20 @@ function rememberScannedRoot(p) {
 let fastRescanNative = null;
 /**
  * The engine rule (scan/nativeEngine.ts, nativeRule) as far as the page can
- * see it: Automatic or Native, the native core loaded, and no "Don't scan"
- * pattern (their glob dialect lives in the walker). The probe of the folder
- * itself is the server's; a refusal there sends a scan to the walker, which
- * only means the box was not offered where it would have helped.
+ * see it: Automatic, Native or NTFS turbo, the native core loaded, and no
+ * "Don't scan" pattern (their glob dialect lives in the walker). NTFS turbo
+ * is one of them because nativeRule has no rule for it (final review F1.6):
+ * where the turbo mode does not scan, the native engine does, so a fast
+ * rescan would never be used there, and asking for one keeps the turbo mode
+ * off. The probe of the folder itself is the server's; a refusal there sends
+ * a scan to the walker, which only means the box was not offered where it
+ * would have helped.
  */
 function nativeScanExpected(caps, settings) {
   if (!caps || !caps.native || typeof caps.native.available !== 'boolean' || !settings) return null;
   if (!caps.native.available) return false;
   const engine = settings.engine || 'auto';
-  if (engine !== 'auto' && engine !== 'native') return false;
+  if (engine !== 'auto' && engine !== 'native' && engine !== 'ntfs-mft') return false;
   const ignore = Array.isArray(settings.ignore) ? settings.ignore : [];
   return !ignore.some((e) => e && e.pattern && e.scope !== 'suggest');
 }

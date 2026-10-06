@@ -119,6 +119,26 @@ test('the box is not offered where the next scan runs on the native engine; it i
   assert.equal(unknown.$('fastRescanWrap').hidden, false, 'not known: offered unticked, which costs nothing');
 });
 
+test('under the NTFS turbo setting the box is not offered where the native core runs: the scan is the turbo mode\'s or the native engine\'s, never the walker\'s (final review F1.6)', async () => {
+  // nativeRule (scan/nativeEngine.ts) has no rule for 'ntfs-mft': with the core loaded the native
+  // engine walks whenever the turbo mode does not. A ticked box only kept the turbo mode off
+  // (diskScanner's mftRuleCause 'incremental') and then went unused (FAST_RESCAN_NOT_USED).
+  const turbo = fastRescan({ scanned: ['/c'], box: '/c', answers: { caps: NATIVE, settings: { engine: 'ntfs-mft', ignore: [] } } });
+  turbo.$('fastRescan').checked = true;
+  await turbo.refreshFastRescanPlan();
+  assert.equal(turbo.$('fastRescanWrap').hidden, true, 'the native core loaded: a fast rescan would never be used, and would cost the turbo mode');
+  assert.equal(turbo.$('fastRescan').checked, false, 'and a hidden box asks for nothing');
+
+  for (const [why, answers] of [
+    ['no native core: the walker scans when the turbo mode does not', { caps: NO_NATIVE, settings: { engine: 'ntfs-mft', ignore: [] } }],
+    ['a "Don\'t scan" pattern keeps the scan on the walker', { caps: NATIVE, settings: { engine: 'ntfs-mft', ignore: [{ pattern: 'node_modules', scope: 'both' }] } }],
+  ] as const) {
+    const h = fastRescan({ scanned: ['/c'], box: '/c', answers });
+    await h.refreshFastRescanPlan();
+    assert.equal(h.$('fastRescanWrap').hidden, false, `${why}: offered`);
+  }
+});
+
 test('the box appears as soon as the folder in the path box has been scanned, not after an edit (QA D47)', () => {
   const h = fastRescan({ scanned: [], box: '/c', answers: { caps: NO_NATIVE, settings: AUTO } });
   h.maybeShowFastRescan();
