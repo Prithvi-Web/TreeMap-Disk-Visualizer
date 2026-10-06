@@ -508,7 +508,16 @@ function crumbsHarness() {
   const map = { drill: 0, up: 0, move: 0 };
   /** What an entry of the Export or right-click menu did when it was picked. */
   const acts: string[] = [];
-  const act = (name: string) => (p?: unknown) => { acts.push(typeof p === 'string' ? `${name} ${p}` : name); };
+  /**
+   * Where focus was as each of those ran: a sheet an act opens — Quick Look,
+   * the Trash sheet — remembers document.activeElement to give focus back to
+   * on close, so focus must already be off the menu (QA-6b review F2.4).
+   */
+  const actFocus: unknown[] = [];
+  const act = (name: string) => (p?: unknown) => {
+    acts.push(typeof p === 'string' ? `${name} ${p}` : name);
+    actFocus.push(fakeDoc.active);
+  };
   const canvas = { tagName: 'CANVAS', focus() { fakeDoc.active = canvas; } };
   fakeDoc.active = fakeDoc.body;
   class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(el: unknown) { observers.push({ cb: this.cb, el }); } }
@@ -559,7 +568,7 @@ function crumbsHarness() {
   // Every click from here on bubbles to the page's own document handler, as in the window.
   fakeDoc.clickHandler = docClick;
   return {
-    render, keydown, showCtxMenu, acts, map, canvas, picked, focusAtPick, menu, observers,
+    render, keydown, showCtxMenu, acts, actFocus, map, canvas, picked, focusAtPick, menu, observers,
     onPick: (p: string) => { picked.push(p); focusAtPick.push(fakeDoc.active); },
     /** The Export button as the markup draws it, with Export's own click listener on it: press it with click(). */
     exportBtn(): FakeBtn {
@@ -944,17 +953,25 @@ test('MEDIUM-1: a pick from Export or from a right-click menu puts focus back wh
   assert.equal(png.dataset.exp, 'png', 'control: the PNG entry has focus');
   png.click(); // the press Enter on it makes
   assert.deepEqual(h.acts, ['png'], 'it exports the PNG');
+  assert.equal(h.actFocus.at(-1), btn, 'focus was back on Export before the export ran, not on the entry being hidden');
   assert.equal(h.menu.style.display, 'none');
   assert.equal(fakeDoc.active, btn, 'and focus is back on Export');
   assert.equal(btn.getAttribute('aria-expanded'), 'false');
-  // Every entry the right-click menu builds — on disk, inside an archive, in the cloud.
+  // Every entry the right-click menu builds — on disk, inside an archive, in
+  // the cloud — Quick Look and the Trash sheet among them: each remembers
+  // what had focus when it opened and gives focus back there when it closes.
+  // Run before focus left the menu, that is an entry about to be hidden, and
+  // closing the sheet drops focus on <body> (QA-6b review F2.4).
   const cases: Array<[unknown, string, string]> = [
     [{ path: '/System/a.mov', name: 'a.mov', type: 'file' }, 'open', 'open /System/a.mov'],
+    [{ path: '/System/a.mov', name: 'a.mov', type: 'file' }, 'preview', 'preview'],
+    [{ path: '/System/a.mov', name: 'a.mov', type: 'file' }, 'trash', 'trash'],
     [{ path: '/System/a.zip/b.txt', name: 'b.txt', type: 'file', virtual: true }, 'copy', 'copy /System/a.zip/b.txt'],
     [{ path: 'cloud://drive/c', name: 'c', type: 'file' }, 'copy', 'copy cloud://drive/c'],
     [{ path: 'cloud://drive/c', name: 'c', type: 'file' }, 'cloudtrash', 'trash'],
   ];
   for (const [node, which, did] of cases) {
+    const where = `${which} on ${(node as { path: string }).path}`;
     h.acts.length = 0;
     h.canvas.focus();
     h.showCtxMenu(40, 50, node);
@@ -962,8 +979,9 @@ test('MEDIUM-1: a pick from Export or from a right-click menu puts focus back wh
     entry.focus(); // reached with the arrows
     entry.click();
     assert.deepEqual(h.acts, [did], `${which} did its job`);
+    assert.equal(h.actFocus.at(-1), h.canvas, `${where} ran with focus already back on the map`);
     assert.equal(h.menu.style.display, 'none');
-    assert.equal(fakeDoc.active, h.canvas, `after ${which} on ${(node as { path: string }).path}, focus is back on the map`);
+    assert.equal(fakeDoc.active, h.canvas, `after ${where}, focus is back on the map`);
   }
 });
 
