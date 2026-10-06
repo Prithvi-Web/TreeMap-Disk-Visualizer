@@ -42,6 +42,11 @@ OpenAPI 3 spec).
    runs it holds a person's scan at Balanced too, because one budget governs
    the whole app. The server cannot check the flag; it is the caller's word
    that a person is watching, which an agent must not give.
+   `incremental: true` asks for a fast rescan, which only the built-in walker
+   does (it reuses the last scan's listings of unchanged folders): where the
+   native engine walks the folder the request is not used, and `engineReason`
+   says so. The answer's `incremental` says whether saved listings were
+   reused.
    A path that is a link to a folder (macOS's `/tmp`, `/var`, `/etc`, a
    project folder kept elsewhere) is scanned as the folder it points to: the
    scan's `rootPath` is that folder's own path, every path in the tree is
@@ -200,7 +205,8 @@ OpenAPI 3 spec).
      `400 UNKNOWN_PROVIDER` naming the valid ids rather than being ignored.
      The facts live in a sidecar because the scan responses are held
      byte-identical to the pre-rewrite baseline by
-     `tests/goldenResponses.test.ts` — no field may be added to them.
+     `tests/goldenResponses.test.ts` (for a tree within the first frame's
+     node budget, step 1) — no field may be added to them.
      Providers: `size` (the scan's own byte count), `subtreeCount`,
      `lastUsed`, `recoverability`, `reclaimScore` and `humanScale`
      (v4 §9.3 — "≈ N photos like the ones here", averaged from the folder's
@@ -396,7 +402,8 @@ OpenAPI 3 spec).
      (`400 BAD_SETTING`). `POST /api/scan/{scanId}/pause` and `/resume` act on
      a running scan; an engine that cannot pause answers `paused: false` with
      the reason. `/stats.engine` names the engine that ran — `native`,
-     `gdu-turbo`, `walker`/`turbo-walker`, `ntfs-mft` — and `engineReason`
+     `gdu-turbo`, `walker`/`turbo-walker`, `ntfs-mft`, or `cloud` for a
+     connected cloud account — and `engineReason`
      says why; `fallbackReason` names what was wanted and could not run (a
      missing or refused native module, a walk that failed, a missing gdu). The
      native module is an accelerator: when it is missing or the wrong version,
