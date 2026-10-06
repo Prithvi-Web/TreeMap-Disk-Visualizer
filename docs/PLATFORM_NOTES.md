@@ -53,7 +53,7 @@ only visible by reading it.
 
 | Capability | Mechanism | Tier | When unavailable |
 |---|---|---|---|
-| Fast enumeration | `getattrlistbulk`, one call per folder, in the native scan core | 2 | Core not loaded → the bundled gdu for a full scan with no "Don't scan" list, otherwise `readdir` + `lstat` (degraded, with the loader's reason — see below); Fast rescans and scans with a "Don't scan" list always take `readdir` + `lstat` |
+| Fast enumeration | `getattrlistbulk`, one call per folder, in the native scan core | 2 | Core not loaded → the bundled gdu for a full scan with no "Don't scan" list that does not include the drives mounted inside the folder, otherwise `readdir` + `lstat` (degraded, with the loader's reason — see below). A scan with a "Don't scan" list always takes `readdir` + `lstat`. A fast rescan reuses its cache only where the core does not walk: with the core loaded the request is not used, and `engineReason` says so |
 | Live changes | `fs.watch(recursive)` → FSEvents | 1 | Watch cannot be established → index staleness guard |
 | Open handles | `lsof -F` | 3 | `lsof` missing → delete proceeds without the warning |
 | Zombie handles | `lsof -F` + inode comparison | 3 | as above |
@@ -176,7 +176,13 @@ Measured: `stat('/').dev`, `stat('/System/Volumes/Data').dev` and
 16777232. The kernel presents the firmlinked pair as one device, which is
 exactly the unit a scan of `/` walks — so grouping mount points by device id
 gets firmlinks right without naming a single one of them, and stays right on
-Linux and Windows where each filesystem simply has its own device.
+Linux and Windows where each filesystem simply has its own device. A scan of
+`/` walks that unit and no other drive under "Stay on this drive", the
+default: every engine stops at a drive the mount table lists inside the
+scanned folder, such as the iOS Simulator's volumes or a mounted disk image
+(Track U U-24). Under "Include drives mounted inside it" the walker and the
+native engine enter them, and gdu, which stops at every drive (`-x`), is not
+used for a scan that would reach one.
 
 ### Purgeable space is not read (v4 §5)
 
@@ -337,7 +343,7 @@ shipped a confidently wrong answer.
 | Capability | Mechanism | Tier | When unavailable |
 |---|---|---|---|
 | Fast enumeration | `FileIdExtdDirectoryInfo`, one call per folder, in the native scan core | 2 | Core not loaded → `readdir` + `lstat` (degraded, with the loader's reason). The bundled gdu is never run here: it keys no hard links on Windows |
-| Volume file table (opt-in: NTFS turbo) | `tm-mft-helper.exe` reads `$MFT` read-only as administrator; the native core reads its output and checks up to 1,000 entries unelevated | 2 + helper | Not NTFS, a network drive, a per-user or portable install, a scan not started in the window, a "Don't scan" list, a declined prompt or a failed check → the listing above, with the reason (below) |
+| Volume file table (opt-in: NTFS turbo) | `tm-mft-helper.exe` reads `$MFT` read-only as administrator; the native core reads its output and checks up to 1,000 entries unelevated | 2 + helper | Not NTFS, a network drive, a per-user or portable install, a scan not started in the window, a fast rescan, a "Don't scan" list, a declined prompt or a failed check → the listing above, with the reason (below) |
 | Live changes | `fs.watch(recursive)` → ReadDirectoryChangesW | 1 | staleness guard |
 | Open handles | Restart Manager (`RmGetList`) via PowerShell P/Invoke | 1 | PowerShell missing → no warning |
 | Allocated size | `GetCompressedFileSize`, batched | 1 | falls back to logical size |
@@ -425,7 +431,7 @@ item that launches TreeMap with no path.
 
 | Capability | Mechanism | Tier | When unavailable |
 |---|---|---|---|
-| Fast enumeration | `getdents64` + `statx`, in the native scan core | 2 | Core not loaded → gdu, when one is bundled (an AppImage you built), fetched (`npm run fetch:gdu:dev`) or on PATH, for a full scan with no "Don't scan" list; otherwise `readdir` + `lstat`, concurrency from sysfs (degraded, with the loader's reason) |
+| Fast enumeration | `getdents64` + `statx`, in the native scan core | 2 | Core not loaded → gdu, when one is bundled (an AppImage you built), fetched (`npm run fetch:gdu:dev`) or on PATH, for a full scan with no "Don't scan" list that does not include the drives mounted inside the folder; otherwise `readdir` + `lstat`, concurrency from sysfs (degraded, with the loader's reason) |
 | Live changes | per-directory inotify | 1 | Watch limit → staleness guard |
 | Open handles | `/proc/<pid>/fd` — no subprocess | 1 | `/proc` absent → no warning |
 | Zombie handles | `/proc` + kernel's `(deleted)` marker | 1 | as above |
