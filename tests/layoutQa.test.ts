@@ -266,3 +266,72 @@ test('collapsing a cart that still holds items returns focus to its tab, and a C
   v.fns.cartClear(); await settled();
   assert.equal(v.focus.active, v.els.opener, 'focus that was never in the dock stays put');
 });
+
+/* ══════════════ B35 — a whole year of the calendar fits the card ══════════════ */
+
+/** A CSS length expression in px: px, cqw (of `cqw100` px), calc/clamp/min/max and + - * /. */
+function cssPx(expr: string, cqw100: number): number {
+  const e = expr.trim()
+    .replace(/(-?\d*\.?\d+)cqw/g, (_m, n: string) => String((Number(n) / 100) * cqw100))
+    .replace(/(-?\d*\.?\d+)px/g, '$1')
+    .replace(/\bcalc\(/g, '(').replace(/\bclamp\(/g, '__clamp(').replace(/\bmin\(/g, 'Math.min(').replace(/\bmax\(/g, 'Math.max(');
+  assert.match(e.replace(/__clamp|Math\.(min|max)/g, ''), /^[\s\d.+\-*/(),]*$/, `"${expr}" is plain arithmetic once resolved`);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return Function('__clamp', `"use strict"; return (${e});`)((lo: number, v: number, hi: number) => Math.max(lo, Math.min(v, hi))) as number;
+}
+
+/** The calendar's grids for `days`, as renderCalendar writes them: [week columns, quarter separators] per year. */
+function calendarGrids(days: Array<{ date: string; bytes: number; count: number }>): Array<{ year: string; cols: number; seps: number }> {
+  const els: Record<string, { innerHTML: string; textContent: string; hidden: boolean }> = {};
+  const $ = (id: string) => (els[id] ||= { innerHTML: '', textContent: '', hidden: false });
+  const render = runPageDecls<() => void>(['calLevel', 'calQuarterOf', 'renderCalendar'], {
+    $, calChannel: 'modified', calData: { modified: days, created: null, degraded: [] },
+    formatBytes: (n: number) => `${n} B`, escapeHtml: (s: string) => s,
+  }, 'renderCalendar');
+  render();
+  const html = els.calBody.innerHTML;
+  return [...html.matchAll(/<div class="cal-year num">(\d+)<\/div><div class="cal-grid">([\s\S]*?)<\/div>/g)].map((m) => {
+    const cells = (m[2].match(/class="cal-cell"/g) || []).length;
+    return { year: m[1], cols: Math.ceil(cells / 7), seps: (m[2].match(/class="cal-qsep"/g) || []).length };
+  });
+}
+
+test('every quarter of a full year is on screen in the calendar card at the desktop window’s minimum width (B35)', () => {
+  // QA: at 1024×768 the card is 675 px wide and a year's grid 849 px, so
+  // October–December sat past the card edge, each year its own sideways
+  // scroller with no cue. The cells now size themselves from the card.
+  const days: Array<{ date: string; bytes: number; count: number }> = [];
+  // 2028 starts on a Saturday and is a leap year: six padding days before
+  // 1 January, then 366 — the widest grid a year can draw.
+  for (let t = new Date(2028, 0, 1); t.getFullYear() === 2028; t.setDate(t.getDate() + 1)) {
+    const iso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    days.push({ date: iso, bytes: 1000 + t.getDate(), count: 1 });
+  }
+  const [grid] = calendarGrids(days);
+  assert.equal(grid.year, '2028');
+  assert.equal(grid.cols, 54, 'the widest year is 54 week columns');
+  assert.equal(grid.seps, 3, 'with a separator before Q2, Q3 and Q4');
+
+  const host = declsFor('#calBody');
+  assert.equal(host.get('container-type'), 'inline-size', 'the calendar measures the card it sits in');
+  const g = declsFor('.cal-grid');
+  const size = g.get('--cal-c');
+  assert.ok(size, 'the grid declares its cell size');
+  assert.equal(g.get('grid-template-rows'), 'repeat(7, var(--cal-c))', 'seven rows of that size');
+  const cell = declsFor('.cal-cell');
+  assert.equal(cell.get('width'), 'var(--cal-c, 12px)', 'cells are as wide as the rows are tall — square');
+  assert.equal(cell.get('height'), 'var(--cal-c, 12px)');
+  const gap = Number(/^(\d+)px$/.exec(g.get('gap') || '')![1]);
+  const sep = Number(/^(\d+)px$/.exec(declsFor('.cal-qsep').get('width') || '')![1]);
+  const width = (W: number) => {
+    const c = cssPx(size!, W);
+    return { c, total: grid.cols * c + grid.seps * sep + (grid.cols + grid.seps - 1) * gap };
+  };
+  // 675 px is the card at 1024×768 (measured by QA); 849 px was the old grid.
+  for (let W = 600; W <= 1400; W++) {
+    const { c, total } = width(W);
+    assert.ok(total <= W + 0.01, `in a ${W}px card the year is ${total.toFixed(1)}px wide (cells ${c.toFixed(2)}px)`);
+  }
+  assert.ok(width(675).c >= 8, `at 1024×768 a day is still a ${width(675).c.toFixed(2)}px target`);
+  assert.equal(width(1400).c, 12, 'and a wide card keeps the full 12 px cells');
+});

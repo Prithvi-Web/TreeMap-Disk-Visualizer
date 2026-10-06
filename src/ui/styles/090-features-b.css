@@ -92,8 +92,17 @@
    scale reads in both themes; an absent day keeps the bare surface colour —
    visually distinct from level 1, because "nothing counted" is not "a little". */
 .cal-year { margin: 12px 0 6px; font-weight: 600; }
-.cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; width: max-content; max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
-.cal-cell { width: 12px; height: 12px; border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: var(--cur-dot);
+/* Cells size themselves from the card (QA B35): at 12 px a year is 849 px
+   wide, and in the 675 px card of a 1024×768 window October–December sat
+   past the edge, one sideways scroller per year with no cue. The widest year
+   is 54 week columns and three 16 px quarter separators, 56 gaps of 3 px
+   between them: 54c + 216 px. Square cells shrink to fit down to 7 px; only
+   a card narrower than ~600 px still scrolls. The legend's swatches keep
+   12 px (the fallback): they are outside every .cal-grid. */
+#calBody { container-type: inline-size; }
+.cal-grid { --cal-c: clamp(7px, calc((100cqw - 216px) / 54), 12px);
+  display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, var(--cal-c)); gap: 3px; width: max-content; max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+.cal-cell { width: var(--cal-c, 12px); height: var(--cal-c, 12px); border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: var(--cur-dot);
   transition: opacity 160ms var(--ease); }
 .cal-cell[data-date] { cursor: var(--cur-hand); }
 /* bklit quarter separators: a full-height hairline that fades 0→1→0, with a
