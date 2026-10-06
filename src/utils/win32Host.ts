@@ -1,4 +1,5 @@
 import os from 'os';
+import { withoutWin32Tail } from './win32Tail';
 
 /**
  * Whether the host of a UNC path is this machine, read the way Windows reads a host — for
@@ -15,7 +16,7 @@ import os from 'os';
  * `mypc.corp.example.com` is `MYPC`. A host's trailing dots and spaces go first, as Win32 drops them.
  */
 export function isThisMachine(host: string, ownHosts: readonly string[] = ownHostNames()): boolean {
-  const h = host.toLowerCase().replace(/(.)[ .]+$/, '$1'); // never `.` itself, which is this machine
+  const h = withoutWin32Tail(host.toLowerCase(), 1); // never shorter than one character: `.` itself is this machine
   if (h === '.' || h === 'localhost') return true;
   const v4 = ipv4Of(h);
   if (v4 !== null) return v4 >>> 24 === 127 || v4 === 0 || ownHosts.some((own) => ipv4Of(own.toLowerCase()) === v4);

@@ -20,7 +20,8 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { setSpillCheckForTests } from '../src/services/autopilot';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { isSpillPath, spillCandidateTest, win32Normalize } from '../src/utils/pathSanitizer';
+import { aliasNamespaceOf, foldName, isSpillPath, spillCandidateTest, win32Normalize } from '../src/utils/pathSanitizer';
+import { isThisMachine } from '../src/utils/win32Host';
 import { SPILL_DIR } from '../src/services/spillSweep';
 
 /**
@@ -186,6 +187,56 @@ test('Windows’ trailing dots and spaces come off every name, whichever separat
     posixSpelled: '/var/tm/scan/data/f',
     mixed: 'c:/users\\me/x',
     inside: '/a.b/c d/e',
+  });
+});
+
+test('nothing in the app trims a run of dots and spaces with a regex anchored at a name’s end — that backtracks once per character of a long run inside a name, so one request path could hold the server for seconds — and the loops that do it read every name as before (POL item 8 review, F1.4 and F1.7)', () => {
+  // A structural guard, because the repo counts rather than times and no output can tell the two forms
+  // apart: over every string up to length 7 the regex and the loop agree. `[ .]+$`, `[ .]+(?=…)` and
+  // their spellings (`[. ]`, `*`) are the shape: a greedy run that can fail after it, tried from each
+  // start in the run.
+  const shape = /\[(?: \.|\. )\][+*](?:\$|\(\?=)/;
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const at = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(at);
+      else if (/\.(?:ts|js)$/.test(entry.name)) files.push(at);
+    }
+  };
+  walk(path.join(__dirname, '..', 'src'));
+  assert.ok(files.length > 50, 'the whole of src/ was read');
+  const offenders = files.flatMap((f) => fs.readFileSync(f, 'utf8').split('\n')
+    .map((line, i) => (shape.test(line) ? `${path.relative(path.join(__dirname, '..'), f)}:${i + 1}: ${line.trim()}` : null))
+    .filter((hit): hit is string => hit !== null));
+  assert.deepEqual(offenders, []);
+  // The loops read names as the regexes did: every name's trailing run goes, and nothing inside it.
+  assert.deepEqual({
+    fold: foldName('Scan-Spill. . ', 'win32'),
+    foldInside: foldName('a . b. .', 'win32'),
+    foldAllDots: foldName('. .', 'win32'),
+    foldLeading: foldName(' .x', 'win32'),
+    foldElsewhere: foldName('TreeMap. .', 'linux'),
+    // A host keeps at least one character: `.` alone is this machine, and so is any run of dots and spaces.
+    hostDotsAndSpaces: isThisMachine('. .', []),
+    hostTrailing: isThisMachine('LOCALHOST. .', []),
+    hostOther: isThisMachine('server. ', ['mypc']),
+    hostSpace: isThisMachine(' ', []),
+    // An admin share's name loses its trailing dots and spaces too: `C$. .` is `C$`.
+    adminShare: aliasNamespaceOf('\\\\localhost\\C$. .\\x', 'win32', []),
+    notAdminShare: aliasNamespaceOf('\\\\localhost\\C$x. \\x', 'win32', []),
+  }, {
+    fold: 'scan-spill',
+    foldInside: 'a . b',
+    foldAllDots: '',
+    foldLeading: ' .x',
+    foldElsewhere: 'treemap. .',
+    hostDotsAndSpaces: true,
+    hostTrailing: true,
+    hostOther: false,
+    hostSpace: false,
+    adminShare: '\\\\localhost\\C$. .',
+    notAdminShare: null,
   });
 });
 

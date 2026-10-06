@@ -5,6 +5,7 @@ import { appDataDir } from '../services/storage';
 import { SPILL_DIR } from '../services/spillSweep';
 import { meansAbsent } from './errno';
 import { isThisMachine } from './win32Host';
+import { withoutWin32Tail } from './win32Tail';
 
 /**
  * Path validation shared by the pathGuard middleware and the services.
@@ -98,7 +99,7 @@ export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.
   // (the SEC-3 brief, item 7).
   if (share && (share[2].includes(':') || (share[1].includes(':') && !/^\[[^\]]*\]$/.test(share[1])))) return share[0];
   // Win32 drops a name's trailing dots and spaces, so `C$.` is `C$` (the SEC-2b review, F1.4).
-  if (share && WIN32_ADMIN_SHARE.test(share[2].replace(/[ .]+$/, '')) && isThisMachine(share[1], ownHosts)) return share[0];
+  if (share && WIN32_ADMIN_SHARE.test(withoutWin32Tail(share[2])) && isThisMachine(share[1], ownHosts)) return share[0];
   // A name with a colon past the root is an NTFS stream of a file or folder, never a path's own
   // name: `System32::$INDEX_ALLOCATION` is the folder itself, `f.txt:x` a stream inside the file.
   const rest = p.slice(path.win32.parse(p).root.length);
@@ -127,17 +128,6 @@ export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.
  */
 export function win32Normalize(p: string): string {
   return p.toLowerCase().split(/([\\/])/).map((part) => (part === '\\' || part === '/' ? part : withoutWin32Tail(part))).join('');
-}
-
-/**
- * `name` without its trailing dots and spaces, as Win32 drops them. A loop, not a regex anchored at
- * the name's end: that backtracks once per character of a long run of spaces inside a name, so a
- * request could make the fold take time quadratic in its path's length.
- */
-function withoutWin32Tail(name: string): string {
-  let end = name.length;
-  while (end > 0 && (name[end - 1] === ' ' || name[end - 1] === '.')) end--;
-  return name.slice(0, end);
 }
 
 function isBlocked(resolved: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): boolean {
@@ -931,7 +921,7 @@ function foldForCompare(p: string): string {
 export function foldName(name: string, platform: NodeJS.Platform = process.platform): string {
   const compatible = name.normalize('NFKC');
   if (platform !== 'win32') return compatible.toLowerCase();
-  return compatible.toUpperCase().toLowerCase().replace(/[ .]+$/, '');
+  return withoutWin32Tail(compatible.toUpperCase().toLowerCase());
 }
 
 /** Whether a folder name is the spill folder's as a file system may read it (`foldName`). */
