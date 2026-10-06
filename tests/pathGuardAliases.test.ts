@@ -369,6 +369,27 @@ test('Windows: this machine is known however its address is written — the shor
   assert.deepEqual(wrong, []);
 });
 
+test('Windows: print$ is this machine’s admin share too — its printer drivers, under System32 — while another machine’s print$ is a path; and a dotted host is this machine by its first label, since no suffix can be proven another machine’s (the SEC-3 brief, item 4)', () => {
+  // \\localhost\print$ is C:\Windows\System32\spool\drivers, under the blocklist, yet only C$ and
+  // ADMIN$ were known. A dotted host is still judged by its first label: Windows has a DNS suffix per
+  // network connection, and an mDNS name besides, so a suffix this machine does not know may be its own
+  // all the same — refusing another machine's admin share of the same first name is the price.
+  const own = ['MYPC', 'mypc.corp.example.com', '192.168.1.20'];
+  const thisMachine = [
+    '\\\\localhost\\print$\\x64\\3',
+    '\\\\MYPC\\PRINT$\\x',
+    '\\\\127.1\\print$.\\x',
+    '\\\\?\\UNC\\localhost\\print$\\x',
+    '\\\\mypc.other.org\\C$\\x', // the doubt, kept: its suffix may be one of this machine's
+  ];
+  const anotherMachine = ['\\\\server\\print$\\x', '\\\\localhost\\printers$\\x', '\\\\localhost\\print\\x'];
+  const wrong = [
+    ...thisMachine.filter((p) => judgeSpelling(p, 'win32', own).secondName === null).map((p) => `${p}: passed as another machine's`),
+    ...anotherMachine.filter((p) => aliasNamespaceOf(p, 'win32', own) !== null).map((p) => `${p}: refused as this machine's`),
+  ];
+  assert.deepEqual(wrong, []);
+});
+
 /* ─────────────── The sanitizer ─────────────── */
 
 test('the sanitizer refuses every second name, PATH_BLOCKED: past the blocklist, onto another drive, or onto a scanned file', { skip: !DARWIN && 'the namespaces are macOS’s; Windows has its own test below' }, () => {

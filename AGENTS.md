@@ -620,7 +620,7 @@ read-what-you-saw) permission to act.
   `\\.\PhysicalDrive0`, `\\.\C:`, `\??\…`); behind `\\?\` or `\\.\` only a
   drive-letter path (`\\?\C:\…`, the drive's root `\\?\C:\` included) or a
   UNC path (`\\?\UNC\server\share\…`) passes. This machine's own admin
-  shares (`\\localhost\C$\…`, `\\127.0.0.1\c$`, `\\<its name>\ADMIN$`, also
+  shares (`\\localhost\C$\…`, `\\127.0.0.1\c$`, `\\<its name>\ADMIN$`, `print$`, also
   behind `\\?\UNC\`, its address written any way Windows reads one —
   `\\127.1\`, `\\2130706433\`, `\\fe80--1s4.ipv6-literal.net\` — and the
   share with a trailing dot or space, `C$.`) are its drives again, and a name with a colon past the

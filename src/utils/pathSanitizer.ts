@@ -78,8 +78,11 @@ const WIN32_PREFIX_BEFORE_DRIVE = /^[\\/]{2}[?.][\\/](?=[a-z]:[\\/])/i;
 
 /** A UNC path's host and share, also behind `\\?\UNC\` or `\\.\UNC\`. */
 const WIN32_UNC_SHARE = /^[\\/]{2}(?:[?.][\\/]unc[\\/])?([^\\/]+)[\\/]([^\\/]+)(?=[\\/]|$)/i;
-/** The shares Windows makes of every drive (`C$`) and of the Windows folder (`ADMIN$`). */
-const WIN32_ADMIN_SHARE = /^(?:[a-z]|admin)\$$/i;
+/**
+ * The shares Windows makes of every drive (`C$`), of the Windows folder (`ADMIN$`) and of its printer
+ * drivers (`print$`, C:\Windows\System32\spool\drivers: the SEC-3 brief, item 4).
+ */
+const WIN32_ADMIN_SHARE = /^(?:[a-z]|admin|print)\$$/i;
 export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): string | null {
   if (isNoPlace(p)) return NO_PLACE;
   if (platform === 'darwin') return DARWIN_ALIAS_ROOT.exec(p)?.[0] ?? null;
