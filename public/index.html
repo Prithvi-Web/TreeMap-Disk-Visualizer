@@ -8958,10 +8958,13 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // interactive: a person started this scan here — the one kind that may
-      // raise an administrator prompt; a quiet refresh behind an index-first
-      // paint is not one (ScanOptions.interactive).
-      body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !quiet }),
+      // interactive: a person started this scan here (ScanOptions.interactive)
+      // — the one kind that runs Automatic at Turbo and may raise an
+      // administrator prompt. Always so: startScan, the window's own Scan,
+      // is the only caller, and `quiet` says only that an index paint is
+      // already on screen. Keyed on `quiet`, every rescan of an indexed
+      // folder — ⌘R, Rescan, Scan — ran at the background budget (B04).
+      body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: true }),
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);

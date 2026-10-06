@@ -919,3 +919,57 @@ test('a stale index badge gives the server\'s reason, escaped, and keeps the old
   assert.equal(live.stale, false);
   assert.match(live.text, /Index live — always current/);
 });
+
+/* ══════════════ BQA-1 — the scan flow, as a person drives it ══════════════ */
+
+/**
+ * startScan and startScanRequest out of the built page. `indexed` says what
+ * the index probe answers; `painted` whether the index paint succeeds. Every
+ * POST /api/scan body is recorded, and so is every badge paint.
+ */
+function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus' }: { indexed: boolean; painted?: boolean; onScreen?: string | null }) {
+  const src = slice('async function startScan(path', 'function quietRescanFailed(');
+  const posts: Array<Record<string, unknown>> = [];
+  const badges: unknown[] = [];
+  const chrome: Array<Record<string, unknown>> = [];
+  const noop = () => {};
+  const state: Record<string, unknown> = { scanning: false, scanGen: 0, root: onScreen ? { path: onScreen } : null };
+  let lineGen = 0;
+  const deps: Record<string, unknown> = {
+    state, toast: noop, closeEventSource: noop, disableLive: noop,
+    beginScanChrome: (o: Record<string, unknown> = {}) => { chrome.push(o); state.scanning = true; },
+    indexStatusFor: async (p: string) => (indexed ? { indexed: true, path: p, root: { path: '/Users/x/corpus', state: 'ready', live: true } } : { indexed: false }),
+    openFromIndex: async () => painted,
+    renderIndexBadge: (info: unknown) => { badges.push(info); },
+    renderIndexLine: noop,
+    bumpIndexLineGen: () => { lineGen++; },
+    api: async (url: string, opts: { body: string }) => { if (url === '/api/scan') posts.push(JSON.parse(opts.body)); return { scanId: 'new' }; },
+    abandonIfStopped: () => false, followScanProgress: noop, quietRescanFailed: noop, failScan: noop,
+    performance: { now: () => 0 },
+  };
+  // `indexLineGen` is 045's own `let`; the slice does not carry it, so it is declared here for the code to bump.
+  const run = new Function(...Object.keys(deps), `'use strict'; let indexLineGen = 0; ${src} return startScan;`)(
+    ...Object.values(deps),
+  ) as (p: string, o?: Record<string, unknown>) => Promise<void>;
+  return { run, posts, badges, chrome, state, lineGen: () => lineGen };
+}
+
+test('a scan a person starts is sent as theirs (interactive) whether or not the index painted first (B04)', async () => {
+  // B04: the index-first path ran the real scan with `interactive: !quiet` =
+  // false, so every rescan of an indexed folder — ⌘R, Rescan, Scan — ran at
+  // the background budget (Eco on battery) instead of the Turbo-a-step-lower
+  // that Settings promises for a scan you start.
+  for (const indexed of [true, false]) {
+    const h = startScanHarness({ indexed });
+    await h.run('/Users/x/corpus');
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(h.posts.length, 1, `indexed=${indexed}: one scan request`);
+    assert.equal(h.posts[0].interactive, true, `indexed=${indexed}: the request says a person started it`);
+    assert.equal(h.posts[0].path, '/Users/x/corpus');
+  }
+  // The chrome is still quiet behind an index paint — the tree stays on screen.
+  const h = startScanHarness({ indexed: true });
+  await h.run('/Users/x/corpus');
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.deepEqual(h.chrome.map((c) => !!c.quiet), [true, true], 'both chrome calls are quiet: the painted tree is not wiped');
+});
