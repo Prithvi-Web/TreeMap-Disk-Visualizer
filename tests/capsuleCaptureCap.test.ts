@@ -387,7 +387,7 @@ interface CallCase {
   /** The item to delete, and the one call on it that gets no answer: its kind, path and order. */
   make: () => { item: string; what: string; abs: string; nth: number };
   /** What the run says of the item, left in place, once that call's limit passed. */
-  expect: { trashed: false; code?: string; reason?: RegExp };
+  expect: { code: string; reason: RegExp };
 }
 
 const manifestOf = (entryId: string): { members: { rel: string; targetIsDir?: boolean }[]; rootMtimeMs?: number } =>
@@ -397,13 +397,13 @@ const CALL_CASES: CallCase[] = [
   {
     name: 'the listing of a folder being walked',
     make: () => { const { dir } = folder('call-readdir'); return { item: dir, what: 'readdir', abs: dir, nth: 0 }; },
-    expect: { trashed: false, code: 'CAPSULE_UNREADABLE', reason: /made no progress for 60 seconds/ },
+    expect: { code: 'CAPSULE_UNREADABLE', reason: /made no progress for 60 seconds/ },
   },
   {
     name: 'the walk\'s read of a link inside the item',
     skip: NO_LINKS,
     make: () => { const { dir, link } = folderWithLink('call-member-link'); return { item: dir, what: 'readlink', abs: link, nth: 0 }; },
-    expect: { trashed: false, code: 'CAPSULE_UNREADABLE', reason: /could not read the link link, inside it \(the disk did not answer/ },
+    expect: { code: 'CAPSULE_UNREADABLE', reason: /could not read the link link, inside it \(the disk did not answer/ },
   },
   {
     name: 'the walk\'s read of an item that is itself a link',
@@ -413,13 +413,13 @@ const CALL_CASES: CallCase[] = [
       fs.symlinkSync('somewhere-else', alias);
       return { item: alias, what: 'readlink', abs: alias, nth: 0 };
     },
-    expect: { trashed: false, code: 'CAPSULE_UNREADABLE', reason: /made no progress for 60 seconds/ },
+    expect: { code: 'CAPSULE_UNREADABLE', reason: /made no progress for 60 seconds/ },
   },
   {
     name: 'the capture\'s read of a link it is copying',
     skip: NO_LINKS,
     make: () => { const { dir, link } = folderWithLink('call-copy-link'); return { item: dir, what: 'readlink', abs: link, nth: 1 }; },
-    expect: { trashed: false, code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .* made no progress for 60 seconds\)/ },
+    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .* made no progress for 60 seconds\)/ },
   },
   // These two only record something, and a look that fails at once still only leaves it unrecorded
   // (below). No answer within the limit fails the item, as every other call on it does (FG3g review
@@ -429,18 +429,19 @@ const CALL_CASES: CallCase[] = [
     name: 'the capture\'s look at what a link leads to (which only records whether it is a folder)',
     skip: NO_LINKS,
     make: () => { const { dir, link } = folderWithLink('call-link-target'); return { item: dir, what: 'stat', abs: link, nth: 0 }; },
-    expect: { trashed: false, code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*link made no progress for 60 seconds\)/ },
+    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*link made no progress for 60 seconds\)/ },
   },
   {
     name: 'the capture\'s look at a folder\'s own times (which only records them)',
     make: () => { const { dir } = folder('call-root-times'); return { item: dir, what: 'lstat', abs: dir, nth: 1 }; },
-    expect: { trashed: false, code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*proj made no progress for 60 seconds\)/ },
+    expect: { code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*proj made no progress for 60 seconds\)/ },
   },
   {
     name: 'the read of a link in the look right before the trash step',
     skip: NO_LINKS,
     make: () => { const { dir, link } = folderWithLink('call-look-link'); return { item: dir, what: 'readlink', abs: link, nth: 3 }; },
-    expect: { trashed: false },
+    // A link that could not be read again is a look that failed, not a link that changed (FG3g review F3.6).
+    expect: { code: 'CAPSULE_UNREADABLE', reason: /could not be looked at again right before its deletion \(the disk did not answer/ },
   },
 ];
 
@@ -464,8 +465,42 @@ for (const c of CALL_CASES) {
     assert.ok(fs.lstatSync(item), 'it is still in place');
     const row = result.skipped.find((s) => s.path === item);
     assert.ok(row, `it is named in skipped (${JSON.stringify(result.skipped)})`);
-    if (c.expect.code) assert.equal(row.code, c.expect.code, row.reason);
-    if (c.expect.reason) assert.match(row.reason ?? '', c.expect.reason, row.reason);
+    assert.equal(row.code, c.expect.code, row.reason);
+    assert.match(row.reason ?? '', c.expect.reason, row.reason);
+  });
+}
+
+/**
+ * The read of a link in the look right before the trash step, answered at once (FG3g review F3.6):
+ * every failure of it was read as a different target, so a link that could not be read was reported
+ * as one that "points somewhere else". Only a different target is that; a link gone since the walk is
+ * a change of its own, and any other failure is a look that failed.
+ */
+const LOOK_LINK_ANSWERS: { name: string; code: string; expect: { code: string; reason: RegExp } }[] = [
+  { name: 'gone since the walk', code: 'ENOENT', expect: { code: 'CAPSULE_CHANGED', reason: /it changed after it was copied \(link was removed\)/ } },
+  { name: 'refused', code: 'EACCES', expect: { code: 'CAPSULE_UNREADABLE', reason: /could not be looked at again right before its deletion \((macOS would not let TreeMap|TreeMap is not allowed)/ } },
+];
+
+for (const answer of LOOK_LINK_ANSWERS) {
+  test(`a link whose read right before the trash step is answered "${answer.name}" is left in place, and said to be so - never "points somewhere else"`, { skip: NO_LINKS }, async () => {
+    const { dir, link } = folderWithLink(`look-link-${answer.code}`);
+    let reads = 0;
+    const remove = setSourceCallForTests((what, abs) => (what === 'readlink' && abs === link && reads++ === 3 // the walk's, the copy's, the look's own walk, then this one
+      ? Promise.reject(Object.assign(new Error(`${answer.code} (a test)`), { code: answer.code }))
+      : null));
+    let result: Awaited<ReturnType<typeof commitCart>>;
+    try {
+      result = await withOpenFileCheck('clear', () => commitCart([dir]));
+    } finally {
+      remove();
+    }
+    assert.equal(reads, 4, 'the look right before the trash step read the link');
+    assert.deepEqual(result.trashed, [], 'it was not deleted');
+    assert.ok(fs.lstatSync(link).isSymbolicLink(), 'it is still in place');
+    const row = result.skipped.find((s) => s.path === dir);
+    assert.equal(row?.code, answer.expect.code, row?.reason);
+    assert.match(row?.reason ?? '', answer.expect.reason, row?.reason);
+    assert.doesNotMatch(row?.reason ?? '', /points somewhere else/, row?.reason);
   });
 }
 

@@ -1726,7 +1726,14 @@ async function stopBeforeTrash(entryId: string | undefined, original: string): P
     const why = err instanceof AppError ? err.message : describeFsError(err);
     return { code: 'CAPSULE_UNREADABLE', reason: `it could not be looked at again right before its deletion (${why})` };
   }
-  const change = await changeSinceCopy(manifest, walked);
+  let change: Awaited<ReturnType<typeof changeSinceCopy>>;
+  try {
+    change = await changeSinceCopy(manifest, walked);
+  } catch (err) {
+    // A link that could not be read again: a look that failed, which says nothing about whether it
+    // changed (FG3g review F3.6).
+    return { code: 'CAPSULE_UNREADABLE', reason: `it could not be looked at again right before its deletion (${describeFsError(err)})` };
+  }
   if (change === null) return null;
   // A change time that moved, alone, says something changed and not what (FG3g review F1.3): a new
   // permission or attribute moves it as a rewrite with its modified time put back does — so only
@@ -1780,6 +1787,8 @@ async function copyIncompleteness(entryId: string, manifest: EntryManifest): Pro
  * reason other than content (a permission, an extended attribute) leaves the item in place too:
  * that costs a deletion, never a file — and `definite` is false when that is the only kind of
  * change seen, since it does not show the copy differs from what is there (FG3g review F1.3).
+ * Throws when a link cannot be read again (FG3g review F3.6): that is a look that failed, not a
+ * change — every failure was read as a different target, and reported as one.
  */
 async function changeSinceCopy(
   manifest: EntryManifest,
@@ -1801,8 +1810,14 @@ async function changeSinceCopy(
       changes.push(`${nameOf(now.rel)} was replaced by another file`);
     } else if (now.kind === 'file' && typeof was.ctimeMs === 'number' && was.ctimeMs !== now.ctimeMs) {
       changeTimeOnly.push(`the change time of ${nameOf(now.rel)} moved`);
-    } else if (now.kind === 'symlink' && was.target !== await onItem('readlink', now.abs, () => fsp.readlink(now.abs)).catch(() => null)) {
-      changes.push(`${nameOf(now.rel)} points somewhere else`);
+    } else if (now.kind === 'symlink') {
+      // Gone since the walk is a change of its own; any other failure is thrown.
+      const target = await onItem('readlink', now.abs, () => fsp.readlink(now.abs)).catch((err: unknown) => {
+        if (meansAbsent(err)) return null;
+        throw err;
+      });
+      if (target === null) changes.push(`${nameOf(now.rel)} was removed`);
+      else if (target !== was.target) changes.push(`${nameOf(now.rel)} points somewhere else`);
     }
   }
   for (const rel of recorded.keys()) changes.push(`${nameOf(rel)} was removed`);
