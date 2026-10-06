@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-docsTruth-data-');
 
 import { FAST_PATH_UNAVAILABLE, nativeEligibility, nativeRule, type EligibilityInput } from '../src/services/scan/nativeEngine';
+import { MEMORY_CAP_ROWS, RESERVE_FACTOR, memoryRoomFor } from '../src/services/scan/nativeMemory';
 
 /**
  * The engineering record and the agents' contract — docs/PLATFORM_NOTES.md,
@@ -38,6 +39,16 @@ function from(text: string, start: string): string {
   return text.slice(at);
 }
 
+/** Every .ts file under `dir`, relative to the repository. */
+function sources(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(path.join(root, dir))) {
+    const rel = path.join(dir, name);
+    if (statSync(path.join(root, rel)).isDirectory()) sources(rel, out);
+    else if (rel.endsWith('.ts')) out.push(rel);
+  }
+  return out;
+}
+
 /* ─────────────── PLATFORM_NOTES: where a fast rescan reads its cache ─────────────── */
 
 test('PLATFORM_NOTES says a fast rescan is not used exactly where the native engine walks, as startScan and nativeRule decide (review F1.1)', () => {
@@ -67,4 +78,33 @@ test('PLATFORM_NOTES says a fast rescan is not used exactly where the native eng
   assert.equal(refused.ok, false, 'a loaded module whose probe of the root refuses does not walk it');
   assert.match(sentence, /can list the folder/, 'PLATFORM_NOTES says the core must be able to list the folder');
   assert.doesNotMatch(sentence, /with the core loaded the request is not used/, 'not "whenever the core is loaded"');
+});
+
+/* ─────────────── RISKS R95: what a scan says about the memory store's room ─────────────── */
+
+test('RISKS R95 says engineReason speaks of the room only where a projection sized it, as startScan does (review F1.2)', () => {
+  // The code: a scan with no projection (every first scan of a folder that is
+  // not a whole volume), or one of half the default room or less, starts in
+  // the default room, and startScan adds the "sized for" clause only to a
+  // room a projection sized. A walk that outgrows its room says it walked
+  // again (runNativeWalk); the projection's own reason stays on the record's
+  // nativePlan, which no route or MCP tool serves.
+  assert.equal(memoryRoomFor(null).sizedBy, 'default', 'no projection: the default room');
+  assert.equal(memoryRoomFor({ entries: MEMORY_CAP_ROWS / RESERVE_FACTOR }).sizedBy, 'default', 'a projection of half the default room: the default room');
+  const scanner = read('src', 'services', 'diskScanner.ts');
+  assert.match(
+    scanner,
+    /if \(room\?\.sizedBy === 'projection'\) \{\n(?:\s*\/\/[^\n]*\n)*\s*scan\.engineReason = `\$\{scan\.engineReason\}; the memory store was sized for /,
+    'the "sized for" clause is added only to a room a projection sized',
+  );
+  assert.match(read('src', 'services', 'scan', 'nativeEngine.ts'), /so it walked the tree again on the columns path/, 'a walk past its room says it walked the tree again');
+  const serving = [...sources(path.join('src', 'api')), ...sources(path.join('src', 'mcp'))].filter((f) => read(f).includes('nativePlan'));
+  assert.deepEqual(serving, [], 'no route or MCP tool serves the projection\'s reason');
+
+  const r95 = lineStarting(read('docs', 'engine', 'RISKS.md'), '| R95 |');
+  assert.doesNotMatch(r95, /says why the room was what it was/, 'not a sentence for every room');
+  assert.match(r95, /`engineReason` says what it was sized for/, 'a sized room is said');
+  assert.match(r95, /default room[^|]*says nothing of its room/, 'the default room is not');
+  assert.match(r95, /that the tree was walked again/, 'only the walk again is');
+  assert.match(r95, /no route serves/, 'and the projection\'s reason is not served');
 });
