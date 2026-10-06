@@ -212,13 +212,20 @@ test('a scheduled scan is held to allowedRoots as one asked for now is: a new sc
     // ever be saved beside it — and a new one inside them is saved.
     const kept = await req(port, 'PUT', '/api/settings', { schedules: [sched('old', elsewhere), sched('in', inside)] });
     answers['one saved earlier, beside a new one inside them'] = [kept.status, (await getSettings()).schedules.map((s) => s.id)];
+    // Refused, it is still stamped as run, so it falls due again after its interval rather than on every
+    // tick of the scheduler — which takes a schedule never stamped as due (the SEC-2d review, F3.4).
+    const stamped = async () => typeof (await getSettings()).schedules.find((s) => s.id === 'old')?.lastRunAt;
+    answers['the earlier one, stamped as run before it falls due'] = await stamped();
     answers['the earlier one, when it falls due'] = await runScheduled(sched('old', elsewhere)).then(() => 'ran', (e: { code?: string }) => e.code);
+    answers['the earlier one, stamped as run though refused'] = await stamped();
     answers['scans of the folders outside them'] = [...scansOf(elsewhere), ...scansOf(later)].map((s) => s.scanId);
     assert.deepEqual(answers, {
       'a new schedule outside them, when saved': [403, 'POLICY_ROOT_NOT_ALLOWED'],
       'what is saved then': ['old'],
       'one saved earlier, beside a new one inside them': [200, ['old', 'in']],
+      'the earlier one, stamped as run before it falls due': 'undefined',
       'the earlier one, when it falls due': 'POLICY_ROOT_NOT_ALLOWED',
+      'the earlier one, stamped as run though refused': 'number',
       'scans of the folders outside them': [],
     });
     // Inside them a scheduled scan runs, Eco, to the end.
