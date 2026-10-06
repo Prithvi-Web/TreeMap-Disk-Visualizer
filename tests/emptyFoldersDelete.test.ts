@@ -418,6 +418,7 @@ test('openapi names every refusal code, in the result and the dry run, and the j
   const codes = Object.values(NOT_EMPTY_CODES).sort();
   const failed = doc.components.schemas.CleanResult.properties.failed.items.properties;
   assert.deepEqual([...failed.code.enum].sort(), codes);
+  assert.match(failed.code.description, /FOLDER_NO_ANSWER \(it or its drive did not answer in time, or its drive still held two calls that had not answered, so it was not asked\)/, 'both causes of FOLDER_NO_ANSWER (the U-4c review, F3.2)');
   const notEmpty = doc.components.schemas.TrashDryRunManifest.properties.notEmpty.items.properties;
   assert.deepEqual([...notEmpty.code.enum].sort(), codes);
   const op = doc.paths['/api/files'].delete;

@@ -129,7 +129,9 @@ export type EmptyVerdict = { empty: true } | { empty: false; why: NotEmptyWhy; r
  * The code an "only empty folders" delete refuses a folder with, by why the
  * look could not show it empty (U-4b L4) — each its own, so a caller can tell
  * a folder that holds something from one nobody could read or that did not
- * answer — or that TreeMap's own time for looking ran out on (`out-of-time`,
+ * answer (`no-answer`: it or its drive, or — never asked — its drive held two
+ * calls that had not answered; the `reason` says which, the U-4c review,
+ * F3.2) — or that TreeMap's own time for looking ran out on (`out-of-time`,
  * the U-4b review's L-5: no drive is to blame for that). A folder that is gone
  * is not refused: it fails as gone.
  */

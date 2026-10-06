@@ -437,7 +437,7 @@ const schemas: Json = {
       withheld: int('Folders the scan saw empty that a second look on disk did not find still empty — they hold something now, could not be read, or did not answer — left out of folders, and their nested ones out of totalCount'),
       withheldBy: {
         type: 'object',
-        description: 'How many of withheld were left out for each reason: content (holds something now), unreadable, no-answer (the folder or its drive did not answer), out-of-time (the 10 s TreeMap gives to looking ran out first), too-many (too much to look through), not-a-folder, gone. {} when nothing was withheld',
+        description: 'How many of withheld were left out for each reason: content (holds something now), unreadable, no-answer (the folder or its drive did not answer, or its drive still held two calls that had not answered, so the folder was not asked), out-of-time (the 10 s TreeMap gives to looking ran out first), too-many (too much to look through), not-a-folder, gone. {} when nothing was withheld',
         additionalProperties: { type: 'integer' },
       },
       reason: str('Present only when the scan cannot offer empty folders at all, and why: a gdu scan shows a folder it could not read as an empty one'),
@@ -514,7 +514,7 @@ const schemas: Json = {
         code: {
           type: 'string',
           enum: [...EMPTY_FOLDER_REFUSAL_CODES],
-          description: 'Present with refused when onlyEmptyFolders was set and this path was not shown to be still an empty folder at its turn, saying why: FOLDER_NOT_EMPTY (it holds something), FOLDER_UNREADABLE (a folder in it could not be read), FOLDER_NO_ANSWER (it or its drive did not answer in time), FOLDER_NOT_CHECKED (the 10 s TreeMap gives to looking ran out before its turn ended), FOLDER_TOO_MANY_ENTRIES (too much to look through), NOT_A_FOLDER',
+          description: 'Present with refused when onlyEmptyFolders was set and this path was not shown to be still an empty folder at its turn, saying why: FOLDER_NOT_EMPTY (it holds something), FOLDER_UNREADABLE (a folder in it could not be read), FOLDER_NO_ANSWER (it or its drive did not answer in time, or its drive still held two calls that had not answered, so it was not asked), FOLDER_NOT_CHECKED (the 10 s TreeMap gives to looking ran out before its turn ended), FOLDER_TOO_MANY_ENTRIES (too much to look through), NOT_A_FOLDER',
         },
       }, ['path', 'reason'])),
     },

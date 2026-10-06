@@ -431,7 +431,9 @@ OpenAPI 3 spec).
      that cannot be shown still an empty folder is left where it is, in
      `failed[]` with `refused: true` and a code saying why:
      `FOLDER_NOT_EMPTY` (it holds something), `FOLDER_UNREADABLE`,
-     `FOLDER_NO_ANSWER` (it or its drive did not answer), `FOLDER_NOT_CHECKED`
+     `FOLDER_NO_ANSWER` (it or its drive did not answer, or its drive
+     still held two calls that had not answered, so it was not asked — its
+     `reason` says which), `FOLDER_NOT_CHECKED`
      (the 10 s TreeMap gives to looking ran out first),
      `FOLDER_TOO_MANY_ENTRIES`, `NOT_A_FOLDER`; a dry run lists those in
      `notEmpty`. `ignoreJunk` (with it only; true when left out) is the

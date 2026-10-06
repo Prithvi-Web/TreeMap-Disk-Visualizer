@@ -234,16 +234,36 @@ test('each reason a folder was left where it is is said as itself, never as a fa
   assert.doesNotMatch(notChecked, /asleep|disconnected|did not answer/);
   assert.ok(toasts.some((m) => /^1 folder is no longer empty/.test(m)), said);
   assert.ok(toasts.some((m) => /^1 folder could not be read/.test(m)), said);
-  assert.ok(toasts.some((m) => /^2 folders did not answer in time/.test(m)), said);
+  assert.ok(toasts.some((m) => /^No answer came in time for 2 folders/.test(m)), said);
   // No time is promised (the U-4c review, F1.4): a drive whose call never comes back stays silent until
   // it does, since asking again on a timer would hold one more thread of the I/O pool each time.
-  const noAnswer = toasts.find((m) => /did not answer in time/.test(m)) ?? '';
+  const noAnswer = toasts.find((m) => /^No answer came in time/.test(m)) ?? '';
   assert.doesNotMatch(noAnswer, /minute|moment|second/, noAnswer);
   assert.match(noAnswer, /once the drive answers again, move them to the Trash again\.$/, noAnswer);
   assert.ok(toasts.some((m) => /^1 folder holds too much to look through/.test(m)), said);
   assert.ok(toasts.some((m) => /^1 item is no longer a folder/.test(m)), said);
   assert.ok(toasts.every((m) => /left where/.test(m)), `each says the folder is still there: ${said}`);
   assert.ok(!toasts.some((m) => /could not be trashed/.test(m)), 'none of them is a failure');
+});
+
+test('folders not asked because their drive still held two calls that had not answered are never said to have not answered themselves (the U-4c review, F3.2)', async () => {
+  // FOLDER_NO_ANSWER and the pane's no-answer count cover two causes — the folder or its drive did not
+  // answer, or TreeMap did not ask it, its drive holding two calls that had not answered — and the page,
+  // which reads only the code, says what is true of both.
+  const held = 'two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it and cannot tell that it is empty';
+  const { toasts } = await confirm({ paths: ['/r/a', '/r/b', '/r/c'], onlyEmptyFolders: true }, {
+    deleted: [],
+    failed: ['/r/a', '/r/b', '/r/c'].map((p) => ({ path: p, reason: held, code: 'FOLDER_NO_ANSWER' })),
+  });
+  const said = toasts.join(' | ');
+  assert.equal(toasts.length, 1, said);
+  assert.match(toasts[0], /^No answer came in time for 3 folders — left where they are\./, said);
+  assert.match(toasts[0], /or the drive was still waiting on earlier calls/, 'the cause in which TreeMap asked nothing is named');
+  assert.doesNotMatch(toasts[0], /folders? did not answer/, 'never that the folders themselves did not answer');
+  const pane = await renderPane({ folders: [], totalCount: 0, truncated: false, withheld: 3, withheldBy: { 'no-answer': 3 } });
+  assert.match(pane, /3 did not answer or were on a drive still waiting on earlier calls/);
+  const one = await renderPane({ folders: [], totalCount: 0, truncated: false, withheld: 1, withheldBy: { 'no-answer': 1 } });
+  assert.match(one, /it did not answer or was on a drive still waiting on earlier calls/);
 });
 
 test('a folder that is no longer empty is reported as that, not as a failure', async () => {

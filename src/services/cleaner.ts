@@ -177,7 +177,8 @@ export interface TrashOptions {
    * not still an empty folder is left where it is and failed with `refused`
    * and the code that says why (`NOT_EMPTY_CODES`, U-4b L4): it holds
    * something (`FOLDER_NOT_EMPTY`), a folder in it cannot be read
-   * (`FOLDER_UNREADABLE`), it does not answer (`FOLDER_NO_ANSWER`), the 10 s for
+   * (`FOLDER_UNREADABLE`), it or its drive does not answer, or its drive holds
+   * two calls that have not and it is not asked (`FOLDER_NO_ANSWER`), the 10 s for
    * looking ran out before its turn (`FOLDER_NOT_CHECKED`), it holds
    * too much to look through (`FOLDER_TOO_MANY_ENTRIES`), it is not a folder
    * (`NOT_A_FOLDER`). A path that is gone fails as it always did.

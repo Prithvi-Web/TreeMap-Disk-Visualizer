@@ -210,12 +210,14 @@ async function startEncode(paths) {
  * `withheldBy` (U-4b review, L-5): "2 held something and 1 did not answer" —
  * only the reasons that applied, and TreeMap's own 10 s said as that, never
  * as a drive that did not answer. An answer without it (an older server) gets
- * the sentence that names every reason a folder can be left out for.
+ * the sentence that names every reason a folder can be left out for. A
+ * no-answer folder may never have been asked — its drive held two calls that
+ * had not answered — and is said so (the U-4c review, F3.2).
  */
 const WITHHELD_SAID = [
   ['content', 'held something'],
   ['unreadable', 'could not be read'],
-  ['no-answer', 'did not answer'],
+  ['no-answer', 'did not answer or was on a drive still waiting on earlier calls', 'did not answer or were on a drive still waiting on earlier calls'],
   ['out-of-time', 'was not looked at before the 10 seconds TreeMap gives to looking ran out', 'were not looked at before the 10 seconds TreeMap gives to looking ran out'],
   ['too-many', 'held too much to look through'],
   ['not-a-folder', 'was no longer a folder', 'were no longer folders'],
@@ -1132,8 +1134,10 @@ async function runCleanTrash(selection, options) {
     FOLDER_NOT_EMPTY: (n, many) => `${n} folder${many ? 's are' : ' is'} no longer empty — ${stays(many)}. Rescan to see what is in ${many ? 'them' : 'it'}.`,
     FOLDER_UNREADABLE: (n, many) => `${n} folder${many ? 's' : ''} could not be read to make sure ${many ? 'they are' : 'it is'} empty — ${stays(many)}.`,
     // No time is promised (the U-4c review, F1.4): TreeMap asks a folder or drive again only once
-    // the call it left out there answers, and a dead mount's may never come back.
-    FOLDER_NO_ANSWER: (n, many) => `${n} folder${many ? 's' : ''} did not answer in time — ${stays(many)}. ${many ? 'They or their drive' : 'It or its drive'} may be slow, asleep or disconnected; once the drive answers again, move ${many ? 'them' : 'it'} to the Trash again.`,
+    // the call it left out there answers, and a dead mount's may never come back. The code covers a
+    // folder never asked too — its drive held two calls that had not answered — so no folder is said
+    // to have not answered itself (the U-4c review, F3.2).
+    FOLDER_NO_ANSWER: (n, many) => `No answer came in time for ${n} folder${many ? 's' : ''} — ${stays(many)}. ${many ? 'They or their drive' : 'It or its drive'} did not answer, or the drive was still waiting on earlier calls. The drive may be slow, asleep or disconnected; once the drive answers again, move ${many ? 'them' : 'it'} to the Trash again.`,
     // TreeMap's own time for looking ran out: no drive is blamed (U-4b review, L-5).
     FOLDER_NOT_CHECKED: (n, many) => `${n} folder${many ? 's were' : ' was'} not checked — ${stays(many)}. TreeMap looks for 10 seconds at a time and ran out first; move ${many ? 'them' : 'it'} to the Trash again to check ${many ? 'them' : 'it'}.`,
     FOLDER_TOO_MANY_ENTRIES: (n, many) => `${n} folder${many ? 's hold' : ' holds'} too much to look through — ${stays(many)}. Rescan to see what is in ${many ? 'them' : 'it'}.`,

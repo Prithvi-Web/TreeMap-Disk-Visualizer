@@ -985,6 +985,7 @@ test('openapi describes the two additive fields', async () => {
   assert.deepEqual(schema.required, ['folders', 'totalCount', 'truncated', 'withheld', 'withheldBy'], 'withheld, and why, are always sent');
   assert.ok(schema.properties.withheld, 'withheld is described');
   assert.ok(schema.properties.withheldBy, 'withheldBy is described (U-4b review, L-5)');
+  assert.match(schema.properties.withheldBy.description, /no-answer \(the folder or its drive did not answer, or its drive still held two calls that had not answered, so the folder was not asked\)/, 'both causes of no-answer (the U-4c review, F3.2)');
   assert.ok(schema.properties.reason, 'reason is described');
   assert.ok(!schema.required.includes('reason'), 'and reason is sent only when it applies');
 });
