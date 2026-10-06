@@ -477,11 +477,17 @@ OpenAPI 3 spec).
      **The refusal that matters:** anything the capsule cannot protect whole —
      too large for it, or a folder holding a file that could not be looked at —
      is **left undeleted** and named in `skipped[]` with its reason — never
-     deleted unprotected. Every look at an item and every file copied has a
-     60-second stall limit, past which that item is left undeleted; and while
-     two such calls are still waiting on a volume that stopped answering,
-     nothing more is started — the rest of the run is left undeleted
-     (`CAPSULE_COPY_FAILED`), and a dry run says so. Older copies are
+     deleted unprotected. Each call the capsule makes on an item — its walk
+     of the item (a dry run's too), each file it copies, and its look again
+     right before the item's trash step — has a 60-second stall limit, past
+     which that item is left undeleted; and while two such calls are still
+     waiting on a volume that stopped answering, nothing more is started —
+     the rest of the run is left undeleted (`CAPSULE_COPY_FAILED`), and a
+     dry run says so. Two looks have no limit yet: where each item of the
+     batch is on the disk, taken before anything is copied, and what stands
+     at each path, noted just before the Trash is asked. A path on a volume
+     that never answers there holds the request — nothing is deleted while
+     it waits. Older copies are
      evicted to make room only once the new copy is whole and verified, so an
      item whose copy fails costs no older copy. A run's copies are never evicted to make room while
      a request of that run is under way — its own, or a later chunk of the
