@@ -233,12 +233,14 @@ let mountTable: { readAt: number; mounts: Mount[] | null } | null = null;
 let mountTableRead: Promise<Mount[] | null> | null = null;
 const READ_MOUNT_TABLE = (): Promise<MountTable> => readMountTable(process.platform);
 let readTable: () => Promise<MountTable> = READ_MOUNT_TABLE;
-let mountClock: () => number = lookClock;
+/** A test's clock for the table's minute; null: `lookClock`, bound in this one place (the U-4c review, F1.6). */
+let mountClockForTests: (() => number) | null = null;
+const mountClock = (): number => (mountClockForTests ?? lookClock)();
 
-/** Tests only: read the mount table with `read`, timed on `now`; null puts the machine's table back. Either way the next lookup reads afresh. */
-export function setMountTableReaderForTests(read: (() => Promise<MountTable>) | null, now: () => number = lookClock): void {
+/** Tests only: read the mount table with `read`, timed on `now` (else `lookClock`); null puts the machine's table back. Either way the next lookup reads afresh. */
+export function setMountTableReaderForTests(read: (() => Promise<MountTable>) | null, now?: () => number): void {
   readTable = read ?? READ_MOUNT_TABLE;
-  mountClock = read ? now : lookClock;
+  mountClockForTests = read && now ? now : null;
   mountTable = null;
   mountTableRead = null;
 }

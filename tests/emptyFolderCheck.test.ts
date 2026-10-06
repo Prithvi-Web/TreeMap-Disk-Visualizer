@@ -596,6 +596,55 @@ test('the clock a look is timed on is monotonic: performance.now, never the wall
   }
 });
 
+/** Run `body` with performance.now reading the test's own count, put back after. */
+async function onPerformanceNow(body: (advance: (ms: number) => void) => Promise<void>): Promise<void> {
+  let tick = 0;
+  Object.defineProperty(performance, 'now', { value: () => tick, configurable: true, writable: true });
+  try {
+    await body((ms) => { tick += ms; });
+  } finally {
+    delete (performance as unknown as { now?: unknown }).now;
+  }
+}
+
+test('a session given no clock of its own is timed on that clock: its budget is spent by performance.now (U-4c review, F1.6)', async () => {
+  // Every other budget and silence test brings its own `now`; this one leaves the real binding in place.
+  await onPerformanceNow(async (advance) => {
+    setEmptyCheckForTests({
+      budgetMs: EMPTY_CHECK_BUDGET_MS,
+      driveOf: async () => '/s',
+      lstat: async () => { advance(3_000); return aFolder; },
+      opendir: async () => listingOf([]),
+      deadline: () => ({ late: new Promise<void>(() => {}), cancel: () => {} }),
+    });
+    const session = emptyCheckSession(true);
+    const whys: string[] = [];
+    for (const p of ['/s/a', '/s/b', '/s/c', '/s/d']) whys.push(whyOf(await session.look(p)));
+    assert.deepEqual(whys, ['empty', 'empty', 'empty', 'out-of-time'], '3 s of performance.now a look: the fourth runs the 10 s out');
+  });
+});
+
+test('the mount table read with no clock of the test\'s own is kept a minute of that clock: performance.now (U-4c review, F1.6)', { skip: process.platform === 'win32' && 'Windows keeps no mount table to read' }, async () => {
+  let reads = 0;
+  await onPerformanceNow(async (advance) => {
+    setMountTableReaderForTests(async () => {
+      reads++;
+      return { source: 'mount', entries: [{ mountPoint: '/', filesystem: 'apfs', options: [] }], reason: null };
+    });
+    try {
+      await driveOn('/x');
+      advance(59_999);
+      await driveOn('/y');
+      assert.equal(reads, 1, 'kept for the minute');
+      advance(1);
+      await driveOn('/z');
+      assert.equal(reads, 2, 'read again once a minute of performance.now has passed');
+    } finally {
+      setMountTableReaderForTests(null);
+    }
+  });
+});
+
 /* ─────────────── "gone" is only ever the folder itself (U-4c L1) ─────────────── */
 
 const enoent = (syscall: string): NodeJS.ErrnoException => Object.assign(new Error(`ENOENT: no such file or directory, ${syscall}`), { code: 'ENOENT' });
