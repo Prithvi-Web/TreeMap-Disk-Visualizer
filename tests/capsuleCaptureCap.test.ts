@@ -368,3 +368,116 @@ test('a capture\'s half-made copy whose folder could not be removed at once is r
   assert.equal(fs.existsSync(path.join(capsuleRoot(), leftover[0])), false, 'the next capture removed it');
   assert.ok(fs.existsSync(broken), 'and the item whose copy failed is untouched');
 });
+
+/* ─────────────── FG3g review F2.12: every other call on the item has the limit too ─────────────── */
+
+const NO_LINKS = process.platform === 'win32' ? 'a link needs a privilege on Windows' : false;
+
+/** A folder holding `inner.txt` and a link `link` to it. */
+function folderWithLink(label: string): { dir: string; link: string } {
+  const { dir } = folder(label);
+  const link = path.join(dir, 'link');
+  fs.symlinkSync('inner.txt', link);
+  return { dir, link };
+}
+
+interface CallCase {
+  name: string;
+  skip?: string | false;
+  /** The item to delete, and the one call on it that gets no answer: its kind, path and order. */
+  make: () => { item: string; what: string; abs: string; nth: number };
+  /** What the run does with the item once that call's limit passed. */
+  expect: { trashed: true; check?: (entryId: string) => void } | { trashed: false; code?: string; reason?: RegExp };
+}
+
+const manifestOf = (entryId: string): { members: { rel: string; targetIsDir?: boolean }[]; rootMtimeMs?: number } =>
+  JSON.parse(fs.readFileSync(path.join(capsuleRoot(), entryId, 'manifest.json'), 'utf8')) as { members: { rel: string; targetIsDir?: boolean }[]; rootMtimeMs?: number };
+
+const CALL_CASES: CallCase[] = [
+  {
+    name: 'the listing of a folder being walked',
+    make: () => { const { dir } = folder('call-readdir'); return { item: dir, what: 'readdir', abs: dir, nth: 0 }; },
+    expect: { trashed: false, code: 'CAPSULE_UNREADABLE', reason: /made no progress for 60 seconds/ },
+  },
+  {
+    name: 'the walk\'s read of a link inside the item',
+    skip: NO_LINKS,
+    make: () => { const { dir, link } = folderWithLink('call-member-link'); return { item: dir, what: 'readlink', abs: link, nth: 0 }; },
+    expect: { trashed: false, code: 'CAPSULE_UNREADABLE', reason: /could not read the link link, inside it \(the disk did not answer/ },
+  },
+  {
+    name: 'the walk\'s read of an item that is itself a link',
+    skip: NO_LINKS,
+    make: () => {
+      const alias = path.join(fileTempDir('treemap-capsuleCaptureCap-call-root-link-'), 'alias');
+      fs.symlinkSync('somewhere-else', alias);
+      return { item: alias, what: 'readlink', abs: alias, nth: 0 };
+    },
+    expect: { trashed: false, code: 'CAPSULE_UNREADABLE', reason: /made no progress for 60 seconds/ },
+  },
+  {
+    name: 'the capture\'s read of a link it is copying',
+    skip: NO_LINKS,
+    make: () => { const { dir, link } = folderWithLink('call-copy-link'); return { item: dir, what: 'readlink', abs: link, nth: 1 }; },
+    expect: { trashed: false, code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .* made no progress for 60 seconds\)/ },
+  },
+  {
+    name: 'the capture\'s look at what a link leads to (which only records whether it is a folder)',
+    skip: NO_LINKS,
+    make: () => { const { dir, link } = folderWithLink('call-link-target'); return { item: dir, what: 'stat', abs: link, nth: 0 }; },
+    expect: {
+      trashed: true,
+      check: (entryId) => {
+        const ofLink = manifestOf(entryId).members.find((m) => m.rel === 'link');
+        assert.ok(ofLink, 'the link was copied');
+        assert.equal(ofLink.targetIsDir, undefined, 'what it leads to, which did not answer, is not recorded');
+      },
+    },
+  },
+  {
+    name: 'the capture\'s look at a folder\'s own times (which only records them)',
+    make: () => { const { dir } = folder('call-root-times'); return { item: dir, what: 'lstat', abs: dir, nth: 1 }; },
+    expect: {
+      trashed: true,
+      check: (entryId) => assert.equal(manifestOf(entryId).rootMtimeMs, undefined, 'the folder\'s own times, which did not answer, are not recorded'),
+    },
+  },
+  {
+    name: 'the read of a link in the look right before the trash step',
+    skip: NO_LINKS,
+    make: () => { const { dir, link } = folderWithLink('call-look-link'); return { item: dir, what: 'readlink', abs: link, nth: 3 }; },
+    expect: { trashed: false },
+  },
+];
+
+for (const c of CALL_CASES) {
+  test(`a call on the item that gets no answer is stopped at the limit and the run goes on: ${c.name}`, { skip: c.skip ?? false }, async () => {
+    await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier call left waiting returning');
+    const { item, what, abs, nth } = c.make();
+    const normal = file('call-next', 'normal.txt', 'an ordinary file after the item');
+    const hold = holdCalls((w, a, n) => w === what && a === abs && n === nth);
+    let result: Awaited<ReturnType<typeof commitCart>>;
+    try {
+      result = await withOpenFileCheck('clear', () => fireEachHeldCall(commitCart([item, normal]), hold));
+    } finally {
+      hold.answer();
+      hold.remove();
+    }
+    await waitFor(() => abandonedCallsUnsettled() === 0, 'the call left waiting returning');
+    assert.deepEqual(hold.calls, [{ what, abs }], 'that call was made, under its limit, once');
+    assert.ok(result.trashed.includes(normal), 'the item after it was protected and deleted: the index was let go');
+    if (c.expect.trashed) {
+      assert.ok(result.trashed.includes(item), `the item was still protected and deleted (${JSON.stringify(result.skipped)})`);
+      const entry = (await getCapsuleIndex()).entries.find((e) => e.runId === result.runId && e.originalPath === item);
+      assert.ok(entry, 'its copy is kept');
+      c.expect.check?.(entry.id);
+    } else {
+      assert.ok(!result.trashed.includes(item), 'the item was not deleted');
+      assert.ok(fs.lstatSync(item), 'it is still in place');
+      const row = result.skipped.find((s) => s.path === item);
+      assert.ok(row, `it is named in skipped (${JSON.stringify(result.skipped)})`);
+      if (c.expect.code) assert.equal(row.code, c.expect.code, row.reason);
+      if (c.expect.reason) assert.match(row.reason ?? '', c.expect.reason, row.reason);
+    }
+  });
+}
