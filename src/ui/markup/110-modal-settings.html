@@ -217,6 +217,8 @@
            shows no figure (review F1.3). -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>How TreeMap measures space</div>
       <div class="muted" style="margin-bottom:10px;">TreeMap's map and totals count the size each file claims. Where this computer can measure it, this panel shows the space the files actually take up on disk next to that, for the folder you last scanned.</div>
+      <!-- QA D09 (the owner's answer, "Match Finder"): every size is decimal. -->
+      <div class="muted" style="margin-bottom:10px;">Sizes are in decimal units, as Finder and drive makers count them: 1 KB is 1,000 bytes, 1 MB is 1,000,000 bytes and 1 GB is 1,000,000,000 bytes — the same units the search box reads in <code>size&gt;1gb</code>. Windows Explorer divides by 1,024 instead, so it shows the same files smaller — by about 7% at gigabyte sizes.</div>
       <div id="allocationDiag" class="alloc-diag">Scan a folder to see this.</div>
 
       <!-- D2 · The right-click entry. Installed and removed from the same

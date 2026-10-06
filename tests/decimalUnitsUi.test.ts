@@ -235,3 +235,15 @@ test('no size in the page is a power of 1024: every threshold it shows or acts o
     assert.fail(`a binary size in the page's code: ${line.trim()}`);
   }
 });
+
+/* ══════════════ the page says which units it counts in ══════════════ */
+
+test('Settings → "How TreeMap measures space" says sizes are decimal, and what that means against Finder and Explorer', () => {
+  const at = INDEX.indexOf('How TreeMap measures space');
+  assert.notEqual(at, -1, 'the section is in Settings');
+  const words = INDEX.slice(at, INDEX.indexOf('id="allocationDiag"', at)).replace(/<[^>]+>/g, ' ').replace(/&gt;/g, '>').replace(/\s+/g, ' ');
+  assert.match(words, /1 KB is 1,000 bytes, 1 MB is 1,000,000 bytes and 1 GB is 1,000,000,000 bytes/, words);
+  assert.match(words, /Finder/, 'the reference a Mac user checks against');
+  assert.match(words, /Explorer[^.]*1,024/, 'and why Windows shows the same files smaller');
+  assert.match(words, /size>1gb/, 'the search box reads the same units');
+});

@@ -177,6 +177,12 @@ test('get_largest returns files largest-first with raw + formatted sizes', async
   assert.equal(s.count, 3);
 });
 
+test('the server tells an agent which units its formatted sizes are in (QA D09)', () => {
+  const said = client.getInstructions() ?? '';
+  assert.match(said, /decimal units/, said);
+  assert.match(said, /1 GB = 1,000,000,000 bytes/, said);
+});
+
 test('get_largest and reclaim_ranked ignore entries under 1 MB by default — 1,000,000 bytes, as every size is printed (QA D09)', async () => {
   const largest = (await call('get_largest', { scanId, kind: 'files', limit: 10 })).structuredContent!;
   const names = largest.files.map((f: { name: string }) => f.name);
