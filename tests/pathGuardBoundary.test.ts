@@ -561,6 +561,49 @@ test('a scan root typed with its last name in another case covers the folder it 
   }
 });
 
+test('the root by another spelling of its last name is asked of the file system only for a path beside the root: a batch of files in a scan costs two lstats a file, and no realpath once their folder is known (the SEC-2d review, F3.5)', () => {
+  // asTheRoot's gate kept the question to a path beside the root, and nothing counted it: without it every
+  // path cost one more lstat for every scan tried, on a route that judges 2,000 paths a request. Counted,
+  // not timed.
+  const home = fs.realpathSync(fileTempDir('treemap-guard-root-cost-'));
+  const root = path.join(home, 'Projects');
+  fs.mkdirSync(root);
+  const files = Array.from({ length: 200 }, (_, i) => path.join(root, `f${i}.txt`));
+  for (const f of files) fs.writeFileSync(f, 'f');
+  const sync = fs as unknown as { lstatSync: (...args: unknown[]) => unknown };
+  const lstat = sync.lstatSync;
+  const realpath = fs.realpathSync.native;
+  const calls = { lstat: 0, realpath: 0 };
+  try {
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+    const rec = createScanRecord(root);
+    rec.status = 'complete';
+    rec.finishedAt = Date.now();
+    assert.equal(insideAnyScanRoot(files[0]), true, 'and the folders’ answers are now remembered');
+    sync.lstatSync = (...args: unknown[]) => {
+      calls.lstat += 1;
+      return lstat(...args);
+    };
+    fs.realpathSync.native = ((...args: Parameters<typeof realpath>) => {
+      calls.realpath += 1;
+      return realpath(...args);
+    }) as typeof realpath;
+    const inside = files.filter((f) => insideAnyScanRoot(f)).length;
+    sync.lstatSync = lstat;
+    fs.realpathSync.native = realpath;
+    // One lstat of the file (is it a link?) and one of the root (is it a folder?), and a few spare.
+    const bound = 2 * files.length + 8;
+    assert.deepEqual(
+      { inside, calls: calls.lstat + calls.realpath <= bound ? `at most ${bound}` : `${calls.lstat} lstats and ${calls.realpath} realpaths` },
+      { inside: files.length, calls: `at most ${bound}` },
+    );
+  } finally {
+    sync.lstatSync = lstat;
+    fs.realpathSync.native = realpath;
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});
+
 test('where /usr/share/firmlinks cannot be read, the folders every macOS firmlinks stand in: the Data volume’s spelling of a scanned file is still that file, and nothing else is read as the root’s (the SEC-2 review, LOW-1)', async (t) => {
   if (process.platform !== 'darwin') return t.skip('the Data volume and its firmlinks are macOS');
   // With no list, no Data volume spelling was the root's: a scan of a home folder refused
