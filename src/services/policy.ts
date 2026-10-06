@@ -85,10 +85,21 @@ export async function getPolicy(): Promise<AgentPolicy> {
   };
 }
 
-/** Scans are the entry ticket to everything else — gate them first. */
+/**
+ * Scans are the entry ticket to everything else — gate them first.
+ *
+ * Judged where the root really is (`rootLivesAt`: a folder by its real place, a
+ * link — which a walk lists as the one entry it is — by the folder it lies in),
+ * against each allowed root where it lives and where it really is. By its text, a
+ * folder spelled inside an allowed root through a link above it passed, and an
+ * index build — which, unlike a scan, has no later check of its own — walked and
+ * served a folder outside every allowed root (the final review, F1.8, F1.15). A
+ * scan still checks where a link root leads before it walks (`startScan`).
+ */
 export function assertScanAllowed(policy: AgentPolicy, rootPath: string): void {
   if (policy.allowedRoots.length === 0) return;
-  if (policy.allowedRoots.some((root) => isInside(root, rootPath))) return;
+  const where = path.normalize(canonicalDirOf(rootLivesAt(rootPath)));
+  if (policy.allowedRoots.flatMap(placesOfEntry).some((root) => isInside(root, where))) return;
   throw new AppError(
     403,
     'POLICY_ROOT_NOT_ALLOWED',

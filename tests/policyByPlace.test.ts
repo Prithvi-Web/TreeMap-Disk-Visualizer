@@ -14,7 +14,7 @@ import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { startScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
-import { assertPathsAllowed, knownSizeOf, POLICY_FILE } from '../src/services/policy';
+import { assertPathsAllowed, assertScanAllowed, knownSizeOf, POLICY_FILE } from '../src/services/policy';
 import { AppError } from '../src/middleware/errorHandler';
 
 /**
@@ -72,11 +72,16 @@ after(async () => {
 
 /** DELETE /api/files as a dry run of `paths`: the refusal's code, or 'ok' with the bytes it counted. */
 function dryRunDelete(paths: string[]): Promise<string> {
+  return send('DELETE', '/api/files', { paths, dryRun: true });
+}
+
+/** A request with a JSON body: the refusal's status and code, or 'ok' with the bytes a dry run counted. */
+function send(method: string, url: string, body: unknown): Promise<string> {
   resetRateLimiter();
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({ paths, dryRun: true });
+    const payload = JSON.stringify(body);
     const r = http.request(
-      { host: '127.0.0.1', port, path: '/api/files', method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+      { host: '127.0.0.1', port, path: url, method, headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
       (res) => {
         let buf = '';
         res.setEncoding('utf8');
@@ -168,4 +173,35 @@ test('the byte cap and the bytes a delete counts read the folder by where it liv
     expected[`${how}: under a 1000-byte cap`] = '403 POLICY_BYTES_EXCEEDED';
   }
   assert.deepEqual(answers, expected);
+});
+
+test('an index build is held to allowedRoots where its root really is, as a scan is: a folder spelled inside an allowed root through a link above it is refused, and a root that is itself a link is judged as the link the walk lists (the final review, F1.8, F1.15)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, async () => {
+  withPolicy({ allowedRoots: [path.join(HOME, 'Desktop')] });
+  const policy = { allowedRoots: [path.join(HOME, 'Desktop')], protectedPaths: [], maxBytesPerOperation: null };
+  const verdict = (root: string): string => {
+    try {
+      assertScanAllowed(policy, root);
+      return 'allowed';
+    } catch (err) {
+      return err instanceof AppError ? err.code : String(err);
+    }
+  };
+  try {
+    assert.deepEqual(
+      {
+        'POST /api/index/build of Desktop/docs/taxes (lives in Documents)': await send('POST', '/api/index/build', { path: path.join(HOME, 'Desktop', 'docs', 'taxes') }),
+        'the gate, Desktop/docs/taxes': verdict(path.join(HOME, 'Desktop', 'docs', 'taxes')),
+        'the gate, Desktop/docs (a link, indexed as itself)': verdict(path.join(HOME, 'Desktop', 'docs')),
+        'the gate, Desktop': verdict(path.join(HOME, 'Desktop')),
+      },
+      {
+        'POST /api/index/build of Desktop/docs/taxes (lives in Documents)': '403 POLICY_ROOT_NOT_ALLOWED',
+        'the gate, Desktop/docs/taxes': 'POLICY_ROOT_NOT_ALLOWED',
+        'the gate, Desktop/docs (a link, indexed as itself)': 'allowed',
+        'the gate, Desktop': 'allowed',
+      },
+    );
+  } finally {
+    fs.rmSync(POLICY_PATH, { force: true });
+  }
 });

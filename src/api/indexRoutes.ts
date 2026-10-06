@@ -252,8 +252,10 @@ indexRouter.post('/index/build', guardBodyPath, async (req: Request, res: Respon
   if (maxEntries !== undefined && !(typeof maxEntries === 'number' && Number.isSafeInteger(maxEntries) && maxEntries > 0)) {
     throw new AppError(400, 'MAX_ENTRIES_INVALID', 'maxEntries must be a whole number of items, 1 or more');
   }
-  // The same policy gate scanning uses: an allowlisted deployment must not be
-  // able to index its way around the restriction.
+  // The same policy gate scanning uses, judged where the root really is (a
+  // link above it resolved; the root itself, if a link, is walked as the one
+  // entry it is): an allowlisted deployment must not be able to index its way
+  // around the restriction (the final review, F1.8, F1.15).
   assertScanAllowed(await getPolicy(), rootPath);
 
   const running = [...jobs.values()].filter((j) => j.rootPath === rootPath && j.status === 'running');
