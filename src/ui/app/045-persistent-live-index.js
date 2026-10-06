@@ -1439,7 +1439,7 @@ async function scanTheBox() {
     offerMeant(p, meant, () => {
       if (!state.scanning) { box.value = meant; maybeShowFastRescan(); }
       return scanTheBox();
-    });
+    }, 'Scan that folder');
     return;
   }
   startScan(p, { incremental });

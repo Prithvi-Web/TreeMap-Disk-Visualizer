@@ -291,10 +291,25 @@ async function meantFolder(p, err) {
     return null;
   }
 }
-/** "No such folder" for the path as typed — its stray space shows before the
-    closing quote — with the folder it probably meant as the one choice. */
-function offerMeant(p, meant, choose) {
-  toastAction(`No folder is named “${p}”`, `Did you mean “${meant}”?`, choose, 'error');
+/** What a path ends with, in words. A trailing space is all that tells the
+    path typed from the folder offered, and shown it is a hairline gap before
+    a closing quote — to a screen reader, nothing: both names read the same,
+    and "no such folder" read as a contradiction (final review F1.13). */
+function trailingBlanks(p) {
+  const tail = (/\s+$/.exec(p) || [''])[0];
+  const n = tail.length;
+  if (/^ +$/.test(tail)) return n === 1 ? 'a space' : `${n} spaces`;
+  if (/^\t+$/.test(tail)) return n === 1 ? 'a tab' : `${n} tabs`;
+  return n === 1 ? 'a blank character' : `${n} blank characters`;
+}
+/** "No such folder" for the path as typed, what it ends with said in words,
+    and the folder it probably meant as the one choice. The paths ride in the
+    message, which wraps; the button is a short verb for what choosing does
+    there (`label`) — a path in it could not shrink, and hung off the toast
+    and past the window's edge (final review F1.9). */
+function offerMeant(p, meant, choose, label = 'Use that folder') {
+  toastAction(`No folder is named “${p}” — the path ends with ${trailingBlanks(p)}. Did you mean “${meant}”?`,
+    label, choose, 'error');
 }
 /** How long Scan or Save waits on a path box's lookup (boxMeant) before
     going ahead with the path exactly as it is: a sleeping network drive can
@@ -380,7 +395,7 @@ async function browseTo(path, typed = false) {
     // An overtaken listing is not looked up further: nothing would show it.
     const meant = typed && seq === browseSeq ? await meantFolder(path, e) : null;
     if (seq !== browseSeq) return false;
-    if (meant) offerMeant(path, meant, () => browseTo(meant));
+    if (meant) offerMeant(path, meant, () => browseTo(meant), 'Open that folder');
     else toast(e.message, 'error');
     return false;
   }

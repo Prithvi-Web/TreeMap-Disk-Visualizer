@@ -123,6 +123,11 @@ body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bo
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-2); animation: toastIn var(--dur-3) var(--ease-spring); line-height: 1.45; }
 .toast .ic { margin-top: 1px; }
+/* The message gives way and wraps — at any character if it must, since a
+   path has no spaces to break at. Its unbroken min-content pushed a toast
+   naming a long path past its own max-width and off the window's edge
+   (final review F1.9). */
+.toast > span { min-width: 0; overflow-wrap: anywhere; }
 .toast.success .ic { color: var(--ok); }
 .toast.error .ic { color: var(--danger); }
 .toast.out { opacity: 0; transform: translateY(10px); transition: all var(--dur-2) var(--ease); }

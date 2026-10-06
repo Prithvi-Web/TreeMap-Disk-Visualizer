@@ -494,6 +494,9 @@ const DOCS = '/home/u/Documents';
 const list = (p: string) => '/api/fs/list?path=' + encodeURIComponent(p);
 /** The server's answer for a path that is not there (errorHandler: ENOENT). */
 const notFound = () => Object.assign(new Error('Path does not exist'), { code: 'PATH_NOT_FOUND', status: 404 });
+/** What an offer says (offerMeant): the path as typed, what is at its end in words, and the folder it probably meant. */
+const noFolder = (typed: string, blanks: string, meant: string) =>
+  `No folder is named “${typed}” — the path ends with ${blanks}. Did you mean “${meant}”?`;
 /** Home, Documents, "Screenshots " with its space, "Gone" without one; a folder that refuses to be read; nothing else. */
 const strictListing = (p: string) => {
   if (p === '/home/u') return HOME;
@@ -515,8 +518,8 @@ test('a typed path whose trailing space names no folder is never opened as the f
   assert.deepEqual(asked.slice(-2), [list(DOCS + ' '), list(DOCS)], 'as typed first, then the folder without the space is looked up');
   assert.equal(rt.path(), '/home/u', 'but not opened: the picker stays where it was');
   assert.equal(offers.length, 1, 'the person is told, with the folder offered');
-  assert.equal(offers[0].msg, `No folder is named “${DOCS} ”`, '"no such folder", for the path as typed — its space shows before the quote');
-  assert.equal(offers[0].label, `Did you mean “${DOCS}”?`, 'and the folder it probably meant is the choice');
+  assert.equal(offers[0].msg, noFolder(DOCS + ' ', 'a space', DOCS), '"no such folder", for the path as typed — its space said in words');
+  assert.equal(offers[0].label, 'Open that folder', 'and the folder it probably meant is the choice');
   assert.equal(offers[0].kind, 'error', 'shown as an error');
   assert.deepEqual(toasts, [], 'one answer, not a plain "Path does not exist" beside it');
   await offers[0].choose();
@@ -528,7 +531,7 @@ test('a typed path whose trailing space names no folder is never opened as the f
   await use();
   assert.deepEqual(scanned, [], '"Scan this folder" scans nothing in its place — nor the folder shown before it');
   assert.equal(offers.length, 2, 'it offers the folder too');
-  assert.equal(offers[1].label, `Did you mean “${DOCS}”?`);
+  assert.equal(offers[1].label, 'Open that folder');
   assert.equal($('browseUseBtn').disabled, false, 'and the button is live again');
   await offers.at(-1)!.choose();
   await use();
@@ -740,8 +743,8 @@ test('a stray trailing space typed into the Scan card or the Autopilot folder is
   assert.deepEqual(asked, [list(DOCS + ' '), list(DOCS)], 'Scan looks the path up as typed, then without the space');
   assert.equal(scanned.length, 0, 'and scans nothing in its place');
   assert.equal(offers.length, 1, 'the person is told, with the folder offered');
-  assert.equal(offers[0].msg, `No folder is named “${DOCS} ”`, '"no such folder", for the path as typed');
-  assert.equal(offers[0].label, `Did you mean “${DOCS}”?`);
+  assert.equal(offers[0].msg, noFolder(DOCS + ' ', 'a space', DOCS), '"no such folder", for the path as typed');
+  assert.equal(offers[0].label, 'Scan that folder');
   await offers[0].choose();
   assert.equal($('pathInput').value, DOCS, 'clicking it puts that folder in the box');
   assert.deepEqual(scanned.map(([p]) => p), [DOCS], 'and scans it');
@@ -765,7 +768,7 @@ test('a stray trailing space typed into the Scan card or the Autopilot folder is
   await click('browseBtn');
   assert.notEqual(rt.path(), DOCS, 'Browse… does not open the folder without the space in its place');
   assert.equal(offers.length, beforeBrowse + 1, 'it offers it');
-  assert.equal(offers.at(-1)!.label, `Did you mean “${DOCS}”?`);
+  assert.equal(offers.at(-1)!.label, 'Open that folder');
   await offers.at(-1)!.choose();
   assert.equal(rt.path(), DOCS, 'and opens it when chosen');
 
@@ -774,8 +777,8 @@ test('a stray trailing space typed into the Scan card or the Autopilot folder is
   await click('apSaveBtn');
   assert.equal(saves(), 0, 'a policy is not saved for the folder without the space');
   assert.equal(offers.length, offered + 1, 'Save answers with an offer of its own');
-  assert.equal(offers.at(-1)!.msg, `No folder is named “${DOCS} ”`, 'the Autopilot editor says "no such folder" too');
-  assert.equal(offers.at(-1)!.label, `Did you mean “${DOCS}”?`, 'with the folder offered');
+  assert.equal(offers.at(-1)!.msg, noFolder(DOCS + ' ', 'a space', DOCS), 'the Autopilot editor says "no such folder" too');
+  assert.equal(offers.at(-1)!.label, 'Use that folder', 'with the folder offered');
   await offers.at(-1)!.choose();
   await settle();
   assert.equal($('apPath').value, DOCS, 'clicking it puts that folder in the box');
@@ -816,7 +819,7 @@ test('a path the page put in a box — a pick, Recent, the last scan, a saved po
   $('pathInput').value = GONE; // Recent, or the last scan, puts the same text in the box
   await click('scanBtn');
   assert.deepEqual(scanned, [], 'Scan never scans the sibling in its place');
-  assert.equal(offers.at(-1)!.label, 'Did you mean “/home/u/Gone”?', 'it says the folder is not there, and the sibling is only offered');
+  assert.equal(offers.at(-1)!.msg, noFolder(GONE, 'a space', '/home/u/Gone'), 'it says the folder is not there, and the sibling is only offered');
   assert.equal($('pathInput').value, GONE, 'the box keeps the path the page put there');
   await click('apBrowseBtn');
   assert.notEqual(rt.path(), '/home/u/Gone', 'Browse… from the policy never opens the sibling in its place');
@@ -963,6 +966,37 @@ test('an offer\'s button acts once: a double-click, or a click while the toast f
   assert.ok(shown[1].cls.has('out'), 'control: an offer left alone fades when its time is up');
   shown[1].button!.click();
   assert.equal(ran, 1, 'and a click on it while it fades does nothing');
+});
+
+test('an offer says in words what the path ends with, its button is a short verb, and its message wraps inside the toast (final review F1.9, F1.13)', async () => {
+  // The only difference between the path typed and the folder offered is
+  // whitespace at its end: on screen a hairline gap before a closing quote,
+  // to a screen reader nothing — both names read the same, and "no such
+  // folder" read as a contradiction. It is said in words.
+  const trailingBlanks = lift<(p: string) => string>(['trailingBlanks'], 'trailingBlanks');
+  assert.equal(trailingBlanks('/a/Shots '), 'a space');
+  assert.equal(trailingBlanks('/a/Shots   '), '3 spaces');
+  assert.equal(trailingBlanks('/a/Shots\t'), 'a tab');
+  assert.equal(trailingBlanks('/a/Shots\t\t'), '2 tabs');
+  assert.equal(trailingBlanks('/a/Shots  '), '2 blank characters');
+  const { offers, click, type } = boxesRuntime(strictListing);
+  type('pathInput', DOCS + '  ');
+  await click('scanBtn');
+  assert.equal(offers.at(-1)!.msg, noFolder(DOCS + '  ', '2 spaces', DOCS), 'the offer says how many');
+
+  // The button held the whole path and could not shrink (flex:none): with a
+  // long path it hung hundreds of pixels past the toast's 380 px and off the
+  // window's edge. The path lives in the message, which wraps — at any
+  // character if it must, since a path has no spaces to break at.
+  type('apPath', DOCS + ' ');
+  await click('apSaveBtn');
+  await click('browseBtn'); // the Scan card's box still holds DOCS + '  '
+  assert.equal(offers.length, 3, 'control: the Scan card, the Autopilot editor and the picker each made an offer');
+  for (const o of offers) assert.doesNotMatch(o.label, /\//, `an offer's button holds no path: "${o.label}"`);
+  const span = /\.toast > span \{([^}]*)\}/.exec(INDEX);
+  assert.ok(span, 'a toast\'s message has a rule of its own');
+  assert.match(span![1], /min-width:\s*0/, 'its message may shrink below its longest word');
+  assert.match(span![1], /overflow-wrap:\s*anywhere/, 'and breaks a path anywhere to fit');
 });
 
 test('Scan reads Fast rescan when pressed, and a lookup that does not answer in time scans the path exactly as typed (QA4a R4-3)', async () => {
