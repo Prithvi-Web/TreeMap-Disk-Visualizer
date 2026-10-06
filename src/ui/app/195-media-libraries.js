@@ -251,7 +251,7 @@ function renderApps() {
         <span class="chip" style="--tint:#5E5CE6">${icon('box', 15)}</span>
         <span class="bp-title">${escapeHtml(a.name)}<span class="prof">${appCatSummary(a)}</span></span>
         <span class="spacer"></span>
-        ${a.safeToClearBytes >= 1048576 ? `<button class="pill app-clear" data-i="${i}" title="Move this app's caches and logs to the Trash — never its data or the app itself">Clear ${formatBytes(a.safeToClearBytes)} safely</button>` : ''}
+        ${a.safeToClearBytes >= MB ? `<button class="pill app-clear" data-i="${i}" title="Move this app's caches and logs to the Trash — never its data or the app itself">Clear ${formatBytes(a.safeToClearBytes)} safely</button>` : ''}
         <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (a.totalBytes / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
         <span class="size-badge num" style="color:${sizeInk(a.totalBytes)}">${formatBytes(a.totalBytes)}</span>
         <span class="chev">${icon('chevronRight', 14)}</span>

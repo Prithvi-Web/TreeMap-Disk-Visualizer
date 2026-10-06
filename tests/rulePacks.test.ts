@@ -241,6 +241,9 @@ test('every suggestion can explain itself, from what the rule actually matches',
   assert.equal(matchReasonFor(rust!), 'A folder named target sitting next to Cargo.toml.', 'in the spelling the pack writes, not the lowercased match key (QA D06)');
   const stale = catalog.staleFiles.find((r) => r.id === 'old-downloads');
   assert.match(matchReasonFor(stale!), /at least 1 MB, untouched for 90\+ days\.$/);
+  // The "1 MB" it says is the decimal megabyte every size is printed in (QA D09).
+  assert.equal(stale!.minSizeBytes, 1_000_000, 'the rule matches from 1,000,000 bytes, the 1 MB its sentence names');
+  assert.match(matchReasonFor({ ...stale!, minSizeBytes: 250_000_000 }), /at least 250 MB,/, 'and the sentence counts in the same megabytes');
 });
 
 test('a matched group carries its confidence and its reason', () => {

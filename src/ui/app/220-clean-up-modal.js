@@ -320,7 +320,7 @@ async function renderGitRepos() {
   if (!host || !state.scanId) return;
   let repos = [];
   try { ({ repos } = await api('/api/git/repos?scanId=' + state.scanId)); } catch { return; }
-  const notable = (repos || []).filter((r) => r.totalBytes > 1048576);
+  const notable = (repos || []).filter((r) => r.totalBytes > MB);
   if (!notable.length) { host.innerHTML = ''; return; }
   host.innerHTML = `<div style="margin-bottom:16px;">
     <div class="rule-row" style="padding:6px 0;"><b style="display:inline-flex;align-items:center;gap:7px;">${icon('gitBranch', 15)}Git repositories</b><span class="muted" style="flex:1;margin-left:8px;">pack &amp; loose-object breakdown — run gc to compact</span></div>

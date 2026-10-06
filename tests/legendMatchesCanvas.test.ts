@@ -293,8 +293,9 @@ test('the numbers at the ends of the key are the ends of the ramp', () => {
   // wrong size — the same class of lie as the wrong hue, harder to spot.
   const labels = [...LEGEND_HTML.matchAll(/>\s*([\d.]+)\s*(B|KB|MB|GB|TB)\+?\s*</g)];
   assert.equal(labels.length, 2, `the key labels both ends: ${LEGEND_HTML}`);
+  // Read in the units every size on the page is printed in: decimal (QA D09).
   const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const bytes = labels.map((l) => Number(l[1]) * 1024 ** UNITS.indexOf(l[2]));
+  const bytes = labels.map((l) => Number(l[1]) * 1000 ** UNITS.indexOf(l[2]));
   assert.equal(Math.round(bytes[0]), Math.round(bytesAt(0)), 'the left label is the bottom of the ramp');
   assert.equal(Math.round(bytes[1]), Math.round(bytesAt(1)), 'the right label is the top of the ramp');
 });

@@ -47,8 +47,12 @@ const MEMORY_JOURNAL_MAX = 2000;
 /** Read-back guard: never parse more than this many trailing lines. */
 const MAX_READ_LINES = 1000;
 
-/** A change smaller than this is daily noise, not a journal entry. */
-export const SIGNIFICANT_BYTES = 100 * 1024 * 1024;
+/**
+ * A change smaller than this is daily noise, not a journal entry. 100 MB in the
+ * decimal units every size is printed in (QA D09): the Calendar tells a person
+ * the journal fills in at "changes of 100 MB or more".
+ */
+export const SIGNIFICANT_BYTES = 100_000_000;
 /** At most this many entries per scheduled scan, largest change first. */
 const MAX_ENTRIES_PER_SCAN = 5;
 

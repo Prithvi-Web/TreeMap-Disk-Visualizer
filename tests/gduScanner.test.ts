@@ -9,7 +9,7 @@ import path from 'node:path';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-gduScanner-data-');
 
-import { findGduBinary, runGdu, gduScan } from '../src/services/gduScanner';
+import { findGduBinary, runGdu, gduScan, shardTooLargeReason } from '../src/services/gduScanner';
 import { startScan, peekScan, createScanRecord } from '../src/services/diskScanner';
 import { FileNode, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
@@ -233,4 +233,12 @@ test('gduScan records files sitting directly under the scan root', async (t) => 
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('a shard too large to parse is refused in a sentence whose sizes are decimal, as every size is printed (QA D09)', () => {
+  // It used to divide by 1048576 and print "MB": 500,000,000 bytes read "477 MB".
+  const why = shardTooLargeReason('/Volumes/Big/Photos', 500_000_000);
+  assert.match(why, /^gdu output for \/Volumes\/Big\/Photos is 500\.0 MB, /, why);
+  assert.match(why, /falling back to the walker$/, why);
+  assert.doesNotMatch(why, /\b477\b/, 'never the mebibyte count under an "MB" label');
 });

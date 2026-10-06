@@ -142,6 +142,14 @@ test('a deep grower is pinned to its own folder, not the scan root', () => {
   assert.equal(culprits[1].delta, -4 * GB);
 });
 
+test('the threshold is the "100 MB" the Calendar promises, in the decimal units every size is printed in (QA D09)', () => {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const said = /notice changes of ([\d.]+ [KMGT]?B) or more/.exec(page);
+  assert.ok(said, 'the Calendar names the threshold');
+  assert.equal(formatBytes(SIGNIFICANT_BYTES, 0), said[1], 'the bytes behind it print as the figure it names');
+  assert.equal(SIGNIFICANT_BYTES, 100_000_000);
+});
+
 test('changes below the significance threshold produce nothing', () => {
   const prev = node('x', 10 * GB, [node('a', 5 * GB), node('b', 5 * GB)]);
   const curr = node('x', 10 * GB + 50 * MB, [node('a', 5 * GB + 30 * MB), node('b', 5 * GB + 20 * MB)]);

@@ -228,8 +228,10 @@ const PREVIEW_TEXT_EXT = new Set([
   'xml', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'csv', 'tsv', 'sql', 'gradle',
   'properties', 'gitignore', 'r', 'vue', 'svelte',
 ]);
-const PREVIEW_MAX_IMAGE = 10 * 1024 * 1024;
-const PREVIEW_TEXT_BYTES = 8192;
+// The sizes the preview pane names — "Image larger than 10 MB", "first 8 KB
+// shown" — in the decimal units every size is printed in (QA D09).
+const PREVIEW_MAX_IMAGE = 10_000_000;
+const PREVIEW_TEXT_BYTES = 8000;
 const PREVIEW_NAME_TEXT = new Set(['dockerfile', 'makefile', 'license', 'readme', '.gitignore', '.env']);
 /** Raster formats sharp can turn into a WebP thumbnail (?thumb) for the near-dupe strip. */
 const THUMB_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'heic', 'heif', 'avif']);

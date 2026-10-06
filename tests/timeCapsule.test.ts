@@ -96,7 +96,8 @@ test('the cap is a share of usable space, so it does not shrink as the capsule f
 test('an unreadable volume falls back to a stated cap rather than an invented one', () => {
   const cap = capFor(null, 0, 10);
   assert.ok(cap > 0, 'protection still happens');
-  assert.equal(cap, 1024 * 1024 * 1024, 'a fixed, documented fallback — not a guess from nothing');
+  // 1 GB in the decimal units its note prints it in ("limited to 1.0 GB"), not 1 GiB, which printed as 1.1 GB (QA D09).
+  assert.equal(cap, 1_000_000_000, 'a fixed, documented fallback — not a guess from nothing');
 });
 
 test('usedBytesOf counts only what is still held', () => {

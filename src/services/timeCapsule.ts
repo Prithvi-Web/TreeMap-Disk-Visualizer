@@ -82,8 +82,8 @@ const SCHEMA_VERSION = 1;
 const MAX_EVENTS = 200;
 /** A single capture beyond this many files is refused rather than crawled. */
 const MAX_FILES_PER_ENTRY = 50_000;
-/** Cap used when the volume's free space cannot be read at all. */
-const FALLBACK_CAP_BYTES = 1024 * 1024 * 1024;
+/** Cap used when the volume's free space cannot be read at all: 1 GB, as its note prints it (decimal units, QA D09). */
+const FALLBACK_CAP_BYTES = 1_000_000_000;
 const JOB_TTL_MS = 30 * 60_000;
 /**
  * How long one file's copy into the capsule may go without reading a byte before it is stopped

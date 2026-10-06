@@ -464,7 +464,9 @@ function toast(msg, kind = 'success', ms = 4200) {
    `color-mix(in srgb, <ramp> var(--size-ink), var(--text-1))`: --text-1 is
    near-black in light and near-white in dark, so the hue survives while
    contrast lands in both themes — with zero theme-change re-render plumbing. */
-const TIER_LO = Math.log10(1048576), TIER_HI = Math.log10(10 * 1024 ** 3);
+// The ramp runs from 1 MB to 10 GB, decimal like every size the page prints
+// (QA D09) — the two figures the key under the map is labelled with.
+const TIER_LO = Math.log10(1e6), TIER_HI = Math.log10(1e10);
 function hexToRgb(h) { return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; }
 const C_TEAL = hexToRgb('#30D158'), C_AMBER = hexToRgb('#FFD60A'), C_RED = hexToRgb('#FF453A');
 function mix(a, b, t) { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }

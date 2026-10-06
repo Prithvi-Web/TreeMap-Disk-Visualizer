@@ -221,3 +221,17 @@ test('a scheduled scan\'s "Alert if +GB" is read and shown in decimal gigabytes'
   )();
   assert.equal(settingsData.schedules[0].thresholdBytes, 3.5e9, '"3.5" in the GB box is 3,500,000,000 bytes');
 });
+
+/* ══════════════ thresholds the page shows or acts on ══════════════ */
+
+test('no size in the page is a power of 1024: every threshold it shows or acts on is a decimal size', () => {
+  // The size key's ends ("1 MB … 10 GB+"), the Apps view's "Clear … safely"
+  // button (offered from 1 MB) and the Git repositories list (repos over
+  // 1 MB) each compared against a mebibyte while the page printed megabytes.
+  const script = INDEX.slice(INDEX.indexOf('<script'));
+  const code = script.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
+  for (const m of code.matchAll(/\b(1048576|1_048_576|1073741824|1_073_741_824|1099511627776|10485760|1024 ?\*\* ?[2-5]|1024 ?\* ?1024)\b/g)) {
+    const line = code.slice(code.lastIndexOf('\n', m.index) + 1, code.indexOf('\n', m.index));
+    assert.fail(`a binary size in the page's code: ${line.trim()}`);
+  }
+});

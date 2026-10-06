@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pack": "common",
-  "updated": "2026-10-05",
+  "updated": "2026-10-06",
   "rules": [
     {
       "id": "regen-node-modules",
@@ -265,7 +265,7 @@
       "confidence": "medium",
       "withinPath": "{home}/Downloads",
       "olderThanDays": 90,
-      "minSizeBytes": 1048576
+      "minSizeBytes": 1000000
     },
     {
       "id": "media-lightroom-previews",

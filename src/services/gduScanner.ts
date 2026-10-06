@@ -11,6 +11,7 @@ import { neverDescendPaths } from '../utils/mountBoundaries';
 import { PackedScanStore, ScanStore, NodeInput } from './scanStore';
 import { platform } from '../platform';
 import { applyChildBudget, isScanPaused, registerPausable, unregisterPausable, whenResumed } from './engineBudget';
+import { formatBytes } from '../utils/formatBytes';
 
 /**
  * The gdu turbo engine.
@@ -37,8 +38,18 @@ import { applyChildBudget, isScanPaused, registerPausable, unregisterPausable, w
  *    keeps us far away from, backstopped by MAX_SHARD_BYTES.
  */
 
-/** Refuse a shard whose JSON approaches V8's ~512 MB single-string ceiling. */
+/** Refuse a shard whose JSON approaches V8's single-string ceiling (2^29 characters, ~512 MiB). */
 const MAX_SHARD_BYTES = 450 * 1024 * 1024;
+
+/**
+ * Why a shard of `bytes` of JSON is not parsed: the engine row's fallback
+ * reason. Sizes through formatBytes, decimal like every size TreeMap prints
+ * (QA D09) — it used to print a mebibyte count under an "MB" label.
+ */
+export function shardTooLargeReason(dirPath: string, bytes: number): string {
+  return `gdu output for ${dirPath} is ${formatBytes(bytes)}, more than the ${formatBytes(MAX_SHARD_BYTES)} TreeMap reads in one piece ` +
+    '(close to V8\'s limit on a single string) — falling back to the walker';
+}
 
 /**
  * Hard ceiling per gdu subprocess. gdu moves at ~112k+ items/sec, so five
@@ -435,10 +446,7 @@ export async function gduScanIntoStore(
 
       const st = await fsp.stat(outFile);
       if (st.size > MAX_SHARD_BYTES) {
-        throw new Error(
-          `gdu output for ${dirPath} is ${Math.round(st.size / 1048576)} MB, beyond the ` +
-            '~512 MB single-string ceiling — falling back to the walker',
-        );
+        throw new Error(shardTooLargeReason(dirPath, st.size));
       }
 
       const parsed = JSON.parse(await fsp.readFile(outFile, 'utf8'));

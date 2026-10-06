@@ -251,6 +251,46 @@ test('the duplicate job says whether its reclaimable figure is an upper bound (A
   }
 });
 
+/* ───────────────────────────── the preview pane ───────────────────────────── */
+
+test('the preview pane\'s limits are the decimal sizes its sentences name: "Image larger than 10 MB", "first 8 KB shown"', async () => {
+  const base = fileTempDir('treemap-polish-preview-');
+  const over = path.join(base, 'over.png');
+  fs.writeFileSync(over, '');
+  fs.truncateSync(over, 10_000_001); // sparse: a size, not ten megabytes of writing
+  const long = path.join(base, 'long.txt');
+  fs.writeFileSync(long, 'a'.repeat(9000));
+  const scan = await startScan(base);
+  await waitFor(() => getScan(scan.scanId)?.status !== 'running', 'the scan settling', 20);
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const answer = (p: string) => new Promise<{ ctype: string; body: string }>((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/files/preview?path=${encodeURIComponent(p)}` }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => { chunks.push(c); });
+      res.on('end', () => resolve({ ctype: String(res.headers['content-type']), body: Buffer.concat(chunks).toString('utf8') }));
+    }).on('error', reject);
+  });
+  const preview = async (p: string): Promise<{ type: string; reason?: string; content?: string; truncated?: boolean }> => {
+    const a = await answer(p);
+    assert.match(a.ctype, /json/, `a JSON answer for ${path.basename(p)}, not the file itself`);
+    return JSON.parse(a.body);
+  };
+  try {
+    const big = await preview(over);
+    assert.equal(big.type, 'meta', 'an image of 10,000,001 bytes is over the 10 MB it names');
+    assert.equal(big.reason, 'Image larger than 10 MB');
+    const text = await preview(long);
+    assert.equal(text.type, 'text');
+    assert.equal(text.content?.length, 8000, 'the first 8 KB is the first 8,000 bytes');
+    assert.equal(text.truncated, true);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
 /* ───────────────────────────── cloud folders ───────────────────────────── */
 
 test('cloudProviderFor is the one gate every engine shares', () => {

@@ -519,7 +519,7 @@ export function matchReasonFor(rule: Rule, matched?: { names?: readonly string[]
     case 'package-cache':
       return `The ${rule.ecosystem} package cache at ${rule.paths[0]}.`;
     case 'stale-files':
-      return `Files under ${rule.withinPath} of at least ${Math.round(rule.minSizeBytes / 1_048_576)} MB, untouched for ${rule.olderThanDays}+ days.`;
+      return `Files under ${rule.withinPath} of at least ${Math.round(rule.minSizeBytes / 1_000_000)} MB, untouched for ${rule.olderThanDays}+ days.`;
   }
 }
 
