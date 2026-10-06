@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import { INDEX } from './fixtures/liftFrontend';
 
@@ -405,4 +407,26 @@ test('Settings → "How TreeMap measures space" says sizes are decimal, and what
   assert.match(words, /Finder/, 'the reference a Mac user checks against');
   assert.match(words, /Explorer[^.]*1,024/, 'and why Windows shows the same files smaller');
   assert.match(words, /size>1gb/, 'the search box reads the same units');
+});
+
+test('the docs claim raw bytes where the answers carry them — beside a formatted size field — and say a size inside a sentence is the formatted figure only (review F1.3)', () => {
+  // PLATFORM_NOTES said "every API answer carries the raw bytes beside the
+  // formatted string". A sentence that prints a size does not: DEST_FULL's
+  // message ("this needs 30.0 MB … only 30.3 MB is free") and the gdu
+  // fallback's reason carry two formatted figures and no byte count, so an
+  // agent trusting the sentence would compare rounded strings.
+  const doc = (file: string) => readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const notes = doc('docs/PLATFORM_NOTES.md');
+  const at = notes.indexOf('## Size units');
+  assert.notEqual(at, -1, 'PLATFORM_NOTES has its units section');
+  const units = notes.slice(at, notes.indexOf('\n## ', at + 1)).replace(/\s+/g, ' ');
+  assert.doesNotMatch(units, /every API answer carries the raw bytes/, 'no claim the error and reason sentences do not keep');
+  assert.match(units, /a size as a field[^.]*raw bytes[^.]*beside the formatted string/, 'the claim the size fields keep');
+  assert.match(units, /a size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/, 'and what a sentence gives instead');
+
+  const agents = doc('AGENTS.md');
+  const mcp = agents.slice(agents.indexOf('## MCP specifics'), agents.indexOf('\n## ', agents.indexOf('## MCP specifics') + 1)).replace(/\s+/g, ' ');
+  assert.doesNotMatch(mcp, /All sizes come back as raw bytes/, 'AGENTS.md\'s MCP line makes the same claim only of size fields');
+  assert.match(mcp, /Every size field comes back as raw bytes plus a human-formatted string/);
+  assert.match(mcp, /A size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/);
 });

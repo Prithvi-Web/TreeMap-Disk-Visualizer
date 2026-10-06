@@ -19,8 +19,11 @@ alike (QA D09, the owner's decision of 5 Oct 2026). That is what Finder shows
 Windows Explorer (under the same KB/MB/GB labels) or `du -h` and `df -h` (as
 K/M/G) show: they divide by 1,024, so for the same bytes TreeMap's figure is
 2.4% larger in KB, 4.9% in MB, 7.4% in GB and 10% in TB. Both come from the same byte
-count; nothing is measured differently, and every API answer carries the raw
-bytes beside the formatted string. Binary quantities inside the code (I/O
+count; nothing is measured differently. Where an API answer gives a size as a
+field, the raw bytes stand beside the formatted string; a size inside a
+sentence — an error such as `DEST_FULL`, a reason such as the gdu fallback's —
+is the formatted figure only, so compare the fields, never the words. Binary
+quantities inside the code (I/O
 buffers, block sizes, V8's string limit) keep their binary values and are
 named in KiB and MiB.
 

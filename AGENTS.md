@@ -1005,12 +1005,14 @@ read-what-you-saw) permission to act.
 - `trash_paths` and `offload` accept `dryRun: true`, which returns the exact
   manifest — affected paths and bytes — while acting on nothing. **Dry-run
   first, show the user, then act.**
-- All sizes come back as raw bytes plus a human-formatted string, and the
-  formatted string is in **decimal units**: 1 KB = 1,000 bytes, 1 MB =
+- Every size field comes back as raw bytes plus a human-formatted string, and
+  the formatted string is in **decimal units**: 1 KB = 1,000 bytes, 1 MB =
   1,000,000 bytes, 1 GB = 1,000,000,000 bytes — as Finder counts them, as the
   query grammar reads `kb`/`mb`/`gb`, and as the server's own instructions
   say. Until 5.2.0 it divided by 1,024 under the same labels; compare raw
-  bytes, never formatted strings, across versions.
+  bytes, never formatted strings, across versions. A size inside a sentence —
+  an error such as `DEST_FULL`, a fallback's reason — is the formatted figure
+  only, with no byte count beside it.
 
 ## Server profile: auth, CORS and remote bind
 
