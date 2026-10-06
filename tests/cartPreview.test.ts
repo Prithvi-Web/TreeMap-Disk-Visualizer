@@ -150,6 +150,57 @@ test('the parent of a path is its directory, in either separator', () => {
   assert.equal(tmParentPath('C:\\Users'), 'C:\\');
 });
 
+test('on macOS and Linux a backslash is a character of a folder’s name, never a separator: a tree with a folder named "a\\b" nests as the disk does (POL item 7)', () => {
+  // "\" is a legal byte in a POSIX name. Read as a separator — because the
+  // folder's own name has one — "/data/a\b/c.txt" fell outside "/data/a\b",
+  // and its sibling FILE "/data/a\b\c.txt" fell inside it.
+  const tmStepToward = lift<(root: string, p: string) => string | null>(['tmStepToward', 'tmIsInside'], 'tmStepToward');
+  const dir = '/data/a\\b';
+  assert.deepEqual({
+    'a file in the folder is inside it': tmIsInside('/data/a\\b/c.txt', dir),
+    'a file beside it, named "a\\b\\c.txt", is not': tmIsInside('/data/a\\b\\c.txt', dir),
+    'nor is the folder’s file inside "/data/a"': tmIsInside('/data/a\\b/c.txt', '/data/a'),
+    'the folder’s parent': tmParentPath(dir),
+    'its file’s parent': tmParentPath('/data/a\\b/c.txt'),
+    'the parent of "x\\y" at the root': tmParentPath('/x\\y'),
+    'a click inside it opens the folder one level down': tmStepToward(dir, '/data/a\\b/sub/f.txt'),
+    'a click from above it opens the folder itself': tmStepToward('/data', '/data/a\\b/sub/f.txt'),
+    'a sibling is no step from it': tmStepToward(dir, '/data/a\\b\\sub'),
+  }, {
+    'a file in the folder is inside it': true,
+    'a file beside it, named "a\\b\\c.txt", is not': false,
+    'nor is the folder’s file inside "/data/a"': false,
+    'the folder’s parent': '/data',
+    'its file’s parent': dir,
+    'the parent of "x\\y" at the root': '/',
+    'a click inside it opens the folder one level down': '/data/a\\b/sub',
+    'a click from above it opens the folder itself': dir,
+    'a sibling is no step from it': null,
+  });
+  // Windows paths read as before — a backslash is the separator in a drive's
+  // path and a share's — and a cloud identifier is spelled with "/" whatever
+  // its names hold.
+  assert.deepEqual({
+    'drive: inside': tmIsInside('C:\\a\\b\\c.txt', 'C:\\a\\b'),
+    'drive: a longer sibling is not inside': tmIsInside('C:\\a\\bb\\c.txt', 'C:\\a\\b'),
+    'share: inside': tmIsInside('\\\\srv\\share\\x', '\\\\srv\\share'),
+    'a drive root ends in its separator': tmIsInside('C:\\x', 'C:\\'),
+    'share: parent': tmParentPath('\\\\srv\\share\\x'),
+    'drive: one level down': tmStepToward('C:\\a', 'C:\\a\\b\\c.txt'),
+    'share: one level down': tmStepToward('\\\\srv\\share', '\\\\srv\\share\\b\\c.txt'),
+    'cloud: inside': tmIsInside('cloud://gdrive/a\\b/c', 'cloud://gdrive/a\\b'),
+  }, {
+    'drive: inside': true,
+    'drive: a longer sibling is not inside': false,
+    'share: inside': true,
+    'a drive root ends in its separator': true,
+    'share: parent': '\\\\srv\\share',
+    'drive: one level down': 'C:\\a\\b',
+    'share: one level down': '\\\\srv\\share\\b',
+    'cloud: inside': true,
+  });
+});
+
 /* ══════════════ the rules §4.3 states, asserted against the source ══════════════ */
 
 function slice(from: string, to: string): string {

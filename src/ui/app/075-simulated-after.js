@@ -110,19 +110,24 @@ const tmPreview = { on: false, saved: null, freedBytes: 0, stagedInView: 0, outs
  * scan is rooted at the whole disk — then every top-level folder reports a
  * parent that matches no node, the child map comes out empty, and the preview
  * silently has nothing to show on the one scan people run most.
+ *
+ * Only a Windows path — a drive's or a share's — is separated by "\" (POL
+ * item 7). On macOS and Linux, and in a cloud identifier, "\" is a character
+ * a name may hold, so `/data/a\b` is the folder `a\b` in `/data`.
  */
 function tmParentPath(p) {
-  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  const i = /^(?:[A-Za-z]:|\\\\)/.test(p) ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
   if (i < 0) return '';
   const head = p.slice(0, i);
   if (head === '' || /^[A-Za-z]:$/.test(head)) return head + p[i];
   return head;
 }
 
-/** Is `p` inside `dir` (and not `dir` itself)? Separator-aware, prefix-safe. */
+/** Is `p` inside `dir` (and not `dir` itself)? Separator-aware — "\" only in a
+    Windows path, as tmParentPath reads it — and prefix-safe. */
 function tmIsInside(p, dir) {
   if (!dir || p === dir) return false;
-  const sep = dir.includes('\\') ? '\\' : '/';
+  const sep = /^(?:[A-Za-z]:|\\\\)/.test(dir) ? '\\' : '/';
   const base = dir.endsWith(sep) ? dir : dir + sep;
   return p.startsWith(base);
 }
@@ -542,7 +547,7 @@ tmCanvas.addEventListener('click', tmOnCanvasClick);
  */
 function tmStepToward(root, p) {
   if (!tmIsInside(p, root)) return null;
-  const sep = root.includes('\\') ? '\\' : '/';
+  const sep = /^(?:[A-Za-z]:|\\\\)/.test(root) ? '\\' : '/';
   // The name below `root` starts at root.length, or one further past the
   // separator; a name never starts with a separator, so +1 is right for both.
   const i = p.indexOf(sep, root.length + 1);
