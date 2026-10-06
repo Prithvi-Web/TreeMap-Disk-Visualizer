@@ -21,6 +21,7 @@ import { startScan } from '../src/services/diskScanner';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
 import { normalizePolicy, simulatePolicy } from '../src/services/autopilot';
 import { protectAndTrash } from '../src/services/timeCapsule';
+import { relocateSecret } from '../src/services/securityHygieneScanner';
 import { POLICY_FILE } from '../src/services/policy';
 import { auditFilePath } from '../src/services/audit';
 import { SAFETY_RECORD_NAMES } from '../src/utils/pathSanitizer';
@@ -183,5 +184,7 @@ test('Autopilot leaves the agent policy and the audit log alone, and says so; an
 test('a relocation of the agent policy out of app-data is refused, and the file stays where it is', async () => {
   const moved = path.join(HOME, 'moved-policy.json');
   assert.equal(await send('POST', '/api/security/relocate', { path: POLICY, to: moved, confirm: true }), '403 SAFETY_RECORD');
+  // The service's own check, for a caller that skipped the route's.
+  await assert.rejects(relocateSecret(POLICY, moved), /agent policy or its audit log/);
   assert.deepEqual([fs.existsSync(POLICY), fs.existsSync(moved)], [true, false]);
 });
