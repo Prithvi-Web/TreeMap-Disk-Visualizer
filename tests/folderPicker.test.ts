@@ -873,14 +873,96 @@ test('Scan holds its button while the path is looked up, and a press the person 
   }
   // The folder offered, chosen while a scan runs.
   {
-    const { rt, scanned, toasts, offers, click, type } = boxesRuntime(strictListing);
+    const { rt, $, scanned, toasts, offers, click, type } = boxesRuntime(strictListing);
     type('pathInput', DOCS + ' ');
     await click('scanBtn');
     rt.scanning(true);
     await offers[0].choose();
     assert.deepEqual(scanned, [], 'a choice made while a scan runs starts nothing');
     assert.equal(toasts.at(-1), 'A scan is already running', 'and says why, rather than nothing at all');
+    // The box names the folder being scanned after a scan started some other
+    // way (a drop, the dock, the queue): a refused choice leaves it be, or the
+    // next press of Scan would scan a folder nobody pressed Scan on (final review F1.12).
+    assert.equal($('pathInput').value, DOCS + ' ', 'and leaves the box as it was');
   }
+});
+
+/* ══════════════ The toast an offer rides in (final review F1.12) ══════════════ */
+
+type ToastBtn = { label: string; attrs: Record<string, string>; listeners: Array<() => void>; addEventListener(t: string, f: () => void): void; click(): void; focus(): void };
+type ToastEl = { cls: Set<string>; html: string; innerHTML: string; button: ToastBtn | null; removed: boolean; className: string;
+  classList: { add(c: string): void; contains(c: string): boolean }; querySelector(sel: string): ToastBtn | null; contains(x: unknown): boolean; remove(): void };
+
+/**
+ * The page's toastAction, evaluated with a fake document on a clock the test
+ * steps (fire): what it put on screen, its button, and where focus is.
+ */
+function toastRuntime() {
+  const doc = { activeElement: null as unknown, createElement: () => toastEl() };
+  const shown: ToastEl[] = [];
+  const timers: { fn: () => void; delay: number; done: boolean }[] = [];
+  const setTimeout = (fn: () => void, delay: number) => { timers.push({ fn, delay, done: false }); return timers.length; };
+  /** Every timer due now runs, as if its delay had passed (timers they set wait for the next fire). */
+  const fire = () => { for (const t of timers.filter((x) => !x.done)) { t.done = true; t.fn(); } };
+  function toastEl(): ToastEl {
+    const el: ToastEl = {
+      cls: new Set(), html: '', button: null, removed: false,
+      get className() { return [...el.cls].join(' '); },
+      set className(v: string) { el.cls = new Set(v.split(/\s+/).filter(Boolean)); },
+      get innerHTML() { return el.html; },
+      set innerHTML(v: string) {
+        el.html = v;
+        const b = /<button([^>]*)>([\s\S]*?)<\/button>/.exec(v);
+        if (!b) { el.button = null; return; }
+        const attrs: Record<string, string> = {};
+        for (const a of b[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
+        const btn: ToastBtn = {
+          label: b[2], attrs, listeners: [],
+          addEventListener(t, f) { if (t === 'click') btn.listeners.push(f); },
+          click() { for (const f of btn.listeners) f(); },
+          focus() { doc.activeElement = btn; },
+        };
+        el.button = btn;
+      },
+      classList: { add: (c) => { el.cls.add(c); }, contains: (c) => el.cls.has(c) },
+      querySelector: (sel) => (sel === 'button' ? el.button : null),
+      contains: (x) => x === el || (x !== null && x === el.button),
+      remove() { el.removed = true; if (el.contains(doc.activeElement)) doc.activeElement = null; },
+    };
+    return el;
+  }
+  const host = { appendChild(el: ToastEl) { shown.push(el); } };
+  const $ = (id: string) => { assert.equal(id, 'toasts', 'a toast goes in #toasts'); return host; };
+  const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const toastAction = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout',
+    `'use strict'; ${braced('function toastAction(')} return toastAction;`,
+  )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout) as
+    (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean }) => void;
+  return { toastAction, doc, shown, timers, fire };
+}
+
+test('an offer\'s button acts once: a double-click, or a click while the toast fades out, does not run its choice again (final review F1.12)', () => {
+  // The toast fades for 320 ms before it is removed, and stays clickable
+  // while it does. A double-click on "Did you mean…" ran the choice twice:
+  // the scan started, then the second run said "A scan is already running".
+  const { toastAction, shown, fire } = toastRuntime();
+  let ran = 0;
+  toastAction('No folder is named “/x ”', 'Use that folder', () => { ran++; }, 'error');
+  const btn = shown[0].button!;
+  btn.click();
+  assert.equal(ran, 1, 'control: a click runs the choice');
+  assert.ok(shown[0].cls.has('out'), 'control: and the toast goes');
+  btn.click();
+  assert.equal(ran, 1, 'a second click while it fades does not run it again');
+  fire();
+  assert.ok(shown[0].removed, 'control: the toast is removed once it has faded');
+
+  toastAction('Results expire soon', 'Scan again', () => { ran++; }, 'success', 20000);
+  fire(); // its time is up: it fades
+  assert.ok(shown[1].cls.has('out'), 'control: an offer left alone fades when its time is up');
+  shown[1].button!.click();
+  assert.equal(ran, 1, 'and a click on it while it fades does nothing');
 });
 
 test('Scan reads Fast rescan when pressed, and a lookup that does not answer in time scans the path exactly as typed (QA4a R4-3)', async () => {

@@ -174,8 +174,17 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000) {
   el.className = 'toast ' + kind;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>' +
     '<button class="pill" type="button" style="margin-left:10px;flex:none;">' + escapeHtml(label) + '</button>';
-  const gone = () => { el.classList.add('out'); setTimeout(() => el.remove(), 320); };
-  el.querySelector('button').addEventListener('click', () => { gone(); fn(); });
+  // Gone once, and its choice made once: the toast stays on screen, and
+  // clickable, for the 320ms it fades, so a double-click — or a click as it
+  // times out — ran `fn` again (final review F1.12).
+  let done = false;
+  const gone = () => {
+    if (done) return;
+    done = true;
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 320);
+  };
+  el.querySelector('button').addEventListener('click', () => { if (done) return; gone(); fn(); });
   $('toasts').appendChild(el);
   setTimeout(gone, ms);
 }

@@ -1433,7 +1433,13 @@ async function scanTheBox() {
   // a scan started some other way: this press acts on nothing.
   if (asPath(box.value) !== p || state.scanning) return;
   if (meant) {
-    offerMeant(p, meant, () => { box.value = meant; maybeShowFastRescan(); return scanTheBox(); });
+    // Chosen while a scan started some other way runs, the box is left as it
+    // is — scanTheBox says why — or the next press would scan a folder nobody
+    // pressed Scan on (final review F1.12).
+    offerMeant(p, meant, () => {
+      if (!state.scanning) { box.value = meant; maybeShowFastRescan(); }
+      return scanTheBox();
+    });
     return;
   }
   startScan(p, { incremental });
