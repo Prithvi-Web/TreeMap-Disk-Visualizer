@@ -10,8 +10,10 @@ const APP = isolatedDataDir('treemap-capsuleRecords-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
-import { cancelAllCapsuleJobs, capsuleRoot, getCapsuleIndex, getCapsuleJob, manifestRefusal, pruneExpired, reconcileCapsule } from '../src/services/timeCapsule';
-import { setCopyFaultForTests } from '../src/utils/copyVerify';
+import {
+  cancelAllCapsuleJobs, capsuleRoot, getCapsuleIndex, getCapsuleJob, manifestRefusal, protectItems, pruneExpired, reconcileCapsule, startCapsuleRestore,
+} from '../src/services/timeCapsule';
+import { setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
 import { apfsNameKey } from '../src/utils/volumeNames';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, assertSavedPolicyPath, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
@@ -23,7 +25,7 @@ import { SPILL_DIR } from '../src/services/spillSweep';
 import { platform } from '../src/platform';
 import { invalidateCapabilities } from '../src/platform/capabilities';
 import type { TimeCapsuleEntry } from '../src/models/types';
-import { waitFor } from './fixtures/waitFor';
+import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { isRestoreCopyFor, restorePartialsIn } from './fixtures/restoreCopy';
 
 /**
@@ -682,4 +684,47 @@ test('a policy folder read back from autopilot.json is held to what TreeMap save
     );
   }
   assert.doesNotThrow(() => assertSavedPolicyPath(dir), 'the folder as TreeMap saves it');
+});
+
+/* ─────────────── A "Forget" refused at its endpoint is audited (FG3g review F1.4) ─────────────── */
+
+test('a "Forget" refused at its endpoint is audited as refused, with its code and the item\'s place, as a refused restore is', async () => {
+  type AuditLine = { action: string; outcome: string; code?: string; paths: string[] };
+  const lastAudit = async (): Promise<AuditLine | undefined> => ((await request('GET', '/api/audit?limit=1')).body.entries as AuditLine[])[0];
+
+  const unknown = await request('DELETE', `/api/timecapsule/${crypto.randomUUID()}`);
+  assert.deepEqual([unknown.status, unknown.body.code], [404, 'ENTRY_NOT_FOUND'], JSON.stringify(unknown.body));
+  const notFound = await lastAudit();
+  assert.deepEqual([notFound?.action, notFound?.outcome, notFound?.code, notFound?.paths], ['timecapsule.forget', 'refused', 'ENTRY_NOT_FOUND', []]);
+
+  // A copy a running restore holds (FG3g H1): the restore is held at its file's placement.
+  const file = path.join(PLACE, 'being-restored.txt');
+  fs.writeFileSync(file, 'the content of being-restored.txt');
+  const { outcomes } = await protectItems([{ path: file }]);
+  assert.equal(outcomes[0].protected, true, outcomes[0].detail);
+  const id = outcomes[0].entryId as string;
+  fs.rmSync(file);
+  let arrive!: () => void;
+  const reached = new Promise<void>((resolve) => { arrive = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const unlink = setHardLinkForTests(async (existing, link) => {
+    arrive();
+    await gate;
+    await fs.promises.link(existing, link);
+  });
+  try {
+    const { jobId } = await startCapsuleRestore([id]);
+    await withinHangGuard(reached, 'the restore reaching its placement');
+    const running = await request('DELETE', `/api/timecapsule/${id}`);
+    assert.deepEqual([running.status, running.body.code], [409, 'RESTORE_RUNNING'], JSON.stringify(running.body));
+    const refused = await lastAudit();
+    assert.deepEqual([refused?.action, refused?.outcome, refused?.code, refused?.paths], ['timecapsule.forget', 'refused', 'RESTORE_RUNNING', [file]]);
+    release();
+    await waitFor(() => getCapsuleJob(jobId)?.status !== 'running', 'the restore');
+    assert.equal(getCapsuleJob(jobId)?.status, 'complete', getCapsuleJob(jobId)?.error);
+  } finally {
+    release();
+    unlink();
+  }
 });

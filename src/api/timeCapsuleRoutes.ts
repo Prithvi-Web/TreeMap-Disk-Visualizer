@@ -103,7 +103,20 @@ timeCapsuleRouter.post('/timecapsule/:id/restore', idempotency, async (req: Requ
 timeCapsuleRouter.delete('/timecapsule/:id', async (req: Request, res: Response) => {
   const id = String(req.params.id);
   const entry = await getCapsuleEntry(id);
-  const result = await deleteCapsuleEntry(id);
+  let result: Awaited<ReturnType<typeof deleteCapsuleEntry>>;
+  try {
+    result = await deleteCapsuleEntry(id);
+  } catch (err) {
+    // A refusal decided here is audited, as a refused restore is (FG3g review F1.4): no such entry,
+    // or a copy a running restore holds (RESTORE_RUNNING).
+    if (err instanceof AppError) {
+      await appendAudit({
+        action: 'timecapsule.forget', source: 'http', tokenId: tokenIdFor('http'),
+        paths: entry ? [entry.originalPath] : [], bytes: null, dryRun: false, outcome: 'refused', code: err.code,
+      });
+    }
+    throw err;
+  }
   await appendAudit({
     action: 'timecapsule.forget', source: 'http', tokenId: tokenIdFor('http'),
     paths: entry ? [entry.originalPath] : [], bytes: result.bytesFreed, dryRun: false, outcome: 'ok',
