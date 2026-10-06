@@ -116,6 +116,13 @@ test('a protected folder is refused by every spelling that reaches it — a link
   assert.match(await dryRunDelete([path.join(HOME, 'Desktop', 'docs')]), /^ok, \d+ bytes$/);
 });
 
+test('a protected path that is a link protects the link, in any spelling, and what it leads to', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, async () => {
+  withPolicy({ protectedPaths: [path.join(HOME, 'Desktop', 'docs')] });
+  const answers: Record<string, string> = { 'what it leads to, Documents/taxes': await dryRunDelete([TAXES]) };
+  if (CASE_FOLDS) answers['the link, in another case'] = await dryRunDelete([path.join(HOME, 'desktop', 'DOCS')]);
+  assert.deepEqual(answers, Object.fromEntries(Object.keys(answers).map((how) => [how, '403 POLICY_PROTECTED_PATH'])));
+});
+
 test('a protected path written with ~ is the folder under the home folder', { skip: WINDOWS && 'the home folder is read from HOME here' }, () => {
   const prior = process.env.HOME;
   process.env.HOME = HOME;
@@ -147,13 +154,18 @@ test('allowedRoots holds a path to where it lives: spelled inside an allowed roo
 
 test('the byte cap and the bytes a delete counts read the folder by where it lives, so another spelling of a sized folder is sized, never "unknown"', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, async () => {
   fs.rmSync(POLICY_PATH, { force: true });
-  const sizes: Record<string, unknown> = {};
-  for (const [how, p] of Object.entries(spellingsOfTaxes())) sizes[how] = knownSizeOf(p);
-  assert.deepEqual(sizes, Object.fromEntries(Object.keys(sizes).map((how) => [how, BYTES])));
+  const answers: Record<string, unknown> = {};
+  for (const [how, p] of Object.entries(spellingsOfTaxes())) answers[`${how}: its known size`] = knownSizeOf(p);
+  // The bytes the manifest and the audit count for it, with no policy in the way.
+  for (const [how, p] of Object.entries(spellingsOfTaxes())) answers[`${how}: a dry run with no policy`] = await dryRunDelete([p]);
   withPolicy({ maxBytesPerOperation: 1000 });
-  const answers: Record<string, string> = {};
-  for (const [how, p] of Object.entries(spellingsOfTaxes())) answers[how] = await dryRunDelete([p]);
-  assert.deepEqual(answers, Object.fromEntries(Object.keys(answers).map((how) => [how, '403 POLICY_BYTES_EXCEEDED'])));
+  for (const [how, p] of Object.entries(spellingsOfTaxes())) answers[`${how}: under a 1000-byte cap`] = await dryRunDelete([p]);
   fs.rmSync(POLICY_PATH, { force: true });
-  assert.equal(await dryRunDelete([path.join(HOME, 'Desktop', 'docs', 'taxes')]), `ok, ${BYTES} bytes`, 'and the audit and the manifest count the bytes the delete takes');
+  const expected: Record<string, unknown> = {};
+  for (const how of Object.keys(spellingsOfTaxes())) {
+    expected[`${how}: its known size`] = BYTES;
+    expected[`${how}: a dry run with no policy`] = `ok, ${BYTES} bytes`;
+    expected[`${how}: under a 1000-byte cap`] = '403 POLICY_BYTES_EXCEEDED';
+  }
+  assert.deepEqual(answers, expected);
 });
