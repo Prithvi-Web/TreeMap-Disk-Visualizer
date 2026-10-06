@@ -368,7 +368,8 @@ export function linkedFileSize(filePath: string): number | null {
 
 /**
  * Findings for a completed scan. Reads names, paths and sizes from the scan
- * tree only — no file is ever opened.
+ * tree — and, for a hard link's second name the tree counts as 0, that file's
+ * size from its metadata (`sizeOfLinkedName`, B17). No file is ever opened.
  *
  * Every match is collected, sorted most serious first, counted, and only then
  * cut to MAX_FINDINGS. Cutting in walk order (QA D77) let 500 Keynote decks
