@@ -8377,7 +8377,9 @@ async function stopScan() {
   restoreDashboardPanels();
   switchView(state.view); // and put the never-scanned empty state back if that is where we are
 
-  if (!scanId) return; // stopped before POST /api/scan answered — startScanRequest handles it
+  // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
+  // sent, while startScan asked the index — and startScan starts none (final review F1.7).
+  if (!scanId) return;
   try {
     await cancelScanById(scanId);
   } catch (e) {
@@ -8701,9 +8703,10 @@ async function indexStatusFor(path) {
  *
  * Returns true when it rendered. The tree comes back in the same `FileNode`
  * shape a scan produces, so everything downstream — treemap, grid, cart — is
- * the existing code path with no special casing.
+ * the existing code path with no special casing. `stopped` says whether the
+ * person pressed Stop while the tree was read: then nothing is painted.
  */
-async function openFromIndex(path, info) {
+async function openFromIndex(path, info, stopped = () => false) {
   const t0 = performance.now();
   let data;
   try {
@@ -8711,7 +8714,7 @@ async function openFromIndex(path, info) {
   } catch {
     return false; // fall through to a real scan
   }
-  if (!data || !data.root) return false;
+  if (stopped() || !data || !data.root) return false;
 
   // A scanId is what every destructive and drill-in endpoint keys off. The
   // index cannot grant one — those endpoints deliberately require a scan this
@@ -8852,20 +8855,29 @@ async function startScan(path, opts = {}) {
   // the click. `quiet` because we do not yet know whether the index will paint;
   // startScanRequest re-enters with the real value a moment later.
   beginScanChrome({ quiet: true, message: 'Starting scan…' });
+  // That chrome has a Stop, and a Stop pressed while the index below is asked
+  // about or read has no scan to cancel: stopScan ends the chrome, and this
+  // click starts nothing more — no paint, no scan (final review F1.7). A Scan
+  // pressed after the Stop is a click of its own, with a chrome of its own.
+  const gen = state.scanGen;
+  const stopped = () => !state.scanning || state.scanGen !== gen;
 
   // A1: if this folder is already indexed, paint from the index first so the
   // user sees their tree immediately, then let the scan refresh it underneath.
   // Skipped for an explicit fast-rescan, which the user asked to be a rescan.
   if (!opts.incremental && !opts.noIndex) {
     const info = await indexStatusFor(path);
+    if (stopped()) return;
     if (info && info.indexed && info.root && info.root.state !== 'building') {
-      const painted = await openFromIndex(path, info);
+      const painted = await openFromIndex(path, info, stopped);
       if (painted) {
         // The scan still runs — it grants the scanId the destructive endpoints
         // require, and reconciles anything the watcher missed.
         void startScanRequest(path, opts, { quiet: true });
         return;
       }
+      // Not painted, the chrome still up unless a Stop took it down: painting ends it.
+      if (stopped()) return;
     }
   }
   await startScanRequest(path, opts, { quiet: false });

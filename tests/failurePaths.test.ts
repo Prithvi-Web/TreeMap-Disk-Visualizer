@@ -331,6 +331,165 @@ test('a cancel the server refuses leaves the status honest, and a 404 does not',
   assert.match(gone.el.innerHTML, /Scan stopped by user/);
 });
 
+/* ─────────────── a Stop pressed before the scan request (final review F1.7) ─────────────── */
+
+/** An element of the page, as much of one as the scan chrome touches. */
+function chromeEl() {
+  const classes = new Set<string>();
+  return {
+    innerHTML: '', textContent: '', hidden: false, dataset: {} as Record<string, unknown>, style: {} as Record<string, string>,
+    classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); }, toggle: () => false, contains: (c: string) => classes.has(c) },
+    setAttribute: () => {}, closest: () => null,
+  };
+}
+
+/**
+ * startScan from the shipped page, with what it calls on the way to a scan
+ * request — the index probe and paint, the chrome, startScanRequest — and
+ * stopScan beside it. Every answer of the index waits for the test, so a
+ * Stop can be pressed while one is out. `indexed` says what the status says.
+ */
+function scanStartHarness(indexed: boolean) {
+  const src = [
+    slice('function cancelScanById(', 'function skeletonRows('),
+    slice('function beginScanChrome(', '\n}\n') + '\n}\n',
+    slice('function endScanChrome()', 'function failScan('),
+    slice('async function indexStatusFor(', '/**\n * Build the index for a freshly-scanned root'),
+    slice('async function startScan(', '/**\n * The quiet rescan behind'),
+  ].join('\n');
+  const els = new Map<string, ReturnType<typeof chromeEl>>();
+  const $ = (id: string) => { if (!els.has(id)) els.set(id, chromeEl()); return els.get(id)!; };
+  const state: Record<string, unknown> = { scanning: false, abortScan: null, scanGen: 0, scanId: null, settledScanId: null, root: null, scanStats: null, whatsNew: { seq: 0 }, view: 'dashboard' };
+  /** What happened, in order: every request, the paint, a scan followed. */
+  const log: string[] = [];
+  /** The index answers out, each waiting for the test. */
+  const out: Array<{ what: string; answer: () => void }> = [];
+  const waitFor = (what: string) => new Promise<void>((resolve) => { out.push({ what, answer: resolve }); });
+  let scans = 0;
+  const api = async (url: string, opts?: { method?: string }) => {
+    log.push(`${opts?.method ?? 'GET'} ${url.split('?')[0]}`);
+    if (url.startsWith('/api/index/status')) {
+      await waitFor('status');
+      return indexed ? { path: '/x', indexed: true, root: { path: '/x', state: 'ready', live: true } } : { path: '/x', indexed: false, root: null };
+    }
+    if (url.startsWith('/api/index/tree')) {
+      await waitFor('tree');
+      return { rootPath: '/x', path: '/x', fileCount: 1, dirCount: 1, root: { name: 'x', path: '/x', size: 1, type: 'dir', children: [] } };
+    }
+    if (url === '/api/scan') return { scanId: `scan-${++scans}`, incremental: false };
+    if (url.endsWith('/cancel')) return {};
+    return assert.fail(`unexpected ${url}`);
+  };
+  const noop = () => {};
+  const env: Record<string, unknown> = {
+    state, $, api, log, performance, console,
+    toast: noop, closeEventSource: noop, disableLive: noop, icon: () => '', REDUCED: true, escapeHtml: (s: string) => s,
+    fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, tourScanStarted: noop,
+    skeletonRows: () => '', setScanButtonMode: (mode: string) => { log.push(`button ${mode}`); },
+    renderIndexBadge: noop, renderIndexLine: noop, indexTree: noop, switchView: noop, clearScanQueue: noop, restoreDashboardPanels: noop,
+    followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },
+    quietRescanFailed: () => { log.push('quiet rescan failed'); }, failScan: (m: string) => { log.push(`failed: ${m}`); },
+    INSTANT_OPEN_NODES: 25000,
+  };
+  const names = Object.keys(env);
+  // finishScan as the page's begins: the chrome ends, then the tree is painted.
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const fns = new Function(...names, `'use strict';
+    let indexLineGen = 0; let indexAutoMaxEntries = null;
+    const finishScan = async (root) => { endScanChrome(); state.root = root; log.push('painted the index tree'); };
+    ${src}
+    return { startScan, stopScan };`)(...names.map((n) => env[n])) as { startScan: (p: string, o?: object) => Promise<void>; stopScan: () => Promise<void> };
+  /** Let the index's next answer go, and the code waiting on it run. */
+  const answer = async (what: string): Promise<void> => {
+    const at = out.findIndex((x) => x.what === what);
+    assert.ok(at >= 0, `the index's ${what} is being asked for (${log.join(', ')})`);
+    out.splice(at, 1)[0].answer();
+    await turns(20);
+  };
+  return { ...fns, state, log, $, answer, scansPosted: () => log.filter((l) => l === 'POST /api/scan').length };
+}
+
+/** Let `n` turns of the event loop pass: a count, never a time. */
+async function turns(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Whether `p` has settled yet — read after counted turns, never awaited, so a click that never finishes cannot hang a test. */
+function settledYet(p: Promise<unknown>): () => boolean {
+  let settled = false;
+  void p.then(() => { settled = true; }, () => { settled = true; });
+  return () => settled;
+}
+
+test('a Stop pressed while the index is asked about an unindexed folder starts no scan (final review F1.7)', async () => {
+  const h = scanStartHarness(false);
+  const done = settledYet(h.startScan('/x'));
+  await turns(20);
+  assert.equal(h.state.scanning, true, 'the click is answered at once: the Stop button is up');
+  await h.stopScan();
+  await h.answer('status');
+  assert.equal(h.scansPosted(), 0, `the scan the person stopped is never asked for (${h.log.join(', ')})`);
+  assert.equal(h.state.scanning, false, 'and nothing says a scan is running');
+  assert.match(h.$('scanStatus').innerHTML, /Scan stopped by user/, 'the status still says what the person did');
+  assert.ok(done(), 'and the click has finished');
+});
+
+test('a Stop pressed while the index is asked about an indexed folder neither paints it nor starts a scan (final review F1.7)', async () => {
+  const h = scanStartHarness(true);
+  const done = settledYet(h.startScan('/x'));
+  await turns(20);
+  await h.stopScan();
+  await h.answer('status');
+  assert.deepEqual(h.log.filter((l) => l.startsWith('GET /api/index/tree') || l === 'painted the index tree'), [], 'the tree is not read');
+  assert.equal(h.scansPosted(), 0, `and no scan is asked for (${h.log.join(', ')})`);
+  assert.ok(done(), 'and the click has finished');
+});
+
+test('a Stop pressed while the index tree is read neither paints it nor starts a scan (final review F1.7)', async () => {
+  const h = scanStartHarness(true);
+  const done = settledYet(h.startScan('/x'));
+  await turns(20);
+  await h.answer('status');
+  await h.stopScan();
+  await h.answer('tree');
+  assert.ok(!h.log.includes('painted the index tree'), `the tree read after the Stop is not painted (${h.log.join(', ')})`);
+  assert.equal(h.scansPosted(), 0, `and no scan is asked for (${h.log.join(', ')})`);
+  assert.match(h.$('scanStatus').innerHTML, /Scan stopped by user/);
+  assert.ok(done(), 'and the click has finished');
+});
+
+test('a Scan pressed again after a Stop starts one scan, not two: the first click\'s probe answering late starts nothing (final review F1.7)', async () => {
+  const h = scanStartHarness(false);
+  const first = settledYet(h.startScan('/x'));
+  await turns(20);
+  await h.stopScan();
+  const second = settledYet(h.startScan('/x')); // Scan again, while the first click's probe is still out
+  await turns(20);
+  await h.answer('status'); // the first click's
+  assert.equal(h.scansPosted(), 0, `the first click starts nothing, though a scan is running again (${h.log.join(', ')})`);
+  assert.ok(first(), 'and has finished');
+  await h.answer('status'); // the second click's
+  assert.equal(h.scansPosted(), 1, `the second click starts its scan (${h.log.join(', ')})`);
+  assert.deepEqual(h.log.filter((l) => l.startsWith('follow')), ['follow scan-1'], 'and it is followed');
+  assert.ok(second());
+});
+
+test('without a Stop, an indexed folder is painted from the index and then scanned quietly; an unindexed one is scanned (final review F1.7)', async () => {
+  const indexed = scanStartHarness(true);
+  const a = settledYet(indexed.startScan('/x'));
+  await turns(20);
+  await indexed.answer('status');
+  await indexed.answer('tree');
+  assert.deepEqual(indexed.log.filter((l) => l === 'painted the index tree' || l === 'POST /api/scan' || l.startsWith('follow')), ['painted the index tree', 'POST /api/scan', 'follow scan-1'], indexed.log.join(', '));
+  assert.ok(a());
+  const plain = scanStartHarness(false);
+  const b = settledYet(plain.startScan('/x'));
+  await turns(20);
+  await plain.answer('status');
+  assert.deepEqual(plain.log.filter((l) => l === 'POST /api/scan' || l.startsWith('follow')), ['POST /api/scan', 'follow scan-1'], plain.log.join(', '));
+  assert.ok(b());
+});
+
 test('a tree with no scan behind it does not leave the Duplicates panes claiming to be scanning', () => {
   // Reachable two ways, and measured in the running app: opening an indexed
   // folder paints a tree before any scan has an id, and Stop leaves one when

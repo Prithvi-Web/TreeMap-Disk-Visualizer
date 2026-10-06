@@ -136,7 +136,9 @@ async function stopScan() {
   restoreDashboardPanels();
   switchView(state.view); // and put the never-scanned empty state back if that is where we are
 
-  if (!scanId) return; // stopped before POST /api/scan answered — startScanRequest handles it
+  // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
+  // sent, while startScan asked the index — and startScan starts none (final review F1.7).
+  if (!scanId) return;
   try {
     await cancelScanById(scanId);
   } catch (e) {
