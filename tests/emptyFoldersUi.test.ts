@@ -266,6 +266,19 @@ test('folders not asked because their drive still held two calls that had not an
   assert.match(one, /it did not answer or was on a drive still waiting on earlier calls/);
 });
 
+test('one folder that did not answer in time is said in the singular, every part of the sentence (final review F1.3)', async () => {
+  // The most common case — one folder on a slow drive — was pinned only in the plural.
+  const { toasts } = await confirm({ paths: ['/r/a'], onlyEmptyFolders: true }, {
+    deleted: [],
+    failed: [{ path: '/r/a', reason: 'it did not answer within 2 seconds, so TreeMap cannot tell that it is empty', code: 'FOLDER_NO_ANSWER' }],
+  });
+  assert.equal(toasts.length, 1, toasts.join(' | '));
+  assert.match(
+    toasts[0],
+    /^No answer came in time for 1 folder — left where it is\. It or its drive did not answer, or the drive was still waiting on earlier calls\. .* move it to the Trash again\.$/,
+  );
+});
+
 test('a folder that is no longer empty is reported as that, not as a failure', async () => {
   const { toasts } = await confirm({ paths: ['/r/a', '/r/b', '/r/c'], onlyEmptyFolders: true }, {
     deleted: ['/r/a'],
