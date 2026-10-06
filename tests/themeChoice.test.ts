@@ -137,13 +137,16 @@ test('the sidebar button flips to an explicit Light or Dark, which the computer 
   assert.equal(t.theme(), 'light');
   t.toggle();
   assert.equal(t.theme(), 'dark', 'a click always changes what you see');
+  assert.equal(t.repaints(), 1, 'and repaints the canvases, which keep the old theme\'s ink until redrawn (QA F3, review F1.5)');
   assert.equal(t.storage.value, 'dark', 'and is remembered');
   assert.deepEqual(t.checked(), ['dark'], 'Settings shows the choice');
   t.query.flip(false);
   t.query.flip(true);
   assert.equal(t.theme(), 'dark', 'an explicit choice stays put when the computer changes');
+  assert.equal(t.repaints(), 1, 'nothing changed on screen, so nothing is repainted');
   t.toggle();
   assert.equal(t.theme(), 'light');
+  assert.equal(t.repaints(), 2, 'one repaint per click');
   assert.equal(t.storage.value, 'light');
 });
 
@@ -154,12 +157,27 @@ test('Settings › Theme is the way back to System, and can choose Light or Dark
   t.pick('system');
   assert.equal(t.storage.value, null, 'System forgets the explicit choice');
   assert.equal(t.theme(), 'dark', 'and shows what the computer says');
+  assert.equal(t.repaints(), 1, 'a pick that changes what you see repaints the canvases (review F1.5)');
   t.query.flip(true);
   assert.equal(t.theme(), 'light', 'and follows it again');
+  assert.equal(t.repaints(), 2, 'the computer\'s switch repaints too');
   t.pick('dark');
   assert.equal(t.theme(), 'dark');
+  assert.equal(t.repaints(), 3, 'one repaint per change');
   assert.equal(t.storage.value, 'dark');
   assert.deepEqual(t.checked(), ['dark']);
+});
+
+test('a choice that leaves the screen as it was repaints nothing (review F1.5)', () => {
+  const t = themeRuntime(null, false); // System, on a dark computer
+  t.pick('dark');
+  assert.equal(t.storage.value, 'dark', 'Dark is chosen');
+  assert.equal(t.repaints(), 0, 'but the screen was dark already');
+  t.pick('system');
+  assert.equal(t.storage.value, null);
+  assert.equal(t.repaints(), 0, 'and back to System, still dark');
+  t.pick('light');
+  assert.equal(t.repaints(), 1, 'Light changes it');
 });
 
 test('the sidebar button says which theme is chosen and what a click does (D67)', () => {

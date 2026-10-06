@@ -498,8 +498,13 @@ test('the theme toggle refreshes EVERY live chart handle — canvases hold raste
   // QA F3: FxCharts resolves tokens at render time and has no theme observer
   // of its own, so a handle the toggle forgets keeps the previous theme's
   // grid/label ink until an unrelated redraw. All four live-handle kinds must
-  // be refreshed here; deleting any one line fails this test.
-  const toggle = slice("$('themeToggle').addEventListener", 'function applySideNav(');
+  // be refreshed here; deleting any one line fails this test. The list is
+  // themeRepaint, which every theme change reaches through applyTheme — the
+  // sidebar button, Settings › Theme and the computer's own switch, each
+  // driven in tests/themeChoice.test.ts (review F1.5).
+  const toggle = slice('function themeRepaint(', '\n}\n');
+  assert.match(slice('function applyTheme(', '\n}\n'), /if \(changed && repaint\) themeRepaint\(\);/,
+    'a change of theme reaches the list');
   assert.match(toggle, /if \(donutHandle\) donutHandle\.update\(\{\}\);/, 'the dashboard ring retints');
   assert.match(toggle, /if \(trendHandle\) trendHandle\.update\(\{\}\);/, 'the Trends area chart retints');
   assert.match(toggle, /for \(const g of budgetGauges\) g\.update\(\{\}\);/, 'every budget gauge retints');

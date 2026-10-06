@@ -243,7 +243,7 @@ test('the net-change strip exists only from three snapshots, and dies on every d
 });
 
 test('the theme toggle refreshes the three new canvas handles', () => {
-  const toggle = slice("$('themeToggle').addEventListener", 'function applySideNav(');
+  const toggle = slice('function themeRepaint(', '\n}\n'); // the list every theme change reaches (review F1.5)
   assert.match(toggle, /if \(trendNetHandle\) trendNetHandle\.update\(\{\}\);/, 'the net-change strip retints');
   assert.match(toggle, /if \(appsScatterHandle\) appsScatterHandle\.update\(\{\}\);/, 'the apps scatter retints');
   assert.match(toggle, /if \(capsuleGaugeHandle\) capsuleGaugeHandle\.update\(\{\}\);/, 'the capsule gauge retints');

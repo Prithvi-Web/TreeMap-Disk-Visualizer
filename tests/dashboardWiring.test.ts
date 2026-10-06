@@ -322,7 +322,7 @@ test('the wear gauge dies on every exit door: rewrite, fetch error, dashboard un
 });
 
 test('the theme toggle retints the wear gauge with the other live handles', () => {
-  const toggle = slice("$('themeToggle').addEventListener", 'function applySideNav(');
+  const toggle = slice('function themeRepaint(', '\n}\n'); // the list every theme change reaches (review F1.5)
   assert.match(toggle, /if \(dhGauge\) dhGauge\.update\(\{\}\);/, 'a forgotten handle keeps stale ink (QA F3)');
 });
 
