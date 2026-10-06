@@ -42,11 +42,21 @@ import { isAtOrUnder, readMountTable, type MountTable } from '../utils/mountBoun
  *    disk woke); one that fails with the drive's own error (EIO, ESTALE, …)
  *    keeps it for `SILENT_DRIVE_MEMORY_MS`, while any other failure is an
  *    answer. A drive is told by the mount table (`driveFor`), as the scan's
- *    boundary is, never by a stat — a stat is what hangs. So a silent drive
- *    holds at most the call that went silent and its root's, and never another.
- *  - **The first look on a drive goes alone.** Within a session, looks on a
- *    drive not yet heard from wait for that drive's first look to answer — or
- *    to go silent — before they start: one probe, not four at once.
+ *    boundary is, never by a stat — a stat is what hangs. Its root is asked by
+ *    one call at a time: a call that misses its deadline while the root is
+ *    being asked waits for that answer.
+ *  - **A drive holds at most `MAX_HELD_PER_DRIVE` calls that did not answer
+ *    (the U-4c review, F1.1).** Each holds a thread of the pool. A drive with
+ *    two of its calls still out — two slow folders, or a folder and its root —
+ *    is silent until one of them answers, though its root answers: else a mount
+ *    whose root answers while every folder below hangs would take one thread
+ *    per folder asked, every request, until the pool was full.
+ *  - **The first look on a drive goes alone, and so does every look on a
+ *    drive with a call out.** Within a session, looks on a drive not yet heard
+ *    from wait for that drive's first look to answer — or to go silent —
+ *    before they start: one probe, not four at once. Across sessions, while
+ *    one of a drive's calls is out unanswered, its looks go one at a time, so
+ *    the next call to hang is the last one it holds.
  *  - **A session looks for `EMPTY_CHECK_BUDGET_MS` at most**, counting only
  *    while a look is running (a delete's Trash steps between its looks are not
  *    looking). A folder whose look the budget cut, or that came after it ran
@@ -91,6 +101,12 @@ export function lookBudgetMs(env: NodeJS.ProcessEnv = process.env): number {
 
 /** How long a drive stays silent after a call that went silent on it answers with a failure. */
 export const SILENT_DRIVE_MEMORY_MS = 60_000;
+
+/**
+ * The most calls on one drive that missed their deadline and are still out
+ * (the U-4c review, F1.1): at this many the drive is silent until one answers.
+ */
+export const MAX_HELD_PER_DRIVE = 2;
 
 /** The most entries one look goes through, nested folders' included, before it stops short of proving a folder empty. */
 export const EMPTY_CHECK_MAX_ENTRIES = 1_000;
@@ -337,6 +353,38 @@ const silentFolders = new Map<string, Silence>();
 /** The first look on each drive that is running now, any session's: a look on a drive not yet heard from waits for it. */
 const probing = new Map<string, Promise<void>>();
 
+/** The call asking each drive's root that is running now (the U-4c review, F1.8): another call that misses its deadline waits for its answer. */
+const askingRoot = new Map<string, Promise<void>>();
+
+/** A drive's calls that missed their deadline and are still out: each holds a thread of the I/O pool. */
+interface Held {
+  calls: number;
+}
+
+/** Process-wide, by drive (the U-4c review, F1.1). */
+const heldOn = new Map<string, Held>();
+
+/** `op`, on `drive`, missed its deadline: it is counted against the drive until it settles. */
+function hold(drive: string, op: Promise<unknown>): void {
+  let held = heldOn.get(drive);
+  if (!held) {
+    held = { calls: 0 };
+    heldOn.set(drive, held);
+  }
+  const h = held;
+  h.calls++;
+  const release = (): void => {
+    h.calls--;
+    if (h.calls === 0 && heldOn.get(drive) === h) heldOn.delete(drive);
+  };
+  op.then(release, release);
+}
+
+/** How many of `drive`'s calls missed their deadline and are still out. */
+function heldCalls(drive: string): number {
+  return heldOn.get(drive)?.calls ?? 0;
+}
+
 /**
  * The failures that are the drive's own (U-4c M1): the device, its transport,
  * its server. Only these keep a silence for `SILENT_DRIVE_MEMORY_MS` once the
@@ -353,8 +401,9 @@ function silentIn(map: Map<string, Silence>, key: string, d: EmptyCheckDeps): bo
   return false;
 }
 
+/** Is `drive` not to be asked now: its root did not answer, or it holds `MAX_HELD_PER_DRIVE` calls already? */
 function isSilent(d: EmptyCheckDeps, drive: string): boolean {
-  return silentIn(silentDrives, drive, d);
+  return silentIn(silentDrives, drive, d) || heldCalls(drive) >= MAX_HELD_PER_DRIVE;
 }
 
 /** `op` missed its wait on `key`: silent until `op` answers, and for a minute after it fails with a drive's own error. */
@@ -380,6 +429,8 @@ export function setEmptyCheckForTests(over: Partial<EmptyCheckDeps> | null): voi
   silentDrives.clear();
   silentFolders.clear();
   probing.clear();
+  askingRoot.clear();
+  heldOn.clear();
 }
 
 /* ───────────────────────────── one look ───────────────────────────── */
@@ -442,8 +493,9 @@ async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<
     deadline.cancel();
   }
   if (answer !== LATE) return answer;
-  // Still out: this folder is not asked again until the call answers.
+  // Still out: this folder is not asked again until the call answers, and the thread it holds counts against its drive.
   hush(silentFolders, where.folder, ctx.d, op);
+  hold(where.drive, op);
   // A wait the budget cut short says nothing of the drive.
   if (wait < ctx.d.deadlineMs) return SPENT;
   await askRoot(ctx, where, op);
@@ -460,6 +512,9 @@ async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<
  * call that never settles holds only its own folder. A drive not known, or
  * one whose root is the folder that hung, cannot be asked anything new: the
  * drive is silent with that call. With the budget spent, the next request asks.
+ * A drive already silent — its root missed, or it holds `MAX_HELD_PER_DRIVE`
+ * calls — is not asked; nor is a root being asked already (the U-4c review,
+ * F1.8): this call waits for that answer, as far as its budget goes.
  */
 async function askRoot(ctx: LookContext, { folder, drive }: Where, op: Promise<unknown>): Promise<void> {
   const { d } = ctx;
@@ -468,8 +523,24 @@ async function askRoot(ctx: LookContext, { folder, drive }: Where, op: Promise<u
     hush(silentDrives, drive, d, op);
     return;
   }
+  const asking = askingRoot.get(drive);
+  if (asking) {
+    await budgeted(ctx, asking);
+    return;
+  }
   const wait = Math.min(d.deadlineMs, ctx.left());
   if (wait <= 0) return;
+  const mine = probeRoot(d, drive, wait);
+  askingRoot.set(drive, mine);
+  try {
+    await mine;
+  } finally {
+    if (askingRoot.get(drive) === mine) askingRoot.delete(drive);
+  }
+}
+
+/** Ask `drive`'s root, waiting `wait`: a root that misses it makes the drive silent until it answers. Never rejects. */
+async function probeRoot(d: EmptyCheckDeps, drive: string, wait: number): Promise<void> {
   let probe: Promise<unknown>;
   try {
     probe = d.lstat(drive);
@@ -685,13 +756,14 @@ export function emptyCheckSession(ignoreJunk: boolean): EmptyCheckSession {
         if (drive === SPENT) return budgetSpent(d);
         for (;;) {
           if (isSilent(d, drive)) return notEmpty('no-answer', DRIVE_SILENT);
-          if (heard.has(drive)) return lookOn(drive, dir);
+          // While one of the drive's calls is out unanswered, its looks go one at a time (the U-4c review, F1.1).
+          if (heard.has(drive) && heldCalls(drive) === 0) return lookOn(drive, dir);
           const first = probing.get(drive);
           if (!first) break;
           // Ends when that look answers or goes silent; this request's own budget bounds the wait.
           if ((await budgeted({ d, left }, first)) === SPENT) return budgetSpent(d);
         }
-        // This look is the drive's first: the others wait for it.
+        // This look is the drive's first, or the one look on a drive with a call out: the others wait for it.
         let done = (): void => {};
         const mine = new Promise<void>((resolve) => { done = resolve; });
         probing.set(drive, mine);

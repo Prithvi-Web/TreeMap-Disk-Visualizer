@@ -6,7 +6,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-emptyFolderCheck-data-');
 
 import {
-  driveFor, driveOn, emptyCheckSession, EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, listsEntryTypes, lookBudgetMs, lookClock,
+  driveFor, driveOn, emptyCheckSession, EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, listsEntryTypes, lookBudgetMs, lookClock, MAX_HELD_PER_DRIVE,
   filesystemOn, openListing, setEmptyCheckForTests, setMountTableReaderForTests, SILENT_DRIVE_MEMORY_MS, stillEmptyFolder, type EmptyCheckDeps, type EmptyVerdict,
 } from '../src/services/emptyFolderCheck';
 import { HANG_GUARD_MS } from './fixtures/waitFor';
@@ -103,12 +103,12 @@ test('a drive whose root answers at last is looked at again at once (a disk that
   const again = await stillEmptyFolder('/dead/a', true);
   assert.match(reasonOf(again), /^it did not answer a moment ago/, 'the folder whose own call is still out is not asked again');
   await stillEmptyFolder('/dead/b', true);
-  assert.deepEqual(drives.stats, ['/dead/a', '/dead', '/dead/b', '/dead'], 'the drive\'s silence ended with its root\'s answer: b is asked (and hangs, and its root again)');
-  drives.out('/dead').answer();
+  // b hangs: with a's call that is two of the drive's calls out, so its root is not asked a third time (the U-4c review, F1.1).
+  assert.deepEqual(drives.stats, ['/dead/a', '/dead', '/dead/b'], 'the drive\'s silence ended with its root\'s answer: b is asked');
   drives.out('/dead/a').answer();
   await settle();
   await stillEmptyFolder('/dead/a', true);
-  assert.equal(drives.stats[4], '/dead/a', 'asked again once its own call answered');
+  assert.equal(drives.stats[3], '/dead/a', 'asked again once its own call answered');
 });
 
 test('a drive whose root fails at last with a drive\'s own error is left alone for a minute after the failure', async () => {
@@ -277,6 +277,160 @@ test('a call whose wait the budget cut short, and whose deadline then passed, sa
   assert.match(reasonOf(await stillEmptyFolder('/slow/a', true)), /^it did not answer a moment ago/, 'its listing is still out: not asked again');
   await stillEmptyFolder('/slow/b', true);
   assert.deepEqual(asked.slice(2), ['stat /slow/b', 'list /slow/b'], 'the drive is not silent');
+  // Each cut listing is still out, holding a thread: two of them, and the drive is asked nothing more (the U-4c review, F1.1).
+  assert.match(reasonOf(await stillEmptyFolder('/slow/c', true)), /the drive it is on did not answer a moment ago/);
+  assert.deepEqual(asked.slice(4), [], 'c is not asked');
+});
+
+/* ─────────────── a drive holds at most two calls that did not answer (U-4c review, F1.1 / F1.3 / F1.8) ─────────────── */
+
+test('many folders that hang on a drive whose root answers leave at most two calls out, whatever the number of folders: the drive is then asked nothing more', async () => {
+  // A hard mount whose server died while the root's attributes are cached, or a File Provider root:
+  // the root answers, every folder below hangs. Each call that hangs keeps a thread of libuv's pool
+  // (8 to 16 threads); one GET once started about 17 of them, and every later request more.
+  const started: string[] = [];
+  const rootAsked: string[] = [];
+  let lastHung = false;
+  setEmptyCheckForTests({
+    driveOf: async () => '/Volumes/nas',
+    lstat: (p) => {
+      if (p === '/Volumes/nas') { rootAsked.push(p); lastHung = false; return Promise.resolve(aFolder); }
+      started.push(p);
+      lastHung = true;
+      return new Promise(() => { /* never answers */ });
+    },
+    opendir: async () => listingOf([]),
+    deadline: () => {
+      const late = lastHung ? Promise.resolve() : new Promise<void>(() => {});
+      lastHung = false;
+      return { late, cancel: () => {} };
+    },
+  });
+  // GET /api/empty-folders' second looks: one session, four looks at a time.
+  const session = emptyCheckSession(true);
+  const paths = Array.from({ length: 200 }, (_, i) => `/Volumes/nas/f${i}`);
+  const verdicts: EmptyVerdict[] = new Array(paths.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (next < paths.length) {
+      const i = next++;
+      verdicts[i] = await session.look(paths[i]);
+    }
+  }));
+  assert.deepEqual(started, ['/Volumes/nas/f0', '/Volumes/nas/f1'], 'the first folder, alone; then, its call still out, the next alone; then nothing');
+  assert.deepEqual(rootAsked, ['/Volumes/nas'], 'the root is asked once, for the first: the second makes two calls out, and that is the drive silent');
+  assert.ok(verdicts.every((v) => whyOf(v) === 'no-answer'), 'none is offered');
+  assert.equal(verdicts.filter((v) => /the drive it is on did not answer a moment ago/.test(reasonOf(v))).length, 198, 'the rest are not asked');
+  // A later request — another GET, a delete — asks nothing either while both calls are out.
+  assert.match(reasonOf(await stillEmptyFolder('/Volumes/nas/later', true)), /the drive it is on did not answer a moment ago/);
+  assert.equal(started.length, 2, 'two threads held in all, not one per folder');
+  assert.equal(MAX_HELD_PER_DRIVE, 2);
+});
+
+test('a second folder that hangs on one drive silences it until one of the two answers; the first alone does not', async () => {
+  const out = new Map<string, () => void>();
+  const stats: string[] = [];
+  let lastSlow = false;
+  setEmptyCheckForTests({
+    driveOf: async () => '/',
+    lstat: (p) => {
+      stats.push(p);
+      lastSlow = p.startsWith('/x/slow');
+      if (!lastSlow) return Promise.resolve(aFolder);
+      return new Promise((resolve) => { out.set(p, () => resolve(aFolder)); });
+    },
+    opendir: async () => listingOf([]),
+    deadline: () => {
+      const late = lastSlow ? Promise.resolve() : new Promise<void>(() => {});
+      lastSlow = false;
+      return { late, cancel: () => {} };
+    },
+  });
+  assert.match(reasonOf(await stillEmptyFolder('/x/slow1', true)), /it did not answer within/);
+  assert.deepEqual(await stillEmptyFolder('/x/fine', true), { empty: true }, 'one slow folder on a drive that answers is withheld alone (M-A)');
+  assert.match(reasonOf(await stillEmptyFolder('/x/slow2', true)), /it did not answer within/);
+  const held = await stillEmptyFolder('/x/fine', true);
+  assert.match(reasonOf(held), /the drive it is on did not answer a moment ago/, 'two calls out on the drive: it is asked nothing more');
+  assert.deepEqual(stats, ['/x/slow1', '/', '/x/fine', '/x/slow2'], 'and its root is not asked about the second: that would be a third thread');
+  out.get('/x/slow1')!();
+  await settle();
+  assert.deepEqual(await stillEmptyFolder('/x/fine', true), { empty: true }, 'one of the two answered: the drive is asked again');
+  assert.deepEqual(stats.slice(4), ['/x/fine']);
+  out.get('/x/slow2')!();
+  await settle();
+  assert.match(reasonOf(await stillEmptyFolder('/x/slow3', true)), /it did not answer within/);
+  assert.deepEqual(stats.slice(5), ['/x/slow3', '/'], 'none out, one hangs: its drive\'s root is asked afresh');
+});
+
+test('four looks at once that hang on a drive heard from ask its root once, not four times', async () => {
+  const stats: string[] = [];
+  let lastHung = false;
+  setEmptyCheckForTests({
+    driveOf: async () => '/d',
+    lstat: (p) => {
+      stats.push(p);
+      lastHung = p !== '/d/ok';
+      return lastHung ? new Promise(() => { /* the folders and the root hang */ }) : Promise.resolve(aFolder);
+    },
+    opendir: async () => listingOf([]),
+    deadline: () => {
+      const late = lastHung ? Promise.resolve() : new Promise<void>(() => {});
+      lastHung = false;
+      return { late, cancel: () => {} };
+    },
+  });
+  const session = emptyCheckSession(true);
+  assert.deepEqual(await session.look('/d/ok'), { empty: true }, 'the drive is heard from');
+  const verdicts = await Promise.all(['/d/h1', '/d/h2', '/d/h3', '/d/h4'].map((p) => session.look(p)));
+  assert.deepEqual(verdicts.map(whyOf), ['no-answer', 'no-answer', 'no-answer', 'no-answer']);
+  assert.equal(stats.filter((p) => p === '/d').length, 1, `one probe of the root (${stats.join(' ')})`);
+});
+
+test('a call that misses its deadline while the drive\'s root is being asked waits for that answer: one probe of a root at a time', async () => {
+  // Nothing answers, and no deadline passes, until the test says: the order is the test's own.
+  const calls: Array<{ path: string; answer: () => void }> = [];
+  const deadlines: Array<{ of: string; pass: () => void }> = [];
+  let last = '';
+  setEmptyCheckForTests({
+    driveOf: async () => '/d',
+    lstat: (p) => {
+      last = p;
+      if (p === '/d/ok') return Promise.resolve(aFolder);
+      return new Promise((resolve) => { calls.push({ path: p, answer: () => resolve(aFolder) }); });
+    },
+    opendir: async () => { last = ''; return listingOf([]); },
+    deadline: () => {
+      let pass = (): void => {};
+      const late = new Promise<void>((resolve) => { pass = resolve; });
+      deadlines.push({ of: last, pass });
+      last = '';
+      return { late, cancel: () => {} };
+    },
+  });
+  const passDeadlineOf = (p: string): void => {
+    const at = deadlines.findIndex((x) => x.of === p);
+    assert.ok(at >= 0, `a deadline for ${p} is waiting`);
+    deadlines.splice(at, 1)[0].pass();
+  };
+  const callsOn = (p: string) => calls.filter((c) => c.path === p);
+  const session = emptyCheckSession(true);
+  assert.deepEqual(await session.look('/d/ok'), { empty: true }, 'the drive is heard from');
+  const a = session.look('/d/h1');
+  const b = session.look('/d/h2');
+  await turns(20);
+  assert.deepEqual(calls.map((c) => c.path), ['/d/h1', '/d/h2'], 'both looks started');
+  passDeadlineOf('/d/h1');
+  await turns(20);
+  assert.equal(callsOn('/d').length, 1, 'h1 missed its deadline: the root is asked');
+  callsOn('/d/h1')[0].answer(); // h1 answers at last, while the root is still being asked
+  await turns(20);
+  passDeadlineOf('/d/h2');
+  await turns(20);
+  assert.equal(callsOn('/d').length, 1, 'h2 missed its deadline too: it waits for the root\'s answer rather than ask it again');
+  passDeadlineOf('/d');
+  assert.match(reasonOf(await a), /it did not answer within/);
+  assert.match(reasonOf(await b), /it did not answer within/);
+  assert.equal(callsOn('/d').length, 1);
 });
 
 test('within a request, the first look on a drive goes alone: four at once ask a silent drive once', async () => {
