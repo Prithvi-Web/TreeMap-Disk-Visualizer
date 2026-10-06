@@ -705,40 +705,53 @@ test('MEDIUM-1: inside the menu the arrows, Home and End move between its folder
   // Focus moves with preventScroll, so in a menu that scrolls (LOW-4) every
   // step has to bring its entry into view itself (QA-6b review F1.9).
   const scrolls = () => items.reduce((n, b) => n + b.scrolls.length, 0);
-  const press = (key: string) => {
+  /**
+   * Press `key` and say whether the menu `taken` it: a key the menu takes is
+   * cancelled — left to the browser, Home and End scroll the list or the page
+   * after focus has moved, and a page scroll closes the menu — and brings the
+   * entry it focused into view; a key it leaves is neither (QA-6b review F2.3).
+   */
+  const press = (key: string, taken: boolean) => {
     const before = scrolls();
     const ev = keyEv(key);
     h.keydown(ev);
-    if (ev.defaultPrevented) {
+    assert.equal(ev.defaultPrevented, taken, taken ? `the menu takes ${key}: the browser does not act on it too` : `${key} is not cancelled`);
+    if (taken) {
       assert.equal(scrolls(), before + 1, `${key} scrolls one entry into view`);
       assert.deepEqual((fakeDoc.active as FakeBtn).scrolls.at(-1), { block: 'nearest' }, `${key}: the entry it focused, the least scroll that shows it`);
+    } else {
+      assert.equal(scrolls(), before, `${key} scrolls nothing`);
     }
     return ev;
   };
-  assert.equal(press('ArrowDown').defaultPrevented, true, 'the menu takes the arrow');
+  press('ArrowDown', true);
   assert.equal(fakeDoc.active, items[1], 'ArrowDown: the next folder');
-  press('ArrowDown'); press('ArrowDown'); press('ArrowDown');
+  press('ArrowDown', true); press('ArrowDown', true); press('ArrowDown', true);
   assert.equal(fakeDoc.active, items[4]);
-  press('ArrowDown');
+  press('ArrowDown', true);
   assert.equal(fakeDoc.active, items[0], 'and wraps from the last to the first');
-  press('ArrowUp');
+  press('ArrowUp', true);
   assert.equal(fakeDoc.active, items[4], 'ArrowUp wraps the other way');
-  press('Home');
+  press('Home', true);
   assert.equal(fakeDoc.active, items[0], 'Home: the first');
-  press('End');
+  press('End', true);
   assert.equal(fakeDoc.active, items[4], 'End: the last');
   assert.equal(scrolls(), 8, 'one scroll for each of the eight steps');
-  for (const key of ['h', 'j', 'k', 'l', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter']) press(key);
+  // Not the menu's, and not the map's either while it is open: the map's would cancel them.
+  for (const key of ['h', 'j', 'k', 'l', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter']) press(key, false);
   assert.deepEqual(h.map, { drill: 0, up: 0, move: 0 }, 'no key pressed in the menu moves, climbs or drills the map');
   // A menu a right-click opened has not taken focus: the first arrow takes it in.
   fakeDoc.active = fakeDoc.body;
-  press('ArrowDown');
+  press('ArrowDown', true);
   assert.equal(fakeDoc.active, items[0], 'ArrowDown from outside the menu lands on its first folder');
   fakeDoc.active = fakeDoc.body;
-  press('ArrowUp');
+  press('ArrowUp', true);
   assert.equal(fakeDoc.active, items[4], 'ArrowUp from outside it, on its last');
   fakeDoc.active = fakeDoc.body;
-  press('j');
+  press('End', true);
+  assert.equal(fakeDoc.active, items[4], 'End from outside it, on its last');
+  fakeDoc.active = fakeDoc.body;
+  press('j', false);
   assert.equal(h.map.move, 0, 'and while it is open the map keys wait, wherever focus is');
 });
 
