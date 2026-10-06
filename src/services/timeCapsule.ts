@@ -641,6 +641,20 @@ function onItem<T>(what: ItemCall, abs: string, call: () => Promise<T>): Promise
 }
 
 /**
+ * For a look that only records something (a folder's times, whether a link leads to a folder): a
+ * failure answers `nothing` — unless the look got no answer within the limit, which fails the item as
+ * every other call on it does (FG3g review F2.2, F3.1). Read as "nothing to record", a silence let the
+ * capture go on to ask the same quiet volume again: one more call left waiting for each folder or
+ * link, a minute each with the index held, and no cap between them.
+ */
+function nothingUnlessNoAnswer<T>(nothing: T): (err: unknown) => T {
+  return (err) => {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ETIMEDOUT') throw err;
+    return nothing;
+  };
+}
+
+/**
  * Why nothing more is started on an item, while too many calls are left waiting on a volume that
  * stopped answering (FG3h A), as a sentence — or null to go ahead.
  */
@@ -804,10 +818,7 @@ async function walkItem(
       // times", it went on to ask the same folder for its listing — a second call left waiting on one
       // quiet folder, which alone reached the cap and stopped the rest of the run. Any other failure
       // leaves the folder's times unrecorded, as before; its listing, asked next, says the rest.
-      const dirStat = await onItem('lstat', dir.abs, () => fsp.lstat(dir.abs)).catch((err: unknown) => {
-        if ((err as NodeJS.ErrnoException | null)?.code === 'ETIMEDOUT') throw err;
-        return null;
-      });
+      const dirStat = await onItem('lstat', dir.abs, () => fsp.lstat(dir.abs)).catch(nothingUnlessNoAnswer(null));
       if (dirStat) {
         const entry = members[members.length - 1];
         entry.mtimeMs = dirStat.mtimeMs;
@@ -942,8 +953,12 @@ async function capture(
       if (member.kind === 'symlink') {
         const target = await onItem('readlink', member.abs, () => fsp.readlink(member.abs));
         // Whether it leads to a folder (FG3f #9), so a restore on Windows can make it as one. A link
-        // that leads nowhere records nothing, and comes back as it was made before this was kept.
-        const targetIsDir = await onItem('stat', member.abs, () => fsp.stat(member.abs)).then((st) => st.isDirectory(), () => undefined);
+        // that leads nowhere records nothing, and comes back as it was made before this was kept. One
+        // whose target does not answer within the limit fails the item (FG3g review F3.1).
+        const targetIsDir = await onItem('stat', member.abs, () => fsp.stat(member.abs)).then(
+          (st) => st.isDirectory(),
+          nothingUnlessNoAnswer(undefined),
+        );
         await fsp.mkdir(path.dirname(dest), { recursive: true });
         await fsp.symlink(target, dest, linkTypeFor(target, targetIsDir));
         members.push({
@@ -968,11 +983,12 @@ async function capture(
       members.push({ rel: member.rel, kind: 'file', size: member.size, hash, ...timesOf(member), ...modeOf(member), ...fileIdOf(member) });
     }
 
-    // The captured folder's own times, read from the original before it goes.
+    // The captured folder's own times, read from the original before it goes: no answer within the
+    // limit fails the item (FG3g review F3.1).
     const rootTimes = walked.isFolder
       ? await onItem('lstat', original, () => fsp.lstat(original)).then(
         (st) => ({ rootMtimeMs: st.mtimeMs, rootAtimeMs: st.atimeMs, rootMode: st.mode & 0o777 }),
-        () => ({}),
+        nothingUnlessNoAnswer({}),
       )
       : {};
     const manifest: EntryManifest = { originalPath: original, name, members, ...rootTimes };

@@ -386,8 +386,8 @@ interface CallCase {
   skip?: string | false;
   /** The item to delete, and the one call on it that gets no answer: its kind, path and order. */
   make: () => { item: string; what: string; abs: string; nth: number };
-  /** What the run does with the item once that call's limit passed. */
-  expect: { trashed: true; check?: (entryId: string) => void } | { trashed: false; code?: string; reason?: RegExp };
+  /** What the run says of the item, left in place, once that call's limit passed. */
+  expect: { trashed: false; code?: string; reason?: RegExp };
 }
 
 const manifestOf = (entryId: string): { members: { rel: string; targetIsDir?: boolean }[]; rootMtimeMs?: number } =>
@@ -421,26 +421,20 @@ const CALL_CASES: CallCase[] = [
     make: () => { const { dir, link } = folderWithLink('call-copy-link'); return { item: dir, what: 'readlink', abs: link, nth: 1 }; },
     expect: { trashed: false, code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .* made no progress for 60 seconds\)/ },
   },
+  // These two only record something, and a look that fails at once still only leaves it unrecorded
+  // (below). No answer within the limit fails the item, as every other call on it does (FG3g review
+  // F3.1): read as "nothing to record", the capture went on to ask the next link the same quiet
+  // volume — one more call left waiting per link, a minute each with the index held.
   {
     name: 'the capture\'s look at what a link leads to (which only records whether it is a folder)',
     skip: NO_LINKS,
     make: () => { const { dir, link } = folderWithLink('call-link-target'); return { item: dir, what: 'stat', abs: link, nth: 0 }; },
-    expect: {
-      trashed: true,
-      check: (entryId) => {
-        const ofLink = manifestOf(entryId).members.find((m) => m.rel === 'link');
-        assert.ok(ofLink, 'the link was copied');
-        assert.equal(ofLink.targetIsDir, undefined, 'what it leads to, which did not answer, is not recorded');
-      },
-    },
+    expect: { trashed: false, code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*link made no progress for 60 seconds\)/ },
   },
   {
     name: 'the capture\'s look at a folder\'s own times (which only records them)',
     make: () => { const { dir } = folder('call-root-times'); return { item: dir, what: 'lstat', abs: dir, nth: 1 }; },
-    expect: {
-      trashed: true,
-      check: (entryId) => assert.equal(manifestOf(entryId).rootMtimeMs, undefined, 'the folder\'s own times, which did not answer, are not recorded'),
-    },
+    expect: { trashed: false, code: 'CAPSULE_COPY_FAILED', reason: /could not be copied into the Time Capsule \(looking at .*proj made no progress for 60 seconds\)/ },
   },
   {
     name: 'the read of a link in the look right before the trash step',
@@ -466,21 +460,65 @@ for (const c of CALL_CASES) {
     await waitFor(() => abandonedCallsUnsettled() === 0, 'the call left waiting returning');
     assert.deepEqual(hold.calls, [{ what, abs }], 'that call was made, under its limit, once');
     assert.ok(result.trashed.includes(normal), 'the item after it was protected and deleted: the index was let go');
-    if (c.expect.trashed) {
-      assert.ok(result.trashed.includes(item), `the item was still protected and deleted (${JSON.stringify(result.skipped)})`);
-      const entry = (await getCapsuleIndex()).entries.find((e) => e.runId === result.runId && e.originalPath === item);
-      assert.ok(entry, 'its copy is kept');
-      c.expect.check?.(entry.id);
-    } else {
-      assert.ok(!result.trashed.includes(item), 'the item was not deleted');
-      assert.ok(fs.lstatSync(item), 'it is still in place');
-      const row = result.skipped.find((s) => s.path === item);
-      assert.ok(row, `it is named in skipped (${JSON.stringify(result.skipped)})`);
-      if (c.expect.code) assert.equal(row.code, c.expect.code, row.reason);
-      if (c.expect.reason) assert.match(row.reason ?? '', c.expect.reason, row.reason);
-    }
+    assert.ok(!result.trashed.includes(item), 'the item was not deleted');
+    assert.ok(fs.lstatSync(item), 'it is still in place');
+    const row = result.skipped.find((s) => s.path === item);
+    assert.ok(row, `it is named in skipped (${JSON.stringify(result.skipped)})`);
+    if (c.expect.code) assert.equal(row.code, c.expect.code, row.reason);
+    if (c.expect.reason) assert.match(row.reason ?? '', c.expect.reason, row.reason);
   });
 }
+
+test('a folder of links whose targets do not answer leaves one call waiting, not one per link: it is left undeleted, and the next item still goes (FG3g review F3.1)', { skip: NO_LINKS }, async () => {
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier call left waiting returning');
+  const { dir } = folder('links-quiet');
+  // Six links whose targets are on a volume that stopped answering: each look at where one leads is held.
+  const links = Array.from({ length: 6 }, (_, i) => {
+    const link = path.join(dir, `link${i}`);
+    fs.symlinkSync('inner.txt', link);
+    return link;
+  });
+  const normal = file('links-quiet-next', 'normal.txt', 'an ordinary file after the folder');
+  const hold = holdCalls((what, abs) => what === 'stat' && links.includes(abs));
+  let result: Awaited<ReturnType<typeof commitCart>>;
+  try {
+    result = await withOpenFileCheck('clear', () => fireEachHeldCall(commitCart([dir, normal]), hold));
+    assert.equal(hold.calls.length, 1, `one look at where a link leads was left waiting, and no other was started on that item (${hold.asked.join(', ')})`);
+  } finally {
+    hold.answer();
+    hold.remove();
+  }
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'the call left waiting returning');
+  const row = result.skipped.find((s) => s.path === dir);
+  assert.equal(row?.code, 'CAPSULE_COPY_FAILED', JSON.stringify(result.skipped));
+  assert.match(row?.reason ?? '', /made no progress for 60 seconds/, row?.reason);
+  assert.ok(links.every((l) => fs.lstatSync(l).isSymbolicLink()), 'the folder is in place, whole');
+  assert.deepEqual(result.trashed, [normal], 'and the item after it was protected and deleted, not refused for calls left waiting');
+});
+
+test('a look at where a link leads, or at a folder\'s own times, that fails at once - an answer, not a silence - still protects the item, with nothing recorded for it', { skip: NO_LINKS }, async () => {
+  const { dir, link } = folderWithLink('looks-fail');
+  const eio = (): Promise<never> => Promise.reject(Object.assign(new Error('an i/o error (a test)'), { code: 'EIO' }));
+  let ofRoot = 0;
+  const remove = setSourceCallForTests((what, abs) => {
+    if (what === 'stat' && abs === link) return eio();
+    if (what === 'lstat' && abs === dir && ofRoot++ === 1) return eio(); // the folder's own times, after the walk's own look
+    return null;
+  });
+  let outcome: Awaited<ReturnType<typeof protectItems>>['outcomes'][number];
+  try {
+    [outcome] = (await protectItems([{ path: dir }])).outcomes;
+  } finally {
+    remove();
+  }
+  assert.equal(outcome.protected, true, outcome.detail);
+  const manifest = manifestOf(outcome.entryId as string);
+  const ofLink = manifest.members.find((m) => m.rel === 'link');
+  assert.ok(ofLink, 'the link was copied');
+  assert.equal(ofLink.targetIsDir, undefined, 'what it leads to, which could not be looked at, is not recorded');
+  assert.equal(manifest.rootMtimeMs, undefined, 'nor the folder\'s own times');
+  assert.ok(manifest.members.some((m) => m.rel === 'inner.txt'), 'and what it holds was copied');
+});
 
 /* ─────────────── FG3g review F2.13: the retry of a capture's leftover folder ─────────────── */
 
