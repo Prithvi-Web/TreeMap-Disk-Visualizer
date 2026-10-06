@@ -186,6 +186,49 @@ test('ULTRA-ROADMAP names every release granted ahead of the phases in its stand
   }
 });
 
+test('ULTRA-ROADMAP says how the Track U gate stands for every release granted ahead of the phases, wherever it makes the gate a condition of the release (review F2.1)', () => {
+  // The record: the Track U plan's Progress row for the gate. A grant (the
+  // test above) excepts a release from the phase rule only; the gate is a
+  // separate condition of the release, so each place that states it says
+  // how it stands for that release, the Release bullet says it as the
+  // plan's row records it, and the exception says it does not cover it.
+  // Otherwise the release reads as a breach of the gate.
+  const doc = read('ULTRA-ROADMAP.md');
+  const gateRow = lineStarting(read('docs', 'superpowers', 'plans', '2026-09-30-trackU-owner-issues.md'), '| Track U gate |');
+  const notRun = /^\| Track U gate \| not run \|/.test(gateRow);
+  const granted = [...doc.matchAll(/^ {2}- \*\*Changed for (\d+\.\d+\.\d+) \([^)]+\):\*\*/gm)].map((m) => m[1]);
+  assert.ok(granted.length >= 1, 'the Release bullet records a release granted ahead of the phases');
+
+  const conditions: Array<[string, string]> = [
+    ['problem 3 of what you asked for', lineStarting(doc, '| 3 | "Thirdly')],
+    ['step 13 of the order of work', lineStarting(doc, '13. **The Track U gate**')],
+    ["the gate's own section", between(doc, '#### The Track U gate (before the release)', '\n#')],
+    ['the Definition-of-Done row', lineStarting(doc, '| U1-U3 |')],
+  ];
+  for (const line of doc.split('\n').filter((l) => /release waits for (?:that gate|your decision)|a condition of the release/.test(l))) {
+    assert.ok(conditions.some(([, text]) => text.includes(line)), `a line that makes the gate a condition of the release is one held here: ${line.slice(0, 80)}…`);
+  }
+  const exceptions = from(doc, '**Exceptions you approved:**');
+  const approved = exceptions.slice(0, exceptions.indexOf('\n---')).split('\n').filter((l) => l.startsWith('- '));
+  for (const v of granted) {
+    const ver = v.replace(/\./g, '\\.');
+    const bullet = lineStarting(doc, `  - **Changed for ${v} (`);
+    if (notRun) {
+      assert.match(bullet, new RegExp(`The Track U gate \\(below\\) has not been run for ${ver}, and whether ${ver} waits for it is your decision, not yet given`), `the Release bullet says the gate has not been run for ${v}, as the plan's row records`);
+    } else {
+      assert.doesNotMatch(bullet, /has not been run/, `the plan's row records the gate run, so the Release bullet does not say it was not (${gateRow.slice(0, 60)})`);
+    }
+    assert.match(bullet, /this change covers the phases only, not the gate/, `the Release bullet says ${v}'s grant does not cover the gate`);
+    const exception = approved.find((l) => l.includes(v) && l.includes('No release until every phase is complete'));
+    assert.ok(exception, `the exceptions you approved list ${v}`);
+    assert.match(exception, /the phases, not the Track U gate/, `the exception for ${v} does not cover the gate`);
+    for (const [where, text] of conditions) {
+      const stands = notRun ? 'the gate has not been run, and' : '(?!the gate has not been run)[^)]*';
+      assert.match(text, new RegExp(`\\(${ver}: ${stands} whether ${ver} waits for it is your decision; see the Release bullet at the top\\)`), `${where} says how the gate stands for ${v}`);
+    }
+  }
+});
+
 /** `doc`'s paragraphs (and table blocks) with struck-through text removed and each run of whitespace made one space. */
 const paragraphs = (doc: string): string[] =>
   doc.replace(/~~[\s\S]*?~~/g, '').split(/\n\s*\n/).map((p) => p.replace(/\s+/g, ' ').trim());
