@@ -505,6 +505,66 @@ test('a loop of links costs a few file-system calls, not a round of the loop for
   assert.deepEqual(cost, { sanitizePath: 'a few', insideAnyScanRoot: 'a few', isAppDataPath: 'a few' });
 });
 
+test('a chain of links is followed link by link to a second name at its end: a link to a link to /.resolve or /.vol is refused beneath it and as itself', { skip: !DARWIN && 'the namespaces are macOS’s' }, () => {
+  // Every link the F3 test makes leads to a second name in one step, so nothing pinned that the walk
+  // goes on through a link to the next one: a walk that stopped at the first target passed it all
+  // (the SEC-2b review, F1.8).
+  const dir = path.join(T, 'f18-chains');
+  const target = path.join(dir, 'target');
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, 'f.txt'), 'f');
+  const st = fs.lstatSync(target);
+  fs.symlinkSync(`/.resolve/1${target}`, path.join(dir, 'L2'));
+  fs.symlinkSync(path.join(dir, 'L2'), path.join(dir, 'L1'));
+  fs.symlinkSync(`/.vol/${st.dev}/${st.ino}`, path.join(dir, 'M2'));
+  fs.symlinkSync(path.join(dir, 'M2'), path.join(dir, 'M1'));
+  fs.symlinkSync('L1', path.join(dir, 'R1')); // relative, and three links long
+  const granted: string[] = [];
+  for (const name of ['L1', 'M1', 'R1']) {
+    for (const p of [path.join(dir, name), path.join(dir, name, 'f.txt'), path.join(dir, name, 'f.txt', 'deeper')]) {
+      if (rejection(p) !== 'PATH_BLOCKED') granted.push(`${path.relative(dir, p)}: the sanitizer`);
+      if (insideAnyScanRoot(p)) granted.push(`${path.relative(dir, p)}: the scanned-root rule`);
+    }
+  }
+  assert.deepEqual(granted, []);
+});
+
+test('a chain of links as long as any system follows is followed to its end, out of the scan; a longer one ends, with bounded work, and its first link is still a path of the scan', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+  // The walk's budget of links must be at least every system's own limit (macOS 32, Linux 40): one cut
+  // short there answers with a link in the scan, while the system follows the chain out of it.
+  const dir = path.join(T, 'f18-long');
+  fs.mkdirSync(dir);
+  const chain = (prefix: string, links: number, end: string): string => {
+    for (let i = links - 1; i >= 0; i--) fs.symlinkSync(i === links - 1 ? end : path.join(dir, `${prefix}${i + 1}`), path.join(dir, `${prefix}${i}`));
+    return path.join(dir, `${prefix}0`);
+  };
+  const out = chain('d', 39, path.join(DEST, 'f18-not-made')); // Linux follows all 39; macOS stops at 32
+  const tooLong = chain('c', 45, path.join(DEST, 'f18-not-made-either')); // no system follows 45
+  const readlink = fs.readlinkSync;
+  let readlinks = 0;
+  fs.readlinkSync = ((...args: Parameters<typeof readlink>) => {
+    readlinks += 1;
+    return readlink(...args);
+  }) as typeof readlink;
+  let answers: Record<string, unknown>;
+  try {
+    answers = {
+      'd0/x, the scanned-root rule': insideAnyScanRoot(path.join(out, 'x')),
+      'c0, the sanitizer': rejection(tooLong),
+      'c0, the scanned-root rule': insideAnyScanRoot(tooLong),
+      'readlinks for c0, the sanitizer': (readlinks = 0, rejection(tooLong), readlinks <= 41 ? 'bounded by the budget of links' : readlinks),
+    };
+  } finally {
+    fs.readlinkSync = readlink;
+  }
+  assert.deepEqual(answers, {
+    'd0/x, the scanned-root rule': false,
+    'c0, the sanitizer': null,
+    'c0, the scanned-root rule': true, // the link itself lives in the scan, and trashing it removes the link
+    'readlinks for c0, the sanitizer': 'bounded by the budget of links',
+  });
+});
+
 /* ─────────────── Every route and tool that takes a path ─────────────── */
 
 /** Field names that carry a path on this API. */
