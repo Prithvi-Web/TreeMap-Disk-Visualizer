@@ -415,6 +415,15 @@ function ctxMenuFocusOpener(el) {
 }
 
 /**
+ * Whether #ctxMenu is showing. The keys of the views behind it wait while it
+ * is — the map's (tmMapKeyYields) and the Grid's Backspace and Delete, whose
+ * trail folds into the same "…" menu (QA-6b review F2.6).
+ */
+function ctxMenuIsOpen() {
+  return $('ctxMenu').style.display === 'block';
+}
+
+/**
  * The open menu's keys, ahead of every other meaning (the page's keydown
  * handler asks first). ArrowDown and ArrowUp step through the entries and
  * wrap, Home and End go to the ends — from inside the menu, or from wherever

@@ -502,7 +502,8 @@ function fakeMenu(): FakeMenu {
 }
 
 /** The menu's machinery, shared by the "…" crumb, the right-click menu and Export (QA-6 review MEDIUM-1). */
-const CTX_MENU_DECLS = ['ctxMenuOpener', 'ctxMenuReturn', 'CTX_MENU_EDGE', 'ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuKeydown'];
+const CTX_MENU_DECLS = ['ctxMenuOpener', 'ctxMenuReturn', 'CTX_MENU_EDGE', 'ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuIsOpen',
+  'ctxMenuKeydown'];
 
 type KeyEv = { key: string; target: unknown; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean;
   defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
@@ -512,12 +513,15 @@ const keyEv = (key: string, target: unknown = fakeDoc.active): KeyEv => {
   return ev;
 };
 
-function crumbsHarness() {
+/** `view` and `selection` put the page in another view — the Grid shares the trail and its "…" menu (QA-6b review F2.6). */
+function crumbsHarness(opts: { view?: string; selection?: string[] } = {}) {
   const picked: string[] = [];
   const focusAtPick: unknown[] = [];
   const observers: Array<{ cb: () => void; el: unknown }> = [];
   const menu = fakeMenu();
   const map = { drill: 0, up: 0, move: 0 };
+  /** The Grid's climbs (gridUp). */
+  const gridMoves = { up: 0 };
   /** What an entry of the Export or right-click menu did when it was picked. */
   const acts: string[] = [];
   /**
@@ -543,7 +547,8 @@ function crumbsHarness() {
       ...CTX_MENU_DECLS, 'tmMapKeyYields', 'tmMapTakeFocus', 'showCtxMenu', 'ctxTarget'], {
       state: {
         scanId: 's1', scanning: false,
-        root: { path: '/System', name: 'System' }, view: 'treemap', lasso: { on: false }, grid: { selection: new Set() },
+        root: { path: '/System', name: 'System' }, view: opts.view ?? 'treemap', lasso: { on: false },
+        grid: { selection: new Set(opts.selection ?? []) },
         system: { platform: 'darwin' },
         treemap: { rootPath: DEEP, history: { active: false, snaps: [] }, kbSel: null },
       },
@@ -574,13 +579,14 @@ function crumbsHarness() {
       kbDrill: () => { map.drill++; },
       kbUp: () => { map.up++; },
       kbMove: () => { map.move++; },
+      gridUp: () => { gridMoves.up++; },
       tmCanvas: canvas,
     }, `{ render: renderCrumbs, keydown: (${pageKeydownSource()}), exportClick: (${exportClickSource()}), showCtxMenu,
       docClick: (${docClickSource()}) }`);
   // Every click from here on bubbles to the page's own document handler, as in the window.
   fakeDoc.clickHandler = docClick;
   return {
-    render, keydown, showCtxMenu, acts, actFocus, map, canvas, picked, focusAtPick, menu, observers,
+    render, keydown, showCtxMenu, acts, actFocus, map, gridMoves, canvas, picked, focusAtPick, menu, observers,
     onPick: (p: string) => { picked.push(p); focusAtPick.push(fakeDoc.active); },
     /** The Export button as the markup draws it, with Export's own click listener on it: press it with click(). */
     exportBtn(): FakeBtn {
@@ -926,6 +932,45 @@ test('MEDIUM-1: Tab out of the menu closes it, and the Tab goes on from "…"', 
   assert.equal(fakeDoc.active, more, 'focus is back on "…"');
   assert.equal(tab.defaultPrevented, false, 'and the Tab itself still moves focus on, from there');
   assert.equal(more.getAttribute('aria-expanded'), 'false');
+});
+
+test('MEDIUM-1: in the Grid, Backspace and Delete wait while the "…" menu is open — the Grid neither climbs nor opens a Trash sheet under it (QA-6b review F2.6)', () => {
+  // The Grid draws the same trail (#gridCrumbs), folded into the same "…"
+  // menu. Its Backspace / Delete block had no open-menu guard: Backspace, the
+  // natural "back" key in a menu, climbed the Grid behind it, and Delete
+  // opened a Trash sheet for selected rows the menu has nothing to do with.
+  const h = crumbsHarness({ view: 'grid', selection: ['/System/a.mov'] });
+  const host = makeHost(150);
+  h.render(host, DEEP, h.onPick);
+  const more = host.buttons.find((b) => b.more)!;
+  assert.ok(more, 'control: the Grid\'s trail folded into "…"');
+  more.focus();
+  h.keydown(keyEv('Backspace'));
+  assert.equal(h.gridMoves.up, 1, 'control: with no menu open, Backspace climbs the Grid');
+  h.keydown(keyEv('Delete'));
+  assert.deepEqual(h.acts, ['trash'], 'control: and Delete asks to trash the selected rows');
+  h.acts.length = 0;
+  more.click();
+  assert.ok(h.menu.buttons.includes(fakeDoc.active as FakeBtn), 'control: focus is in the open menu');
+  const back = keyEv('Backspace');
+  h.keydown(back);
+  assert.equal(h.gridMoves.up, 1, 'Backspace in the open menu does not climb the Grid under it');
+  assert.equal(back.defaultPrevented, false, 'nor is it cancelled for the Grid');
+  const del = keyEv('Delete');
+  h.keydown(del);
+  assert.deepEqual(h.acts, [], 'Delete in the open menu opens no Trash sheet for the selected rows');
+  assert.equal(del.defaultPrevented, false);
+  assert.equal(h.menu.style.display, 'block', 'the menu is still open');
+  fakeDoc.active = fakeDoc.body; // wherever focus is, while the menu is up
+  h.keydown(keyEv('Backspace'));
+  h.keydown(keyEv('Delete'));
+  assert.equal(h.gridMoves.up, 1, 'with focus elsewhere, Backspace still waits for the menu');
+  assert.deepEqual(h.acts, [], 'and Delete');
+  more.focus();
+  h.keydown(keyEv('Escape'));
+  assert.equal(h.menu.style.display, 'none', 'Escape closes the menu');
+  h.keydown(keyEv('Backspace'));
+  assert.equal(h.gridMoves.up, 2, 'and the keys are the Grid\'s again');
 });
 
 test('MEDIUM-1: Tab closes the menu wherever focus is — still on Export, or on the map a right-click left it on (QA-6b review F1.1)', () => {

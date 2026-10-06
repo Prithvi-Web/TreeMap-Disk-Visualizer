@@ -49,7 +49,7 @@ window.addEventListener('blur', () => {
  * be opened nor used from the keyboard.
  */
 function tmMapKeyYields(e) {
-  if ($('ctxMenu').style.display === 'block') return true;
+  if (ctxMenuIsOpen()) return true;
   if (e.key !== 'Enter' && e.key !== ' ') return false;
   const t = e.target;
   return !!(t && typeof t.closest === 'function' && t.closest('button, a[href], [role="button"], [role="menuitem"]'));
@@ -139,8 +139,11 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   // Plain Backspace / Delete in the grid — never while typing, and the
-  // Cmd/Ctrl-modified variants above keep working exactly as before.
-  if (!mod && !typing && state.view === 'grid' && state.root) {
+  // Cmd/Ctrl-modified variants above keep working exactly as before. Not
+  // while #ctxMenu is open either: the Grid's trail folds into the same "…"
+  // menu, and Backspace pressed in it climbed the Grid behind it, Delete
+  // opened a Trash sheet for the selected rows (QA-6b review F2.6).
+  if (!mod && !typing && state.view === 'grid' && state.root && !ctxMenuIsOpen()) {
     if (e.key === 'Backspace') { e.preventDefault(); gridUp(); return; }
     if (e.key === 'Delete' && state.grid.selection.size) {
       e.preventDefault(); confirmTrash([...state.grid.selection]); return;
