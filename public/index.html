@@ -33166,7 +33166,9 @@ async function runCleanTrash(selection, options) {
   const leftSaid = {
     FOLDER_NOT_EMPTY: (n, many) => `${n} folder${many ? 's are' : ' is'} no longer empty — ${stays(many)}. Rescan to see what is in ${many ? 'them' : 'it'}.`,
     FOLDER_UNREADABLE: (n, many) => `${n} folder${many ? 's' : ''} could not be read to make sure ${many ? 'they are' : 'it is'} empty — ${stays(many)}.`,
-    FOLDER_NO_ANSWER: (n, many) => `${n} folder${many ? 's' : ''} did not answer in time — ${stays(many)}. ${many ? 'They or their drive' : 'It or its drive'} may be slow, asleep or disconnected; try again in a minute.`,
+    // No time is promised (the U-4c review, F1.4): TreeMap asks a folder or drive again only once
+    // the call it left out there answers, and a dead mount's may never come back.
+    FOLDER_NO_ANSWER: (n, many) => `${n} folder${many ? 's' : ''} did not answer in time — ${stays(many)}. ${many ? 'They or their drive' : 'It or its drive'} may be slow, asleep or disconnected; once the drive answers again, move ${many ? 'them' : 'it'} to the Trash again.`,
     // TreeMap's own time for looking ran out: no drive is blamed (U-4b review, L-5).
     FOLDER_NOT_CHECKED: (n, many) => `${n} folder${many ? 's were' : ' was'} not checked — ${stays(many)}. TreeMap looks for 10 seconds at a time and ran out first; move ${many ? 'them' : 'it'} to the Trash again to check ${many ? 'them' : 'it'}.`,
     FOLDER_TOO_MANY_ENTRIES: (n, many) => `${n} folder${many ? 's hold' : ' holds'} too much to look through — ${stays(many)}. Rescan to see what is in ${many ? 'them' : 'it'}.`,

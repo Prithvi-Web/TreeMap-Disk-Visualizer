@@ -235,6 +235,11 @@ test('each reason a folder was left where it is is said as itself, never as a fa
   assert.ok(toasts.some((m) => /^1 folder is no longer empty/.test(m)), said);
   assert.ok(toasts.some((m) => /^1 folder could not be read/.test(m)), said);
   assert.ok(toasts.some((m) => /^2 folders did not answer in time/.test(m)), said);
+  // No time is promised (the U-4c review, F1.4): a drive whose call never comes back stays silent until
+  // it does, since asking again on a timer would hold one more thread of the I/O pool each time.
+  const noAnswer = toasts.find((m) => /did not answer in time/.test(m)) ?? '';
+  assert.doesNotMatch(noAnswer, /minute|moment|second/, noAnswer);
+  assert.match(noAnswer, /once the drive answers again, move them to the Trash again\.$/, noAnswer);
   assert.ok(toasts.some((m) => /^1 folder holds too much to look through/.test(m)), said);
   assert.ok(toasts.some((m) => /^1 item is no longer a folder/.test(m)), said);
   assert.ok(toasts.every((m) => /left where/.test(m)), `each says the folder is still there: ${said}`);
