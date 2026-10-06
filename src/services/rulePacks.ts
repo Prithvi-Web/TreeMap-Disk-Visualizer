@@ -530,14 +530,19 @@ export function matchReasonFor(rule: Rule, matched?: { names?: readonly string[]
  * rule knows; a group holds what actually matched. Applied where groups are
  * served (cleanupMemo), so the walk itself — held byte for byte to the
  * pre-U-16 matcher — is untouched. Names come from the items the group lists,
- * on-disk spelling, each once whatever its case. A group two rules share (one
- * id) is narrowed only when one rule's names cover all of them; otherwise, and
- * for rules not matched by name, the sentence stands.
+ * on-disk spelling, each once whatever its case.
+ *
+ * A group several rules share (one id — regen-web-build is the framework
+ * folders and dist beside a JS project file) is said rule by rule, each rule
+ * naming the names it matched, in the catalog's order: the walk's sentence
+ * came from whichever rule it met first, so it left the other rule's folders
+ * unnamed, and which ones depended on walk order (review F2.2).
  *
  * Only a group with fewer than `itemCap` items is narrowed (review F1.2): the
  * walk lists the first `itemCap` matches it meets, in walk order, while its
  * totalSize counts every one, so a full list may leave out a name whose bytes
- * the total includes. Such a group keeps the rule's sentence, which may name
+ * the total includes. Such a group, and one holding a name no rule of its id
+ * names, is said in full: every rule of the id, every name. That may name
  * more than matched but never less. Returns new groups; the input is not edited.
  */
 export function withMatchedReasons<G extends { id: string; why?: string; items: readonly { name: string }[] }>(
@@ -551,16 +556,39 @@ export function withMatchedReasons<G extends { id: string; why?: string; items: 
   }
   return groups.map((g) => {
     const rules = byId.get(g.id);
-    if (!rules || g.items.length === 0 || g.items.length >= itemCap) return g;
-    const seen = new Set<string>();
-    const names: string[] = [];
-    for (const item of g.items) {
-      const key = item.name.toLowerCase();
-      if (!seen.has(key)) { seen.add(key); names.push(item.name); }
-    }
-    const rule = rules.find((r) => names.every((n) => r.names.includes(n.toLowerCase())));
-    if (!rule) return g;
-    const why = matchReasonFor(rule, { names });
+    if (!rules || g.items.length === 0) return g;
+    const why = groupReason(rules, g.items.length < itemCap ? g.items : null);
     return why === g.why ? g : { ...g, why };
   });
+}
+
+/**
+ * The sentence for a group whose id `rules` share. `items` is every match the
+ * group holds, or null when its list was cut and the rest are unknown: then
+ * every rule says every name it knows.
+ */
+function groupReason(rules: readonly (ProjectDirRule | DirRule | FileRule)[], items: readonly { name: string }[] | null): string {
+  const full = (): string => joinReasons(rules.map((r) => matchReasonFor(r)));
+  if (!items) return full();
+  const matched = new Map<ProjectDirRule | DirRule | FileRule, string[]>();
+  const seen = new Set<string>();
+  for (const item of items) {
+    const key = item.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const rule = rules.find((r) => r.names.includes(key));
+    if (!rule) return full();
+    matched.set(rule, [...(matched.get(rule) ?? []), item.name]);
+  }
+  return joinReasons(rules.filter((r) => matched.has(r)).map((r) => matchReasonFor(r, { names: matched.get(r) })));
+}
+
+/** Rule sentences as one: "A folder named .next; or a folder named dist sitting next to …". */
+function joinReasons(sentences: readonly string[]): string {
+  return sentences
+    .map((s, i) => {
+      const body = i < sentences.length - 1 ? s.replace(/\.$/, '') : s;
+      return i === 0 ? body : `or ${body.charAt(0).toLowerCase()}${body.slice(1)}`;
+    })
+    .join('; ');
 }
