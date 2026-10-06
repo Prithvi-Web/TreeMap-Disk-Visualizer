@@ -21564,6 +21564,10 @@ $('tmSavedViews').addEventListener('click', async (e) => {
 /* ── Export PNG / SVG ── */
 $('tmExportBtn').addEventListener('click', (e) => {
   e.stopPropagation();
+  // A toggle, as its aria-expanded says, like "…": a second press closes the
+  // menu the first opened (QA-6b review F3.3). Its click never reaches the
+  // document handler that closes it, so without this it rebuilt the menu.
+  if (ctxMenuOpener === e.currentTarget && ctxMenuIsOpen()) { hideCtxMenu(); return; }
   if (!drawnCells().length) { toast('Render something first', 'error'); return; }
   const menu = $('ctxMenu');
   // A report can only be built from a FINISHED scan — the endpoint answers

@@ -1143,6 +1143,43 @@ test('MEDIUM-1: Export says it opens a menu and whether it is open, and Escape g
   assert.deepEqual(h.acts, [], 'nothing was exported');
 });
 
+test('MEDIUM-1: Export is a toggle, as its aria-expanded says — a second press closes the menu the first opened (QA-6b review F3.3)', () => {
+  // "…" closed on a second press; Export rebuilt its menu and stayed
+  // aria-expanded="true". Its click stops short of the document handler that
+  // closes the menu on a click outside it, and ctxMenuShow leaves an opener's
+  // aria-expanded alone when that opener shows the menu again — so only
+  // Escape, Tab or a click elsewhere could close it.
+  const { h, more } = foldedTrail();
+  const btn = h.exportBtn();
+  btn.focus();
+  btn.click();
+  assert.equal(h.menu.style.display, 'block', 'control: the first press opens the menu');
+  assert.equal(btn.getAttribute('aria-expanded'), 'true', 'control: and Export says so');
+  btn.click(); // a click, or Enter or Space with focus still on Export
+  assert.equal(h.menu.style.display, 'none', 'the second press closes it');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'and Export says so');
+  assert.equal(fakeDoc.active, btn, 'focus stays on Export');
+  btn.click();
+  assert.equal(h.menu.style.display, 'block', 'a third press opens it again');
+  assert.equal(btn.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(h.acts, [], 'nothing was exported along the way');
+  // A menu another control opened is not Export's to close: a press of Export
+  // shows Export's own menu in its place.
+  btn.click();
+  more.click();
+  assert.equal(more.getAttribute('aria-expanded'), 'true', 'control: "…" has the menu now');
+  btn.click();
+  assert.equal(h.menu.style.display, 'block', 'Export, pressed over the "…" menu, opens its own');
+  assert.equal(h.menu.getAttribute('aria-label'), 'Export the map', 'in place of the folders');
+  assert.equal(btn.getAttribute('aria-expanded'), 'true', 'Export says it is open');
+  assert.equal(more.getAttribute('aria-expanded'), 'false', 'and "…" that it is not');
+  h.showCtxMenu(40, 50, { path: '/System/a.mov', name: 'a.mov', type: 'file' });
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'control: a right-click menu took it over');
+  btn.click();
+  assert.equal(h.menu.getAttribute('aria-label'), 'Export the map', 'and Export, pressed over a right-click menu, opens its own too');
+  assert.equal(btn.getAttribute('aria-expanded'), 'true');
+});
+
 /* ══════════════ QA-6 review LOW-4 — #ctxMenu fits the window ══════════════ */
 
 test('LOW-4: a menu taller than the window opens at its top edge, never above it', () => {
