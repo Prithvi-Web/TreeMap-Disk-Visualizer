@@ -348,6 +348,11 @@ test('Windows: this machine is known however its address is written — the shor
     '\\\\--.ipv6-literal.net\\C$\\x', // ::
     '\\\\--ffff-0-0.ipv6-literal.net\\C$\\x', // ::ffff:0.0.0.0
     '\\\\[::ffff:127.0.0.1]\\C$\\x',
+    // One of this machine's own IPv4 addresses mapped into IPv6, as the loopback is above (the final
+    // review, F1.2): read as another machine's while its plain spelling was this one.
+    '\\\\[::ffff:192.168.1.20]\\C$\\Windows\\System32',
+    '\\\\[::ffff:c0a8:114]\\C$\\x',
+    '\\\\--ffff-c0a8-114.ipv6-literal.net\\C$\\x',
   ];
   const anotherMachine = [
     '\\\\10.1\\C$\\x', // 10.0.0.1

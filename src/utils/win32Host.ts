@@ -11,7 +11,8 @@ import { withoutWin32Tail } from './win32Tail';
  * address in the short, decimal, hex and octal forms inet_aton does (`127.1`, `2130706433`,
  * `0x7f.1`, `0177.0.0.1`), and an IPv6 one under `.ipv6-literal.net` with `-` for `:` and `s` before
  * a zone (`fe80--1s4.ipv6-literal.net`). Each is parsed to its value: loopback (127.0.0.0/8, ::1,
- * ::ffff:127.x), the unspecified address, or one of this machine's own addresses is this machine;
+ * ::ffff:127.x), the unspecified address, or one of this machine's own addresses (an IPv4 one also
+ * mapped into IPv6, ::ffff:a.b.c.d) is this machine;
  * any other name is compared with this machine's names by its first label, so
  * `mypc.corp.example.com` is `MYPC`. A host's trailing dots and spaces go first, as Win32 drops them.
  */
@@ -21,7 +22,13 @@ export function isThisMachine(host: string, ownHosts: readonly string[] = ownHos
   const v4 = ipv4Of(h);
   if (v4 !== null) return v4 >>> 24 === 127 || v4 === 0 || ownHosts.some((own) => ipv4Of(own.toLowerCase()) === v4);
   const v6 = ipv6Of(h);
-  if (v6 !== null) return isLoopbackOrUnspecified(v6) || ownHosts.some((own) => sameAddress(ipv6Of(own.toLowerCase()), v6));
+  if (v6 !== null) {
+    if (isLoopbackOrUnspecified(v6)) return true;
+    // An IPv4 address mapped into IPv6 is that IPv4 address: one of this machine's own is this
+    // machine, as its plain spelling is (the final review, F1.2).
+    const mapped = mappedIpv4Of(v6);
+    return ownHosts.some((own) => sameAddress(ipv6Of(own.toLowerCase()), v6) || (mapped !== null && ipv4Of(own.toLowerCase()) === mapped));
+  }
   if (h.includes(':') || h.startsWith('[') || h.endsWith('.ipv6-literal.net')) return false; // an address that parses as none
   return ownHosts.some((own) => {
     const o = own.toLowerCase();
@@ -84,8 +91,14 @@ function ipv6Of(host: string): number[] | null {
 /** ::1, ::, or an IPv4 loopback or unspecified address mapped into IPv6 (::ffff:127.x.x.x). */
 function isLoopbackOrUnspecified(groups: number[]): boolean {
   if (groups.slice(0, 7).every((g) => g === 0) && groups[7] <= 1) return true;
-  const mapped = groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff;
-  return mapped && (groups[6] >>> 8 === 127 || (groups[6] === 0 && groups[7] === 0));
+  const mapped = mappedIpv4Of(groups);
+  return mapped !== null && (mapped >>> 24 === 127 || mapped === 0);
+}
+
+/** The IPv4 address an IPv4-mapped IPv6 address (::ffff:a.b.c.d) carries, as one number; null for any other. */
+function mappedIpv4Of(groups: number[]): number | null {
+  if (!groups.slice(0, 5).every((g) => g === 0) || groups[5] !== 0xffff) return null;
+  return groups[6] * 0x10000 + groups[7];
 }
 
 function sameAddress(a: number[] | null, b: number[]): boolean {
