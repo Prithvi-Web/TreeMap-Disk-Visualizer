@@ -241,7 +241,7 @@ test('ULTRA-ROADMAP says how the Track U gate stands for every release granted a
 const paragraphs = (doc: string): string[] =>
   doc.replace(/~~[\s\S]*?~~/g, '').split(/\n\s*\n/).map((p) => p.replace(/\s+/g, ' ').trim());
 
-test('ULTRA-ROADMAP and DESIGN say P4-14 is built above T_mem in memory mode (Track U U-32), as startScan does (found with review F1.5; DESIGN, review F2.2)', () => {
+test('ULTRA-ROADMAP, DESIGN and the Phase 4 plan say P4-14 is built above T_mem in memory mode (Track U U-32), as startScan does (found with review F1.5; DESIGN, review F2.2; the plan, found with review F3.1)', () => {
   // The code: a native walk that fails part-way above T_mem is refused a
   // walk again in the built-in walker (noRestartRefusal; startScan throws it,
   // the README test above). The roadmap still called P4-14 "decided, not
@@ -270,6 +270,12 @@ test('ULTRA-ROADMAP and DESIGN say P4-14 is built above T_mem in memory mode (Tr
   assert.match(rule, /\(P4-14, decided by the owner on 28 Sep 2026, plan §S\.11 Q10\)/, 'the rule is the owner\'s decision of 28 Sep');
   assert.match(rule, /Track U U-32 built it above `T_mem` in memory mode/, 'built above T_mem in memory mode');
   assert.match(rule, /spill and aggregate are not built/, 'and the modes it also covers do not exist yet');
+
+  // The plan's list of the rules §S.0 added on 24 Sep 2026 said "None is built".
+  const added = paragraphs(read('docs', 'superpowers', 'plans', '2026-09-18-phase4-storage.md')).filter((p) => p.startsWith('**Added 24 Sep 2026 — see §S.0:**'));
+  assert.equal(added.length, 1, "the plan lists the rules §S.0 added on 24 Sep 2026");
+  assert.doesNotMatch(added[0], /None is built/, 'not "None is built"');
+  assert.match(added[0], /None was built on 24 Sep 2026; since then Track U U-32 has built P4-14 above `T_mem` in memory mode/, 'the plan says U-32 built P4-14 above T_mem in memory mode');
 });
 
 /* ─────────────── the Phase 4 plan's questions: nothing the owner decided is called pending ─────────────── */
