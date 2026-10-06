@@ -596,7 +596,9 @@ function stripDataVolume(p: string): string {
  * mount of the same volume, a bind mount, a firmlink Apple adds next release —
  * still lands on the same inode, and identity is the one test that cannot be
  * spelled around. Gated on a basename match below so the stat is not paid on
- * every path this app ever sees.
+ * every path this app ever sees. Ids compared in full (bigint stats): an NTFS
+ * id passes 2^53 on a volume whose records have been reused, and read as a
+ * number two folders can share one (POL item 9).
  */
 let blockedIds: Set<string> | null = null;
 function blockedIdentities(): Set<string> {
@@ -605,7 +607,7 @@ function blockedIdentities(): Set<string> {
   const list = process.platform === 'win32' ? WINDOWS_BLOCKLIST : UNIX_BLOCKLIST;
   for (const b of list) {
     try {
-      const st = fs.statSync(b);
+      const st = fs.statSync(b, { bigint: true });
       blockedIds.add(`${st.dev}:${st.ino}`);
     } catch {
       // Not present on this machine, so nothing can alias to it.
@@ -624,7 +626,7 @@ function isBlockedByIdentity(p: string): boolean {
   const list = process.platform === 'win32' ? WINDOWS_BLOCKLIST : UNIX_BLOCKLIST;
   if (!list.some((b) => path.basename(b).toLowerCase() === base)) return false;
   try {
-    const st = fs.statSync(p);
+    const st = fs.statSync(p, { bigint: true });
     return blockedIdentities().has(`${st.dev}:${st.ino}`);
   } catch {
     return false; // it does not exist, so it is not a blocked directory
