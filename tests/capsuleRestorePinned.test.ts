@@ -157,7 +157,8 @@ test('a capture never evicts a copy a running restore has not reached yet: the i
     const outcome = captured.outcomes[0];
     assert.equal(outcome.protected, false, 'C could only fit by evicting a copy being restored, so it was not protected');
     assert.equal(outcome.code, 'CAPSULE_FULL');
-    assert.match(outcome.detail ?? '', /being restored/, 'and the sentence says what holds the room');
+    assert.match(outcome.detail ?? '', /195\.3 KB of copies of items being restored/, 'and the sentence says what holds the room');
+    assert.doesNotMatch(outcome.detail ?? '', /could not be confirmed|still under way/, 'and only that');
     assert.ok(fs.existsSync(c), 'C is untouched');
   } finally {
     uncap();

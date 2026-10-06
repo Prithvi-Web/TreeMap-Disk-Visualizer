@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleChanged-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { capsuleRoot, getCapsuleIndex, getCapsuleJob, setMemberLookFaultForTests } from '../src/services/timeCapsule';
+import { capsuleRoot, getCapsuleIndex, getCapsuleJob, protectItems, sameFileId, setMemberLookFaultForTests } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
 import { waitFor } from './fixtures/waitFor';
@@ -333,4 +333,32 @@ test('a single file whose copy went missing by its turn is left in place (FG3g L
   const row = result.skipped.find((s) => s.path === notes);
   assert.equal(row?.code, 'CAPSULE_COPY_GONE', JSON.stringify(result.skipped));
   assert.match(row?.reason ?? '', /notes\.txt is missing from it/, row?.reason);
+});
+
+/* ─────────────── FG3h D: a file's id is compared as the volume gives it, never rounded ─────────────── */
+
+test('a copy records each file\'s id exactly as the volume gives it, and its times as before', async () => {
+  const dir = fileTempDir('treemap-capsuleChanged-exact-id-');
+  const p = path.join(dir, 'exact.txt');
+  fs.writeFileSync(p, 'a file whose id is recorded exactly');
+  const { outcomes } = await protectItems([{ path: p }]);
+  assert.equal(outcomes[0].protected, true, outcomes[0].detail);
+  const manifest = JSON.parse(fs.readFileSync(path.join(capsuleRoot(), outcomes[0].entryId as string, 'manifest.json'), 'utf8')) as {
+    members: { ino?: unknown; mtimeMs?: number; ctimeMs?: number; size: number }[];
+  };
+  const [member] = manifest.members;
+  assert.equal(member.ino, fs.lstatSync(p, { bigint: true }).ino.toString(), 'the id in full, as text: no rounding past 2^53');
+  const st = fs.lstatSync(p);
+  assert.equal(member.mtimeMs, st.mtimeMs, 'the modified time as a number, exactly as before');
+  assert.equal(member.ctimeMs, st.ctimeMs, 'and the change time');
+  assert.equal(member.size, st.size);
+});
+
+test('file ids are compared in full: two ids a number would round to one are told apart, and a copy recorded with a number is still compared', () => {
+  // NTFS file ids run past 2^53, where a number can no longer hold every one: these two differ by one.
+  assert.equal(Number('9007199254740993') === Number('9007199254740992'), true, 'as numbers they are the same');
+  assert.equal(sameFileId('9007199254740993', '9007199254740993'), true);
+  assert.equal(sameFileId('9007199254740993', '9007199254740992'), false, 'compared in full they differ');
+  assert.equal(sameFileId(271194695, '271194695'), true, 'an id recorded as a number, before, still matches');
+  assert.equal(sameFileId(271194695, '271194696'), false);
 });

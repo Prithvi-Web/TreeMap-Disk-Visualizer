@@ -8,11 +8,11 @@ isolatedDataDir('treemap-capsuleCaptureCap-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import {
-  capsuleStoreWaitersForTests, deleteCapsuleEntry, getCapsuleIndex, protectItems, setSourceCallForTests,
+  capsuleRoot, capsuleStoreWaitersForTests, deleteCapsuleEntry, getCapsuleIndex, protectItems, setCaptureCleanupFaultForTests, setSourceCallForTests,
 } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit } from '../src/services/cartCommit';
-import { abandonedCallsUnsettled, setStallTimerForTests, withinStallLimit } from '../src/utils/copyVerify';
+import { abandonedCallsUnsettled, setCopyFaultForTests, setStallTimerForTests, withinStallLimit } from '../src/utils/copyVerify';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
 
@@ -256,4 +256,33 @@ test('an item whose look right before its trash step gets no answer is left in p
   assert.match(row?.reason ?? '', /could not be looked at again right before its deletion \(the disk did not answer/, row?.reason);
   assert.deepEqual((hold as ReturnType<typeof holdCallsOn> | null)?.asked, [second], 'asked once: no second wait on the same quiet volume');
   assert.ok(fs.existsSync(second));
+});
+
+test('a capture\'s half-made copy whose folder could not be removed at once is removed by the next capture, not left until the next start (FG3h D)', async () => {
+  const broken = file('cleanup', 'broken.txt', 'an item whose copy fails part-way');
+  const next = file('cleanup-next', 'next.txt', 'an item captured after it');
+  const folders = (): string[] => (fs.existsSync(capsuleRoot()) ? fs.readdirSync(capsuleRoot()) : []);
+  const known = async (): Promise<Set<string>> => new Set((await getCapsuleIndex()).entries.map((e) => e.id));
+  const unfault = setCopyFaultForTests((dest) => (path.basename(dest) === 'broken.txt' ? new Error('the disk stopped answering (a test)') : null));
+  // As on Windows, where the copy left waiting still holds a handle in the folder: the first removal fails.
+  let refusals = 0;
+  const uncleanup = setCaptureCleanupFaultForTests(() => (refusals++ === 0 ? Object.assign(new Error('the folder is in use (a test)'), { code: 'EBUSY' }) : null));
+  let leftover: string[] = [];
+  try {
+    const [outcome] = (await protectItems([{ path: broken }])).outcomes;
+    assert.equal(outcome.code, 'CAPSULE_COPY_FAILED', outcome.detail);
+    const ids = await known();
+    leftover = folders().filter((name) => !ids.has(name));
+    assert.equal(leftover.length, 1, `the half-made copy's folder is still there (${leftover.join(', ')})`);
+  } finally {
+    unfault();
+  }
+  try {
+    const [outcome] = (await protectItems([{ path: next }])).outcomes;
+    assert.equal(outcome.protected, true, outcome.detail);
+  } finally {
+    uncleanup();
+  }
+  assert.equal(fs.existsSync(path.join(capsuleRoot(), leftover[0])), false, 'the next capture removed it');
+  assert.ok(fs.existsSync(broken), 'and the item whose copy failed is untouched');
 });

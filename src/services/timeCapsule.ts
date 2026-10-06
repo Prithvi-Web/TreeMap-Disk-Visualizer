@@ -1,4 +1,4 @@
-import { promises as fsp, type Stats } from 'fs';
+import { promises as fsp, type BigIntStats, type Stats } from 'fs';
 import { formatCount } from '../utils/formatCount';
 import path from 'path';
 import crypto from 'crypto';
@@ -152,9 +152,11 @@ interface ManifestMember {
    * write moves the change time, and nothing can set it back; a file saved the way editors save is
    * another file, with another id. Optional — a copy recorded before is compared on size and
    * modification time, as it always was — and not part of `digestOf`. Where a volume keeps no change
-   * time of its own (FAT, exFAT) it is whatever Node reports there.
+   * time of its own (FAT, exFAT) it is whatever Node reports there. The id is recorded as text, in
+   * full (FG3h D): NTFS ids run past 2^53, where a number rounds two ids to one; one recorded as a
+   * number before is compared as one.
    */
-  ino?: number;
+  ino?: number | string;
   ctimeMs?: number;
 }
 
@@ -554,10 +556,42 @@ function restoreRunning(entry: TimeCapsuleEntry, what: string): AppError {
   return new AppError(409, 'RESTORE_RUNNING', `“${entry.name}” is being restored right now, so ${what}. Try again once that restore has finished.`);
 }
 
-/** The sentence for an item that does not fit: beside the copies still pinned, or at all. */
-function doesNotFitSentence(bytes: number, capBytes: number, pinnedBytes: number, verb: 'was' | 'will be'): string {
-  const beside = pinnedBytes > 0 && bytes <= capBytes
-    ? `, and ${formatBytes(pinnedBytes)} of that holds copies that are never dropped to make room — of items whose deletion is still under way or could not be confirmed, or being restored`
+/** The bytes the copies that are never dropped to make room hold, by why each is kept (FG3h D). */
+interface PinnedBytes {
+  /** Of items whose deletion is under way (a run in flight, or in a dry run the items it has accepted). */
+  running: number;
+  /** Of items whose trash step could not be confirmed (FG3g L6). */
+  unconfirmed: number;
+  /** Of items being restored (FG3g H1). */
+  restoring: number;
+}
+
+/** What `pinnedBytesOf` counts, by cause: each copy under its first cause, restoring before running before unconfirmed. */
+function pinnedBytesBy(entries: TimeCapsuleEntry[], unconfirmed: ReadonlySet<string>): PinnedBytes {
+  const by: PinnedBytes = { running: 0, unconfirmed: 0, restoring: 0 };
+  for (const e of entries) {
+    if (!e.hasPayload || e.heldBytes <= 0) continue;
+    if (restoresInFlight.has(e.id)) by.restoring += e.heldBytes;
+    else if (ofRunInFlight(e) || e.runId === PLAN_RUN_ID) by.running += e.heldBytes;
+    else if (unconfirmed.has(e.id)) by.unconfirmed += e.heldBytes;
+  }
+  return by;
+}
+
+/**
+ * The sentence for an item that does not fit: beside the copies still pinned, or at all — naming
+ * what holds the room, and only that (FG3h D): a capsule filled by copies kept because their trash
+ * step could not be confirmed said "or being restored" with nothing being restored.
+ */
+function doesNotFitSentence(bytes: number, capBytes: number, pinned: PinnedBytes, verb: 'was' | 'will be'): string {
+  const parts = [
+    [pinned.restoring, 'of copies of items being restored'],
+    [pinned.running, 'of copies of items whose deletion is still under way'],
+    [pinned.unconfirmed, 'of copies of items whose trash step could not be confirmed (each may be the only copy)'],
+  ].filter(([n]) => (n as number) > 0).map(([n, what]) => `${formatBytes(n as number)} ${what as string}`);
+  const total = pinned.restoring + pinned.running + pinned.unconfirmed;
+  const beside = total > 0 && bytes <= capBytes
+    ? `, and ${formatBytes(total)} of that is copies never dropped to make room — ${parts.join(', and ')}`
     : '';
   return `Protecting it needs ${formatBytes(bytes)}, but the Time Capsule can only hold ${formatBytes(capBytes)}${beside}. ` +
     `It ${verb} left alone rather than deleted without a backup.`;
@@ -626,9 +660,48 @@ interface WalkedMember {
   mtimeMs?: number;
   atimeMs?: number;
   mode?: number;
-  /** Files only, from the same lstat (FG3g M1). */
-  ino?: number;
+  /** Files only, from the same lstat (FG3g M1): the id in full, as text (FG3h D). */
+  ino?: string;
   ctimeMs?: number;
+}
+
+/** A file's own look during a walk, with its id in full (FG3h D) and its times as Node's plain lstat gives them. */
+interface FileLook {
+  size: number;
+  mtimeMs: number;
+  atimeMs: number;
+  ctimeMs: number;
+  mode: number;
+  ino: string;
+  isSymbolicLink(): boolean;
+  isDirectory(): boolean;
+}
+
+/** Milliseconds from a time in nanoseconds, computed as Node computes a plain lstat's `…Ms`, so the two agree to the bit. */
+function msOf(ns: bigint): number {
+  return Number(ns / 1_000_000_000n) * 1000 + Number(ns % 1_000_000_000n) / 1e6;
+}
+
+/** A bigint lstat as a `FileLook`. */
+function fileLookOf(st: BigIntStats): FileLook {
+  return {
+    size: Number(st.size),
+    mtimeMs: msOf(st.mtimeNs),
+    atimeMs: msOf(st.atimeNs),
+    ctimeMs: msOf(st.ctimeNs),
+    mode: Number(st.mode),
+    ino: st.ino.toString(),
+    isSymbolicLink: () => st.isSymbolicLink(),
+    isDirectory: () => st.isDirectory(),
+  };
+}
+
+/**
+ * Whether a file's id recorded in a copy's manifest is the id walked now, in full (FG3h D). One a
+ * copy recorded as a number (before ids were kept as text) is compared as a number, as it was then.
+ */
+export function sameFileId(recorded: number | string, now: string): boolean {
+  return typeof recorded === 'number' ? Number(now) === recorded : recorded === now;
 }
 
 /**
@@ -661,11 +734,11 @@ export function setMemberLookFaultForTests(fault: (abs: string) => Error | null)
  * gone: the member got no copy, its folder was still copied and trashed whole with it inside, and an
  * undo put the folder back without it and said everything was back.
  */
-async function lstatMember(abs: string, rel: string): Promise<Stats | null> {
+async function lstatMember(abs: string, rel: string): Promise<FileLook | null> {
   try {
     const fault = memberLookFaultForTests?.(abs) ?? null;
     if (fault !== null) throw fault;
-    return await onItem('lstat', abs, () => fsp.lstat(abs));
+    return fileLookOf(await onItem('lstat', abs, () => fsp.lstat(abs, { bigint: true })));
   } catch (err) {
     if (meansAbsent(err)) return null;
     throw new AppError(409, 'CAPSULE_UNREADABLE',
@@ -694,7 +767,7 @@ async function walkItem(
   root: string,
   opts: { withDirTimes?: boolean } = {},
 ): Promise<{ members: WalkedMember[]; bytes: number; isFolder: boolean }> {
-  const stat = await onItem('lstat', root, () => fsp.lstat(root));
+  const stat = fileLookOf(await onItem('lstat', root, () => fsp.lstat(root, { bigint: true })));
   if (stat.isSymbolicLink()) {
     const target = await onItem('readlink', root, () => fsp.readlink(root));
     return { members: [{ abs: root, rel: '', kind: 'symlink', size: Buffer.byteLength(target) }], bytes: 0, isFolder: false };
@@ -835,7 +908,7 @@ async function capture(
   // yet (FG3h A3): room was made first, so an item whose copy then failed (a read that stalled, a
   // full disk) had dropped older undo copies for nothing. Room is made once the copy is whole, below.
   const room = await withPayloadLock(async () => roomFor(store.entries, walked.bytes, capBytes));
-  if (!room.fits) return doesNotFit(store, original, walked.bytes, capBytes, room.pinnedBytes);
+  if (!room.fits) return doesNotFit(store, original, walked.bytes, capBytes, room.pinned);
 
   const id = crypto.randomUUID();
   let entry: TimeCapsuleEntry;
@@ -916,7 +989,7 @@ async function capture(
   } catch (err) {
     // A half-written capture protects nothing. Remove it entirely so the
     // caller cannot mistake it for cover, and so reconcile has nothing to find.
-    await fsp.rm(entryDir(id), { recursive: true, force: true }).catch(() => {});
+    await removeCaptureFolder(id);
     const detail = `It could not be copied into the Time Capsule (${err instanceof Error ? err.message : String(err)}), so it was left alone.`;
     recordEvent(store, {
       at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: walked.bytes, detail,
@@ -952,8 +1025,8 @@ async function capture(
   });
   if (!made.fits) {
     // Whole, but with no room left beside what is pinned now: not kept, and nothing was evicted for it.
-    await fsp.rm(entryDir(id), { recursive: true, force: true }).catch(() => {});
-    return doesNotFit(store, original, walked.bytes, capBytes, made.pinnedBytes);
+    await removeCaptureFolder(id);
+    return doesNotFit(store, original, walked.bytes, capBytes, made.pinned);
   }
   return { path: original, protected: true, entryId: id, bytes: walked.bytes };
 }
@@ -963,16 +1036,59 @@ async function capture(
  * under way or a restore (FG3f #1, FG3g H1), and those marked unconfirmed (FG3g L6) — looked for
  * only when something must go. Asked under the payload lock.
  */
-async function roomFor(entries: TimeCapsuleEntry[], bytes: number, capBytes: number): Promise<{ evict: TimeCapsuleEntry[]; fits: boolean; pinnedBytes: number }> {
+async function roomFor(entries: TimeCapsuleEntry[], bytes: number, capBytes: number): Promise<{ evict: TimeCapsuleEntry[]; fits: boolean; pinned: PinnedBytes }> {
   const unconfirmed = usedBytesOf(entries) + bytes > capBytes ? await unconfirmedIdsOf(entries) : new Set<string>();
   const kept = (e: TimeCapsuleEntry): boolean => inUse(e) || unconfirmed.has(e.id);
   const plan = planEviction(entries, capBytes, bytes, kept);
-  return { ...plan, pinnedBytes: plan.fits ? 0 : pinnedBytesOf(entries, kept) };
+  return { ...plan, pinned: plan.fits ? { running: 0, unconfirmed: 0, restoring: 0 } : pinnedBytesBy(entries, unconfirmed) };
+}
+
+/**
+ * Folders of copies a capture made and could not remove when it gave up on them, by id (FG3h D): on
+ * Windows a copy left waiting at its stall limit still holds a handle in its folder, and the removal
+ * fails — the folder then stayed until the next start's reconcile. Tried again by every later capture
+ * and expiry sweep, under the index lock, while no record names it.
+ */
+const captureLeftovers = new Set<string>();
+
+/**
+ * Test-only: a failure of removing a capture's own folder (FG3h D), as Windows answers one a handle
+ * is still open in — Error to fail, null for the real removal. The suite's ForTests idiom: returns
+ * the function that removes it.
+ */
+let captureCleanupFaultForTests: ((dir: string) => Error | null) | null = null;
+export function setCaptureCleanupFaultForTests(fault: (dir: string) => Error | null): () => void {
+  captureCleanupFaultForTests = fault;
+  return () => { captureCleanupFaultForTests = null; };
+}
+
+/** Removes the folder of a copy a capture gave up on; one that cannot be removed now is tried again later. */
+async function removeCaptureFolder(id: string): Promise<void> {
+  try {
+    const fault = captureCleanupFaultForTests?.(entryDir(id)) ?? null;
+    if (fault !== null) throw fault;
+    await fsp.rm(entryDir(id), { recursive: true, force: true });
+    captureLeftovers.delete(id);
+  } catch (err) {
+    captureLeftovers.add(id);
+    console.error(`[treemap] time capsule: the folder of a copy that was given up on could not be removed yet (${describeFsError(err)}); it is tried again later`);
+  }
+}
+
+/** Tries again to remove what earlier captures could not — only folders no record of `store` names. Under the index lock. */
+async function sweepCaptureLeftovers(store: CapsuleStore): Promise<void> {
+  for (const id of [...captureLeftovers]) {
+    if (store.entries.some((e) => e.id === id)) {
+      captureLeftovers.delete(id);
+      continue;
+    }
+    await removeCaptureFolder(id);
+  }
 }
 
 /** The outcome of an item that does not fit beside what is pinned, recorded where the person sees it. */
-function doesNotFit(store: CapsuleStore, original: string, bytes: number, capBytes: number, pinnedBytes: number): ProtectionOutcome {
-  const detail = doesNotFitSentence(bytes, capBytes, pinnedBytes, 'was');
+function doesNotFit(store: CapsuleStore, original: string, bytes: number, capBytes: number, pinned: PinnedBytes): ProtectionOutcome {
+  const detail = doesNotFitSentence(bytes, capBytes, pinned, 'was');
   recordEvent(store, { at: Date.now(), kind: 'unprotected', name: path.basename(original), originalPath: original, sizeBytes: bytes, detail });
   return { path: original, protected: false, bytes, code: 'CAPSULE_FULL', detail };
 }
@@ -1003,10 +1119,10 @@ function modeOf(member: WalkedMember): { mode?: number } {
   return typeof member.mode === 'number' && Number.isInteger(member.mode) ? { mode: member.mode } : {};
 }
 
-/** A file's id and change time as the walk read them, each only when it is a number (FG3g M1). */
-function fileIdOf(member: WalkedMember): { ino?: number; ctimeMs?: number } {
+/** A file's id (in full, as text) and change time as the walk read them, each only when it was read (FG3g M1, FG3h D). */
+function fileIdOf(member: WalkedMember): { ino?: string; ctimeMs?: number } {
   return {
-    ...(typeof member.ino === 'number' && Number.isFinite(member.ino) ? { ino: member.ino } : {}),
+    ...(typeof member.ino === 'string' && member.ino !== '' ? { ino: member.ino } : {}),
     ...(typeof member.ctimeMs === 'number' && Number.isFinite(member.ctimeMs) ? { ctimeMs: member.ctimeMs } : {}),
   };
 }
@@ -1099,6 +1215,7 @@ export async function protectItems(
     const settings = await getSettings();
 
     const store = await loadStore();
+    await sweepCaptureLeftovers(store);
     if (afterIndexLoadForTests) await afterIndexLoadForTests(runId);
     const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
     const outcomes: ProtectionOutcome[] = [];
@@ -1261,7 +1378,7 @@ export async function planProtection(
         bytes: walked.bytes,
         willProtect: false,
         code: 'CAPSULE_FULL',
-        detail: doesNotFitSentence(walked.bytes, capacity.capBytes, pinnedBytesOf(simulated, kept), 'will be'),
+        detail: doesNotFitSentence(walked.bytes, capacity.capBytes, pinnedBytesBy(simulated, unconfirmed ?? new Set<string>()), 'will be'),
       });
       continue;
     }
@@ -1525,9 +1642,10 @@ const CHANGED = 'CAPSULE_CHANGED';
  * deleted without a copy that was seen to be of it.
  *
  * #1 — its copy must still be where capture put it: what a run under way holds is never evicted
- * here, but another TreeMap process sharing this app data (the MCP server beside the app) knows
- * nothing of this run, and anything outside TreeMap can remove a folder. The copy's manifest is
- * written last by capture and goes with every removal of the folder.
+ * here, but anything outside this process can remove a folder — another program, a person, a disk's
+ * own repair (the MCP server beside the app never writes the capsule: its trash_paths goes straight
+ * to the Trash). The copy's manifest is written last by capture and goes with every removal of the
+ * folder.
  *
  * #4 — the item must still be what was copied: a file added, rewritten or replaced in a captured
  * folder between the copy and this turn was trashed with the folder and had no copy. Its metadata is
@@ -1644,7 +1762,7 @@ async function changeSinceCopy(
     else if (was.kind !== now.kind) changes.push(`${nameOf(now.rel)} is no longer a ${was.kind === 'dir' ? 'folder' : was.kind}`);
     else if (now.kind === 'file' && (was.size !== now.size || (typeof was.mtimeMs === 'number' && was.mtimeMs !== now.mtimeMs))) {
       changes.push(`${nameOf(now.rel)} was modified`);
-    } else if (now.kind === 'file' && typeof was.ino === 'number' && was.ino !== now.ino) {
+    } else if (now.kind === 'file' && (typeof was.ino === 'number' || typeof was.ino === 'string') && typeof now.ino === 'string' && !sameFileId(was.ino, now.ino)) {
       changes.push(`${nameOf(now.rel)} was replaced by another file`);
     } else if (now.kind === 'file' && typeof was.ctimeMs === 'number' && was.ctimeMs !== now.ctimeMs) {
       changeTimeOnly.push(`the change time of ${nameOf(now.rel)} moved`);
@@ -1857,7 +1975,8 @@ export async function getCapsuleEntry(id: string): Promise<TimeCapsuleEntry | un
 
 /**
  * Forget one entry and its payload, at the user's request. Refused while a restore is reading its
- * copy (FG3g H1): forgotten then, it took the copy from under the restore.
+ * copy (FG3g H1): forgotten then, it took the copy from under the restore. Refused too while the
+ * deletion run it belongs to is under way (FG3h D).
  */
 export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean; bytesFreed: number }> {
   return withCapsuleStore(async () => withPayloadLock(async () => {
@@ -1865,6 +1984,12 @@ export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean
     const entry = store.entries.find((e) => e.id === id);
     if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
     if (restoresInFlight.has(entry.id)) throw restoreRunning(entry, 'it cannot be forgotten now');
+    // A copy of a deletion still under way (FG3h D): its item may be past its last look and on its way
+    // to the Trash with this as its only copy. Forgotten then, it went to the Trash with none.
+    if (ofRunInFlight(entry)) {
+      throw new AppError(409, 'DELETION_RUNNING',
+        `“${entry.name}” belongs to a deletion that is still under way — its item may be on its way to the Trash with this as its only copy — so it cannot be forgotten now. Try again once that deletion has finished.`);
+    }
     const bytesFreed = await dropPayload(entry);
     store.entries = store.entries.filter((e) => e.id !== id);
     await saveStore(store);
@@ -1900,6 +2025,7 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
 
   return withCapsuleStore(async () => withPayloadLock(async () => {
     const store = await loadStore();
+    await sweepCaptureLeftovers(store);
     // The pins as they stand now, read once (FG3h C): a restore cannot pin a copy while this lock is
     // held, but one can end and let go of its copies part-way through — and read again after the
     // copies were dropped, one let go meanwhile had its record removed with its copy still on disk.

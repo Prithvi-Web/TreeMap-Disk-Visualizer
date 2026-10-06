@@ -550,7 +550,9 @@ read-what-you-saw) permission to act.
   `POST /api/git/gc` each require `{ "confirm": true }`. Two more cannot be
   taken back and take no confirm flag, so confirm with the user first:
   `DELETE /api/timecapsule/{id}` discards a Time Capsule copy for good
-  (refused with `409 RESTORE_RUNNING` while a restore is reading it), and
+  (refused with `409 RESTORE_RUNNING` while a restore is reading it, and
+  `409 DELETION_RUNNING` while the deletion that made it is still under way —
+  its item may be on its way to the Trash with that copy as its only one), and
   `POST /api/zombie-handles/restart` quits a program, which can lose its
   unsaved work.
 - **The scanned-root rule.** Endpoints that read, open, move or delete a path

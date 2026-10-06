@@ -2820,7 +2820,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Forgotten', obj({ deleted: bool(), bytesFreed: int() }, ['deleted', 'bytesFreed'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
-      '409': errorResponse('RESTORE_RUNNING — a restore is reading that copy right now; it can be forgotten once the restore has finished'),
+      '409': errorResponse('RESTORE_RUNNING — a restore is reading that copy right now; it can be forgotten once the restore has finished. DELETION_RUNNING — the deletion that made the copy is still under way, and its item may be on its way to the Trash with this as its only copy; it can be forgotten once that deletion has finished'),
     },
   },
   {

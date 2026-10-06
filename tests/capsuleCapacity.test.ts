@@ -132,6 +132,9 @@ test('a batch the cap cannot hold whole: the later item is left in place, and no
   assert.ok(left, `the third is named in skipped (${JSON.stringify(result.skipped)})`);
   assert.equal(left.code, 'CAPSULE_FULL');
   assert.match(left.reason ?? '', /left alone rather than deleted without a backup/);
+  // What holds the room is named, and only that (FG3h D): this run's own copies.
+  assert.match(left.reason ?? '', /195\.3 KB of copies of items whose deletion is still under way/, left.reason);
+  assert.doesNotMatch(left.reason ?? '', /being restored|could not be confirmed/, left.reason);
   assert.ok(fs.existsSync(c), 'the third is still where it was');
   assert.equal(result.bytesFreed, 2 * ITEM);
 
@@ -371,4 +374,27 @@ test('a copy that no longer fits once it is whole - a restore took the room mean
   await restored(jobId);
   assert.ok(fs.readFileSync(o1).equals(Buffer.alloc(ITEM, 1)), 'o1 is back, from the copy nothing evicted');
   assert.ok(fs.readFileSync(o2).equals(Buffer.alloc(ITEM, 2)), 'and o2');
+});
+
+/* ─────────────── FG3h D: "Forget" never takes a copy a deletion run under way relies on ─────────────── */
+
+test('"Forget" refuses the copy of an item whose deletion is under way: asked at its very trash step, the item still goes with its copy held', async () => {
+  const [a, b] = files('forget-in-flight', ['a.bin', 'b.bin']);
+  let refused: unknown = null;
+  duringTrash = async (p) => {
+    if (p !== b) return;
+    // After b's own look right before its trash step, and before the move: the person presses Forget on b.
+    const entry = (await getCapsuleIndex()).entries.find((e) => e.originalPath === b);
+    assert.ok(entry);
+    refused = await deleteCapsuleEntry(entry.id).then(() => null, (err: unknown) => err);
+  };
+  const result = await withOpenFileCheck('clear', () => commitCart([a, b]));
+  assert.ok(refused instanceof AppError, `Forget was refused (${String(refused)})`);
+  assert.equal(refused.code, 'DELETION_RUNNING', refused.message);
+  assert.match(refused.message, /deletion that is still under way/, refused.message);
+  assert.deepEqual(sorted(result.trashed), sorted([a, b]));
+  await assertEveryTrashedItemHasItsCopy(result.runId, result.trashed);
+  const entry = (await getCapsuleIndex()).entries.find((e) => e.originalPath === b);
+  assert.ok(entry);
+  assert.deepEqual(await deleteCapsuleEntry(entry.id), { deleted: true, bytesFreed: ITEM }, 'once the deletion is over, it can be forgotten');
 });
