@@ -53,7 +53,9 @@ function gate() {
 type FakeEl = {
   id: string; value: string; textContent: string; innerHTML: string; disabled: boolean;
   title: string; scrollLeft: number; scrollTop: number; readonly scrollWidth: number;
-  classList: { add(c: string): void; remove(c: string): void };
+  classList: { add(c: string): void; remove(c: string): void; toggle(c: string, on?: boolean): void };
+  attrs: Record<string, string>;
+  setAttribute(k: string, v: string): void; removeAttribute(k: string): void; getAttribute(k: string): string | null;
   listeners: Record<string, (e?: unknown) => unknown>;
   addEventListener(type: string, fn: (e?: unknown) => unknown): void;
   querySelectorAll(sel: string): FakeEl[];
@@ -68,7 +70,11 @@ function fakeEl(id: string): FakeEl {
     title: '', scrollLeft: 0, scrollTop: 0,
     // A laid-out text field's content is as wide as its text (7 px a character here).
     get scrollWidth() { return el.value.length * 7; },
-    classList: { add() {}, remove() {} },
+    classList: { add() {}, remove() {}, toggle() {} },
+    attrs: {},
+    setAttribute(k, v) { el.attrs[k] = String(v); },
+    removeAttribute(k) { delete el.attrs[k]; },
+    getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
     listeners: {},
     addEventListener(type, fn) { el.listeners[type] = fn; },
     querySelectorAll: () => [],
@@ -612,7 +618,8 @@ function boxesRuntime(listing: (p: string) => unknown) {
         el.listeners[type] = before ? (e) => { void before(e); return fn(e); } : fn;
       };
       el.querySelector = () => null;
-      el.click = () => { void el.listeners.click?.(); };
+      // As HTMLElement.click(): a disabled control ignores it (Enter in the path box calls it).
+      el.click = () => { if (!el.disabled) void el.listeners.click?.(); };
       els.set(id, el);
     }
     return els.get(id)!;
@@ -654,6 +661,7 @@ function boxesRuntime(listing: (p: string) => unknown) {
     between('function scannedRoots()', 'async function showFastRescanStat'),
     between("$('scanBtn').addEventListener('click'", "window.addEventListener('beforeunload'"),
     braced('function openPolicyEditor('),
+    braced('function setScanButtonMode('),
     between('/** Read the dialog back into the wire shape the API validates. */', 'registerView({'),
   ].join('\n');
   const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
@@ -841,27 +849,59 @@ test('Scan holds its button while the path is looked up, and a press the person 
   // Box changed while the lookup ran.
   {
     const g = gate();
-    const { $, scanned, offers, click, type } = boxesRuntime(slowStray(g));
+    const { $, scanned, offers, toasts, click, type } = boxesRuntime(slowStray(g));
     type('pathInput', DOCS + ' ');
     const pending = click('scanBtn');
     assert.equal($('scanBtn').disabled, true, 'Scan is held while the path is looked up');
+    // ...and says so, to the eye and to a screen reader (final review F1.11).
+    assert.equal($('scanBtn').getAttribute('aria-busy'), 'true', 'the held button is busy');
+    assert.match($('scanBtn').innerHTML, /Checking…/, 'its face says what it is doing');
+    assert.match($('scanAnnounce').textContent, /Checking that the folder exists/, 'and the scan\'s live region says it');
     type('pathInput', '/data');
     g.open();
     await pending;
     assert.deepEqual(scanned, [], 'a path no longer in the box is not scanned, nor the folder it might have meant');
     assert.deepEqual(offers, [], 'and nothing is offered for it');
     assert.equal($('scanBtn').disabled, false, 'and Scan is live again');
+    assert.equal($('scanBtn').getAttribute('aria-busy'), null, 'no longer busy');
+    assert.match($('scanBtn').innerHTML, /Scan$/, 'and says Scan again');
+    // The press is dropped out loud: in silence, the person's Scan did nothing
+    // and nothing said so (final review F1.5).
+    assert.match(toasts.at(-1) ?? '', /^Nothing was scanned — the path changed while it was being checked\. Press Scan to scan the path in the box\.$/,
+      'the person is told nothing was scanned, and what to do');
   }
   // A scan started some other way (Recent, the dock) while the lookup ran.
   {
     const g = gate();
-    const { rt, scanned, click, type } = boxesRuntime(slowShots(g));
+    const { rt, scanned, toasts, click, type } = boxesRuntime(slowShots(g));
     type('pathInput', SLOW);
     const pending = click('scanBtn');
     rt.scanning(true);
     g.open();
     await pending;
     assert.deepEqual(scanned, [], 'a press overtaken by a scan that started meanwhile starts nothing');
+    assert.equal(toasts.at(-1), 'A scan is already running', 'and says why, as startScan would (final review F1.5)');
+  }
+  // Enter while Scan is held: the button ignores a click() while disabled,
+  // so Enter did nothing and said nothing, and the held press then dropped
+  // itself because the box had changed (final review F1.11). Enter is a
+  // press of its own, and a newer press takes over.
+  {
+    const g = gate();
+    const { $, scanned, offers, toasts, click, type } = boxesRuntime(slowStray(g));
+    type('pathInput', DOCS + ' ');
+    const held = click('scanBtn');
+    assert.equal($('scanBtn').disabled, true, 'control: Scan is held');
+    type('pathInput', '/data');
+    await $('pathInput').listeners.keydown({ key: 'Enter' });
+    await settle();
+    assert.deepEqual(scanned.map(([p]) => p), ['/data'], 'Enter scans the path now in the box');
+    g.open();
+    await held;
+    assert.deepEqual(scanned.map(([p]) => p), ['/data'], 'and the press it overtook acts on nothing');
+    assert.deepEqual(offers, [], 'offers nothing');
+    assert.deepEqual(toasts, [], 'and says nothing — the newer press answered');
+    assert.equal($('scanBtn').disabled, false, 'Scan is live');
   }
   // Two presses on one path (Enter, or a press that got through).
   {
@@ -1068,6 +1108,21 @@ test('an offer takes focus, so a keyboard reaches it with a sheet open or not, a
   assert.deepEqual(pulled, [sheet], 'focus on an offer\'s button stays there');
 });
 
+test('a path the lookup cannot even spell — a pasted lone surrogate before a trailing space — never leaves Scan held: it is scanned as typed, for the scan to report (final review F1.5)', async () => {
+  // encodeURIComponent throws a URIError on a lone surrogate. boxMeant built
+  // the lookup's URL before its promise chain, so the throw escaped the press
+  // between holding the button and handing it back: Scan stayed disabled
+  // until a reload.
+  const ODD = '/x/\uD800 ';
+  const { $, scanned, toasts, click, type } = boxesRuntime(strictListing);
+  type('pathInput', ODD);
+  await click('scanBtn'); // rejects, and fails this test, if the throw escapes
+  assert.equal($('scanBtn').disabled, false, 'Scan is live again');
+  assert.equal($('scanBtn').getAttribute('aria-busy'), null, 'and not busy');
+  assert.deepEqual(scanned.map(([p]) => p), [ODD], 'the path is scanned exactly as typed, for the scan to report');
+  assert.deepEqual(toasts, []);
+});
+
 test('Scan reads Fast rescan when pressed, and a lookup that does not answer in time scans the path exactly as typed (QA4a R4-3)', async () => {
   const g = gate();
   const { rt, $, scanned, offers, click, type, timers, fire } = boxesRuntime(slowShots(g));
@@ -1118,6 +1173,7 @@ test('Save reads every field when pressed, holds its button while the folder is 
     const pending = click('apSaveBtn');
     rt.close('apModal');
     assert.equal($('apSaveBtn').disabled, false, 'a closed editor holds nothing — it opens again with Save live');
+    assert.equal($('apSaveBtn').getAttribute('aria-busy'), null, 'and not busy (final review F1.11)');
     g.open();
     await pending;
     assert.equal(saves(), 0, 'a Save still looking up its folder when the editor closed saves nothing');
@@ -1125,15 +1181,19 @@ test('Save reads every field when pressed, holds its button while the folder is 
   // Another folder typed while it was looked up.
   {
     const g = gate();
-    const { rt, $, click, type, saves } = boxesRuntime(slowShots(g));
+    const { rt, $, click, type, saves, toasts } = boxesRuntime(slowShots(g));
     rt.openPolicyEditor(null);
     type('apPath', SLOW);
     const pending = click('apSaveBtn');
+    assert.equal($('apSaveBtn').getAttribute('aria-busy'), 'true', 'the held Save is busy (final review F1.11)');
     type('apPath', '/data');
     g.open();
     await pending;
     assert.equal(saves(), 0, 'a Save whose folder was changed while it was looked up saves nothing');
     assert.equal($('apSaveBtn').disabled, false, 'and Save is live again, for the folder now in the box');
+    assert.equal($('apSaveBtn').getAttribute('aria-busy'), null, 'no longer busy');
+    assert.equal(toasts.at(-1), 'Nothing was saved — the folder changed while it was being checked. Press Save to save the folder in the box.',
+      'and the person is told nothing was saved (final review F1.5)');
   }
   // Two presses.
   {

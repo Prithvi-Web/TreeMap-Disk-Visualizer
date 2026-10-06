@@ -1421,17 +1421,40 @@ async function scanTheBox() {
   const p = asPath(box.value);
   if (!p) { toast('Enter a folder path first', 'error'); return; }
   // Read as the person pressed Scan; only the path is looked up after, held
-  // to PATH_LOOKUP_MS, with the button held while it is (QA4a R4-3).
+  // to PATH_LOOKUP_MS, with the button held while it is (QA4a R4-3) — and
+  // saying so: "Checking…" on its face, aria-busy, and a sentence in the
+  // scan's live region (final review F1.11).
   const incremental = !$('fastRescanWrap').hidden && $('fastRescan').checked;
   const seq = ++scanPressSeq;
   btn.disabled = true;
-  const meant = await boxMeant(p);
-  // A newer press took over, and holds the button now.
+  if (boxLooksUp(p)) {
+    btn.setAttribute('aria-busy', 'true');
+    btn.innerHTML = icon('search', 16) + 'Checking…';
+    $('scanAnnounce').textContent = 'Checking that the folder exists…';
+  }
+  let meant = null;
+  try {
+    meant = await boxMeant(p);
+  } finally {
+    // Handed back by the press that holds it, however the lookup ended — a
+    // throw included, which left Scan disabled until a reload (final review
+    // F1.5). A scan started meanwhile has made it Stop already.
+    if (seq === scanPressSeq) {
+      btn.removeAttribute('aria-busy');
+      if (state.scanning) btn.disabled = false; else setScanButtonMode('scan');
+    }
+  }
+  // A newer press took over — Enter, or the folder offered, chosen — and
+  // answers in this one's place.
   if (seq !== scanPressSeq) return;
-  btn.disabled = false;
-  // The person moved on while it was looked up — another path in the box, or
-  // a scan started some other way: this press acts on nothing.
-  if (asPath(box.value) !== p || state.scanning) return;
+  // The person moved on while it was looked up — a scan started some other
+  // way, or another path in the box: this press acts on nothing, and says so
+  // rather than leaving a press that did nothing (final review F1.5).
+  if (state.scanning) { toast('A scan is already running', 'error'); return; }
+  if (asPath(box.value) !== p) {
+    toast('Nothing was scanned — the path changed while it was being checked. Press Scan to scan the path in the box.', 'error');
+    return;
+  }
   if (meant) {
     // Chosen while a scan started some other way runs, the box is left as it
     // is — scanTheBox says why — or the next press would scan a folder nobody
@@ -1455,8 +1478,13 @@ async function scanTheBox() {
 // fooled two people testing this build before it was noticed. The house rule
 // is the one at tmRunGrammarQuery: say so rather than doing nothing. The
 // button's own behaviour is unchanged; only the refusal gained a voice.
+//
+// Enter is a press of Scan of its own, not a click() on the button: while
+// Scan is held for a lookup a click() on it does nothing, so Enter in the
+// box was dropped in silence. Pressed, it takes over from the held press
+// and scans what the box holds now (final review F1.11).
 $('pathInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !state.scanning) { $('scanBtn').click(); return; }
+  if (e.key === 'Enter' && !state.scanning) { void scanTheBox(); return; }
   if (e.key === 'Enter') toast('A scan is already running — press Stop to end it, then press Enter to scan this path.', 'error');
 });
 $('pathInput').addEventListener('input', maybeShowFastRescan);

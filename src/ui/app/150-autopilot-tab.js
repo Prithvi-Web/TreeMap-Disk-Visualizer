@@ -494,6 +494,7 @@ let apSaveSeq = 0;
 function apEditorClosed() {
   apSaveSeq++;
   $('apSaveBtn').disabled = false;
+  $('apSaveBtn').removeAttribute('aria-busy');
 }
 $('apSaveBtn').addEventListener('click', async () => {
   // Every field is read now, as the person pressed Save: what is saved is
@@ -507,15 +508,27 @@ $('apSaveBtn').addEventListener('click', async () => {
   if (edited.path !== (apDraft && apDraft.path)) {
     const btn = $('apSaveBtn');
     const seq = ++apSaveSeq;
-    btn.disabled = true; // held while the folder is looked up, at most PATH_LOOKUP_MS
-    const meant = await boxMeant(edited.path);
-    // The editor closed, or a newer press took over: nothing is saved, and
-    // the button is not this press's to hand back.
+    // Held while the folder is looked up, at most PATH_LOOKUP_MS, and busy
+    // while it is (final review F1.11).
+    btn.disabled = true;
+    if (boxLooksUp(edited.path)) btn.setAttribute('aria-busy', 'true');
+    let meant = null;
+    try {
+      meant = await boxMeant(edited.path);
+    } finally {
+      // Handed back by the press that holds it, however the lookup ended
+      // (final review F1.5). The editor closed, or a newer press took over:
+      // the button is not this press's to hand back.
+      if (seq === apSaveSeq) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+    }
+    // Nothing is saved for a closed editor, or in a newer press's place.
     if (seq !== apSaveSeq) return;
-    btn.disabled = false;
     // Another folder typed while this one was looked up: that one is the
-    // next press's to save.
-    if (asPath($('apPath').value) !== edited.path) return;
+    // next press's to save, and the person is told this one saved nothing.
+    if (asPath($('apPath').value) !== edited.path) {
+      toast('Nothing was saved — the folder changed while it was being checked. Press Save to save the folder in the box.', 'error');
+      return;
+    }
     if (meant) {
       // Only into the editor it was offered for, while no other press has come since.
       offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });

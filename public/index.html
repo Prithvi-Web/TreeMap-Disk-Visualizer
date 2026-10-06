@@ -10021,17 +10021,40 @@ async function scanTheBox() {
   const p = asPath(box.value);
   if (!p) { toast('Enter a folder path first', 'error'); return; }
   // Read as the person pressed Scan; only the path is looked up after, held
-  // to PATH_LOOKUP_MS, with the button held while it is (QA4a R4-3).
+  // to PATH_LOOKUP_MS, with the button held while it is (QA4a R4-3) — and
+  // saying so: "Checking…" on its face, aria-busy, and a sentence in the
+  // scan's live region (final review F1.11).
   const incremental = !$('fastRescanWrap').hidden && $('fastRescan').checked;
   const seq = ++scanPressSeq;
   btn.disabled = true;
-  const meant = await boxMeant(p);
-  // A newer press took over, and holds the button now.
+  if (boxLooksUp(p)) {
+    btn.setAttribute('aria-busy', 'true');
+    btn.innerHTML = icon('search', 16) + 'Checking…';
+    $('scanAnnounce').textContent = 'Checking that the folder exists…';
+  }
+  let meant = null;
+  try {
+    meant = await boxMeant(p);
+  } finally {
+    // Handed back by the press that holds it, however the lookup ended — a
+    // throw included, which left Scan disabled until a reload (final review
+    // F1.5). A scan started meanwhile has made it Stop already.
+    if (seq === scanPressSeq) {
+      btn.removeAttribute('aria-busy');
+      if (state.scanning) btn.disabled = false; else setScanButtonMode('scan');
+    }
+  }
+  // A newer press took over — Enter, or the folder offered, chosen — and
+  // answers in this one's place.
   if (seq !== scanPressSeq) return;
-  btn.disabled = false;
-  // The person moved on while it was looked up — another path in the box, or
-  // a scan started some other way: this press acts on nothing.
-  if (asPath(box.value) !== p || state.scanning) return;
+  // The person moved on while it was looked up — a scan started some other
+  // way, or another path in the box: this press acts on nothing, and says so
+  // rather than leaving a press that did nothing (final review F1.5).
+  if (state.scanning) { toast('A scan is already running', 'error'); return; }
+  if (asPath(box.value) !== p) {
+    toast('Nothing was scanned — the path changed while it was being checked. Press Scan to scan the path in the box.', 'error');
+    return;
+  }
   if (meant) {
     // Chosen while a scan started some other way runs, the box is left as it
     // is — scanTheBox says why — or the next press would scan a folder nobody
@@ -10055,8 +10078,13 @@ async function scanTheBox() {
 // fooled two people testing this build before it was noticed. The house rule
 // is the one at tmRunGrammarQuery: say so rather than doing nothing. The
 // button's own behaviour is unchanged; only the refusal gained a voice.
+//
+// Enter is a press of Scan of its own, not a click() on the button: while
+// Scan is held for a lookup a click() on it does nothing, so Enter in the
+// box was dropped in silence. Pressed, it takes over from the held press
+// and scans what the box holds now (final review F1.11).
 $('pathInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !state.scanning) { $('scanBtn').click(); return; }
+  if (e.key === 'Enter' && !state.scanning) { void scanTheBox(); return; }
   if (e.key === 'Enter') toast('A scan is already running — press Stop to end it, then press Enter to scan this path.', 'error');
 });
 $('pathInput').addEventListener('input', maybeShowFastRescan);
@@ -26886,6 +26914,7 @@ let apSaveSeq = 0;
 function apEditorClosed() {
   apSaveSeq++;
   $('apSaveBtn').disabled = false;
+  $('apSaveBtn').removeAttribute('aria-busy');
 }
 $('apSaveBtn').addEventListener('click', async () => {
   // Every field is read now, as the person pressed Save: what is saved is
@@ -26899,15 +26928,27 @@ $('apSaveBtn').addEventListener('click', async () => {
   if (edited.path !== (apDraft && apDraft.path)) {
     const btn = $('apSaveBtn');
     const seq = ++apSaveSeq;
-    btn.disabled = true; // held while the folder is looked up, at most PATH_LOOKUP_MS
-    const meant = await boxMeant(edited.path);
-    // The editor closed, or a newer press took over: nothing is saved, and
-    // the button is not this press's to hand back.
+    // Held while the folder is looked up, at most PATH_LOOKUP_MS, and busy
+    // while it is (final review F1.11).
+    btn.disabled = true;
+    if (boxLooksUp(edited.path)) btn.setAttribute('aria-busy', 'true');
+    let meant = null;
+    try {
+      meant = await boxMeant(edited.path);
+    } finally {
+      // Handed back by the press that holds it, however the lookup ended
+      // (final review F1.5). The editor closed, or a newer press took over:
+      // the button is not this press's to hand back.
+      if (seq === apSaveSeq) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+    }
+    // Nothing is saved for a closed editor, or in a newer press's place.
     if (seq !== apSaveSeq) return;
-    btn.disabled = false;
     // Another folder typed while this one was looked up: that one is the
-    // next press's to save.
-    if (asPath($('apPath').value) !== edited.path) return;
+    // next press's to save, and the person is told this one saved nothing.
+    if (asPath($('apPath').value) !== edited.path) {
+      toast('Nothing was saved — the folder changed while it was being checked. Press Save to save the folder in the box.', 'error');
+      return;
+    }
     if (meant) {
       // Only into the editor it was offered for, while no other press has come since.
       offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
@@ -32360,15 +32401,25 @@ function offerMeant(p, meant, choose, label = 'Use that folder') {
     take minutes to answer, and the scan or the policy then answers for the
     path as it does for any other (QA4a R4-3). */
 const PATH_LOOKUP_MS = 3000;
+/** Whether boxMeant looks `p` up before it is scanned or saved: only a path
+    ending in whitespace is. */
+function boxLooksUp(p) {
+  return /\s$/.test(p);
+}
 /** Before a path box's folder is scanned or saved: the folder it probably
     meant (meantFolder) when the path names none, or null to go ahead with the
     path exactly as it is — also once PATH_LOOKUP_MS pass without an answer.
-    Only a path ending in whitespace is looked up. */
+    Only a path ending in whitespace is looked up. It never throws: the URL is
+    built inside the promise chain, so a path encodeURIComponent cannot encode
+    (a pasted lone surrogate) is a failed lookup — null — and not a throw out
+    of a press that holds its button (final review F1.5). */
 function boxMeant(p) {
-  if (p === p.replace(/\s+$/, '')) return Promise.resolve(null);
+  if (!boxLooksUp(p)) return Promise.resolve(null);
   let timer;
   const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), PATH_LOOKUP_MS); });
-  const lookup = api('/api/fs/list?path=' + encodeURIComponent(p)).then(() => null, (e) => meantFolder(p, e));
+  const lookup = Promise.resolve()
+    .then(() => api('/api/fs/list?path=' + encodeURIComponent(p)))
+    .then(() => null, (e) => meantFolder(p, e));
   return Promise.race([lookup, late]).finally(() => clearTimeout(timer));
 }
 async function openBrowse(start, onPick = null, title = null) {

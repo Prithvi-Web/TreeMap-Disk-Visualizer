@@ -318,15 +318,25 @@ function offerMeant(p, meant, choose, label = 'Use that folder') {
     take minutes to answer, and the scan or the policy then answers for the
     path as it does for any other (QA4a R4-3). */
 const PATH_LOOKUP_MS = 3000;
+/** Whether boxMeant looks `p` up before it is scanned or saved: only a path
+    ending in whitespace is. */
+function boxLooksUp(p) {
+  return /\s$/.test(p);
+}
 /** Before a path box's folder is scanned or saved: the folder it probably
     meant (meantFolder) when the path names none, or null to go ahead with the
     path exactly as it is — also once PATH_LOOKUP_MS pass without an answer.
-    Only a path ending in whitespace is looked up. */
+    Only a path ending in whitespace is looked up. It never throws: the URL is
+    built inside the promise chain, so a path encodeURIComponent cannot encode
+    (a pasted lone surrogate) is a failed lookup — null — and not a throw out
+    of a press that holds its button (final review F1.5). */
 function boxMeant(p) {
-  if (p === p.replace(/\s+$/, '')) return Promise.resolve(null);
+  if (!boxLooksUp(p)) return Promise.resolve(null);
   let timer;
   const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), PATH_LOOKUP_MS); });
-  const lookup = api('/api/fs/list?path=' + encodeURIComponent(p)).then(() => null, (e) => meantFolder(p, e));
+  const lookup = Promise.resolve()
+    .then(() => api('/api/fs/list?path=' + encodeURIComponent(p)))
+    .then(() => null, (e) => meantFolder(p, e));
   return Promise.race([lookup, late]).finally(() => clearTimeout(timer));
 }
 async function openBrowse(start, onPick = null, title = null) {

@@ -256,10 +256,13 @@ test('a real scan still fills both tiles', async () => {
 function runPathKeydown(scanning: boolean, key = 'Enter') {
   const src = slice("$('pathInput').addEventListener('keydown'", "$('pathInput').addEventListener('input'");
   const handlers: Record<string, (e: { key: string }) => void> = {};
+  /** click() on the Scan button — which is Stop mid-scan. */
   const clicks: number[] = [];
+  /** Presses of Scan (scanTheBox), the way Enter starts one. */
+  const presses: number[] = [];
   const toasts: Array<[string, string | undefined]> = [];
   new Function(
-    '$', 'state', 'toast',
+    '$', 'state', 'toast', 'scanTheBox',
     `'use strict'; ${src}`,
   )(
     (id: string) => (id === 'pathInput'
@@ -267,17 +270,19 @@ function runPathKeydown(scanning: boolean, key = 'Enter') {
       : { click: () => clicks.push(1) }),
     { scanning },
     (m: string, kind?: string) => { toasts.push([m, kind]); },
+    () => { presses.push(1); return Promise.resolve(); },
   );
   assert.ok(handlers.keydown, 'the path field has a keydown handler');
   handlers.keydown({ key });
-  return { clicks, toasts };
+  return { clicks, presses, toasts };
 }
 
 test('Enter during the boot auto-scan says what is happening instead of doing nothing', () => {
   // The app auto-scans the last path at boot, so this is the FIRST thing a
   // returning user hits. It must still not cancel the running scan…
-  const { clicks, toasts } = runPathKeydown(true);
+  const { clicks, presses, toasts } = runPathKeydown(true);
   assert.equal(clicks.length, 0, 'Enter never presses Stop');
+  assert.equal(presses.length, 0, 'nor starts a press of Scan');
   // …but a refusal nobody can hear is indistinguishable from a dead input.
   assert.equal(toasts.length, 1, 'the refusal is spoken');
   assert.match(toasts[0][0], /scan/i, 'it names what is happening');
@@ -285,14 +290,19 @@ test('Enter during the boot auto-scan says what is happening instead of doing no
 });
 
 test('Enter with nothing running still starts the scan, silently', () => {
-  const { clicks, toasts } = runPathKeydown(false);
-  assert.equal(clicks.length, 1, 'the button does the work, exactly as before');
+  const { clicks, presses, toasts } = runPathKeydown(false);
+  // A press of Scan of its own, not a click() on the button: a click() on a
+  // button held for a path lookup does nothing, and Enter was dropped in
+  // silence (final review F1.11).
+  assert.equal(presses.length, 1, 'Enter is a press of Scan');
+  assert.equal(clicks.length, 0, 'not a click() on the button, which a held button ignores');
   assert.equal(toasts.length, 0, 'and a working control says nothing');
 });
 
 test('the refusal fires on Enter only, not on every keystroke', () => {
-  const { clicks, toasts } = runPathKeydown(true, 'a');
+  const { clicks, presses, toasts } = runPathKeydown(true, 'a');
   assert.equal(toasts.length, 0, 'typing a path mid-scan is not an error');
+  assert.equal(presses.length, 0);
   assert.equal(clicks.length, 0);
 });
 
