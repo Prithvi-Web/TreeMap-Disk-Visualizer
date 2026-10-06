@@ -407,6 +407,28 @@ test('Windows: a path realpath hands back behind \\\\?\\ is read as Windows read
   assert.equal(fromExtendedLengthPath('\\\\?\\UNC\\srv\\share\\x', 'darwin'), '\\\\?\\UNC\\srv\\share\\x', 'elsewhere it is a name like any other');
 });
 
+test('with Windows stood in, a folder realpath hands back as \\\\?\\UNC\\localhost\\C$\\… is read through that reading where the rules place a path: a file in it lies in this machine’s admin share, a second name (the SEC-3 brief, item 5; its review)', { skip: WINDOWS && 'here realpath is the real one; the stand-in is what reaches the rule on the other runners' }, () => {
+  // The pure reading above is only half: the sanitizer's own realpath answers go through it too, or a
+  // mapped drive into \\localhost\C$ is still read as UNC\localhost\C$\…, a relative name.
+  const dir = path.join(T, 'unc-mapped');
+  fs.mkdirSync(dir);
+  const realpath = fs.realpathSync.native;
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  let place = '';
+  fs.realpathSync.native = ((p: fs.PathLike, ...rest: unknown[]) =>
+    String(p) === dir ? '\\\\?\\UNC\\localhost\\C$\\Windows' : (realpath as (...a: unknown[]) => string)(p, ...rest)) as typeof realpath;
+  Object.defineProperty(process, 'platform', { ...real, value: 'win32' });
+  try {
+    place = canonicalDirOf(path.join(dir, 'x.txt'));
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+    fs.realpathSync.native = realpath;
+  }
+  assert.ok(place.startsWith('\\\\localhost\\C$\\Windows'), `as Windows reads it: ${place}`);
+  assert.notEqual(aliasNamespaceOf(place, 'win32', []), null, `a second name: ${place}`);
+});
+
 test('Windows: a colon in a UNC path’s share name, or in its host outside an IPv6 address’s brackets, is a second name — \\\\localhost\\C$::$INDEX_ALLOCATION\\… is a stream of the share’s own root, which both rules read as part of the root (the SEC-3 brief, item 7)', () => {
   // parse() reads `\\localhost\C$::$INDEX_ALLOCATION\` as the root, so the stream rule (a colon past
   // the root) never saw it, and the admin-share rule saw a share named `C$::$INDEX_ALLOCATION`. SMB
