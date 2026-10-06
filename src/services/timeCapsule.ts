@@ -14,7 +14,9 @@ import { isEphemeral } from './portableMode';
 import { moveToTrash } from './cleaner';
 import { getSettings } from './settings';
 import { diskUsage } from './diskUsage';
-import { copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber } from '../utils/copyVerify';
+import {
+  abandonedCallsUnsettled, copyWithHash, hashFile, CopyCancelled, CopyLeftBehind, partialNameFor, placeWithoutClobber, withinStallLimit,
+} from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { describeFsError, meansAbsent } from '../utils/errno';
@@ -89,6 +91,15 @@ const JOB_TTL_MS = 30 * 60_000;
  * well within it.
  */
 const CAPTURE_STALL_MS = 60_000;
+/**
+ * How many file calls may be left waiting at their stall limit (`abandonedCallsUnsettled`) before a
+ * capture starts no more (FG3h A). A call left waiting cannot be stopped: it holds a worker thread of
+ * the pool every file call in the process shares (four in Node by default, eight to sixteen in the
+ * app) until the volume answers — so a handful of them starved the next file call, which then hung
+ * with the index held. At this many, the rest of a run is left undeleted at once, and a dry run says
+ * so, until they return.
+ */
+const MAX_ABANDONED_CALLS = 2;
 /** How often expired entries are swept out. */
 const MAINTENANCE_INTERVAL_MS = 60 * 60_000;
 
@@ -546,6 +557,44 @@ async function dropPayload(entry: TimeCapsuleEntry): Promise<number> {
 
 /* ---------------- capture ---------------- */
 
+/** A call a capture, or the look right before a trash step, makes on the item itself (FG3h A). */
+type ItemCall = 'lstat' | 'readdir' | 'readlink' | 'stat';
+
+/**
+ * Test-only: a stand-in for one call on the item (FG3h A), as a volume that stops answering gives it
+ * — a promise that does not settle — or null for the real call. The suite's ForTests idiom: returns
+ * the function that removes it.
+ */
+let itemCallForTests: ((what: ItemCall, abs: string) => Promise<unknown> | null) | null = null;
+export function setSourceCallForTests(fn: (what: ItemCall, abs: string) => Promise<unknown> | null): () => void {
+  itemCallForTests = fn;
+  return () => { itemCallForTests = null; };
+}
+
+/**
+ * `call` on the item at `abs`, bounded by the stall limit a copy has (FG3h A): every look a capture
+ * takes at the item ran with the index held and no limit, so a volume that stopped answering part-way
+ * through a walk held the index — and the Autopilot policy behind it — for ever. Past the limit it
+ * fails as a volume that did not answer (ETIMEDOUT), the call left to return on its own.
+ */
+function onItem<T>(what: ItemCall, abs: string, call: () => Promise<T>): Promise<T> {
+  const standIn = itemCallForTests?.(what, abs) ?? null;
+  return withinStallLimit(standIn !== null ? (standIn as Promise<T>) : call(), CAPTURE_STALL_MS, () => {
+    throw Object.assign(new Error(`looking at ${abs} made no progress for ${Math.round(CAPTURE_STALL_MS / 1000)} seconds`), { code: 'ETIMEDOUT' });
+  });
+}
+
+/**
+ * Why nothing more is started on an item, while too many calls are left waiting on a volume that
+ * stopped answering (FG3h A), as a sentence — or null to go ahead.
+ */
+function startsNoMore(then: string): string | null {
+  const waiting = abandonedCallsUnsettled();
+  if (waiting < MAX_ABANDONED_CALLS) return null;
+  return `TreeMap is still waiting on ${formatCount(waiting)} calls to the disk that never answered (a volume that stopped responding), ` +
+    `so it starts no more until they return. ${then}`;
+}
+
 /** A file, directory or symlink to be copied, discovered under the item. */
 interface WalkedMember {
   abs: string;
@@ -595,7 +644,7 @@ async function lstatMember(abs: string, rel: string): Promise<Stats | null> {
   try {
     const fault = memberLookFaultForTests?.(abs) ?? null;
     if (fault !== null) throw fault;
-    return await fsp.lstat(abs);
+    return await onItem('lstat', abs, () => fsp.lstat(abs));
   } catch (err) {
     if (meansAbsent(err)) return null;
     throw new AppError(409, 'CAPSULE_UNREADABLE',
@@ -612,7 +661,7 @@ async function readlinkMember(abs: string, rel: string): Promise<string | null> 
   try {
     const fault = memberLookFaultForTests?.(abs) ?? null;
     if (fault !== null) throw fault;
-    return await fsp.readlink(abs);
+    return await onItem('readlink', abs, () => fsp.readlink(abs));
   } catch (err) {
     if (meansAbsent(err)) return null;
     throw new AppError(409, 'CAPSULE_UNREADABLE',
@@ -624,9 +673,9 @@ async function walkItem(
   root: string,
   opts: { withDirTimes?: boolean } = {},
 ): Promise<{ members: WalkedMember[]; bytes: number; isFolder: boolean }> {
-  const stat = await fsp.lstat(root);
+  const stat = await onItem('lstat', root, () => fsp.lstat(root));
   if (stat.isSymbolicLink()) {
-    const target = await fsp.readlink(root);
+    const target = await onItem('readlink', root, () => fsp.readlink(root));
     return { members: [{ abs: root, rel: '', kind: 'symlink', size: Buffer.byteLength(target) }], bytes: 0, isFolder: false };
   }
   if (!stat.isDirectory()) {
@@ -656,7 +705,7 @@ async function walkItem(
     // the one a person waits on with the confirmation dialog not yet open,
     // so it does not pay for something only the capture needs.
     if (opts.withDirTimes && dir.rel) {
-      const dirStat = await fsp.lstat(dir.abs).catch(() => null);
+      const dirStat = await onItem('lstat', dir.abs, () => fsp.lstat(dir.abs)).catch(() => null);
       if (dirStat) {
         const entry = members[members.length - 1];
         entry.mtimeMs = dirStat.mtimeMs;
@@ -664,7 +713,7 @@ async function walkItem(
         entry.mode = dirStat.mode & 0o777;
       }
     }
-    const dirents = await fsp.readdir(dir.abs, { withFileTypes: true });
+    const dirents = await onItem('readdir', dir.abs, () => fsp.readdir(dir.abs, { withFileTypes: true }));
     for (const dirent of dirents) {
       const abs = path.join(dir.abs, dirent.name);
       const rel = dir.rel ? path.join(dir.rel, dirent.name) : dirent.name;
@@ -736,6 +785,13 @@ async function capture(
 ): Promise<ProtectionOutcome> {
   const original = request.path;
   const name = path.basename(original);
+
+  // Nothing is started on it while calls are left waiting on a volume that stopped answering (FG3h A).
+  const waiting = startsNoMore('It was left alone rather than deleted without a backup.');
+  if (waiting !== null) {
+    recordEvent(store, { at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: 0, detail: waiting });
+    return { path: original, protected: false, bytes: 0, code: 'CAPSULE_COPY_FAILED', detail: waiting };
+  }
 
   let walked: { members: WalkedMember[]; bytes: number; isFolder: boolean };
   try {
@@ -810,10 +866,10 @@ async function capture(
         continue;
       }
       if (member.kind === 'symlink') {
-        const target = await fsp.readlink(member.abs);
+        const target = await onItem('readlink', member.abs, () => fsp.readlink(member.abs));
         // Whether it leads to a folder (FG3f #9), so a restore on Windows can make it as one. A link
         // that leads nowhere records nothing, and comes back as it was made before this was kept.
-        const targetIsDir = await fsp.stat(member.abs).then((st) => st.isDirectory(), () => undefined);
+        const targetIsDir = await onItem('stat', member.abs, () => fsp.stat(member.abs)).then((st) => st.isDirectory(), () => undefined);
         await fsp.mkdir(path.dirname(dest), { recursive: true });
         await fsp.symlink(target, dest, linkTypeFor(target, targetIsDir));
         members.push({
@@ -840,7 +896,7 @@ async function capture(
 
     // The captured folder's own times, read from the original before it goes.
     const rootTimes = walked.isFolder
-      ? await fsp.lstat(original).then(
+      ? await onItem('lstat', original, () => fsp.lstat(original)).then(
         (st) => ({ rootMtimeMs: st.mtimeMs, rootAtimeMs: st.atimeMs, rootMode: st.mode & 0o777 }),
         () => ({}),
       )
@@ -1123,6 +1179,12 @@ export async function planProtection(
   let unconfirmed: Set<string> | undefined;
 
   for (const path of paths) {
+    // As the real run (FG3h A): nothing is started on it while calls are left waiting on a quiet volume.
+    const waiting = startsNoMore('It will be left alone rather than deleted without a backup.');
+    if (waiting !== null) {
+      items.push({ path, bytes: 0, willProtect: false, code: 'CAPSULE_COPY_FAILED', detail: waiting });
+      continue;
+    }
     let walked: { members: WalkedMember[]; bytes: number; isFolder: boolean };
     try {
       walked = await walkItem(path);
@@ -1447,10 +1509,18 @@ async function stopBeforeTrash(entryId: string | undefined, original: string): P
   if (incomplete !== null) {
     return { code: COPY_GONE, reason: `its Time Capsule copy is incomplete (${incomplete}), and nothing is deleted without a whole copy` };
   }
+  // Not looked at again while calls are left waiting on a volume that stopped answering (FG3h A), and
+  // nothing is deleted without that look.
+  const waiting = startsNoMore('It was not looked at again right before its deletion, and nothing is deleted without that look.');
+  if (waiting !== null) return { code: 'CAPSULE_UNREADABLE', reason: waiting.replace(/\.$/, '') };
   try {
-    await fsp.lstat(original);
+    await onItem('lstat', original, () => fsp.lstat(original));
   } catch (err) {
     if (meansAbsent(err)) return null; // gone by its turn: the trash step's own look says what became of it
+    // No answer within the limit: not asked a second time by the walk below (FG3h A).
+    if ((err as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+      return { code: 'CAPSULE_UNREADABLE', reason: `it could not be looked at again right before its deletion (${describeFsError(err)})` };
+    }
   }
   let walked: Awaited<ReturnType<typeof walkItem>>;
   try {
@@ -1535,7 +1605,7 @@ async function changeSinceCopy(
       changes.push(`${nameOf(now.rel)} was replaced by another file`);
     } else if (now.kind === 'file' && typeof was.ctimeMs === 'number' && was.ctimeMs !== now.ctimeMs) {
       changeTimeOnly.push(`the change time of ${nameOf(now.rel)} moved`);
-    } else if (now.kind === 'symlink' && was.target !== await fsp.readlink(now.abs).catch(() => null)) {
+    } else if (now.kind === 'symlink' && was.target !== await onItem('readlink', now.abs, () => fsp.readlink(now.abs)).catch(() => null)) {
       changes.push(`${nameOf(now.rel)} points somewhere else`);
     }
   }

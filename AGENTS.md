@@ -472,7 +472,11 @@ OpenAPI 3 spec).
      **The refusal that matters:** anything the capsule cannot protect whole —
      too large for it, or a folder holding a file that could not be looked at —
      is **left undeleted** and named in `skipped[]` with its reason — never
-     deleted unprotected. A run's copies are never evicted to make room while
+     deleted unprotected. Every look at an item and every file copied has a
+     60-second stall limit, past which that item is left undeleted; and while
+     two such calls are still waiting on a volume that stopped answering,
+     nothing more is started — the rest of the run is left undeleted
+     (`CAPSULE_COPY_FAILED`), and a dry run says so. A run's copies are never evicted to make room while
      a request of that run is under way — its own, or a later chunk of the
      same chunked commit — so a batch bigger than the capsule leaves its later
      items undeleted (`CAPSULE_FULL`) rather than dropping its own earlier
