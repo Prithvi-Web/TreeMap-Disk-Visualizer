@@ -94,8 +94,11 @@ function themeRuntime(stored: string | null, osLight: boolean, opts: { broken?: 
   const documentElement = { dataset: { theme: headTheme(stored, osLight, opts) } as Record<string, string> };
   const storage = fakeStorage(stored, opts);
   const query = fakeQuery(osLight);
-  let repaints = 0;
-  const handle = { update() { repaints++; } };
+  // Each repaint records the theme on screen when it ran. The charts read
+  // their ink from the document's computed style, so a repaint before
+  // data-theme flips draws the old theme again (QA F3, review F2.7).
+  const paintedIn: string[] = [];
+  const handle = { update() { paintedIn.push(documentElement.dataset.theme); } };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(
     'document', 'window', 'localStorage', '$', 'icon', 'state', 'drawnCells', 'isCells', 'repaintCells', 'drawView',
@@ -115,7 +118,9 @@ function themeRuntime(stored: string | null, osLight: boolean, opts: { broken?: 
     theme: () => documentElement.dataset.theme, storage, query, checked, pick,
     toggle: () => els.get('themeToggle')!.listeners.click(),
     button: () => els.get('themeToggle')!,
-    repaints: () => repaints,
+    repaints: () => paintedIn.length,
+    /** The theme on screen at each repaint, oldest first. */
+    paintedIn: () => [...paintedIn],
   };
 }
 
@@ -129,6 +134,7 @@ test('System is the default and follows the computer as it changes, repainting t
   assert.equal(t.repaints(), 1, 'the canvases are told');
   t.query.flip(false);
   assert.equal(t.theme(), 'dark');
+  assert.deepEqual(t.paintedIn(), ['light', 'dark'], 'each repaint runs after the switch, in the new theme\'s ink (review F2.7)');
   assert.equal(t.storage.value, null, 'following the computer stores nothing');
 });
 
@@ -147,6 +153,7 @@ test('the sidebar button flips to an explicit Light or Dark, which the computer 
   t.toggle();
   assert.equal(t.theme(), 'light');
   assert.equal(t.repaints(), 2, 'one repaint per click');
+  assert.deepEqual(t.paintedIn(), ['dark', 'light'], 'each in the theme the click chose, never the one it left (review F2.7)');
   assert.equal(t.storage.value, 'light');
 });
 
@@ -164,6 +171,7 @@ test('Settings › Theme is the way back to System, and can choose Light or Dark
   t.pick('dark');
   assert.equal(t.theme(), 'dark');
   assert.equal(t.repaints(), 3, 'one repaint per change');
+  assert.deepEqual(t.paintedIn(), ['dark', 'light', 'dark'], 'each after the theme it paints is on screen (review F2.7)');
   assert.equal(t.storage.value, 'dark');
   assert.deepEqual(t.checked(), ['dark']);
 });
