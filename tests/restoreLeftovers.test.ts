@@ -9,7 +9,7 @@ const DATA = isolatedDataDir('treemap-restoreLeftovers-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { getCapsuleJob, protectItems, startCapsuleMaintenance, startCapsuleRestore, stopCapsuleMaintenance } from '../src/services/timeCapsule';
-import { recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers } from '../src/services/restoreLeftovers';
+import { pendingRecords, recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers } from '../src/services/restoreLeftovers';
 import { createScanRecord } from '../src/services/diskScanner';
 import { getOffloadIndex, getOffloadJob, prepareOffload, startOffload, startRestore } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -283,4 +283,48 @@ test('every record a restore writes names the process that wrote it', async () =
     unhook();
   }
   assert.ok(pids.length > 0 && pids.every((p) => p === process.pid), JSON.stringify(pids));
+});
+
+/* ─────────────── FG3g review F2.4: reading the journal is linear in its lines ─────────────── */
+
+/**
+ * A restore of a large folder onto a volume without hard links writes three lines a file (its
+ * temporary copy, the empty file held at its name, and the line settling that one), and each settled
+ * line was resolved by a scan of every record before it: 50,000 files took seconds of the event loop
+ * at the end of the job and at the next start. Counted here, never timed: every read of a record's
+ * path or id while the journal is resolved, against a bound linear in its lines.
+ */
+test('the journal of one restore of many files is resolved in work linear in its lines, keeping exactly the records no later line settled', () => {
+  let reads = 0;
+  const counted = <T extends object>(fields: T & { path: string; id: string }): T => {
+    const { path: p, id, ...rest } = fields;
+    return Object.defineProperties({ ...rest }, {
+      path: { enumerable: true, get: () => { reads++; return p; } },
+      id: { enumerable: true, get: () => { reads++; return id; } },
+    }) as unknown as T;
+  };
+  const n = 3000;
+  const dir = path.join(path.sep, 'restored');
+  const lines: Parameters<typeof pendingRecords>[0][number][] = [];
+  for (let i = 0; i < n; i++) {
+    const name = path.join(dir, `file-${i}.txt`);
+    lines.push(counted({ path: path.join(dir, `.treemap-restore-${i.toString(16).padStart(8, '0')}`), id: `1:${2 * i}`, pid: 1 }));
+    lines.push(counted({ path: name, id: `1:${2 * i + 1}`, kind: 'placeholder' as const, pid: 1 }));
+    lines.push(counted({ path: name, id: `1:${2 * i + 1}`, settled: true as const }));
+  }
+  // A settled line drops only the earlier records of the same place and file: not another file at
+  // that place, and not a record that comes after it.
+  const shared = path.join(dir, 'shared.txt');
+  lines.push(counted({ path: shared, id: '2:1', kind: 'placeholder' as const }));
+  lines.push(counted({ path: shared, id: '2:2', kind: 'placeholder' as const }));
+  lines.push(counted({ path: shared, id: '2:1', settled: true as const }));
+  lines.push(counted({ path: shared, id: '2:1', kind: 'placeholder' as const }));
+  reads = 0;
+  const pending = pendingRecords(lines);
+  const bound = 4 * lines.length;
+  assert.ok(reads <= bound, `${reads} reads of a record's place or file to resolve ${lines.length} lines: not linear in the journal (bound ${bound})`);
+  const ids = pending.map((r) => r.id);
+  assert.equal(pending.length, n + 2, 'every temporary copy\'s record, and of the shared place\'s, the two no line settled');
+  assert.deepEqual(ids.slice(0, 3), ['1:0', '1:2', '1:4'], 'the temporary copies\' records, in order');
+  assert.deepEqual(ids.slice(-2), ['2:2', '2:1'], 'another file at a settled place is kept, and so is a record after the line that settled one');
 });

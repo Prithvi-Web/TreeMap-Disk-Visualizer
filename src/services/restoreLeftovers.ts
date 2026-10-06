@@ -135,7 +135,7 @@ async function readJournal(): Promise<Made[]> {
     if (meansAbsent(err)) return [];
     throw err;
   }
-  const made: Made[] = [];
+  const lines: (Made | Settled)[] = [];
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     let record: Partial<Made & Settled>;
@@ -147,18 +147,51 @@ async function readJournal(): Promise<Made[]> {
     if (record === null || typeof record !== 'object' || typeof record.path !== 'string' || typeof record.id !== 'string') continue;
     const { path: at, id } = record;
     if (record.settled === true) {
-      for (let i = made.length - 1; i >= 0; i--) if (made[i].path === at && made[i].id === id) made.splice(i, 1);
+      lines.push({ path: at, id, settled: true });
       continue;
     }
     const placeholder = record.kind === 'placeholder';
     if (!path.isAbsolute(at) || !(placeholder ? isRecordablePlace(at) : PARTIAL_NAME.test(path.basename(at)))) continue;
-    made.push({
+    lines.push({
       path: at, id,
       ...(placeholder ? { kind: 'placeholder' as const } : {}),
       ...(Number.isInteger(record.pid) && (record.pid as number) > 0 ? { pid: record.pid } : {}),
     });
   }
-  return made;
+  return pendingRecords(lines);
+}
+
+/** Whether a journal line settles the records before it, rather than recording a file. */
+function isSettled(line: Made | Settled): line is Settled {
+  return (line as Partial<Settled>).settled === true;
+}
+
+/**
+ * The records among `lines` that no later line settled, in order: a settled line drops every earlier
+ * record of the same place and file — never another file at that place, nor a record after it.
+ *
+ * In one pass, each record found by its place and file (FG3g review F2.4): each settled line scanned
+ * every record before it, so the journal one restore of fifty thousand files leaves on a volume
+ * without hard links (three lines a file) took seconds of the event loop to read — at the end of the
+ * job and at the next start.
+ */
+export function pendingRecords(lines: readonly (Made | Settled)[]): Made[] {
+  const made: (Made | null)[] = [];
+  /** Where in `made` the records not yet settled are, by place and file. */
+  const open = new Map<string, number[]>();
+  for (const line of lines) {
+    const key = `${line.path}\0${line.id}`;
+    if (isSettled(line)) {
+      for (const i of open.get(key) ?? []) made[i] = null;
+      open.delete(key);
+      continue;
+    }
+    const at = open.get(key);
+    if (at === undefined) open.set(key, [made.length]);
+    else at.push(made.length);
+    made.push(line);
+  }
+  return made.filter((record): record is Made => record !== null);
 }
 
 /** Whether `at` is spelled as TreeMap records a place it restores to, and not a system folder it never writes. */
