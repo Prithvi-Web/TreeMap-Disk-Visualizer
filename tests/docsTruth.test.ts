@@ -299,18 +299,44 @@ test('AGENTS.md says how the index readers answer an index that is not finished,
   assert.match(text, /answer `409 ALLOCATION_NOT_MEASURED`, with a sentence and no number, where TreeMap did not measure what the files occupy — on Windows, which reports no blocks/);
 });
 
-test('the Track U plan names as AGENTS.md\'s readers only tests that read it (review F1.6)', () => {
+test('the Track U plan calls a test a reader of AGENTS.md only where it reads it, and names as comment-only readers only tests that are (review F1.6, F2.3)', () => {
   // U-40's row named nine tests "AGENTS.md's readers"; each names AGENTS.md
   // in a comment only. A reader is a test whose code (not a comment) names
-  // the file.
+  // the file. The guard does not depend on the row's wording (review F2.3):
+  // every sentence of the row that names tests and AGENTS.md is held to the
+  // code, whichever way it is worded, and a sentence that speaks of
+  // AGENTS.md's readers without naming them fails.
   const COMMENT = /^\s*(?:\/\/|\/\*|\*)/;
   const readsAgents = (name: string): boolean =>
-    read('tests', name).split('\n').some((l) => !COMMENT.test(l) && /['"]AGENTS\.md['"]/.test(l));
-  assert.ok(readsAgents('docsTruth.test.ts'), 'this file reads AGENTS.md');
+    read('tests', `${name}.test.ts`).split('\n').some((l) => !COMMENT.test(l) && /['"]AGENTS\.md['"]/.test(l));
+  const testNames = new Set(readdirSync(path.join(root, 'tests')).filter((f) => f.endsWith('.test.ts')).map((f) => f.slice(0, -'.test.ts'.length)));
+  // A test is named as `tests/<name>.test.ts`, or in a parenthesised list
+  // whose every item is a test: never as a bare word, since `notes` and
+  // `scanBoundary` are test files and words of the row alike.
+  const named = (sentence: string): string[] => {
+    const out = [...sentence.matchAll(/tests\/([A-Za-z0-9]+)\.test\.ts/g)].map((m) => m[1]);
+    for (const m of sentence.matchAll(/\(([^()]*)\)/g)) {
+      const items = m[1].split(/,\s*(?:and\s+)?|\s+and\s+/).map((x) => x.trim());
+      if (items.every((x) => testNames.has(x))) out.push(...items);
+    }
+    return out;
+  };
+  const SPEAKS_OF_READERS = /readers? of AGENTS\.md|AGENTS\.md['’]s readers?|\breads? AGENTS\.md/;
+  const COMMENT_ONLY = /in a comment only|no test read/;
+
   const row = lineStarting(read('docs', 'superpowers', 'plans', '2026-09-30-trackU-owner-issues.md'), '| U-40 ');
-  const claimed = /AGENTS\.md's readers \(([^)]*)\)/.exec(row);
-  for (const name of claimed ? claimed[1].split(/,\s*/) : []) {
-    assert.ok(readsAgents(`${name}.test.ts`), `${name} is called a reader of AGENTS.md but does not read it`);
+  const held: string[] = [];
+  for (const sentence of row.split(/(?<=[.!?])\s+(?=[A-Z*`])/)) {
+    const names = named(sentence);
+    if (SPEAKS_OF_READERS.test(sentence)) assert.ok(names.length > 0, `a sentence that speaks of AGENTS.md's readers names them: ${sentence.slice(0, 120)}…`);
+    if (names.length === 0 || !sentence.includes('AGENTS.md')) continue;
+    const commentOnly = COMMENT_ONLY.test(sentence);
+    for (const name of names) {
+      if (commentOnly) assert.equal(readsAgents(name), false, `${name} is said to name AGENTS.md in a comment only, but it reads it`);
+      else assert.ok(readsAgents(name), `${name} is called a reader of AGENTS.md but does not read it`);
+      held.push(`${name}:${commentOnly ? 'comment' : 'reads'}`);
+    }
   }
-  assert.match(row, /`tests\/docsTruth\.test\.ts` now holds/, 'the row names the test that does');
+  assert.ok(held.includes('docsTruth:reads'), `the row names the test that reads AGENTS.md (held: ${held.join(', ')})`);
+  assert.ok(held.some((h) => h.endsWith(':comment')), `the row's correction is held to the tests it names (held: ${held.join(', ')})`);
 });
