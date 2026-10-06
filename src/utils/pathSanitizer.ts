@@ -450,7 +450,8 @@ function startOf(realFolder: string, target: string): { at: string; names: strin
  * a loop, certain (`LinkWalk`), where nothing lies beneath — every call there fails.
  *
  * Past its budget of links or its bound on names it answers no place (`NO_PLACE`), which every rule
- * refuses: the system may go on where the walk stops — no system limits the names a lookup walks, and
+ * refuses — and so it does at a name it cannot look up only because the joined string is too long
+ * (ENAMETOOLONG), which the system, looking names up one at a time, may follow: the system may go on where the walk stops — no system limits the names a lookup walks, and
  * Windows follows 63 links — so where the walk stopped says nothing of where the system lands. Settled
  * there, with the names left joined, the answer was the next link's own place in the scan, and a chain
  * of long targets to a second name, or out of the scan, was granted (the SEC-2d review, F3.1).
@@ -479,7 +480,12 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
     let entry: fs.Stats | undefined;
     try {
       entry = fs.lstatSync(next, { throwIfNoEntry: false });
-    } catch {
+    } catch (err) {
+      // Too long as one string is not "not there": the system looks names up one at a time and has no
+      // limit on where a lookup leads, only on what one call is handed — so a long name in a deep folder,
+      // which only the joined spelling puts past the limit, is followed where the walk cannot see. Settled
+      // as plain folders, `<long name>/../x` read as a folder of the scan (the final review, F1.1).
+      if (tooLongToAsk(err)) return NO_PLACE;
       entry = undefined;
     }
     if (entry === undefined) return settle([name, ...pending]);
@@ -494,7 +500,8 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
     let target: string;
     try {
       target = fs.readlinkSync(next);
-    } catch {
+    } catch (err) {
+      if (tooLongToAsk(err)) return NO_PLACE; // as for lstat above
       return settle([name, ...pending]);
     }
     if (aliasNamespaceOf(target) !== null) return joinUnder(target, ...pending);
@@ -503,6 +510,11 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
     pending.unshift(...start.names);
   }
   return settle([]);
+}
+
+/** Whether a file system call failed only for the length of the string it was handed (ENAMETOOLONG). */
+function tooLongToAsk(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'ENAMETOOLONG';
 }
 
 /**

@@ -736,6 +736,67 @@ test('a path longer than the system takes is answered as spelled at the cost of 
   });
 });
 
+test('a link the walk cannot look up by its whole spelling — a long name in a deep folder, past the limit on a path that only the joined string has — is placed nowhere and refused, never settled as a folder of the scan: the system looks names up one at a time and follows it out of the scan (the final review, F1.1)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+  // lstat of `S/<long name>` failed with ENAMETOOLONG, which the walk read as "not there", so it made the
+  // rest plain folders: `S/L` (L -> <long name>/../x) settled at S/x, in the scan, while the system read
+  // L through the long link to outside/a/b and took `..` to outside/a — a delete, open or offload of a
+  // file outside every scan was granted, and a write into app-data that way was not app-data.
+  const PATH_MAX = DARWIN ? 1024 : 4096;
+  const LONG = 'L'.repeat(250);
+  const base = path.join(T, 'f11-long');
+  let S = base;
+  fs.mkdirSync(S);
+  for (let i = 0; S.length < PATH_MAX - 230; i++) {
+    S = path.join(S, `d${i}-`.padEnd(Math.min(200, PATH_MAX - 230 - S.length), 'x'));
+    fs.mkdirSync(S);
+  }
+  fs.mkdirSync(path.join(S, 'x')); // where the text of `<long>/../x` would put it: in the scan
+  const outside = path.join(DEST, 'f11-long', 'a');
+  fs.mkdirSync(path.join(outside, 'b'), { recursive: true });
+  fs.mkdirSync(path.join(outside, 'x'));
+  fs.writeFileSync(path.join(outside, 'x', 'victim.txt'), 'outside every scan');
+  const data = fs.realpathSync(appDataDir());
+  fs.mkdirSync(path.join(data, 'f11-long-b'));
+  const DATA_LONG = 'D'.repeat(250);
+  const cwd = process.cwd();
+  process.chdir(S); // the long-named links are made by a name the system takes, from inside S
+  try {
+    fs.symlinkSync(path.join(outside, 'b'), LONG);
+    fs.symlinkSync(path.join(data, 'f11-long-b'), DATA_LONG);
+  } finally {
+    process.chdir(cwd);
+  }
+  fs.symlinkSync([LONG, '..', 'x'].join(path.sep), path.join(S, 'L'));
+  fs.symlinkSync([DATA_LONG, '..', 'settings.json'].join(path.sep), path.join(S, 'LA'));
+  try {
+    const victim = path.join(S, 'L', 'victim.txt');
+    assert.ok(path.join(S, LONG).length > PATH_MAX && victim.length < PATH_MAX, 'only the joined string is past the limit');
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'outside every scan', 'the system follows the long link, name by name');
+    assert.deepEqual(
+      {
+        'the scanned-root rule': insideAnyScanRoot(victim),
+        'liesInside the scan': liesInside(T, victim),
+        'the sanitizer': rejection(victim),
+        'a write through LA, the app-data rule': isAppDataPath(path.join(S, 'LA')),
+      },
+      {
+        'the scanned-root rule': false,
+        'liesInside the scan': false,
+        'the sanitizer': 'PATH_BLOCKED', // no place the walk can name: doubt refuses
+        'a write through LA, the app-data rule': true,
+      },
+    );
+  } finally {
+    process.chdir(S); // the long-named links cannot be removed by their whole spelling either
+    try {
+      fs.unlinkSync(LONG);
+      fs.unlinkSync(DATA_LONG);
+    } finally {
+      process.chdir(cwd);
+    }
+  }
+});
+
 test('a chain of links is followed link by link to a second name at its end: a link to a link to /.resolve or /.vol is refused beneath it and as itself', { skip: !DARWIN && 'the namespaces are macOS’s' }, () => {
   // Every link the F3 test makes leads to a second name in one step, so nothing pinned that the walk
   // goes on through a link to the next one: a walk that stopped at the first target passed it all
