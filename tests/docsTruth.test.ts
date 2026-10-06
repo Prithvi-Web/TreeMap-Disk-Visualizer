@@ -186,11 +186,16 @@ test('ULTRA-ROADMAP names every release granted ahead of the phases in its stand
   }
 });
 
-test('ULTRA-ROADMAP says P4-14 is built above T_mem in memory mode (Track U U-32), as startScan does (found with review F1.5)', () => {
+/** `doc`'s paragraphs (and table blocks) with struck-through text removed and each run of whitespace made one space. */
+const paragraphs = (doc: string): string[] =>
+  doc.replace(/~~[\s\S]*?~~/g, '').split(/\n\s*\n/).map((p) => p.replace(/\s+/g, ' ').trim());
+
+test('ULTRA-ROADMAP and DESIGN say P4-14 is built above T_mem in memory mode (Track U U-32), as startScan does (found with review F1.5; DESIGN, review F2.2)', () => {
   // The code: a native walk that fails part-way above T_mem is refused a
   // walk again in the built-in walker (noRestartRefusal; startScan throws it,
   // the README test above). The roadmap still called P4-14 "decided, not
-  // built" in three places, and said nothing enforces T_mem.
+  // built" in three places, and said nothing enforces T_mem; DESIGN §6
+  // still called it "pending the owner".
   const refusal = noRestartRefusal(new Error('the test breaks the walk'), 11, null, 10);
   assert.ok(refusal instanceof Error, 'P4-14 is built: a failure above T_mem ends the scan');
   const doc = read('ULTRA-ROADMAP.md');
@@ -201,6 +206,66 @@ test('ULTRA-ROADMAP says P4-14 is built above T_mem in memory mode (Track U U-32
   }
   assert.ok(p414.every((l) => l.includes('U-32')), 'each line that names P4-14 says U-32 built it');
   assert.doesNotMatch(doc, /nothing enforces `T_mem` yet/, 'T_mem is enforced where a native walk fails');
+
+  // DESIGN is wrapped, so it is read a paragraph at a time.
+  const design = paragraphs(read('docs', 'engine', 'DESIGN.md')).filter((p) => p.includes('P4-14'));
+  assert.ok(design.length >= 2, 'DESIGN names P4-14 in §6 and §6.1');
+  for (const para of design) {
+    assert.doesNotMatch(para, /P4-14,? pending the owner|pending the owner[^.]*P4-14/, `not "pending the owner": ${para.slice(0, 80)}…`);
+    assert.match(para, /U-32/, `each paragraph that names P4-14 says U-32 built it: ${para.slice(0, 80)}…`);
+  }
+  const rule = design.find((p) => p.includes('No legacy engine takes over'));
+  assert.ok(rule, 'DESIGN §6 states the rule');
+  assert.match(rule, /\(P4-14, decided by the owner on 28 Sep 2026, plan §S\.11 Q10\)/, 'the rule is the owner\'s decision of 28 Sep');
+  assert.match(rule, /Track U U-32 built it above `T_mem` in memory mode/, 'built above T_mem in memory mode');
+  assert.match(rule, /spill and aggregate are not built/, 'and the modes it also covers do not exist yet');
+});
+
+test('DESIGN and RISKS call nothing pending the owner that the Phase 4 plan records as decided (review F2.2)', () => {
+  // The record: each question of the Phase 4 plan's §S.11 carries its status,
+  // and the P4-x rule its title names. A "pending the owner" that names one
+  // the owner has decided (by its Q, or by the rule it decides) is stale.
+  const plan = read('docs', 'superpowers', 'plans', '2026-09-18-phase4-storage.md');
+  const s11 = between(plan, '#### S.11 Open questions for the owner', '\n#');
+  const decided = new Set<string>();
+  const rulesOf = new Map<string, string[]>();
+  let current: string | null = null;
+  for (const line of s11.split('\n')) {
+    const q = /^\d+\. \*\*(Q\d+) —/.exec(line);
+    if (q) {
+      current = q[1];
+      const rules = [...line.matchAll(/P4-\d+[a-z]?/g)].map((m) => m[0]);
+      if (rulesOf.has(current)) throw new Error(`${current} is listed twice`);
+      rulesOf.set(current, rules);
+      continue;
+    }
+    if (current !== null && /^\s+- \*\*Status: decided by the owner/.test(line)) decided.add(current);
+  }
+  assert.ok(decided.has('Q5') && decided.has('Q10'), `the plan's decided questions are read (${[...decided].join(', ')})`);
+  assert.deepEqual(rulesOf.get('Q10'), ['P4-14'], 'Q10 is the question that decides P4-14');
+  const decides = (ref: string): boolean =>
+    decided.has(ref) || [...decided].some((q) => (rulesOf.get(q) ?? []).includes(ref));
+
+  const stale: string[] = [];
+  for (const file of [['docs', 'engine', 'DESIGN.md'], ['docs', 'engine', 'RISKS.md'], ['ULTRA-ROADMAP.md']]) {
+    const text = paragraphs(read(...file)).join(' ');
+    const said = [
+      ...[...text.matchAll(/\(([^()]*pending the owner[^()]*)\)/g)].map((m) => m[1]),
+      ...[...text.matchAll(/pending the owner,? \(([^()]*)\)/g)].map((m) => m[1]),
+    ];
+    for (const words of said) {
+      const refs = [...words.matchAll(/\bQ\d+\b|P4-\d+[a-z]?/g)].map((m) => m[0]);
+      if (refs.some(decides)) stale.push(`${file.join('/')}: "${words}"`);
+    }
+  }
+  assert.deepEqual(stale, [], 'no question the owner decided is called pending');
+
+  const design = paragraphs(read('docs', 'engine', 'DESIGN.md')).join(' ');
+  assert.match(design, /Live mode and container expansion, because the store is read-only \(decided by the owner on 28 Sep 2026, plan §S\.11 Q5\)/, 'DESIGN §6: Q5 decided');
+  const risks = read('docs', 'engine', 'RISKS.md');
+  assert.match(lineStarting(risks, '| R78 |'), /that T20 lands inside Phase 4 was decided by the owner on 28 Sep 2026, plan §S\.11 Q13/, 'R78: Q13 decided');
+  assert.match(lineStarting(risks, '| R80 |'), /that it lands inside Phase 4 was decided by the owner on 28 Sep 2026, plan §S\.11 Q6/, 'R80: Q6 decided');
+  assert.match(lineStarting(risks, '| R81 |'), /Live mode and container expansion off in the large modes was decided by the owner on 28 Sep 2026 \(plan §S\.11 Q5\)/, 'R81: Q5 decided');
 });
 
 /* ─────────────── AGENTS.md: the sentences the 5.2.0 docs batch changed ─────────────── */

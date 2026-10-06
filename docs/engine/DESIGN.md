@@ -340,7 +340,7 @@ and saying so.
 | Mode | When | What is kept | What it disables |
 | --- | --- | --- | --- |
 | `memory` | the projection (the previous scan of the same root, `fileCount + dirCount` × 1.25) is at most `T_mem`, or there is no projection | every row, in anonymous mappings | nothing |
-| `spill` | the projection is above `T_mem` and the spill plan allows it, or a memory walk reaches `capRows` = 1.25 × `T_mem` with spill as its overflow target | every row, written with `write()` into files unlinked at creation and read with `pread()` through a bounded page cache; nothing is mapped | Live mode and container expansion, because the store is read-only (pending the owner, plan §S.11 Q5); duplicates, near-duplicates, compare, empty folders, the custom-rule duplicate option, per-file CSV/XLSX export, folder offload and Photos expansion, until each is ported to native code. The whole-tree features whose JavaScript state is bounded run in a worker thread (the FullPassRunner, plan §S.5.7) |
+| `spill` | the projection is above `T_mem` and the spill plan allows it, or a memory walk reaches `capRows` = 1.25 × `T_mem` with spill as its overflow target | every row, written with `write()` into files unlinked at creation and read with `pread()` through a bounded page cache; nothing is mapped | Live mode and container expansion, because the store is read-only (decided by the owner on 28 Sep 2026, plan §S.11 Q5); duplicates, near-duplicates, compare, empty folders, the custom-rule duplicate option, per-file CSV/XLSX export, folder offload and Photos expansion, until each is ported to native code. The whole-tree features whose JavaScript state is bounded run in a worker thread (the FullPassRunner, plan §S.5.7) |
 | `aggregate` | the spill plan refuses, spill fails during the walk (`ENOSPC`, `EIO`, falling free space), a guarded memory walk passes `M_agg`, or the owner selects it | no row per entry: the folders and files above the β thresholds (plan §S.6.1), the top 32 children of shallow folders, and the dashboard answers, each exact or flagged `exact: false`; each kept folder says what it omitted | everything spill disables, plus the FullPassRunner's features; `/nodes` and the facts answer `notKept` for a path not kept |
 
 `T_mem` defaults to 5M entries and `M_agg` to about 153 MB of rows (about
@@ -349,7 +349,9 @@ The volume's used-inode count is only a hint, because it counts inodes, not
 names, and the whole volume, not the scanned folder. Every memory walk
 carries a byte guard and converts during the walk, never at the end (P4-4a).
 No legacy engine takes over in spill or aggregate or above `T_mem` (P4-14,
-pending the owner).
+decided by the owner on 28 Sep 2026, plan §S.11 Q10). Track U U-32 built it
+above `T_mem` in memory mode on 2 October 2026 (below); spill and aggregate
+are not built.
 
 **As built through T10 (26 September 2026).** Every native scan walks in
 memory mode (`nativeStorageFor`). There is no projection yet (T12's chooser),
