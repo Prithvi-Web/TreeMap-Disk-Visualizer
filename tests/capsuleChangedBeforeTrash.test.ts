@@ -66,12 +66,24 @@ async function commitChanging(first: string, item: string, change: () => void): 
   return withOpenFileCheck('clear', () => commitCart([first, item]));
 }
 
-async function assertLeftInPlace(result: Awaited<ReturnType<typeof commitCart>>, item: string, what: RegExp): Promise<void> {
+/**
+ * `definite`: the change shows its copy is not of what is there now (FG3g review F1.3). A change time
+ * that moved, alone, does not — a new permission or attribute moves it as a rewrite does — and the
+ * sentence then says only that TreeMap cannot show the copy is of what is there.
+ */
+async function assertLeftInPlace(result: Awaited<ReturnType<typeof commitCart>>, item: string, what: RegExp, definite = true): Promise<void> {
   assert.ok(!result.trashed.includes(item), `${path.basename(item)} was not trashed (${JSON.stringify(result.trashed)})`);
   assert.ok(fs.existsSync(item), 'it is still where it was');
   const row = result.skipped.find((s) => s.path === item);
   assert.equal(row?.code, 'CAPSULE_CHANGED', JSON.stringify(result.skipped));
   assert.match(row?.reason ?? '', /changed after it was copied/, row?.reason);
+  if (definite) {
+    assert.match(row?.reason ?? '', /so its copy is not of what is there now/, row?.reason);
+  } else {
+    assert.match(row?.reason ?? '', /may have changed after it was copied/, row?.reason);
+    assert.match(row?.reason ?? '', /cannot show its copy is of what is there now/, row?.reason);
+    assert.doesNotMatch(row?.reason ?? '', /its copy is not of what is there now/, row?.reason);
+  }
   assert.match(row?.reason ?? '', what, row?.reason);
   assert.match(row?.reason ?? '', /its copy was discarded/, row?.reason);
   const entries = (await getCapsuleIndex()).entries.filter((e) => e.runId === result.runId);
@@ -160,7 +172,7 @@ test('a file rewritten in place with its size and modification time both put bac
     assert.equal(now.mtimeMs, WHEN * 1000);
     assert.equal(now.ino, ino, 'the same file, rewritten');
   });
-  await assertLeftInPlace(result, proj, /state\.txt was changed/);
+  await assertLeftInPlace(result, proj, /the change time of state\.txt moved/, false);
   assert.equal(fs.readFileSync(state, 'utf8'), 'BBBB', 'the new content is still there, not in the Trash with no copy');
 });
 
@@ -174,7 +186,7 @@ test('a file item rewritten in place with its size and modification time put bac
     fs.writeFileSync(notes, 'version 2');
     fs.utimesSync(notes, WHEN, WHEN);
   });
-  await assertLeftInPlace(result, notes, /notes\.txt was changed/);
+  await assertLeftInPlace(result, notes, /the change time of notes\.txt moved/, false);
   assert.equal(fs.readFileSync(notes, 'utf8'), 'version 2');
 });
 
@@ -192,6 +204,27 @@ test('a file replaced by another with its size and modification time put back is
     assert.notEqual(fs.statSync(main).ino, before.ino);
   });
   await assertLeftInPlace(result, proj, /src[\\/]main\.c was replaced by another file/);
+});
+
+test('a file whose permissions alone changed is left in place, and the sentence never says its copy is of something else (FG3g review F1.3)', { skip: POSIX_CTIME }, async () => {
+  const { first, proj } = batch('chmod');
+  const main = path.join(proj, 'src', 'main.c');
+  const content = fs.readFileSync(main);
+  const result = await commitChanging(first, proj, () => {
+    fs.chmodSync(main, 0o600); // the bytes, size and modification time are as they were copied
+  });
+  await assertLeftInPlace(result, proj, /the change time of src[\\/]main\.c moved/, false);
+  assert.match(result.skipped.find((s) => s.path === proj)?.reason ?? '', /a new permission or attribute/);
+  assert.ok(fs.readFileSync(main).equals(content), 'what is in it is as it was');
+});
+
+test('a permission change beside a real one is said as the real one: the copy is not of what is there now', { skip: POSIX_CTIME }, async () => {
+  const { first, proj } = batch('chmod-and-edit');
+  const result = await commitChanging(first, proj, () => {
+    fs.chmodSync(path.join(proj, 'src', 'main.c'), 0o600);
+    fs.appendFileSync(path.join(proj, 'README.md'), ' and more');
+  });
+  await assertLeftInPlace(result, proj, /README\.md was modified/);
 });
 
 test('a copy recorded before file ids and change times were kept is compared as it always was: on size and modification time', async () => {

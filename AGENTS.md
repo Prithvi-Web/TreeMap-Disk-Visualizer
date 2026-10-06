@@ -479,7 +479,10 @@ OpenAPI 3 spec).
      is walked again and compared with what was copied: a file added, removed,
      rewritten — even with its size and modified time put back — or replaced
      since leaves it in place, its copy discarded (`CAPSULE_CHANGED`, naming
-     what changed). A volume that keeps no change time of its own (FAT,
+     what changed). A change time that moved with nothing else (a new
+     permission or attribute moves it too) is said as "may have changed": it
+     does not show the copy differs, and the item stays in place all the
+     same. A volume that keeps no change time of its own (FAT,
      exFAT) answers with what it has. `dryRun: true` returns that same verdict per
      path *before* anything happens, along with the older capsule copies that
      would be evicted to make room and B2's open-handle preflight. At most 500

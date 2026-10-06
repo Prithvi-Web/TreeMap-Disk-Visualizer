@@ -1461,7 +1461,17 @@ async function stopBeforeTrash(entryId: string | undefined, original: string): P
     return { code: 'CAPSULE_UNREADABLE', reason: `it could not be looked at again right before its deletion (${why})` };
   }
   const change = await changeSinceCopy(manifest, walked);
-  return change === null ? null : { code: CHANGED, reason: `it changed after it was copied (${change}), so its copy is not of what is there now` };
+  if (change === null) return null;
+  // A change time that moved, alone, says something changed and not what (FG3g review F1.3): a new
+  // permission or attribute moves it as a rewrite with its modified time put back does — so only
+  // what TreeMap can show is said. Left in place either way.
+  return {
+    code: CHANGED,
+    reason: change.definite
+      ? `it changed after it was copied (${change.phrase}), so its copy is not of what is there now`
+      : `it may have changed after it was copied (${change.phrase}: a rewrite whose size and modified time were put back moves it, ` +
+        'and so does a new permission or attribute), so TreeMap cannot show its copy is of what is there now',
+  };
 }
 
 /**
@@ -1502,12 +1512,18 @@ async function copyIncompleteness(entryId: string, manifest: EntryManifest): Pro
  * (FG3g M1: the last two where the copy recorded them), each link's target. Not compared: access
  * times (the copy itself read every file) and folders' own times. A change time that moved for a
  * reason other than content (a permission, an extended attribute) leaves the item in place too:
- * that costs a deletion, never a file.
+ * that costs a deletion, never a file — and `definite` is false when that is the only kind of
+ * change seen, since it does not show the copy differs from what is there (FG3g review F1.3).
  */
-async function changeSinceCopy(manifest: EntryManifest, walked: Awaited<ReturnType<typeof walkItem>>): Promise<string | null> {
+async function changeSinceCopy(
+  manifest: EntryManifest,
+  walked: Awaited<ReturnType<typeof walkItem>>,
+): Promise<{ phrase: string; definite: boolean } | null> {
   const nameOf = (rel: string): string => (rel === '' ? manifest.name : rel);
   const recorded = new Map(manifest.members.map((m) => [m.rel, m]));
   const changes: string[] = [];
+  /** Changes that are a change time that moved and nothing else: said after every other kind. */
+  const changeTimeOnly: string[] = [];
   for (const now of walked.members) {
     const was = recorded.get(now.rel);
     recorded.delete(now.rel);
@@ -1518,14 +1534,17 @@ async function changeSinceCopy(manifest: EntryManifest, walked: Awaited<ReturnTy
     } else if (now.kind === 'file' && typeof was.ino === 'number' && was.ino !== now.ino) {
       changes.push(`${nameOf(now.rel)} was replaced by another file`);
     } else if (now.kind === 'file' && typeof was.ctimeMs === 'number' && was.ctimeMs !== now.ctimeMs) {
-      changes.push(`${nameOf(now.rel)} was changed`);
+      changeTimeOnly.push(`the change time of ${nameOf(now.rel)} moved`);
     } else if (now.kind === 'symlink' && was.target !== await fsp.readlink(now.abs).catch(() => null)) {
       changes.push(`${nameOf(now.rel)} points somewhere else`);
     }
   }
   for (const rel of recorded.keys()) changes.push(`${nameOf(rel)} was removed`);
-  if (changes.length === 0) return null;
-  return changes.length === 1 ? changes[0] : `${changes[0]}, and ${formatCount(changes.length - 1)} more change${changes.length === 2 ? '' : 's'}`;
+  // A definite change is named first, so the phrase begins with what shows the copy is not of what is there.
+  const all = [...changes, ...changeTimeOnly];
+  if (all.length === 0) return null;
+  const phrase = all.length === 1 ? all[0] : `${all[0]}, and ${formatCount(all.length - 1)} more change${all.length === 2 ? '' : 's'}`;
+  return { phrase, definite: changes.length > 0 };
 }
 
 /** What a person is told about an item whose trash step reported a failure the disk could not confirm. */
