@@ -361,6 +361,19 @@ every native scan took before T10, and says so in `engineReason`. The second
 walk is the cost until T12–T14 give such a tree spill or aggregate (RISKS
 R95).
 
+**Amended 2 October 2026 by Track U U-30–U-32 (built; interim until T16).**
+A projection now exists before the walk: the folder's last scan, else, for a
+whole volume, its inodes in use (`projectEntries`,
+`src/services/scan/projection.ts`). The sink's room is 2 × that projection
+when it is more than the default room (`memoryRoomFor`), so a tree that
+outgrew the default is walked once, and `engineReason` says what the room was
+sized for. A walk that still meets its room is walked again on the columns
+path as above; the count the scan shows holds through the second walk, and
+`engineReason` is the only place that says it happened — the scan's phase on
+its record and `/live` (Track U U-9, U-10) are not built at 5.2.0. A native
+walk that fails past `T_mem` is not restarted in the built-in walker (U-32,
+P4-14). T16's chooser replaces `memoryRoomFor`.
+
 Spill files cannot outlive the scan (P4-5a). Each is created in
 `<appData>/scan-spill/` and unlinked at once (Linux `O_TMPFILE`; macOS
 `mkstemp`, then `unlink` only if the path's `(dev, ino)` still matches the
@@ -868,7 +881,7 @@ number for it is recorded here, because none has been measured.
 
 ## 10. Exact duplicates (Phase 5)
 
-1. **Before any read:** group by size from the arena (ids only, no paths); drop unique sizes; drop files under the minimum size (the API default stays 1,024 bytes so today's results do not shift; the prompt's 4 KiB is the UI's new default and the setting is exposed), files in ignored paths, **files with the `dataless` flag, files on read-hostile mounts**; collapse hard links through the side table and report the family as sharing storage; clones: no public API on APFS exposes clone identity, so the response says the reclaimable figure is an upper bound on that platform — exactly the sentence the finder already composes and the route drops.
+1. **Before any read:** group by size from the arena (ids only, no paths); drop unique sizes; drop files under the minimum size (the API default stays 1,024 bytes so today's results do not shift; the prompt's 4 KiB is the UI's new default and the setting is exposed), files in ignored paths, **files with the `dataless` flag, files on read-hostile mounts**; collapse hard links through the side table and report the family as sharing storage; clones: ~~no public API on APFS exposes clone identity~~ (**corrected 6 October 2026 by Track U U-40:** `getattrlist` does — `ATTR_CMNEXT_CLONEID` with `FSOPT_ATTR_CMN_EXTENDED`, both in the macOS SDK's `sys/attr.h`, returned a shared clone id for a `cp -c` pair when Track U's design measured it; TreeMap does not ask for it yet — Track U U-39, owner-gated — and Missing GB's clones line, U-8, is not built at 5.2.0), so the response says the reclaimable figure is an upper bound on that platform — exactly the sentence the finder already composes and the route drops.
 2. **Sample digest:** BLAKE3 over `size || first 4 KiB || middle 4 KiB || last 4 KiB` — three small reads, and the tail catches same-header media that a head-only sample cannot.
 3. **Full digest:** BLAKE3, large sequential reads with `F_RDAHEAD` / `posix_fadvise(SEQUENTIAL)` / `FILE_FLAG_SEQUENTIAL_SCAN`, opened `O_NOFOLLOW` through a verified descriptor (the mobile crate's discipline); a large file is hashed in parallel by BLAKE3's tree structure.
 4. **Byte comparison** for groups over a size threshold (default on above 1 GiB, always on in the test suite so zero false positives is *proven*, not assumed).
@@ -906,6 +919,13 @@ without it. Adds two backend npm dependencies, which is why it waits for D8.
 * `GET /api/near-duplicates` gains `tier`, per-image `signature` and `decodePath`, `clusterRepresentative`, `confidence`.
 * New: `GET /api/engine/capabilities`, `GET|PUT /api/engine/budget` (live effect), `POST /api/scan/:id/pause`, `POST /api/scan/:id/resume`. All go through the same guards and the `meta`/`api` lanes as their neighbours.
 * Nothing is removed or renamed. The MCP tools gain the same fields.
+
+**Amended 2 October 2026 by Track U U-19 (the owner's answer to U-Q6).** One
+change since is not additive: the progress stream's `complete` frame and
+`/result` prune to the 250,000-node budget exactly (§16 item 17), so a tree
+whose earlier frame passed the budget is sent with more folders `pruned`. A
+tree that fitted the budget is byte for byte what it was, and
+`tests/goldenResponses.test.ts` is unchanged.
 
 ## 13. UI (Phase 8, `src/ui/` parts, zero dependencies)
 
@@ -976,6 +996,8 @@ assertion.
 18. **gdu leaves a mount point it did not enter out of the tree.** Under "Stay on this drive" the walker and the native engine keep a drive mounted inside the folder as an empty folder; gdu's `-x` (`--no-cross`) skips the mount point, node and all, unless it sits directly under the root, where the shard filter adds it empty as it does the fixed folders. Recorded, not normalised: the drive is reported as not entered on every engine alike, from the mount table and the walk's records (`mountOutcome`), never from the tree's shape. Under "Include drives mounted inside it" gdu is not used while the table lists a drive the walk can reach (`gduRuleFor`): it would stop at the drive the person asked to count.
 
 The spill folder is not added to the never-descend list, so there is no walker difference there: its files have no names, and no walk can list them (§6.1).
+
+**Not built at 5.2.0; recorded here when they land (Track U U-40):** gdu's refused folders read from its own log (Track U U-12) — until then item 1's "every engine" leaves out gdu, which counts no refusal (`ENGINES_THAT_COUNT_REFUSALS` in `missingGigabytes.ts`); and an index built from the scan itself (U-36), whose differences from the walk-built index its plan lists (a zero-block file, the "don't scan" patterns, which name of a hard-link pair keeps the size).
 
 ## 17. Phase plan → commits
 

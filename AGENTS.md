@@ -178,9 +178,15 @@ OpenAPI 3 spec).
 
      `coversWholeVolume: false` means the scan started inside the volume rather
      than at it, so everything else on that volume is necessarily in the
-     residual; `caveats` says so in words. Read-only, and the `remedy` on a line
-     is a *description* of an existing, separately-gated endpoint — never a
-     second path to one.
+     residual; `caveats` says so in words. One line is about the scan's own
+     reach: `mountedInside`, the drives mounted inside the scanned folder.
+     Under "Stay on this drive" it is a measured 0 with their count, since the
+     scan entered none; after a scan that entered any (`"cross"`) it is
+     unknown, because what they hold is not on this volume and is not
+     subtracted (the logical total counted there is in its `detail`); and it
+     is unknown when the mount table could not be read. Read-only, and the
+     `remedy` on a line is a *description* of an existing, separately-gated
+     endpoint — never a second path to one.
 
    - `POST /api/facts` with `{ scanId, paths, providers }` — **per-path
      derived facts, delivered as a sidecar** rather than folded into the scan
@@ -429,7 +435,15 @@ OpenAPI 3 spec).
      swapped in. A build honours the "Stay on this drive" setting as a scan
      does: under `stay` it leaves out every drive mounted inside the folder
      (composed from the folder and the setting — no scan needed), and the
-     index's live watcher drops changes there. The index progress stream keeps
+     index's live watcher drops changes there. Readers serve only a finished
+     index: while a folder's index is being built `GET /api/index/tree`
+     answers `202` with `status: "running"` and `GET /api/allocation` and
+     `/api/allocation/file` answer `202 { status: "building" }`,
+     `/api/search` searches only finished indexes, and a failed build answers
+     `500 INDEX_BUILD_FAILED`. The allocation routes answer
+     `409 ALLOCATION_NOT_MEASURED`, with a sentence and no number, where
+     TreeMap did not measure what the files occupy — on Windows, which reports
+     no blocks. The index progress stream keeps
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
