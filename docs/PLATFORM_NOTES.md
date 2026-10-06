@@ -53,7 +53,7 @@ only visible by reading it.
 
 | Capability | Mechanism | Tier | When unavailable |
 |---|---|---|---|
-| Fast enumeration | `getattrlistbulk`, one call per folder, in the native scan core | 2 | Core not loaded → the bundled gdu for a full scan with no "Don't scan" list that does not include the drives mounted inside the folder, otherwise `readdir` + `lstat` (degraded, with the loader's reason — see below). A scan with a "Don't scan" list always takes `readdir` + `lstat`. A fast rescan reuses its cache only where the core does not walk: with the core loaded the request is not used, and `engineReason` says so |
+| Fast enumeration | `getattrlistbulk`, one call per folder, in the native scan core | 2 | Core not loaded → the bundled gdu for a full scan with no "Don't scan" list that does not include the drives mounted inside the folder, otherwise `readdir` + `lstat` (degraded, with the loader's reason — see below). A scan with a "Don't scan" list always takes `readdir` + `lstat`. A fast rescan reuses its cache only where the core does not walk the scan. The core walks it when it is loaded and can list the folder, the scan has no "Don't scan" list and is not of a single file, and the Scan engine setting is not Built-in walker or gdu; there the request is not used, and `engineReason` says so |
 | Live changes | `fs.watch(recursive)` → FSEvents | 1 | Watch cannot be established → index staleness guard |
 | Open handles | `lsof -F` | 3 | `lsof` missing → delete proceeds without the warning |
 | Zombie handles | `lsof -F` + inode comparison | 3 | as above |
