@@ -527,10 +527,16 @@ function boxesRuntime(listing: (p: string) => unknown) {
     return els.get(id)!;
   };
   const asked: string[] = [];
-  const sent: { url: string; body: { policy?: { path: string }; policies?: { path: string }[] } }[] = [];
+  const sent: { url: string; body: { policy?: { path: string }; policies?: { path: string; name?: string }[] } }[] = [];
   const scanned: [string, { incremental?: boolean }][] = [];
   const toasts: string[] = [];
   const offers: Offer[] = [];
+  // The page's timers, on a clock the test steps itself (fire): count, don't time.
+  const timers: { fn: () => void; delay: number; cleared: boolean }[] = [];
+  const setTimeout = (fn: () => void, delay: number) => { timers.push({ fn, delay, cleared: false }); return timers.length; };
+  const clearTimeout = (id: number) => { if (timers[id - 1]) timers[id - 1].cleared = true; };
+  /** Every timer still pending runs now, as if its delay had passed. */
+  const fire = () => { for (const t of timers) if (!t.cleared) { t.cleared = true; t.fn(); } };
   const api = async (url: string, opts?: { body?: string }) => {
     if (url.startsWith('/api/fs/list')) {
       asked.push(url);
@@ -565,22 +571,28 @@ function boxesRuntime(listing: (p: string) => unknown) {
   const rt = new Function(
     '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'stopScan', 'localStorage', 'document',
     'fxOrbShow', 'fxOrbHide', 'formatBytes', 'formatCount', 'loadAutopilot', 'setApMatchKind', 'renderApGroupList', 'validateApQuery',
+    'setTimeout', 'clearTimeout',
     `'use strict';
      const state = { scanning: false, system: { homeDir: '/home/u', commonDirs: [] }, autopilot: { policies: [] } };
      const GB = 1024 * 1024 * 1024;
      let apDraft = null;
      function icon() { return ''; }
      ${src}
-     return { openBrowse, browseTo, path: () => browsePath, rememberScannedRoot, openPolicyEditor };`,
+     return { openBrowse, browseTo, path: () => browsePath, rememberScannedRoot, openPolicyEditor,
+       close: (id) => closeModal(id), scanning: (on) => { state.scanning = on; } };`,
   )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml,
     (p: string, o: { incremental?: boolean }) => { scanned.push([p, o]); }, noop,
-    localStorage, document, noop, noop, String, String, noop, noop, noop, noop) as {
+    localStorage, document, noop, noop, String, String, noop, noop, noop, noop, setTimeout, clearTimeout) as {
     openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
     rememberScannedRoot: (p: string) => void;
     /** The page's own editor, opened on a saved policy (or a new one, with null). */
     openPolicyEditor: (policy: Record<string, unknown> | null) => void;
+    /** A sheet closed — Escape, the ✕ or the scrim all run the page's closeModal. */
+    close: (id: string) => void;
+    /** A scan starting (or ending) some other way: Recent, the dock, the queue. */
+    scanning: (on: boolean) => void;
   };
   /** A click on a button whose handler may be async; resolves when it has run. */
   const click = (id: string) => Promise.resolve($(id).listeners.click());
@@ -591,7 +603,7 @@ function boxesRuntime(listing: (p: string) => unknown) {
   const saved = () => sent.filter((s) => s.url === '/api/autopilot/policies').map((s) => s.body.policies!.map((p) => p.path));
   /** How many times the policy list was saved. */
   const saves = () => saved().length;
-  return { rt, $, asked, scanned, toasts, offers, click, type, policy, saved, saves };
+  return { rt, $, asked, scanned, toasts, offers, click, type, policy, saved, saves, timers, fire };
 }
 
 test('a folder picked into the Scan card keeps its trailing space when Scan and Browse… read the box again, and Fast rescan knows it (review F2.4, F2.8)', async () => {
@@ -721,4 +733,175 @@ test('a path the page put in a box — a pick, Recent, the last scan, a saved po
   await click('apBrowseBtn');
   assert.notEqual(rt.path(), '/home/u/Gone', 'Browse… from the policy never opens the sibling in its place');
   assert.equal($('apPath').value, GONE, 'and the policy\'s folder is untouched');
+});
+
+/* ══════════════ A path box's lookup: one press, held, bounded (QA4a R4-3) ══════════════ */
+
+/** A folder on a network drive whose name ends in a space; slow to answer. */
+const SLOW = '/Volumes/NAS/Shots ';
+/** SLOW exists, and answers only when the gate opens; everything else as strictListing. */
+const slowShots = (g: ReturnType<typeof gate>) => (p: string) =>
+  (p === SLOW ? g.opened.then(() => ({ path: SLOW, parent: '/Volumes/NAS', dirs: [] })) : strictListing(p));
+/** DOCS + ' ' is not there, and says so only when the gate opens; DOCS is. */
+const slowStray = (g: ReturnType<typeof gate>) => (p: string) =>
+  (p === DOCS + ' ' ? g.opened.then(() => notFound()) : strictListing(p));
+
+test('Scan holds its button while the path is looked up, and a press the person moved on from acts on nothing (QA4a R4-3)', async () => {
+  // Box changed while the lookup ran.
+  {
+    const g = gate();
+    const { $, scanned, offers, click, type } = boxesRuntime(slowStray(g));
+    type('pathInput', DOCS + ' ');
+    const pending = click('scanBtn');
+    assert.equal($('scanBtn').disabled, true, 'Scan is held while the path is looked up');
+    type('pathInput', '/data');
+    g.open();
+    await pending;
+    assert.deepEqual(scanned, [], 'a path no longer in the box is not scanned, nor the folder it might have meant');
+    assert.deepEqual(offers, [], 'and nothing is offered for it');
+    assert.equal($('scanBtn').disabled, false, 'and Scan is live again');
+  }
+  // A scan started some other way (Recent, the dock) while the lookup ran.
+  {
+    const g = gate();
+    const { rt, scanned, click, type } = boxesRuntime(slowShots(g));
+    type('pathInput', SLOW);
+    const pending = click('scanBtn');
+    rt.scanning(true);
+    g.open();
+    await pending;
+    assert.deepEqual(scanned, [], 'a press overtaken by a scan that started meanwhile starts nothing');
+  }
+  // Two presses on one path (Enter, or a press that got through).
+  {
+    const g = gate();
+    const { offers, click, type } = boxesRuntime(slowStray(g));
+    type('pathInput', DOCS + ' ');
+    const first = click('scanBtn');
+    const second = click('scanBtn');
+    g.open();
+    await Promise.all([first, second]);
+    assert.equal(offers.length, 1, 'two presses on one path answer once');
+  }
+  // The folder offered, chosen while a scan runs.
+  {
+    const { rt, scanned, toasts, offers, click, type } = boxesRuntime(strictListing);
+    type('pathInput', DOCS + ' ');
+    await click('scanBtn');
+    rt.scanning(true);
+    await offers[0].choose();
+    assert.deepEqual(scanned, [], 'a choice made while a scan runs starts nothing');
+    assert.equal(toasts.at(-1), 'A scan is already running', 'and says why, rather than nothing at all');
+  }
+});
+
+test('Scan reads Fast rescan when pressed, and a lookup that does not answer in time scans the path exactly as typed (QA4a R4-3)', async () => {
+  const g = gate();
+  const { rt, $, scanned, offers, click, type, timers, fire } = boxesRuntime(slowShots(g));
+  rt.rememberScannedRoot(SLOW);
+  type('pathInput', SLOW);
+  assert.equal($('fastRescanWrap').hidden, false, 'Fast rescan is offered for the folder scanned before');
+  assert.ok(!$('fastRescan').checked, 'unticked: it is the person\'s choice (QA D45)');
+  $('fastRescan').checked = true; // the person ticks it
+  const pending = click('scanBtn');
+  $('fastRescan').checked = false; // unticked while Scan waits
+  const waiting = timers.filter((t) => !t.cleared);
+  assert.equal(waiting.length, 1, 'the wait for the lookup is bounded');
+  assert.ok(waiting[0].delay > 0 && waiting[0].delay <= 5000, `and short (${waiting[0].delay})`);
+  fire();
+  await pending;
+  assert.deepEqual(scanned, [[SLOW, { incremental: true }]],
+    'the path is scanned exactly as typed — the scan answers for a folder that is not there — as the fast rescan Scan was pressed with');
+  assert.equal($('scanBtn').disabled, false, 'and Scan is live again');
+  g.open();
+  await settle();
+  assert.equal(scanned.length, 1, 'the late answer starts nothing');
+  assert.deepEqual(offers, []);
+});
+
+test('Save reads every field when pressed, holds its button while the folder is looked up, and saves nothing once the editor closed, the folder changed or another press took over (QA4a R4-3)', async () => {
+  // Every field as Save was pressed.
+  {
+    const g = gate();
+    const { rt, $, click, type, saved, policy } = boxesRuntime(slowShots(g));
+    rt.openPolicyEditor(null);
+    $('apName').value = 'Shots';
+    type('apPath', SLOW);
+    const pending = click('apSaveBtn');
+    assert.equal($('apSaveBtn').disabled, true, 'Save is held while the folder is looked up');
+    $('apName').value = 'Renamed while it waited';
+    g.open();
+    await pending;
+    assert.deepEqual(saved(), [[SLOW]], 'the folder that exists as typed is saved');
+    assert.equal(policy('/api/autopilot/policies').policies![0].name, 'Shots', 'with every field as it was when Save was pressed');
+    assert.equal($('apSaveBtn').disabled, false, 'and Save is live again');
+  }
+  // The editor closed while the folder was looked up.
+  {
+    const g = gate();
+    const { rt, $, click, type, saves } = boxesRuntime(slowShots(g));
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    const pending = click('apSaveBtn');
+    rt.close('apModal');
+    assert.equal($('apSaveBtn').disabled, false, 'a closed editor holds nothing — it opens again with Save live');
+    g.open();
+    await pending;
+    assert.equal(saves(), 0, 'a Save still looking up its folder when the editor closed saves nothing');
+  }
+  // Another folder typed while it was looked up.
+  {
+    const g = gate();
+    const { rt, $, click, type, saves } = boxesRuntime(slowShots(g));
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    const pending = click('apSaveBtn');
+    type('apPath', '/data');
+    g.open();
+    await pending;
+    assert.equal(saves(), 0, 'a Save whose folder was changed while it was looked up saves nothing');
+    assert.equal($('apSaveBtn').disabled, false, 'and Save is live again, for the folder now in the box');
+  }
+  // Two presses.
+  {
+    const g = gate();
+    const { rt, click, type, saves } = boxesRuntime(slowShots(g));
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    const first = click('apSaveBtn');
+    const second = click('apSaveBtn');
+    g.open();
+    await Promise.all([first, second]);
+    assert.equal(saves(), 1, 'two presses save once');
+  }
+});
+
+test('an Autopilot offer outlives nothing: a click after the editor closed never fills the one opened next, and a lookup that does not answer in time saves the folder as typed (QA4a R4-3)', async () => {
+  {
+    const { rt, $, click, type, offers } = boxesRuntime(strictListing);
+    rt.openPolicyEditor(null);
+    type('apPath', DOCS + ' ');
+    await click('apSaveBtn');
+    assert.equal(offers.length, 1, 'the folder is offered');
+    rt.close('apModal');
+    rt.openPolicyEditor({ id: 'p2', name: 'Other', path: '/data', match: { kind: 'custom' } });
+    await offers[0].choose();
+    assert.equal($('apPath').value, '/data', 'a click on an offer made for an editor since closed leaves the one opened after it alone');
+  }
+  {
+    const g = gate();
+    const { rt, click, type, saved, offers, timers, fire } = boxesRuntime(slowStray(g));
+    rt.openPolicyEditor(null);
+    type('apPath', DOCS + ' ');
+    const pending = click('apSaveBtn');
+    assert.equal(timers.filter((t) => !t.cleared).length, 1, 'Save waits on the lookup for a bounded time');
+    fire();
+    await pending;
+    assert.deepEqual(saved(), [[DOCS + ' ']],
+      'a folder lookup that does not answer in time saves the folder exactly as typed — never the one without its space');
+    g.open();
+    await settle();
+    assert.deepEqual(offers, [], 'its late answer offers nothing');
+    assert.equal(saved().length, 1, 'and saves nothing more');
+  }
 });

@@ -644,6 +644,9 @@ function closeModal(id) {
   // A typed path still opening in the folder picker is not acted on once the
   // picker is gone: no pick (an offload destination), no scan.
   if (id === 'browseModal') browseClosed();
+  // A Save still looking up its folder when the policy editor goes saves
+  // nothing, and its button is handed back (QA4a R4-3).
+  if (id === 'apModal') apEditorClosed();
   // FX: the job ring dies with the sheet, whichever surface closed it — a beam
   // on a hidden modal would be a claim nobody can see.
   if (id === 'offloadModal') {

@@ -1399,16 +1399,32 @@ $('scanBtn').addEventListener('click', () => {
     click on it scans it — with Fast rescan then offered for it where it was
     scanned before, since that box is read the same way (QA4a R4-1, R4-2), and
     never ticked for the person, so that click scans it in full (QA D45). */
+let scanPressSeq = 0; // each press of Scan takes the next number (scanTheBox)
 async function scanTheBox() {
   const box = $('pathInput');
+  const btn = $('scanBtn');
+  // Only the folder offered can be chosen mid-scan (the button is Stop then):
+  // said, as startScan says it, rather than nothing at all.
+  if (state.scanning) { toast('A scan is already running', 'error'); return; }
   const p = asPath(box.value);
   if (!p) { toast('Enter a folder path first', 'error'); return; }
+  // Read as the person pressed Scan; only the path is looked up after, held
+  // to PATH_LOOKUP_MS, with the button held while it is (QA4a R4-3).
+  const incremental = !$('fastRescanWrap').hidden && $('fastRescan').checked;
+  const seq = ++scanPressSeq;
+  btn.disabled = true;
   const meant = await boxMeant(p);
+  // A newer press took over, and holds the button now.
+  if (seq !== scanPressSeq) return;
+  btn.disabled = false;
+  // The person moved on while it was looked up — another path in the box, or
+  // a scan started some other way: this press acts on nothing.
+  if (asPath(box.value) !== p || state.scanning) return;
   if (meant) {
     offerMeant(p, meant, () => { box.value = meant; maybeShowFastRescan(); return scanTheBox(); });
     return;
   }
-  startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
+  startScan(p, { incremental });
 }
 // Enter starts a scan and only ever starts one. It used to be free of this
 // check because the button was disabled mid-scan; now that the button is Stop,

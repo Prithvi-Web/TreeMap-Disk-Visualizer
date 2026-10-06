@@ -9877,16 +9877,32 @@ $('scanBtn').addEventListener('click', () => {
     click on it scans it — with Fast rescan then offered for it where it was
     scanned before, since that box is read the same way (QA4a R4-1, R4-2), and
     never ticked for the person, so that click scans it in full (QA D45). */
+let scanPressSeq = 0; // each press of Scan takes the next number (scanTheBox)
 async function scanTheBox() {
   const box = $('pathInput');
+  const btn = $('scanBtn');
+  // Only the folder offered can be chosen mid-scan (the button is Stop then):
+  // said, as startScan says it, rather than nothing at all.
+  if (state.scanning) { toast('A scan is already running', 'error'); return; }
   const p = asPath(box.value);
   if (!p) { toast('Enter a folder path first', 'error'); return; }
+  // Read as the person pressed Scan; only the path is looked up after, held
+  // to PATH_LOOKUP_MS, with the button held while it is (QA4a R4-3).
+  const incremental = !$('fastRescanWrap').hidden && $('fastRescan').checked;
+  const seq = ++scanPressSeq;
+  btn.disabled = true;
   const meant = await boxMeant(p);
+  // A newer press took over, and holds the button now.
+  if (seq !== scanPressSeq) return;
+  btn.disabled = false;
+  // The person moved on while it was looked up — another path in the box, or
+  // a scan started some other way: this press acts on nothing.
+  if (asPath(box.value) !== p || state.scanning) return;
   if (meant) {
     offerMeant(p, meant, () => { box.value = meant; maybeShowFastRescan(); return scanTheBox(); });
     return;
   }
-  startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
+  startScan(p, { incremental });
 }
 // Enter starts a scan and only ever starts one. It used to be free of this
 // check because the button was disabled mid-scan; now that the button is Stop,
@@ -26527,7 +26543,19 @@ $('apPreviewBtn').addEventListener('click', async () => {
   }
 });
 
+/** Each press of Save takes the next number, and the editor closing retires
+    every press still looking up its folder (apEditorClosed). */
+let apSaveSeq = 0;
+/** The policy editor closed (closeModal): a Save still looking up its folder
+    saves nothing, and the button it held is handed back for the next time the
+    editor opens. */
+function apEditorClosed() {
+  apSaveSeq++;
+  $('apSaveBtn').disabled = false;
+}
 $('apSaveBtn').addEventListener('click', async () => {
+  // Every field is read now, as the person pressed Save: what is saved is
+  // what Save was pressed on (QA4a R4-3).
   const edited = policyFromEditor();
   // A folder that names none, where the same path without its trailing space
   // does, is not saved in its place: "no such folder", with that folder
@@ -26535,9 +26563,20 @@ $('apSaveBtn').addEventListener('click', async () => {
   // policy's own stored folder is saved as stored, never looked up under
   // another name (QA4a R4-1).
   if (edited.path !== (apDraft && apDraft.path)) {
+    const btn = $('apSaveBtn');
+    const seq = ++apSaveSeq;
+    btn.disabled = true; // held while the folder is looked up, at most PATH_LOOKUP_MS
     const meant = await boxMeant(edited.path);
+    // The editor closed, or a newer press took over: nothing is saved, and
+    // the button is not this press's to hand back.
+    if (seq !== apSaveSeq) return;
+    btn.disabled = false;
+    // Another folder typed while this one was looked up: that one is the
+    // next press's to save.
+    if (asPath($('apPath').value) !== edited.path) return;
     if (meant) {
-      offerMeant(edited.path, meant, () => { $('apPath').value = meant; });
+      // Only into the editor it was offered for, while no other press has come since.
+      offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
       return;
     }
   }
@@ -31867,17 +31906,21 @@ async function meantFolder(p, err) {
 function offerMeant(p, meant, choose) {
   toastAction(`No folder is named “${p}”`, `Did you mean “${meant}”?`, choose, 'error');
 }
+/** How long Scan or Save waits on a path box's lookup (boxMeant) before
+    going ahead with the path exactly as it is: a sleeping network drive can
+    take minutes to answer, and the scan or the policy then answers for the
+    path as it does for any other (QA4a R4-3). */
+const PATH_LOOKUP_MS = 3000;
 /** Before a path box's folder is scanned or saved: the folder it probably
     meant (meantFolder) when the path names none, or null to go ahead with the
-    path exactly as it is. Only a path ending in whitespace is looked up. */
-async function boxMeant(p) {
-  if (p === p.replace(/\s+$/, '')) return null;
-  try {
-    await api('/api/fs/list?path=' + encodeURIComponent(p));
-    return null;
-  } catch (e) {
-    return meantFolder(p, e);
-  }
+    path exactly as it is — also once PATH_LOOKUP_MS pass without an answer.
+    Only a path ending in whitespace is looked up. */
+function boxMeant(p) {
+  if (p === p.replace(/\s+$/, '')) return Promise.resolve(null);
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), PATH_LOOKUP_MS); });
+  const lookup = api('/api/fs/list?path=' + encodeURIComponent(p)).then(() => null, (e) => meantFolder(p, e));
+  return Promise.race([lookup, late]).finally(() => clearTimeout(timer));
 }
 async function openBrowse(start, onPick = null, title = null) {
   browseOnPick = onPick;
@@ -34358,6 +34401,9 @@ function closeModal(id) {
   // A typed path still opening in the folder picker is not acted on once the
   // picker is gone: no pick (an offload destination), no scan.
   if (id === 'browseModal') browseClosed();
+  // A Save still looking up its folder when the policy editor goes saves
+  // nothing, and its button is handed back (QA4a R4-3).
+  if (id === 'apModal') apEditorClosed();
   // FX: the job ring dies with the sheet, whichever surface closed it — a beam
   // on a hidden modal would be a claim nobody can see.
   if (id === 'offloadModal') {

@@ -284,17 +284,21 @@ async function meantFolder(p, err) {
 function offerMeant(p, meant, choose) {
   toastAction(`No folder is named “${p}”`, `Did you mean “${meant}”?`, choose, 'error');
 }
+/** How long Scan or Save waits on a path box's lookup (boxMeant) before
+    going ahead with the path exactly as it is: a sleeping network drive can
+    take minutes to answer, and the scan or the policy then answers for the
+    path as it does for any other (QA4a R4-3). */
+const PATH_LOOKUP_MS = 3000;
 /** Before a path box's folder is scanned or saved: the folder it probably
     meant (meantFolder) when the path names none, or null to go ahead with the
-    path exactly as it is. Only a path ending in whitespace is looked up. */
-async function boxMeant(p) {
-  if (p === p.replace(/\s+$/, '')) return null;
-  try {
-    await api('/api/fs/list?path=' + encodeURIComponent(p));
-    return null;
-  } catch (e) {
-    return meantFolder(p, e);
-  }
+    path exactly as it is — also once PATH_LOOKUP_MS pass without an answer.
+    Only a path ending in whitespace is looked up. */
+function boxMeant(p) {
+  if (p === p.replace(/\s+$/, '')) return Promise.resolve(null);
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), PATH_LOOKUP_MS); });
+  const lookup = api('/api/fs/list?path=' + encodeURIComponent(p)).then(() => null, (e) => meantFolder(p, e));
+  return Promise.race([lookup, late]).finally(() => clearTimeout(timer));
 }
 async function openBrowse(start, onPick = null, title = null) {
   browseOnPick = onPick;

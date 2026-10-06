@@ -415,7 +415,19 @@ $('apPreviewBtn').addEventListener('click', async () => {
   }
 });
 
+/** Each press of Save takes the next number, and the editor closing retires
+    every press still looking up its folder (apEditorClosed). */
+let apSaveSeq = 0;
+/** The policy editor closed (closeModal): a Save still looking up its folder
+    saves nothing, and the button it held is handed back for the next time the
+    editor opens. */
+function apEditorClosed() {
+  apSaveSeq++;
+  $('apSaveBtn').disabled = false;
+}
 $('apSaveBtn').addEventListener('click', async () => {
+  // Every field is read now, as the person pressed Save: what is saved is
+  // what Save was pressed on (QA4a R4-3).
   const edited = policyFromEditor();
   // A folder that names none, where the same path without its trailing space
   // does, is not saved in its place: "no such folder", with that folder
@@ -423,9 +435,20 @@ $('apSaveBtn').addEventListener('click', async () => {
   // policy's own stored folder is saved as stored, never looked up under
   // another name (QA4a R4-1).
   if (edited.path !== (apDraft && apDraft.path)) {
+    const btn = $('apSaveBtn');
+    const seq = ++apSaveSeq;
+    btn.disabled = true; // held while the folder is looked up, at most PATH_LOOKUP_MS
     const meant = await boxMeant(edited.path);
+    // The editor closed, or a newer press took over: nothing is saved, and
+    // the button is not this press's to hand back.
+    if (seq !== apSaveSeq) return;
+    btn.disabled = false;
+    // Another folder typed while this one was looked up: that one is the
+    // next press's to save.
+    if (asPath($('apPath').value) !== edited.path) return;
     if (meant) {
-      offerMeant(edited.path, meant, () => { $('apPath').value = meant; });
+      // Only into the editor it was offered for, while no other press has come since.
+      offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
       return;
     }
   }
