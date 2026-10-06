@@ -87,10 +87,13 @@
 #rcPopover .rc-pop-scroll { max-height: calc(70vh - 2px); overflow-y: auto; overscroll-behavior: contain;
   padding: 12px 14px; border-radius: inherit; }
 /* ── v4 §9.6: the plain-words popover — rcPopover's opaque-glass recipe, for
-   the same reason: it sits straight on the map with no scrim. ── */
+   the same reason: it sits straight on the map with no scrim. The recipe is
+   painted because the glass engine makes #nlPop a lens host (its TARGETS
+   list); the base is opaque, so a backdrop filter would only filter pixels
+   nobody can see (QA B27). ── */
 #nlPop { position: fixed; z-index: 211; width: min(380px, calc(100vw - 24px)); padding: 12px 14px;
   --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
-  --lg-blur: 26px;
+  --lg-backdrop: none;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
 #nlPop[hidden] { display: none; }
 /* ── v4 §9.1: the command palette ── */

@@ -454,6 +454,53 @@ test('a dialog opened from the selection bar still puts toasts at the top, and t
   assert.equal(declsOf('.toast').get('pointer-events'), 'auto', 'a toast keeps its own buttons');
 });
 
+/* ══════════════ B27 — the plain-words popover is opaque ══════════════ */
+
+/** The glass engine's TARGETS list, as shipped. */
+function lensTargets(): string {
+  const from = INDEX.indexOf('/* Which elements get the lens, and how strong. */');
+  const to = INDEX.indexOf('const SELECTOR =', from);
+  assert.ok(from !== -1 && to > from, 'the glass engine still lists its lens targets');
+  return INDEX.slice(from, to);
+}
+
+test('the plain-words popover is opaque in both themes — its glass recipe is painted, not just written (B27)', () => {
+  // #nlPop declared #rcPopover's opaque recipe as --lg-tint, but only a lens
+  // host (.lg, which the engine adds) paints --lg-tint through .lg::before.
+  // The popover was never one, so its own .glass class painted --glass-strong
+  // — 72% opaque, no blur — and the toolbar, the field list and the
+  // time-lapse controls read straight through "Translates to — check it…".
+  const tint = declsOf('#nlPop').get('--lg-tint');
+  assert.ok(tint, '#nlPop sets the tint its lens layer paints');
+  for (const [name, tokens] of THEMES) {
+    assert.equal(baseAlpha(tint!, tokens), 1, `${name}: the popover's tint has an opaque base`);
+  }
+  assert.match(lensTargets(), /\['#nlPop',/,
+    '#nlPop is a lens target: .lg::before paints its tint and `.lg.glass` drops the 72% .glass fill under it');
+  assert.equal(declsOf('.lg::before').get('background'), 'var(--lg-tint)', 'the lens layer is what reads the tint');
+  assert.equal(declsOf('.lg.glass').get('background'), 'none', 'and a lens host carrying .glass paints no fill of its own');
+});
+
+test('every element that declares a glass tint is one the engine makes a lens host — a tint nothing reads is the B27 trap', () => {
+  const targets = lensTargets();
+  const seen: string[] = [];
+  for (const r of RULES) {
+    if (!decls(r.body).has('--lg-tint')) continue;
+    for (const sel of r.selectors) {
+      const last = (sel.split(/[\s>+~]+/).pop() || '').replace(/::?[\w-]+(\([^)]*\))?/g, '');
+      const key = /^[#.][\w-]+/.exec(last)?.[0];
+      if (!key) continue; // :root and the theme blocks declare the token, they do not paint it
+      seen.push(key);
+      const id = key.startsWith('#') ? key.slice(1) : null;
+      const markupLg = id !== null && new RegExp(`id="${id}"[^>]*class="[^"]*\\blg\\b|class="[^"]*\\blg\\b[^"]*"[^>]*id="${id}"`).test(INDEX);
+      assert.ok(targets.includes(`['${key}',`) || markupLg,
+        `${sel} sets --lg-tint, but ${key} is not a lens target and carries no .lg — the tint is never painted`);
+    }
+  }
+  assert.ok(seen.includes('#nlPop') && seen.includes('#rcPopover') && seen.includes('.modal'),
+    `the scan found the tinted surfaces (${[...new Set(seen)].join(', ')})`);
+});
+
 /* ══════════════ D69 — no ring around a whole dialog ══════════════ */
 
 test('a dialog that takes focus itself draws no focus ring around the whole sheet (D69)', () => {

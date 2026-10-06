@@ -118,6 +118,11 @@
       ['#previewPane',  { scale: 40, ab: 2, plain: 1 }],
       ['#ctxMenu',      { scale: 26, ab: 1.5, plain: 1 }],
       ['#rcPopover',    { scale: 30, ab: 2, plain: 1 }],
+      /* The plain-words popover writes the same opaque recipe as #rcPopover,
+         and --lg-tint is painted only by a lens host's ::before. Without
+         this entry it stayed a bare .glass — 72% opaque, no blur — and the
+         toolbar read straight through its text (QA B27). */
+      ['#nlPop',        { scale: 30, ab: 2, plain: 1 }],
       /* The tooltip follows the pointer every frame and re-sizes on every
          node. A url(#…) reference filter in backdrop-filter is rasterised
          against the moving backdrop each frame, and each new 8px size bucket
