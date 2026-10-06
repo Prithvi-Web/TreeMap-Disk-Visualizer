@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { lift } from './fixtures/liftFrontend';
 
 /**
  * Polish round — the light theme, measured.
@@ -296,4 +297,51 @@ test('no drop shadow outside the token blocks is a hard-coded black — the ligh
     assert.ok(DARK[tok] && LIGHT_ONLY[tok] && DARK[tok] !== LIGHT_ONLY[tok], `${tok} is declared for both themes, differently`);
     assert.ok(alpha(LIGHT_ONLY[tok].match(/rgba\([^)]*\)/)![0]) < alpha(DARK[tok].match(/rgba\([^)]*\)/)![0]), `${tok} is lighter in the light theme`);
   }
+});
+
+/* ═══════════════ B21 — a size printed in its ramp colour reads in both themes ═══════════════ */
+
+/**
+ * The size ramp (teal → amber → red) is tuned for dark glass, and amber is
+ * the lightest colour on it: Libraries and Apps printed their totals in the
+ * RAW ramp colour, #FFBB13 on a near-white card — about 1.5:1 in the light
+ * theme. The Dashboard's badges already mixed the ramp with --text-1, but at
+ * 60% even that measured 2.6:1 there. One helper now builds every size ink,
+ * with the ramp's share a theme token, and this measures it across the whole
+ * ramp on every ground a badge sits on.
+ */
+test('every size figure printed in the ramp colour clears 4.5:1 on its badge, the card and the page, in both themes (B21)', () => {
+  const ink = lift<(bytes: number) => string>(
+    ['TIER_LO', 'hexToRgb', 'C_TEAL', 'mix', 'sizeRgb', 'sizeColor', 'sizeInk'], 'sizeInk');
+  let checked = 0;
+  for (const [name, palette] of THEMES) {
+    assert.ok(palette['--size-ink'], `${name} declares the ramp's share of a size ink`);
+    const { page, card } = grounds(palette);
+    const surfaces: Array<[string, RGB]> = [
+      ['the card', card], ['the page', page],
+      ['a badge on the card', paint('var(--surface-2)', palette, card)],
+      ['a badge on the page', paint('var(--surface-2)', palette, page)],
+    ];
+    for (const [where, ground] of surfaces) {
+      // 1 B to 3 TB in 1/20-decade steps: every hue the ramp can produce.
+      for (let e = 0; e <= 12.5; e += 0.05) {
+        const bytes = Math.round(10 ** e);
+        const expr = ink(bytes).replace(/var\(--size-ink\)/g, palette['--size-ink']);
+        const ratio = contrast(paint(expr, palette, ground), ground);
+        checked++;
+        assert.ok(ratio >= 4.5, `${name}: a ${bytes}-byte figure measures ${fmt(ratio)}:1 on ${where} (${expr})`);
+      }
+    }
+  }
+  assert.ok(checked > 1500, `the ramp was sampled (${checked} points)`);
+});
+
+test('no size figure paints its ramp colour raw — every text use goes through the one ink (B21)', () => {
+  const code = INDEX.slice(INDEX.indexOf('<script>'));
+  const raw = [...code.matchAll(/color:\s*\$\{sizeColor\(/g)].length;
+  const handMixed = [...code.matchAll(/color:\s*color-mix\(in srgb, \$\{sizeColor\(/g)].length;
+  assert.equal(raw, 0, 'a raw ramp colour as text is ~1.5:1 on a light card');
+  assert.equal(handMixed, 0, 'a hand-written mix fixes the share at one value for both themes');
+  const inks = [...code.matchAll(/color:\s*\$\{sizeInk\(/g)].length;
+  assert.ok(inks >= 13, `the badges and the tooltip take the ink (${inks})`);
 });

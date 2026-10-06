@@ -125,7 +125,7 @@ function showTooltip(x, y, node, pctOfRoot = null) {
   tip.innerHTML = `
     <div class="t-head"><span style="color:${k.tint};display:inline-flex;">${icon(k.icon, 15)}</span>${escapeHtml(node.name)}</div>
     <div class="t-line t-path">${escapeHtml(node.path)}</div>
-    <div class="t-line num"><span class="t-strong" style="color:${sizeColor(node.size)}">${formatBytes(node.size)}</span>` +
+    <div class="t-line num"><span class="t-strong" style="color:${sizeInk(node.size)}">${formatBytes(node.size)}</span>` +
     (pctOfRoot !== null && pctOfRoot >= 0.05 ? ` · ${pctOfRoot.toFixed(1)}% of this view` : '') +
     (node.logicalSize ? ` · ${formatBytes(node.logicalSize)} uncompressed` : '') +
     (containerListable(node) && !node.children ? ' · click to look inside' : '') +

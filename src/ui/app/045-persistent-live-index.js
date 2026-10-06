@@ -1563,7 +1563,7 @@ function renderBigFiles() {
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
       <span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>
       ${reclaimBadge(f.path, scoreFor(f.path)) || (state.bigFilesSort === 'reclaim' && scoreKnown(f.path) ? '<span class="rc-none" title="None of the six signals could be read for this file">not scored</span>' : '')}
-      <span class="size-badge num" style="color:color-mix(in srgb, ${sizeColor(f.size)} 60%, var(--text-1));">${formatBytes(f.size)}</span>
+      <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
         <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
         <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 14)}</button>
@@ -1633,7 +1633,7 @@ function renderBigFolders() {
       <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} file${f.fileCount === 1 ? '' : 's'}</span>
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
       <span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>
-      <span class="size-badge num" style="color:color-mix(in srgb, ${sizeColor(f.size)} 60%, var(--text-1));">${formatBytes(f.size)}</span>
+      <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
     </div>`).join('');
   fxBarsIn(host);
   host.querySelectorAll('[data-jump]').forEach(row => {

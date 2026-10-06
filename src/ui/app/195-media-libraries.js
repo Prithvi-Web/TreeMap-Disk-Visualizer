@@ -48,7 +48,7 @@ function renderMedia() {
       <div class="game-libhead">
         <b>${escapeHtml(lib.appName || lib.kind)}</b>
         <span class="pth" title="${escapeHtml(lib.path)}">${escapeHtml(lib.path)}</span>
-        <span class="size-badge num" style="color:${sizeColor(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
       </div>`;
     // An unrecognised layout gets its size and an explanation — never a guess
     // at which parts are safe.
@@ -132,7 +132,7 @@ function renderGames() {
       <div class="game-libhead">
         <b>${escapeHtml(LAUNCHER_LABEL[lib.launcher] || lib.launcher)}</b>
         <span class="pth">${escapeHtml(lib.path)}</span>
-        <span class="size-badge num" style="color:${sizeColor(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
       </div>` + lib.titles.map(t => {
         const parts = t.components.reduce((m, c) => { m[c.kind] = (m[c.kind] || 0) + c.bytes; return m; }, {});
         const bar = Object.keys(GAME_PART).filter(k => parts[k] > 0).map(k =>
@@ -253,14 +253,14 @@ function renderApps() {
         <span class="spacer"></span>
         ${a.safeToClearBytes >= 1048576 ? `<button class="pill app-clear" data-i="${i}" title="Move this app's caches and logs to the Trash — never its data or the app itself">Clear ${formatBytes(a.safeToClearBytes)} safely</button>` : ''}
         <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (a.totalBytes / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
-        <span class="size-badge num" style="color:${sizeColor(a.totalBytes)}">${formatBytes(a.totalBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(a.totalBytes)}">${formatBytes(a.totalBytes)}</span>
         <span class="chev">${icon('chevronRight', 14)}</span>
       </div>
       <div class="bp-items">` + a.locations.map(loc => `
         <div class="bp-item" role="button" tabindex="0" data-jump="${escapeHtml(loc.path)}" title="Show ${escapeHtml(loc.path)} in the treemap — right-click for actions">
           <span class="cat">${APP_CAT_LABEL[loc.category]}</span>
           <span class="lbl">${escapeHtml(loc.path)}</span>
-          <span class="size-badge num" style="color:${sizeColor(loc.bytes)}">${formatBytes(loc.bytes)}</span>
+          <span class="size-badge num" style="color:${sizeInk(loc.bytes)}">${formatBytes(loc.bytes)}</span>
           ${APP_CART_CATEGORIES.has(loc.category)
             ? `<button class="icon-btn" data-cart-add="${escapeHtml(loc.path)}" aria-label="Add ${escapeHtml(loc.path)} to cleanup cart">${icon('plus', 13)}</button>`
             : `<span class="adv-spacer" title="${escapeHtml(APP_CAT_LABEL[loc.category])} — this is the app or your own data, not a rebuildable cache, so TreeMap does not offer to stage it"></span>`}
@@ -273,7 +273,7 @@ function renderApps() {
         <span class="bp-title">Everything else<span class="prof">files not owned by any application</span></span>
         <span class="spacer"></span>
         <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (state.apps.otherBytes / max) * 100).toFixed(1)}" style="${fxBarStyle(3)}"></div></div>
-        <span class="size-badge num" style="color:${sizeColor(state.apps.otherBytes)}">${formatBytes(state.apps.otherBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(state.apps.otherBytes)}">${formatBytes(state.apps.otherBytes)}</span>
       </div>
     </div>`;
 

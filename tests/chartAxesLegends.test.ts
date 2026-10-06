@@ -284,7 +284,7 @@ test('D14: Large Folders says "1 file", not "1 files"', () => {
       { name: 'two', path: '/r/two', size: 500, fileCount: 2 },
     ] },
     escapeHtml: (s: string) => s, chipFor: () => '', formatCount: (n: number) => n.toLocaleString('en-US'),
-    fxBarStyle: () => '', sizeColor: () => '#000', formatBytes: (n: number) => `${n} B`, fxBarsIn() {},
+    fxBarStyle: () => '', sizeColor: () => '#000', sizeInk: () => '#000', formatBytes: (n: number) => `${n} B`, fxBarsIn() {},
   });
   render();
   const counts = [...host.innerHTML.matchAll(/class="cnt[^"]*"[^>]*>([^<]*)</g)].map((m) => m[1]);

@@ -121,7 +121,7 @@ async function loadVideoCandidates() {
             c.durationSeconds ? ` · ${Math.round(c.durationSeconds / 60)} min` : ''}</div>
         </div>
         <span class="vid-ba num">${formatBytes(c.size)} → <b>~${formatBytes(c.estimatedBytes)}</b></span>
-        <span class="size-badge num" style="color:${sizeColor(c.estimatedSaving)}">~${formatBytes(c.estimatedSaving)}</span>
+        <span class="size-badge num" style="color:${sizeInk(c.estimatedSaving)}">~${formatBytes(c.estimatedSaving)}</span>
       </div>`).join('') + `</div>` +
     (unreadable ? `<div class="muted" style="padding:6px 2px;">${escapeHtml(`${formatCount(unreadable)} more large video${unreadable === 1 ? '' : 's'} couldn’t be read, so ${unreadable === 1 ? 'it isn’t' : 'they aren’t'} listed: TreeMap can’t say whether re-encoding ${unreadable === 1 ? 'it' : 'them'} would help.`)}</div>` : '') + `
     <div class="vid-actions">
@@ -396,7 +396,7 @@ async function renderPackageOrphans() {
       <span class="muted" style="flex:1;margin-left:8px;">${data.orphanCount
         ? `${formatCount(data.orphanCount)} orphaned — nothing will rebuild ${data.orphanCount === 1 ? 'it' : 'them'}`
         : 'no orphans; shared caches only'}</span>
-      <span class="size-badge num" style="color:${sizeColor(reclaimable)}">${formatBytes(reclaimable)}</span>
+      <span class="size-badge num" style="color:${sizeInk(reclaimable)}">${formatBytes(reclaimable)}</span>
     </div>` + groups.map(g => {
       const head = [
         g.orphanCount ? `${formatCount(g.orphanCount)} orphaned · ${formatBytes(g.orphanBytes)}` : '',
@@ -477,7 +477,7 @@ async function renderBrowserProfiles() {
         <div class="bp-item">
           <input type="checkbox" class="bp-ck" data-path="${escapeHtml(it.path)}" data-bytes="${it.bytes}" data-p="${pi}" aria-label="Select ${escapeHtml(it.label)}">
           <span class="lbl">${escapeHtml(it.label)}</span>
-          <span class="size-badge num" style="color:${sizeColor(it.bytes)}">${formatBytes(it.bytes)}</span>
+          <span class="size-badge num" style="color:${sizeInk(it.bytes)}">${formatBytes(it.bytes)}</span>
           <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.label)} to cleanup cart">${icon('plus', 13)}</button>
         </div>`).join('');
       return `<div class="bp-acc" data-acc="${pi}">
@@ -585,7 +585,7 @@ function renderSmartGroups(catalog) {
         ${adv && g.adviceCommand ? `<code class="regen-cmd" title="Reclaim with: ${escapeHtml(g.adviceCommand)}">${escapeHtml(g.adviceCommand)}</code><span class="rc-lbl">to reclaim</span>` : ''}
         <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
           title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
-        <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
+        <span class="size-badge num" style="color:${sizeInk(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
       </div>
       <div class="smart-why" id="smartWhy${gi}" hidden>
         <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
@@ -960,7 +960,7 @@ async function runCleanFind(fetcher) {
           <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
         </div>
         <span class="dt num">${formatDate(f.modifiedAt)}</span>
-        <span class="size-badge num" style="color:${sizeColor(f.size)}">${formatBytes(f.size)}</span>
+        <span class="size-badge num" style="color:${sizeInk(f.size)}">${formatBytes(f.size)}</span>
         <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
       </div>`).join('') + '</div>';
   refreshCartButtons(); // v4 §4.2

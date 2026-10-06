@@ -42,6 +42,10 @@
      4.09:1 on the page — under AA for text that small. 4.8:1 now, and still
      clearly quieter than --text-2 (7.9:1). The light block does the same. */
   --text-3:        rgba(255,255,255,0.47);
+  /* The size ramp's share of a size printed as TEXT (sizeInk mixes the rest
+     from --text-1). 60% keeps the hue on dark glass at 6.5:1 or better
+     across the whole ramp; the light block re-tunes it (QA B21). */
+  --size-ink:      60%;
 
   --tm-canvas-bg:  rgba(0,0,0,0.30);
   --scrim:         rgba(2,4,10,0.60);
@@ -142,6 +146,10 @@
   /* 0.42 measured 2.81:1 on the page — the paths, dates and the Trash
      reassurance line were a grey smudge on a white card. 4.7:1 now. */
   --text-3:        rgba(10,12,20,0.58);
+  /* Amber is the ramp's lightest colour: raw it measured ~1.5:1 on a white
+     card (the Libraries and Apps totals), and even a 60% share left 2.6:1.
+     At 36% the worst point of the ramp, on a badge chip, is ~5.0:1 (QA B21). */
+  --size-ink:      36%;
 
   /* The dark theme's #FFD60A yellow is near-invisible on light cards
      (~1.5:1). Text and badges using --warn need this darker amber here.

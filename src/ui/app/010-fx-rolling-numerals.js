@@ -460,8 +460,8 @@ function toast(msg, kind = 'success', ms = 4200) {
 /* ───────────────────────────── Size → color scale ─────────────────────────────
    The ramp anchors (teal → amber → red) are tuned for DARK surfaces; pure
    #FFD60A text is ~1.4:1 against the light theme's chips. Text uses of the
-   scale (the size badges) therefore write
-   `color-mix(in srgb, <ramp> 60%, var(--text-1))` inline: --text-1 is
+   scale (every size printed as text) therefore go through sizeInk() below,
+   `color-mix(in srgb, <ramp> var(--size-ink), var(--text-1))`: --text-1 is
    near-black in light and near-white in dark, so the hue survives while
    contrast lands in both themes — with zero theme-change re-render plumbing. */
 const TIER_LO = Math.log10(1048576), TIER_HI = Math.log10(10 * 1024 ** 3);
@@ -475,6 +475,17 @@ function sizeRgb(bytes) {
 function sizeColor(bytes, alpha = 1) {
   const c = sizeRgb(bytes);
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
+/**
+ * The colour to PRINT a size in: the ramp, mixed toward the body ink by the
+ * theme's --size-ink share. Every size badge and the tooltip's size use it;
+ * sizeColor stays the fill colour (cells, bars). The Libraries and Apps
+ * totals printed the raw ramp — amber on a white card, ~1.5:1 — and the
+ * Dashboard's own 60% mix still measured 2.6:1 there (QA B21).
+ * tests/polishVisualTheme.test.ts measures the whole ramp in both themes.
+ */
+function sizeInk(bytes) {
+  return `color-mix(in srgb, ${sizeColor(bytes)} var(--size-ink), var(--text-1))`;
 }
 
 /* ── Age → color scale (heatmap mode): green = fresh … red = stale ── */

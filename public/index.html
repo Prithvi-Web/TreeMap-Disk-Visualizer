@@ -71,6 +71,10 @@
      4.09:1 on the page — under AA for text that small. 4.8:1 now, and still
      clearly quieter than --text-2 (7.9:1). The light block does the same. */
   --text-3:        rgba(255,255,255,0.47);
+  /* The size ramp's share of a size printed as TEXT (sizeInk mixes the rest
+     from --text-1). 60% keeps the hue on dark glass at 6.5:1 or better
+     across the whole ramp; the light block re-tunes it (QA B21). */
+  --size-ink:      60%;
 
   --tm-canvas-bg:  rgba(0,0,0,0.30);
   --scrim:         rgba(2,4,10,0.60);
@@ -171,6 +175,10 @@
   /* 0.42 measured 2.81:1 on the page — the paths, dates and the Trash
      reassurance line were a grey smudge on a white card. 4.7:1 now. */
   --text-3:        rgba(10,12,20,0.58);
+  /* Amber is the ramp's lightest colour: raw it measured ~1.5:1 on a white
+     card (the Libraries and Apps totals), and even a 60% share left 2.6:1.
+     At 36% the worst point of the ramp, on a badge chip, is ~5.0:1 (QA B21). */
+  --size-ink:      36%;
 
   /* The dark theme's #FFD60A yellow is near-invisible on light cards
      (~1.5:1). Text and badges using --warn need this darker amber here.
@@ -6620,8 +6628,8 @@ function toast(msg, kind = 'success', ms = 4200) {
 /* ───────────────────────────── Size → color scale ─────────────────────────────
    The ramp anchors (teal → amber → red) are tuned for DARK surfaces; pure
    #FFD60A text is ~1.4:1 against the light theme's chips. Text uses of the
-   scale (the size badges) therefore write
-   `color-mix(in srgb, <ramp> 60%, var(--text-1))` inline: --text-1 is
+   scale (every size printed as text) therefore go through sizeInk() below,
+   `color-mix(in srgb, <ramp> var(--size-ink), var(--text-1))`: --text-1 is
    near-black in light and near-white in dark, so the hue survives while
    contrast lands in both themes — with zero theme-change re-render plumbing. */
 const TIER_LO = Math.log10(1048576), TIER_HI = Math.log10(10 * 1024 ** 3);
@@ -6635,6 +6643,17 @@ function sizeRgb(bytes) {
 function sizeColor(bytes, alpha = 1) {
   const c = sizeRgb(bytes);
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
+/**
+ * The colour to PRINT a size in: the ramp, mixed toward the body ink by the
+ * theme's --size-ink share. Every size badge and the tooltip's size use it;
+ * sizeColor stays the fill colour (cells, bars). The Libraries and Apps
+ * totals printed the raw ramp — amber on a white card, ~1.5:1 — and the
+ * Dashboard's own 60% mix still measured 2.6:1 there (QA B21).
+ * tests/polishVisualTheme.test.ts measures the whole ramp in both themes.
+ */
+function sizeInk(bytes) {
+  return `color-mix(in srgb, ${sizeColor(bytes)} var(--size-ink), var(--text-1))`;
 }
 
 /* ── Age → color scale (heatmap mode): green = fresh … red = stale ── */
@@ -10250,7 +10269,7 @@ function renderBigFiles() {
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
       <span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>
       ${reclaimBadge(f.path, scoreFor(f.path)) || (state.bigFilesSort === 'reclaim' && scoreKnown(f.path) ? '<span class="rc-none" title="None of the six signals could be read for this file">not scored</span>' : '')}
-      <span class="size-badge num" style="color:color-mix(in srgb, ${sizeColor(f.size)} 60%, var(--text-1));">${formatBytes(f.size)}</span>
+      <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
         <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
         <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 14)}</button>
@@ -10320,7 +10339,7 @@ function renderBigFolders() {
       <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} file${f.fileCount === 1 ? '' : 's'}</span>
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
       <span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>
-      <span class="size-badge num" style="color:color-mix(in srgb, ${sizeColor(f.size)} 60%, var(--text-1));">${formatBytes(f.size)}</span>
+      <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
     </div>`).join('');
   fxBarsIn(host);
   host.querySelectorAll('[data-jump]').forEach(row => {
@@ -22889,7 +22908,7 @@ function showTooltip(x, y, node, pctOfRoot = null) {
   tip.innerHTML = `
     <div class="t-head"><span style="color:${k.tint};display:inline-flex;">${icon(k.icon, 15)}</span>${escapeHtml(node.name)}</div>
     <div class="t-line t-path">${escapeHtml(node.path)}</div>
-    <div class="t-line num"><span class="t-strong" style="color:${sizeColor(node.size)}">${formatBytes(node.size)}</span>` +
+    <div class="t-line num"><span class="t-strong" style="color:${sizeInk(node.size)}">${formatBytes(node.size)}</span>` +
     (pctOfRoot !== null && pctOfRoot >= 0.05 ? ` · ${pctOfRoot.toFixed(1)}% of this view` : '') +
     (node.logicalSize ? ` · ${formatBytes(node.logicalSize)} uncompressed` : '') +
     (containerListable(node) && !node.children ? ' · click to look inside' : '') +
@@ -30728,7 +30747,7 @@ function renderMedia() {
       <div class="game-libhead">
         <b>${escapeHtml(lib.appName || lib.kind)}</b>
         <span class="pth" title="${escapeHtml(lib.path)}">${escapeHtml(lib.path)}</span>
-        <span class="size-badge num" style="color:${sizeColor(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
       </div>`;
     // An unrecognised layout gets its size and an explanation — never a guess
     // at which parts are safe.
@@ -30812,7 +30831,7 @@ function renderGames() {
       <div class="game-libhead">
         <b>${escapeHtml(LAUNCHER_LABEL[lib.launcher] || lib.launcher)}</b>
         <span class="pth">${escapeHtml(lib.path)}</span>
-        <span class="size-badge num" style="color:${sizeColor(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
       </div>` + lib.titles.map(t => {
         const parts = t.components.reduce((m, c) => { m[c.kind] = (m[c.kind] || 0) + c.bytes; return m; }, {});
         const bar = Object.keys(GAME_PART).filter(k => parts[k] > 0).map(k =>
@@ -30933,14 +30952,14 @@ function renderApps() {
         <span class="spacer"></span>
         ${a.safeToClearBytes >= 1048576 ? `<button class="pill app-clear" data-i="${i}" title="Move this app's caches and logs to the Trash — never its data or the app itself">Clear ${formatBytes(a.safeToClearBytes)} safely</button>` : ''}
         <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (a.totalBytes / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>
-        <span class="size-badge num" style="color:${sizeColor(a.totalBytes)}">${formatBytes(a.totalBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(a.totalBytes)}">${formatBytes(a.totalBytes)}</span>
         <span class="chev">${icon('chevronRight', 14)}</span>
       </div>
       <div class="bp-items">` + a.locations.map(loc => `
         <div class="bp-item" role="button" tabindex="0" data-jump="${escapeHtml(loc.path)}" title="Show ${escapeHtml(loc.path)} in the treemap — right-click for actions">
           <span class="cat">${APP_CAT_LABEL[loc.category]}</span>
           <span class="lbl">${escapeHtml(loc.path)}</span>
-          <span class="size-badge num" style="color:${sizeColor(loc.bytes)}">${formatBytes(loc.bytes)}</span>
+          <span class="size-badge num" style="color:${sizeInk(loc.bytes)}">${formatBytes(loc.bytes)}</span>
           ${APP_CART_CATEGORIES.has(loc.category)
             ? `<button class="icon-btn" data-cart-add="${escapeHtml(loc.path)}" aria-label="Add ${escapeHtml(loc.path)} to cleanup cart">${icon('plus', 13)}</button>`
             : `<span class="adv-spacer" title="${escapeHtml(APP_CAT_LABEL[loc.category])} — this is the app or your own data, not a rebuildable cache, so TreeMap does not offer to stage it"></span>`}
@@ -30953,7 +30972,7 @@ function renderApps() {
         <span class="bp-title">Everything else<span class="prof">files not owned by any application</span></span>
         <span class="spacer"></span>
         <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (state.apps.otherBytes / max) * 100).toFixed(1)}" style="${fxBarStyle(3)}"></div></div>
-        <span class="size-badge num" style="color:${sizeColor(state.apps.otherBytes)}">${formatBytes(state.apps.otherBytes)}</span>
+        <span class="size-badge num" style="color:${sizeInk(state.apps.otherBytes)}">${formatBytes(state.apps.otherBytes)}</span>
       </div>
     </div>`;
 
@@ -33005,7 +33024,7 @@ async function loadVideoCandidates() {
             c.durationSeconds ? ` · ${Math.round(c.durationSeconds / 60)} min` : ''}</div>
         </div>
         <span class="vid-ba num">${formatBytes(c.size)} → <b>~${formatBytes(c.estimatedBytes)}</b></span>
-        <span class="size-badge num" style="color:${sizeColor(c.estimatedSaving)}">~${formatBytes(c.estimatedSaving)}</span>
+        <span class="size-badge num" style="color:${sizeInk(c.estimatedSaving)}">~${formatBytes(c.estimatedSaving)}</span>
       </div>`).join('') + `</div>` +
     (unreadable ? `<div class="muted" style="padding:6px 2px;">${escapeHtml(`${formatCount(unreadable)} more large video${unreadable === 1 ? '' : 's'} couldn’t be read, so ${unreadable === 1 ? 'it isn’t' : 'they aren’t'} listed: TreeMap can’t say whether re-encoding ${unreadable === 1 ? 'it' : 'them'} would help.`)}</div>` : '') + `
     <div class="vid-actions">
@@ -33280,7 +33299,7 @@ async function renderPackageOrphans() {
       <span class="muted" style="flex:1;margin-left:8px;">${data.orphanCount
         ? `${formatCount(data.orphanCount)} orphaned — nothing will rebuild ${data.orphanCount === 1 ? 'it' : 'them'}`
         : 'no orphans; shared caches only'}</span>
-      <span class="size-badge num" style="color:${sizeColor(reclaimable)}">${formatBytes(reclaimable)}</span>
+      <span class="size-badge num" style="color:${sizeInk(reclaimable)}">${formatBytes(reclaimable)}</span>
     </div>` + groups.map(g => {
       const head = [
         g.orphanCount ? `${formatCount(g.orphanCount)} orphaned · ${formatBytes(g.orphanBytes)}` : '',
@@ -33361,7 +33380,7 @@ async function renderBrowserProfiles() {
         <div class="bp-item">
           <input type="checkbox" class="bp-ck" data-path="${escapeHtml(it.path)}" data-bytes="${it.bytes}" data-p="${pi}" aria-label="Select ${escapeHtml(it.label)}">
           <span class="lbl">${escapeHtml(it.label)}</span>
-          <span class="size-badge num" style="color:${sizeColor(it.bytes)}">${formatBytes(it.bytes)}</span>
+          <span class="size-badge num" style="color:${sizeInk(it.bytes)}">${formatBytes(it.bytes)}</span>
           <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.label)} to cleanup cart">${icon('plus', 13)}</button>
         </div>`).join('');
       return `<div class="bp-acc" data-acc="${pi}">
@@ -33469,7 +33488,7 @@ function renderSmartGroups(catalog) {
         ${adv && g.adviceCommand ? `<code class="regen-cmd" title="Reclaim with: ${escapeHtml(g.adviceCommand)}">${escapeHtml(g.adviceCommand)}</code><span class="rc-lbl">to reclaim</span>` : ''}
         <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
           title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
-        <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
+        <span class="size-badge num" style="color:${sizeInk(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
       </div>
       <div class="smart-why" id="smartWhy${gi}" hidden>
         <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
@@ -33844,7 +33863,7 @@ async function runCleanFind(fetcher) {
           <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
         </div>
         <span class="dt num">${formatDate(f.modifiedAt)}</span>
-        <span class="size-badge num" style="color:${sizeColor(f.size)}">${formatBytes(f.size)}</span>
+        <span class="size-badge num" style="color:${sizeInk(f.size)}">${formatBytes(f.size)}</span>
         <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
       </div>`).join('') + '</div>';
   refreshCartButtons(); // v4 §4.2

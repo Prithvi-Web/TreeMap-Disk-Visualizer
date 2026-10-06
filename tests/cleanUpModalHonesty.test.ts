@@ -581,6 +581,7 @@ async function videoPane(data: Record<string, unknown>): Promise<string> {
     formatBytes: (n: number) => `${n}B`,
     formatCount: (n: number) => Number(n).toLocaleString('en-US'),
     sizeColor: () => '',
+    sizeInk: () => '',
     videoCandidates: [],
     confirmEncode: () => {},
   });
