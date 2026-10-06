@@ -162,7 +162,7 @@ function drawTrendChart() {
     inside the folder (Track U, U-24): the step is a drive, not a change. The
     key is the server's (`boundaryKeyOf`): the drives a scan left out, or the
     ones a crossing scan went into (the SEC-1 review, L2). */
-function trendNetPoints(snaps) {
+function trendNetPoints(snaps, sameCounting = null) {
   const key = (s) => {
     const b = s.boundary;
     if (!b) return '';
@@ -172,9 +172,16 @@ function trendNetPoints(snaps) {
   const out = [];
   for (let i = 1; i < snaps.length; i++) {
     if (key(snaps[i]) !== key(snaps[i - 1])) continue;
+    if (sameCounting && !sameCounting(snaps[i - 1], snaps[i])) continue;
     out.push({ t: snaps[i].takenAt, v: snaps[i].totalSize - snaps[i - 1].totalSize });
   }
   return out;
+}
+
+/** False across a change of "Don't scan" rules (B24): that step is what was
+    scanned, not a change on disk — like a drive leaving the count above. */
+function trendSameCounting(a, b) {
+  return coverageChange(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id)) !== 'rules';
 }
 
 /* The compact net-change strip above the deltas: sign-split at zero, accent
@@ -184,7 +191,7 @@ let trendNetHandle = null;
 function drawTrendNet() {
   const snaps = state.trends.snapshots;
   const wrap = $('trendNet');
-  const points = trendNetPoints(snaps);
+  const points = trendNetPoints(snaps, trendSameCounting);
   if (snaps.length < 3 || points.length < 2) {
     wrap.hidden = true;
     if (trendNetHandle) { trendNetHandle.destroy(); trendNetHandle = null; }
@@ -207,13 +214,17 @@ async function renderTrendDeltas() {
   try {
     const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
     const up = diff.totalDelta >= 0;
+    // A change of "Don't scan" rules between the two is what was scanned (B24).
+    const rules = coverageRules(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id));
     const head = `<div class="muted" style="margin-bottom:10px;" >${formatDate(a.takenAt)} → ${formatDate(b.takenAt)} — total ${up ? 'grew' : 'shrank'} by
-      <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b></div>`;
+      <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b>` +
+      (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
+      `</div>`;
     if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
     const maxD = Math.abs(diff.entries[0].delta) || 1;
     // Keyed by root path: the same folder's next comparison rolls whatever
     // digits survived in place; a different root snaps.
-    FxNum.rollHtml(host, head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD)).join(''), state.trends.path);
+    FxNum.rollHtml(host, head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD, { rules })).join(''), state.trends.path);
     fxBarsIn(host); // the diverging bars ride the kit's width-in
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
@@ -224,12 +235,15 @@ async function renderTrendDeltas() {
 function deltaRow(en, maxD, opts = {}) {
   const up = en.delta > 0;
   const removed = en.sizeB === null;
-  const label = en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank';
+  // A folder a changed "Don't scan" rule left out was never deleted (B24): it
+  // is called that, and offered no snapshot hunt.
+  const ruled = opts.rules ? coverageExplains(en, opts.rules) : null;
+  const label = ruled || (en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank');
   const ext = en.type === 'file' ? (en.name.split('.').pop() || '').toLowerCase() : undefined;
   // B4: only a *removed* row has anything to recover, so only it gets the
   // action. Offering "check snapshots" beside a file that is still on disk
   // would be noise on every other row.
-  const recover = removed && opts.offerSnapshots
+  const recover = removed && opts.offerSnapshots && !ruled
     ? `<button class="pill" data-snap-check="${escapeHtml(en.path)}" title="Look for this in the system's own filesystem snapshots">Check snapshots</button>`
     : '';
   return `

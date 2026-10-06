@@ -213,8 +213,9 @@ function timeAgo(ms) {
    before this one) has no record — and then the banner states the change in
    the totals without naming a cause. */
 const SCAN_COVERAGE_STORE = 'tm-scan-coverage';
-/** Snapshots remembered per folder: the two a banner compares, and a reopened scan's. */
-const SCAN_COVERAGE_PER_ROOT = 4;
+/** Records kept per folder: the two snapshots a banner compares, a reopened
+    scan's, and each one's live scan too ("scan:<id>", for Compare — B24). */
+const SCAN_COVERAGE_PER_ROOT = 8;
 const SCAN_COVERAGE_ROOTS = 60;
 
 /**
@@ -272,6 +273,63 @@ function coverageChange(before, after) {
 }
 
 /**
+ * One "Don't scan" pattern as the scanner reads it (src/utils/glob.ts,
+ * compileIgnore — tests/historyRuleChange.test.ts holds the two to the same
+ * answers): a bare name matches an entry's name anywhere; a pattern with a
+ * separator matches that path and everything beneath it. `*` stays inside a
+ * name, `**` crosses folders, `?` is one character; `~` is the home folder;
+ * case counts only on Linux.
+ */
+function ignorePatternTest(pattern) {
+  const sys = state.system || {};
+  const ci = sys.platform !== 'linux';
+  let p = String(pattern).trim();
+  if (sys.homeDir && (p === '~' || p.startsWith('~/') || p.startsWith('~\\'))) p = sys.homeDir + p.slice(1);
+  const toRe = (glob) => {
+    let re = '';
+    for (let i = 0; i < glob.length; i++) {
+      const ch = glob[i];
+      if (ch === '*') {
+        if (glob[i + 1] === '*') { re += '.*'; i++; } else re += '[^/\\\\]*';
+      } else if (ch === '?') re += '[^/\\\\]';
+      else if (ch === '/' || ch === '\\') re += '[/\\\\]';
+      else if ('.+^$()[]{}|'.includes(ch)) re += '\\' + ch;
+      else re += ch;
+    }
+    return new RegExp('^' + re + '$', ci ? 'i' : '');
+  };
+  if (/[/\\]/.test(p)) {
+    const trimmed = p.replace(/[/\\]+$/, '');
+    const self = toRe(trimmed), beneath = toRe(trimmed + '/**');
+    return (fullPath) => self.test(fullPath) || beneath.test(fullPath);
+  }
+  const nameRe = toRe(p);
+  return (_fullPath, name) => nameRe.test(name);
+}
+
+/**
+ * What a change of "Don't scan" rules between two scans can explain (B24):
+ * the patterns only the second ran with left things out of it, and the ones
+ * only the first ran with let things back in once dropped. Null when the two
+ * counted the same way, or either has no record — then nothing is explained,
+ * and a missing folder is just missing.
+ */
+function coverageRules(before, after) {
+  if (coverageChange(before, after) !== 'rules') return null;
+  const only = (xs, ys) => xs.filter((x) => !ys.includes(x)).map(ignorePatternTest);
+  return { leftOut: only(after.patterns, before.patterns), letIn: only(before.patterns, after.patterns) };
+}
+
+/** A compare entry a rule change explains: 'no longer scanned', 'scanned again', or null. */
+function coverageExplains(entry, rules) {
+  if (!rules) return null;
+  const hit = (tests) => tests.some((t) => t(entry.path, entry.name));
+  if (entry.sizeB === null && hit(rules.leftOut)) return 'no longer scanned';
+  if (entry.sizeA === null && hit(rules.letIn)) return 'scanned again';
+  return null;
+}
+
+/**
  * After a completed scan, compare the two most recent snapshots of this root
  * and summarize what changed. The scan's own snapshot is written async just
  * after completion, so poll briefly until it lands — diffing a stale pair
@@ -292,6 +350,7 @@ async function loadWhatsNew() {
   // would make the next scan with it compare as the same, and say "freed".
   const reopened = !!(state.lastScan && state.lastScan.reopened);
   const engine = state.scanStats && !reopened ? state.scanStats.engine : null;
+  const scanId = state.scanId;
   try {
     let snaps = null;
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -316,6 +375,9 @@ async function loadWhatsNew() {
       after = scanCoverageOf(settings, engine);
       if (after) rememberCoverage(rootPath, curr.id, after);
     }
+    // And under the live scan's own id: Compare's "Scan (full diff)" pairs
+    // are scans, not snapshots, and read their rules from here (B24).
+    if (after && scanId) rememberCoverage(rootPath, 'scan:' + scanId, after);
     if (snaps.length < 2) return;
     const prev = snaps[snaps.length - 2];
     const change = coverageChange(coverageFor(rootPath, prev.id), after);

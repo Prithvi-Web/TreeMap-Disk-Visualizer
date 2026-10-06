@@ -48,6 +48,11 @@ async function loadCompareOptions() {
   }
 }
 
+/** The "Don't scan" rules a Compare pick ran with: a live scan's under its scan id, a snapshot's under its own (B24). */
+function cmpCoverage(o) {
+  return coverageFor(o.rootPath, o.kind === 'scan' ? 'scan:' + o.id : o.id);
+}
+
 function parseCmp(value) {
   const i = value.indexOf(':');
   if (i < 0) return null;
@@ -71,16 +76,17 @@ $('cmpRunBtn').addEventListener('click', async () => {
   // dropped (the card is innerHTML-transient) before every rewrite that
   // settles it: render, error, and the history view's unmount.
   fxHuntBeamSync('cmpBody', true);
+  const rules = coverageRules(cmpCoverage(a), cmpCoverage(b));
   try {
     if (a.kind === 'scan') {
       const diff = await api(`/api/compare?scanIdA=${a.id}&scanIdB=${b.id}`);
       fxHuntBeamSync('cmpBody', false);
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, deep: true, whenA: a.when, whenB: b.when });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, deep: true, whenA: a.when, whenB: b.when, rules });
     } else {
       const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
       fxHuntBeamSync('cmpBody', false);
       // §7.4 — a same-root snapshot pair also gets the split-slider maps.
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rules });
     }
   } catch (e) {
     fxHuntBeamSync('cmpBody', false);
@@ -194,7 +200,11 @@ function renderCompare(r) {
   cmpSplit = null; // a fresh card owns the canvas; a stale draw must find nothing
   cmpCountsDrop();
   const counts = { added: 0, removed: 0, grew: 0, shrank: 0 };
+  // Left out, or let back in, by a changed "Don't scan" rule: neither added
+  // nor removed (B24).
+  let ruled = 0;
   for (const en of r.entries) {
+    if (coverageExplains(en, r.rules || null)) { ruled++; continue; }
     counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
   }
   const up = r.totalDelta >= 0;
@@ -218,10 +228,12 @@ function renderCompare(r) {
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${formatWhen(r.whenA)} → ${formatWhen(r.whenB)}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">Total ${up ? 'grew' : 'shrank'} by
         <b class="cmp-total" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>
-        &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
+        &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
+        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
+      ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length
-        ? r.entries.slice(0, 200).map(en => deltaRow(en, maxD, { offerSnapshots: true })).join('')
+        ? r.entries.slice(0, 200).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
         : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
     </div>`;
   // Animated counts: the from-zero roll the quick stats use, on the totals

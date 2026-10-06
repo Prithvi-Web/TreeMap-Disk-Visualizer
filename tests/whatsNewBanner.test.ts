@@ -177,3 +177,23 @@ test('the record is per snapshot: reopening the same scan compares the same way,
   await scanFinished(b2, { engine: 'cloud', settings: NO_RULES, snaps: [a] });
   assert.equal(b2.store.size, 0, 'nor for a cloud listing, which no "Don\'t scan" rule or disk engine shaped');
 });
+
+test('a finished scan records what it counted under its own id too, so Compare can read two live scans (B24)', async () => {
+  const b = browser();
+  const a = snap('a', T0, 10_000, 100);
+  await scanFinished(b, { engine: 'turbo-walker', settings: ONE_RULE, snaps: [a] });
+  const book = JSON.parse(b.store.get('tm-scan-coverage') ?? '{}') as Record<string, Array<{ snap: string; patterns: string[] }>>;
+  assert.deepEqual(book['/c']?.map((r) => r.snap).sort(), ['a', 'scan:scan-a'], 'the snapshot and the live scan it came from');
+  assert.deepEqual(book['/c']?.find((r) => r.snap === 'scan:scan-a')?.patterns, ['big-folder']);
+});
+
+test('the record keeps three scans\u2019 snapshots and live scans, so Compare can pair the last few (B24)', async () => {
+  const b = browser();
+  const snaps: Snap[] = [];
+  for (const id of ['a', 'b', 'c']) {
+    snaps.push(snap(id, T0 + snaps.length * 60_000, 10_000, 100));
+    await scanFinished(b, { engine: 'turbo-walker', settings: ONE_RULE, snaps: [...snaps], diff: { totalDelta: 0, entries: [] } });
+  }
+  const book = JSON.parse(b.store.get('tm-scan-coverage') ?? '{}') as Record<string, Array<{ snap: string }>>;
+  assert.deepEqual(book['/c']?.map((r) => r.snap).sort(), ['a', 'b', 'c', 'scan:scan-a', 'scan:scan-b', 'scan:scan-c']);
+});

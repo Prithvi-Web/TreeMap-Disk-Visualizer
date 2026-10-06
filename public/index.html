@@ -8004,8 +8004,9 @@ function timeAgo(ms) {
    before this one) has no record — and then the banner states the change in
    the totals without naming a cause. */
 const SCAN_COVERAGE_STORE = 'tm-scan-coverage';
-/** Snapshots remembered per folder: the two a banner compares, and a reopened scan's. */
-const SCAN_COVERAGE_PER_ROOT = 4;
+/** Records kept per folder: the two snapshots a banner compares, a reopened
+    scan's, and each one's live scan too ("scan:<id>", for Compare — B24). */
+const SCAN_COVERAGE_PER_ROOT = 8;
 const SCAN_COVERAGE_ROOTS = 60;
 
 /**
@@ -8063,6 +8064,63 @@ function coverageChange(before, after) {
 }
 
 /**
+ * One "Don't scan" pattern as the scanner reads it (src/utils/glob.ts,
+ * compileIgnore — tests/historyRuleChange.test.ts holds the two to the same
+ * answers): a bare name matches an entry's name anywhere; a pattern with a
+ * separator matches that path and everything beneath it. `*` stays inside a
+ * name, `**` crosses folders, `?` is one character; `~` is the home folder;
+ * case counts only on Linux.
+ */
+function ignorePatternTest(pattern) {
+  const sys = state.system || {};
+  const ci = sys.platform !== 'linux';
+  let p = String(pattern).trim();
+  if (sys.homeDir && (p === '~' || p.startsWith('~/') || p.startsWith('~\\'))) p = sys.homeDir + p.slice(1);
+  const toRe = (glob) => {
+    let re = '';
+    for (let i = 0; i < glob.length; i++) {
+      const ch = glob[i];
+      if (ch === '*') {
+        if (glob[i + 1] === '*') { re += '.*'; i++; } else re += '[^/\\\\]*';
+      } else if (ch === '?') re += '[^/\\\\]';
+      else if (ch === '/' || ch === '\\') re += '[/\\\\]';
+      else if ('.+^$()[]{}|'.includes(ch)) re += '\\' + ch;
+      else re += ch;
+    }
+    return new RegExp('^' + re + '$', ci ? 'i' : '');
+  };
+  if (/[/\\]/.test(p)) {
+    const trimmed = p.replace(/[/\\]+$/, '');
+    const self = toRe(trimmed), beneath = toRe(trimmed + '/**');
+    return (fullPath) => self.test(fullPath) || beneath.test(fullPath);
+  }
+  const nameRe = toRe(p);
+  return (_fullPath, name) => nameRe.test(name);
+}
+
+/**
+ * What a change of "Don't scan" rules between two scans can explain (B24):
+ * the patterns only the second ran with left things out of it, and the ones
+ * only the first ran with let things back in once dropped. Null when the two
+ * counted the same way, or either has no record — then nothing is explained,
+ * and a missing folder is just missing.
+ */
+function coverageRules(before, after) {
+  if (coverageChange(before, after) !== 'rules') return null;
+  const only = (xs, ys) => xs.filter((x) => !ys.includes(x)).map(ignorePatternTest);
+  return { leftOut: only(after.patterns, before.patterns), letIn: only(before.patterns, after.patterns) };
+}
+
+/** A compare entry a rule change explains: 'no longer scanned', 'scanned again', or null. */
+function coverageExplains(entry, rules) {
+  if (!rules) return null;
+  const hit = (tests) => tests.some((t) => t(entry.path, entry.name));
+  if (entry.sizeB === null && hit(rules.leftOut)) return 'no longer scanned';
+  if (entry.sizeA === null && hit(rules.letIn)) return 'scanned again';
+  return null;
+}
+
+/**
  * After a completed scan, compare the two most recent snapshots of this root
  * and summarize what changed. The scan's own snapshot is written async just
  * after completion, so poll briefly until it lands — diffing a stale pair
@@ -8083,6 +8141,7 @@ async function loadWhatsNew() {
   // would make the next scan with it compare as the same, and say "freed".
   const reopened = !!(state.lastScan && state.lastScan.reopened);
   const engine = state.scanStats && !reopened ? state.scanStats.engine : null;
+  const scanId = state.scanId;
   try {
     let snaps = null;
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -8107,6 +8166,9 @@ async function loadWhatsNew() {
       after = scanCoverageOf(settings, engine);
       if (after) rememberCoverage(rootPath, curr.id, after);
     }
+    // And under the live scan's own id: Compare's "Scan (full diff)" pairs
+    // are scans, not snapshots, and read their rules from here (B24).
+    if (after && scanId) rememberCoverage(rootPath, 'scan:' + scanId, after);
     if (snaps.length < 2) return;
     const prev = snaps[snaps.length - 2];
     const change = coverageChange(coverageFor(rootPath, prev.id), after);
@@ -31492,7 +31554,7 @@ function drawTrendChart() {
     inside the folder (Track U, U-24): the step is a drive, not a change. The
     key is the server's (`boundaryKeyOf`): the drives a scan left out, or the
     ones a crossing scan went into (the SEC-1 review, L2). */
-function trendNetPoints(snaps) {
+function trendNetPoints(snaps, sameCounting = null) {
   const key = (s) => {
     const b = s.boundary;
     if (!b) return '';
@@ -31502,9 +31564,16 @@ function trendNetPoints(snaps) {
   const out = [];
   for (let i = 1; i < snaps.length; i++) {
     if (key(snaps[i]) !== key(snaps[i - 1])) continue;
+    if (sameCounting && !sameCounting(snaps[i - 1], snaps[i])) continue;
     out.push({ t: snaps[i].takenAt, v: snaps[i].totalSize - snaps[i - 1].totalSize });
   }
   return out;
+}
+
+/** False across a change of "Don't scan" rules (B24): that step is what was
+    scanned, not a change on disk — like a drive leaving the count above. */
+function trendSameCounting(a, b) {
+  return coverageChange(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id)) !== 'rules';
 }
 
 /* The compact net-change strip above the deltas: sign-split at zero, accent
@@ -31514,7 +31583,7 @@ let trendNetHandle = null;
 function drawTrendNet() {
   const snaps = state.trends.snapshots;
   const wrap = $('trendNet');
-  const points = trendNetPoints(snaps);
+  const points = trendNetPoints(snaps, trendSameCounting);
   if (snaps.length < 3 || points.length < 2) {
     wrap.hidden = true;
     if (trendNetHandle) { trendNetHandle.destroy(); trendNetHandle = null; }
@@ -31537,13 +31606,17 @@ async function renderTrendDeltas() {
   try {
     const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
     const up = diff.totalDelta >= 0;
+    // A change of "Don't scan" rules between the two is what was scanned (B24).
+    const rules = coverageRules(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id));
     const head = `<div class="muted" style="margin-bottom:10px;" >${formatDate(a.takenAt)} → ${formatDate(b.takenAt)} — total ${up ? 'grew' : 'shrank'} by
-      <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b></div>`;
+      <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b>` +
+      (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
+      `</div>`;
     if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
     const maxD = Math.abs(diff.entries[0].delta) || 1;
     // Keyed by root path: the same folder's next comparison rolls whatever
     // digits survived in place; a different root snaps.
-    FxNum.rollHtml(host, head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD)).join(''), state.trends.path);
+    FxNum.rollHtml(host, head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD, { rules })).join(''), state.trends.path);
     fxBarsIn(host); // the diverging bars ride the kit's width-in
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
@@ -31554,12 +31627,15 @@ async function renderTrendDeltas() {
 function deltaRow(en, maxD, opts = {}) {
   const up = en.delta > 0;
   const removed = en.sizeB === null;
-  const label = en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank';
+  // A folder a changed "Don't scan" rule left out was never deleted (B24): it
+  // is called that, and offered no snapshot hunt.
+  const ruled = opts.rules ? coverageExplains(en, opts.rules) : null;
+  const label = ruled || (en.sizeA === null ? 'new' : removed ? 'removed' : up ? 'grew' : 'shrank');
   const ext = en.type === 'file' ? (en.name.split('.').pop() || '').toLowerCase() : undefined;
   // B4: only a *removed* row has anything to recover, so only it gets the
   // action. Offering "check snapshots" beside a file that is still on disk
   // would be noise on every other row.
-  const recover = removed && opts.offerSnapshots
+  const recover = removed && opts.offerSnapshots && !ruled
     ? `<button class="pill" data-snap-check="${escapeHtml(en.path)}" title="Look for this in the system's own filesystem snapshots">Check snapshots</button>`
     : '';
   return `
@@ -31769,6 +31845,11 @@ async function loadCompareOptions() {
   }
 }
 
+/** The "Don't scan" rules a Compare pick ran with: a live scan's under its scan id, a snapshot's under its own (B24). */
+function cmpCoverage(o) {
+  return coverageFor(o.rootPath, o.kind === 'scan' ? 'scan:' + o.id : o.id);
+}
+
 function parseCmp(value) {
   const i = value.indexOf(':');
   if (i < 0) return null;
@@ -31792,16 +31873,17 @@ $('cmpRunBtn').addEventListener('click', async () => {
   // dropped (the card is innerHTML-transient) before every rewrite that
   // settles it: render, error, and the history view's unmount.
   fxHuntBeamSync('cmpBody', true);
+  const rules = coverageRules(cmpCoverage(a), cmpCoverage(b));
   try {
     if (a.kind === 'scan') {
       const diff = await api(`/api/compare?scanIdA=${a.id}&scanIdB=${b.id}`);
       fxHuntBeamSync('cmpBody', false);
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, deep: true, whenA: a.when, whenB: b.when });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, deep: true, whenA: a.when, whenB: b.when, rules });
     } else {
       const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
       fxHuntBeamSync('cmpBody', false);
       // §7.4 — a same-root snapshot pair also gets the split-slider maps.
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath });
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rules });
     }
   } catch (e) {
     fxHuntBeamSync('cmpBody', false);
@@ -31915,7 +31997,11 @@ function renderCompare(r) {
   cmpSplit = null; // a fresh card owns the canvas; a stale draw must find nothing
   cmpCountsDrop();
   const counts = { added: 0, removed: 0, grew: 0, shrank: 0 };
+  // Left out, or let back in, by a changed "Don't scan" rule: neither added
+  // nor removed (B24).
+  let ruled = 0;
   for (const en of r.entries) {
+    if (coverageExplains(en, r.rules || null)) { ruled++; continue; }
     counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
   }
   const up = r.totalDelta >= 0;
@@ -31939,10 +32025,12 @@ function renderCompare(r) {
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${formatWhen(r.whenA)} → ${formatWhen(r.whenB)}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">Total ${up ? 'grew' : 'shrank'} by
         <b class="cmp-total" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>
-        &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
+        &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
+        ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
+      ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
       ${r.entries.length ? '<div id="cmpCounts"></div>' : ''}
       ${r.entries.length
-        ? r.entries.slice(0, 200).map(en => deltaRow(en, maxD, { offerSnapshots: true })).join('')
+        ? r.entries.slice(0, 200).map(en => deltaRow(en, maxD, { offerSnapshots: true, rules: r.rules || null })).join('')
         : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
     </div>`;
   // Animated counts: the from-zero roll the quick stats use, on the totals
