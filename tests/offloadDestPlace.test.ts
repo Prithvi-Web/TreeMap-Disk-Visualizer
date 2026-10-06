@@ -35,6 +35,14 @@ fs.mkdirSync(path.join(F, 'sub'), { recursive: true });
 fs.writeFileSync(path.join(F, 'a.txt'), 'the original');
 fs.writeFileSync(path.join(F, 'sub', 'b.txt'), 'inside');
 if (!WINDOWS) fs.symlinkSync(path.join(F, 'sub'), path.join(R, 'lnk'));
+/** Outside the scan: a file a link inside it names. */
+const OUTSIDE = fs.realpathSync(fileTempDir('treemap-offloadDestPlace-outside-'));
+fs.writeFileSync(path.join(OUTSIDE, 'secret.txt'), 'outside every scan');
+/** G/a.txt and G/out -> OUTSIDE/secret.txt: a folder that holds a link out of the scan. */
+const G = path.join(R, 'G');
+fs.mkdirSync(G);
+fs.writeFileSync(path.join(G, 'a.txt'), 'a');
+if (!WINDOWS) fs.symlinkSync(path.join(OUTSIDE, 'secret.txt'), path.join(G, 'out'));
 const CASE_FOLDS = fs.existsSync(path.join(R, 'f', 'SUB'));
 /** A destination outside the scan. */
 const D = fs.realpathSync(fileTempDir('treemap-offloadDestPlace-dest-'));
@@ -104,4 +112,21 @@ test('a copy the plan makes is refused when its own name reaches the folder bein
   await waitFor(() => rescan.status !== 'running', `the rescan of ${R}`);
   scan = rescan;
   assert.equal(await verdict([source], dest), 'DEST_INSIDE_SOURCE');
+});
+
+test('an offload never copies through a link: a link in the selection, or one selected, is refused with a sentence before anything is copied — opened, it was copied as whatever it named, from outside the scan too, and sized as the link (the final review, F1.10)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, async () => {
+  const answers: Record<string, string> = {
+    'G, which holds a link out of the scan': await verdict([G], D),
+    'the link G/out itself': await verdict([path.join(G, 'out')], D),
+    'lnk, a link to a folder in the scan': await verdict([path.join(R, 'lnk')], D),
+    'F/sub, which holds none': await verdict([path.join(F, 'sub')], D),
+  };
+  assert.deepEqual(answers, {
+    'G, which holds a link out of the scan': 'LINK_IN_SELECTION',
+    'the link G/out itself': 'LINK_IN_SELECTION',
+    'lnk, a link to a folder in the scan': 'LINK_IN_SELECTION',
+    'F/sub, which holds none': 'planned',
+  });
+  assert.deepEqual(fs.readdirSync(D), [], 'nothing was written at the destination');
+  await assert.rejects(prepareOffload(scan, [G], D), (err: unknown) => err instanceof AppError && err.message.includes(path.join(G, 'out')), 'the sentence names the link');
 });

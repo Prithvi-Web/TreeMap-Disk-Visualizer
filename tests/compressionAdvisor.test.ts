@@ -192,6 +192,22 @@ test('a good encode replaces the original, which goes to the Trash, keeping its 
   assert.ok(fs.existsSync(inTrash) && fs.readFileSync(inTrash).equals(Buffer.alloc(1000, 3)), 'and the original is in the Trash, byte for byte');
 });
 
+test('a link is kept as it is, never encoded: an encode reads the file it names, from wherever that is, and its result would replace the link (the final review, F1.10)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  const dir = tmp();
+  const named = original(tmp(), 1000); // the file the link names, in another folder
+  const link = path.join(dir, 'link.mp4');
+  fs.symlinkSync(named, link);
+  let encodes = 0;
+  setMediaTools({ ...fakeTools(), async encode(_input, output) { encodes += 1; fs.writeFileSync(output, Buffer.alloc(400)); } });
+
+  const outcome = await encodeOne(link, 'hevc_videotoolbox', 0, () => undefined);
+  assert.deepEqual(
+    { ok: outcome.ok, says: /is a link/.test(outcome.error ?? ''), encodes, 'still a link': fs.lstatSync(link).isSymbolicLink(), 'what it names': fs.statSync(named).size },
+    { ok: false, says: true, encodes: 0, 'still a link': true, 'what it names': 1000 },
+  );
+  assert.deepEqual(fs.readdirSync(dir), ['link.mp4'], 'nothing was made beside it');
+});
+
 test('a failed encode leaves the original exactly where it was', async () => {
   const dir = tmp();
   const file = original(dir, 1000);

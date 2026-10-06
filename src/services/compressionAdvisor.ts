@@ -390,6 +390,15 @@ export async function encodeOne(
   onSpawn?: (child: ChildProcess) => void,
 ): Promise<EncodeOutcome> {
   const media = mediaTools();
+  // A link is kept as it is: an encode reads the file it names, from wherever that is, and its result
+  // would be renamed into the link's place (the final review, F1.10). The scan lists a link as itself.
+  const own = await fs.promises.lstat(file);
+  if (own.isSymbolicLink()) {
+    return {
+      path: file, ok: false, originalBytes: own.size, newBytes: 0, savedBytes: 0,
+      error: `Kept it — ${path.basename(file)} is a link, and re-encoding it would read the file it names, from wherever that is, and put the result in the link's place.`,
+    };
+  }
   const original = await fs.promises.stat(file);
   const originalBytes = original.size;
   const base: EncodeOutcome = { path: file, ok: false, originalBytes, newBytes: 0, savedBytes: 0 };

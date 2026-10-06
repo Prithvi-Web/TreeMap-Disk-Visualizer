@@ -543,6 +543,17 @@ function namesWithin(outer: string[], inner: string[]): boolean {
   return outer.length <= inner.length && outer.every((name, i) => name === inner[i]);
 }
 
+/** The first link a selected node is or holds (archive contents aside), as the scan spells it; null when none. */
+function firstLinkIn(node: FileNode): string | null {
+  if (node.isSymlink === true) return node.path;
+  for (const child of node.children ?? []) {
+    if (child.virtual) continue;
+    const link = firstLinkIn(child);
+    if (link !== null) return link;
+  }
+  return null;
+}
+
 function destInsideSource(): AppError {
   return new AppError(400, 'DEST_INSIDE_SOURCE', 'The destination is inside a folder being offloaded');
 }
@@ -574,6 +585,20 @@ export async function prepareOffload(
     if (id === -1) throw new AppError(404, 'PATH_NOT_FOUND', `"${p}" is not in this scan`);
     if (store.flag(id, Flag.Virtual)) throw new AppError(403, 'VIRTUAL_PATH', 'Entries inside an archive can’t be offloaded — offload the archive itself');
     nodes.push(store.prune(id, { maxNodes: Number.MAX_SAFE_INTEGER }).root);
+  }
+  // A link is never copied through: opened, it was copied as whatever it names — from outside every
+  // scanned root too, sized as the link's own few bytes for the free-space check and the byte cap — and
+  // a link to a folder failed the whole job (the final review, F1.10). The scan lists a link as itself.
+  for (const node of nodes) {
+    const link = firstLinkIn(node);
+    if (link !== null) {
+      throw new AppError(
+        400,
+        'LINK_IN_SELECTION',
+        `"${link}" is a link. An offload copies each file, verifies the copy and then trashes the original, and a link would be ` +
+          'copied as whatever it names, from wherever that is. Leave the link out of the selection, or offload what it names instead.',
+      );
+    }
   }
   // A destination inside a selected folder (or vice versa) would eat itself: the copy is verified,
   // then the selection is trashed with the copy in it. Judged where each really is (`placeNamesOf`),

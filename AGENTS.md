@@ -156,7 +156,8 @@ OpenAPI 3 spec).
    - `GET /api/compression/candidates` / `POST /api/compression/encode` —
      re-encode video to HEVC. **Lossy, and the original is trashed once the new
      file verifies.** Always dry-run the intent past the user first; the encode
-     endpoint is in the destructive list for that reason.
+     endpoint is in the destructive list for that reason. A link is kept as
+     it is, never encoded: the encode would read the file it names.
    - `GET /api/missing-gigabytes?scanId=` — **one accounting statement for the
      volume the scan lives on**, and the only endpoint here whose output is an
      arithmetic claim. `{ volume, lines[], unaccountedBytes, coversWholeVolume,
@@ -464,7 +465,12 @@ OpenAPI 3 spec).
      not empty.
    - `POST /api/offload` with `{ scanId, paths, dest }` moves data to another
      drive the safe way: copy → verify SHA-256 → only then trash originals;
-     any failure rolls back and leaves local data untouched. The record
+     any failure rolls back and leaves local data untouched. A selection that
+     is or holds a link is refused before anything is copied
+     (`400 LINK_IN_SELECTION`), since a copy would follow it; a destination
+     inside the selection, or a selection inside the destination, is refused
+     by where each really is (`DEST_INSIDE_SOURCE`, `SOURCE_INSIDE_DEST`),
+     however either is spelled. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
      drive's own copy of it is written after, one write of each drive's
      record at a time, and a drive that does not answer for 60 seconds is

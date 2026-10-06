@@ -2075,7 +2075,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Dry-run manifest (dryRun: true only)', ref('OffloadDryRunManifest')),
       '202': jsonResponse('Job started (progress via SSE)', obj({ jobId: str() }, ['jobId'])),
-      '400': errorResponse('Bad destination / too many files / not enough space (DEST_FULL), or DEST_SPACE_UNKNOWN when the destination\u2019s free space could not be read at all — the drive may be disconnected or busy, and no offload was started'),
+      '400': errorResponse('Bad destination / too many files / not enough space (DEST_FULL), or DEST_SPACE_UNKNOWN when the destination\u2019s free space could not be read at all — the drive may be disconnected or busy, and no offload was started. DEST_INSIDE_SOURCE / SOURCE_INSIDE_DEST when the destination lies in the selection or the selection in the destination, judged where each really is; LINK_IN_SELECTION when a selected path is or holds a link, which a copy would follow'),
       '403': errorResponse('Sources outside every scanned root, or refused by agent-policy.json'),
     },
   },
