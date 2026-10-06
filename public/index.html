@@ -32037,8 +32037,17 @@ async function browseTo(path, typed = false) {
     if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
     rows.push(...browseOrder(data.dirs).map(d =>
       `<button class="browse-item" data-p="${escapeHtml(d.path)}" aria-label="Open ${escapeHtml(d.name)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
+    // The rows are replaced. Focus on one of them — the row just opened, or
+    // ".." — would fall to the page with it, and the next Tab start over at
+    // the top of the sheet: it goes to the new list's first row (the path
+    // field when the list has none). And the list is its own scroller: the new
+    // listing opens at its top, where the cut-list note and ".." are, not at
+    // the old listing's offset (POL item 2 review, F2.10).
+    const focusInList = list.contains(document.activeElement);
     list.innerHTML = rows.join('') || '<div class="muted" style="padding:14px;">No subfolders.</div>';
+    list.scrollTop = 0;
     list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
+    if (focusInList) (list.querySelector('.browse-item') || $('browseCurrent')).focus();
     return true;
   } catch (e) {
     // An overtaken listing is not looked up further: nothing would show it.

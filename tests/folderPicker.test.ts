@@ -52,23 +52,29 @@ function gate() {
 
 type FakeEl = {
   id: string; value: string; textContent: string; innerHTML: string; disabled: boolean;
-  title: string; scrollLeft: number; readonly scrollWidth: number;
+  title: string; scrollLeft: number; scrollTop: number; readonly scrollWidth: number;
   classList: { add(c: string): void; remove(c: string): void };
   listeners: Record<string, (e?: unknown) => unknown>;
   addEventListener(type: string, fn: (e?: unknown) => unknown): void;
   querySelectorAll(sel: string): FakeEl[];
+  querySelector(sel: string): { focus(): void } | null;
+  contains(other: unknown): boolean;
+  focus(): void;
 };
 
 function fakeEl(id: string): FakeEl {
   const el: FakeEl = {
     id, value: '', textContent: '', innerHTML: '', disabled: false,
-    title: '', scrollLeft: 0,
+    title: '', scrollLeft: 0, scrollTop: 0,
     // A laid-out text field's content is as wide as its text (7 px a character here).
     get scrollWidth() { return el.value.length * 7; },
     classList: { add() {}, remove() {} },
     listeners: {},
     addEventListener(type, fn) { el.listeners[type] = fn; },
     querySelectorAll: () => [],
+    querySelector: () => null,
+    contains: () => false,
+    focus() {},
   };
   return el;
 }
@@ -81,7 +87,7 @@ function offerRecorder(offers: Offer[]) {
   };
 }
 
-function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
+function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: { activeElement: unknown } = { activeElement: null }) {
   const els = new Map<string, FakeEl>();
   const $ = (id: string) => { if (!els.has(id)) els.set(id, fakeEl(id)); return els.get(id)!; };
   const asked: string[] = [];
@@ -104,14 +110,14 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>) {
   const closeModal = braced('function closeModal(');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
-    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'formatCount',
+    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'formatCount', 'document',
     `'use strict';
      const state = { system: { homeDir: '/home/u', commonDirs: [] } };
      function icon() { return ''; }
      ${INDEX.slice(start, end)}
      ${closeModal}
      return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal') };`,
-  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }, (n: number) => n.toLocaleString('en-US')) as {
+  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }, (n: number) => n.toLocaleString('en-US'), doc) as {
     openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
@@ -160,6 +166,46 @@ test('a listing the server cut says so above its folders, with how many there ar
     whole: false, // every folder was sent
     older: false, // an answer with no total says nothing
   });
+});
+
+test('a new listing opens at its top, with the cut-list note and ".." in view, and focus on the row that opened it goes to the new list’s first row — or the path field when the list has none — rather than falling to the page (POL item 2 review, F2.10)', async () => {
+  // The list is its own scroller. Its rows were replaced and its offset kept, so a folder opened from far
+  // down the previous list opened scrolled down too — the "Showing the first 500" note and ".." out of
+  // view — and the clicked row, gone, left focus on the page, so the next Tab started at the sheet's top.
+  const BIG = '/home/u/big';
+  const listings: Record<string, unknown> = {
+    [BIG]: { path: BIG, parent: '/home/u', dirs: ['a', 'b'].map(dir), total: 1234 },
+    '/empty': { path: '/empty', parent: null, dirs: [], total: 0 },
+  };
+  const doc: { activeElement: unknown } = { activeElement: null };
+  const { rt, $ } = browseRuntime((p) => listings[p] ?? HOME, doc);
+  const list = $('browseList');
+  const focused: string[] = [];
+  const aRow = { a: 'row in the list' };
+  list.contains = (other) => other === aRow;
+  list.querySelector = (sel) => {
+    const first = /class="browse-item" data-p="([^"]*)"/.exec(list.innerHTML);
+    return sel === '.browse-item' && first ? { focus: () => { focused.push(first[1]); } } : null;
+  };
+  $('browseCurrent').focus = () => { focused.push('the path field'); };
+  await rt.openBrowse(null);
+  const step = async (p: string, focusInList: boolean) => {
+    list.scrollTop = 900; // scrolled down the listing on screen
+    doc.activeElement = focusInList ? aRow : null;
+    focused.length = 0;
+    await rt.browseTo(p);
+    return { scrollTop: list.scrollTop, focused: [...focused] };
+  };
+  assert.deepEqual({
+    fromARow: await step(BIG, true),
+    fromAChip: await step('/home/u', false),
+    intoAnEmptyFolder: await step('/empty', true),
+  }, {
+    fromARow: { scrollTop: 0, focused: ['/home/u'] }, // "..", the new list's first row
+    fromAChip: { scrollTop: 0, focused: [] }, // focus was not in the list: it stays where it was
+    intoAnEmptyFolder: { scrollTop: 0, focused: ['the path field'] },
+  });
+  assert.match($('browseList').innerHTML, /No subfolders\./);
 });
 
 test('the ordering is one function, stable, and keeps every folder (D05)', () => {
