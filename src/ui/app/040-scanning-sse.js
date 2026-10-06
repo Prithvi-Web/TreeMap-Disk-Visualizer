@@ -32,12 +32,25 @@ function setScanButtonMode(mode) {
  * showing skeleton rows forever, on top of data the app still holds.
  */
 function restoreDashboardPanels() {
+  // A tree on screen with no scan behind it was painted from the saved index,
+  // and the scan that lists it was stopped or failed: there are no lists to
+  // give back, and "Run a scan…" describes an app with nothing on screen
+  // (B08). Said as what it is, beside the map it describes.
+  const fromIndex = !!state.root && !state.settledScanId;
+  const empty = (indexed, firstRun) => '<div class="muted">' + (fromIndex ? indexed : firstRun) + '</div>';
   if (state.largest.length) renderBigFiles();
-  else $('bigFiles').innerHTML = '<div class="muted">Run a scan to find your biggest files.</div>';
+  else $('bigFiles').innerHTML = empty('Opened from the saved index — scan this folder to list its biggest files.', 'Run a scan to find your biggest files.');
   if (state.bigFolders.length) renderBigFolders();
-  else $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
+  else $('bigFolders').innerHTML = empty('Opened from the saved index — scan this folder to list its biggest folders.', 'Run a scan to find your biggest folders.');
   if (state.types.length) { state.donut.animated = false; renderDonut(); }
-  else { $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>'; fxDonutLoadingSync(false); }
+  else {
+    // The ring and its centre total are another folder's, or a scan's that
+    // never finished: off the card with the legend (B08: "36.0 MB All types"
+    // stood beside "Run a scan to see the breakdown.").
+    clearDonut();
+    $('donutLegend').innerHTML = empty('Opened from the saved index — scan this folder to see its breakdown.', 'Run a scan to see the breakdown.');
+    fxDonutLoadingSync(false);
+  }
   // And the lines and tiles beginScanChrome took down (QA D22), from the
   // stats of the tree still on screen; blank when there is none.
   renderDiskNotes();
@@ -46,6 +59,10 @@ function restoreDashboardPanels() {
     if (typeof n === 'number') countUp($(id), n);
     else { $(id).dataset.v = 0; $(id).textContent = '–'; }
   }
+  const largest = state.largest[0] || null;
+  $('statLargest').textContent = largest ? largest.name + ' · ' + formatBytes(largest.size) : '–';
+  // The forecast is about the folder on screen, read by its path (B05).
+  if (state.root) void renderGrowthProjection();
 }
 
 /**
@@ -56,6 +73,7 @@ function restoreDashboardPanels() {
  * a lie about a folder that plainly has files.
  */
 function showListsPending() {
+  clearDonut(); // the ring is the last folder's until this one's types land (B05)
   $('bigFiles').innerHTML = skeletonRows(6);
   $('bigFolders').innerHTML = skeletonRows(6);
   $('donutLegend').innerHTML = skeletonRows(5, 24);
@@ -293,6 +311,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   $('scanStatus').innerHTML = '<span>Starting scan…</span>';
   $('bigFiles').innerHTML = skeletonRows(6);
   $('bigFolders').innerHTML = skeletonRows(6);
+  clearDonut(); // before the legend: taking the ring down empties it
   $('donutLegend').innerHTML = skeletonRows(5, 24);
   fxDonutLoadingSync(true);
   // The last scan's summary is stale the moment a new one starts — hide it and
@@ -309,6 +328,10 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // generation moves on, review L2), and its claim was not re-checked.
   for (const id of ['sparseRow', 'hardlinkRow', 'cloudRow', 'engineRow']) $(id).hidden = true;
   for (const id of ['statFiles', 'statDirs']) { $(id).dataset.v = 0; $(id).textContent = '–'; }
+  // B05: the ring's centre total (above), Largest file and the disk-full
+  // forecast were the last folder's too, and stood for the whole scan.
+  $('statLargest').textContent = '–';
+  if ($('growthProj')) $('growthProj').hidden = true;
   renderIndexBadge(null);
   indexLineGen++;
   renderIndexLine(null);

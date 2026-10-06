@@ -302,6 +302,14 @@ async function startScan(path, opts = {}) {
   // pressed after the Stop is a click of its own, with a chrome of its own.
   const gen = state.scanGen;
   const stopped = () => !state.scanning || state.scanGen !== gen;
+  // The badge and its line describe the folder on screen. A scan of another
+  // folder takes them down now, not when the probe below answers: the index
+  // paint puts this folder's back, and the full chrome keeps them down (B05).
+  if (!state.root || state.root.path !== path) {
+    renderIndexBadge(null);
+    indexLineGen++;
+    renderIndexLine(null);
+  }
 
   // A1: if this folder is already indexed, paint from the index first so the
   // user sees their tree immediately, then let the scan refresh it underneath.
@@ -781,6 +789,9 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // or another folder's data). The background scan calls finishScan again with
   // a real id in a moment, and that is what fills them in.
   if (!state.scanId) {
+    // The forecast on the card was the last folder's; the scan behind this
+    // tree paints this one's, and Stop asks for it by this folder's path (B05).
+    if ($('growthProj')) $('growthProj').hidden = true;
     showListsPending();
     emit(TOPIC.scan, null);
     switchView(state.view);
@@ -918,9 +929,12 @@ function renderDiskNotes() {
       // The names Settings › Scan engine uses. The walker is one engine at any
       // pool size: the desktop app always sizes the pool past 4, and "Turbo
       // walker" then sat beside "budget: Eco".
-      const label = { native: 'Native engine', 'gdu-turbo': 'gdu', 'turbo-walker': 'Built-in walker', 'ntfs-mft': 'NTFS turbo', walker: 'Built-in walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
+      // A tree painted from the saved index was read, not scanned (B08: the
+      // row said "index — scanned 106,664 items").
+      const label = { native: 'Native engine', 'gdu-turbo': 'gdu', 'turbo-walker': 'Built-in walker', 'ntfs-mft': 'NTFS turbo', walker: 'Built-in walker', cloud: 'Cloud metadata listing', index: 'Saved index' }[s.engine] || s.engine;
+      const verb = s.engine === 'index' ? 'read' : 'scanned';
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
-      $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
+      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
       // the fallback reason when something faster could not run.
@@ -1634,6 +1648,17 @@ function renderBigFolders() {
    The handle is kept so a rescan updates in place; only the empty state and
    the theme repaint are decided here. */
 let donutHandle = null;
+/**
+ * Take the ring and its centre total off the card. The kit's destroy empties
+ * the legend but leaves the canvas as it was painted, so the last breakdown's
+ * "8.8 GB All types" stood on beside skeletons or another folder's lists
+ * (B05, B08) unless the canvas is cleared too.
+ */
+function clearDonut() {
+  if (donutHandle) { donutHandle.destroy(); donutHandle = null; }
+  const { ctx } = Canvas2D.setup($('donutCanvas'), 230, 230);
+  ctx.clearRect(0, 0, 230, 230);
+}
 function renderDonut() {
   fxDonutLoadingSync(false); // every paint of the card settles the veil
   const legend = $('donutLegend');

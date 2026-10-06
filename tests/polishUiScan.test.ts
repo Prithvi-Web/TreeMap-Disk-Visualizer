@@ -371,7 +371,7 @@ function finishScanHarness(over: Record<string, unknown> = {}) {
   const finishScan = new Function(...Object.keys(deps), `'use strict'; ${src} return finishScan;`)(
     ...Object.values(deps),
   ) as (root: unknown, ms: number, stats: unknown, opts?: { reopenedAt?: number }) => Promise<void>;
-  return { finishScan, els, toasts, state, indexBuilds };
+  return { finishScan, $, els, toasts, state, indexBuilds };
 }
 
 test('finishScan hands the index build the folder and the scan\'s own stats (Track U review of U-1, finding 9)', async () => {
@@ -543,12 +543,14 @@ function chromeHarness(scanStats: Record<string, unknown> | null) {
     switchView: noop, // renderIndexBadge is the page's own: the slice carries its declaration
     renderDiskNotes: () => { calls.push('notes'); }, renderBigFiles: noop, renderBigFolders: noop, renderDonut: noop,
     countUp: (e: El, n: number) => { counted.push([e === $('statFiles') ? 'files' : 'dirs', n]); },
+    clearDonut: () => { calls.push('clearDonut'); }, formatBytes: (n: number) => `${n} B`,
+    renderGrowthProjection: () => { calls.push('forecast'); },
   };
   // The slice carries 045's own `indexLineGen` and renderIndexLine: the generation a background index build checks before it paints.
   const fns = new Function(...Object.keys(deps), `'use strict'; ${begin} ${restore} return { beginScanChrome, restoreDashboardPanels, gen: () => indexLineGen };`)(
     ...Object.values(deps),
   ) as { beginScanChrome: (o?: { quiet?: boolean; message?: string }) => void; restoreDashboardPanels: () => void; gen: () => number };
-  return { ...fns, els, calls, counted, state };
+  return { ...fns, $, els, calls, counted, state };
 }
 
 test('a new scan takes down the last scan\'s facts instead of standing them beside its skeletons (QA D22)', () => {
@@ -935,10 +937,11 @@ function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus
   const noop = () => {};
   const state: Record<string, unknown> = { scanning: false, scanGen: 0, root: onScreen ? { path: onScreen } : null };
   let lineGen = 0;
+  let probeAt = -1;
   const deps: Record<string, unknown> = {
     state, toast: noop, closeEventSource: noop, disableLive: noop,
     beginScanChrome: (o: Record<string, unknown> = {}) => { chrome.push(o); state.scanning = true; },
-    indexStatusFor: async (p: string) => (indexed ? { indexed: true, path: p, root: { path: '/Users/x/corpus', state: 'ready', live: true } } : { indexed: false }),
+    indexStatusFor: async (p: string) => { probeAt = badges.length; return indexed ? { indexed: true, path: p, root: { path: '/Users/x/corpus', state: 'ready', live: true } } : { indexed: false }; },
     openFromIndex: async () => painted,
     renderIndexBadge: (info: unknown) => { badges.push(info); },
     renderIndexLine: noop,
@@ -951,7 +954,7 @@ function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus
   const run = new Function(...Object.keys(deps), `'use strict'; let indexLineGen = 0; ${src} return startScan;`)(
     ...Object.values(deps),
   ) as (p: string, o?: Record<string, unknown>) => Promise<void>;
-  return { run, posts, badges, chrome, state, lineGen: () => lineGen };
+  return { run, posts, badges, chrome, state, lineGen: () => lineGen, badgesBeforeProbe: () => probeAt };
 }
 
 test('a scan a person starts is sent as theirs (interactive) whether or not the index painted first (B04)', async () => {
@@ -972,4 +975,117 @@ test('a scan a person starts is sent as theirs (interactive) whether or not the 
   await h.run('/Users/x/corpus');
   for (let i = 0; i < 5; i++) await Promise.resolve();
   assert.deepEqual(h.chrome.map((c) => !!c.quiet), [true, true], 'both chrome calls are quiet: the painted tree is not wiped');
+});
+
+test('a new scan takes down the last folder\'s donut total, largest file and forecast too; a quiet refresh leaves them (B05)', () => {
+  // B05: during a whole /Applications scan the File Types ring still read
+  // "8.8 GB All types", Quick Stats "holiday-4k.mov · 3.0 GB — Largest file"
+  // and the forecast "5 scans over less than an hour" — all the corpus's.
+  const h = chromeHarness({ fileCount: 101034, dirCount: 5630 });
+  h.$('statLargest').textContent = 'holiday-4k.mov · 3.0 GB';
+  h.$('growthProj').hidden = false;
+  h.beginScanChrome();
+  assert.ok(h.calls.includes('clearDonut'), 'the ring and its centre total come off the card');
+  assert.equal(h.els.statLargest.textContent, '–', 'Largest file is not the last folder\'s');
+  assert.equal(h.els.growthProj.hidden, true, 'nor is the disk-full forecast');
+  const q = chromeHarness({ fileCount: 101034, dirCount: 5630 });
+  q.$('statLargest').textContent = 'holiday-4k.mov · 3.0 GB';
+  q.$('growthProj').hidden = false;
+  q.beginScanChrome({ quiet: true, message: 'Starting scan…' });
+  assert.ok(!q.calls.includes('clearDonut'), 'a quiet refresh keeps the ring of the tree still on screen');
+  assert.equal(q.els.statLargest.textContent, 'holiday-4k.mov · 3.0 GB');
+  assert.equal(q.els.growthProj.hidden, false);
+});
+
+test('Stop puts back the largest file and the forecast of the tree that stays on screen (B05, B08)', () => {
+  const h = chromeHarness({ fileCount: 12000, dirCount: 40 });
+  h.state.largest = [{ name: 'inbox.mbox', size: 3000 }];
+  h.state.root = { path: '/Users/x/corpus/Mail' };
+  h.state.settledScanId = 'mail';
+  h.beginScanChrome();
+  h.restoreDashboardPanels();
+  assert.equal(h.$('statLargest').textContent, 'inbox.mbox · 3000 B', 'the tile is the held scan\'s again');
+  assert.ok(h.calls.includes('forecast'), 'and the forecast is asked for again, for the folder on screen');
+});
+
+test('a scan of another folder takes the index badge down before the index is asked; a rescan of the same folder keeps it (B05)', async () => {
+  // B05: "Starting scan…" for corpus/Projects stood beside the corpus's
+  // "Index live — always current" until the probe answered.
+  const other = startScanHarness({ indexed: false, onScreen: '/Users/x/corpus' });
+  await other.run('/Users/x/corpus/Projects');
+  assert.equal(other.badges[0], null, 'the badge of the folder on screen is taken down');
+  assert.equal(other.badgesBeforeProbe(), 1, 'before the probe is sent, not after it answers');
+  const same = startScanHarness({ indexed: false, onScreen: '/Users/x/corpus' });
+  await same.run('/Users/x/corpus');
+  assert.deepEqual(same.badges, [], 'a rescan of the folder on screen leaves its badge to the index paint');
+  const first = startScanHarness({ indexed: false, onScreen: null });
+  await first.run('/Users/x/corpus');
+  assert.equal(first.badges[0], null, 'with nothing on screen there is nothing to keep');
+});
+
+test('the index paint takes the last folder\'s ring and forecast down while its lists are pending (B05, B08)', async () => {
+  const pending = braced('function showListsPending(');
+  const { $, els } = makeDom();
+  const calls: string[] = [];
+  const run = new Function('$', 'skeletonRows', 'fxDonutLoadingSync', 'clearDonut', `'use strict'; ${pending} return showListsPending;`)(
+    $, () => '<i>skeleton</i>', () => {}, () => { calls.push('clearDonut'); }) as () => void;
+  run();
+  assert.deepEqual(calls, ['clearDonut'], 'the ring of the last folder does not stand beside skeletons');
+  assert.equal(els.donutLegend.innerHTML, '<i>skeleton</i>');
+  const h = finishScanHarness();
+  h.state.scanId = null;
+  h.$('growthProj').hidden = false;
+  await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 50, { fileCount: 101034, dirCount: 5630, engine: 'index', durationMs: 50, scanned: 106664 });
+  assert.equal(h.els.growthProj.hidden, true, 'the forecast was about the folder before; the scan behind this one paints this folder\'s');
+});
+
+test('Stop over a tree painted from the index: the lists say why they are empty, and no other folder\'s ring stays (B08)', () => {
+  const h = chromeHarness({ fileCount: 101034, dirCount: 5630, engine: 'index' });
+  h.state.root = { path: '/Users/x/corpus' };
+  h.state.settledScanId = null;
+  h.restoreDashboardPanels();
+  for (const id of ['bigFiles', 'bigFolders', 'donutLegend']) {
+    assert.match(h.els[id].innerHTML, /saved index/, `${id}: says the folder came from its saved index`);
+    assert.doesNotMatch(h.els[id].innerHTML, /Run a scan to/, `${id}: not the first-run sentence`);
+  }
+  assert.match(h.els.bigFiles.innerHTML, /biggest files/);
+  assert.match(h.els.bigFolders.innerHTML, /biggest folders/);
+  assert.ok(h.calls.includes('clearDonut'), 'the Mail scan\'s "36.0 MB All types" comes off the ring');
+  const none = chromeHarness(null);
+  none.restoreDashboardPanels();
+  assert.match(none.els.bigFiles.innerHTML, /Run a scan to find your biggest files/, 'with no tree at all, the first-run sentence');
+  assert.ok(none.calls.includes('clearDonut'));
+  assert.ok(!none.calls.includes('forecast'), 'and no forecast is asked for a folder that is not there');
+});
+
+test('the engine row names an index read in words, not the internal id "index" (B08)', () => {
+  const src = braced('function renderDiskNotes(');
+  const { $, els } = makeDom();
+  const state = { scanStats: { engine: 'index', durationMs: 300, scanned: 106664 }, treemap: {} };
+  const run = new Function('$', 'state', 'formatCount', 'formatBytes', 'engineBudgetNote', 'engineReasonTitle', 'fxTmPillBeamsSync',
+    `'use strict'; ${src} return renderDiskNotes;`)(
+    $, state, (n: number) => n.toLocaleString('en-US'), (n: number) => `${n} B`, () => '', () => '', () => {}) as () => void;
+  run();
+  assert.match(els.engineText.textContent, /^Saved index — read 106,664 items in 0\.3 s/, 'the row says what happened: the saved index was read');
+  assert.doesNotMatch(els.engineText.textContent, /^index/, 'never the lower-case engine id');
+});
+
+test('clearDonut takes the ring off: the handle is destroyed and the canvas, centre total included, is wiped (B05, B08)', () => {
+  // The kit's destroy empties the legend but leaves the painted canvas — the
+  // centre total that stood beside another folder's lists.
+  const src = braced('function clearDonut(');
+  const cleared: number[][] = [];
+  let destroyed = 0;
+  const canvas = {};
+  const Canvas2D = { setup: (c: unknown, w: number, h: number) => { assert.equal(c, canvas); return { ctx: { clearRect: (...r: number[]) => { cleared.push(r); } }, w, h }; } };
+  const h = new Function('$', 'Canvas2D', 'handle', `'use strict'; let donutHandle = handle; ${src} return { clearDonut, held: () => donutHandle };`)(
+    (id: string) => (id === 'donutCanvas' ? canvas : null), Canvas2D, { destroy: () => { destroyed++; } },
+  ) as { clearDonut: () => void; held: () => unknown };
+  h.clearDonut();
+  assert.equal(destroyed, 1, 'the live ring is destroyed — no leaked observer');
+  assert.equal(h.held(), null, 'and forgotten, so the next breakdown builds a fresh one');
+  assert.deepEqual(cleared, [[0, 0, 230, 230]], 'the whole canvas is wiped, centre total included');
+  h.clearDonut();
+  assert.equal(destroyed, 1, 'with no ring held there is nothing to destroy');
+  assert.equal(cleared.length, 2, 'but the canvas is wiped all the same');
 });
