@@ -922,3 +922,34 @@ test('a scan of / never offers macOS’s second names (/.nofollow, /.resolve, /.
     evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
   }
 });
+
+test('a scan of / with more empty folders than the list holds still never counts the second names, nor lets them cut the list short: its 1,000 places go to folders of their own, and the count agrees with them (the SEC-3 brief, item 7)', { skip: process.platform !== 'darwin' && 'the namespaces are macOS’s' }, async () => {
+  // The second names were dropped after the list was cut at 1,000, and subtracted from the count only
+  // when they had made the list: met past the cap, each still counted, and still made the list "cut".
+  const own = Array.from({ length: 1000 }, (_, i) => `-e${String(i).padStart(4, '0')}`).map((name) => dir(name, `/${name}`, []));
+  const scan = createScanRecord('/');
+  scan.engine = 'walker';
+  scan.store = buildStoreFromTree(dir('', '/', [
+    ...own,
+    dir('.nofollow', '/.nofollow', []),
+    dir('.resolve', '/.resolve', []),
+    dir('.vol', '/.vol', []),
+  ]), '/');
+  scan.status = 'complete';
+  // Every folder looks empty on a second look: nothing here reads this Mac's disk.
+  setEmptyCheckForTests({
+    lstat: async () => ({ isDirectory: () => true }),
+    opendir: async () => ({ read: async () => null, close: async () => {} }),
+    driveOf: async () => '/',
+  });
+  try {
+    const answer = await emptyFoldersForScan(scan, true);
+    assert.deepEqual(
+      { offered: answer.folders.length, secondNames: answer.folders.filter((f) => aliasNamespaceOf(f.path) !== null).length, totalCount: answer.totalCount, truncated: answer.truncated },
+      { offered: 1000, secondNames: 0, totalCount: 1000, truncated: false },
+    );
+  } finally {
+    setEmptyCheckForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});

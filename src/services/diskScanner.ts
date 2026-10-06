@@ -39,7 +39,7 @@ import { memoryRoomFor, noRestartRefusal } from './scan/nativeMemory';
 import { formatCount } from '../utils/formatCount';
 import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
-import { isInside, isSpillFolderName, isSpillPath, sanitizePath } from '../utils/pathSanitizer';
+import { aliasNamespaceOf, isInside, isSpillFolderName, isSpillPath, sanitizePath } from '../utils/pathSanitizer';
 import { meansGone } from '../utils/errno';
 
 /**
@@ -1825,6 +1825,18 @@ function isTreeMapSpillFolder(store: ScanStore, id: number, name: string): boole
   return isSpillFolderName(name) && store.isDir(id) && isSpillPath(store.path(id));
 }
 
+/**
+ * A second name the system gives a path (macOS's /.nofollow, /.resolve and /.vol: `aliasNamespaceOf`),
+ * which a walk of / lists as an empty folder. It is no folder of its own, and the sanitizer refuses a
+ * delete naming one (the SEC-2 review, F4), so it is owned like a tool's: never offered nor counted.
+ * Decided here, before the list is cut at EMPTY_FOLDERS_CAP — dropped after the cut, one met past it
+ * was still counted and still made the list read as cut (the SEC-3 brief, item 7). Second names are
+ * names at the root of the boot volume, so only the scan root's own children are asked.
+ */
+function isSecondNameFolder(store: ScanStore, id: number): boolean {
+  return store.parent(id) === store.rootId && store.isDir(id) && aliasNamespaceOf(store.path(id)) !== null;
+}
+
 /** What Empty Folders finds in a tree, before anything is looked at again on disk (Track U, U-4). */
 export interface EmptyFolderCandidates {
   /**
@@ -1895,7 +1907,7 @@ export function findEmptyFolders(source: TreeSource, ignoreJunk: boolean): Empty
       continue;
     }
     const name = store.name(id);
-    if (ownsItsContents(name) || isTreeMapSpillFolder(store, id, name)) toolOwned[id] = 1;
+    if (ownsItsContents(name) || isTreeMapSpillFolder(store, id, name) || isSecondNameFolder(store, id)) toolOwned[id] = 1;
   }
   /** Reportable = empty, and not something a tool or the OS keeps for itself. */
   const reportable = (id: number): boolean =>

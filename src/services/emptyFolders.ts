@@ -2,7 +2,6 @@ import type { EmptyFoldersAnswer, ScanResult } from '../models/types';
 import { findEmptyFolders } from './diskScanner';
 import { storeOf } from './scanStore';
 import { emptyCheckSession } from './emptyFolderCheck';
-import { aliasNamespaceOf } from '../utils/pathSanitizer';
 
 /**
  * GET /api/empty-folders, answered (Track U, U-4): never a folder the scan did
@@ -44,19 +43,18 @@ export async function emptyFoldersForScan(scan: ScanResult, ignoreJunk: boolean)
   if (scan.engine === 'gdu-turbo') {
     return { folders: [], totalCount: 0, truncated: false, withheld: 0, reason: GDU_EMPTY_FOLDERS_REASON };
   }
+  // A second name the system gives a path (macOS /.nofollow, /.resolve, /.vol), which a walk of /
+  // lists as an empty folder, is never among them nor counted: `findEmptyFolders` owns it like a
+  // tool's folder, before its list is cut (the SEC-2 review, F4; the SEC-3 brief, item 7).
   const found = findEmptyFolders(storeOf(scan), ignoreJunk);
-  // A second name the system gives a path (macOS /.nofollow, /.resolve, /.vol: `aliasNamespaceOf`),
-  // which a walk of / lists as an empty folder, is no folder of its own: never offered nor counted.
-  // The sanitizer refuses a delete naming one, and so refused every batch holding one (the SEC-2 review, F4).
-  const secondName = (f: { path: string }): boolean => aliasNamespaceOf(f.path) !== null;
-  const candidates = found.folders.filter((f) => !secondName(f));
+  const candidates = found.folders;
   // A cloud provider's listing lives at the provider: there is no folder on this disk to look at again.
   const still = scan.engine === 'cloud'
     ? candidates.map(() => true)
     : await secondLooks(candidates.map((f) => f.path), ignoreJunk);
   const folders: EmptyFoldersAnswer['folders'] = [];
   let withheld = 0;
-  let totalCount = found.folders.filter(secondName).reduce((n, f) => n - f.counted, found.totalCount);
+  let totalCount = found.totalCount;
   candidates.forEach((f, i) => {
     if (still[i]) {
       folders.push({ name: f.name, path: f.path });
