@@ -13,13 +13,14 @@ process.env.TREEMAP_NO_GDU = '1'; // one test runs a real scan of a small folder
 import {
   DEFAULT_FLEET_PORT, FleetConfig, PAIRING_WINDOW_MS, beginPairing, cancelPairing,
   defaultConfig, handlePeerRequest, isPrivateIPv4, lanAddresses, pairingOffer,
-  resetFleetConfig, secretMatches, verifyPairingCode,
+  resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode,
 } from '../src/services/fleet/fleetSync';
 import { FleetSummary, SUMMARY_FIELDS, buildSummary, isForbiddenSummaryField, serialiseSummary } from '../src/services/fleet/fleetSummary';
 import { startPeerScan } from '../src/services/fleet/fleetRuntime';
 import { allScans, getScan } from '../src/services/diskScanner';
 import { appDataDir } from '../src/services/storage';
 import { POLICY_FILE } from '../src/services/policy';
+import { AppError } from '../src/middleware/errorHandler';
 
 /**
  * §D1 — LAN fleet view.
@@ -363,7 +364,20 @@ test('a scan another machine asks for is held to agent-policy.json’s allowedRo
   try {
     const refused = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: elsewhere }, startScan: startPeerScan });
     assert.deepEqual([refused.status, refused.body?.code], [403, 'POLICY_ROOT_NOT_ALLOWED'], JSON.stringify(refused.body));
-    assert.deepEqual(allScans().filter((s) => s.rootPath === elsewhere), [], 'nothing was scanned');
+    // In words for the person who reads them, on the machine that asked: the policy's own sentence told
+    // that person to edit agent-policy.json, which named their own file — it governs nothing here (the
+    // SEC-2c review, F2.4).
+    const sentence = String(refused.body?.error);
+    assert.deepEqual({
+      'names the other machine': /^That machine\b/.test(sentence),
+      'names whose file it is': /\bits own agent-policy\.json\b/.test(sentence),
+      'never tells the reader to edit a file': !/\bedit\b/i.test(sentence),
+      fields: Object.keys(refused.body ?? {}).sort(),
+    }, {
+      'names the other machine': true, 'names whose file it is': true, 'never tells the reader to edit a file': true, fields: ['code', 'error'],
+    }, sentence);
+    // Ids, not records: a finished scan's record holds its whole store, and a diff of that is not a message.
+    assert.deepEqual(allScans().filter((s) => s.rootPath === elsewhere).map((s) => s.scanId), [], 'nothing was scanned');
     const started = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: allowed }, startScan: startPeerScan });
     assert.equal(started.status, 202, JSON.stringify(started.body));
     const scan = getScan(started.body.scanId);
@@ -371,6 +385,49 @@ test('a scan another machine asks for is held to agent-policy.json’s allowedRo
     assert.deepEqual([scan?.rootPath, scan?.status], [allowed, 'complete']);
   } finally {
     fs.rmSync(policyFile, { force: true });
+  }
+});
+
+test('only this machine’s allowedRoots refusal is the peer’s 403: a policy file that cannot be read, or any other refusal the scan meets, is this server’s own failure — 500, its detail kept here — and nothing is scanned (the SEC-2c review, F2.10)', async () => {
+  // The receiver passed any 403 AppError on word for word, and nothing pinned the line that chose: a
+  // receiver passing on EVERY AppError — a corrupt agent-policy.json's 500 POLICY_UNREADABLE among them,
+  // its parse detail crossing the network as a 403 — stayed green.
+  const cfg: FleetConfig = { ...defaultConfig(), port: 0, allowRemoteScan: true };
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  const folder = fs.realpathSync(fileTempDir('tm-fleet-unreadable-'));
+  const policyFile = path.join(appDataDir(), POLICY_FILE);
+  let hook: (root: string) => Promise<{ scanId: string }> = startPeerScan;
+  // A real listener on loopback: what the asking machine reads is what the socket answers.
+  const server = await startPeerServer(cfg, { async summary() { return summary(); }, startScan: (root) => hook(root) }, ['127.0.0.1']);
+  const ask = () => new Promise<[number, unknown]>((resolve, reject) => {
+    const payload = JSON.stringify({ path: folder });
+    const req = http.request({
+      host: '127.0.0.1', port: server.port, path: '/fleet/scan', method: 'POST', agent: false,
+      headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => { text += c; });
+      res.on('end', () => resolve([res.statusCode ?? 0, JSON.parse(text)]));
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
+  try {
+    fs.writeFileSync(policyFile, '{"allowedRoots": [');
+    const answers: Record<string, unknown> = { 'a policy file that cannot be read': await ask() };
+    fs.rmSync(policyFile, { force: true });
+    hook = async () => { throw new AppError(403, 'PERMISSION_DENIED', 'a refusal of this machine, in words for this machine'); };
+    answers['another 403'] = await ask();
+    hook = async () => { throw new AppError(404, 'NOT_FOUND', 'a refusal of this machine, in words for this machine'); };
+    answers['another status'] = await ask();
+    const failure = [500, { error: 'fleet request failed' }];
+    assert.deepEqual(answers, { 'a policy file that cannot be read': failure, 'another 403': failure, 'another status': failure });
+    assert.deepEqual(allScans().filter((s) => s.rootPath === folder).map((s) => s.scanId), [], 'nothing was scanned');
+  } finally {
+    await server.close();
+    for (const f of fs.readdirSync(appDataDir())) if (f.startsWith(POLICY_FILE)) fs.rmSync(path.join(appDataDir(), f), { force: true });
   }
 });
 
@@ -421,7 +478,6 @@ test('loopback and public interfaces are never bound', () => {
 });
 
 test('a machine with no private address does not start the listener', async () => {
-  const { startPeerServer } = await import('../src/services/fleet/fleetSync');
   await assert.rejects(
     startPeerServer(defaultConfig(), { async summary() { return summary(); }, async startScan() { return { scanId: 'x' }; } }, []),
     /No private network address/,

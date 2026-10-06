@@ -317,6 +317,14 @@ function remoteScanRoot(given: string): string {
   return sanitizePath(given);
 }
 
+/**
+ * The peer's refusal of a folder outside this machine's allowedRoots. Read on the machine that asked —
+ * its fleet panel shows it as given — so it calls this one "that machine" and the file its own: the
+ * policy's own sentence ("edit agent-policy.json …") named the reader's file, which governs nothing
+ * here (the SEC-2c review, F2.4).
+ */
+const OUTSIDE_ALLOWED_ROOTS = 'That machine scans only folders inside the allowed roots set in its own agent-policy.json';
+
 function send(res: http.ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
   res.writeHead(status, {
@@ -494,10 +502,12 @@ export async function handlePeerRequest(
     try {
       started = await hooks.startScan(root);
     } catch (err) {
-      // This machine's own refusal — agent-policy.json's allowedRoots — is the peer's answer too,
-      // as POST /api/scan gives it; anything else stays the server's own failure.
-      if (!(err instanceof AppError) || err.status !== 403) throw err;
-      send(res, 403, { error: err.message, code: err.code });
+      // This machine's own refusal — agent-policy.json's allowedRoots — is the peer's answer too, with
+      // POST /api/scan's code, but in words for the machine that asked (OUTSIDE_ALLOWED_ROOTS). Anything
+      // else — a policy file that cannot be read, any other refusal — stays this server's own failure,
+      // its detail kept here (the SEC-2c review, F2.4, F2.10).
+      if (!(err instanceof AppError) || err.code !== 'POLICY_ROOT_NOT_ALLOWED') throw err;
+      send(res, 403, { error: OUTSIDE_ALLOWED_ROOTS, code: err.code });
       return;
     }
     // The scanId only; the RESULT is never pushed anywhere. A peer sees the
