@@ -4183,9 +4183,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div id="apRuns"></div>
     </div>
   </section>
+</main>
 
   <!-- Policy editor: the Clean Up custom-rules controls, reused verbatim in
-       shape so a person who has used Clean Up already knows this dialog. -->
+       shape so a person who has used Clean Up already knows this dialog.
+       It sits AFTER </main>, a direct child of <body> like every other sheet:
+       while any sheet is open the focus net (235) makes every other child of
+       <body> inert, so a sheet inside <main> made its own page inert and
+       nothing in it could be clicked, typed into or focused (B31). -->
   <div class="modal-backdrop" id="apModal" role="dialog" aria-modal="true" aria-labelledby="apModalTitle">
     <div class="modal" style="width:620px;">
       <div class="modal-head">
@@ -4274,7 +4279,6 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
     </div>
   </div>
-</main>
 
 <!-- ═══════════ Selection toolbar ═══════════ -->
 <div class="glass" id="selectionBar">

@@ -346,6 +346,97 @@ test('every backdrop is wired into the net, and the close funnel is untouched', 
   assert.match(braced('function closeModal('), /classList\.remove\('open'\)/, 'closeModal still just removes the class — the net does the rest');
 });
 
+/**
+ * The shipped page's <body>, as a tree of fake elements: tag, id, classes,
+ * attributes and nesting, read from the markup itself. Comments are skipped,
+ * raw-text elements (script, style, textarea, title) are leaves, void and
+ * self-closed elements take no children, and a close tag that does not match
+ * the open one fails here rather than quietly re-parenting everything after it.
+ */
+function pageFromMarkup(doc: FDoc): FEl {
+  const mk = mkOf(doc);
+  const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+  const RAW = new Set(['script', 'style', 'textarea', 'title']);
+  const at = INDEX.indexOf('<body');
+  assert.notEqual(at, -1, 'the page has a <body>');
+  let i = INDEX.indexOf('>', at) + 1;
+  const stack: FEl[] = [doc.body];
+  while (i < INDEX.length) {
+    const lt = INDEX.indexOf('<', i);
+    if (lt === -1) break;
+    if (INDEX.startsWith('<!--', lt)) { i = INDEX.indexOf('-->', lt) + 3; continue; }
+    if (INDEX[lt + 1] === '/') {
+      const gt = INDEX.indexOf('>', lt);
+      const name = INDEX.slice(lt + 2, gt).trim().toLowerCase();
+      i = gt + 1;
+      if (name === 'body') break;
+      const top = stack.pop()!;
+      assert.equal(top.tag, name, `</${name}> closes the <${top.tag}${top.id ? ` id=${top.id}` : ''}> it should`);
+      continue;
+    }
+    const m = /^<([a-zA-Z][\w-]*)/.exec(INDEX.slice(lt, lt + 40));
+    if (!m) { i = lt + 1; continue; }
+    let j = lt + m[0].length;
+    let q = '';
+    for (; j < INDEX.length; j++) {
+      const c = INDEX[j];
+      if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c; else if (c === '>') break;
+    }
+    const tag = m[1].toLowerCase();
+    const attrs: Record<string, string> = {};
+    const re = /([\w:@.-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+    const rest = INDEX.slice(lt + m[0].length, j);
+    for (let a = re.exec(rest); a; a = re.exec(rest)) attrs[a[1].toLowerCase()] = a[2] ?? a[3] ?? a[4] ?? '';
+    const { id = '', class: cls = '', ...others } = attrs;
+    const el = append(stack[stack.length - 1], mk(tag, id, cls.split(/\s+/).filter(Boolean), others));
+    if ('hidden' in attrs) el.hidden = true;
+    if ('disabled' in attrs) el.disabled = true;
+    if (el.cls.has('modal-backdrop')) el.shown = false; // a closed sheet does not paint
+    i = j + 1;
+    if (RAW.has(tag)) { i = INDEX.indexOf('>', INDEX.toLowerCase().indexOf(`</${tag}`, i)) + 1; continue; }
+    if (!VOID.has(tag) && !INDEX.slice(lt, j + 1).endsWith('/>')) stack.push(el);
+  }
+  assert.deepEqual(stack.map((e) => e.tag), ['body'], 'every element the body opens, it closes');
+  return doc.body;
+}
+
+/* B31 — the Autopilot policy sheet lived inside <main>, and the net makes
+   every direct child of <body> that is not a sheet inert while one is open:
+   so opening it made its own ancestor inert, and nothing in it could be
+   clicked, typed into or focused. This drives the real net over the real
+   markup, every sheet in turn. */
+test('every dialog in the shipped page is live when it opens: no inert ancestor, and it takes focus', () => {
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const api = loadModalNet(doc);
+  const sheets = doc.querySelectorAll('.modal-backdrop');
+  const ids = sheets.map((s) => s.id);
+  for (const id of ['apModal', 'cleanModal', 'confirmModal', 'settingsModal', 'budgetModal', 'offloadModal'])
+    assert.ok(ids.includes(id), `#${id} is one of the sheets checked`);
+  const page = doc.querySelector('main');
+  assert.ok(page, 'the page has a <main> for the net to make inert');
+  for (const sheet of sheets) {
+    setOpen(api, sheet, true);
+    assert.equal(page!.inert, true, `#${sheet.id} open: the page behind it is inert`);
+    const deadAncestor = (() => { for (let c: FEl | null = sheet; c; c = c.parent) if (c.inert) return c; return null; })();
+    assert.ok(!deadAncestor,
+      `#${sheet.id} open: nothing it sits in is inert (it sits in <${deadAncestor?.tag}${deadAncestor?.id ? ` id=${deadAncestor.id}` : ''}>)`);
+    assert.ok(sheet.contains(doc.activeElement), `#${sheet.id} open: focus moved into it (it is on <${doc.activeElement?.tag} id=${doc.activeElement?.id}>)`);
+    doc.activeElement = doc.body;
+    setOpen(api, sheet, false);
+    assert.equal(page!.inert, false, `#${sheet.id} closed: the page is live again`);
+  }
+  // The fields the B31 report could not reach, by name.
+  const ap = doc.getElementById('apModal')!;
+  setOpen(api, ap, true);
+  for (const id of ['apName', 'apPath', 'apPreviewBtn', 'apSaveBtn']) {
+    const el = doc.getElementById(id)!;
+    assert.ok(ap.contains(el), `#${id} is in the Autopilot sheet`);
+    el.focus();
+    assert.ok(doc.activeElement === el, `#${id} takes focus while the Autopilot sheet is open`);
+  }
+});
+
 /* ══════════════ a11y-keyboard-2 — shortcuts stop at the scrim; Escape closes the top layer ══════════════ */
 
 test('while a dialog is open, global shortcuts never reach the views underneath', () => {
