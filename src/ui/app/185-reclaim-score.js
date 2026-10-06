@@ -457,8 +457,10 @@ document.addEventListener('click', (e) => {
   // for the panel, not a click outside it. A person's click runs that entry's
   // listener, then the microtasks — which open the panel at once when the
   // score is already loaded — and only then bubbles here: without this the
-  // one click opened the panel and closed it again (B09).
-  if (e.target.closest('#ctxMenu [data-act="score"]')) return;
+  // one click opened the panel and closed it again (B09). Kept only when the
+  // panel shows the cell the menu was opened on; one still showing another
+  // cell (this one's score is on its way) closes, as any outside click does.
+  if (e.target.closest('#ctxMenu [data-act="score"]') && ctxTarget && rcPopoverPath === ctxTarget.path) return;
   if (!$('rcPopover').hidden && !e.target.closest('#rcPopover')) closeReclaimWhy();
 });
 document.addEventListener('keydown', (e) => {

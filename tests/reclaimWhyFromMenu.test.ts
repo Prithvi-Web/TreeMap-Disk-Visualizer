@@ -65,7 +65,15 @@ function el(id: string, attrs: Record<string, string> = {}, parent: El | null = 
   return self;
 }
 
-function harness({ scoreLoaded }: { scoreLoaded: boolean }) {
+const XCODE = '/Applications/Xcode.app/Contents/Developer/Toolchains';
+const KOTLIN = '/Applications/IntelliJ IDEA.app/Contents/plugins/Kotlin';
+
+/**
+ * The menu, the panel and both listeners. `loaded` are the paths whose score
+ * is already in hand; any other path's score lands when `settle(path)` says.
+ * `rightClick(path)` points the menu at a cell, as a right-click does.
+ */
+function harness({ loaded }: { loaded: string[] }) {
   const body = el('body');
   const ctxMenu = el('ctxMenu', {}, body);
   const list = el('', { class: 'ctx-list' }, ctxMenu);
@@ -75,52 +83,63 @@ function harness({ scoreLoaded }: { scoreLoaded: boolean }) {
   pop.hidden = true;
   const elsewhere = el('tmCanvas', {}, body);
   const log: string[] = [];
-  let settle: () => void = () => {};
-  const scores = scoreLoaded ? Promise.resolve() : new Promise<void>((r) => { settle = r; });
+  const pending = new Map<string, () => void>();
+  const ensureScores = (paths: string[]) => (loaded.includes(paths[0])
+    ? Promise.resolve()
+    : new Promise<void>((r) => { pending.set(paths[0], r); }));
   const $ = (id: string) => (id === 'rcPopover' ? pop : id === 'ctxMenu' ? ctxMenu : null);
-  const openReclaimWhy = (p: string) => { pop.hidden = false; log.push(`open ${p}`); };
-  const closeReclaimWhy = () => { if (!pop.hidden) { pop.hidden = true; log.push('close'); } };
   const noop = () => {};
+  // ctxTarget is the 115 part's `let`, reassigned by every right-click; one live object stands for it.
+  let target = { path: XCODE };
+  const ctxTarget = { get path() { return target.path; } };
+  // The document's click listener in the reclaim-score part (the badge opener and outside-click closer),
+  // with the panel's own `rcPopoverPath` and stand-ins for its open and close.
+  const docSrc = arrowAt("document.addEventListener('click', (e) => {\n  const badge = e.target.closest('[data-rc-why]');", "document.addEventListener('click', ".length);
+  const panel = new Function('$', 'ctxTarget', 'log', `'use strict';
+    let rcPopoverPath = null;
+    function openReclaimWhy(p) { $('rcPopover').hidden = false; rcPopoverPath = p; log.push('open ' + p); }
+    function closeReclaimWhy() { if (!$('rcPopover').hidden) { $('rcPopover').hidden = true; rcPopoverPath = null; log.push('close'); } }
+    return { onDocClick: (${docSrc}), openReclaimWhy };`)($, ctxTarget, log) as { onDocClick: (e: unknown) => void; openReclaimWhy: (p: string) => void };
   // The menu entry's listener, with `b` the entry it was bound to.
   const entryAnchor = "menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {\n    const act = b.dataset.act;";
   const entrySrc = arrowAt(entryAnchor, "menu.querySelectorAll('button').forEach(b => b.addEventListener('click', ".length);
   const entryFor = (b: El) => new Function('b', 'ctxTarget', 'x', 'y', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ensureScores', 'openReclaimWhy',
     'openInOS', 'openPreview', 'copyPath', 'openTerminal', 'cartToggle', 'startOffloadFlow', 'openBudgetDialog', 'removeBudget', 'openNoteDialog', 'confirmTrash',
     `return (${entrySrc});`)(
-    { dataset: { act: b.attrs['data-act'] } }, { path: '/Applications/Xcode.app/Contents/Developer/Toolchains' }, 300, 200,
-    () => null, noop, () => scores, openReclaimWhy, noop, noop, (p: string) => log.push(`copy ${p}`), noop, noop, noop, noop, noop, noop, noop,
+    { dataset: { act: b.attrs['data-act'] } }, ctxTarget, 300, 200,
+    () => null, noop, ensureScores, panel.openReclaimWhy, noop, noop, (p: string) => log.push(`copy ${p}`), noop, noop, noop, noop, noop, noop, noop,
   ) as () => void;
-  // The document's click listener in the reclaim-score part (the badge opener and outside-click closer).
-  const docSrc = arrowAt("document.addEventListener('click', (e) => {\n  const badge = e.target.closest('[data-rc-why]');", "document.addEventListener('click', ".length);
-  const onDocClick = new Function('$', 'openReclaimWhy', 'closeReclaimWhy', `return (${docSrc});`)($, openReclaimWhy, closeReclaimWhy) as (e: unknown) => void;
   /** A trusted click: the target's listener, the microtask checkpoint, then the bubble to the document. */
-  async function realClick(target: El, ownListener: (() => void) | null) {
-    const e = { target, preventDefault: noop, stopPropagation: noop };
+  async function realClick(t: El, ownListener: (() => void) | null) {
+    const e = { target: t, preventDefault: noop, stopPropagation: noop };
     if (ownListener) ownListener();
     for (let i = 0; i < 5; i++) await Promise.resolve();
-    onDocClick(e);
+    panel.onDocClick(e);
   }
-  return { pop, log, scoreItem, copyItem, elsewhere, entryFor, realClick, settle: () => settle() };
+  async function settle(path: string) {
+    pending.get(path)!();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  }
+  return { pop, log, scoreItem, copyItem, elsewhere, entryFor, realClick, settle, rightClick: (path: string) => { target = { path }; } };
 }
 
 test('a real click on "Why this reclaim score?" opens the breakdown and leaves it open (score already loaded)', async () => {
-  const h = harness({ scoreLoaded: true });
+  const h = harness({ loaded: [XCODE] });
   await h.realClick(h.scoreItem, h.entryFor(h.scoreItem));
-  assert.deepEqual(h.log, ['open /Applications/Xcode.app/Contents/Developer/Toolchains'], 'the panel opened once and nothing closed it');
+  assert.deepEqual(h.log, [`open ${XCODE}`], 'the panel opened once and nothing closed it');
   assert.equal(h.pop.hidden, false, 'the breakdown is showing after the click has finished');
 });
 
 test('the same, when the score lands after the click', async () => {
-  const h = harness({ scoreLoaded: false });
+  const h = harness({ loaded: [] });
   await h.realClick(h.scoreItem, h.entryFor(h.scoreItem));
   assert.equal(h.pop.hidden, true, 'nothing to show until the score lands');
-  h.settle();
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  await h.settle(XCODE);
   assert.equal(h.pop.hidden, false, 'the breakdown opens when the score lands');
 });
 
 test('a click anywhere else — another menu entry included — still closes the breakdown', async () => {
-  const h = harness({ scoreLoaded: true });
+  const h = harness({ loaded: [XCODE] });
   await h.realClick(h.scoreItem, h.entryFor(h.scoreItem));
   assert.equal(h.pop.hidden, false);
   await h.realClick(h.elsewhere, null);
@@ -130,4 +149,17 @@ test('a click anywhere else — another menu entry included — still closes the
   await h.realClick(h.copyItem, h.entryFor(h.copyItem));
   assert.equal(h.pop.hidden, true, 'a different menu entry is a click outside the panel');
   assert.equal(h.log.filter((l) => l === 'close').length, 2);
+});
+
+test('asking about another cell closes the breakdown still showing the last one, and opens the new one when its score lands', async () => {
+  // Kept open only when the panel shows the cell the menu was opened on: a
+  // panel still showing another path is a click outside it, as before.
+  const h = harness({ loaded: [XCODE] });
+  await h.realClick(h.scoreItem, h.entryFor(h.scoreItem));
+  assert.deepEqual(h.log, [`open ${XCODE}`]);
+  h.rightClick(KOTLIN);
+  await h.realClick(h.scoreItem, h.entryFor(h.scoreItem));
+  assert.deepEqual(h.log, [`open ${XCODE}`, 'close'], 'Xcode\'s breakdown does not stand while Kotlin\'s is asked for');
+  await h.settle(KOTLIN);
+  assert.deepEqual(h.log, [`open ${XCODE}`, 'close', `open ${KOTLIN}`], 'and Kotlin\'s opens when its score lands');
 });
