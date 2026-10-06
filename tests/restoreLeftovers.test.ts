@@ -186,3 +186,34 @@ test('a record naming anything but a restore\'s temporary name is never acted on
   assert.deepEqual(swept.removed, []);
   assert.equal(fs.readFileSync(precious, 'utf8'), 'a file a record was planted for');
 });
+
+const SKIP_MODES = process.platform === 'win32' ? 'a folder\'s permissions cannot hide its names on Windows' : false;
+
+test('the tidying after a restore keeps the record of a temporary file still there, and of one whose place cannot be looked at: the next start removes both (FG3g review F1.9)', { skip: SKIP_MODES }, async () => {
+  const dir = fileTempDir('treemap-restoreLeftovers-kept-');
+  const stillThere = path.join(dir, '.treemap-restore-bbbb0001'); // left by a restore that could not remove it, or a crash
+  fs.writeFileSync(stillThere, 'part of a file nothing removed');
+  await recordRestorePartial(stillThere, identity(stillThere));
+  const hidden = path.join(dir, 'locked');
+  fs.mkdirSync(hidden);
+  const unseen = path.join(hidden, '.treemap-restore-bbbb0002');
+  fs.writeFileSync(unseen, 'part of a file in a folder that cannot be looked into');
+  await recordRestorePartial(unseen, identity(unseen));
+  const planted = [stillThere, unseen];
+  const { file, id } = await capturedFile('kept', 'the content of a file put back while the others wait');
+  fs.chmodSync(hidden, 0o000); // its names can no longer be looked at
+  try {
+    const job = await settled((await startCapsuleRestore([id])).jobId);
+    assert.equal(job.status, 'complete', job.error);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'the content of a file put back while the others wait');
+    // The restore recorded its own temporary file before it settled: once that record is gone, the tidying has run.
+    await waitFor(() => records().every((r) => planted.includes(r.path)), 'the tidying after the restore');
+    assert.deepEqual(records().map((r) => r.path).sort(), [...planted].sort(), 'both records stay for the sweep: one file is still there, the other could not be looked at');
+  } finally {
+    fs.chmodSync(hidden, 0o700);
+  }
+  const swept = await sweepRestoreLeftovers();
+  assert.deepEqual(swept.removed.sort(), [...planted].sort(), 'the next start removes them');
+  assert.ok(!fs.existsSync(stillThere) && !fs.existsSync(unseen));
+  assert.deepEqual(records(), []);
+});
