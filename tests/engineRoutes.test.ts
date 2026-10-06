@@ -16,8 +16,9 @@ import { rateLimitLanes, resetRateLimiter } from '../src/middleware/rateLimiter'
 import { ENDPOINTS, buildOpenApiDocument } from '../src/api/openapi';
 import { buildScanStats } from '../src/api/scanRoutes';
 import { resetNativeForTests } from '../src/services/scan/native';
-import { resetEngineBudgetForTests, setNativeLoadOptionsForTests } from '../src/services/engineBudget';
-import { createScanRecord, getScan } from '../src/services/diskScanner';
+import { forgetScanBudget, pauseScan, resetEngineBudgetForTests, resumeScan, setNativeLoadOptionsForTests } from '../src/services/engineBudget';
+import { createScanRecord, getScan, gduRuleFor } from '../src/services/diskScanner';
+import type { ScanResult } from '../src/models/types';
 
 /**
  * The budget's HTTP surface (Phase 2, Task 5): the setting and its live
@@ -395,12 +396,15 @@ test('the golden normaliser scrubs only a legal budget value; anything else stay
   assert.throws(() => normalize({ budget: { effective: 'eco', source: 'guess' } }, '/nowhere'), /budget\.source is "guess", not one of/);
 });
 
-test('the spec names every engine a scan can report, and says which cannot pause as pauseScan does', () => {
+test('the spec lists exactly the engines a scan can report, and says which pause as pauseScan and resumeScan answer', () => {
   // ScanStats.engine listed four engines "e.g." and left out the native
   // engine and the NTFS turbo mode; the pause route said "gdu cannot be paused
   // on Windows", where gdu never runs (gduRuleFor); and `reason` was "present
-  // whenever paused is false", which a resume that worked is too, without one
-  // (the walker test above).
+  // whenever paused is false", which a resume that worked is too, without one.
+  // Review of 6 Oct (F1.7, F1.8): a name is counted only in the description's
+  // own list, not wherever the word appears ("the built-in walker"), and the
+  // pause summary is held to what pauseScan answers for each engine rather
+  // than to the phrases it was written with.
   const types = fs.readFileSync(path.join(__dirname, '..', 'src', 'models', 'types.ts'), 'utf8');
   const union = /\n  engine\?: ((?:'[a-z-]+'(?: \| )?)+);/.exec(types);
   assert.ok(union, "ScanResult's engine union is found in types.ts");
@@ -408,14 +412,66 @@ test('the spec names every engine a scan can report, and says which cannot pause
   assert.ok(engines.length >= 6, `the union lists the engines (${engines.join(', ')})`);
   const doc = buildOpenApiDocument() as any;
   const engineDescription: string = doc.components.schemas.ScanStats.properties.engine.description;
-  for (const e of engines) assert.match(engineDescription, new RegExp(`(^|[^a-z-])${e}([^a-z-]|$)`), `ScanStats.engine names ${e}`);
+  const LEAD = 'The engine that produced the scan: ';
+  assert.ok(engineDescription.startsWith(LEAD), `ScanStats.engine opens with its list: ${engineDescription}`);
+  // Each listed name stands before its parenthesis, joined by commas and "or".
+  const listed = engineDescription.slice(LEAD.length).replace(/\s*\([^)]*\)/g, '').split(/,\s*(?:or\s+)?|\s+or\s+/).map((x) => x.trim()).filter(Boolean);
+  assert.deepEqual([...listed].sort(), [...engines].sort(), `ScanStats.engine lists exactly the union's engines (listed: ${listed.join(' | ')})`);
+
+  // What pauseScan answers for a running scan of each engine, on every
+  // platform that engine runs on. gdu never runs on Windows.
+  assert.notEqual(gduRuleFor({ forced: 'auto', rootIsDir: true, incremental: false, ignoreCount: 0, noGdu: false, platform: 'win32' }), null, 'gdu never runs on Windows');
+  const pauses = new Map<string, boolean>();
+  for (const engine of engines) {
+    const answers = new Set<boolean>();
+    for (const platformName of ['macos', 'linux', 'windows'] as const) {
+      if (engine === 'gdu-turbo' && platformName === 'windows') continue;
+      const record = createScanRecord(path.join(os.tmpdir(), `treemap-engine-pause-${engine}`));
+      record.engine = engine as ScanResult['engine'];
+      try {
+        const paused = pauseScan(record, { platformName });
+        answers.add(paused.paused);
+        if (paused.paused) {
+          assert.equal(paused.reason, undefined, `a pause that took (${engine}, ${platformName}) carries no reason`);
+          const resumed = resumeScan(record);
+          assert.deepEqual([resumed.paused, resumed.reason], [false, undefined], `a resume that worked (${engine}) carries no reason`);
+        } else {
+          assert.equal(paused.supported, false, `${engine} on ${platformName}: refused as unsupported`);
+          assert.ok(paused.reason, `a refusal (${engine}, ${platformName}) says why`);
+        }
+      } finally {
+        forgetScanBudget(record.scanId);
+        record.status = 'error';
+      }
+    }
+    assert.equal(answers.size, 1, `${engine} pauses on every platform it runs on, or on none`);
+    pauses.set(engine, [...answers][0]);
+  }
+  const notPaused = createScanRecord(path.join(os.tmpdir(), 'treemap-engine-pause-none'));
+  assert.ok(resumeScan(notPaused).reason, 'a resume that found nothing paused says so');
+  notPaused.status = 'error';
 
   const pause = ENDPOINTS.find((e) => e.method === 'post' && e.path === '/api/scan/{scanId}/pause');
   assert.ok(pause, 'the pause route is described');
+  const clauses = pause.summary.split('; ');
+  assert.equal(clauses.length, 2, `the summary names the engines that pause, then those that cannot: ${pause.summary}`);
+  const [canPause, cannot] = clauses;
+  assert.match(cannot, /cannot be paused/);
+  const WORDS: Record<string, RegExp> = {
+    native: /native walk/, walker: /built-in walker/, 'turbo-walker': /built-in walker/,
+    'gdu-turbo': /gdu shard/, 'ntfs-mft': /NTFS turbo read/, cloud: /cloud listing/,
+  };
+  assert.deepEqual(Object.keys(WORDS).sort(), [...engines].sort(), 'every engine has its words in the pause summary');
+  for (const engine of engines) {
+    const [said, notSaid] = pauses.get(engine) ? [canPause, cannot] : [cannot, canPause];
+    assert.match(said, WORDS[engine], `the summary puts ${engine} with the engines that ${pauses.get(engine) ? 'pause' : 'cannot pause'}`);
+    assert.doesNotMatch(notSaid, WORDS[engine], `and not with the others (${engine})`);
+  }
   assert.doesNotMatch(pause.summary, /gdu cannot be paused on Windows/, 'gdu never runs on Windows');
-  assert.match(pause.summary, /native walk/, 'a native walk pauses (scanPause)');
-  assert.match(pause.summary, /NTFS turbo read or a cloud listing cannot be paused/, "the engines pauseSupportFor refuses");
+
   const reason: string = doc.components.schemas.ScanPauseOutcome.properties.reason.description;
   assert.doesNotMatch(reason, /whenever paused is false/, 'a resume that worked answers paused: false with no reason');
-  assert.match(reason, /resume that worked/, 'and the description says so');
+  assert.match(reason, /absent after a pause that took and after a resume that worked/, 'the answers above carry no reason');
+  assert.match(reason, /when a pause did not take \(the scan had finished, or its engine cannot pause\) and when a resume found nothing paused/, 'and the refusals do');
 });
+
