@@ -145,7 +145,7 @@ Left open from Phase 3:
 
 | Task | What | State (30 Sep, UTC) |
 | --- | --- | --- |
-| T0 | Design documents. The gate is the owner's answers. | Q1, Q3, Q5, Q6, Q10, Q13 and Q16 decided (Q10 and P4-14 are decided; on 30 Sep neither was built, and on 2 Oct Track U U-32 built P4-14 for memory mode). **Q2, Q4, Q7 await confirmation** (OD2); T0's gate names Q1-Q5 and Q7. Q8, Q9, Q11, Q12, Q14, Q15 and Q17 are also engineering decisions you may overrule; none gates T0. |
+| T0 | Design documents. The gate is the owner's answers. | Q1, Q3, Q5, Q6, Q10, Q13 and Q16 decided (Q10 and P4-14 are decided; on 30 Sep neither was built, and on 2 Oct Track U U-32 built P4-14 for memory mode). **Q2, Q4, Q7 await confirmation** (OD2). T0's gate names Q1-Q5 and Q7. Q8, Q9, Q11, Q12, Q14, Q15 and Q17 are also engineering decisions you may overrule; none gates T0. |
 | T13d | Link-log 32 MiB resident cap and sorted disk runs | Built; review-fix round in its worktree; not on main |
 | T14 | SpillSink: external sort, patch/block logs, seal passes, load-back | T14a (`074cc7f`), T14b (`9b6e2e1`) and T14c (`264f2d2`) committed in a worktree, not on main; T14d not yet committed |
 | T15b | Summary, `spillLookup`/`spillSelect`, sync-call counter, forced-spill golden leg, spill RowSource | Not started (needs T14) |

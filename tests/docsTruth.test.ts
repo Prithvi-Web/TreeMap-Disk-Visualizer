@@ -264,41 +264,111 @@ test('ULTRA-ROADMAP and DESIGN say P4-14 is built above T_mem in memory mode (Tr
   assert.match(rule, /spill and aggregate are not built/, 'and the modes it also covers do not exist yet');
 });
 
-test('DESIGN and RISKS call nothing pending the owner that the Phase 4 plan records as decided (review F2.2)', () => {
-  // The record: each question of the Phase 4 plan's §S.11 carries its status,
-  // and the P4-x rule its title names. A "pending the owner" that names one
-  // the owner has decided (by its Q, or by the rule it decides) is stale.
+/* ─────────────── the Phase 4 plan's questions: nothing the owner decided is called pending ─────────────── */
+
+const MONTH = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*';
+
+/** "28 Sep 2026" or "28 September 2026" as a UTC day. */
+function dayOf(text: string): number {
+  const m = new RegExp(`^(\\d{1,2}) (${MONTH}) (\\d{4})$`).exec(text);
+  if (!m) throw new Error(`"${text}" is not a date`);
+  const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(m[2].slice(0, 3));
+  return Date.UTC(Number(m[3]), month, Number(m[1]));
+}
+
+/**
+ * The Phase 4 plan's questions, read from its §S.11 with struck-through text
+ * left out: the day the owner decided each decided one, and every P4-x rule
+ * each one's entry names — its title, its status and the bullets under it —
+ * so a rule reads as decided exactly when a question that names it is.
+ */
+function phase4Questions(): { decidedOn: Map<string, number>; rulesOf: Map<string, Set<string>> } {
   const plan = read('docs', 'superpowers', 'plans', '2026-09-18-phase4-storage.md');
-  const s11 = between(plan, '#### S.11 Open questions for the owner', '\n#');
-  const decided = new Set<string>();
-  const rulesOf = new Map<string, string[]>();
-  let current: string | null = null;
+  const s11 = between(plan, '#### S.11 Open questions for the owner', '\n#').replace(/~~[\s\S]*?~~/g, '');
+  const decidedOn = new Map<string, number>();
+  const rulesOf = new Map<string, Set<string>>();
+  let current: { q: string; rules: Set<string> } | null = null;
   for (const line of s11.split('\n')) {
     const q = /^\d+\. \*\*(Q\d+) —/.exec(line);
     if (q) {
-      current = q[1];
-      const rules = [...line.matchAll(/P4-\d+[a-z]?/g)].map((m) => m[0]);
-      if (rulesOf.has(current)) throw new Error(`${current} is listed twice`);
-      rulesOf.set(current, rules);
+      if (rulesOf.has(q[1])) throw new Error(`${q[1]} is listed twice`);
+      current = { q: q[1], rules: new Set() };
+      rulesOf.set(current.q, current.rules);
+    }
+    if (current === null) continue;
+    for (const m of line.matchAll(/\bP4-\d+[a-z]?\b/g)) current.rules.add(m[0]);
+    const status = new RegExp(`^\\s+- \\*\\*Status: decided by the owner on (\\d{1,2} ${MONTH} \\d{4})\\b`).exec(line);
+    if (status) decidedOn.set(current.q, dayOf(status[1]));
+  }
+  return { decidedOn, rulesOf };
+}
+
+/** Words that say a decision is still to come, however a sentence puts it. */
+const PENDING = /\bpending\b|\bawait(?:s|ing)?\b|\bwaits? (?:on|for) (?:the owner|you)\b|\b(?:not yet|never been) (?:decided|answered|given)\b|\bha(?:s|ve)(?: not|n['’]t)(?: yet)? (?:been )?(?:decided|answered)\b|\bnot decided\b|\bundecided\b|\bunanswered\b|\bto be decided\b|\bopen question\b|\b(?:still|stays|remains) open\b/i;
+
+/** Another plan named in a statement, and Phase 4 named in it. */
+const OTHER_PLAN = /\bPhase (?!4\b)[0-9T]+\b|\bTrack U\b/;
+const PHASE_4 = /\bPhase 4\b|§S\.11|\bP4-\d/;
+
+/**
+ * The Phase 4 questions and rules `statement` names. "Q1–Q5" names each of
+ * them. A Q that a qualifier gives to another plan is left out: "Phase 8 Q3",
+ * "Phase 5's Q7", and "its Q3" in a statement that names another plan and not
+ * Phase 4. ("U-Q6" is Track U's own question, never Phase 4's Q6.)
+ */
+function phase4Refs(statement: string): string[] {
+  const refs: string[] = [];
+  for (const m of statement.matchAll(/(?:\b(Phase [0-9T]+(?:['’]s)?|its) )?(?<![A-Za-z]-)(?<!\w)Q(\d+)(?: ?[–-] ?Q(\d+))?\b|\bP4-\d+[a-z]?\b/g)) {
+    if (m[2] === undefined) {
+      refs.push(m[0]);
       continue;
     }
-    if (current !== null && /^\s+- \*\*Status: decided by the owner/.test(line)) decided.add(current);
+    const by = m[1];
+    if (by !== undefined && by !== 'its' && !/^Phase 4\b/.test(by)) continue;
+    if (by === 'its' && OTHER_PLAN.test(statement) && !PHASE_4.test(statement)) continue;
+    for (let n = Number(m[2]); n <= Number(m[3] ?? m[2]); n++) refs.push(`Q${n}`);
   }
-  assert.ok(decided.has('Q5') && decided.has('Q10'), `the plan's decided questions are read (${[...decided].join(', ')})`);
-  assert.deepEqual(rulesOf.get('Q10'), ['P4-14'], 'Q10 is the question that decides P4-14');
-  const decides = (ref: string): boolean =>
-    decided.has(ref) || [...decided].some((q) => (rulesOf.get(q) ?? []).includes(ref));
+  return refs;
+}
+
+/**
+ * `doc` as statements: each sentence of a paragraph, a list item or a table
+ * row, with struck-through text left out and each run of whitespace made one
+ * space.
+ */
+function statements(doc: string): string[] {
+  const out: string[] = [];
+  for (const block of doc.replace(/~~[\s\S]*?~~/g, '').split(/\n\s*\n/)) {
+    for (const item of block.split(/\n(?=\s*(?:[-*+]|\d+\.) |\|)/)) {
+      for (const text of item.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/)) if (text !== '') out.push(text);
+    }
+  }
+  return out;
+}
+
+test('DESIGN, RISKS and the roadmap call nothing still to be decided that the Phase 4 plan records as decided, however a sentence words it (review F2.2, F3.2, F3.3)', () => {
+  // The record: each question of the plan's §S.11 carries its status, and the
+  // P4-x rules its entry names. A statement that says a decision is still to
+  // come ("pending the owner", "awaits your answer", "has not yet decided")
+  // and names a question the owner decided — by its Q, or by a rule that
+  // question decides — is stale, wherever the words sit in the sentence.
+  const { decidedOn, rulesOf } = phase4Questions();
+  for (const q of ['Q1', 'Q3', 'Q5', 'Q6', 'Q10', 'Q13', 'Q16']) {
+    assert.ok(decidedOn.has(q), `the plan's decided questions are read: ${q} (read: ${[...decidedOn.keys()].join(', ')})`);
+  }
+  const decidedDay = (ref: string): number | undefined => {
+    const days = [...decidedOn].filter(([q]) => q === ref || (rulesOf.get(q)?.has(ref) ?? false)).map(([, day]) => day);
+    return days.length === 0 ? undefined : Math.min(...days);
+  };
+  assert.equal(decidedDay('P4-14'), dayOf('28 Sep 2026'), 'Q10 decides P4-14 (its title names it), on 28 Sep 2026');
+  assert.equal(decidedDay('P4-6a'), dayOf('28 Sep 2026'), 'Q5 decides P4-6a (its status names it), on 28 Sep 2026');
 
   const stale: string[] = [];
   for (const file of [['docs', 'engine', 'DESIGN.md'], ['docs', 'engine', 'RISKS.md'], ['ULTRA-ROADMAP.md']]) {
-    const text = paragraphs(read(...file)).join(' ');
-    const said = [
-      ...[...text.matchAll(/\(([^()]*pending the owner[^()]*)\)/g)].map((m) => m[1]),
-      ...[...text.matchAll(/pending the owner,? \(([^()]*)\)/g)].map((m) => m[1]),
-    ];
-    for (const words of said) {
-      const refs = [...words.matchAll(/\bQ\d+\b|P4-\d+[a-z]?/g)].map((m) => m[0]);
-      if (refs.some(decides)) stale.push(`${file.join('/')}: "${words}"`);
+    for (const text of statements(read(...file))) {
+      if (!PENDING.test(text)) continue;
+      const decided = phase4Refs(text).filter((ref) => decidedDay(ref) !== undefined);
+      if (decided.length > 0) stale.push(`${file.join('/')} (${[...new Set(decided)].join(', ')}): ${text.slice(0, 160)}`);
     }
   }
   assert.deepEqual(stale, [], 'no question the owner decided is called pending');
