@@ -13,7 +13,9 @@ const tmSearchCtx = tmSearchBuffer.getContext('2d');
 /**
  * The rectangle map's floor: files smaller than this get no rectangle (the
  * request's minSize). One number for the request, the live re-layout and the
- * sentence that admits it (tmNodeCapNote).
+ * sentence that admits it (tmNodeCapNote). The floor a map on screen was
+ * actually asked with is state.treemap.minSize — loadTreemap drops this one
+ * for a folder of small files (QA-6b review F1.2).
  */
 const TM_MIN_SIZE = 4096;
 
@@ -69,6 +71,7 @@ async function loadTreemap(rootPath, animate = false) {
       // and therefore the only thing the eye can follow across the change.
       if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
     } else {
+      let floor = TM_MIN_SIZE; // the floor the map on screen will have been asked with
       let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
       // The 4 KB floor keeps a big folder's map legible; in a folder of
@@ -76,6 +79,7 @@ async function loadTreemap(rootPath, animate = false) {
       // panel reads as a broken app. When it drew nothing and there are bytes
       // to draw, ask again without the floor.
       if (!data.nodes.length && data.root.size > 0) {
+        floor = 1;
         data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
         if (seq !== tmLoadSeq) return;
       }
@@ -84,6 +88,7 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
+      state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
@@ -407,7 +412,7 @@ function treemapCanvasHeight(wrap) {
  * tests/mapViewTruth.test.ts reads both literals so the copies cannot drift.
  */
 const TM_SERVER_NODE_CAP = 20000;
-let tmCapMemo = { nodes: null, rootSize: -1, note: '' };
+let tmCapMemo = { nodes: null, rootSize: -1, floor: -1, note: '' };
 
 /**
  * The rectangle map's admission that the server's cap cut it short (QA D58).
@@ -419,10 +424,13 @@ let tmCapMemo = { nodes: null, rootSize: -1, note: '' };
  *
  * The bytes with no rectangle are exact from the drawn set alone: every
  * outlined folder (the root included) minus what was drawn inside it. That
- * also counts the files under the 4 KB floor (TM_MIN_SIZE), which no
+ * also counts the files under the floor the map was asked with, which no
  * drill-in reveals, so the sentence says so and where they are listed
- * (QA-6 review LOW-2); the time slider's map has no floor and does not say
- * it. Below the cap it says nothing — the line on every map would be noise.
+ * (QA-6 review LOW-2). Only a map that had one: loadTreemap's second ask for
+ * a folder of small files has none, and draws them, and neither has the time
+ * slider's map — the floor is the one recorded with the nodes
+ * (state.treemap.minSize), never assumed (QA-6b review F1.2). Below the cap
+ * it says nothing — the line on every map would be noise.
  * The injected Trash cell is not a server node.
  *
  * Reaching the cap is not proof of a cut: a folder of exactly 20,000 items
@@ -436,7 +444,8 @@ function tmNodeCapNote() {
   let sent = 0;
   for (const n of nodes) if (!n.isTrash) sent++;
   if (sent < TM_SERVER_NODE_CAP) return '';
-  if (tmCapMemo.nodes === nodes && tmCapMemo.rootSize === state.treemap.rootSize) return tmCapMemo.note;
+  const floor = state.treemap.history && state.treemap.history.active ? 0 : (state.treemap.minSize || 0);
+  if (tmCapMemo.nodes === nodes && tmCapMemo.rootSize === state.treemap.rootSize && tmCapMemo.floor === floor) return tmCapMemo.note;
   const { root, kids } = tmDrawnTree();
   let blank = 0;
   for (const p of [root, ...nodes]) {
@@ -445,13 +454,12 @@ function tmNodeCapNote() {
     for (const c of kids.get(p.path) || []) drawn += c.size;
     blank += Math.max(0, p.size - drawn);
   }
-  const floored = !(state.treemap.history && state.treemap.history.active);
   const note = blank > 0
     ? `The map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that: `
       + `${formatBytes(blank)} has no rectangle here — drill in, or open the Grid view, to see the rest.`
-      + (floored ? ` That figure counts files under ${formatBytes(TM_MIN_SIZE)} too, which the map does not draw; the Grid view lists them.` : '')
+      + (floor > 1 ? ` That figure counts files under ${formatBytes(floor)} too, which the map does not draw; the Grid view lists them.` : '')
     : '';
-  tmCapMemo = { nodes, rootSize: state.treemap.rootSize, note };
+  tmCapMemo = { nodes, rootSize: state.treemap.rootSize, floor, note };
   return note;
 }
 

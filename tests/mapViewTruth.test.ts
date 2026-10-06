@@ -1022,9 +1022,12 @@ test('LOW-4: the menu scrolls inside a short window, and scrolling it does not c
 
 type TmNode = { path: string; size: number; depth: number; expanded: boolean; isTrash?: boolean };
 
-function capNote(nodes: TmNode[], rootSize: number, history = false): string {
-  const note = load<() => string>(['tmNodeCapNote', 'tmDrawnTree', 'tmParentPath', 'TM_SERVER_NODE_CAP', 'TM_MIN_SIZE', 'tmCapMemo'], {
-    state: { treemap: { rootPath: '/r', rootSize, nodes, history: { active: history } } },
+const CAP_NOTE_DECLS = ['tmNodeCapNote', 'tmDrawnTree', 'tmParentPath', 'TM_SERVER_NODE_CAP', 'TM_MIN_SIZE', 'tmCapMemo'];
+
+/** The note under a map of `nodes`, drawn with the floor `minSize` (what loadTreemap records; 4096 is its first ask). */
+function capNote(nodes: TmNode[], rootSize: number, history = false, minSize = 4096): string {
+  const note = load<() => string>(CAP_NOTE_DECLS, {
+    state: { treemap: { rootPath: '/r', rootSize, nodes, minSize, history: { active: history } } },
     formatCount: fmtCount,
     formatBytes: (n: number) => `${n} B`,
   }, 'tmNodeCapNote');
@@ -1105,6 +1108,72 @@ test('LOW-2: the floor the note names is the one the map is asked for', async ()
   assert.match(url, new RegExp(`[?&]minSize=${floor}&`), 'loadTreemap asks for the floor TM_MIN_SIZE names');
   const live = INDEX.slice(INDEX.indexOf('async function liveRelayout('), INDEX.indexOf('animateTreemapTo(data.nodes)'));
   assert.match(live, /minSize=\$\{TM_MIN_SIZE\}/, 'and so does the live re-layout');
+});
+
+/**
+ * The real loadTreemap and liveRelayout over a stubbed server, and the real
+ * note for whatever they left on screen. `serve(minSize)` answers each ask.
+ */
+function mapAndNote(serve: (minSize: number) => { root: { path: string; name: string; size: number }; nodes: TmNode[] }) {
+  const asked: number[] = [];
+  const state = {
+    scanId: 's1', root: { path: '/r' }, pathIndex: new Map(), view: 'treemap', scanning: false,
+    live: { on: true, dirty: 1 },
+    treemap: { mode: 'treemap', colorMode: 'size', rootPath: '/r', rootSize: 0, maxDepth: 4, nodes: [] as TmNode[], minSize: undefined as number | undefined,
+      hover: null, kbSel: null, history: { scrubbing: false, active: false } },
+  };
+  const page = load<{ loadTreemap: (p: string) => Promise<void>; liveRelayout: () => Promise<void>; note: () => string }>(
+    ['loadTreemap', 'liveRelayout', ...CAP_NOTE_DECLS], {
+      state, REDUCED: true, isSun: () => false, isCells: () => false, exitCartPreview() {},
+      $: () => ({ classList: { add() {}, remove() {} }, disabled: false }),
+      api: async (u: string) => { const m = Number(/[?&]minSize=(\d+)/.exec(u)![1]); asked.push(m); return serve(m); },
+      toast: (m: string) => { throw new Error('the page reported: ' + m); },
+      renderCrumbs() {}, maybeInjectTrash() {}, exitHistoryState() {}, refreshTimebar() {}, drawView() {},
+      animateTreemapTo: (nodes: TmNode[]) => { state.treemap.nodes = nodes; },
+      formatCount: fmtCount, formatBytes: (n: number) => `${n} B`,
+    }, '{ loadTreemap, liveRelayout, note: tmNodeCapNote }', 'let tmLoadSeq = 0;');
+  return { ...page, state, asked };
+}
+
+test('LOW-2: a map loadTreemap asked for again with no floor does not say it hides files under one (QA-6b review F1.2, F1.4)', async () => {
+  // A flat folder of 25,600 files of 250 B: the 4 KB ask draws nothing, so
+  // loadTreemap asks again with minSize=1 and gets 20,000 of them. That map
+  // DOES draw 250-byte files; the 1.4 MB with no rectangle is what the cap cut.
+  const root = { path: '/r', name: 'r', size: 25600 * 250 };
+  const small = mapAndNote((m) => ({ root, nodes: m <= 250 ? files(20000, 250) : [] }));
+  await small.loadTreemap('/r');
+  assert.deepEqual(small.asked, [4096, 1], 'control: the floor was dropped for the second ask');
+  assert.equal(small.state.treemap.nodes.length, 20000);
+  const note = small.note();
+  assert.match(note, /holds at most 20,000 items, and this folder reached that: 1400000 B has no rectangle here/, 'the cut is still said');
+  assert.doesNotMatch(note, /files under/, 'and no floor is claimed for a map that has none');
+  // The same folder with files over the floor keeps the sentence: its map was asked with 4 KB.
+  const big = mapAndNote(() => ({ root: { path: '/r', name: 'r', size: 25600 * 5000 }, nodes: files(20000, 5000) }));
+  await big.loadTreemap('/r');
+  assert.deepEqual(big.asked, [4096]);
+  assert.match(big.note(), /That figure counts files under 4096 B too, which the map does not draw; the Grid view lists them\./);
+});
+
+test('LOW-2: the live re-layout records the floor it asks with, and the note follows it (QA-6b review F1.2)', async () => {
+  // Live mode on that folder of small files, while they grow past 4 KB.
+  let grown = false;
+  const h = mapAndNote((m) => (grown
+    ? { root: { path: '/r', name: 'r', size: 25600 * 5000 }, nodes: files(20000, 5000) }
+    : { root: { path: '/r', name: 'r', size: 25600 * 250 }, nodes: m <= 250 ? files(20000, 250) : [] }));
+  await h.loadTreemap('/r');
+  grown = true;
+  assert.doesNotMatch(h.note(), /files under/, 'control: the retry map claims no floor');
+  await h.liveRelayout();
+  assert.deepEqual(h.asked, [4096, 1, 4096], 'control: the live re-layout asks with the 4 KB floor');
+  assert.match(h.note(), /counts files under 4096 B too/, 'so the map it lays out says so');
+});
+
+test('LOW-2: the note is recomputed when only the floor changed (QA-6b review F1.2)', () => {
+  const state = { treemap: { rootPath: '/r', rootSize: 25600 * 250, nodes: files(20000, 250), minSize: 4096, history: { active: false } } };
+  const note = load<() => string>(CAP_NOTE_DECLS, { state, formatCount: fmtCount, formatBytes: (n: number) => `${n} B` }, 'tmNodeCapNote');
+  assert.match(note(), /files under 4096 B/);
+  state.treemap.minSize = 1; // the same nodes, read under another floor
+  assert.doesNotMatch(note(), /files under/, 'the remembered note is not served for another floor');
 });
 
 test('D58: every rectangle-map paint refreshes the note under the map', () => {

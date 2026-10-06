@@ -1339,6 +1339,7 @@ async function liveRelayout() {
     const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(state.treemap.rootPath)}`);
     if (!live.on) return;
     state.treemap.rootSize = data.root.size;
+    state.treemap.minSize = TM_MIN_SIZE; // the floor this layout was asked with (tmNodeCapNote)
     animateTreemapTo(data.nodes);
   } catch { /* transient — next tick retries */ }
 }
