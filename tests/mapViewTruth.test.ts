@@ -497,6 +497,7 @@ function crumbsHarness() {
       // The right-click menu's.
       cartHas: () => false, budgetFor: () => null, noteFor: () => null,
       openInOS: act('open'), copyPath: act('copy'), openPreview: act('preview'), cartToggle: act('cart'), confirmTrash: act('trash'),
+      cloudProviderOfScan: () => ({ name: 'Drive' }),
       document: fakeDoc,
       icon: () => '<svg></svg>',
       escapeHtml: esc,
@@ -784,6 +785,66 @@ test('MEDIUM-1: Tab out of the menu closes it, and the Tab goes on from "…"', 
   assert.equal(fakeDoc.active, more, 'focus is back on "…"');
   assert.equal(tab.defaultPrevented, false, 'and the Tab itself still moves focus on, from there');
   assert.equal(more.getAttribute('aria-expanded'), 'false');
+});
+
+test('MEDIUM-1: Tab closes the menu wherever focus is — still on Export, or on the map a right-click left it on (QA-6b review F1.1)', () => {
+  // Export and a right-click open the menu without moving focus into it, and
+  // Tab closed it only from inside: it stayed up, and while it was up the map
+  // keys did nothing — only Escape or a click got out.
+  const h = crumbsHarness();
+  const btn = exportButton();
+  btn.focus();
+  h.exportClick({ stopPropagation() {}, currentTarget: btn });
+  assert.equal(fakeDoc.active, btn, 'control: Export keeps focus while its menu opens');
+  const tab = keyEv('Tab');
+  h.keydown(tab);
+  assert.equal(h.menu.style.display, 'none', 'Tab from Export closes its menu');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'and Export says so');
+  assert.equal(tab.defaultPrevented, false, 'the Tab itself goes on');
+  assert.equal(fakeDoc.active, btn, 'from Export, where focus was');
+  h.canvas.focus(); // where the Tab took it
+  h.keydown(keyEv('j'));
+  assert.equal(h.map.move, 1, 'with the menu gone, the map keys are the map\'s again');
+  h.showCtxMenu(40, 50, { path: '/System/a.mov', name: 'a.mov', type: 'file' });
+  assert.equal(fakeDoc.active, h.canvas, 'control: a right-click menu does not take focus');
+  h.keydown(keyEv('Tab'));
+  assert.equal(h.menu.style.display, 'none', 'Tab from the map closes a right-click menu too');
+  assert.equal(fakeDoc.active, h.canvas, 'and leaves focus for the Tab to move');
+});
+
+test('MEDIUM-1: a pick from Export or from a right-click menu puts focus back where it was, not on <body> (QA-6b review F1.8)', () => {
+  // Only the "…" menu's pick gave focus back; Export's and the right-click
+  // menu's closed the menu around the focused entry, and focus fell to <body>.
+  const h = crumbsHarness();
+  const btn = exportButton();
+  btn.focus();
+  h.exportClick({ stopPropagation() {}, currentTarget: btn });
+  h.keydown(keyEv('ArrowDown'));
+  const png = fakeDoc.active as FakeBtn;
+  assert.equal(png.dataset.exp, 'png', 'control: the PNG entry has focus');
+  png.click(); // the press Enter on it makes
+  assert.deepEqual(h.acts, ['png'], 'it exports the PNG');
+  assert.equal(h.menu.style.display, 'none');
+  assert.equal(fakeDoc.active, btn, 'and focus is back on Export');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false');
+  // Every entry the right-click menu builds — on disk, inside an archive, in the cloud.
+  const cases: Array<[unknown, string, string]> = [
+    [{ path: '/System/a.mov', name: 'a.mov', type: 'file' }, 'open', 'open /System/a.mov'],
+    [{ path: '/System/a.zip/b.txt', name: 'b.txt', type: 'file', virtual: true }, 'copy', 'copy /System/a.zip/b.txt'],
+    [{ path: 'cloud://drive/c', name: 'c', type: 'file' }, 'copy', 'copy cloud://drive/c'],
+    [{ path: 'cloud://drive/c', name: 'c', type: 'file' }, 'cloudtrash', 'trash'],
+  ];
+  for (const [node, which, did] of cases) {
+    h.acts.length = 0;
+    h.canvas.focus();
+    h.showCtxMenu(40, 50, node);
+    const entry = h.menu.buttons.find((b) => b.dataset.act === which)!;
+    entry.focus(); // reached with the arrows
+    entry.click();
+    assert.deepEqual(h.acts, [did], `${which} did its job`);
+    assert.equal(h.menu.style.display, 'none');
+    assert.equal(fakeDoc.active, h.canvas, `after ${which} on ${(node as { path: string }).path}, focus is back on the map`);
+  }
 });
 
 test('MEDIUM-1: "…" says whether its menu is open, the menu is named and made of menu items, and a second click closes it', () => {

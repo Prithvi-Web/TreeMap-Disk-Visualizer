@@ -299,8 +299,8 @@ function showCtxMenu(x, y, node) {
       <div class="div"></div>
       <button data-act="cloudtrash" class="danger">${icon('trash', 15)}Move to ${escapeHtml(provider.name)}'s trash</button>`;
     ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
-    menu.querySelector('[data-act="copy"]').addEventListener('click', () => { hideCtxMenu(); copyPath(node.path); });
-    menu.querySelector('[data-act="cloudtrash"]').addEventListener('click', () => { hideCtxMenu(); confirmTrash([node.path]); });
+    menu.querySelector('[data-act="copy"]').addEventListener('click', () => { ctxMenuFocusOpener(hideCtxMenu()); copyPath(node.path); });
+    menu.querySelector('[data-act="cloudtrash"]').addEventListener('click', () => { ctxMenuFocusOpener(hideCtxMenu()); confirmTrash([node.path]); });
     return;
   }
   // Entries inside a container exist in its listing, not on disk — the only
@@ -311,7 +311,7 @@ function showCtxMenu(x, y, node) {
       <div class="div"></div>
       <button disabled style="opacity:.55;cursor:var(--cur-dot)">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
     ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
-    menu.querySelector('[data-act="copy"]').addEventListener('click', () => { hideCtxMenu(); copyPath(node.path); });
+    menu.querySelector('[data-act="copy"]').addEventListener('click', () => { ctxMenuFocusOpener(hideCtxMenu()); copyPath(node.path); });
     return;
   }
   const inCart = cartHas(node.path);
@@ -333,7 +333,7 @@ function showCtxMenu(x, y, node) {
   ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
-    hideCtxMenu();
+    ctxMenuFocusOpener(hideCtxMenu()); // before the act: a sheet it opens gives focus back here
     if (act === 'open') openInOS(ctxTarget.path, true);
     if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
@@ -359,7 +359,9 @@ function showCtxMenu(x, y, node) {
    door: the menu gets a name and its entries the menuitem role, the control
    that opened it says so (aria-expanded), and focus is remembered so the
    keyboard closes — Escape, a pick, Tab — put it back where it was rather
-   than on <body>. ctxMenuKeydown gives it the arrows, Home and End. */
+   than on <body>: every entry's handler starts with
+   ctxMenuFocusOpener(hideCtxMenu()), whichever menu it is in (QA-6b review
+   F1.8). ctxMenuKeydown gives it the arrows, Home and End. */
 /** The control whose menu is showing (it carries aria-expanded), or null for a right-click at a point. */
 let ctxMenuOpener = null;
 /** Where focus goes back to when the keyboard closes the menu: the opener, or what had focus when it opened. */
@@ -409,11 +411,13 @@ function ctxMenuFocusOpener(el) {
  * The open menu's keys, ahead of every other meaning (the page's keydown
  * handler asks first). ArrowDown and ArrowUp step through the entries and
  * wrap, Home and End go to the ends — from inside the menu, or from wherever
- * focus is when a right-click opened it without taking focus. Tab leaves it:
- * the menu closes, focus goes back to its opener, and the Tab goes on from
- * there. Escape and Enter are not handled here: Escape is the page's Escape
- * chain, and Enter on an entry is that button's own press. Answers whether
- * the key was the menu's.
+ * focus is when a right-click opened it without taking focus. Tab leaves it,
+ * wherever focus is: the menu closes — Export and a right-click open it with
+ * focus left where it was, and a menu left up holds the map's keys (QA-6b
+ * review F1.1) — focus that was inside it goes back to its opener, and the
+ * Tab goes on from there. Escape and Enter are not handled here: Escape is
+ * the page's Escape chain, and Enter on an entry is that button's own press.
+ * Answers whether the key was the menu's.
  */
 function ctxMenuKeydown(e) {
   const menu = $('ctxMenu');
@@ -421,7 +425,8 @@ function ctxMenuKeydown(e) {
   const active = document.activeElement;
   const inside = menu.contains(active);
   if (e.key === 'Tab') {
-    if (inside) ctxMenuFocusOpener(hideCtxMenu());
+    const back = hideCtxMenu();
+    if (inside) ctxMenuFocusOpener(back);
     return false;
   }
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return false;

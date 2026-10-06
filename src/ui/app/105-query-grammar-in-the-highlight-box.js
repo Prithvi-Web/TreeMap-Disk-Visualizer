@@ -720,10 +720,10 @@ $('tmExportBtn').addEventListener('click', (e) => {
     <button data-exp="xlsx-folders">${icon('grid', 15)}Excel — all folders</button>
     <button data-exp="pdf">${icon('download', 15)}PDF report</button>` : '');
   const r = e.currentTarget.getBoundingClientRect();
-  // A named menu of menu items, focus back on Export when the keyboard closes it (QA-6 review MEDIUM-1).
+  // A named menu of menu items, focus back on Export when the keyboard closes it or an entry is picked (QA-6 review MEDIUM-1, QA-6b F1.8).
   ctxMenuShow(menu, { label: 'Export the map', opener: e.currentTarget, x: r.left, y: r.bottom + 6 });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-    hideCtxMenu();
+    ctxMenuFocusOpener(hideCtxMenu());
     const exp = b.dataset.exp;
     if (exp === 'png') exportTreemapPNG();
     else if (exp === 'svg') exportTreemapSVG();
