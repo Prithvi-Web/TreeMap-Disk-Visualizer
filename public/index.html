@@ -27586,7 +27586,15 @@ function policyFromEditor() {
   } else {
     match = { kind: 'custom' };
     if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
-    if ($('apRuleSizeOn').checked) match.minBytes = Math.round(Math.max(1, Number($('apRuleSizeMb').value) || 100) * MB);
+    if ($('apRuleSizeOn').checked) {
+      // A rule the box still shows as it was opened keeps its stored bytes —
+      // one under 1 MB too, which the policy API accepts (500,000 opens as
+      // "0.5"). Only a figure a person typed is held to the box's 1 MB floor,
+      // so Save never rewrites a rule nobody edited (review F2.3).
+      const opened = apDraft?.match?.minBytes;
+      const typed = Number($('apRuleSizeMb').value);
+      match.minBytes = opened > 0 && typed === opened / MB ? opened : Math.round(Math.max(1, typed || 100) * MB);
+    }
     if ($('apRuleExtOn').checked) match.exts = $('apRuleExts').value.split(',').map(s => s.trim()).filter(Boolean);
     // An age rule the box still shows as it was opened keeps the milliseconds
     // the policy stored — a part of a day too (36 hours opens as "1.5"), and

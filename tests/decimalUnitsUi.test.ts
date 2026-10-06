@@ -170,15 +170,38 @@ test('Autopilot: a limit saved by an earlier TreeMap in 1024s opens as its exact
   assert.equal(back.requireConfirmationAbove, legacy.requireConfirmationAbove);
   assert.equal(back.match.minBytes, legacy.match.minBytes, 'and so does the size rule');
 
-  // Every size a limit can hold comes back as the bytes it was; a size rule
-  // from the editor's own 1 MB floor up.
+  // Every size a limit or a size rule can hold comes back as the bytes it
+  // was — a rule under the editor's 1 MB floor too (review F2.4).
   for (const b of storedSizes()) {
-    const p = { name: 'p', path: '/home/u', match: { kind: 'custom', minBytes: Math.max(1e6, b) }, maxBytesPerRun: b, maxBytesPerWeek: b, requireConfirmationAbove: b };
+    const p = { name: 'p', path: '/home/u', match: { kind: 'custom', minBytes: b }, maxBytesPerRun: b, maxBytesPerWeek: b, requireConfirmationAbove: b };
     const e = editorRuntime(p);
     e.open(p);
     const r = e.read();
-    assert.deepEqual([r.maxBytesPerRun, r.maxBytesPerWeek, r.requireConfirmationAbove, r.match.minBytes], [b, b, b, Math.max(1e6, b)], `${b} bytes`);
+    assert.deepEqual([r.maxBytesPerRun, r.maxBytesPerWeek, r.requireConfirmationAbove, r.match.minBytes], [b, b, b, b], `${b} bytes`);
   }
+});
+
+test('Autopilot: a size rule under 1 MB opens as its figure and saves untouched as the bytes it was; only a typed figure is held to the 1 MB floor (review F2.3, F2.4)', () => {
+  // The policy API takes any minBytes over 0, so a custom rule of 500,000
+  // bytes exists. The editor opened it as "0.5" and Save — nothing touched —
+  // sent 1,000,000: the box said one figure and the unattended deleter's rule
+  // became another.
+  for (const b of [1, 4096, 500_000, 999_999]) {
+    const p = { name: 'p', path: '/home/u', match: { kind: 'custom', minBytes: b } };
+    const e = editorRuntime(p);
+    e.open(p);
+    assert.equal(String(e.$('apRuleSizeMb').value), String(b / 1e6), `${b} bytes open as ${b / 1e6} MB`);
+    assert.equal(e.read().match.minBytes, b, `a ${b}-byte rule saved untouched keeps every byte`);
+  }
+
+  // A figure a person types is still held to the box's 1 MB floor (min="1").
+  const p = { name: 'p', path: '/home/u', match: { kind: 'custom', minBytes: 500_000 } };
+  const e = editorRuntime(p);
+  e.open(p);
+  e.$('apRuleSizeMb').value = '0.25';
+  assert.equal(e.read().match.minBytes, 1e6, 'a typed 0.25 MB is read as the 1 MB floor');
+  e.$('apRuleSizeMb').value = '2.5';
+  assert.equal(e.read().match.minBytes, 2.5e6, 'and a typed 2.5 MB is 2,500,000 bytes');
 });
 
 test('Autopilot: a stored limit reads back in the units it was typed in', () => {
