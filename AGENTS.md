@@ -481,7 +481,9 @@ OpenAPI 3 spec).
      drive's own copy of it is written after, one write of each drive's
      record at a time, and a drive that does not answer for 60 seconds is
      left to finish on its own while the job says so (the next write of that
-     drive's record waits its turn, counted in its own 60 seconds). Within a
+     drive's record waits its turn, counted in its own 60 seconds); such a
+     write is not one of the Time Capsule's calls left waiting, so a quiet
+     offload drive never stops a cart commit or Autopilot deletion. Within a
      process one save of the app-data record runs at a time; the MCP
      server is a second process with no share in that lock. Each save goes
      through a temp file of its own process and a rename, so the record is

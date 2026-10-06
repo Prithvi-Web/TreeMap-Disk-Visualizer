@@ -961,11 +961,15 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // that record at a time (FG3g review F2.1). Best effort, and never a reason to roll back; a drive
       // that does not answer is left to finish on its own, the limit counting the wait for its turn.
       // Nothing here may throw: past the trash step a throw rolls back, deleting the verified copies.
+      // Not counted with the calls the Time Capsule left waiting (final review F1.6): one write of a
+      // drive's record at a time bounds what is left waiting here to one call per drive — a later one
+      // only waits its turn — and counted, two offloads to a quiet drive stopped every capsule copy,
+      // so every cart commit and Autopilot deletion on every volume, until the drive answered.
       const writing = withDestRecord(destDir, () => writeDestManifest(destDir, onDrive)).catch((err: unknown) =>
         `The record on the destination could not be written (${describeFsError(err)}); the copies are in place, and TreeMap's own record of them is kept.`);
       const unwritten = await withinStallLimit(writing, DEST_RECORD_STALL_MS, () =>
         `The record on the destination was not written: the drive did not answer for ${Math.round(DEST_RECORD_STALL_MS / 1000)} seconds, ` +
-        'so TreeMap went on without it. The copies are in place, and TreeMap\'s own record of them is kept.');
+        'so TreeMap went on without it. The copies are in place, and TreeMap\'s own record of them is kept.', { counted: false });
       if (unwritten) job.error = job.error ? `${job.error} Also: ${unwritten}` : unwritten;
     }
 

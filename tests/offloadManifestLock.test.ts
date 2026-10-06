@@ -337,9 +337,9 @@ test('an offload whose destination drive never answers while its record is writt
       const before = abandonedCallsUnsettled();
       timers[timers.length - 1].fire(); // the limit passes with the drive still quiet
       job = await settled(started.jobId);
-      assert.equal(abandonedCallsUnsettled(), before + 1, 'the write left waiting on the drive is counted until it returns');
+      // Not one of the Time Capsule's calls (final review F1.6): one write per drive at a time bounds it.
+      assert.equal(abandonedCallsUnsettled(), before, 'the write left waiting on the drive is not counted as a call the Time Capsule left waiting');
       hold.release();
-      await waitFor(() => abandonedCallsUnsettled() === before, 'the write left waiting returning');
     });
   } finally {
     hold.release();
@@ -399,6 +399,55 @@ test('two offloads to one drive write its record one at a time: the second waits
   }
   const onDrive = JSON.parse(fs.readFileSync(path.join(dest, 'treemap-offload-manifest.json'), 'utf8')) as { entries: OffloadEntry[] };
   assert.deepEqual(onDrive.entries.map((e) => e.originalPath).sort(), [one, two].sort(), 'the drive\'s own record lists both offloads');
+});
+
+/**
+ * The final review, F1.6: each write of a drive's record left waiting at its limit was counted with the
+ * calls the Time Capsule left waiting, and two of those stop every capsule copy - so two offloads to one
+ * drive that stopped answering made every cart commit and Autopilot deletion, on every volume, refuse
+ * as CAPSULE_COPY_FAILED until the drive answered or TreeMap restarted. The second was not even a call
+ * on the drive: it waits its turn behind the first (one write of a drive's record at a time), which is
+ * what bounds them.
+ */
+test('two offloads to a drive that never answers while its record is written leave the Time Capsule able to copy: a deletion elsewhere still goes', async () => {
+  const { src, paths: [one, two] } = files('dest-quiet-pair', 'one.bin', 'two.bin');
+  const dest = fileTempDir('treemap-offloadManifestLock-dest-quiet-pair-');
+  await waitFor(() => abandonedCallsUnsettled() === 0, 'every earlier call left waiting returning');
+  const timers: { ms: number; fire: () => void }[] = [];
+  const untimer = setStallTimerForTests((ms, onExpire) => {
+    timers.push({ ms, fire: onExpire });
+    return () => {};
+  });
+  const gates: (() => void)[] = [];
+  const unhook = setDestManifestWriteForTests(async (root) => {
+    if (root !== dest) return;
+    await new Promise<void>((resolve) => { gates.push(resolve); }); // a drive that stopped answering
+  });
+  try {
+    for (const [i, f] of [one, two].entries()) {
+      const scan = scanOf(src, [f]);
+      const job = await withOpenFileCheck('clear', async () => {
+        const prepared = await prepareOffload(scan, [f], dest);
+        const started = await startOffload(scan, [f], dest, prepared);
+        await waitFor(() => timers.length > i, `offload ${i + 1} at its write of the drive's record`);
+        timers[i].fire(); // the limit passes with the drive still quiet
+        return settled(started.jobId);
+      });
+      assert.equal(job.status, 'complete', job.error);
+      assert.match(job.error ?? '', /did not answer for 60 seconds/, job.error);
+    }
+    assert.equal(abandonedCallsUnsettled(), 0, 'neither write left waiting is counted as a call the Time Capsule left waiting');
+    const local = path.join(fileTempDir('treemap-offloadManifestLock-dest-quiet-pair-local-'), 'local.txt');
+    fs.writeFileSync(local, 'a file on a disk that answers');
+    const [outcome] = (await protectItems([{ path: local }])).outcomes;
+    assert.equal(outcome.protected, true, `a copy is still made, so a deletion still goes: ${outcome.detail ?? ''}`);
+  } finally {
+    for (const open of gates) open();
+    await waitFor(() => gates.length >= 2, 'the second write beginning once the first returned');
+    for (const open of gates) open();
+    unhook();
+    untimer();
+  }
 });
 
 /* ─────────────── FG3g review F2.6: the Offloaded tab looks at destinations with no lock held ─────────────── */
