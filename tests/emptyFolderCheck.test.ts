@@ -854,6 +854,60 @@ test('a call its request\'s budget cut short that fails with a drive\'s own erro
   }
 });
 
+/* ─────────────── a drive's root asked with less than a deadline of budget left (final review F1.1) ─────────────── */
+
+/**
+ * Each request below has 3 s of budget and gives a call its 2 s at most: a
+ * folder call that misses its whole 2 s leaves 1 s of the request to ask the
+ * drive's root with. The test moves the clock.
+ */
+function rootAskedLate() {
+  let now = 0;
+  const h = byHand(() => '/d', (p) => p.startsWith('/d/ok'), { budgetMs: 3_000, deadlineMs: 2_000, now: () => now });
+  const a = watch(stillEmptyFolder('/d/a', true));
+  return {
+    h,
+    a,
+    /** a's own stat takes its whole 2 s: the root is asked with 1 s of a's budget left. */
+    async folderMisses(): Promise<void> {
+      await turns(20);
+      now = 2_000;
+      h.passDeadlineOf('/d/a');
+      await turns(20);
+    },
+    /** The last second of a's budget runs out — every wait of 1 s passes — the root still within its 2 s. */
+    async budgetRunsOut(): Promise<void> {
+      const cut = h.deadlines.filter((x) => x.ms === 1_000);
+      assert.ok(cut.length > 0, `a wait is the 1 s left of a's budget (deadlines: ${h.deadlines.map((x) => `${x.of || '-'}:${x.ms}`).join(' ')})`);
+      for (const x of cut) x.pass();
+      await turns(20);
+    },
+  };
+}
+
+test('a drive\'s root asked with less of the request\'s budget left than a deadline gets its whole deadline, waited out apart from the request: the request\'s own time running out does not silence the drive (final review F1.1)', async () => {
+  const r = rootAskedLate();
+  await r.folderMisses();
+  assert.equal(r.h.callsOn('/d').length, 1, 'the folder missed its whole 2 s: the drive\'s root is asked');
+  await r.budgetRunsOut();
+  assert.match(reasonOf(r.a() ?? { empty: true }), /^it did not answer within 2 seconds/, 'the request ends when its budget does, and says its folder did not answer');
+  assert.deepEqual(await stillEmptyFolder('/d/ok1', true), { empty: true }, 'another request is not told the drive did not answer: its root has not missed its 2 s');
+  r.h.callsOn('/d')[0].fail('EIO'); // the root answers inside its 2 s — with the drive's own error, but an answer
+  await turns(20);
+  assert.deepEqual(await stillEmptyFolder('/d/ok2', true), { empty: true }, 'an answer in time shows the drive is there: it is not silenced for a minute');
+  assert.deepEqual(r.h.deadlines.filter((x) => x.of === '/d').map((x) => x.ms), [2_000], 'the root was given its whole 2 s, not the 1 s left of the request\'s budget');
+});
+
+test('a drive\'s root asked with less of the request\'s budget left than a deadline, that misses its whole deadline, silences the drive though the request is long gone (final review F1.1)', async () => {
+  const r = rootAskedLate();
+  await r.folderMisses();
+  await r.budgetRunsOut();
+  assert.match(reasonOf(r.a() ?? { empty: true }), /^it did not answer within 2 seconds/);
+  r.h.passDeadlineOf('/d'); // the root's whole 2 s pass unanswered
+  await turns(20);
+  assert.match(reasonOf(await stillEmptyFolder('/d/ok3', true)), /^the drive it is on did not answer a moment ago/, 'the root missed its whole 2 s: the drive is silent');
+});
+
 test('within a request, the first look on a drive goes alone: four at once ask a silent drive once', async () => {
   const drives = twoDrives();
   setEmptyCheckForTests(drives.deps);

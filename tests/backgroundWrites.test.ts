@@ -62,6 +62,8 @@ const NOT_A_RACE: Record<string, string> = {
   'services/watcher.ts::onRawEvent': 'filesystem event fan-in; its effect is an SSE push, not a stored read',
   'services/emptyFolderCheck.ts::restOfDeadline':
     'the rest of a call\'s 2 s deadline its request\'s budget cut short (U-4c review F3.1): it writes no file, only the in-memory turn and silence that the next look reads by design, and it settles at the call\'s own answer or that deadline — both of which a test passes by hand, never by polling; tracking it would have settled() wait on a call that may never answer',
+  'services/emptyFolderCheck.ts::forgetProbe':
+    'a drive root\'s probe, given its whole 2 s though the request that asked had less of its budget left (final review F1.1): it writes no file, only the in-memory probe-in-flight entry and drive silence that the next look reads by design, and it settles at the root\'s own answer or that deadline — both of which a test passes by hand, never by polling; tracking it would have settled() wait on a root that may never answer',
   'services/containerScanner.ts::worker.terminate': 'releases a worker; writes nothing',
   'services/fleet/fleetSync.ts::handlePeerRequest': 'a peer HTTP handler — it IS the request, not something after one',
   'server.ts::fleetRuntime': 'shutdown path — stops the LAN listener',

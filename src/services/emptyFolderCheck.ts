@@ -669,6 +669,12 @@ async function restOfDeadline(d: EmptyCheckDeps, where: Where, op: Promise<unkno
  * A drive already silent — its root missed, or it holds `MAX_HELD_PER_DRIVE`
  * calls — is not asked; nor is a root being asked already (the U-4c review,
  * F1.8): this call waits for that answer, as far as its budget goes.
+ *
+ * The root always gets its whole deadline (final review F1.1): with less of
+ * the budget left than that, this call waits only for what is left, and the
+ * probe is waited out apart from it, as the rest of a folder call's deadline
+ * is (`restOfDeadline`). The request's own time running out says nothing of
+ * the drive: only a root that misses its whole deadline silences it.
  */
 async function askRoot(ctx: LookContext, { folder, drive }: Where, op: Promise<unknown>): Promise<void> {
   const { d } = ctx;
@@ -683,15 +689,19 @@ async function askRoot(ctx: LookContext, { folder, drive }: Where, op: Promise<u
     await budgeted(ctx, asking);
     return;
   }
-  const wait = Math.min(d.deadlineMs, ctx.left());
-  if (wait <= 0) return;
-  const mine = probeRoot(d, drive, wait);
+  const left = ctx.left();
+  if (left <= 0) return;
+  const mine = probeRoot(d, drive, d.deadlineMs);
   askingRoot.set(drive, mine);
-  try {
-    await mine;
-  } finally {
-    if (askingRoot.get(drive) === mine) askingRoot.delete(drive);
-  }
+  // Until the probe settles, whoever started it: a request whose budget ends first leaves it out.
+  void forgetProbe(drive, mine);
+  await (left < d.deadlineMs ? budgeted(ctx, mine) : mine);
+}
+
+/** `drive`'s root is no longer being asked once `probe` settles, unless another probe took its place. Never rejects. */
+async function forgetProbe(drive: string, probe: Promise<void>): Promise<void> {
+  await probe;
+  if (askingRoot.get(drive) === probe) askingRoot.delete(drive);
 }
 
 /** Ask `drive`'s root, waiting `wait`: a root that misses it makes the drive silent until it answers. Never rejects. */
