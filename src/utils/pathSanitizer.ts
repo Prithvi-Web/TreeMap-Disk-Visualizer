@@ -971,8 +971,9 @@ function linkTargetOf(p: string): string | null {
 
 /**
  * Whether `p` lies strictly inside `folder`, both where they really are: every link in the folder
- * resolved, and every link in p resolved too — its own last name included, when it exists — so a
- * link inside the folder that leads out of it is outside, and so is `folder/..`; either path not
+ * resolved, and every link in p resolved too — its own last name included, when it exists, and
+ * a link realpath cannot follow where its target says it leads — so a link inside the folder that
+ * leads out of it, or through a second name, is outside, and so is `folder/..`; either path not
  * text, or not absolute, is not inside anything. Names are compared as the resolved paths spell them, never
  * folded: this answers what may be opened, and a fold could only let more through.
  */
@@ -984,7 +985,12 @@ export function liesInside(folder: unknown, p: unknown): boolean {
   try {
     where = stripDataVolume(strip(fs.realpathSync.native(p)));
   } catch {
-    where = canonicalDirOf(p);
+    // A link realpath cannot follow (its target missing, a loop, a target spelled through a second
+    // name) is judged where its target says it leads (`whereLinkLeads`), as the sanitizer judges it.
+    // Read as its own place, such a link in the folder was inside it, wherever it led (the SEC-2d
+    // review, F3.2).
+    const led = whereLinkLeads(p);
+    where = led === null ? canonicalDirOf(p) : stripDataVolume(led);
   }
   // Through a second name no text says where it lies (`joinUnder`): outside, whatever it spells.
   if (aliasNamespaceOf(where) !== null) return false;

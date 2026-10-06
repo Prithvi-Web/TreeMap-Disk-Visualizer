@@ -480,6 +480,9 @@ test('a link realpath cannot follow because its target is missing is judged wher
   assert.equal(insideAnyScanRoot(path.join(dir, 'in', 'x.txt')), true, 'one that leads to a place in the scan is in the scan');
   assert.equal(insideAnyScanRoot(path.join(dir, 'out')), true, 'the link itself lives in the scan, and trashing it removes the link');
   assert.equal(rejection(path.join(dir, 'out')), null, 'which the sanitizer passes too: its target is an ordinary path');
+  // liesInside (an offload copy inside its destination) read a link realpath cannot follow as its own
+  // place, so one inside the folder that leads out of it was inside (the SEC-2d review, F3.2).
+  assert.deepEqual([liesInside(T, path.join(dir, 'out')), liesInside(T, path.join(dir, 'in'))], [false, true], 'liesInside judges the link where it leads, as its doc says');
 });
 
 test('a link whose target climbs back up through another link (`sub/../x`) is judged where the system reads it — above where sub leads — not in the link’s own folder, though realpath cannot follow it while x is missing', { skip: WINDOWS && 'Windows reads a relative link’s `..` against the link’s own folder, and making a link needs a privilege the runner may not hold' }, () => {
@@ -677,7 +680,7 @@ test('a `..` after a second name in a link’s target is the system’s to read,
       const p = path.join(dir, name, below);
       if (rejection(p) !== 'PATH_BLOCKED') granted.push(`${name}/${below}: the sanitizer`);
       if (insideAnyScanRoot(p)) granted.push(`${name}/${below}: the scanned-root rule`);
-      if (below !== '' && liesInside(T, p)) granted.push(`${name}/${below}: liesInside`);
+      if (liesInside(T, p)) granted.push(`${name}/${below}: liesInside`);
     }
   }
   assert.deepEqual(granted, [], 'beneath such a link, and the link itself, nothing is a path of the scan');
@@ -806,7 +809,7 @@ test('a walk that runs out of its bound on names answers no place, and every rul
       const which = `${what}, ${path.relative(dir, p)}`;
       if (rejection(p) !== 'PATH_BLOCKED') granted.push(`${which}: the sanitizer`);
       if (insideAnyScanRoot(p)) granted.push(`${which}: the scanned-root rule`);
-      if (below !== '' && liesInside(T, p)) granted.push(`${which}: liesInside`);
+      if (liesInside(T, p)) granted.push(`${which}: liesInside`);
       // A write to the link itself goes where the chain ends, which the app-data rule follows hop by hop,
       // each hop a walk of its own; beneath the link, one walk must place the whole chain.
       if (below !== '' && !isAppDataPath(p)) granted.push(`${which}: the app-data rule, as a place to write`);
