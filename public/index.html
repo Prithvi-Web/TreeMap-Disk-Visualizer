@@ -10065,8 +10065,17 @@ function renderCrumbs(host, path, onPick) {
   // goes to the new "…", else the folder on screen. Only "…": a crumb a
   // pointer pressed holds focus too, and keeping it there would turn the
   // next Enter from the map's into a reload of that folder.
+  // A "…" menu open over this trail goes with it (QA-6b review F1.3): it
+  // lists what the old trail folded, and its opener is the "…" about to be
+  // replaced — left up, the new "…" said aria-expanded false over an open
+  // menu, a press of it re-opened instead of closing, and Escape focused a
+  // button no longer on the page. Focus that was in that menu is kept in
+  // the trail, like focus on "…".
   const active = document.activeElement;
-  const kept = !!active && host.contains(active) && active.hasAttribute('data-crumb-more');
+  const menuHere = !!ctxMenuOpener && host.contains(ctxMenuOpener);
+  const inMenu = menuHere && $('ctxMenu').contains(active);
+  if (menuHere) hideCtxMenu();
+  const kept = inMenu || (!!active && host.contains(active) && active.hasAttribute('data-crumb-more'));
   const crumbs = breadcrumbsFor(path);
   let fold = 0;
   crumbsPaint(host, crumbs, fold, onPick);

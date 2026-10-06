@@ -716,6 +716,63 @@ test('MEDIUM-1: Escape, or a folder picked, closes the menu and gives focus back
   assert.ok(host.contains(fakeDoc.active), 'after the crumbs are redrawn, focus is still on a crumb');
 });
 
+test('MEDIUM-1: a trail redrawn while its "…" menu is open closes the menu, and focus goes to the new "…" (QA-6b review F1.3, F1.5, F1.12)', () => {
+  // A resize, ⌘B or a scan landing redraws the trail under an open menu. The
+  // menu stayed up, bound to the old "…": the new one said aria-expanded
+  // false over an open menu, a press of it re-opened instead of closing, and
+  // Escape focused a button no longer on the page — focus fell to <body>.
+  const { h, host, more } = foldedTrail();
+  more.click();
+  assert.equal(h.menu.buttons.includes(fakeDoc.active as FakeBtn), true, 'control: focus is in the open menu');
+  host.clientWidth = 140; // the toolbar narrows
+  h.observers[0].cb();
+  const again = host.buttons.find((b) => b.more)!;
+  assert.ok(again && again !== more, 'control: the redraw replaced "…"');
+  assert.equal(h.menu.style.display, 'none', 'the menu of the old trail closes with it');
+  assert.equal(fakeDoc.active, again, 'focus that was in it goes to the new "…", not to <body>');
+  assert.equal(again.getAttribute('aria-expanded'), 'false', 'which says, truthfully, that its menu is closed');
+  again.click();
+  assert.equal(h.menu.style.display, 'block', 'one press of the new "…" opens its menu');
+  assert.equal(again.getAttribute('aria-expanded'), 'true');
+  again.click();
+  assert.equal(h.menu.style.display, 'none', 'and the next closes it: the toggle follows the button on screen');
+  again.click();
+  h.keydown(keyEv('Escape'));
+  assert.equal(fakeDoc.active, again, 'Escape gives focus back to the "…" on screen');
+  // A load landing on another folder redraws the trail the same way.
+  again.click();
+  h.render(host, DEEP.slice(0, DEEP.lastIndexOf('/')), h.onPick);
+  assert.equal(h.menu.style.display, 'none', 'a new folder\'s trail closes the menu of the old one');
+  assert.equal(fakeDoc.active, host.buttons.find((b) => b.more), 'and focus is on its "…"');
+  assert.deepEqual(h.picked, [], 'nothing was picked');
+});
+
+test('MEDIUM-1: another trail redrawn leaves an open "…" menu alone (QA-6b review F1.3)', () => {
+  const { h, more } = foldedTrail();
+  more.click();
+  const at = fakeDoc.active;
+  h.render(makeHost(1400), '/System/Library', h.onPick); // the Grid's or the City's trail
+  assert.equal(h.menu.style.display, 'block', 'the menu belongs to the other trail and stays open');
+  assert.equal(fakeDoc.active, at, 'with focus where it was');
+  assert.equal(more.getAttribute('aria-expanded'), 'true');
+});
+
+test('MEDIUM-1: focus on "…" goes to the folder on screen when the redrawn trail has no "…" (QA-6b review F1.10)', () => {
+  // Widened, or a shallow folder picked, the trail no longer folds: the
+  // fallback is the only place focus can go that is not <body>.
+  for (const menuOpen of [false, true]) {
+    const { h, host, more } = foldedTrail();
+    if (menuOpen) more.click(); else more.focus();
+    host.clientWidth = 1400;
+    h.observers[0].cb();
+    assert.equal(host.buttons.some((b) => b.more), false, 'control: wide, the trail has no "…"');
+    const here = host.buttons[host.buttons.length - 1];
+    assert.equal(here.current, true, 'control: the last crumb is the folder on screen');
+    assert.equal(fakeDoc.active, here, `focus ${menuOpen ? 'in the open menu' : 'on "…"'} goes to the folder on screen`);
+    assert.equal(h.menu.style.display, menuOpen ? 'none' : undefined, 'and an open menu is closed');
+  }
+});
+
 test('MEDIUM-1: a crumb a pointer pressed does not hold focus in the redrawn trail — Enter goes back to the map', () => {
   // Focus is kept across the redraw for "…" (the keyboard's way through the
   // menu). A click leaves focus on the crumb it pressed; keeping it there
