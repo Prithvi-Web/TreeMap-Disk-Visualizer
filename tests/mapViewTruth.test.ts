@@ -399,11 +399,12 @@ function crumbsHarness() {
   const observers: Array<{ cb: () => void; el: unknown }> = [];
   const menu = fakeMenu();
   const map = { drill: 0, up: 0, move: 0 };
+  const canvas = { tagName: 'CANVAS', focus() { fakeDoc.active = canvas; } };
   fakeDoc.active = fakeDoc.body;
   class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(el: unknown) { observers.push({ cb: this.cb, el }); } }
   const { render, keydown } = load<{ render: (host: unknown, p: string, onPick: (p: string) => void) => void; keydown: (e: KeyEv) => void }>(
     ['renderCrumbs', 'breadcrumbsFor', 'crumbsPaint', 'crumbFolded', 'crumbsOverflow', 'crumbsWatch', 'showCrumbMenu', 'CRUMB_FADE_PX',
-      ...CTX_MENU_DECLS, 'tmMapKeyYields'], {
+      ...CTX_MENU_DECLS, 'tmMapKeyYields', 'tmMapTakeFocus'], {
       state: {
         root: { path: '/System', name: 'System' }, view: 'treemap', lasso: { on: false }, grid: { selection: new Set() },
         treemap: { rootPath: DEEP, history: { active: false }, kbSel: null },
@@ -424,9 +425,10 @@ function crumbsHarness() {
       kbDrill: () => { map.drill++; },
       kbUp: () => { map.up++; },
       kbMove: () => { map.move++; },
+      tmCanvas: canvas,
     }, `{ render: renderCrumbs, keydown: (${pageKeydownSource()}) }`);
   return {
-    render, keydown, map, picked, focusAtPick, menu, observers,
+    render, keydown, map, canvas, picked, focusAtPick, menu, observers,
     onPick: (p: string) => { picked.push(p); focusAtPick.push(fakeDoc.active); },
   };
 }
@@ -610,6 +612,30 @@ test('MEDIUM-1: Escape, or a folder picked, closes the menu and gives focus back
   // The load redraws the trail: focus stays in it rather than dropping to <body>.
   h.render(host, last.path as string, h.onPick);
   assert.ok(host.contains(fakeDoc.active), 'after the crumbs are redrawn, focus is still on a crumb');
+});
+
+test('MEDIUM-1: the map keys used from a button beside the map hand focus to the map, so Enter after j or k still drills', () => {
+  // Enter on a focused button is now that button's press. A click leaves
+  // focus on the button it pressed — a crumb, Refresh, a renderer segment —
+  // and someone who then steers the map with j and k means Enter for the map.
+  const { h, host } = foldedTrail();
+  const crumb = host.buttons[host.buttons.length - 1];
+  crumb.focus();
+  h.keydown(keyEv('j'));
+  assert.equal(h.map.move, 1, 'j moves the selection');
+  assert.equal(fakeDoc.active, h.canvas, 'and the map, which j drives, takes focus');
+  h.keydown(keyEv('Enter'));
+  assert.equal(h.map.drill, 1, 'so Enter drills the selection rather than pressing the crumb');
+  for (const [key, count] of [['k', 'move'], ['h', 'up'], ['l', 'drill']] as const) {
+    crumb.focus();
+    const before = h.map[count];
+    h.keydown(keyEv(key));
+    assert.equal(h.map[count], before + 1, `${key} acts on the map`);
+    assert.equal(fakeDoc.active, h.canvas, `${key} from a button hands focus to the map`);
+  }
+  fakeDoc.active = fakeDoc.body;
+  h.keydown(keyEv('j'));
+  assert.equal(fakeDoc.active, fakeDoc.body, 'with nothing focused, focus is left where it is');
 });
 
 test('MEDIUM-1: Tab out of the menu closes it, and the Tab goes on from "…"', () => {

@@ -55,6 +55,19 @@ function tmMapKeyYields(e) {
   return !!(t && typeof t.closest === 'function' && t.closest('button, a[href], [role="button"], [role="menuitem"]'));
 }
 
+/**
+ * The map's moving keys hand focus to the map when they are pressed from a
+ * control beside it (QA-6 review MEDIUM-1). Enter on a focused button is that
+ * button's press now (tmMapKeyYields), and a click leaves focus on the button
+ * it pressed — a crumb, Refresh, a renderer segment — so someone who then
+ * steered the map with j and k would have pressed that button with Enter.
+ * The map is what those keys drive, so it is what Enter goes to next.
+ */
+function tmMapTakeFocus() {
+  const at = document.activeElement;
+  if (at && at !== tmCanvas && at !== document.body) tmCanvas.focus({ preventScroll: true });
+}
+
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
@@ -138,10 +151,10 @@ document.addEventListener('keydown', (e) => {
       && !state.treemap.history.active && !tmPreview.on && !tmMapKeyYields(e)) {
     switch (e.key) {
       case '/': e.preventDefault(); $('tmSearch').focus(); return;
-      case 'h': case 'ArrowLeft': case 'Backspace': e.preventDefault(); kbUp(); return;
-      case 'j': case 'ArrowDown': e.preventDefault(); kbMove(1); return;
-      case 'k': case 'ArrowUp': e.preventDefault(); kbMove(-1); return;
-      case 'l': case 'ArrowRight': case 'Enter': e.preventDefault(); kbDrill(); return;
+      case 'h': case 'ArrowLeft': case 'Backspace': e.preventDefault(); tmMapTakeFocus(); kbUp(); return;
+      case 'j': case 'ArrowDown': e.preventDefault(); tmMapTakeFocus(); kbMove(1); return;
+      case 'k': case 'ArrowUp': e.preventDefault(); tmMapTakeFocus(); kbMove(-1); return;
+      case 'l': case 'ArrowRight': case 'Enter': e.preventDefault(); tmMapTakeFocus(); kbDrill(); return;
       case 'Delete':
         // Synthetic Trash cell and in-archive entries can't be trashed.
         if (state.treemap.kbSel && !state.treemap.kbSel.isTrash && !state.treemap.kbSel.virtual) {
