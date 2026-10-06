@@ -54,13 +54,15 @@ import { withOpenFileCheck } from './fixtures/openFileCheck';
 const FAKE_TRASH = fileTempDir('treemap-capsuleRestorePinned-trash-');
 let trashCalls = 0;
 
+async function fakeTrashStep(p: string): Promise<void> {
+  // A name starting "late": the step is stopped at its time limit, the file left in place — so
+  // the run keeps its copy as unconfirmed.
+  if (path.basename(p).startsWith('late')) throw new CommandStopped('osascript was stopped at its time limit (a test)');
+  fs.renameSync(p, path.join(FAKE_TRASH, `${trashCalls++}-${path.basename(p)}`));
+}
+
 before(() => {
-  setTrashStepForTests(async (p) => {
-    // A name starting "late": the step is stopped at its time limit, the file left in place — so
-    // the run keeps its copy as unconfirmed.
-    if (path.basename(p).startsWith('late')) throw new CommandStopped('osascript was stopped at its time limit (a test)');
-    fs.renameSync(p, path.join(FAKE_TRASH, `${trashCalls++}-${path.basename(p)}`));
-  });
+  setTrashStepForTests(fakeTrashStep);
 });
 
 after(() => {
@@ -347,6 +349,46 @@ test('an unconfirmed copy being restored is never dropped as superseded by a new
   }
 });
 
+test('a copy a running restore holds is kept when the Trash refuses its item: never discarded from under the restore (FG3h D)', async () => {
+  const dir = fileTempDir('treemap-capsuleRestorePinned-refused-');
+  const p = path.join(dir, 'refused.bin');
+  const aside = path.join(dir, 'aside.bin');
+  fs.writeFileSync(p, Buffer.alloc(ITEM, 9));
+  const hold = holdAtPlacement();
+  let jobId = '';
+  let entryId = '';
+  setTrashStepForTests(async (q) => {
+    if (q !== p) return fakeTrashStep(q);
+    // The item leaves its place for a moment — a Trash that moves it and puts it back, then reports a
+    // failure — and in that moment its copy is restored: the place is free, so the restore is accepted
+    // and pinned, and it reads the copy while the run goes on.
+    fs.renameSync(p, aside);
+    const copy = (await getCapsuleIndex()).entries.find((e) => e.originalPath === p);
+    assert.ok(copy);
+    entryId = copy.id;
+    ({ jobId } = await startCapsuleRestore([copy.id]));
+    await withinHangGuard(hold.reached, 'the restore reaching its placement');
+    fs.renameSync(aside, p);
+    throw new Error('the Trash refused it (a test)');
+  });
+  try {
+    const result = await withOpenFileCheck('clear', () => commitCart([p]));
+    const row = result.skipped.find((s) => s.path === p);
+    assert.equal(row?.code, 'NOT_DELETED', JSON.stringify(result.skipped));
+    assert.match(row?.reason ?? '', /its copy is kept while a restore reads it/, row?.reason);
+    assert.doesNotMatch(row?.reason ?? '', /its copy was discarded/, row?.reason);
+    assert.equal((await entry(entryId))?.hasPayload, true, 'the copy the restore is reading is still listed');
+    assert.ok(fs.existsSync(path.join(capsuleRoot(), entryId)), 'and still on disk');
+    hold.release();
+    const job = await settled(jobId);
+    assert.equal(job.status, 'error', 'its item is back in its place, so the restore stopped without writing over it');
+  } finally {
+    setTrashStepForTests(fakeTrashStep);
+    hold.release();
+    hold.remove();
+  }
+});
+
 /* ─────────────── a second restore; letting go ─────────────── */
 
 test('a second restore of a copy already being restored is refused, and the first finishes', async () => {
@@ -445,6 +487,40 @@ test('every removal of a copy, and accepting a restore, are made under one lock'
   assert.ok(sites.some((s) => s.what === 'restoresInFlight.add'), 'a restore pins its copies');
   const unlocked = sites.filter((s) => !s.locked).map((s) => `${s.what} at line ${s.line}`);
   assert.deepEqual(unlocked, [], 'outside withPayloadLock');
+});
+
+test('the copies of items the Trash refused are let go by the restore pins read under the payload lock, itself inside the index lock (FG3h D)', () => {
+  // A restore is accepted under the payload lock alone, on a fresh read of the index: read outside it,
+  // the pins could miss a restore accepted the next moment, whose copy was then removed from under it.
+  const text = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'timeCapsule.ts'), 'utf8');
+  const source = ts.createSourceFile('timeCapsule.ts', text, ts.ScriptTarget.Latest, true);
+  let discard: ts.FunctionDeclaration | undefined;
+  const find = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'discardUnusedCopies') discard = node;
+    ts.forEachChild(node, find);
+  };
+  find(source);
+  assert.ok(discard, 'discardUnusedCopies is there');
+  const reads: { line: number; locks: string[] }[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'has'
+      && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'restoresInFlight') {
+      // The locks around it, innermost first.
+      const locks: string[] = [];
+      for (let up: ts.Node | undefined = node.parent; up; up = up.parent) {
+        if (ts.isCallExpression(up) && ts.isIdentifier(up.expression) && ['withPayloadLock', 'withCapsuleStore'].includes(up.expression.text)) {
+          locks.push(up.expression.text);
+        }
+      }
+      reads.push({ line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, locks });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(discard);
+  assert.ok(reads.length >= 1, 'it asks which copies a running restore holds');
+  for (const read of reads) {
+    assert.deepEqual(read.locks, ['withPayloadLock', 'withCapsuleStore'], `line ${read.line}: under the payload lock, inside the index lock`);
+  }
 });
 
 test('a restore holds the payload lock only to look at the copies and pin them: where it writes is looked at before, holding nothing', () => {

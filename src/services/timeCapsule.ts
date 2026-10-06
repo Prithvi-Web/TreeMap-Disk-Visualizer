@@ -1556,7 +1556,7 @@ async function protectAndTrashInFlight(
   if (failedToTrash.length > 0) {
     const refusedBecause = new Map(failedToTrash.map((f) => [f.path, f.reason]));
     const notDeleted = protectedOutcomes.filter((o) => refusedBecause.has(o.path));
-    const problem = await discardUnusedCopies(notDeleted);
+    const { problem, held } = await discardUnusedCopies(notDeleted);
     for (const outcome of notDeleted) {
       // The Trash's own reason, per item (FG3b): the one thing a person can act on. Or TreeMap's own,
       // when the Trash was never asked: its check held the whole batch back (FG3c), or it refused
@@ -1568,12 +1568,15 @@ async function protectAndTrashInFlight(
       const code = stoppedBecause.get(outcome.path);
       outcome.protected = false;
       outcome.code = code ?? 'NOT_DELETED';
-      // A copy that was gone has nothing to discard but its record (FG3f #1).
+      // A copy that was gone has nothing to discard but its record (FG3f #1); one a restore is reading
+      // is kept (FG3h D).
       outcome.detail = problem !== null
         ? `${refusal}. Discarding its copy did not finish, so the Time Capsule may still list it.`
         : code === COPY_GONE
           ? `${refusal}.`
-          : `${refusal}, and its copy was discarded.`;
+          : typeof outcome.entryId === 'string' && held.has(outcome.entryId)
+            ? `${refusal}, and its copy is kept while a restore reads it.`
+            : `${refusal}, and its copy was discarded.`;
     }
     if (problem !== null) {
       const items = `${formatCount(notDeleted.length)} item${notDeleted.length === 1 ? '' : 's'}`;
@@ -1883,10 +1886,17 @@ const NOT_DELETED_MARK = 'not-deleted';
  * only after that are the folders removed (one left behind is an orphan, which `reconcileCapsule`
  * sweeps). An undo passes over a marked copy (`listUndoableEntriesForRun`), so an index that could
  * not be read or written still leaves it putting back exactly what was trashed.
+ *
+ * A copy a running restore holds is kept, marked (FG3h D): a restore can be accepted while its item
+ * is away from its place for a moment, and the copy it reads was removed from under it. Its pins are
+ * read under the payload lock, inside the index lock (the order every removal takes), so a restore
+ * is accepted either before the read — and its copy kept — or after the index no longer names it.
+ * `held` answers which were kept.
  */
-async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<string | null> {
+async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<{ problem: string | null; held: ReadonlySet<string> }> {
   const ids = new Set(outcomes.map((o) => o.entryId).filter((id): id is string => typeof id === 'string'));
-  if (ids.size === 0) return null;
+  const held = new Set<string>();
+  if (ids.size === 0) return { problem: null, held };
   let problem: string | null = null;
   const report = (step: string, err: unknown): void => {
     problem ??= err instanceof Error ? err.message : String(err);
@@ -1899,8 +1909,8 @@ async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<strin
       console.error('[treemap] time capsule: a copy of an item the Trash refused could not be marked:', err);
     });
   }
-  // Read and written as one, with no other writer between (FG3f #2).
-  const dropped = await withCapsuleStore(async () => {
+  // Read and written as one, with no other writer between (FG3f #2), and no restore accepted between.
+  const dropped = await withCapsuleStore(async () => withPayloadLock(async () => {
     let store: CapsuleStore;
     try {
       failIfInjected('load');
@@ -1909,7 +1919,8 @@ async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<strin
       report('reading the index', err);
       return false;
     }
-    store.entries = store.entries.filter((e) => !ids.has(e.id));
+    for (const id of ids) if (restoresInFlight.has(id)) held.add(id);
+    store.entries = store.entries.filter((e) => !ids.has(e.id) || held.has(e.id));
     try {
       failIfInjected('save');
       await saveStore(store);
@@ -1918,9 +1929,10 @@ async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<strin
       report('writing the index', err);
       return false;
     }
-  });
-  if (!dropped) return problem; // the entries stay, each marked, so its folder stays too
+  }));
+  if (!dropped) return { problem, held }; // the entries stay, each marked, so its folder stays too
   for (const id of ids) {
+    if (held.has(id)) continue;
     try {
       failIfInjected('drop');
       await fsp.rm(entryDir(id), { recursive: true, force: true });
@@ -1928,7 +1940,7 @@ async function discardUnusedCopies(outcomes: ProtectionOutcome[]): Promise<strin
       report('removing a copy', err);
     }
   }
-  return problem;
+  return { problem, held };
 }
 
 /* ---------------- index (Time Capsule tab) ---------------- */
