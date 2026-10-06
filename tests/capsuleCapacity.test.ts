@@ -398,3 +398,27 @@ test('"Forget" refuses the copy of an item whose deletion is under way: asked at
   assert.ok(entry);
   assert.deepEqual(await deleteCapsuleEntry(entry.id), { deleted: true, bytesFreed: ITEM }, 'once the deletion is over, it can be forgotten');
 });
+
+/* ─────────────── FG3g review F2.3: a capture that fails while making room keeps no orphan copy ─────────────── */
+
+const SKIP_MODES = process.platform === 'win32'
+  ? 'a folder\'s permissions do not stop a removal on Windows'
+  : process.getuid?.() === 0 ? 'running as root, a folder\'s mode stops nothing' : false;
+
+test('a capture whose making room fails once its copy is whole removes that copy: no folder of it is left beside the index', { skip: SKIP_MODES }, async () => {
+  const [o1, o2, s] = files('a3-room-fails', ['o1.bin', 'o2.bin', 's.bin']);
+  const [id1, id2] = await protectEach([o1, o2]); // the capsule is full: s fits only by evicting o1
+  const locked = path.join(capsuleRoot(), id1, 'data');
+  fs.chmodSync(locked, 0o555); // o1's copy cannot be removed: making room for s fails
+  try {
+    await assert.rejects(protectItems([{ path: s }]), (err: unknown) => {
+      assert.equal((err as NodeJS.ErrnoException).code, 'EACCES', String(err));
+      return true;
+    });
+  } finally {
+    fs.chmodSync(locked, 0o755);
+  }
+  assert.deepEqual(fs.readdirSync(capsuleRoot()).sort(), [id1, id2].sort(), 'no copy of s is left on disk, where nothing would count it or remove it until the next start');
+  assert.deepEqual((await getCapsuleIndex()).entries.map((e) => e.id).sort(), [id1, id2].sort(), 'and the index records none');
+  assert.ok(fs.readFileSync(s).equals(Buffer.alloc(ITEM, 3)), 's is untouched');
+});

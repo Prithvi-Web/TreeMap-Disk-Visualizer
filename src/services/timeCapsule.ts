@@ -1030,6 +1030,14 @@ async function capture(
     // the evicted copies as restorable, and a restore or an undo of one was refused as unreadable.
     if (plan.evict.length > 0) await persist();
     return plan;
+  }).catch(async (err: unknown) => {
+    // Making room failed with the new copy whole on disk (FG3g review F2.3): an older copy that could
+    // not be removed, or an index that could not be saved (a disk the copy has just filled). The copy
+    // was left as a folder nothing counted — the cap counts what the index records — and nothing
+    // removed until the next start, one more for each retry of the run. It goes as a failed copy does
+    // (or is tried again later), and the failure is the run's, as when room was made before the copy.
+    await removeCaptureFolder(id);
+    throw err;
   });
   if (!made.fits) {
     // Whole, but with no room left beside what is pinned now: not kept, and nothing was evicted for it.
