@@ -365,13 +365,14 @@ R95).
 A projection now exists before the walk: the folder's last scan, else, for a
 whole volume, its inodes in use (`projectEntries`,
 `src/services/scan/projection.ts`). The sink's room is 2 × that projection
-when it is more than the default room (`memoryRoomFor`), so a tree that
+whenever that is more than the default room (`memoryRoomFor`), so a tree that
 outgrew the default is walked once, and `engineReason` says what the room was
 sized for. A walk that still meets its room is walked again on the columns
 path as above; the count the scan shows holds through the second walk, and
 `engineReason` is the only place that says it happened — the scan's phase on
-its record and `/live` (Track U U-9, U-10) are not built at 5.2.0. A native
-walk that fails past `T_mem` is not restarted in the built-in walker (U-32,
+its record and `/live` (Track U U-9, U-10) are not built at 5.2.0. A failed
+native walk of a tree known to be past `T_mem` — it had counted more, or its
+last scan × 1.25 is more — is not restarted in the built-in walker (U-32,
 P4-14). T16's chooser replaces `memoryRoomFor`.
 
 Spill files cannot outlive the scan (P4-5a). Each is created in

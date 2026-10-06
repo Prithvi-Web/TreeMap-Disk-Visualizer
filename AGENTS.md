@@ -180,11 +180,13 @@ OpenAPI 3 spec).
      than at it, so everything else on that volume is necessarily in the
      residual; `caveats` says so in words. One line is about the scan's own
      reach: `mountedInside`, the drives mounted inside the scanned folder.
-     Under "Stay on this drive" it is a measured 0 with their count, since the
-     scan entered none; after a scan that entered any (`"cross"`) it is
-     unknown, because what they hold is not on this volume and is not
-     subtracted (the logical total counted there is in its `detail`); and it
-     is unknown when the mount table could not be read. Read-only, and the
+     Under "Stay on this drive" it is a measured 0, since the scan entered
+     none, with their count (`null` on Windows, which keeps no mount table).
+     It is unknown, with the reason, after a scan that entered any
+     (`"cross"`), because what they hold is not on this volume and is not
+     subtracted (the logical total counted there is in its `detail`); when
+     the mount table could not be read or the scan did not read it; and when
+     the walk went onto a device the table does not list. Read-only, and the
      `remedy` on a line is a *description* of an existing, separately-gated
      endpoint — never a second path to one.
 
@@ -439,8 +441,8 @@ OpenAPI 3 spec).
      index: while a folder's index is being built `GET /api/index/tree`
      answers `202` with `status: "running"` and `GET /api/allocation` and
      `/api/allocation/file` answer `202 { status: "building" }`,
-     `/api/search` searches only finished indexes, and a failed build answers
-     `500 INDEX_BUILD_FAILED`. The allocation routes answer
+     `/api/search` searches only finished indexes, and after a failed build
+     the tree and allocation routes answer `500 INDEX_BUILD_FAILED`. The allocation routes answer
      `409 ALLOCATION_NOT_MEASURED`, with a sentence and no number, where
      TreeMap did not measure what the files occupy — on Windows, which reports
      no blocks. The index progress stream keeps
