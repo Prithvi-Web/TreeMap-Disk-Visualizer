@@ -729,7 +729,7 @@ function boxesRuntime(listing: (p: string) => unknown) {
     'setTimeout', 'clearTimeout',
     `'use strict';
      const state = { scanning: false, system: { homeDir: '/home/u', commonDirs: [] }, autopilot: { policies: [] } };
-     const GB = 1024 * 1024 * 1024;
+     const KB = 1e3, MB = 1e6, GB = 1e9, TB = 1e12; // the page's decimal units (000-prelude, QA D09)
      let apDraft = null;
      function icon() { return ''; }
      ${src}

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { lift } from './fixtures/liftFrontend';
+
 /**
  * Clean Up → "Make this an Autopilot policy" with the Duplicates rule ticked.
  *
@@ -89,6 +91,7 @@ function pressPromote(rules: Rules, opts: {
   const switched: string[] = [];
   const deps: Record<string, unknown> = {
     $,
+    MB: lift<number>(['MB'], 'MB'), // the page's own megabyte
     state: { scanId: 's1', root: { path: '/home/u/proj' }, treemap: { rootPath: '/home/u/proj/sub' } },
     cleanRuleSource: opts.source ?? 'simple',
     selectedSavedView: () => opts.view ?? null,
@@ -107,7 +110,8 @@ function pressPromote(rules: Rules, opts: {
 }
 
 const DAY = 86_400_000;
-const MB = 1_048_576;
+/** Sizes are decimal (QA D09): the size box is in MB of 1,000,000 bytes. */
+const MB = 1_000_000;
 
 /** A press that was refused because of the Duplicates rule, and did nothing else. */
 function assertRefusedForDuplicates(r: ReturnType<typeof pressPromote>): string {

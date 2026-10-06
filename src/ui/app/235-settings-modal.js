@@ -196,15 +196,16 @@ for (const input of engineBudgetInputs()) {
 
 /* ── Cleanup target (v4 §4.1) ──
    Stored as bytes; shown in whichever unit divides evenly, largest first, so
-   50 GB comes back as "50 GB" rather than "51200 MB". An empty box is the
-   no-target state and is written back as `null`. */
-const CLEANUP_GOAL_UNITS = [1099511627776, 1073741824, 1048576];
+   50 GB comes back as "50 GB" rather than "50000 MB". Units are decimal, as
+   printed (QA D09). An empty box is the no-target state and is written back
+   as `null`. */
+const CLEANUP_GOAL_UNITS = [TB, GB, MB];
 function renderCleanupGoalFields() {
   // adoptCartGoal is boot's own policy: the dock and the dialog can never
   // disagree, whether this paint follows an open or a save.
   const bytes = adoptCartGoal(settingsData.cleanupGoalBytes);
-  if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = '1073741824'; return; }
-  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? 1073741824;
+  if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = String(GB); return; }
+  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? GB;
   $('cleanupGoalUnit').value = String(unit);
   $('cleanupGoalValue').value = String(Math.round((bytes / unit) * 100) / 100);
 }
@@ -213,7 +214,7 @@ function renderCleanupGoalFields() {
 function collectCleanupGoal() {
   const raw = parseFloat($('cleanupGoalValue').value);
   if (!Number.isFinite(raw) || raw <= 0) return null;
-  return Math.round(raw * (Number($('cleanupGoalUnit').value) || 1073741824));
+  return Math.round(raw * (Number($('cleanupGoalUnit').value) || GB));
 }
 
 // An edit like every other field here: Save carries it to the cart's meter
@@ -497,7 +498,7 @@ function renderSchedules() {
       <select class="s-int" aria-label="Scan interval">
         ${hours.map(h => `<option value="${h}"${s.intervalHours === h ? ' selected' : ''}>${h === 168 ? 'week' : h + ' h'}</option>`).join('')}
       </select>
-      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? (s.thresholdBytes / 1073741824).toFixed(1) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
+      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? (s.thresholdBytes / GB).toFixed(1) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
       <input type="number" class="s-pct" min="0" value="${s.thresholdPct ?? ''}" placeholder="–" aria-label="Alert threshold in percent">
       <input type="checkbox" class="s-on"${s.enabled ? ' checked' : ''} aria-label="Schedule enabled">
       <button class="icon-btn danger s-del" data-i="${i}" aria-label="Remove this schedule" title="Remove">${icon('trash', 14)}</button>
@@ -545,7 +546,7 @@ function collectSettingsForms() {
     s.path = asPath(row.querySelector('.s-path').value);
     s.intervalHours = +row.querySelector('.s-int').value;
     const gb = parseFloat(row.querySelector('.s-gb').value);
-    s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1073741824) : undefined;
+    s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * GB) : undefined;
     const pct = parseFloat(row.querySelector('.s-pct').value);
     s.thresholdPct = Number.isFinite(pct) && pct > 0 ? pct : undefined;
     s.enabled = row.querySelector('.s-on').checked;

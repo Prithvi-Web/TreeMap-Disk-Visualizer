@@ -795,7 +795,7 @@ function promoteRuleToPolicy() {
     }
     match = { kind: 'custom' };
     if (ageOn) match.maxAgeMs = Math.max(1, Number($('ruleAgeDays').value) || 180) * 86400000;
-    if (sizeOn) match.minBytes = Math.max(1, Number($('ruleSizeMb').value) || 100) * 1048576;
+    if (sizeOn) match.minBytes = Math.max(1, Number($('ruleSizeMb').value) || 100) * MB;
     if (extOn && exts.length) match.exts = exts;
     name = 'Clean Up rule';
   }
@@ -860,7 +860,7 @@ $('cleanFindBtn').addEventListener('click', async () => {
     return Number.isFinite(n) && n > 0 ? n : undefined;
   };
   const maxAgeMs = ageOn ? threshold($('ruleAgeDays').value, 86400_000) : undefined;
-  const minBytes = sizeOn ? threshold($('ruleSizeMb').value, 1048576) : undefined;
+  const minBytes = sizeOn ? threshold($('ruleSizeMb').value, MB) : undefined; // decimal MB, as printed (QA D09)
   const exts = $('ruleExts').value.split(',').map(s => s.trim().toLowerCase().replace(/^\./, '')).filter(Boolean);
   if (!ageOn && !sizeOn && !extOn && !dupOn) { toast('Enable at least one rule', 'error'); return; }
   if (extOn && !exts.length && !ageOn && !sizeOn && !dupOn) { toast('Add at least one extension', 'error'); return; }

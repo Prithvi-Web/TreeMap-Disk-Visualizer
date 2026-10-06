@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { lift } from './fixtures/liftFrontend';
+
 /**
  * Clean Up → Find matching files: a ticked rule with no value in its box.
  *
@@ -95,6 +97,7 @@ async function pressFind(boxes: Record<string, Box>) {
   const urls: string[] = [];
   const fn = runnable(findBody(), {
     $,
+    MB: lift<number>(['MB'], 'MB'), // the page's own megabyte
     state: { scanId: 's1', root: { path: '/r' }, treemap: {} },
     cleanRuleSource: 'rules',
     toast: (msg: string, kind?: string) => { toasts.push({ msg, kind }); },
@@ -111,7 +114,8 @@ async function pressFind(boxes: Record<string, Box>) {
 }
 
 const DAY = 86_400_000;
-const MB = 1_048_576;
+/** Sizes are decimal (QA D09): the size box is in MB of 1,000,000 bytes. */
+const MB = 1_000_000;
 
 /** The single refusal a press produced, asserting there was exactly one. */
 function refusal(toasts: Shown[]): string {

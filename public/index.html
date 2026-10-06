@@ -4108,10 +4108,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div class="spacer"></div>
         <label for="dupMinSize">Ignore files under</label>
         <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
-          <option value="1024">1 KB</option>
-          <option value="102400" selected>100 KB</option>
-          <option value="1048576">1 MB</option>
-          <option value="10485760">10 MB</option>
+          <option value="1000">1 KB</option>
+          <option value="100000" selected>100 KB</option>
+          <option value="1000000">1 MB</option>
+          <option value="10000000">10 MB</option>
         </select>
         <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
         <button class="btn" id="dupOffloadBtn" disabled title="Copy the selected duplicates to another drive, verify, then trash them locally"><span data-icon="archive"></span>Offload…</button>
@@ -4589,9 +4589,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="budget-input">
         <input type="number" id="budgetValue" min="0" step="any" placeholder="5" aria-label="Budget amount">
         <select id="budgetUnit" aria-label="Budget unit">
-          <option value="1073741824" selected>GB</option>
-          <option value="1048576">MB</option>
-          <option value="1024">KB</option>
+          <option value="1000000000" selected>GB</option>
+          <option value="1000000">MB</option>
+          <option value="1000">KB</option>
           <option value="1">bytes</option>
         </select>
       </div>
@@ -4834,9 +4834,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <span data-icon="gauge"></span><label for="cleanupGoalValue">Free up</label>
         <input type="number" id="cleanupGoalValue" min="0" step="any" placeholder="none" aria-label="Cleanup target amount — leave empty for none">
         <select id="cleanupGoalUnit" aria-label="Cleanup target unit">
-          <option value="1073741824">GB</option>
-          <option value="1099511627776">TB</option>
-          <option value="1048576">MB</option>
+          <option value="1000000000">GB</option>
+          <option value="1000000000000">TB</option>
+          <option value="1000000">MB</option>
         </select>
         <button class="btn" id="cleanupGoalClear"><span data-icon="x"></span>Clear target</button>
       </div>
@@ -5123,6 +5123,13 @@ function formatBytes(n, d = 1) {
   if (shown >= 1000 && u < UNITS.length - 1) { v /= 1000; u++; }
   return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
+/* The same units for a size a person TYPES — a budget, a cap, a target, a
+   rule — so "50 GB" typed is the 50 GB printed beside it (QA D09). Real
+   binary quantities (buffers, blocks) never use these. */
+const KB = 1e3;
+const MB = 1e6;
+const GB = 1e9;
+const TB = 1e12;
 /* The interface is in English, so what it writes is English: counts "1,234"
    (formatCount, below) and dates "Sep 6, 2026" (DATE_FMT, WHEN_FMT and the
    few toLocale*String calls that name UI_LOCALE). A Portuguese machine used to
@@ -27136,7 +27143,7 @@ const AP_STATUS_LABEL = {
   blocked: 'Held back',
   failed: 'Failed',
 };
-const GB = 1024 * 1024 * 1024;
+// Byte limits are typed in GB and size rules in MB: the page's decimal units (KB, MB, GB in 000-prelude).
 
 /** Editor state for the policy dialog; null when it is closed. */
 let apDraft = null;
@@ -27476,7 +27483,7 @@ function openPolicyEditor(policy) {
     $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;
     if (m.maxAgeMs) $('apRuleAgeDays').value = m.maxAgeMs / 86400000; // exact: 36 hours is 1.5, never rounded to 2
     $('apRuleSizeOn').checked = m.minBytes !== undefined;
-    if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / 1048576);
+    if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / MB);
     $('apRuleExtOn').checked = Boolean(m.exts?.length);
     $('apRuleExts').value = (m.exts || []).join(', ');
   }
@@ -27568,7 +27575,7 @@ function policyFromEditor() {
   } else {
     match = { kind: 'custom' };
     if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
-    if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * 1048576;
+    if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * MB;
     if ($('apRuleExtOn').checked) match.exts = $('apRuleExts').value.split(',').map(s => s.trim()).filter(Boolean);
     // An age rule the box still shows as it was opened keeps the milliseconds
     // the policy stored — a part of a day too (36 hours opens as "1.5"), and
@@ -28314,16 +28321,17 @@ function openBudgetDialog(node) {
   $('budgetCurrent').innerHTML = size != null
     ? `Current size: <b>${formatBytes(size)}</b>`
     : 'Current size unknown until the next scan.';
-  // Prefill with the existing budget (pick the friendliest unit) or a sensible default.
+  // Prefill with the existing budget in the largest unit it reaches (1.5 GB,
+  // not 1500 MB), or a sensible default. Units are decimal, as printed; the
+  // figure is exact, so one saved by an earlier TreeMap in 1024s (50 "GB" =
+  // 53,687,091,200 bytes) opens as the 53.6870912 GB it is and saves unchanged.
   const unitSel = $('budgetUnit'), valIn = $('budgetValue');
   if (existing) {
-    const unit = existing.maxBytes % 1073741824 === 0 ? 1073741824
-      : existing.maxBytes % 1048576 === 0 ? 1048576
-      : existing.maxBytes % 1024 === 0 ? 1024 : 1;
+    const unit = [GB, MB, KB].find((u) => existing.maxBytes >= u) ?? 1;
     unitSel.value = String(unit);
     valIn.value = String(existing.maxBytes / unit);
   } else {
-    unitSel.value = '1073741824';
+    unitSel.value = String(GB);
     valIn.value = '';
   }
   $('budgetRemoveBtn').style.display = existing ? '' : 'none';
@@ -34202,7 +34210,7 @@ function promoteRuleToPolicy() {
     }
     match = { kind: 'custom' };
     if (ageOn) match.maxAgeMs = Math.max(1, Number($('ruleAgeDays').value) || 180) * 86400000;
-    if (sizeOn) match.minBytes = Math.max(1, Number($('ruleSizeMb').value) || 100) * 1048576;
+    if (sizeOn) match.minBytes = Math.max(1, Number($('ruleSizeMb').value) || 100) * MB;
     if (extOn && exts.length) match.exts = exts;
     name = 'Clean Up rule';
   }
@@ -34267,7 +34275,7 @@ $('cleanFindBtn').addEventListener('click', async () => {
     return Number.isFinite(n) && n > 0 ? n : undefined;
   };
   const maxAgeMs = ageOn ? threshold($('ruleAgeDays').value, 86400_000) : undefined;
-  const minBytes = sizeOn ? threshold($('ruleSizeMb').value, 1048576) : undefined;
+  const minBytes = sizeOn ? threshold($('ruleSizeMb').value, MB) : undefined; // decimal MB, as printed (QA D09)
   const exts = $('ruleExts').value.split(',').map(s => s.trim().toLowerCase().replace(/^\./, '')).filter(Boolean);
   if (!ageOn && !sizeOn && !extOn && !dupOn) { toast('Enable at least one rule', 'error'); return; }
   if (extOn && !exts.length && !ageOn && !sizeOn && !dupOn) { toast('Add at least one extension', 'error'); return; }
@@ -35388,15 +35396,16 @@ for (const input of engineBudgetInputs()) {
 
 /* ── Cleanup target (v4 §4.1) ──
    Stored as bytes; shown in whichever unit divides evenly, largest first, so
-   50 GB comes back as "50 GB" rather than "51200 MB". An empty box is the
-   no-target state and is written back as `null`. */
-const CLEANUP_GOAL_UNITS = [1099511627776, 1073741824, 1048576];
+   50 GB comes back as "50 GB" rather than "50000 MB". Units are decimal, as
+   printed (QA D09). An empty box is the no-target state and is written back
+   as `null`. */
+const CLEANUP_GOAL_UNITS = [TB, GB, MB];
 function renderCleanupGoalFields() {
   // adoptCartGoal is boot's own policy: the dock and the dialog can never
   // disagree, whether this paint follows an open or a save.
   const bytes = adoptCartGoal(settingsData.cleanupGoalBytes);
-  if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = '1073741824'; return; }
-  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? 1073741824;
+  if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = String(GB); return; }
+  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? GB;
   $('cleanupGoalUnit').value = String(unit);
   $('cleanupGoalValue').value = String(Math.round((bytes / unit) * 100) / 100);
 }
@@ -35405,7 +35414,7 @@ function renderCleanupGoalFields() {
 function collectCleanupGoal() {
   const raw = parseFloat($('cleanupGoalValue').value);
   if (!Number.isFinite(raw) || raw <= 0) return null;
-  return Math.round(raw * (Number($('cleanupGoalUnit').value) || 1073741824));
+  return Math.round(raw * (Number($('cleanupGoalUnit').value) || GB));
 }
 
 // An edit like every other field here: Save carries it to the cart's meter
@@ -35689,7 +35698,7 @@ function renderSchedules() {
       <select class="s-int" aria-label="Scan interval">
         ${hours.map(h => `<option value="${h}"${s.intervalHours === h ? ' selected' : ''}>${h === 168 ? 'week' : h + ' h'}</option>`).join('')}
       </select>
-      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? (s.thresholdBytes / 1073741824).toFixed(1) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
+      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? (s.thresholdBytes / GB).toFixed(1) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
       <input type="number" class="s-pct" min="0" value="${s.thresholdPct ?? ''}" placeholder="–" aria-label="Alert threshold in percent">
       <input type="checkbox" class="s-on"${s.enabled ? ' checked' : ''} aria-label="Schedule enabled">
       <button class="icon-btn danger s-del" data-i="${i}" aria-label="Remove this schedule" title="Remove">${icon('trash', 14)}</button>
@@ -35737,7 +35746,7 @@ function collectSettingsForms() {
     s.path = asPath(row.querySelector('.s-path').value);
     s.intervalHours = +row.querySelector('.s-int').value;
     const gb = parseFloat(row.querySelector('.s-gb').value);
-    s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1073741824) : undefined;
+    s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * GB) : undefined;
     const pct = parseFloat(row.querySelector('.s-pct').value);
     s.thresholdPct = Number.isFinite(pct) && pct > 0 ? pct : undefined;
     s.enabled = row.querySelector('.s-on').checked;

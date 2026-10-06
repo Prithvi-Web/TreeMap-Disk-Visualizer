@@ -15,7 +15,7 @@ const AP_STATUS_LABEL = {
   blocked: 'Held back',
   failed: 'Failed',
 };
-const GB = 1024 * 1024 * 1024;
+// Byte limits are typed in GB and size rules in MB: the page's decimal units (KB, MB, GB in 000-prelude).
 
 /** Editor state for the policy dialog; null when it is closed. */
 let apDraft = null;
@@ -355,7 +355,7 @@ function openPolicyEditor(policy) {
     $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;
     if (m.maxAgeMs) $('apRuleAgeDays').value = m.maxAgeMs / 86400000; // exact: 36 hours is 1.5, never rounded to 2
     $('apRuleSizeOn').checked = m.minBytes !== undefined;
-    if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / 1048576);
+    if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / MB);
     $('apRuleExtOn').checked = Boolean(m.exts?.length);
     $('apRuleExts').value = (m.exts || []).join(', ');
   }
@@ -447,7 +447,7 @@ function policyFromEditor() {
   } else {
     match = { kind: 'custom' };
     if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
-    if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * 1048576;
+    if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * MB;
     if ($('apRuleExtOn').checked) match.exts = $('apRuleExts').value.split(',').map(s => s.trim()).filter(Boolean);
     // An age rule the box still shows as it was opened keeps the milliseconds
     // the policy stored — a part of a day too (36 hours opens as "1.5"), and

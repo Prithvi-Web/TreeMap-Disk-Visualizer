@@ -139,16 +139,17 @@ function openBudgetDialog(node) {
   $('budgetCurrent').innerHTML = size != null
     ? `Current size: <b>${formatBytes(size)}</b>`
     : 'Current size unknown until the next scan.';
-  // Prefill with the existing budget (pick the friendliest unit) or a sensible default.
+  // Prefill with the existing budget in the largest unit it reaches (1.5 GB,
+  // not 1500 MB), or a sensible default. Units are decimal, as printed; the
+  // figure is exact, so one saved by an earlier TreeMap in 1024s (50 "GB" =
+  // 53,687,091,200 bytes) opens as the 53.6870912 GB it is and saves unchanged.
   const unitSel = $('budgetUnit'), valIn = $('budgetValue');
   if (existing) {
-    const unit = existing.maxBytes % 1073741824 === 0 ? 1073741824
-      : existing.maxBytes % 1048576 === 0 ? 1048576
-      : existing.maxBytes % 1024 === 0 ? 1024 : 1;
+    const unit = [GB, MB, KB].find((u) => existing.maxBytes >= u) ?? 1;
     unitSel.value = String(unit);
     valIn.value = String(existing.maxBytes / unit);
   } else {
-    unitSel.value = '1073741824';
+    unitSel.value = String(GB);
     valIn.value = '';
   }
   $('budgetRemoveBtn').style.display = existing ? '' : 'none';

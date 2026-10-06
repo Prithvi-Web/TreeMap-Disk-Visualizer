@@ -23,6 +23,13 @@ function formatBytes(n, d = 1) {
   if (shown >= 1000 && u < UNITS.length - 1) { v /= 1000; u++; }
   return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
+/* The same units for a size a person TYPES — a budget, a cap, a target, a
+   rule — so "50 GB" typed is the 50 GB printed beside it (QA D09). Real
+   binary quantities (buffers, blocks) never use these. */
+const KB = 1e3;
+const MB = 1e6;
+const GB = 1e9;
+const TB = 1e12;
 /* The interface is in English, so what it writes is English: counts "1,234"
    (formatCount, below) and dates "Sep 6, 2026" (DATE_FMT, WHEN_FMT and the
    few toLocale*String calls that name UI_LOCALE). A Portuguese machine used to
