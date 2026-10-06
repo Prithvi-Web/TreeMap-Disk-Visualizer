@@ -1471,12 +1471,15 @@ async function loadCity(rootPath) {
 
   if (state.treemap.rootPath !== want || !state.treemap.nodes.length) {
     try {
-      const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(want)}`);
+      // The Treemap's own floor (TM_MIN_SIZE), so the nodes the two views
+      // share are the same whichever of them asked for them.
+      const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(want)}`);
       if (seq !== cityLoadSeq) return; // superseded while fetching
       state.treemap.rootPath = data.root.path;
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
+      state.treemap.minSize = TM_MIN_SIZE; // what tmNodeCapNote may say these nodes leave out
       state.treemap.hover = null;
     } catch (e) {
       $('cityLod').textContent = e.message;

@@ -236,6 +236,34 @@ test('no size in the page is a power of 1024: every threshold it shows or acts o
   }
 });
 
+/* ══════════════ the map's floor, wherever the map is asked for ══════════════ */
+
+test('Disk City asks for the map with the Treemap\'s 4 KB floor, and records it beside the nodes the two views share', async () => {
+  // TM_MIN_SIZE became 4,000 (D09) while Disk City went on asking with a
+  // literal 4096: opened first, it drew no building for a 4,000–4,095-byte
+  // file the Treemap then drew, and left state.treemap.minSize unset, so the
+  // note under the map named no floor for nodes that had one.
+  const floor = run<number>(pageConst('TM_MIN_SIZE'), {}, 'TM_MIN_SIZE');
+  const asked: string[] = [];
+  const state = {
+    scanId: 's1', root: { path: '/r', name: 'r' }, city: {} as Record<string, unknown>,
+    treemap: { rootPath: '/r', maxDepth: 3, nodes: [] as unknown[], minSize: undefined as number | undefined },
+  };
+  const loadCity = run<(p: string) => Promise<void>>(
+    `let cityLoadSeq = 0;\n${pageConst('TM_MIN_SIZE')}\n${braced('async function loadCity(')}`,
+    {
+      state, $: dom().$,
+      api: async (u: string) => { asked.push(u); return { root: { path: '/r', name: 'r', size: 9000 }, nodes: [{ path: '/r/f', size: 4000 }] }; },
+      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {},
+    },
+    'loadCity',
+  );
+  await loadCity('/r');
+  assert.equal(asked.length, 1, 'control: with no map loaded, Disk City asked the server itself');
+  assert.equal(new URL(asked[0], 'http://x').searchParams.get('minSize'), String(floor), 'the floor the Treemap asks with (TM_MIN_SIZE)');
+  assert.equal(state.treemap.minSize, floor, 'and the floor the shared nodes were asked with is recorded, as loadTreemap records it');
+});
+
 /* ══════════════ the page says which units it counts in ══════════════ */
 
 test('Settings → "How TreeMap measures space" says sizes are decimal, and what that means against Finder and Explorer', () => {
