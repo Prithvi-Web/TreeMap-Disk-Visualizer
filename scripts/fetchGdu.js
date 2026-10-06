@@ -121,6 +121,10 @@ async function fetchTarget(target, sums, destDir) {
 
 async function fetchLicense() {
   // MIT requires the licence text to travel with the binary.
+  // A LICENSE.md already there is kept as it is and never fetched again: the
+  // committed build/gdu/LICENSE.md is the pinned version's. On a gdu bump,
+  // delete it first so this fetches the new version's; scripts/gdu-notices.js
+  // refuses one that is not the LICENSE.md of the version VERSION pins.
   const dest = path.join(ROOT, 'build', 'gdu', 'LICENSE.md');
   if (fs.existsSync(dest)) return;
   fs.mkdirSync(path.dirname(dest), { recursive: true });

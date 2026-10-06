@@ -18,6 +18,10 @@ import { storeOf } from '../src/services/scanStore';
 import { updateSettings } from '../src/services/settings';
 import { settled } from '../src/utils/backgroundWrites';
 import type { EngineSetting, ScanResult } from '../src/models/types';
+import { ENDPOINTS } from '../src/api/openapi';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { buildMcpServer } from '../src/mcp/server';
 
 /**
  * QA D45 (5 Oct 2026): "Fast rescan" was about twenty times slower than a
@@ -196,4 +200,48 @@ test('a fast rescan counts the online-only files of the folders it reuses, from 
 
   const plain = await scanOf(root, 'walker');
   assert.equal(times(plain.engineReason, PARTIAL), 0, 'a scan that reads no cache measured every file');
+});
+
+/* ─────────────── what an agent is told a fast-rescan request does ─────────────── */
+
+/** The `incremental` property's description, wherever it sits in a schema. */
+function incrementalDescription(schema: unknown): string {
+  const found: string[] = [];
+  const visit = (v: unknown): void => {
+    if (Array.isArray(v)) return v.forEach(visit);
+    if (v === null || typeof v !== 'object') return;
+    for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+      if (k === 'incremental' && child !== null && typeof child === 'object' && typeof (child as { description?: unknown }).description === 'string') {
+        found.push((child as { description: string }).description);
+      }
+      visit(child);
+    }
+  };
+  visit(schema);
+  assert.equal(found.length, 1, 'one described incremental property');
+  return found[0];
+}
+
+test('POST /api/scan and MCP scan_path say a fast-rescan request is the walker\'s, and not used where the native engine walks (D45)', async () => {
+  // The request body's description and the MCP tool's both promised "Reuse
+  // the on-disk mtime cache" whatever engine ran; since D45 a native walk
+  // does not read the cache, and an agent asking for speed got none.
+  const scanRoute = ENDPOINTS.find((e) => e.method === 'post' && e.path === '/api/scan');
+  assert.ok(scanRoute, 'POST /api/scan is described');
+  const mcp = buildMcpServer();
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'treemap-fastRescanEngine-test', version: '0.0.0' });
+  await Promise.all([mcp.connect(serverSide), client.connect(clientSide)]);
+  try {
+    const tool = (await client.listTools()).tools.find((x) => x.name === 'scan_path');
+    assert.ok(tool, 'scan_path is listed');
+    for (const [where, text] of [['POST /api/scan', incrementalDescription(scanRoute.requestBody)], ['scan_path', incrementalDescription(tool.inputSchema)]] as const) {
+      assert.match(text, /only the built-in walker/i, `${where}: the fast rescan is the walker's`);
+      assert.match(text, /native engine walks[^.]*not used/i, `${where}: a native walk does not use it`);
+      assert.match(text, /incremental says whether/i, `${where}: the answer's incremental says what happened`);
+      assert.doesNotMatch(text, /^Reuse the on-disk mtime cache/, `${where}: not a promise every engine keeps`);
+    }
+  } finally {
+    await client.close();
+  }
 });

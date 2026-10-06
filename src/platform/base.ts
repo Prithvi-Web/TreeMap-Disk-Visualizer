@@ -88,7 +88,10 @@ export abstract class BaseProvider implements PlatformProvider {
     // root that is a link is a leaf as every link in the walk is — listing
     // it would follow the link (readdir does), handing over the entries of
     // a folder the walk never yielded (Track U review of the index, M-1).
-    // A scan treats the root the same way: it lstats it, and a link is one file.
+    // A scan decides about its root before any walk starts (diskScanner's
+    // scanRootOf, QA D78): a link to a folder is followed, and the folder is
+    // walked by its own path; a link to a file or to nothing, and an
+    // Autopilot policy's folder given as a link, stay the one file they are.
     let frontier: { path: string; ordinal: number }[] = rootEntry.isDir ? [{ path: root, ordinal: rootEntry.ordinal }] : [];
 
     while (frontier.length > 0) {

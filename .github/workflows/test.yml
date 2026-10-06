@@ -166,11 +166,14 @@ jobs:
 
       - name: Fetch gdu for this platform
         # The equivalence gate's (b) compares gdu — the app's bundled engine —
-        # with the walker, and skips when no gdu binary is found. Nothing in
-        # this workflow ever fetched one, so (b) had never run on any CI leg.
-        # `--dev` stages the host's binary where the app looks from source
-        # (./gdu/), verified against the pinned release's sha256sums.txt; a
-        # failed fetch fails this step rather than turning (b) into a skip.
+        # with the walker, and needs a gdu binary; until this step existed no
+        # CI leg had one, so (b) had never run. `--dev` stages the host's
+        # binary where the app looks from source (./gdu/), verified against
+        # the pinned release's sha256sums.txt. scripts/fetchGdu.js exits 0 on
+        # any failure, so a developer without network can still build, and
+        # this step stays green when the fetch fails. The suite does not: on
+        # CI the gate's (b) and the other tests that need gdu fail instead of
+        # skipping when there is none (skipOrFailOnCi, tests/fixtures/ciSkip.ts).
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run fetch:gdu:dev
 

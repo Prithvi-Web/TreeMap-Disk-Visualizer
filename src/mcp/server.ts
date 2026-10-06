@@ -295,7 +295,11 @@ export function buildMcpServer(): McpServer {
         incremental: z
           .boolean()
           .default(false)
-          .describe('Reuse the on-disk mtime cache for a fast rescan (may miss in-place file edits)'),
+          .describe(
+            'Ask for a fast rescan. Only the built-in walker does one: it reuses the last scan\'s listings of folders whose ' +
+              'modified time has not changed, and may miss an edit inside a file. Where the native engine walks the folder the ' +
+              'request is not used (that walk is faster and exact). The result\'s incremental says whether listings were reused.',
+          ),
         waitMs: waitMsSchema,
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },

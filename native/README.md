@@ -106,6 +106,24 @@ generator changed since the file was written, and when the file was edited by
 hand. Bumping the workspace version needs no regeneration: the file names
 TreeMap's own crates without versions.
 
+gdu's notices (`build/gdu/THIRD_PARTY_NOTICES.txt` and
+`build/gdu/gdu-modules.json`, written by `scripts/gdu-notices.js` and sealed
+the same way) share two of these generator files: `scripts/rust-notices/spdx.js`
+and `scripts/rust-notices/text.js` are named in both seals. A change to either
+turns both `tests/rustNotices.test.ts` and `tests/gduNotices.test.ts` red, so
+regenerate both:
+
+```
+node scripts/fetchGdu.js --all     stage every target's gdu binary under build/gdu/ (network)
+node scripts/gdu-notices.js        rewrite gdu's notices from those binaries and the Go modules' source (network: proxy.golang.org)
+node scripts/rust-notices.js       rewrite native/THIRD_PARTY_NOTICES.txt (offline)
+```
+
+and commit the three files. `scripts/fetchGdu.js` never fetches
+`build/gdu/LICENSE.md` again once it is there, so on a gdu version bump delete
+it first; `scripts/gdu-notices.js` refuses one that is not the pinned
+version's.
+
 ## The version handshake
 
 Three numbers must agree: `nativeVersion` in `package.json`, the workspace
