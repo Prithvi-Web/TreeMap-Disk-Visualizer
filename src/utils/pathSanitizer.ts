@@ -711,6 +711,28 @@ export function livesAt(p: string): string {
 }
 
 /**
+ * Where a scan's ROOT lives, as the scanned-root rule compares it: `livesAt`, but a root that is a
+ * folder has its own last name as the volume stores it too. The record keeps the root as typed, and
+ * the paths a scan lists are spelled from it, so their folders resolve to the volume's own names
+ * (`livesAt`) while the root's last name stayed as typed: a root typed `/System/Volumes/data`, on a
+ * volume that folds case, was not the Data volume to the rule — it granted none of that volume's
+ * files and granted the root itself — and any root's files were outside it once their folder was
+ * read back by its stored name (the SEC-2b review, F1.3, F1.5). A root that is itself a link keeps
+ * its own place, as any link does: a scan of a link lists the link, never what it leads to. One
+ * lstat (fresh, as a leaf's always is); the realpath is `canonDir`'s memo.
+ */
+export function rootLivesAt(root: string): string {
+  const at = livesAt(root);
+  let entry: fs.Stats | undefined;
+  try {
+    entry = fs.lstatSync(root, { throwIfNoEntry: false });
+  } catch {
+    return at; // unreadable: as spelled
+  }
+  return entry?.isDirectory() ? canonDir(root) : at;
+}
+
+/**
  * Where `p` is on the disk: every link resolved and each name as the volume stores it — the native
  * realpath, so `proj/FOO.TXT` answers `…/Proj/Foo.txt` on a volume that folds case (on macOS and
  * Windows; Linux's keeps each name as typed) — on the Data volume's short spelling. Not memoised,

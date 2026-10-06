@@ -418,14 +418,20 @@ test('a scan of the Data volume typed through a link in its parents, or in anoth
   const home = fs.realpathSync(fileTempDir('treemap-guard-data-f1-'));
   fs.symlinkSync('/System', path.join(home, 'boot'));
   const roots = [path.join(home, 'boot', 'Volumes', 'Data')];
-  // The boot volume folds case on every Mac by default; where it does, /System/volumes is that folder too.
+  // The boot volume folds case on every Mac by default; where it does, /System/volumes is that folder
+  // too, and so is the root's own last name in another case — which was kept as typed, so such a root
+  // was not the Data volume to the rule and granted nothing of it (the SEC-2b review, F1.3, F1.5).
   if (fs.realpathSync.native('/System/volumes') === '/System/Volumes') roots.push('/System/volumes/Data');
+  if (fs.realpathSync.native('/System/Volumes/data') === '/System/Volumes/Data') {
+    roots.push('/System/Volumes/data', '/System/Volumes/DATA', '/system/volumes/data', path.join(home, 'boot', 'Volumes', 'DATA'));
+  }
   const tables = [
     { label: 'the table read at the start', entries: parseBsdMount(`${DIAGNOSIS_MAC_MOUNT}/dev/disk20s1 on /Volumes/Backup (apfs, local, journaled)\n`) },
     { label: 'the table unknown', entries: null },
   ];
   try {
     for (const root of roots) {
+      resetRateLimiter(); // two dry runs a root: this asks about the rule, never the limiter
       assert.equal(sanitizePath(root), root, 'the sanitizer keeps the root as typed, and so does the record');
       for (const { label, entries } of tables) {
         evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
@@ -446,13 +452,57 @@ test('a scan of the Data volume typed through a link in its parents, or in anoth
         ]) {
           assert.equal(insideAnyScanRoot(p), false, `${root}, ${label}: ${p}`);
         }
-        assert.equal(insideAnyScanRoot(path.join(home, 'x.txt')), true, `${root}, ${label}: a file on the Data volume is still inside`);
+        assert.deepEqual(
+          {
+            file: insideAnyScanRoot(path.join(home, 'x.txt')),
+            asTheVolumeSpellsIt: insideAnyScanRoot(path.join('/System/Volumes/Data', home, 'x.txt')),
+            asTheRootSpellsIt: insideAnyScanRoot(path.join(root, home, 'x.txt')),
+            theRootItself: insideAnyScanRoot(root),
+          },
+          { file: true, asTheVolumeSpellsIt: true, asTheRootSpellsIt: true, theRootItself: false },
+          `${root}, ${label}: a file on the Data volume is still inside, by each spelling; the volume itself never was`,
+        );
         const r = await deleteDryRun(['/Volumes/NewlyMounted/secret.txt']);
         assert.deepEqual([r.status, r.body.code], [403, 'OUTSIDE_SCAN_ROOT'], `${root}, ${label}: ${JSON.stringify(r.body)}`);
       }
     }
   } finally {
     setDataVolumeFoldersForTests(null);
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+  }
+});
+
+test('a scan root typed with its last name in another case covers the folder it names, by either spelling; a root that is a link covers the link, never what it leads to', async (t) => {
+  const home = fs.realpathSync(fileTempDir('treemap-guard-root-case-'));
+  fs.mkdirSync(path.join(home, 'Projects'));
+  fs.mkdirSync(path.join(home, 'elsewhere'));
+  fs.symlinkSync(path.join(home, 'elsewhere'), path.join(home, 'link-root'));
+  const folds = fs.existsSync(path.join(home, 'PROJECTS'));
+  try {
+    evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
+    const linked = createScanRecord(path.join(home, 'link-root'));
+    linked.status = 'complete';
+    linked.finishedAt = Date.now();
+    const answers: Record<string, boolean> = {
+      'the link the scan listed': insideAnyScanRoot(path.join(home, 'link-root')),
+      'what it leads to': insideAnyScanRoot(path.join(home, 'elsewhere', 'x.txt')),
+    };
+    const expected: Record<string, boolean> = { 'the link the scan listed': true, 'what it leads to': false };
+    if (folds) {
+      // Its files' folders read back by the volume's own name, while the root's last name stayed as
+      // typed: every file the scan listed was outside it (the SEC-2b review, F1.3).
+      const typed = createScanRecord(path.join(home, 'PROJECTS'));
+      typed.status = 'complete';
+      typed.finishedAt = Date.now();
+      answers['a file, as the scan spelled it'] = insideAnyScanRoot(path.join(home, 'PROJECTS', 'a.txt'));
+      answers['a file, by its own name'] = insideAnyScanRoot(path.join(home, 'Projects', 'a.txt'));
+      answers['a sibling'] = insideAnyScanRoot(path.join(home, 'Projects2', 'a.txt'));
+      Object.assign(expected, { 'a file, as the scan spelled it': true, 'a file, by its own name': true, 'a sibling': false });
+    } else {
+      t.diagnostic('this volume keeps case, so a root in another case names another folder');
+    }
+    assert.deepEqual(answers, expected);
+  } finally {
     evictExpiredScans(Date.now() + 2 * SCAN_TTL_MS);
   }
 });

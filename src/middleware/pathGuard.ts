@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, livesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, livesAt, rootLivesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
 import { DATA_VOLUME, exclusionsOf, isAtOrUnder, parseFirmlinks } from '../utils/mountBoundaries';
@@ -211,7 +211,20 @@ function whereUnlessSecondName(p: string): string | null {
  * folders of the same names, which it does.
  */
 function placeOf(p: string): string {
-  const at = livesAt(p);
+  return placeFrom(livesAt(p));
+}
+
+/**
+ * Where a scan's root lives, as `placeOf` reads a path: from `rootLivesAt`, so a root typed with its
+ * last name in another case is the folder it names — /System/Volumes/data is the Data volume (the
+ * SEC-2b review, F1.3, F1.5).
+ */
+export function rootPlaceOf(root: string): string {
+  return placeFrom(rootLivesAt(root));
+}
+
+/** `placeOf` from where the path lives: the Data volume's prefix off where the firmlinks show the rest. */
+function placeFrom(at: string): string {
   if (!onDataVolume(at)) return at;
   const rest = at === DATA_VOLUME ? '/' : at.slice(DATA_VOLUME.length);
   return underFirmlink(rest) ? rest : at;
@@ -261,7 +274,7 @@ function underAnyScanRoot(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
   const where = whereUnlessSecondName(p);
   return where !== null && allScans().some((scan) => {
-    const root = placeOf(scan.rootPath);
+    const root = rootPlaceOf(scan.rootPath);
     return isInside(root, asListedFrom(root, where) ?? where);
   });
 }
@@ -365,7 +378,7 @@ export function setFirmlinksFileForTests(file: string | null): void {
  * refuses more.
  */
 function listedBy(scan: ScanResult, where: string): boolean {
-  const root = placeOf(scan.rootPath);
+  const root = rootPlaceOf(scan.rootPath);
   const at = asListedFrom(root, where);
   if (at === null || !isInside(root, at)) return false;
   const keys = exclusionKeysOf(scan, root);
