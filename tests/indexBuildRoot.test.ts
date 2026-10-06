@@ -1,6 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
@@ -8,6 +9,8 @@ import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-indexBuildRoot-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { getScan, startScan } from '../src/services/diskScanner';
 import { storeOf } from '../src/services/scanStore';
 import {
@@ -146,6 +149,65 @@ test('a link root gets no live watcher: a watch on a link reports the folder it 
   assert.equal(startWatcher(link), false, 'nor is one attached on request');
   assert.equal(getRoot(link)?.live, false);
   assert.equal(rowsOf(built.id).length, 1);
+});
+
+/* ══════════════════ a link the index holds, asked for by its own path (final review F1.4) ══════════════════ */
+
+async function listen(): Promise<{ base: string; close: () => Promise<void> }> {
+  const app = createApp(path.join(__dirname, '..', 'public'));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  return { base: `http://127.0.0.1:${port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+async function get(base: string, url: string): Promise<{ status: number; json: Record<string, unknown> }> {
+  resetRateLimiter();
+  const res = await fetch(base + url);
+  return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+}
+
+const statusOf = (base: string, p: string) => get(base, '/api/index/status?path=' + encodeURIComponent(p));
+const treeOf = (base: string, p: string) => get(base, '/api/index/tree?path=' + encodeURIComponent(p) + '&maxNodes=25000');
+
+test('a link inside an indexed folder is not served as a folder of the index: the page is told it is not indexed, and scans the folder it points to, as the scan does (final review F1.4)', { skip: NO_LINKS }, async () => {
+  // A scan of a link to a folder walks the folder (D78); the index records the link as the one entry
+  // it is (M-1). Served under the link's spelling, the instant paint was a one-tile map of 100-odd
+  // bytes, labelled "Index live — always current", until the scan replaced it — or for good, if it failed.
+  const { real, link } = linkTree();
+  const parent = path.dirname(real);
+  const built = await buildIndex(parent, { live: false });
+  assert.equal(built.state, 'ready');
+  const { base, close } = await listen();
+  try {
+    const status = await statusOf(base, link);
+    assert.equal(status.status, 200);
+    assert.equal(status.json.indexed, false, 'the link is not a folder the index holds');
+    assert.equal(status.json.root, null, 'and no root is offered for it');
+    const tree = await treeOf(base, link);
+    assert.equal(tree.status, 404, 'its tree is not served either');
+    assert.equal(tree.json.code, 'PATH_NOT_FOUND');
+    // The folder it points to, and the folder holding it, are served as they always were.
+    assert.equal((await statusOf(base, real)).json.indexed, true);
+    assert.equal((await treeOf(base, real)).status, 200);
+    assert.equal((await statusOf(base, parent)).json.indexed, true);
+  } finally {
+    await close();
+  }
+});
+
+test('an index saved under a link\'s own path (a one-row index of the link) is not served for it either (final review F1.4)', { skip: NO_LINKS }, async () => {
+  // Before D78 a scan of /tmp asked for the index of /tmp itself: one row, the link.
+  const { link } = linkTree();
+  await buildIndex(link, { live: false });
+  const { base, close } = await listen();
+  try {
+    const status = await statusOf(base, link);
+    assert.equal(status.json.indexed, false, 'not offered as the folder the link points to');
+    assert.equal((await treeOf(base, link)).status, 404);
+  } finally {
+    await close();
+  }
 });
 
 /* ══════════════════ a root that cannot be walked ══════════════════ */

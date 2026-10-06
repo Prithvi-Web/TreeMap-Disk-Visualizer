@@ -1439,6 +1439,21 @@ export function findNodeIdByPath(rootId: number, rootPath: string, absPath: stri
 }
 
 /**
+ * Whether `root`'s index holds `absPath` as a link (final review F1.4). The
+ * index records a link as the one entry it is and never follows it (M-1),
+ * while a scan of a link to a folder walks the folder it points to (D78), so
+ * such a row is never a folder the index can show for that path: served, the
+ * instant paint was a one-tile map of the link's own bytes. The root's own
+ * row counts too — the one-row index a build of a link's own path makes.
+ */
+export function indexedAsLink(root: Pick<IndexedRoot, 'id' | 'path'>, absPath: string): boolean {
+  const id = findNodeIdByPath(root.id, root.path, absPath);
+  if (id === null) return false;
+  const row = openIndex().prepare('SELECT flags FROM nodes WHERE id = ?').get(id) as { flags: number } | undefined;
+  return row !== undefined && (row.flags & FLAG.SYMLINK) !== 0;
+}
+
+/**
  * A memoised node-id → absolute-path resolver.
  *
  * Callers resolving many nodes at once (search hits, hard-link families)

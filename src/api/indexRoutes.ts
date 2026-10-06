@@ -16,6 +16,7 @@ import {
   capStopFor,
   deleteIndex,
   getRoot,
+  indexedAsLink,
   listRoots,
   readTree,
   rootFor,
@@ -426,7 +427,11 @@ indexRouter.get('/index/status', guardQueryPath('path'), (req: Request, res: Res
     res.json({ roots: listRoots(), dbPath: indexDbPathSafe(), dbBytes: indexDbBytes(), autoBuild: autoBuild() });
     return;
   }
-  const root = rootFor(target);
+  // A link the index holds is not a folder it can show: a scan of the same
+  // path walks the folder the link points to (D78), so the page is told the
+  // path is not indexed, and scans it (final review F1.4).
+  const found = rootFor(target);
+  const root = found !== null && indexedAsLink(found, target) ? null : found;
   res.json({
     path: target,
     indexed: root !== null,
@@ -469,6 +474,10 @@ indexRouter.get('/index/tree', guardQueryPath('path'), (req: Request, res: Respo
     throw new AppError(500, 'INDEX_BUILD_FAILED', root.error ?? 'The index for that folder could not be built');
   }
 
+  // The status's rule (final review F1.4): a link is not the folder it points to.
+  if (indexedAsLink(root, target)) {
+    throw new AppError(404, 'PATH_NOT_FOUND', 'That path is a link, and the index holds the link itself, not the folder it points to — scan it to see that folder');
+  }
   const maxNodes = clampInt(req.query.maxNodes, 250_000, 1, 250_000);
   const tree = readTree(root.path, target, maxNodes);
   if (!tree) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in the index');
