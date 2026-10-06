@@ -319,3 +319,97 @@ test('the save path repaints the target from the PUT response, not the form', ()
   assert.ok(repaint !== -1, 'the save repaints the goal fields');
   assert.ok(put < repaint, 'after the server answered — the response is the truth, the form is a request');
 });
+
+/* ══════ B29 + B06: what the cart says it frees, and what it cannot size ══════ */
+
+/** `function name(…) {…}` from the built page, by brace matching. */
+function fnSource(name: string): string {
+  let start = INDEX.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} is in the built page`);
+  if (INDEX.slice(start - 6, start) === 'async ') start -= 6;
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', INDEX.indexOf(')', start)); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`${name} never closes`);
+}
+
+type Node = { name: string; path: string; size: number };
+
+/** Run the page's own renderCart over a cart; what the footer, the pill and the list say. */
+async function cartShows(staged: string[], nodes: Record<string, Node>) {
+  const els: Record<string, { innerHTML: string; textContent: string; title: string; classList: { toggle(): void } }> = {};
+  const $ = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', title: '', classList: { toggle() {} } });
+  const deps: Record<string, unknown> = {
+    $, state: { cart: new Set(staged) },
+    ensureNodes: async () => {}, fxCartPulseSync: () => {}, cartDockToggle: () => {}, renderCartGoal: () => {},
+    nodeFor: (p: string) => nodes[p] ?? null,
+    countUp: (el: { textContent: string }, v: number, fmt: (n: number) => string) => { el.textContent = fmt(v); },
+    FxNum: {
+      rollText: (el: { textContent: string }, t: string) => { el.textContent = t; },
+      rollHtml: (el: { innerHTML: string }, h: string) => { el.innerHTML = h; },
+    },
+    formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: (s: unknown) => String(s), icon: () => '',
+  };
+  const names = ['renderCart', 'cartTotalBytes', 'cartKnownPaths', 'cartNode', 'tmCartRoots', 'tmParentPath'];
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const render = new Function(...keys, `let cartShown = 200;\n${names.map(fnSource).join('\n')}\nreturn renderCart;`)(
+    ...keys.map((k) => deps[k]),
+  ) as () => Promise<void>;
+  await render();
+  return { foot: els.cartFootTotal!.innerHTML, pill: els.cartTabTotal!.textContent, pillTitle: els.cartTabTotal!.title };
+}
+
+const MOV = { name: 'holiday-4k.mov', path: '/c/Videos/holiday-4k.mov', size: 3_000_000_000 };
+const DMG = { name: 'Installer.dmg', path: '/c/Installer.dmg', size: 2_000_000_000 };
+
+test('the cart promises what a move to the Trash does — up to its size, once the Trash is emptied — never "Reclaims" (B29)', async () => {
+  // QA: "Reclaims 6.5 GB" for three sparse files that occupy 0 bytes; D54 had
+  // already reworded Clean Up to say this, and the cart said it more strongly.
+  const shown = await cartShows([MOV.path, DMG.path], { [MOV.path]: MOV, [DMG.path]: DMG });
+  assert.doesNotMatch(shown.foot, /Reclaims/, `no promise the Trash has not kept: ${shown.foot}`);
+  assert.match(shown.foot, /Up to <b>5000000000 B<\/b>, freed when you empty the Trash/, shown.foot);
+  assert.equal(shown.pill, '5000000000 B', 'the pill still shows what is staged');
+});
+
+test('staged items the scan does not hold are not counted as 0 B — they are named as unknown (B06)', async () => {
+  // QA: two node_modules staged from another scan read "Reclaims 0 B" and the pill "2 · 0 B".
+  const other = ['/elsewhere/a/node_modules', '/elsewhere/b/node_modules'];
+  const none = await cartShows(other, {});
+  assert.doesNotMatch(none.foot, /0 B/, `a size nobody measured is not a zero: ${none.foot}`);
+  assert.match(none.foot, /2 items not in this scan — size unknown/, none.foot);
+  assert.equal(none.pill, '—', 'nor does the pill read 0 B');
+  assert.match(none.pillTitle, /size unknown/, 'and it says why on hover');
+
+  const some = await cartShows([MOV.path, other[0]!], { [MOV.path]: MOV });
+  assert.match(some.foot, /Up to <b>3000000000 B<\/b>, freed when you empty the Trash · 1 not in this scan, not counted/, some.foot);
+  assert.equal(some.pill, '3000000000 B+', 'the pill marks the total as a floor');
+  assert.match(some.pillTitle, /1 not in this scan, not counted/);
+
+  const all = await cartShows([MOV.path], { [MOV.path]: MOV });
+  assert.equal(all.pill, '3000000000 B', 'no mark when everything is sized');
+  assert.equal(all.pillTitle, '');
+});
+
+test('after a commit, the cart says where the files went, not that space was recovered (B29)', () => {
+  const els: Record<string, { innerHTML: string; hidden: boolean; classList: { add(): void } }> = {};
+  const deps: Record<string, unknown> = {
+    $: (id: string) => (els[id] ??= { innerHTML: '', hidden: false, classList: { add() {} } }),
+    formatCount: String, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s), icon: () => '',
+    baseName: (p: string) => path.basename(p),
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const run = new Function(...keys, `let confirmPaths = []; let onConfirmTrash = null;\n${fnSource('cartCommitSummary')}\nreturn cartCommitSummary;`)(
+    ...keys.map((k) => deps[k]),
+  ) as (r: unknown) => void;
+  const summary = (r: unknown): string => { run(r); return els.confirmText!.innerHTML; };
+  const html = summary({ trashed: ['/c/a', '/c/b'], bytesFreed: 6_500_000_000, runId: 'r1' });
+  assert.doesNotMatch(html, /recovered/i, `nothing is recovered by a move to the Trash: ${html}`);
+  assert.match(html, /Moved <b>2<\/b> items \(<b>6500000000 B<\/b>\) to the Trash/, html);
+  assert.match(html, /comes back when you empty the Trash, less what the Time Capsule keeps so this can be undone/, html);
+  const bare = summary({ trashed: ['/c/a'], bytesFreed: 10, capsuleUnavailable: 'No capsule in a portable session.' });
+  assert.doesNotMatch(bare, /less what the Time Capsule keeps/, 'no capsule copy is mentioned when none was made');
+});

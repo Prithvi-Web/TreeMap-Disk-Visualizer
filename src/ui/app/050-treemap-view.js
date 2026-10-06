@@ -655,7 +655,7 @@ function drawTreemap() {
     ctx.fillStyle = cssVar('--text-1');
     for (const r of px) {
       if (!r.n.freed || r.w < 74 || r.h < 26) continue;
-      ctx.fillText('Freed ' + formatBytes(r.n.size), r.x + r.w / 2, r.y + r.h / 2, r.w - 10);
+      ctx.fillText('Staged ' + formatBytes(r.n.size), r.x + r.w / 2, r.y + r.h / 2, r.w - 10); // not freed yet (B29)
     }
     ctx.restore();
     ctx.textAlign = 'left'; // pass 4 assumes it, and save/restore does not cover a later pass
@@ -837,7 +837,7 @@ function updateTmStatus() {
   // authoritative message here, so the status line says what it is looking at.
   if (tmPreview.on) {
     $('tmStatus').textContent =
-      `Preview · ${formatBytes(tmPreview.freedBytes)} would be freed · ${formatBytes(state.treemap.rootSize)} total today`;
+      `Preview · ${formatBytes(tmPreview.freedBytes)} staged for the Trash · ${formatBytes(state.treemap.rootSize)} total today`;
     return;
   }
   if (q) {

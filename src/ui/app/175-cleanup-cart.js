@@ -15,7 +15,7 @@ try { JSON.parse(localStorage.getItem('tm-cart') || '[]').forEach((p) => state.c
  * which then pays the cost once, deliberately, rather than on every toggle.
  * §2.4's rule applies: a cap that is not stated is a lie about the list.
  *
- * Every TOTAL — the tab count, "Reclaims", the goal meter, the commit itself —
+ * Every TOTAL — the tab count, the footer's "Up to …", the goal meter, the commit itself —
  * is computed from the whole Set and is unaffected by what is drawn.
  */
 const CART_PAGE = 200;
@@ -193,13 +193,25 @@ async function renderCart() {
   dock.classList.toggle('show', n > 0);
   if (n === 0) cartDockToggle(false); // an empty cart closes the drawer, and the body class with it
   const total = cartTotalBytes();
+  // A staged item the scan on screen does not hold has no size here: it is
+  // unknown, never 0 B (B06), and the total is said to leave it out.
+  const unknown = n - cartKnownPaths().length;
+  const allUnknown = n > 0 && unknown === n;
   // The cart is one entity across its whole life, so every count and total
   // rolls in place; the plural flip ("item" → "items") is a shape change
   // and snaps by FxNum's own rule.
   countUp($('cartTabCount'), n, String);
-  countUp($('cartTabTotal'), total, formatBytes);
+  countUp($('cartTabTotal'), total, allUnknown ? () => '—' : unknown ? (v) => `${formatBytes(v)}+` : formatBytes);
+  $('cartTabTotal').title = allUnknown ? 'Not in this scan: size unknown'
+    : unknown ? `${formatCount(unknown)} not in this scan, not counted` : '';
   FxNum.rollText($('cartHeadCount'), n + ' item' + (n === 1 ? '' : 's'));
-  FxNum.rollHtml($('cartFootTotal'), `Reclaims <b>${formatBytes(total)}</b>`, 'cart');
+  // What a move to the Trash frees, said as Clean Up says it (D54, B29):
+  // nothing until the Trash is emptied, and then at most the size the files
+  // report — a sparse or shared file frees less.
+  FxNum.rollHtml($('cartFootTotal'), allUnknown
+    ? `${formatCount(n)} item${n === 1 ? '' : 's'} not in this scan — size unknown`
+    : `Up to <b>${formatBytes(total)}</b>, freed when you empty the Trash` +
+      (unknown ? ` · ${formatCount(unknown)} not in this scan, not counted` : ''), 'cart');
   renderCartGoal(total);
   const list = $('cartList');
   if (n === 0) {
@@ -500,8 +512,11 @@ function cartCommitSummary(result) {
   // The Trash reported failing, and the disk could not show either way: their copies were kept.
   const unverified = result.unverified || [];
 
+  // Moved, not recovered (B29): the Trash still holds them, and the Time
+  // Capsule keeps a copy of each for the undo below.
   let html = trashed.length
-    ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} to the Trash — <b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b> recovered.`
+    ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} (<b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b>) to the Trash. ` +
+      `Up to that much comes back when you empty the Trash${result.capsuleUnavailable ? '' : ', less what the Time Capsule keeps so this can be undone'}.`
     : unverified.length ? `<b>Nothing was confirmed as moved to the Trash.</b>` : `<b>Nothing was deleted.</b>`;
   if (result.capsuleUnavailable) {
     html += `<div class="cart-mf-note">${escapeHtml(result.capsuleUnavailable)}</div>`;

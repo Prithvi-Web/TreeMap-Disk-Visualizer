@@ -805,3 +805,39 @@ test('the preview is read-only for the keyboard, not just the mouse', () => {
   assert.match(nav, /!state\.treemap\.history\.active && !tmPreview\.on/);
   assert.match(nav, /case 'Delete':/, 'the guarded block really is the one with Delete in it');
 });
+
+/* ══════════════ B29: the preview says "staged", not "freed" ══════════════ */
+
+test('the preview banner, the status line and the hatched block say staged for the Trash, never freed (B29)', () => {
+  // QA: "The hatched areas are the 4.5 GB this cart would free", "Freed 4.5 GB",
+  // "Preview · 4.5 GB would be freed" — for two sparse files that occupy 0 bytes,
+  // about to be moved to the Trash, which frees nothing until it is emptied.
+  const text = { innerHTML: '' };
+  const banner = { hidden: true, offsetHeight: 20 };
+  const wrap = { classList: { toggle() {} }, style: { removeProperty() {}, getPropertyValue: () => '', setProperty() {} } };
+  const els: Record<string, unknown> = { tmPreviewText: text, tmPreviewBanner: banner, treemapWrap: wrap, cartPreview: null };
+  const keys = ['$', 'tmPreview', 'formatBytes', 'formatCount', 'escapeHtml', 'tmPreviewPadSync', 'tmPreviewWatch'];
+  const body = slice('function syncCartPreviewChrome', '/**\n * Pad the wrap');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const sync = new Function(...keys, `${body}\nreturn syncCartPreviewChrome;`)(
+    (id: string) => els[id] ?? null, { on: true, freedBytes: 4_500_000_000, outsideView: 0, outsideBytes: 0 },
+    (n: number) => `${n} B`, String, (s: unknown) => String(s), () => false, () => {},
+  ) as () => void;
+  sync();
+  assert.doesNotMatch(text.innerHTML, /would free/, text.innerHTML);
+  assert.match(text.innerHTML, /<b>4500000000 B<\/b> this cart stages for the Trash; up to that much comes back when you empty it\./, text.innerHTML);
+
+  const status = slice('if (tmPreview.on) {\n    $(\'tmStatus\')', 'if (q) {');
+  assert.doesNotMatch(status, /would be freed/);
+  assert.match(status, /staged for the Trash/);
+  const label = slice('// Pass 3.5 (v4 §4.3)', "ctx.textAlign = 'left'; // pass 4 assumes it");
+  assert.match(label, /ctx\.fillText\('Staged ' \+ formatBytes\(r\.n\.size\)/, 'the hatched block is labelled staged');
+  assert.doesNotMatch(label, /'Freed '/);
+});
+
+test('the hatched block is named "Staged" — the name the magnifier lens prints over it (B29)', () => {
+  const { nodes, sizes } = fixture();
+  const out = buildPreviewWith(nodes, '/r', 1000, ['/r/b'], sizes);
+  const freed = out.nodes!.filter((n) => n.freed);
+  assert.deepEqual(freed.map((n) => n.name), ['Staged'], 'not "Freed": nothing is freed until the Trash is emptied');
+});

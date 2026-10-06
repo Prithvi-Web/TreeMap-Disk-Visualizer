@@ -10836,7 +10836,7 @@ function drawTreemap() {
     ctx.fillStyle = cssVar('--text-1');
     for (const r of px) {
       if (!r.n.freed || r.w < 74 || r.h < 26) continue;
-      ctx.fillText('Freed ' + formatBytes(r.n.size), r.x + r.w / 2, r.y + r.h / 2, r.w - 10);
+      ctx.fillText('Staged ' + formatBytes(r.n.size), r.x + r.w / 2, r.y + r.h / 2, r.w - 10); // not freed yet (B29)
     }
     ctx.restore();
     ctx.textAlign = 'left'; // pass 4 assumes it, and save/restore does not cover a later pass
@@ -11018,7 +11018,7 @@ function updateTmStatus() {
   // authoritative message here, so the status line says what it is looking at.
   if (tmPreview.on) {
     $('tmStatus').textContent =
-      `Preview · ${formatBytes(tmPreview.freedBytes)} would be freed · ${formatBytes(state.treemap.rootSize)} total today`;
+      `Preview · ${formatBytes(tmPreview.freedBytes)} staged for the Trash · ${formatBytes(state.treemap.rootSize)} total today`;
     return;
   }
   if (q) {
@@ -17173,7 +17173,7 @@ function tmBuildPreview() {
       if (live[k].node === null) {
         freedTotal += live[k].size;
         out.push({
-          name: 'Freed', path: parent.path + ' — freed', size: live[k].size, type: 'dir',
+          name: 'Staged', path: parent.path + ' — freed', size: live[k].size, type: 'dir',
           depth: depth + 1, expanded: false, freed: true,
           x: r.x, y: r.y, w: r.w, h: r.h,
         });
@@ -17300,7 +17300,9 @@ function syncCartPreviewChrome() {
     : '';
   $('tmPreviewText').innerHTML =
     `<b>Preview — nothing has been deleted.</b> The hatched areas are the ` +
-    `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart would free.` + outside;
+    // Staged, not freed (B29): a move to the Trash frees nothing until it is
+    // emptied, and a sparse file frees only what it really takes.
+    `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart stages for the Trash; up to that much comes back when you empty it.` + outside;
   // The banner floats over the map's top edge, and covered the labels of the
   // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
   // by the banner's measured height instead — it wraps to two lines beside
@@ -28163,7 +28165,7 @@ try { JSON.parse(localStorage.getItem('tm-cart') || '[]').forEach((p) => state.c
  * which then pays the cost once, deliberately, rather than on every toggle.
  * §2.4's rule applies: a cap that is not stated is a lie about the list.
  *
- * Every TOTAL — the tab count, "Reclaims", the goal meter, the commit itself —
+ * Every TOTAL — the tab count, the footer's "Up to …", the goal meter, the commit itself —
  * is computed from the whole Set and is unaffected by what is drawn.
  */
 const CART_PAGE = 200;
@@ -28341,13 +28343,25 @@ async function renderCart() {
   dock.classList.toggle('show', n > 0);
   if (n === 0) cartDockToggle(false); // an empty cart closes the drawer, and the body class with it
   const total = cartTotalBytes();
+  // A staged item the scan on screen does not hold has no size here: it is
+  // unknown, never 0 B (B06), and the total is said to leave it out.
+  const unknown = n - cartKnownPaths().length;
+  const allUnknown = n > 0 && unknown === n;
   // The cart is one entity across its whole life, so every count and total
   // rolls in place; the plural flip ("item" → "items") is a shape change
   // and snaps by FxNum's own rule.
   countUp($('cartTabCount'), n, String);
-  countUp($('cartTabTotal'), total, formatBytes);
+  countUp($('cartTabTotal'), total, allUnknown ? () => '—' : unknown ? (v) => `${formatBytes(v)}+` : formatBytes);
+  $('cartTabTotal').title = allUnknown ? 'Not in this scan: size unknown'
+    : unknown ? `${formatCount(unknown)} not in this scan, not counted` : '';
   FxNum.rollText($('cartHeadCount'), n + ' item' + (n === 1 ? '' : 's'));
-  FxNum.rollHtml($('cartFootTotal'), `Reclaims <b>${formatBytes(total)}</b>`, 'cart');
+  // What a move to the Trash frees, said as Clean Up says it (D54, B29):
+  // nothing until the Trash is emptied, and then at most the size the files
+  // report — a sparse or shared file frees less.
+  FxNum.rollHtml($('cartFootTotal'), allUnknown
+    ? `${formatCount(n)} item${n === 1 ? '' : 's'} not in this scan — size unknown`
+    : `Up to <b>${formatBytes(total)}</b>, freed when you empty the Trash` +
+      (unknown ? ` · ${formatCount(unknown)} not in this scan, not counted` : ''), 'cart');
   renderCartGoal(total);
   const list = $('cartList');
   if (n === 0) {
@@ -28648,8 +28662,11 @@ function cartCommitSummary(result) {
   // The Trash reported failing, and the disk could not show either way: their copies were kept.
   const unverified = result.unverified || [];
 
+  // Moved, not recovered (B29): the Trash still holds them, and the Time
+  // Capsule keeps a copy of each for the undo below.
   let html = trashed.length
-    ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} to the Trash — <b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b> recovered.`
+    ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} (<b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b>) to the Trash. ` +
+      `Up to that much comes back when you empty the Trash${result.capsuleUnavailable ? '' : ', less what the Time Capsule keeps so this can be undone'}.`
     : unverified.length ? `<b>Nothing was confirmed as moved to the Trash.</b>` : `<b>Nothing was deleted.</b>`;
   if (result.capsuleUnavailable) {
     html += `<div class="cart-mf-note">${escapeHtml(result.capsuleUnavailable)}</div>`;
