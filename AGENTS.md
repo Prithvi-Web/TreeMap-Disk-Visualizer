@@ -364,7 +364,8 @@ OpenAPI 3 spec).
      findings and provenance URLs never cross the network, and **there is no
      remote-delete route at all**. Triggering a scan on a peer is a separate
      opt-in that peer must have granted, and the peer judges the folder by its
-     own rules first: its sanitizer (`400 PATH_BLOCKED` / `PATH_INVALID`) and
+     own rules first: its sanitizer (`400 PATH_BLOCKED` / `PATH_INVALID`, in
+     words for the asker — never the path as resolved there, `~` expanded) and
      its own `agent-policy.json` `allowedRoots` (`403 POLICY_ROOT_NOT_ALLOWED`),
      as for a scan asked for there — and on Windows only a folder on one of its
      drives: a network share (`\\server\share`) is refused `400 PATH_BLOCKED`

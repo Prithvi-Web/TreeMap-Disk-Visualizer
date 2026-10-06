@@ -406,6 +406,32 @@ test('with Windows stood in for process.platform, the receiver refuses a peer’
   assert.deepEqual(scansStarted, [], 'no scan was started');
 });
 
+test('a peer refused by this machine’s path rules is told why in words of its own — never the path as resolved here, which names this machine’s home folder once `~` is expanded (the SEC-3 brief, item 7)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  // The receiver sent the sanitizer's sentence, `Scanning "/Users/<name>/x" is not allowed`, to the
+  // machine that asked for `~/x`: this machine's home folder, and with it the person's account name.
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  scansStarted.length = 0;
+  const home = fs.realpathSync(fileTempDir('tm-fleet-home-'));
+  fs.symlinkSync('/dev/null', path.join(home, 'to-dev'));
+  const before = process.env.HOME;
+  process.env.HOME = home; // os.homedir() reads it: the real home is never looked at
+  let r: { status: number; body: any };
+  try {
+    assert.equal(os.homedir(), home, 'the stand-in home is the one `~` expands to');
+    r = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: '~/to-dev' } });
+  } finally {
+    if (before === undefined) delete process.env.HOME;
+    else process.env.HOME = before;
+  }
+  assert.deepEqual([r.status, r.body?.code], [400, 'PATH_BLOCKED']);
+  assert.ok(!String(r.body?.error).includes(home), `the answer names no path of this machine: ${String(r.body?.error)}`);
+  assert.match(String(r.body?.error), /path rules/, 'and says what refused it');
+  assert.deepEqual(scansStarted, []);
+});
+
 test('a scan another machine asks for is held to agent-policy.json’s allowedRoots, as one asked for here is: outside them 403 POLICY_ROOT_NOT_ALLOWED and nothing is scanned; inside them it starts', async () => {
   // AGENTS.md: allowedRoots "confines both scanning and destruction". POST /api/scan, the MCP scan_path
   // tool, the index and Autopilot asked it; the scan a paired peer starts did not.

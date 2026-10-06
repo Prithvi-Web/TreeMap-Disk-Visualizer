@@ -313,8 +313,22 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 function remoteScanRoot(given: string): string {
   const refusal = peerScanRootRefusal(given);
   if (refusal) throw refusal;
-  return sanitizePath(given);
+  try {
+    return sanitizePath(given);
+  } catch (err) {
+    if (!(err instanceof PathRejectedError)) throw err;
+    // The sanitizer's sentence names the path as resolved here — `~` expanded to this machine's home
+    // folder, and with it the person's account name — which is not the asker's to learn (the SEC-3
+    // brief, item 7). Its code crosses the network, in words written for the machine that asked.
+    throw new PathRejectedError(PEER_PATH_REFUSALS[err.code] ?? PEER_PATH_REFUSALS.PATH_BLOCKED, err.code);
+  }
 }
+
+/** What a peer is told when this machine's sanitizer refuses its folder, by the refusal's code: never a path of this machine. */
+const PEER_PATH_REFUSALS: Readonly<Record<string, string>> = Object.freeze({
+  PATH_BLOCKED: 'That machine’s own path rules refuse that folder: an operating-system folder, or one reached through a second name or a link to either, is never scanned',
+  PATH_INVALID: 'That machine cannot read that as a folder on it: it takes an absolute path, or ~ for its home folder, with no null byte',
+});
 
 /** A Windows path rooted on one of the machine's drives: `C:\…`, also behind `\\?\` or `\\.\`. */
 const WIN32_DRIVE_ROOTED = /^(?:[\\/]{2}[?.][\\/])?[a-z]:[\\/]/i;
