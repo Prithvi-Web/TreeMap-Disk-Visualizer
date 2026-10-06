@@ -2597,6 +2597,13 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   background: transparent; color: var(--text-1); font-size: 13px; padding: 8px 11px;
   border-radius: 8px; cursor: var(--cur-hand); transition: background var(--dur-1) var(--ease); }
 #ctxMenu button .ic { color: var(--text-2); }
+/* A focused entry is marked inside its own box (QA-6b review F2.1). The
+   page's ring is drawn 2px outside what it marks, and .ctx-list — the
+   scroller, its entries full width — clipped it at every edge: a one-entry
+   menu showed no focus at all. Inset, the ring shows wherever the list is
+   scrolled, and the tint marks the entry without it. Before :hover, which
+   wins when both apply. */
+#ctxMenu button:focus-visible { outline-offset: -2px; background: var(--accent-soft); }
 #ctxMenu button:hover { background: var(--accent); color: #fff; }
 #ctxMenu button:hover .ic { color: #fff; }
 #ctxMenu button.danger:hover { background: var(--danger); }

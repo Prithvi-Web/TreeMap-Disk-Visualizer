@@ -1196,6 +1196,27 @@ test('LOW-4: the menu\'s entries scroll inside a short window, in a list inside 
   assert.ok(h.menu.list, 'and Export\'s');
 });
 
+test('LOW-4: a focused menu entry shows its whole focus ring inside the list that clips it, and more than the ring (QA-6b review F2.1)', () => {
+  // .ctx-list scrolls (overflow-y:auto makes overflow-x auto too) and its
+  // entries are full width, so it clips right at their edges. The page's ring
+  // is drawn outside the box it marks — 2 px wide, 2 px out — and was cut off
+  // at every edge: a menu of one entry showed no focus at all, and arrowing
+  // through a longer one, nothing said which entry was active (WCAG 2.4.7).
+  const pageAt = INDEX.indexOf('\n:focus-visible {');
+  assert.notEqual(pageAt, -1, 'control: the page draws one focus ring for every control');
+  const page = INDEX.slice(pageAt, INDEX.indexOf('}', pageAt));
+  const own = INDEX.includes('#ctxMenu button:focus-visible {') ? cssRule('#ctxMenu button:focus-visible') : '';
+  const px = (re: RegExp) => { const m = re.exec(own) || re.exec(page); return m ? Number(m[1]) : NaN; };
+  const width = px(/outline(?:-width)?:\s*(\d+)px/);
+  const offset = px(/outline-offset:\s*(-?\d+)px/);
+  assert.ok(width > 0 && !/outline:\s*(none|0)\b/.test(own), `a focused entry is ringed (${width} px)`);
+  const pad = /padding:\s*([^;]+);/.exec(cssRule('#ctxMenu .ctx-list'));
+  const room = pad ? Math.min(...(pad[1].match(/-?\d+/g) || ['0']).map(Number)) : 0;
+  assert.ok(width + offset <= room,
+    `the ring reaches ${width + offset} px past the entry's edge, and the list leaves ${room} px around its entries before it clips`);
+  assert.match(own, /background:/, 'and focus is not shown by the ring alone: a focused entry\'s background changes too');
+});
+
 test('LOW-4: scrolling the menu\'s list does not close it; a scroll anywhere else does', () => {
   // The capture-phase scroll listener closed the menu on ANY scroll — its own list's included.
   const menu = fakeMenu();
