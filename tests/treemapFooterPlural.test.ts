@@ -148,3 +148,16 @@ test('the "N of M" disclosure agrees with M, the number its noun belongs to', ()
   assert.match(runTmStatus({ query: 'size>1gb', matches: 1, matchTotal: 2, rootSize: 5 }),
     /^1 of 2 matches for “size>1gb”/, 'two matches stay "matches"');
 });
+
+test('a query line names the folder’s size as the folder’s, not as a total of the matches (B26)', () => {
+  // QA: "4 matches for “size>100mb type:file” · 8.8 GB total" — 8.8 GB was the
+  // whole folder on screen, the four matches were 7.2 GB, and beside a match
+  // count "total" reads as theirs.
+  for (const [matches, matchTotal] of [[4, null], [3, 9], [1, 1]] as const) {
+    const line = runTmStatus({ query: 'size>100mb type:file', matches, matchTotal, rootSize: 8_800 });
+    assert.doesNotMatch(line, /\btotal\b/, `no bare "total" beside a match count: "${line}"`);
+    assert.match(line, /· 8800 B in this folder$/, `the size is the folder’s, said so: "${line}"`);
+  }
+  // The plain count line keeps its own wording: nodes and drawn are the folder's.
+  assert.equal(footer(3, 2, 7), '3 nodes · 2 drawn · 7 B total');
+});

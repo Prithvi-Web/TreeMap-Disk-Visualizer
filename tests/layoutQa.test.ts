@@ -368,3 +368,60 @@ test('the "Preview after" banner may use its whole max-width, and "Exit preview"
   assert.equal(exit.get('flex'), 'none', 'and the message wraps before the button gives up width');
   assert.match(INDEX, /<button class="pill" id="tmPreviewExit">Exit preview<\/button>/, 'the button is the one in the banner');
 });
+
+/* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
+
+/** The treemap's measured height, with a row of `above` px pushing it down, and whether it redrew. */
+function refitWorld(opts: { view?: string; drawnAt: string; above: number; footH?: number; padB?: number }) {
+  const draws: string[] = [];
+  const wrap = {
+    getBoundingClientRect: () => ({ top: 150 + opts.above }),
+    parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: opts.footH ?? 17 }) }) },
+    closest: () => ({}),
+  };
+  const fns = runPageDecls<{ tmRefitMap(): void }>(['treemapCanvasHeight', 'tmRefitMap'], {
+    $: (id: string) => (id === 'treemapWrap' ? wrap : null),
+    state: { view: opts.view ?? 'treemap', treemap: { rootPath: '/c' } },
+    tmCanvas: { style: { height: opts.drawnAt } },
+    window: { innerHeight: 900 },
+    getComputedStyle: (el: unknown) => (el === wrap
+      ? { paddingTop: '10px', paddingBottom: '10px' }
+      : { marginTop: '12px', paddingBottom: `${opts.padB ?? 48}px` }),
+    drawView: () => { draws.push('draw'); },
+  }, '{ tmRefitMap }');
+  return { fns, draws };
+}
+
+test('the map redraws when a row above or below it changes height, and only then (B26)', () => {
+  // QA: with history AND a query, the query row (Save view · Stage 4 files)
+  // appeared after the map was sized, and pushed the footer to y 896–909 in a
+  // 900 px window. D59 redrew for the time-lapse bar only.
+  // Sized with nothing extra above it: 900 - 150 - 20 - (17 + 12) - 48 = 653.
+  const still = refitWorld({ drawnAt: '653px', above: 0 });
+  still.fns.tmRefitMap();
+  assert.deepEqual(still.draws, [], 'nothing moved: no redraw (a Voronoi map would re-solve for nothing)');
+  const pushed = refitWorld({ drawnAt: '653px', above: 42 }); // the query row appeared
+  pushed.fns.tmRefitMap();
+  assert.deepEqual(pushed.draws, ['draw'], 'the query row pushed the map down: it is redrawn to fit');
+  const roomier = refitWorld({ drawnAt: '653px', above: 0, padB: 76 }); // the cart pill reserved the bottom
+  roomier.fns.tmRefitMap();
+  assert.deepEqual(roomier.draws, ['draw'], 'room taken at the bottom refits it too');
+  const elsewhere = refitWorld({ view: 'dashboard', drawnAt: '653px', above: 42 });
+  elsewhere.fns.tmRefitMap();
+  assert.deepEqual(elsewhere.draws, [], 'not while another view is up');
+  const never = refitWorld({ drawnAt: '', above: 42 });
+  never.fns.tmRefitMap();
+  assert.deepEqual(never.draws, [], 'and not before the map has been drawn at all: its first draw measures');
+});
+
+test('every row that can push the map or its footer is watched (B26)', () => {
+  const rows = /const TM_CHROME_ROWS = \[([^\]]*)\];/.exec(INDEX);
+  assert.ok(rows, 'the rows around the map are listed');
+  const list = [...rows![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  for (const sel of ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock']) {
+    assert.ok(list.includes(sel), `${sel} is watched (${list.join(', ')})`);
+  }
+  const wiring = INDEX.slice(rows!.index, rows!.index + 600);
+  assert.match(wiring, /new ResizeObserver\(\(\) => tmRefitMap\(\)\)/, 'a change of size refits the map');
+  assert.match(wiring, /for \(const sel of TM_CHROME_ROWS\)[^}]*\.observe\(/, 'and every listed row is observed');
+});

@@ -10867,6 +10867,28 @@ function treemapCanvasHeight(wrap) {
 }
 
 /**
+ * Redraw the map when a row around it changed height (QA B26; D59 did this
+ * for the time-lapse bar alone). The canvas is sized once per draw, from
+ * what sits above and below it, and a row can appear or re-flow AFTER that
+ * draw: the query bar (Save view · Stage N files), the time-lapse bar, a
+ * toolbar that wraps, a footer that wraps, the room the cart pill reserves at
+ * the bottom of <main>. The footer — legend, counts, hint — then fell below
+ * the window. A no-op unless the height the map should have differs from the
+ * one it was drawn at, so a Voronoi map is never re-solved for nothing, and
+ * nothing before the first draw, which measures for itself.
+ */
+function tmRefitMap() {
+  if (state.view !== 'treemap' || !state.treemap.rootPath || !tmCanvas.style.height) return;
+  if (tmCanvas.style.height === treemapCanvasHeight($('treemapWrap')) + 'px') return;
+  drawView();
+}
+const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock'];
+if (typeof ResizeObserver !== 'undefined') {
+  const tmChromeRo = new ResizeObserver(() => tmRefitMap());
+  for (const sel of TM_CHROME_ROWS) { const el = document.querySelector(sel); if (el) tmChromeRo.observe(el); }
+}
+
+/**
  * The server's ceiling on one treemap response: `maxNodes: 20_000` where
  * src/api/scanRoutes.ts builds the live map and src/api/insightRoutes.ts the
  * time slider's. The response is golden-locked (§12), so nothing in it can
@@ -11325,7 +11347,9 @@ function updateTmStatus() {
     const counted = Number.isFinite(total) && total > drawn
       ? `${formatCount(drawn)} of ${formatCount(total)} match${total === 1 ? '' : 'es'}`
       : `${formatCount(drawn)} match${drawn === 1 ? '' : 'es'}`;
-    $('tmStatus').textContent = `${counted} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`;
+    // The size is the folder's, and says so: beside a match count a bare
+    // "8.8 GB total" read as the matches' total (they were 7.2 GB — QA B26).
+    $('tmStatus').textContent = `${counted} for “${q}” · ${formatBytes(state.treemap.rootSize)} in this folder`;
     return;
   }
   // With no query the count belongs to whichever renderer drew: "nodes drawn"
