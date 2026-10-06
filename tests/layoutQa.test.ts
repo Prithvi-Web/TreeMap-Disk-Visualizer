@@ -131,3 +131,138 @@ test('the Offloaded and Time Capsule search boxes fill their field — the place
     assert.ok(inputW >= needed, `#${id}: a ${inputW}px box shows all of "${placeholder}" (needs ~${needed.toFixed(0)}px)`);
   }
 });
+
+/* ══════════════ B13 — emptying the cart hands focus back, never to <body> ══════════════ */
+
+/** Several page declarations (functions, or `const x = …;`) in one scope, run with `deps`. */
+function runPageDecls<T>(names: string[], deps: Record<string, unknown>, returns: string): T {
+  const parts = names.map((name) => {
+    let start = INDEX.indexOf(`function ${name}(`);
+    if (INDEX.lastIndexOf('async ', start) === start - 6) start -= 6;
+    if (start < 0) {
+      const at = INDEX.indexOf(`const ${name} = `);
+      assert.notEqual(at, -1, `${name} is in the built page`);
+      return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
+    }
+    // The body opens after the parameter list closes: a destructured
+    // parameter ({ focus = false } = {}) has braces of its own.
+    let paren = 0, open = -1;
+    for (let i = INDEX.indexOf('(', start); i < INDEX.length; i++) {
+      if (INDEX[i] === '(') paren++;
+      else if (INDEX[i] === ')' && --paren === 0) { open = INDEX.indexOf('{', i); break; }
+    }
+    let depth = 0;
+    for (let i = open; i < INDEX.length; i++) {
+      if (INDEX[i] === '{') depth++;
+      else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+    }
+    return assert.fail(`${name} has a balanced body`);
+  });
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(...keys, `'use strict';\n${parts.join('\n')}\nreturn ${returns};`)(...keys.map((k) => deps[k])) as T;
+}
+
+type CartEl = {
+  id: string; cls: Set<string>; parent: CartEl | null; connected: boolean; disabled?: boolean;
+  classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean; toggle(c: string, on?: boolean): void };
+  contains(n: unknown): boolean; focus(opts?: unknown): void; getClientRects(): unknown[]; readonly isConnected: boolean;
+};
+
+/** Lets the page's awaited repaint run out (microtasks only — nothing is timed). */
+async function settled() { for (let i = 0; i < 10; i++) await Promise.resolve(); }
+
+/** The cart dock and a view beside it: what focus can land on, and whether it is painted. */
+function cartWorld() {
+  const focus: { active: CartEl | null } = { active: null };
+  const make = (id: string, parent: CartEl | null): CartEl => {
+    const el: CartEl = {
+      id, cls: new Set(), parent, connected: true,
+      classList: {
+        add: (c) => { el.cls.add(c); }, remove: (c) => { el.cls.delete(c); }, contains: (c) => el.cls.has(c),
+        toggle: (c, on) => { if (on ?? !el.cls.has(c)) el.cls.add(c); else el.cls.delete(c); },
+      },
+      contains: (n) => { for (let p = n as CartEl | null; p; p = p.parent) if (p === el) return true; return false; },
+      // focus() on something not painted does nothing, as in a browser.
+      focus: () => { if (el.getClientRects().length) focus.active = el; },
+      // The dock is display:none without .show; the panel without .open.
+      getClientRects: () => {
+        for (let p: CartEl | null = el; p; p = p.parent) {
+          if (p.id === 'cartDock' && !p.cls.has('show')) return [];
+          if (p.id === 'cartPanel' && !p.parent!.cls.has('open')) return [];
+        }
+        return el.connected ? [{}] : [];
+      },
+      get isConnected() { return el.connected; },
+    };
+    return el;
+  };
+  const body = make('body', null);
+  const dock = make('cartDock', body);
+  const els: Record<string, CartEl> = { cartDock: dock };
+  els.cartPanel = make('cartPanel', dock);
+  els.cartClear = make('cartClear', els.cartPanel);
+  els.cartCollapse = make('cartCollapse', els.cartPanel);
+  els.cartTab = make('cartTab', dock);
+  const view = make('view-treemap', body);
+  els.viewFirst = make('tmUpBtn', view);
+  els.opener = make('addToCartBtn', view);
+  const state = { cart: new Set(['/c/a', '/c/b']) };
+  const document = {
+    body,
+    get activeElement() { return focus.active ?? body; },
+    querySelectorAll: (sel: string) => (/\.view\.active/.test(sel) ? [els.viewFirst, els.opener] : []),
+  };
+  const fns = runPageDecls<{
+    cartClear(): void; cartDockToggle(open?: boolean, o?: { focus?: boolean }): void; cartNoteFocusIn(e: { relatedTarget: unknown }): void;
+  }>(['cartFocus', 'cartNoteFocusIn', 'cartFocusReturn', 'cartDockToggle', 'cartClear'], {
+    $: (id: string) => els[id], document, state,
+    requestAnimationFrame: (f: () => void) => { f(); return 1; },
+    CART_PAGE: 200, cartShown: 200,
+    saveCart() {}, refreshCartButtons() {}, cartPreviewInvalidated() {},
+    // renderCart's part in this: an empty cart hides the dock and closes the drawer.
+    renderCart: async () => {
+      await null;
+      dock.classList.toggle('show', state.cart.size > 0);
+      if (state.cart.size === 0) fns.cartDockToggle(false);
+    },
+  }, '{ cartClear, cartDockToggle, cartNoteFocusIn }');
+  dock.classList.add('show');
+  fns.cartDockToggle(true);
+  return { els, focus, state, fns, body };
+}
+
+test('Clear in the cart hands focus back to where it came from, never to <body> (B13)', async () => {
+  // QA: Clear emptied the cart, the panel and the pill disappeared, and focus
+  // landed on <body>. The tab the drawer normally returns to is hidden with it.
+  const w = cartWorld();
+  w.fns.cartNoteFocusIn({ relatedTarget: w.els.opener }); // tabbed into the dock from the view
+  w.fns.cartNoteFocusIn({ relatedTarget: w.els.cartTab }); // then moved around inside it
+  w.els.cartClear.focus();
+  assert.equal(w.focus.active, w.els.cartClear, 'focus is on Clear');
+  w.fns.cartClear(); await settled();
+  assert.equal(w.state.cart.size, 0, 'the cart is empty');
+  assert.ok(!w.els.cartDock.cls.has('show'), 'and the dock is hidden, tab and all');
+  assert.equal(w.focus.active, w.els.opener, 'focus is back on the control it came from');
+});
+
+test('with the control it came from gone, an emptied cart hands focus to the view on screen (B13)', async () => {
+  const w = cartWorld();
+  w.fns.cartNoteFocusIn({ relatedTarget: w.els.opener });
+  w.els.cartClear.focus();
+  w.els.opener.connected = false; // the row it came from was re-rendered away
+  w.fns.cartClear(); await settled();
+  assert.equal(w.focus.active, w.els.viewFirst, 'the first control of the view on screen');
+});
+
+test('collapsing a cart that still holds items returns focus to its tab, and a Clear made from outside moves no focus (B13)', async () => {
+  const w = cartWorld();
+  w.fns.cartNoteFocusIn({ relatedTarget: w.els.opener });
+  w.els.cartCollapse.focus();
+  w.fns.cartDockToggle(false);
+  assert.equal(w.focus.active, w.els.cartTab, 'the tab is the way back in while the cart has items');
+  const v = cartWorld();
+  v.els.opener.focus();
+  v.fns.cartClear(); await settled();
+  assert.equal(v.focus.active, v.els.opener, 'focus that was never in the dock stays put');
+});

@@ -914,10 +914,15 @@ test('Escape closes the cart drawer, ahead of the preview pane and the map', () 
 });
 
 test('the drawer takes focus when opened from the keyboard and returns it on close', () => {
-  const fn = braced('function cartDockToggle(');
+  // cartFocusReturn decides where focus goes on close (the tab while the cart
+  // holds anything — QA B13 added the emptied-cart case, tested in layoutQa).
+  const focusState = INDEX.slice(INDEX.indexOf('const cartFocus = '), INDEX.indexOf(';', INDEX.indexOf('const cartFocus = ')) + 1);
+  assert.match(focusState, /^const cartFocus = /, 'the focus-origin note is in the page');
+  const fn = `${braced('function cartDockToggle(')}\n${focusState}\n${braced('function cartFocusReturn(')}`;
   const doc = makeDoc();
   const mk = mkOf(doc);
-  const dock = append(doc.body, mk('div', 'cartDock'));
+  // The dock is shown (.show) whenever the cart holds anything.
+  const dock = append(doc.body, mk('div', 'cartDock', ['show']));
   const panel = append(dock, mk('div', 'cartPanel'));
   const collapse = append(panel, mk('button', 'cartCollapse'));
   const tab = append(dock, mk('div', 'cartTab', [], { tabindex: '0' }));

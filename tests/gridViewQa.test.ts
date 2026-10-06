@@ -76,8 +76,12 @@ type FakeEl = {
   clientWidth: number; clientHeight: number; scrollTop: number;
   classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean; toggle(c: string, on?: boolean): void };
   setAttribute(k: string, v: string): void; addEventListener(t: string, f: (e: unknown) => void): void;
-  appendChild(c: FakeEl): void; replaceChildren(f: { children: FakeEl[] }): void; querySelector(): null; focus(): void; remove(): void;
+  appendChild(c: FakeEl): void; replaceChildren(f: { children: FakeEl[] }): void; querySelector(sel?: string): FakeEl | null;
+  contains(n: unknown): boolean; focus(opts?: unknown): void; remove(): void;
 };
+
+/** Where keyboard focus is: what `document.activeElement` answers in the harness. */
+const FOCUS: { active: FakeEl | null } = { active: null };
 
 function fakeEl(id = ''): FakeEl {
   const el: FakeEl = {
@@ -91,7 +95,14 @@ function fakeEl(id = ''): FakeEl {
     addEventListener: (t, f) => { (el.listeners[t] ||= []).push(f); },
     appendChild: (c) => { el.children.push(c); },
     replaceChildren: (f) => { el.children = [...f.children]; },
-    querySelector: () => null, focus: () => {}, remove: () => {},
+    // Only the tile lookups the Grid makes for focus; anything else finds nothing, as before.
+    querySelector: (sel) => {
+      const m = /^\.gcell(?:\[data-i="(\d+)"\])?$/.exec(sel || '');
+      if (!m) return null;
+      return el.children.find((c) => /\bgcell\b/.test(c.className) && (m[1] === undefined || String(c.dataset.i) === m[1])) || null;
+    },
+    contains: (n) => n === el || el.children.includes(n as FakeEl),
+    focus: () => { FOCUS.active = el; }, remove: () => {},
   };
   return el;
 }
@@ -117,6 +128,9 @@ function gridHarness(): Grid {
     '/* ───────────────────────────── Apps view (Feature 18) ───────────────────────────── */');
   const els: Record<string, FakeEl> = {};
   const $ = (id: string) => (els[id] ||= fakeEl(id));
+  FOCUS.active = null;
+  // The selection bar holds its four controls, as the markup does.
+  $('selectionBar').children.push($('selInfo'), $('selOffloadBtn'), $('selTrashBtn'), $('selClearBtn'));
   const fonts: Node = { name: 'Fonts', path: '/r/Fonts', size: 3000, type: 'dir', children: [file('/r/Fonts', 'a.ttf', 2000), file('/r/Fonts', 'b.otf', 1000)] };
   const other: Node = { name: 'Notes.txt', path: '/r/Notes.txt', size: 10, type: 'file', modifiedAt: 1 };
   const root: Node = { name: 'r', path: '/r', size: 3010, type: 'dir', children: [fonts, other] };
@@ -132,6 +146,7 @@ function gridHarness(): Grid {
   const document = {
     createElement: () => fakeEl(),
     createDocumentFragment: () => { const f = { children: [] as FakeEl[], appendChild(c: FakeEl) { f.children.push(c); } }; return f; },
+    get activeElement() { return FOCUS.active; },
   };
   const pending: Promise<unknown>[] = [];
   const deps: Record<string, unknown> = {
@@ -395,4 +410,38 @@ test('the Move-to-Trash sheet’s total counts a folder and a file inside it onc
   assert.match(els.confirmText.innerHTML, /\(115 B total\)/,
     'A (100) holds x.bin (40): the folder counts once; B and AB are separate — a shared name prefix is not nesting');
   assert.match(els.confirmText.innerHTML, /<b>4 items<\/b>/, 'the sheet still names every item it will move');
+});
+
+/* ══════════════ B13 — Clear hands keyboard focus back to the grid ══════════════ */
+
+/** Press Clear in the selection bar, as its click handler sees it. */
+function pressClear(g: Grid) {
+  const handlers = g.els.selClearBtn.listeners.click || [];
+  assert.ok(handlers.length > 0, 'Clear has a click handler');
+  for (const h of handlers) h({});
+}
+
+test('Clear in the selection bar hands keyboard focus back to the tile it was selecting, never to <body> (B13)', async () => {
+  // QA: the bar slid away with focus still on its Clear button, so focus
+  // fell to <body> and a keyboard user had to tab in from the top again.
+  const g = gridHarness();
+  await g.renderGrid();
+  g.onCellClick({ metaKey: true }, 1); // ⌘-click the second tile: the bar slides in
+  assert.ok(g.els.selectionBar.cls.has('visible'), 'the bar is up');
+  g.els.selClearBtn.focus();
+  pressClear(g);
+  assert.ok(!g.els.selectionBar.cls.has('visible'), 'the bar slides away');
+  const at = FOCUS.active;
+  assert.ok(at && /\bgcell\b/.test(at.className), `focus is on a tile, not on the hidden button (${at ? at.id || at.className : 'nothing'})`);
+  assert.equal(String(at!.dataset.i), '1', 'the tile the selection was anchored on');
+  assert.ok(g.els.gridInner.children.includes(at!), 'one of the tiles the grid is showing now');
+});
+
+test('Clear leaves focus alone when it was not in the bar (B13)', async () => {
+  const g = gridHarness();
+  await g.renderGrid();
+  g.onCellClick({ metaKey: true }, 0);
+  g.els.gridSearch.focus(); // somewhere else entirely
+  pressClear(g);
+  assert.equal(FOCUS.active, g.els.gridSearch, 'a control outside the bar keeps its focus');
 });

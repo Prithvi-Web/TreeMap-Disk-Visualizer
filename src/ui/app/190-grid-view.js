@@ -234,7 +234,20 @@ function updateSelectionBar() {
   $('selOffloadBtn').hidden = isCloudScan(); // offload is a local-disk concept
   bar.classList.add('visible');
 }
-$('selClearBtn').addEventListener('click', () => { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); });
+/* Clear hides the bar it sits in. Focus that was in the bar goes back to the
+   grid — the tile the selection was anchored on, else the first tile drawn —
+   instead of falling to <body> with the bar (QA B13). Focus anywhere else is
+   left where it is. */
+function gridClearSelection() {
+  const hadFocus = $('selectionBar').contains(document.activeElement);
+  state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true);
+  if (!hadFocus) return;
+  const at = state.grid.anchor;
+  const tile = (at !== null && gridInner.querySelector(`.gcell[data-i="${at}"]`)) || gridInner.querySelector('.gcell');
+  if (tile) tile.focus();
+  else $('gridSearch').focus({ preventScroll: true });
+}
+$('selClearBtn').addEventListener('click', gridClearSelection);
 $('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.selection]));
 
 /* ───────────────────────────── Apps view (Feature 18) ───────────────────────────── */

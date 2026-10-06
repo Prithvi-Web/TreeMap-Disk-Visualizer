@@ -659,9 +659,32 @@ function cartDockToggle(open, { focus = false } = {}) {
   if (next) {
     if (focus) requestAnimationFrame(() => { const c = $('cartCollapse'); if (c && dock.classList.contains('open')) c.focus({ preventScroll: true }); });
   } else if (hadFocus) {
-    $('cartTab').focus({ preventScroll: true });
+    cartFocusReturn();
   }
 }
+
+/**
+ * Where keyboard focus goes when it has to leave the dock (QA B13). While the
+ * cart holds anything, the tab is the way back in. An emptied cart hides the
+ * whole dock, tab and all, so focus goes back to the control it entered the
+ * dock from — or, if that is gone, to the first control of the view on
+ * screen. Never to <body>, where a keyboard user starts again from the top.
+ */
+const cartFocus = { from: null };
+function cartNoteFocusIn(e) {
+  const from = e.relatedTarget;
+  if (from && !$('cartDock').contains(from)) cartFocus.from = from;
+}
+function cartFocusReturn() {
+  const dock = $('cartDock');
+  const usable = (el) => !!el && el.isConnected !== false && !dock.contains(el) && el.getClientRects().length > 0;
+  const target = dock.classList.contains('show') ? $('cartTab')
+    : usable(cartFocus.from) ? cartFocus.from
+    : [...document.querySelectorAll('.view.active button, .view.active input, .view.active select, .view.active [tabindex="0"]')]
+      .find((el) => !el.disabled && usable(el));
+  if (target) target.focus({ preventScroll: true });
+}
+$('cartDock').addEventListener('focusin', cartNoteFocusIn);
 $('cartTab').addEventListener('click', () => cartDockToggle());
 $('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cartDockToggle(undefined, { focus: true }); } });
 $('cartCollapse').addEventListener('click', () => cartDockToggle(false));
