@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -15,6 +16,7 @@ import {
   getCapsuleJob,
   protectItems,
   setAfterIndexLoadForTests,
+  setCapsuleCapForTests,
   startCapsuleRestore,
 } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -225,6 +227,28 @@ test('a capture that throws lets the index go and unpins its run: the next commi
   assert.deepEqual(done.trashed, [y]);
   assert.ok(fs.existsSync(x), 'the first commit trashed nothing');
   assert.equal(capsuleStoreWaitersForTests(), 0, 'and nothing is left waiting for the index');
+
+  // Its run is let go too (FG3g review F1.10): a run that already holds a copy, whose next capture
+  // throws, leaves that copy evictable again. Still pinned, it could never make room for anything.
+  const uncap = setCapsuleCapForTests(150_000);
+  try {
+    const runId = crypto.randomUUID();
+    const [kept] = (await protectItems([{ path: file('throws', 'first.bin', 'f'.repeat(100_000)) }], { runId })).outcomes;
+    assert.equal(kept.protected, true, kept.detail);
+    const unhookRun = setAfterIndexLoadForTests(async (id) => {
+      if (id === runId) throw new Error('a failure inside the capture (a test)');
+    });
+    try {
+      await assert.rejects(protectItems([{ path: file('throws', 'second.bin', 'the second item of the run') }], { runId }), /a failure inside the capture/);
+    } finally {
+      unhookRun();
+    }
+    const [later] = (await protectItems([{ path: file('throws', 'later.bin', 'l'.repeat(100_000)) }])).outcomes;
+    assert.equal(later.protected, true, `a later capture makes room by evicting that run's copy, no longer pinned: ${String(later.detail)}`);
+    assert.equal((await getCapsuleIndex()).entries.find((e) => e.id === kept.entryId)?.hasPayload, false, 'that copy went to make room');
+  } finally {
+    uncap();
+  }
 });
 
 /* ─────────────── autopilot.json ─────────────── */
