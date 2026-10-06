@@ -474,9 +474,25 @@ function silentIn(map: Map<string, Silence>, key: string, d: EmptyCheckDeps): bo
   return false;
 }
 
+/**
+ * What keeps a call from starting: its folder's own call out unanswered
+ * (`folder`), the drive's root having missed (`drive`), or the drive holding
+ * `MAX_HELD_PER_DRIVE` calls that did not answer though its root did
+ * (`held`) — each said in its own sentence (the U-4c review, F2.3).
+ */
+type SilencedBy = 'folder' | 'drive' | 'held';
+
+/** Why a call on `folder` (null: any folder) on `drive` is not to start now, or null when it may. */
+function silencedBy(d: EmptyCheckDeps, folder: string | null, drive: string): SilencedBy | null {
+  if (folder !== null && silentIn(silentFolders, folder, d)) return 'folder';
+  if (silentIn(silentDrives, drive, d)) return 'drive';
+  if (heldCalls(drive) >= MAX_HELD_PER_DRIVE) return 'held';
+  return null;
+}
+
 /** Is `drive` not to be asked now: its root did not answer, or it holds `MAX_HELD_PER_DRIVE` calls already? */
 function isSilent(d: EmptyCheckDeps, drive: string): boolean {
-  return silentIn(silentDrives, drive, d) || heldCalls(drive) >= MAX_HELD_PER_DRIVE;
+  return silencedBy(d, null, drive) !== null;
 }
 
 /** `op` missed its wait on `key`: silent until `op` answers, and for a minute after it fails with a drive's own error. */
@@ -511,8 +527,10 @@ export function setEmptyCheckForTests(over: Partial<EmptyCheckDeps> | null): voi
 
 const LATE = Symbol('late');
 const SPENT = Symbol('spent');
-/** Never started: the folder or the drive it is on went silent before this call's turn (the U-4b review, L-2). */
-const HUSHED = Symbol('hushed');
+/** Never started: the folder or the drive it is on went silent before this call's turn (the U-4b review, L-2); `by` says which. */
+class Hushed {
+  constructor(readonly by: SilencedBy) {}
+}
 
 /** A wait as a sentence says it: "2 seconds", or "1 ms" for a test's. */
 function waitWords(ms: number): string {
@@ -542,18 +560,19 @@ interface Where {
 /**
  * `start()`'s answer; LATE when its deadline passes first, SPENT when the
  * session's budget does (or was gone before it started, when nothing is
- * started), HUSHED — nothing started — when the folder or its drive went
+ * started), a `Hushed` — nothing started — when the folder or its drive went
  * silent before this call's turn. A call first waits its turn (`turnOf`):
  * another call on its folder out, or its drive's most calls out. A call left
  * waiting makes its folder silent until it answers; one that missed its whole
  * deadline has the folder's drive asked about too (`askRoot`). A later
  * rejection of the call is handled by the race.
  */
-async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<T>): Promise<T | typeof LATE | typeof SPENT | typeof HUSHED> {
+async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<T>): Promise<T | typeof LATE | typeof SPENT | Hushed> {
   // A call waits its turn — the folder's call out, or a drive with its most calls out — as far as the budget goes (the U-4c review, F2.2, F2.4).
   for (;;) {
     if (ctx.left() <= 0) return SPENT;
-    if (silentIn(silentFolders, where.folder, ctx.d) || isSilent(ctx.d, where.drive)) return HUSHED;
+    const by = silencedBy(ctx.d, where.folder, where.drive);
+    if (by) return new Hushed(by);
     const turn = turnOf(where.folder, where.drive);
     if (!turn) break;
     if ((await budgeted(ctx, turn)) === SPENT) return SPENT;
@@ -669,12 +688,24 @@ async function driveSafely(d: EmptyCheckDeps, p: string): Promise<string> {
   }
 }
 
-/** The sentence for a folder whose own call is still out from an earlier look. */
-const folderSilent = (named: string): EmptyVerdict =>
-  notEmpty('no-answer', `${named} did not answer a moment ago, so TreeMap did not ask again and cannot tell that it is empty`);
-
-/** The sentence for a folder on a drive that went silent. */
-const DRIVE_SILENT = 'the drive it is on did not answer a moment ago, so TreeMap did not look at it again and cannot tell that it is empty';
+/**
+ * The verdict for a folder not asked, by what silenced it (`silencedBy`):
+ * `named` is how the sentence names it ("it", or "the folder x inside it"),
+ * `top` whether it is the folder looked at. "The drive did not answer" is
+ * said only where the drive's root missed: a drive holding two calls that did
+ * not answer has had its root answer (the U-4c review, F2.3).
+ */
+function hushedVerdict(named: string, top: boolean, by: SilencedBy): EmptyVerdict {
+  if (by === 'folder') return notEmpty('no-answer', `${named} did not answer a moment ago, so TreeMap did not ask again and cannot tell that it is empty`);
+  if (by === 'drive') {
+    return notEmpty('no-answer', top
+      ? 'the drive it is on did not answer a moment ago, so TreeMap did not look at it again and cannot tell that it is empty'
+      : `${named} is on a drive that did not answer a moment ago, so TreeMap did not ask it again and cannot tell that it is empty`);
+  }
+  return notEmpty('no-answer', top
+    ? 'two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it and cannot tell that it is empty'
+    : `${named} is on a drive where two earlier calls have not answered yet, so TreeMap did not ask it and cannot tell that it is empty`);
+}
 
 /**
  * A listing that could not be opened, and why (`failure`): told apart from a
@@ -722,7 +753,7 @@ function budgetSpent(d: EmptyCheckDeps): EmptyVerdict {
 
 /** Opening `dir` said it is not there: so it is gone if a fresh stat says so too; anything else is not shown empty (U-4c L1). */
 async function goneUnlessThere(ctx: LookContext, dir: string): Promise<EmptyVerdict> {
-  let again: { isDirectory(): boolean } | typeof LATE | typeof SPENT | typeof HUSHED;
+  let again: { isDirectory(): boolean } | typeof LATE | typeof SPENT | Hushed;
   try {
     again = await answered(ctx, { folder: dir, drive: ctx.drive }, () => ctx.d.lstat(dir));
   } catch (err) {
@@ -731,7 +762,7 @@ async function goneUnlessThere(ctx: LookContext, dir: string): Promise<EmptyVerd
   }
   if (again === LATE) return notEmpty('no-answer', `it did not answer within ${waitWords(ctx.d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
   if (again === SPENT) return budgetSpent(ctx.d);
-  if (again === HUSHED) return notEmpty('no-answer', DRIVE_SILENT);
+  if (again instanceof Hushed) return hushedVerdict('it', true, again.by);
   return notEmpty('unreadable', 'it could not be opened (ENOENT), though it is there, so TreeMap cannot tell that it is empty');
 }
 
@@ -742,12 +773,8 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
   const silent = (folder: string): EmptyVerdict =>
     notEmpty('no-answer', `${named(folder)} did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
   /** Not asked: the folder's own call, or its drive, went silent before its turn. */
-  const hushed = (folder: string, drive: string): EmptyVerdict => {
-    if (silentIn(silentFolders, folder, d)) return folderSilent(named(folder));
-    if (folder === dir) return notEmpty('no-answer', DRIVE_SILENT);
-    return notEmpty('no-answer', `${named(folder)} is on a drive that did not answer a moment ago, so TreeMap did not ask it again and cannot tell that it is empty`);
-  };
-  let top: { isDirectory(): boolean } | typeof LATE | typeof SPENT | typeof HUSHED;
+  const hushed = (folder: string, h: Hushed): EmptyVerdict => hushedVerdict(named(folder), folder === dir, h.by);
+  let top: { isDirectory(): boolean } | typeof LATE | typeof SPENT | Hushed;
   try {
     top = await answered(ctx, { folder: dir, drive: ctx.drive }, () => d.lstat(dir));
   } catch (err) {
@@ -756,7 +783,7 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
   }
   if (top === LATE) return silent(dir);
   if (top === SPENT) return budgetSpent(d);
-  if (top === HUSHED) return hushed(dir, ctx.drive);
+  if (top instanceof Hushed) return hushed(dir, top);
   if (!top.isDirectory()) return notEmpty('not-a-folder', 'it is not a folder any more');
   const queue = [dir];
   let examined = 0;
@@ -781,7 +808,7 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
       return true;
     };
     let gaveUp = false;
-    let listed: void | typeof LATE | typeof SPENT | typeof HUSHED;
+    let listed: void | typeof LATE | typeof SPENT | Hushed;
     // A folder below may be a mount of its own: its silence is its own drive's (U-4c M1).
     const drive = folder === dir ? ctx.drive : await budgeted(ctx, driveSafely(d, folder));
     if (drive === SPENT) return budgetSpent(d);
@@ -794,7 +821,7 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
       if (err instanceof NotOpened && folder === dir && codeOf(failure) === 'ENOENT') return goneUnlessThere(ctx, dir);
       return notEmpty('unreadable', `${named(folder)} could not be read (${codeOf(failure)}), so TreeMap cannot tell that it is empty`);
     }
-    if (listed === HUSHED) return hushed(folder, drive);
+    if (listed instanceof Hushed) return hushed(folder, listed);
     if (listed === LATE || listed === SPENT) {
       gaveUp = true;
       return listed === LATE ? silent(folder) : budgetSpent(d);
@@ -842,7 +869,8 @@ export function emptyCheckSession(ignoreJunk: boolean): EmptyCheckSession {
         const drive = await budgeted({ d, left }, driveSafely(d, dir));
         if (drive === SPENT) return budgetSpent(d);
         for (;;) {
-          if (isSilent(d, drive)) return notEmpty('no-answer', DRIVE_SILENT);
+          const by = silencedBy(d, null, drive);
+          if (by) return hushedVerdict('it', true, by);
           // While one of the drive's calls is out unanswered, its looks go one at a time (the U-4c review, F1.1).
           if (heard.has(drive) && heldCalls(drive) === 0) return lookOn(drive, dir);
           const first = probing.get(drive);

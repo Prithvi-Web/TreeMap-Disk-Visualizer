@@ -276,6 +276,8 @@ function hangsAt(hangs: (p: string) => boolean, contents: Record<string, Dirent[
 }
 
 const onNas = (p: string): string => (p.startsWith('/x/outer/mnt') || p.startsWith('/nas') ? '/nas' : '/');
+/** The drive of a path when /nas is mounted at `mount` too. */
+const onNasAt = (mount: string) => (p: string): string => (p.startsWith(mount) || p.startsWith('/nas') ? '/nas' : '/');
 
 test('R1: a dead mount nested inside a candidate silences the mount\'s own drive, never the candidate\'s: a healthy folder elsewhere is offered', async () => {
   const asked = hangsAt((p) => p === '/x/outer/mnt' || p === '/nas', { '/x/outer': [dirent('mnt', true)] }, onNas);
@@ -337,7 +339,7 @@ test('a call whose wait the budget cut short, and whose deadline then passed, sa
   await stillEmptyFolder('/slow/b', true);
   assert.deepEqual(asked.slice(2), ['stat /slow/b', 'list /slow/b'], 'the drive is not silent');
   // Each cut listing is still out, holding a thread: two of them, and the drive is asked nothing more (the U-4c review, F1.1).
-  assert.match(reasonOf(await stillEmptyFolder('/slow/c', true)), /the drive it is on did not answer a moment ago/);
+  assert.match(reasonOf(await stillEmptyFolder('/slow/c', true)), /two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'said as the two calls out, not as a drive that did not answer (the U-4c review, F2.3)');
   assert.deepEqual(asked.slice(4), [], 'c is not asked');
 });
 
@@ -379,9 +381,10 @@ test('many folders that hang on a drive whose root answers leave at most two cal
   assert.deepEqual(started, ['/Volumes/nas/f0', '/Volumes/nas/f1'], 'the first folder, alone; then, its call still out, the next alone; then nothing');
   assert.deepEqual(rootAsked, ['/Volumes/nas'], 'the root is asked once, for the first: the second makes two calls out, and that is the drive silent');
   assert.ok(verdicts.every((v) => whyOf(v) === 'no-answer'), 'none is offered');
-  assert.equal(verdicts.filter((v) => /the drive it is on did not answer a moment ago/.test(reasonOf(v))).length, 198, 'the rest are not asked');
+  // Its root answered: they are not told the drive did not answer (the U-4c review, F2.3).
+  assert.equal(verdicts.filter((v) => /two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/.test(reasonOf(v))).length, 198, 'the rest are not asked, and are told why');
   // A later request — another GET, a delete — asks nothing either while both calls are out.
-  assert.match(reasonOf(await stillEmptyFolder('/Volumes/nas/later', true)), /the drive it is on did not answer a moment ago/);
+  assert.match(reasonOf(await stillEmptyFolder('/Volumes/nas/later', true)), /two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/);
   assert.equal(started.length, 2, 'two threads held in all, not one per folder');
   assert.equal(MAX_HELD_PER_DRIVE, 2);
 });
@@ -409,7 +412,8 @@ test('a second folder that hangs on one drive silences it until one of the two a
   assert.deepEqual(await stillEmptyFolder('/x/fine', true), { empty: true }, 'one slow folder on a drive that answers is withheld alone (M-A)');
   assert.match(reasonOf(await stillEmptyFolder('/x/slow2', true)), /it did not answer within/);
   const held = await stillEmptyFolder('/x/fine', true);
-  assert.match(reasonOf(held), /the drive it is on did not answer a moment ago/, 'two calls out on the drive: it is asked nothing more');
+  assert.match(reasonOf(held), /two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'two calls out on the drive: it is asked nothing more, and told so, its root having answered (the U-4c review, F2.3)');
+  assert.doesNotMatch(reasonOf(held), /did not answer a moment ago/);
   assert.deepEqual(stats, ['/x/slow1', '/', '/x/fine', '/x/slow2'], 'and its root is not asked about the second: that would be a third thread');
   out.get('/x/slow1')!();
   await settle();
@@ -419,6 +423,17 @@ test('a second folder that hangs on one drive silences it until one of the two a
   await settle();
   assert.match(reasonOf(await stillEmptyFolder('/x/slow3', true)), /it did not answer within/);
   assert.deepEqual(stats.slice(5), ['/x/slow3', '/'], 'none out, one hangs: its drive\'s root is asked afresh');
+});
+
+test('a folder inside the one looked at, on a drive holding two calls that did not answer, is said to be on such a drive, not on one that did not answer (the U-4c review, F2.3)', async () => {
+  // /nas is mounted at /x/top/mnt: its root answers, and two of its folders hang.
+  const asked = hangsAt((p) => p === '/nas/a' || p === '/nas/b', { '/x/top': [dirent('mnt', true)] }, onNasAt('/x/top/mnt'));
+  assert.match(reasonOf(await stillEmptyFolder('/nas/a', true)), /it did not answer within/);
+  assert.match(reasonOf(await stillEmptyFolder('/nas/b', true)), /it did not answer within/);
+  const top = await stillEmptyFolder('/x/top', true);
+  assert.equal(whyOf(top), 'no-answer');
+  assert.match(reasonOf(top), /^the folder mnt inside it is on a drive where two earlier calls have not answered yet, so TreeMap did not ask it/);
+  assert.deepEqual(asked, ['stat /nas/a', 'stat /nas', 'stat /nas/b', 'stat /x/top', 'list /x/top'], 'mnt was not asked');
 });
 
 test('a drive\'s own root offered while the drive already holds a call, and hanging, keeps the drive silent until that root answers', async () => {
@@ -612,6 +627,8 @@ test('four looks at once on a drive heard from start at most two calls on it, an
   assert.deepEqual(verdicts.map(whyOf), ['no-answer', 'no-answer', 'no-answer', 'no-answer'], 'and every look has answered');
   assert.match(reasonOf(verdicts[0]), /it did not answer within/);
   assert.match(reasonOf(verdicts[1]), /it did not answer within/);
+  assert.match(reasonOf(verdicts[2]), /two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'the looks that waited are told why they were not asked (the U-4c review, F2.3)');
+  assert.match(reasonOf(verdicts[3]), /two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/);
   assert.equal(h.asked.filter((p) => p === '/d').length, 1, 'its root asked once, for the first');
 });
 
