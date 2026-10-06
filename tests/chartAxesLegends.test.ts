@@ -217,6 +217,34 @@ test('D48: the Apps scatter asks for decimal byte decades', () => {
   assert.match(wiring, /logX: 10, logY: 1000,/, 'base 1000, so every decade prints as a round 1.0 KB / MB / GB');
 });
 
+/* ══════════════ B15 — the scatter's axis labels never crowd each other ══════════════ */
+
+test('B15: the scatter’s top label never crowds the decade below it — "8.3 GB" sat 15 px above "953.7 MB"', () => {
+  // The Apps chart: 200 px tall, ~130k files and an 8.9 GB largest app. The
+  // max earned its own tick when it was 8% of the axis past the 1 GB decade —
+  // 13 px of a 158 px plot, less than two lines of 10.5 px text.
+  const k = loadKit();
+  const points = [
+    { x: 9, y: 1e3 }, { x: 40, y: 2e6 }, { x: 900, y: 4e8 }, { x: 4000, y: 7e8 }, { x: 130_200, y: 8.9e9 },
+  ].map((p, i) => ({ ...p, label: 'app' + i }));
+  k.fx.scatter(k.canvas, { points, height: 200, logX: 10, logY: 1000 });
+  const labels = texts(k.rec().calls);
+  const y = labels.filter((c) => c.align === 'right').map((c) => ({ s: String(c.args[0]), at: c.args[2] as number }));
+  assert.ok(y.length >= 3, `the y axis is labelled (${y.map((l) => l.s).join(', ')})`);
+  assert.equal(y[y.length - 1].s, '8.9 GB', 'the axis still tops at the data');
+  for (let i = 1; i < y.length; i++) {
+    const gap = Math.abs(y[i].at - y[i - 1].at);
+    assert.ok(gap >= 20, `"${y[i - 1].s}" and "${y[i].s}" are ${gap.toFixed(1)} px apart — two 10.5 px labels need 20`);
+  }
+  // Along x the labels are centred under their decades: none may overlap the next.
+  const x = labels.filter((c) => c.align === 'center').map((c) => ({ s: String(c.args[0]), at: c.args[1] as number }));
+  assert.ok(x.length >= 2, `the x axis is labelled (${x.map((l) => l.s).join(', ')})`);
+  for (let i = 1; i < x.length; i++) {
+    const room = x[i].at - x[i - 1].at - (x[i].s.length * 6 + x[i - 1].s.length * 6) / 2;
+    assert.ok(room >= 8, `"${x[i - 1].s}" and "${x[i].s}" leave ${room.toFixed(1)} px between them`);
+  }
+});
+
 /* ══════════════ D04 — an empty chart has no axis numbers ══════════════ */
 
 test('D04: with no data a chart says "No data yet." and prints no axis numbers', () => {

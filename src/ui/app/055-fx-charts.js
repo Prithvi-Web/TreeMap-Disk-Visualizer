@@ -65,7 +65,7 @@ const FxCharts = (() => {
      * and the number at the top belonged to nothing in the data. The top of
      * an axis is a claim about the data, so it states the data.
      */
-    logTicks(max, base = 10, count = 5) {
+    logTicks(max, base = 10, count = 5, minGap = 0.08) {
       if (!(max > 0) || !(base > 1)) return [0, 1];
       // the 1e-9 keeps an exact power from flooring into the decade below it
       const topExp = Math.floor(Math.log(max) / Math.log(base) + 1e-9);
@@ -76,11 +76,12 @@ const FxCharts = (() => {
       out.reverse();
       // Distance is measured in the scale's own log10(v+1) space, so "far
       // enough apart to read" means the same fraction of the plot at any
-      // base: a decade closer than 8% of the axis to max gives up its place
-      // rather than printing its label on top of the max's.
+      // base: a decade closer than `minGap` of the axis (8% unless the
+      // caller knows its pixels — scatter's short y axis does) to max gives
+      // up its place rather than printing its label on top of the max's.
       const L = (v) => Math.log10(v + 1);
       const span = L(max) || 1;
-      if (!out.length || L(max) - L(out[out.length - 1]) > span * 0.08) out.push(max);
+      if (!out.length || L(max) - L(out[out.length - 1]) > span * minGap) out.push(max);
       else out[out.length - 1] = max;
       return [0, ...out];
     },
@@ -1967,6 +1968,10 @@ const FxCharts = (() => {
     const life = makeLife(host, () => render());
     const R_CORE = 5, RING_GAP = 2, RING_W = 2; // bklit's offset-ring geometry
     const R_RING = R_CORE + RING_GAP + RING_W / 2;
+    /* Two 10.5 px y labels read as two rows only with about this much
+       between them. 8% of the Apps chart's 158 px plot is 13 px, and its
+       "8.3 GB" top label sat 15 px above "953.7 MB" (QA B15). */
+    const Y_LABEL_GAP_PX = 22;
 
     function frame() {
       const w = Math.max(240, host.clientWidth || 240);
@@ -1982,7 +1987,8 @@ const FxCharts = (() => {
       const [, yMax] = math.extent(pts.map((p) => p.y));
       const yLog = !!s.logY;
       const yBase = typeof s.logY === 'number' && s.logY > 1 ? s.logY : 10;
-      const ticks = yLog ? math.logTicks(yMax, yBase, 4) : math.niceTicks(0, yMax * 1.05 || 1, 4);
+      const yGap = Math.max(0.08, Y_LABEL_GAP_PX / Math.max(1, f.height - f.padT - f.padB));
+      const ticks = yLog ? math.logTicks(yMax, yBase, 4, yGap) : math.niceTicks(0, yMax * 1.05 || 1, 4);
       const top = ticks[ticks.length - 1];
       let X, xTicks = null;
       if (s.logX) {
