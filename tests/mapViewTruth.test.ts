@@ -247,7 +247,34 @@ const fakeDoc = {
   body: { tagName: 'BODY' } as unknown,
   active: null as unknown,
   get activeElement() { return fakeDoc.active; },
+  /**
+   * The page's own document-level click handler — the one that closes
+   * #ctxMenu on a click outside it — as crumbsHarness loaded it, or null.
+   * Every fake click bubbles to it unless a listener stopped it (QA-6b review F2.2).
+   */
+  clickHandler: null as ((e: ClickEv) => void) | null,
 };
+
+type ClickEv = { target: unknown; currentTarget: unknown; propagationStopped: boolean; stopPropagation(): void; preventDefault(): void };
+
+/**
+ * A click on `target`, as the browser delivers it: the element's own
+ * listeners first, then — unless one of them stopped it — the page's document
+ * click handler, which a click bubbles up to. The doubles used to hand every
+ * listener a stopPropagation() that did nothing and never reached the
+ * document, so a menu whose opening click closed it again stayed green
+ * (QA-6b review F2.2).
+ */
+function dispatchClick(target: unknown, own: Array<(e: unknown) => void> = []): ClickEv {
+  const ev: ClickEv = { target, currentTarget: target, propagationStopped: false,
+    stopPropagation() { ev.propagationStopped = true; }, preventDefault() {} };
+  for (const f of own) f(ev);
+  if (!ev.propagationStopped && fakeDoc.clickHandler) {
+    ev.currentTarget = fakeDoc;
+    fakeDoc.clickHandler(ev);
+  }
+  return ev;
+}
 
 type FakeBtn = {
   tagName: string; path: string | null; more: boolean; nm: string | null; text: string; current: boolean; disabled: boolean;
@@ -313,7 +340,7 @@ function parseButtons(html: string): FakeBtn[] {
       scrolls: [],
       listeners: {},
       addEventListener(t, f) { (b.listeners[t] ||= []).push(f); },
-      click() { for (const f of b.listeners.click || []) f({ stopPropagation() {}, preventDefault() {}, currentTarget: b }); },
+      click() { dispatchClick(b, b.listeners.click || []); },
       getBoundingClientRect: () => ({ left: 0, bottom: 30 }),
       focus() { fakeDoc.active = b; },
       scrollIntoView(o) { b.scrolls.push(o); },
@@ -406,6 +433,11 @@ function exportClickSource(): string {
   return listenerAfter("$('tmExportBtn').addEventListener('click', (e) => {", 'the Export click listener');
 }
 
+/** The page's document-level click handler: a click outside #ctxMenu closes it (QA-6b review F2.2). */
+function docClickSource(): string {
+  return listenerAfter("document.addEventListener('click', (e) => { if (!$('ctxMenu')", 'the document click handler');
+}
+
 /** The Export button as the markup draws it, its attributes the page's own. */
 function exportButton(): FakeBtn {
   const at = INDEX.indexOf('id="tmExportBtn"');
@@ -430,6 +462,7 @@ type FakeMenu = {
  * — anything else throws rather than quietly answering the buttons.
  */
 function fakeMenu(): FakeMenu {
+  fakeDoc.clickHandler = null; // a new page: whichever handler bubbled before belonged to another menu
   const menu: FakeMenu = { html: '', buttons: [], divs: [], list: null, style: {}, offsetHeight: 120, attrs: {},
     set innerHTML(v: string) {
       menu.html = v;
@@ -482,8 +515,9 @@ function crumbsHarness() {
   type Page = {
     render: (host: unknown, p: string, onPick: (p: string) => void) => void; keydown: (e: KeyEv) => void;
     exportClick: (e: unknown) => void; showCtxMenu: (x: number, y: number, node: unknown) => void;
+    docClick: (e: ClickEv) => void;
   };
-  const { render, keydown, exportClick, showCtxMenu } = load<Page>(
+  const { render, keydown, exportClick, showCtxMenu, docClick } = load<Page>(
     ['renderCrumbs', 'breadcrumbsFor', 'crumbsPaint', 'crumbFolded', 'crumbsOverflow', 'crumbsWatch', 'showCrumbMenu', 'CRUMB_FADE_PX',
       ...CTX_MENU_DECLS, 'tmMapKeyYields', 'tmMapTakeFocus', 'showCtxMenu', 'ctxTarget'], {
       state: {
@@ -520,10 +554,21 @@ function crumbsHarness() {
       kbUp: () => { map.up++; },
       kbMove: () => { map.move++; },
       tmCanvas: canvas,
-    }, `{ render: renderCrumbs, keydown: (${pageKeydownSource()}), exportClick: (${exportClickSource()}), showCtxMenu }`);
+    }, `{ render: renderCrumbs, keydown: (${pageKeydownSource()}), exportClick: (${exportClickSource()}), showCtxMenu,
+      docClick: (${docClickSource()}) }`);
+  // Every click from here on bubbles to the page's own document handler, as in the window.
+  fakeDoc.clickHandler = docClick;
   return {
-    render, keydown, exportClick, showCtxMenu, acts, map, canvas, picked, focusAtPick, menu, observers,
+    render, keydown, showCtxMenu, acts, map, canvas, picked, focusAtPick, menu, observers,
     onPick: (p: string) => { picked.push(p); focusAtPick.push(fakeDoc.active); },
+    /** The Export button as the markup draws it, with Export's own click listener on it: press it with click(). */
+    exportBtn(): FakeBtn {
+      const btn = exportButton();
+      btn.addEventListener('click', exportClick);
+      return btn;
+    },
+    /** A click on something that is not one of the fakes' buttons — the map, the page — which only bubbles. */
+    clickOn: (target: unknown) => dispatchClick(target),
   };
 }
 
@@ -854,9 +899,9 @@ test('MEDIUM-1: Tab closes the menu wherever focus is — still on Export, or on
   // Tab closed it only from inside: it stayed up, and while it was up the map
   // keys did nothing — only Escape or a click got out.
   const h = crumbsHarness();
-  const btn = exportButton();
+  const btn = h.exportBtn();
   btn.focus();
-  h.exportClick({ stopPropagation() {}, currentTarget: btn });
+  btn.click();
   assert.equal(fakeDoc.active, btn, 'control: Export keeps focus while its menu opens');
   const tab = keyEv('Tab');
   h.keydown(tab);
@@ -878,9 +923,9 @@ test('MEDIUM-1: a pick from Export or from a right-click menu puts focus back wh
   // Only the "…" menu's pick gave focus back; Export's and the right-click
   // menu's closed the menu around the focused entry, and focus fell to <body>.
   const h = crumbsHarness();
-  const btn = exportButton();
+  const btn = h.exportBtn();
   btn.focus();
-  h.exportClick({ stopPropagation() {}, currentTarget: btn });
+  btn.click();
   h.keydown(keyEv('ArrowDown'));
   const png = fakeDoc.active as FakeBtn;
   assert.equal(png.dataset.exp, 'png', 'control: the PNG entry has focus');
@@ -920,6 +965,27 @@ test('MEDIUM-1: "…" says whether its menu is open, the menu is named and made 
   more.click();
   assert.equal(h.menu.style.display, 'none', 'a second click on "…" closes what the first opened');
   assert.equal(more.getAttribute('aria-expanded'), 'false');
+});
+
+test('MEDIUM-1: the click that opens a menu does not close it on its way up; a click outside the menu closes it, one inside does not (QA-6b review F2.2)', () => {
+  // The page's document click handler closes #ctxMenu on any click outside
+  // it — and the click on "…" or Export that opened it is outside it too.
+  // Each opener stops its click short of the document, or the menu would
+  // close in the same click that opened it, and neither would show a menu.
+  const { h, more } = foldedTrail();
+  more.click();
+  assert.equal(h.menu.style.display, 'block', '"…" opens its menu, and the click that did it does not close it on the way up');
+  h.clickOn(h.menu.list);
+  assert.equal(h.menu.style.display, 'block', 'a click inside the menu, between its entries, leaves it open');
+  h.clickOn(h.canvas);
+  assert.equal(h.menu.style.display, 'none', 'a click on the map closes it');
+  assert.equal(more.getAttribute('aria-expanded'), 'false', 'and "…" says so');
+  const btn = h.exportBtn();
+  btn.click();
+  assert.equal(h.menu.style.display, 'block', 'Export opens its menu, its click stopped short of the document too');
+  h.clickOn(fakeDoc.body);
+  assert.equal(h.menu.style.display, 'none', 'a click anywhere else on the page closes it');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'and Export says so');
 });
 
 test('MEDIUM-1: the right-click menu is named and made of menu items too', () => {
@@ -962,7 +1028,7 @@ test('MEDIUM-1: Export says it opens a menu and whether it is open, and Escape g
   // Driven through Export's own click listener: a regex over its source stayed
   // green with the opener left out, and nothing read the button's markup.
   const h = crumbsHarness();
-  const btn = exportButton();
+  const btn = h.exportBtn();
   assert.equal(btn.getAttribute('aria-haspopup'), 'menu', 'the markup says Export opens a menu');
   assert.equal(btn.getAttribute('aria-expanded'), 'false', 'and that it is closed');
   btn.focus();
@@ -970,7 +1036,7 @@ test('MEDIUM-1: Export says it opens a menu and whether it is open, and Escape g
   h.keydown(enter);
   assert.equal(enter.defaultPrevented, false, 'Enter on Export is Export\'s press');
   assert.equal(h.map.drill, 0);
-  h.exportClick({ stopPropagation() {}, currentTarget: btn }); // the press Enter makes
+  btn.click(); // the press Enter makes — it bubbles to the page's document click handler
   assert.equal(h.menu.style.display, 'block', 'the menu opens');
   assert.equal(btn.getAttribute('aria-expanded'), 'true', 'and Export says it is open');
   assert.equal(h.menu.getAttribute('aria-label'), 'Export the map', 'the menu is named');
@@ -1035,7 +1101,7 @@ test('LOW-4: the menu\'s entries scroll inside a short window, in a list inside 
   assert.equal(h.menu.buttons.length, 5, 'all of them');
   h.showCtxMenu(40, 50, { path: '/System/a.mov', name: 'a.mov', type: 'file' });
   assert.ok(h.menu.list, 'and the right-click menu\'s');
-  h.exportClick({ stopPropagation() {}, currentTarget: exportButton() });
+  h.exportBtn().click();
   assert.ok(h.menu.list, 'and Export\'s');
 });
 
