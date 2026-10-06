@@ -1787,6 +1787,30 @@ test('LOW-2: the note is recomputed when only the floor changed (QA-6b review F1
   assert.doesNotMatch(note(), /files under/, 'the remembered note is not served for another floor');
 });
 
+test('B33: a history frame says how much its snapshot did not keep — the dark holes are named, below the cap too', () => {
+  // B33: a history frame showed Videos/clips (141.5 MB) as a few tiles beside
+  // a dark empty rectangle, with no word: a snapshot keeps each folder's
+  // biggest items a few levels deep, not the whole tree.
+  const nodes = [
+    { path: '/r/clips', size: 5000, depth: 1, expanded: true },
+    { path: '/r/clips/a.mov', size: 1500, depth: 2, expanded: false },
+    { path: '/r/b.mov', size: 2000, depth: 1, expanded: false },
+  ];
+  const history = capNote(nodes, 7000, true);
+  assert.match(history, /3500 B in this snapshot has no rectangle/, 'clips is 5,000 B with 1,500 B kept inside it');
+  assert.match(history, /History keeps/, 'and why: what a snapshot keeps');
+  assert.doesNotMatch(history, /20,000/, 'not the node cap, which this map is far below');
+  assert.equal(capNote(nodes, 7000, false), '', 'the live map below the cap still says nothing');
+  const whole = [{ path: '/r/a', size: 4000, depth: 1, expanded: false }, { path: '/r/b', size: 3000, depth: 1, expanded: false }];
+  assert.equal(capNote(whole, 7000, true), '', 'a snapshot that kept everything has nothing to explain');
+  // During playback the frames are blends; the note waits for a frame that is a snapshot.
+  const playing = load<() => string>(CAP_NOTE_DECLS, {
+    state: { treemap: { rootPath: '/r', rootSize: 7000, nodes, minSize: 0, history: { active: true }, lapse: { playing: true } } },
+    formatCount: fmtCount, formatBytes: (n: number) => `${n} B`,
+  }, 'tmNodeCapNote');
+  assert.equal(playing(), '', 'no note on a frame that is a blend of two snapshots');
+});
+
 test('D58: every rectangle-map paint refreshes the note under the map', () => {
   const start = INDEX.indexOf('function drawTreemap() {');
   const body = INDEX.slice(start, INDEX.indexOf('\n}', start));

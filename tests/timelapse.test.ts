@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lift } from './fixtures/liftFrontend';
+import { lift, INDEX } from './fixtures/liftFrontend';
 
 /**
  * Time-lapse interpolation (v4 §7.1).
@@ -199,4 +199,56 @@ test('a treeless snapshot is a gap, never a guess', () => {
   const ordered = lapseOrderedSnaps(snaps);
   assert.deepEqual(ordered.map((s) => s.id), ['a', 'c'],
     'playback interpolates a→c directly; nothing is synthesised for the hole');
+});
+
+/* ══════════════ B33 — a pause shows a real snapshot, not a half-morphed frame ══════════════ */
+
+/** lapseStop out of the built page, run against a history whose map was last drawn mid-segment. */
+function pausedMid(opts: { rect?: boolean; active?: boolean; cached?: boolean } = {}) {
+  const at = INDEX.indexOf('function lapseStop(');
+  assert.notEqual(at, -1, 'lapseStop exists');
+  let depth = 0, end = at;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const SNAP2 = [{ path: '/r/a', x: 0, y: 0, w: 60, h: 100, depth: 1, size: 60 }, { path: '/r/b', x: 60, y: 0, w: 40, h: 100, depth: 1, size: 40 }];
+  const MID = lapseLerpNodes(SNAP2, [{ path: '/r/a', x: 0, y: 0, w: 30, h: 100, depth: 1, size: 30 }, { path: '/r/c', x: 30, y: 0, w: 70, h: 100, depth: 1, size: 70 }], 0.5);
+  const snaps = [{ id: 's0' }, { id: 's1' }, { id: 's2' }, { id: 's3' }];
+  const cache = new Map<string, unknown>(opts.cached === false ? [] : [['s2', { nodes: SNAP2, tree: {} }]]);
+  const state = { treemap: {
+    nodes: MID,
+    lapse: { seq: 4, raf: 9, playing: true, onDone: null as null | (() => void) },
+    history: { active: opts.active !== false, index: 2, snaps, cache },
+  } };
+  const drawn: unknown[][] = [];
+  const run = new Function('state', 'cancelAnimationFrame', 'lapseReflect', 'isRectMap', 'drawTreemap', `'use strict'; ${INDEX.slice(at, end)} return lapseStop;`)(
+    state, () => {}, () => {}, () => opts.rect !== false, () => { drawn.push(state.treemap.nodes as unknown[]); },
+  ) as () => void;
+  run();
+  return { state, drawn, SNAP2, MID };
+}
+
+test('B33: pausing mid-segment settles the map on the snapshot the slider and label name', () => {
+  // B33: Pause at "Oct 6, 2:53 PM · 8.8 GB" froze the last interpolated frame
+  // — a cascade of overlapping ghost tiles — labelled as that snapshot, and it
+  // never settled, Diff on or off.
+  const h = pausedMid();
+  assert.equal(h.state.treemap.lapse.playing, false, 'the transport stops');
+  assert.deepEqual(h.state.treemap.nodes, h.SNAP2, 'the map holds the snapshot the label names, not a blend');
+  assert.equal(h.drawn.length, 1, 'and is drawn once, as that snapshot');
+  assert.deepEqual(h.drawn[0], h.SNAP2);
+});
+
+test('B33: the settle touches nothing it has no snapshot for, and leaves the other renderers to their own dispatch', () => {
+  for (const [why, opts] of [
+    ['live, not history', { active: false }],
+    ['the snapshot is not loaded', { cached: false }],
+    ['a renderer other than the rectangles (it steps discretely already)', { rect: false }],
+  ] as const) {
+    const h = pausedMid(opts);
+    assert.equal(h.state.treemap.lapse.playing, false, `${why}: still stops`);
+    assert.equal(h.state.treemap.nodes, h.MID, `${why}: the map is left as it is`);
+    assert.equal(h.drawn.length, 0, `${why}: nothing is drawn`);
+  }
 });

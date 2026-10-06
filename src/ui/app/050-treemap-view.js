@@ -445,10 +445,17 @@ let tmCapMemo = { nodes: null, rootSize: -1, floor: -1, note: '' };
  */
 function tmNodeCapNote() {
   const nodes = state.treemap.nodes;
+  // A history frame keeps each folder's biggest items a few levels deep
+  // (snapshots.ts compactTree), so it can leave dark holes far below the cap;
+  // they were unexplained (B33). Said for a frame that IS a snapshot — not
+  // for the blends time-lapse playback draws between two.
+  const historyFrame = !!(state.treemap.history && state.treemap.history.active);
+  if (historyFrame && state.treemap.lapse && state.treemap.lapse.playing) return '';
   let sent = 0;
   for (const n of nodes) if (!n.isTrash) sent++;
-  if (sent < TM_SERVER_NODE_CAP) return '';
-  const floor = state.treemap.history && state.treemap.history.active ? 0 : (state.treemap.minSize || 0);
+  const capped = sent >= TM_SERVER_NODE_CAP;
+  if (!capped && !historyFrame) return '';
+  const floor = historyFrame ? 0 : (state.treemap.minSize || 0);
   if (tmCapMemo.nodes === nodes && tmCapMemo.rootSize === state.treemap.rootSize && tmCapMemo.floor === floor) return tmCapMemo.note;
   const { root, kids } = tmDrawnTree();
   let blank = 0;
@@ -458,11 +465,13 @@ function tmNodeCapNote() {
     for (const c of kids.get(p.path) || []) drawn += c.size;
     blank += Math.max(0, p.size - drawn);
   }
-  const note = blank > 0
-    ? `The map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that: `
-      + `${formatBytes(blank)} has no rectangle here — drill in, or open the Grid view, to see the rest.`
-      + (floor > 1 ? ` That figure counts files under ${formatBytes(floor)} too, which the map does not draw; the Grid view lists them.` : '')
-    : '';
+  const note = blank <= 0 ? ''
+    : capped
+      ? `The map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that: `
+        + `${formatBytes(blank)} has no rectangle here — drill in, or open the Grid view, to see the rest.`
+        + (floor > 1 ? ` That figure counts files under ${formatBytes(floor)} too, which the map does not draw; the Grid view lists them.` : '')
+      : `History keeps each folder's biggest items, a few levels deep — not every file: ${formatBytes(blank)} in this snapshot `
+        + 'has no rectangle. The live map shows everything.';
   tmCapMemo = { nodes, rootSize: state.treemap.rootSize, floor, note };
   return note;
 }

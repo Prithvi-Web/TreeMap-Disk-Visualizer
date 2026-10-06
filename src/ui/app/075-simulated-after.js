@@ -1069,6 +1069,17 @@ function lapseStop() {
   L.raf = 0;
   L.playing = false;
   lapseReflect();
+  // The last frame the rectangles drew is a blend of two snapshots. Left up,
+  // a pause showed overlapping ghost tiles under a label naming one real
+  // snapshot (B33). Settle on the snapshot the slider and label name; the
+  // other renderers step discretely through the slider's dispatch already.
+  const h = state.treemap.history;
+  const at = h && h.active ? h.snaps[h.index] : null;
+  const layout = at ? h.cache.get(at.id) : null;
+  if (layout && layout.nodes && isRectMap()) {
+    state.treemap.nodes = layout.nodes;
+    drawTreemap();
+  }
   // §7.1c — whoever is waiting on this run (the WebM recorder) hears about
   // every ending, including an interrupted one; what was captured is honest.
   const cb = L.onDone;
