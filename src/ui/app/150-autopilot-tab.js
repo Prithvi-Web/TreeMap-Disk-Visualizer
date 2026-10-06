@@ -336,9 +336,12 @@ function openPolicyEditor(policy) {
   $('apName').value = apDraft.name || '';
   $('apPath').value = apDraft.path || '';
   $('apCooldown').value = apDraft.cooldownDays ?? 7;
-  $('apMaxRun').value = apDraft.maxBytesPerRun ? (apDraft.maxBytesPerRun / GB).toFixed(2).replace(/\.?0+$/, '') : '';
-  $('apMaxWeek').value = apDraft.maxBytesPerWeek ? (apDraft.maxBytesPerWeek / GB).toFixed(2).replace(/\.?0+$/, '') : '';
-  $('apConfirmAbove').value = apDraft.requireConfirmationAbove ? (apDraft.requireConfirmationAbove / GB).toFixed(2).replace(/\.?0+$/, '') : '';
+  // Each limit as its exact figure, never rounded: Save reads these boxes back,
+  // so "5.37" for a 5 GiB cap an earlier TreeMap stored (5,368,709,120 bytes)
+  // would rewrite it to 5,370,000,000 (review F1.1). It shows as 5.36870912.
+  $('apMaxRun').value = apDraft.maxBytesPerRun ? String(apDraft.maxBytesPerRun / GB) : '';
+  $('apMaxWeek').value = apDraft.maxBytesPerWeek ? String(apDraft.maxBytesPerWeek / GB) : '';
+  $('apConfirmAbove').value = apDraft.requireConfirmationAbove ? String(apDraft.requireConfirmationAbove / GB) : '';
   $('apDryRunFirst').checked = apDraft.dryRunFirst !== false;
   $('apEnabled').checked = apDraft.enabled === true;
   $('apPreview').innerHTML = '';
@@ -355,7 +358,7 @@ function openPolicyEditor(policy) {
     $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;
     if (m.maxAgeMs) $('apRuleAgeDays').value = m.maxAgeMs / 86400000; // exact: 36 hours is 1.5, never rounded to 2
     $('apRuleSizeOn').checked = m.minBytes !== undefined;
-    if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / MB);
+    if (m.minBytes) $('apRuleSizeMb').value = m.minBytes / MB; // exact, as the limits above
     $('apRuleExtOn').checked = Boolean(m.exts?.length);
     $('apRuleExts').value = (m.exts || []).join(', ');
   }
@@ -447,7 +450,7 @@ function policyFromEditor() {
   } else {
     match = { kind: 'custom' };
     if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
-    if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * MB;
+    if ($('apRuleSizeOn').checked) match.minBytes = Math.round(Math.max(1, Number($('apRuleSizeMb').value) || 100) * MB);
     if ($('apRuleExtOn').checked) match.exts = $('apRuleExts').value.split(',').map(s => s.trim()).filter(Boolean);
     // An age rule the box still shows as it was opened keeps the milliseconds
     // the policy stored — a part of a day too (36 hours opens as "1.5"), and

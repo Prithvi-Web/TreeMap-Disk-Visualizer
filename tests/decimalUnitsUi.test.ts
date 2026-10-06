@@ -133,6 +133,52 @@ test('Autopilot: "5 GB per run" is 5,000,000,000 bytes, and a size rule of 100 M
   assert.equal(p.match.minBytes, 250e6);
 });
 
+/**
+ * Byte counts of every magnitude a stored size can have, from 1 byte to just
+ * under a petabyte, the same list on every run: the 1024-based sizes an
+ * earlier TreeMap stored, then a deterministic spread of awkward ones.
+ */
+function storedSizes(count = 3000): number[] {
+  const out = [1, 999, 1000, 4096, 1024 ** 2, 100 * 1024 ** 2, 500 * 1024 ** 2, 1024 ** 3, 0.5 * 1024 ** 3,
+    5 * 1024 ** 3, 10 * 1024 ** 3, 20 * 1024 ** 3, 50 * 1024 ** 3, 1024 ** 4, 2 * 1024 ** 4, 2.25e9, 999_999_999_999_999];
+  let x = 0x2545f491;
+  const next = () => (x = (Math.imul(x, 1103515245) + 12345) >>> 0);
+  while (out.length < count) {
+    const digits = 1 + (next() % 15);
+    out.push(Math.max(1, Math.floor((next() / 2 ** 32) * 10 ** digits)));
+  }
+  return out;
+}
+
+test('Autopilot: a limit saved by an earlier TreeMap in 1024s opens as its exact figure, and Save keeps every byte (review F1.1)', () => {
+  // 5.1 stored "5 GB per run" as 5,368,709,120 bytes. The editor showed it
+  // rounded to "5.37", so opening the policy and pressing Save — touching
+  // nothing — rewrote the cap to 5,370,000,000.
+  const legacy = {
+    name: 'p', path: '/home/u', match: { kind: 'custom', minBytes: 100 * 1024 ** 2 },
+    maxBytesPerRun: 5 * 1024 ** 3, maxBytesPerWeek: 20 * 1024 ** 3, requireConfirmationAbove: 1024 ** 3,
+  };
+  const ed = editorRuntime(legacy);
+  ed.open(legacy);
+  assert.equal(ed.$('apMaxRun').value, '5.36870912', '5 GiB is 5.36870912 GB, shown whole');
+  assert.equal(String(ed.$('apRuleSizeMb').value), '104.8576', 'a 100 MiB rule is 104.8576 MB, shown whole');
+  const back = ed.read();
+  assert.equal(back.maxBytesPerRun, legacy.maxBytesPerRun, 'opened and saved untouched, the per-run cap keeps every byte');
+  assert.equal(back.maxBytesPerWeek, legacy.maxBytesPerWeek);
+  assert.equal(back.requireConfirmationAbove, legacy.requireConfirmationAbove);
+  assert.equal(back.match.minBytes, legacy.match.minBytes, 'and so does the size rule');
+
+  // Every size a limit can hold comes back as the bytes it was; a size rule
+  // from the editor's own 1 MB floor up.
+  for (const b of storedSizes()) {
+    const p = { name: 'p', path: '/home/u', match: { kind: 'custom', minBytes: Math.max(1e6, b) }, maxBytesPerRun: b, maxBytesPerWeek: b, requireConfirmationAbove: b };
+    const e = editorRuntime(p);
+    e.open(p);
+    const r = e.read();
+    assert.deepEqual([r.maxBytesPerRun, r.maxBytesPerWeek, r.requireConfirmationAbove, r.match.minBytes], [b, b, b, Math.max(1e6, b)], `${b} bytes`);
+  }
+});
+
 test('Autopilot: a stored limit reads back in the units it was typed in', () => {
   const ed = editorRuntime(null);
   ed.open({ name: 'p', path: '/home/u', match: { kind: 'suggestion', groupIds: [] }, maxBytesPerRun: 5e9, maxBytesPerWeek: 1.5e9, requireConfirmationAbove: 250e6 });
@@ -210,7 +256,7 @@ test('a scheduled scan\'s "Alert if +GB" is read and shown in decimal gigabytes'
     { $, settingsData, escapeHtml: String, icon: () => '', collectSettingsForms() {} },
     'renderSchedules',
   )();
-  assert.match($('schedList').innerHTML, /class="s-gb"[^>]*value="2\.0"/, '2,000,000,000 bytes show as 2.0 GB');
+  assert.match($('schedList').innerHTML, /class="s-gb"[^>]*value="2"/, '2,000,000,000 bytes show as 2 GB');
 
   const field = (cls: string, value: string, checked = false) => ({ value, checked, dataset: { i: '0' } });
   const row = { querySelector: (sel: string) => ({ '.s-path': field('', '/r'), '.s-int': field('', '24'), '.s-gb': field('', '3.5'), '.s-pct': field('', ''), '.s-on': field('', '', true) } as Record<string, unknown>)[sel] };
@@ -220,6 +266,47 @@ test('a scheduled scan\'s "Alert if +GB" is read and shown in decimal gigabytes'
     'collectSettingsForms',
   )();
   assert.equal(settingsData.schedules[0].thresholdBytes, 3.5e9, '"3.5" in the GB box is 3,500,000,000 bytes');
+});
+
+/** One scheduled scan's alert, painted by renderSchedules and read back by collectSettingsForms with its box untouched. */
+function alertRoundTrip(bytes: number): { shown: string; saved: unknown } {
+  const { $ } = dom();
+  const settingsData = { schedules: [{ path: '/r', intervalHours: 24, thresholdBytes: bytes, enabled: true }] as Array<Record<string, unknown>>, ignore: [] as unknown[] };
+  run<() => void>(
+    `${pageConst('SCHED_HOURS')}\n${braced('function renderSchedules(')}`,
+    { $, settingsData, escapeHtml: String, icon: () => '', collectSettingsForms() {} },
+    'renderSchedules',
+  )();
+  const shown = /class="s-gb"[^>]*value="([^"]*)"/.exec($('schedList').innerHTML)?.[1] ?? assert.fail('the alert box is painted');
+  const field = (value: string, checked = false) => ({ value, checked, dataset: { i: '0' } });
+  const fields: Record<string, unknown> = { '.s-path': field('/r'), '.s-int': field('24'), '.s-gb': field(shown), '.s-pct': field(''), '.s-on': field('', true) };
+  run<() => void>(
+    braced('function collectSettingsForms('),
+    { $, settingsData, document: { querySelectorAll: (sel: string) => (sel.includes('sched') ? [{ querySelector: (s: string) => fields[s] }] : []) } },
+    'collectSettingsForms',
+  )();
+  return { shown, saved: settingsData.schedules[0].thresholdBytes };
+}
+
+test('Settings Save keeps every stored alert and cleanup target exactly — a 1024-based one too, shown as its exact decimal figure (review F1.1, F1.5)', () => {
+  // Save reads every schedule row and the target box back, edited or not. A
+  // value an earlier TreeMap stored in 1024s was painted rounded ("0.5" for
+  // 536,870,912 bytes, "53.69" GB for a 50 GiB target), so saving any other
+  // setting rewrote it to the rounded figure: 500,000,000 and 53,690,000,000.
+  assert.deepEqual(alertRoundTrip(0.5 * 1024 ** 3), { shown: '0.536870912', saved: 0.5 * 1024 ** 3 });
+  assert.deepEqual(alertRoundTrip(2.25e9), { shown: '2.25', saved: 2.25e9 }, 'a decimal alert typed with two places is not rounded to one');
+
+  const goal = goalFields(50 * 1024 ** 3);
+  assert.deepEqual({ unit: goal.unit, value: goal.value }, { unit: '1000000000', value: '53.6870912' }, 'a 50 GiB target is 53.6870912 GB');
+  assert.equal(goal.collect(), 50 * 1024 ** 3, 'and saving it untouched keeps every byte');
+  const mib = goalFields(500 * 1024 ** 2);
+  assert.deepEqual({ unit: mib.unit, value: mib.value }, { unit: '1000000', value: '524.288' }, 'a 500 MiB target stays in MB: 524.288 MB, not 0.52 GB');
+  assert.equal(mib.collect(), 500 * 1024 ** 2);
+
+  for (const b of storedSizes()) {
+    assert.equal(alertRoundTrip(b).saved, b, `an alert of ${b} bytes survives a Save`);
+    assert.equal(goalFields(b).collect(), b, `a target of ${b} bytes survives a Save`);
+  }
 });
 
 /* ══════════════ thresholds the page shows or acts on ══════════════ */

@@ -208,9 +208,14 @@ function renderCleanupGoalFields() {
   // disagree, whether this paint follows an open or a save.
   const bytes = adoptCartGoal(settingsData.cleanupGoalBytes);
   if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = String(GB); return; }
-  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? GB;
+  // A target no unit divides — one an earlier TreeMap stored in 1024s, 50
+  // "GB" being 53,687,091,200 bytes — opens in the largest unit it reaches,
+  // as its exact figure (53.6870912 GB): Save reads this box back whatever
+  // was edited, so a rounded figure would rewrite the target (review F1.5).
+  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0)
+    ?? CLEANUP_GOAL_UNITS.find((u) => bytes >= u) ?? MB;
   $('cleanupGoalUnit').value = String(unit);
-  $('cleanupGoalValue').value = String(Math.round((bytes / unit) * 100) / 100);
+  $('cleanupGoalValue').value = String(bytes / unit);
 }
 
 /** The target as bytes, or null when the box is empty or nonsense. */
@@ -501,7 +506,7 @@ function renderSchedules() {
       <select class="s-int" aria-label="Scan interval">
         ${hours.map(h => `<option value="${h}"${s.intervalHours === h ? ' selected' : ''}>${h === 168 ? 'week' : h + ' h'}</option>`).join('')}
       </select>
-      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? (s.thresholdBytes / GB).toFixed(1) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
+      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? String(s.thresholdBytes / GB) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
       <input type="number" class="s-pct" min="0" value="${s.thresholdPct ?? ''}" placeholder="–" aria-label="Alert threshold in percent">
       <input type="checkbox" class="s-on"${s.enabled ? ' checked' : ''} aria-label="Schedule enabled">
       <button class="icon-btn danger s-del" data-i="${i}" aria-label="Remove this schedule" title="Remove">${icon('trash', 14)}</button>
@@ -548,6 +553,8 @@ function collectSettingsForms() {
     // "Screenshots" (final review F1.4).
     s.path = asPath(row.querySelector('.s-path').value);
     s.intervalHours = +row.querySelector('.s-int').value;
+    // renderSchedules paints the stored alert's exact figure (0.536870912 for
+    // a 1024-based "0.5"), so a row nobody edited saves the bytes it had (review F1.1).
     const gb = parseFloat(row.querySelector('.s-gb').value);
     s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * GB) : undefined;
     const pct = parseFloat(row.querySelector('.s-pct').value);

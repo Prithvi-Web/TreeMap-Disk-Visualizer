@@ -27472,9 +27472,12 @@ function openPolicyEditor(policy) {
   $('apName').value = apDraft.name || '';
   $('apPath').value = apDraft.path || '';
   $('apCooldown').value = apDraft.cooldownDays ?? 7;
-  $('apMaxRun').value = apDraft.maxBytesPerRun ? (apDraft.maxBytesPerRun / GB).toFixed(2).replace(/\.?0+$/, '') : '';
-  $('apMaxWeek').value = apDraft.maxBytesPerWeek ? (apDraft.maxBytesPerWeek / GB).toFixed(2).replace(/\.?0+$/, '') : '';
-  $('apConfirmAbove').value = apDraft.requireConfirmationAbove ? (apDraft.requireConfirmationAbove / GB).toFixed(2).replace(/\.?0+$/, '') : '';
+  // Each limit as its exact figure, never rounded: Save reads these boxes back,
+  // so "5.37" for a 5 GiB cap an earlier TreeMap stored (5,368,709,120 bytes)
+  // would rewrite it to 5,370,000,000 (review F1.1). It shows as 5.36870912.
+  $('apMaxRun').value = apDraft.maxBytesPerRun ? String(apDraft.maxBytesPerRun / GB) : '';
+  $('apMaxWeek').value = apDraft.maxBytesPerWeek ? String(apDraft.maxBytesPerWeek / GB) : '';
+  $('apConfirmAbove').value = apDraft.requireConfirmationAbove ? String(apDraft.requireConfirmationAbove / GB) : '';
   $('apDryRunFirst').checked = apDraft.dryRunFirst !== false;
   $('apEnabled').checked = apDraft.enabled === true;
   $('apPreview').innerHTML = '';
@@ -27491,7 +27494,7 @@ function openPolicyEditor(policy) {
     $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;
     if (m.maxAgeMs) $('apRuleAgeDays').value = m.maxAgeMs / 86400000; // exact: 36 hours is 1.5, never rounded to 2
     $('apRuleSizeOn').checked = m.minBytes !== undefined;
-    if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / MB);
+    if (m.minBytes) $('apRuleSizeMb').value = m.minBytes / MB; // exact, as the limits above
     $('apRuleExtOn').checked = Boolean(m.exts?.length);
     $('apRuleExts').value = (m.exts || []).join(', ');
   }
@@ -27583,7 +27586,7 @@ function policyFromEditor() {
   } else {
     match = { kind: 'custom' };
     if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
-    if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * MB;
+    if ($('apRuleSizeOn').checked) match.minBytes = Math.round(Math.max(1, Number($('apRuleSizeMb').value) || 100) * MB);
     if ($('apRuleExtOn').checked) match.exts = $('apRuleExts').value.split(',').map(s => s.trim()).filter(Boolean);
     // An age rule the box still shows as it was opened keeps the milliseconds
     // the policy stored — a part of a day too (36 hours opens as "1.5"), and
@@ -35416,9 +35419,14 @@ function renderCleanupGoalFields() {
   // disagree, whether this paint follows an open or a save.
   const bytes = adoptCartGoal(settingsData.cleanupGoalBytes);
   if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = String(GB); return; }
-  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? GB;
+  // A target no unit divides — one an earlier TreeMap stored in 1024s, 50
+  // "GB" being 53,687,091,200 bytes — opens in the largest unit it reaches,
+  // as its exact figure (53.6870912 GB): Save reads this box back whatever
+  // was edited, so a rounded figure would rewrite the target (review F1.5).
+  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0)
+    ?? CLEANUP_GOAL_UNITS.find((u) => bytes >= u) ?? MB;
   $('cleanupGoalUnit').value = String(unit);
-  $('cleanupGoalValue').value = String(Math.round((bytes / unit) * 100) / 100);
+  $('cleanupGoalValue').value = String(bytes / unit);
 }
 
 /** The target as bytes, or null when the box is empty or nonsense. */
@@ -35709,7 +35717,7 @@ function renderSchedules() {
       <select class="s-int" aria-label="Scan interval">
         ${hours.map(h => `<option value="${h}"${s.intervalHours === h ? ' selected' : ''}>${h === 168 ? 'week' : h + ' h'}</option>`).join('')}
       </select>
-      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? (s.thresholdBytes / GB).toFixed(1) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
+      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? String(s.thresholdBytes / GB) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
       <input type="number" class="s-pct" min="0" value="${s.thresholdPct ?? ''}" placeholder="–" aria-label="Alert threshold in percent">
       <input type="checkbox" class="s-on"${s.enabled ? ' checked' : ''} aria-label="Schedule enabled">
       <button class="icon-btn danger s-del" data-i="${i}" aria-label="Remove this schedule" title="Remove">${icon('trash', 14)}</button>
@@ -35756,6 +35764,8 @@ function collectSettingsForms() {
     // "Screenshots" (final review F1.4).
     s.path = asPath(row.querySelector('.s-path').value);
     s.intervalHours = +row.querySelector('.s-int').value;
+    // renderSchedules paints the stored alert's exact figure (0.536870912 for
+    // a 1024-based "0.5"), so a row nobody edited saves the bytes it had (review F1.1).
     const gb = parseFloat(row.querySelector('.s-gb').value);
     s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * GB) : undefined;
     const pct = parseFloat(row.querySelector('.s-pct').value);
