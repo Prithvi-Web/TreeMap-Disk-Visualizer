@@ -475,27 +475,30 @@ test('a restore holds the payload lock only to look at the copies and pin them: 
 
 /* ─────────────── FG3g L1: what the index says while a capture that evicted is under way ─────────────── */
 
-test('while a capture that evicted a copy is still copying, the index already says that copy is gone, and a restore of it says so (FG3f review S1)', async () => {
+test('while a capture that evicted a copy is still under way, the index already says that copy is gone, and a restore of it says so (FG3f review S1)', async () => {
   const uncap = setCapsuleCapForTests(250_000);
   try {
     const a = item('s1', 'a.bin', 19);
     const b = item('s1', 'b.bin', 20);
     const c = item('s1', 'c.bin', 21);
+    const d = path.join(fileTempDir('treemap-capsuleRestorePinned-s1-d-'), 'd.bin');
+    fs.writeFileSync(d, 'a small item captured after c'); // fits beside b and c
     const [idA] = await protectEach([a, b]); // A is the oldest copy, so the one evicted for C
     fs.rmSync(a);
     let listed: Promise<TimeCapsuleEntry | undefined> | null = null;
     let restore: Promise<string> | null = null;
-    // Part-way through copying C, A's copy is gone: the index and a restore are asked then.
+    // C evicts A once C's own copy is whole (FG3h A3); part-way through copying D, the next item of
+    // the same capture, the index and a restore of A are asked.
     const unfault = setCopyFaultForTests((dest) => {
-      if (listed === null && path.basename(dest) === 'c.bin') {
+      if (listed === null && path.basename(dest) === 'd.bin') {
         listed = entry(idA);
         restore = startCapsuleRestore([idA]).then(() => 'started', (err: unknown) => (err instanceof AppError ? err.code : String(err)));
       }
       return null;
     });
     try {
-      const captured = await protectItems([{ path: c }]);
-      assert.equal(captured.outcomes[0].protected, true);
+      const captured = await protectItems([{ path: c }, { path: d }]);
+      assert.deepEqual(captured.outcomes.map((o) => o.protected), [true, true]);
     } finally {
       unfault();
     }
@@ -530,16 +533,19 @@ test('an undo asked for while a capture that evicted one of its copies is under 
     const committed = await withOpenFileCheck('clear', () => commitCart([a, b])); // one run: both trashed, both copies kept
     assert.deepEqual([...committed.trashed].sort(), [a, b].sort());
     const c = item('undo-s1', 'c.bin', 26);
+    const d = path.join(fileTempDir('treemap-capsuleRestorePinned-undo-s1-d-'), 'd.bin');
+    fs.writeFileSync(d, 'a small item captured after c');
     let undo: Promise<{ unrestorable?: { path: string }[]; jobId?: string; code?: string }> | null = null;
-    // The commit's copies are no longer pinned (its run is over), so C evicts the older of them.
+    // The commit's copies are no longer pinned (its run is over), so C evicts the older of them once
+    // C's copy is whole (FG3h A3); the undo is asked while D, the capture's next item, is copied.
     const unfault = setCopyFaultForTests((dest) => {
-      if (undo === null && path.basename(dest) === 'c.bin') {
+      if (undo === null && path.basename(dest) === 'd.bin') {
         undo = undoCartRun(committed.runId).then((r) => r, (err: unknown) => ({ code: err instanceof AppError ? err.code : String(err) }));
       }
       return null;
     });
     try {
-      assert.equal((await protectItems([{ path: c }])).outcomes[0].protected, true);
+      assert.deepEqual((await protectItems([{ path: c }, { path: d }])).outcomes.map((o) => o.protected), [true, true]);
     } finally {
       unfault();
     }

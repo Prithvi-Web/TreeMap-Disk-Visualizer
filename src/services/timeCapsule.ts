@@ -53,10 +53,13 @@ import { recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers, whi
  * ── Capacity ──
  *
  * The capsule must never be the reason a disk fills up. Its ceiling is a
- * percentage of the volume's usable space, and it is enforced *before* each
- * copy, evicting the oldest protections to make room. An item bigger than the
- * whole cap is refused outright rather than being allowed to evict everything
- * else on its way to failing anyway.
+ * percentage of the volume's usable space. Each copy is planned against it
+ * before anything is copied, and room is made — the oldest protections
+ * evicted — only once the new copy is whole and verified (FG3h A3), so a copy
+ * that fails has cost nothing; the capsule can hold one item more than its
+ * ceiling for as long as that copy takes. An item bigger than the whole cap is
+ * refused outright rather than being allowed to evict everything else on its
+ * way to failing anyway.
  *
  * ── On-disk shape ──
  *
@@ -497,6 +500,17 @@ export function capsulePayloadWaitersForTests(): number {
 }
 
 /**
+ * Test-only: awaited by a capture with its new copy's id once that copy is whole and verified, before
+ * it makes room for it (FG3h A3): a test acts in that moment. The suite's ForTests idiom: returns the
+ * function that removes it.
+ */
+let afterCopyVerifiedForTests: ((entryId: string) => Promise<void>) | null = null;
+export function setAfterCopyVerifiedForTests(hook: (entryId: string) => Promise<void>): () => void {
+  afterCopyVerifiedForTests = hook;
+  return () => { afterCopyVerifiedForTests = null; };
+}
+
+/**
  * Test-only: awaited by a capture that must evict, with the ids it is about to evict, after planning
  * and before removing anything (FG3g H1): a test holds an eviction there to show what overlaps it.
  * The suite's ForTests idiom: returns the function that removes it.
@@ -810,42 +824,14 @@ async function capture(
     return { path: original, protected: false, bytes: 0, code, detail };
   }
 
-  // Planned and made under the payload lock (FG3g H1), so the copies a restore has accepted are
-  // pinned, and a restore never accepts one this eviction is removing.
-  const room = await withPayloadLock(async () => {
-    // Looked for only when something must go: an unconfirmed copy is never what goes (FG3g L6).
-    const unconfirmed = usedBytesOf(store.entries) + walked.bytes > capBytes ? await unconfirmedIdsOf(store.entries) : new Set<string>();
-    const kept = (e: TimeCapsuleEntry): boolean => inUse(e) || unconfirmed.has(e.id);
-    const plan = planEviction(store.entries, capBytes, walked.bytes, kept);
-    if (!plan.fits) return { fits: false, pinnedBytes: pinnedBytesOf(store.entries, kept) };
-    if (beforeEvictionForTests && plan.evict.length > 0) await beforeEvictionForTests(plan.evict.map((e) => e.id));
-    // Make room first — the eviction is real and permanent, so it is recorded
-    // where the user can see what it cost them.
-    for (const victim of plan.evict) {
-      await dropPayload(victim);
-      recordEvent(store, {
-        at: Date.now(),
-        kind: 'evicted',
-        name: victim.name,
-        originalPath: victim.originalPath,
-        sizeBytes: victim.sizeBytes,
-        detail: `Removed from the Time Capsule to make room for ${name}. It can no longer be restored from here.`,
-      });
-    }
-    // Saved at once (FG3g L1), not at the end of the capture: until then the index on disk offered
-    // the evicted copies as restorable, and a restore or an undo of one was refused as unreadable.
-    if (plan.evict.length > 0) await persist();
-    return { fits: true, pinnedBytes: 0 };
-  });
-  if (!room.fits) {
-    const detail = doesNotFitSentence(walked.bytes, capBytes, room.pinnedBytes, 'was');
-    recordEvent(store, {
-      at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: walked.bytes, detail,
-    });
-    return { path: original, protected: false, bytes: walked.bytes, code: 'CAPSULE_FULL', detail };
-  }
+  // Planned before anything is copied, so nothing is copied that cannot fit — and nothing is evicted
+  // yet (FG3h A3): room was made first, so an item whose copy then failed (a read that stalled, a
+  // full disk) had dropped older undo copies for nothing. Room is made once the copy is whole, below.
+  const room = await withPayloadLock(async () => roomFor(store.entries, walked.bytes, capBytes));
+  if (!room.fits) return doesNotFit(store, original, walked.bytes, capBytes, room.pinnedBytes);
 
   const id = crypto.randomUUID();
+  let entry: TimeCapsuleEntry;
   const dataRoot = payloadRoot(id);
   try {
     await fsp.mkdir(dataRoot, { recursive: true });
@@ -904,7 +890,7 @@ async function capture(
     const manifest: EntryManifest = { originalPath: original, name, members, ...rootTimes };
     await fsp.writeFile(path.join(entryDir(id), 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
 
-    const entry: TimeCapsuleEntry = {
+    entry = {
       id,
       name,
       originalPath: original,
@@ -920,8 +906,6 @@ async function capture(
       ...(request.reason ? { reason: request.reason } : {}),
       ...(request.realPath !== undefined && request.realPath !== original ? { realPath: request.realPath } : {}),
     };
-    store.entries.push(entry);
-    return { path: original, protected: true, entryId: id, bytes: walked.bytes };
   } catch (err) {
     // A half-written capture protects nothing. Remove it entirely so the
     // caller cannot mistake it for cover, and so reconcile has nothing to find.
@@ -932,6 +916,58 @@ async function capture(
     });
     return { path: original, protected: false, bytes: walked.bytes, code: 'CAPSULE_COPY_FAILED', detail };
   }
+
+  if (afterCopyVerifiedForTests) await afterCopyVerifiedForTests(id);
+  // The copy is whole and verified: room is made now (FG3h A3), under the payload lock (FG3g H1) so
+  // the copies a restore has accepted are pinned and a restore never accepts one being removed — and
+  // planned again, by the pins as they stand now: a restore may have accepted a copy meanwhile.
+  const made = await withPayloadLock(async () => {
+    const plan = await roomFor(store.entries, walked.bytes, capBytes);
+    if (!plan.fits) return plan;
+    if (beforeEvictionForTests && plan.evict.length > 0) await beforeEvictionForTests(plan.evict.map((e) => e.id));
+    // The eviction is real and permanent, so it is recorded where the user can see what it cost them.
+    for (const victim of plan.evict) {
+      await dropPayload(victim);
+      recordEvent(store, {
+        at: Date.now(),
+        kind: 'evicted',
+        name: victim.name,
+        originalPath: victim.originalPath,
+        sizeBytes: victim.sizeBytes,
+        detail: `Removed from the Time Capsule to make room for ${name}. It can no longer be restored from here.`,
+      });
+    }
+    store.entries.push(entry);
+    // Saved at once (FG3g L1), not at the end of the capture: until then the index on disk offered
+    // the evicted copies as restorable, and a restore or an undo of one was refused as unreadable.
+    if (plan.evict.length > 0) await persist();
+    return plan;
+  });
+  if (!made.fits) {
+    // Whole, but with no room left beside what is pinned now: not kept, and nothing was evicted for it.
+    await fsp.rm(entryDir(id), { recursive: true, force: true }).catch(() => {});
+    return doesNotFit(store, original, walked.bytes, capBytes, made.pinnedBytes);
+  }
+  return { path: original, protected: true, entryId: id, bytes: walked.bytes };
+}
+
+/**
+ * How `bytes` more would fit, by the pins as they stand now: the copies in use by a deletion run
+ * under way or a restore (FG3f #1, FG3g H1), and those marked unconfirmed (FG3g L6) — looked for
+ * only when something must go. Asked under the payload lock.
+ */
+async function roomFor(entries: TimeCapsuleEntry[], bytes: number, capBytes: number): Promise<{ evict: TimeCapsuleEntry[]; fits: boolean; pinnedBytes: number }> {
+  const unconfirmed = usedBytesOf(entries) + bytes > capBytes ? await unconfirmedIdsOf(entries) : new Set<string>();
+  const kept = (e: TimeCapsuleEntry): boolean => inUse(e) || unconfirmed.has(e.id);
+  const plan = planEviction(entries, capBytes, bytes, kept);
+  return { ...plan, pinnedBytes: plan.fits ? 0 : pinnedBytesOf(entries, kept) };
+}
+
+/** The outcome of an item that does not fit beside what is pinned, recorded where the person sees it. */
+function doesNotFit(store: CapsuleStore, original: string, bytes: number, capBytes: number, pinnedBytes: number): ProtectionOutcome {
+  const detail = doesNotFitSentence(bytes, capBytes, pinnedBytes, 'was');
+  recordEvent(store, { at: Date.now(), kind: 'unprotected', name: path.basename(original), originalPath: original, sizeBytes: bytes, detail });
+  return { path: original, protected: false, bytes, code: 'CAPSULE_FULL', detail };
 }
 
 /** The recorded times, or nothing at all when the walk could not read them. */

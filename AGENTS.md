@@ -476,7 +476,9 @@ OpenAPI 3 spec).
      60-second stall limit, past which that item is left undeleted; and while
      two such calls are still waiting on a volume that stopped answering,
      nothing more is started — the rest of the run is left undeleted
-     (`CAPSULE_COPY_FAILED`), and a dry run says so. A run's copies are never evicted to make room while
+     (`CAPSULE_COPY_FAILED`), and a dry run says so. Older copies are
+     evicted to make room only once the new copy is whole and verified, so an
+     item whose copy fails costs no older copy. A run's copies are never evicted to make room while
      a request of that run is under way — its own, or a later chunk of the
      same chunked commit — so a batch bigger than the capsule leaves its later
      items undeleted (`CAPSULE_FULL`) rather than dropping its own earlier

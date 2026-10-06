@@ -14,8 +14,11 @@ import {
   getCapsuleJob,
   planEviction,
   protectItems,
+  setAfterCopyVerifiedForTests,
   setCapsuleCapForTests,
+  startCapsuleRestore,
 } from '../src/services/timeCapsule';
+import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
 import { approvePolicy, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
@@ -286,4 +289,86 @@ test('an Autopilot undo of a run whose copy was evicted since names the item it 
   } finally {
     await savePolicies([]);
   }
+});
+
+/* ─────────────── FG3h A3: a capture evicts only once its own copy is whole ─────────────── */
+
+/** Protects each path in its own capture, oldest first: the copies' ids. */
+async function protectEach(paths: string[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const p of paths) {
+    const { outcomes } = await protectItems([{ path: p }]);
+    assert.equal(outcomes[0].protected, true, outcomes[0].detail);
+    ids.push(outcomes[0].entryId as string);
+  }
+  return ids;
+}
+
+const held = async (id: string): Promise<boolean | undefined> => (await getCapsuleIndex()).entries.find((e) => e.id === id)?.hasPayload;
+
+test('a capture whose copy fails evicts nothing: the older copies it needed room from are all still held (FG3h A3)', async () => {
+  const [o1, o2, s] = files('a3-fails', ['o1.bin', 'o2.bin', 's.bin']);
+  const [id1, id2] = await protectEach([o1, o2]); // the capsule is full: s fits only by evicting o1
+  const unfault = setCopyFaultForTests((dest) => (path.basename(dest) === 's.bin' ? new Error('the disk stopped answering (a test)') : null));
+  let outcome: Awaited<ReturnType<typeof protectItems>>['outcomes'][number];
+  try {
+    [outcome] = (await protectItems([{ path: s }])).outcomes;
+  } finally {
+    unfault();
+  }
+  assert.equal(outcome.protected, false);
+  assert.equal(outcome.code, 'CAPSULE_COPY_FAILED', outcome.detail);
+  assert.equal(await held(id1), true, 'the oldest copy, which would have made room, is still held');
+  assert.equal(await held(id2), true);
+  assert.ok(fs.existsSync(path.join(capsuleRoot(), id1, 'manifest.json')), 'and still on disk');
+  const events = (await getCapsuleIndex()).events.filter((e) => e.kind === 'evicted' && e.originalPath === o1);
+  assert.deepEqual(events, [], 'nothing was evicted for an item that was then not protected');
+});
+
+test('a capture that must make room evicts only once its copy is whole: while it copies, the older copy is still held', async () => {
+  const [o1, o2, s] = files('a3-order', ['o1.bin', 'o2.bin', 's.bin']);
+  const [id1, id2] = await protectEach([o1, o2]);
+  let duringCopy: { onDisk: boolean } | null = null;
+  const unfault = setCopyFaultForTests((dest) => {
+    if (duringCopy === null && path.basename(dest) === 's.bin') duringCopy = { onDisk: fs.existsSync(path.join(capsuleRoot(), id1, 'manifest.json')) };
+    return null;
+  });
+  let outcome: Awaited<ReturnType<typeof protectItems>>['outcomes'][number];
+  try {
+    [outcome] = (await protectItems([{ path: s }])).outcomes;
+  } finally {
+    unfault();
+  }
+  assert.deepEqual(duringCopy, { onDisk: true }, 'while s was copied, the copy it then evicted was still there');
+  assert.equal(outcome.protected, true, outcome.detail);
+  assert.equal(await held(id1), false, 'once s\'s copy was whole, the oldest copy went to make room');
+  assert.equal(await held(id2), true);
+});
+
+test('a copy that no longer fits once it is whole - a restore took the room meanwhile - is discarded, and nothing is evicted', async () => {
+  const [o1, o2, s] = files('a3-replan', ['o1.bin', 'o2.bin', 's.bin']);
+  const [id1, id2] = await protectEach([o1, o2]);
+  fs.rmSync(o1);
+  fs.rmSync(o2); // the capsule holds their only copies
+  let jobId = '';
+  let copied = '';
+  const unhook = setAfterCopyVerifiedForTests(async (entryId) => {
+    copied = entryId;
+    // The person presses Undo for o1 and o2 while s is being protected, after s's copy was planned to fit.
+    jobId = (await startCapsuleRestore([id1, id2])).jobId;
+  });
+  let outcome: Awaited<ReturnType<typeof protectItems>>['outcomes'][number];
+  try {
+    [outcome] = (await protectItems([{ path: s }])).outcomes;
+  } finally {
+    unhook();
+  }
+  assert.equal(outcome.protected, false, 'it fits only by evicting copies being restored');
+  assert.equal(outcome.code, 'CAPSULE_FULL', outcome.detail);
+  assert.match(outcome.detail ?? '', /being restored/, outcome.detail);
+  assert.ok(copied !== '' && !fs.existsSync(path.join(capsuleRoot(), copied)), 'its copy, whole but with no room, is not kept');
+  assert.ok(fs.existsSync(s), 's is untouched');
+  await restored(jobId);
+  assert.ok(fs.readFileSync(o1).equals(Buffer.alloc(ITEM, 1)), 'o1 is back, from the copy nothing evicted');
+  assert.ok(fs.readFileSync(o2).equals(Buffer.alloc(ITEM, 2)), 'and o2');
 });
