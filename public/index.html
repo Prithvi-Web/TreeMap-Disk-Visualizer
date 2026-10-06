@@ -28499,14 +28499,21 @@ async function cartTrashAll() {
     return;
   }
 
+  // A folder and an item staged inside it are one set of files, sent once by
+  // the folder (final review F1.12). The commit is cut into chunks, and the
+  // server knows nothing of a chunk before: the item in a later chunk than its
+  // folder was counted twice by the dry run, and reported by the real run as
+  // still on the disk once the folder had taken it to the Trash.
+  const roots = outermostPaths(known);
+
   const btn = $('cartTrash');
   const label = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Checking…';
   let plan;
   try {
-    plan = await cartDryRun(known, (done) => {
-      btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Checking… ${formatCount(done)}/${formatCount(known.length)}`;
+    plan = await cartDryRun(roots, (done) => {
+      btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Checking… ${formatCount(done)}/${formatCount(roots.length)}`;
     });
   } catch (e) {
     toast('Could not work out what this would do: ' + e.message, 'error', 8000);
@@ -28694,7 +28701,7 @@ async function cartExecuteCommit(paths, foreseen = []) {
     // when something was — or may have been: an item whose trash step was not
     // confirmed either way (FG3c) — is the one message that must not be sent here.
     if (result.trashed.length || result.unverified.length) {
-      (result.trashed || []).forEach((p) => state.cart.delete(p));
+      cartDropTrashed(result.trashed || []);
       saveCart(); renderCart(); refreshCartButtons();
       cartLastRun = result.runId;
       toast(result.trashed.length
@@ -28710,7 +28717,7 @@ async function cartExecuteCommit(paths, foreseen = []) {
     btn.disabled = false;
     btn.innerHTML = label;
   }
-  (result.trashed || []).forEach((p) => state.cart.delete(p));
+  cartDropTrashed(result.trashed || []);
   cartShown = CART_PAGE;
   saveCart();
   renderCart();
@@ -28725,6 +28732,14 @@ async function cartExecuteCommit(paths, foreseen = []) {
     ],
   });
   if (result.trashed && result.trashed.length) rescan();
+}
+
+/** Takes what went to the Trash out of the cart, and whatever was staged inside a folder that went (final review F1.12). */
+function cartDropTrashed(trashed) {
+  if (!trashed.length) return;
+  for (const p of [...state.cart]) {
+    if (trashed.some((t) => p === t || tmIsInside(p, t))) state.cart.delete(p);
+  }
 }
 
 /**
