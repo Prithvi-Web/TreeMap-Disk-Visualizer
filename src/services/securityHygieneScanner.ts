@@ -1,6 +1,7 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { ScanStore, TreeSource, asStore } from './scanStore';
+import { Flag, ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { appDataPathRefusal, insideAnyScanRoot, spillPathRefusal } from '../middleware/pathGuard';
 import { isInside } from '../utils/pathSanitizer';
@@ -9,8 +10,9 @@ import { isInside } from '../utils/pathSanitizer';
  * securityHygieneScanner — secrets in the wrong place (§C5).
  *
  * This looks at **names and locations only** (plus the size the scan already
- * recorded, for the one extension a Mac shares with Keynote). It never opens a
- * file, never reads a byte of user content, and never sends anything anywhere. A private
+ * recorded, for the one extension a Mac shares with Keynote — or, for a hard
+ * link's second name, which the scan counts as 0, the file's own size from a
+ * metadata read). It never opens a file, never reads a byte of user content, and never sends anything anywhere. A private
  * key in `~/.ssh` is where a private key belongs and is not a finding; the same
  * file in `~/Downloads` is, because that is the folder people share, sync,
  * screen-record and forget.
@@ -215,7 +217,12 @@ export interface SecurityFinding {
   severity: SecuritySeverity;
   path: string;
   name: string;
-  size: number;
+  /**
+   * The file's own size. A hard link's second name carries 0 in the scan (the
+   * file is counted once), so its size is read from the file's metadata; null
+   * when that cannot be read — unknown, never a zero (B17).
+   */
+  size: number | null;
   modifiedAt: number;
   /** Plain-English statement of where it is and why that is a problem. */
   reason: string;
@@ -333,16 +340,30 @@ function inExpectedLocation(filePath: string, pattern: SecurityPattern, homeDir:
   return false;
 }
 
-function matchPattern(name: string, size: number): SecurityPattern | undefined {
+/** A size of null is unknown, so it cannot rule a file out. */
+function matchPattern(name: string, size: number | null): SecurityPattern | undefined {
   const lower = name.toLowerCase();
   const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : '';
   return SECURITY_PATTERNS.find((p) => {
-    if (p.maxBytes !== undefined && size > p.maxBytes) return false;
+    if (p.maxBytes !== undefined && size !== null && size > p.maxBytes) return false;
     if (p.names?.includes(lower)) return true;
     if (ext && p.extensions?.includes(ext)) return true;
     if (p.prefixes?.some((prefix) => lower.startsWith(prefix))) return true;
     return false;
   });
+}
+
+/**
+ * The size of a file the scan counted under another name: a metadata read
+ * (lstat), which opens nothing. null when it cannot be read.
+ */
+export function linkedFileSize(filePath: string): number | null {
+  try {
+    const st = fs.lstatSync(filePath);
+    return st.isFile() ? st.size : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -358,6 +379,7 @@ export function collectSecurityFindings(
   source: TreeSource,
   ignore: CompiledIgnore[],
   homeDir: string = os.homedir(),
+  sizeOfLinkedName: (filePath: string) => number | null = linkedFileSize,
 ): SecurityReport {
   const store = asStore(source);
   const findings: SecurityFinding[] = [];
@@ -372,7 +394,13 @@ export function collectSecurityFindings(
         continue;
       }
 
-      const pattern = matchPattern(name, store.size(child));
+      // A hard link's second name carries 0 in the tree (the scan counts the
+      // file once). The panel describes files, so it reads that file's own
+      // size — only for a name that could be a finding at all (B17).
+      const linked = store.flag(child, Flag.HardlinkDup);
+      if (linked && !matchPattern(name, null)) continue;
+      const size = linked ? sizeOfLinkedName(childPath) : store.size(child);
+      const pattern = matchPattern(name, size);
       if (!pattern) continue;
       // A public key is not a secret, and flagging it teaches people to ignore
       // the whole panel.
@@ -400,7 +428,7 @@ export function collectSecurityFindings(
         severity: appOwned ? 'low' : stakes,
         path: childPath,
         name,
-        size: store.size(child),
+        size,
         modifiedAt: store.modifiedAt(child),
         reason: osOwned
           ? `In “${where}”, a folder the operating system manages — this file is part of the system, so moving it would break whatever uses it.`

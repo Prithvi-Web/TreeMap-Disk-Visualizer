@@ -561,7 +561,9 @@ function renderSecurity() {
         <div class="pth">${escapeHtml(f.path)}</div>
         <div class="sec-why">${escapeHtml(f.reason)} ${escapeHtml(f.why)}</div>
       </div>
-      <span class="size-badge num">${formatBytes(f.size)}</span>
+      ${f.size == null // a hard link's second name whose size could not be read (B17)
+        ? '<span class="size-badge" title="TreeMap could not read this file’s size">size unknown</span>'
+        : `<span class="size-badge num">${formatBytes(f.size)}</span>`}
       <button class="pill" data-sec-reveal="${i}">${icon('external', 13)} Show me</button>
       ${f.suggestedPath ? `<button class="pill" data-sec-move="${i}">${icon('shield', 13)} Move to ${escapeHtml(baseName(f.suggestedPath))}</button>` : ''}
     </div>`).join('') + '</div>';

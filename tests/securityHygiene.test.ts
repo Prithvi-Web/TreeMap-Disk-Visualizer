@@ -15,6 +15,7 @@ import {
 } from '../src/services/securityHygieneScanner';
 import { compileIgnoreList } from '../src/utils/glob';
 import { FileNode } from '../src/models/types';
+import { storeOf } from '../src/services/scanStore';
 import { startScan } from '../src/services/diskScanner';
 import { waitFor } from './fixtures/waitFor';
 
@@ -335,6 +336,95 @@ test('a .key file too large to be any private key is not a finding (D77)', () =>
   assert.deepEqual(findingsFor([file('Pitch.key', path.join(HOME, 'Documents'), 400_000)]), [], 'a 400 KB .key is not a key');
   assert.equal(findingsFor([file('big.pem', path.join(HOME, 'Documents'), 400_000)]).length, 1,
     'the size rule is the .key rule alone');
+});
+
+/* ─────────────── B17: a hard link's second name is a file, not a 0 ─────────────── */
+
+test('a hard link’s second name shows the file’s own size, not the 0 the scan total gives it (B17)', () => {
+  // The scan counts a hard-linked file once, so its second name carries 0 in
+  // the tree — right for totals, wrong for a panel that describes files.
+  const at = path.join(HOME, 'Downloads');
+  const second: FileNode = { ...file('GlobalSignRootCA.pem', at, 0), hardlinkDuplicate: true };
+  const plain = file('server.pem', path.join(HOME, 'Desktop'), 900);
+  const notASecret: FileNode = { ...file('notes.txt', at, 0), hardlinkDuplicate: true };
+  const asked: string[] = [];
+  const sizeOf = (p: string): number | null => {
+    asked.push(p);
+    return 1261;
+  };
+  const found = collectSecurityFindings(treeWith(HOME, [second, plain, notASecret]), [], HOME, sizeOf).findings;
+  assert.equal(found.find((f) => f.name === 'GlobalSignRootCA.pem')?.size, 1261, 'the second name shows the file’s size');
+  assert.equal(found.find((f) => f.name === 'server.pem')?.size, 900, 'a file with one name keeps the scan’s size');
+  assert.deepEqual(asked, [second.path], 'only a second name that could be a finding is looked up');
+
+  // Its own size decides the size rule, as it does for its first name.
+  const bigKey: FileNode = { ...file('Pitch.key', at, 0), hardlinkDuplicate: true };
+  assert.deepEqual(collectSecurityFindings(treeWith(HOME, [bigKey]), [], HOME, () => 400_000).findings, [],
+    'a 400 KB .key is not a key under its second name either');
+
+  // A size that cannot be read is unknown, never a zero — and cannot rule the file out.
+  const unknown = collectSecurityFindings(treeWith(HOME, [second]), [], HOME, () => null).findings;
+  assert.equal(unknown.length, 1, 'still listed');
+  assert.equal(unknown[0].size, null, 'its size is unknown, not 0');
+});
+
+test('both names of a real hard-linked certificate show its size after a scan (B17)', { skip: process.platform === 'win32' && 'hard links need NTFS privileges on some runners' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-sec-'));
+  try {
+    const first = path.join(dir, 'bundler', 'GlobalSignRootCA.pem');
+    const second = path.join(dir, 'rubygems', 'GlobalSignRootCA.pem');
+    fs.mkdirSync(path.dirname(first), { recursive: true });
+    fs.mkdirSync(path.dirname(second), { recursive: true });
+    fs.writeFileSync(first, 'x'.repeat(1261));
+    fs.linkSync(first, second);
+    const scan = await startScan(dir);
+    await waitFor(() => scan.status !== 'running', `the scan of ${dir}`);
+    assert.equal(scan.status, 'complete', scan.error);
+    const store = storeOf(scan);
+    const sizes = [...store.childIds(store.rootId)].flatMap((d) => [...store.childIds(d)]).map((f) => store.size(f)).sort();
+    assert.deepEqual(sizes, [0, 1261], 'the scan counts the file once (the precondition)');
+
+    const found = collectSecurityFindings(store, [], HOME).findings;
+    assert.deepEqual(found.map((f) => [f.path, f.size]).sort(), [[first, 1261], [second, 1261]],
+      'each name is listed at the file’s own size');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the Security panel says a size it could not read is unknown, never "0 B" (B17)', () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
+  const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
+  const info = { textContent: '', innerHTML: '' };
+  const stubs: Record<string, unknown> = {
+    $: (id: string) => (id === 'securityBody' ? host : info),
+    state: { scanId: 's', security: { report: {
+      findings: [
+        { severity: 'low', name: 'a.pem', label: 'Cert', path: '/x/a.pem', reason: 'r', why: 'w', size: null },
+        { severity: 'low', name: 'b.pem', label: 'Cert', path: '/x/b.pem', reason: 'r', why: 'w', size: 1261 },
+      ],
+      counts: { high: 0, medium: 0, low: 2 }, total: 2, patternCount: 9,
+    } } },
+    escapeHtml: (s: unknown) => String(s),
+    formatBytes: (n: number) => `${String(n)} B`,
+    formatCount: (n: number) => String(n),
+    icon: () => '',
+    baseName: (p: string) => path.basename(p),
+    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } },
+    SEVERITY_LABEL: { low: 'Minor' },
+    openInOS: () => {},
+    confirmRelocateSecret: () => {},
+  };
+  const keys = Object.keys(stubs);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const render = new Function(...keys, `${fn}; return renderSecurity;`)(...keys.map((k) => stubs[k])) as () => void;
+  render();
+  const rows = host.innerHTML.split('sec-item').slice(1);
+  assert.equal(rows.length, 2);
+  assert.doesNotMatch(rows[0], /null B|0 B/, 'an unknown size is not printed as a number');
+  assert.match(rows[0], /size unknown/, 'it is called unknown');
+  assert.match(rows[1], /1261 B/, 'a known size is printed as before');
 });
 
 test('only a file very likely to be an SSH key is offered a move into ~/.ssh (D77)', () => {
