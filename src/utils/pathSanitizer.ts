@@ -113,15 +113,20 @@ export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.
  * every file API. This file deliberately stopped trimming the tail — a trailing
  * space is legal filename DATA on POSIX — so the blocklist has to do the
  * normalisation Windows itself would do, or the space walks a blocked path
- * straight past a string comparison. Windows' separator, whatever this OS's is,
- * so Windows' rules are tested on every OS.
+ * straight past a string comparison.
+ *
+ * Every name loses them, between either of Windows' separators — "\" or "/" —
+ * and each separator is kept as spelled (POL item 8). Tests stand Windows in for
+ * process.platform while Node's path module stays this OS's (rules follow
+ * process.platform, resolution follows Node's module), so a path reaching here
+ * under that stand-in is spelled with "/"; split on "\" alone, only its last
+ * name was trimmed, and "/x/scan./appdata" kept the dot that "/x/scan." lost.
+ * A path spelled with "\" alone — every path on a real Windows, where Node
+ * resolves "/" to "\" — folds exactly as it did; on macOS and Linux this runs
+ * only for Windows' rules.
  */
-function win32Normalize(p: string): string {
-  return p
-    .toLowerCase()
-    .split(path.win32.sep)
-    .map((seg) => seg.replace(/[ .]+$/, ''))
-    .join(path.win32.sep);
+export function win32Normalize(p: string): string {
+  return p.toLowerCase().replace(/[ .]+(?=[\\/]|$)/g, '');
 }
 
 function isBlocked(resolved: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): boolean {

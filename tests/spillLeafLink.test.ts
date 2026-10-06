@@ -20,7 +20,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { setSpillCheckForTests } from '../src/services/autopilot';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { isSpillPath, spillCandidateTest } from '../src/utils/pathSanitizer';
+import { isSpillPath, spillCandidateTest, win32Normalize } from '../src/utils/pathSanitizer';
 import { SPILL_DIR } from '../src/services/spillSweep';
 
 /**
@@ -165,4 +165,52 @@ const onAnotherVolume = OTHER_VOLUME !== null && fs.statSync(OTHER_VOLUME, { big
 test('a policy folder on another volume than app-data is a doubt too (counted)', { skip: !onAnotherVolume && 'no second volume at a fixed path here' }, () => {
   // Whatever the two paths say, a mount, a junction or a firmlink can join two volumes.
   assert.equal(passedOn(OTHER_VOLUME as string), SAMPLE.length, `${OTHER_VOLUME}: every path`);
+});
+
+/* ═══════════ Windows' name folding, whichever separator spells the path (POL item 8) ═══════════ */
+
+test('Windows’ trailing dots and spaces come off every name, whichever separator spells the path — a backslash path folds exactly as before (POL item 8)', () => {
+  // The tests stand Windows in for process.platform while Node's path module
+  // stays this OS's, so a path reaching the fold under that stand-in is spelled
+  // with "/". Split on "\\" alone, it lost the dots and spaces of its last name
+  // only: "/x/scan./appdata" kept the dot that "/x/scan." lost.
+  assert.deepEqual({
+    windows: win32Normalize('C:\\Windows\\System32 \\Drivers. \\x. '),
+    windowsDots: win32Normalize('C:\\a..\\. \\b'),
+    posixSpelled: win32Normalize('/Var/TM/scan. /data. /f '),
+    mixed: win32Normalize('C:/Users. \\Me /x.'),
+    inside: win32Normalize('/a.b/c d/e'),
+  }, {
+    windows: 'c:\\windows\\system32\\drivers\\x',
+    windowsDots: 'c:\\a\\\\b',
+    posixSpelled: '/var/tm/scan/data/f',
+    mixed: 'c:/users\\me/x',
+    inside: '/a.b/c d/e',
+  });
+});
+
+test('with Windows stood in for process.platform, the Autopilot prefilter finds app-data inside a scanned folder whose name ends in a dot, as Windows reads the names; on this machine itself nothing changes (POL item 8)', { skip: process.platform === 'win32' && 'a name ending in a dot cannot be made through the Windows API' }, () => {
+  const base = fs.realpathSync(fileTempDir('tm-spill-dot-'));
+  const scanned = path.join(base, 'scan.');
+  const appData = path.join(scanned, 'appdata');
+  fs.mkdirSync(appData, { recursive: true });
+  const leftover = path.join(appData, SPILL_DIR, 'x.bin');
+  const saved = process.env.TREEMAP_DATA_DIR;
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  process.env.TREEMAP_DATA_DIR = appData;
+  let here: boolean;
+  let asWindows: boolean;
+  try {
+    here = spillCandidateTest(scanned)(leftover);
+    Object.defineProperty(process, 'platform', { ...real, value: 'win32' });
+    try {
+      asWindows = spillCandidateTest(scanned)(leftover);
+    } finally {
+      Object.defineProperty(process, 'platform', real);
+    }
+  } finally {
+    process.env.TREEMAP_DATA_DIR = saved;
+  }
+  assert.deepEqual({ here, asWindows }, { here: true, asWindows: true }, 'a path in the spill folder is passed on for the full check');
 });
