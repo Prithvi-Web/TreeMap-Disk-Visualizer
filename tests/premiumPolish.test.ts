@@ -117,8 +117,11 @@ test('disk city rides the same two-row toolbar system', () => {
  */
 test('every nav-row group fills its grid track instead of sizing to its content', () => {
   const cols = decls('.tb-row-nav {');
-  assert.match(cols, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto\s*minmax\(0,\s*1fr\)/,
-    'the flanks are shrinkable tracks — which only helps if the items honour them');
+  // The crumbs flank is the shrinkable one (the trail clips); the find flank
+  // may grow past an equal share but never shrink below its own content —
+  // see the B16 geometry test below for why.
+  assert.match(cols, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto\s*minmax\(min-content,\s*1fr\)/,
+    'the crumbs flank is a shrinkable track — which only helps if the items honour them');
   for (const group of ['.tb-nav', '.tb-view', '.tb-find']) {
     const d = decls(`.tb-row-nav ${group} {`);
     const js = /justify-self:\s*([a-z-]+)/.exec(d);
@@ -200,10 +203,78 @@ test('a security row can lose filename characters but never its kind label', () 
 test('the view switcher is centred by construction, not by luck', () => {
   const rule = INDEX.match(/\.tb-row-nav\s*\{[^}]*\}/);
   assert.ok(rule, '.tb-row-nav rule exists');
-  assert.match(rule![0], /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto\s*minmax\(0,\s*1fr\)/,
-    'equal flexible flanks hold the seg in the true centre');
+  assert.match(rule![0], /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto\s*minmax\(min-content,\s*1fr\)/,
+    'equal flexible flanks hold the seg in the true centre whenever the find group fits its half');
   // And when the toolbar itself narrows, the seg drops to its own centred
   // line instead of crushing the crumbs or the search field.
   assert.match(INDEX, /@container[^{]*\(max-width[^)]*\)[^{]*\{[\s\S]{0,600}?"view view"/,
     'a narrow-container rule gives the seg its own full-width line');
+});
+
+/* ── B16: row one never lays one control over another ── */
+
+/** The built stylesheet, comments removed. */
+const SHEET = INDEX.slice(INDEX.indexOf('<style>') + 7, INDEX.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, ' ');
+/** `prop` of the first top-level rule whose selector is exactly `sel`. */
+function prop(sel: string, name: string): string {
+  for (const m of SHEET.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    if (!m[1].split(',').map((s) => s.trim()).includes(sel)) continue;
+    const d = new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+)`).exec(m[2]);
+    if (d) return d[1].trim();
+  }
+  return assert.fail(`${sel} declares ${name}`);
+}
+const pxOf = (v: string) => { const m = /^(\d+(?:\.\d+)?)px$/.exec(v.trim()); assert.ok(m, `a px length: ${v}`); return Number(m![1]); };
+
+/**
+ * QA B16: at 1024×768 — the desktop window's minimum width — the Highlight
+ * field sat 20 px over the "Voronoi" tab. Row one's flanks were equal
+ * `minmax(0, 1fr)` tracks, so below a ~1100 px window the find flank was
+ * narrower than the field plus the plain-words button, and the group (packed
+ * to its end) overflowed leftwards across the switcher.
+ *
+ * The geometry is rebuilt from the stylesheet for every toolbar width the
+ * three-column row is used at (above its narrow container query): the
+ * switcher's width from its own rules with a conservative 7.6 px per
+ * character of its widest 12.5 px label, the find group from #tmSearch's
+ * clamp, the group gap and an icon button. CSS grid gives a flexible track
+ * whose minimum is content-sized at least that content, taking it from the
+ * other flexible track — the crumbs, which clip by design.
+ */
+test('the find group never overprints the view switcher, at any toolbar width the row is used at (B16)', () => {
+  const cols = prop('.tb-row-nav', 'grid-template-columns');
+  const tracks = /^minmax\(0,\s*1fr\)\s+auto\s+minmax\(([\w-]+),\s*1fr\)$/.exec(cols);
+  assert.ok(tracks, `row one is crumbs | switcher | find (${cols})`);
+  // `auto` would not do: .tb-group sets min-width: 0, which makes an auto
+  // minimum zero for this item. Only a content keyword holds the field.
+  const findMinIsContent = ['min-content', 'max-content'].includes(tracks![1]);
+  const gap = pxOf(prop('.tb-row-nav', 'gap'));
+  const narrow = /@container \(max-width: (\d+)px\) \{\s*\.tb-row-nav \{/.exec(SHEET);
+  assert.ok(narrow, 'a container query stacks the row when the toolbar is narrow');
+  const floor = Number(narrow![1]);
+
+  const labels = [...INDEX.matchAll(/<button role="tab" type="button" data-vm="\w+"[^>]*>([^<]+)<\/button>/g)].map((m) => m[1]);
+  assert.equal(labels.length, 4, 'the switcher has its four layouts');
+  const tabPad = pxOf(prop('.seg button', 'padding').split(/\s+/)[1]);
+  const tab = Math.max(...labels.map((l) => l.length)) * 7.6 + 2 * tabPad; // equal columns (grid-auto-columns: 1fr)
+  const segPad = pxOf(prop('.seg', 'padding'));
+  const seg = 4 * tab + 2 * segPad + 2;
+
+  const clamp = /^clamp\((\d+)px,\s*(\d+(?:\.\d+)?)cqw,\s*(\d+)px\)$/.exec(prop('#tmSearch', 'width'));
+  assert.ok(clamp, `the field's width is a cqw clamp (${prop('#tmSearch', 'width')})`);
+  const groupGap = pxOf(prop('.tb-group', 'gap'));
+  const iconBtn = pxOf(prop('.icon-btn', 'width'));
+
+  let checked = 0;
+  for (let W = floor + 1; W <= 1700; W++) {
+    const field = Math.min(Number(clamp![3]), Math.max(Number(clamp![1]), (Number(clamp![2]) / 100) * W));
+    const find = field + groupGap + iconBtn;
+    const free = W - seg - 2 * gap;
+    const right = findMinIsContent ? Math.max(find, free / 2) : free / 2;
+    const left = free - right;
+    checked++;
+    assert.ok(right >= find, `${W}px toolbar: the find flank is ${right.toFixed(1)}px for a ${find.toFixed(1)}px field + button — it would overlap the switcher by ${(find - right).toFixed(1)}px`);
+    assert.ok(left >= 0, `${W}px toolbar: the crumbs flank keeps a width (${left.toFixed(1)}px)`);
+  }
+  assert.ok(checked > 900, `every width from ${floor + 1}px was checked (${checked})`);
 });

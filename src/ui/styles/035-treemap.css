@@ -11,7 +11,14 @@
 .tm-toolbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
   container-type: inline-size; }
 .tb-row { min-height: 30px; }
-.tb-row-nav { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+/* The flanks are equal whenever the search fits its half, which centres the
+   switcher. Below that the find flank keeps its own content (min-content)
+   and the crumbs flank, which clips by design, gives way: with two
+   minmax(0, 1fr) flanks the field and the plain-words button overflowed
+   their half leftwards and sat 20 px over "Voronoi" at the desktop window's
+   1024 px minimum (QA B16). The seg sits a little off-centre in that range;
+   tests/premiumPolish.test.ts rebuilds this geometry at every width. */
+.tb-row-nav { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(min-content, 1fr);
   gap: 12px; align-items: center; }
 /* stretch, always: any other justify-self sizes a grid item to its own
    content instead of its track, so a `minmax(0, 1fr)` flank stops
