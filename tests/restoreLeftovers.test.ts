@@ -188,7 +188,9 @@ test('a record naming anything but a restore\'s temporary name is never acted on
   assert.equal(fs.readFileSync(precious, 'utf8'), 'a file a record was planted for');
 });
 
-const SKIP_MODES = process.platform === 'win32' ? 'a folder\'s permissions cannot hide its names on Windows' : false;
+const SKIP_MODES = process.platform === 'win32'
+  ? 'a folder\'s permissions cannot hide its names on Windows'
+  : process.getuid?.() === 0 ? 'running as root, a folder\'s mode hides nothing (FG3g review F2.15)' : false;
 
 test('the tidying after a restore keeps the record of a temporary file still there, and of one whose place cannot be looked at: the next start removes both (FG3g review F1.9)', { skip: SKIP_MODES }, async () => {
   const dir = fileTempDir('treemap-restoreLeftovers-kept-');
@@ -243,6 +245,29 @@ test('a held name\'s record is acted on only while it names an empty file: a pla
   const swept = await sweepRestoreLeftovers();
   assert.deepEqual(swept.removed, []);
   assert.equal(fs.readFileSync(precious, 'utf8'), 'a file a record was planted for');
+});
+
+test('a held name\'s record spelled in any way TreeMap does not record a place - or under a system folder - is never acted on, though it names an empty file (FG3g review F2.11)', async () => {
+  const dir = fileTempDir('treemap-restoreLeftovers-spelled-');
+  const empty = path.join(dir, 'empty.txt'); // a person's own empty file
+  fs.writeFileSync(empty, '');
+  fs.mkdirSync(path.join(dir, 'x'));
+  const sep = path.sep;
+  const spellings = [
+    `${dir}${sep}x${sep}..${sep}empty.txt`, // through a folder and back
+    `${dir}${sep}${sep}empty.txt`, // a doubled separator
+    `${dir}${sep}.${sep}empty.txt`, // through "."
+    `${empty}${sep}`, // a trailing separator
+  ];
+  for (const spelled of spellings) {
+    fs.appendFileSync(JOURNAL, `${JSON.stringify({ path: spelled, id: identity(empty), kind: 'placeholder' })}\n`);
+  }
+  const system = process.platform === 'win32' ? 'C:\\Windows\\System32\\treemap-held' : '/dev/treemap-held';
+  fs.appendFileSync(JOURNAL, `${JSON.stringify({ path: system, id: identity(empty), kind: 'placeholder' })}\n`);
+  const swept = await sweepRestoreLeftovers();
+  assert.deepEqual(swept.removed, [], JSON.stringify(swept));
+  assert.ok(fs.existsSync(empty), 'the person\'s empty file is still there');
+  assert.deepEqual(records().filter((r) => [...spellings, system].includes(r.path)), [], 'and no such record is kept for a later start');
 });
 
 test('the start-up sweep never removes what another TreeMap still running recorded; it removes what one that has ended left (FG3h D)', async () => {
