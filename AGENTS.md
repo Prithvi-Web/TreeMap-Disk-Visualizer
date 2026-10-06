@@ -347,11 +347,12 @@ OpenAPI 3 spec).
      is asked: a drive whose root does not answer either is asked once, and
      until the root answers every folder on it is withheld unasked — in later
      requests and in an `onlyEmptyFolders` delete too — while on a drive that
-     answers only the slow folder is withheld. Each call that does not answer
-     holds a thread of the server's I/O pool, so a drive holds at most two:
-     with two slow folders' calls out it is asked nothing more until one
-     answers, even though its root answers (a folder and a root that does not
-     answer are two as well), and while one is out its folders are looked at
+     answers only the slow folder is withheld. Each call holds a thread of the
+     server's I/O pool while it runs, so a drive has at most two calls out at
+     once, and a folder one; a further call waits its turn. With two slow
+     folders' calls out unanswered the drive is asked nothing more until one
+     answers, even though its root answers (its root is asked beside them, by
+     one probe at a time), and while one is out its folders are looked at
      one at a time. A call that fails with the
      drive's own error (EIO, ESTALE, …) keeps its silence a minute; any other
      answer lifts it. The looks of one request stop after 10 s. A gdu scan offers none and says why in

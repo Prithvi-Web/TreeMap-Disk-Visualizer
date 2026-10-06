@@ -45,19 +45,23 @@ import { isAtOrUnder, readMountTable, type MountTable } from '../utils/mountBoun
  *    boundary is, never by a stat — a stat is what hangs. Its root is asked by
  *    one call at a time: a call that misses its deadline while the root is
  *    being asked waits for that answer.
- *  - **A drive holds at most `MAX_HELD_PER_DRIVE` calls that did not answer
- *    (the U-4c review, F1.1).** Each holds a thread of the pool. A drive with
- *    two of its folders' calls still out is silent until one of them answers,
+ *  - **A drive has at most `MAX_HELD_PER_DRIVE` calls out at once, and a
+ *    folder one (the U-4c review, F1.1, F2.2, F2.4).** Each call holds a
+ *    thread of the pool while it runs, and calls that start together hang
+ *    together, so a call is counted when it starts: a further one on the
+ *    drive, or a second on the folder, waits its turn — the next answer or
+ *    missed deadline — as far as its session's budget goes. A drive with two
+ *    of its folders' calls out unanswered is silent until one of them answers,
  *    though its root answers: else a mount whose root answers while every
  *    folder below hangs would take one thread per folder asked, every request,
- *    until the pool was full. (A root that does not answer silences its drive
- *    by itself, above, so a folder and its root are two threads at most too.)
+ *    until the pool was full. (Its root is asked beside them, by one probe at
+ *    a time; a root that does not answer silences its drive by itself, above.)
  *  - **The first look on a drive goes alone, and so does every look on a
- *    drive with a call out.** Within a session, looks on a drive not yet heard
- *    from wait for that drive's first look to answer — or to go silent —
- *    before they start: one probe, not four at once. Across sessions, while
- *    one of a drive's calls is out unanswered, its looks go one at a time, so
- *    the next call to hang is the last one it holds.
+ *    drive with a call out unanswered.** Within a session, looks on a drive
+ *    not yet heard from wait for that drive's first look to answer — or to go
+ *    silent — before they start: one probe, not four at once. Across
+ *    sessions, while one of a drive's calls is out unanswered, its looks go
+ *    one at a time.
  *  - **A session looks for `EMPTY_CHECK_BUDGET_MS` at most**, counting only
  *    while a look is running (a delete's Trash steps between its looks are not
  *    looking). A folder whose look the budget cut, or that came after it ran
@@ -104,8 +108,9 @@ export function lookBudgetMs(env: NodeJS.ProcessEnv = process.env): number {
 export const SILENT_DRIVE_MEMORY_MS = 60_000;
 
 /**
- * The most calls on one drive that missed their deadline and are still out
- * (the U-4c review, F1.1): at this many the drive is silent until one answers.
+ * The most calls out at once on one drive, answered in time or not (the U-4c
+ * review, F1.1, F2.4): a further call waits its turn. With this many out that
+ * missed their deadline, the drive is silent until one answers.
  */
 export const MAX_HELD_PER_DRIVE = 2;
 
@@ -367,33 +372,90 @@ const probing = new Map<string, Promise<void>>();
 /** The call asking each drive's root that is running now (the U-4c review, F1.8): another call that misses its deadline waits for its answer. */
 const askingRoot = new Map<string, Promise<void>>();
 
-/** A drive's calls that missed their deadline and are still out: each holds a thread of the I/O pool. */
-interface Held {
-  calls: number;
+/**
+ * A drive's folder calls (the U-4c review, F1.1, F2.4): `out` started and not
+ * settled — each holds a thread of the I/O pool while it runs — and `late`,
+ * those of them that missed their deadline. A call is counted when it starts,
+ * not once it misses: calls that start together hang together. `changed`
+ * settles at the next start's settling or missing, for a call waiting its turn.
+ */
+interface CallsOn {
+  out: number;
+  late: number;
+  changed: Promise<void>;
+  signal: () => void;
 }
 
-/** Process-wide, by drive (the U-4c review, F1.1). */
-const heldOn = new Map<string, Held>();
+/** Process-wide, by drive. */
+const callsOn = new Map<string, CallsOn>();
 
-/** `op`, on `drive`, missed its deadline: it is counted against the drive until it settles. */
-function hold(drive: string, op: Promise<unknown>): void {
-  let held = heldOn.get(drive);
-  if (!held) {
-    held = { calls: 0 };
-    heldOn.set(drive, held);
+/** The call on each folder that is out now, any session's, until it answers or misses its deadline (the U-4c review, F2.2). */
+const askingFolder = new Map<string, Promise<void>>();
+
+/** Wake every call waiting its turn on `c`'s drive. */
+function changeOn(c: CallsOn): void {
+  const wake = c.signal;
+  c.changed = new Promise<void>((resolve) => { c.signal = resolve; });
+  wake();
+}
+
+/** `op` started on `drive`: counted until it settles. Answers what marks it as having missed its deadline. */
+function countCall(drive: string, op: Promise<unknown>): () => void {
+  let c = callsOn.get(drive);
+  if (!c) {
+    let signal = (): void => {};
+    const changed = new Promise<void>((resolve) => { signal = resolve; });
+    c = { out: 0, late: 0, changed, signal };
+    callsOn.set(drive, c);
   }
-  const h = held;
-  h.calls++;
+  const calls = c;
+  calls.out++;
+  let settled = false;
+  let missed = false;
   const release = (): void => {
-    h.calls--;
-    if (h.calls === 0 && heldOn.get(drive) === h) heldOn.delete(drive);
+    settled = true;
+    calls.out--;
+    if (missed) calls.late--;
+    if (calls.out === 0 && callsOn.get(drive) === calls) callsOn.delete(drive);
+    changeOn(calls);
   };
   op.then(release, release);
+  return () => {
+    if (settled || missed) return; // answered just as its deadline passed: nothing is held
+    missed = true;
+    calls.late++;
+    changeOn(calls);
+  };
 }
 
 /** How many of `drive`'s calls missed their deadline and are still out. */
 function heldCalls(drive: string): number {
-  return heldOn.get(drive)?.calls ?? 0;
+  return callsOn.get(drive)?.late ?? 0;
+}
+
+/**
+ * What a call on `folder` waits for before it may start, or null when it may
+ * start now: the call on that folder that is out (one call per folder, any
+ * session's: two on one stuck folder were two of its drive's held calls), or,
+ * with `MAX_HELD_PER_DRIVE` calls out on the drive, the next of them to
+ * settle or miss — so the drive never holds more than that many.
+ */
+function turnOf(folder: string, drive: string): Promise<void> | null {
+  const asking = askingFolder.get(folder);
+  if (asking) return asking;
+  const calls = callsOn.get(drive);
+  return calls && calls.out >= MAX_HELD_PER_DRIVE ? calls.changed : null;
+}
+
+/** `folder`'s call has started: the next ask on it waits until `end()` — its answer, or its deadline. */
+function askingOn(folder: string): () => void {
+  let done = (): void => {};
+  const mine = new Promise<void>((resolve) => { done = resolve; });
+  askingFolder.set(folder, mine);
+  return () => {
+    if (askingFolder.get(folder) === mine) askingFolder.delete(folder);
+    done();
+  };
 }
 
 /**
@@ -441,7 +503,8 @@ export function setEmptyCheckForTests(over: Partial<EmptyCheckDeps> | null): voi
   silentFolders.clear();
   probing.clear();
   askingRoot.clear();
-  heldOn.clear();
+  callsOn.clear();
+  askingFolder.clear();
 }
 
 /* ───────────────────────────── one look ───────────────────────────── */
@@ -480,33 +543,45 @@ interface Where {
  * `start()`'s answer; LATE when its deadline passes first, SPENT when the
  * session's budget does (or was gone before it started, when nothing is
  * started), HUSHED — nothing started — when the folder or its drive went
- * silent before this call's turn. A call left waiting makes its folder silent
- * until it answers; one that missed its whole deadline has the folder's drive
- * asked about too (`askRoot`). A later rejection of the call is handled by
- * the race.
+ * silent before this call's turn. A call first waits its turn (`turnOf`):
+ * another call on its folder out, or its drive's most calls out. A call left
+ * waiting makes its folder silent until it answers; one that missed its whole
+ * deadline has the folder's drive asked about too (`askRoot`). A later
+ * rejection of the call is handled by the race.
  */
 async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<T>): Promise<T | typeof LATE | typeof SPENT | typeof HUSHED> {
-  const left = ctx.left();
-  if (left <= 0) return SPENT;
-  if (silentIn(silentFolders, where.folder, ctx.d) || isSilent(ctx.d, where.drive)) return HUSHED;
-  const wait = Math.min(ctx.d.deadlineMs, left);
+  // A call waits its turn — the folder's call out, or a drive with its most calls out — as far as the budget goes (the U-4c review, F2.2, F2.4).
+  for (;;) {
+    if (ctx.left() <= 0) return SPENT;
+    if (silentIn(silentFolders, where.folder, ctx.d) || isSilent(ctx.d, where.drive)) return HUSHED;
+    const turn = turnOf(where.folder, where.drive);
+    if (!turn) break;
+    if ((await budgeted(ctx, turn)) === SPENT) return SPENT;
+  }
+  const wait = Math.min(ctx.d.deadlineMs, ctx.left());
   let op: Promise<T>;
   try {
     op = start();
   } catch (err) {
     op = Promise.reject(err);
   }
+  // Counted from its start, on its folder and its drive: nothing between the checks above and here awaits.
+  const missed = countCall(where.drive, op);
+  const endTurn = askingOn(where.folder);
   const deadline = ctx.d.deadline(wait);
   let answer: T | typeof LATE;
   try {
     answer = await Promise.race([op, deadline.late.then((): typeof LATE => LATE)]);
+    if (answer === LATE) {
+      // Still out: this folder is not asked again until the call answers, and the thread it holds counts against its drive.
+      hush(silentFolders, where.folder, ctx.d, op);
+      missed();
+    }
   } finally {
     deadline.cancel();
+    endTurn(); // after the silence above, so a call waiting on this folder sees it
   }
   if (answer !== LATE) return answer;
-  // Still out: this folder is not asked again until the call answers, and the thread it holds counts against its drive.
-  hush(silentFolders, where.folder, ctx.d, op);
-  hold(where.drive, op);
   // A wait the budget cut short says nothing of the drive.
   if (wait < ctx.d.deadlineMs) return SPENT;
   await askRoot(ctx, where, op);

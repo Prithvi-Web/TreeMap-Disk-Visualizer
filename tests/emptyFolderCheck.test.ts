@@ -525,6 +525,134 @@ test('a call that misses its deadline while the drive\'s root is being asked wai
   assert.equal(callsOn('/d').length, 1);
 });
 
+/* ─────────────── a call is counted when it starts (U-4c review, round 2: F2.2, F2.4) ─────────────── */
+
+/**
+ * Calls and deadlines by the test's hand: a stat of a path `atOnce` names
+ * answers at once, any other waits in `calls` until the test answers it, and
+ * no deadline passes until the test passes it. Each deadline is recorded with
+ * its length and the path of the call it was asked for ('' for a wait the
+ * budget bounds); `asked` lists every stat.
+ */
+function byHand(driveOf: (p: string) => string, atOnce: (p: string) => boolean, over: Partial<EmptyCheckDeps> = {}) {
+  const asked: string[] = [];
+  const calls: Array<{ path: string; answer: () => void }> = [];
+  const deadlines: Array<{ of: string; ms: number; pass: () => void }> = [];
+  let last = '';
+  setEmptyCheckForTests({
+    driveOf: async (p) => driveOf(p),
+    lstat: (p) => {
+      asked.push(p);
+      last = p;
+      if (atOnce(p)) return Promise.resolve(aFolder);
+      return new Promise((resolve) => { calls.push({ path: p, answer: () => resolve(aFolder) }); });
+    },
+    opendir: async () => { last = ''; return listingOf([]); },
+    deadline: (ms) => {
+      let pass = (): void => {};
+      const late = new Promise<void>((resolve) => { pass = resolve; });
+      deadlines.push({ of: last, ms, pass });
+      last = '';
+      return { late, cancel: () => {} };
+    },
+    ...over,
+  });
+  const callsOn = (p: string) => calls.filter((c) => c.path === p);
+  const passDeadlineOf = (p: string): void => {
+    const at = deadlines.findIndex((x) => x.of === p);
+    assert.ok(at >= 0, `a deadline for ${p} is waiting`);
+    deadlines.splice(at, 1)[0].pass();
+  };
+  return { asked, calls, deadlines, callsOn, passDeadlineOf };
+}
+
+/** `p`'s verdict once it settles; null while it has not. */
+function watch(p: Promise<EmptyVerdict>): () => EmptyVerdict | null {
+  let verdict: EmptyVerdict | null = null;
+  void p.then((v) => { verdict = v; });
+  return () => verdict;
+}
+
+test('a folder two requests ask at once is asked by one call: the second waits for its answer, and one folder that hangs silences only itself (the U-4c review, F2.2)', async () => {
+  // Two calls on one stuck folder once counted as the drive's two held calls: every folder on the
+  // drive was then withheld for as long as the call hung (M-A, back by another door).
+  const h = byHand(() => '/', (p) => p !== '/x/hang');
+  const a = emptyCheckSession(true);
+  assert.deepEqual(await a.look('/x/ok'), { empty: true }, 'the drive is heard from');
+  const first = watch(a.look('/x/hang'));
+  await turns(20);
+  const second = watch(stillEmptyFolder('/x/hang', true)); // another request, while the first call is out
+  await turns(20);
+  assert.equal(h.callsOn('/x/hang').length, 1, 'one call on the folder, not one per request');
+  assert.equal(second(), null, 'the second waits for that call');
+  h.passDeadlineOf('/x/hang');
+  await turns(20);
+  assert.match(reasonOf(first() ?? { empty: true }), /it did not answer within/);
+  assert.match(reasonOf(second() ?? { empty: true }), /^it did not answer a moment ago/, 'the call it waited for missed its deadline: the folder is silent');
+  assert.equal(h.callsOn('/x/hang').length, 1);
+  assert.deepEqual(await stillEmptyFolder('/x/fine', true), { empty: true }, 'one folder hung, once: the drive is not silent');
+});
+
+test('four looks at once on a drive heard from start at most two calls on it, and with two that did not answer it is asked nothing more (the U-4c review, F2.4)', async () => {
+  // Each call that hangs holds a thread of the I/O pool (8 to 16): four looks once started four
+  // calls on a NAS that died mid-request, though a drive is to hold at most two.
+  const h = byHand(() => '/d', (p) => p === '/d/ok' || p === '/d');
+  const session = emptyCheckSession(true);
+  assert.deepEqual(await session.look('/d/ok'), { empty: true }, 'the drive is heard from');
+  const looks = ['/d/h1', '/d/h2', '/d/h3', '/d/h4'].map((p) => watch(session.look(p)));
+  await turns(20);
+  assert.deepEqual(h.calls.map((c) => c.path), ['/d/h1', '/d/h2'], 'two calls out on the drive; the other looks wait their turn');
+  h.passDeadlineOf('/d/h1');
+  await turns(20);
+  assert.deepEqual(h.calls.map((c) => c.path), ['/d/h1', '/d/h2'], 'one missed its deadline and is still out: no third call starts');
+  h.passDeadlineOf('/d/h2');
+  await turns(20);
+  const verdicts = looks.map((v): EmptyVerdict => v() ?? { empty: true });
+  assert.deepEqual(h.calls.map((c) => c.path), ['/d/h1', '/d/h2'], 'two calls that did not answer: the drive is asked nothing more');
+  assert.deepEqual(verdicts.map(whyOf), ['no-answer', 'no-answer', 'no-answer', 'no-answer'], 'and every look has answered');
+  assert.match(reasonOf(verdicts[0]), /it did not answer within/);
+  assert.match(reasonOf(verdicts[1]), /it did not answer within/);
+  assert.equal(h.asked.filter((p) => p === '/d').length, 1, 'its root asked once, for the first');
+});
+
+test('a call waiting its turn on a drive with two calls out starts once one answers: a drive that answers is never refused for being busy (the U-4c review, F2.4)', async () => {
+  const h = byHand(() => '/d', (p) => p === '/d/ok' || p === '/d/c');
+  const session = emptyCheckSession(true);
+  assert.deepEqual(await session.look('/d/ok'), { empty: true });
+  const a = session.look('/d/a');
+  const b = session.look('/d/b');
+  await turns(20);
+  const c = watch(session.look('/d/c'));
+  await turns(20);
+  assert.equal(c(), null, 'c waits its turn while a and b are out');
+  assert.deepEqual(h.asked, ['/d/ok', '/d/a', '/d/b'], 'and is not asked yet');
+  h.callsOn('/d/a')[0].answer();
+  await turns(20);
+  assert.deepEqual(c(), { empty: true }, 'a answered: c was asked, and it is empty');
+  assert.deepEqual(await a, { empty: true });
+  h.callsOn('/d/b')[0].answer();
+  assert.deepEqual(await b, { empty: true });
+});
+
+test('a call waiting its turn waits as far as its own request\'s budget goes, never unbounded (the U-4c review, F2.4)', async () => {
+  const h = byHand(() => '/d', (p) => p === '/d/ok');
+  const session = emptyCheckSession(true);
+  assert.deepEqual(await session.look('/d/ok'), { empty: true });
+  void session.look('/d/a');
+  void session.look('/d/b');
+  await turns(20);
+  const mark = h.deadlines.length;
+  const c = watch(stillEmptyFolder('/d/c', true)); // another request, with a budget of its own
+  await turns(20);
+  assert.equal(c(), null, 'c waits its turn');
+  const waits = h.deadlines.slice(mark).filter((x) => x.of === '');
+  assert.ok(waits.length > 0, 'its waits are bounded by its budget');
+  for (const w of waits) w.pass();
+  await turns(20);
+  assert.match(reasonOf(c() ?? { empty: true }), /TreeMap gives to looking at folders again ran out/, 'and end when that runs out');
+  assert.deepEqual(h.asked, ['/d/ok', '/d/a', '/d/b'], 'c was never asked');
+});
+
 test('within a request, the first look on a drive goes alone: four at once ask a silent drive once', async () => {
   const drives = twoDrives();
   setEmptyCheckForTests(drives.deps);
