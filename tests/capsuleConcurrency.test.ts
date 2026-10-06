@@ -24,6 +24,7 @@ import { commitCart } from '../src/services/cartCommit';
 import { approvePolicy, listPolicies, listRuns, runDuePolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 import type { AutopilotRun, TimeCapsuleEntry } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
+import { pending, settled } from '../src/utils/backgroundWrites';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
 
@@ -239,6 +240,8 @@ test('a restore finishes without waiting for a capture under way, and is recorde
     await waitFor(() => getCapsuleJob(jobId)?.status !== 'running' || capsuleStoreWaitersForTests() > 0,
       'the restore finishing, or waiting for the capture');
     assert.equal(getCapsuleJob(jobId)?.status, 'complete', `the restore's job did not wait for the capture (${getCapsuleJob(jobId)?.error})`);
+    // The record still to be written outlives the job's "complete", so it is tracked: settled() waits for it.
+    assert.ok(pending().some((w) => w.startsWith('capsuleRestoreRecord ')), `the record waiting is tracked (${pending().join(', ')})`);
     assert.equal(fs.readFileSync(e, 'utf8'), 'the content of e.txt', 'the file is back');
     // Until the capture lets the index go, the copy is still held for the restore that put it back.
     await assert.rejects(startCapsuleRestore([id]), (err: unknown) => {
@@ -258,6 +261,7 @@ test('a restore finishes without waiting for a capture under way, and is recorde
   // By its turn the record is written and the copy let go: forgotten, with nothing left to free.
   assert.deepEqual(await withinHangGuard(forgetting as Promise<unknown>, 'the Forget'), { deleted: true, bytesFreed: 0 },
     'the Forget found the copy put back, recorded and let go - never refused as still being restored');
+  await withinHangGuard(settled(), 'the tracked record settling, once the capture let the index go');
 });
 
 test('a capture that throws lets the index go and unpins its run: the next commit runs, and the first trashed nothing (FG3f review R3)', async () => {

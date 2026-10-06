@@ -26,6 +26,7 @@ import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from
 import { collapseBatch, deepestFirst, shallowestFirst } from './capsuleBatch';
 import { restoreNameKeyFor } from '../utils/volumeNames';
 import { AsyncMutex } from '../utils/asyncMutex';
+import { trackWrite } from '../utils/backgroundWrites';
 import { recordRestorePartial, restorePlacementHooks, sweepRestoreLeftovers, whileRestoring } from './restoreLeftovers';
 
 /**
@@ -3026,7 +3027,8 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
   // The index is held — a capture copying, for as long as its copies take (FG3h A4): the restore's job
   // went on waiting for it, its dialog still "restoring" with every byte home. Now what it put back is
   // recorded once the index is free, and the job goes on; the copy stays pinned until then, so nothing
-  // evicts, forgets or restores it a second time meanwhile.
+  // evicts, forgets or restores it a second time meanwhile. It writes the index after the job has said
+  // complete, so it is tracked: `settled()` waits for it, and a read of the index is not raced blind.
   recordingRestored.add(entry.id);
-  void record(true);
+  trackWrite('capsuleRestoreRecord', record(true));
 }
