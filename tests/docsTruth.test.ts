@@ -161,3 +161,26 @@ test('the README says where each end of a failed native walk says why: the engin
   assert.match(para, /the built-in walker scans again from the start, and the Dashboard's engine line says why/, 'a walk again: the engine line');
   assert.match(para, /the scan ends instead, with a message that gives the reason and how to scan it anyway/, 'a refusal: the scan\'s own message');
 });
+
+/* ─────────────── ULTRA-ROADMAP: a release granted ahead of the phases ─────────────── */
+
+test('ULTRA-ROADMAP names every release granted ahead of the phases in its standing rule, its approved exceptions and its order of work (review F1.5)', () => {
+  // The record: each "Changed for X" under the Release bullet is the owner's
+  // grant of a release before every phase is finished. The standing rule a
+  // later session reads, the exceptions listed under it and step 11 of the
+  // order must each name it, or that release reads as a breach of the rule.
+  const doc = read('ULTRA-ROADMAP.md');
+  lineStarting(doc, '- **Release:** none until every phase is finished');
+  const granted = [...doc.matchAll(/^ {2}- \*\*Changed for (\d+\.\d+\.\d+) \([^)]+\):\*\*/gm)].map((m) => m[1]);
+  assert.ok(granted.length >= 1, 'the Release bullet records a release granted ahead of the phases');
+  const rule = lineStarting(doc, '- **No release until every phase is complete,**');
+  const exceptions = from(doc, '**Exceptions you approved:**');
+  const approved = exceptions.slice(0, exceptions.indexOf('\n---')).split('\n').filter((l) => l.startsWith('- '));
+  const step11 = lineStarting(doc, '11. **Phase T step 2');
+  for (const v of granted) {
+    const ver = v.replace(/\./g, '\\.');
+    assert.match(rule, new RegExp(`\\(except ${ver}, released ahead of the remaining phases at your request`), `the standing rule names ${v}`);
+    assert.ok(approved.some((l) => l.includes(v) && l.includes('No release until every phase is complete')), `the exceptions you approved list ${v}`);
+    assert.match(step11, new RegExp(`\\(${ver} excepted`), `step 11 names ${v}`);
+  }
+});

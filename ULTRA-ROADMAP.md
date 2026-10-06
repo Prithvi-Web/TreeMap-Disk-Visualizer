@@ -100,7 +100,7 @@ Continue building TreeMap. Read ULTRA-ROADMAP.md at the repo root first: it is t
 8. **Phase 6: near-duplicate images, fast tier.** Then its gate, then CI green on four legs.
 9. **Phase 7: near-duplicate deep tier (opt-in).** Then its gate, then CI green on four legs.
 10. **Phase 8:** UI, docs and the CI performance gate. Its frame, packaging and performance measurements are taken **on the step-1 Tauri build**. Its gate must pass and CI must be green on four legs.
-11. **Phase T step 2 (the draft plan's Phase R), by default here.** Your rule says no release until every phase is complete, and Phase T is a phase of this roadmap. So by default step 2 runs before the release. OD1 asks whether you want to change that. Step 2 ends with its own gate and CI green on four legs.
+11. **Phase T step 2 (the draft plan's Phase R), by default here.** Your rule says no release until every phase is complete, and Phase T is a phase of this roadmap. So by default step 2 runs before the release (5.2.0 excepted, at your request: see the Release bullet at the top). OD1 asks whether you want to change that for the releases after it. Step 2 ends with its own gate and CI green on four legs.
 12. **On the final build:** Phase 8's frame, packaging and performance measurements and its Definition-of-Done audit (T26) run again, so the release is judged on what ships.
 13. **The Track U gate** (below): U1, U2 and U3 each pass on your Mac, on the build that ships.
 14. **Release.**
@@ -625,12 +625,13 @@ Every quality figure is labelled "synthetic corpus" until the owner's real-libra
 - **A correctness test is never "fixed" by loosening its assertion.** Every new assertion is proven by a mutant.
 - **Count, don't time.** Tests assert counts, never wall-clock bounds.
 - **End users never need a Rust toolchain.**
-- **No release until every phase is complete,** including Phase T step 2, with CI green on all four legs after each phase, unless you change this rule in OD1.
+- **No release until every phase is complete,** including Phase T step 2, with CI green on all four legs after each phase, unless you change this rule in OD1 (except 5.2.0, released ahead of the remaining phases at your request of 2 Oct 2026; OD1 stays open for the releases after it).
 - **Ask first** before anything outward-facing: a tag, a release, a new crate or package, a public API shape change, a change to the offload verification algorithm, or anything that needs elevated privileges.
 
 **Exceptions you approved:**
 - TreeMap may `unlink` its own spill files inside `<appData>/scan-spill` (Q1, 28 Sep), an exception to MP §3.1.
 - No legacy fallback in spill or aggregate or above `T_mem` (Q10, P4-14, 28 Sep): a native failure there fails the scan with its reason. Decided, not built. This sits beside "the built-in walker stays" and bears on U1 (OD9).
+- TreeMap 5.2.0, the Electron build, may be released before every phase is complete (your request of 2 Oct 2026, repeated on 6 Oct): an exception to "No release until every phase is complete". It covers 5.2.0 only; OD1 stays open for the releases after it.
 
 ---
 
