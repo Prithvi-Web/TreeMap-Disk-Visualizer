@@ -186,6 +186,63 @@ test('R3: a slow folder on a drive whose root answers is withheld alone — the 
   assert.deepEqual(stats, ['/x/slow', '/', '/x/fine', '/x/slow']);
 });
 
+/** Every listing hangs, its deadline passed, until the test fails it; stats (the drive's root's too) answer at once. On a clock of the test's own. */
+function listingsHang() {
+  let now = 0;
+  const asked: string[] = [];
+  let failListing: (code: string) => void = () => {};
+  let lastHung = false;
+  setEmptyCheckForTests({
+    now: () => now,
+    driveOf: async () => '/nas',
+    lstat: async (p) => { asked.push(`stat ${p}`); lastHung = false; return aFolder; },
+    opendir: (p) => {
+      asked.push(`list ${p}`);
+      lastHung = true;
+      return new Promise((_, reject) => { failListing = (code) => reject(failure(code)); });
+    },
+    deadline: () => {
+      const late = lastHung ? Promise.resolve() : new Promise<void>(() => {});
+      lastHung = false;
+      return { late, cancel: () => {} };
+    },
+  });
+  return { asked, fail: (code: string) => failListing(code), advance: (ms: number) => { now += ms; } };
+}
+
+/** A listing of `offered` hangs, then fails with a drive's own error: `next` is not asked for a minute; after ENOENT, at once. */
+async function silenceAfterListingFails(offered: string, next: string, said: RegExp): Promise<void> {
+  for (const code of ['ETIMEDOUT', 'EIO']) {
+    const h = listingsHang();
+    assert.equal(whyOf(await stillEmptyFolder(offered, true)), 'no-answer');
+    h.fail(code);
+    await settle();
+    const asked = h.asked.length;
+    h.advance(SILENT_DRIVE_MEMORY_MS - 1);
+    assert.match(reasonOf(await stillEmptyFolder(next, true)), said, `${offered}, ${code}`);
+    assert.equal(h.asked.length, asked, `${offered}, ${code}: nothing is asked within the minute`);
+    h.advance(1);
+    await stillEmptyFolder(next, true);
+    assert.equal(h.asked[asked], `stat ${next}`, `${offered}, ${code}: asked again once the minute is up`);
+  }
+  const h = listingsHang();
+  await stillEmptyFolder(offered, true);
+  h.fail('ENOENT');
+  await settle();
+  const asked = h.asked.length;
+  await stillEmptyFolder(next, true);
+  assert.equal(h.asked[asked], `stat ${next}`, `${offered}, ENOENT: an answer, so asked again at once`);
+}
+
+// A listing's failure reaches the silence wrapped (it could not be opened: NotOpened), unlike a stat's (U-4c review, F1.7).
+test('a drive\'s own root offered, whose listing hangs and then fails with the drive\'s own error, keeps the drive silent a minute; ENOENT lifts it at once (U-4c review, F1.7)', async () => {
+  await silenceAfterListingFails('/nas', '/nas/inner', /the drive it is on did not answer a moment ago/);
+});
+
+test('a folder whose listing hangs and then fails with the drive\'s own error is not asked for a minute; ENOENT lifts it at once (U-4c review, F1.7)', async () => {
+  await silenceAfterListingFails('/nas/a', '/nas/a', /^it did not answer a moment ago/);
+});
+
 /** A listing of the test's own that hands out `entries`, then the end. */
 const listingOf = (entries: Dirent[]) => {
   const rest = [...entries];
