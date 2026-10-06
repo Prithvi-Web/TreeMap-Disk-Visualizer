@@ -26312,8 +26312,19 @@ function cityAgeWords(days) {
   return `${years.toFixed(years < 10 ? 1 : 0)} years ago`;
 }
 
+/**
+ * A click on a building: one level per click, the owner's rule for every map
+ * layout (QA D26, B11). The hit is the deepest building under the pointer —
+ * from /Applications a click on "Kotlin" went IntelliJ IDEA.app › Contents ›
+ * plugins › Kotlin at once, while Esc climbs back one — so anything below the
+ * next level opens the folder one level down that holds it, through the
+ * map's own step (tmStepToward). A folder directly here opens itself.
+ */
 function cityDrillInto(node) {
-  if (!node || node.type !== 'dir') return;
+  if (!node) return;
+  const step = tmStepToward(state.treemap.rootPath, node.path);
+  if (step && step !== node.path) { loadCity(step); return; }
+  if (node.type !== 'dir') return;
   loadCity(node.path);
 }
 

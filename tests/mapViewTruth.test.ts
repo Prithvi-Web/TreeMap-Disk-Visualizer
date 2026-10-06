@@ -265,6 +265,32 @@ test('B37: the dashed "drillable" border is drawn only on containers the server 
     'the badge pass asks the same question as the click');
 });
 
+/** Click a Disk City building while `rootPath` is on screen; report the folders the city loaded. */
+function cityClickOn(node: { path: string; type: string } | null, rootPath = '/r') {
+  const loaded: string[] = [];
+  const drill = load<(n: unknown) => void>(['cityDrillInto', 'tmStepToward', 'tmIsInside'], {
+    state: { treemap: { rootPath } },
+    loadCity: (p: string) => { loaded.push(p); },
+  }, 'cityDrillInto');
+  drill(node);
+  return loaded;
+}
+
+test('B11: Disk City opens one level per click too — the next folder down under the pointer, never the deepest building', () => {
+  // B11: from /Applications one click on "Kotlin" landed in IntelliJ IDEA.app/
+  // Contents/plugins/Kotlin, four levels at once, while the four map layouts
+  // step one level and Esc climbs back one (owner, D26: one level per click).
+  assert.deepEqual(cityClickOn({ path: '/Applications/IntelliJ IDEA.app/Contents/plugins/Kotlin', type: 'dir' }, '/Applications'),
+    ['/Applications/IntelliJ IDEA.app'], 'a building four levels down opens the folder one level down that holds it');
+  assert.deepEqual(cityClickOn({ path: '/r/a', type: 'dir' }), ['/r/a'], 'a folder directly here opens itself');
+  assert.deepEqual(cityClickOn({ path: '/r/a/b/movie.mov', type: 'file' }), ['/r/a'],
+    'a file building inside a folder is a click on that folder, one level down');
+  assert.deepEqual(cityClickOn({ path: '/r/notes.txt', type: 'file' }), [], 'a file directly here has no level to open');
+  assert.deepEqual(cityClickOn(null), [], 'a click on open ground does nothing');
+  assert.deepEqual(cityClickOn({ path: 'C:\\Users\\me\\AppData\\Local\\Temp', type: 'dir' }, 'C:\\Users\\me'),
+    ['C:\\Users\\me\\AppData'], 'separator-aware, as the map is');
+});
+
 test('D26: the tour describes the click the map actually performs', () => {
   const start = INDEX.indexOf("tour.step === 'map'");
   assert.notEqual(start, -1, 'the map step of the tour exists');
