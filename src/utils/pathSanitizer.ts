@@ -4,6 +4,7 @@ import fs from 'fs';
 import { appDataDir } from '../services/storage';
 import { SPILL_DIR } from '../services/spillSweep';
 import { meansAbsent } from './errno';
+import { isThisMachine } from './win32Host';
 
 /**
  * Path validation shared by the pathGuard middleware and the services.
@@ -65,31 +66,6 @@ const WIN32_PREFIX_BEFORE_DRIVE = /^[\\/]{2}[?.][\\/](?=[a-z]:[\\/])/i;
 const WIN32_UNC_SHARE = /^[\\/]{2}(?:[?.][\\/]unc[\\/])?([^\\/]+)[\\/]([^\\/]+)(?=[\\/]|$)/i;
 /** The shares Windows makes of every drive (`C$`) and of the Windows folder (`ADMIN$`). */
 const WIN32_ADMIN_SHARE = /^(?:[a-z]|admin)\$$/i;
-/** A host that is always this machine: loopback by name or address. */
-const WIN32_LOOPBACK_HOST = /^(?:localhost|127(?:\.\d{1,3}){3}|::1|\[::1\]|0--1\.ipv6-literal\.net)$/i;
-const IPV4_LITERAL = /^\d{1,3}(?:\.\d{1,3}){3}$/;
-
-/** This machine's own names and addresses, as a UNC path may name it: asked only of an admin share's host. */
-function ownHostNames(): string[] {
-  const addresses = Object.values(os.networkInterfaces()).flatMap((list) => (list ?? []).map((i) => i.address));
-  return [os.hostname(), process.env.COMPUTERNAME ?? '', ...addresses].filter((n) => n.length > 0);
-}
-
-/**
- * Whether a UNC host is this machine (the SEC-2 review, LOW-3): loopback, `.`, or one of its own
- * names — compared by the first label, so `mypc.corp.example.com` is `MYPC` — or addresses.
- */
-function isThisMachine(host: string, ownHosts: readonly string[] | undefined): boolean {
-  const h = host.toLowerCase().replace(/(.)\.$/, '$1'); // a fully qualified name's final dot, never `.` itself
-  if (h === '.' || WIN32_LOOPBACK_HOST.test(h)) return true;
-  const literal = IPV4_LITERAL.test(h) || h.includes(':');
-  return (ownHosts ?? ownHostNames()).some((own) => {
-    const o = own.toLowerCase();
-    if (literal || IPV4_LITERAL.test(o) || o.includes(':')) return o === h;
-    return o.split('.')[0] === h.split('.')[0];
-  });
-}
-
 export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): string | null {
   if (platform === 'darwin') return DARWIN_ALIAS_ROOT.exec(p)?.[0] ?? null;
   if (platform !== 'win32' || p.startsWith('cloud://')) return null; // a cloud identifier's colon is its scheme's
@@ -97,7 +73,8 @@ export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.
   if (WIN32_DEVICE_PREFIX.test(p) && !WIN32_FILE_BEHIND_PREFIX.test(p)) return p.slice(0, 4);
   // This machine's own admin share is its drive (or Windows folder) again: \\localhost\C$\x is C:\x.
   const share = WIN32_UNC_SHARE.exec(p);
-  if (share && WIN32_ADMIN_SHARE.test(share[2]) && isThisMachine(share[1], ownHosts)) return share[0];
+  // Win32 drops a name's trailing dots and spaces, so `C$.` is `C$` (the SEC-2b review, F1.4).
+  if (share && WIN32_ADMIN_SHARE.test(share[2].replace(/[ .]+$/, '')) && isThisMachine(share[1], ownHosts)) return share[0];
   // A name with a colon past the root is an NTFS stream of a file or folder, never a path's own
   // name: `System32::$INDEX_ALLOCATION` is the folder itself, `f.txt:x` a stream inside the file.
   const rest = p.slice(path.win32.parse(p).root.length);

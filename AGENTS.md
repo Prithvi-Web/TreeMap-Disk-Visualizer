@@ -614,7 +614,9 @@ read-what-you-saw) permission to act.
   drive-letter path (`\\?\C:\…`, the drive's root `\\?\C:\` included) or a
   UNC path (`\\?\UNC\server\share\…`) passes. This machine's own admin
   shares (`\\localhost\C$\…`, `\\127.0.0.1\c$`, `\\<its name>\ADMIN$`, also
-  behind `\\?\UNC\`) are its drives again, and a name with a colon past the
+  behind `\\?\UNC\`, its address written any way Windows reads one —
+  `\\127.1\`, `\\2130706433\`, `\\fe80--1s4.ipv6-literal.net\` — and the
+  share with a trailing dot or space, `C$.`) are its drives again, and a name with a colon past the
   root is an NTFS stream (`System32::$INDEX_ALLOCATION` is the folder
   itself): both are second names too. The scanned-root rule refuses such a spelling on its own as well
   (`OUTSIDE_SCAN_ROOT` to a caller that skipped the sanitizer), including

@@ -287,6 +287,52 @@ test('Windows: this machine’s own admin shares and an NTFS stream name are sec
   }
 });
 
+test('Windows: this machine is known however its address is written — the short, decimal, hex and octal IPv4 forms Windows reads, the ipv6-literal.net form with or without a zone — and an admin share with a trailing dot or space is still one', () => {
+  // Only the exact spellings were known, so \\127.1\C$\…\SAM, \\2130706433\C$ and \\fe80--1.ipv6-literal.net\c$
+  // passed as another machine's shares, and \\localhost\C$.\Windows as an ordinary share (the SEC-2b review, F1.4).
+  const own = ['MYPC', '192.168.1.20', 'fe80::1', '2001:db8::5'];
+  const thisMachine = [
+    '\\\\127.1\\C$\\Windows\\System32\\config\\SAM',
+    '\\\\127.0.1\\C$\\x',
+    '\\\\2130706433\\C$\\Windows',
+    '\\\\0x7f000001\\C$\\x',
+    '\\\\0x7f.1\\c$\\x',
+    '\\\\0177.0.0.1\\C$\\x',
+    '\\\\0.0.0.0\\C$\\x',
+    '\\\\3232235796\\C$\\x', // 192.168.1.20
+    '\\\\192.168.276\\C$\\x', // 192.168.1.20: the last part fills the bytes left
+    '\\\\--1.ipv6-literal.net\\C$\\x',
+    '\\\\0-0-0-0-0-0-0-1.IPV6-LITERAL.NET\\C$\\x',
+    '\\\\--ffff-7f00-1.ipv6-literal.net\\C$\\x', // ::ffff:127.0.0.1
+    '\\\\[0:0:0:0:0:0:0:1]\\C$\\x',
+    '\\\\fe80--1.ipv6-literal.net\\c$\\x',
+    '\\\\fe80--1s4.ipv6-literal.net\\C$\\x',
+    '\\\\FE80-0-0-0-0-0-0-1.ipv6-literal.net\\C$\\x',
+    '\\\\2001-db8-0-0-0-0-0-5.ipv6-literal.net\\C$\\x',
+    '\\\\?\\UNC\\127.1\\C$\\x',
+    '\\\\localhost\\C$.\\Windows',
+    '\\\\localhost\\C$ \\Windows',
+    '\\\\127.0.0.1\\ADMIN$..\\System32',
+  ];
+  const anotherMachine = [
+    '\\\\10.1\\C$\\x', // 10.0.0.1
+    '\\\\3232235797\\C$\\x', // 192.168.1.21
+    '\\\\0x7f.example.com\\C$\\x',
+    '\\\\127.1.example.com\\C$\\x',
+    '\\\\fe80--2.ipv6-literal.net\\C$\\x',
+    '\\\\2001-db8--6.ipv6-literal.net\\C$\\x',
+    '\\\\1-2-3-4-5-6-7-8-9.ipv6-literal.net\\C$\\x',
+    '\\\\localhost\\C$x\\y',
+    '\\\\localhost\\share.\\x',
+    '\\\\256.0.0.1\\C$\\x',
+  ];
+  const wrong = [
+    ...thisMachine.filter((p) => judgeSpelling(p, 'win32', own).secondName === null).map((p) => `${p}: passed as another machine's`),
+    ...anotherMachine.filter((p) => aliasNamespaceOf(p, 'win32', own) !== null).map((p) => `${p}: refused as this machine's`),
+  ];
+  assert.deepEqual(wrong, []);
+});
+
 /* ─────────────── The sanitizer ─────────────── */
 
 test('the sanitizer refuses every second name, PATH_BLOCKED: past the blocklist, onto another drive, or onto a scanned file', { skip: !DARWIN && 'the namespaces are macOS’s; Windows has its own test below' }, () => {
