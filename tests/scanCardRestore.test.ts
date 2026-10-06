@@ -48,7 +48,10 @@ function storage(seed: Record<string, string> = {}) {
 
 type Answers = { caps?: unknown; settings?: unknown };
 function fastRescan(opts: { scanned: string[]; box: string; answers?: Answers | Error }) {
-  const src = slice('/* Feature 5 — fast (incremental) rescan helpers.', '/** Shared scanning chrome');
+  // The box reads its path as the Scan button does (asPath, defined beside
+  // the folder picker), so that comes along from the page too.
+  const src = slice('function asPath(', '\n}\n') + '\n}\n' +
+    slice('/* Feature 5 — fast (incremental) rescan helpers.', '/** Shared scanning chrome');
   const els: Record<string, El> = {};
   const $ = (id: string) => (els[id] ??= el());
   $('pathInput').value = opts.box;

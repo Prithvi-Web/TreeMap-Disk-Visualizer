@@ -1387,9 +1387,12 @@ function scanResultsExpired(err, url) {
 }
 /* ── end results expire ── */
 
-$('scanBtn').addEventListener('click', () => {
+$('scanBtn').addEventListener('click', async () => {
   if (state.scanning) { void stopScan(); return; } // the same button is Stop mid-scan
-  const p = $('pathInput').value.trim();
+  // The folder the box names (boxPath): a trailing space is part of a name —
+  // the picker, Recent and the last scan fill this box as the server spells a
+  // folder (review F2.4, F2.8) — unless no folder has it (F2.9).
+  const p = await boxPath($('pathInput').value);
   if (!p) { toast('Enter a folder path first', 'error'); return; }
   startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
 });

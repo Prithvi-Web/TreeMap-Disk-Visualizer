@@ -253,6 +253,44 @@ let browseOnPick = null; // when set, "Use this folder" hands the path to this i
 // answer is shown: a sleeping NAS answers late (review F1.8). Closing the
 // picker retires every listing still on its way — see browseClosed.
 let browseSeq = 0;
+/** A path as the server reads one (sanitizePath): leading whitespace is paste
+    debris and goes, a trailing space is part of a folder's name and stays.
+    Trimming it turned "Screenshots " (a name macOS and Linux allow, spelled so
+    by the picker, a saved policy or the last scan) into its sibling
+    "Screenshots", or into nothing. Every path box is read this way (review
+    F1.1, F2.1, F2.4, F2.8). */
+function asPath(text) {
+  return String(text ?? '').replace(/^\s+/, '');
+}
+/** List a path someone typed or pasted: as typed first, and only when no
+    folder has that name and it ends in whitespace, without the whitespace. A
+    double-click selection often carries a stray space, invisible in the field
+    and in "Path does not exist"; had it been part of a name, the folder would
+    have been found (review F2.9). Resolves to the listing and the spelling
+    that found it; any other failure is the first answer's. */
+async function listTyped(p) {
+  const list = (q) => api('/api/fs/list?path=' + encodeURIComponent(q));
+  try {
+    return { data: await list(p), spelled: p };
+  } catch (e) {
+    const bare = p.replace(/\s+$/, '');
+    if (!e || e.code !== 'PATH_NOT_FOUND' || !bare || bare === p) throw e;
+    return { data: await list(bare), spelled: bare };
+  }
+}
+/** The folder a path box names, to scan or to clean: the box read by asPath,
+    its trailing whitespace dropped only where listTyped finds no folder with
+    it. Only a path ending in whitespace is looked up; one that cannot be is
+    left as typed, for the scan or the policy to report. */
+async function boxPath(text) {
+  const p = asPath(text);
+  if (p === p.replace(/\s+$/, '')) return p;
+  try {
+    return (await listTyped(p)).spelled;
+  } catch {
+    return p;
+  }
+}
 async function openBrowse(start, onPick = null, title = null) {
   browseOnPick = onPick;
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
@@ -261,7 +299,8 @@ async function openBrowse(start, onPick = null, title = null) {
   chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
     `<button class="pill" data-p="${escapeHtml(d)}">${icon('folder', 12)}${escapeHtml(d.split(/[\\/]/).pop() || d)}</button>`).join('');
   chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
-  await browseTo(start || state.system?.homeDir || '/');
+  // A start comes from a path box, which a person may have typed in.
+  await browseTo(start || state.system?.homeDir || '/', !!start);
 }
 /** Ordinary folders first, dot-folders after them, each in the server's order
     (QA D05: in a home folder .agents, .cache… pushed Documents below the fold). */
@@ -269,8 +308,9 @@ function browseOrder(dirs) {
   return [...dirs.filter((d) => !d.isHidden), ...dirs.filter((d) => d.isHidden)];
 }
 /** List a folder in the picker. True when it opened; a failure is a toast and
-    leaves the picker where it was. */
-async function browseTo(path) {
+    leaves the picker where it was. `typed`: someone typed it (listTyped); a
+    folder the server listed is never looked up under another name. */
+async function browseTo(path, typed = false) {
   const seq = ++browseSeq;
   // A newer listing (a chip, a row, the picker opened again) overtakes any
   // press of "Scan this folder" still opening a typed path, and that press
@@ -278,7 +318,7 @@ async function browseTo(path) {
   // NAS can keep the old listing waiting for minutes (review F2.3, F2.5).
   $('browseUseBtn').disabled = false;
   try {
-    const data = await api('/api/fs/list?path=' + encodeURIComponent(path));
+    const data = typed ? (await listTyped(path)).data : await api('/api/fs/list?path=' + encodeURIComponent(path));
     // A newer listing was asked for, or the picker closed, while this one was
     // on its way: its answer is not shown, and it did not open.
     if (seq !== browseSeq) return false;
@@ -311,14 +351,12 @@ function browseClosed() {
   browseSeq++;
   $('browseUseBtn').disabled = false; // the press it held is retired with it
 }
-/** The path line as a path. Leading whitespace is paste debris and goes; a
-    trailing space is part of a folder's name and stays — the server's own
-    rule (sanitizePath). Trimming it would turn the folder shown, listed by the
-    server as "Screenshots ", into its sibling "Screenshots", or into nothing. */
+/** The path line as a path (asPath): the folder shown, as the server spelled
+    it, until someone edits it. */
 function browseFieldPath() {
-  return $('browseCurrent').value.replace(/^\s+/, '');
+  return asPath($('browseCurrent').value);
 }
-$('browseBtn').addEventListener('click', () => openBrowse($('pathInput').value.trim() || null));
+$('browseBtn').addEventListener('click', () => openBrowse(asPath($('pathInput').value) || null));
 $('emptyBrowseBtn').addEventListener('click', () => openBrowse(null));
 // The path line is the picker's typing route (QA D05) — before the first scan
 // the Scan card's path box is not on screen, so this sheet is the only door.
@@ -326,7 +364,7 @@ $('browseCurrent').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
   const typed = browseFieldPath();
-  if (typed) return browseTo(typed);
+  if (typed) return browseTo(typed, true);
 });
 $('browseUseBtn').addEventListener('click', async () => {
   const btn = $('browseUseBtn');
@@ -339,7 +377,7 @@ $('browseUseBtn').addEventListener('click', async () => {
     // Held while it opens, so a second press cannot act twice. Only this
     // press's own listing hands it back: a newer listing or the picker
     // closing already has, and a newer press may be holding it now.
-    const opening = browseTo(typed);
+    const opening = browseTo(typed, true);
     const mine = browseSeq;
     btn.disabled = true;
     const opened = await opening;

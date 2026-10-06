@@ -387,3 +387,211 @@ test('the field says it can be typed in (D05)', () => {
   assert.match(field![0], /aria-label="[^"]*type a path[^"]*"/i, 'its name says it can be typed in');
   assert.match(modal, /Type a path and press Enter/, 'and the sheet says so in words');
 });
+
+/* ══════════════ A stray trailing space that names no folder (F2.9) ══════════════ */
+
+const DOCS = '/home/u/Documents';
+const list = (p: string) => '/api/fs/list?path=' + encodeURIComponent(p);
+/** The server's answer for a path that is not there (errorHandler: ENOENT). */
+const notFound = () => Object.assign(new Error('Path does not exist'), { code: 'PATH_NOT_FOUND', status: 404 });
+/** Home, Documents, "Screenshots " with its space, "Gone" without one; a folder that refuses to be read; nothing else. */
+const strictListing = (p: string) => {
+  if (p === '/home/u') return HOME;
+  if (p === DOCS) return { path: DOCS, parent: '/home/u', dirs: [] };
+  if (p === '/home/u/Gone') return { path: '/home/u/Gone', parent: '/home/u', dirs: [] };
+  if (p === SHOT) return { path: SHOT, parent: '/home/u', dirs: [] };
+  if (p === '/locked ') return Object.assign(new Error('Permission denied'), { code: 'PERMISSION_DENIED', status: 403 });
+  return notFound();
+};
+
+test('a typed or pasted path whose trailing space names no folder opens the folder without it — Enter, Scan and a pick (review F2.9)', async () => {
+  // A double-click selection in a terminal or a chat often carries a space;
+  // it is invisible in the field and in "Path does not exist".
+  const { rt, $, asked, scanned, use } = browseRuntime(strictListing);
+  await rt.openBrowse(null);
+  $('browseCurrent').value = DOCS + ' ';
+  await $('browseCurrent').listeners.keydown({ key: 'Enter', preventDefault() {} });
+  assert.deepEqual(asked.slice(-2), [list(DOCS + ' '), list(DOCS)], 'as typed first, then without the space');
+  assert.equal(rt.path(), DOCS, 'the folder that exists is the one shown');
+  assert.equal($('browseCurrent').value, DOCS, 'spelled as the server listed it');
+  await rt.openBrowse(null);
+  $('browseCurrent').value = DOCS + ' \t';
+  await use();
+  assert.deepEqual(scanned, [DOCS], '"Scan this folder" scans it');
+  const picked: string[] = [];
+  await rt.openBrowse(null, (p) => { picked.push(p); });
+  $('browseCurrent').value = DOCS + ' ';
+  await use();
+  assert.deepEqual(picked, [DOCS], 'and a pick for Offload or Autopilot takes it');
+});
+
+test('a trailing space is dropped only from a typed path, only after "no such folder", and never from one that exists (review F1.1, F2.9)', async () => {
+  const { rt, $, asked, scanned, toasts, use } = browseRuntime(strictListing);
+  await rt.openBrowse(null);
+  $('browseCurrent').value = SHOT;
+  await use();
+  assert.deepEqual(scanned, [SHOT], 'a folder whose name ends in a space is found as typed');
+  // A row listed as "Gone " whose folder has since gone: its sibling "Gone"
+  // is another folder, not the one clicked.
+  const before = asked.length;
+  assert.equal(await rt.browseTo('/home/u/Gone '), false, 'a listed row whose folder has gone does not open — not even as its sibling');
+  assert.equal(asked.length, before + 1, 'which is never looked up');
+  await rt.openBrowse(null);
+  const n = asked.length;
+  $('browseCurrent').value = '/locked ';
+  await use();
+  assert.equal(asked.length, n + 1, 'a folder that refuses to be read is not tried under another name');
+  assert.ok(toasts.includes('Permission denied'), 'and its own reason is shown');
+  $('browseCurrent').value = '/home/u/Nope ';
+  await use();
+  assert.deepEqual(scanned, [SHOT], 'neither spelling exists: nothing is scanned');
+  assert.equal(toasts[toasts.length - 1], 'Path does not exist', 'and the person is told');
+});
+
+/* ══════════════ The boxes a folder is picked into (F2.1, F2.4, F2.8) ══════════════ */
+
+/** The page's text from one anchor up to (not including) the next. */
+function between(from: string, to: string): string {
+  const start = INDEX.indexOf(from);
+  assert.notEqual(start, -1, `"${from}" is in the page`);
+  const end = INDEX.indexOf(to, start);
+  assert.ok(end > start, `"${to}" follows "${from}"`);
+  return INDEX.slice(start, end);
+}
+
+type BoxEl = FakeEl & { checked?: boolean; hidden?: boolean; querySelector(sel: string): null; click(): void };
+
+/**
+ * The picker, the Scan card (its Scan button, path box and Fast rescan box)
+ * and the Autopilot policy editor, evaluated together from the built page:
+ * the picker fills a box, and the box is read again by everything else.
+ */
+function boxesRuntime(listing: (p: string) => unknown) {
+  const els = new Map<string, BoxEl>();
+  const $ = (id: string) => {
+    if (!els.has(id)) {
+      const el = fakeEl(id) as BoxEl;
+      el.querySelector = () => null;
+      el.click = () => { void el.listeners.click?.(); };
+      els.set(id, el);
+    }
+    return els.get(id)!;
+  };
+  const asked: string[] = [];
+  const sent: { url: string; body: { policy?: { path: string }; policies?: { path: string }[] } }[] = [];
+  const scanned: [string, { incremental?: boolean }][] = [];
+  const toasts: string[] = [];
+  const api = async (url: string, opts?: { body?: string }) => {
+    if (url.startsWith('/api/fs/list')) {
+      asked.push(url);
+      const answer = await listing(decodeURIComponent(url.slice(url.indexOf('path=') + 5)));
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }
+    sent.push({ url, body: JSON.parse(opts?.body ?? '{}') });
+    return url === '/api/autopilot/simulate'
+      ? { items: [], bytesWouldDelete: 0, capBytes: null, wouldBlockReason: null, skipped: [] }
+      : {};
+  };
+  const stored = new Map<string, string>();
+  const localStorage = { getItem: (k: string) => stored.get(k) ?? null, setItem: (k: string, v: string) => { stored.set(k, v); } };
+  const document = {
+    querySelector: (sel: string) => (sel === '#apMatchSeg button[aria-selected="true"]' ? { dataset: { apmatch: 'custom' } } : null),
+    querySelectorAll: () => [],
+  };
+  const browse = between('/* ───────────────────────────── Browse modal ───────────────────────────── */',
+    "$('browseUseBtn').addEventListener('click'") + between("$('browseUseBtn').addEventListener('click'", '\n});\n') + '\n});\n';
+  const src = [
+    browse,
+    braced('function closeModal('),
+    between('function scannedRoots()', 'async function showFastRescanStat'),
+    between("$('scanBtn').addEventListener('click'", "window.addEventListener('beforeunload'"),
+    between('/** Read the dialog back into the wire shape the API validates. */', 'registerView({'),
+  ].join('\n');
+  const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
+  const noop = () => {};
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const rt = new Function(
+    '$', 'api', 'toast', 'escapeHtml', 'startScan', 'stopScan', 'localStorage', 'document',
+    'fxOrbShow', 'fxOrbHide', 'formatBytes', 'formatCount', 'loadAutopilot', 'openPolicyEditor', 'setApMatchKind',
+    `'use strict';
+     const state = { scanning: false, system: { homeDir: '/home/u', commonDirs: [] }, autopilot: { policies: [] } };
+     const GB = 1024 * 1024 * 1024;
+     let apDraft = null;
+     function icon() { return ''; }
+     ${src}
+     return { openBrowse, browseTo, path: () => browsePath, rememberScannedRoot };`,
+  )($, api, (m: string) => { toasts.push(m); }, escapeHtml, (p: string, o: { incremental?: boolean }) => { scanned.push([p, o]); }, noop,
+    localStorage, document, noop, noop, String, String, noop, noop, noop) as {
+    openBrowse: (start: string | null, onPick?: (p: string) => void) => Promise<void>;
+    browseTo: (p: string) => Promise<boolean>;
+    path: () => string | null;
+    rememberScannedRoot: (p: string) => void;
+  };
+  /** A click on a button whose handler may be async; resolves when it has run. */
+  const click = (id: string) => Promise.resolve($(id).listeners.click());
+  const policy = (url: string) => sent.filter((s) => s.url === url).at(-1)!.body;
+  return { rt, $, asked, scanned, toasts, click, policy };
+}
+
+test('a folder picked into the Scan card keeps its trailing space when Scan and Browse… read the box again, and Fast rescan knows it (review F2.4, F2.8)', async () => {
+  const { rt, $, asked, scanned, click } = boxesRuntime(strictListing);
+  await click('browseBtn'); // the box is empty: the picker opens at home
+  await rt.browseTo(SHOT); // the row "Screenshots "
+  await click('browseUseBtn');
+  assert.equal($('pathInput').value, SHOT, 'the box holds the folder as listed');
+  assert.deepEqual(scanned.map(([p]) => p), [SHOT], 'and it is the folder scanned');
+  rt.rememberScannedRoot(SHOT); // what the finished scan records
+  $('pathInput').listeners.input();
+  assert.equal($('fastRescanWrap').hidden, false, 'Fast rescan is offered for the folder scanned before');
+  assert.ok(!$('fastRescan').checked, 'offered, never ticked for the person (QA D45)');
+  $('fastRescan').checked = true; // the person ticks it
+  await click('scanBtn');
+  assert.deepEqual(scanned.map(([p]) => p), [SHOT, SHOT], 'Scan on the card scans that folder again, not its sibling "Screenshots"');
+  assert.equal(scanned[1][1].incremental, true, 'as the fast rescan it offered');
+  await click('browseBtn');
+  assert.equal(asked.at(-1), list(SHOT), 'and Browse… opens the picker at that folder');
+  assert.equal(rt.path(), SHOT);
+});
+
+test('a folder picked for an Autopilot policy is previewed, saved and browsed as listed — never as its sibling (review F2.1)', async () => {
+  const { rt, $, asked, click, policy } = boxesRuntime(strictListing);
+  await click('apBrowseBtn');
+  await rt.browseTo(SHOT);
+  await click('browseUseBtn');
+  assert.equal($('apPath').value, SHOT, 'the box holds the folder as listed');
+  await click('apPreviewBtn');
+  assert.equal(policy('/api/autopilot/simulate').policy!.path, SHOT, 'the preview asks about that folder');
+  await click('apSaveBtn');
+  assert.deepEqual(policy('/api/autopilot/policies').policies!.map((p) => p.path), [SHOT],
+    'and the policy saved cleans it — a sibling "Screenshots" would be trashed on schedule');
+  await click('apBrowseBtn');
+  assert.equal(asked.at(-1), list(SHOT), 'Browse… opens the picker at it again');
+});
+
+test('a stray trailing space typed into the Scan card or the Autopilot folder is dropped only when no folder has it (review F2.9)', async () => {
+  const { rt, $, asked, scanned, toasts, click, policy } = boxesRuntime(strictListing);
+  $('pathInput').value = '   ';
+  await click('scanBtn');
+  assert.equal(toasts.at(-1), 'Enter a folder path first', 'a box of spaces is an empty box');
+  assert.equal(scanned.length, 0, 'and nothing is scanned');
+  $('pathInput').value = '  ' + DOCS + ' ';
+  await click('scanBtn');
+  assert.deepEqual(scanned.map(([p]) => p), [DOCS], 'the folder that exists is scanned');
+  $('pathInput').value = SHOT;
+  await click('scanBtn');
+  assert.deepEqual(scanned.map(([p]) => p), [DOCS, SHOT], 'a folder whose name ends in a space is scanned as typed');
+  $('pathInput').value = '/locked ';
+  await click('scanBtn');
+  assert.deepEqual(scanned.at(-1)![0], '/locked ', 'one that cannot be looked up is left as typed, for the scan to report');
+  const lookups = asked.length;
+  $('pathInput').value = DOCS;
+  await click('scanBtn');
+  assert.equal(asked.length, lookups, 'a path with nothing at its end to doubt is not looked up');
+  $('pathInput').value = DOCS + ' ';
+  await click('browseBtn');
+  assert.equal(rt.path(), DOCS, 'Browse… opens the folder that exists');
+  $('apPath').value = DOCS + ' ';
+  await click('apSaveBtn');
+  assert.deepEqual(policy('/api/autopilot/policies').policies!.map((p) => p.path), [DOCS], 'a policy is saved for the folder that exists');
+});

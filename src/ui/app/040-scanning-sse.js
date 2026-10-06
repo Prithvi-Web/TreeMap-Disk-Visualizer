@@ -217,7 +217,9 @@ async function refreshFastRescanPlan() {
 }
 function maybeShowFastRescan() {
   const wrap = $('fastRescanWrap'); if (!wrap) return;
-  const p = $('pathInput').value.trim();
+  // Read as the Scan button reads it (asPath): a root remembered as
+  // "Screenshots " is known by that name (review F2.4).
+  const p = asPath($('pathInput').value);
   const show = !!p && scannedRoots().has(p) && fastRescanNative !== true;
   wrap.hidden = !show;
   // Never ticked for the person: it can be the slow path, so it is their
