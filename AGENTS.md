@@ -871,7 +871,12 @@ read-what-you-saw) permission to act.
   is, so a path spelled through a link (the root itself, or a folder above it)
   that leads outside every allowed root is refused before anything is walked;
   `protectedPaths` can
-  never be trashed/offloaded (nor anything containing them); the byte cap
+  never be trashed/offloaded (nor anything containing them). A destructive
+  path is held to both lists where it really is, as the scanned-root rule
+  holds it — a link in its parents followed, the macOS Data volume's
+  spelling, a name in another case — so no other spelling of a protected file
+  reaches it, and a link in an allowed root does not lead out of it; an entry
+  written through a link holds the folder it leads to too. The byte cap
   refuses any single oversized operation. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" }`. An entry may begin with `~` for your home
