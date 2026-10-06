@@ -301,6 +301,25 @@ test('MEDIUM-2: a drill-in cancels the chain still scoring the folder left behin
     'one repaint, for the new folder\'s scores; the cancelled chain repaints nothing, though its first batch had landed');
 });
 
+test('MEDIUM-2: a new scan of the same folder cancels the chain still scoring the old one, request in flight included (QA-6b review F1.6)', async () => {
+  // A rescan keeps the folder, the renderer and the colouring: only the scan
+  // id tells the two chains apart, and the old one's 2,000-path request was
+  // left to run until a later check stopped the chain after it.
+  const h = harness(SERVER, { batch: 2 });
+  h.cells = files(6); // three batches
+  h.fetchScoresForTreemap();
+  assert.equal(h.asked.length, 1, 'control: the first batch of the old scan is out');
+  h.state.scanId = 's2'; // the rescan lands; its draw asks for its own cells
+  h.fetchScoresForTreemap();
+  assert.equal(h.signals[0]?.aborted, true, 'the old scan\'s request in flight is cancelled at once');
+  assert.equal(h.signals[1]?.aborted, false, 'the new scan\'s is not');
+  await turns(60);
+  assert.deepEqual(h.asked.slice(1), [['/r/f0', '/r/f1'], ['/r/f2', '/r/f3'], ['/r/f4', '/r/f5']],
+    'the new scan asks for every cell itself, and the old chain sends nothing more');
+  assert.equal(h.reclaim.failed.size, 0, 'the cancelled request is not remembered as a failure');
+  assert.equal(h.note(), '');
+});
+
 test('MEDIUM-2: a cell the cancelled chain held in flight is asked for by its replacement at once', async () => {
   const h = harness(SERVER, { batch: 2 });
   h.cells = [{ n: { path: '/r/a/x0' } }, { n: { path: '/r/f1' } }, ...files(2, '/r/g')];
