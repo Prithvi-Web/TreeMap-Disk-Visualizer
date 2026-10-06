@@ -335,3 +335,36 @@ test('every quarter of a full year is on screen in the calendar card at the desk
   assert.ok(width(675).c >= 8, `at 1024×768 a day is still a ${width(675).c.toFixed(2)}px target`);
   assert.equal(width(1400).c, 12, 'and a wide card keeps the full 12 px cells');
 });
+
+/* ══════════════ B30 — the preview-after banner uses its width, and its button is one line ══════════════ */
+
+test('the "Preview after" banner may use its whole max-width, and "Exit preview" never wraps (B30)', () => {
+  // QA: with the cart closed the banner re-centred at only 568 px of a
+  // 1,100 px map and wrapped to three lines, its button to two. An absolute
+  // box at `left: 50%` with an auto width shrinks to fit the room right of
+  // its left edge — HALF the map — so it wrapped long before its own
+  // max-width. A max-content width is limited only by that max-width.
+  const banner = declsFor('.tm-preview-banner');
+  const open = declsFor('body.cart-open .tm-preview-banner');
+  assert.equal(banner.get('position'), 'absolute');
+  const states: Array<[string, Map<string, string>]> = [
+    ['cart closed', banner],
+    ['cart open', new Map([...banner, ...open])],
+  ];
+  const pct = (v: string, W: number) => cssPx(v.replace(/(\d+(?:\.\d+)?)%/g, (_m, n: string) => `${(Number(n) / 100) * W}px`), W);
+  for (const W of [700, 900, 1150, 1400]) { // the map's width, 1024 to wide windows
+    for (const [label, d] of states) {
+      const maxW = pct(d.get('max-width')!, W);
+      const left = pct(d.get('left')!, W);
+      const width = d.get('width');
+      // Shrink-to-fit for an absolute box with `right: auto` is capped by the
+      // room from its left edge to the containing block's right edge.
+      const longest = width === 'max-content' ? maxW : Math.min(maxW, W - left);
+      assert.equal(longest, maxW, `${label}, ${W}px map: a line of the banner can run ${longest.toFixed(0)}px of its ${maxW.toFixed(0)}px max-width`);
+    }
+  }
+  const exit = declsFor('.tm-preview-banner #tmPreviewExit');
+  assert.equal(exit.get('white-space'), 'nowrap', '"Exit preview" stays one line');
+  assert.equal(exit.get('flex'), 'none', 'and the message wraps before the button gives up width');
+  assert.match(INDEX, /<button class="pill" id="tmPreviewExit">Exit preview<\/button>/, 'the button is the one in the banner');
+});

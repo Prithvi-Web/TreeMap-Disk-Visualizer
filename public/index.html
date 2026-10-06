@@ -2576,9 +2576,14 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
   box-shadow: var(--shadow-2); font-size: 12.5px; color: var(--text-1);
-  max-width: calc(100% - 28px); }
+  /* max-content: an absolute box at left: 50% with an auto width shrinks to
+     the room right of its left edge — half the map — and wrapped to three
+     lines at 568 px of a 1,100 px map (QA B30). Now only max-width binds. */
+  width: max-content; max-width: calc(100% - 28px); }
 .tm-preview-banner[hidden] { display: none; }
 .tm-preview-banner .ic { color: var(--warn); flex: none; }
+/* One line, always: the message wraps before the button gives up width. */
+.tm-preview-banner #tmPreviewExit { flex: none; white-space: nowrap; }
 .tm-preview-banner #tmPreviewText { min-width: 0; line-height: 1.4; }
 .tm-preview-banner b { font-weight: 700; }
 /* Padded below the banner (QA D64): the JS measures it into --tm-preview-pad. */
