@@ -415,7 +415,10 @@ function exportButton(): FakeBtn {
 }
 
 type FakeMenu = {
-  html: string; buttons: FakeBtn[]; divs: Array<ReturnType<typeof fakeEl>>; style: Record<string, string>; offsetHeight: number;
+  html: string; buttons: FakeBtn[]; divs: Array<ReturnType<typeof fakeEl>>;
+  /** The `.ctx-list` the entries scroll in, when what was written has one. */
+  list: ReturnType<typeof fakeEl> | null;
+  style: Record<string, string>; offsetHeight: number;
   attrs: Record<string, string>;
   innerHTML: string; querySelectorAll(sel: string): unknown[]; querySelector(sel: string): FakeBtn | null;
   setAttribute(k: string, v: string): void; getAttribute(k: string): string | null; contains(el: unknown): boolean;
@@ -427,11 +430,12 @@ type FakeMenu = {
  * — anything else throws rather than quietly answering the buttons.
  */
 function fakeMenu(): FakeMenu {
-  const menu: FakeMenu = { html: '', buttons: [], divs: [], style: {}, offsetHeight: 120, attrs: {},
+  const menu: FakeMenu = { html: '', buttons: [], divs: [], list: null, style: {}, offsetHeight: 120, attrs: {},
     set innerHTML(v: string) {
       menu.html = v;
       menu.buttons = parseButtons(v);
       menu.divs = [...v.matchAll(/<div class="div"><\/div>/g)].map(() => fakeEl('DIV', { class: 'div' }));
+      menu.list = /^<div class="ctx-list" role="none">[\s\S]*<\/div>$/.test(v) ? fakeEl('DIV', { class: 'ctx-list', role: 'none' }) : null;
     },
     get innerHTML() { return menu.html; },
     querySelectorAll(sel: string) {
@@ -447,7 +451,8 @@ function fakeMenu(): FakeMenu {
     },
     setAttribute(k, v) { menu.attrs[k] = String(v); },
     getAttribute(k) { return k in menu.attrs ? menu.attrs[k] : null; },
-    contains: (el: unknown) => el === menu || menu.buttons.includes(el as FakeBtn) || menu.divs.includes(el as ReturnType<typeof fakeEl>) };
+    contains: (el: unknown) => el === menu || (!!menu.list && el === menu.list) || menu.buttons.includes(el as FakeBtn)
+      || menu.divs.includes(el as ReturnType<typeof fakeEl>) };
   return menu;
 }
 
@@ -994,26 +999,57 @@ test('LOW-4: a menu taller than the window opens at its top edge, never above it
     document: fakeDoc, window: { innerWidth: 200, innerHeight: 900 },
   }, 'ctxMenuShow');
   const m = fakeMenu();
-  narrow(m, { label: 'x', x: 150, y: 20 });
+  narrow(m, { label: 'x', html: '', x: 150, y: 20 });
   assert.equal(m.style.left, '8px', 'and never off the left edge of a window narrower than the menu');
 });
 
-test('LOW-4: the menu scrolls inside a short window, and scrolling it does not close it', () => {
-  const at = INDEX.indexOf('#ctxMenu { position: fixed;');
-  assert.notEqual(at, -1);
-  const rule = INDEX.slice(at, INDEX.indexOf('}', at));
+/** A CSS rule of the built page, from its selector to its closing brace. */
+function cssRule(selector: string): string {
+  const at = INDEX.indexOf(`${selector} {`);
+  assert.notEqual(at, -1, `the ${selector} rule is in the built page`);
+  return INDEX.slice(at, INDEX.indexOf('}', at));
+}
+
+test('LOW-4: the menu\'s entries scroll inside a short window, in a list inside the panel — the frosted panel itself never scrolls (QA-6b review F1.11)', () => {
+  // #ctxMenu is a lensed surface: its frost is .lg::before and its ring
+  // .lg::after, both absolutely positioned against it. Made the scroller, it
+  // scrolled them away with the entries — the bottom of a scrolled menu sat
+  // on the bare map and the ring's edge crossed the list. The entries scroll
+  // in .ctx-list instead, as a sheet's body scrolls inside .modal.
+  assert.ok(INDEX.includes("['#ctxMenu',"), 'control: #ctxMenu is one of the liquid-glass engine\'s surfaces');
+  const panel = cssRule('#ctxMenu');
+  assert.doesNotMatch(panel, /overflow/, 'the panel is not a scroll container');
+  assert.doesNotMatch(panel, /max-height/, 'nor capped: its list is');
+  const pad = Number(/padding:\s*(\d+)px;/.exec(panel)![1]);
+  const border = Number(/border:\s*(\d+)px solid/.exec(panel)![1]);
   const edge = Number(load<number>(['CTX_MENU_EDGE'], {}, 'CTX_MENU_EDGE'));
-  assert.match(rule, new RegExp(`max-height:\\s*calc\\(100vh - ${2 * edge}px\\)`), 'no taller than the window less the edge kept above and below');
-  assert.match(rule, /overflow-y:\s*auto/, 'and what does not fit scrolls');
+  const list = cssRule('#ctxMenu .ctx-list');
+  const cap = 2 * edge + 2 * pad + 2 * border;
+  assert.match(list, new RegExp(`max-height:\\s*calc\\(100vh - ${cap}px\\)`),
+    `the list is no taller than the window less the edge kept above and below and the panel's padding and border (${cap} px)`);
+  assert.match(list, /overflow-y:\s*auto/, 'and what does not fit scrolls there');
+  // Every menu is written through ctxMenuShow, which puts its entries in that list.
+  const { h, more } = foldedTrail();
+  more.click();
+  assert.ok(h.menu.list, `the "…" menu's entries are inside .ctx-list: ${h.menu.html.slice(0, 60)}`);
+  assert.equal(h.menu.buttons.length, 5, 'all of them');
+  h.showCtxMenu(40, 50, { path: '/System/a.mov', name: 'a.mov', type: 'file' });
+  assert.ok(h.menu.list, 'and the right-click menu\'s');
+  h.exportClick({ stopPropagation() {}, currentTarget: exportButton() });
+  assert.ok(h.menu.list, 'and Export\'s');
+});
+
+test('LOW-4: scrolling the menu\'s list does not close it; a scroll anywhere else does', () => {
   // The capture-phase scroll listener closed the menu on ANY scroll — its own list's included.
   const menu = fakeMenu();
-  menu.style.display = 'block';
-  const onScroll = load<(e: { target: unknown }) => void>(['ctxMenuOnScroll', ...CTX_MENU_DECLS], {
-    $: () => menu, document: fakeDoc,
-  }, 'ctxMenuOnScroll');
-  onScroll({ target: menu });
-  assert.equal(menu.style.display, 'block', 'scrolling the menu itself leaves it open');
-  onScroll({ target: { tagName: 'MAIN' } });
+  const page = load<{ show: (m: FakeMenu, o: unknown) => void; onScroll: (e: { target: unknown }) => void }>(['ctxMenuOnScroll', ...CTX_MENU_DECLS], {
+    $: () => menu, document: fakeDoc, window: { innerWidth: 1440, innerHeight: 900 },
+  }, '{ show: ctxMenuShow, onScroll: ctxMenuOnScroll }');
+  page.show(menu, { label: 'x', html: '<button>a</button>', x: 10, y: 10 });
+  assert.ok(menu.list, 'control: the entries are in their list');
+  page.onScroll({ target: menu.list });
+  assert.equal(menu.style.display, 'block', 'scrolling the list leaves the menu open');
+  page.onScroll({ target: { tagName: 'MAIN' } });
   assert.equal(menu.style.display, 'none', 'a scroll anywhere else still closes it');
   assert.ok(INDEX.includes("document.addEventListener('scroll', ctxMenuOnScroll, true);"), 'and that is the listener the page installs');
 });

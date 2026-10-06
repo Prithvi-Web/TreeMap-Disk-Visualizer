@@ -2583,11 +2583,16 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 #tooltip .t-line { color: var(--text-2); margin-top: 3px; word-break: break-all; line-height: 1.45; }
 #tooltip .t-strong { color: var(--text-1); font-weight: 600; }
 #ctxMenu { position: fixed; z-index: 210; min-width: 210px; padding: 5px; display: none;
-  /* Never taller than the window less CTX_MENU_EDGE above and below; the rest scrolls (QA-6 review LOW-4). */
-  max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 24px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-3); }
+/* The entries scroll here, never #ctxMenu itself: the panel's frost and ring
+   are its .lg::before and ::after, and a scrolling panel carried them away
+   with the entries (QA-6b review F1.11) — as .modal's body scrolls inside
+   the sheet. No taller than the window less CTX_MENU_EDGE above and below
+   (16px) and the panel's 5px padding and 1px border on each side (12px);
+   the rest scrolls (QA-6 review LOW-4). */
+#ctxMenu .ctx-list { max-height: calc(100vh - 28px); overflow-y: auto; overscroll-behavior: contain; }
 #ctxMenu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
   background: transparent; color: var(--text-1); font-size: 13px; padding: 8px 11px;
   border-radius: 8px; cursor: var(--cur-hand); transition: background var(--dur-1) var(--ease); }
@@ -10177,10 +10182,10 @@ function crumbsPaint(host, crumbs, fold, onPick) {
  */
 function showCrumbMenu(anchor, folded, onPick) {
   const menu = $('ctxMenu');
-  menu.innerHTML = folded.map((c) =>
+  const html = folded.map((c) =>
     `<button data-p="${escapeHtml(c.path)}" title="${escapeHtml(c.path)}">${icon('folder', 15)}${escapeHtml(c.name)}</button>`).join('');
   const r = anchor.getBoundingClientRect();
-  ctxMenuShow(menu, { label: 'Folders above this one', opener: anchor, x: r.left, y: r.bottom + 6 });
+  ctxMenuShow(menu, { label: 'Folders above this one', html, opener: anchor, x: r.left, y: r.bottom + 6 });
   menu.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
     ctxMenuFocusOpener(hideCtxMenu());
     onPick(b.dataset.p);
@@ -21559,7 +21564,7 @@ $('tmExportBtn').addEventListener('click', (e) => {
   // the rectangle renderer (the only one whose motion is honest to tween).
   const canLapse = state.treemap.history.snaps.length >= 2 && isRectMap();
   const canWebm = canLapse && 'captureStream' in HTMLCanvasElement.prototype && !!window.MediaRecorder;
-  menu.innerHTML = `
+  const html = `
     <button data-exp="png">${icon('image', 15)}PNG image</button>` +
     (isRectMap() ? `
     <button data-exp="svg">${icon('code', 15)}SVG vector</button>` : '') +
@@ -21577,7 +21582,7 @@ $('tmExportBtn').addEventListener('click', (e) => {
     <button data-exp="pdf">${icon('download', 15)}PDF report</button>` : '');
   const r = e.currentTarget.getBoundingClientRect();
   // A named menu of menu items, focus back on Export when the keyboard closes it or an entry is picked (QA-6 review MEDIUM-1, QA-6b F1.8).
-  ctxMenuShow(menu, { label: 'Export the map', opener: e.currentTarget, x: r.left, y: r.bottom + 6 });
+  ctxMenuShow(menu, { label: 'Export the map', html, opener: e.currentTarget, x: r.left, y: r.bottom + 6 });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     ctxMenuFocusOpener(hideCtxMenu());
     const exp = b.dataset.exp;
@@ -22427,11 +22432,10 @@ function showCtxMenu(x, y, node) {
   // else exists for a file that isn't on this disk.
   if (node.path.startsWith('cloud://')) {
     const provider = cloudProviderOfScan();
-    menu.innerHTML = `
+    ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y, html: `
       <button data-act="copy">${icon('copy', 15)}Copy path</button>
       <div class="div"></div>
-      <button data-act="cloudtrash" class="danger">${icon('trash', 15)}Move to ${escapeHtml(provider.name)}'s trash</button>`;
-    ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
+      <button data-act="cloudtrash" class="danger">${icon('trash', 15)}Move to ${escapeHtml(provider.name)}'s trash</button>` });
     menu.querySelector('[data-act="copy"]').addEventListener('click', () => { ctxMenuFocusOpener(hideCtxMenu()); copyPath(node.path); });
     menu.querySelector('[data-act="cloudtrash"]').addEventListener('click', () => { ctxMenuFocusOpener(hideCtxMenu()); confirmTrash([node.path]); });
     return;
@@ -22439,17 +22443,16 @@ function showCtxMenu(x, y, node) {
   // Entries inside a container exist in its listing, not on disk — the only
   // sensible action is copying the path; trash/open the container itself.
   if (node.virtual) {
-    menu.innerHTML = `
+    ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y, html: `
       <button data-act="copy">${icon('copy', 15)}Copy path</button>
       <div class="div"></div>
-      <button disabled style="opacity:.55;cursor:var(--cur-dot)">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
-    ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
+      <button disabled style="opacity:.55;cursor:var(--cur-dot)">${icon('archive', 15)}Inside an archive — act on the archive itself</button>` });
     menu.querySelector('[data-act="copy"]').addEventListener('click', () => { ctxMenuFocusOpener(hideCtxMenu()); copyPath(node.path); });
     return;
   }
   const inCart = cartHas(node.path);
   const hasBudget = node.type === 'dir' && !!budgetFor(node.path);
-  menu.innerHTML = `
+  ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y, html: `
     <button data-act="open">${icon('external', 15)}Open in ${fm}</button>
     ${node.type === 'file' ? `<button data-act="preview">${icon('search', 15)}Quick Look</button>` : ''}
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
@@ -22462,8 +22465,7 @@ function showCtxMenu(x, y, node) {
     ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}
     ${node.isTrash ? '' : `<button data-act="note">${icon('doc', 15)}${noteFor(node.path) ? 'Edit note…' : 'Add note…'}</button>`}` : ''}
     <div class="div"></div>
-    <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
-  ctxMenuShow(menu, { label: `Actions for ${node.name || node.path}`, x, y });
+    <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>` });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
     ctxMenuFocusOpener(hideCtxMenu()); // before the act: a sheet it opens gives focus back here
@@ -22489,7 +22491,9 @@ function showCtxMenu(x, y, node) {
    Three things show it — this right-click menu, Export, and the "…" crumb's
    folded folders — and each used to show it on its own, as an unnamed box of
    plain buttons the keyboard could reach only by Tab. ctxMenuShow is the one
-   door: the menu gets a name and its entries the menuitem role, the control
+   door, and the only writer of the menu's contents: the entries go into the
+   .ctx-list that scrolls inside the panel (QA-6b review F1.11), the menu
+   gets a name and its entries the menuitem role, the control
    that opened it says so (aria-expanded), and focus is remembered so the
    keyboard closes — Escape, a pick, Tab — put it back where it was rather
    than on <body>: every entry's handler starts with
@@ -22501,15 +22505,23 @@ let ctxMenuOpener = null;
 let ctxMenuReturn = null;
 /**
  * The gap kept between the menu and every edge of the window (QA-6 review
- * LOW-4). The CSS caps the menu at the window's height less two of these and
- * scrolls the rest, so a menu of 30 folded folders opens on screen; the top
- * used to be placed above the window's top edge, with the root out of reach.
+ * LOW-4). The CSS caps the menu's .ctx-list so the whole panel is no taller
+ * than the window less two of these, and scrolls the rest, so a menu of 30
+ * folded folders opens on screen; the top used to be placed above the
+ * window's top edge, with the root out of reach.
  */
 const CTX_MENU_EDGE = 8;
 
-/** Show #ctxMenu, already filled, at (x, y), named `label` for assistive technology. */
-function ctxMenuShow(menu, { label, opener = null, x, y }) {
+/**
+ * Fill #ctxMenu with `html` — its entries — and show it at (x, y), named
+ * `label` for assistive technology. The entries go in a .ctx-list, the
+ * element that scrolls: #ctxMenu is a lensed surface whose frost and ring are
+ * its ::before and ::after, which a scrolling #ctxMenu carried away with the
+ * entries (QA-6b review F1.11). Listeners go on the entries after this.
+ */
+function ctxMenuShow(menu, { label, html, opener = null, x, y }) {
   if (ctxMenuOpener && ctxMenuOpener !== opener) ctxMenuOpener.setAttribute('aria-expanded', 'false');
+  menu.innerHTML = `<div class="ctx-list" role="none">${html}</div>`;
   menu.setAttribute('aria-label', label);
   menu.querySelectorAll('button').forEach((b) => b.setAttribute('role', 'menuitem'));
   menu.querySelectorAll('.div').forEach((d) => d.setAttribute('role', 'separator'));

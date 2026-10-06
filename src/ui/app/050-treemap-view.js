@@ -229,10 +229,10 @@ function crumbsPaint(host, crumbs, fold, onPick) {
  */
 function showCrumbMenu(anchor, folded, onPick) {
   const menu = $('ctxMenu');
-  menu.innerHTML = folded.map((c) =>
+  const html = folded.map((c) =>
     `<button data-p="${escapeHtml(c.path)}" title="${escapeHtml(c.path)}">${icon('folder', 15)}${escapeHtml(c.name)}</button>`).join('');
   const r = anchor.getBoundingClientRect();
-  ctxMenuShow(menu, { label: 'Folders above this one', opener: anchor, x: r.left, y: r.bottom + 6 });
+  ctxMenuShow(menu, { label: 'Folders above this one', html, opener: anchor, x: r.left, y: r.bottom + 6 });
   menu.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
     ctxMenuFocusOpener(hideCtxMenu());
     onPick(b.dataset.p);

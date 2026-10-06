@@ -56,11 +56,16 @@
 #tooltip .t-line { color: var(--text-2); margin-top: 3px; word-break: break-all; line-height: 1.45; }
 #tooltip .t-strong { color: var(--text-1); font-weight: 600; }
 #ctxMenu { position: fixed; z-index: 210; min-width: 210px; padding: 5px; display: none;
-  /* Never taller than the window less CTX_MENU_EDGE above and below; the rest scrolls (QA-6 review LOW-4). */
-  max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 24px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-3); }
+/* The entries scroll here, never #ctxMenu itself: the panel's frost and ring
+   are its .lg::before and ::after, and a scrolling panel carried them away
+   with the entries (QA-6b review F1.11) — as .modal's body scrolls inside
+   the sheet. No taller than the window less CTX_MENU_EDGE above and below
+   (16px) and the panel's 5px padding and 1px border on each side (12px);
+   the rest scrolls (QA-6 review LOW-4). */
+#ctxMenu .ctx-list { max-height: calc(100vh - 28px); overflow-y: auto; overscroll-behavior: contain; }
 #ctxMenu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
   background: transparent; color: var(--text-1); font-size: 13px; padding: 8px 11px;
   border-radius: 8px; cursor: var(--cur-hand); transition: background var(--dur-1) var(--ease); }

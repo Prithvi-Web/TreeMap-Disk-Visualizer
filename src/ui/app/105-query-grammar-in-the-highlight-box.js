@@ -703,7 +703,7 @@ $('tmExportBtn').addEventListener('click', (e) => {
   // the rectangle renderer (the only one whose motion is honest to tween).
   const canLapse = state.treemap.history.snaps.length >= 2 && isRectMap();
   const canWebm = canLapse && 'captureStream' in HTMLCanvasElement.prototype && !!window.MediaRecorder;
-  menu.innerHTML = `
+  const html = `
     <button data-exp="png">${icon('image', 15)}PNG image</button>` +
     (isRectMap() ? `
     <button data-exp="svg">${icon('code', 15)}SVG vector</button>` : '') +
@@ -721,7 +721,7 @@ $('tmExportBtn').addEventListener('click', (e) => {
     <button data-exp="pdf">${icon('download', 15)}PDF report</button>` : '');
   const r = e.currentTarget.getBoundingClientRect();
   // A named menu of menu items, focus back on Export when the keyboard closes it or an entry is picked (QA-6 review MEDIUM-1, QA-6b F1.8).
-  ctxMenuShow(menu, { label: 'Export the map', opener: e.currentTarget, x: r.left, y: r.bottom + 6 });
+  ctxMenuShow(menu, { label: 'Export the map', html, opener: e.currentTarget, x: r.left, y: r.bottom + 6 });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     ctxMenuFocusOpener(hideCtxMenu());
     const exp = b.dataset.exp;
