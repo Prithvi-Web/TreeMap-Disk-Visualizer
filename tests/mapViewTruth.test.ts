@@ -457,13 +457,25 @@ type FakeMenu = {
 };
 
 /**
+ * #ctxMenu's own attributes, as the built markup draws the element. Its role
+ * comes from there alone — ctxMenuShow names the menu and gives its entries
+ * the menuitem role, and both mean something only inside a `menu` — so the
+ * fake starts as the markup does rather than as a role-less box (QA-6b review F2.5).
+ */
+function ctxMenuMarkupAttrs(): Record<string, string> {
+  const tags = [...INDEX.matchAll(/<div\b([^>]*\bid="ctxMenu"[^>]*)>/g)];
+  assert.equal(tags.length, 1, '#ctxMenu is drawn once in the built page');
+  return Object.fromEntries([...tags[0][1].matchAll(/([\w-]+)(?:="([^"]*)")?/g)].map((a) => [a[1], unesc(a[2] ?? '')]));
+}
+
+/**
  * #ctxMenu: its buttons and its `.div` dividers are parsed from what is
  * written into it, and only the selectors the page uses on it are answered
  * — anything else throws rather than quietly answering the buttons.
  */
 function fakeMenu(): FakeMenu {
   fakeDoc.clickHandler = null; // a new page: whichever handler bubbled before belonged to another menu
-  const menu: FakeMenu = { html: '', buttons: [], divs: [], list: null, style: {}, offsetHeight: 120, attrs: {},
+  const menu: FakeMenu = { html: '', buttons: [], divs: [], list: null, style: {}, offsetHeight: 120, attrs: ctxMenuMarkupAttrs(),
     set innerHTML(v: string) {
       menu.html = v;
       menu.buttons = parseButtons(v);
@@ -991,6 +1003,7 @@ test('MEDIUM-1: "…" says whether its menu is open, the menu is named and made 
   assert.equal(more.getAttribute('aria-expanded'), 'false', 'closed, and says so');
   more.click();
   assert.equal(more.getAttribute('aria-expanded'), 'true', 'open, and says so');
+  assert.equal(h.menu.getAttribute('role'), 'menu', 'the container is a menu, as the markup draws it — the parent its name and its menu items need (QA-6b review F2.5)');
   assert.match(h.menu.getAttribute('aria-label') || '', /folders above/i, 'the menu has an accessible name');
   assert.ok(h.menu.buttons.every((b) => b.getAttribute('role') === 'menuitem'), 'every entry is a menuitem');
   more.click();
@@ -1034,6 +1047,7 @@ test('MEDIUM-1: the right-click menu is named and made of menu items too', () =>
   fakeDoc.active = fakeDoc.body;
   show(40, 50, { path: '/r/movie.mov', name: 'movie.mov', type: 'file' });
   assert.equal(menu.style.display, 'block');
+  assert.equal(menu.getAttribute('role'), 'menu', 'a menu, as the markup draws it');
   assert.equal(menu.getAttribute('aria-label'), 'Actions for movie.mov');
   assert.ok(menu.buttons.length > 3 && menu.buttons.every((b) => b.getAttribute('role') === 'menuitem'), 'every entry is a menuitem');
   assert.ok(menu.divs.length >= 1, 'control: the menu has a divider, before Move to Trash');
@@ -1070,6 +1084,7 @@ test('MEDIUM-1: Export says it opens a menu and whether it is open, and Escape g
   btn.click(); // the press Enter makes — it bubbles to the page's document click handler
   assert.equal(h.menu.style.display, 'block', 'the menu opens');
   assert.equal(btn.getAttribute('aria-expanded'), 'true', 'and Export says it is open');
+  assert.equal(h.menu.getAttribute('role'), 'menu', 'a menu, as the markup draws it');
   assert.equal(h.menu.getAttribute('aria-label'), 'Export the map', 'the menu is named');
   assert.deepEqual(h.menu.buttons.map((b) => b.dataset.exp), ['png', 'svg', 'csv-files', 'csv-folders', 'xlsx-files', 'xlsx-folders', 'pdf'],
     'the map\'s two image formats, and the reports a finished scan offers');
