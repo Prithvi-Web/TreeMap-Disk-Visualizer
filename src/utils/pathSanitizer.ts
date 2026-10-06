@@ -373,9 +373,17 @@ function newLinkWalk(from?: string): LinkWalk {
   return { links: MAX_LINK_HOPS, names: MAX_WALK_NAMES, seen: new Set(from === undefined ? [] : [from]) };
 }
 
+/**
+ * Whether the link walk reads links as Windows does: by the system Node runs on (its own path
+ * module), never by process.platform — the walk asks this machine's file system about every name it
+ * spells, and the tests stand Windows in for process.platform on another OS, where a target resolved
+ * by Windows' rules (`\\/private/var/…`) is no place at all (`resolveAsTyped`'s convention).
+ */
+const WALK_READS_AS_WIN32 = path === path.win32;
+
 /** A path's names below its root; `.` and empty names name the folder they are in, so they go. */
 function namesIn(p: string): string[] {
-  return p.split(process.platform === 'win32' ? /[\\/]/ : '/').filter((name) => name !== '' && name !== '.');
+  return p.split(WALK_READS_AS_WIN32 ? /[\\/]/ : '/').filter((name) => name !== '' && name !== '.');
 }
 
 /**
@@ -391,7 +399,7 @@ function namesIn(p: string): string[] {
  * resolved first, and only the names left are walked.
  */
 function startOf(realFolder: string, target: string): { at: string; names: string[] } {
-  if (process.platform === 'win32') {
+  if (WALK_READS_AS_WIN32) {
     const whole = path.win32.resolve(realFolder, target);
     const { root } = path.win32.parse(whole);
     return { at: root, names: namesIn(whole.slice(root.length)) };

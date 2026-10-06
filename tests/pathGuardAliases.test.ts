@@ -17,7 +17,7 @@ import { createApp } from '../src/server';
 import { ENDPOINTS } from '../src/api/openapi';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
-import { aliasNamespaceOf, isAppDataPath, judgeSpelling, liesInside, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
+import { aliasNamespaceOf, canonicalDirOf, isAppDataPath, judgeSpelling, liesInside, PathRejectedError, resolveAsTyped, sanitizePath } from '../src/utils/pathSanitizer';
 import { appDataDir } from '../src/services/storage';
 import { createScanRecord, evictExpiredScans, SCAN_TTL_MS, startScan } from '../src/services/diskScanner';
 import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cleaner';
@@ -238,6 +238,33 @@ test('with Windows stood in for process.platform — as the tests that need its 
     `the rules are still Windows’: a colon past the root names an NTFS stream, a second name (${String(streamRefusal)})`,
   );
   if (real.value !== 'win32') assert.equal(sanitizePath(stream), stream, 'outside the stand-in, a colon is a name like any other here');
+});
+
+test('with Windows stood in for process.platform, a link realpath cannot follow is walked as the system Node runs on reads it — with Node’s own path module, as the sanitizer resolves — so beneath it is where its target leads, not a path no file system call finds', { skip: WINDOWS && 'on Windows the platform and Node’s path module are one; making a link needs a privilege the runner may not hold' }, () => {
+  // The link walk read a target by Windows' rules whenever process.platform said win32, resolving it
+  // with path.win32: under a stand-in on a Mac a link in /private/var/… led to `\/private/var/…`,
+  // which is no place here, so a file beneath a link to a folder of the scan not made yet was outside
+  // it. The sanitizer's convention since the SEC-2 F5 regression fix: the platform picks the rules,
+  // Node's own path module resolves what the file system is asked about next.
+  const dir = path.join(T, 'standin-walk');
+  fs.mkdirSync(dir);
+  fs.symlinkSync('later', path.join(dir, 'in')); // relative, to a folder of the scan not made yet
+  fs.symlinkSync(path.join(DEST, 'standin-not-made'), path.join(dir, 'out'));
+  fs.symlinkSync('later\\name', path.join(dir, 'slash')); // one name here, holding a backslash
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  let answers: Record<string, string> = {};
+  Object.defineProperty(process, 'platform', { ...real, value: 'win32' });
+  try {
+    answers = Object.fromEntries(['in', 'out', 'slash'].map((link) => [link, canonicalDirOf(path.join(dir, link, 'x.txt'))]));
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+  }
+  assert.deepEqual(answers, {
+    in: path.join(dir, 'later', 'x.txt'),
+    out: path.join(DEST, 'standin-not-made', 'x.txt'),
+    slash: path.join(dir, 'later\\name', 'x.txt'), // not later/name: a backslash is a separator only to Windows
+  });
 });
 
 test('Windows: this machine’s own admin shares and an NTFS stream name are second names, refused by the sanitizer and the scanned-root rule; another machine’s share and an ordinary share are paths (the SEC-2 review, LOW-3)', () => {
