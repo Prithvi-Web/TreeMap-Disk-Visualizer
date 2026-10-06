@@ -75,6 +75,33 @@ test('a read-only portable session removes nothing: its app-data is not TreeMap\
   assert.equal(await dropLegacyMtimeCaches(), 1, 'and removed once the session may write');
 });
 
+test('a cache that cannot be removed stays, unread, and the others still go: the removal never rejects (the U-4c review, F2.6)', async () => {
+  // An antivirus lock or a read-only attribute refuses one removal. The scan's tracked write
+  // swallows a rejection silently, so one that threw would leave every later old cache in place on every scan.
+  const old = ['mtime-cache-4444444444444444.json', 'mtime-cache-5555555555555555.json', 'mtime-cache-6666666666666666.json'];
+  for (const name of old) fs.writeFileSync(path.join(APP, name), '{}');
+  const real = fs.promises.unlink;
+  let refused = '';
+  // The first removal asked for is refused, whichever file the listing names first.
+  (fs.promises as { unlink: unknown }).unlink = function (p: fs.PathLike) {
+    if (!refused) {
+      refused = path.basename(String(p));
+      return Promise.reject(Object.assign(new Error(`EACCES: permission denied, unlink '${String(p)}'`), { code: 'EACCES', errno: -13, syscall: 'unlink', path: String(p) }));
+    }
+    return real.call(fs.promises, p);
+  };
+  let dropped: number;
+  try {
+    dropped = await dropLegacyMtimeCaches();
+  } finally {
+    (fs.promises as { unlink: unknown }).unlink = real;
+  }
+  assert.ok(old.includes(refused), `a removal was refused (${refused})`);
+  assert.deepEqual(names().filter((n) => old.includes(n)), [refused], 'the refused one stays, and the other two went');
+  assert.equal(dropped, 2, 'and it counts only what it removed');
+  assert.equal(await dropLegacyMtimeCaches(), 1, 'once the refusal is gone, the next scan removes it');
+});
+
 test('no app-data folder yet: nothing to remove, and no failure', async () => {
   const saved = process.env.TREEMAP_DATA_DIR;
   process.env.TREEMAP_DATA_DIR = path.join(fileTempDir('treemap-legacyMtimeCaches-none-'), 'never-made');
