@@ -28,7 +28,8 @@ import { withOpenFileCheck } from './fixtures/openFileCheck';
  * Nothing here waits on a clock: the stall limit is judged by a timer this file injects
  * (setStallTimerForTests) and fires itself, once the copy is seen to be stuck. "A read that never
  * answers" is real: a named pipe with no writer, whose open does not return until this file opens
- * it for writing at the end — so nothing is left pending when the file's tests are done. Nothing
+ * it for writing at the end, once that open is seen waiting (`release`) — so nothing is left pending
+ * when the file's tests are done. Nothing
  * reaches the machine's Trash: the trash step moves each file into this file's own folder.
  */
 
@@ -58,9 +59,10 @@ after(() => {
 });
 
 /**
- * A named pipe nobody writes to: an open of it for reading does not return. Each test opens it for
- * writing in its own `finally` (`unblock`), while it is still there: the folder is removed with this
- * file's others, and a read still waiting on a pipe nobody can name any more would never return.
+ * A named pipe nobody writes to: an open of it for reading does not return. Each test whose copy may
+ * still be waiting on it releases it in its own `finally` (`release`), while it is still there: the
+ * folder is removed with this file's others, and a read still waiting on a pipe nobody can name any
+ * more would never return.
  */
 function namedPipe(label: string): string {
   const fifo = path.join(fileTempDir(`treemap-capsuleCaptureStall-${label}-`), 'pipe');
@@ -68,13 +70,23 @@ function namedPipe(label: string): string {
   return fifo;
 }
 
-/** Opens `fifo` for writing and closes it, so a read waiting on it returns at its end. */
-function unblock(fifo: string): void {
-  try {
-    fs.closeSync(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
-  } catch {
-    // ENXIO: nothing is waiting to read it any more.
-  }
+/**
+ * Opens `fifo` for writing once a read is waiting on it, and closes it, so that read returns at its
+ * end. Polled until one is (FG3g review F1.6): a copy hands its open to a worker thread, which may not
+ * have reached it yet when a test is done with the copy — and a writer that came and went before it
+ * did found no reader (ENXIO), so the open then waited for ever, holding a worker thread and this
+ * whole file open. Called only where a read of the pipe has been started and not yet released.
+ */
+async function release(fifo: string): Promise<void> {
+  await waitFor(() => {
+    try {
+      fs.closeSync(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENXIO') return false; // no read waiting on it yet
+      throw err;
+    }
+  }, 'a read of the pipe waiting, to release it');
 }
 
 /** The newest stall timer still armed: "no progress for the whole limit" is declared by firing it. */
@@ -104,7 +116,7 @@ test('a copy whose source never answers is stopped once the stall limit passes w
     });
     assert.equal(fs.existsSync(dest), false, 'nothing was made at the destination');
   } finally {
-    unblock(fifo);
+    await release(fifo); // the copy's open of it may not have been entered yet
   }
 });
 
@@ -117,13 +129,14 @@ test('a copy whose source stops answering part-way is stopped, and what it made 
     if (d === dest) chunks++;
     return null;
   });
-  const writer: { fd: number | null } = { fd: null };
+  const writer: { fd: number | null; opened: boolean } = { fd: null, opened: false };
   try {
     const copying = copyWithHash(fifo, dest, undefined, { stallMs: 60_000 });
     // The source answers once, then goes quiet with its writer still open.
     await waitFor(() => {
       try {
         writer.fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        writer.opened = true;
         return true;
       } catch {
         return false; // the copy has not opened it for reading yet
@@ -141,7 +154,7 @@ test('a copy whose source stops answering part-way is stopped, and what it made 
   } finally {
     unfault();
     if (writer.fd !== null) fs.closeSync(writer.fd);
-    unblock(fifo);
+    if (!writer.opened) await release(fifo); // the copy's open of it never returned
   }
 });
 
@@ -154,12 +167,13 @@ test('a stopped copy whose stuck read then brings more bytes stops at once and r
     if (d === dest) chunks++;
     return null;
   });
-  const writer: { fd: number | null } = { fd: null };
+  const writer: { fd: number | null; opened: boolean } = { fd: null, opened: false };
   try {
     const copying = copyWithHash(fifo, dest, undefined, { stallMs: 60_000 });
     await waitFor(() => {
       try {
         writer.fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        writer.opened = true;
         return true;
       } catch {
         return false;
@@ -175,7 +189,7 @@ test('a stopped copy whose stuck read then brings more bytes stops at once and r
   } finally {
     unfault();
     if (writer.fd !== null) fs.closeSync(writer.fd);
-    unblock(fifo);
+    if (!writer.opened) await release(fifo); // the copy's open of it never returned
   }
 });
 
@@ -210,17 +224,19 @@ test('a capture whose copy stalls leaves that item undeleted, goes on to the nex
   const normal = file('cart', 'normal.txt', 'an ordinary file');
   let forgot: Promise<unknown> | null = null;
   let result: Awaited<ReturnType<typeof commitCart>>;
+  let copyStarted = false;
   try {
     result = await withOpenFileCheck('clear', async () => {
       const committing = commitCart([fifo, normal]);
       await waitFor(() => newestArmed() !== undefined, 'the copy of the pipe starting');
+      copyStarted = true;
       forgot = deleteCapsuleEntry(held.entryId as string);
       await waitFor(() => capsuleStoreWaitersForTests() > 0, 'the "Forget" waiting for the capture, which holds the index');
       newestArmed()?.fire(); // the stall limit passes with nothing read
       return withinHangGuard(committing, 'the commit finishing');
     });
   } finally {
-    unblock(fifo);
+    if (copyStarted) await release(fifo); // the copy's open of it may not have been entered yet
   }
   assert.deepEqual(await (forgot as unknown as Promise<unknown>), { deleted: true, bytesFreed: Buffer.byteLength('a copy someone will forget') }, 'the "Forget" ran once the capture let the index go');
   const row = result.skipped.find((s) => s.path === fifo);
