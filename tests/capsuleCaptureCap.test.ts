@@ -8,7 +8,7 @@ isolatedDataDir('treemap-capsuleCaptureCap-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import {
-  capsuleRoot, capsuleStoreWaitersForTests, deleteCapsuleEntry, getCapsuleIndex, protectItems, setCaptureCleanupFaultForTests, setSourceCallForTests,
+  capsuleRoot, capsuleStoreWaitersForTests, deleteCapsuleEntry, getCapsuleIndex, protectItems, pruneExpired, setCaptureCleanupFaultForTests, setSourceCallForTests,
 } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit } from '../src/services/cartCommit';
@@ -481,3 +481,52 @@ for (const c of CALL_CASES) {
     }
   });
 }
+
+/* ─────────────── FG3g review F2.13: the retry of a capture's leftover folder ─────────────── */
+
+/** A capture whose copy fails and whose folder cannot be removed at once: that folder's name. */
+async function leaveCaptureFolder(label: string): Promise<string> {
+  const broken = file(label, 'broken.txt', 'an item whose copy fails part-way');
+  const unfault = setCopyFaultForTests((dest) => (dest.startsWith(capsuleRoot()) && path.basename(dest) === 'broken.txt' ? new Error('the disk stopped answering (a test)') : null));
+  let refusals = 0;
+  const uncleanup = setCaptureCleanupFaultForTests(() => (refusals++ === 0 ? Object.assign(new Error('the folder is in use (a test)'), { code: 'EBUSY' }) : null));
+  try {
+    const before = new Set(fs.readdirSync(capsuleRoot()));
+    const [outcome] = (await protectItems([{ path: broken }])).outcomes;
+    assert.equal(outcome.code, 'CAPSULE_COPY_FAILED', outcome.detail);
+    const left = fs.readdirSync(capsuleRoot()).filter((name) => !before.has(name));
+    assert.equal(left.length, 1, `the half-made copy's folder is still there (${left.join(', ')})`);
+    return left[0];
+  } finally {
+    unfault();
+    uncleanup();
+  }
+}
+
+const INDEX = (): string => path.join(path.dirname(capsuleRoot()), 'timecapsule.json');
+
+test('a capture\'s folder that could not be removed at once is removed by the next expiry sweep too, not left until the next start', async () => {
+  const leftover = await leaveCaptureFolder('sweep-retry');
+  await pruneExpired();
+  assert.equal(fs.existsSync(path.join(capsuleRoot(), leftover)), false, 'the expiry sweep removed it');
+});
+
+test('a folder a record names is never removed by that retry: only its place in the list of leftovers goes', async () => {
+  const leftover = await leaveCaptureFolder('sweep-named');
+  // A record naming that folder (as a record written by another TreeMap on the same app data would).
+  const index = JSON.parse(fs.readFileSync(INDEX(), 'utf8')) as { entries: Record<string, unknown>[] };
+  const planted = {
+    id: leftover, name: 'named.txt', originalPath: path.join(fileTempDir('treemap-capsuleCaptureCap-sweep-named-orig-'), 'named.txt'),
+    kind: 'file', sizeBytes: 1, heldBytes: 1, hasPayload: true, fileCount: 1, digest: '', capturedAt: Date.now(), runId: 'planted',
+  };
+  fs.writeFileSync(INDEX(), JSON.stringify({ ...index, entries: [...index.entries, planted] }));
+  try {
+    await pruneExpired();
+    assert.ok(fs.existsSync(path.join(capsuleRoot(), leftover)), 'the folder a record names is kept');
+  } finally {
+    const now = JSON.parse(fs.readFileSync(INDEX(), 'utf8')) as { entries: { id: string }[] };
+    fs.writeFileSync(INDEX(), JSON.stringify({ ...now, entries: now.entries.filter((e) => e.id !== leftover) }));
+  }
+  await pruneExpired();
+  assert.ok(fs.existsSync(path.join(capsuleRoot(), leftover)), 'and it is no longer a leftover the retry removes: the next start\'s reconcile decides');
+});
