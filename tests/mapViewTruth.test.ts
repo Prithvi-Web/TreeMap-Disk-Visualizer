@@ -1196,25 +1196,69 @@ test('LOW-4: the menu\'s entries scroll inside a short window, in a list inside 
   assert.ok(h.menu.list, 'and Export\'s');
 });
 
-test('LOW-4: a focused menu entry shows its whole focus ring inside the list that clips it, and more than the ring (QA-6b review F2.1)', () => {
+/** Where a rule of the built page starts; it must be there exactly once, or "before" means nothing. */
+function cssAt(selector: string): number {
+  const at = INDEX.indexOf(`${selector} {`);
+  assert.notEqual(at, -1, `the ${selector} rule is in the built page`);
+  assert.equal(INDEX.indexOf(`${selector} {`, at + 1), -1, `the ${selector} rule is in the built page once`);
+  return at;
+}
+
+/** Every custom property the page's top-level :root blocks define, with its value. */
+function rootTokens(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (let at = INDEX.indexOf('\n:root {'); at !== -1; at = INDEX.indexOf('\n:root {', at + 1)) {
+    const block = INDEX.slice(at, INDEX.indexOf('\n}', at));
+    for (const m of block.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) if (!out.has(m[1])) out.set(m[1], m[2].trim());
+  }
+  assert.ok(out.size > 0, 'control: the page defines its design tokens on :root');
+  return out;
+}
+
+/**
+ * A control marked by focus inside the box that clips it (QA-6b review F2.1,
+ * F3.1, F3.2): the ring — the page's, unless `selector` draws its own —
+ * reaches no further past the control's edge than the `room` its clipping box
+ * leaves, is neither switched off nor made transparent, and the control's
+ * background turns to a tint the page defines: a misspelled token computes to
+ * transparent, which is no tint at all.
+ */
+function assertFocusMarkedInside(selector: string, room: number, what: string): void {
+  const pageAt = INDEX.indexOf('\n:focus-visible {');
+  assert.notEqual(pageAt, -1, 'control: the page draws one focus ring for every control');
+  const page = INDEX.slice(pageAt, INDEX.indexOf('}', pageAt));
+  const own = INDEX.includes(`${selector} {`) ? cssRule(selector) : '';
+  const px = (re: RegExp) => { const m = re.exec(own) || re.exec(page); return m ? Number(m[1]) : NaN; };
+  const width = px(/outline(?:-width)?:\s*(\d+)px/);
+  const offset = px(/outline-offset:\s*(-?\d+)px/);
+  assert.ok(width > 0 && !/outline(?:-style)?:\s*(none|hidden|0)\b/.test(own), `a focused ${what} is ringed (${width} px)`);
+  assert.doesNotMatch(own, /outline(?:-color)?:[^;]*\btransparent\b/, `and its ring is not made transparent: ${own}`);
+  assert.ok(width + offset <= room,
+    `the ring reaches ${width + offset} px past the ${what}'s edge, and the box that clips it leaves ${room} px before it clips`);
+  const bg = /background(?:-color)?:\s*([^;]+);/.exec(own);
+  assert.ok(bg, `and focus is not shown by the ring alone: a focused ${what}'s background changes too`);
+  const token = /^var\((--[\w-]+)\)$/.exec(bg![1].trim());
+  assert.ok(token, `to one of the page's tints, not a colour of its own or none (${bg![1]})`);
+  const value = rootTokens().get(token![1]);
+  assert.ok(value !== undefined, `${token![1]} is a token the page defines — an undefined one computes to transparent`);
+  assert.doesNotMatch(value!, /^transparent$|,\s*0(?:\.0*)?\s*\)$/, `and ${token![1]} is a tint you can see (${value})`);
+}
+
+test('LOW-4: a focused menu entry shows its whole focus ring inside the list that clips it, and more than the ring (QA-6b review F2.1, F3.1)', () => {
   // .ctx-list scrolls (overflow-y:auto makes overflow-x auto too) and its
   // entries are full width, so it clips right at their edges. The page's ring
   // is drawn outside the box it marks — 2 px wide, 2 px out — and was cut off
   // at every edge: a menu of one entry showed no focus at all, and arrowing
   // through a longer one, nothing said which entry was active (WCAG 2.4.7).
-  const pageAt = INDEX.indexOf('\n:focus-visible {');
-  assert.notEqual(pageAt, -1, 'control: the page draws one focus ring for every control');
-  const page = INDEX.slice(pageAt, INDEX.indexOf('}', pageAt));
-  const own = INDEX.includes('#ctxMenu button:focus-visible {') ? cssRule('#ctxMenu button:focus-visible') : '';
-  const px = (re: RegExp) => { const m = re.exec(own) || re.exec(page); return m ? Number(m[1]) : NaN; };
-  const width = px(/outline(?:-width)?:\s*(\d+)px/);
-  const offset = px(/outline-offset:\s*(-?\d+)px/);
-  assert.ok(width > 0 && !/outline:\s*(none|0)\b/.test(own), `a focused entry is ringed (${width} px)`);
   const pad = /padding:\s*([^;]+);/.exec(cssRule('#ctxMenu .ctx-list'));
   const room = pad ? Math.min(...(pad[1].match(/-?\d+/g) || ['0']).map(Number)) : 0;
-  assert.ok(width + offset <= room,
-    `the ring reaches ${width + offset} px past the entry's edge, and the list leaves ${room} px around its entries before it clips`);
-  assert.match(own, /background:/, 'and focus is not shown by the ring alone: a focused entry\'s background changes too');
+  assertFocusMarkedInside('#ctxMenu button:focus-visible', room, 'menu entry');
+  // Both rules are (1,1,1), so the later wins where both apply. :hover must:
+  // it sets white text with its accent fill, and a focus tint after it left
+  // that white text on the pale tint of an entry the pointer was over.
+  assert.match(cssRule('#ctxMenu button:hover'), /color:\s*#fff/, 'control: an entry under the pointer has white text on the accent');
+  assert.ok(cssAt('#ctxMenu button:focus-visible') < cssAt('#ctxMenu button:hover'),
+    'the focus rule comes before :hover, so an entry both focused and under the pointer keeps the accent behind its white text');
 });
 
 test('LOW-4: scrolling the menu\'s list does not close it; a scroll anywhere else does', () => {
