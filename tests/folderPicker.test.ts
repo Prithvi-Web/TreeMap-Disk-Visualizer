@@ -642,10 +642,14 @@ function boxesRuntime(listing: (p: string) => unknown) {
       if (answer instanceof Error) throw answer;
       return answer;
     }
-    sent.push({ url, body: JSON.parse(opts?.body ?? '{}') });
-    return url === '/api/autopilot/simulate'
-      ? { items: [], bytesWouldDelete: 0, capBytes: null, wouldBlockReason: null, skipped: [] }
-      : {};
+    const body = JSON.parse(opts?.body ?? '{}');
+    sent.push({ url, body });
+    if (url !== '/api/autopilot/simulate') return {};
+    // The server scans the policy's folder to preview it: a folder that is not
+    // there answers as its listing does — 404 PATH_NOT_FOUND (simulatePolicy → startScan).
+    const there = await listing(body.policy.path);
+    if (there instanceof Error) throw there;
+    return { items: [], bytesWouldDelete: 0, capBytes: null, wouldBlockReason: null, skipped: [] };
   };
   const stored = new Map<string, string>();
   const localStorage = { getItem: (k: string) => stored.get(k) ?? null, setItem: (k: string, v: string) => { stored.set(k, v); } };
@@ -1121,6 +1125,45 @@ test('a path the lookup cannot even spell — a pasted lone surrogate before a t
   assert.equal($('scanBtn').getAttribute('aria-busy'), null, 'and not busy');
   assert.deepEqual(scanned.map(([p]) => p), [ODD], 'the path is scanned exactly as typed, for the scan to report');
   assert.deepEqual(toasts, []);
+});
+
+test('Preview of a folder whose trailing space names no folder says so in words and offers the folder without it, as Save does — never a bare "Path does not exist" (final review F1.6)', async () => {
+  const { rt, $, offers, click, type, policy } = boxesRuntime(strictListing);
+  rt.openPolicyEditor(null);
+  type('apPath', DOCS + ' ');
+  await click('apPreviewBtn');
+  assert.equal(policy('/api/autopilot/simulate').policy!.path, DOCS + ' ', 'control: Preview asks about the folder exactly as typed');
+  assert.equal(offers.length, 1, 'the folder without the space is offered');
+  assert.equal(offers[0].msg, noFolder(DOCS + ' ', 'a space', DOCS), 'in the words Save uses');
+  assert.equal(offers[0].label, 'Use that folder');
+  assert.match($('apPreview').innerHTML, /No folder is named “\/home\/u\/Documents ” — the path ends with a space\./,
+    'and the preview says so where its answer goes, not a bare "Path does not exist"');
+  await offers[0].choose();
+  assert.equal($('apPath').value, DOCS, 'choosing it puts that folder in the box');
+
+  type('apPath', '/home/u/Nope ');
+  await click('apPreviewBtn');
+  assert.equal(offers.length, 1, 'nothing is offered where neither spelling is a folder');
+  assert.match($('apPreview').innerHTML, /Path does not exist/, 'and the server\'s reason is shown');
+
+  type('apPath', DOCS + ' ');
+  await click('apPreviewBtn');
+  assert.equal(offers.length, 2, 'control: offered again');
+  rt.close('apModal');
+  rt.openPolicyEditor({ id: 'p2', name: 'Other', path: '/data', match: { kind: 'custom' } });
+  await offers[1].choose();
+  assert.equal($('apPath').value, '/data', 'a click on an offer a closed editor made leaves the one opened after it alone');
+
+  // The editor closed while the preview was on its way: no offer is made for it.
+  const g = gate();
+  const slow = boxesRuntime(slowStray(g));
+  slow.rt.openPolicyEditor(null);
+  slow.type('apPath', DOCS + ' ');
+  const pending = slow.click('apPreviewBtn');
+  slow.rt.close('apModal');
+  g.open();
+  await pending;
+  assert.deepEqual(slow.offers, [], 'a preview answered after its editor closed offers nothing');
 });
 
 test('Scan reads Fast rescan when pressed, and a lookup that does not answer in time scans the path exactly as typed (QA4a R4-3)', async () => {

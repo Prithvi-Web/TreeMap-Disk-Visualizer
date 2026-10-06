@@ -458,6 +458,11 @@ $('apBrowseBtn').addEventListener('click', () =>
 
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');
+  // The draft as the editor holds it now — previewed, never saved.
+  const draft = { policy: policyFromEditor() };
+  // The editor this preview was asked in: closing it (apEditorClosed) or a
+  // press of Save moves apSaveSeq on, and an offer made here then fills nothing.
+  const seq = apSaveSeq;
   // FX: the "working" orb lives exactly as long as the simulate round-trip;
   // the finally below destroys it on every exit, the error paths included.
   host.innerHTML = `<div class="muted" style="margin-top:14px;display:flex;align-items:center;gap:8px;"><span class="fx-orb-well"></span>Checking what this would delete…</div>`;
@@ -465,7 +470,7 @@ $('apPreviewBtn').addEventListener('click', async () => {
   try {
     const result = await api('/api/autopilot/simulate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ policy: policyFromEditor() }),
+      body: JSON.stringify(draft),
     });
     const rows = result.items.slice(0, 12).map(i => `
       <div class="ap-run-item"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(i.name)}</span>
@@ -479,7 +484,17 @@ $('apPreviewBtn').addEventListener('click', async () => {
       (result.items.length > 12 ? `<div class="muted" style="font-size:11px;padding-left:10px;">…and ${formatCount(result.items.length - 12)} more</div>` : '') +
       (result.skipped.length ? `<div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(result.skipped[0].reason)}</span></div>` : '');
   } catch (e) {
-    host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
+    // A folder that names none, where the same path without the whitespace at
+    // its end does: said in words, with that folder offered, as Save says it —
+    // not a bare "Path does not exist" with the space invisible in it (final
+    // review F1.6). Only offered into the editor it was asked in.
+    const meant = await meantFolder(draft.policy.path, e);
+    if (meant && seq === apSaveSeq) {
+      host.innerHTML = `<div class="ap-reason">${escapeHtml(noFolderNamed(draft.policy.path))}</div>`;
+      offerMeant(draft.policy.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
+    } else {
+      host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
+    }
   } finally {
     fxOrbHide('ap');
   }

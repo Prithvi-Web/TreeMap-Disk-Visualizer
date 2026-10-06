@@ -310,8 +310,11 @@ function trailingBlanks(p) {
     own press, so its button takes focus: from inside a sheet the keyboard
     could not reach it otherwise (final review F1.10). */
 function offerMeant(p, meant, choose, label = 'Use that folder') {
-  toastAction(`No folder is named “${p}” — the path ends with ${trailingBlanks(p)}. Did you mean “${meant}”?`,
-    label, choose, 'error', 12000, { focus: true });
+  toastAction(`${noFolderNamed(p)} Did you mean “${meant}”?`, label, choose, 'error', 12000, { focus: true });
+}
+/** "No folder is named “…” — the path ends with a space." */
+function noFolderNamed(p) {
+  return `No folder is named “${p}” — the path ends with ${trailingBlanks(p)}.`;
 }
 /** How long Scan or Save waits on a path box's lookup (boxMeant) before
     going ahead with the path exactly as it is: a sleeping network drive can
