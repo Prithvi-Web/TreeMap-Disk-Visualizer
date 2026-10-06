@@ -18,6 +18,7 @@ import {
   getCapsuleJob,
   protectItems,
   pruneExpired,
+  setAfterExpiryDropsForTests,
   setAfterIndexLoadForTests,
   setBeforeEvictionForTests,
   setCapsuleCapForTests,
@@ -276,6 +277,45 @@ test('the expiry sweep passes over a copy a running restore holds, and sweeps it
     hold.release();
     hold.remove();
   }
+});
+
+test('a restore that ends while the expiry sweep runs never leaves its copy on disk with no record: the sweep goes by the pins it read when it began (FG3h C)', async () => {
+  const x = item('prune-mid', 'x.bin', 13);
+  const p = item('prune-mid', 'p.bin', 14);
+  const [idX, idP] = await protectEach([x, p]); // one run each: nothing else of P's run holds its record
+  fs.rmSync(p);
+  // P's restore is held at its placement, and fails there once let go: a restore that fails lets go of its copy at once.
+  let arrive!: () => void;
+  const reached = new Promise<void>((resolve) => { arrive = resolve; });
+  let fail!: () => void;
+  const failed = new Promise<void>((resolve) => { fail = resolve; });
+  const unlink = setHardLinkForTests(async () => {
+    arrive();
+    await failed;
+    throw Object.assign(new Error('something stands there (a test)'), { code: 'EEXIST' });
+  });
+  let jobId = '';
+  const later = Date.now() + 1000 * 86_400_000; // everything has expired by then
+  const unhook = setAfterExpiryDropsForTests(async () => {
+    fail();
+    await waitFor(() => getCapsuleJob(jobId)?.status !== 'running', 'the restore of P ending while the sweep runs');
+  });
+  try {
+    jobId = (await startCapsuleRestore([idP])).jobId;
+    await withinHangGuard(reached, 'the restore reaching its placement');
+    await pruneExpired(later);
+  } finally {
+    fail();
+    unhook();
+    unlink();
+  }
+  assert.equal(getCapsuleJob(jobId)?.status, 'error', 'the case is the one under test: the restore ended, and let go, during the sweep');
+  assert.equal(await entry(idX), undefined, 'X expired, and its record went with its run');
+  assert.equal((await entry(idP))?.hasPayload, true, 'P was being restored when the sweep began: its record stays, holding its copy');
+  assert.ok(fs.existsSync(path.join(capsuleRoot(), idP)), 'and its copy is where the record says');
+  await pruneExpired(later);
+  assert.equal(await entry(idP), undefined, 'a later sweep expires it');
+  assert.equal(fs.existsSync(path.join(capsuleRoot(), idP)), false, 'record and copy together');
 });
 
 test('an unconfirmed copy being restored is never dropped as superseded by a newer identical one', async () => {

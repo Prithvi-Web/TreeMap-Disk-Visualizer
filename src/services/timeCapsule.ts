@@ -1762,6 +1762,17 @@ export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean
 /* ---------------- retention + reconciliation ---------------- */
 
 /**
+ * Test-only: awaited by the expiry sweep after it has dropped the expired copies and before it decides
+ * which records go (FG3h C), so a test can end a restore in that moment. The suite's ForTests idiom:
+ * returns the function that removes it.
+ */
+let afterExpiryDropsForTests: (() => Promise<void>) | null = null;
+export function setAfterExpiryDropsForTests(hook: () => Promise<void>): () => void {
+  afterExpiryDropsForTests = hook;
+  return () => { afterExpiryDropsForTests = null; };
+}
+
+/**
  * Sweep out every copy past the retention window. Returns how many copies went, and the bytes freed.
  *
  * A copy a restore is reading is passed over until a later sweep (FG3g H1): swept now, it went from
@@ -1776,7 +1787,11 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
 
   return withCapsuleStore(async () => withPayloadLock(async () => {
     const store = await loadStore();
-    const past = (e: TimeCapsuleEntry): boolean => e.capturedAt < cutoff && !restoresInFlight.has(e.id);
+    // The pins as they stand now, read once (FG3h C): a restore cannot pin a copy while this lock is
+    // held, but one can end and let go of its copies part-way through — and read again after the
+    // copies were dropped, one let go meanwhile had its record removed with its copy still on disk.
+    const pinned = new Set(restoresInFlight);
+    const past = (e: TimeCapsuleEntry): boolean => e.capturedAt < cutoff && !pinned.has(e.id);
     const expiring = store.entries.filter((e) => past(e) && e.expiredAt === undefined);
 
     let bytesFreed = 0;
@@ -1792,6 +1807,7 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
         detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Time Capsule.`,
       });
     }
+    if (afterExpiryDropsForTests) await afterExpiryDropsForTests();
     // A record goes once nothing of its run is left that has not expired.
     const runsHeld = new Set(store.entries.filter((e) => !past(e) && typeof e.runId === 'string').map((e) => e.runId));
     const gone = new Set(store.entries.filter((e) => past(e) && !(typeof e.runId === 'string' && runsHeld.has(e.runId))));
