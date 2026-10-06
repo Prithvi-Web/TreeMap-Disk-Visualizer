@@ -27,6 +27,6 @@
 > Full walkthrough, including the *"TreeMap is damaged"* variant:
 > **[Installing on macOS](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer#-first-launch-on-macos--apple-could-not-verify)**
 
-**Windows** — `TreeMap-Setup-x.y.z.exe`. Run it, click **More info** → **Run anyway** at the SmartScreen prompt. To use the **NTFS turbo** scan engine (Settings), choose **Anyone who uses this computer** when the installer asks — it runs only from Program Files. *Only for me*, and the portable `TreeMap-x.y.z.exe` (no installer; it keeps its data beside itself), scan the normal way.
+**Windows** — `TreeMap-Setup-x.y.z.exe`. Run it, click **More info** → **Run anyway** at the SmartScreen prompt. To use the **NTFS turbo** scan engine (Settings), choose **Anyone who uses this computer** when the installer asks, and keep the folder it offers: the engine runs only from a folder your own programs cannot change, such as Program Files. *Only for me*, and the portable `TreeMap-x.y.z.exe` (no installer; it keeps its data beside itself), scan the normal way.
 
 **Intel Mac / Linux** — no desktop build; run web mode from source ([3 commands](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer#-run-from-source--web-mode-3-commands)).
