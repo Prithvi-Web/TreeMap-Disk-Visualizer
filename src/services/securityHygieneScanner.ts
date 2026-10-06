@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { Flag, ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
-import { appDataPathRefusal, insideAnyScanRoot, spillPathRefusal } from '../middleware/pathGuard';
+import { appDataPathRefusal, insideAnyScanRoot, safetyRecordRefusal, spillPathRefusal } from '../middleware/pathGuard';
 import { isInside } from '../utils/pathSanitizer';
 
 /**
@@ -512,6 +512,9 @@ export async function relocateSecret(from: string, to: string): Promise<Relocate
   // Nothing is moved INTO app-data, whose files TreeMap trusts (FG1); moving one out is a delete.
   const appData = appDataPathRefusal(to);
   if (appData) throw new Error(appData.message);
+  // Nor is the agent policy or the audit log moved out of it (the final review, F1.11).
+  const record = safetyRecordRefusal(from);
+  if (record) throw new Error(record.message);
   const fsp = await import('fs/promises');
   const src = await fsp.lstat(from);
   if (!src.isFile()) throw new Error('Only a file can be moved to a safer location');

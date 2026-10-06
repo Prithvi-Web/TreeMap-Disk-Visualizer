@@ -1714,6 +1714,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     ),
     responses: {
       '200': jsonResponse('Moved', obj({ moved: bool(), from: str(), to: str() }, ['moved', 'from', 'to'])),
+      '400': errorResponse('PATH_REQUIRED, PATH_INVALID or PATH_BLOCKED for the path; CONFIRM_REQUIRED without confirm: true; DEST_REQUIRED without a "to"'),
+      '403': errorResponse('OUTSIDE_SCAN_ROOT for either end; SPILL_PATH, or APP_DATA_PATH for the destination; SAFETY_RECORD for the agent policy or the audit log, which are never moved; POLICY_ROOT_NOT_ALLOWED or POLICY_PROTECTED_PATH from agent-policy.json'),
       '409': errorResponse('The destination is occupied, or the move failed — nothing was removed'),
     },
   },
@@ -1996,7 +1998,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Per-path outcome, or the dry-run manifest', { oneOf: [ref('CleanResult'), ref('TrashDryRunManifest')] }),
       '400': errorResponse('ONLY_EMPTY_FOLDERS_INVALID — onlyEmptyFolders is present and not a boolean; IGNORE_JUNK_INVALID — ignoreJunk is not a boolean, or is sent without onlyEmptyFolders: true'),
-      '403': errorResponse('A path is outside every scanned root, cloud-hosted, inside an archive, or refused by agent-policy.json'),
+      '403': errorResponse('A path is outside every scanned root, cloud-hosted, inside an archive, or refused by agent-policy.json; SAFETY_RECORD for the agent policy or the audit log, or a folder that holds them (app-data, a folder above it), which no request removes or moves'),
       '409': errorResponse('OPEN_HANDLE_CONFLICT — a program holds one of these paths (or a file inside it) open; the offending processes are listed in `conflicts`. Retry with ignoreOpenHandles: true to proceed anyway'),
     },
   },
@@ -2076,7 +2078,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '200': jsonResponse('Dry-run manifest (dryRun: true only)', ref('OffloadDryRunManifest')),
       '202': jsonResponse('Job started (progress via SSE)', obj({ jobId: str() }, ['jobId'])),
       '400': errorResponse('Bad destination / too many files / not enough space (DEST_FULL), or DEST_SPACE_UNKNOWN when the destination\u2019s free space could not be read at all — the drive may be disconnected or busy, and no offload was started. DEST_INSIDE_SOURCE / SOURCE_INSIDE_DEST when the destination lies in the selection or the selection in the destination, judged where each really is; LINK_IN_SELECTION when a selected path is or holds a link, which a copy would follow'),
-      '403': errorResponse('Sources outside every scanned root, or refused by agent-policy.json'),
+      '403': errorResponse('Sources outside every scanned root, or refused by agent-policy.json; SAFETY_RECORD for the agent policy or the audit log, or a folder that holds them'),
     },
   },
   {
@@ -3140,7 +3142,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         ),
       ),
       '400': errorResponse('PATHS_REQUIRED, TOO_MANY_PATHS or a rejected path'),
-      '403': errorResponse('OUTSIDE_SCAN_ROOT, VIRTUAL_PATH or a policy refusal'),
+      '403': errorResponse('OUTSIDE_SCAN_ROOT, VIRTUAL_PATH, SAFETY_RECORD (the agent policy or the audit log, or a folder that holds them) or a policy refusal'),
       '409': errorResponse('OPEN_HANDLE_CONFLICT — something in the set is open'),
     },
   },
@@ -3265,7 +3267,8 @@ export function buildOpenApiDocument(): Json {
         'large scan is kept in answers 409 { error, code: "STORAGE_MODE", mode, feature } (every scan is ' +
         'kept in memory today, where nothing is off); a path in TreeMap\'s own spill folder in app-data is ' +
         'refused by every endpoint that takes a path to trash, open, move or write, 403 { code: "SPILL_PATH" }; and no ' +
-        'request writes, moves or copies a file anywhere in app-data, 403 { code: "APP_DATA_PATH" }.',
+        'request writes, moves or copies a file anywhere in app-data, 403 { code: "APP_DATA_PATH" }; nor removes or moves ' +
+        'the agent policy or the audit log, or a folder that holds them, 403 { code: "SAFETY_RECORD" }.',
     },
     servers: [{ url: '/' }],
     tags: [

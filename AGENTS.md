@@ -685,7 +685,14 @@ read-what-you-saw) permission to act.
   files under names it chose — settings, records, the Time Capsule's copies —
   and the one file a request can have put back there is an item TreeMap
   itself took from there, by an undo or a Time Capsule restore. Reading
-  app-data, and deleting what a scan covers there, are unchanged. The offload reveal (`POST /api/offload/reveal`) opens a copy only
+  app-data, and deleting what a scan covers there, are unchanged — but for
+  **the agent policy and the audit log** (`agent-policy.json`, `audit.jsonl`):
+  no request removes or moves either, nor app-data itself or any folder above
+  it — `DELETE /api/files`, the cart, an offload, a relocation, the MCP tools —
+  `403 { code: "SAFETY_RECORD" }`, however the path is spelled, dry runs too;
+  Autopilot leaves them alone and names them in `skipped`. An absent policy
+  means no limits, and the log is the record of what was done; change either
+  yourself, outside TreeMap. The offload reveal (`POST /api/offload/reveal`) opens a copy only
   inside the destination its manifest record names, both resolved; anything
   else, a record whose paths are not text included, is
   `403 { code: "OUTSIDE_DEST_ROOT" }`.
@@ -880,7 +887,7 @@ read-what-you-saw) permission to act.
   recorded. A request refused before that is not recorded, because it never
   became an operation:
   by the path rules (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`,
-  `SPILL_PATH`, `APP_DATA_PATH`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
+  `SPILL_PATH`, `APP_DATA_PATH`, `SAFETY_RECORD`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
   field (`CONFIRM_REQUIRED`, `DEST_REQUIRED`), the rate limiter, or the
   storage-mode gate (`STORAGE_MODE`). `SPILL_PATH` and `APP_DATA_PATH` fall
   on both sides of that line. On a path the request names — its `path` or

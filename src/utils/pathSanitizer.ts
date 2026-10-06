@@ -1015,6 +1015,62 @@ export function isSpillPath(p: string): boolean {
 }
 
 /**
+ * TreeMap's safety records in app-data, by the names `policy.ts` (POLICY_FILE) and `audit.ts` write
+ * them under — the agent policy and the audit log (tests/safetyRecords.test.ts pins that they agree).
+ */
+export const SAFETY_RECORD_NAMES: readonly string[] = Object.freeze(['agent-policy.json', 'audit.jsonl']);
+
+/**
+ * Whether removing or moving `p` would take one of TreeMap's safety records (the final review, F1.11,
+ * F1.20): the agent policy or the audit log in app-data — by any spelling `namesBelowAppData` knows, and
+ * by identity under a name no fold explains (an 8.3 short name) — or a folder that holds them: app-data
+ * itself, or a folder above it. An ABSENT policy means "no limits", so a delete of the file lifted
+ * every rail the human set, and a delete of the log erased the record of it. A link elsewhere that
+ * leads to one is not one: removing a link removes the link.
+ */
+export function takesSafetyRecord(p: string): boolean {
+  if (p.startsWith('cloud://')) return false;
+  const at = namesBelowAppData(p);
+  if (at !== null) {
+    if (at.below.length === 0) return true; // app-data itself
+    if (at.below.length !== 1) return false;
+    const name = foldName(at.below[0]);
+    return SAFETY_RECORD_NAMES.some((record) => foldName(record) === name || sameEntry(at.where, path.join(at.appData, record)));
+  }
+  const { folded } = appDataNames();
+  const names = namesOf(path.normalize(canonicalDirOf(p))).map((name) => foldName(name));
+  return names.length < folded.length && names.every((name, i) => name === folded[i]); // a folder above app-data
+}
+
+/**
+ * A cheap test over the paths a walk of `root` lists, as `spillCandidateTest` is: false for every path
+ * that can be neither in app-data nor a folder above it — so neither a safety record nor a folder
+ * holding one — true for one that may be, which `takesSafetyRecord` must still judge. On any doubt it
+ * passes every path on.
+ */
+export function safetyRecordCandidateTest(root: string): (p: string) => boolean {
+  if (!path.isAbsolute(root)) return () => true;
+  let appData: string;
+  let scanned: string;
+  try {
+    const appDataAt = realLocationOf(appDataDir());
+    const rootAt = realLocationOf(root);
+    if (fs.statSync(appDataAt, { bigint: true }).dev !== fs.statSync(rootAt, { bigint: true }).dev) return () => true;
+    appData = foldForCompare(appDataAt);
+    scanned = foldForCompare(rootAt);
+  } catch {
+    return () => true;
+  }
+  if (isInside(appData, scanned)) return () => true; // the walk lies in app-data
+  if (!isInside(scanned, appData)) return () => false; // app-data lies outside it, and so above none of it
+  const listed = path.join(foldForCompare(root), path.relative(scanned, appData));
+  return (p) => {
+    const folded = foldForCompare(p);
+    return isInside(listed, folded) || isInside(folded, listed);
+  };
+}
+
+/**
  * Is `p` TreeMap's own app-data folder or anything in it, as a place something would be WRITTEN
  * (FG1)? App-data holds the files TreeMap trusts: its settings, the Autopilot policies and their
  * approval, the offload manifest, the Time Capsule, the spill folder. So no request may make one

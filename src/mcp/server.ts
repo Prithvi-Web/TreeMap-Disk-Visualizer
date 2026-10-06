@@ -20,7 +20,7 @@ import { prepareOffload, startOffload, getOffloadJob } from '../services/offload
 import { moveToTrash } from '../services/cleaner';
 import { checkOpenHandles, describeConflicts } from '../services/openHandleGuard';
 import { storeOf } from '../services/scanStore';
-import { insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
+import { insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath, assertNotSafetyRecord } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
 import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
@@ -173,6 +173,7 @@ function guardDestructivePaths(raw: string[]): string[] {
       throw new AppError(403, 'CLOUD_PATH', `"${p}" lives in a cloud account — use the provider's trash instead`);
     }
     assertNotSpillPath(p);
+    assertNotSafetyRecord(p); // the agent policy and the audit log are never removed or moved (F1.11)
     if (!insideAnyScanRoot(p)) {
       throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `"${p}" is outside every scanned root — scan its folder first`);
     }

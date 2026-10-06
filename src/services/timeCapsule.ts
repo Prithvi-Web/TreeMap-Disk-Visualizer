@@ -20,7 +20,7 @@ import {
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { describeFsError, meansAbsent } from '../utils/errno';
-import { assertNotSpillPath } from '../middleware/pathGuard';
+import { assertNotSafetyRecord, assertNotSpillPath } from '../middleware/pathGuard';
 import { isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from '../utils/placeIdentity';
 import { collapseBatch, deepestFirst, shallowestFirst } from './capsuleBatch';
@@ -1486,7 +1486,10 @@ async function protectAndTrashInFlight(
 ): Promise<ProtectAndTrashResult> {
   // Nothing in TreeMap's own spill folder is protected or trashed (Phase 4 §S.5.3): refused
   // before anything is copied, whatever selected it.
-  for (const r of batch) assertNotSpillPath(r.path);
+  for (const r of batch) {
+    assertNotSpillPath(r.path);
+    assertNotSafetyRecord(r.path); // nor the agent policy or the audit log (the final review, F1.11)
+  }
   // One request per item (FG3), and none inside another (FG3b), judged by where each is on the
   // disk (FG3c, `collapseBatch`). The same path twice made two copies, one trash and one failure, and
   // the failure then discarded both copies of an item that was in the Trash. A folder and an item

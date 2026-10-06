@@ -29,7 +29,7 @@ import {
 } from './timeCapsule';
 import fs from 'fs';
 import nodePath from 'path';
-import { isSpillPath, PathRejectedError, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
+import { isSpillPath, PathRejectedError, safetyRecordCandidateTest, sanitizePath, spillCandidateTest, takesSafetyRecord } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
 import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
 import { formatBytes } from '../utils/formatBytes';
@@ -546,10 +546,19 @@ async function resolveCandidates(
     if (mayBeInSpill(c.path) && spillCheck(c.path)) inSpill++;
     else matched.push(c);
   }
-  const spillSkipped = inSpill === 0 ? [] : [{
+  const spillSkipped: { path: string; reason: string }[] = inSpill === 0 ? [] : [{
     path: nodePath.join(appDataDir(), SPILL_DIR),
     reason: `Left alone — TreeMap's own ${SPILL_DIR} folder holds the working files of very large scans and is never cleaned up automatically (${inSpill} matched item${inSpill === 1 ? '' : 's'}).`,
   }];
+  // Nor the agent policy or its audit log, nor a folder holding them (the final review, F1.11): an
+  // absent policy means no limits, and the log is the record of what was done. Each named, as only
+  // these few can match. Only a candidate in app-data, or above it, pays the full check.
+  const mayHoldRecord = safetyRecordCandidateTest(policy.path);
+  const records = matched.filter((c) => mayHoldRecord(c.path) && takesSafetyRecord(c.path));
+  for (const c of records) {
+    matched.splice(matched.indexOf(c), 1);
+    spillSkipped.push({ path: c.path, reason: "Left alone — TreeMap's agent policy and its audit log are never removed or moved, by Autopilot or any other way through TreeMap." });
+  }
   // FAILS CLOSED: suppressedNoteRoots throws NOTES_UNREADABLE on a corrupt
   // notes.json, and the throw is deliberately not caught here — runPolicy
   // records a failed run and simulate surfaces the error, so an unreadable

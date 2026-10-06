@@ -11,7 +11,7 @@ import {
   restoreRefusal,
 } from '../services/offload';
 import { openPath } from '../services/cleaner';
-import { guardBodyPaths, requireInsideScanRoot, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
+import { guardBodyPaths, requireInsideScanRoot, assertNotSpillPath, assertNotAppDataPath, refuseSafetyRecords } from '../middleware/pathGuard';
 import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
@@ -68,7 +68,7 @@ export function drainOffloadClients(): void {
  * having validated everything a real run would — and does nothing.
  * Honors an Idempotency-Key header so a retry can't start a second job.
  */
-offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoot, storageModeGate, async (req: Request, res: Response) => {
+offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoot, refuseSafetyRecords, storageModeGate, async (req: Request, res: Response) => {
   const body = req.body as { scanId?: unknown; paths: string[]; dest?: unknown; dryRun?: unknown };
   const scan = requireScan(req, body.scanId);
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) {

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { guardBodyPaths, requireInsideScanRoot } from '../middleware/pathGuard';
+import { guardBodyPaths, refuseSafetyRecords, requireInsideScanRoot } from '../middleware/pathGuard';
 import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
@@ -47,7 +47,7 @@ export const cartRouter = Router();
  * The refusal that matters: anything too large for the capsule is **left
  * undeleted** and named in `skipped`, never deleted unprotected.
  */
-cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
+cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRoot, refuseSafetyRecords, async (req: Request, res: Response) => {
   const body = req.body as { paths?: unknown; dryRun?: unknown; runId?: unknown };
   assertCartPaths(body.paths);
   const paths = body.paths;

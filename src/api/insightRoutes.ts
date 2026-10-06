@@ -21,7 +21,7 @@ import {
   diffSnapshots,
 } from '../services/snapshots';
 import { buildTreemap } from '../utils/treemap';
-import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot, assertNotSpillPath, assertNotAppDataPath, refuseSafetyRecords } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
@@ -359,7 +359,7 @@ insightRouter.get('/security/findings', storageModeGate, async (req: Request, re
  * occupied destination aborts. Both ends are path-sanitised and the source must
  * lie inside a scanned root, exactly like every other file operation.
  */
-insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsideScanRoot, refuseSafetyRecords, async (req: Request, res: Response) => {
   const { path: from, to, confirm } = req.body as { path: string; to?: unknown; confirm?: boolean };
   if (confirm !== true) {
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to move a file');

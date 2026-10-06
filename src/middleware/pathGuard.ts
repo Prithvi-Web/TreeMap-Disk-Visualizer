@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, sanitizePathToRead, isInside, livesAt, rootLivesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName } from '../utils/pathSanitizer';
+import { sanitizePath, sanitizePathToRead, isInside, livesAt, rootLivesAt, isSpillPath, isAppDataPath, foldName, aliasNamespaceOf, linkLeadsThroughSecondName, takesSafetyRecord } from '../utils/pathSanitizer';
 import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
 import { DATA_VOLUME, exclusionsBelow, isAtOrUnder, parseFirmlinks } from '../utils/mountBoundaries';
@@ -477,7 +477,8 @@ export function assertNotSpillPath(p: string): void {
  * their approval, the offload manifest the reveal route opens from, the Time Capsule — so no
  * request makes a file there: not a relocation's `to`, an offload's `dest` or any copy its plan
  * makes, a snapshot restore's destination, nor an encode (which writes where its original is).
- * Reading app-data, and deleting what a scan covers, are not refused here.
+ * Reading app-data, and deleting what a scan covers, are not refused here (the agent policy and the
+ * audit log are, by `safetyRecordRefusal`).
  */
 export function appDataPathRefusal(p: string): AppError | null {
   if (!isAppDataPath(p)) return null;
@@ -493,6 +494,50 @@ export function appDataPathRefusal(p: string): AppError | null {
 export function assertNotAppDataPath(p: string): void {
   const refusal = appDataPathRefusal(p);
   if (refusal) throw refusal;
+}
+
+/**
+ * The refusal for removing or moving TreeMap's agent policy or its audit log, or a folder that holds
+ * them (`takesSafetyRecord`), or null (the final review, F1.11, F1.20). The policy is deliberately not
+ * writable through the API, and an absent one means "no limits"; the audit is the record of what was
+ * done. Asked only by the doors that remove or move what a request names — never by open or preview:
+ * a person edits the policy by opening it.
+ */
+export function safetyRecordRefusal(p: string): AppError | null {
+  if (!takesSafetyRecord(p)) return null;
+  return new AppError(
+    403,
+    'SAFETY_RECORD',
+    `"${p}" is TreeMap's agent policy or its audit log, or a folder that holds them. TreeMap never removes or moves either: ` +
+      'an absent policy means no limits at all, and the audit is the record of what was done. Change them yourself, outside TreeMap.',
+  );
+}
+
+/** Throws `safetyRecordRefusal`'s 403: for the Trash step, the Time Capsule, a relocation and the MCP tools. */
+export function assertNotSafetyRecord(p: string): void {
+  const refusal = safetyRecordRefusal(p);
+  if (refusal) throw refusal;
+}
+
+/**
+ * `safetyRecordRefusal` over every path a request's body carries (`bodyPaths`): the guard of every
+ * route that removes or moves what it names — a delete, the cart, an offload, a relocation — before its
+ * dry run, so a dry run refuses as the real run would.
+ */
+export function refuseSafetyRecords(req: Request, _res: Response, next: NextFunction): void {
+  const candidates = bodyPaths(req);
+  if (candidates instanceof AppError) {
+    next(candidates);
+    return;
+  }
+  for (const p of candidates) {
+    const refusal = safetyRecordRefusal(p);
+    if (refusal) {
+      next(refusal);
+      return;
+    }
+  }
+  next();
 }
 
 /**

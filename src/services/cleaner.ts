@@ -6,7 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { describeFsError } from '../utils/errno';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
-import { assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
+import { assertNotSafetyRecord, assertNotSpillPath, insideAnyScanRoot } from '../middleware/pathGuard';
 import { RealMachineRefusal, refuseUnderTestRunner } from './realMachineGuard';
 import { emptyCheckSession, NOT_EMPTY_CODES } from './emptyFolderCheck';
 
@@ -226,7 +226,10 @@ export function setTrashStepForTests(step: ((p: string) => Promise<void>) | null
 export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Promise<CleanResult> {
   // The backstop behind every entry point's own refusal (Phase 4 §S.5.3): nothing in TreeMap's
   // own spill folder is ever trashed, whatever asked. The whole batch is refused, before anything.
-  for (const p of paths) assertNotSpillPath(p);
+  for (const p of paths) {
+    assertNotSpillPath(p);
+    assertNotSafetyRecord(p); // the agent policy and the audit log, whatever asked (the final review, F1.11)
+  }
   if (!opts.ignoreOpenHandles) {
     const report = await checkOpenHandles(paths);
     if (report.conflicts.length > 0) {

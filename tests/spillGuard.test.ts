@@ -482,7 +482,10 @@ test('Autopilot pays the full spill check only for candidates under app-data', a
     const items = (holding.body.items as { path: string }[]).map((i) => i.path);
     assert.ok(items.filter((p) => p.startsWith(USER + path.sep)).length >= 20, 'a folder holding app-data matched the user\'s files');
     const underApp = items.filter((p) => p.startsWith(APP + path.sep)).length;
-    assert.equal(full, underApp + 1, 'one full check per candidate under app-data, the leftover included, and none for the rest');
+    // The audit log this file's requests wrote in app-data is a candidate too, left alone as a safety
+    // record (the final review, F1.11) after its spill check: counted here with the items.
+    const recordsLeft = (holding.body.skipped as { path: string; reason: string }[]).filter((sk) => sk.path.startsWith(APP + path.sep) && /agent policy and its audit log/.test(sk.reason)).length;
+    assert.equal(full, underApp + recordsLeft + 1, 'one full check per candidate under app-data, the leftover included, and none for the rest');
     assert.ok((holding.body.skipped as { path: string }[]).some((sk) => sk.path === SPILL), 'and the leftover is still left alone');
   } finally {
     setSpillCheckForTests(null);

@@ -9,6 +9,7 @@ import {
   requireInsideScanRoot,
   insideAnyScanRoot,
   assertNotSpillPath,
+  refuseSafetyRecords,
 } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { getOrRenderThumbnail, THUMB_DIM, THUMB_MAX_INPUT } from '../services/thumbnailCache';
@@ -102,7 +103,7 @@ async function auditTrash(a: TrashAudit): Promise<void> {
  * check never goes without it. Each such refusal is audited as a refusal with
  * its code.
  */
-fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
+fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, refuseSafetyRecords, async (req: Request, res: Response) => {
   const { paths, dryRun, ignoreOpenHandles, onlyEmptyFolders, ignoreJunk } = req.body as {
     paths: string[];
     dryRun?: boolean;
