@@ -11,7 +11,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { startScan } from '../src/services/diskScanner';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
 import { readAudit } from '../src/services/audit';
-import { EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, EMPTY_CHECK_MAX_ENTRIES, lookDeadlineMs, NOT_EMPTY_CODES, setEmptyCheckForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
+import { EMPTY_CHECK_BUDGET_MS, EMPTY_CHECK_DEADLINE_MS, EMPTY_CHECK_MAX_ENTRIES, lookDeadlineMs, NOT_EMPTY_CODES, setEmptyCheckForTests, setMountTableReaderForTests, stillEmptyFolder } from '../src/services/emptyFolderCheck';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { canLock } from './fixtures/nativeEdge';
@@ -580,6 +580,9 @@ function countedListing(target: string, n: number, kind: 'dir' | 'file') {
 }
 
 test('the look reads a listing only as far as it needs, and closes it', async () => {
+  // Through a listing of its own. On the disk, the listing is read that far too only where the file
+  // system names each entry's type; elsewhere it is read whole first (the U-4c review, F1.9, pinned
+  // in tests/emptyFolderCheck.test.ts), and this is the looking that stops early.
   const target = at('wide-on-another-drive');
   const isFolder = () => Promise.resolve({ isDirectory: () => true });
   const folders = countedListing(target, 10_000, 'dir');
@@ -645,5 +648,51 @@ test('a look that does not answer is not empty, whether the stat or the listing 
     assert.match(listSilent.empty === false ? listSilent.reason : '', /did not answer/);
   } finally {
     setEmptyCheckForTests(null);
+  }
+});
+
+/** The machine's mount table, as the test says it: one drive, `/`, whose file system is `filesystem`. */
+const tableSays = (filesystem: string): void =>
+  setMountTableReaderForTests(async () => ({ source: 'mount', entries: [{ mountPoint: '/', filesystem, options: [] }], reason: null }));
+
+test('where listings may leave entry types out (the table says nfs), a folder is read whole, off the event loop, and one holding a file deep down is never trashed (U-4c review, F1.5)', { skip: process.platform === 'win32' && 'every Windows listing names its entries\' types: Windows never reads a folder whole' }, async () => {
+  // The whole-listing path on real folders: every CI temp folder is on apfs, ext4 or NTFS, whose
+  // listings are read as an fs.Dir, so nothing else runs the path a NAS, an exFAT stick or a
+  // container's overlay takes — the path a broken readdir would let a non-empty folder down.
+  const base = fs.realpathSync(fileTempDir('treemap-emptyFoldersDelete-untyped-'));
+  const holder = path.join(base, 'holder');
+  fs.mkdirSync(path.join(holder, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(holder, 'sub', 'keep.txt'), 'kept');
+  const empty = path.join(base, 'empty');
+  fs.mkdirSync(path.join(empty, 'a', 'b'), { recursive: true });
+  // Which call lists each folder under `base`: the live listing reaches them through fs.promises.
+  const listedWith: string[] = [];
+  const spied = fs.promises as unknown as Record<'opendir' | 'readdir', (...args: unknown[]) => unknown>;
+  const real = { opendir: spied.opendir, readdir: spied.readdir };
+  for (const call of ['opendir', 'readdir'] as const) {
+    spied[call] = (...args: unknown[]) => {
+      if (String(args[0]).startsWith(base)) listedWith.push(call);
+      return real[call].apply(fs.promises, args);
+    };
+  }
+  try {
+    tableSays('nfs');
+    const look = await stillEmptyFolder(holder, true);
+    assert.equal(look.empty === false && look.why, 'content', JSON.stringify(look));
+    assert.match(look.empty === false ? look.reason : '', /it holds sub[\\/]keep\.txt now/);
+    const result = await moveToTrash([holder, empty], { ignoreOpenHandles: true, onlyEmptyFolders: true });
+    assert.deepEqual(trashed, [empty], 'only the folder holding nothing reached the Trash step');
+    assert.deepEqual(result.failed.map((f) => [f.path, f.code]), [[holder, 'FOLDER_NOT_EMPTY']]);
+    assert.ok(fs.existsSync(path.join(holder, 'sub', 'keep.txt')));
+    assert.deepEqual([...new Set(listedWith)], ['readdir'], 'read whole, never opened as a Dir, which stats an untyped entry on the event loop');
+    // The same folders where the table names a file system whose listings carry each entry's type.
+    listedWith.length = 0;
+    tableSays('apfs');
+    assert.equal((await stillEmptyFolder(holder, true)).empty, false);
+    assert.deepEqual([...new Set(listedWith)], ['opendir'], 'opened as a Dir, read as far as the look needs');
+  } finally {
+    spied.opendir = real.opendir;
+    spied.readdir = real.readdir;
+    setMountTableReaderForTests(null);
   }
 });

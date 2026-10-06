@@ -152,9 +152,13 @@ export interface FolderListing {
 export interface EmptyCheckDeps {
   lstat: (p: string) => Promise<{ isDirectory(): boolean }>;
   /**
-   * A folder's listing, read an entry at a time (U-4b L5): a folder of a
-   * million entries is read only as far as the look needs — the first file, or
-   * one entry past `maxEntries` — never whole before the limit applies.
+   * A folder's listing, read an entry at a time (U-4b L5): the look reads only
+   * as far as it needs — the first file, or one entry past `maxEntries`. On a
+   * file system whose listings name each entry's type the disk is read that
+   * far too (an `fs.Dir`). Elsewhere (`openListing`: a NAS, exFAT, an overlay,
+   * a mount table that could not be read) the folder is read whole first, one
+   * `readdir` on the I/O pool, and only the looking stops early: the cost of
+   * keeping every stat off the event loop (U-4c L1; the U-4c review, F1.9).
    */
   opendir: (p: string) => Promise<FolderListing>;
   /** A deadline of `ms`: `late` settles when it passes; `cancel` lets it go once the answer came. */
@@ -308,7 +312,11 @@ const LIVE_LISTING: ListingDeps = {
  * file system names each entry's type (U-4b L5: a folder of a million entries
  * is read only as far as the look needs), else read whole with `readdir` and
  * handed out an entry at a time (U-4c L1). Either way no stat runs on the
- * event loop.
+ * event loop. The whole read is the price (the U-4c review, F1.9): a folder
+ * of a million entries on a share is listed in full, on one pool thread,
+ * before its first entry settles the look, and an entry the listing did not
+ * type is stat'ed on the pool. Node offers no listing read in parts that
+ * keeps such an entry's stat off the event loop.
  */
 export async function openListing(p: string, ld: ListingDeps = LIVE_LISTING): Promise<FolderListing> {
   if (listsEntryTypes(await ld.filesystemOf(p), ld.platform)) return ld.opendir(p);

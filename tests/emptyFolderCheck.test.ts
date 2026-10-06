@@ -1,8 +1,10 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import type { Dirent } from 'node:fs';
+import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-emptyFolderCheck-data-');
 
 import {
@@ -675,6 +677,41 @@ test('a listing is read an entry at a time only where the file system names each
   const whole = await openListing('/n/y', via('smbfs'));
   assert.deepEqual([(await whole.read())?.name, (await whole.read())?.name, await whole.read()], ['a', 'b', null], 'served an entry at a time, then the end');
   await whole.close();
+});
+
+test('where listings may leave entry types out, a folder is read whole before any limit applies: the cost of keeping every stat off the event loop (U-4c review, F1.9)', { skip: process.platform === 'win32' && 'every Windows listing names its entries\' types: Windows never reads a folder whole' }, async () => {
+  // Through the live listing (no deps of the test's own): an fs.Dir only where the table names a file
+  // system whose listings carry each entry's type; elsewhere one readdir hands over every entry at once,
+  // so the first entry settling a look, or the 1,000-entry limit, stops only the looking.
+  const base = fs.realpathSync(fileTempDir('treemap-emptyFolderCheck-wide-'));
+  for (let i = 0; i < 40; i++) fs.writeFileSync(path.join(base, `f${i}`), '');
+  const handed: number[] = [];
+  const spied = fs.promises as unknown as Record<'readdir', (...args: unknown[]) => Promise<unknown[]>>;
+  const realReaddir = spied.readdir;
+  spied.readdir = async (...args: unknown[]) => {
+    const entries = await realReaddir.apply(fs.promises, args);
+    if (args[0] === base) handed.push(entries.length);
+    return entries;
+  };
+  const firstOf = async (): Promise<void> => {
+    const listing = await openListing(base);
+    assert.ok(await listing.read(), 'an entry');
+    await listing.close();
+  };
+  const tableSays = (filesystem: string): void =>
+    setMountTableReaderForTests(async () => ({ source: 'mount', entries: [{ mountPoint: '/', filesystem, options: [] }], reason: null }));
+  try {
+    tableSays('smbfs');
+    await firstOf();
+    assert.deepEqual(handed, [40], 'one readdir, every entry, though one was read');
+    handed.length = 0;
+    tableSays('apfs');
+    await firstOf();
+    assert.deepEqual(handed, [], 'an fs.Dir, read an entry at a time');
+  } finally {
+    spied.readdir = realReaddir;
+    setMountTableReaderForTests(null);
+  }
 });
 
 test('which drive a path is on: the deepest mount point listed above it, by name; a Windows path\'s own drive', () => {
