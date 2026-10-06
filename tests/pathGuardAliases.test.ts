@@ -886,6 +886,11 @@ test('a chain of links as long as macOS or Linux follows is followed to its end,
   // its budget, so 40 links cost 39 of it, and a budget cut to 38 answered this chain "in the scan" (the
   // SEC-2c review, F2.9: the chain was 39 links, and no budget above 37 failed it).
   const out = chain('d', 40, path.join(DEST, 'f18-not-made'));
+  // Since a walk out of its budget answers no place, which the scanned-root rule refuses as it refuses a
+  // chain out of the scan, `d0/x` is false either way: these two tell a budget cut short from one that
+  // reaches the end (the final review, F1.5). A chain the walk follows is an ordinary path, and one that
+  // ends in the scan is in it.
+  const inScan = chain('i', 40, path.join(T, 'sub'));
   const tooLong = chain('c', 45, path.join(DEST, 'f18-not-made-either')); // macOS and Linux never follow 45
   const readlink = fs.readlinkSync;
   let readlinks = 0;
@@ -897,6 +902,8 @@ test('a chain of links as long as macOS or Linux follows is followed to its end,
   try {
     answers = {
       'd0/x, the scanned-root rule': insideAnyScanRoot(path.join(out, 'x')),
+      'd0, the sanitizer': rejection(out),
+      'i0/x (40 links into the scan), the scanned-root rule': insideAnyScanRoot(path.join(inScan, 'x')),
       'c0, the sanitizer': rejection(tooLong),
       'c0, the scanned-root rule': insideAnyScanRoot(tooLong),
       'readlinks for c0, the sanitizer': (readlinks = 0, rejection(tooLong), readlinks <= 41 ? 'bounded by the budget of links' : readlinks),
@@ -906,6 +913,8 @@ test('a chain of links as long as macOS or Linux follows is followed to its end,
   }
   assert.deepEqual(answers, {
     'd0/x, the scanned-root rule': false,
+    'd0, the sanitizer': null, // followed to its end: an ordinary path, outside the scan
+    'i0/x (40 links into the scan), the scanned-root rule': true,
     'c0, the sanitizer': 'PATH_BLOCKED',
     'c0, the scanned-root rule': false, // the two agree
     'readlinks for c0, the sanitizer': 'bounded by the budget of links',
