@@ -318,10 +318,11 @@ test('a look never starts a call on a drive that went silent, even one it meets 
   assert.deepEqual(asked, ['stat /nas/a', 'stat /nas', 'stat /x/top', 'list /x/top'], 'the silent drive was not asked for mnt');
 });
 
-test('a call whose wait the budget cut short, and whose deadline then passed, says the budget ran out: its folder is held, its drive never asked about', async () => {
+test('a call whose wait the budget cut short says the budget ran out; once the rest of its deadline passed too, its folder is held, and its drive is never asked about', async () => {
   // The U-4b review's test gap: the branch where the deadline fires while the wait is shorter than a deadline.
   let now = 0;
   const asked: string[] = [];
+  const waits: number[] = [];
   setEmptyCheckForTests({
     deadlineMs: 2_000,
     budgetMs: 3_000,
@@ -329,16 +330,22 @@ test('a call whose wait the budget cut short, and whose deadline then passed, sa
     driveOf: async () => '/slow',
     lstat: async (p) => { asked.push(`stat ${p}`); now += 2_500; return aFolder; }, // answers, after 2.5 s of the clock
     opendir: (p) => { asked.push(`list ${p}`); return new Promise(() => { /* still listing */ }); },
-    // Only a wait shorter than a whole deadline — one the budget cut — passes.
-    deadline: (ms) => ({ late: ms < 2_000 ? Promise.resolve() : new Promise<void>(() => {}), cancel: () => {} }),
+    // Only a wait shorter than a whole deadline passes: the one the budget cut, and the rest of the deadline after it.
+    deadline: (ms) => {
+      waits.push(ms);
+      return { late: ms < 2_000 ? Promise.resolve() : new Promise<void>(() => {}), cancel: () => {} };
+    },
   });
   const cut = await stillEmptyFolder('/slow/a', true);
   assert.match(reasonOf(cut), /the 3 seconds TreeMap gives to looking at folders again ran out/);
+  assert.deepEqual(waits, [3_000, 2_000, 500, 1_500], 'the drive lookup, the stat, the listing the budget cut at 500 ms, then the rest of its 2 s, waited out apart from the request (the U-4c review, F3.1)');
   assert.deepEqual(asked, ['stat /slow/a', 'list /slow/a'], 'the drive\'s root is not asked: a cut wait says nothing about the drive');
-  assert.match(reasonOf(await stillEmptyFolder('/slow/a', true)), /^it did not answer a moment ago/, 'its listing is still out: not asked again');
+  await settle();
+  assert.match(reasonOf(await stillEmptyFolder('/slow/a', true)), /^it did not answer a moment ago/, 'its listing is still out, its whole 2 s gone: not asked again');
   await stillEmptyFolder('/slow/b', true);
   assert.deepEqual(asked.slice(2), ['stat /slow/b', 'list /slow/b'], 'the drive is not silent');
-  // Each cut listing is still out, holding a thread: two of them, and the drive is asked nothing more (the U-4c review, F1.1).
+  await settle();
+  // Each cut listing is still out past its 2 s, holding a thread: two of them, and the drive is asked nothing more (the U-4c review, F1.1).
   assert.match(reasonOf(await stillEmptyFolder('/slow/c', true)), /two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'said as the two calls out, not as a drive that did not answer (the U-4c review, F2.3)');
   assert.deepEqual(asked.slice(4), [], 'c is not asked');
 });
@@ -699,6 +706,95 @@ test('a call that waits for another request\'s probe of its drive\'s root waits 
   h.passDeadlineOf('/d');
   await turns(20);
   assert.match(reasonOf(first() ?? { empty: true }), /it did not answer within 2 seconds/);
+});
+
+/* ─────────────── a wait the request's own budget cut short (U-4c review, round 3: F3.1) ─────────────── */
+
+/**
+ * Each request below has 1.5 s of budget and gives a call its 2 s at most: a
+ * call it starts is waited for 1.5 s by the request, and the rest of its 2 s,
+ * 500 ms, apart from it. Nothing moves the clock.
+ */
+const CUT = { budgetMs: 1_500, deadlineMs: 2_000, now: () => 0 };
+
+test('a call its own request\'s budget cut short keeps its folder\'s turn: another request waiting for it asks once it answers, and is never told the folder did not answer (the U-4c review, F3.1)', async () => {
+  // A cut wait says nothing of the folder: it once stood for the folder missing its 2 s, so a request
+  // that waited for the call was refused as "did not answer", for a folder about to answer in time.
+  let slowAsked = 0;
+  const h = byHand(() => '/', (p) => p === '/x/slow' && ++slowAsked > 1, CUT);
+  const a = watch(stillEmptyFolder('/x/slow', true));
+  await turns(20);
+  const b = watch(stillEmptyFolder('/x/slow', true)); // another request, its budget its own
+  await turns(20);
+  assert.equal(h.callsOn('/x/slow').length, 1, 'one call on the folder');
+  assert.equal(b(), null, 'b waits for it');
+  h.passDeadlineOf('/x/slow'); // a's 1.5 s run out with the call still out
+  await turns(20);
+  assert.match(reasonOf(a() ?? { empty: true }), /the 1500 ms TreeMap gives to looking at folders again ran out/);
+  assert.equal(b(), null, 'b still waits: the folder has not had its 2 s');
+  h.callsOn('/x/slow')[0].answer(); // it answers inside its 2 s
+  await turns(20);
+  assert.deepEqual(b(), { empty: true }, 'b asked it in turn, and it is empty');
+  assert.deepEqual(h.asked, ['/x/slow', '/x/slow']);
+});
+
+test('a call its request\'s budget cut short that lets the rest of its deadline pass unanswered did not answer: a request waiting for it is told so, and the folder is not asked again (the U-4c review, F3.1)', async () => {
+  const h = byHand(() => '/', (p) => p !== '/x/slow', CUT);
+  const a = watch(stillEmptyFolder('/x/slow', true));
+  await turns(20);
+  const b = watch(stillEmptyFolder('/x/slow', true));
+  await turns(20);
+  h.passDeadlineOf('/x/slow');
+  await turns(20);
+  assert.equal(whyOf(a() ?? { empty: true }), 'out-of-time');
+  const rest = h.deadlines.filter((x) => x.ms === 500);
+  assert.equal(rest.length, 1, `the rest of its 2 s, 500 ms, is waited out (deadlines: ${h.deadlines.map((x) => `${x.of || '-'}:${x.ms}`).join(' ')})`);
+  assert.equal(b(), null, 'b waits through it');
+  rest[0].pass();
+  await turns(20);
+  assert.match(reasonOf(b() ?? { empty: true }), /^it did not answer a moment ago/, 'its whole 2 s passed: now it did not answer');
+  assert.deepEqual(h.asked, ['/x/slow'], 'and it is not asked again while that call is out');
+});
+
+test('two calls a request\'s budget cut short on a drive that is only slow are not two that did not answer: another request waits its turn, and hears the drive holds two only once both whole deadlines pass (the U-4c review, F3.1)', async () => {
+  const h = byHand(() => '/d', (p) => p === '/d/ok', CUT);
+  const s = emptyCheckSession(true);
+  assert.deepEqual(await s.look('/d/ok'), { empty: true }, 'the drive is heard from');
+  const a = s.look('/d/a');
+  const b = s.look('/d/b');
+  await turns(20);
+  h.passDeadlineOf('/d/a');
+  h.passDeadlineOf('/d/b'); // the request's 1.5 s run out with both calls out
+  assert.deepEqual([await a, await b].map(whyOf), ['out-of-time', 'out-of-time']);
+  const c = watch(stillEmptyFolder('/d/c', true)); // another request
+  await turns(20);
+  assert.equal(c(), null, 'c waits its turn: two calls are out, and neither has missed its 2 s');
+  const rests = h.deadlines.filter((x) => x.ms === 500);
+  assert.equal(rests.length, 2, `the rest of each call's 2 s is waited out (deadlines: ${h.deadlines.map((x) => `${x.of || '-'}:${x.ms}`).join(' ')})`);
+  rests[0].pass();
+  await turns(20);
+  assert.equal(c(), null, 'one missed its whole 2 s: the drive holds one, and c still waits its turn');
+  rests[1].pass();
+  await turns(20);
+  assert.match(reasonOf(c() ?? { empty: true }), /^two earlier calls on the drive it is on have not answered yet/, 'both did: now the drive holds two, and c is told that');
+  assert.deepEqual(h.asked, ['/d/ok', '/d/a', '/d/b'], 'c was never asked, nor the drive\'s root');
+});
+
+test('a call on a drive\'s own root that a request\'s budget cut short, and that lets the rest of its deadline pass, silences its drive: the root is not asked twice (the U-4c review, F3.1)', async () => {
+  const h = byHand((p) => (p.startsWith('/nas') ? '/nas' : '/'), (p) => !p.startsWith('/nas'), CUT);
+  const a = watch(stillEmptyFolder('/nas', true));
+  await turns(20);
+  h.passDeadlineOf('/nas');
+  await turns(20);
+  assert.equal(whyOf(a() ?? { empty: true }), 'out-of-time');
+  const rest = h.deadlines.find((x) => x.ms === 500);
+  assert.ok(rest, `the rest of its 2 s is waited out (deadlines: ${h.deadlines.map((x) => `${x.of || '-'}:${x.ms}`).join(' ')})`);
+  rest.pass();
+  await turns(20);
+  const inner = watch(stillEmptyFolder('/nas/inner', true));
+  await turns(20);
+  assert.match(reasonOf(inner() ?? { empty: true }), /^the drive it is on did not answer a moment ago/);
+  assert.deepEqual(h.asked, ['/nas'], 'one call on the dead root, not two');
 });
 
 test('within a request, the first look on a drive goes alone: four at once ask a silent drive once', async () => {

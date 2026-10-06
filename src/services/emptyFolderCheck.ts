@@ -65,7 +65,10 @@ import { isAtOrUnder, readMountTable, type MountTable } from '../utils/mountBoun
  *  - **A session looks for `EMPTY_CHECK_BUDGET_MS` at most**, counting only
  *    while a look is running (a delete's Trash steps between its looks are not
  *    looking). A folder whose look the budget cut, or that came after it ran
- *    out, did not answer in time.
+ *    out, did not answer in time. A call the budget cut is still given the
+ *    rest of its deadline, apart from the request, before it counts as not
+ *    answering (the U-4c review, F3.1): TreeMap's own time is no fault of the
+ *    folder's, and a request waiting on that call waits, within its budget.
  * Imports nothing that imports the Trash pathway, so `cleaner.ts` can use it.
  */
 
@@ -562,10 +565,12 @@ interface Where {
  * session's budget does (or was gone before it started, when nothing is
  * started), a `Hushed` — nothing started — when the folder or its drive went
  * silent before this call's turn. A call first waits its turn (`turnOf`):
- * another call on its folder out, or its drive's most calls out. A call left
- * waiting makes its folder silent until it answers; one that missed its whole
- * deadline has the folder's drive asked about too (`askRoot`). A later
- * rejection of the call is handled by the race.
+ * another call on its folder out, or its drive's most calls out. A call that
+ * missed its whole deadline makes its folder silent until it answers, counts
+ * against its drive, and has the drive asked about (`askRoot`); one whose wait
+ * the budget cut short is SPENT, and keeps its folder's turn for the rest of
+ * its deadline (`restOfDeadline`). A later rejection of the call is handled by
+ * the race.
  */
 async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<T>): Promise<T | typeof LATE | typeof SPENT | Hushed> {
   // A call waits its turn — the folder's call out, or a drive with its most calls out — as far as the budget goes (the U-4c review, F2.2, F2.4).
@@ -591,20 +596,62 @@ async function answered<T>(ctx: LookContext, where: Where, start: () => Promise<
   let answer: T | typeof LATE;
   try {
     answer = await Promise.race([op, deadline.late.then((): typeof LATE => LATE)]);
-    if (answer === LATE) {
-      // Still out: this folder is not asked again until the call answers, and the thread it holds counts against its drive.
-      hush(silentFolders, where.folder, ctx.d, op);
-      missed();
-    }
+  } catch (err) {
+    endTurn();
+    throw err;
   } finally {
     deadline.cancel();
-    endTurn(); // after the silence above, so a call waiting on this folder sees it
   }
-  if (answer !== LATE) return answer;
-  // A wait the budget cut short says nothing of the drive.
-  if (wait < ctx.d.deadlineMs) return SPENT;
+  if (answer !== LATE) {
+    endTurn();
+    return answer;
+  }
+  if (wait < ctx.d.deadlineMs) {
+    // A wait this request's own budget cut short says nothing of the folder or its drive (the U-4c
+    // review, F3.1): the call keeps its folder's turn — a call waiting on it waits, within its own
+    // budget — and stands for the folder missing its deadline only once the rest of it passes.
+    void restOfDeadline(ctx.d, where, op, ctx.d.deadlineMs - wait, missed, endTurn);
+    return SPENT;
+  }
+  missedDeadline(ctx.d, where.folder, op, missed, endTurn);
   await askRoot(ctx, where, op);
   return LATE;
+}
+
+/**
+ * `op` on `folder` missed its whole deadline and is still out: the folder is
+ * not asked again until it answers, the thread it holds counts against its
+ * drive (`missed`), and only then is its turn ended (`endTurn`), so a call
+ * waiting on the folder sees the silence.
+ */
+function missedDeadline(d: EmptyCheckDeps, folder: string, op: Promise<unknown>, missed: () => void, endTurn: () => void): void {
+  hush(silentFolders, folder, d, op);
+  missed();
+  endTurn();
+}
+
+/**
+ * The rest of a deadline a request's budget cut short (the U-4c review,
+ * F3.1), waited out apart from that request: `op` keeps its folder's turn
+ * until it answers or `ms` more pass. Passing them unanswered is a missed
+ * deadline like any other — with no budget left to ask the drive's root, so
+ * only a root that hung, or a drive not known, goes silent with it. Never
+ * rejects.
+ */
+async function restOfDeadline(d: EmptyCheckDeps, where: Where, op: Promise<unknown>, ms: number, missed: () => void, endTurn: () => void): Promise<void> {
+  const rest = d.deadline(ms);
+  let late: boolean;
+  try {
+    late = await Promise.race([op.then(() => false, () => false), rest.late.then(() => true)]);
+  } finally {
+    rest.cancel();
+  }
+  if (!late) {
+    endTurn();
+    return;
+  }
+  missedDeadline(d, where.folder, op, missed, endTurn);
+  await askRoot({ d, drive: where.drive, left: () => 0 }, where, op);
 }
 
 /**

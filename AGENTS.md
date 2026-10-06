@@ -355,7 +355,10 @@ OpenAPI 3 spec).
      one probe at a time), and while one is out its folders are looked at
      one at a time. A call that fails with the
      drive's own error (EIO, ESTALE, …) keeps its silence a minute; any other
-     answer lifts it. The looks of one request stop after 10 s. A gdu scan offers none and says why in
+     answer lifts it. The looks of one request stop after 10 s; a call
+     those 10 s cut short is still given the rest of its 2 s, and only one
+     that misses its whole 2 s counts as not answering — a request waiting
+     on it meanwhile waits, within its own 10 s. A gdu scan offers none and says why in
      `reason` (gdu shows a folder it could not read as an empty one). To trash
      what it offers, send `onlyEmptyFolders: true` (below).
    - `GET /api/file-types`, `GET /api/apps`,
