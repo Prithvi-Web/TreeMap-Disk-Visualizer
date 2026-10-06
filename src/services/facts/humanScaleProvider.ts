@@ -117,6 +117,20 @@ const MUSIC_EXTENSIONS = ['mp3', 'm4a', 'flac', 'wav', 'aac', 'ogg', 'aiff'];
 /** Emission order is fixed, so results are deterministic batch to batch. */
 const KINDS: readonly HumanScaleKind[] = ['photos', 'videos', 'music'];
 
+/**
+ * The smallest file that counts as one of a kind (B10, decimal bytes). An
+ * extension says what a file is made of, not what it is: an app's 1.6 KB
+ * icon PNGs made 2.6 GB of SDKs "≈ 1,701,034 photos like the ones here", and
+ * a 50 KB alert sound is not a song. Below the floor a file is still part of
+ * the folder's size — the figure translated — but not of the sample it is
+ * compared to; a folder of icons alone has no photos, and says nothing.
+ */
+export const MIN_ITEM_BYTES: Readonly<Record<HumanScaleKind, number>> = {
+  photos: 100_000,
+  videos: 1_000_000,
+  music: 1_000_000,
+};
+
 const KIND_OF_EXTENSION = new Map<string, HumanScaleKind>();
 for (const e of PHOTO_EXTENSIONS) KIND_OF_EXTENSION.set(e, 'photos');
 for (const e of VIDEO_EXTENSIONS) KIND_OF_EXTENSION.set(e, 'videos');
@@ -172,9 +186,11 @@ function walkDir(
     if (ext === undefined) continue;
     const kind = KIND_OF_EXTENSION.get(ext);
     if (kind === undefined) continue;
+    const bytes = store.size(id);
+    if (bytes < MIN_ITEM_BYTES[kind]) continue; // an icon, a thumbnail, an alert sound
     const tally = tallies[kind];
     tally.count += 1;
-    tally.bytes += store.size(id);
+    tally.bytes += bytes;
   }
 
   // The folder's byte figure is the scan's own summed total — O(1) truth,

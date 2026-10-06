@@ -131,16 +131,27 @@ async function scanned(port: number, root: string): Promise<string> {
  * A fixture whose media mix is fully known, and a completed scan over it.
  *
  * Every byte count is chosen so the true averages are exact integers, which
- * keeps the expected values below free of float-tolerance fudging:
+ * keeps the expected values below free of float-tolerance fudging. Media
+ * files are at least the per-item floors (a photo 100 KB, a video or a song
+ * 1 MB — B10), and are written sparse, so their sizes cost no disk:
  *
- *  photos20/   20 photos sized 1000+10i     → 21,900 bytes, average 1,095
- *  mixed/      20 photos sized 2000+100i    → 59,000 bytes, average 2,950
- *  mixed/clips 15 videos sized 10000+1000i  → 255,000 bytes, average 17,000
- *  few9/       9 photos (below the floor)   → no comparable kind
- *  nomedia/    txt + bin + extensionless    → no comparable kind
- *  zeromusic/  12 empty .mp3 files          → 12 samples but average 0
- *  capped30/   30 photos of exactly 1,000   → for the walk-cap test
+ *  photos20/   20 photos sized 100000+1000i       → 2,190,000 bytes, average 109,500
+ *  mixed/      20 photos sized 200000+10000i      → 5,900,000 bytes, average 295,000
+ *  mixed/clips 15 videos sized 1000000+100000i    → 25,500,000 bytes, average 1,700,000
+ *  few9/       9 photos (below the count floor)   → no comparable kind
+ *  nomedia/    txt + bin + extensionless          → no comparable kind
+ *  zeromusic/  12 empty .mp3 files                → 12 files, none a song
+ *  capped30/   30 photos of exactly 100,000       → for the walk-cap test
+ *  icons/      56 PNG icons of 1,600 bytes        → no photos at all (B10)
+ *  album/      12 photos of 2,000,000 + 40 icons  → the photos, not the icons (B10)
+ *  sounds/     12 alert sounds of 50,000 (.aiff)  → no music (B10)
  */
+/** A file of `bytes` that occupies no blocks where the file system allows it. */
+function sized(file: string, bytes: number): void {
+  fs.writeFileSync(file, '');
+  fs.truncateSync(file, bytes);
+}
+
 async function scannedMediaFixture(port: number) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-humanscale-fixture-'));
 
@@ -150,7 +161,7 @@ async function scannedMediaFixture(port: number) {
     // One deliberately UPPERCASE name: the scanner lowercases extensions, so
     // this file must still land in the photo bucket or sampleCount reads 19.
     const name = i === 0 ? 'IMG_0000.JPG' : `img_${i}.${i % 2 === 0 ? 'jpg' : 'png'}`;
-    fs.writeFileSync(path.join(photos20, name), Buffer.alloc(1000 + 10 * i));
+    sized(path.join(photos20, name), 100_000 + 1000 * i);
   }
 
   const mixed = path.join(root, 'mixed');
@@ -159,18 +170,18 @@ async function scannedMediaFixture(port: number) {
   fs.mkdirSync(clips);
   for (let i = 0; i < 20; i++) {
     const ext = i % 3 === 0 ? 'heic' : i % 3 === 1 ? 'jpg' : 'webp';
-    fs.writeFileSync(path.join(mixed, `img_${i}.${ext}`), Buffer.alloc(2000 + 100 * i));
+    sized(path.join(mixed, `img_${i}.${ext}`), 200_000 + 10_000 * i);
   }
   // Videos live one level down, so this folder also proves the walk descends
   // into subdirectories rather than reading direct children only.
   for (let i = 0; i < 15; i++) {
-    fs.writeFileSync(path.join(clips, `clip_${i}.${i % 2 === 0 ? 'mp4' : 'mov'}`), Buffer.alloc(10000 + 1000 * i));
+    sized(path.join(clips, `clip_${i}.${i % 2 === 0 ? 'mp4' : 'mov'}`), 1_000_000 + 100_000 * i);
   }
 
   const few9 = path.join(root, 'few9');
   fs.mkdirSync(few9);
   for (let i = 0; i < 9; i++) {
-    fs.writeFileSync(path.join(few9, `photo_${i}.png`), Buffer.alloc(500 + i));
+    sized(path.join(few9, `photo_${i}.png`), 200_000 + i);
   }
 
   const nomedia = path.join(root, 'nomedia');
@@ -188,8 +199,23 @@ async function scannedMediaFixture(port: number) {
   const capped30 = path.join(root, 'capped30');
   fs.mkdirSync(capped30);
   for (let i = 0; i < 30; i++) {
-    fs.writeFileSync(path.join(capped30, `same_${i}.jpg`), Buffer.alloc(1000));
+    sized(path.join(capped30, `same_${i}.jpg`), 100_000);
   }
+
+  // B10: an app's icon PNGs are not photos. 56 of them averaging 1.6 KB made
+  // 2.6 GB of SDKs "≈ 1,701,034 photos like the ones here".
+  const icons = path.join(root, 'icons');
+  fs.mkdirSync(icons);
+  for (let i = 0; i < 56; i++) sized(path.join(icons, `icon_${i}.png`), 1600);
+
+  const album = path.join(root, 'album');
+  fs.mkdirSync(album);
+  for (let i = 0; i < 12; i++) sized(path.join(album, `IMG_${i}.heic`), 2_000_000);
+  for (let i = 0; i < 40; i++) sized(path.join(album, `thumb_${i}.png`), 1600);
+
+  const sounds = path.join(root, 'sounds');
+  fs.mkdirSync(sounds);
+  for (let i = 0; i < 12; i++) sized(path.join(sounds, `alert_${i}.aiff`), 50_000);
 
   let scanId: string;
   try {
@@ -209,6 +235,9 @@ async function scannedMediaFixture(port: number) {
     nomedia,
     zeromusic,
     capped30,
+    icons,
+    album,
+    sounds,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -226,12 +255,12 @@ test('a folder of 20 photos yields one photos entry from its own true average', 
     assert.equal(out.humanScale.available, true);
 
     const v = out.humanScale.values[fixture.photos20] as HumanScaleFact;
-    // Sum of 1000+10i for i in 0..19 is 21,900; the average over 20 files is
-    // exactly 1,095, and the folder holds nothing else — so a folder made
-    // only of photos is equivalent to its own photo count.
+    // Sum of 100000+1000i for i in 0..19 is 2,190,000; the average over 20
+    // files is exactly 109,500, and the folder holds nothing else — so a
+    // folder made only of photos is equivalent to its own photo count.
     assert.deepEqual(v, {
-      bytes: 21900,
-      equivalents: [{ kind: 'photos', sampleCount: 20, avgBytes: 1095, equivalentCount: 20 }],
+      bytes: 2190000,
+      equivalents: [{ kind: 'photos', sampleCount: 20, avgBytes: 109500, equivalentCount: 20 }],
     });
     // The optional stays absent on an uncapped walk — never `capped: false`.
     assert.equal(Object.prototype.hasOwnProperty.call(v, 'capped'), false);
@@ -250,16 +279,16 @@ test('a mixed folder yields each kind from its own average, including nested fil
     const out = await computeFacts(fixture.scanId, [fixture.mixed], ['humanScale'], fresh());
     const v = out.humanScale.values[fixture.mixed] as HumanScaleFact;
 
-    // The folder totals 59,000 (photos) + 255,000 (videos in clips/) =
-    // 314,000 bytes. Each kind divides that same total by its OWN average:
-    // photos 314,000 / 2,950 = 106.44 → 106; videos 314,000 / 17,000 =
-    // 18.47 → 18. If either kind borrowed the other's average — or any
-    // constant — neither literal would match.
+    // The folder totals 5,900,000 (photos) + 25,500,000 (videos in clips/) =
+    // 31,400,000 bytes. Each kind divides that same total by its OWN average:
+    // photos 31,400,000 / 295,000 = 106.44 → 106; videos 31,400,000 /
+    // 1,700,000 = 18.47 → 18. If either kind borrowed the other's average —
+    // or any constant — neither literal would match.
     assert.deepEqual(v, {
-      bytes: 314000,
+      bytes: 31400000,
       equivalents: [
-        { kind: 'photos', sampleCount: 20, avgBytes: 2950, equivalentCount: 106 },
-        { kind: 'videos', sampleCount: 15, avgBytes: 17000, equivalentCount: 18 },
+        { kind: 'photos', sampleCount: 20, avgBytes: 295000, equivalentCount: 106 },
+        { kind: 'videos', sampleCount: 15, avgBytes: 1700000, equivalentCount: 18 },
       ],
     });
   } finally {
@@ -303,11 +332,40 @@ test('no comparable files means an empty equivalents array — never a generic a
     const nomedia = out.humanScale.values[fixture.nomedia] as HumanScaleFact;
     assert.deepEqual(nomedia, { bytes: 350, equivalents: [] });
 
-    // Twelve zero-byte mp3 files clear the sample floor but average 0 bytes.
-    // Dividing by that average would be nonsense, so the kind is omitted the
-    // same way an under-sampled one is.
+    // Twelve zero-byte mp3 files are twelve files but no song: each is under
+    // the per-item floor, so the kind is omitted the same way an under-sampled
+    // one is — and an average of 0 bytes is never divided by.
     const zeromusic = out.humanScale.values[fixture.zeromusic] as HumanScaleFact;
     assert.deepEqual(zeromusic, { bytes: 0, equivalents: [] });
+  } finally {
+    fixture.cleanup();
+    await close();
+  }
+});
+
+/* ------------------- B10: an icon is not a photo, nor an alert a song ------------------- */
+
+test('icons, thumbnails and alert sounds are not the photos and songs a folder is compared to (B10)', async () => {
+  const { port, close } = await listen();
+  const fixture = await scannedMediaFixture(port);
+  try {
+    clearFactCache();
+    const out = await computeFacts(fixture.scanId, [fixture.icons, fixture.album, fixture.sounds], ['humanScale'], fresh());
+    const icons = out.humanScale.values[fixture.icons] as HumanScaleFact;
+    assert.deepEqual(icons, { bytes: 56 * 1600, equivalents: [] },
+      '56 icon PNGs averaging 1.6 KB are no basis for "photos like the ones here"');
+
+    // The album's twelve photos are the basis; its forty thumbnails are not in
+    // the sample (they would drag the average to 1/3 of a photo), but they are
+    // still part of the folder's size, which is the figure translated.
+    const album = out.humanScale.values[fixture.album] as HumanScaleFact;
+    assert.deepEqual(album, {
+      bytes: 12 * 2_000_000 + 40 * 1600,
+      equivalents: [{ kind: 'photos', sampleCount: 12, avgBytes: 2_000_000, equivalentCount: 12 }],
+    });
+
+    const sounds = out.humanScale.values[fixture.sounds] as HumanScaleFact;
+    assert.deepEqual(sounds.equivalents, [], 'twelve 50 KB alert sounds are not songs');
   } finally {
     fixture.cleanup();
     await close();
@@ -468,20 +526,20 @@ test('a walk that hits the node cap reports what it counted, marked capped', asy
   const { port, close } = await listen();
   const fixture = await scannedMediaFixture(port);
   // Cap 12 visits the directory itself plus 11 of its 30 photos. Every photo
-  // is exactly 1,000 bytes, so the average is 1,000 no matter which eleven
-  // the traversal reached — the assertion cannot flake on child order.
+  // is exactly 100,000 bytes, so the average is 100,000 no matter which
+  // eleven the traversal reached — the assertion cannot flake on child order.
   const restore = setHumanScaleWalkCapForTests(12);
   try {
     clearFactCache();
     const out = await computeFacts(fixture.scanId, [fixture.capped30], ['humanScale'], fresh());
     const v = out.humanScale.values[fixture.capped30] as HumanScaleFact;
     assert.deepEqual(v, {
-      bytes: 30000,
+      bytes: 3000000,
       capped: true,
-      // 11 samples still clear MIN_COMPARABLE, and the folder's full 30,000
-      // bytes divided by the sampled average of 1,000 says "about 30 photos"
-      // — the UI's basis line can state the truncated sample honestly.
-      equivalents: [{ kind: 'photos', sampleCount: 11, avgBytes: 1000, equivalentCount: 30 }],
+      // 11 samples still clear MIN_COMPARABLE, and the folder's full 3,000,000
+      // bytes divided by the sampled average of 100,000 says "about 30
+      // photos" — the UI's basis line can state the truncated sample honestly.
+      equivalents: [{ kind: 'photos', sampleCount: 11, avgBytes: 100000, equivalentCount: 30 }],
     });
 
     // With the cap restored the same folder answers in full, and the capped
@@ -491,8 +549,8 @@ test('a walk that hits the node cap reports what it counted, marked capped', asy
     const full = await computeFacts(fixture.scanId, [fixture.capped30], ['humanScale'], fresh());
     const fv = full.humanScale.values[fixture.capped30] as HumanScaleFact;
     assert.deepEqual(fv, {
-      bytes: 30000,
-      equivalents: [{ kind: 'photos', sampleCount: 30, avgBytes: 1000, equivalentCount: 30 }],
+      bytes: 3000000,
+      equivalents: [{ kind: 'photos', sampleCount: 30, avgBytes: 100000, equivalentCount: 30 }],
     });
     assert.equal(Object.prototype.hasOwnProperty.call(fv, 'capped'), false);
   } finally {
@@ -532,6 +590,22 @@ test('the tooltip line shows nothing without comparables, and always carries its
   assert.match(resolver, /node\.type !== 'dir'/, 'directories only');
   assert.match(resolver, /HS_MIN_BYTES/, 'only over the ~1 GB floor');
   assert.match(resolver, /state\.scanId !== scanAtRequest\) return/, 'a stale answer cannot cross scans');
+});
+
+test('the human-scale sentence wraps between words — only the path line may break inside one (B10)', () => {
+  const html = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const rule = (selector: string): string => {
+    const at = html.indexOf(`${selector} {`);
+    assert.notEqual(at, -1, `${selector} has a rule`);
+    return html.slice(at, html.indexOf('}', at));
+  };
+  // "based on the 56 pho / tos in this folder": break-all, meant for paths,
+  // also applied to every sentence in the tooltip.
+  assert.doesNotMatch(rule('#tooltip .t-line'), /break-all/, 'a tooltip sentence is not broken mid-word');
+  assert.match(rule('#tooltip .t-line'), /overflow-wrap: anywhere/, 'though a token wider than the tooltip still wraps');
+  assert.match(rule('#tooltip .t-path'), /word-break: break-all/, 'the path line keeps breaking anywhere');
+  const show = html.slice(html.indexOf('function showTooltip'), html.indexOf('function resolveScore'));
+  assert.match(show, /<div class="t-line t-path">\$\{escapeHtml\(node\.path\)\}<\/div>/, 'and the path line is the one that carries it');
 });
 
 test('one request cannot walk forever: the batch budget skips the tail honestly', async () => {

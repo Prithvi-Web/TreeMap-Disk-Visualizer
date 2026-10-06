@@ -53,7 +53,10 @@
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-2); }
 #tooltip .t-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
-#tooltip .t-line { color: var(--text-2); margin-top: 3px; word-break: break-all; line-height: 1.45; }
+/* Sentences wrap between words; only the path line breaks anywhere (B10: the
+   human-scale line read "56 pho / tos"). A token wider than the tooltip still wraps. */
+#tooltip .t-line { color: var(--text-2); margin-top: 3px; overflow-wrap: anywhere; line-height: 1.45; }
+#tooltip .t-path { word-break: break-all; }
 #tooltip .t-strong { color: var(--text-1); font-weight: 600; }
 #ctxMenu { position: fixed; z-index: 210; min-width: 210px; padding: 5px; display: none;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 24px;
