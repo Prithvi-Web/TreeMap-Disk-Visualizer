@@ -901,6 +901,19 @@ const realpathNative = (p: string): Promise<string> =>
   new Promise((resolve, reject) => fs.realpath.native(p, (err, out) => (err ? reject(err) : resolve(out))));
 
 /**
+ * `realPlaceOf`, asked now and without a throw: where `p` really is (every link resolved, each name as
+ * the volume stores it, on the Data volume's short spelling), or null when realpath cannot answer — for
+ * a rule that also judges the path where it lives (`canonicalDirOf`) and only adds this place to it.
+ */
+export function realPlaceNow(p: string): string | null {
+  try {
+    return stripDataVolume(strip(fs.realpathSync.native(p)));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * True when `child` is `parent` itself or located anywhere beneath it. Only
  * `..` itself leaves: a name that merely begins with two dots (`..data`, as
  * Kubernetes mounts a ConfigMap; `...`) is a name inside the folder (the U-25

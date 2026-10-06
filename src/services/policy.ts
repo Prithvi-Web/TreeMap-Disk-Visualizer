@@ -1,7 +1,8 @@
 import { AgentPolicy } from '../models/types';
+import os from 'os';
 import path from 'path';
 import { appDataDir, readJsonFileChecked } from './storage';
-import { isInside } from '../utils/pathSanitizer';
+import { canonicalDirOf, foldName, isInside, realPlaceNow, rootLivesAt } from '../utils/pathSanitizer';
 import { allScans } from './diskScanner';
 import { storeOf } from './scanStore';
 import { AppError } from '../middleware/errorHandler';
@@ -95,15 +96,65 @@ export function assertScanAllowed(policy: AgentPolicy, rootPath: string): void {
   );
 }
 
+/** A policy entry as a path: a leading `~` is the home folder, as a path a request carries reads it. */
+function entryPath(entry: string): string {
+  const expanded = entry === '~' || entry.startsWith('~/') || entry.startsWith('~\\') ? path.join(os.homedir(), entry.slice(1)) : entry;
+  return path.resolve(expanded);
+}
+
+/**
+ * Where a policy entry is: where it lives (every link in its parents resolved, its own name as
+ * written: a link entry is the link) and, when realpath can answer, where it really is (a link entry
+ * is also what it leads to). Both count, so an entry written through a link, or as a link, names the
+ * folder its writer meant.
+ */
+function placesOfEntry(entry: string): string[] {
+  const p = entryPath(entry);
+  const places = [path.normalize(canonicalDirOf(p))];
+  const real = realPlaceNow(p);
+  if (real !== null && real !== places[0]) places.push(real);
+  return places;
+}
+
+/**
+ * Where a request's path lives, as the scanned-root rule and the delete read it: every link in its
+ * parents resolved, its own name as spelled — so a link is still the link, and removing it removes
+ * the link, never what it leads to.
+ */
+function placeOfTarget(p: string): string {
+  return path.normalize(canonicalDirOf(p));
+}
+
+/** A path's names, its root first, each as a file system may fold it (`foldName`): a fold only ever refuses more here. */
+function foldedNamesOf(p: string): string[] {
+  const { root } = path.parse(p);
+  return [root, ...p.slice(root.length).split(path.sep).filter((name) => name.length > 0)].map((name) => foldName(name).toUpperCase().toLowerCase());
+}
+
+/** Whether the folded names `outer` are `inner`'s or lead to them. */
+function namesContain(outer: string[], inner: string[]): boolean {
+  return outer.length <= inner.length && outer.every((name, i) => name === inner[i]);
+}
+
 /**
  * Destructive targets must lie inside an allowed root and must not touch a
  * protected path — in either direction: trashing a folder that CONTAINS a
  * protected path would delete it just as surely.
+ *
+ * Both are judged on where each path LIVES (`placeOfTarget`), as the scanned-root
+ * rule judges it and the delete then acts (the final review, F1.3, F1.7): by its
+ * text, a protected folder spelled through a link in its parents, in another case
+ * or on the Data volume's long spelling passed, and a path spelled inside an
+ * allowed root through a link that leads out of it was "inside". A protected path
+ * is compared name by name as a file system may fold names, which only refuses
+ * more; an allowed root exactly, since a fold there would let more through.
  */
 export function assertPathsAllowed(policy: AgentPolicy, paths: string[]): void {
   if (policy.allowedRoots.length > 0) {
+    const allowed = policy.allowedRoots.flatMap(placesOfEntry);
     for (const p of paths) {
-      if (!policy.allowedRoots.some((root) => isInside(root, p))) {
+      const where = placeOfTarget(p);
+      if (!allowed.some((root) => isInside(root, where))) {
         throw new AppError(
           403,
           'POLICY_ROOT_NOT_ALLOWED',
@@ -112,13 +163,17 @@ export function assertPathsAllowed(policy: AgentPolicy, paths: string[]): void {
       }
     }
   }
+  if (policy.protectedPaths.length === 0) return;
+  const protectedPlaces = policy.protectedPaths.map((entry) => ({ entry, places: placesOfEntry(entry).map(foldedNamesOf) }));
   for (const p of paths) {
-    for (const protectedPath of policy.protectedPaths) {
-      if (isInside(protectedPath, p) || isInside(p, protectedPath)) {
+    const where = foldedNamesOf(placeOfTarget(p));
+    for (const { entry, places } of protectedPlaces) {
+      const touches = isInside(entry, p) || isInside(p, entry) || places.some((place) => namesContain(place, where) || namesContain(where, place));
+      if (touches) {
         throw new AppError(
           403,
           'POLICY_PROTECTED_PATH',
-          `"${p}" touches the protected path "${protectedPath}" — remove it from agent-policy.json to allow this`,
+          `"${p}" touches the protected path "${entry}" — remove it from agent-policy.json to allow this`,
         );
       }
     }
@@ -136,13 +191,66 @@ export function assertBytesCap(policy: AgentPolicy, bytes: number | null): void 
   );
 }
 
-/** Recursive size of `p` according to any completed scan that contains it. */
+/**
+ * Recursive size of `p` according to any completed scan that contains it: by its
+ * own spelling, or else by where it lives (`placeOfTarget`), spelled as that scan
+ * spells its paths (the final review, F1.4). Found by its text alone, a folder
+ * spelled through a link in its parents, in another case or on the Data volume's
+ * long spelling was "size unknown" — so the byte cap let it through and the audit
+ * counted nothing — while the delete took the folder the scan had sized.
+ */
 export function knownSizeOf(p: string): number | null {
-  for (const scan of allScans()) {
-    if (scan.status !== 'complete' || (!scan.store && !scan.root)) continue;
+  const complete = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root));
+  for (const scan of complete) {
     const store = storeOf(scan);
     const id = store.findByPath(p);
     if (id !== -1) return store.size(id);
   }
+  const where = placeOfTarget(p);
+  for (const scan of complete) {
+    const store = storeOf(scan);
+    const id = nodeAtPlace(store, scan.rootPath, where);
+    if (id !== -1) return store.size(id);
+  }
   return null;
+}
+
+/**
+ * The node of the scan rooted at `rootPath` that lies at `where` (a place, `placeOfTarget`), or -1:
+ * the names below the root's own place (`rootLivesAt`) walked from the root's node, each by its
+ * exact name or else by the one child whose name folds the same (the last name keeps the case it was
+ * typed in; the folders above it are realpath's, as the volume stores them).
+ */
+function nodeAtPlace(store: ReturnType<typeof storeOf>, rootPath: string, where: string): number {
+  const rootAt = path.normalize(rootPlaceNow(rootPath));
+  const rootNames = foldedNamesOf(rootAt);
+  const names = where.slice(path.parse(where).root.length).split(path.sep).filter((name) => name.length > 0);
+  if (!namesContain(rootNames, foldedNamesOf(where))) return -1;
+  let id = store.findByPath(rootPath);
+  for (const name of names.slice(rootNames.length - 1)) {
+    if (id === -1) return -1;
+    id = childNamed(store, id, name);
+  }
+  return id;
+}
+
+/** The child of `parent` named `name`, or the one child whose name folds the same; -1 when none (or more than one) does. */
+function childNamed(store: ReturnType<typeof storeOf>, parent: number, name: string): number {
+  const exact = store.childByName(parent, name);
+  if (exact !== -1) return exact;
+  const wanted = foldName(name).toUpperCase().toLowerCase();
+  let found = -1;
+  let count = 0;
+  store.forEachChild(parent, (child) => {
+    if (foldName(store.name(child)).toUpperCase().toLowerCase() === wanted) {
+      found = child;
+      count += 1;
+    }
+  });
+  return count === 1 ? found : -1;
+}
+
+/** Where a scan's root is, as `rootLivesAt` reads it, on the Data volume's short spelling as `canonicalDirOf` gives a path. */
+function rootPlaceNow(rootPath: string): string {
+  return canonicalDirOf(rootLivesAt(rootPath));
 }
