@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-capsuleUnverifiedPinned-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { getCapsuleIndex, protectItems, setCapsuleCapForTests } from '../src/services/timeCapsule';
+import { deleteCapsuleEntry, getCapsuleIndex, protectItems, setCapsuleCapForTests } from '../src/services/timeCapsule';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit } from '../src/services/cartCommit';
 import type { TimeCapsuleEntry } from '../src/models/types';
@@ -51,7 +51,17 @@ async function entryOf(id: string): Promise<TimeCapsuleEntry | undefined> {
   return (await getCapsuleIndex()).entries.find((e) => e.id === id);
 }
 
+/**
+ * Forgets every copy the capsule holds, so each test starts from an empty capsule whatever ran before
+ * it (FG3g review F1.8): the second test relied on a copy the first one left, and failed run alone.
+ */
+async function emptyCapsule(): Promise<void> {
+  for (const e of (await getCapsuleIndex()).entries) await deleteCapsuleEntry(e.id);
+  assert.deepEqual((await getCapsuleIndex()).entries, [], 'the capsule starts empty');
+}
+
 test('a copy kept because its trash step could not be confirmed is never evicted once its run is over: a newer copy goes instead', async () => {
+  await emptyCapsule();
   const uncap = setCapsuleCapForTests(250_000);
   try {
     const late = item('late', 'late.bin', 1);
@@ -78,12 +88,15 @@ test('a copy kept because its trash step could not be confirmed is never evicted
 });
 
 test('an item that would fit only by evicting unconfirmed copies is left undeleted, saying why', async () => {
-  // The first test's unconfirmed copy is still held: with this one, the unconfirmed copies fill the room.
+  await emptyCapsule();
   const uncap = setCapsuleCapForTests(250_000);
   try {
-    const late = item('late-full', 'late-full.bin', 4);
-    const committed = await withOpenFileCheck('clear', () => commitCart([late]));
-    assert.equal(committed.unverified?.length, 1);
+    // Two unconfirmed copies of this test's own fill the room: 200 kB held, never evicted.
+    for (const [n, fill] of [[1, 4], [2, 6]] as const) {
+      const late = item(`late-full-${n}`, `late-full-${n}.bin`, fill);
+      const committed = await withOpenFileCheck('clear', () => commitCart([late]));
+      assert.deepEqual((committed.unverified ?? []).map((u) => u.path), [late], 'unconfirmed: its copy is kept');
+    }
     const big = item('big', 'big.bin', 5);
     const result = await withOpenFileCheck('clear', () => commitCart([big]));
     const row = result.skipped.find((s) => s.path === big);
