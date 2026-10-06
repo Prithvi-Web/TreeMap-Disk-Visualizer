@@ -118,7 +118,8 @@ export function setDestManifestWriteForTests(hook: (destRoot: string) => Promise
  * them), and two overlapping restores lost each other's "restored". Every `saveManifest` call is
  * inside one (tests/offloadManifestLock.test.ts reads this file to hold it so); a read alone needs
  * none, since a save replaces the file whole. Never nested: see AsyncMutex. Nothing on another drive
- * is touched while it is held (FG3g review F1.2): the record on the destination is written after.
+ * is touched while it is held: the record on the destination is written after (FG3g review F1.2),
+ * and the Offloaded tab looks at each destination before (FG3g review F2.6).
  *
  * The lock is this process's own (FG3h B). The MCP server is a second process that can offload into
  * the same app data, and nothing coordinates the two read-modify-writes. Each save goes through a
@@ -943,38 +944,64 @@ export interface OffloadIndex {
   entries: OffloadEntry[];
 }
 
+/**
+ * Test-only: a stand-in for the Offloaded tab's look at whether a destination is there (FG3g review
+ * F2.6) — a promise of the answer, one that does not settle for a drive that stopped answering — or
+ * null for the real look. The suite's ForTests idiom: returns the function that removes it.
+ */
+let destinationLookForTests: ((root: string) => Promise<boolean> | null) | null = null;
+export function setDestinationLookForTests(look: (root: string) => Promise<boolean> | null): () => void {
+  destinationLookForTests = look;
+  return () => { destinationLookForTests = null; };
+}
+
+/** How long the Offloaded tab waits for a destination to answer before showing it as not connected (FG3g review F2.6). */
+const DESTINATION_LOOK_STALL_MS = 10_000;
+
+/**
+ * Whether a destination's folder is there now. A look at another drive, so it is bounded: one that
+ * does not answer within the limit is shown as not connected, its look left to return on its own.
+ */
+function destinationMounted(root: string): Promise<boolean> {
+  const look = destinationLookForTests?.(root) ?? fsp.stat(root).then(() => true, () => false);
+  return withinStallLimit(look, DESTINATION_LOOK_STALL_MS, () => false);
+}
+
 export async function getOffloadIndex(): Promise<OffloadIndex> {
-  // Its "last seen" is a write too, so the whole read-modify-write holds the manifest (FG3g M3).
-  return withOffloadManifest(async () => {
-    const store = await loadManifest();
-    const roots = new Map<string, { totalBytes: number; activeCount: number; restoredCount: number }>();
-    for (const e of store.entries) {
-      const agg = roots.get(e.destRoot) ?? { totalBytes: 0, activeCount: 0, restoredCount: 0 };
-      if (e.restoredAt) {
-        agg.restoredCount++;
-      } else {
-        agg.activeCount++;
-        agg.totalBytes += e.size;
-      }
-      roots.set(e.destRoot, agg);
+  // Read, and each destination looked at, with no lock held (FG3g review F2.6): a read alone needs
+  // none, and the look — at another drive, perhaps one that stopped answering — ran inside the lock as
+  // a synchronous stat, holding the event loop and every offload's record save and restore's with it.
+  const store = await loadManifest();
+  const roots = new Map<string, { totalBytes: number; activeCount: number; restoredCount: number }>();
+  for (const e of store.entries) {
+    const agg = roots.get(e.destRoot) ?? { totalBytes: 0, activeCount: 0, restoredCount: 0 };
+    if (e.restoredAt) {
+      agg.restoredCount++;
+    } else {
+      agg.activeCount++;
+      agg.totalBytes += e.size;
     }
-    let touched = false;
-    const destinations = [...roots.entries()].map(([root, agg]) => {
-      const mounted = fs.existsSync(root);
-      if (mounted) {
-        store.destinations[root] = { lastSeenAt: Date.now() };
-        touched = true;
-      }
-      return {
-        root,
-        mounted,
-        lastSeenAt: store.destinations[root]?.lastSeenAt ?? 0,
-        ...agg,
-      };
-    }).sort((a, b) => b.totalBytes - a.totalBytes);
-    if (touched) await saveManifest(store);
-    return { destinations, entries: [...store.entries].sort((a, b) => b.offloadedAt - a.offloadedAt) };
-  });
+    roots.set(e.destRoot, agg);
+  }
+  const looked = await Promise.all([...roots.entries()].map(async ([root, agg]) => ({ root, agg, mounted: await destinationMounted(root) })));
+  const seenAt = Date.now();
+  const seen = looked.filter((d) => d.mounted).map((d) => d.root);
+  if (seen.length > 0) {
+    // "Last seen" is a write, so it is one read-modify-write of the manifest (FG3g M3), on a fresh
+    // read: whatever was saved since the read above is kept.
+    await withOffloadManifest(async () => {
+      const fresh = await loadManifest();
+      for (const root of seen) fresh.destinations[root] = { lastSeenAt: seenAt };
+      await saveManifest(fresh);
+    });
+  }
+  const destinations = looked.map(({ root, agg, mounted }) => ({
+    root,
+    mounted,
+    lastSeenAt: mounted ? seenAt : store.destinations[root]?.lastSeenAt ?? 0,
+    ...agg,
+  })).sort((a, b) => b.totalBytes - a.totalBytes);
+  return { destinations, entries: [...store.entries].sort((a, b) => b.offloadedAt - a.offloadedAt) };
 }
 
 /** Manifest lookup for the reveal endpoint (only manifest paths may open). */

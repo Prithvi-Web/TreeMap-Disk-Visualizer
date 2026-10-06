@@ -10,8 +10,8 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createScanRecord } from '../src/services/diskScanner';
 import {
-  getOffloadIndex, getOffloadJob, offloadManifestWaitersForTests, prepareOffload, setAfterManifestLoadForTests, setDestManifestWriteForTests,
-  startOffload, startRestore,
+  getOffloadIndex, getOffloadJob, offloadManifestWaitersForTests, prepareOffload, setAfterManifestLoadForTests, setDestinationLookForTests,
+  setDestManifestWriteForTests, startOffload, startRestore,
 } from '../src/services/offload';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { abandonedCallsUnsettled, setHardLinkForTests, setStallTimerForTests } from '../src/utils/copyVerify';
@@ -398,4 +398,74 @@ test('two offloads to one drive write its record one at a time: the second waits
   }
   const onDrive = JSON.parse(fs.readFileSync(path.join(dest, 'treemap-offload-manifest.json'), 'utf8')) as { entries: OffloadEntry[] };
   assert.deepEqual(onDrive.entries.map((e) => e.originalPath).sort(), [one, two].sort(), 'the drive\'s own record lists both offloads');
+});
+
+/* ─────────────── FG3g review F2.6: the Offloaded tab looks at destinations with no lock held ─────────────── */
+
+test('the Offloaded tab\'s look at a destination that does not answer holds no record: an offload finishing meanwhile is saved at once, and the tab shows that drive not connected at the limit', async () => {
+  const { src, paths: [seen, o] } = files('look-quiet', 'seen.bin', 'o.bin');
+  const quiet = fileTempDir('treemap-offloadManifestLock-look-quiet-a-');
+  const other = fileTempDir('treemap-offloadManifestLock-look-quiet-b-');
+  assert.equal((await offload(src, seen, quiet)).status, 'complete');
+  const manifestFile = path.join(DATA, 'offload-manifest.json');
+  const lastSeen = (root: string): number | undefined => (JSON.parse(fs.readFileSync(manifestFile, 'utf8')) as { destinations: Record<string, { lastSeenAt: number }> }).destinations[root]?.lastSeenAt;
+  const seenBefore = lastSeen(quiet);
+  const timers: { ms: number; fire: () => void }[] = [];
+  const untimer = setStallTimerForTests((ms, onExpire) => {
+    timers.push({ ms, fire: onExpire });
+    return () => {};
+  });
+  let asked = 0;
+  /** Which of `timers` is the quiet look's: it is armed the moment its look is asked. */
+  let quietTimer = -1;
+  let answer!: (mounted: boolean) => void;
+  const answered = new Promise<boolean>((resolve) => { answer = resolve; });
+  const unlook = setDestinationLookForTests((root) => {
+    if (root !== quiet) return null;
+    asked++;
+    quietTimer = timers.length;
+    return answered; // a drive that stopped answering
+  });
+  let index: Awaited<ReturnType<typeof getOffloadIndex>> | null = null;
+  try {
+    const reading = getOffloadIndex();
+    await waitFor(() => asked > 0, 'the tab looking at the quiet destination');
+    const scan = scanOf(src, [o]);
+    let job: OffloadJob | null = null;
+    await withOpenFileCheck('clear', async () => {
+      const prepared = await prepareOffload(scan, [o], other);
+      const started = await startOffload(scan, [o], other, prepared);
+      await waitFor(() => getOffloadJob(started.jobId)?.status !== 'running' || offloadManifestWaitersForTests() > 0,
+        'the offload finishing, or its record waiting for the tab');
+      assert.equal(offloadManifestWaitersForTests(), 0, 'nothing waits on the tab\'s look at the quiet drive');
+      job = await settled(started.jobId);
+    });
+    assert.equal((job as OffloadJob | null)?.status, 'complete', (job as OffloadJob | null)?.error);
+    assert.ok((JSON.parse(fs.readFileSync(manifestFile, 'utf8')) as { entries: OffloadEntry[] }).entries.some((e) => e.originalPath === o),
+      'its record is saved while the tab still waits on the quiet drive');
+    const lookLimit = timers[quietTimer];
+    assert.equal(lookLimit?.ms, 10_000, 'the look has a limit of its own');
+    lookLimit.fire(); // the limit passes with the drive still quiet
+    index = await withinHangGuard(reading, 'the tab answering once the limit passed');
+  } finally {
+    answer(true);
+    unlook();
+    untimer();
+  }
+  const ofQuiet = index?.destinations.find((d) => d.root === quiet);
+  assert.equal(ofQuiet?.mounted, false, 'a drive that did not answer is shown not connected');
+  assert.equal(lastSeen(quiet), seenBefore, 'and it is not recorded as seen');
+  assert.ok(index?.entries.some((e) => e.originalPath === seen), 'the tab lists what the record held when it read it');
+  // The drive answers now: it is recorded as seen when the tab is read again. A mark first, so the
+  // write is seen whatever the clock reads.
+  const marked = JSON.parse(fs.readFileSync(manifestFile, 'utf8')) as { destinations: Record<string, { lastSeenAt: number }> };
+  marked.destinations[quiet] = { lastSeenAt: 1 };
+  fs.writeFileSync(manifestFile, JSON.stringify(marked));
+  const again = await getOffloadIndex();
+  const quietNow = again.destinations.find((d) => d.root === quiet);
+  assert.equal(quietNow?.mounted, true);
+  assert.notEqual(quietNow?.lastSeenAt, 1);
+  assert.equal(lastSeen(quiet), quietNow?.lastSeenAt, 'a destination that answers is recorded as seen');
+  assert.ok((JSON.parse(fs.readFileSync(manifestFile, 'utf8')) as { entries: OffloadEntry[] }).entries.some((e) => e.originalPath === o),
+    'and saving "last seen" kept the offload saved meanwhile');
 });
