@@ -366,7 +366,9 @@ OpenAPI 3 spec).
      opt-in that peer must have granted, and the peer judges the folder by its
      own rules first: its sanitizer (`400 PATH_BLOCKED` / `PATH_INVALID`) and
      its own `agent-policy.json` `allowedRoots` (`403 POLICY_ROOT_NOT_ALLOWED`),
-     as for a scan asked for there.
+     as for a scan asked for there — and on Windows only a folder on one of its
+     drives: a network share (`\\server\share`) is refused `400 PATH_BLOCKED`
+     before anything looks at it, so no peer can make it sign in to a server.
    - `GET /api/engine/budget` — the scanning budget: the setting
      (`auto|eco|balanced|turbo`, optional `cpuPercent`), what it resolves to
      now (`effective`), and who holds it (`source`: the native governor, or the

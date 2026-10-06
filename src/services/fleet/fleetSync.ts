@@ -306,15 +306,46 @@ function readBody(req: http.IncomingMessage): Promise<string> {
  * any scan starts (the SEC-2 review, F2): `sanitizePath`, as POST /api/scan applies it — a blocked
  * OS folder, a second name of a path (/.nofollow, /.vol, a device namespace) or a null byte is
  * refused — and an absolute path (or `~`) only, since this server's working folder means nothing to
- * the machine that asked. `startScan` itself sanitizes nothing. Throws `PathRejectedError`.
+ * the machine that asked, on Windows rooted on one of this machine's drives (`peerScanRootRefusal`,
+ * asked before anything looks at the path). `startScan` itself sanitizes nothing. Throws
+ * `PathRejectedError`.
  */
 function remoteScanRoot(given: string): string {
-  const typed = given.replace(/^\s+/, '');
-  const home = typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\');
-  if (!home && !path.isAbsolute(typed)) {
-    throw new PathRejectedError('A scan started from another machine must name an absolute path on this one', 'PATH_INVALID');
-  }
+  const refusal = peerScanRootRefusal(given);
+  if (refusal) throw refusal;
   return sanitizePath(given);
+}
+
+/** A Windows path rooted on one of the machine's drives: `C:\…`, also behind `\\?\` or `\\.\`. */
+const WIN32_DRIVE_ROOTED = /^(?:[\\/]{2}[?.][\\/])?[a-z]:[\\/]/i;
+
+/**
+ * The refusal the spelling alone of a folder another machine asks for earns, before anything asks the
+ * file system about it; null when it may go on to `sanitizePath`. `~` alone or before a separator is
+ * this machine's home; anything else must be absolute.
+ *
+ * And on Windows, rooted on one of this machine's drives. A UNC path (`\\server\share`,
+ * `//server/share`, `\\?\UNC\…`) passed the sanitizer, so a paired peer could make this machine open
+ * an SMB session to any server it named — signing in there with the user's NTLM credentials — the
+ * moment anything looked at the path (the SEC-3 brief, item 6b). A drive a person mapped to a share is
+ * a drive letter, and still scans; any other root (a device name, the current drive's `\`) is not the
+ * peer's to name either. Pure — `platform` picks the rules (process.platform's when none is named), so
+ * Windows' are tested on every OS; nothing here is resolved.
+ */
+export function peerScanRootRefusal(given: string, platform: NodeJS.Platform = process.platform): PathRejectedError | null {
+  const typed = given.replace(/^\s+/, '');
+  if (typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\')) return null;
+  const windows = platform === 'win32';
+  if (!(windows ? path.win32 : path.posix).isAbsolute(typed)) {
+    return new PathRejectedError('A scan started from another machine must name an absolute path on this one', 'PATH_INVALID');
+  }
+  if (windows && !WIN32_DRIVE_ROOTED.test(typed)) {
+    return new PathRejectedError(
+      'A scan started from another machine must name a folder on one of this machine’s drives, such as C:\\Users — never a network share or a device, which this machine would have to reach on the asker’s word',
+      'PATH_BLOCKED',
+    );
+  }
+  return null;
 }
 
 /**

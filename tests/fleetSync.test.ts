@@ -13,7 +13,7 @@ process.env.TREEMAP_NO_GDU = '1'; // one test runs a real scan of a small folder
 import {
   DEFAULT_FLEET_PORT, FleetConfig, PAIRING_WINDOW_MS, beginPairing, cancelPairing,
   defaultConfig, handlePeerRequest, isPrivateIPv4, lanAddresses, pairingOffer,
-  resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode,
+  peerScanRootRefusal, resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode,
 } from '../src/services/fleet/fleetSync';
 import { FleetSummary, SUMMARY_FIELDS, buildSummary, isForbiddenSummaryField, serialiseSummary } from '../src/services/fleet/fleetSummary';
 import { fleetRuntime, startPeerScan } from '../src/services/fleet/fleetRuntime';
@@ -347,6 +347,63 @@ test('a scan another machine asks for is judged by this machine’s own path rul
   for (const p of ['~', '~/x']) statuses.push((await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } })).status);
   assert.deepEqual(statuses, [202, 202]);
   assert.deepEqual(scansStarted, [tmp, os.homedir(), path.join(os.homedir(), 'x')]);
+});
+
+test('on Windows a scan another machine asks for must be rooted on one of this machine’s drives: a network share would make this machine sign in to whatever server the peer names — its NTLM hash with it — so \\\\server\\share, //server/share, \\\\?\\UNC\\… and every other non-drive root are refused; elsewhere nothing changes (the SEC-3 brief, item 6b)', () => {
+  const codes = (platform: NodeJS.Platform, paths: string[]) => Object.fromEntries(paths.map((p) => [p, peerScanRootRefusal(p, platform)?.code ?? null]));
+  assert.deepEqual(codes('win32', [
+    'C:\\Users\\me', 'd:/Photos', '\\\\?\\C:\\Users', '\\\\.\\D:\\', '~', '~\\Documents', '~/x',
+    '\\\\attacker\\share', '//attacker/share/x', '\\\\?\\UNC\\attacker\\share', '\\\\.\\UNC\\attacker\\share', '\\/attacker/share',
+    '  \\\\attacker\\share', '\\\\?\\GLOBALROOT\\Device\\Mup\\attacker\\share', '\\Users\\me',
+    'C:Users', 'C:', 'Documents', '..\\elsewhere',
+  ]), {
+    'C:\\Users\\me': null, 'd:/Photos': null, '\\\\?\\C:\\Users': null, '\\\\.\\D:\\': null, '~': null, '~\\Documents': null, '~/x': null,
+    '\\\\attacker\\share': 'PATH_BLOCKED', '//attacker/share/x': 'PATH_BLOCKED', '\\\\?\\UNC\\attacker\\share': 'PATH_BLOCKED',
+    '\\\\.\\UNC\\attacker\\share': 'PATH_BLOCKED', '\\/attacker/share': 'PATH_BLOCKED', '  \\\\attacker\\share': 'PATH_BLOCKED',
+    '\\\\?\\GLOBALROOT\\Device\\Mup\\attacker\\share': 'PATH_BLOCKED', '\\Users\\me': 'PATH_BLOCKED', // the current drive's root: which drive is not the peer's to know
+    'C:Users': 'PATH_INVALID', 'C:': 'PATH_INVALID', 'Documents': 'PATH_INVALID', '..\\elsewhere': 'PATH_INVALID',
+  });
+  // On macOS and Linux //server/share is /server/share, a folder of this machine, and a share is a mount the user made.
+  assert.deepEqual(codes('darwin', ['/Volumes/share', '//server/share', '~', 'Documents']), { '/Volumes/share': null, '//server/share': null, '~': null, 'Documents': 'PATH_INVALID' });
+  assert.deepEqual(codes('linux', ['/mnt/share', '//server/share', '../x']), { '/mnt/share': null, '//server/share': null, '../x': 'PATH_INVALID' });
+});
+
+test('with Windows stood in for process.platform, the receiver refuses a peer’s network share before anything touches the path — no realpath, lstat or stat, so no sign-in to the server it names — and no scan starts (the SEC-3 brief, item 6b)', async () => {
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  scansStarted.length = 0;
+  const touched: string[] = [];
+  const writable = fs as { lstatSync: typeof fs.lstatSync; statSync: typeof fs.statSync };
+  const realpath = fs.realpathSync.native;
+  const lstat = fs.lstatSync;
+  const stat = fs.statSync;
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  const answers: unknown[] = [];
+  fs.realpathSync.native = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`realpath ${String(p)}`); return (realpath as (...a: unknown[]) => string)(p, ...rest); }) as typeof realpath;
+  writable.lstatSync = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`lstat ${String(p)}`); return (lstat as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof lstat;
+  writable.statSync = ((p: fs.PathLike, ...rest: unknown[]) => { touched.push(`stat ${String(p)}`); return (stat as (...a: unknown[]) => unknown)(p, ...rest); }) as typeof stat;
+  Object.defineProperty(process, 'platform', { ...real, value: 'win32' });
+  try {
+    for (const p of ['\\\\attacker\\share', '//attacker/share/x', '\\\\?\\UNC\\attacker\\share']) {
+      const r = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } });
+      answers.push([p, r.status, r.body?.code]);
+    }
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+    fs.realpathSync.native = realpath;
+    writable.lstatSync = lstat;
+    writable.statSync = stat;
+  }
+  assert.deepEqual(answers, [
+    ['\\\\attacker\\share', 400, 'PATH_BLOCKED'],
+    ['//attacker/share/x', 400, 'PATH_BLOCKED'],
+    ['\\\\?\\UNC\\attacker\\share', 400, 'PATH_BLOCKED'],
+  ]);
+  assert.deepEqual(touched.filter((t) => t.includes('attacker')), [], 'nothing asked the file system about the share');
+  assert.deepEqual(scansStarted, [], 'no scan was started');
 });
 
 test('a scan another machine asks for is held to agent-policy.json’s allowedRoots, as one asked for here is: outside them 403 POLICY_ROOT_NOT_ALLOWED and nothing is scanned; inside them it starts', async () => {
