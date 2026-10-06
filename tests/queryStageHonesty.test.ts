@@ -250,14 +250,14 @@ test('when the server stopped at its cap, the box says so rather than "the N big
  * ignored which one was asked for. The second export overwrote (or was renamed
  * beside) the first. Same for Excel.
  */
-async function downloadName(format: string, mode?: string): Promise<string> {
+async function downloadName(format: string, mode?: string, at: { root: { path: string; name: string }; rootName: string } = { root: { path: '/r', name: 'Library' }, rootName: 'Library' }): Promise<string> {
   const anchors: { download?: string }[] = [];
   const doc = {
     createElement: () => { const a: any = { click() {}, remove() {} }; anchors.push(a); return a; },
     body: { appendChild() {} },
   };
   const deps: Record<string, unknown> = {
-    state: { scanId: 's1', root: { path: '/r' }, scanning: false, treemap: { rootName: 'Library' } },
+    state: { scanId: 's1', root: at.root, scanning: false, treemap: { rootName: at.rootName } },
     toast: () => {},
     api: async () => ({ status: 'complete' }),
     document: doc,
@@ -281,6 +281,26 @@ test('files and folders exports are saved under different names', async () => {
 
 test('an export with no mode keeps the plain name', async () => {
   assert.match(await downloadName('pdf'), /^treemap-Library-\d{8}\.pdf$/);
+});
+
+/* ══════════════════ B32: a report is named for what it holds ══════════════════ */
+
+test('B32: a report holds the whole scan, so it is named after the scanned folder — not the folder drilled into', async () => {
+  // B32: drilled into corpus › Videos, "CSV — all files" saved
+  // treemap-Videos-files-….csv holding all 101,034 corpus files; the server
+  // names it treemap-corpus-files-….csv.
+  const drilled = { root: { path: '/Users/x/corpus', name: 'corpus' }, rootName: 'Videos' };
+  assert.match(await downloadName('csv', 'files', drilled), /^treemap-corpus-files-\d{8}\.csv$/, 'the CSV');
+  assert.match(await downloadName('xlsx', 'folders', drilled), /^treemap-corpus-folders-\d{8}\.xlsx$/, 'the workbook');
+  assert.match(await downloadName('pdf', undefined, drilled), /^treemap-corpus-\d{8}\.pdf$/, 'the PDF report');
+});
+
+test('B32: a picture of the map is still named after the folder on screen — that is what it shows', () => {
+  const name = new Function('state', `${declOf('exportFileName')}\nreturn exportFileName;`)(
+    { root: { path: '/Users/x/corpus', name: 'corpus' }, treemap: { rootName: 'Videos' } },
+  ) as (ext: string, mode?: string) => string;
+  assert.match(name('png'), /^treemap-Videos-\d{8}\.png$/);
+  assert.match(name('svg'), /^treemap-Videos-\d{8}\.svg$/);
 });
 
 /* ══════════════════ D30: a field that is not one gets a hint ══════════════════ */

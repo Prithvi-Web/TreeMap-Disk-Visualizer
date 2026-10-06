@@ -850,7 +850,10 @@ async function downloadReport(format, mode) {
   // convention as every other export the app writes, and names the mode: the
   // attribute wins over the server's -files-/-folders- name, so without it the
   // two CSVs (and the two workbooks) were saved under one name (D37).
-  a.download = exportFileName(format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv', mode);
+  // Named after the SCANNED folder: the request has no root, and the file
+  // holds the whole scan, whatever folder the map is drilled into (B32 — it
+  // saved treemap-Videos-files-….csv holding every corpus file).
+  a.download = exportFileName(format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv', mode, state.root && state.root.name);
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
@@ -858,9 +861,14 @@ async function downloadReport(format, mode) {
   toast(format === 'pdf' ? 'Building PDF report…' : format === 'xlsx' ? 'Building Excel workbook…' : 'Exporting CSV…');
 }
 
-/** `mode` (files / folders) is part of the name when an export has one. */
-function exportFileName(ext, mode) {
-  const base = (state.treemap.rootName || 'treemap').replace(/[^\w.-]+/g, '_');
+/**
+ * `mode` (files / folders) is part of the name when an export has one.
+ * `name` is what the file holds: by default the folder on screen — a picture
+ * of the map shows that folder — and the scanned folder for a report of the
+ * whole scan (B32).
+ */
+function exportFileName(ext, mode, name = state.treemap.rootName) {
+  const base = (name || 'treemap').replace(/[^\w.-]+/g, '_');
   const d = new Date(), pad = (n) => String(n).padStart(2, '0');
   return `treemap-${base}-${mode ? `${mode}-` : ''}${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.${ext}`;
 }
