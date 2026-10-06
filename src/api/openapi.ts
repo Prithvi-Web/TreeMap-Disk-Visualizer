@@ -2220,7 +2220,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'settings',
     destructive: true,
     requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone, engineBudget, engine, scanBoundary')),
-    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape; BAD_SETTING when engine is not one of auto, native, gdu, walker, ntfs-mft — ntfs-mft only on Windows — or scanBoundary is not stay or cross') },
+    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape; BAD_SETTING when engine is not one of auto, native, gdu, walker, ntfs-mft — ntfs-mft only on Windows — or scanBoundary is not stay or cross'), '403': errorResponse('POLICY_ROOT_NOT_ALLOWED — a new schedule\'s folder is outside agent-policy.json\'s allowedRoots (one saved earlier is kept, and refused by the scheduler each time it falls due)') },
   },
   /* ------------ the scanning budget (Phase 2) ------------ */
   {

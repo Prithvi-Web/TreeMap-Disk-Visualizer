@@ -10,6 +10,7 @@ import { collectBrowserProfiles } from '../services/browserProfiles';
 import { listNotifications } from '../services/scheduler';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
+import { assertScanAllowed, getPolicy } from '../services/policy';
 import { validateEngineBudget } from '../services/engineBudget';
 import { ScheduleConfig, BudgetEntry } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
@@ -66,6 +67,7 @@ settingsRouter.put('/settings', async (req: Request, res: Response) => {
       }
       sched.path = sanitizePath(sched.path); // throws PathRejectedError -> errorHandler
     }
+    await refuseNewSchedulesOutsidePolicy(body.schedules as ScheduleConfig[]);
   }
   // "Anything but explicit false means on" is a forgiveness rule for
   // hand-edited FILES; API input is validated like every other field —
@@ -97,6 +99,24 @@ settingsRouter.put('/settings', async (req: Request, res: Response) => {
   }
   res.json(await updateSettings(body));
 });
+
+/**
+ * A schedule is a standing scan, so a NEW schedule path outside
+ * agent-policy.json's allowedRoots is refused as it is saved — 403
+ * POLICY_ROOT_NOT_ALLOWED, as POST /api/scan refuses the scan itself — rather
+ * than only failing, unseen, each time it falls due (`runScheduled`, where the
+ * policy is enforced; the SEC-2c review, F2.5). A path already saved is not
+ * refused: a schedule saved before the policy narrowed must not block every
+ * later save of the list it rides in, and the scheduler still refuses to run
+ * it. The policy is read only when there is a new path to judge.
+ */
+async function refuseNewSchedulesOutsidePolicy(schedules: ScheduleConfig[]): Promise<void> {
+  const saved = new Set((await getSettings()).schedules.map((s) => s.path));
+  const fresh = schedules.map((s) => s.path).filter((p) => !saved.has(p));
+  if (fresh.length === 0) return;
+  const policy = await getPolicy();
+  for (const p of fresh) assertScanAllowed(policy, p);
+}
 
 /** GET /api/cleanup/suggestions?scanId= — smart suggestions for a scan. */
 settingsRouter.get('/cleanup/suggestions', storageModeGate, async (req: Request, res: Response) => {

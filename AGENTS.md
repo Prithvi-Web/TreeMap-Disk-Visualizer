@@ -752,10 +752,13 @@ read-what-you-saw) permission to act.
     "maxBytesPerOperation": 10737418240
   }
   ```
-  `allowedRoots` confines both scanning and destruction — a scan by where its
-  root really is, so a path spelled through a link (the root itself, or a
-  folder above it) that leads outside every allowed root is refused before
-  anything is walked; `protectedPaths` can
+  `allowedRoots` confines both scanning and destruction — every scan, whoever
+  starts it: a scheduled one too (a new schedule outside the roots is refused
+  when `PUT /api/settings` saves it; one saved earlier is refused each time it
+  falls due) and one a paired peer asks for, and each by where its root really
+  is, so a path spelled through a link (the root itself, or a folder above it)
+  that leads outside every allowed root is refused before anything is walked;
+  `protectedPaths` can
   never be trashed/offloaded (nor anything containing them); the byte cap
   refuses any single oversized operation. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |

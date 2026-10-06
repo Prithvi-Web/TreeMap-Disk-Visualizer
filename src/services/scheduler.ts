@@ -7,6 +7,7 @@ import { boundaryKeyOf, listSnapshots, scanBoundaryKey } from './snapshots';
 import { getForecast } from './forecast';
 import { recordScanJournal } from './journal';
 import { sanitizePath } from '../utils/pathSanitizer';
+import { assertScanAllowed, getPolicy } from './policy';
 import { formatBytes } from '../utils/formatBytes';
 
 /**
@@ -123,11 +124,22 @@ async function maybeForecastAlert(target: string): Promise<void> {
   }
 }
 
-async function runScheduled(sched: ScheduleConfig): Promise<void> {
+/**
+ * One scheduled scan, start to finish (`tick`, when it falls due). Exported
+ * for its tests. agent-policy.json's allowedRoots "confines both scanning and
+ * destruction", and a scan is the entry ticket to acting on what it listed,
+ * so a scheduled one is held to it as a scan asked for now is (POST /api/scan,
+ * the MCP scan_path tool, Autopilot, a paired peer): a schedule saved before
+ * the policy narrowed is refused 403 POLICY_ROOT_NOT_ALLOWED each time it
+ * falls due, nothing is scanned, and the tick logs why (the SEC-2c review,
+ * F2.5). PUT /api/settings refuses a new one outside them as it is saved.
+ */
+export async function runScheduled(sched: ScheduleConfig): Promise<void> {
   // Stamp lastRunAt up front so a failing path can't retry every minute.
   await patchSchedule(sched.id, { lastRunAt: Date.now() });
 
   const target = sanitizePath(sched.path); // throws on blocked/invalid paths
+  assertScanAllowed(await getPolicy(), target);
   // The folder the scan is rooted at, which its snapshot is saved under: a
   // link to a folder is scanned as that folder (QA D78), and read by the
   // link's path the history held none of it — no growth alert, no forecast.

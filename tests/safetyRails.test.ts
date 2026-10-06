@@ -14,6 +14,8 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { idempotency, resetIdempotencyCache } from '../src/middleware/idempotency';
 import { allScans, peekScan } from '../src/services/diskScanner';
+import { runScheduled } from '../src/services/scheduler';
+import { getSettings, updateSettings } from '../src/services/settings';
 import { pending } from '../src/utils/backgroundWrites';
 import { waitFor } from './fixtures/waitFor';
 
@@ -182,6 +184,51 @@ test('agent-policy.json blocks out-of-allowlist scans and destructive calls with
   } finally {
     fs.rmSync(POLICY_PATH, { force: true }); // later tests run unrestricted
     fs.rmSync(elsewhere, { recursive: true, force: true });
+    await close();
+  }
+});
+
+test('a scheduled scan is held to allowedRoots as one asked for now is: a new schedule outside them is refused 403 POLICY_ROOT_NOT_ALLOWED when it is saved, one saved before the policy narrowed is refused each time it falls due, and nothing outside them is scanned (the SEC-2c review, F2.5)', async () => {
+  // AGENTS.md: allowedRoots "confines both scanning and destruction". PUT /api/settings only sanitized a
+  // schedule's path and the scheduler started the scan, so a policy confined to one folder did not stop a
+  // scheduled scan of another — whose scan then granted acting on it, by the scanned-root rule.
+  const { port, close } = await listen();
+  const inside = fs.realpathSync(fixture);
+  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-rails-sched-elsewhere-')));
+  const later = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-rails-sched-later-')));
+  // Disabled, so a scheduler running anywhere in this process never picks them up on its own.
+  const sched = (id: string, p: string) => ({ id, path: p, intervalHours: 24, enabled: false });
+  const before = new Set(allScans().map((s) => s.scanId));
+  const scansOf = (p: string) => allScans().filter((s) => s.rootPath === p && !before.has(s.scanId));
+  try {
+    // Saved while nothing confined it: its save was the last time it was judged.
+    await updateSettings({ schedules: [sched('old', elsewhere)] });
+    fs.writeFileSync(POLICY_PATH, JSON.stringify({ allowedRoots: [inside] }));
+    const answers: Record<string, unknown> = {};
+    const fresh = await req(port, 'PUT', '/api/settings', { schedules: [sched('old', elsewhere), sched('new', later)] });
+    answers['a new schedule outside them, when saved'] = [fresh.status, fresh.body?.code];
+    answers['what is saved then'] = (await getSettings()).schedules.map((s) => s.id);
+    // One saved earlier is not refused when the list it rides in is saved again — else no schedule could
+    // ever be saved beside it — and a new one inside them is saved.
+    const kept = await req(port, 'PUT', '/api/settings', { schedules: [sched('old', elsewhere), sched('in', inside)] });
+    answers['one saved earlier, beside a new one inside them'] = [kept.status, (await getSettings()).schedules.map((s) => s.id)];
+    answers['the earlier one, when it falls due'] = await runScheduled(sched('old', elsewhere)).then(() => 'ran', (e: { code?: string }) => e.code);
+    answers['scans of the folders outside them'] = [...scansOf(elsewhere), ...scansOf(later)].map((s) => s.scanId);
+    assert.deepEqual(answers, {
+      'a new schedule outside them, when saved': [403, 'POLICY_ROOT_NOT_ALLOWED'],
+      'what is saved then': ['old'],
+      'one saved earlier, beside a new one inside them': [200, ['old', 'in']],
+      'the earlier one, when it falls due': 'POLICY_ROOT_NOT_ALLOWED',
+      'scans of the folders outside them': [],
+    });
+    // Inside them a scheduled scan runs, Eco, to the end.
+    await runScheduled(sched('in', inside));
+    assert.deepEqual(scansOf(inside).map((s) => [s.status, s.budget?.preset]), [['complete', 'eco']]);
+  } finally {
+    fs.rmSync(POLICY_PATH, { force: true }); // later tests run unrestricted
+    await updateSettings({ schedules: [] });
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+    fs.rmSync(later, { recursive: true, force: true });
     await close();
   }
 });
