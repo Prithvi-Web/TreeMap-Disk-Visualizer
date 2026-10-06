@@ -1138,6 +1138,13 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .crumbs button:hover { background: var(--accent-soft); }
 .crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
   border-color: var(--hairline); pointer-events: none; }
+/* A focused crumb is marked inside its own box, as #ctxMenu's entries are
+   (QA-6b review F3.2, F2.1). .crumbs clips — overflow:hidden and the fade's
+   mask — and has no padding, so the page's ring, drawn 2px outside, lost its
+   top and bottom: "…", the keyboard's way in and where focus comes back
+   from its menu, showed two thin side bars. After the folder on screen's
+   own background, so the tint marks it too when focus lands there. */
+.crumbs button:focus-visible { outline-offset: -2px; background: var(--accent-soft); }
 .crumbs .sep { color: var(--text-3); display: inline-flex; flex: none; }
 .tm-toolbar label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .tm-toolbar .field { position: relative; }

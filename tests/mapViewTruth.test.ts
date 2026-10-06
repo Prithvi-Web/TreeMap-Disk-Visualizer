@@ -1261,6 +1261,28 @@ test('LOW-4: a focused menu entry shows its whole focus ring inside the list tha
     'the focus rule comes before :hover, so an entry both focused and under the pointer keeps the accent behind its white text');
 });
 
+test('MEDIUM-1: a focused crumb shows its whole focus ring inside the trail that clips it, and more than the ring (QA-6b review F3.2)', () => {
+  // .crumbs clips (overflow:hidden, and the fade's mask) and has no padding:
+  // its 30 px crumbs fill it top to bottom, and the folder on screen sits flush
+  // with its right edge. The page's ring, drawn 2 px outside the box it marks,
+  // lost its top and bottom to that clip, so "…" — the keyboard's way into the
+  // folded folders, and where focus comes back from their menu — was marked
+  // by two thin side bars. The City's and the Grid's trails are the same rule.
+  const host = cssRule('.crumbs');
+  assert.match(host, /overflow:\s*hidden/, 'control: the trail clips what does not fit in it');
+  assert.deepEqual([...INDEX.matchAll(/<div class="crumbs" id="(\w+)"><\/div>/g)].map((m) => m[1]), ['tmCrumbs', 'cityCrumbs', 'gridCrumbs'],
+    'control: the map\'s, the City\'s and the Grid\'s trails are all .crumbs');
+  const pad = /padding:\s*([^;]+);/.exec(host);
+  const room = pad ? Math.min(...(pad[1].match(/-?\d+/g) || ['0']).map(Number)) : 0;
+  assertFocusMarkedInside('.crumbs button:focus-visible', room, 'crumb');
+  // With no "…", focus lands on the folder on screen (renderCrumbs). Its rule
+  // gives it a background of its own at the same specificity, (0,2,1), so the
+  // tint shows there only if the focus rule comes later.
+  assert.match(cssRule('.crumbs button[aria-current="true"]'), /background:/, 'control: the folder on screen has a background of its own');
+  assert.ok(cssAt('.crumbs button[aria-current="true"]') < cssAt('.crumbs button:focus-visible'),
+    'the focus rule comes after it, so a focused folder on screen is tinted like any other focused crumb');
+});
+
 test('LOW-4: scrolling the menu\'s list does not close it; a scroll anywhere else does', () => {
   // The capture-phase scroll listener closed the menu on ANY scroll — its own list's included.
   const menu = fakeMenu();
