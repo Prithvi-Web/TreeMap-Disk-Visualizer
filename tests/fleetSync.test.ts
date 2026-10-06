@@ -318,6 +318,9 @@ test('a scan another machine asks for is judged by this machine’s own path rul
     ['Documents', 'PATH_INVALID'],
     [path.join('..', 'elsewhere'), 'PATH_INVALID'],
     [`${tmp}\0x`, 'PATH_INVALID'],
+    // `~` alone or `~/` is this machine's home; `~user` and `~x` are relative names (the SEC-2b review, F1.9).
+    ['~user/x', 'PATH_INVALID'],
+    ['~x', 'PATH_INVALID'],
   ];
   if (process.platform === 'darwin') refused.push(['/.nofollow/private/tmp', 'PATH_BLOCKED'], ['/.vol/1/2', 'PATH_BLOCKED']);
   if (windows) refused.push(['\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\Users', 'PATH_BLOCKED'], ['C:Users', 'PATH_INVALID']);
@@ -329,7 +332,11 @@ test('a scan another machine asks for is judged by this machine’s own path rul
   // A path that passes is handed on as the sanitizer resolves it.
   const accepted = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: `  ${tmp}${path.sep}a${path.sep}..` } });
   assert.equal(accepted.status, 202, JSON.stringify(accepted.body));
-  assert.deepEqual(scansStarted, [tmp]);
+  // And `~`, alone or before a separator, is this machine's home folder (the SEC-2b review, F1.9).
+  const statuses = [];
+  for (const p of ['~', '~/x']) statuses.push((await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } })).status);
+  assert.deepEqual(statuses, [202, 202]);
+  assert.deepEqual(scansStarted, [tmp, os.homedir(), path.join(os.homedir(), 'x')]);
 });
 
 test('there is no route that deletes, reads a file, or lists a directory', async () => {
