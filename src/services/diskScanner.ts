@@ -444,6 +444,14 @@ export function createScanRecord(rootPath: string): ScanResult {
 const FAST_RESCAN_NOT_USED =
   'a fast rescan was asked for and not used: the native engine lists the whole folder faster than the built-in walker reuses its cache, and sees the edits inside files the cache cannot';
 
+/**
+ * What the walker says when it took over from a native walk that failed part-way, for a scan that asked
+ * to be a fast rescan (POL item 6): the cache is read only for a scan the native engine will not walk, so
+ * the walker that took over had none, and its sentence said only that the native engine failed.
+ */
+const FAST_RESCAN_NOT_USED_AFTER_FAILURE =
+  'a fast rescan was asked for and not used: the native engine was to walk this folder, so its cache was not read, and the built-in walker that took over when the native engine failed lists every folder afresh';
+
 /** What the walker says when it reads the fast-rescan cache (QA D45): a reused listing holds no file's allocation. */
 const FAST_RESCAN_PARTIAL =
   'a fast rescan reuses the listings of folders that have not changed, which record no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh';
@@ -1028,6 +1036,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
         resetCounters(scan);
         noteFallback(scan, reason);
         why.push(said(reason));
+        if (fastRescanSkipped) why.push(said(FAST_RESCAN_NOT_USED_AFTER_FAILURE));
         scan.engine = WALKER_ENGINE;
         scan.fastPath = WALKER_FAST_PATH;
       }

@@ -1056,6 +1056,43 @@ test('a native walk that fails part-way falls back to the walker with the failur
   }
 });
 
+test('a fast-rescan request whose native walk fails part-way says once, plainly, that the fast rescan was not used — its cache was left unread and the walker that took over lists every folder afresh (POL item 6)', async () => {
+  // A fast rescan's cache is read only for a scan the native engine will not
+  // walk (QA D45). When the native walk then failed, the walker took over
+  // with no cache, and the sentence said only that the native engine failed:
+  // nothing said the fast rescan that was asked for had not happened.
+  const { root, total, locked } = await buildEdgeFixture('treemap-native-midfail-fast-');
+  try {
+    useFakeNative({ steps: 3, walkError: 'the native engine failed: a walker thread panicked' });
+    const scan = await scanWith('auto', root, { incremental: true });
+    assert.equal(scan.status, 'complete', scan.error);
+    const reason = scan.engineReason ?? '';
+    assert.deepEqual({
+      walker: scan.engine === 'walker' || scan.engine === 'turbo-walker',
+      incremental: scan.incremental,
+      cachedDirs: scan.cachedDirs ?? 0,
+      failure: /the native engine failed part-way: the native engine failed: a walker thread panicked/.test(reason),
+      said: reason.match(/a fast rescan was asked for and not used/g)?.length ?? 0,
+      plainly: /a fast rescan was asked for and not used: the native engine was to walk this folder, so its cache was not read, and the built-in walker that took over when the native engine failed lists every folder afresh/.test(reason),
+    }, { walker: true, incremental: false, cachedDirs: 0, failure: true, said: 1, plainly: true }, reason);
+    assert.equal(scan.scanned, total);
+  } finally {
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a native walk that fails part-way with no fast rescan asked for says nothing of one (POL item 6)', async () => {
+  const { root, locked } = await buildEdgeFixture('treemap-native-midfail-plain-');
+  try {
+    useFakeNative({ steps: 3, walkError: 'the native engine failed: a walker thread panicked' });
+    const scan = await scanWith('auto', root);
+    assert.equal(scan.status, 'complete', scan.error);
+    assert.doesNotMatch(scan.engineReason ?? '', /fast rescan/, scan.engineReason ?? '');
+  } finally {
+    await unlockAndRemove(root, locked);
+  }
+});
+
 test('a root that disappears under a native walk is the scan’s own error, in the sentence every engine uses, not a fallback', async () => {
   const { root, locked } = await buildEdgeFixture('treemap-native-vanish-');
   try {
