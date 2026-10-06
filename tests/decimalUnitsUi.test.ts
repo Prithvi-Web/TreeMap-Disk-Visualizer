@@ -334,6 +334,50 @@ test('Settings Save keeps every stored alert and cleanup target exactly — a 10
   }
 });
 
+test('every box that opens a stored size is wide enough for its exact figure — 14 characters for any size under 10 TB (review F2.5)', () => {
+  // The boxes paint the stored bytes' exact figure (review F1.1, F1.5). An
+  // 88 px box keeps about 47 px of text beside its spin buttons, so a 5 GiB
+  // cap an earlier TreeMap stored, "5.36870912", read as "5.3687" — a shorter,
+  // different number — and a 0.5 GiB alert in its 92 px column as "0.5368".
+  let widest = '';
+  for (const b of storedSizes(300).filter((n) => n < 1e13)) {
+    const p = { name: 'p', path: '/home/u', match: { kind: 'custom', minBytes: b }, maxBytesPerRun: b, maxBytesPerWeek: b, requireConfirmationAbove: b };
+    const e = editorRuntime(p);
+    e.open(p);
+    const painted = [...['apMaxRun', 'apMaxWeek', 'apConfirmAbove', 'apRuleSizeMb'].map((id) => String(e.$(id).value)), String(goalFields(b).value), alertRoundTrip(b).shown];
+    for (const s of painted) if (s.length > widest.length) widest = s;
+  }
+  const chars = widest.length; // 14: "1099.511627776", 1 TiB in GB
+
+  // The base box: 13 px text, 12 px padding each side, a 1 px border.
+  const base = braced('input[type="text"], input[type="number"], select {');
+  const pad = Number(/padding: \d+px (\d+)px;/.exec(base)?.[1] ?? assert.fail('the base box states its padding'));
+  assert.match(base, /border: 1px solid/);
+  assert.match(base, /font-size: 13px;/);
+  const SPIN = 16; // a number box's spin buttons: about 15 px in Chromium
+  const chrome = 2 * pad + 2 + SPIN;
+
+  const sizeBox = braced('.rule-row input.size-in {');
+  const [, ch, px] = /width: calc\((\d+)ch \+ (\d+)px\);/.exec(sizeBox) ?? assert.fail(`the size boxes are sized in characters: ${sizeBox}`);
+  assert.ok(Number(ch) >= chars, `a size box holds ${ch} characters; "${widest}" needs ${chars}`);
+  assert.ok(Number(px) >= chrome, `and ${px} px for its padding, border and spin buttons, which take ${chrome}`);
+  assert.match(sizeBox, /font-variant-numeric: tabular-nums;/, 'every digit as wide as the "0" a ch measures');
+  for (const id of ['apRuleSizeMb', 'apMaxRun', 'apMaxWeek', 'apConfirmAbove', 'cleanupGoalValue']) {
+    const tag = new RegExp(`<input [^>]*id="${id}"[^>]*>`).exec(INDEX)?.[0] ?? assert.fail(`#${id} is in the page`);
+    assert.match(tag, /class="[^"]*\bsize-in\b/, `#${id} is a size box`);
+  }
+
+  // The scheduled-scan alert fills a grid column, measured in the row's own characters.
+  const sched = braced('.sched-row {');
+  const tracks = /grid-template-columns: ([^;]*);/.exec(sched)?.[1] ?? assert.fail('the schedule rows are a grid');
+  const alert = /^minmax\([^()]*\) minmax\([^()]*\) minmax\(\d+px, calc\((\d+)ch \+ (\d+)px\)\) /.exec(tracks) ?? assert.fail(`the alert column is sized in characters: ${tracks}`);
+  assert.ok(Number(alert[1]) >= chars, `the alert column holds ${alert[1]} characters; "${widest}" needs ${chars}`);
+  assert.ok(Number(alert[2]) >= chrome, `and ${alert[2]} px for the box around them, which takes ${chrome}`);
+  assert.match(sched, /font-size: 13px;/, 'the row\'s characters are its boxes\' 13 px ones');
+  assert.doesNotMatch(braced('.sched-row.sched-head {'), /font-size/, 'and the header row keeps that size, so its columns line up with the rows under it');
+  assert.match(braced('.sched-row input.s-gb {'), /font-variant-numeric: tabular-nums;/);
+});
+
 /* ══════════════ thresholds the page shows or acts on ══════════════ */
 
 /**

@@ -1952,6 +1952,12 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .rule-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 13.5px; }
 .rule-row .ic { color: var(--text-3); }
 .rule-row input[type="number"] { width: 88px; }
+/* A box that opens a stored size shows its exact figure (QA D09 review F1.1,
+   F1.5) — up to 14 characters for any size under 10 TB: 5.36870912 GB is a
+   5 GiB cap an earlier TreeMap stored, 2199.023255552 GB is 2 TiB. Room for 14
+   digits beside the padding, border and spin buttons, so none of the digits
+   that make the figure exact is cut off (review F2.5). */
+.rule-row input.size-in { width: calc(14ch + 44px); font-variant-numeric: tabular-nums; }
 .rule-row input[type="text"] { flex: 1; }
 /* A search .field (icon + box) that a rule row grows: it has to be a row
    itself, or its input keeps its intrinsic ~172 px however wide the field
@@ -2927,10 +2933,17 @@ body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bo
 .set-h .ic { color: var(--text-3); }
 /* minmax, not fixed tracks: the modal is 92vw in a narrow window, and fixed
    field columns (96+92+76+30+30 plus gaps) crushed the folder column there.
-   Each field keeps a floor it stays usable at and gives back the rest. */
-.sched-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(64px, 96px) minmax(60px, 92px) minmax(52px, 76px) 30px 30px; gap: 8px;
-  align-items: center; margin-bottom: 8px; }
-.sched-row.sched-head { font-size: 11px; margin-bottom: 4px; }
+   Each field keeps a floor it stays usable at and gives back the rest.
+   The alert column has room for the exact figure a stored alert opens as
+   (0.536870912 for a 0.5 GiB one; 14 characters for any size under 10 TB):
+   at 92 px it read "0.5368" (QA D09 review F2.5). Its ch are the boxes' own
+   13 px ones on every row, the header's included, so the columns line up;
+   only the header's words are smaller. */
+.sched-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(64px, 96px) minmax(60px, calc(14ch + 44px)) minmax(52px, 76px) 30px 30px; gap: 8px;
+  align-items: center; margin-bottom: 8px; font-size: 13px; }
+.sched-row.sched-head { margin-bottom: 4px; }
+.sched-row.sched-head > span { font-size: 11px; }
+.sched-row input.s-gb { font-variant-numeric: tabular-nums; }
 .sched-row input[type="checkbox"] { justify-self: center; }
 /* Form controls carry intrinsic minimums wider than a squeezed track;
    min-width: 0 lets the track's floor win. */
@@ -4328,7 +4341,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           </div>
           <div class="rule-row">
             <input type="checkbox" id="apRuleSizeOn" checked> <span data-icon="trendUp"></span><label for="apRuleSizeOn">Larger than</label>
-            <input type="number" id="apRuleSizeMb" value="100" min="1" aria-label="Megabytes"> <span class="muted">MB</span>
+            <input type="number" id="apRuleSizeMb" class="size-in" value="100" min="1" aria-label="Megabytes"> <span class="muted">MB</span>
           </div>
           <div class="rule-row">
             <input type="checkbox" id="apRuleExtOn"> <span data-icon="file"></span><label for="apRuleExtOn">Extensions</label>
@@ -4339,15 +4352,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div class="set-h" style="margin-top:18px;"><span data-icon="shield"></span>Limits</div>
         <div class="rule-row">
           <span data-icon="gauge"></span><label for="apMaxRun">Delete at most</label>
-          <input type="number" id="apMaxRun" min="0" placeholder="no limit" aria-label="Maximum gigabytes per run"> <span class="muted">GB per run</span>
+          <input type="number" id="apMaxRun" class="size-in" min="0" placeholder="no limit" aria-label="Maximum gigabytes per run"> <span class="muted">GB per run</span>
         </div>
         <div class="rule-row" style="margin-top:6px;">
           <span data-icon="gauge"></span><label for="apMaxWeek">and at most</label>
-          <input type="number" id="apMaxWeek" min="0" placeholder="no limit" aria-label="Maximum gigabytes per week"> <span class="muted">GB per week</span>
+          <input type="number" id="apMaxWeek" class="size-in" min="0" placeholder="no limit" aria-label="Maximum gigabytes per week"> <span class="muted">GB per week</span>
         </div>
         <div class="rule-row" style="margin-top:6px;">
           <span data-icon="alert"></span><label for="apConfirmAbove">Ask me first above</label>
-          <input type="number" id="apConfirmAbove" min="0" placeholder="never ask" aria-label="Ask for confirmation above this many gigabytes"> <span class="muted">GB in one run</span>
+          <input type="number" id="apConfirmAbove" class="size-in" min="0" placeholder="never ask" aria-label="Ask for confirmation above this many gigabytes"> <span class="muted">GB in one run</span>
         </div>
         <div class="rule-row" style="margin-top:6px;">
           <span data-icon="clock"></span><label for="apCooldown">Run at most once every</label>
@@ -4832,7 +4845,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="muted" style="margin-bottom:10px;">Set how much you are trying to free and the cleanup cart shows a meter filling toward it. Leave it empty for no target — the meter then doesn't appear at all. It only measures what you have staged; nothing is ever deleted to reach it.</div>
       <div class="rule-row">
         <span data-icon="gauge"></span><label for="cleanupGoalValue">Free up</label>
-        <input type="number" id="cleanupGoalValue" min="0" step="any" placeholder="none" aria-label="Cleanup target amount — leave empty for none">
+        <input type="number" id="cleanupGoalValue" class="size-in" min="0" step="any" placeholder="none" aria-label="Cleanup target amount — leave empty for none">
         <select id="cleanupGoalUnit" aria-label="Cleanup target unit">
           <option value="1000000000">GB</option>
           <option value="1000000000000">TB</option>

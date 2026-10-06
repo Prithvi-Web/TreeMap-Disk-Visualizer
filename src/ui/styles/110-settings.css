@@ -4,10 +4,17 @@
 .set-h .ic { color: var(--text-3); }
 /* minmax, not fixed tracks: the modal is 92vw in a narrow window, and fixed
    field columns (96+92+76+30+30 plus gaps) crushed the folder column there.
-   Each field keeps a floor it stays usable at and gives back the rest. */
-.sched-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(64px, 96px) minmax(60px, 92px) minmax(52px, 76px) 30px 30px; gap: 8px;
-  align-items: center; margin-bottom: 8px; }
-.sched-row.sched-head { font-size: 11px; margin-bottom: 4px; }
+   Each field keeps a floor it stays usable at and gives back the rest.
+   The alert column has room for the exact figure a stored alert opens as
+   (0.536870912 for a 0.5 GiB one; 14 characters for any size under 10 TB):
+   at 92 px it read "0.5368" (QA D09 review F2.5). Its ch are the boxes' own
+   13 px ones on every row, the header's included, so the columns line up;
+   only the header's words are smaller. */
+.sched-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(64px, 96px) minmax(60px, calc(14ch + 44px)) minmax(52px, 76px) 30px 30px; gap: 8px;
+  align-items: center; margin-bottom: 8px; font-size: 13px; }
+.sched-row.sched-head { margin-bottom: 4px; }
+.sched-row.sched-head > span { font-size: 11px; }
+.sched-row input.s-gb { font-variant-numeric: tabular-nums; }
 .sched-row input[type="checkbox"] { justify-self: center; }
 /* Form controls carry intrinsic minimums wider than a squeezed track;
    min-width: 0 lets the track's floor win. */

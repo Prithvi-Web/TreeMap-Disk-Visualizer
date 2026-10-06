@@ -68,7 +68,7 @@
           </div>
           <div class="rule-row">
             <input type="checkbox" id="apRuleSizeOn" checked> <span data-icon="trendUp"></span><label for="apRuleSizeOn">Larger than</label>
-            <input type="number" id="apRuleSizeMb" value="100" min="1" aria-label="Megabytes"> <span class="muted">MB</span>
+            <input type="number" id="apRuleSizeMb" class="size-in" value="100" min="1" aria-label="Megabytes"> <span class="muted">MB</span>
           </div>
           <div class="rule-row">
             <input type="checkbox" id="apRuleExtOn"> <span data-icon="file"></span><label for="apRuleExtOn">Extensions</label>
@@ -79,15 +79,15 @@
         <div class="set-h" style="margin-top:18px;"><span data-icon="shield"></span>Limits</div>
         <div class="rule-row">
           <span data-icon="gauge"></span><label for="apMaxRun">Delete at most</label>
-          <input type="number" id="apMaxRun" min="0" placeholder="no limit" aria-label="Maximum gigabytes per run"> <span class="muted">GB per run</span>
+          <input type="number" id="apMaxRun" class="size-in" min="0" placeholder="no limit" aria-label="Maximum gigabytes per run"> <span class="muted">GB per run</span>
         </div>
         <div class="rule-row" style="margin-top:6px;">
           <span data-icon="gauge"></span><label for="apMaxWeek">and at most</label>
-          <input type="number" id="apMaxWeek" min="0" placeholder="no limit" aria-label="Maximum gigabytes per week"> <span class="muted">GB per week</span>
+          <input type="number" id="apMaxWeek" class="size-in" min="0" placeholder="no limit" aria-label="Maximum gigabytes per week"> <span class="muted">GB per week</span>
         </div>
         <div class="rule-row" style="margin-top:6px;">
           <span data-icon="alert"></span><label for="apConfirmAbove">Ask me first above</label>
-          <input type="number" id="apConfirmAbove" min="0" placeholder="never ask" aria-label="Ask for confirmation above this many gigabytes"> <span class="muted">GB in one run</span>
+          <input type="number" id="apConfirmAbove" class="size-in" min="0" placeholder="never ask" aria-label="Ask for confirmation above this many gigabytes"> <span class="muted">GB in one run</span>
         </div>
         <div class="rule-row" style="margin-top:6px;">
           <span data-icon="clock"></span><label for="apCooldown">Run at most once every</label>
