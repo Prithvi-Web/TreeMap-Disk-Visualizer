@@ -126,7 +126,18 @@ export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.
  * only for Windows' rules.
  */
 export function win32Normalize(p: string): string {
-  return p.toLowerCase().replace(/[ .]+(?=[\\/]|$)/g, '');
+  return p.toLowerCase().split(/([\\/])/).map((part) => (part === '\\' || part === '/' ? part : withoutWin32Tail(part))).join('');
+}
+
+/**
+ * `name` without its trailing dots and spaces, as Win32 drops them. A loop, not a regex anchored at
+ * the name's end: that backtracks once per character of a long run of spaces inside a name, so a
+ * request could make the fold take time quadratic in its path's length.
+ */
+function withoutWin32Tail(name: string): string {
+  let end = name.length;
+  while (end > 0 && (name[end - 1] === ' ' || name[end - 1] === '.')) end--;
+  return name.slice(0, end);
 }
 
 function isBlocked(resolved: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): boolean {
