@@ -368,6 +368,23 @@ test('on Windows a scan another machine asks for must be rooted on one of this m
   assert.deepEqual(codes('linux', ['/mnt/share', '//server/share', '../x']), { '/mnt/share': null, '//server/share': null, '../x': 'PATH_INVALID' });
 });
 
+test('every sentence a peer reads about this machine’s refusal of its folder speaks of “that machine”, as the asker shows it as is — never “this machine”, which there names the asker (SEC-3 review, wording)', async () => {
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  const sentences: Record<string, string> = {
+    'not absolute': String(peerScanRootRefusal('Documents', 'win32')?.message),
+    'a share, on Windows': String(peerScanRootRefusal('\\\\srv\\share', 'win32')?.message),
+    'no drive, on Windows': String(peerScanRootRefusal('/Users/x', 'win32')?.message),
+  };
+  for (const p of [process.platform === 'win32' ? 'C:\\Windows\\System32' : '/dev', 'Documents']) {
+    sentences[`the receiver, ${p}`] = String((await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } })).body?.error);
+  }
+  const wrong = Object.entries(sentences).filter(([, s]) => !/^That machine/.test(s) || /this machine/i.test(s)).map(([k, s]) => `${k}: ${s}`);
+  assert.deepEqual(wrong, []);
+});
+
 test('with Windows stood in for process.platform, the receiver refuses a peer’s network share before anything touches the path — no realpath, lstat or stat, so no sign-in to the server it names — and no scan starts (the SEC-3 brief, item 6b)', async () => {
   const cfg = defaultConfig();
   const offer = beginPairing();

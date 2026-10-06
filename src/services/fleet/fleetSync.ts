@@ -330,6 +330,10 @@ const PEER_PATH_REFUSALS: Readonly<Record<string, string>> = Object.freeze({
   PATH_INVALID: 'That machine cannot read that as a folder on it: it takes an absolute path, or ~ for its home folder, with no null byte',
 });
 
+// What the asker reads, as it shows it: "that machine" is this one (OUTSIDE_ALLOWED_ROOTS' convention).
+const PEER_ABSOLUTE_ONLY = 'That machine scans only an absolute path on it, or ~ for its home folder';
+const PEER_DRIVE_ONLY = 'That machine scans only a folder on one of its own drives, such as C:\\Users: a network share, a device or a path with no drive is not the asker’s to name';
+
 /** A Windows path rooted on one of the machine's drives: `C:\…`, also behind `\\?\` or `\\.\`. */
 const WIN32_DRIVE_ROOTED = /^(?:[\\/]{2}[?.][\\/])?[a-z]:[\\/]/i;
 
@@ -351,13 +355,10 @@ export function peerScanRootRefusal(given: string, platform: NodeJS.Platform = p
   if (typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\')) return null;
   const windows = platform === 'win32';
   if (!(windows ? path.win32 : path.posix).isAbsolute(typed)) {
-    return new PathRejectedError('A scan started from another machine must name an absolute path on this one', 'PATH_INVALID');
+    return new PathRejectedError(PEER_ABSOLUTE_ONLY, 'PATH_INVALID');
   }
   if (windows && !WIN32_DRIVE_ROOTED.test(typed)) {
-    return new PathRejectedError(
-      'A scan started from another machine must name a folder on one of this machine’s drives, such as C:\\Users — never a network share or a device, which this machine would have to reach on the asker’s word',
-      'PATH_BLOCKED',
-    );
+    return new PathRejectedError(PEER_DRIVE_ONLY, 'PATH_BLOCKED');
   }
   return null;
 }
