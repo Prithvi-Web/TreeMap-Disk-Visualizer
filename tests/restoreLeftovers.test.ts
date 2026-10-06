@@ -72,7 +72,9 @@ test('a restore records each temporary file, as the file it was made, before wri
   }
   assert.equal(job.status, 'complete', job.error);
   assert.deepEqual(seen, { recorded: true, asMade: true }, 'recorded, with the file it was made as, by the time its bytes were written');
-  assert.deepEqual(records(), [], 'and once it was put in place, nothing of it is left to record');
+  // Dropped by the compaction that runs once the job has ended, which may finish after the job says
+  // so (FG3g review F1.7): waited for, never read the moment the status changes.
+  await waitFor(() => records().length === 0, 'once it was put in place, nothing of it left to record');
 });
 
 test('an offload restore records its temporary file the same way', async () => {
@@ -116,7 +118,7 @@ test('an offload restore records its temporary file the same way', async () => {
     unhook();
   }
   assert.deepEqual(seen, { recorded: true, asMade: true });
-  assert.deepEqual(records(), [], 'and its record went once the file was in place');
+  await waitFor(() => records().length === 0, 'its record going once the file was in place');
 });
 
 test('at the next start, a recorded temporary file still as it was made is removed; one that is something else now, or never recorded, is left alone', async () => {
