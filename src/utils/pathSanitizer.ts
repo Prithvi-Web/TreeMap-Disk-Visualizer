@@ -52,9 +52,23 @@ const WINDOWS_BLOCKLIST = [
  * or a UNC path (`UNC\server\share…`) is a file path; anything else there, and `\??\` always, is a
  * second name.
  *
+ * And on every platform, the place a link walk answers when it could not reach the end (`NO_PLACE`).
+ *
  * Answers the namespace as spelled (for the refusal's sentence), or null. Pure — no file system
  * call — and `platform` picks the rules, so both platforms' are tested everywhere.
  */
+/**
+ * Where a link walk leads when it ran out of its bound before the end (`walkNames`): no place
+ * TreeMap can name. A NUL is in no file name and in no path a request may carry (`sanitizePath`), so
+ * nothing is spelled this but the walk's own answer, a name joined beneath it keeps it, and every file
+ * system call refuses it. A second name to `aliasNamespaceOf` on every platform, so each rule that
+ * refuses a second name refuses it; the app-data rule refuses it too (the SEC-2d review, F3.1).
+ */
+const NO_PLACE = `${path.sep}\0no place`;
+/** Whether `p` is, or lies beneath, the place a walk answers when it could not reach the end (`NO_PLACE`). */
+function isNoPlace(p: string): boolean {
+  return p.includes('\0');
+}
 const DARWIN_ALIAS_ROOT = /^\/\.(?:nofollow|resolve|vol)(?=\/|$)/i;
 const WIN32_OBJECT_NAMESPACE = /^[\\/]\?\?(?=[\\/])/;
 const WIN32_DEVICE_PREFIX = /^[\\/]{2}[?.](?=[\\/])/;
@@ -67,6 +81,7 @@ const WIN32_UNC_SHARE = /^[\\/]{2}(?:[?.][\\/]unc[\\/])?([^\\/]+)[\\/]([^\\/]+)(
 /** The shares Windows makes of every drive (`C$`) and of the Windows folder (`ADMIN$`). */
 const WIN32_ADMIN_SHARE = /^(?:[a-z]|admin)\$$/i;
 export function aliasNamespaceOf(p: string, platform: NodeJS.Platform = process.platform, ownHosts?: readonly string[]): string | null {
+  if (isNoPlace(p)) return NO_PLACE;
   if (platform === 'darwin') return DARWIN_ALIAS_ROOT.exec(p)?.[0] ?? null;
   if (platform !== 'win32' || p.startsWith('cloud://')) return null; // a cloud identifier's colon is its scheme's
   if (WIN32_OBJECT_NAMESPACE.test(p)) return p.slice(0, 4);
@@ -333,8 +348,9 @@ function readLinkAt(p: string): string | null {
 }
 
 /**
- * Links one judgement follows before it stops: at least as many as any system follows in one lookup
- * (macOS 32, Linux 40), so a chain the system follows to its end is never cut short here.
+ * Links one judgement follows before it stops: at least as many as macOS (32) and Linux (40) follow in
+ * one lookup, so a chain those systems follow to its end is never cut short here. Windows follows up to
+ * 63; a chain longer than this is placed nowhere (`walkNames`), and refused.
  */
 const MAX_LINK_HOPS = 40;
 /** Names one judgement walks through link targets before it stops, whatever they spell: a bound on its work. */
@@ -393,8 +409,13 @@ function startOf(realFolder: string, target: string): { at: string; names: strin
  * It ends early, with the names left joined as spelled: at a name that is not there (as if the rest
  * were made as plain folders — what a check before a folder is made must assume) or cannot be looked
  * at; at a second name (`aliasNamespaceOf`), answered as spelled so the alias test sees it; and at
- * a loop, certain, or past the system's own limit of links or the bound on names (`LinkWalk`), where
- * nothing lies beneath — every call there fails.
+ * a loop, certain (`LinkWalk`), where nothing lies beneath — every call there fails.
+ *
+ * Past its budget of links or its bound on names it answers no place (`NO_PLACE`), which every rule
+ * refuses: the system may go on where the walk stops — no system limits the names a lookup walks, and
+ * Windows follows 63 links — so where the walk stopped says nothing of where the system lands. Settled
+ * there, with the names left joined, the answer was the next link's own place in the scan, and a chain
+ * of long targets to a second name, or out of the scan, was granted (the SEC-2d review, F3.1).
  */
 function walkNames(at: string, names: readonly string[], walk: LinkWalk): string {
   const pending = [...names];
@@ -416,7 +437,7 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
     }
     const next = path.join(here, name);
     if (aliasNamespaceOf(next) !== null) return joinUnder(next, ...pending);
-    if (walk.names-- <= 0) return settle([name, ...pending]);
+    if (walk.names-- <= 0) return NO_PLACE;
     let entry: fs.Stats | undefined;
     try {
       entry = fs.lstatSync(next, { throwIfNoEntry: false });
@@ -429,7 +450,8 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
       continue;
     }
     const read = [next, ...pending].join('\0'); // NUL is in no name
-    if (walk.seen.has(read) || walk.links-- <= 0) return settle([name, ...pending]);
+    if (walk.seen.has(read)) return settle([name, ...pending]);
+    if (walk.links-- <= 0) return NO_PLACE;
     walk.seen.add(read);
     let target: string;
     try {
@@ -919,6 +941,7 @@ export function isAppDataPath(p: string): boolean {
   for (let hop = 0; hop <= MAX_LINK_HOPS; hop++) {
     if (namesBelowAppData(current) !== null) return true;
     const at = livesAt(current);
+    if (isNoPlace(at)) return true; // a walk that could not place it (`NO_PLACE`): doubt refuses
     if (visited.has(at)) return true; // a loop leads nowhere a write could land: doubt refuses
     visited.add(at);
     const next = linkTargetOf(current);

@@ -693,9 +693,11 @@ test('a `..` after a second name in a link’s target is the system’s to read,
   );
 });
 
-test('a chain of links as long as any system follows is followed to its end, out of the scan; a longer one ends, with bounded work, and its first link is still a path of the scan', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
-  // The walk's budget of links must be at least every system's own limit (macOS 32, Linux 40): one cut
-  // short there answers with a link in the scan, while the system follows the chain out of it.
+test('a chain of links as long as macOS or Linux follows is followed to its end, out of the scan; a longer one ends with bounded work, placed nowhere and refused (the SEC-2d review, F3.1)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+  // The walk's budget of links must be at least macOS's and Linux's own limit (32, 40): one cut short
+  // there answers with a link in the scan, while the system follows the chain out of it. Past the budget
+  // the walk settled at the link where it stopped, in the scan — but Windows follows 63 links, so where
+  // the walk stops says nothing of where the system lands, and no place is guessed.
   const dir = path.join(T, 'f18-long');
   fs.mkdirSync(dir);
   const chain = (prefix: string, links: number, end: string): string => {
@@ -706,7 +708,7 @@ test('a chain of links as long as any system follows is followed to its end, out
   // its budget, so 40 links cost 39 of it, and a budget cut to 38 answered this chain "in the scan" (the
   // SEC-2c review, F2.9: the chain was 39 links, and no budget above 37 failed it).
   const out = chain('d', 40, path.join(DEST, 'f18-not-made'));
-  const tooLong = chain('c', 45, path.join(DEST, 'f18-not-made-either')); // no system follows 45
+  const tooLong = chain('c', 45, path.join(DEST, 'f18-not-made-either')); // macOS and Linux never follow 45
   const readlink = fs.readlinkSync;
   let readlinks = 0;
   fs.readlinkSync = ((...args: Parameters<typeof readlink>) => {
@@ -726,17 +728,18 @@ test('a chain of links as long as any system follows is followed to its end, out
   }
   assert.deepEqual(answers, {
     'd0/x, the scanned-root rule': false,
-    'c0, the sanitizer': null,
-    'c0, the scanned-root rule': true, // the link itself lives in the scan, and trashing it removes the link
+    'c0, the sanitizer': 'PATH_BLOCKED',
+    'c0, the scanned-root rule': false, // the two agree
     'readlinks for c0, the sanitizer': 'bounded by the budget of links',
   });
 });
 
-test('a walk through link targets that spell more names than its bound ends there: one lstat a name, and no more names than the bound, however many a chain of long targets spells (the SEC-2c review, F2.9)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+test('a walk through link targets that spell more names than its bound ends there: one lstat a name, and no more names than the bound, however many a chain of long targets spells — and no place is guessed for it (the SEC-2c review, F2.9; the SEC-2d review, F3.1)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
   // The bound on names (MAX_WALK_NAMES) caps one judgement's work whatever link targets spell, and nothing
   // pinned it: without it, 31 links (fewer than any system's limit) whose targets each spell 201 real
   // names cost an lstat for every one of them. Counted, not timed; built from real folders, since a name
-  // that is not there ends a walk at once.
+  // that is not there ends a walk at once. The verdict is asserted too, so the cost alone hides nothing:
+  // the chain's end is never read, so the path is placed nowhere and refused.
   const dir = path.join(T, 'f29-names');
   fs.mkdirSync(path.join(dir, 'a'), { recursive: true });
   const chain = (prefix: string): string => {
@@ -749,7 +752,7 @@ test('a walk through link targets that spell more names than its bound ends ther
     return path.join(dir, `${prefix}0`, 'x');
   };
   const asks: Record<string, () => unknown> = {
-    sanitizePath: ((p: string) => () => sanitizePath(p))(chain('s')),
+    sanitizePath: ((p: string) => () => rejection(p))(chain('s')),
     insideAnyScanRoot: ((p: string) => () => insideAnyScanRoot(p))(chain('i')),
   };
   const sync = fs as unknown as { lstatSync: (...args: unknown[]) => unknown };
@@ -763,13 +766,53 @@ test('a walk through link targets that spell more names than its bound ends ther
   try {
     for (const [name, ask] of Object.entries(asks)) {
       lstats = 0;
-      ask();
+      const verdict = ask();
       answers[name] = lstats <= 4096 + 64 ? 'bounded by the names one walk may spend' : `${lstats} lstats`;
+      answers[`${name}, its verdict`] = verdict;
     }
   } finally {
     sync.lstatSync = lstat;
   }
-  assert.deepEqual(answers, { sanitizePath: 'bounded by the names one walk may spend', insideAnyScanRoot: 'bounded by the names one walk may spend' });
+  assert.deepEqual(answers, {
+    sanitizePath: 'bounded by the names one walk may spend',
+    'sanitizePath, its verdict': 'PATH_BLOCKED',
+    insideAnyScanRoot: 'bounded by the names one walk may spend',
+    'insideAnyScanRoot, its verdict': false,
+  });
+});
+
+test('a walk that runs out of its bound on names answers no place, and every rule refuses it — never the link where it stopped, inside the scan: a chain of long targets that leads out of the scan, to /.resolve or to /.vol is outside every scan, beneath it and as itself (the SEC-2d review, F3.1)', { skip: WINDOWS && 'making a link needs a privilege the runner may not hold' }, () => {
+  // The walk settled where its budget ran out and joined the names it had not walked: 22 links whose
+  // targets each spell 200 rounds of `a/../` spend the 4096 names around the 21st link, so the answer was
+  // the 22nd link's own place in the scan, and the link to the second name, or out of the scan, was never
+  // read — while the system's own lookup has no limit on names (32 links of 1023 bytes on macOS, 40 of
+  // 4095 on Linux). With 20 links the same chain was refused.
+  const dir = path.join(T, 'f31');
+  fs.mkdirSync(path.join(dir, 'a'), { recursive: true });
+  const chain = (prefix: string, links: number, end: string): string => {
+    for (let i = links - 1; i >= 0; i--) fs.symlinkSync(i === links - 1 ? end : `${'a/../'.repeat(200)}${prefix}${i + 1}`, path.join(dir, `${prefix}${i}`));
+    return path.join(dir, `${prefix}0`);
+  };
+  const ends: Record<string, string> = { 'out of the scan, to a folder not made yet': path.join(DEST, 'f31-not-made') };
+  if (DARWIN) {
+    const st = fs.lstatSync(DEST);
+    Object.assign(ends, { '/.resolve': `/.resolve/1${DEST}`, '/.vol': `/.vol/${st.dev}/${st.ino}` });
+  }
+  const granted: string[] = [];
+  Object.entries(ends).forEach(([what, end], n) => {
+    const first = chain(`e${n}-`, 22, end);
+    for (const below of ['', 'x', path.join('sub', 'x')]) {
+      const p = path.join(first, below);
+      const which = `${what}, ${path.relative(dir, p)}`;
+      if (rejection(p) !== 'PATH_BLOCKED') granted.push(`${which}: the sanitizer`);
+      if (insideAnyScanRoot(p)) granted.push(`${which}: the scanned-root rule`);
+      if (below !== '' && liesInside(T, p)) granted.push(`${which}: liesInside`);
+      // A write to the link itself goes where the chain ends, which the app-data rule follows hop by hop,
+      // each hop a walk of its own; beneath the link, one walk must place the whole chain.
+      if (below !== '' && !isAppDataPath(p)) granted.push(`${which}: the app-data rule, as a place to write`);
+    }
+  });
+  assert.deepEqual(granted, [], 'past the bound on names, no place is guessed');
 });
 
 /* ─────────────── Every route and tool that takes a path ─────────────── */

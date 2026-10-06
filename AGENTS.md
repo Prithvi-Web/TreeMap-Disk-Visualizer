@@ -631,7 +631,11 @@ read-what-you-saw) permission to act.
   as the system reads it: on macOS and Linux a `..` in the target is the
   folder above where the names before it really lead (`sub/../x` with `sub`
   a link is beside `sub`'s target, not beside the link), so a link is not
-  "in the scan" because its text cancels out.
+  "in the scan" because its text cancels out. A chain too long to place —
+  more links than macOS or Linux follows in one lookup (Windows follows 63),
+  or targets that spell more names than one check walks (4096) — is placed
+  nowhere and refused by both rules, never read as the link where the check
+  stopped.
 - **Cloud and archive paths.** `cloud://` paths never touch the local
   filesystem — their deletes go to the provider's own trash via
   `POST /api/cloud/trash`. Entries *inside* archives are listings, not files
