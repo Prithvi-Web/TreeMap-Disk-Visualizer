@@ -34,8 +34,10 @@ function lift<T>(names: string[], returns: string): T {
 function declsOf(names: string[]): string {
   const parts: string[] = [];
   for (const name of names) {
-    const start = INDEX.indexOf(`function ${name}(`);
-    assert.notEqual(start, -1, `function ${name} was located in public/index.html`);
+    const at = INDEX.indexOf(`function ${name}(`);
+    assert.notEqual(at, -1, `function ${name} was located in public/index.html`);
+    // An async function is lifted with its `async`, or its awaits would not parse.
+    const start = INDEX.startsWith('async ', at - 6) ? at - 6 : at;
     // Balanced-brace scan from the declaration's opening brace. Crude, and
     // sufficient: these functions contain no braces inside strings.
     const open = INDEX.indexOf('{', start);
@@ -277,6 +279,88 @@ test('on macOS and Linux a backslash in a folder’s name is part of the name ev
     posix: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('/data/a\\b/f\\g.txt'))?.[1], // the file "f\g.txt"
     windows: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('C:\\x\\f.txt'))?.[1],
   }, { posix: '/data/a\\b', windows: 'C:\\x' });
+});
+
+test('the journal’s “Show on treemap” and a global-search hit ask whether a path is in the scan on screen by folder boundary — a whole drive’s scan ("/", "C:\\") holds every path on it, "/Users/me/Projects-old" is not in "/Users/me/Projects", and on macOS and Linux neither is the folder "a\\b" in "/data/a" (POL item 7 review, F2.1 and F2.9)', async () => {
+  // journalOpen tried root + "/" and root + "\": "\" was a separator on every system, and a root that
+  // ends in its separator never matched — every journal row of a whole-disk scan said "Scan / first".
+  const journal = (root: string | null, entryPath: string): string => {
+    const log: string[] = [];
+    const state = { root: root === null ? null : { path: root }, pathIndex: new Map([[entryPath, { type: 'dir' }]]), treemap: { rootPath: root } };
+    const open = new Function('state', '$', 'switchView', 'toast', 'tmApplyQuery',
+      `let tmQueryDeb = 0;\n${declsOf(['journalOpen', 'tmIsInside'])}\nreturn journalOpen;`)(
+      state, () => ({ value: '' }), (view: string) => log.push(`view ${view}`), () => log.push('toast'), () => undefined,
+    ) as (entry: { at: number; path: string; rootPath: string }) => void;
+    open({ at: 0, path: entryPath, rootPath: '/the/scan/it/is/in' });
+    if (log.includes('toast')) return `scan it first (${log.join(', ')})`;
+    return `shown at ${state.treemap.rootPath} (${log.join(', ')})`;
+  };
+  assert.deepEqual({
+    sibling: journal('/data/a', '/data/a\\b/f'),
+    wholeDisk: journal('/', '/Users/x/f'),
+    wholeDrive: journal('C:\\', 'C:\\Users\\x\\f'),
+    inside: journal('/data/a', '/data/a/b'),
+    theRootItself: journal('/data/a', '/data/a'),
+    longerSibling: journal('/data/a', '/data/ab/f'),
+    windows: journal('C:\\d', 'C:\\d\\x'),
+    share: journal('\\\\srv\\share', '\\\\srv\\share\\x'),
+    noScan: journal(null, '/x'),
+  }, {
+    sibling: 'scan it first (view dashboard, toast)',
+    wholeDisk: 'shown at /Users/x/f (view treemap)',
+    wholeDrive: 'shown at C:\\Users\\x\\f (view treemap)',
+    inside: 'shown at /data/a/b (view treemap)',
+    theRootItself: 'shown at /data/a (view treemap)',
+    longerSibling: 'scan it first (view dashboard, toast)',
+    windows: 'shown at C:\\d\\x (view treemap)',
+    share: 'shown at \\\\srv\\share\\x (view treemap)',
+    noScan: 'scan it first (view dashboard, toast)',
+  });
+
+  // gsearchGoTo asked folder.startsWith(root): a hit in "/Users/me/Projects-old" was drilled into inside
+  // "/Users/me/Projects", the server refused it 403, and the map was left rooted at a folder outside the scan.
+  type Hit = { path: string; type: string; parentPath: string; rootPath: string; name: string };
+  const goToFor = (state: unknown, hit: Hit, seams: Record<string, unknown>) => new Function(
+    'state', '$', 'gsearch', 'gsearchClose', 'toast', 'startScan', 'switchView', 'loadTreemap', 'tmApplyQuery',
+    `${declsOf(['gsearchGoTo', 'tmIsInside'])}\nreturn gsearchGoTo;`,
+  )(state, () => ({ value: '', blur: () => undefined }), { hits: [hit] }, () => undefined,
+    seams.toast, seams.startScan, seams.switchView, seams.loadTreemap, () => undefined) as (p: string) => Promise<void>;
+  const search = async (root: string | null, hit: Hit): Promise<{ log: string[]; mapRoot: string | null }> => {
+    const log: string[] = [];
+    const state = { root: root === null ? null : { path: root }, treemap: { rootPath: root } };
+    await goToFor(state, hit, {
+      toast: () => log.push('toast'),
+      startScan: async (p: string) => { log.push(`scan ${p}`); },
+      switchView: (view: string) => log.push(`view ${view}`),
+      // A load that fails: loadTreemap roots the map only once the folder has loaded.
+      loadTreemap: async (p: string) => { log.push(`load ${p}`); },
+    })(hit.path);
+    return { log, mapRoot: state.treemap.rootPath };
+  };
+  const file = (parentPath: string, rootPath: string): Hit => ({ path: `${parentPath}/f`, type: 'file', parentPath, rootPath, name: 'f' });
+  assert.deepEqual({
+    prefixSibling: await search('/Users/me/Projects', file('/Users/me/Projects-old/app', '/Users/me/Projects-old')),
+    backslashSibling: await search('/data/a', file('/data/a\\b', '/data')),
+    noScan: await search(null, file('/data/x', '/data')),
+    wholeDisk: await search('/', file('/x', '/')),
+    wholeDrive: await search('C:\\', { path: 'C:\\x\\f', type: 'file', parentPath: 'C:\\x', rootPath: 'C:\\', name: 'f' }),
+    theRootItself: await search('/data', { path: '/data', type: 'dir', parentPath: '/', rootPath: '/data', name: 'data' }),
+  }, {
+    // Another root is scanned, and the result opened again once that scan is on screen: drilled into
+    // now, the map would ask a scan that has not finished.
+    prefixSibling: { log: ['toast', 'scan /Users/me/Projects-old'], mapRoot: '/Users/me/Projects' },
+    backslashSibling: { log: ['toast', 'scan /data'], mapRoot: '/data/a' },
+    noScan: { log: ['toast', 'scan /data'], mapRoot: null },
+    // Inside: drilled into, and a load that fails leaves the map where it was.
+    wholeDisk: { log: ['view treemap', 'load /x'], mapRoot: '/' },
+    wholeDrive: { log: ['view treemap', 'load C:\\x'], mapRoot: 'C:\\' },
+    theRootItself: { log: ['view treemap', 'load /data'], mapRoot: '/data' },
+  });
+  const said: string[] = [];
+  await goToFor({ root: { path: '/a' }, treemap: { rootPath: '/a' } }, file('/b/c', '/b'), {
+    toast: (text: string) => said.push(text), startScan: async () => undefined, switchView: () => undefined, loadTreemap: async () => undefined,
+  })('/b/c/f');
+  assert.deepEqual(said, ['“f” is in /b, not the scan on screen — scanning that folder now. Open the result again when the scan finishes.']);
 });
 
 /* ══════════════ the rules §4.3 states, asserted against the source ══════════════ */

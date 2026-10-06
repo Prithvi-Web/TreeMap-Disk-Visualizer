@@ -141,17 +141,23 @@ async function gsearchGoTo(targetPath) {
 
   const folder = hit.type === 'dir' ? hit.path : hit.parentPath;
 
-  // The treemap can only drill within the scan it currently holds. A hit from
-  // a different indexed root needs that root loaded first — and saying so beats
-  // silently doing nothing.
-  if (!state.root || !(folder === state.root.path || folder.startsWith(state.root.path))) {
-    toast(`“${hit.name}” is in ${hit.rootPath} — scanning that folder to show it.`);
+  // The treemap can only drill within the scan it currently holds: a hit
+  // inside it by folder boundary (tmIsInside), so "/Users/me/Projects-old" is
+  // not in "/Users/me/Projects", and a whole drive's scan holds every path on
+  // it. A hit from a different indexed root needs that root scanned first —
+  // and saying so beats silently doing nothing. The scan runs on its own;
+  // drilled into now, the map would ask a scan that has not finished (POL
+  // item 7 review, F2.9).
+  if (!state.root || !(folder === state.root.path || tmIsInside(folder, state.root.path))) {
+    toast(`“${hit.name}” is in ${hit.rootPath}, not the scan on screen — scanning that folder now. Open the result again when the scan finishes.`);
     $('pathInput').value = hit.rootPath;
     await startScan(hit.rootPath);
+    return;
   }
 
   switchView('treemap');
-  state.treemap.rootPath = folder;
+  // loadTreemap roots the map once the folder has loaded; rooted here first,
+  // a load that failed left the map at a folder it never drew.
   await loadTreemap(folder, true);
   // Reuse the existing highlight box so the file is visibly marked, rather
   // than adding a second highlighting mechanism.

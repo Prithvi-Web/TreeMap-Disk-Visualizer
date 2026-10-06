@@ -305,9 +305,11 @@ function journalOpen(entry) {
   const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const q = `modified:${iso}`;
   const root = state.root ? state.root.path : null;
-  // Both separators are tried: sniffing one from entry.path misreads a POSIX
-  // filename that happens to contain a backslash (review H9).
-  const inScan = root && (entry.path === root || entry.path.startsWith(root + '/') || entry.path.startsWith(root + '\\'));
+  // Inside by folder boundary, as the map reads a path (tmIsInside): "\" is a
+  // separator only in a Windows path — on macOS and Linux "/data/a\b" is the
+  // folder "a\b", not inside "/data/a" — and a whole drive's scan ("/", "C:\")
+  // holds every path on it (POL item 7 review, F2.1).
+  const inScan = root && (entry.path === root || tmIsInside(entry.path, root));
   if (!inScan) {
     $('pathInput').value = entry.rootPath;
     switchView('dashboard');
