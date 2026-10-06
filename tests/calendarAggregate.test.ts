@@ -15,6 +15,9 @@ import { createScanRecord } from '../src/services/diskScanner';
 import { aggregateCalendar, STAT_CAP } from '../src/services/calendarAggregate';
 import { STAT_CAP as QUERY_STAT_CAP } from '../src/services/query/execute';
 import { FileNode } from '../src/models/types';
+import { buildStoreFromTree } from '../src/services/scanStore';
+import { parse } from '../src/services/query/parse';
+import { executeAgainstScan, type QueryOutcome } from '../src/services/query/execute';
 
 /**
  * The calendar endpoint's one hard problem is the word "day": buckets are
@@ -446,4 +449,83 @@ test('the endpoint is registered in the spec, and its live 200 matches the schem
   } finally {
     await close();
   }
+});
+
+/* ---------- B23: a day on the calendar is a query for that day's FILES ---------- */
+
+const PAGE = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+/** `function name(…) {…}` from the built page, by brace matching. */
+function pageFunction(name: string): string {
+  const start = PAGE.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} is in the built page`);
+  let depth = 0;
+  for (let i = PAGE.indexOf('{', start); i < PAGE.length; i++) {
+    if (PAGE[i] === '{') depth++;
+    else if (PAGE[i] === '}' && --depth === 0) return PAGE.slice(start, i + 1);
+  }
+  return assert.fail(`${name} never closes`);
+}
+
+/** The query a page function hands to the map, given the page's globals. */
+function queryFrom(names: string[], call: string, deps: Record<string, unknown>): string {
+  let q = '';
+  const all: Record<string, unknown> = {
+    switchView: () => {}, toast: () => {}, tmQueryDeb: 0,
+    $: () => ({ value: '' }),
+    tmApplyQuery: (x: string) => { q = x; },
+    ...deps,
+  };
+  const keys = Object.keys(all);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(...keys, `${names.map(pageFunction).join('\n')}\n${call};`)(...keys.map((k) => all[k]));
+  return q;
+}
+
+test('a calendar day becomes a query for the files that day counted — never its folders or the scan root (B23)', async () => {
+  await withTz('America/New_York', async () => {
+    assertTzActive(Date.UTC(2026, 0, 15, 12), 7);
+    // QA: "2026-10-02 — 340 files" matched 5,970 — the 340 files and every
+    // folder made that day, the scan root first.
+    const day = Date.UTC(2026, 9, 2, 16); // noon in New York, 2 Oct 2026
+    const before = Date.UTC(2026, 8, 1, 16);
+    const file = (p: string, size: number, modifiedAt: number): FileNode => ({
+      name: path.basename(p), path: p, type: 'file', extension: 'mov', size, modifiedAt, isHidden: false,
+    });
+    const root: FileNode = {
+      name: 'b23', path: '/b23', type: 'dir', size: 0, modifiedAt: day, isHidden: false,
+      children: [
+        {
+          name: 'made-today', path: '/b23/made-today', type: 'dir', size: 0, modifiedAt: day, isHidden: false,
+          children: [file('/b23/made-today/a.mov', 300, day), file('/b23/made-today/b.mov', 200, day)],
+        },
+        file('/b23/old.mov', 50, before),
+      ],
+    };
+    const scan = createScanRecord('/b23');
+    scan.store = buildStoreFromTree(root);
+    scan.status = 'complete';
+    const cell = aggregateCalendar(root).modified.find((d) => d.date === '2026-10-02');
+    assert.ok(cell, 'the calendar has the day');
+    assert.deepEqual([cell.count, cell.bytes], [2, 500], 'the cell counts the two files');
+
+    const run = async (q: string): Promise<string[]> => {
+      const r = parse(q);
+      assert.ok(r.ok, `"${q}" parses`);
+      const out = await executeAgainstScan(scan.scanId, r.ast, { limit: 100, offset: 0, sort: 'size', signal: new AbortController().signal });
+      assert.ok(!('error' in out), JSON.stringify(out));
+      return (out as QueryOutcome).hits.map((h) => h.path).sort();
+    };
+    const theDaysFiles = ['/b23/made-today/a.mov', '/b23/made-today/b.mov'];
+
+    const calendar = (a: string, b: string) => queryFrom(['calApplyRange', 'calNextDay'], `calApplyRange('${a}', '${b}')`, { calChannel: 'modified' });
+    assert.deepEqual(await run(calendar('2026-10-02', '2026-10-02')), theDaysFiles,
+      'a click on the cell shows the files it counted — not the folder or the root modified that day');
+    assert.deepEqual(await run(calendar('2026-10-01', '2026-10-02')), theDaysFiles, 'and so does a dragged range');
+
+    const journal = queryFrom(['journalOpen'], `journalOpen({ at: ${day}, path: '/b23/made-today', rootPath: '/b23' })`, {
+      state: { root: { path: '/b23' }, pathIndex: new Map([['/b23/made-today', { type: 'dir' }]]), treemap: {} },
+    });
+    assert.deepEqual(await run(journal), theDaysFiles, 'a journal entry opens the same day the same way');
+  });
 });

@@ -131,9 +131,13 @@ function renderCalendar() {
   $('calMax').textContent = `top day ${formatBytes(max)}`;
 }
 
-/** A day (or a dragged range) becomes a query and the treemap answers it. */
+/**
+ * A day (or a dragged range) becomes a query and the treemap answers it. The
+ * calendar counts files, so the query asks for files (B23): without type:file
+ * a day matched every folder made or touched that day, the scan root first.
+ */
 function calApplyRange(a, b) {
-  const q = a === b ? `${calChannel}:${a}` : `${calChannel}>=${a} ${calChannel}<${calNextDay(b)}`;
+  const q = (a === b ? `${calChannel}:${a}` : `${calChannel}>=${a} ${calChannel}<${calNextDay(b)}`) + ' type:file';
   switchView('treemap');
   $('tmSearch').value = q;
   clearTimeout(tmQueryDeb);
@@ -303,7 +307,7 @@ function journalOpen(entry) {
   const d = new Date(entry.at);
   const pad = (n) => String(n).padStart(2, '0');
   const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const q = `modified:${iso}`;
+  const q = `modified:${iso} type:file`; // the day's files, not every folder they touched (B23)
   const root = state.root ? state.root.path : null;
   // Inside by folder boundary, as the map reads a path (tmIsInside): "\" is a
   // separator only in a Windows path — on macOS and Linux "/data/a\b" is the
