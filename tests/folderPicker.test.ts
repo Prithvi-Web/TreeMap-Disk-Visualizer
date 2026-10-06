@@ -471,6 +471,11 @@ function boxesRuntime(listing: (p: string) => unknown) {
   const $ = (id: string) => {
     if (!els.has(id)) {
       const el = fakeEl(id) as BoxEl;
+      // A box may have several listeners for one event (the page adds one per concern).
+      el.addEventListener = (type, fn) => {
+        const before = el.listeners[type];
+        el.listeners[type] = before ? (e) => { void before(e); return fn(e); } : fn;
+      };
       el.querySelector = () => null;
       el.click = () => { void el.listeners.click?.(); };
       els.set(id, el);
@@ -530,8 +535,10 @@ function boxesRuntime(listing: (p: string) => unknown) {
   };
   /** A click on a button whose handler may be async; resolves when it has run. */
   const click = (id: string) => Promise.resolve($(id).listeners.click());
+  /** A person typing or pasting into a box: its value, then its input event. */
+  const type = (id: string, text: string) => { $(id).value = text; void $(id).listeners.input?.(); };
   const policy = (url: string) => sent.filter((s) => s.url === url).at(-1)!.body;
-  return { rt, $, asked, scanned, toasts, click, policy };
+  return { rt, $, asked, scanned, toasts, click, type, policy };
 }
 
 test('a folder picked into the Scan card keeps its trailing space when Scan and Browse… read the box again, and Fast rescan knows it (review F2.4, F2.8)', async () => {
@@ -570,28 +577,49 @@ test('a folder picked for an Autopilot policy is previewed, saved and browsed as
 });
 
 test('a stray trailing space typed into the Scan card or the Autopilot folder is dropped only when no folder has it (review F2.9)', async () => {
-  const { rt, $, asked, scanned, toasts, click, policy } = boxesRuntime(strictListing);
-  $('pathInput').value = '   ';
+  const { rt, asked, scanned, toasts, click, type, policy } = boxesRuntime(strictListing);
+  type('pathInput', '   ');
   await click('scanBtn');
   assert.equal(toasts.at(-1), 'Enter a folder path first', 'a box of spaces is an empty box');
   assert.equal(scanned.length, 0, 'and nothing is scanned');
-  $('pathInput').value = '  ' + DOCS + ' ';
+  type('pathInput', '  ' + DOCS + ' ');
   await click('scanBtn');
   assert.deepEqual(scanned.map(([p]) => p), [DOCS], 'the folder that exists is scanned');
-  $('pathInput').value = SHOT;
+  type('pathInput', SHOT);
   await click('scanBtn');
   assert.deepEqual(scanned.map(([p]) => p), [DOCS, SHOT], 'a folder whose name ends in a space is scanned as typed');
-  $('pathInput').value = '/locked ';
+  type('pathInput', '/locked ');
   await click('scanBtn');
   assert.deepEqual(scanned.at(-1)![0], '/locked ', 'one that cannot be looked up is left as typed, for the scan to report');
   const lookups = asked.length;
-  $('pathInput').value = DOCS;
+  type('pathInput', DOCS);
   await click('scanBtn');
   assert.equal(asked.length, lookups, 'a path with nothing at its end to doubt is not looked up');
-  $('pathInput').value = DOCS + ' ';
+  type('pathInput', DOCS + ' ');
   await click('browseBtn');
   assert.equal(rt.path(), DOCS, 'Browse… opens the folder that exists');
-  $('apPath').value = DOCS + ' ';
+  type('apPath', DOCS + ' ');
   await click('apSaveBtn');
   assert.deepEqual(policy('/api/autopilot/policies').policies!.map((p) => p.path), [DOCS], 'a policy is saved for the folder that exists');
+});
+
+test('a box the page filled itself — a pick, Recent, the last scan, a saved policy — is a folder\'s own spelling: its trailing space is never dropped, even when that folder has gone (review F2.9)', async () => {
+  // "Gone " was scanned, or saved in a policy, and has since been removed;
+  // "Gone" beside it is another folder. Only a person's typing carries a
+  // stray space, so only typing is looked up without it.
+  const GONE = '/home/u/Gone ';
+  const { $, asked, scanned, toasts, click, policy } = boxesRuntime(strictListing);
+  $('pathInput').value = GONE; // Recent, or the last scan, fills the box
+  await click('scanBtn');
+  assert.deepEqual(scanned.map(([p]) => p), [GONE], 'Scan asks for that folder, and the scan says it is gone — never scanning its sibling');
+  assert.equal(asked.length, 0, 'it is not looked up under another name');
+  await click('browseBtn');
+  assert.deepEqual(asked, [list(GONE)], 'Browse… opens the picker at it, and only at it');
+  assert.equal(toasts.at(-1), 'Path does not exist');
+  $('apPath').value = GONE; // a saved policy, opened for editing
+  await click('apSaveBtn');
+  assert.deepEqual(policy('/api/autopilot/policies').policies!.map((p) => p.path), [GONE],
+    'saving it again keeps its folder — the sibling would be trashed on schedule');
+  await click('apBrowseBtn');
+  assert.deepEqual(asked, [list(GONE), list(GONE)], 'and its Browse… opens at it, and only at it');
 });

@@ -1392,7 +1392,7 @@ $('scanBtn').addEventListener('click', async () => {
   // The folder the box names (boxPath): a trailing space is part of a name —
   // the picker, Recent and the last scan fill this box as the server spells a
   // folder (review F2.4, F2.8) — unless no folder has it (F2.9).
-  const p = await boxPath($('pathInput').value);
+  const p = await boxPath($('pathInput'));
   if (!p) { toast('Enter a folder path first', 'error'); return; }
   startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
 });

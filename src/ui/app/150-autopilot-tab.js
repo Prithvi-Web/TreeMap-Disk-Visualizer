@@ -369,7 +369,7 @@ async function policyFromEditor() {
     // The folder the box names (boxPath). Trimmed, a folder picked as
     // "Screenshots " was saved as its sibling "Screenshots", and the policy
     // would trash files there on schedule (review F2.1).
-    path: await boxPath($('apPath').value),
+    path: await boxPath($('apPath')),
     match,
     maxBytesPerRun: gb('apMaxRun'),
     maxBytesPerWeek: gb('apMaxWeek'),
@@ -384,7 +384,8 @@ document.querySelectorAll('#apMatchSeg button').forEach(b =>
   b.addEventListener('click', () => setApMatchKind(b.dataset.apmatch)));
 $('apAddBtn').addEventListener('click', () => openPolicyEditor(null));
 $('apBrowseBtn').addEventListener('click', () =>
-  openBrowse(asPath($('apPath').value) || null, (picked) => { $('apPath').value = picked; }, 'Folder this policy cleans'));
+  openBrowse(asPath($('apPath').value) || null, (picked) => { $('apPath').value = picked; }, 'Folder this policy cleans',
+    boxTyped($('apPath'))));
 
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');

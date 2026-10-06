@@ -278,20 +278,33 @@ async function listTyped(p) {
     return { data: await list(bare), spelled: bare };
   }
 }
+/** What a person last typed or pasted into each path box (its input event).
+    A value the page put there since (a pick, Recent, the last scan, a saved
+    policy) is a folder's own spelling, never paste debris: that folder may
+    have gone, and the one without its trailing space is another folder. */
+const typedPaths = new WeakMap();
+for (const id of ['pathInput', 'apPath']) {
+  const box = $(id);
+  box.addEventListener('input', () => typedPaths.set(box, box.value));
+}
+/** True when the box holds what a person typed, not what the page put there. */
+function boxTyped(box) {
+  return typedPaths.get(box) === box.value;
+}
 /** The folder a path box names, to scan or to clean: the box read by asPath,
-    its trailing whitespace dropped only where listTyped finds no folder with
-    it. Only a path ending in whitespace is looked up; one that cannot be is
-    left as typed, for the scan or the policy to report. */
-async function boxPath(text) {
-  const p = asPath(text);
-  if (p === p.replace(/\s+$/, '')) return p;
+    and, only where a person typed it, its trailing whitespace dropped when
+    listTyped finds no folder with it. Only such a path is looked up; one that
+    cannot be is left as typed, for the scan or the policy to report. */
+async function boxPath(box) {
+  const p = asPath(box.value);
+  if (!boxTyped(box) || p === p.replace(/\s+$/, '')) return p;
   try {
     return (await listTyped(p)).spelled;
   } catch {
     return p;
   }
 }
-async function openBrowse(start, onPick = null, title = null) {
+async function openBrowse(start, onPick = null, title = null, startTyped = false) {
   browseOnPick = onPick;
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
   $('browseModal').classList.add('open');
@@ -299,8 +312,8 @@ async function openBrowse(start, onPick = null, title = null) {
   chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
     `<button class="pill" data-p="${escapeHtml(d)}">${icon('folder', 12)}${escapeHtml(d.split(/[\\/]/).pop() || d)}</button>`).join('');
   chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
-  // A start comes from a path box, which a person may have typed in.
-  await browseTo(start || state.system?.homeDir || '/', !!start);
+  // A start from a path box a person typed in is a typed path (listTyped).
+  await browseTo(start || state.system?.homeDir || '/', !!start && startTyped);
 }
 /** Ordinary folders first, dot-folders after them, each in the server's order
     (QA D05: in a home folder .agents, .cache… pushed Documents below the fold). */
@@ -356,7 +369,8 @@ function browseClosed() {
 function browseFieldPath() {
   return asPath($('browseCurrent').value);
 }
-$('browseBtn').addEventListener('click', () => openBrowse(asPath($('pathInput').value) || null));
+$('browseBtn').addEventListener('click', () =>
+  openBrowse(asPath($('pathInput').value) || null, null, null, boxTyped($('pathInput'))));
 $('emptyBrowseBtn').addEventListener('click', () => openBrowse(null));
 // The path line is the picker's typing route (QA D05) — before the first scan
 // the Scan card's path box is not on screen, so this sheet is the only door.
