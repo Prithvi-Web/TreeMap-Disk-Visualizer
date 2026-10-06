@@ -385,8 +385,11 @@ export async function buildStatement(
       `Files here have more than one name, and ${formatBytes(hardlinked)} would be counted twice by a tool that adds every name up. The scan counts each file once, so that is already left out here — it is not a separate line.`,
     );
   }
+  // Plain words on a page a person reads (B19, as D41 did for Purgeable): the
+  // obstacle — no clone identity from the file system calls the scan makes —
+  // is recorded in src/platform/macos/allocation.ts, not on the page.
   scannedNotes.push(
-    'Copy-on-write clones cannot yet be told apart from real copies — no Node API exposes clone identity, and TreeMap\'s native scan core does not ask APFS for it: a clone reports its full size and its own inode, exactly as a genuine copy does. Where clones exist, this line is an over-count and the difference lands in Unaccounted below.',
+    'Some copies share their storage with the original — a clone, which is what duplicating a file on a modern Mac makes. TreeMap cannot yet tell a clone from a real copy, so it counts each at its full size. Where clones exist, this line counts more than they take on the disk, and the difference shows up in Unaccounted below.',
   );
   lines.push({
     id: 'scanned',

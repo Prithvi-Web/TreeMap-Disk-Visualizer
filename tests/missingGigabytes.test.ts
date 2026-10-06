@@ -255,6 +255,21 @@ test('the residual is stated, not clamped, when TreeMap counts more than the vol
   assertBalances(s);
 });
 
+test('the scanned line explains shared-storage copies in plain words, not developer terms (B19)', async () => {
+  const s = await buildStatement(scanFixture({ store: storeOfSize(5 * GB) }), sourcesFixture({ usedBytes: 9 * GB }));
+  const notes = lineOf(s, 'scanned').notes;
+  const clone = notes.find((n) => /share their storage/.test(n));
+  assert.ok(clone, `the scanned line still says such copies are counted in full: ${JSON.stringify(notes)}`);
+  assert.match(clone, /Unaccounted/, 'and where the difference goes');
+  for (const n of notes) {
+    assert.doesNotMatch(
+      n,
+      /\bAPI\b|\bNode\b|native scan core|inode|copy-on-write|clone identity|APFS/i,
+      `no developer terms on a page a person reads: ${n}`,
+    );
+  }
+});
+
 /* ══════════════ 2. Unavailable is never zero, and says where it went ══════════════ */
 
 test('purgeable is unavailable with a reason on every platform, and never reads zero', () => {
