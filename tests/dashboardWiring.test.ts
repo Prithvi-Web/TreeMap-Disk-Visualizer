@@ -444,3 +444,77 @@ test('the file-types ring accounts for the whole scan, not just its eight bigges
   assert.equal(small.items.length, 2, 'nothing is folded when every type already fits');
   assert.ok(!small.items.some((it: any) => it.name === 'Other' || /more/.test(it.title || '')), 'and no empty "Other" slice is invented');
 });
+
+/* ══════════════ B02 — a Trash TreeMap could not read is not "at least 0 B" ══════════════ */
+
+type FactEl = { hidden: boolean; textContent: string; title: string; dataset: Record<string, unknown>; style: Record<string, string> };
+const factEl = (): FactEl => ({ hidden: true, textContent: '', title: '', dataset: {}, style: {} });
+
+async function loadTrashWith(answer: unknown) {
+  const src = slice('async function loadTrash', 'function openTrashModal');
+  const els: Record<string, FactEl> = {};
+  const $ = (id: string) => (els[id] ??= factEl());
+  $('trashFact').title = 'View Trash contents'; // as the markup ships it
+  const countUp = (el: FactEl, n: number, fmt: (v: number) => string) => { el.dataset.v = n; el.textContent = fmt(n); };
+  const run = new Function('api', 'state', '$', 'countUp', 'formatBytes', 'formatCount', `'use strict'; ${src} return loadTrash;`)(
+    async () => answer, {}, $, countUp, (n: number) => `${n} B`, String,
+  ) as () => Promise<void>;
+  await run();
+  return els;
+}
+
+test('a Trash TreeMap could not read says so and why — never "at least 0 B" (B02)', async () => {
+  const reason = 'macOS would not let TreeMap read the Trash. Give it Full Disk Access in System Settings.';
+  const unread = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: false, incompleteReason: reason });
+  assert.equal(unread.trashFact.hidden, false, 'the row stays: hiding it would say the Trash is empty');
+  assert.doesNotMatch(unread.sysTrash.textContent, /at least 0/, 'a floor of nothing is not a fact');
+  assert.match(unread.sysTrash.textContent, /Couldn’t read/, 'it says the Trash could not be read');
+  assert.equal(unread.trashFact.title, reason, 'and the reason the server gave is on the row');
+  assert.equal(Number(unread.sysTrash.dataset.v), 0, 'the roll restarts from nothing when a size comes');
+
+  const partial = await loadTrashWith({ totalBytes: 5000, itemCount: 3, complete: false, incompleteReason: reason });
+  assert.equal(partial.sysTrash.textContent, 'at least 5000 B · 3', 'a real floor is still a floor');
+  assert.equal(partial.trashFact.title, reason, 'with the reason it is only a floor');
+
+  const whole = await loadTrashWith({ totalBytes: 2000, itemCount: 4, complete: true });
+  assert.equal(whole.sysTrash.textContent, '2000 B · 4');
+  assert.equal(whole.trashFact.title, 'View Trash contents', 'a Trash read in full keeps the plain title');
+  const empty = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: true });
+  assert.equal(empty.trashFact.hidden, true, 'an empty Trash read in full has no row, as before');
+});
+
+/* ══════════════ B18 — the System card follows the disk, not the page load ══════════════ */
+
+test('the System card\'s disk figures are read again whenever a scan lands (B18)', async () => {
+  // B18: read once at page load; half an hour of disk churn later it stated a
+  // Free figure 3.8 GB away from the Missing GB receipt in the same session.
+  const src = slice('function paintDiskFacts(', '/* Feature 8 — Trash awareness. */') +
+    slice('/* The System card follows the disk', '/* Empty Trash');
+  const els: Record<string, FactEl> = {};
+  const $ = (id: string) => (els[id] ??= factEl());
+  // The card as the page load painted it.
+  $('sysFree').textContent = '199 B'; $('sysUsed').textContent = '261 B'; $('ringPct').textContent = '57%';
+  const state: Record<string, unknown> = { system: { homeDir: '/Users/x', platform: 'darwin', totalDisk: 460, freeDisk: 199, usedDisk: 261 } };
+  let answer: unknown = { homeDir: '/Users/x', platform: 'darwin', totalDisk: 460, freeDisk: 195, usedDisk: 265 };
+  const asked: string[] = [];
+  const handlers: Array<[string, (id: unknown) => unknown]> = [];
+  new Function('api', 'state', '$', 'countUp', 'formatBytes', 'requestAnimationFrame', 'subscribe', 'TOPIC', `'use strict'; ${src}`)(
+    async (url: string) => { asked.push(url); if (answer instanceof Error) throw answer; return answer; },
+    state, $, (el: FactEl, n: number, fmt: (v: number) => string) => { el.textContent = fmt(n); }, (n: number) => `${n} B`,
+    (fn: () => void) => fn(), (topic: string, fn: (id: unknown) => unknown) => { handlers.push([topic, fn]); }, { scan: 'scan' },
+  );
+  const onScan = handlers.filter(([t]) => t === 'scan').map(([, fn]) => fn);
+  assert.equal(onScan.length, 1, 'one listener for a scan landing');
+  await onScan[0](null);
+  assert.deepEqual(asked, [], 'a tree with no scan behind it (the index paint) asks nothing');
+  await onScan[0]('s1');
+  assert.deepEqual(asked, ['/api/system'], 'a scan that landed asks the disk again');
+  assert.equal(els.sysFree.textContent, '195 B', 'Free is the disk\'s figure now');
+  assert.equal(els.sysUsed.textContent, '265 B', 'and Used');
+  assert.equal(els.ringPct.textContent, '58%', 'and the ring');
+  assert.equal((state.system as { freeDisk: number }).freeDisk, 195, 'the app\'s copy follows, for every view that reads it');
+  answer = new Error('offline');
+  await onScan[0]('s2');
+  assert.equal(els.sysFree.textContent, '195 B', 'a failed read keeps the figures it had');
+  assert.equal((state.system as { homeDir: string }).homeDir, '/Users/x', 'and the app\'s copy');
+});

@@ -7866,21 +7866,7 @@ async function loadSystem() {
     if (typeof tour !== 'undefined' && tour.active && tour.step === 'welcome') tourRender();
     $('sysHost').textContent = sys.hostname;
     $('sysPlatform').textContent = ({ darwin:'macOS', win32:'Windows', linux:'Linux' })[sys.platform] || sys.platform;
-    // Rolling numerals: same machine, same meaning, every refresh — the
-    // digits glide while "GB" and the labels hold still.
-    countUp($('sysTotal'), sys.totalDisk, formatBytes);
-    countUp($('sysFree'), sys.freeDisk, formatBytes);
-    // `usedDisk`, not `totalDisk - freeDisk`: `freeDisk` is what a normal
-    // program may write, which on ext4 excludes the 5% the system keeps for
-    // itself. Subtracting it would count that reserve as space something is
-    // using, and the Missing GB receipt — which reads the occupied blocks
-    // directly — would disagree with this tile by ~50 GB on a 1 TB disk.
-    const used = sys.usedDisk;
-    countUp($('sysUsed'), used, formatBytes);
-    const pct = sys.totalDisk > 0 ? used / sys.totalDisk : 0;
-    countUp($('ringPct'), Math.round(pct * 100), (v) => v + '%');
-    const C = 2 * Math.PI * 55;
-    requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
+    paintDiskFacts(sys);
     // The Fast rescan box follows the folder the box now holds — at once,
     // not whenever the engine plan happens to answer (review L3).
     if (!$('pathInput').value) { $('pathInput').value = sys.homeDir; maybeShowFastRescan(); }
@@ -7896,6 +7882,25 @@ async function loadSystem() {
   }
 }
 
+/** The disk's own figures on the System card: total, free, used and the ring. */
+function paintDiskFacts(sys) {
+  // Rolling numerals: same machine, same meaning, every refresh — the
+  // digits glide while "GB" and the labels hold still.
+  countUp($('sysTotal'), sys.totalDisk, formatBytes);
+  countUp($('sysFree'), sys.freeDisk, formatBytes);
+  // `usedDisk`, not `totalDisk - freeDisk`: `freeDisk` is what a normal
+  // program may write, which on ext4 excludes the 5% the system keeps for
+  // itself. Subtracting it would count that reserve as space something is
+  // using, and the Missing GB receipt — which reads the occupied blocks
+  // directly — would disagree with this tile by ~50 GB on a 1 TB disk.
+  const used = sys.usedDisk;
+  countUp($('sysUsed'), used, formatBytes);
+  const pct = sys.totalDisk > 0 ? used / sys.totalDisk : 0;
+  countUp($('ringPct'), Math.round(pct * 100), (v) => v + '%');
+  const C = 2 * Math.PI * 55;
+  requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
+}
+
 /* Feature 8 — Trash awareness. */
 async function loadTrash() {
   try {
@@ -7909,7 +7914,16 @@ async function loadTrash() {
     if (t && (t.totalBytes > 0 || t.complete === false)) {
       const prefix = t.complete === false ? 'at least ' : '';
       const suffix = t.itemCount ? ` · ${formatCount(t.itemCount)}` : '';
-      countUp($('sysTrash'), t.totalBytes, (v) => prefix + formatBytes(v) + suffix);
+      // Nothing read at all: "at least 0 B" is true of every Trash and says
+      // nothing (B02). The row says it could not be read, and why — the
+      // server's sentence, also in the sheet the row opens.
+      if (t.complete === false && !(t.totalBytes > 0)) {
+        $('sysTrash').dataset.v = 0;
+        $('sysTrash').textContent = 'Couldn’t read it';
+      } else countUp($('sysTrash'), t.totalBytes, (v) => prefix + formatBytes(v) + suffix);
+      el.title = t.complete === false
+        ? (t.incompleteReason || 'Part of the Trash could not be read, so TreeMap cannot say what is in it.')
+        : 'View Trash contents';
       el.hidden = false;
     } else {
       el.hidden = true;
@@ -7944,6 +7958,21 @@ function openTrashModal() {
 }
 $('trashFact').addEventListener('click', openTrashModal);
 $('trashFact').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTrashModal(); } });
+
+/* The System card follows the disk, not the page load (B18). It was read
+   once at boot and, half an hour of disk churn later, stated a Free figure
+   3.8 GB away from the Missing GB receipt beside it. A scan landing asks
+   again — one small read, the disk figures only; a failed read keeps what
+   the card already says. A tree painted from the index (no scan id) waits
+   for the scan behind it. */
+async function refreshDiskFacts() {
+  let sys;
+  try { sys = await api('/api/system'); } catch { return; }
+  if (!sys) return;
+  state.system = sys;
+  paintDiskFacts(sys);
+}
+subscribe(TOPIC.scan, (scanId) => { if (scanId) return refreshDiskFacts(); });
 
 /* Empty Trash — irreversible, so it goes through the standard confirm modal. */
 $('emptyTrashBtn').addEventListener('click', () => {
