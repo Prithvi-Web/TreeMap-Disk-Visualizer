@@ -201,7 +201,9 @@ test('on macOS and Linux a backslash is a character of a folder’s name, never 
     'drive: a longer sibling is not inside': false,
     'share: inside': true,
     'a drive root ends in its separator': true,
-    'share: parent': '\\\\srv\\share',
+    // A share's root folder keeps its separator, as a drive's does: Windows spells it so (path.win32.dirname),
+    // and a scan of the share is rooted there (POL item 7 review, F2.7).
+    'share: parent': '\\\\srv\\share\\',
     'drive: one level down': 'C:\\a\\b',
     'share: one level down': '\\\\srv\\share\\b',
     'cloud: inside': true,
@@ -239,7 +241,7 @@ test('on macOS and Linux a backslash in a folder’s name is part of the name ev
   type Node = { type: string; size: number };
   const live = (root: string, nodes: Record<string, Node>, ev: Record<string, unknown>): Record<string, number> => {
     const pathIndex = new Map(Object.entries(nodes));
-    (new Function('state', `${declsOf(['applyLiveDelta'])}\nreturn applyLiveDelta;`)({ root: { path: root }, pathIndex }) as (e: unknown) => void)(ev);
+    (new Function('state', `${declsOf(['applyLiveDelta', 'tmParentPath'])}\nreturn applyLiveDelta;`)({ root: { path: root }, pathIndex }) as (e: unknown) => void)(ev);
     return Object.fromEntries([...pathIndex].map(([p, n]) => [p, n.size]));
   };
   const liveRegionFor = lift<(p: string, byPath: Map<string, string>) => string | null>(['liveRegionFor'], 'liveRegionFor');
@@ -361,6 +363,87 @@ test('the journal’s “Show on treemap” and a global-search hit ask whether 
     toast: (text: string) => said.push(text), startScan: async () => undefined, switchView: () => undefined, loadTreemap: async () => undefined,
   })('/b/c/f');
   assert.deepEqual(said, ['“f” is in /b, not the scan on screen — scanning that folder now. Open the result again when the scan finishes.']);
+});
+
+test('a whole drive’s scan and a share’s are rooted at a folder whose path ends in its separator — "/", "C:\\", "\\\\srv\\share\\" as Windows spells a share’s root — and the page climbs to it: Live mode grows every folder above a change up to that root, a share’s changes pulse to it, the preview and Disk City’s Up find it as a folder’s parent, and the “Writing now” rows name each file from below it without losing a letter (POL item 7 review, F2.7 and F2.8)', () => {
+  type Node = { type: string; size: number };
+  const live = (root: string, nodes: Record<string, Node>, ev: Record<string, unknown>): Record<string, number> => {
+    const pathIndex = new Map(Object.entries(nodes));
+    (new Function('state', `${declsOf(['applyLiveDelta', 'tmParentPath'])}\nreturn applyLiveDelta;`)({ root: { path: root }, pathIndex }) as (e: unknown) => void)(ev);
+    return Object.fromEntries([...pathIndex].map(([p, n]) => [p, n.size]));
+  };
+  const liveRegionFor = lift<(p: string, byPath: Map<string, string>) => string | null>(['liveRegionFor'], 'liveRegionFor');
+  const snapFolderRefusedText = lift<(p: string) => string>(['snapFolderRefusedText'], 'snapFolderRefusedText');
+  const dir = (size: number): Node => ({ type: 'dir', size });
+  const file = (size: number): Node => ({ type: 'file', size });
+  const share = '\\\\srv\\share\\'; // path.win32.resolve('\\\\srv\\share'): the root of a share's scan
+  assert.equal(path.win32.resolve('\\\\srv\\share'), share, 'Windows spells a share’s root folder with its separator');
+  // The preview's parent relation, and Disk City's Up, from a folder at the top of a share's scan.
+  const drawnKids = (rootPath: string, nodes: { path: string }[]): string[] => {
+    const tree = (new Function('state', `${declsOf(['tmDrawnTree', 'tmParentPath'])}\nreturn tmDrawnTree;`)(
+      { treemap: { rootPath, rootSize: 10, nodes } }) as () => { kids: Map<string, { path: string }[]> })();
+    return (tree.kids.get(rootPath) ?? []).map((n) => n.path);
+  };
+  const cityUpFrom = (rootPath: string, at: string): string | null => {
+    let loaded: string | null = null;
+    (new Function('state', 'loadCity', `${declsOf(['cityUp', 'tmParentPath'])}\nreturn cityUp;`)(
+      { root: { path: rootPath }, treemap: { rootPath: at } }, (p: string) => { loaded = p; }) as () => void)();
+    return loaded;
+  };
+  assert.deepEqual({
+    // The root never grew: the climb cut at the last separator and stopped short of "/", "C:\" or "\\srv\share\".
+    wholeDisk: live('/', { '/': dir(100), '/Users': dir(50), '/Users/f': file(5) }, { path: '/Users/f', kind: 'modified', size: 15, delta: 10 }),
+    wholeDrive: live('C:\\', { 'C:\\': dir(100), 'C:\\x': dir(50), 'C:\\x\\f': file(5) }, { path: 'C:\\x\\f', kind: 'modified', size: 15, delta: 10 }),
+    share: live(share, { [share]: dir(100), [`${share}d`]: dir(10), [`${share}d\\f`]: file(5) }, { path: `${share}d\\f`, kind: 'modified', size: 15, delta: 10 }),
+    // Nothing above the scan's root is touched, and a change at the root itself climbs nowhere.
+    stopsAtTheRoot: live('/data/d', { '/data': dir(500), '/data/d': dir(100), '/data/d/f': file(5) }, { path: '/data/d/f', kind: 'modified', size: 15, delta: 10 }),
+    atTheRoot: live('/data/d', { '/data': dir(500), '/data/d': dir(100) }, { path: '/data/d', kind: 'modified', size: 0, delta: 10 }),
+    sharePulse: liveRegionFor(`${share}d\\f`, new Map([[`${share}d`, 'D']])),
+    shareParent: tmParentPath(`${share}x`),
+    shareRootIsItsOwnParent: tmParentPath(share),
+    sharePreview: drawnKids(share, [{ path: `${share}x` }, { path: `${share}y` }]),
+    shareCityUp: cityUpFrom(share, `${share}x`),
+    driveCityUp: cityUpFrom('C:\\', 'C:\\x'),
+    shareRestoreFolder: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText(`${share}x\\f.txt`))?.[1],
+  }, {
+    wholeDisk: { '/': 110, '/Users': 60, '/Users/f': 15 },
+    wholeDrive: { 'C:\\': 110, 'C:\\x': 60, 'C:\\x\\f': 15 },
+    share: { [share]: 110, [`${share}d`]: 20, [`${share}d\\f`]: 15 },
+    stopsAtTheRoot: { '/data': 500, '/data/d': 110, '/data/d/f': 15 },
+    atTheRoot: { '/data': 500, '/data/d': 100 },
+    sharePulse: 'D',
+    shareParent: share,
+    shareRootIsItsOwnParent: share,
+    sharePreview: [`${share}x`, `${share}y`],
+    shareCityUp: share, // "\\srv\share" is outside the scan: the server refused it 403
+    driveCityUp: 'C:\\',
+    shareRestoreFolder: `${share}x`,
+  });
+
+  // The feed's rows, as renderLiveFeed writes them: each file named from below the root.
+  const feed = (root: string, paths: string[]): string[] => {
+    const host = { hidden: true, innerHTML: '', appendChild: () => undefined };
+    const state = { view: 'treemap', root: { path: root }, live: { on: true, window: paths.map((p, i) => ({ path: p, delta: 1000 * (paths.length - i), at: Date.now() })) } };
+    const element = () => ({ className: '', setAttribute: () => undefined, appendChild: () => undefined, firstChild: null });
+    (new Function('state', '$', 'icon', 'escapeHtml', 'formatBytes', 'document', 'FxCharts',
+      `const LIVE_WINDOW_MS = 60000; let liveLineHandle = null; let liveLineWrap = null;\n${declsOf(['renderLiveFeed', 'tmIsInside'])}\nreturn renderLiveFeed;`)(
+      state, () => host, () => '', (s: string) => s, (n: number) => `${n} B`, { createElement: element }, { liveLine: () => ({ push: () => undefined }) },
+    ) as () => void)();
+    return [...host.innerHTML.matchAll(/<span class="nm">([^<]*)<\/span>/g)].map((m) => m[1]);
+  };
+  assert.deepEqual({
+    wholeDisk: feed('/', ['/Users/me/Downloads/big.iso', '/x']),
+    wholeDrive: feed('C:\\', ['C:\\Users\\me\\big.iso']),
+    folder: feed('/Users/me', ['/Users/me/Downloads/big.iso', '/Users/me']),
+    share: feed(share, [`${share}d\\f`]),
+    backslashName: feed('/data/a\\b', ['/data/a\\b/f', '/data/a\\bc/g']),
+  }, {
+    wholeDisk: ['Users/me/Downloads/big.iso', 'x'],
+    wholeDrive: ['Users\\me\\big.iso'],
+    folder: ['Downloads/big.iso', '/Users/me'], // the root itself keeps its whole path
+    share: ['d\\f'],
+    backslashName: ['f', '/data/a\\bc/g'], // a sibling that merely starts with the root's name is not below it
+  });
 });
 
 /* ══════════════ the rules §4.3 states, asserted against the source ══════════════ */

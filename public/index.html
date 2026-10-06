@@ -16942,6 +16942,12 @@ const tmPreview = { on: false, saved: null, freedBytes: 0, stagedInView: 0, outs
  * parent that matches no node, the child map comes out empty, and the preview
  * silently has nothing to show on the one scan people run most.
  *
+ * A share's root folder keeps its separator too: `\\srv\share\x` yields
+ * `\\srv\share\`, as Windows spells it (path.win32.dirname) and as a scan of
+ * the share is rooted. Without it the preview of a share had nothing to show,
+ * Live mode never grew the share's total, and Disk City's Up left the scan
+ * (POL item 7 review, F2.7).
+ *
  * Only a Windows path — a drive's or a share's — is separated by "\" (POL
  * item 7). On macOS and Linux, and in a cloud identifier, "\" is a character
  * a name may hold, so `/data/a\b` is the folder `a\b` in `/data`.
@@ -16950,7 +16956,7 @@ function tmParentPath(p) {
   const i = /^(?:[A-Za-z]:|\\\\)/.test(p) ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
   if (i < 0) return '';
   const head = p.slice(0, i);
-  if (head === '' || /^[A-Za-z]:$/.test(head)) return head + p[i];
+  if (head === '' || /^[A-Za-z]:$/.test(head) || /^\\\\[^\\/]+[\\/][^\\/]+$/.test(head)) return head + p[i];
   return head;
 }
 
@@ -18035,21 +18041,21 @@ const LIVE_WINDOW_MS = 60_000;
 const LIVE_RELAYOUT_MS = 8000;
 
 /** Mirror a live change into the client tree so sunburst/tooltips stay true.
-    "\" separates only a Windows path, as tmParentPath reads it (POL item 7):
-    read as one in "/data/a\b/f", the change also grew the sibling "/data/a". */
+    Every folder above the change grows, up to and including the scan's root,
+    climbed by tmParentPath: "\" separates only a Windows path (POL item 7) —
+    read as one in "/data/a\b/f", the change also grew the sibling "/data/a" —
+    and a whole drive's root ("/", "C:\") ends in its separator, which the
+    climb cut off, so that root never grew (POL item 7 review, F2.8). */
 function applyLiveDelta(ev) {
   const node = state.pathIndex.get(ev.path);
   if (node && node.type === 'file') node.size = ev.kind === 'deleted' ? 0 : ev.size;
   if (!state.root) return;
-  let p = ev.path;
-  const windows = /^(?:[A-Za-z]:|\\\\)/.test(p);
-  for (;;) {
-    const cut = windows ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
-    if (cut <= 0) break;
-    p = p.slice(0, cut);
-    const dir = state.pathIndex.get(p);
+  for (let p = ev.path; p !== state.root.path; ) {
+    const up = tmParentPath(p);
+    if (up === p) break; // the top, never the root: the change was not inside the scan
+    const dir = state.pathIndex.get(up);
     if (dir && dir.type === 'dir') dir.size += ev.delta;
-    if (p === state.root.path) break;
+    p = up;
   }
 }
 
@@ -18147,7 +18153,12 @@ function renderLiveFeed() {
   const byPath = new Map();
   for (const e of live.window) byPath.set(e.path, (byPath.get(e.path) || 0) + e.delta);
   const rows = [...byPath.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6);
-  const rel = p => (state.root && p.startsWith(state.root.path) ? p.slice(state.root.path.length + 1) : p) || p;
+  // Each row names its file from below the scan's root, past the separator
+  // after it — which a whole drive's root ("/", "C:\") already ends in: cut one
+  // further, "/Users/me/x" read "sers/me/x" (POL item 7 review, F2.8).
+  const root = state.root ? state.root.path : null;
+  const sep = root && /^(?:[A-Za-z]:|\\\\)/.test(root) ? '\\' : '/';
+  const rel = p => (root && tmIsInside(p, root) ? p.slice(root.endsWith(sep) ? root.length : root.length + 1) : p);
   host.innerHTML = `<div class="lf-h">${icon('activity', 13)}Writing now</div>` + (rows.length
     ? rows.map(([p, d]) => `<div class="lf-row" title="${escapeHtml(p)}"><span class="nm">${escapeHtml(rel(p))}</span>` +
         `<span class="num ${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : '−'}${formatBytes(Math.abs(d))}/min</span></div>`).join('')
