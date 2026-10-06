@@ -443,6 +443,17 @@ test('a folder inside the one looked at, on a drive holding two calls that did n
   assert.deepEqual(asked, ['stat /nas/a', 'stat /nas', 'stat /nas/b', 'stat /x/top', 'list /x/top'], 'mnt was not asked');
 });
 
+test('a call on a mount nested in the folder looked at counts against the nested drive: with two of its calls out unanswered, a third folder there is not asked (the U-4c review, F3.4)', async () => {
+  // /nas is mounted at /x/o/m too: its root answers; the listing of m, then /nas/b, hang. Counted on
+  // the drive /x/o is on instead, m's listing would leave the nas holding one call, and a third would start.
+  const asked = hangsAt((p) => p === '/x/o/m' || p === '/nas/b', { '/x/o': [dirent('m', true)] }, onNasAt('/x/o/m'));
+  assert.match(reasonOf(await stillEmptyFolder('/x/o', true)), /^the folder m inside it did not answer within/);
+  assert.match(reasonOf(await stillEmptyFolder('/nas/b', true)), /^it did not answer within/);
+  const c = await stillEmptyFolder('/nas/c', true);
+  assert.deepEqual(asked, ['stat /x/o', 'list /x/o', 'list /x/o/m', 'stat /nas', 'stat /nas/b'], 'c was not asked: no third thread on the nas');
+  assert.match(reasonOf(c), /^two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'the nas holds two: m\'s listing and b\'s stat');
+});
+
 test('a drive\'s own root offered while the drive already holds a call, and hanging, keeps the drive silent until that root answers', async () => {
   // The root is asked about once as a probe (it answers), then offered as an empty folder (it hangs).
   const stats: string[] = [];
