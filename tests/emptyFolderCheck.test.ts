@@ -670,6 +670,37 @@ test('a call waiting its turn waits as far as its own request\'s budget goes, ne
   assert.deepEqual(h.asked, ['/d/ok', '/d/a', '/d/b'], 'c was never asked');
 });
 
+test('a call that waits for another request\'s probe of its drive\'s root waits as far as its own budget goes (the U-4c review, F2.5)', async () => {
+  let now = 0;
+  const h = byHand(() => '/d', (p) => p === '/d/ok', { now: () => now, budgetMs: 3_000, deadlineMs: 2_000 });
+  const s1 = emptyCheckSession(true);
+  assert.deepEqual(await s1.look('/d/ok'), { empty: true }, 'the drive is heard from');
+  const first = watch(s1.look('/d/h1'));
+  await turns(20);
+  h.passDeadlineOf('/d/h1');
+  await turns(20);
+  assert.equal(h.callsOn('/d').length, 1, 'h1 missed its deadline: the root is asked, and does not answer');
+  h.callsOn('/d/h1')[0].answer(); // h1 answers at last: the drive holds nothing, its root still being asked
+  await turns(20);
+  const second = watch(emptyCheckSession(true).look('/d/h2')); // another request, its budget its own
+  await turns(20);
+  assert.equal(h.callsOn('/d/h2').length, 1, 'h2 is asked');
+  now = 2_900; // h2's request has 100 ms left
+  h.passDeadlineOf('/d/h2');
+  await turns(20);
+  assert.equal(h.callsOn('/d').length, 1, 'h2 missed its deadline too: it waits for the probe already out');
+  assert.equal(second(), null, 'and is waiting');
+  const wait = h.deadlines.find((x) => x.of === '' && x.ms === 100);
+  assert.ok(wait, `the wait is bounded by what is left of h2's budget, 100 ms (deadlines: ${h.deadlines.map((x) => `${x.of || '-'}:${x.ms}`).join(' ')})`);
+  wait.pass();
+  await turns(20);
+  assert.match(reasonOf(second() ?? { empty: true }), /it did not answer within 2 seconds/, 'and ends when that runs out, the probe still out');
+  assert.equal(first(), null, 'the probe\'s own request still waits for it');
+  h.passDeadlineOf('/d');
+  await turns(20);
+  assert.match(reasonOf(first() ?? { empty: true }), /it did not answer within 2 seconds/);
+});
+
 test('within a request, the first look on a drive goes alone: four at once ask a silent drive once', async () => {
   const drives = twoDrives();
   setEmptyCheckForTests(drives.deps);
