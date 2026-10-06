@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 // Isolate policies, run history, the capsule and settings from the user's real
 // app data. An Autopilot test that wrote to the real store would leave standing
 // instructions to delete the user's files.
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { isRestoreCopyFor } from './fixtures/restoreCopy';
 isolatedDataDir('treemap-autopilot-test-');
@@ -163,6 +163,12 @@ test('every refusal PUT /api/autopilot/policies and POST /api/autopilot/simulate
     ['POLICY_QUERY_INVALID', { path: tmp, match: { kind: 'query', q: 'nosuchfield:1' } }],
     ['POLICY_QUERY_UNANSWERABLE', { path: tmp, match: { kind: 'query', q: 'dupe:yes' } }],
   ];
+  if (IS_UNIX) {
+    // A folder given as a link (POL item 5); making a link needs a privilege on Windows.
+    const link = path.join(fileTempDir('tm-ap-spec-'), 'lnk');
+    fs.symlinkSync(tmp, link, 'dir');
+    policyCases.push(['POLICY_PATH_IS_LINK', { path: link, match: ok }]);
+  }
   const routes: Record<string, Array<[string, unknown]>> = {
     'put /api/autopilot/policies': [
       ['NOTHING_TO_UPDATE', {}],
@@ -446,15 +452,56 @@ test('a policy whose folder is a link acts on nothing through it: the scan takes
     const link = path.join(dir, 'lnk');
     fs.symlinkSync(path.join(dir, 'real'), link, 'dir');
     const match = { kind: 'suggestion', groupIds: ['regen-node-modules'] };
-    const [direct, viaLink] = await savePolicies([
-      { id: 'direct', name: 'Direct', path: path.join(dir, 'real'), match },
-      { id: 'via-link', name: 'Via link', path: link, match },
-    ]);
+    const [direct] = await savePolicies([{ id: 'direct', name: 'Direct', path: path.join(dir, 'real'), match }]);
+    // A link folder can no longer be saved (POL item 5): this one is as an earlier build stored it.
+    const viaLink: AutopilotPolicy = { ...direct, id: 'via-link', name: 'Via link', path: link };
+    await writeJsonFile('autopilot.json', { version: 1, policies: [direct, viaLink], runs: [] });
     assert.ok((await simulatePolicy(direct)).items.length > 0, 'the folder by its own path matches');
     const sim = await simulatePolicy(viaLink);
     assert.deepEqual(sim.items, [], 'through the link, nothing');
     assert.equal(sim.bytesMatched, 0);
     assert.ok(fs.existsSync(path.join(dir, 'real', 'project', 'node_modules')), 'nothing was touched');
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a policy cannot be saved with a folder that is a link: 400 POLICY_PATH_IS_LINK names the folder it leads to, which the person can choose instead — as Preview judges it; one an earlier build saved is kept while it stays unchanged (POL item 5)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
+  // A scan a person starts follows a root that is a link, and says so (QA D78).
+  // A policy is an unattended deleter: its checks are made of the saved
+  // spelling, and a link can be pointed anywhere after the policy is
+  // approved, so its run takes the link as the one file it is and matches
+  // nothing. Saving one said nothing, and the policy silently never acted.
+  const dir = fs.realpathSync(await mkTmp());
+  const esc = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try {
+    const real = path.join(dir, 'real');
+    fs.mkdirSync(real);
+    const link = path.join(dir, 'lnk');
+    fs.symlinkSync(real, link, 'dir');
+    const dangling = path.join(dir, 'gone');
+    fs.symlinkSync(path.join(dir, 'not-made'), dangling, 'dir');
+    const match = { kind: 'custom', minBytes: 1 };
+    const refusal = (p: string, id?: string): Promise<unknown> => savePolicies([{ ...(id ? { id } : {}), name: 'Via link', path: p, match }])
+      .then(() => 'saved', (err: unknown) => (err instanceof AppError ? [err.status, err.code, err.message] : String(err)));
+    const viaLink = await refusal(link) as [number, string, string];
+    assert.deepEqual(viaLink.slice(0, 2), [400, 'POLICY_PATH_IS_LINK'], String(viaLink));
+    assert.match(viaLink[2], new RegExp(`^"${esc(link)}" is a link to "${esc(real)}"\\. .*Choose "${esc(real)}" itself\\.$`), 'it names the folder the link leads to, to choose instead');
+    const gone = await refusal(dangling) as [number, string, string];
+    assert.deepEqual(gone.slice(0, 2), [400, 'POLICY_PATH_IS_LINK'], 'a link to nothing is a link too');
+    assert.match(gone[2], new RegExp(`^"${esc(dangling)}" is a link to "${esc(path.join(dir, 'not-made'))}"`), 'named where it would lead');
+    // The folder itself saves, and changing a saved policy's folder to the link is refused.
+    const [saved] = await savePolicies([{ id: 'p', name: 'Real', path: real, match }]);
+    assert.deepEqual((await refusal(link, 'p') as unknown[]).slice(0, 2), [400, 'POLICY_PATH_IS_LINK'], 'a changed folder is judged as a new one');
+    // An earlier build stored one: kept while unchanged, so the rest of the list can still be edited.
+    const old: AutopilotPolicy = { ...saved, id: 'old', name: 'Old', path: link };
+    await writeJsonFile('autopilot.json', { version: 1, policies: [saved, old], runs: [] });
+    const kept = await savePolicies([{ ...saved, name: 'Renamed' }, old]);
+    assert.deepEqual(kept.map((p) => [p.id, p.name, p.path]), [['p', 'Renamed', real], ['old', 'Old', link]]);
+    // Preview judges a new one as Save does.
+    const preview = await call('POST', '/api/autopilot/simulate', { policy: { name: 'Via link', path: link, match } });
+    assert.deepEqual([preview.status, preview.body.code], [400, 'POLICY_PATH_IS_LINK']);
   } finally {
     await savePolicies([]);
     await fsp.rm(dir, { recursive: true, force: true });

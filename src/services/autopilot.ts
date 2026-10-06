@@ -27,6 +27,7 @@ import {
   unrestorableOf,
   type ProtectAndTrashResult,
 } from './timeCapsule';
+import fs from 'fs';
 import nodePath from 'path';
 import { isSpillPath, PathRejectedError, sanitizePath, spillCandidateTest } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
@@ -165,6 +166,11 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
     throw new AppError(400, 'POLICY_PATH_TOO_BROAD',
       'Pick a folder rather than the whole drive — an automatic cleanup pointed at the root of the disk would eventually consider every file on it');
   }
+  // A folder given as a link, refused where a person is writing it: a new
+  // policy or a changed folder (POL item 5). An unchanged one an earlier build
+  // saved is kept, for the reason given for queries below; its run takes the
+  // link as the one file it is and matches nothing (matchCandidates).
+  if (!existing || existing.path !== policyPath) refuseLinkFolder(policyPath);
 
   const match = normalizeMatch(p.match);
   const name = typeof p.name === 'string' && p.name.trim()
@@ -195,6 +201,42 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
   // stands (the evaluator never matches an unknown).
   if (match.kind === 'query' && (!existing || !sameScope(existing, policy))) refuseUnanswerable(name, match.q);
   return policy;
+}
+
+/**
+ * A policy's folder given as a link (POL item 5): refused with the folder it leads to, which the person
+ * can choose instead. A scan a person starts follows a root that is a link and says so (QA D78), but a
+ * policy deletes unattended: every check of its folder — never a whole drive, folder notes, protected
+ * paths, TreeMap's own spill folder — is made of the saved spelling, while the scanned-root rule judges a
+ * path by where it really is, and a link can be pointed anywhere after the policy was approved
+ * (~/all -> /). So a run takes the link as the one file it is and matches nothing (matchCandidates);
+ * refused here, the person learns it where they are writing the policy, not from a policy that never
+ * acts. Only the folder's own last name is asked: a link in the folders above it is resolved by every
+ * check, as for a scan. A folder that cannot be looked at is left to the run, as any folder is.
+ */
+function refuseLinkFolder(policyPath: string): void {
+  let entry: fs.Stats | undefined;
+  try {
+    entry = fs.lstatSync(policyPath, { throwIfNoEntry: false });
+  } catch {
+    return;
+  }
+  if (!entry?.isSymbolicLink()) return;
+  let leadsTo: string | null;
+  try {
+    leadsTo = fs.realpathSync.native(policyPath);
+  } catch {
+    // A link to nothing (yet), or a loop: named where its text says it leads.
+    try {
+      leadsTo = nodePath.resolve(nodePath.dirname(policyPath), fs.readlinkSync(policyPath));
+    } catch {
+      leadsTo = null;
+    }
+  }
+  throw new AppError(400, 'POLICY_PATH_IS_LINK',
+    `"${policyPath}" is ${leadsTo === null ? 'a link whose target could not be read' : `a link to "${leadsTo}"`}. ` +
+    'An Autopilot policy works only in a folder given by its own path, which cannot be pointed somewhere else after you approve the policy. ' +
+    (leadsTo === null ? 'Choose the folder itself.' : `Choose "${leadsTo}" itself.`));
 }
 
 /**
