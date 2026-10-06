@@ -311,16 +311,60 @@ test('Settings Save keeps every stored alert and cleanup target exactly — a 10
 
 /* ══════════════ thresholds the page shows or acts on ══════════════ */
 
+/**
+ * Each line of `code` that spells a 1024-based size, once per line: 1024 as a
+ * number (`v /= 1024`, `n % 1024`, `1024 ** 3`, `1024.0`); a shift or a power
+ * of two by 10, 20, 30 or 40 bits (`1 << 20`, `bytes >> 30`, `2 ** 30`,
+ * `Math.pow(2, 40)`); and an integer literal of seven digits or more that is a
+ * whole number of MiB (104857600 is 100 MiB, 5368709120 is 5 GiB) — except
+ * 4294967296, the range of a 32-bit hash, which is a count. Smaller powers of
+ * two (4096 as a cap, 65536 as a count) and hex literals are not judged.
+ */
+function binarySizesIn(code: string): string[] {
+  const hits = new Set<string>();
+  const spelled = /(?<![\w.])1024(?!\w)|(?:<<|>>>?) ?(?:10|20|30|40)\b|\b2 ?\*\* ?(?:10|20|30|40)\b|Math\.pow\( ?2 ?, ?(?:10|20|30|40) ?\)|(?<![\w.])\d[\d_]{6,}(?![\w.])/g;
+  for (const m of code.matchAll(spelled)) {
+    if (/^\d[\d_]{6,}$/.test(m[0])) {
+      const n = Number(m[0].replace(/_/g, ''));
+      if (n % 1048576 !== 0 || n === 2 ** 32) continue; // a decimal figure, a count, or a hash's range
+    }
+    hits.add(code.slice(code.lastIndexOf('\n', m.index) + 1, code.indexOf('\n', m.index)).trim());
+  }
+  return [...hits];
+}
+
+test('the binary-size scan finds each 1024-based spelling it names, and passes decimal sizes and plain counts (review F1.4)', () => {
+  // The scan below is the only thing between the page and a size divided by
+  // 1024 again. It knew seven literals and two shapes; the old formatBytes
+  // loop, a 100 MiB literal and `1 << 20` all went through it.
+  for (const bad of [
+    'while (v >= 1024) { v /= 1024; }', // the old formatBytes loop
+    'const unit = n % 1024 === 0 ? 1024 : 1;', // the old budget unit table
+    "return (n / 1024).toFixed(1) + ' KB';",
+    'const n = x * 1024.0;',
+    'const MB3 = 1048576;', 'const big = 1024 * 1024 * 1024;', 'const t = Math.pow(1024, 3);',
+    'if (bytes > 104857600) warn();', 'const cap = 5_368_709_120;', 'const two = 2147483648;',
+    'const MiB = 1 << 20;', 'const mib = bytes >> 20;', 'const gib = bytes >>> 30;',
+    'const GiB = 2 ** 30;', 'const KiB = 2**10;', 'const TiB = Math.pow(2, 40);',
+  ]) assert.equal(binarySizesIn(bad).length, 1, `caught: ${bad}`);
+  for (const fine of [
+    'const GB = 1e9;', 'if (size > 1000000000) big();', 'const PB = 1_000_000_000_000_000;',
+    "const s = 'Explorer divides by 1,024';", 'el.style.width = "1024px";', 'const r = 0.1024;',
+    'return (h >>> 0) / 4294967296;', // 2^32, a 32-bit hash's range: a count, not a size
+    'const cap = 4096;', 'h ^= h << 13; h ^= h >>> 17;', 'const n = 12345678;',
+  ]) assert.deepEqual(binarySizesIn(fine), [], `not a binary size: ${fine}`);
+});
+
 test('no size in the page is a power of 1024: every threshold it shows or acts on is a decimal size', () => {
   // The size key's ends ("1 MB … 10 GB+"), the Apps view's "Clear … safely"
   // button (offered from 1 MB) and the Git repositories list (repos over
   // 1 MB) each compared against a mebibyte while the page printed megabytes.
-  const script = INDEX.slice(INDEX.indexOf('<script'));
-  const code = script.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
-  for (const m of code.matchAll(/\b(1048576|1_048_576|1073741824|1_073_741_824|1099511627776|10485760|1024 ?\*\* ?[2-5]|1024 ?\* ?1024)\b/g)) {
-    const line = code.slice(code.lastIndexOf('\n', m.index) + 1, code.indexOf('\n', m.index));
-    assert.fail(`a binary size in the page's code: ${line.trim()}`);
-  }
+  const at = INDEX.indexOf('<script');
+  assert.notEqual(at, -1, 'the page has its script');
+  const code = INDEX.slice(at).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
+  assert.ok(code.length > 500_000, `the scan reads the whole script, not a sliver of it (${code.length} characters)`);
+  assert.ok(code.includes('function formatBytes(') && code.includes('function renderCleanupGoalFields('), 'and it is the page\'s own code');
+  assert.deepEqual(binarySizesIn(code), [], 'a binary size in the page\'s code');
 });
 
 /* ══════════════ the map's floor, wherever the map is asked for ══════════════ */
