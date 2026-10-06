@@ -1471,15 +1471,24 @@ async function loadCity(rootPath) {
 
   if (state.treemap.rootPath !== want || !state.treemap.nodes.length) {
     try {
-      // The Treemap's own floor (TM_MIN_SIZE), so the nodes the two views
-      // share are the same whichever of them asked for them.
-      const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(want)}`);
+      // The Treemap's own floor (TM_MIN_SIZE), and its own retry without it
+      // (loadTreemap), so the nodes the two views share are the same whichever
+      // of them asked for them. A folder whose files all fall under the floor
+      // came back with no nodes, and the city stood blank where the Treemap
+      // drew every file (review F2.6).
+      let floor = TM_MIN_SIZE;
+      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=${TM_MIN_SIZE}&root=${encodeURIComponent(want)}`);
       if (seq !== cityLoadSeq) return; // superseded while fetching
+      if (!data.nodes.length && data.root.size > 0) {
+        floor = 1;
+        data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(want)}`);
+        if (seq !== cityLoadSeq) return;
+      }
       state.treemap.rootPath = data.root.path;
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
-      state.treemap.minSize = TM_MIN_SIZE; // what tmNodeCapNote may say these nodes leave out
+      state.treemap.minSize = floor; // what tmNodeCapNote may say these nodes leave out
       state.treemap.hover = null;
     } catch (e) {
       $('cityLod').textContent = e.message;

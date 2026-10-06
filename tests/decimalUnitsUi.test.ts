@@ -420,6 +420,61 @@ test('Disk City asks for the map with the Treemap\'s 4 KB floor, and records it 
   assert.equal(state.treemap.minSize, floor, 'and the floor the shared nodes were asked with is recorded, as loadTreemap records it');
 });
 
+/** The page's loadCity over a stub server: `serve(root, minSize)` answers each ask, and `asked` lists them. */
+function cityLoader(serve: (root: string, minSize: number) => Promise<{ root: { path: string; name: string; size: number }; nodes: unknown[] }>) {
+  const asked: Array<[string, number]> = [];
+  const state = {
+    scanId: 's1', root: { path: '/r', name: 'r' }, city: {} as Record<string, unknown>,
+    treemap: { rootPath: '/r', maxDepth: 3, nodes: [] as unknown[], minSize: undefined as number | undefined },
+  };
+  const loadCity = run<(p: string) => Promise<void>>(
+    `let cityLoadSeq = 0;\n${pageConst('TM_MIN_SIZE')}\n${braced('async function loadCity(')}`,
+    {
+      state, $: dom().$,
+      api: async (u: string) => {
+        const q = new URL(u, 'http://x').searchParams;
+        const ask: [string, number] = [q.get('root')!, Number(q.get('minSize'))];
+        asked.push(ask);
+        return serve(...ask);
+      },
+      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {},
+    },
+    'loadCity',
+  );
+  return { loadCity, state, asked };
+}
+
+test('Disk City asks again without the floor when the floor hid every file, as the Treemap does (review F2.6)', async () => {
+  // A folder of 30 files of 3,000 bytes: the 4 KB ask returns no nodes. The
+  // Treemap asks again with minSize=1 and draws all 30; Disk City kept the
+  // empty answer and drew a blank city ("showing all 0").
+  const floor = run<number>(pageConst('TM_MIN_SIZE'), {}, 'TM_MIN_SIZE');
+  const small = Array.from({ length: 30 }, (_, i) => ({ path: `/r/d/f${i}`, size: 3000 }));
+  const c = cityLoader(async (root, m) => ({ root: { path: root, name: 'd', size: 90_000 }, nodes: m <= 3000 ? small : [] }));
+  await c.loadCity('/r/d');
+  assert.deepEqual(c.asked, [['/r/d', floor], ['/r/d', 1]], 'the floor hid everything there was, so it asked again without it');
+  assert.equal(c.state.treemap.nodes.length, 30, 'the city holds the 30 files the Treemap draws');
+  assert.equal(c.state.treemap.minSize, 1, 'and records that these nodes were asked for with no floor');
+
+  // A folder with no bytes at all is asked for once: there is nothing a floor hid.
+  const empty = cityLoader(async (root) => ({ root: { path: root, name: 'e', size: 0 }, nodes: [] }));
+  await empty.loadCity('/r/e');
+  assert.deepEqual(empty.asked, [['/r/e', floor]], 'an empty folder is not asked for twice');
+});
+
+test('a Disk City load overtaken while it asks again without the floor lands nothing (review F2.6)', async () => {
+  const small = Array.from({ length: 30 }, (_, i) => ({ path: `/r/d/f${i}`, size: 3000 }));
+  const c: ReturnType<typeof cityLoader> = cityLoader(async (root, m) => {
+    if (root === '/r/d' && m === 1) await c.loadCity('/r/x'); // the person drilled elsewhere meanwhile
+    return root === '/r/d'
+      ? { root: { path: root, name: 'd', size: 90_000 }, nodes: m <= 3000 ? small : [] }
+      : { root: { path: root, name: 'x', size: 9000 }, nodes: [{ path: '/r/x/f', size: 9000 }] };
+  });
+  await c.loadCity('/r/d');
+  assert.deepEqual(c.asked.map((a) => a[0]), ['/r/d', '/r/d', '/r/x'], 'control: the newer load started during the retry');
+  assert.equal(c.state.treemap.rootPath, '/r/x', 'the overtaken retry does not replace the newer folder');
+});
+
 /* ══════════════ the page says which units it counts in ══════════════ */
 
 test('Settings → "How TreeMap measures space" says sizes are decimal, and what that means against Finder and Explorer', () => {
