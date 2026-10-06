@@ -2103,6 +2103,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '202': jsonResponse('Job started (progress via SSE)', obj({ jobId: str() }, ['jobId'])),
       '400': errorResponse('Bad destination / too many files / not enough space (DEST_FULL), or DEST_SPACE_UNKNOWN when the destination\u2019s free space could not be read at all — the drive may be disconnected or busy, and no offload was started. DEST_INSIDE_SOURCE / SOURCE_INSIDE_DEST when the destination lies in the selection or the selection in the destination, judged where each really is; LINK_IN_SELECTION when a selected path is or holds a link, which a copy would follow'),
       '403': errorResponse('Sources outside every scanned root, or refused by agent-policy.json; SAFETY_RECORD for the agent policy or the audit log, or a folder that holds them, or a link TreeMap reaches app-data through'),
+      '409': errorResponse('OPEN_HANDLE_CONFLICT — a program holds one of the sources open; or OFFLOAD_NOT_FULLY_LISTED — a selected folder holds something the scan did not list (a "Don\'t scan" match, a folder it could not read, a drive it did not enter, something made since), which the trash step would take with no copy: refused before anything is copied, a dry run too, naming the first such entry'),
     },
   },
   {

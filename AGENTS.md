@@ -470,7 +470,13 @@ OpenAPI 3 spec).
      (`400 LINK_IN_SELECTION`), since a copy would follow it; a destination
      inside the selection, or a selection inside the destination, is refused
      by where each really is (`DEST_INSIDE_SOURCE`, `SOURCE_INSIDE_DEST`),
-     however either is spelled. The record
+     however either is spelled. A selected
+     folder is trashed whole, so one holding anything the scan did not list
+     (a "Don't scan" match, a folder it could not read, a drive it did not
+     enter, a file made since) is refused before anything is copied, dry run
+     included (`409 OFFLOAD_NOT_FULLY_LISTED`, naming it); OS junk such as
+     `.DS_Store` does not count. One that gains a file while the copies run
+     is left in place, its verified copies standing and recorded. The record
      Restore reads (`offload-manifest.json`, app-data) is saved first; the
      drive's own copy of it is written after, one write of each drive's
      record at a time, and a drive that does not answer for 60 seconds is

@@ -22,6 +22,7 @@ import { AppError } from '../middleware/errorHandler';
 import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuard';
 import { AsyncMutex } from '../utils/asyncMutex';
 import { recordRestorePartial, restorePlacementHooks, whileRestoring } from './restoreLeftovers';
+import { JUNK_FILES } from './emptyFolderCheck';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -562,6 +563,61 @@ function destInsideSource(): AppError {
 export interface PreparedOffload {
   plan: PlannedCopy[];
   bytesTotal: number;
+  /** What the scan listed of the selection: each selected folder, and every file it listed under one (final review F1.5). */
+  listed: ListedSelection;
+}
+
+/** The selected folders, and every file the scan listed under them (copied, or a hard link's second name it deliberately skips). */
+interface ListedSelection {
+  folders: string[];
+  files: Set<string>;
+}
+
+/** The selection as the scan listed it (`ListedSelection`). Archive contents are listings, not files on the disk. */
+function listedSelection(nodes: FileNode[]): ListedSelection {
+  const folders: string[] = [];
+  const files = new Set<string>();
+  const walk = (dir: FileNode): void => {
+    for (const child of dir.children ?? []) {
+      if (child.virtual) continue;
+      if (child.type === 'file') files.add(child.path);
+      else walk(child);
+    }
+  };
+  for (const node of nodes) {
+    if (node.type === 'file') continue;
+    folders.push(node.path);
+    walk(node);
+  }
+  return { folders, files };
+}
+
+/**
+ * The first thing on the disk under `folder` that the scan did not list, or null when it listed
+ * everything there (final review F1.5). An offload copies what the scan listed and then trashes the
+ * selected folder whole, so anything else in it — a "Don't scan" match, a folder the scan could not
+ * read, a drive it did not enter, a file made since — went to the Trash with no copy. A folder that
+ * cannot be looked into is such a thing too: what it holds is unknown. OS junk (`JUNK_FILES`: .DS_Store
+ * and the like, which the OS writes into any folder it shows) is not held against it. Links are not
+ * followed: a link is one entry, which the scan lists as one.
+ */
+async function firstUnlisted(folder: string, files: ReadonlySet<string>): Promise<{ at: string; why: string } | null> {
+  const pending = [folder];
+  while (pending.length > 0) {
+    const dir = pending.pop() as string;
+    let entries: fs.Dirent[];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      return { at: dir, why: `it could not be looked into (${describeFsError(err)})` };
+    }
+    for (const entry of entries) {
+      const at = path.join(dir, entry.name);
+      if (entry.isDirectory()) pending.push(at);
+      else if (!files.has(at) && !JUNK_FILES.has(entry.name.toLowerCase())) return { at, why: 'the scan did not list it' };
+    }
+  }
+  return null;
 }
 
 /**
@@ -626,6 +682,20 @@ export async function prepareOffload(
   if (plan.length === 0) throw new AppError(400, 'NOTHING_TO_OFFLOAD', 'The selection contains no files');
   if (plan.length > MAX_FILES_PER_JOB) {
     throw new AppError(400, 'TOO_MANY_FILES', `That's ${formatCount(plan.length)} files — offload at most ${formatCount(MAX_FILES_PER_JOB)} at a time`);
+  }
+  // A selected folder is trashed whole once its copies verify, so it may hold nothing the scan did
+  // not list: that would go to the Trash with no copy (final review F1.5). Asked here, so a dry run
+  // refuses it too, before anything is written.
+  const listed = listedSelection(nodes);
+  for (const folder of listed.folders) {
+    const unlisted = await firstUnlisted(folder, listed.files);
+    if (unlisted !== null) {
+      throw new AppError(409, 'OFFLOAD_NOT_FULLY_LISTED',
+        `${path.basename(folder)} holds ${path.relative(folder, unlisted.at) || path.basename(folder)}, and ${unlisted.why} — ` +
+        'a "Don\'t scan" pattern, a folder the scan could not read, a drive it did not enter, or something made since. ' +
+        'Offloading the folder would move that to the Trash with no copy, so nothing was copied or deleted. ' +
+        'Rescan it, or offload what is inside it instead.');
+    }
   }
   // Nothing is ever copied into TreeMap's own spill folder (Phase 4 §S.5.3): not at `dest`,
   // which the route refuses, and not at any target the plan makes under it. A selected folder
@@ -698,7 +768,7 @@ export async function prepareOffload(
     });
   }
 
-  return { plan, bytesTotal };
+  return { plan, bytesTotal, listed };
 }
 
 export async function startOffload(
@@ -710,7 +780,7 @@ export async function startOffload(
   prepared?: PreparedOffload,
 ): Promise<OffloadJob> {
   pruneJobs();
-  const { plan, bytesTotal } = prepared ?? (await prepareOffload(scan, paths, destDir));
+  const { plan, bytesTotal, listed } = prepared ?? (await prepareOffload(scan, paths, destDir));
 
   const job: OffloadJob = {
     jobId: crypto.randomUUID(),
@@ -728,7 +798,7 @@ export async function startOffload(
   };
   jobs.set(job.jobId, job);
 
-  void runOffload(job, plan, paths, destDir).catch((err: unknown) => {
+  void runOffload(job, plan, paths, destDir, listed).catch((err: unknown) => {
     job.status = job.cancelled ? 'cancelled' : 'error';
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
@@ -736,7 +806,7 @@ export async function startOffload(
   return job;
 }
 
-async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string): Promise<void> {
+async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string, listed: ListedSelection): Promise<void> {
   const createdFiles: string[] = [];
   let createdDirs: string[] = [];
   const results: { src: string; dest: string; size: number; hash: string }[] = [];
@@ -764,9 +834,19 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     // Every copy verified — only now do the local originals go to the Trash.
     job.phase = 'trashing';
     job.currentPath = '';
+    // Each selected folder is looked at once more (final review F1.5): what was made in it since the
+    // plan was checked has no copy, and the folder goes to the Trash whole. Such a folder is left in
+    // place, its verified copies standing and recorded, as for an original something holds open.
+    const leftInPlace: { folder: string; at: string; why: string }[] = [];
+    for (const folder of listed.folders) {
+      const unlisted = await firstUnlisted(folder, listed.files);
+      if (unlisted !== null) leftInPlace.push({ folder, ...unlisted });
+    }
+    const held = new Set(leftInPlace.map((l) => l.folder));
+    const toTrash = topPaths.filter((p) => !held.has(p));
     let trashed = { deleted: [] as string[], failed: [] as { path: string; reason: string }[] };
     try {
-      trashed = await moveToTrash(topPaths);
+      if (toTrash.length > 0) trashed = await moveToTrash(toTrash);
     } catch (err) {
       // B2 refused: something got opened between the pre-flight and here.
       //
@@ -782,6 +862,15 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     if (trashed.failed.length) {
       // Copies are safe at the destination; report the leftovers honestly.
       job.error = `Offloaded everything, but ${trashed.failed.length} original${trashed.failed.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${trashed.failed[0].reason}`;
+    }
+    if (leftInPlace.length > 0) {
+      const [first] = leftInPlace;
+      const more = leftInPlace.length > 1 ? ` (and ${formatCount(leftInPlace.length - 1)} more folder${leftInPlace.length === 2 ? '' : 's'})` : '';
+      const kept =
+        `${path.basename(first.folder)} was left in place${more}: it now holds ${path.relative(first.folder, first.at) || path.basename(first.folder)}, ` +
+        `which was not copied (${first.why === 'the scan did not list it' ? 'it was made after the offload was planned' : first.why}), ` +
+        `so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
+      job.error = job.error ? `${job.error} Also: ${kept}` : kept;
     }
 
     // BOOKKEEPING, past the point of no return — and therefore never a reason
