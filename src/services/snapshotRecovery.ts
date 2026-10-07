@@ -352,8 +352,33 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     originalPath: original,
     restoredTo: destination,
     fromSnapshotId: result.fromSnapshotId ?? null,
-    sizeBytes: stat ? stat.size : (result.sizeBytes ?? 0),
+    // A folder is the bytes of the files recovered in it (final review F1.15): its directory entry's own
+    // size (96 B on APFS) was reported for a whole tree, to the page and the audit line.
+    sizeBytes: stat === null ? (result.sizeBytes ?? 0) : stat.isDirectory() ? await recoveredTreeBytes(destination) : stat.size,
     // An older copy than a snapshot that could not be looked in may hold (FG4e, review L4).
     ...(result.newerUnread ? { newerUnread: result.newerUnread } : {}),
   };
+}
+
+/**
+ * The bytes of the files under a recovered folder (links counted as themselves, never followed), or null
+ * when any part of the tree cannot be read: a size that left part out would be a wrong number, and the
+ * page then says only that the folder was recovered (final review F1.15).
+ */
+async function recoveredTreeBytes(root: string): Promise<number | null> {
+  let total = 0;
+  const pending = [root];
+  try {
+    while (pending.length > 0) {
+      const dir = pending.pop() as string;
+      for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+        const at = path.join(dir, entry.name);
+        if (entry.isDirectory()) pending.push(at);
+        else total += (await fsp.lstat(at)).size;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return total;
 }

@@ -341,7 +341,8 @@ async function restoreFromSnapshot(targetPath, host) {
       ? `<div class="snap-msg">${icon('alert', 13)} ${escapeHtml(snapNewerUnreadText(out.newerUnread))}</div>`
       : '';
     host.innerHTML =
-      `<div class="snap-msg">${icon('checkCircle', 13)} Recovered <b>${formatBytes(out.sizeBytes)}</b> to ` +
+      // A folder whose recovered tree could not be read has no size to say (final review F1.15).
+      `<div class="snap-msg">${icon('checkCircle', 13)} Recovered ${out.sizeBytes === null ? 'it' : `<b>${formatBytes(out.sizeBytes)}</b>`} to ` +
       `<span class="pth">${escapeHtml(out.restoredTo)}</span></div>` + older +
       `<div class="snap-actions"><button class="pill" data-snap-reveal="${escapeHtml(out.restoredTo)}">Show me</button></div>`;
     wireSnapshotActions(host);

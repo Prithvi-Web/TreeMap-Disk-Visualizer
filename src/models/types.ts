@@ -1095,7 +1095,8 @@ export interface SnapshotRestoreOutcome {
   /** Where it was actually written — never the original path unless asked. */
   restoredTo: string;
   fromSnapshotId: string | null;
-  sizeBytes: number;
+  /** The bytes recovered: a file's size, a folder's files' total; null when a recovered folder's tree cannot be read. */
+  sizeBytes: number | null;
   /**
    * Present only when the copy came from an older snapshot because `count` newer ones could not be
    * mounted or looked in (the first for `reason`): it may not be the newest copy (FG4e, review L4).

@@ -2912,7 +2912,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '403': errorResponse('SPILL_PATH for the path or the destination; APP_DATA_PATH for the destination; with overwrite, for the file it would replace, OUTSIDE_SCAN_ROOT, or POLICY_ROOT_NOT_ALLOWED, POLICY_PROTECTED_PATH or POLICY_BYTES_EXCEEDED from agent-policy.json'),
       '200': jsonResponse('Recovered', obj(
         {
-          restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()), sizeBytes: int(),
+          restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()),
+          sizeBytes: nullable(int('The bytes recovered: a file\'s size, or the total of the files in a recovered folder; null when that folder\'s tree could not be read')),
           newerUnread: obj(
             { count: int('How many newer snapshots could not be mounted or opened'), reason: str('The first of their reasons') },
             ['count', 'reason'],
