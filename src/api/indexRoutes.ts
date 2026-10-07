@@ -18,6 +18,7 @@ import {
   getRoot,
   indexedAsLink,
   listRoots,
+  markBoundaryChanged,
   readTree,
   rootFor,
   searchIndex,
@@ -154,16 +155,22 @@ function capCovers(running: number | undefined, requested: number | undefined): 
  * the person's "Stay on this drive" setting — the fixed never-descend
  * folders and, under `stay`, every drive the mount table shows mounted
  * inside it (`scanBoundary`, the one place a scan composes its list).
- * Composed from the folder and the setting alone, read now: a build has no
- * scan to take it from. A table that cannot be read leaves the fixed list,
+ * Composed from the folder and `rule`, the setting as the caller just read
+ * it (`boundaryRule`): a build has no scan to take it from, and a build
+ * checks the rule it was handed against the setting once it has walked
+ * (final review F1.5). A table that cannot be read leaves the fixed list,
  * as it leaves a scan's.
  */
-async function boundaryFor(rootPath: string): Promise<string[]> {
-  const rule: BoundaryRule = await getSettings().then((s) => s.scanBoundary, () => DEFAULT_BOUNDARY_RULE);
+async function boundaryFor(rootPath: string, rule: BoundaryRule): Promise<string[]> {
   const boundary = await scanBoundary(rootPath, rule).catch((err: unknown) =>
     unknownBoundary(rule, process.platform, err instanceof Error ? err.message : String(err)),
   );
   return boundary.neverDescend;
+}
+
+/** The "Stay on this drive" rule as the settings say it now, or the default when they cannot be read. */
+async function boundaryRule(): Promise<BoundaryRule> {
+  return getSettings().then((s) => s.scanBoundary, () => DEFAULT_BOUNDARY_RULE);
 }
 
 /** Tests only: while set, every job waits for this before its build starts. */
@@ -201,8 +208,9 @@ async function runJob(job: BuildJob, ahead: BuildJob | undefined): Promise<void>
     }
     // A job no longer queued is never widened, so its cap is read after this
     // await as it was before it.
-    const neverDescend = await boundaryFor(job.rootPath);
-    const root = await buildIndex(job.rootPath, {
+    const rule = await boundaryRule();
+    const neverDescend = await boundaryFor(job.rootPath, rule);
+    let root = await buildIndex(job.rootPath, {
       ...(job.maxEntries === undefined ? {} : { maxEntries: job.maxEntries }),
       neverDescend,
       isCancelled: () => job.cancelled,
@@ -212,6 +220,12 @@ async function runJob(job: BuildJob, ahead: BuildJob | undefined): Promise<void>
         job.currentPath = p.currentPath;
       },
     });
+    // The rule changed while it walked (final review F1.5): what it built is
+    // not current, and is said so, as the setting's change says of the rest.
+    if ((await boundaryRule()) !== rule) {
+      markBoundaryChanged(job.rootPath);
+      root = getRoot(job.rootPath) ?? root;
+    }
     end('complete', { phase: 'done', result: root });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -513,7 +527,7 @@ indexRouter.post('/index/watch', guardBodyPath, async (req: Request, res: Respon
   if (!root) throw new AppError(404, 'INDEX_NOT_BUILT', 'That folder has not been indexed yet');
   // What the index leaves out, for an index an earlier process built (U-24);
   // one this process built keeps its own build's list.
-  const attached = startWatcher(rootPath, await boundaryFor(rootPath));
+  const attached = startWatcher(rootPath, await boundaryFor(rootPath, await boundaryRule()));
   res.json({ path: rootPath, watching: attached });
 });
 

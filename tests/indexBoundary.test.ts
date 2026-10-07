@@ -199,6 +199,88 @@ test('POST /api/index/watch on a folder built before this process started drops 
   });
 });
 
+/* ══════════════════ the rule an index was built under (final review F1.5) ══════════════════ */
+
+/** What the badge says of an index built under the rule the setting no longer has. */
+const BOUNDARY_CHANGED = /^The “Stay on this drive” setting has changed since this index was built, so a drive mounted inside this folder may be counted differently now\.$/;
+
+/** The saved index of `root`, as GET /api/index/status describes it. */
+async function savedIndexOf(base: string, root: string): Promise<{ state: string; live: boolean; staleReason?: string }> {
+  const answer = await call(base, 'GET', '/api/index/status?path=' + encodeURIComponent(root));
+  assert.equal(answer.status, 200, JSON.stringify(answer.json));
+  return answer.json.root as { state: string; live: boolean; staleReason?: string };
+}
+
+/** PUT /api/settings with "Stay on this drive" set to `rule`, as the Settings window saves it. */
+async function saveRule(base: string, rule: 'stay' | 'cross'): Promise<void> {
+  const answer = await call(base, 'PUT', '/api/settings', { scanBoundary: rule });
+  assert.equal(answer.status, 200, JSON.stringify(answer.json));
+}
+
+test('changing "Stay on this drive" makes every saved index stale, saying why, so the next scan rebuilds it under the new rule; saving the rule it had changes nothing (final review F1.5)', { skip: NO_TABLE }, async (t) => {
+  // The page treats a ready, watched index as current and never rebuilds it; nothing recorded the
+  // rule a build ran under, so after the switch every later open painted the index without the
+  // drive's bytes (or with them, the other way round) until a restart made it stale.
+  const f = tree();
+  useTable([f.mnt]);
+  fakeWatches(t); // the build attaches its watcher, as one after a scan does
+  await withServer(async (base) => {
+    try {
+      await updateSettings({ scanBoundary: 'stay' });
+      const built = await buildThroughRoute(base, f.root);
+      assert.equal(built.live, true, 'built under "stay", and watched: current');
+      await saveRule(base, 'stay');
+      assert.equal((await savedIndexOf(base, f.root)).state, 'ready', 'the rule it had, saved again: the index is still current');
+      await saveRule(base, 'cross');
+      const switched = await savedIndexOf(base, f.root);
+      assert.equal(switched.state, 'stale', 'built under "stay", read under "cross": not current, so the next scan rebuilds it');
+      assert.match(switched.staleReason ?? '', BOUNDARY_CHANGED, 'and the badge says why');
+      const rebuilt = await buildThroughRoute(base, f.root);
+      assert.equal(rebuilt.fileCount, 3, 'rebuilt under "cross": the drive mounted inside is counted');
+      assert.equal((await savedIndexOf(base, f.root)).state, 'ready', 'and the rebuilt index is current');
+    } finally {
+      await updateSettings({ scanBoundary: 'stay' });
+      deleteIndex(f.root);
+    }
+  });
+});
+
+test('a build that read the rule before "Stay on this drive" changed finishes stale, saying why, not current (final review F1.5)', { skip: NO_TABLE }, async () => {
+  // The rule is read as the build starts; a switch while it walks — a large folder's build after a
+  // scan, the Settings window opened meanwhile — would leave a current-looking index under the old one.
+  const f = tree();
+  let tableAsked = false;
+  let release = (): void => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  setBoundaryDepsForTests({
+    readTable: async () => { tableAsked = true; await held; return mountTableNaming([f.mnt]); },
+    aliases: async () => () => [],
+  });
+  await withServer(async (base) => {
+    try {
+      await updateSettings({ scanBoundary: 'stay' });
+      const started = await call(base, 'POST', '/api/index/build', { path: f.root });
+      assert.equal(started.status, 202, JSON.stringify(started.json));
+      await waitFor(() => tableAsked, 'the build reading the mount table, its rule read');
+      await saveRule(base, 'cross');
+      release();
+      const done = await settle(base, started.json.jobId);
+      assert.equal(done.status, 200, JSON.stringify(done.json));
+      const answered = done.json.root as { state: string; fileCount: number; staleReason?: string };
+      assert.equal(answered.fileCount, 2, 'it walked under "stay", the rule it read');
+      assert.equal(answered.state, 'stale', 'and the job does not answer it as current');
+      const saved = await savedIndexOf(base, f.root);
+      assert.equal(saved.state, 'stale', 'nor does the status');
+      assert.match(saved.staleReason ?? '', BOUNDARY_CHANGED);
+    } finally {
+      release();
+      useTable([]);
+      await updateSettings({ scanBoundary: 'stay' });
+      deleteIndex(f.root);
+    }
+  });
+});
+
 /* ══════════════════ a root on the Data volume ══════════════════ */
 
 /**

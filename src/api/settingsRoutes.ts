@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
 import { engineSettingRefusal, getSettings, updateSettings, getIgnoreMatchers, scanBoundaryRefusal } from '../services/settings';
 import { suppressedNoteRoots } from '../services/notes';
+import { markBoundaryChanged } from '../services/indexEngine';
 import { cleanupSuggestionsFor } from '../services/cleanupMemo';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { collectCloudPlaceholders, matchCustomRules, CustomRules } from '../services/scanQueries';
@@ -97,7 +98,13 @@ settingsRouter.put('/settings', async (req: Request, res: Response) => {
       budget.path = sanitizePath(budget.path); // throws PathRejectedError -> errorHandler
     }
   }
-  res.json(await updateSettings(body));
+  // A change of "Stay on this drive" leaves every saved index built under the
+  // other rule, which the page would otherwise keep reading as current (final
+  // review F1.5): they are marked stale, saying why, and rebuilt by the next scan.
+  const ruleBefore = body.scanBoundary === undefined ? undefined : (await getSettings()).scanBoundary;
+  const saved = await updateSettings(body);
+  if (ruleBefore !== undefined && saved.scanBoundary !== ruleBefore) markBoundaryChanged();
+  res.json(saved);
 });
 
 /**

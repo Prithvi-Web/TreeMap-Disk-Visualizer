@@ -113,6 +113,9 @@ const STALE_REASON = {
   unreadableChange: 'A change here could not be read after several tries, so it may be missing.',
   /** A burst of changes the database would not take. */
   unwritableChange: 'A change here could not be written to the index, so it may be missing.',
+  /** The "Stay on this drive" setting changed after the build read it (final review F1.5). */
+  boundaryChanged:
+    'The “Stay on this drive” setting has changed since this index was built, so a drive mounted inside this folder may be counted differently now.',
 } as const;
 
 export interface BuildProgress {
@@ -1909,6 +1912,27 @@ function markRootStale(rootPath: string, rootId: number, builtAt: number | null,
     // one that refused the write (busy, full) leaves the root saying 'ready',
     // and that must at least be on record.
     console.error(`[treemap] could not mark ${rootPath} stale (${reason}):`, err);
+  }
+}
+
+/**
+ * The "Stay on this drive" rule changed (final review F1.5). An index built
+ * under the other rule leaves out a drive mounted inside its folder that a
+ * scan now walks, or holds one a scan now leaves out, and nothing records
+ * which rule it was built under: so every ready root — or only
+ * `rootPath`'s — is marked stale with that reason, and the page's next scan
+ * of the folder rebuilds it under the rule it has now. An index not open in
+ * this process needs nothing: every root is stale when it is opened.
+ */
+export function markBoundaryChanged(rootPath?: string): void {
+  if (!db) return;
+  try {
+    const rows = (rootPath === undefined
+      ? db.prepare("SELECT id, path, built_at FROM roots WHERE state = 'ready'").all()
+      : db.prepare("SELECT id, path, built_at FROM roots WHERE state = 'ready' AND path = ?").all(rootPath)) as Array<{ id: number; path: string; built_at: number | null }>;
+    for (const row of rows) markRootStale(row.path, row.id, row.built_at, STALE_REASON.boundaryChanged);
+  } catch (err) {
+    console.error('[treemap] could not mark the saved indexes stale after "Stay on this drive" changed:', err);
   }
 }
 
