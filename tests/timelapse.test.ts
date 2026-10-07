@@ -203,26 +203,31 @@ test('a treeless snapshot is a gap, never a guess', () => {
 
 /* ══════════════ B33 — a pause shows a real snapshot, not a half-morphed frame ══════════════ */
 
-/** lapseStop out of the built page, run against a history whose map was last drawn mid-segment. */
-function pausedMid(opts: { rect?: boolean; active?: boolean; cached?: boolean } = {}) {
-  const at = INDEX.indexOf('function lapseStop(');
-  assert.notEqual(at, -1, 'lapseStop exists');
+/** One named function's whole source out of the built page, by brace matching. */
+function fnSource(name: string): string {
+  const at = INDEX.indexOf(`function ${name}(`);
+  assert.notEqual(at, -1, `${name} exists`);
   let depth = 0, end = at;
   for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
     if (INDEX[i] === '{') depth++;
     else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
   }
+  return INDEX.slice(at, end);
+}
+
+/** lapseStop out of the built page, run against a history whose map was last drawn mid-segment. */
+function pausedMid(opts: { rect?: boolean; active?: boolean; cached?: boolean; playing?: boolean } = {}) {
   const SNAP2 = [{ path: '/r/a', x: 0, y: 0, w: 60, h: 100, depth: 1, size: 60 }, { path: '/r/b', x: 60, y: 0, w: 40, h: 100, depth: 1, size: 40 }];
   const MID = lapseLerpNodes(SNAP2, [{ path: '/r/a', x: 0, y: 0, w: 30, h: 100, depth: 1, size: 30 }, { path: '/r/c', x: 30, y: 0, w: 70, h: 100, depth: 1, size: 70 }], 0.5);
   const snaps = [{ id: 's0' }, { id: 's1' }, { id: 's2' }, { id: 's3' }];
   const cache = new Map<string, unknown>(opts.cached === false ? [] : [['s2', { nodes: SNAP2, tree: {} }]]);
   const state = { treemap: {
     nodes: MID,
-    lapse: { seq: 4, raf: 9, playing: true, onDone: null as null | (() => void) },
+    lapse: { seq: 4, raf: 9, playing: opts.playing !== false, onDone: null as null | (() => void) },
     history: { active: opts.active !== false, index: 2, snaps, cache },
   } };
   const drawn: unknown[][] = [];
-  const run = new Function('state', 'cancelAnimationFrame', 'lapseReflect', 'isRectMap', 'drawTreemap', `'use strict'; ${INDEX.slice(at, end)} return lapseStop;`)(
+  const run = new Function('state', 'cancelAnimationFrame', 'lapseReflect', 'isRectMap', 'drawTreemap', `'use strict'; ${fnSource('lapseStop')} return lapseStop;`)(
     state, () => {}, () => {}, () => opts.rect !== false, () => { drawn.push(state.treemap.nodes as unknown[]); },
   ) as () => void;
   run();
@@ -250,5 +255,55 @@ test('B33: the settle touches nothing it has no snapshot for, and leaves the oth
     assert.equal(h.state.treemap.lapse.playing, false, `${why}: still stops`);
     assert.equal(h.state.treemap.nodes, h.MID, `${why}: the map is left as it is`);
     assert.equal(h.drawn.length, 0, `${why}: nothing is drawn`);
+  }
+});
+
+test('B33: a stop with nothing playing is not a pause — it draws nothing (a renderer switch, the view closing, an export starting)', () => {
+  const h = pausedMid({ playing: false });
+  assert.equal(h.state.treemap.nodes, h.MID, 'the map is left as whoever drew it last left it');
+  assert.equal(h.drawn.length, 0, 'nothing playing: nothing to settle, nothing drawn');
+});
+
+/**
+ * exitHistoryState and lapseStop out of the built page, run in the order
+ * loadTreemap's rectangle branch runs them: the live nodes land first
+ * (`state.treemap.nodes = data.nodes`), then history is left. The snapshot the
+ * slider was on is cached, as it is after any drag to it.
+ */
+function liveLayoutLands(opts: { playing: boolean }) {
+  const SNAP2 = [{ path: '/r/old-a', x: 0, y: 0, w: 60, h: 100, depth: 1, size: 60 }, { path: '/r/old-b', x: 60, y: 0, w: 40, h: 100, depth: 1, size: 40 }];
+  const LIVE = [{ path: '/r/live-a', x: 0, y: 0, w: 100, h: 100, depth: 1, size: 100 }];
+  const snaps = [{ id: 's0' }, { id: 's1' }, { id: 's2' }, { id: 's3' }];
+  const state = { treemap: {
+    nodes: SNAP2 as unknown[],
+    lapse: { seq: 4, raf: opts.playing ? 9 : 0, playing: opts.playing, onDone: null as null | (() => void) },
+    history: { active: true, scrubbing: false, index: 2, snaps, cache: new Map<string, unknown>([['s2', { nodes: SNAP2, tree: {} }]]), seq: 0, tree: {} as unknown },
+  } };
+  const slider = { value: '2', max: '4' };
+  const drawn: unknown[][] = [];
+  const exitHistoryState = new Function('state', '$', 'updateTimeLabel', 'cancelAnimationFrame', 'lapseReflect', 'isRectMap', 'drawTreemap',
+    `'use strict'; ${fnSource('exitHistoryState')} ${fnSource('lapseStop')} return exitHistoryState;`)(
+    state, (id: string) => (id === 'tmTimeSlider' ? slider : null), () => {}, () => {}, () => {}, () => true,
+    () => { drawn.push(state.treemap.nodes); },
+  ) as () => void;
+  state.treemap.nodes = LIVE; // loadTreemap: the live layout lands
+  exitHistoryState(); //          …and history is left
+  return { state, drawn, slider, LIVE };
+}
+
+test('B33: a live layout landing over a viewed snapshot stays — leaving history never paints the snapshot back over it', () => {
+  // Review F1.1: Treemap, drag to a snapshot, Dashboard and back (or Refresh,
+  // the Depth select, the root crumb). loadTreemap stored the live nodes, then
+  // exitHistoryState's lapseStop settled the map back on the cached snapshot,
+  // and drawView painted its rectangles under a "Live" slider — the old tree's
+  // folders to click into, beside the live total.
+  for (const playing of [false, true]) {
+    const h = liveLayoutLands({ playing });
+    const why = playing ? 'during playback' : 'with the slider parked on a snapshot';
+    assert.equal(h.state.treemap.nodes, h.LIVE, `${why}: the live layout that just landed is the one held`);
+    assert.equal(h.drawn.length, 0, `${why}: no snapshot is painted over it`);
+    assert.equal(h.state.treemap.history.active, false, `${why}: history is left`);
+    assert.equal(h.slider.value, h.slider.max, `${why}: and the slider says Live`);
+    assert.equal(h.state.treemap.lapse.playing, false, `${why}: playback is over`);
   }
 });

@@ -806,8 +806,12 @@ const HISTORY_CACHE_MAX = 40;
 /** Drop history mode without reloading (called whenever a live layout lands). */
 function exitHistoryState() {
   const h = state.treemap.history;
-  lapseStop(); // §7.1 — leaving history always ends playback (Escape, live layout landing)
+  // Out of history BEFORE playback stops: lapseStop settles a paused map on
+  // the snapshot history names, and the caller has usually just stored the
+  // live layout — settled, the old snapshot's rectangles were drawn under a
+  // "Live" slider (review F1.1).
   h.active = false;
+  lapseStop(); // §7.1 — leaving history always ends playback (Escape, live layout landing)
   h.scrubbing = false; // a live layout that genuinely landed ends the scrub
   h.tree = null;
   h.seq++; // invalidate any in-flight history fetch
@@ -1064,6 +1068,7 @@ function lapseReflect() {
 
 function lapseStop() {
   const L = state.treemap.lapse;
+  const wasPlaying = L.playing;
   L.seq++; // orphan the running tick before cancelling, so a queued frame is inert
   if (L.raf) cancelAnimationFrame(L.raf);
   L.raf = 0;
@@ -1073,8 +1078,11 @@ function lapseStop() {
   // a pause showed overlapping ghost tiles under a label naming one real
   // snapshot (B33). Settle on the snapshot the slider and label name; the
   // other renderers step discretely through the slider's dispatch already.
+  // Only a pause has a blend to settle: with nothing playing, the map on
+  // screen is whatever its last real draw put there — a live layout that
+  // has just landed, as often as not — and must not be painted over.
   const h = state.treemap.history;
-  const at = h && h.active ? h.snaps[h.index] : null;
+  const at = wasPlaying && h && h.active ? h.snaps[h.index] : null;
   const layout = at ? h.cache.get(at.id) : null;
   if (layout && layout.nodes && isRectMap()) {
     state.treemap.nodes = layout.nodes;
