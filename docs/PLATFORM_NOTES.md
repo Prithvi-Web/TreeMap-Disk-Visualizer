@@ -24,9 +24,11 @@ is a raw byte count. `GET /api/agent/summary` is the one HTTP route that adds
 formatted strings beside sizes; every other route answers in raw bytes alone
 (`GET /api/large-files`' `size`, for one). The MCP tools add a formatted twin
 beside many size fields, not all — AGENTS.md names some without one. A size
-inside a sentence — an error such as `DEST_FULL`, a reason such as the gdu
-fallback's — is the formatted figure only, so compare the raw fields, never
-the words. Binary quantities inside the code (I/O buffers, block sizes, V8's
+inside a sentence is for a person to read: most print the formatted figure
+alone — an error such as `DEST_FULL`, a reason such as the gdu fallback's —
+and a diagnostic may print an exact byte count instead, as the NTFS turbo
+mode's cross-check does when it names a file whose size changed. So read sizes
+from the raw fields, never from the words. Binary quantities inside the code (I/O buffers, block sizes, V8's
 string limit) keep their binary values and are named in KiB and MiB.
 
 ## Mechanism preference order (§2.3)

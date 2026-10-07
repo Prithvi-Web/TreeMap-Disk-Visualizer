@@ -673,7 +673,7 @@ test('Settings → "How TreeMap measures space" says sizes are decimal, and what
   assert.match(words, /size>1gb/, 'the search box reads the same units');
 });
 
-test('the docs promise a formatted string beside a size only where the answers give one, and say a size inside a sentence is the formatted figure only (review F1.3, F2.1, F2.2)', () => {
+test('the docs promise a formatted string beside a size only where the answers give one (review F1.3, F2.1, F2.2)', () => {
   // PLATFORM_NOTES said "every API answer carries the raw bytes beside the
   // formatted string". A sentence that prints a size does not: DEST_FULL's
   // message ("this needs 30.0 MB … only 30.3 MB is free") and the gdu
@@ -695,7 +695,6 @@ test('the docs promise a formatted string beside a size only where the answers g
   assert.match(units, /`GET \/api\/agent\/summary` is the one HTTP route that adds formatted strings/, 'the one HTTP answer that adds a formatted string');
   assert.match(units, /`GET \/api\/large-files`/, 'and a route that does not, by name');
   assert.match(units, /MCP tools add a formatted twin beside many size fields, not all/, 'the MCP tools add one beside many, not all');
-  assert.match(units, /[Aa] size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/, 'and what a sentence gives instead');
 
   const agents = doc('AGENTS.md');
   const mcp = agents.slice(agents.indexOf('## MCP specifics'), agents.indexOf('\n## ', agents.indexOf('## MCP specifics') + 1)).replace(/\s+/g, ' ');
@@ -706,7 +705,31 @@ test('the docs promise a formatted string beside a size only where the answers g
   for (const field of ['`copies[].size`', '`bytesDone`', '`sizeA`', '`sizeB`', '`topGrowers[].bytesPerDay`']) {
     assert.ok(mcp.includes(field), `AGENTS.md names ${field} among the size fields with no formatted twin`);
   }
-  assert.match(mcp, /A size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/);
+});
+
+test('the docs say a size inside a sentence is for a person to read: most print the formatted figure alone, a diagnostic may print exact bytes, so an agent reads the raw fields (review F3.3)', () => {
+  // AGENTS.md and PLATFORM_NOTES said a size inside a sentence "is the
+  // formatted figure only". The NTFS turbo mode's cross-check reason, which
+  // becomes a scan's engineReason, names a file's two sizes as exact byte
+  // counts ("… its size is 223 bytes, but opening it now reports 289 bytes" —
+  // tests/mftEngine.test.ts pins that sentence), and so can the mode's read
+  // errors. A diagnostic means its exact figure; the docs now say so.
+  const doc = (file: string) => readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const section = (text: string, heading: string) => {
+    const at = text.indexOf(heading);
+    assert.notEqual(at, -1, `the docs have "${heading}"`);
+    return text.slice(at, text.indexOf('\n## ', at + 1)).replace(/\s+/g, ' ');
+  };
+  for (const [where, text] of [
+    ['PLATFORM_NOTES', section(doc('docs/PLATFORM_NOTES.md'), '## Size units')],
+    ['AGENTS.md', section(doc('AGENTS.md'), '## MCP specifics')],
+  ] as const) {
+    assert.doesNotMatch(text, /is the formatted figure only/, `${where} no longer says every size in a sentence is formatted`);
+    assert.match(text, /[Aa] size inside a sentence is for a person to read/, `${where} says what a size in a sentence is for`);
+    assert.match(text, /most print the formatted figure alone[^.]*`DEST_FULL`/, `${where} names a sentence that prints the formatted figure`);
+    assert.match(text, /a diagnostic may print an exact byte count instead[^.]*NTFS turbo mode.s cross-check/, `${where} names one that prints exact bytes`);
+    assert.match(text, /read sizes from the raw fields, never from the words/, `${where} sends an agent to the raw fields`);
+  }
 });
 
 test('the agent summary is described as it answers: a formatted twin beside every size but the forecast\'s topGrowers[].bytesPerDay, which is raw bytes only (review F3.2)', () => {

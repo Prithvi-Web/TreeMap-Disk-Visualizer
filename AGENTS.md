@@ -1017,8 +1017,11 @@ read-what-you-saw) permission to act.
   counts them, as the query grammar reads `kb`/`mb`/`gb`, and as the server's
   own instructions say. Until 5.2.0 it divided by 1,024 under the same
   labels; compare raw bytes, never formatted strings, across versions. A size
-  inside a sentence — an error such as `DEST_FULL`, a fallback's reason — is
-  the formatted figure only, with no byte count beside it.
+  inside a sentence is for a person to read: most print the formatted figure
+  alone — an error such as `DEST_FULL`, the gdu fallback's reason — and a
+  diagnostic may print an exact byte count instead, as the NTFS turbo mode's
+  cross-check does in a scan's `engineReason` when it names a file whose size
+  changed. So read sizes from the raw fields, never from the words.
 
 ## Server profile: auth, CORS and remote bind
 
