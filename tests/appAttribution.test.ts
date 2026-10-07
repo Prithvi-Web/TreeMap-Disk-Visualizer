@@ -227,6 +227,27 @@ test('windows: Program Files, vendor AppData nesting and cache subdir split', ()
   assert.equal(attributed + r.otherBytes, root.size);
 });
 
+test('windows: a dot-prefixed app folder (%APPDATA%\\.minecraft) is named for the app, not shown with its leading dot (B14 review)', () => {
+  // The leading dot only hides the folder; it is not part of the app's name.
+  // B14's "keep a dotted name whole" must not keep ".minecraft" whole.
+  const wj = (...parts: string[]) => path.join(WH, ...parts);
+  const pf = 'C:\\Program Files';
+  const roaming = (n: string) => dir(wj('AppData', 'Roaming', n), [file(wj('AppData', 'Roaming', n, 'f'), 100)]);
+  const build = () => dir('C:\\', [
+    dir(pf, [dir(path.join(pf, 'Minecraft'), [file(path.join(pf, 'Minecraft', 'mc.exe'), 100)])]),
+    dir(wj(), [dir(wj('AppData'), [dir(wj('AppData', 'Roaming'), [roaming('.minecraft'), roaming('.vscode'), roaming('zoom.us')])])]),
+  ]);
+  const programFilesFirst = build();
+  const usersFirst = build();
+  usersFirst.children!.reverse();
+  for (const [order, root] of [['Program Files first', programFilesFirst], ['the user folder first', usersFirst]] as const) {
+    const names = attributeTree(root, ctxFor('win32', WH)).apps.map((a) => a.name).sort();
+    assert.ok(!names.some((n) => n.startsWith('.')), `no app is shown with a leading dot (${order}): ${JSON.stringify(names)}`);
+    assert.deepEqual(names, ['Minecraft', 'Vscode', 'zoom.us'],
+      `.minecraft and Program Files\\Minecraft are one "Minecraft" whichever is walked first, .vscode is "Vscode", zoom.us is whole (${order})`);
+  }
+});
+
 /* ---------------- Linux ---------------- */
 
 const LH = '/home/t';

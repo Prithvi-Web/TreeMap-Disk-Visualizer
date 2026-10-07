@@ -181,11 +181,15 @@ function normKey(name: string): string {
 /**
  * "com.google.Chrome" → "Chrome"; "google-chrome" → "Google Chrome" is curated.
  * A dot inside an app's own name ("zoom.us", "Python 3.11") is part of the
- * name, so only a reverse-DNS id is cut to its last label (B14).
+ * name, so only a reverse-DNS id is cut to its last label (B14). A leading
+ * dot only hides a folder (%APPDATA%\.minecraft, ~/.vscode) and is not part
+ * of any name, so it is set aside before either test.
  */
 function prettify(raw: string): string {
-  if (raw.includes('.') && !looksLikeBundleId(raw)) return raw;
-  const last = raw.includes('.') ? raw.split('.').pop()! : raw;
+  const bare = raw.replace(/^\.+/, '');
+  if (!bare) return raw;
+  if (bare.includes('.') && !looksLikeBundleId(bare)) return bare;
+  const last = bare.includes('.') ? bare.split('.').pop()! : bare;
   const spaced = last.replace(/[-_]+/g, ' ').trim();
   return spaced.length <= 1 ? raw : spaced.replace(/\b\w/g, (c) => c.toUpperCase());
 }
