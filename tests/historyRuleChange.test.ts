@@ -76,15 +76,26 @@ const REALLY_GONE = { name: 'Old photos', path: '/c/Old photos', type: 'dir', si
 test('the page reads a "Don’t scan" pattern as the scanner does: the same answer for every case (B24)', () => {
   const pageTest = load<(p: string) => (full: string, name: string) => boolean>([], base(browserWith([])), 'ignorePatternTest');
   const home = os.homedir();
-  const patterns = ['Wide folder', '*.iso', 'node_modules', 'cache?', `${home}/Library`, '~/projects/**/dist', '/data/', 'WIDE FOLDER'];
+  // Every character the scanner escapes — . + ^ $ ( ) [ ] { } | — is in a
+  // pattern below, each beside a path that only the UNescaped reading would
+  // match ("Photos old" for "Photos (old)", "diskXiso" for "*.iso", …), so a
+  // port that stopped escaping any of them disagrees with the scanner here.
+  const patterns = [
+    'Wide folder', '*.iso', 'node_modules', 'cache?', `${home}/Library`, '~/projects/**/dist', '/data/', 'WIDE FOLDER',
+    'Photos (old)', 'Backup [2019]', 'a+b', 'x{1}', 'cost$', '^top', 'a|b', '/c/build (old)',
+  ];
   const paths = [
-    '/c/Wide folder', '/c/x/Wide folder', '/c/Wide folder/inner', '/c/disk.iso', '/c/disk.iso.bak', '/c/a/node_modules',
+    '/c/Wide folder', '/c/x/Wide folder', '/c/Wide folder/inner', '/c/disk.iso', '/c/disk.iso.bak', '/c/diskXiso', '/c/a/node_modules',
     '/c/cache1', '/c/cache12', `${home}/Library`, `${home}/Library/Caches`, `${home}/Libraryx`,
     `${home}/projects/a/b/dist`, `${home}/projects/dist`, `${home}/projects/a/dist/x.js`, '/data', '/data/deep/file', '/database',
+    '/c/Photos (old)', '/c/Photos old', '/c/Backup [2019]', '/c/Backup 2', '/c/a+b', '/c/ab', '/c/x{1}', '/c/x',
+    '/c/cost$', '/c/cost', '/c/^top', '/c/top', '/c/a|b', '/c/a', '/c/build (old)', '/c/build (old)/inner', '/c/build old',
   ];
   for (const p of patterns) {
     const server = compileIgnore(p);
     const page = pageTest(p);
+    assert.ok(paths.some((full) => server.test(full, path.posix.basename(full))),
+      `"${p}" matches at least one listed path for the scanner, so the page agreeing with it is not two "no"s`);
     for (const full of paths) {
       const name = path.posix.basename(full);
       assert.equal(page(full, name), server.test(full, name), `"${p}" on ${full}: the page and the scanner agree`);
