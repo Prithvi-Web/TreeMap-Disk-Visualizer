@@ -27511,6 +27511,15 @@ function openPolicyEditor(policy) {
   $('apRuleQuery').value = kind === 'query' ? (apDraft.match.q || '') : '';
   $('apQueryStatus').textContent = '';
   if (kind === 'query') void validateApQuery();
+  // Every custom-rule control starts from the markup's own default on every
+  // open, and only then takes what the policy stored. Painted for a custom
+  // policy alone, a figure from the previous open stayed in its box: a 0.5 MB
+  // rule left "0.5" there for the next policy, whose Save held it to the 1 MB
+  // floor — the box said one figure and the standing rule became another
+  // (review F3.1). A figure now reaches Save only if the person typed it or
+  // the policy being edited stored it.
+  for (const id of ['apRuleAgeOn', 'apRuleSizeOn', 'apRuleExtOn']) $(id).checked = $(id).defaultChecked;
+  for (const id of ['apRuleAgeDays', 'apRuleSizeMb', 'apRuleExts']) $(id).value = $(id).defaultValue;
   if (kind === 'custom') {
     const m = apDraft.match;
     $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;

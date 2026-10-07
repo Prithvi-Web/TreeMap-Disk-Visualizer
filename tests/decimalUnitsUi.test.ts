@@ -216,6 +216,109 @@ test('Autopilot: a stored limit reads back in the units it was typed in', () => 
   assert.equal(back.requireConfirmationAbove, 250e6);
 });
 
+/** The custom-rule controls of the policy editor, every one. */
+const AP_RULE_CONTROLS = ['apRuleAgeOn', 'apRuleAgeDays', 'apRuleSizeOn', 'apRuleSizeMb', 'apRuleExtOn', 'apRuleExts'];
+
+/**
+ * One policy editor kept across several opens, as the page keeps it: its
+ * inputs start as the built page's markup makes them, `defaultValue` and
+ * `defaultChecked` reflect that markup as a browser's do (assigning `.value`
+ * or `.checked` leaves them alone), and pressing a segment button selects it
+ * for policyFromEditor exactly as setApMatchKind does.
+ */
+function editorSession() {
+  const { $: plain } = dom();
+  const $ = (id: string) => {
+    const el = plain(id) as Box & { defaultValue?: string; defaultChecked?: boolean };
+    if (!('defaultValue' in el)) {
+      const tag = INDEX.match(new RegExp(`<input\\b[^>]*\\sid="${id}"[^>]*>`))?.[0] ?? '';
+      el.defaultValue = tag.match(/\svalue="([^"]*)"/)?.[1] ?? '';
+      el.defaultChecked = /\schecked(?=[\s>])/.test(tag);
+      el.value = el.defaultValue;
+      el.checked = el.defaultChecked;
+    }
+    return el;
+  };
+  let kind = 'suggestion';
+  const seg = { get dataset() { return { apmatch: kind }; } };
+  const source = braced('function openPolicyEditor(') + '\n' + braced('function policyFromEditor(');
+  const rt = run<{ open: (p: unknown) => void; read: () => Record<string, any> }>(
+    `let apDraft = null;\n${source}`,
+    {
+      $, icon: () => '', state: { system: { homeDir: '/home/u' } },
+      setApMatchKind: (k: string) => { kind = k; }, validateApQuery() {}, renderApGroupList() {}, asPath: (p: string) => p,
+      document: { querySelector: () => seg, querySelectorAll: () => [] },
+    },
+    '{ open: openPolicyEditor, read: policyFromEditor }',
+  );
+  return { ...rt, $, press: (k: string) => { kind = k; } };
+}
+
+test('Autopilot: every custom-rule box opens as the markup made it or as the policy stored it — never as the last policy left it — so Save sends the figure the box shows (review F3.1)', () => {
+  const ed = editorSession();
+  // Control: the markup's own defaults, so a pattern that matched nothing cannot pass.
+  assert.deepEqual(AP_RULE_CONTROLS.map((id) => [id, ed.$(id).defaultChecked, ed.$(id).defaultValue]), [
+    ['apRuleAgeOn', true, ''], ['apRuleAgeDays', false, '180'], ['apRuleSizeOn', true, ''],
+    ['apRuleSizeMb', false, '100'], ['apRuleExtOn', false, ''], ['apRuleExts', false, ''],
+  ], 'the markup ticks "Older than 180 days" and "Larger than 100 MB", and leaves extensions empty');
+  const atDefaults = (why: string) => {
+    for (const id of AP_RULE_CONTROLS) {
+      assert.equal(ed.$(id).checked, ed.$(id).defaultChecked, `${why}: #${id} is ticked as the markup ticks it`);
+      assert.equal(String(ed.$(id).value), ed.$(id).defaultValue, `${why}: #${id} holds the markup's figure`);
+    }
+  };
+  const savesWhatItShows = (why: string) => {
+    const m = ed.read().match;
+    assert.equal(m.kind, 'custom');
+    assert.equal(m.minBytes, Number(ed.$('apRuleSizeMb').value) * 1e6, `${why}: Save sends the size the box shows, ${ed.$('apRuleSizeMb').value} MB`);
+    assert.equal(m.maxAgeMs, Number(ed.$('apRuleAgeDays').value) * 86_400_000, `${why}: and the age it shows`);
+  };
+  const ruleA = { id: 'A', name: 'A', path: '/p/a', match: { kind: 'custom', minBytes: 500_000, maxAgeMs: 30 * 86_400_000, exts: ['log'] } };
+
+  // Policy A, a rule under 1 MB the API accepts, opened and closed.
+  ed.open(ruleA);
+  assert.equal(String(ed.$('apRuleSizeMb').value), '0.5', 'control: A opens as its own figure');
+  assert.equal(ed.$('apRuleExts').value, 'log', 'control: and its own extensions');
+
+  // Then "New policy" and "My own rules": the box held A's "0.5", and Save
+  // sent 1,000,000 — the box said one figure, the standing rule another.
+  ed.open(null);
+  atDefaults('a new policy after A');
+  ed.press('custom');
+  savesWhatItShows('a new policy after A, on "My own rules"');
+
+  // Then a custom policy with only an age rule, and "Larger than" ticked.
+  ed.open(ruleA);
+  ed.open({ id: 'B', name: 'B', path: '/p/b', match: { kind: 'custom', maxAgeMs: 30 * 86_400_000 } });
+  assert.equal(ed.$('apRuleSizeOn').checked, false, 'B has no size rule, so "Larger than" opens unticked');
+  assert.equal(String(ed.$('apRuleSizeMb').value), '100', 'and its box holds the markup\'s 100, not A\'s 0.5');
+  assert.equal(ed.$('apRuleExtOn').checked, false, 'nor A\'s extensions');
+  assert.equal(ed.$('apRuleExts').value, '');
+  ed.$('apRuleSizeOn').checked = true;
+  savesWhatItShows('B after A, "Larger than" ticked');
+
+  // A figure typed into one editor and abandoned is not the next one's.
+  ed.open(null);
+  ed.press('custom');
+  ed.$('apRuleSizeMb').value = '0.25';
+  ed.$('apRuleAgeDays').value = '7';
+  ed.$('apRuleAgeOn').checked = false;
+  ed.$('apRuleSizeOn').checked = false;
+  ed.$('apRuleExtOn').checked = true;
+  ed.$('apRuleExts').value = 'tmp';
+  ed.open(null);
+  atDefaults('a new policy after one typed into and abandoned');
+  ed.press('custom');
+  savesWhatItShows('that new policy, on "My own rules"');
+
+  // And a query or suggestion policy opened after A leaves nothing of A behind.
+  for (const match of [{ kind: 'query', q: 'ext:log' }, { kind: 'suggestion', groupIds: [] }]) {
+    ed.open(ruleA);
+    ed.open({ id: 'Q', name: 'Q', path: '/p/q', match });
+    atDefaults(`a ${match.kind} policy after A`);
+  }
+});
+
 /* ══════════════ folder budgets ══════════════ */
 
 function budgetDialog(existing: number | null) {
