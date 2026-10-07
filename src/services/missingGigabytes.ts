@@ -7,6 +7,7 @@ import { groupZombies, RESTART_REFUSES } from './zombieHandles';
 import { storeOf } from './scanStore';
 import { boundaryReport } from './boundaryReport';
 import { formatBytes } from '../utils/formatBytes';
+import { separatorOf } from '../utils/pathSeparator';
 import type { ScanResult } from '../models/types';
 import type { LogicalVolumeInfo, VolumeTopology } from '../platform/types';
 import type { SnapshotAccounting } from './snapshotAccounting';
@@ -292,25 +293,6 @@ export function volumeForPath(volumes: readonly LogicalVolumeInfo[], target: str
     if (!best || v.mountPoint.length > (best.mountPoint ?? '').length) best = v;
   }
   return best;
-}
-
-/**
- * Which separator does this path use?
- *
- * Read off the path itself, never off the host. `path.sep` was the first
- * version and it is wrong twice over: it makes a pure function's answer depend
- * on which machine is asking, and it is simply incorrect for the POSIX-shaped
- * paths a Windows host really does handle — a `cloud://` scan root has forward
- * slashes whatever the OS is. It also broke every macOS-shaped fixture the
- * moment the suite ran on Windows, which is how this was found.
- *
- * Being lenient — treating both separators as boundaries everywhere — would be
- * worse than either: `\` is a legal character in a POSIX filename, so a file
- * genuinely named `a\b` inside `/x` would be reported as living under `/x/a`.
- * The separator is a property of the path, so it is read from the path.
- */
-function separatorOf(p: string): string {
-  return /^[A-Za-z]:/.test(p) || p.startsWith('\\\\') ? '\\' : '/';
 }
 
 /** Is `target` at or beneath `dir`? Segment-wise, so `/Volumes/Disk2` is not under `/Volumes/Disk`. */

@@ -1,5 +1,6 @@
 import { FileNode, TreemapNode } from '../models/types';
 import { ScanStore, Flag } from '../services/scanStore';
+import { separatorOf } from './pathSeparator';
 
 /**
  * Squarified treemap layout, implemented from scratch after
@@ -282,7 +283,7 @@ export function findNodeByPath(root: FileNode, targetPath: string): FileNode | n
   if ((root.type !== 'dir' && !root.container) || !root.children) return null;
   // The target must live under a child whose path prefixes it.
   for (const child of root.children) {
-    if (targetPath === child.path || targetPath.startsWith(child.path + sep(child.path))) {
+    if (targetPath === child.path || targetPath.startsWith(child.path + separatorOf(child.path))) {
       const found = findNodeByPath(child, targetPath);
       if (found) return found;
     }
@@ -290,6 +291,3 @@ export function findNodeByPath(root: FileNode, targetPath: string): FileNode | n
   return null;
 }
 
-function sep(p: string): string {
-  return p.includes('\\') ? '\\' : '/';
-}

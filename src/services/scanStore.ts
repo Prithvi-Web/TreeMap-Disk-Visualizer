@@ -1,5 +1,6 @@
 import { FileNode, ContainerKind } from '../models/types';
 import { pruneTree, PruneResult, PruneOptions } from '../utils/pruneTree';
+import { separatorOf } from '../utils/pathSeparator';
 
 /**
  * ScanStore — the in-memory representation of one scan's tree.
@@ -484,7 +485,7 @@ export class ObjectScanStore implements ScanStore {
     const store = Object.create(ObjectScanStore.prototype) as ObjectScanStore;
     (store as { rootId: number }).rootId = 0;
     (store as { rootPath: string }).rootPath = root.path;
-    (store as { sep: string }).sep = sep ?? (root.path.includes('\\') ? '\\' : '/');
+    (store as { sep: string }).sep = sep ?? separatorOf(root.path);
     // Object.create skips the field initializers: without this the version
     // would be undefined, then NaN after a change, and a count guarded by it
     // (treeFrame.ts) would see every comparison as a change.
@@ -734,12 +735,16 @@ export class ObjectScanStore implements ScanStore {
     return found ? (this.ids.get(found) as number) : -1;
   }
 
-  /** The exact findNodeByPath logic from utils/treemap. */
+  /**
+   * findNodeByPath's logic from utils/treemap, with the store's own separator — the one every child's
+   * path was joined with, as PackedScanStore.findByPath reads it. Guessed from each child's path, a
+   * folder whose name holds a backslash hid everything inside it (POL item 7 review, F2.2).
+   */
   private findIn(root: FileNode, targetPath: string): FileNode | null {
     if (root.path === targetPath) return root;
     if ((root.type !== 'dir' && !root.container) || !root.children) return null;
     for (const child of root.children) {
-      if (targetPath === child.path || targetPath.startsWith(child.path + this.sepOf(child.path))) {
+      if (targetPath === child.path || targetPath.startsWith(child.path + this.sep)) {
         const found = this.findIn(child, targetPath);
         if (found) return found;
       }
@@ -747,9 +752,6 @@ export class ObjectScanStore implements ScanStore {
     return null;
   }
 
-  private sepOf(p: string): string {
-    return p.includes('\\') ? '\\' : '/';
-  }
 
   /* ---------- graft ---------- */
 
@@ -1856,7 +1858,7 @@ export function storeOf(scan: { store?: ScanStore; root?: FileNode }): ScanStore
  * verbatim, so pre-summed dir totals survive unchanged.
  */
 export function buildStoreFromTree(root: FileNode, sep?: string): PackedScanStore {
-  const storeSep = sep ?? (root.path.includes('\\') ? '\\' : '/');
+  const storeSep = sep ?? separatorOf(root.path);
   const store = new PackedScanStore(root.path, storeSep, fileNodeToInput(root));
   const build = (parentId: number, children: FileNode[] | undefined): void => {
     if (!children) return;

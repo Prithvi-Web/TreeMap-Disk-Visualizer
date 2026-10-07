@@ -9,6 +9,7 @@ import { readAudit } from './audit';
 import { boundaryKeyOf, buildSnapshotTree, getSnapshotTreeAt, scanBoundaryKey } from './snapshots';
 import { storeOf } from './scanStore';
 import { isInside } from '../utils/pathSanitizer';
+import { separatorOf } from '../utils/pathSeparator';
 import { formatBytes } from '../utils/formatBytes';
 
 /**
@@ -165,7 +166,7 @@ export interface SignificantChange {
  */
 export function significantChanges(prev: SnapshotTreeNode, curr: SnapshotTreeNode, rootPath: string): SignificantChange[] {
   const out: SignificantChange[] = [];
-  const sep = rootPath.includes('\\') ? '\\' : '/';
+  const sep = separatorOf(rootPath);
   const join = (p: string, n: string): string => p + (p.endsWith(sep) ? '' : sep) + n;
 
   const walk = (p: SnapshotTreeNode, c: SnapshotTreeNode, nodePath: string): void => {

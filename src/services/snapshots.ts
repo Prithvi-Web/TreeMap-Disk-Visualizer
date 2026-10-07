@@ -6,6 +6,7 @@ import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { isEphemeral } from './portableMode';
 import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
 import { mountOutcome } from '../utils/mountBoundaries';
+import { separatorOf } from '../utils/pathSeparator';
 
 /**
  * Snapshots — lightweight scan history persisted to snapshots.json in the
@@ -217,7 +218,7 @@ export function buildSnapshotTree(source: TreeSource): SnapshotTreeNode {
  * the root path; every node reports the snapshot time as its mtime.
  */
 export function inflateSnapshotTree(stored: SnapshotTreeNode, rootPath: string, takenAt: number): FileNode {
-  const sep = rootPath.includes('\\') ? '\\' : '/';
+  const sep = separatorOf(rootPath);
   const build = (t: SnapshotTreeNode, parentPath: string, isRoot: boolean): FileNode => {
     const p = isRoot ? rootPath : parentPath + (parentPath.endsWith(sep) ? '' : sep) + t.n;
     const node: FileNode = {
