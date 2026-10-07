@@ -752,7 +752,6 @@ export class ObjectScanStore implements ScanStore {
     return null;
   }
 
-
   /* ---------- graft ---------- */
 
   ingestSubtree(parentId: number, children: FileNode[]): void {
