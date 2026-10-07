@@ -35390,6 +35390,19 @@ document.querySelectorAll('.modal-backdrop').forEach(bd =>
 let lastFocus = null;             // the most recently focused element, anywhere
 const modalPrevFocus = new Map(); // backdrop id → the element to return focus to
 
+/* Body-level panels a sheet's own content opens over it, painted above every
+   sheet: the reclaim-score breakdown Clean Up's badges open (z-index 211 to
+   the sheets' 100). They belong to the top layer, not to the page behind it.
+   Made inert with the page, the breakdown opened unreachable — its close
+   button refused focus, Tab and a screen reader could not get to it, and a
+   click on it fell through to the sheet and closed it (review F1.3). The
+   right-click menu and the plain-words popover are not here: what opens them
+   lives in the page, which no one can reach while a sheet is up. */
+const MODAL_OVERLAYS = ['rcPopover'];
+function inModalOverlay(node) {
+  return !!(node && node.closest && MODAL_OVERLAYS.some((id) => node.closest('#' + id)));
+}
+
 function noteFocus(el) { lastFocus = el; }
 document.addEventListener('focusin', (e) => {
   noteFocus(e.target);
@@ -35399,7 +35412,7 @@ document.addEventListener('focusin', (e) => {
   // in the sheet takes focus there, the one way a keyboard reaches it (final
   // review F1.10). Tab from it goes back into the sheet (modalTrapTab).
   const top = topModal();
-  if (top && !top.contains(e.target) && !$('toasts').contains(e.target)) modalFocusInto(top);
+  if (top && !top.contains(e.target) && !$('toasts').contains(e.target) && !inModalOverlay(e.target)) modalFocusInto(top);
 });
 
 /* Which sheet is on top, bottom to top.
@@ -35477,9 +35490,10 @@ function syncModalLayers(moveFocus = true) {
       // this the sheet that owns the keyboard can sit behind the one it was
       // opened from. Cleared on close so the stylesheet owns the rank again.
       if (el.style) el.style.zIndex = el === top && open.length > 1 ? '101' : '';
-    } else if (el.id !== 'toasts' && el.id !== 'tooltip' && !el.classList.contains('blob')) el.inert = !!top;
+    } else if (el.id !== 'toasts' && el.id !== 'tooltip' && !MODAL_OVERLAYS.includes(el.id) && !el.classList.contains('blob')) el.inert = !!top;
   }
-  if (moveFocus && top && !top.contains(document.activeElement)) modalFocusInto(top);
+  const active = document.activeElement;
+  if (moveFocus && top && !top.contains(active) && !inModalOverlay(active)) modalFocusInto(top);
 }
 const modalNet = new MutationObserver((records) => {
   for (const r of records) {

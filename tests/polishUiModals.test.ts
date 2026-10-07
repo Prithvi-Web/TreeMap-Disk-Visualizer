@@ -437,6 +437,40 @@ test('every dialog in the shipped page is live when it opens: no inert ancestor,
   }
 });
 
+/* B31's sibling (review F1.3): the net made every body-level element that is
+   not a sheet inert while one is open, toasts and tooltip aside. #rcPopover —
+   the reclaim-score breakdown Clean Up's badges open, painted above every
+   sheet — is one of them, so it opened over Clean Up already inert: its close
+   button refused focus, Tab and a screen reader could not reach it, and a
+   click on it fell through to the sheet and closed it. */
+test('a panel a sheet opens over itself — the reclaim-score breakdown from Clean Up — is live: it takes focus and keeps it', () => {
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const focusin: Array<(e: { target: FEl }) => void> = [];
+  (doc as unknown as { addEventListener: (type: string, fn: (e: { target: FEl }) => void) => void }).addEventListener =
+    (type, fn) => { if (type === 'focusin') focusin.push(fn); };
+  const api = loadModalNet(doc);
+  assert.equal(focusin.length, 1, 'the net watches where focus lands');
+  const clean = doc.getElementById('cleanModal')!;
+  const pop = doc.getElementById('rcPopover')!;
+  assert.ok(pop && pop.parent === doc.body && !clean.contains(pop), '#rcPopover is a body-level panel, outside every sheet');
+  setOpen(api, clean, true);
+  // openReclaimWhy, as a badge click in Clean Up runs it: fill, unhide, focus the close button.
+  const close = append(pop, mkOf(doc)('button', 'rcPopClose', ['icon-btn']));
+  pop.hidden = false;
+  assert.equal(pop.inert, false, 'open over Clean Up, the breakdown is not inert — clicks land on it, Tab and a screen reader reach it');
+  close.focus();
+  for (const fn of focusin) fn({ target: close });
+  assert.equal(doc.activeElement, close, 'its close button takes focus, and the net does not pull it back into the sheet');
+  api.syncModalLayers(); // any later class flip on a backdrop runs the net again
+  assert.equal(doc.activeElement, close, 'and keeps it when the net runs again');
+  assert.equal(doc.querySelector('main')!.inert, true, 'the page behind the sheet is still inert');
+  // Focus that lands in the page behind is still pulled back into the sheet.
+  doc.activeElement = doc.getElementById('scanBtn') ?? doc.body;
+  for (const fn of focusin) fn({ target: doc.activeElement! });
+  assert.ok(clean.contains(doc.activeElement), 'focus landing anywhere else outside the sheet is pulled back in, as before');
+});
+
 /* ══════════════ a11y-keyboard-2 — shortcuts stop at the scrim; Escape closes the top layer ══════════════ */
 
 test('while a dialog is open, global shortcuts never reach the views underneath', () => {
