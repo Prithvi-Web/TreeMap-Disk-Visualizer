@@ -96,7 +96,11 @@ function normalizeSchedules(raw: unknown): ScheduleConfig[] {
     const hours = Number(e.intervalHours);
     out.push({
       id: typeof e.id === 'string' && e.id ? e.id : crypto.randomUUID(),
-      path: e.path.trim(),
+      // Leading whitespace only, as sanitizePath reads a path: whitespace at
+      // its end is part of a folder's name, and trimming it re-pointed a
+      // schedule for "Screenshots " at its sibling "Screenshots" on every
+      // save and load (final review F1.4).
+      path: e.path.replace(/^\s+/, ''),
       intervalHours: Number.isFinite(hours) ? Math.min(720, Math.max(1, Math.round(hours))) : 24,
       thresholdPct: clampOptional(e.thresholdPct, 0, 100000),
       thresholdBytes: clampOptional(e.thresholdBytes, 0, Number.MAX_SAFE_INTEGER),

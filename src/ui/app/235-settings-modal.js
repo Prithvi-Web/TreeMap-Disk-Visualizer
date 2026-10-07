@@ -17,6 +17,7 @@ $('settingsBtn').addEventListener('click', async () => {
     toast('Could not load settings: ' + e.message, 'error');
     settingsData = { ignore: [], schedules: [] };
   }
+  rememberStoredSchedules();
   renderSchedules();
   renderIgnores();
   renderCloudAccounts();
@@ -538,7 +539,10 @@ function collectSettingsForms() {
   document.querySelectorAll('#schedList .sched-row:not(.sched-head)').forEach(row => {
     const s = settingsData.schedules[+row.querySelector('.s-path').dataset.i];
     if (!s) return;
-    s.path = row.querySelector('.s-path').value.trim();
+    // As every path box is read (asPath): whitespace at its end is part of a
+    // folder's name. Trimmed, any Save swapped "Screenshots " for its sibling
+    // "Screenshots" (final review F1.4).
+    s.path = asPath(row.querySelector('.s-path').value);
     s.intervalHours = +row.querySelector('.s-int').value;
     const gb = parseFloat(row.querySelector('.s-gb').value);
     s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1073741824) : undefined;
@@ -570,23 +574,92 @@ $('ignoreAddBtn').addEventListener('click', () => {
   renderIgnores();
 });
 
-$('settingsSaveBtn').addEventListener('click', async () => {
+/** The scheduled folders as the server last sent them: a folder the page put
+    in a box is saved as stored, never looked up under another name (QA4a
+    R4-1). Opening the sheet sets it (rememberStoredSchedules). */
+let schedStoredPaths = new Set();
+function rememberStoredSchedules() {
+  schedStoredPaths = new Set((settingsData.schedules || []).map((s) => s.path));
+}
+/** Each press of Save takes the next number; the sheet closing retires every
+    press still looking up a folder (settingsSheetClosed). */
+let settingsSaveSeq = 0;
+/** The Settings sheet closed (closeModal): a Save still looking up a folder
+    saves nothing, and the button it held is handed back. */
+function settingsSheetClosed() {
+  settingsSaveSeq++;
+  $('settingsSaveBtn').disabled = false;
+  $('settingsSaveBtn').removeAttribute('aria-busy');
+}
+/** Every field of the sheet, read into the body Save sends. */
+function settingsBody() {
   collectSettingsForms();
-  const schedules = settingsData.schedules.filter(s => s.path);
-  const ignore = settingsData.ignore.filter(e => e.pattern);
-  const forecastThresholdDays = Math.min(365, Math.max(1, Math.round(Number($('forecastDays').value) || 30)));
-  const watchIdleMinutes = Math.min(120, Math.max(1, Math.round(Number($('watchIdleMin').value) || 10)));
-  const timeCapsuleRetentionDays = Math.min(365, Math.max(1, Math.round(Number($('capsuleRetentionDays').value) || 30)));
-  const timeCapsuleMaxPercent = Math.min(90, Math.max(1, Math.round(Number($('capsuleMaxPercent').value) || 10)));
-  const cloud = collectCloudCreds();
-  const reclaimWeights = collectReclaimWeights();
-  const cleanupGoalBytes = collectCleanupGoal(); // null clears the target (§4.1)
-  const humanScaleUnits = $('humanScaleToggle').checked; // §9.3
+  return JSON.stringify({
+    schedules: settingsData.schedules.filter(s => s.path),
+    ignore: settingsData.ignore.filter(e => e.pattern),
+    forecastThresholdDays: Math.min(365, Math.max(1, Math.round(Number($('forecastDays').value) || 30))),
+    watchIdleMinutes: Math.min(120, Math.max(1, Math.round(Number($('watchIdleMin').value) || 10))),
+    timeCapsuleRetentionDays: Math.min(365, Math.max(1, Math.round(Number($('capsuleRetentionDays').value) || 30))),
+    timeCapsuleMaxPercent: Math.min(90, Math.max(1, Math.round(Number($('capsuleMaxPercent').value) || 10))),
+    cloud: collectCloudCreds(),
+    reclaimWeights: collectReclaimWeights(),
+    cleanupGoalBytes: collectCleanupGoal(), // null clears the target (§4.1)
+    humanScaleUnits: $('humanScaleToggle').checked, // §9.3
+  });
+}
+/**
+ * Before Save: a scheduled folder typed or changed here whose path ends in
+ * whitespace and names no folder, where the same path without it does, is
+ * not saved — nor that folder in its place: "no such folder", with that
+ * folder offered, as every path box does (final review F1.4). Save is held
+ * while it is looked up (at most PATH_LOOKUP_MS a folder). True when Save
+ * may go ahead with `body`, the sheet as it was pressed.
+ */
+async function settingsFoldersChecked(body) {
+  const typed = JSON.parse(body).schedules.map((s) => s.path).filter((p) => !schedStoredPaths.has(p) && boxLooksUp(p));
+  if (!typed.length) return true;
+  const btn = $('settingsSaveBtn');
+  const seq = ++settingsSaveSeq;
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  let found = null;
+  try {
+    for (const p of typed) {
+      const meant = await boxMeant(p);
+      if (seq !== settingsSaveSeq) break;
+      if (meant) { found = { p, meant }; break; }
+    }
+  } finally {
+    if (seq === settingsSaveSeq) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+  }
+  // The sheet closed, or a newer press took over and answers instead.
+  if (seq !== settingsSaveSeq) return false;
+  // What is saved is what Save was pressed on: an edit made while a folder
+  // was looked up would be lost by saving the sheet as it was — so nothing is.
+  if (settingsBody() !== body) {
+    toast('Nothing was saved — a setting changed while a scheduled folder was being checked. Press Save to save the settings as they are now.', 'error');
+    return false;
+  }
+  if (found) {
+    // A click puts that folder in the box, for the person to save.
+    offerMeant(found.p, found.meant, () => {
+      if (seq !== settingsSaveSeq) return;
+      document.querySelectorAll('#schedList .s-path').forEach((box) => { if (asPath(box.value) === found.p) box.value = found.meant; });
+    });
+    return false;
+  }
+  return true;
+}
+
+$('settingsSaveBtn').addEventListener('click', async () => {
+  // Every field is read now, as the person pressed Save (QA4a R4-3).
+  const body = settingsBody();
+  if (!(await settingsFoldersChecked(body))) return;
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits }),
+      body,
     });
     humanScaleOn = settingsData.humanScaleUnits !== false;
     renderSchedules();
@@ -631,7 +704,7 @@ function closeModal(id) {
   // subtree (FxOrbs only gates on document.hidden). Closing the sheet
   // ends both; Connect starts a fresh handshake, and a consent that DID
   // complete shows as connected the next time the sheet opens.
-  if (id === 'settingsModal') { clearInterval(cloudConnectPoll); fxOrbHide('cloud'); }
+  if (id === 'settingsModal') { clearInterval(cloudConnectPoll); fxOrbHide('cloud'); settingsSheetClosed(); }
   // The Smart pane's funnel is a live handle inside this sheet; every way of
   // closing the sheet funnels through here, so this is its one exit door.
   if (id === 'cleanModal') cleanFunnelDrop();

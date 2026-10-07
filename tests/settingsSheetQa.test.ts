@@ -105,7 +105,7 @@ function openSettingsRuntime(api: (url: string, options?: ApiCall['options']) =>
   });
   const opener = braced("$('settingsBtn').addEventListener('click', async () => {");
   const stubs = [
-    'renderAllocationDiagnostic', 'renderEngineBudgetHelp', 'loadEngineBudget', 'renderSchedules', 'renderIgnores',
+    'renderAllocationDiagnostic', 'renderEngineBudgetHelp', 'loadEngineBudget', 'rememberStoredSchedules', 'renderSchedules', 'renderIgnores',
     'renderCloudAccounts', 'renderCleanupGoalFields', 'renderReclaimWeights', 'renderScanEngine', 'renderScanBoundary',
     'renderShellIntegration',
   ].filter((name) => !lifted.includes(name));
@@ -342,6 +342,12 @@ function saveRuntime(api: (url: string, options?: ApiCall['options']) => Promise
      function collectCloudCreds() { return {}; }
      function collectReclaimWeights() { return {}; }
      function collectCleanupGoal() { return null; }
+     // Save reads the sheet through settingsBody, and checks typed scheduled
+     // folders first (final review F1.4) — none here, so it goes straight on.
+     let schedStoredPaths = new Set();
+     let settingsSaveSeq = 0;
+     ${braced('function settingsBody(')}
+     ${braced('async function settingsFoldersChecked(')}
      ${handler});`,
   )(dom.$, api, (msg: string, kind?: string) => { toasts.push({ msg, kind }); }, (id: string) => {
     closed.push(id);

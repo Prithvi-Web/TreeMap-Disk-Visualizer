@@ -1333,3 +1333,181 @@ test('an Autopilot offer outlives nothing: a click after the editor closed never
     assert.equal(saved().length, 1, 'and saves nothing more');
   }
 });
+
+/* ══════════════ The scheduled-scan folders in Settings (final review F1.4) ══════════════ */
+
+type SchedRow = { box: { value: string; dataset: { i: string } }; querySelector(sel: string): unknown };
+
+/**
+ * Settings' schedule rows, collectSettingsForms and the Save button, evaluated
+ * from the built page with fake rows: what Save sends, what it offers, and
+ * what it tells the person.
+ */
+function settingsRuntime(listing: (p: string) => unknown, stored: { id: string; path: string }[]) {
+  const els = new Map<string, BoxEl>();
+  const $ = (id: string) => {
+    if (!els.has(id)) {
+      const el = fakeEl(id) as BoxEl;
+      el.querySelector = () => null;
+      el.click = () => { if (!el.disabled) void el.listeners.click?.(); };
+      els.set(id, el);
+    }
+    return els.get(id)!;
+  };
+  const rows: SchedRow[] = [];
+  /** A schedule row as renderSchedules draws it, for settingsData.schedules[i]: its folder box holds `path`. */
+  const drawRow = (path: string) => {
+    const box = { value: path, dataset: { i: String(rows.length) } };
+    const fields: Record<string, unknown> = { '.s-path': box, '.s-int': { value: '24' }, '.s-gb': { value: '' }, '.s-pct': { value: '' }, '.s-on': { checked: true } };
+    rows.push({ box, querySelector: (sel: string) => fields[sel] });
+  };
+  const document = {
+    querySelectorAll: (sel: string) => {
+      if (sel === '#schedList .sched-row:not(.sched-head)') return rows;
+      if (sel === '#schedList .s-path') return rows.map((r) => r.box);
+      return [];
+    },
+  };
+  const asked: string[] = [];
+  const puts: { schedules: { path: string }[] }[] = [];
+  const toasts: string[] = [];
+  const offers: Offer[] = [];
+  const closed: string[] = [];
+  const timers: { fn: () => void; delay: number; cleared: boolean }[] = [];
+  const setTimeout = (fn: () => void, delay: number) => { timers.push({ fn, delay, cleared: false }); return timers.length; };
+  const clearTimeout = (id: number) => { if (timers[id - 1]) timers[id - 1].cleared = true; };
+  const api = async (url: string, opts?: { method?: string; body?: string }) => {
+    if (url.startsWith('/api/fs/list')) {
+      asked.push(url);
+      const answer = await listing(decodeURIComponent(url.slice(url.indexOf('path=') + 5)));
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }
+    assert.equal(url, '/api/settings');
+    const body = JSON.parse(opts!.body!);
+    puts.push(body);
+    return { ...body, ignore: [] };
+  };
+  const browse = between('/* ───────────────────────────── Browse modal ───────────────────────────── */',
+    "$('browseUseBtn').addEventListener('click'");
+  const src = [browse, between('/** Read the form rows back into settingsData', '/* ── Growth notifications')].join('\n');
+  const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
+  const noop = () => {};
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const rt = new Function(
+    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'document', 'setTimeout', 'clearTimeout', 'closeModal',
+    'renderSchedules', 'renderIgnores', 'renderCleanupGoalFields', 'renderReclaimWeights', 'reclaimReset',
+    'collectCloudCreds', 'collectReclaimWeights', 'collectCleanupGoal', 'drawView', 'refreshBigFiles', 'startScan',
+    `'use strict';
+     const state = { root: null, system: { homeDir: '/home/u', commonDirs: [] }, view: 'dashboard', treemap: {}, bigFilesSort: 'size' };
+     let settingsData = { ignore: [], schedules: ${JSON.stringify(stored)}.map((s) => ({ intervalHours: 24, enabled: true, ...s })) };
+     let humanScaleOn = true;
+     function icon() { return ''; }
+     ${src}
+     return {
+       remember: typeof rememberStoredSchedules === 'function' ? rememberStoredSchedules : () => {},
+       closed: typeof settingsSheetClosed === 'function' ? settingsSheetClosed : () => {},
+       // What "Add schedule" does before its row is drawn.
+       add: (path) => { settingsData.schedules.push({ id: '', path, intervalHours: 24, enabled: true }); },
+     };`,
+  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, document, setTimeout, clearTimeout,
+    (id: string) => { closed.push(id); }, noop, noop, noop, noop, noop, () => ({}), () => ({}), () => null, noop, noop, noop) as {
+    /** What opening the sheet does once the stored settings arrive. */
+    remember: () => void;
+    /** The sheet closing (closeModal's settingsModal arm). */
+    closed: () => void;
+    add: (path: string) => void;
+  };
+  for (const s of stored) drawRow(s.path);
+  rt.remember();
+  /** "Add schedule", then the person types `path` into its folder box. */
+  const addRow = (path: string) => { rt.add(''); drawRow(path); };
+  const save = () => Promise.resolve($('settingsSaveBtn').listeners.click());
+  /** The folders of every settings body Save sent, one list per save. */
+  const saved = () => puts.map((b) => b.schedules.map((s) => s.path));
+  return { rt, $, rows, addRow, asked, saved, toasts, offers, closed, save, timers };
+}
+
+test('a scheduled scan\'s folder keeps the whitespace at its end — on any Save, stored or typed — and one typed that names no folder, where the folder without it exists, is offered, never saved in its place (final review F1.4)', async () => {
+  // collectSettingsForms trimmed every schedule box on every Save, so a
+  // folder "Screenshots " saved once was swapped for its sibling
+  // "Screenshots" by the next Save of anything in Settings.
+  {
+    const { asked, saved, save } = settingsRuntime(strictListing, [{ id: 's1', path: SHOT }]);
+    await save();
+    assert.deepEqual(saved(), [[SHOT]], 'a stored folder is saved as stored, by a Save that never touched it');
+    assert.deepEqual(asked, [], 'and is never looked up under another name');
+  }
+  {
+    const { rows, addRow, asked, saved, offers, save } = settingsRuntime(strictListing, []);
+    addRow(DOCS + ' '); // typed, with a stray space
+    await save();
+    assert.deepEqual(saved(), [], 'a typed folder that names none is not saved — nor the folder without its space');
+    assert.equal(offers.length, 1, 'the folder without the space is offered');
+    assert.equal(offers[0].msg, noFolder(DOCS + ' ', 'a space', DOCS), 'in the words every path box uses');
+    assert.equal(offers[0].label, 'Use that folder');
+    assert.ok(asked.includes(list(DOCS + ' ')), 'control: the folder as typed was looked up');
+    await offers[0].choose();
+    assert.equal(rows[0].box.value, DOCS, 'choosing it puts that folder in the box');
+    assert.deepEqual(saved(), [], 'and saves nothing — saving is the person\'s own press');
+    await save();
+    assert.deepEqual(saved(), [[DOCS]], 'which saves the folder chosen');
+  }
+  {
+    const { addRow, saved, offers, save } = settingsRuntime(strictListing, []);
+    addRow(SHOT); // a folder whose name ends in a space, typed or added from the scan
+    addRow('   ' + DOCS); // leading paste debris
+    await save();
+    assert.deepEqual(saved(), [[SHOT, DOCS]], 'a folder that exists as typed is saved as typed, and leading whitespace goes');
+    assert.deepEqual(offers, []);
+  }
+});
+
+test('Settings Save holds while a typed scheduled folder is looked up, saves nothing once the sheet closed or a setting changed meanwhile, and says so (final review F1.4)', async () => {
+  {
+    const g = gate();
+    const { $, rows, addRow, saved, toasts, save } = settingsRuntime(slowStray(g), []);
+    addRow(DOCS + ' ');
+    const pending = save();
+    assert.equal($('settingsSaveBtn').disabled, true, 'Save is held while the folder is looked up');
+    assert.equal($('settingsSaveBtn').getAttribute('aria-busy'), 'true', 'and busy');
+    rows[0].box.value = '/data';
+    g.open();
+    await pending;
+    assert.deepEqual(saved(), [], 'a setting changed while it was looked up: nothing is saved');
+    assert.equal(toasts.at(-1), 'Nothing was saved — a setting changed while a scheduled folder was being checked. Press Save to save the settings as they are now.',
+      'and the person is told');
+    assert.equal($('settingsSaveBtn').disabled, false, 'Save is live again');
+    assert.equal($('settingsSaveBtn').getAttribute('aria-busy'), null);
+  }
+  {
+    const g = gate();
+    const { rt, $, addRow, saved, offers, save } = settingsRuntime(slowStray(g), []);
+    addRow(DOCS + ' ');
+    const pending = save();
+    rt.closed();
+    assert.equal($('settingsSaveBtn').disabled, false, 'a closed sheet holds nothing');
+    g.open();
+    await pending;
+    assert.deepEqual(saved(), [], 'a Save still looking up a folder when the sheet closed saves nothing');
+    assert.deepEqual(offers, [], 'and offers nothing');
+  }
+  {
+    const { addRow, saved, timers, save } = settingsRuntime(slowStray(gate()), []);
+    addRow(DOCS + ' ');
+    const pending = save();
+    const waiting = timers.filter((t) => !t.cleared);
+    assert.equal(waiting.length, 1, 'the wait is bounded');
+    waiting[0].cleared = true;
+    waiting[0].fn(); // PATH_LOOKUP_MS pass with no answer
+    await pending;
+    assert.deepEqual(saved(), [[DOCS + ' ']], 'a lookup that does not answer in time saves the folder exactly as typed — never the one without its space');
+  }
+  // The wiring the harness stands in for: opening the sheet remembers the
+  // folders the server sent, and closing it retires a Save still looking up.
+  const opener = braced("$('settingsBtn').addEventListener('click', async () =>");
+  assert.match(opener, /settingsData = await api\('\/api\/settings'\);[\s\S]*?\n {2}rememberStoredSchedules\(\);\n {2}renderSchedules\(\);/,
+    'opening Settings remembers the stored folders, once they have arrived and before the rows are drawn');
+  assert.match(braced('function closeModal('), /if \(id === 'settingsModal'\) \{[^}]*settingsSheetClosed\(\);/,
+    'and every way of closing it retires a Save still looking up a folder');
+});

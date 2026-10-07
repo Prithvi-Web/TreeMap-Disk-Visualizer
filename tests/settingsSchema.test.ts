@@ -5,7 +5,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-settings-schema-');
 
 import { buildOpenApiDocument } from '../src/api/openapi';
-import { getSettings } from '../src/services/settings';
+import { getSettings, updateSettings } from '../src/services/settings';
 
 /**
  * GET /api/settings answers every key of AppSettings, always (getSettings
@@ -24,4 +24,22 @@ test('the published AppSettings schema describes and requires exactly the keys G
   const schema = doc.components.schemas.AppSettings;
   assert.deepEqual(Object.keys(schema.properties).sort(), answered, 'every answered key is described, and nothing else');
   assert.deepEqual([...schema.required].sort(), answered, 'and every one is required, since every one is always answered');
+});
+
+test('a scheduled scan\'s folder keeps the whitespace at its end — part of its name — and loses only leading whitespace, as sanitizePath reads a path (final review F1.4)', async () => {
+  // normalizeSchedules trimmed both ends, on every save and every load of
+  // settings.json, so a schedule for "Screenshots " scanned — and alerted
+  // on — its sibling "Screenshots" from the next save on. Disabled here, so
+  // no scheduler running in this process ever picks them up.
+  await updateSettings({
+    schedules: [
+      { id: 'shots', path: '/Users/me/Screenshots ', intervalHours: 24, enabled: false },
+      { id: 'docs', path: '  /Users/me/Documents', intervalHours: 24, enabled: false },
+      { id: 'blank', path: '   ', intervalHours: 24, enabled: false },
+    ],
+  });
+  const saved = (await getSettings()).schedules.map((s) => [s.id, s.path]);
+  assert.deepEqual(saved, [['shots', '/Users/me/Screenshots '], ['docs', '/Users/me/Documents']],
+    'the trailing space stays, leading whitespace goes, and a blank folder is no schedule');
+  await updateSettings({ schedules: [] });
 });
