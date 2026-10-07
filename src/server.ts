@@ -41,7 +41,7 @@ import { cancelAllCapsuleJobs, startCapsuleMaintenance, stopCapsuleMaintenance }
 import { startScheduler, stopScheduler } from './services/scheduler';
 import { cancelAllEncodeJobs, drainEncodeClients } from './services/compressionAdvisor';
 import { sweepSpillDir, SweepReport } from './services/spillSweep';
-import { appDataDir, sweepDeadSaveTemps } from './services/storage';
+import { appDataDir, sweepDeadSaveTemps, type SaveTempSweep } from './services/storage';
 import { isEphemeral } from './services/portableMode';
 import { formatBytes } from './utils/formatBytes';
 
@@ -232,15 +232,23 @@ function bootSpillSweep(): Promise<void> {
     });
 }
 
+let bootSaveTempSweepForTests: (() => Promise<SaveTempSweep>) | null = null;
+
+/** Test seam: the sweep the boot runs in place of `sweepDeadSaveTemps`; `null` restores it (final review F1.3). */
+export function setBootSaveTempSweepForTests(fn: (() => Promise<SaveTempSweep>) | null): void {
+  bootSaveTempSweepForTests = fn;
+}
+
 /**
  * The boot sweep of saves' temporary files in app-data (FG3g review F3.2, F3.7): what a TreeMap
  * process killed or crashed part-way through a save left (`sweepDeadSaveTemps`), once per start,
  * on the turn after the server is listening. Like the spill sweep it never holds the start up and
- * fails nothing; in a read-only portable session the sweep itself removes nothing.
+ * fails nothing: a file it could not remove is left and named, one line each, and a sweep that
+ * fails is one line too. In a read-only portable session the sweep itself removes nothing.
  */
 function bootSaveTempSweep(): Promise<void> {
   return new Promise<void>((resolve) => setImmediate(resolve))
-    .then(() => sweepDeadSaveTemps())
+    .then(() => (bootSaveTempSweepForTests ?? sweepDeadSaveTemps)())
     .then(({ removed, failed }) => {
       if (removed.length > 0) {
         console.log(`[treemap] removed ${removed.length} temporary file${removed.length === 1 ? '' : 's'} a save left when a TreeMap process stopped part-way`);

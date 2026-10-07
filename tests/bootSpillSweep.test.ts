@@ -8,7 +8,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 const APP = isolatedDataDir('treemap-bootSpillSweep-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { describeSweep, startServer, setBootSweepForTests, type RunningServer } from '../src/server';
+import { describeSweep, startServer, setBootSaveTempSweepForTests, setBootSweepForTests, type RunningServer } from '../src/server';
 import { SPILL_DIR } from '../src/services/spillSweep';
 import { initPortableMode, isEphemeral, resetPortableMode } from '../src/services/portableMode';
 import { waitFor } from './fixtures/waitFor';
@@ -45,13 +45,13 @@ function saveLeftover(pid: number, name: string): string {
   return file;
 }
 
-/** The lines the server logs about the spill sweep while `fn` runs. */
-async function sweepLines<T>(fn: () => Promise<T>): Promise<{ value: T; lines: string[] }> {
+/** The lines the server logs about the spill sweep (or, with `about`, about anything it matches) while `fn` runs. */
+async function sweepLines<T>(fn: () => Promise<T>, about: RegExp = /spill sweep/): Promise<{ value: T; lines: string[] }> {
   const lines: string[] = [];
   const { log, warn } = console;
   const keep = (args: unknown[]): void => {
     const line = args.map(String).join(' ');
-    if (line.includes('spill sweep')) lines.push(line);
+    if (about.test(line)) lines.push(line);
   };
   console.log = (...args: unknown[]) => keep(args);
   console.warn = (...args: unknown[]) => keep(args);
@@ -222,3 +222,79 @@ test('boot removes a save\'s temp file a dead process left in app-data, and keep
     fs.rmSync(live, { force: true });
   }
 });
+
+/* ─────────────── the final review, F1.3: the save sweep's failures, its skip, and that nothing waits on it ─────────────── */
+
+/** What the server logs about saves' temp files. */
+const SAVE_SWEEP = /temporary file/;
+
+test('a save\'s temp file the sweep could not remove is left and named, one line each, and the server serves', async () => {
+  setBootSaveTempSweepForTests(async () => ({
+    removed: ['settings.json.4242.tmp'],
+    failed: [
+      { name: 'offload-manifest.json.4243.tmp', why: 'EACCES: permission denied (a test)' },
+      { name: 'timecapsule.json.4244.tmp', why: 'EBUSY: resource busy (a test)' },
+    ],
+  }));
+  let running: RunningServer | undefined;
+  try {
+    const { lines } = await sweepLines(async () => {
+      running = await boot();
+      await running.saveTempSweep;
+    }, SAVE_SWEEP);
+    assert.equal(await get(running!.port, '/api/capabilities'), 200, 'the server serves');
+    assert.deepEqual(lines, [
+      '[treemap] removed 1 temporary file a save left when a TreeMap process stopped part-way',
+      '[treemap] left offload-manifest.json.4243.tmp, a save\'s temporary file, which could not be removed: EACCES: permission denied (a test)',
+      '[treemap] left timecapsule.json.4244.tmp, a save\'s temporary file, which could not be removed: EBUSY: resource busy (a test)',
+    ]);
+  } finally {
+    running?.shutdown();
+    setBootSaveTempSweepForTests(null);
+  }
+});
+
+test('a save sweep that fails does not stop the server: its promise settles, never rejects, and the failure is one line', async () => {
+  setBootSaveTempSweepForTests(async () => {
+    await Promise.resolve();
+    throw Object.assign(new Error('EACCES: permission denied, scandir (a test)'), { code: 'EACCES' });
+  });
+  let running: RunningServer | undefined;
+  try {
+    const { lines } = await sweepLines(async () => {
+      running = await boot();
+      await running.saveTempSweep; // settles, never rejects
+    }, SAVE_SWEEP);
+    assert.equal(await get(running!.port, '/api/capabilities'), 200, 'and the server serves');
+    assert.deepEqual(lines, ['[treemap] the sweep of saves\' temporary files failed and was skipped: EACCES: permission denied, scandir (a test)']);
+  } finally {
+    running?.shutdown();
+    setBootSaveTempSweepForTests(null);
+  }
+});
+
+test('the boot does not wait for the save sweep', async () => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let settled = false;
+  setBootSaveTempSweepForTests(async () => {
+    await held;
+    settled = true;
+    return { removed: [], failed: [] };
+  });
+  let running: RunningServer | undefined;
+  let booting: Promise<RunningServer> | undefined;
+  try {
+    booting = boot().then((server) => (running = server));
+    await waitFor(() => running !== undefined, 'the boot, while its save sweep is still running');
+    assert.equal(settled, false, 'the server was up before the save sweep finished');
+    release();
+    await running!.saveTempSweep;
+    assert.equal(settled, true);
+  } finally {
+    release();
+    (running ?? (await booting))?.shutdown();
+    setBootSaveTempSweepForTests(null);
+  }
+});
+
