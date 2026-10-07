@@ -708,3 +708,32 @@ test('the docs promise a formatted string beside a size only where the answers g
   }
   assert.match(mcp, /A size inside a sentence[^.]*(error|reason)[^.]*is the formatted figure only/);
 });
+
+test('the agent summary is described as it answers: a formatted twin beside every size but the forecast\'s topGrowers[].bytesPerDay, which is raw bytes only (review F3.2)', () => {
+  // AGENTS.md, the route's own comment and its OpenAPI summary all said the
+  // summary gives "every number as raw bytes plus a formatted string". The
+  // forecast is spread in as computed, so each of its topGrowers carries a
+  // bytesPerDay with no twin, and an agent trusting the sentence looked for
+  // one and found nothing. (tests/agentErgonomics.test.ts walks a live
+  // summary for every other size's twin.)
+  const read = (file: string) => readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const agents = read('AGENTS.md');
+  const at = agents.indexOf('`GET /api/agent/summary?scanId=`');
+  assert.notEqual(at, -1, 'AGENTS.md introduces the agent summary');
+  const said = agents.slice(at, agents.indexOf('\n   The tree itself', at)).replace(/\s+/g, ' ');
+  const comment = (() => {
+    const src = read('src/api/metaRoutes.ts');
+    const end = src.indexOf("metaRouter.get('/agent/summary'");
+    return src.slice(src.lastIndexOf('/**', end), end).replace(/\s*\*\s*/g, ' ');
+  })();
+  // The entry's summary string, its concatenated pieces joined as JavaScript joins them.
+  const openapi = (/path: '\/api\/agent\/summary',\s*summary:\s*((?:'[^']*'(?:\s*\+\s*)?)+)/.exec(read('src/api/openapi.ts'))?.[1]
+    ?? assert.fail('the OpenAPI entry for the agent summary has a summary')).match(/'[^']*'/g)!.map((s) => s.slice(1, -1)).join('');
+  for (const [where, text] of [['AGENTS.md', said], ['metaRoutes.ts', comment], ['openapi.ts', openapi]] as const) {
+    assert.doesNotMatch(text, /every number as raw bytes plus a formatted string|Every number comes as raw bytes plus a formatted string|— raw bytes \+ formatted,/,
+      `${where} no longer promises a formatted string beside every number`);
+    assert.match(text, /[Ee]very size[^.]*raw bytes/, `${where} says what a size is`);
+    assert.match(text, /topGrowers\[\]\.bytesPerDay/, `${where} names the size that has no formatted twin`);
+  }
+  assert.match(said, /`forecast\.topGrowers\[\]\.bytesPerDay`[^.]*raw bytes only/, 'AGENTS.md says that size is raw bytes only');
+});

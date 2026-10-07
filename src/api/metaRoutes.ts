@@ -67,10 +67,12 @@ metaRouter.get('/policy', async (_req: Request, res: Response) => {
 /**
  * GET /api/agent/summary?scanId= — the whole picture in one read-only call:
  * top culprits, reclaimable-by-category, and the disk-full forecast, composed
- * from the exact services the individual endpoints use. Every number comes as
- * raw bytes plus a formatted string; ids are the services' stable ids; every
- * list is deterministically ordered (size desc), so two calls over the same
- * scan return identical payloads.
+ * from the exact services the individual endpoints use. Every size comes as
+ * raw bytes with a formatted string beside it, except the forecast's
+ * topGrowers[].bytesPerDay, which is spread in as computed and stays raw bytes
+ * only; ids are the services' stable ids; every list is deterministically
+ * ordered (size desc), so two calls over the same scan return identical
+ * payloads.
  */
 metaRouter.get('/agent/summary', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);

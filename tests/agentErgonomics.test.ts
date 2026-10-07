@@ -161,6 +161,28 @@ test('agent summary: raw+formatted bytes, stable ids, deterministic order, real 
     assert.equal(s.totals.formatted, formatBytes(s.totals.bytes), 'raw and formatted agree');
     assert.equal(s.totals.fileCount, 5);
 
+    // Every size in the summary has a formatted twin beside it that is
+    // formatBytes of it, as AGENTS.md says — all but each forecast grower's
+    // bytesPerDay, which AGENTS.md names as raw bytes only (review F3.2).
+    const isSize = (key: string) => /^(size|bytes|totalSize)$|Bytes$|^bytesPer/.test(key);
+    const twins = (key: string) => (key === 'bytes' ? ['formatted', 'bytesFormatted'] : [`${key}Formatted`, `${key.replace(/Bytes$/, '')}Formatted`]);
+    const untwinned: string[] = [];
+    let sizes = 0;
+    const walk = (v: unknown, at: string): void => {
+      if (Array.isArray(v)) { v.forEach((x) => walk(x, `${at}[]`)); return; }
+      if (!v || typeof v !== 'object') return;
+      const o = v as Record<string, unknown>;
+      for (const [k, x] of Object.entries(o)) {
+        if (typeof x !== 'number' || !isSize(k)) { walk(x, `${at}.${k}`); continue; }
+        sizes++;
+        if (!twins(k).some((t) => o[t] === formatBytes(Math.abs(x)))) untwinned.push(`${at}.${k}`);
+      }
+    };
+    walk(s, 'summary');
+    assert.ok(sizes >= 10, `the walk met the summary's sizes (${sizes})`);
+    assert.deepEqual(untwinned.filter((p) => p !== 'summary.forecast.topGrowers[].bytesPerDay'), [],
+      'every size but a grower\'s bytesPerDay has its formatted twin');
+
     assert.equal(s.largestFiles[0].name, 'huge.bin', 'largest first');
     assert.equal(s.largestFiles[0].size, 2_000_000);
     assert.equal(s.largestFiles[0].sizeFormatted, '2.0 MB');

@@ -1001,7 +1001,9 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/agent/summary',
-    summary: 'One read-only call: top culprits, reclaimable-by-category, and the forecast — raw bytes + formatted, deterministic order',
+    summary:
+      'One read-only call: top culprits, reclaimable-by-category, and the forecast — every size in raw bytes, all but ' +
+      'forecast.topGrowers[].bytesPerDay with a formatted twin; deterministic order',
     tag: 'meta',
     destructive: false,
     parameters: [scanIdQuery],
