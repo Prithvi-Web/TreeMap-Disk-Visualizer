@@ -13,7 +13,7 @@ process.env.TREEMAP_NO_GDU = '1'; // one test runs a real scan of a small folder
 import {
   DEFAULT_FLEET_PORT, FleetConfig, PAIRING_WINDOW_MS, beginPairing, cancelPairing,
   defaultConfig, handlePeerRequest, isPrivateIPv4, lanAddresses, pairingOffer,
-  peerScanRootRefusal, reachesDarwinAutomount, resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode,
+  peerScanRootRefusal, resetFleetConfig, secretMatches, startPeerServer, verifyPairingCode, walkDarwinLinks,
 } from '../src/services/fleet/fleetSync';
 import { FleetSummary, SUMMARY_FIELDS, buildSummary, isForbiddenSummaryField, serialiseSummary } from '../src/services/fleet/fleetSummary';
 import { fleetRuntime, startPeerScan } from '../src/services/fleet/fleetRuntime';
@@ -447,16 +447,117 @@ test('on a Mac a folder whose path reaches an automount folder through a link �
     '/Users/me/to-net', '/Users/me/to-net/nas', '/Users/me/hop/nas', '/Users/me/rel/someone', '/Users/me/rel2/nas', '/Users/me/to-data/home/x',
     '/Users/me/dotdot/home/x', '/home/x',
     '/Volumes/Macintosh HD/Users/me/Documents', '/Users/me/to-docs/x', '/Users/me/loop/x', '/Users/me/missing/x', '/Users/me',
-  ].map((p) => [p, reachesDarwinAutomount(p, io)]));
+  ].map((p) => [p, walkDarwinLinks(p, io)]));
   assert.deepEqual(verdicts, {
-    '/Volumes/Macintosh HD/home/x': true, '/Volumes/Macintosh HD/net/nas': true, '/Volumes/Macintosh HD/Network/Servers/x': true,
-    '/Users/me/to-net': true, '/Users/me/to-net/nas': true, '/Users/me/hop/nas': true, '/Users/me/rel/someone': true, '/Users/me/rel2/nas': true,
-    '/Users/me/to-data/home/x': true, '/Users/me/dotdot/home/x': true, '/home/x': true,
-    '/Volumes/Macintosh HD/Users/me/Documents': false, '/Users/me/to-docs/x': false, '/Users/me/loop/x': false,
-    '/Users/me/missing/x': false, '/Users/me': false,
+    '/Volumes/Macintosh HD/home/x': 'automount', '/Volumes/Macintosh HD/net/nas': 'automount', '/Volumes/Macintosh HD/Network/Servers/x': 'automount',
+    '/Users/me/to-net': 'automount', '/Users/me/to-net/nas': 'automount', '/Users/me/hop/nas': 'automount', '/Users/me/rel/someone': 'automount', '/Users/me/rel2/nas': 'automount',
+    '/Users/me/to-data/home/x': 'automount', '/Users/me/dotdot/home/x': 'automount', '/home/x': 'automount',
+    '/Volumes/Macintosh HD/Users/me/Documents': 'clear', '/Users/me/to-docs/x': 'clear', '/Users/me/loop/x': 'clear',
+    '/Users/me/missing/x': 'clear', '/Users/me': 'clear',
   });
   const inside = looked.filter((p) => automounts.some((a) => path.posix.dirname(p.replace(/^readlink /, '')) === a));
   assert.deepEqual(inside, [], 'no name was looked up inside an automount folder');
+});
+
+/** Whether a lookup (as the stand-ins record it: "<call> <path>") reached a second name, or anything below one. */
+const throughASecondName = (lookup: string): boolean => /^(?:\S+ )?\/\.(?:nofollow|resolve|vol)(?:\/|$)/i.test(lookup);
+
+test('on a Mac the link walk never looks a name up through a second name — /.nofollow, /.resolve or /.vol, typed or where a link leads, absolute or relative, in any case — and ends there: /.nofollow/net/<host> is /net/<host>, and a look through it mounts the host’s share (POL item 1 review, F2.3 and F2.4)', () => {
+  // A stand-in Mac where a second name answers as macOS answers it: as the folder it names.
+  const links: Record<string, string> = {
+    '/Users/me/to-nofollow-net': '/.nofollow/net/tm-no-such-host',
+    '/Users/me/to-vol': '/.vol/16777220/2/net',
+    '/Users/me/rel-alias': '../../.resolve/16777220/2',
+    '/Users/me/to-shouted': '/.NoFollow/Users',
+  };
+  const dirs = new Set(['/Users', '/Users/me', '/.nofollow', '/.NoFollow', '/.nofollow/net', '/.nofollow/System', '/.nofollow/System/Volumes',
+    '/.nofollow/System/Volumes/Data', '/.nofollow/System/Volumes/Data/home', '/.vol', '/.vol/16777220', '/.vol/16777220/2', '/.vol/16777220/2/net',
+    '/.resolve', '/.RESOLVE', '/.resolve/16777220', '/.resolve/16777220/2', '/.NoFollow/Users']);
+  const looked: string[] = [];
+  const io = {
+    lstat(p: string) {
+      looked.push(`lstat ${p}`);
+      if (p in links) return { isSymbolicLink: () => true };
+      if (dirs.has(p)) return { isSymbolicLink: () => false };
+      throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    },
+    readlink(p: string) { looked.push(`readlink ${p}`); return links[p]; },
+  };
+  const verdicts = Object.fromEntries([
+    '/.nofollow/net/tm-no-such-host/share', '/.vol/16777220/2/net/tm-no-such-host', '/.nofollow/System/Volumes/Data/home/tm-no-such-user',
+    '/.RESOLVE/16777220/2/x', '/Users/../.nofollow/net/x',
+    '/Users/me/to-nofollow-net/share', '/Users/me/to-vol/tm-no-such-host', '/Users/me/rel-alias/x', '/Users/me/to-shouted/me',
+    '/Users/me/.nofollow/x', // a folder of that name inside a home is no second name: it is looked up, and is not there
+  ].map((p) => [p, walkDarwinLinks(p, io)]));
+  assert.deepEqual(verdicts, {
+    '/.nofollow/net/tm-no-such-host/share': 'second-name', '/.vol/16777220/2/net/tm-no-such-host': 'second-name',
+    '/.nofollow/System/Volumes/Data/home/tm-no-such-user': 'second-name', '/.RESOLVE/16777220/2/x': 'second-name', '/Users/../.nofollow/net/x': 'second-name',
+    '/Users/me/to-nofollow-net/share': 'second-name', '/Users/me/to-vol/tm-no-such-host': 'second-name', '/Users/me/rel-alias/x': 'second-name',
+    '/Users/me/to-shouted/me': 'second-name',
+    '/Users/me/.nofollow/x': 'clear',
+  });
+  assert.deepEqual(looked.filter(throughASecondName), [], 'nothing was looked up at or through a second name');
+});
+
+test('with macOS stood in for process.platform, the receiver refuses a peer’s folder spelled through a second name, or reached through a link to one, before anything is looked up through it — and a blocked folder before anything is looked up at all — 400 PATH_BLOCKED in words of its own, no scan (POL item 1 review, F2.3 and F2.4)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
+  cfg.allowRemoteScan = true;
+  scansStarted.length = 0;
+  const tmp = fs.realpathSync(fileTempDir('tm-fleet-alias-link-'));
+  fs.symlinkSync('/.nofollow/net/tm-no-such-host', path.join(tmp, 'to-alias'));
+  // Every lookup is recorded. One at or through a second name, in an automount folder, under /dev or of a
+  // tm-no-such name is answered "not there" by the stand-in and never reaches the file system, and nothing
+  // that follows a link (realpath, stat) is let through to the link made here: on this Mac a regression
+  // would otherwise really ask autofs for the host.
+  const never = (p: string): boolean => throughASecondName(p) || /^\/(?:net|Network|home|dev)(?:\/|$)/i.test(p) || p.includes('tm-no-such');
+  const touched: string[] = [];
+  const writable = fs as { lstatSync: typeof fs.lstatSync; statSync: typeof fs.statSync; readlinkSync: typeof fs.readlinkSync };
+  const realpath = fs.realpathSync.native;
+  const { lstatSync: lstat, statSync: stat, readlinkSync: readlink } = writable;
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(real && 'value' in real, 'process.platform is a plain value that can be stood in for');
+  const stand = <F extends (...a: never[]) => unknown>(name: string, fn: F, follows: boolean): F => ((p: fs.PathLike, ...rest: unknown[]) => {
+    touched.push(`${name} ${String(p)}`);
+    if (never(String(p)) || (follows && String(p).includes('to-alias'))) {
+      // "Not there", as the call itself says it: undefined where the caller asked for no throw.
+      if ((rest[0] as { throwIfNoEntry?: boolean } | undefined)?.throwIfNoEntry === false) return undefined;
+      throw Object.assign(new Error(`ENOENT: ${String(p)}`), { code: 'ENOENT' });
+    }
+    return (fn as unknown as (...a: unknown[]) => unknown)(p, ...rest);
+  }) as unknown as F;
+  const answers: unknown[] = [];
+  fs.realpathSync.native = stand('realpath', realpath, true);
+  writable.lstatSync = stand('lstat', lstat, false);
+  writable.statSync = stand('stat', stat, true);
+  writable.readlinkSync = stand('readlink', readlink, false);
+  Object.defineProperty(process, 'platform', { ...real, value: 'darwin' });
+  try {
+    for (const p of ['/.nofollow/net/tm-no-such-host/share', '/.vol/16777220/2/net/tm-no-such-host', '/.nofollow/System/Volumes/Data/home/tm-no-such-user',
+      '/.Resolve/16777220/2', '/dev/tm-no-such-device', path.join(tmp, 'to-alias'), path.join(tmp, 'to-alias', 'share')]) {
+      const r = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: p } });
+      answers.push([p.startsWith(tmp) ? path.relative(tmp, p) : p, r.status, r.body?.code ?? null, /^That machine/.test(String(r.body?.error))]);
+    }
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+    fs.realpathSync.native = realpath;
+    writable.lstatSync = lstat;
+    writable.statSync = stat;
+    writable.readlinkSync = readlink;
+  }
+  assert.deepEqual(answers, [
+    ['/.nofollow/net/tm-no-such-host/share', 400, 'PATH_BLOCKED', true],
+    ['/.vol/16777220/2/net/tm-no-such-host', 400, 'PATH_BLOCKED', true],
+    ['/.nofollow/System/Volumes/Data/home/tm-no-such-user', 400, 'PATH_BLOCKED', true],
+    ['/.Resolve/16777220/2', 400, 'PATH_BLOCKED', true],
+    ['/dev/tm-no-such-device', 400, 'PATH_BLOCKED', true],
+    ['to-alias', 400, 'PATH_BLOCKED', true],
+    [path.join('to-alias', 'share'), 400, 'PATH_BLOCKED', true],
+  ]);
+  assert.deepEqual(touched.filter((t) => never(t.slice(t.indexOf(' ') + 1)) || /^(?:realpath|stat) .*to-alias/.test(t)), [],
+    'nothing was looked up through a second name, at /dev, or by following the link to one');
+  assert.deepEqual(scansStarted, [], 'no scan was started');
 });
 
 test('with macOS stood in for process.platform, the receiver refuses a peer’s folder that a link leads into /home, before any name inside it is looked up — 400 AUTOMOUNT_PATH in words of its own, no scan — while a link to an ordinary folder still scans (POL item 1 review, F1.1)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {

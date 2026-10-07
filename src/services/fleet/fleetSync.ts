@@ -4,7 +4,7 @@ import http from 'http';
 import os from 'os';
 import path from 'path';
 import { readJsonFile, writeJsonFile } from '../storage';
-import { PathRejectedError, foldName, sanitizePath } from '../../utils/pathSanitizer';
+import { PathRejectedError, aliasNamespaceOf, foldName, judgeSpelling, sanitizePath } from '../../utils/pathSanitizer';
 import { AppError } from '../../middleware/errorHandler';
 import { FleetSummary, serialiseSummary } from './fleetSummary';
 
@@ -312,7 +312,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
  * `PathRejectedError`.
  */
 function remoteScanRoot(given: string): string {
-  const refusal = peerScanRootRefusal(given) ?? peerAutomountByLinks(given);
+  const refusal = peerScanRootRefusal(given) ?? peerRefusalByLinks(given);
   if (refusal) throw refusal;
   try {
     return sanitizePath(given);
@@ -366,7 +366,7 @@ function underDarwinAutomount(p: string): boolean {
   return DARWIN_AUTOMOUNT_ROOTS.has(names[onData ? DARWIN_DATA_VOLUME.length : 0] ?? '');
 }
 
-/** What `reachesDarwinAutomount` asks of the file system: the fs module's own, or a stand-in in tests. */
+/** What `walkDarwinLinks` asks of the file system: the fs module's own, or a stand-in in tests. */
 export interface LinkWalkIo {
   lstat(p: string): { isSymbolicLink(): boolean };
   readlink(p: string): string;
@@ -378,39 +378,50 @@ const FS_LINK_WALK_IO: LinkWalkIo = { lstat: (p) => fs.lstatSync(p), readlink: (
 /** More links than this in one path is a loop, which the sanitizer refuses on its own (macOS stops at 32). */
 const MAX_LINKS_FOLLOWED = 40;
 
+/** Where `walkDarwinLinks` ends: in an automount folder, at a second name, or neither. */
+export type DarwinLinkWalk = 'automount' | 'second-name' | 'clear';
+
 /**
- * Whether the absolute POSIX path `p`, resolved one name at a time and following each link in it as the
- * sanitizer's realpath would (a link's `..` from where the link leads), reaches one of macOS's automount
- * folders: the boot volume's own entry in /Volumes (a link to /), /home (a link to the Data volume's),
- * or any link a person made. Answered before any name is looked up inside one, so the walk itself mounts
- * nothing; every name it looks up is one the sanitizer would look up too (POL item 1 review, F1.1).
- * A name that cannot be looked up (missing, unreadable, not a folder) or a loop ends the walk with
- * false: nothing past it can be reached, and the sanitizer then answers as it does for any such path.
+ * Where the absolute POSIX path `p` leads, resolved one name at a time and following each link in it as
+ * the sanitizer's realpath would (a link's `..` from where the link leads): into one of macOS's automount
+ * folders — the boot volume's own entry in /Volumes (a link to /), /home (a link to the Data volume's),
+ * or any link a person made — `'automount'`, answered before any name is looked up inside one, so the walk
+ * itself mounts nothing (POL item 1 review, F1.1).
+ *
+ * Or through a second name — /.nofollow, /.resolve or /.vol, in any case, typed or where a link leads —
+ * `'second-name'`, answered before anything is looked up through it. A second name is the folder it names
+ * under another spelling (/.nofollow/net/<host> is /net/<host>), where no string tells which; walked, the
+ * walk looked a host up inside /net, and the sanitizer refuses that spelling anyway (POL item 1 review,
+ * F2.3 and F2.4).
+ *
+ * A name that cannot be looked up (missing, unreadable, not a folder) or a loop ends the walk `'clear'`:
+ * nothing past it can be reached, and the sanitizer then answers as it does for any such path.
  */
-export function reachesDarwinAutomount(p: string, io: LinkWalkIo = FS_LINK_WALK_IO): boolean {
+export function walkDarwinLinks(p: string, io: LinkWalkIo = FS_LINK_WALK_IO): DarwinLinkWalk {
   const pending = path.posix.resolve(p).split('/').filter((name) => name.length > 0).reverse(); // the next name last
   let at = '/';
   let links = 0;
   for (;;) {
-    if (underDarwinAutomount(at)) return true;
+    if (underDarwinAutomount(at)) return 'automount';
     const name = pending.pop();
-    if (name === undefined) return false;
+    if (name === undefined) return 'clear';
     if (name === '.') continue;
     if (name === '..') {
       at = path.posix.dirname(at);
       continue;
     }
     const next = path.posix.join(at, name);
+    if (aliasNamespaceOf(next, 'darwin') !== null) return 'second-name';
     let target: string;
     try {
       if (!io.lstat(next).isSymbolicLink()) {
         at = next;
         continue;
       }
-      if (++links > MAX_LINKS_FOLLOWED) return false;
+      if (++links > MAX_LINKS_FOLLOWED) return 'clear';
       target = io.readlink(next);
     } catch {
-      return false;
+      return 'clear';
     }
     pending.push(...target.split('/').filter((part) => part.length > 0).reverse());
     if (target.startsWith('/')) at = '/';
@@ -418,15 +429,22 @@ export function reachesDarwinAutomount(p: string, io: LinkWalkIo = FS_LINK_WALK_
 }
 
 /**
- * On a Mac, the refusal a folder another machine asks for earns when a link in it leads into an
- * automount folder (`reachesDarwinAutomount`) — asked after `peerScanRootRefusal` has passed its
- * spelling, and before the sanitizer looks at it. Null elsewhere, and on every other system.
+ * On a Mac, the refusal a folder another machine asks for earns where its links lead (`walkDarwinLinks`):
+ * into an automount folder, or through a second name — refused as the sanitizer refuses one, before its
+ * realpath follows the link there. Asked after `peerScanRootRefusal` has passed its spelling, and before
+ * the sanitizer looks at it. A path the sanitizer refuses from its spelling alone — a second name as
+ * typed, a blocked folder — is left to it: it asks the file system nothing about one, and neither does
+ * this (POL item 1 review, F2.3 and F2.4). Null elsewhere, and on every other system.
  */
-function peerAutomountByLinks(given: string): PathRejectedError | null {
+function peerRefusalByLinks(given: string): PathRejectedError | null {
   if (process.platform !== 'darwin') return null;
   const typed = given.replace(/^\s+/, '');
   const absolute = typed === '~' || typed.startsWith('~/') || typed.startsWith('~\\') ? path.posix.join(os.homedir(), typed.slice(1)) : typed;
-  return reachesDarwinAutomount(absolute) ? new PathRejectedError(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH') : null;
+  if (judgeSpelling(absolute).blocked) return null;
+  const end = walkDarwinLinks(absolute);
+  if (end === 'automount') return new PathRejectedError(PEER_AUTOMOUNT, 'AUTOMOUNT_PATH');
+  if (end === 'second-name') return new PathRejectedError(PEER_PATH_REFUSALS.PATH_BLOCKED, 'PATH_BLOCKED');
+  return null;
 }
 
 /**
