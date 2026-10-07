@@ -192,10 +192,22 @@ test('Windows’ trailing dots and spaces come off every name, whichever separat
 
 test('nothing in the app trims a run of dots and spaces with a regex anchored at a name’s end — that backtracks once per character of a long run inside a name, so one request path could hold the server for seconds — and the loops that do it read every name as before (POL item 8 review, F1.4 and F1.7)', () => {
   // A structural guard, because the repo counts rather than times and no output can tell the two forms
-  // apart: over every string up to length 7 the regex and the loop agree. `[ .]+$`, `[ .]+(?=…)` and
-  // their spellings (`[. ]`, `*`) are the shape: a greedy run that can fail after it, tried from each
-  // start in the run.
-  const shape = /\[(?: \.|\. )\][+*](?:\$|\(\?=)/;
+  // apart: over every string up to length 7 the regex and the loop agree. The shape is a greedy run that
+  // can fail after it, tried from each start in the run: a class — or a group of alternatives — holding a
+  // space (or \s, \x20,  ) and a dot (escaped or not), repeated with +, * or {n,}, then an end anchor,
+  // a lookahead, a group or a class. Its first form knew only `[ .]` and `[. ]` before `$` or `(?=`, and
+  // `[\s.]+$`, `[ \.]+$`, `(?:\.| )+$`, `[ .]{1,}$` and `[ .]+([\\/]|$)` all passed it (its review, F2.6).
+  const run = /(\[(?!\^)((?:\\.|[^\]\\])*)\]|\((?:\?:)?((?:\\.|[^()\\])*)\))(?:[+*]|\{\d+,\})\??(?=\$|\(|\[)/g;
+  const shape = { test: (line: string): boolean => [...line.matchAll(run)].some((m) => {
+    const held = m[2] ?? m[3] ?? '';
+    return /(?: |\\s|\\x20|\\u0020)/.test(held) && /\./.test(held);
+  }) };
+  assert.deepEqual({
+    caught: ['[ .]+$', '[. ]*$', '[ .]+(?=[\\\\/]|$)', '[ \\.]+$', '[\\s.]+$', '[.\\s]+$', '[\\x20.]+$', '(?:\\.| )+$', '[ .]{1,}$', '[ .]+([\\\\/]|$)']
+      .filter((spelling) => !shape.test(`.replace(/${spelling}/, '')`)),
+    passed: ['[^ .]+$', '[ .]+', '\\s+$', '[a-z.]+$', '[ .]{1,5}$', '[\\s]+$']
+      .filter((spelling) => shape.test(`.replace(/${spelling}/, '')`)),
+  }, { caught: [], passed: [] }, 'every spelling of the shape is caught, and a run without both, or bounded, or not followed by anything that can fail, is not');
   const files: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

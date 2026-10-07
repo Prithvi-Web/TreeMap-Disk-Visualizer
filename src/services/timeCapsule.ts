@@ -1451,6 +1451,18 @@ export async function planProtection(
 }
 
 /**
+ * `text` without the run of white space and full stops it ends in, so the sentence it goes into does not
+ * double its full stop. A loop, not a regex anchored at the end, which backtracks once per character of a
+ * long run inside the text — a reason can quote a path (tests/spillLeafLink.test.ts reads all of src/ for
+ * that shape; POL item 8 review, F2.6).
+ */
+function withoutClosingStops(text: string): string {
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '.' || /\s/.test(text[end - 1]))) end--;
+  return text.slice(0, end);
+}
+
+/**
  * The one entry point for automated deletion: copy → verify → Trash.
  *
  * Everything that could not be protected is simply not deleted, and says why.
@@ -1594,7 +1606,7 @@ async function protectAndTrashInFlight(
       // when the Trash was never asked: its check held the whole batch back (FG3c), or it refused
       // this one item itself, a name Windows would trim (FG3d #9) — a sentence of its own, whose
       // full stop is not doubled.
-      const why = (refusedBecause.get(outcome.path) ?? '').replace(/[\s.]+$/, '');
+      const why = withoutClosingStops(refusedBecause.get(outcome.path) ?? '');
       const byTreeMap = heldBackBeforeTrash || refusedByTreeMap.has(outcome.path);
       const refusal = `${byTreeMap ? 'TreeMap did not hand it to the Trash' : 'The Trash did not take it'}: ${why}. It is still in place, untouched`;
       const code = stoppedBecause.get(outcome.path);
