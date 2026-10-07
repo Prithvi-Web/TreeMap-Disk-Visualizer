@@ -131,8 +131,10 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
  * `GET /api/timecapsule/jobs/{jobId}/progress` — because it is the capsule's
  * restore, not a second one (§10: no new pathway). An item whose copy is gone
  * since (evicted to make room, expired, or missing from the capsule folder) — or
- * a record in the run TreeMap did not make (FG3g L9) — is named in
- * `unrestorable`, never passed over in silence (FG3f #3).
+ * a record in the run whose id is not one TreeMap gives (FG3g L9) — is named in
+ * `unrestorable`, never passed over in silence (FG3f #3). A record with such an
+ * id whose place or manifest TreeMap would not write refuses the whole undo,
+ * 409 CAPSULE_RECORD_INVALID, as the restore checks every copy first (FG3d #6).
  *
  * Idempotency-Key'd, so a retried undo cannot start a second restore of the
  * same run.

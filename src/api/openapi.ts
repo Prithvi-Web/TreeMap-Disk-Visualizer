@@ -93,6 +93,29 @@ const indexBuilding202 = jsonResponse(
   obj({ status: str("Always 'running'"), root: opaque('The indexed root as it stands: path, state, counters') }, ['status', 'root']),
 );
 
+/** GET /api/index/{jobId}/result while its build runs: the body indexRoutes.ts sends, not a scan's. */
+const indexRunning202 = jsonResponse(
+  'Build still running — retry when it completes',
+  obj(
+    {
+      status: str("Always 'running'"),
+      phase: str('enumerating while the files are written as the walk finds them, summing while the folders are written last'),
+      processed: int('Rows written so far'),
+      currentPath: str(),
+    },
+    ['status'],
+  ),
+);
+
+/**
+ * The refusals an undo meets in the Time Capsule restore it starts, which check every copy before any
+ * is put back: any one refuses the whole undo, nothing put back (F1.17, F1.18).
+ */
+const UNDO_RESTORE_409 =
+  'and, from the restore it starts, which checks every copy before it puts any back: PATH_OCCUPIED (something stands at an item\'s place), ' +
+  'PATH_UNREADABLE (an item\'s place could not be looked at), PAYLOAD_GONE, MANIFEST_UNREADABLE, or CAPSULE_RECORD_INVALID (a record ' +
+  'with a TreeMap id whose original place or manifest TreeMap would not write) — any of them refuses the whole undo, and nothing is put back';
+
 /** The allocation routes' answer while the index that holds the path is being built (plan U-7): no figure. */
 const allocationBuilding202 = jsonResponse(
   'The index that holds this path is still being built — nothing is summed from a partial index; retry when it is ready',
@@ -745,12 +768,13 @@ const schemas: Json = {
       dryRun: bool('Always true'),
       wouldTrash: arr(obj({ path: str(), bytes: nullable(int('null when no scan knows this path')) }, ['path', 'bytes'])),
       totalKnownBytes: int(),
+      openHandles: opaque("B2's preflight, always sent: what a program is holding open right now in these paths — a real run refuses 409 OPEN_HANDLE_CONFLICT on any of them unless ignoreOpenHandles: true"),
       notEmpty: arr(
         obj({ path: str(), code: { type: 'string', enum: [...EMPTY_FOLDER_REFUSAL_CODES] }, reason: str() }, ['path', 'code', 'reason']),
         'Present only with onlyEmptyFolders: the paths the real run would leave, because each is not still an empty folder; they are not in wouldTrash',
       ),
     },
-    ['dryRun', 'wouldTrash', 'totalKnownBytes'],
+    ['dryRun', 'wouldTrash', 'totalKnownBytes', 'openHandles'],
     'What DELETE /api/files would do — nothing has been touched',
   ),
   OffloadDryRunManifest: obj(
@@ -2129,7 +2153,12 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'offload',
     destructive: false,
     requestBody: jsonBody(obj({ id: str('Offload entry id') }, ['id'])),
-    responses: { '200': jsonResponse('Revealed', obj({ revealed: str() }, ['revealed'])), '404': errorResponse('Unknown entry') },
+    responses: {
+      '200': jsonResponse('Revealed', obj({ revealed: str() }, ['revealed'])),
+      '400': errorResponse('ID_REQUIRED — the body has no "id"'),
+      '403': errorResponse('OUTSIDE_DEST_ROOT — the record names a place outside its own destination, both resolved, so nothing was revealed'),
+      '404': errorResponse('ENTRY_NOT_FOUND — unknown entry'),
+    },
   },
   {
     method: 'post',
@@ -2432,7 +2461,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'index',
     destructive: false,
     parameters: [pathParam('jobId', 'Job id from POST /api/index/build')],
-    responses: { '200': sseResponse('progress / complete / error / shutdown frames. A progress frame\'s processed is the rows written so far, and moves with every write of at most 500 rows: phase enumerating while the files are written as the walk finds them, summing while the folders are written last, each with its total. An error frame\'s processed is how many entries the walk had found. An error frame for a build stopped at its cap also carries code INDEX_CAP_REACHED and maxEntries') },
+    responses: { '200': sseResponse('progress / complete / error / shutdown frames. A progress frame\'s processed is the rows written so far, and moves with every write of at most 500 rows: phase enumerating while the files are written as the walk finds them, summing while the folders are written last, each with its total. An error frame for a build stopped at its cap also carries code INDEX_CAP_REACHED and maxEntries') },
   },
   {
     method: 'get',
@@ -2443,7 +2472,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     parameters: [pathParam('jobId', 'Job id from POST /api/index/build')],
     responses: {
       '200': jsonResponse('Index root', opaque('status, root')),
-      '202': running202,
+      '202': indexRunning202,
       '404': errorResponse('JOB_NOT_FOUND'),
       '409': errorResponse('INDEX_CAP_REACHED — the build stopped at its maxEntries (carried in the body): the folder holds more than it may write. Nothing failed; the saved index, if any, is as it was'),
       '500': errorResponse('INDEX_BUILD_FAILED — the build failed or was cancelled. A folder that is gone or cannot be listed is refused with a sentence before anything is written, and its saved index is kept'),
@@ -2818,7 +2847,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '202': jsonResponse('Restore started', obj({ jobId: str() }, ['jobId'])),
       '404': errorResponse('ENTRY_NOT_FOUND — no such entry'),
-      '409': errorResponse('PATH_OCCUPIED, ALREADY_RESTORED (put back already, or just now and still being recorded), PAYLOAD_GONE, MANIFEST_UNREADABLE, RESTORE_RUNNING (a restore of that copy is already under way) or CAPSULE_RECORD_INVALID (the entry\'s id, its original place or its manifest\'s names are not what TreeMap records) — restoring never overwrites what is there now, and never follows a record TreeMap did not write'),
+      '409': errorResponse('PATH_OCCUPIED, PATH_UNREADABLE (its original place could not be looked at — a folder above it cannot be searched — so nothing was put there), ALREADY_RESTORED (put back already, or just now and still being recorded), PAYLOAD_GONE, MANIFEST_UNREADABLE, RESTORE_RUNNING (a restore of that copy is already under way) or CAPSULE_RECORD_INVALID (the entry\'s id, its original place or its manifest\'s names are not what TreeMap records) — restoring never overwrites what is there now, and never follows a record TreeMap did not write'),
     },
   },
   {
@@ -2957,10 +2986,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         jobId: str(),
         entryCount: int(),
         passedOver: arr(opaque('{ path, reason } — a copy of an unconfirmed item not put back yet (its place is not empty), saying what the disk showed; the run stays undoable for it')),
-        unrestorable: arr(opaque('{ path, reason } — an item of the run whose Time Capsule copy is gone (evicted to make room, expired, or missing from the capsule folder — or a record in the run that TreeMap did not make), which no undo can put back; the run is then not marked undone')),
+        unrestorable: arr(opaque('{ path, reason } — an item of the run whose Time Capsule copy is gone (evicted to make room, expired, or missing from the capsule folder), or a record in the run whose id is not one TreeMap gives, which no undo can put back; the run is then not marked undone. A record with a TreeMap id whose original place or manifest TreeMap would not write refuses the whole undo instead (409 CAPSULE_RECORD_INVALID)')),
       }, ['jobId', 'entryCount'])),
       '404': errorResponse('RUN_NOT_FOUND'),
-      '409': errorResponse('NOTHING_TO_UNDO (the sentence says what the disk showed of each copy still held), ALREADY_UNDONE, CAPSULE_EMPTY or RESTORE_RUNNING (an undo or restore of the same copies is already under way) — refused rather than half-undone'),
+      '409': errorResponse('NOTHING_TO_UNDO (the sentence says what the disk showed of each copy still held), ALREADY_UNDONE, CAPSULE_EMPTY or RESTORE_RUNNING (an undo or restore of the same copies is already under way) — refused rather than half-undone; ' + UNDO_RESTORE_409),
     },
   },
   {
@@ -3109,11 +3138,13 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Commit the cleanup cart: protect in the Time Capsule, verify, then Trash — as one undoable run',
     tag: 'cart',
     destructive: true,
+    parameters: [idempotencyHeader],
     requestBody: jsonBody(
       obj(
         {
           paths: arr(str(), 'Absolute paths inside a scanned root; at most 500 per request'),
           dryRun: bool('Return the exact manifest, having acted on nothing'),
+          carryOver: arr(opaque('Opaque: an entry of the carryOver a previous dry run returned'), 'Dry run only: the carryOver the dry run of the previous batch of the same cart returned, handed back unchanged — so this batch plans against the room the earlier batches would already use (a dry run writes nothing). Leave it out for the first batch'),
           runId: str('Continue the run a previous commit started, so a cart larger than one request is still ONE undoable unit. Must be the id that commit returned'),
         },
         ['paths'],
@@ -3132,6 +3163,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             evicts: arr(opaque('{ id, name, originalPath, bytes } — older capsule copies that would be dropped to make room')),
             capsule: opaque('{ available, reason?, capBytes, usedBytes }'),
             openHandles: opaque("B2's preflight: what a program is holding open right now"),
+            carryOver: arr(opaque('Opaque'), 'Dry run only: hand it back unchanged with the next batch\'s dry run of the same cart'),
             trashed: arr(str(), 'Real run only. An item staged inside another staged item (by where each is on the disk) is listed too, once the disk no longer shows it: it went to the Trash inside it, and its bytes are counted once, there'),
             bytesFreed: int('Real run only'),
             skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected (CAPSULE_FULL also when they do not fit beside the copies this run already holds, which are never evicted), their copy was gone by their own trash step (CAPSULE_COPY_GONE), they changed between their copy and their trash step (CAPSULE_CHANGED; the copy is discarded), the Trash refused them (or TreeMap did not hand them to it), the item holding them was not deleted, or the Trash reported taking the item holding them while the disk still shows them in place (code NOT_DELETED)')),
@@ -3154,6 +3186,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Put a whole cart commit back from the Time Capsule, at the original paths',
     tag: 'cart',
     destructive: true,
+    parameters: [idempotencyHeader],
     requestBody: jsonBody(obj({ runId: str('The runId POST /api/cart/commit returned') }, ['runId'])),
     responses: {
       '202': jsonResponse(
@@ -3163,11 +3196,11 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           entryCount: int(),
           bytesTotal: int(),
           passedOver: arr(opaque('{ path, reason } — a copy of an unconfirmed item not put back yet (its place is not empty), saying what the disk showed; a later undo can still put it back')),
-          unrestorable: arr(opaque('{ path, reason } — an item of the commit whose Time Capsule copy is gone (evicted to make room, expired, or missing from the capsule folder — or a record in the run that TreeMap did not make), which no undo can put back')),
+          unrestorable: arr(opaque('{ path, reason } — an item of the commit whose Time Capsule copy is gone (evicted to make room, expired, or missing from the capsule folder), or a record in the run whose id is not one TreeMap gives, which no undo can put back. A record with a TreeMap id whose original place or manifest TreeMap would not write refuses the whole undo instead (409 CAPSULE_RECORD_INVALID)')),
         }, ['jobId', 'entryCount', 'bytesTotal']),
       ),
       '400': errorResponse('RUN_ID_REQUIRED'),
-      '409': errorResponse('ALREADY_UNDONE — an undo already put back everything it could (and the sentence counts any item whose copy is gone); CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — no copy it holds can be put back now, and the sentence says what the disk showed of each: the same file still in its place, never deleted, something else standing there, or a place that could not be looked at; RESTORE_RUNNING — an undo or restore of the same copies is already under way'),
+      '409': errorResponse('ALREADY_UNDONE — an undo already put back everything it could (and the sentence counts any item whose copy is gone); CAPSULE_EMPTY — the copies are gone, so it cannot be undone; NOTHING_TO_UNDO — no copy it holds can be put back now, and the sentence says what the disk showed of each: the same file still in its place, never deleted, something else standing there, or a place that could not be looked at; RESTORE_RUNNING — an undo or restore of the same copies is already under way; ' + UNDO_RESTORE_409),
     },
   },
 

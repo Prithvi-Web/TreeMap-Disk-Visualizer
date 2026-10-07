@@ -114,9 +114,11 @@ autopilotRouter.get('/autopilot/runs', async (req: Request, res: Response) => {
  * Puts back everything the run deleted, from the Time Capsule, as one verified
  * restore job. Refuses outright when the capsule no longer holds any of the run.
  * When it holds only part of it — a copy evicted since to make room, expired or
- * missing, or a record of the run TreeMap did not make (FG3g L9) — it puts
- * back what it holds and names the rest in `unrestorable`, and the run is not
- * marked undone: never "restored part of it and reported success" (FG3f #3).
+ * missing, or a record of the run whose id is not one TreeMap gives (FG3g L9) —
+ * it puts back what it holds and names the rest in `unrestorable`, and the run
+ * is not marked undone: never "restored part of it and reported success" (FG3f
+ * #3). A record with such an id whose place or manifest TreeMap would not write
+ * refuses the whole undo (409 CAPSULE_RECORD_INVALID), as a restore does.
  */
 autopilotRouter.post('/autopilot/runs/:id/undo', idempotency, async (req: Request, res: Response) => {
   const id = String(req.params.id);
