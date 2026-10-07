@@ -10,6 +10,7 @@ isolatedDataDir('treemap-securityHygiene-data-');
 import {
   SECURITY_PATTERNS,
   collectSecurityFindings,
+  linkedFileSize,
   relocateSecret,
   relocationTargetFor,
 } from '../src/services/securityHygieneScanner';
@@ -366,6 +367,24 @@ test('a hard link’s second name shows the file’s own size, not the 0 the sca
   const unknown = collectSecurityFindings(treeWith(HOME, [second]), [], HOME, () => null).findings;
   assert.equal(unknown.length, 1, 'still listed');
   assert.equal(unknown[0].size, null, 'its size is unknown, not 0');
+});
+
+test('a second name’s size is read from the file system: its bytes for a file, unknown — never 0 B — when it is gone or not a file (B17 review)', () => {
+  // The default sizeOfLinkedName. The test above injects its answers, so this
+  // is where the real metadata read's failure branches are held to null.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-sec-size-'));
+  try {
+    const cert = path.join(dir, 'GlobalSignRootCA.pem');
+    fs.writeFileSync(cert, 'x'.repeat(1261));
+    const empty = path.join(dir, 'empty.pem');
+    fs.writeFileSync(empty, '');
+    assert.equal(linkedFileSize(cert), 1261, 'a file’s own byte size');
+    assert.equal(linkedFileSize(empty), 0, 'an empty file is a measured 0');
+    assert.equal(linkedFileSize(path.join(dir, 'vanished.pem')), null, 'a name whose file is gone is unknown, not 0 B');
+    assert.equal(linkedFileSize(dir), null, 'a folder is not a file to size, not 0 B');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('both names of a real hard-linked certificate show its size after a scan (B17)', { skip: process.platform === 'win32' && 'hard links need NTFS privileges on some runners' }, async () => {
