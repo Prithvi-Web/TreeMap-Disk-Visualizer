@@ -1800,6 +1800,10 @@ test('B33: a history frame says how much its snapshot did not keep — the dark 
   assert.match(history, /3500 B in this snapshot has no rectangle/, 'clips is 5,000 B with 1,500 B kept inside it');
   assert.match(history, /History keeps/, 'and why: what a snapshot keeps');
   assert.doesNotMatch(history, /20,000/, 'not the node cap, which this map is far below');
+  // Review F1.4: it ended "The live map shows everything." — but the live map
+  // is asked with a 4 KB floor and a 20,000-item cap, and says so itself.
+  assert.doesNotMatch(history, /live map/i, 'no promise about the live map, which has its own floor and cap');
+  assert.match(history, /has no rectangle\.$/, 'the note ends on what it knows: the bytes this snapshot did not keep');
   assert.equal(capNote(nodes, 7000, false), '', 'the live map below the cap still says nothing');
   const whole = [{ path: '/r/a', size: 4000, depth: 1, expanded: false }, { path: '/r/b', size: 3000, depth: 1, expanded: false }];
   assert.equal(capNote(whole, 7000, true), '', 'a snapshot that kept everything has nothing to explain');

@@ -448,7 +448,9 @@ function tmNodeCapNote() {
   // A history frame keeps each folder's biggest items a few levels deep
   // (snapshots.ts compactTree), so it can leave dark holes far below the cap;
   // they were unexplained (B33). Said for a frame that IS a snapshot — not
-  // for the blends time-lapse playback draws between two.
+  // for the blends time-lapse playback draws between two. It promises
+  // nothing about the live map, which has a floor and a cap of its own
+  // (review F1.4: "The live map shows everything" was not true).
   const historyFrame = !!(state.treemap.history && state.treemap.history.active);
   if (historyFrame && state.treemap.lapse && state.treemap.lapse.playing) return '';
   let sent = 0;
@@ -471,7 +473,7 @@ function tmNodeCapNote() {
         + `${formatBytes(blank)} has no rectangle here — drill in, or open the Grid view, to see the rest.`
         + (floor > 1 ? ` That figure counts files under ${formatBytes(floor)} too, which the map does not draw; the Grid view lists them.` : '')
       : `History keeps each folder's biggest items, a few levels deep — not every file: ${formatBytes(blank)} in this snapshot `
-        + 'has no rectangle. The live map shows everything.';
+        + 'has no rectangle.';
   tmCapMemo = { nodes, rootSize: state.treemap.rootSize, floor, note };
   return note;
 }
