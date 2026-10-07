@@ -418,6 +418,120 @@ test('while the selection bar is up, toasts sit above it rather than over its bu
     `the stack starts at ${px(lifted.get('bottom'))}px, above the bar's top at ~${barTop}px`);
 });
 
+/* ══════════════ B22 + B36 — the selection bar, the cart pill and the treemap's hint ══════════════ */
+
+/** A shorthand side list → [top, right, bottom, left] in px. */
+function sides4(v: string): number[] {
+  const p = v.trim().split(/\s+/).map((s) => (s === '0' ? 0 : px(s)));
+  return [p[0], p[1] ?? p[0], p[2] ?? p[0], p[3] ?? p[1] ?? p[0]];
+}
+
+/**
+ * The selection bar's controls, each a width estimate: 7 px a character of
+ * 13 px text, a 16 px icon and its 7 px gap, the .btn padding and border. The
+ * count line is the long form ("12,345 items selected — 123.4 GB").
+ */
+function selectionBarItems(): number[] {
+  const btnPad = sides4(declsOf('.btn').get('padding') || '0')[1];
+  const bar = INDEX.slice(INDEX.indexOf('<div class="glass" id="selectionBar">'), INDEX.indexOf('<!-- ═══════════ Offload progress'));
+  const buttons = [...bar.matchAll(/<button class="btn[^"]*" id="(\w+)"[^>]*>(<span data-icon="\w+"><\/span>)?([^<]+)<\/button>/g)];
+  assert.deepEqual(buttons.map((b) => b[1]), ['selOffloadBtn', 'selTrashBtn', 'selClearBtn'], 'the bar’s three buttons');
+  return ['12,345 items selected — 123.4 GB'.length * 7,
+    ...buttons.map((b) => (b[2] ? 16 + 7 : 0) + b[3].length * 7 + 2 * btnPad + 2)];
+}
+
+/** Rows a wrapping flex line needs for `items` in `inner` px with `gap` between them. */
+function rowsFor(items: number[], inner: number, gap: number): number {
+  let rows = 1, used = 0;
+  for (const w of items) {
+    if (used && used + gap + w > inner) { rows++; used = w; } else used += (used ? gap : 0) + w;
+  }
+  return rows;
+}
+
+/** The selection bar's box in a W-px window: left/right edges, bottom and height. */
+function barBox(W: number, H: number, st: PageState) {
+  const bar = cascade('#selectionBar', st);
+  const vars = scope(st, bar);
+  assert.match(bar.get('transform') || '', /^translateX\(-50%\)/, 'the bar is centred on its own width');
+  const centre = evalLen(bar.get('left')!, vars, W, H);
+  const maxW = bar.has('max-width') ? evalLen(bar.get('max-width')!, vars, W, H) : Infinity;
+  const [padY, padX] = sides4(bar.get('padding')!);
+  const gaps = (bar.get('gap') || '0').split(/\s+/).map((g) => px(g));
+  const rowGap = gaps[0], colGap = gaps[1] ?? gaps[0];
+  const items = selectionBarItems();
+  const natural = items.reduce((s, w) => s + w, 0) + colGap * (items.length - 1) + 2 * padX + 2;
+  const width = Math.min(natural, maxW);
+  const rows = natural <= maxW ? 1 : rowsFor(items, width - 2 * padX - 2, colGap);
+  if (rows > 1) assert.equal(bar.get('flex-wrap'), 'wrap', 'a bar narrower than its controls wraps them rather than overflowing');
+  const btnH = px(declsOf('.btn').get('min-height'));
+  const height = 2 * padY + 2 + rows * btnH + (rows - 1) * rowGap;
+  return { x0: centre - width / 2, x1: centre + width / 2, bottom: px(bar.get('bottom')), height, rows };
+}
+
+/** The cart pill (#cartTab) height: its padding and border around a 17 px icon or a 13 px line. */
+function pillHeight(): number {
+  const tab = declsOf('#cartTab');
+  return 2 * sides4(tab.get('padding')!)[0] + 2 + Math.max(17, px(tab.get('font-size')) * 1.35);
+}
+
+test('the selection bar never shares a pixel with the cart pill, the preview pane or the sidebar — at every window size (B22)', () => {
+  // QA: with the preview pane open the cart pill sat over "Move to Trash" and
+  // "Clear" (1440, 1320 and 1024 wide); at 1024 the pane covered the bar's
+  // end too. The bar was centred on the WINDOW, blind to the sidebar, the
+  // pane and the pill.
+  const pillH = pillHeight();
+  let checked = 0;
+  for (const W of [MIN_W, 1180, 1320, 1440, 1920]) {
+    for (const collapsed of [false, true]) {
+      for (const preview of [false, true]) {
+        for (const cart of [false, true]) {
+          const active = ['#selectionBar.visible', ...(cart ? ['#cartDock.show'] : []), ...(collapsed ? ['#sideNav.collapsed'] : [])];
+          const st: PageState = { active, preview };
+          const label = `${W}px, sidebar ${collapsed ? 'rail' : 'open'}${preview ? ', preview' : ''}${cart ? ', cart' : ''}`;
+          const b = barBox(W, MIN_H, st);
+          const sideEdge = 12 + px(collapsed ? declsOf(':root').get('--side-w-rail') : declsOf(':root').get('--side-w'));
+          assert.ok(b.x0 >= sideEdge, `${label}: the bar starts at ${b.x0.toFixed(0)}px, the sidebar ends at ${sideEdge}px`);
+          assert.ok(b.x1 <= W, `${label}: the bar ends inside the window (${b.x1.toFixed(0)}px)`);
+          if (preview) {
+            const pane = W - px(declsOf('#previewPane').get('width'));
+            assert.ok(b.x1 <= pane, `${label}: the bar ends at ${b.x1.toFixed(0)}px, the preview pane starts at ${pane}px`);
+          }
+          if (cart) {
+            const dock = cascade('#cartDock', st);
+            const dockBottom = px(dock.get('bottom'));
+            const pillLeft = rightSurfaces(W, st).find((r) => r.name === 'the cart dock')!.left;
+            const pillRight = pillLeft + px(declsOf('#cartDock').get('width'));
+            const apartX = b.x1 <= pillLeft || b.x0 >= pillRight;
+            const apartY = b.bottom + b.height <= dockBottom || dockBottom + pillH <= b.bottom;
+            assert.ok(apartX || apartY,
+              `${label}: the bar (${b.x0.toFixed(0)}–${b.x1.toFixed(0)}px, up to ${(b.bottom + b.height).toFixed(0)}px) and the pill (${pillLeft}–${pillRight}px from ${dockBottom}px up) overlap`);
+          }
+          const toasts = px(cascade('#toasts', st).get('bottom'));
+          assert.ok(toasts >= b.bottom + b.height + 6, `${label}: toasts start at ${toasts}px, above the bar's top at ${(b.bottom + b.height).toFixed(0)}px`);
+          checked++;
+        }
+      }
+    }
+  }
+  assert.equal(checked, 40, 'every size and state was checked');
+});
+
+test('the cart pill leaves the bottom of the page clear, so the treemap’s hint line is never under it (B36)', () => {
+  // QA: "click to drill in · drag to lass" — the pill covered the rest of the
+  // hint (lasso, magnifier, Esc), the only on-screen mention of those
+  // gestures. The map is fitted to the window less <main>'s bottom padding,
+  // so the footer's last line sits that far above the window's bottom edge.
+  const padB = (st: PageState) => {
+    const m = cascade('main', st);
+    return m.has('padding-bottom') ? px(m.get('padding-bottom')) : sides4(m.get('padding')!)[2];
+  };
+  const pillTop = px(declsOf('#cartDock').get('bottom')) + pillHeight();
+  const withCart = padB({ active: ['#cartDock.show'] });
+  assert.ok(withCart >= pillTop + 8, `with the cart up the page ends ${withCart}px above the bottom; the pill reaches ${pillTop.toFixed(1)}px`);
+  assert.ok(padB({ active: [] }) < withCart, 'and with no cart the page keeps its own, smaller bottom margin');
+});
+
 test('while a dialog is open, toasts sit above the sheet, at the smallest window too (D08)', () => {
   const up = cascade('#toasts', { active: ['.modal-backdrop.open'] });
   assert.equal(up.get('bottom'), 'auto', 'no longer anchored to the bottom, where a tall sheet keeps its footer buttons');
@@ -446,7 +560,8 @@ test('a dialog opened from the selection bar still puts toasts at the top, and t
   const both = cascade('#toasts', { active: ['#selectionBar.visible', '.modal-backdrop.open'] });
   assert.equal(both.get('bottom'), 'auto', 'the dialog slot outranks the selection-bar lift');
   assert.equal(both.get('top'), declsOf('body:has(.modal-backdrop.open) #toasts').get('top'), 'the stack sits at the top of the scrim');
-  assert.equal(cascade('#toasts', { active: ['#selectionBar.visible'] }).get('bottom'), '90px', 'with no dialog the lift still applies');
+  assert.equal(cascade('#toasts', { active: ['#selectionBar.visible'] }).get('bottom'),
+    declsOf('body:has(#selectionBar.visible) #toasts').get('bottom'), 'with no dialog the lift still applies');
   assert.equal(cascade('#toasts', { active: [] }).get('top'), undefined, 'and the resting slot is the bottom');
   // A box with no background still takes the clicks that land on it: the
   // stack is see-through to the pointer, the toasts on it are not.

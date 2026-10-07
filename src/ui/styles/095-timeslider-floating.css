@@ -114,7 +114,9 @@ body:has(#tourOverlay:not([hidden])) { --tr-tour: 378px; }
   transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   width: max-content; max-width: var(--toast-room); pointer-events: none; }
-body:has(#selectionBar.visible) #toasts { bottom: 90px; }
+/* Above the selection bar's tallest form: it wraps to two rows beside an open
+   preview pane (QA B22). The same line the cart dock steps up to. */
+body:has(#selectionBar.visible) #toasts { bottom: 124px; }
 body:has(.modal-backdrop.open) #toasts,
 body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bottom: auto; }
 .toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px;

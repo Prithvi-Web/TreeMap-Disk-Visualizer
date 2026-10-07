@@ -1264,9 +1264,17 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    off-screen alone left "Offload…", "Move to Trash" and "Clear" in the Tab
    order and the accessibility tree (QA D02). visibility, not inert — the
    dialog focus net rewrites every body-level element's inert flag whenever a
-   sheet closes. Hiding waits for the slide-out; showing is immediate. */
-#selectionBar { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(96px);
-  display: flex; align-items: center; gap: 14px; padding: 11px 18px; z-index: 60;
+   sheet closes. Hiding waits for the slide-out; showing is immediate.
+   It is centred in the strip the sidebar and the preview pane leave (the
+   toast stack's --toast-l / --tr-pane), capped to that strip, and wraps its
+   controls onto a second row there: centred on the window it ran under the
+   pane at 1024 px, and under the cart pill with the pane open at any width
+   (QA B22). The cart dock steps up above it while it is up (045-cart.css). */
+#selectionBar { position: fixed; bottom: 22px;
+  left: calc(var(--toast-l) + (100vw - var(--toast-l) - var(--tr-pane)) / 2);
+  width: max-content; max-width: max(240px, calc(100vw - var(--toast-l) - var(--tr-pane) - 24px));
+  transform: translateX(-50%) translateY(calc(100% + 30px));
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px 14px; padding: 11px 18px; z-index: 60;
   --lg-tint: var(--lg-tint-strong); visibility: hidden;
   transition: transform var(--dur-3) var(--ease), visibility 0s linear var(--dur-3); font-size: 13px; }
 #selectionBar.visible { transform: translateX(-50%) translateY(0); visibility: visible;
@@ -1282,6 +1290,18 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 #cartDock { position: fixed; right: 22px; bottom: 22px; z-index: 80; display: none;
   flex-direction: column; align-items: stretch; gap: 10px; width: 366px; max-width: 92vw; }
 #cartDock.show { display: flex; }
+/* While the Grid's selection bar is up, the dock steps up above it: the pill
+   sat on "Move to Trash" and "Clear" (QA B22). 124 px = the bar's 22 px
+   gutter + its tallest form at the desktop window's sizes (two rows, 92 px)
+   + 10 px; the toast stack lifts to the same line (095-timeslider-floating). */
+body:has(#selectionBar.visible) #cartDock { bottom: 124px; }
+/* The pill rests over the bottom ~64 px of the window, so while the cart
+   holds anything <main> keeps that much clear: the treemap's hint line
+   ("click to drill in · drag to lasso…") was cut at "lass" under it (QA
+   B36), and no view's last row could be scrolled out from under it. The map
+   is fitted to the window less this padding (treemapCanvasHeight) and refits
+   when the dock appears (tmRefitMap watches #cartDock). */
+body:has(#cartDock.show) main { padding-bottom: 76px; }
 #cartPanel { display: none; flex-direction: column; max-height: 54vh; overflow: hidden;
   border: 1px solid var(--hairline-2); border-radius: var(--r-lg); box-shadow: var(--shadow-3);
   --lg-tint: var(--lg-tint-strong);
@@ -2706,7 +2726,9 @@ body:has(#tourOverlay:not([hidden])) { --tr-tour: 378px; }
   transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   width: max-content; max-width: var(--toast-room); pointer-events: none; }
-body:has(#selectionBar.visible) #toasts { bottom: 90px; }
+/* Above the selection bar's tallest form: it wraps to two rows beside an open
+   preview pane (QA B22). The same line the cart dock steps up to. */
+body:has(#selectionBar.visible) #toasts { bottom: 124px; }
 body:has(.modal-backdrop.open) #toasts,
 body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bottom: auto; }
 .toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px;

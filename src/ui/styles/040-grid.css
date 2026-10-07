@@ -56,9 +56,17 @@
    off-screen alone left "Offload…", "Move to Trash" and "Clear" in the Tab
    order and the accessibility tree (QA D02). visibility, not inert — the
    dialog focus net rewrites every body-level element's inert flag whenever a
-   sheet closes. Hiding waits for the slide-out; showing is immediate. */
-#selectionBar { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(96px);
-  display: flex; align-items: center; gap: 14px; padding: 11px 18px; z-index: 60;
+   sheet closes. Hiding waits for the slide-out; showing is immediate.
+   It is centred in the strip the sidebar and the preview pane leave (the
+   toast stack's --toast-l / --tr-pane), capped to that strip, and wraps its
+   controls onto a second row there: centred on the window it ran under the
+   pane at 1024 px, and under the cart pill with the pane open at any width
+   (QA B22). The cart dock steps up above it while it is up (045-cart.css). */
+#selectionBar { position: fixed; bottom: 22px;
+  left: calc(var(--toast-l) + (100vw - var(--toast-l) - var(--tr-pane)) / 2);
+  width: max-content; max-width: max(240px, calc(100vw - var(--toast-l) - var(--tr-pane) - 24px));
+  transform: translateX(-50%) translateY(calc(100% + 30px));
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px 14px; padding: 11px 18px; z-index: 60;
   --lg-tint: var(--lg-tint-strong); visibility: hidden;
   transition: transform var(--dur-3) var(--ease), visibility 0s linear var(--dur-3); font-size: 13px; }
 #selectionBar.visible { transform: translateX(-50%) translateY(0); visibility: visible;

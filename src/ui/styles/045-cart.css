@@ -8,6 +8,18 @@
 #cartDock { position: fixed; right: 22px; bottom: 22px; z-index: 80; display: none;
   flex-direction: column; align-items: stretch; gap: 10px; width: 366px; max-width: 92vw; }
 #cartDock.show { display: flex; }
+/* While the Grid's selection bar is up, the dock steps up above it: the pill
+   sat on "Move to Trash" and "Clear" (QA B22). 124 px = the bar's 22 px
+   gutter + its tallest form at the desktop window's sizes (two rows, 92 px)
+   + 10 px; the toast stack lifts to the same line (095-timeslider-floating). */
+body:has(#selectionBar.visible) #cartDock { bottom: 124px; }
+/* The pill rests over the bottom ~64 px of the window, so while the cart
+   holds anything <main> keeps that much clear: the treemap's hint line
+   ("click to drill in · drag to lasso…") was cut at "lass" under it (QA
+   B36), and no view's last row could be scrolled out from under it. The map
+   is fitted to the window less this padding (treemapCanvasHeight) and refits
+   when the dock appears (tmRefitMap watches #cartDock). */
+body:has(#cartDock.show) main { padding-bottom: 76px; }
 #cartPanel { display: none; flex-direction: column; max-height: 54vh; overflow: hidden;
   border: 1px solid var(--hairline-2); border-radius: var(--r-lg); box-shadow: var(--shadow-3);
   --lg-tint: var(--lg-tint-strong);
