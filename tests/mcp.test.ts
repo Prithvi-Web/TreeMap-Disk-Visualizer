@@ -15,6 +15,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer, setToolWaitClockForTests } from '../src/mcp/server';
 import { peekScan } from '../src/services/diskScanner';
+import { setTrashStepForTests } from '../src/services/cleaner';
 import { formatBytes } from '../src/utils/formatBytes';
 import { waitFor } from './fixtures/waitFor';
 
@@ -280,6 +281,36 @@ test('trash_paths refuses paths outside every scanned root', async () => {
     assert.ok(fs.existsSync(victim), 'the refused path is untouched');
   } finally {
     fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('trash_paths says what really happened: "moved to the Trash" only for what moved, and nothing of the kind when nothing did (the final review, F1.25)', async () => {
+  // The note was a fixed sentence beside reclaimedBytes 0, so an agent reading it reported a delete
+  // that did not happen. The Trash step is stood in for: one item moves, one is refused, one is gone.
+  const standIn = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-trash-'));
+  const moves = write('note-moves.txt', 'moves');
+  const refused = write('note-refused.txt', 'refused');
+  const gone = path.join(fixtureRoot, 'note-gone.txt'); // never there: inside the scanned root, nothing at it
+  setTrashStepForTests(async (p) => {
+    if (p === refused) throw new Error('the Trash refused it');
+    fs.renameSync(p, path.join(standIn, path.basename(p)));
+  });
+  try {
+    const noteOf = async (paths: string[]): Promise<string> => {
+      const r = await call('trash_paths', { paths, dryRun: false });
+      assert.ok(!r.isError, JSON.stringify(r.content));
+      return String(r.structuredContent!.note);
+    };
+    const notes = {
+      'nothing moved': await noteOf([gone, refused]),
+      'some moved': await noteOf([moves, gone]),
+    };
+    assert.match(notes['nothing moved'], /^Nothing was moved to the Trash/);
+    assert.doesNotMatch(notes['nothing moved'], /were moved to the OS Trash/);
+    assert.match(notes['some moved'], /^1 item was moved to the OS Trash and can be restored from there; 1 was not/);
+  } finally {
+    setTrashStepForTests(null);
+    fs.rmSync(standIn, { recursive: true, force: true });
   }
 });
 

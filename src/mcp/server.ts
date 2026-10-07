@@ -156,6 +156,17 @@ function requireCompleteScanMcp(scanId: string): ScanResult {
 }
 
 /**
+ * What trash_paths says it did, from what moveToTrash reports: "moved to the Trash" only for what
+ * moved, and how many were not (each with its reason in `failed`). A fixed sentence beside
+ * reclaimedBytes 0 told an agent a delete had happened that had not (the final review, F1.25).
+ */
+function trashNote(moved: number, notMoved: number): string {
+  if (moved === 0) return notMoved === 0 ? 'Nothing was moved to the Trash.' : 'Nothing was moved to the Trash — `failed` says why for each item.';
+  const done = `${moved} item${moved === 1 ? ' was' : 's were'} moved to the OS Trash and can be restored from there`;
+  return notMoved === 0 ? `${done}.` : `${done}; ${notMoved} ${notMoved === 1 ? 'was' : 'were'} not — \`failed\` says why.`;
+}
+
+/**
  * The requireInsideScanRoot rule, applied to tool input: sanitize every path,
  * then reject anything cloud-hosted, outside every scanned root, or virtual
  * (inside an archive). Same codes and messages as the HTTP middleware.
@@ -874,7 +885,7 @@ export function buildMcpServer(): McpServer {
           failed: result.failed,
           reclaimedBytes: freed,
           reclaimedFormatted: formatBytes(freed),
-          note: 'Items were moved to the OS Trash and can be restored from there.',
+          note: trashNote(result.deleted.length, result.failed.length),
         });
       }),
   );
