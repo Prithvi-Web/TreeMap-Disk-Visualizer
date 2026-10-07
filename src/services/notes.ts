@@ -191,8 +191,8 @@ export interface PreparedSuppression {
   /** Folded with a trailing separator, for boundary-safe prefix checks. */
   foldedSep: string;
   /**
-   * The same folder's other spellings, folded the same way: where it really is, and — for a walk
-   * whose root was given — as that walk spells it (the final review, F1.13).
+   * The same folder's other spelling, folded the same way: as the walk spells it, when that differs
+   * from the note's own (the final review, F1.13).
    */
   aliases: { folded: string; foldedSep: string }[];
 }
@@ -209,28 +209,26 @@ function realSpellingOf(p: string): string {
 }
 
 /**
- * The suppressing roots, prepared once per walk. Each is compared by its own spelling, by where it
- * really is, and — given `walkRoot`, the folder a walk lists its paths from — as that walk spells it
- * (the final review, F1.13). By its text alone, a note on a folder missed every path a walk listed
- * through a link (a policy folder typed through one, a link scan root, /tmp for /private/tmp, the Data
+ * The suppressing roots, prepared once per walk from `walkRoot`, the folder the walk lists its paths
+ * from. Each is compared by its own spelling and as that walk spells the same folder — found where
+ * both really are (the final review, F1.13). By its text alone, a note on a folder missed every path a
+ * walk listed through a link (a policy folder typed through one, /tmp for /private/tmp, the Data
  * volume's long spelling), and the unattended deleter selected what the note paused; a note typed
  * through a link missed the folder a scan lists by its own path. A note on a folder that holds the
  * whole walk covers all of it. A few realpaths a walk; the per-node checks stay string compares.
  */
-export function prepareSuppressed(roots: string[], walkRoot?: string): PreparedSuppression[] {
-  const walk = walkRoot === undefined ? null : { at: path.resolve(walkRoot), real: realSpellingOf(walkRoot) };
+export function prepareSuppressed(roots: string[], walkRoot: string): PreparedSuppression[] {
+  const walk = { at: path.resolve(walkRoot), real: realSpellingOf(walkRoot) };
+  const walkReal = foldCase(walk.real);
   return roots.map((r) => {
     const resolved = path.resolve(r);
     const own = spelling(resolved);
     const real = realSpellingOf(resolved);
-    const others = new Set<string>([real]);
-    if (walk !== null) {
-      const noteReal = foldCase(real);
-      const walkReal = foldCase(walk.real);
-      if (isInside(walkReal, noteReal)) others.add(path.join(walk.at, path.relative(walk.real, real)));
-      else if (isInside(noteReal, walkReal)) others.add(walk.at); // the note holds the whole walk
-    }
-    const aliases = [...others].map(spelling).filter((a) => a.folded !== own.folded);
+    const noteReal = foldCase(real);
+    let asWalked: string | null = null;
+    if (isInside(walkReal, noteReal)) asWalked = path.join(walk.at, path.relative(walk.real, real));
+    else if (isInside(noteReal, walkReal)) asWalked = walk.at; // the note holds the whole walk
+    const aliases = asWalked === null ? [] : [spelling(asWalked)].filter((a) => a.folded !== own.folded);
     return { raw: resolved, ...own, aliases };
   });
 }
