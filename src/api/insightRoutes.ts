@@ -376,7 +376,15 @@ insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsi
     throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'The destination is outside every scanned folder — scan it first');
   }
   const policy = await getPolicy();
-  assertPathsAllowed(policy, [from, dest]);
+  try {
+    assertPathsAllowed(policy, [from, dest]);
+  } catch (err) {
+    // A refusal the endpoint decides is recorded, as every destructive route records its own (F1.21).
+    if (err instanceof AppError) {
+      await appendAudit({ action: 'security.relocate', source: 'http', tokenId: tokenIdFor('http'), paths: [from, dest], bytes: null, dryRun: false, outcome: 'refused', code: err.code });
+    }
+    throw err;
+  }
   try {
     const result = await relocateSecret(from, dest);
     await appendAudit({ action: 'security.relocate', source: 'http', tokenId: tokenIdFor('http'), paths: [from, dest], bytes: null, dryRun: false, outcome: 'ok' });
@@ -519,7 +527,15 @@ insightRouter.post('/compression/encode', idempotency, guardBodyPaths, async (re
     throw new AppError(503, 'ENCODER_UNAVAILABLE', availability.reason || 'No hardware encoder is available');
   }
   const policy = await getPolicy();
-  assertPathsAllowed(policy, paths);
+  try {
+    assertPathsAllowed(policy, paths);
+  } catch (err) {
+    // Recorded, as the relocation's and every destructive route's policy refusal is (F1.21).
+    if (err instanceof AppError) {
+      await appendAudit({ action: 'compression.encode', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: null, dryRun: false, outcome: 'refused', code: err.code });
+    }
+    throw err;
+  }
   const jobId = randomUUID();
   startEncodeJob(jobId, paths, availability.encoder);
   await appendAudit({ action: 'compression.encode', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: null, dryRun: false, outcome: 'ok' });

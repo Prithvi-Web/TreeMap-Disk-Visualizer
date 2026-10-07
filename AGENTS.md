@@ -884,10 +884,8 @@ read-what-you-saw) permission to act.
   the agent policy and its byte cap, an open file and the offload plan, each
   with its code, a folder an `onlyEmptyFolders` delete or dry run left where
   it is (one `refused` entry per code, apart from the paths that went), and
-  a relocation whose move failed, as refused — except
-  that `POST /api/security/relocate` and `POST /api/compression/encode` check
-  the policy before their audited step, so their policy refusals are not
-  recorded. A request refused before that is not recorded, because it never
+  a relocation whose move failed, as refused — a relocation's and an
+  encode's policy refusals among them. A request refused before that is not recorded, because it never
   became an operation:
   by the path rules (`PATH_INVALID`, `PATH_BLOCKED`, `CLOUD_PATH`,
   `SPILL_PATH`, `APP_DATA_PATH`, `SAFETY_RECORD`, `OUTSIDE_SCAN_ROOT`, `VIRTUAL_PATH`), a missing or malformed
