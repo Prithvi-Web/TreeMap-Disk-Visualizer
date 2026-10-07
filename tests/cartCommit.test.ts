@@ -765,6 +765,21 @@ test('a cart commit stopped by a later batch never says nothing was deleted whil
   assert.match(nothing.toasts.join(' | '), /Nothing was deleted/, 'where nothing was done or may have been, it still says so');
 });
 
+test('the result summary never calls a move to the Trash "recovered": the space comes back once the Trash is emptied and the Time Capsule lets its copy go (final review F1.14)', () => {
+  const src = slice('function cartCommitSummary', '/** Restore a whole committed run from the Time Capsule');
+  const els: Record<string, { innerHTML: string; hidden: boolean; classList: { add: () => void } }> = {};
+  const el = (id: string): { innerHTML: string; hidden: boolean; classList: { add: () => void } } =>
+    (els[id] ??= { innerHTML: '', hidden: false, classList: { add: () => undefined } });
+  const summary = new Function('$', 'icon', 'escapeHtml', 'formatCount', 'formatBytes', 'baseName',
+    `let confirmPaths = null; let onConfirmTrash = null; ${src}; return cartCommitSummary;`,
+  )(el, () => '', String, String, (n: number) => `${n / 1e9} GB`, (p: string) => p) as (result: Record<string, unknown>) => void;
+  summary({ runId: 'run-1', trashed: ['/d/a', '/d/b', '/d/c'], bytesFreed: 5e9, skipped: [], failedToTrash: [], unverified: [] });
+  const text = els.confirmText.innerHTML.replace(/<[^>]+>/g, '');
+  assert.doesNotMatch(text, /recovered|freed/i, `nothing is freed by a move to the Trash with a copy kept: "${text}"`);
+  assert.match(text, /Moved 3 items \(5 GB\) to the Trash/, text);
+  assert.match(text, /space comes back once the Trash is emptied and the Time Capsule/, text);
+});
+
 test('items the capsule could not protect are shown as left behind, never as deleted', () => {
   const body = slice('function cartCommitSummary', 'async function cartUndoRun');
   assert.match(body, /skipped/, 'the summary reads the skipped list');
