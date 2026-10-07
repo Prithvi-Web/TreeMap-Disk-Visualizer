@@ -14,7 +14,7 @@ import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
 import { AppError } from '../src/middleware/errorHandler';
 import { platform } from '../src/platform';
 import { invalidateCapabilities } from '../src/platform/capabilities';
-import { approvePolicy, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
+import { approvePolicyForTests, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 
 /**
  * An unattended delete (Autopilot) never trashes what the open-file check
@@ -146,7 +146,7 @@ test('a live Autopilot run whose check failed deletes nothing and is blocked', a
         match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
         dryRunFirst: false, enabled: true,
       }]);
-      await approvePolicy(policy.id);
+      await approvePolicyForTests(policy.id);
       const result = await runPolicy((await listPolicies())[0]);
       assert.equal(result.mode, 'live', 'it really did try');
       assert.equal(result.bytesDeleted, 0);

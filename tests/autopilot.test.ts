@@ -28,6 +28,7 @@ import {
   runPolicy,
   simulatePolicy,
   approvePolicy,
+  approvePolicyForTests,
   listRuns,
   undoRun,
   type Candidate,
@@ -277,7 +278,7 @@ test('agent-policy.json protected paths bind Autopilot too', async () => {
       match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
       dryRunFirst: false, enabled: true,
     }]);
-    await approvePolicy(policy.id);
+    await approvePolicyForTests(policy.id);
 
     const result = await runPolicy((await listPolicies())[0]);
     assert.equal(result.bytesDeleted, 0);
@@ -314,7 +315,7 @@ test('editing what a policy matches revokes the approval it already had', async 
   const saved = await savePolicies([
     { id: 'edit-me', path: os.tmpdir(), match: { kind: 'suggestion', groupIds: ['regen-node-modules'] }, enabled: true },
   ]);
-  await approvePolicy(saved[0].id);
+  await approvePolicyForTests(saved[0].id);
   assert.ok((await listPolicies())[0].approvedAt, 'approved');
 
   // "Approve a tiny dry run, then edit the policy to match everything" is the
@@ -557,19 +558,24 @@ test('the folder a link policy’s refusal tells the person to choose is one a p
 });
 
 test('approving clears the cooldown the dry run started', async () => {
-  const [policy] = await savePolicies([{
-    id: 'approve-me', name: 'p', path: os.tmpdir(),
-    match: { kind: 'suggestion', groupIds: ['regen-node-modules'] }, enabled: true,
-  }]);
-  // Simulate the dry run having stamped the clock.
-  const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
-  store.policies[0].lastRunAt = Date.now();
-  await writeJsonFile('autopilot.json', store);
+  const dir = await mkTmp();
+  try {
+    await writeFile(path.join(dir, 'project', 'node_modules', 'dep', 'a.bin'), 4096);
+    const [policy] = await savePolicies([{
+      id: 'approve-me', name: 'p', path: dir,
+      match: { kind: 'suggestion', groupIds: ['regen-node-modules'] }, enabled: true,
+    }]);
+    const preview = await runPolicy(policy);
+    assert.equal(preview.status, 'awaiting-approval');
+    assert.ok((await listPolicies())[0].lastRunAt, 'the dry run stamped the clock');
 
-  const approved = await approvePolicy(policy.id);
-  assert.ok(approved.approvedAt);
-  assert.equal(approved.lastRunAt, undefined, 'approving must not leave the user waiting out a full cooldown');
-  await savePolicies([]);
+    const approved = await approvePolicy(policy.id, preview.id);
+    assert.ok(approved.approvedAt);
+    assert.equal(approved.lastRunAt, undefined, 'approving must not leave the user waiting out a full cooldown');
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
 });
 
 /* ══════════════════ The rails that stop a real run ══════════════════ */
@@ -586,7 +592,7 @@ test('an unexpectedly large match stops the run instead of being trimmed and exe
       match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
       dryRunFirst: false, enabled: true, requireConfirmationAbove: 1000, maxBytesPerRun: 100,
     }]);
-    await approvePolicy(policy.id);
+    await approvePolicyForTests(policy.id);
 
     const result = await runPolicy((await listPolicies())[0]);
     assert.equal(result.status, 'awaiting-approval');
@@ -629,7 +635,7 @@ test('a spent weekly allowance blocks the run and says when it resumes', async (
       match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
       dryRunFirst: false, enabled: true, maxBytesPerWeek: 1000,
     }]);
-    await approvePolicy(policy.id);
+    await approvePolicyForTests(policy.id);
 
     // A previous live run already used the whole weekly allowance.
     const raw = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
@@ -655,7 +661,7 @@ test('a policy set to preview keeps previewing after approval', async () => {
       match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
       dryRunFirst: true, enabled: true,
     }]);
-    await approvePolicy(policy.id);
+    await approvePolicyForTests(policy.id);
 
     const result = await runPolicy((await listPolicies())[0]);
     assert.equal(result.mode, 'dry-run');
@@ -701,7 +707,7 @@ test('a live run routes through the open-file guard and deletes nothing when it 
       match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
       dryRunFirst: false, enabled: true,
     }]);
-    await approvePolicy(policy.id);
+    await approvePolicyForTests(policy.id);
 
     const result = await runPolicy((await listPolicies())[0]);
     assert.equal(result.mode, 'live', 'it really did try');

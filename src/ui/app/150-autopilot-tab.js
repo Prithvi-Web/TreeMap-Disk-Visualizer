@@ -116,8 +116,28 @@ function describeMatch(match) {
   return parts.join(', ');
 }
 
+/**
+ * The runs whose Approve is offered (final review F1.7): each policy's newest
+ * run, when it is awaiting approval and was made for the policy's folder and
+ * match as they are now. Approval is bound to the run on the server too; an
+ * older run's button approved whatever the policy had become since — a scope
+ * edited after its preview, never previewed, due at once.
+ */
+function approvableRunIds(runs, policies) {
+  const out = new Set();
+  const newestOf = new Map();
+  for (const r of runs) if (!newestOf.has(r.policyId)) newestOf.set(r.policyId, r);
+  for (const p of policies) {
+    const r = newestOf.get(p.id);
+    if (r && r.status === 'awaiting-approval' && r.scope && r.scope.path === p.path &&
+        JSON.stringify(r.scope.match) === JSON.stringify(p.match)) out.add(r.id);
+  }
+  return out;
+}
+
 function renderAutopilotRuns(runs) {
   const host = $('apRuns');
+  const approvable = approvableRunIds(runs, state.autopilot.policies || []);
   if (!runs.length) {
     host.innerHTML = `<div class="muted">Nothing has run yet. Each run will be listed here with exactly what it removed — or why it decided not to.</div>`;
     return;
@@ -158,7 +178,8 @@ function renderAutopilotRuns(runs) {
         ${items || '<div class="muted" style="padding:4px 10px;">Nothing matched.</div>'}
         ${more}${skipped}
         <div class="ap-run-actions">
-          ${needsApproval ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.policyId)}"><span data-icon="check"></span>Approve this policy</button>` : ''}
+          ${approvable.has(r.id) ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.id)}"><span data-icon="check"></span>Approve this run</button>`
+            : needsApproval ? `<span class="muted">This policy has changed since this run, or ran again, so this is not what it would do now — approve its newest run.</span>` : ''}
           ${(r.bytesDeleted > 0 || unconfirmed > 0) && !r.undoneAt ? `<button class="btn" data-ap-undo="${escapeHtml(r.id)}"><span data-icon="refresh"></span>Undo this run</button>` : ''}
         </div>
       </div>
@@ -175,24 +196,45 @@ function renderAutopilotRuns(runs) {
   host.querySelectorAll('.ap-run').forEach(a => {
     if (a.querySelector('[data-ap-approve]')) { a.classList.add('open'); a.querySelector('.bp-head').setAttribute('aria-expanded', 'true'); }
   });
-  host.querySelectorAll('[data-ap-approve]').forEach(b => b.addEventListener('click', () => approveAutopilotPolicy(b.dataset.apApprove)));
+  host.querySelectorAll('[data-ap-approve]').forEach(b => b.addEventListener('click', () => approveAutopilotRun(b.dataset.apApprove)));
   host.querySelectorAll('[data-ap-undo]').forEach(b => b.addEventListener('click', () => undoAutopilotRun(b.dataset.apUndo)));
 }
 
-function approveAutopilotPolicy(policyId) {
-  const policy = (state.autopilot.policies || []).find(p => p.id === policyId);
+/**
+ * Approve the run the person is looking at (final review F1.7, F1.10): the
+ * server holds the approval to that run, and the confirm says what it covers —
+ * the folder, what the policy matches there, and how much this run matched.
+ * A first approval lets the policy delete on its own from then on; approving a
+ * run held by "Ask me first above" lets its next run delete what it matched,
+ * once, and a later bigger match asks again.
+ */
+function approveAutopilotRun(runId) {
+  const run = (state.autopilot.runs || []).find(r => r.id === runId);
+  const policy = run && (state.autopilot.policies || []).find(p => p.id === run.policyId);
+  if (!run || !policy) return;
+  const first = !policy.approvedAt;
   onConfirmTrash = async () => {
     try {
-      await api(`/api/autopilot/policies/${encodeURIComponent(policyId)}/approve`, { method: 'POST' });
-      toast('Approved — it will run on its own from now on');
+      await api(`/api/autopilot/policies/${encodeURIComponent(policy.id)}/approve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: run.id }),
+      });
+      toast(first ? 'Approved — it will run on its own from now on' : 'Approved — its next run removes what this one matched');
     } catch (e) {
       toast(e.message, 'error');
     }
     loadAutopilot();
   };
-  $('confirmTitle').innerHTML = icon('check', 18) + 'Let this policy delete on its own?';
-  $('confirmText').innerHTML =
-    `<b>${escapeHtml(policy ? policy.name : 'This policy')}</b> will start removing what it matched, without asking again.` +
+  const scope = `in <b>${escapeHtml(policy.path)}</b> (${escapeHtml(describeMatch(policy.match))})`;
+  $('confirmTitle').innerHTML = icon('check', 18) + (first ? 'Let this policy delete on its own?' : 'Let its next run remove this much?');
+  $('confirmText').innerHTML = (first
+    ? `<b>${escapeHtml(policy.name)}</b> will start removing what it matches ${scope} on its own — ` +
+      `<b>${formatBytes(run.bytesMatched)}</b> this time.` +
+      (policy.requireConfirmationAbove
+        ? ` A run that matches more than ${formatBytes(policy.requireConfirmationAbove)} still asks first` +
+          (run.bytesMatched > policy.requireConfirmationAbove ? ' — except its next one, up to what this run matched.' : '.')
+        : '')
+    : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
+      `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
     `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and any run can be undone from here.</span>`;
   $('confirmModal').classList.add('open');
 }

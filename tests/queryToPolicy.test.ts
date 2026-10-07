@@ -19,7 +19,7 @@ import {
   effectiveCap,
   simulatePolicy,
   runPolicy,
-  approvePolicy,
+  approvePolicyForTests,
 } from '../src/services/autopilot';
 import { AppError } from '../src/middleware/errorHandler';
 import type { AutopilotPolicy, AutopilotRun } from '../src/models/types';
@@ -174,7 +174,7 @@ test('editing a query policy scope drops the approval it had', async () => {
   // Through approvePolicy, because sending `approvedAt` in the body is exactly
   // what rail 1 refuses — the test above proves it, and this one would quietly
   // pass for the wrong reason if it tried the same trick.
-  await approvePolicy(stored.id);
+  await approvePolicyForTests(stored.id);
   assert.ok((await listPolicies())[0].approvedAt, 'approval persisted');
 
   await savePolicies([{ ...stored, match: { kind: 'query', q: 'ext:tmp' } }]);

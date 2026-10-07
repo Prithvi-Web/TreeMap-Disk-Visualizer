@@ -21,7 +21,7 @@ import {
 import { setCopyFaultForTests } from '../src/utils/copyVerify';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
-import { approvePolicy, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
+import { approvePolicyForTests, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
 import type { TimeCapsuleEntry } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
 import { waitFor } from './fixtures/waitFor';
@@ -273,7 +273,7 @@ test('an Autopilot undo of a run whose copy was evicted since names the item it 
   for (const [name, fill] of [['a.bin', 1], ['b.bin', 2]] as const) fs.writeFileSync(path.join(dir, name), Buffer.alloc(ITEM, fill));
   await savePolicies([{ id: 'partial', name: 'partial', path: dir, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
   try {
-    await approvePolicy('partial');
+    await approvePolicyForTests('partial');
     const policy = (await listPolicies()).find((p) => p.id === 'partial');
     assert.ok(policy);
     const run = await withOpenFileCheck('clear', () => runPolicy(policy));

@@ -1601,16 +1601,20 @@ test('the empty state explains that nothing is deleted on a first run', () => {
 test('a run awaiting approval opens itself and offers the approval', () => {
   // A decision folded behind a disclosure triangle is a decision nobody makes.
   const code = appCode();
-  const fn = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotPolicy'));
+  const fn = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotRun'));
   assert.match(fn, /data-ap-approve/);
   assert.match(fn, /querySelector\('\[data-ap-approve\]'\)[\s\S]{0,80}classList\.add\('open'\)/);
 });
 
 test('approval goes through the shared destructive confirmation', () => {
   const code = appCode();
-  const fn = code.slice(code.indexOf('function approveAutopilotPolicy'), code.indexOf('function undoAutopilotRun'));
+  const fn = code.slice(code.indexOf('function approveAutopilotRun'), code.indexOf('function undoAutopilotRun'));
   assert.match(fn, /onConfirmTrash =/, 'the same dialog every destructive action uses (§3.6)');
-  assert.match(fn, /without asking again/, 'and it is honest about what approval means');
+  // Honest about what approval means (final review F1.10): on its own from then on, and a run over
+  // "Ask me first above" still asks — never "without asking again", which a size hold made false.
+  assert.match(fn, /on its own/, 'and it is honest about what approval means');
+  assert.match(fn, /asks again|still asks first/, 'including what still asks');
+  assert.doesNotMatch(fn, /without asking again/);
 });
 
 test('undo streams through the one shared progress dialog', () => {
@@ -1624,14 +1628,14 @@ test('undo streams through the one shared progress dialog', () => {
 /** `renderAutopilotRuns` really evaluated for one run: what its row SAYS and OFFERS. */
 function autopilotRunRow(run: Record<string, unknown>): string {
   const code = appCode();
-  const src = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotPolicy'));
-  assert.ok(src.length > 100 && src.length < 8000, `the renderAutopilotRuns slice is ${src.length} chars`);
+  const src = code.slice(code.indexOf('function approvableRunIds'), code.indexOf('function approveAutopilotRun'));
+  assert.ok(src.length > 100 && src.length < 9000, `the renderAutopilotRuns slice is ${src.length} chars`);
   const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
   const make = new Function(
-    '$', 'formatBytes', 'formatCount', 'formatDate', 'escapeHtml', 'icon', 'AP_STATUS_LABEL',
+    '$', 'formatBytes', 'formatCount', 'formatDate', 'escapeHtml', 'icon', 'AP_STATUS_LABEL', 'state',
     `${src}; return renderAutopilotRuns;`,
   );
-  make(() => host, (n: number) => `${n} B`, (n: number) => String(n), () => 'today', (s: unknown) => String(s), () => '', {})([run]);
+  make(() => host, (n: number) => `${n} B`, (n: number) => String(n), () => 'today', (s: unknown) => String(s), () => '', {}, { autopilot: { policies: [] } })([run]);
   return host.innerHTML;
 }
 
@@ -1687,7 +1691,7 @@ test('a run shows why each item was chosen, and what it left alone', () => {
   // §B1 wants the run record to carry what and why. On screen that means the
   // rule's own words beside every item, and the skipped list visible.
   const code = appCode();
-  const fn = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotPolicy'));
+  const fn = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotRun'));
   assert.match(fn, /i\.reason/, 'each item says why it was selected');
   assert.match(fn, /r\.skipped/, 'and what was left behind is shown');
   assert.match(fn, /blockedReason/, 'a run that refused explains itself');

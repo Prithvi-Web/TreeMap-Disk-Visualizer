@@ -26,7 +26,7 @@ import { ENDPOINTS } from '../src/api/openapi';
 import { moveToTrash, openPath, openTerminal, setLaunchStepForTests } from '../src/services/cleaner';
 import { protectAndTrash } from '../src/services/timeCapsule';
 import { relocateSecret } from '../src/services/securityHygieneScanner';
-import { approvePolicy, listPolicies, runDuePolicies, savePolicies, setSpillCheckForTests } from '../src/services/autopilot';
+import { approvePolicyForTests, listPolicies, runDuePolicies, savePolicies, setSpillCheckForTests } from '../src/services/autopilot';
 import { platform } from '../src/platform';
 import { AppError } from '../src/middleware/errorHandler';
 import { isSpillPath, SAFETY_RECORD_NAMES } from '../src/utils/pathSanitizer';
@@ -666,7 +666,7 @@ test('a refusal from the delete itself is recorded as the run, so the policy wai
   setSpillCheckForTests(() => false);
   try {
     const [policy] = await savePolicies([{ id: 'refused', name: 'app-data', path: APP, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
-    await approvePolicy(policy.id);
+    await approvePolicyForTests(policy.id);
     const logged: string[] = [];
     const log = console.error;
     console.error = (...args: unknown[]) => { logged.push(args.map((a) => (a instanceof Error ? `${a.message}\n${a.stack ?? ''}` : String(a))).join(' ')); };

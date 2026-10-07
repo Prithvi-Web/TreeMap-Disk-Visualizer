@@ -16,7 +16,7 @@ import {
 import { setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
 import { apfsNameKey } from '../src/utils/volumeNames';
 import { commitCart, undoCartRun } from '../src/services/cartCommit';
-import { approvePolicy, assertSavedPolicyPath, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
+import { approvePolicyForTests, assertSavedPolicyPath, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 import { AppError } from '../src/middleware/errorHandler';
 import { sanitizePath } from '../src/utils/pathSanitizer';
 import { setTrashStepForTests } from '../src/services/cleaner';
@@ -651,7 +651,7 @@ test('an Autopilot policy whose folder is not one TreeMap saved does not run, an
   for (const f of files) fs.writeFileSync(f, Buffer.alloc(4096, 1));
   try {
     await savePolicies([{ id: 'planted', name: 'planted', path: dir, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
-    await approvePolicy('planted');
+    await approvePolicyForTests('planted');
     // autopilot.json edited on disk, as something other than TreeMap would: the saved folder, respelled.
     const file = path.join(APP, 'autopilot.json');
     const stored = JSON.parse(fs.readFileSync(file, 'utf8')) as { policies: { path: string }[] };

@@ -56,13 +56,16 @@ autopilotRouter.put('/autopilot/policies', async (req: Request, res: Response) =
 });
 
 /**
- * POST /api/autopilot/policies/:id/approve — let a policy start deleting.
+ * POST /api/autopilot/policies/:id/approve { runId } — let a policy start deleting.
  *
- * Only reachable after the mandatory first dry run has produced a run record
- * the user could actually read.
+ * Bound to the run the person looked at (final review F1.7): refused unless it
+ * is the policy's newest run, awaiting approval, made for its folder and match
+ * as they are now. Approving a run held by "Ask me first above" lets the next
+ * run delete up to what it matched, once (F1.10).
  */
 autopilotRouter.post('/autopilot/policies/:id/approve', async (req: Request, res: Response) => {
-  const policy = await approvePolicy(String(req.params.id));
+  const { runId } = (req.body ?? {}) as { runId?: unknown };
+  const policy = await approvePolicy(String(req.params.id), typeof runId === 'string' ? runId : '');
   await appendAudit({
     action: 'autopilot.approve', source: 'http', tokenId: tokenIdFor('http'),
     paths: [policy.path], bytes: null, dryRun: false, outcome: 'ok',

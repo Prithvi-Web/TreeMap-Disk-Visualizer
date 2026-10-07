@@ -1156,6 +1156,13 @@ export interface AutopilotPolicy {
    * policy only ever simulates, regardless of `dryRunFirst` (§B1).
    */
   approvedAt?: number;
+  /**
+   * What the person approved the policy's run to delete, once: the bytes the run they approved
+   * matched (final review F1.10). The next run that reaches the "Ask me first above" check may delete
+   * up to this much without asking again, and spends it; a bigger match asks again. Engine bookkeeping,
+   * like `approvedAt`: never taken from a client, and gone when the scope changes.
+   */
+  approvedBytes?: number;
   lastRunAt?: number;
 }
 
@@ -1204,6 +1211,12 @@ export interface AutopilotRun {
    * cancelled, nor when one started (FG3d #8).
    */
   undoneAt?: number;
+  /**
+   * The folder and match the policy had when this run was made (final review F1.7): an approval of the
+   * run is refused once the policy's scope is no longer this, since the run showed something else.
+   * Absent on runs an earlier build recorded, which therefore cannot be approved.
+   */
+  scope?: { path: string; match: AutopilotMatch };
 }
 
 /* ---------- Live disk activity (Watcher) ---------- */

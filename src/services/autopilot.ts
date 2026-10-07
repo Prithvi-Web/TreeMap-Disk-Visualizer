@@ -192,6 +192,7 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
     // grant approval by sending a field, or the mandatory first dry run would
     // be one crafted request away from being skipped.
     ...(existing?.approvedAt ? { approvedAt: existing.approvedAt } : {}),
+    ...(typeof existing?.approvedBytes === 'number' ? { approvedBytes: existing.approvedBytes } : {}),
     ...(existing?.lastRunAt ? { lastRunAt: existing.lastRunAt } : {}),
   };
   // Refused where a person is writing it: a new policy, or a changed folder or
@@ -370,7 +371,14 @@ export async function savePolicies(raw: unknown): Promise<AutopilotPolicy[]> {
       // approval that was granted for the old one — otherwise "approve a tiny
       // dry run, then edit the policy to match everything" would walk straight
       // past the rail that exists to prevent exactly that.
-      if (existing && !sameScope(existing, policy)) delete policy.approvedAt;
+      if (existing && !sameScope(existing, policy)) {
+        delete policy.approvedAt;
+        delete policy.approvedBytes;
+        // The new scope has never been previewed: its preview is due at the next tick, not after the
+        // cooldown the old scope's last run started — it deletes nothing until approved (final review
+        // F1.7), and approving a run of the old scope is refused (`approvePolicy`).
+        delete policy.lastRunAt;
+      }
       next.push(policy);
     }
     store.policies = next;
@@ -379,8 +387,8 @@ export async function savePolicies(raw: unknown): Promise<AutopilotPolicy[]> {
   });
 }
 
-/** Do two versions of a policy select the same things in the same place? */
-export function sameScope(a: AutopilotPolicy, b: AutopilotPolicy): boolean {
+/** Do two versions of a policy (or a policy and the scope a run recorded) select the same things in the same place? */
+export function sameScope(a: Pick<AutopilotPolicy, 'path' | 'match'>, b: Pick<AutopilotPolicy, 'path' | 'match'>): boolean {
   return a.path === b.path && JSON.stringify(a.match) === JSON.stringify(b.match);
 }
 
@@ -728,10 +736,10 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
   let wouldBlockReason: string | undefined;
   if (!policy.approvedAt) {
     wouldBlockReason = 'This policy has never run for real. Approving it is what lets it start deleting.';
-  } else if (policy.requireConfirmationAbove !== null && bytesMatched > policy.requireConfirmationAbove) {
+  } else if (heldForSize(policy, bytesMatched)) {
     wouldBlockReason =
       `A real run would stop and ask: this matches ${formatBytes(bytesMatched)}, more than the ` +
-      `${formatBytes(policy.requireConfirmationAbove)} you asked to be consulted about.`;
+      `${formatBytes(policy.requireConfirmationAbove ?? 0)} you asked to be consulted about.`;
   } else if (policy.dryRunFirst) {
     wouldBlockReason = 'This policy is set to preview every run, so it never deletes.';
   }
@@ -746,6 +754,15 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
     capBytes: cap,
     ...(wouldBlockReason ? { wouldBlockReason } : {}),
   };
+}
+
+/**
+ * Whether a run that matched `bytesMatched` stops and asks ("Ask me first above"): more than the
+ * policy's limit, and more than the person approved for its next run (`approvedBytes`, F1.10).
+ */
+function heldForSize(policy: AutopilotPolicy, bytesMatched: number): boolean {
+  if (policy.requireConfirmationAbove === null || bytesMatched <= policy.requireConfirmationAbove) return false;
+  return !(typeof policy.approvedBytes === 'number' && bytesMatched <= policy.approvedBytes);
 }
 
 export interface RunOptions {
@@ -792,13 +809,19 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     bytesMatched: 0,
     bytesDeleted: 0,
     skipped: [],
+    // What it was made for: an approval of it holds only while the policy still has this (F1.7).
+    scope: { path: policy.path, match: policy.match },
   };
+  /** Set once this run reaches the "Ask me first above" check: the allowance it read is spent (F1.10). */
+  let spentAllowance: number | undefined;
 
   const record = (): Promise<AutopilotRun> => withAutopilotStore(async () => {
     const fresh = await loadStore();
     fresh.runs.unshift(run);
     const live = fresh.policies.find((p) => p.id === policy.id);
     if (live) live.lastRunAt = now;
+    // Once: an allowance a newer approval wrote meanwhile is left for the run after this.
+    if (live && spentAllowance !== undefined && live.approvedBytes === spentAllowance) delete live.approvedBytes;
     await saveStore(fresh);
     return run;
   });
@@ -875,11 +898,14 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   }
 
   // An unexpectedly large match stops here rather than being trimmed by the
-  // cap and executed: the size itself is the signal that something is wrong.
-  if (policy.requireConfirmationAbove !== null && run.bytesMatched > policy.requireConfirmationAbove) {
+  // cap and executed: the size itself is the signal that something is wrong —
+  // unless the person approved a run of this policy that matched at least this
+  // much, which this run spends (F1.10: approving a held run let nothing run).
+  spentAllowance = policy.approvedBytes;
+  if (heldForSize(policy, run.bytesMatched)) {
     run.status = 'awaiting-approval';
     run.blockedReason =
-      `This matched ${formatBytes(run.bytesMatched)}, which is more than the ${formatBytes(policy.requireConfirmationAbove)} ` +
+      `This matched ${formatBytes(run.bytesMatched)}, which is more than the ${formatBytes(policy.requireConfirmationAbove ?? 0)} ` +
       `you asked to be consulted about. Nothing was deleted.`;
     return record();
   }
@@ -981,21 +1007,67 @@ function toRunItem(c: Candidate): AutopilotRunItem {
 /* ---------------- approval, history, undo ---------------- */
 
 /**
- * Approve a policy that has shown its first dry run.
+ * Approve the run the person looked at (final review F1.7, F1.10).
  *
- * Approval is granted against the *run the user actually looked at*: if the
- * policy's scope changed since, the approval would be for something else.
+ * Approval is granted against that run, never the policy at large: it is refused unless the run is
+ * the policy's newest, still awaiting approval, and made for the policy's folder and match as they are
+ * now (`scope`). Granted policy-wide, the "Approve" of an old preview approved a scope edited since
+ * and never previewed, due at once — and an older run's button restarted an approved policy's
+ * cooldown. A run an earlier build recorded carries no scope and is refused the same way.
+ *
+ * What the run matched is the most its next run may delete past "Ask me first above", once
+ * (`approvedBytes`): approving a run held for its size only re-stamped the policy, and the next run was
+ * held again, every time. A first approval stamps `approvedAt` as well.
+ *
+ * The run that earned the approval stamped `lastRunAt`, which would otherwise leave the person waiting
+ * out a full cooldown right after saying "yes, do it": it is cleared, and the next tick picks the policy
+ * up — a policy still running is not started again by it (`runPolicy`, FG3f #2). A stale approval of a
+ * policy not yet approved clears it too, so its current scope is previewed at the next tick; that
+ * preview deletes nothing.
  */
-export async function approvePolicy(policyId: string): Promise<AutopilotPolicy> {
+export async function approvePolicy(policyId: string, runId: string): Promise<AutopilotPolicy> {
+  return withAutopilotStore(async () => {
+    const store = await loadStore();
+    const policy = store.policies.find((p) => p.id === policyId);
+    if (!policy) throw new AppError(404, 'POLICY_NOT_FOUND', 'No such policy');
+    if (typeof runId !== 'string' || !runId) {
+      throw new AppError(400, 'RUN_ID_REQUIRED', 'Approve the run you looked at: send its "runId"');
+    }
+    const run = store.runs.find((r) => r.id === runId && r.policyId === policy.id);
+    if (!run) throw new AppError(404, 'RUN_NOT_FOUND', 'That run of this policy is not in its history');
+    if (run.status !== 'awaiting-approval') {
+      throw new AppError(409, 'APPROVAL_NOT_ASKED', 'That run is not waiting for approval, so there is nothing to approve');
+    }
+    const newest = store.runs.find((r) => r.policyId === policy.id);
+    const current = newest?.id === run.id && run.scope !== undefined && sameScope(run.scope, policy);
+    if (!current) {
+      if (!policy.approvedAt && policy.lastRunAt !== undefined) {
+        delete policy.lastRunAt;
+        await saveStore(store);
+      }
+      throw new AppError(409, 'APPROVAL_STALE',
+        `“${policy.name}” has changed, or run again, since that run, so it is not what that run showed. ` +
+        'Approve its newest run, which shows what it matches now' +
+        (policy.approvedAt ? '.' : ' — a fresh preview comes at its next check, within a minute.'));
+    }
+    if (!policy.approvedAt) policy.approvedAt = Date.now();
+    policy.approvedBytes = run.bytesMatched;
+    delete policy.lastRunAt;
+    await saveStore(store);
+    return policy;
+  });
+}
+
+/**
+ * Tests only: approve a policy with no run, as setup for a test about something else. Every approval a
+ * person or a client makes goes through `approvePolicy`, bound to the run they looked at.
+ */
+export async function approvePolicyForTests(policyId: string): Promise<AutopilotPolicy> {
   return withAutopilotStore(async () => {
     const store = await loadStore();
     const policy = store.policies.find((p) => p.id === policyId);
     if (!policy) throw new AppError(404, 'POLICY_NOT_FOUND', 'No such policy');
     policy.approvedAt = Date.now();
-    // The dry run that earned this approval stamped `lastRunAt`, which would
-    // otherwise leave the user waiting out a full cooldown right after saying
-    // "yes, do it". Clearing it lets the next tick pick the policy up — and a
-    // policy still running is not started again by it (`runPolicy`, FG3f #2).
     delete policy.lastRunAt;
     await saveStore(store);
     return policy;

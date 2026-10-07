@@ -924,6 +924,15 @@ read-what-you-saw) permission to act.
   `DELETE /api/notes` — destructive-flagged for their consequences, not
   their mechanics — do not; they move no bytes, and their whole state is
   inspectable in the files they write.
+- **Autopilot approval.** A policy's first run only previews; approving it
+  is `POST /api/autopilot/policies/{id}/approve` with `{ runId }`, the run the
+  person looked at — refused `409 APPROVAL_STALE` unless it is the policy's
+  newest run, awaiting approval, made for its folder and match as they are
+  now (each run records its `scope`), and `409 APPROVAL_NOT_ASKED` for a run
+  that asked nothing. Editing a policy's folder or match revokes its approval
+  and makes its preview due at the next check. Approving a run held by
+  `requireConfirmationAbove` lets the next run delete up to what it matched,
+  once (`approvedBytes`); a bigger match asks again.
 - **Journal.** Significant disk changes noticed by scheduled scans are
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an

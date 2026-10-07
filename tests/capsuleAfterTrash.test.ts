@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { deleteCapsuleEntry, getCapsuleIndex, getCapsuleJob, listUndoableEntriesForRun, setDiscardFaultForTests, setMemberLookFaultForTests, type DiscardStep } from '../src/services/timeCapsule';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart, planCartCommit, undoCartRun } from '../src/services/cartCommit';
-import { approvePolicy, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
+import { approvePolicyForTests, getRun, listPolicies, runPolicy, savePolicies, undoRun } from '../src/services/autopilot';
 import { platform } from '../src/platform';
 import { invalidateCapabilities } from '../src/platform/capabilities';
 import { waitFor } from './fixtures/waitFor';
@@ -148,7 +148,7 @@ async function withOpenFileCheck<T>(answer: 'clear' | 'fails' | 'open', fn: () =
 /** Saves and approves a live policy over `dir`, and runs it once. */
 async function runOver(dir: string, id: string): Promise<Awaited<ReturnType<typeof runPolicy>>> {
   await savePolicies([{ id, name: 'three files', path: dir, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
-  await approvePolicy(id);
+  await approvePolicyForTests(id);
   const policy = (await listPolicies()).find((p) => p.id === id);
   assert.ok(policy);
   return runPolicy(policy);

@@ -21,7 +21,7 @@ import {
 } from '../src/services/timeCapsule';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart } from '../src/services/cartCommit';
-import { approvePolicy, listPolicies, listRuns, runDuePolicies, runPolicy, savePolicies } from '../src/services/autopilot';
+import { approvePolicyForTests, listPolicies, listRuns, runDuePolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 import type { AutopilotRun, TimeCapsuleEntry } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
 import { pending, settled } from '../src/utils/backgroundWrites';
@@ -145,7 +145,7 @@ test('a cart commit overlapping an Autopilot run keeps both runs\' copies', asyn
   fs.writeFileSync(p, 'the content of p.bin');
   const a = file('cart', 'a.bin');
   await savePolicies([{ id: 'overlap', name: 'overlap', path: dir, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
-  await approvePolicy('overlap');
+  await approvePolicyForTests('overlap');
   const policy = (await listPolicies()).find((x) => x.id === 'overlap');
   assert.ok(policy);
 
@@ -309,7 +309,7 @@ test('three approvals at once are all kept', async () => {
     id, name: id, path: fileTempDir(`treemap-capsuleConcurrency-${id}-`), match: { kind: 'custom', minBytes: 1 }, dryRunFirst: true, enabled: true,
   })));
   try {
-    await Promise.all(ids.map((id) => approvePolicy(id)));
+    await Promise.all(ids.map((id) => approvePolicyForTests(id)));
     const approved = (await listPolicies()).filter((p) => ids.includes(p.id) && typeof p.approvedAt === 'number').map((p) => p.id);
     assert.deepEqual(approved.sort(), ids, 'each approval was saved, not overwritten by the next');
   } finally {
@@ -329,8 +329,8 @@ test('a policy still running is not started again by the next tick, and a tick t
     { id: 'tick-a', name: 'A', path: dirA, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true },
     { id: 'tick-b', name: 'B', path: dirB, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true },
   ]);
-  await approvePolicy('tick-a');
-  await approvePolicy('tick-b');
+  await approvePolicyForTests('tick-a');
+  await approvePolicyForTests('tick-b');
   let release!: () => void;
   const released = new Promise<void>((resolve) => { release = resolve; });
   let reached!: () => void;
