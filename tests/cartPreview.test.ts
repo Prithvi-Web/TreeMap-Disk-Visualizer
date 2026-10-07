@@ -586,6 +586,7 @@ interface PreviewOut {
   stagedInView: number;
   outsideView: number;
   outsideBytes: number;
+  outsideUnsized: number;
   freedBytes: number;
 }
 
@@ -840,4 +841,53 @@ test('the hatched block is named "Staged" — the name the magnifier lens prints
   const out = buildPreviewWith(nodes, '/r', 1000, ['/r/b'], sizes);
   const freed = out.nodes!.filter((n) => n.freed);
   assert.deepEqual(freed.map((n) => n.name), ['Staged'], 'not "Freed": nothing is freed until the Trash is emptied');
+});
+
+/* ══════════════ B06 review: an unsized staged item is unknown in the banner too ══════════════ */
+
+/** The banner's text for a given preview state, from the page's own syncCartPreviewChrome. */
+function bannerFor(preview: Record<string, unknown>): string {
+  const text = { innerHTML: '' };
+  const banner = { hidden: true, offsetHeight: 20 };
+  const wrap = { classList: { toggle() {} }, style: { removeProperty() {}, getPropertyValue: () => '', setProperty() {} } };
+  const els: Record<string, unknown> = { tmPreviewText: text, tmPreviewBanner: banner, treemapWrap: wrap, cartPreview: null };
+  const keys = ['$', 'tmPreview', 'formatBytes', 'formatCount', 'escapeHtml', 'tmPreviewPadSync', 'tmPreviewWatch'];
+  const body = slice('function syncCartPreviewChrome', '/**\n * Pad the wrap');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const sync = new Function(...keys, `${body}\nreturn syncCartPreviewChrome;`)(
+    (id: string) => els[id] ?? null, { on: true, freedBytes: 400, ...preview },
+    (n: number) => `${n} B`, String, (s: unknown) => String(s), () => false, () => {},
+  ) as () => void;
+  sync();
+  return text.innerHTML;
+}
+
+test('the preview counts a staged item with no size apart from the bytes it reports, never as 0 B (B06 review)', () => {
+  const { nodes, sizes } = fixture();
+  // Drawn, outside the folder with a size, and not in the scan on screen at all.
+  const mixed = buildPreviewWith(nodes, '/r', 1000, ['/r/b', '/elsewhere/x.bin', '/gone/y.bin'], sizes);
+  assert.equal(mixed.outsideView, 2, 'both are counted as not shown');
+  assert.equal(mixed.outsideBytes, 999, 'the bytes are the sized one only');
+  assert.equal(mixed.outsideUnsized, 1, 'and the one nobody measured is counted as unknown');
+  // Inside the folder, but with no size here either.
+  const inside = buildPreviewWith(nodes, '/r', 1000, ['/r/b', '/r/a/unresolved.bin'], sizes);
+  assert.equal(inside.outsideUnsized, 1, 'an unsized item inside the folder is unknown too');
+  const sized = buildPreviewWith(nodes, '/r', 1000, ['/r/b', '/elsewhere/x.bin'], sizes);
+  assert.equal(sized.outsideUnsized, 0, 'and a sized one is not');
+});
+
+test('the preview banner marks its figure as a floor when some staged items are unsized, and gives none when all are (B06 review)', () => {
+  const mixed = bannerFor({ outsideView: 2, outsideBytes: 999, outsideUnsized: 1 });
+  assert.doesNotMatch(mixed, /\(999 B\) are/, `the sized part is not the total for both: ${mixed}`);
+  assert.match(mixed, /2 staged items \(999 B\+; 1 not in this scan, not counted\) are outside this folder and not shown\./, mixed);
+
+  const unknown = bannerFor({ outsideView: 2, outsideBytes: 0, outsideUnsized: 2 });
+  assert.doesNotMatch(unknown, /\(\d+ B/, `no figure when nothing was measured: ${unknown}`);
+  assert.match(unknown, /2 staged items \(not in this scan, size unknown\) are outside this folder and not shown\./, unknown);
+
+  const sized = bannerFor({ outsideView: 1, outsideBytes: 999, outsideUnsized: 0 });
+  assert.match(sized, /1 staged item \(999 B\) is outside this folder and not shown\./, `unchanged when every item is sized: ${sized}`);
+
+  const enter = slice('function enterCartPreview', 'function exitCartPreview');
+  assert.match(enter, /tmPreview\.outsideUnsized = built\.outsideUnsized;/, 'turning the preview on carries the unknown count to the banner');
 });

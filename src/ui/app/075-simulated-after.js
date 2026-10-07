@@ -100,7 +100,7 @@ function tmSquarify(areas, rect) {
 }
 
 /** Preview state. `saved` is the exact node list to put back on exit (§4.3). */
-const tmPreview = { on: false, saved: null, freedBytes: 0, stagedInView: 0, outsideView: 0, outsideBytes: 0 };
+const tmPreview = { on: false, saved: null, freedBytes: 0, stagedInView: 0, outsideView: 0, outsideBytes: 0, outsideUnsized: 0 };
 
 /**
  * The directory part of a path, using whichever separator the path itself uses.
@@ -203,7 +203,9 @@ function tmBuildPreview() {
   const shrunk = new Map();    // drawn leaves that lost bytes from below
   let removedAll = false;      // the map's own root was staged: everything goes
 
-  let stagedInView = 0, outsideView = 0, outsideBytes = 0;
+  // outsideUnsized counts the not-shown items with no size here: unknown,
+  // never 0 B (B06), so they are kept out of outsideBytes and named apart.
+  let stagedInView = 0, outsideView = 0, outsideBytes = 0, outsideUnsized = 0;
   const addFreed = (p, bytes) => freedIn.set(p, (freedIn.get(p) || 0) + bytes);
 
   for (const p of tmCartRoots()) {
@@ -218,7 +220,11 @@ function tmBuildPreview() {
       removedAll = true; // one flag; the walk below skips every child
       continue;
     }
-    if (!tmIsInside(p, root.path)) { outsideView++; outsideBytes += bytes || 0; continue; }
+    if (!tmIsInside(p, root.path)) {
+      outsideView++;
+      if (bytes === null) outsideUnsized++; else outsideBytes += bytes;
+      continue;
+    }
 
     const drawn = byPath.get(p);
     if (drawn) {
@@ -228,7 +234,7 @@ function tmBuildPreview() {
       continue;
     }
     // Size unknown: never guessed at, and never silently dropped either.
-    if (bytes === null) { outsideView++; continue; }
+    if (bytes === null) { outsideView++; outsideUnsized++; continue; }
 
     // Not drawn: charge it to the deepest drawn node that contains it.
     //
@@ -254,7 +260,7 @@ function tmBuildPreview() {
     }
   }
 
-  if (!freedIn.size) return { nodes: null, stagedInView: 0, outsideView, outsideBytes, freedBytes: 0 };
+  if (!freedIn.size) return { nodes: null, stagedInView: 0, outsideView, outsideBytes, outsideUnsized, freedBytes: 0 };
 
   // Re-lay out from the root. Every parent keeps its ORIGINAL size as the
   // denominator, so a surviving rectangle covers exactly the area it covers on
@@ -291,7 +297,7 @@ function tmBuildPreview() {
     }
   };
   walk(root, { x: 0, y: 0, w: 100, h: 100 }, 0);
-  return { nodes: out, stagedInView, outsideView, outsideBytes, freedBytes: freedTotal };
+  return { nodes: out, stagedInView, outsideView, outsideBytes, outsideUnsized, freedBytes: freedTotal };
 }
 
 /**
@@ -356,6 +362,7 @@ function enterCartPreview() {
   tmPreview.stagedInView = built.stagedInView;
   tmPreview.outsideView = built.outsideView;
   tmPreview.outsideBytes = built.outsideBytes;
+  tmPreview.outsideUnsized = built.outsideUnsized;
   state.treemap.nodes = built.nodes;
   state.treemap.hover = null;
   state.treemap.kbSel = null;
@@ -397,10 +404,16 @@ function syncCartPreviewChrome() {
   if (!banner) return;
   banner.hidden = !tmPreview.on;
   if (!tmPreview.on) { wrap.style.removeProperty('--tm-preview-pad'); return; }
+  // A not-shown item with no size here is unknown, never 0 B (B06): the figure
+  // covers the sized ones and is marked a floor, as the cart's own total is,
+  // and when none is sized there is no figure at all.
+  const unsized = tmPreview.outsideUnsized || 0;
+  const outsideFigure = unsized >= tmPreview.outsideView ? '(not in this scan, size unknown) '
+    : unsized ? `(${escapeHtml(formatBytes(tmPreview.outsideBytes))}+; ${formatCount(unsized)} not in this scan, not counted) `
+    : tmPreview.outsideBytes ? `(${escapeHtml(formatBytes(tmPreview.outsideBytes))}) ` : '';
   const outside = tmPreview.outsideView
     ? ` <span class="muted">${formatCount(tmPreview.outsideView)} staged item${tmPreview.outsideView === 1 ? '' : 's'} ` +
-      `${tmPreview.outsideBytes ? `(${escapeHtml(formatBytes(tmPreview.outsideBytes))}) ` : ''}` +
-      `${tmPreview.outsideView === 1 ? 'is' : 'are'} outside this folder and not shown.</span>`
+      `${outsideFigure}${tmPreview.outsideView === 1 ? 'is' : 'are'} outside this folder and not shown.</span>`
     : '';
   $('tmPreviewText').innerHTML =
     `<b>Preview — nothing has been deleted.</b> The hatched areas are the ` +
