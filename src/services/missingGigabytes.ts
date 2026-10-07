@@ -1058,9 +1058,10 @@ export function assertBalances(s: AccountingStatement): void {
   }
 }
 
-// Bytes in notes go through the shared formatBytes (binary units), the same
-// function the page uses for every line and chip: a private decimal
-// formatter here made "9.1 GB" sit under an "11.6 GB" row it was part of.
+// Bytes in notes go through the shared formatBytes (decimal units, as Finder
+// counts them), the same function the page uses for every line and chip: a
+// private formatter here, in other units than the page's, made "9.1 GB" sit
+// under an "11.6 GB" row it was part of.
 
 function osName(plat: NodeJS.Platform): string {
   if (plat === 'darwin') return 'macOS';

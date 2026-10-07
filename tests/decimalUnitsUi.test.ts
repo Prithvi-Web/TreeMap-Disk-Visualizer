@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { INDEX } from './fixtures/liftFrontend';
@@ -537,6 +537,45 @@ test('no size in the page is a power of 1024: every threshold it shows or acts o
   assert.ok(code.length > 500_000, `the scan reads the whole script, not a sliver of it (${code.length} characters)`);
   assert.ok(code.includes('function formatBytes(') && code.includes('function renderCleanupGoalFields('), 'and it is the page\'s own code');
   assert.deepEqual(binarySizesIn(code), [], 'a binary size in the page\'s code');
+});
+
+/**
+ * Each place in `text` that names formatBytes and, on that line or the two
+ * after it, calls its units binary: "binary", a 1024, base 2, or a KiB, MiB,
+ * GiB or TiB.
+ */
+function binaryFormatBytesClaims(text: string): string[] {
+  const lines = text.split('\n');
+  return lines.flatMap((line, i) =>
+    /formatBytes/.test(line) && /\bbinary\b|(?<![\w.])1024(?!\w)|\bbase[- ]?2\b|\b[KMGT]iB\b/i.test(lines.slice(i, i + 3).join('\n'))
+      ? [`${i + 1}: ${line.trim()}`] : []);
+}
+
+test('no comment in the code calls the shared formatBytes binary, now that it counts in 1000s (review F3.4)', () => {
+  // missingGigabytes.ts said its notes go "through the shared formatBytes
+  // (binary units)" a release after formatBytes became decimal; told so, the
+  // next maintainer may "fix" the labels back.
+  for (const said of [
+    '// Bytes in notes go through the shared formatBytes (binary units), the same',
+    ' * formatBytes divides by 1024, so',
+    '// formatBytes: sizes in\n// KiB and MiB',
+  ]) assert.equal(binaryFormatBytesClaims(said).length, 1, `caught: ${said}`);
+  for (const said of [
+    '// Bytes in notes go through the shared formatBytes (decimal units, as Finder counts them), the same',
+    ' * reason. Sizes through formatBytes, decimal like every size TreeMap prints',
+    '// formatBytes\n\n\n// a binary plist', // three lines on: a different sentence
+  ]) assert.deepEqual(binaryFormatBytesClaims(said), [], `not a claim: ${said}`);
+
+  const root = path.join(__dirname, '..');
+  const files = ['src', 'electron'].flatMap((dir) =>
+    (readdirSync(path.join(root, dir), { recursive: true }) as string[])
+      .filter((f) => /\.(ts|js|cjs|mjs)$/.test(f) && !f.split(path.sep).includes('node_modules'))
+      .map((f) => path.join(dir, f)));
+  assert.ok(files.includes(path.join('src', 'services', 'missingGigabytes.ts')) && files.length > 200, `every source file is read (${files.length})`);
+  const claims = files.flatMap((f) => binaryFormatBytesClaims(readFileSync(path.join(root, f), 'utf8')).map((c) => `${f}:${c}`));
+  assert.deepEqual(claims, [], 'a comment that calls formatBytes binary');
+  assert.match(readFileSync(path.join(root, 'src/services/missingGigabytes.ts'), 'utf8'),
+    /shared formatBytes \(decimal units, as Finder(?:\s|\/\/)+counts them\)/, 'missingGigabytes names the units its notes print in');
 });
 
 /* ══════════════ the map's floor, wherever the map is asked for ══════════════ */
