@@ -1,6 +1,6 @@
 import path from 'path';
 import { readJsonFile, readJsonFileChecked, writeJsonFile } from './storage';
-import { sanitizePath } from '../utils/pathSanitizer';
+import { canonicalDirOf, isInside, realPlaceNow, sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 
 /**
@@ -190,14 +190,54 @@ export interface PreparedSuppression {
   folded: string;
   /** Folded with a trailing separator, for boundary-safe prefix checks. */
   foldedSep: string;
+  /**
+   * The same folder's other spellings, folded the same way: where it really is, and — for a walk
+   * whose root was given — as that walk spells it (the final review, F1.13).
+   */
+  aliases: { folded: string; foldedSep: string }[];
 }
 
-export function prepareSuppressed(roots: string[]): PreparedSuppression[] {
+/** A spelling folded for comparison, with and without its trailing separator. */
+function spelling(p: string): { folded: string; foldedSep: string } {
+  const folded = foldCase(p);
+  return { folded, foldedSep: folded.endsWith(path.sep) ? folded : folded + path.sep };
+}
+
+/** Where `p` really is: realpath's answer, or the links in its parents resolved when it is not there. */
+function realSpellingOf(p: string): string {
+  return realPlaceNow(p) ?? path.normalize(canonicalDirOf(p));
+}
+
+/**
+ * The suppressing roots, prepared once per walk. Each is compared by its own spelling, by where it
+ * really is, and — given `walkRoot`, the folder a walk lists its paths from — as that walk spells it
+ * (the final review, F1.13). By its text alone, a note on a folder missed every path a walk listed
+ * through a link (a policy folder typed through one, a link scan root, /tmp for /private/tmp, the Data
+ * volume's long spelling), and the unattended deleter selected what the note paused; a note typed
+ * through a link missed the folder a scan lists by its own path. A note on a folder that holds the
+ * whole walk covers all of it. A few realpaths a walk; the per-node checks stay string compares.
+ */
+export function prepareSuppressed(roots: string[], walkRoot?: string): PreparedSuppression[] {
+  const walk = walkRoot === undefined ? null : { at: path.resolve(walkRoot), real: realSpellingOf(walkRoot) };
   return roots.map((r) => {
     const resolved = path.resolve(r);
-    const folded = foldCase(resolved);
-    return { raw: resolved, folded, foldedSep: folded.endsWith(path.sep) ? folded : folded + path.sep };
+    const own = spelling(resolved);
+    const real = realSpellingOf(resolved);
+    const others = new Set<string>([real]);
+    if (walk !== null) {
+      const noteReal = foldCase(real);
+      const walkReal = foldCase(walk.real);
+      if (isInside(walkReal, noteReal)) others.add(path.join(walk.at, path.relative(walk.real, real)));
+      else if (isInside(noteReal, walkReal)) others.add(walk.at); // the note holds the whole walk
+    }
+    const aliases = [...others].map(spelling).filter((a) => a.folded !== own.folded);
+    return { raw: resolved, ...own, aliases };
   });
+}
+
+/** Every spelling of a prepared root: its own, then its aliases. */
+function spellingsOf(root: PreparedSuppression): { folded: string; foldedSep: string }[] {
+  return [root, ...root.aliases];
 }
 
 /** The prepared root covering `p` (p at or under it), or null. */
@@ -205,7 +245,7 @@ export function suppressedRootCovering(p: string, prepared: PreparedSuppression[
   if (prepared.length === 0) return null;
   const target = foldCase(path.resolve(p));
   for (const root of prepared) {
-    if (target === root.folded || target.startsWith(root.foldedSep)) return root.raw;
+    if (spellingsOf(root).some((s) => target === s.folded || target.startsWith(s.foldedSep))) return root.raw;
   }
   return null;
 }
@@ -220,7 +260,7 @@ export function noteRootInside(p: string, prepared: PreparedSuppression[]): stri
   const target = foldCase(path.resolve(p));
   const targetSep = target.endsWith(path.sep) ? target : target + path.sep;
   for (const root of prepared) {
-    if (root.folded !== target && root.folded.startsWith(targetSep)) return root.raw;
+    if (spellingsOf(root).some((s) => s.folded !== target && s.folded.startsWith(targetSep))) return root.raw;
   }
   return null;
 }

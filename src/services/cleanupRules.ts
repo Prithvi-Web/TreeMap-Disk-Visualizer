@@ -125,7 +125,7 @@ class SuggestionWalk implements SlicedWalk {
     private readonly now: number,
   ) {
     // Folded once per walk, not once per node — see prepareSuppressed.
-    this.suppressed = prepareSuppressed(suppressedRoots);
+    this.suppressed = prepareSuppressed(suppressedRoots, store.rootPath);
     this.locations = locationIndex(catalog.location);
     this.joinsNames = Object.getPrototypeOf(store) === PackedScanStore.prototype;
     this.enter(store.rootId, store.rootPath);

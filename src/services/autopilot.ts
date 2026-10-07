@@ -565,7 +565,7 @@ async function resolveCandidates(
   // pause list stops the deleter instead of silently unpausing it.
   const noted = await suppressedNoteRoots();
   if (noted.length === 0) return { candidates: matched, leftAlone: spillSkipped };
-  const prepared = prepareSuppressed(noted);
+  const prepared = prepareSuppressed(noted, policy.path); // candidates are spelled from the policy's folder (F1.13)
   const candidates: Candidate[] = [];
   // Collapsed to ONE entry per note root with a count (review round 1,
   // finding 6): a 2,000-item match over a noted folder must not write 2,000

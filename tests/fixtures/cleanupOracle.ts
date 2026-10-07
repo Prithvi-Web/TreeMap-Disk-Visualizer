@@ -49,7 +49,7 @@ export function oracleCleanupSuggestions(
 ): CleanupSuggestionGroup[] {
   const store = asStore(source);
   // Folded once per call, not once per node — see prepareSuppressed.
-  const suppressed = prepareSuppressed(suppressedRoots);
+  const suppressed = prepareSuppressed(suppressedRoots, store.rootPath);
 
   const groups = new Map<string, CleanupSuggestionGroup>();
   const add = (rule: Rule, node: number, nodePath: string): void => {

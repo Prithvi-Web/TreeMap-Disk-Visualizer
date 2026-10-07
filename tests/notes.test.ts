@@ -567,6 +567,65 @@ test('Autopilot refuses a match that contains a noted keeper, and says so', asyn
   }
 });
 
+test('a suppressing note pauses Autopilot whichever spelling of the folder the policy or the note uses — through a link in the parents, or the folder it leads to (the final review, F1.13)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  // Both sides were compared as folded text: a policy whose folder was typed through a link reached
+  // the noted folder's files by a spelling the note's text did not start with, and the unattended
+  // deleter selected them.
+  await clearNotes();
+  const fx = fs.realpathSync(await mkTmp());
+  try {
+    await writeBin(path.join(fx, 'real', 'sub', 'keep', 'a.log'), 2000);
+    await writeBin(path.join(fx, 'real', 'sub', 'other', 'b.log'), 2000);
+    fs.symlinkSync(path.join(fx, 'real'), path.join(fx, 'lnk'));
+    const wouldDelete = async (where: string): Promise<string[]> => {
+      const [policy] = await savePolicies([{
+        id: 'note-link', name: 'p', path: where,
+        match: { kind: 'custom', exts: ['log'], minBytes: 1 },
+        dryRunFirst: false, enabled: true,
+      }]);
+      return (await simulatePolicy(policy)).items.map((i) => path.relative(where, i.path)).sort();
+    };
+    await setNote(path.join(fx, 'real', 'sub', 'keep'), 'do not clean this', true);
+    const answers: Record<string, string[]> = {
+      'note on the folder, policy typed through the link': await wouldDelete(path.join(fx, 'lnk', 'sub')),
+      'note on the folder, policy on the folder': await wouldDelete(path.join(fx, 'real', 'sub')),
+    };
+    await clearNotes();
+    await setNote(path.join(fx, 'lnk', 'sub', 'keep'), 'do not clean this', true);
+    answers['note typed through the link, policy on the folder'] = await wouldDelete(path.join(fx, 'real', 'sub'));
+    await clearNotes();
+    await setNote(path.join(fx, 'real'), 'none of this', true);
+    answers['note on a folder holding the policy folder, policy typed through the link'] = await wouldDelete(path.join(fx, 'lnk', 'sub'));
+    const onlyOther = [path.join('other', 'b.log')];
+    assert.deepEqual(answers, {
+      'note on the folder, policy typed through the link': onlyOther,
+      'note on the folder, policy on the folder': onlyOther,
+      'note typed through the link, policy on the folder': onlyOther,
+      'note on a folder holding the policy folder, policy typed through the link': [],
+    });
+  } finally {
+    await savePolicies([]);
+    await clearNotes();
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});
+
+test('a suppressing note typed through a link silences Smart Suggestions for the folder the scan lists by its own path (the final review, F1.13)', { skip: process.platform === 'win32' && 'making a link needs a privilege the runner may not hold' }, async () => {
+  const fx = fs.realpathSync(await mkTmp());
+  try {
+    await fsp.mkdir(path.join(fx, 'real', 'proj'), { recursive: true });
+    fs.symlinkSync(path.join(fx, 'real'), path.join(fx, 'lnk'));
+    const fixture = () => tree([dir('proj', [pkg('node_modules')])], path.join(fx, 'real'));
+    const fires = (noted: string[]) => collectCleanupSuggestions(fixture(), NO_IGNORE, undefined, undefined, noted).some((g) => g.id === 'regen-node-modules');
+    assert.deepEqual(
+      { 'no note': fires([]), 'a note on lnk/proj': fires([path.join(fx, 'lnk', 'proj')]), 'a note on lnk/proj/node_modules/x, inside it': fires([path.join(fx, 'lnk', 'proj', 'node_modules', 'x')]) },
+      { 'no note': true, 'a note on lnk/proj': false, 'a note on lnk/proj/node_modules/x, inside it': false },
+    );
+  } finally {
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});
+
 test('a corrupt notes.json fails CLOSED — automation refuses rather than running unsuppressed', async () => {
   // Review finding 2: a note that suppresses is a guard rail on unattended
   // deletion. A file that cannot be read must pause automation, never
