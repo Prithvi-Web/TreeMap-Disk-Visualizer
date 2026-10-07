@@ -272,11 +272,13 @@ function loadAdoptCartGoal() {
   return new Function(`
     let cartGoalBytes = 'never-adopted';
     const rendered = [];
-    function renderCartGoal(staged) { rendered.push(staged); }
+    const unknowns = [];
+    function renderCartGoal(staged, unknown) { rendered.push(staged); unknowns.push(unknown); }
     function cartTotalBytes() { return 4096; }
+    function cartUnknownCount() { return 1; }
     ${src}
-    return { adopt: adoptCartGoal, goal: () => cartGoalBytes, rendered };
-  `)() as { adopt: (v: unknown) => number | null; goal: () => unknown; rendered: number[] };
+    return { adopt: adoptCartGoal, goal: () => cartGoalBytes, rendered, unknowns };
+  `)() as { adopt: (v: unknown) => number | null; goal: () => unknown; rendered: number[]; unknowns: unknown[] };
 }
 
 test('adoptCartGoal takes the saved target live and repaints the meter — no reload', () => {
@@ -284,6 +286,7 @@ test('adoptCartGoal takes the saved target live and repaints the meter — no re
   assert.equal(h.adopt(20 * 1024 ** 3), 20 * 1024 ** 3);
   assert.equal(h.goal(), 20 * 1024 ** 3, 'the in-memory target follows the save');
   assert.deepEqual(h.rendered, [4096], 'the goal meter repaints against the staged total');
+  assert.deepEqual(h.unknowns, [1], 'with the count of staged items it cannot size, so a saved target never reads an unsized cart as 0 B (B06 review)');
 });
 
 test('adoptCartGoal keeps the boot path honesty policy: nonsense is no target', () => {
@@ -341,9 +344,11 @@ type Node = { name: string; path: string; size: number };
 async function cartShows(staged: string[], nodes: Record<string, Node>) {
   const els: Record<string, { innerHTML: string; textContent: string; title: string; classList: { toggle(): void } }> = {};
   const $ = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', title: '', classList: { toggle() {} } });
+  const goal: unknown[][] = [];
   const deps: Record<string, unknown> = {
     $, state: { cart: new Set(staged) },
-    ensureNodes: async () => {}, fxCartPulseSync: () => {}, cartDockToggle: () => {}, renderCartGoal: () => {},
+    ensureNodes: async () => {}, fxCartPulseSync: () => {}, cartDockToggle: () => {},
+    renderCartGoal: (...args: unknown[]) => { goal.push(args); },
     nodeFor: (p: string) => nodes[p] ?? null,
     countUp: (el: { textContent: string }, v: number, fmt: (n: number) => string) => { el.textContent = fmt(v); },
     FxNum: {
@@ -352,14 +357,44 @@ async function cartShows(staged: string[], nodes: Record<string, Node>) {
     },
     formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: (s: unknown) => String(s), icon: () => '',
   };
-  const names = ['renderCart', 'cartTotalBytes', 'cartKnownPaths', 'cartNode', 'tmCartRoots', 'tmParentPath'];
+  const names = ['renderCart', 'cartTotalBytes', 'cartKnownPaths', 'cartUnknownCount', 'cartNode', 'tmCartRoots', 'tmParentPath'];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const render = new Function(...keys, `let cartShown = 200;\n${names.map(fnSource).join('\n')}\nreturn renderCart;`)(
     ...keys.map((k) => deps[k]),
   ) as () => Promise<void>;
   await render();
-  return { foot: els.cartFootTotal!.innerHTML, pill: els.cartTabTotal!.textContent, pillTitle: els.cartTabTotal!.title };
+  return { foot: els.cartFootTotal!.innerHTML, pill: els.cartTabTotal!.textContent, pillTitle: els.cartTabTotal!.title, goal };
+}
+
+type GoalEl = {
+  hidden: boolean; met: boolean | undefined; style: { width: string }; innerHTML: string; label: string;
+  classList: { toggle(c: string, on: boolean): void }; setAttribute(k: string, v: string): void;
+};
+
+/** Run the page's own renderCartGoal for a cart of `cartSize` items, `unknown` of them unsized here; what the meter shows. */
+function goalShows(staged: number, unknown: number, cartSize: number, target = 50_000_000_000) {
+  const els: Record<string, GoalEl> = {};
+  const $ = (id: string): GoalEl => {
+    if (!els[id]) {
+      const e: GoalEl = {
+        hidden: true, met: undefined, style: { width: '' }, innerHTML: '', label: '',
+        classList: { toggle: (_c, on) => { e.met = on; } }, setAttribute: (_k, v) => { e.label = v; },
+      };
+      els[id] = e;
+    }
+    return els[id];
+  };
+  const pulses: Array<boolean | null> = [];
+  const cart = new Set(Array.from({ length: cartSize }, (_, i) => `/c/item${i}`));
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const render = new Function('$', 'fxGoalPulseSync', 'escapeHtml', 'formatBytes', 'state', 'cartGoalBytes',
+    `${fnSource('renderCartGoal')}\nreturn renderCartGoal;`)(
+    $, (met: boolean | null) => { pulses.push(met); }, (s: unknown) => String(s), (n: number) => `${n} B`,
+    { scanId: 's1', cart }, target,
+  ) as (staged: number, unknown: number) => void;
+  render(staged, unknown);
+  return { line: els.cartGoalLine!.innerHTML, label: els.cartGoal!.label, met: els.cartGoal!.met, pulses };
 }
 
 const MOV = { name: 'holiday-4k.mov', path: '/c/Videos/holiday-4k.mov', size: 3_000_000_000 };
@@ -391,6 +426,31 @@ test('staged items the scan does not hold are not counted as 0 B — they are na
   const all = await cartShows([MOV.path], { [MOV.path]: MOV });
   assert.equal(all.pill, '3000000000 B', 'no mark when everything is sized');
   assert.equal(all.pillTitle, '');
+});
+
+test('the cleanup-target meter does not count an unsized staged item as 0 B: unknown when none is sized, a floor when some are (B06 review)', async () => {
+  // Review: the pill read "—" and the footer "2 items not in this scan — size
+  // unknown" while the meter beside them read "0 B of 50 GB staged 0%".
+  const none = goalShows(0, 2, 2);
+  assert.doesNotMatch(none.line, /<b>0 B<\/b>|>0%</, `a size nobody measured is not a zero: ${none.line}`);
+  assert.match(none.line, /size unknown/, none.line);
+  assert.doesNotMatch(none.label, /: 0 B of|0 percent/, `nor for a screen reader: ${none.label}`);
+  assert.match(none.label, /staged size is unknown/, none.label);
+  assert.equal(none.met, false, 'an unknown is not "met"');
+  assert.deepEqual(none.pulses, [null], 'nor "below target" for the one-shot pulse');
+
+  const some = goalShows(3_000_000_000, 1, 2);
+  assert.match(some.line, /<b>3000000000 B\+<\/b> of 50000000000 B staged/, `the known part is marked a floor: ${some.line}`);
+  assert.match(some.label, /Cleanup target: at least 3000000000 B of 50000000000 B staged, 6 percent/, some.label);
+
+  const all = goalShows(3_000_000_000, 0, 1);
+  assert.match(all.line, /<b>3000000000 B<\/b> of 50000000000 B staged/, `no mark when everything is sized: ${all.line}`);
+  assert.match(all.label, /Cleanup target: 3000000000 B of 50000000000 B staged, 6 percent/, all.label);
+
+  // renderCart hands the meter the same unknown count the pill and footer use.
+  const other = ['/elsewhere/a/node_modules', '/elsewhere/b/node_modules'];
+  assert.deepEqual((await cartShows(other, {})).goal, [[0, 2]], 'all unsized: the meter is told 2 unknown');
+  assert.deepEqual((await cartShows([MOV.path, other[0]!], { [MOV.path]: MOV })).goal, [[3_000_000_000, 1]], 'one of two unsized');
 });
 
 test('after a commit, the cart says where the files went, not that space was recovered (B29)', () => {

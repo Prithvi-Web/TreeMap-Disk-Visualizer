@@ -27,6 +27,9 @@ function cartNode(p) { return nodeFor(p); }
 // "Known" means the scan really contains it — not merely that the pruned tree
 // we were handed happened to include it. renderCart resolves these first.
 function cartKnownPaths() { return [...state.cart].filter((p) => nodeFor(p)); }
+// Staged items the scan on screen cannot size: unknown, never 0 B (B06). The
+// pill, the footer and the target meter all say so from this one count.
+function cartUnknownCount() { return state.cart.size - cartKnownPaths().length; }
 // A path inside another staged one is already in that folder's size, so it is
 // counted once (D60): the cart summed both and read 22.5 GB from an 8.8 GB scan.
 function cartTotalBytes() { return tmCartRoots().reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0); }
@@ -129,7 +132,7 @@ let humanScaleOn = true;
     not a save, and does not come here (review F1.10). */
 function adoptCartGoal(bytes) {
   cartGoalBytes = typeof bytes === 'number' && bytes > 0 ? bytes : null;
-  renderCartGoal(cartTotalBytes());
+  renderCartGoal(cartTotalBytes(), cartUnknownCount());
   return cartGoalBytes;
 }
 
@@ -154,32 +157,43 @@ async function loadCartGoal() {
  * `staged` is passed in rather than recomputed so this stays a pure render of
  * a number the caller already has — renderCart resolves nodes before it knows
  * the total, and reading it twice could show two different figures in the same
- * frame.
+ * frame. `unknown` is how many staged items the scan on screen cannot size
+ * (cartUnknownCount): unknown, never 0 B (B06), so with some of them the
+ * figure is a floor ("3.0 GB+", as on the pill) and with only them there is
+ * no figure at all.
  */
-function renderCartGoal(staged) {
+function renderCartGoal(staged, unknown = 0) {
   const host = $('cartGoal');
   if (!host) return;
   if (!cartGoalBytes) { host.hidden = true; fxGoalPulseSync(null); return; }
   host.hidden = false;
-  const pct = Math.min(100, (staged / cartGoalBytes) * 100);
-  const met = staged >= cartGoalBytes;
-  host.classList.toggle('met', met);
+  const sized = !(unknown > 0 && unknown >= state.cart.size);
+  const pct = sized ? Math.min(100, (staged / cartGoalBytes) * 100) : 0;
+  // A cart nobody could size has neither met the target nor fallen short.
+  const met = sized ? staged >= cartGoalBytes : null;
+  host.classList.toggle('met', met === true);
   // FX: one pulse on the crossing — this render funnel owns `met`. Without a
   // scan the staged total is 0 only because cartNode() cannot resolve a size
   // yet, so it says "unknown" rather than seeding the one-shot at "below": a
   // boot restore of an already-met cart is not a crossing the user caused.
+  // An unsized cart's null `met` reads as unknown the same way.
   fxGoalPulseSync(state.scanId ? met : null);
   $('cartGoalFill').style.width = pct.toFixed(1) + '%';
-  $('cartGoalLine').innerHTML = met
-    // Plainly, once. The extra is stated rather than celebrated — it is a fact
-    // about the cart, not a prize.
-    ? `<b>Target met.</b> <span>${escapeHtml(formatBytes(staged))} staged toward ${escapeHtml(formatBytes(cartGoalBytes))}.</span>`
-    : `<span><b>${escapeHtml(formatBytes(staged))}</b> of ${escapeHtml(formatBytes(cartGoalBytes))} staged</span>` +
-      `<span class="g-pct num">${Math.round(pct)}%</span>`;
+  const goal = formatBytes(cartGoalBytes);
+  const shown = formatBytes(staged) + (unknown ? '+' : '');
+  const said = (unknown ? 'at least ' : '') + formatBytes(staged);
+  $('cartGoalLine').innerHTML = !sized
+    ? `<span>Staged size unknown — not in this scan · target ${escapeHtml(goal)}</span>`
+    : met
+      // Plainly, once. The extra is stated rather than celebrated — it is a fact
+      // about the cart, not a prize.
+      ? `<b>Target met.</b> <span>${escapeHtml(shown)} staged toward ${escapeHtml(goal)}.</span>`
+      : `<span><b>${escapeHtml(shown)}</b> of ${escapeHtml(goal)} staged</span>` +
+        `<span class="g-pct num">${Math.round(pct)}%</span>`;
   host.setAttribute('aria-label',
-    met
-      ? `Cleanup target met: ${formatBytes(staged)} staged toward ${formatBytes(cartGoalBytes)}`
-      : `Cleanup target: ${formatBytes(staged)} of ${formatBytes(cartGoalBytes)} staged, ${Math.round(pct)} percent`);
+    !sized ? `Cleanup target ${goal}: the staged size is unknown, not in this scan`
+      : met ? `Cleanup target met: ${said} staged toward ${goal}`
+      : `Cleanup target: ${said} of ${goal} staged, ${Math.round(pct)} percent`);
 }
 
 async function renderCart() {
@@ -195,7 +209,7 @@ async function renderCart() {
   const total = cartTotalBytes();
   // A staged item the scan on screen does not hold has no size here: it is
   // unknown, never 0 B (B06), and the total is said to leave it out.
-  const unknown = n - cartKnownPaths().length;
+  const unknown = cartUnknownCount();
   const allUnknown = n > 0 && unknown === n;
   // The cart is one entity across its whole life, so every count and total
   // rolls in place; the plural flip ("item" → "items") is a shape change
@@ -212,7 +226,7 @@ async function renderCart() {
     ? `${formatCount(n)} item${n === 1 ? '' : 's'} not in this scan — size unknown`
     : `Up to <b>${formatBytes(total)}</b>, freed when you empty the Trash` +
       (unknown ? ` · ${formatCount(unknown)} not in this scan, not counted` : ''), 'cart');
-  renderCartGoal(total);
+  renderCartGoal(total, unknown);
   const list = $('cartList');
   if (n === 0) {
     list.innerHTML = '<div class="cart-empty">Your cart is empty.<br>Add files from any view to stage them for the Trash.</div>';
