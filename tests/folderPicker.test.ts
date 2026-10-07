@@ -970,6 +970,27 @@ test('Scan holds its button while the path is looked up, and a press the person 
     await Promise.all([first, second]);
     assert.equal(offers.length, 1, 'two presses on one path answer once');
   }
+  // The button is handed back only by the press that holds it: an overtaken
+  // press whose lookup lands first leaves the newer press's hold alone
+  // (final review F1.15).
+  {
+    const g1 = gate();
+    const g2 = gate();
+    const { $, scanned, click, type } = boxesRuntime((p) => (p === DOCS + ' ' ? g1.opened.then(() => notFound())
+      : p === SLOW ? g2.opened.then(() => ({ path: SLOW, parent: '/Volumes/NAS', dirs: [] })) : strictListing(p)));
+    type('pathInput', DOCS + ' ');
+    const older = click('scanBtn');
+    type('pathInput', SLOW);
+    void $('pathInput').listeners.keydown({ key: 'Enter' }); // the newer press, held on its own lookup
+    g1.open();
+    await older;
+    assert.equal($('scanBtn').disabled, true, 'the older press, landing first, does not hand back the button the newer press holds');
+    assert.equal($('scanBtn').getAttribute('aria-busy'), 'true', 'nor end its busy state');
+    g2.open();
+    await settle();
+    assert.equal($('scanBtn').disabled, false, 'the newer press hands it back when its own lookup lands');
+    assert.deepEqual(scanned.map(([p]) => p), [SLOW], 'and scans its folder');
+  }
   // The folder offered, chosen while a scan runs.
   {
     const { rt, $, scanned, toasts, offers, click, type } = boxesRuntime(strictListing);
@@ -1230,7 +1251,11 @@ test('Scan reads Fast rescan when pressed, and a lookup that does not answer in 
   $('fastRescan').checked = false; // unticked while Scan waits
   const waiting = timers.filter((t) => !t.cleared);
   assert.equal(waiting.length, 1, 'the wait for the lookup is bounded');
-  assert.ok(waiting[0].delay > 0 && waiting[0].delay <= 5000, `and short (${waiting[0].delay})`);
+  // Pinned to the number, so a change to the limit is a deliberate edit here:
+  // "at most 5 s" let a 4.9 s limit through (final review F1.16).
+  const limit = lift<number>(['PATH_LOOKUP_MS'], 'PATH_LOOKUP_MS');
+  assert.equal(limit, 3000, 'Scan and Save wait 3 s on a lookup');
+  assert.equal(waiting[0].delay, limit, 'and Scan\'s wait is that limit');
   fire();
   await pending;
   assert.deepEqual(scanned, [[SLOW, { incremental: true }]],
@@ -1302,6 +1327,30 @@ test('Save reads every field when pressed, holds its button while the folder is 
     await Promise.all([first, second]);
     assert.equal(saves(), 1, 'two presses save once');
   }
+  // A press in an editor since closed, landing first, leaves the hold of the
+  // press made in the editor opened after it alone (final review F1.15).
+  {
+    const g1 = gate();
+    const g2 = gate();
+    const { rt, $, click, type, saved } = boxesRuntime((p) => (p === DOCS + ' ' ? g1.opened.then(() => notFound())
+      : p === SLOW ? g2.opened.then(() => ({ path: SLOW, parent: '/Volumes/NAS', dirs: [] })) : strictListing(p)));
+    rt.openPolicyEditor(null);
+    type('apPath', DOCS + ' ');
+    const older = click('apSaveBtn');
+    rt.close('apModal'); // hands the button back, and retires that press
+    rt.openPolicyEditor(null);
+    type('apPath', SLOW);
+    const newer = click('apSaveBtn');
+    assert.equal($('apSaveBtn').disabled, true, 'control: the newer press holds Save');
+    g1.open();
+    await older;
+    assert.equal($('apSaveBtn').disabled, true, 'the retired press, landing first, does not hand back the button the newer press holds');
+    assert.equal($('apSaveBtn').getAttribute('aria-busy'), 'true', 'nor end its busy state');
+    g2.open();
+    await newer;
+    assert.equal($('apSaveBtn').disabled, false, 'the newer press hands it back');
+    assert.deepEqual(saved(), [[SLOW]], 'and saves its folder');
+  }
 });
 
 test('an Autopilot offer outlives nothing: a click after the editor closed never fills the one opened next, and a lookup that does not answer in time saves the folder as typed (QA4a R4-3)', async () => {
@@ -1322,7 +1371,9 @@ test('an Autopilot offer outlives nothing: a click after the editor closed never
     rt.openPolicyEditor(null);
     type('apPath', DOCS + ' ');
     const pending = click('apSaveBtn');
-    assert.equal(timers.filter((t) => !t.cleared).length, 1, 'Save waits on the lookup for a bounded time');
+    const waiting = timers.filter((t) => !t.cleared);
+    assert.equal(waiting.length, 1, 'Save waits on the lookup for a bounded time');
+    assert.equal(waiting[0].delay, 3000, 'of 3 s (final review F1.16)');
     fire();
     await pending;
     assert.deepEqual(saved(), [[DOCS + ' ']],
@@ -1332,6 +1383,32 @@ test('an Autopilot offer outlives nothing: a click after the editor closed never
     assert.deepEqual(offers, [], 'its late answer offers nothing');
     assert.equal(saved().length, 1, 'and saves nothing more');
   }
+});
+
+test('leading whitespace pasted into the Autopilot folder is paste debris — Preview, Save and Browse… all read the folder without it, and a stray trailing space after it is still offered (final review F1.14)', async () => {
+  // Every other test typed only a trailing space into this box: reading it
+  // raw anywhere in the editor would have passed them all.
+  const { rt, asked, offers, click, type, policy, saved, toasts } = boxesRuntime(strictListing);
+  rt.openPolicyEditor(null);
+  type('apPath', '  ' + SHOT);
+  await click('apPreviewBtn');
+  assert.equal(policy('/api/autopilot/simulate').policy!.path, SHOT, 'Preview asks about the folder without the leading spaces');
+  await click('apBrowseBtn');
+  assert.equal(asked.at(-1), list(SHOT), 'Browse… opens the picker at it');
+  rt.close('browseModal');
+  await click('apSaveBtn');
+  assert.deepEqual(saved(), [[SHOT]], 'and Save saves it — its own trailing space kept');
+
+  rt.openPolicyEditor(null);
+  type('apPath', '   ' + DOCS + ' ');
+  await click('apSaveBtn');
+  assert.equal(saved().length, 1, 'leading and a stray trailing space: nothing is saved');
+  assert.ok(!toasts.some((t) => /^Nothing was saved/.test(t)), `not refused as a folder changed while it was checked: ${JSON.stringify(toasts)}`);
+  assert.equal(offers.length, 1, 'the folder without the trailing space is offered');
+  assert.equal(offers[0].msg, noFolder(DOCS + ' ', 'a space', DOCS), 'for the path as read');
+  await offers[0].choose();
+  await click('apSaveBtn');
+  assert.deepEqual(saved().at(-1), [DOCS], 'and Save after choosing it saves that folder');
 });
 
 /* ══════════════ The scheduled-scan folders in Settings (final review F1.4) ══════════════ */
