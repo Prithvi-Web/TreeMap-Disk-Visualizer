@@ -217,6 +217,17 @@ async function scannedMediaFixture(port: number) {
   fs.mkdirSync(sounds);
   for (let i = 0; i < 12; i++) sized(path.join(sounds, `alert_${i}.aiff`), 50_000);
 
+  // The video and music floors from the side the folders above leave open:
+  // a 300 KB clip is under the video floor, and a 1 MB song is at the music
+  // floor, so it counts.
+  const shortclips = path.join(root, 'shortclips');
+  fs.mkdirSync(shortclips);
+  for (let i = 0; i < 12; i++) sized(path.join(shortclips, `loop_${i}.mp4`), 300_000);
+
+  const songs = path.join(root, 'songs');
+  fs.mkdirSync(songs);
+  for (let i = 0; i < 12; i++) sized(path.join(songs, `track_${i}.mp3`), 1_000_000);
+
   let scanId: string;
   try {
     scanId = await scanned(port, root);
@@ -238,6 +249,8 @@ async function scannedMediaFixture(port: number) {
     icons,
     album,
     sounds,
+    shortclips,
+    songs,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -366,6 +379,26 @@ test('icons, thumbnails and alert sounds are not the photos and songs a folder i
 
     const sounds = out.humanScale.values[fixture.sounds] as HumanScaleFact;
     assert.deepEqual(sounds.equivalents, [], 'twelve 50 KB alert sounds are not songs');
+  } finally {
+    fixture.cleanup();
+    await close();
+  }
+});
+
+test('the video and music floors hold from both sides: a 300 KB clip is not a video, a 1 MB song is a song (B10 review)', async () => {
+  const { port, close } = await listen();
+  const fixture = await scannedMediaFixture(port);
+  try {
+    clearFactCache();
+    const out = await computeFacts(fixture.scanId, [fixture.shortclips, fixture.songs], ['humanScale'], fresh());
+    const shortclips = out.humanScale.values[fixture.shortclips] as HumanScaleFact;
+    assert.deepEqual(shortclips, { bytes: 12 * 300_000, equivalents: [] },
+      'twelve 300 KB clips are under the 1 MB video floor: no "videos like the ones here"');
+    const songs = out.humanScale.values[fixture.songs] as HumanScaleFact;
+    assert.deepEqual(songs, {
+      bytes: 12 * 1_000_000,
+      equivalents: [{ kind: 'music', sampleCount: 12, avgBytes: 1_000_000, equivalentCount: 12 }],
+    }, 'twelve 1 MB songs sit at the music floor and are the sample');
   } finally {
     fixture.cleanup();
     await close();
