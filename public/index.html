@@ -9026,11 +9026,13 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       headers: { 'Content-Type': 'application/json' },
       // interactive: a person started this scan here (ScanOptions.interactive)
       // — the one kind that runs Automatic at Turbo and may raise an
-      // administrator prompt. Always so: startScan, the window's own Scan,
-      // is the only caller, and `quiet` says only that an index paint is
-      // already on screen. Keyed on `quiet`, every rescan of an indexed
-      // folder — ⌘R, Rescan, Scan — ran at the background budget (B04).
-      body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: true }),
+      // administrator prompt. Who started it is the caller's to say, never
+      // `quiet`, which says only that an index paint is already on screen:
+      // keyed on `quiet`, every rescan of an indexed folder — ⌘R, Rescan,
+      // Scan — ran at the background budget (B04). Every caller is a person's
+      // click, drop or request except the boot-time restore, which passes
+      // `unattended` — a relaunch must not ask for elevation (review F1.2).
+      body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
@@ -35953,7 +35955,11 @@ async function restoreLastSession() {
     toast(reopen.outcome === 'gone'
       ? `Your last scan of ${last.rootPath} is no longer held — scanning it again.`
       : `Couldn’t reopen your last scan of ${last.rootPath} (${reopen.reason}) — scanning it again.`);
-    await startScan(last.rootPath);
+    // Nobody pressed anything: the page is putting back what was on screen.
+    // Sent as unattended, it runs at the background budget and never raises
+    // an administrator prompt at launch (review F1.2). `?path=` above is a
+    // person's own request, and goes as theirs.
+    await startScan(last.rootPath, { unattended: true });
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
   }

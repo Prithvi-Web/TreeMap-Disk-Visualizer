@@ -176,7 +176,7 @@ test('when the system answer fills the path box, the box is re-checked for that 
 
 type Restore = {
   run: () => Promise<void>; state: Record<string, unknown>; $: (id: string) => El; asked: string[];
-  started: string[]; finished: Array<{ root: unknown; ms: number; stats: unknown; opts: unknown; boxThen: string; scanIdThen: unknown }>;
+  started: string[]; startedWith: unknown[]; finished: Array<{ root: unknown; ms: number; stats: unknown; opts: unknown; boxThen: string; scanIdThen: unknown }>;
   toasts: string[]; warned: string[];
 };
 const LAST = { scanId: 's9', rootPath: '/Users/x/corpus', totalSize: 8_800_000_000, fileCount: 101_034, finishedAt: 1_700_000_000_000 };
@@ -184,7 +184,7 @@ const STATS = { scanId: 's9', status: 'complete', scanned: 106_664, fileCount: 1
 const RESULT = { status: 'complete', scanId: 's9', root: { path: '/Users/x/corpus', size: 8_800_000_000 }, fileCount: 101_034 };
 
 function restore(opts: {
-  answer: (url: string) => unknown; box?: string; focused?: boolean; onResult?: (state: Record<string, unknown>) => void;
+  answer: (url: string) => unknown; box?: string; focused?: boolean; onResult?: (state: Record<string, unknown>) => void; search?: string;
 }): Restore {
   const src = slice('function requestedPath()', 'void restoreLastSession();');
   const els: Record<string, El> = {};
@@ -193,6 +193,7 @@ function restore(opts: {
   const state: Record<string, unknown> = { root: null, scanning: false, scanId: null };
   const asked: string[] = [];
   const started: string[] = [];
+  const startedWith: unknown[] = []; // the options each startScan was handed
   const finished: Restore['finished'] = [];
   const toasts: string[] = [];
   const warned: string[] = [];
@@ -207,15 +208,15 @@ function restore(opts: {
   const run = new Function('$', 'state', 'api', 'location', 'document', 'console', 'startScan', 'finishScan', 'maybeShowFastRescan',
     'rememberScannedRoot', 'toast', 'escapeHtml',
     `'use strict'; ${src} return restoreLastSession;`)(
-    $, state, api, { search: '' }, document, { warn: (m: string) => warned.push(m) },
-    async (p: string) => { started.push(p); },
+    $, state, api, { search: opts.search ?? '' }, document, { warn: (m: string) => warned.push(m) },
+    async (p: string, o?: unknown) => { started.push(p); startedWith.push(o); },
     async (root: unknown, ms: number, stats: unknown, o: unknown) => {
       finished.push({ root, ms, stats, opts: o, boxThen: $('pathInput').value, scanIdThen: state.scanId });
       state.root = root;
     },
     () => {}, () => {}, (m: string) => toasts.push(m), (s: string) => s,
   ) as () => Promise<void>;
-  return { run, state, $, asked, started, finished, toasts, warned };
+  return { run, state, $, asked, started, startedWith, finished, toasts, warned };
 }
 const gone = () => Object.assign(new Error('Unknown or expired scanId'), { status: 404, code: 'SCAN_NOT_FOUND' });
 
@@ -334,4 +335,28 @@ test('only an empty history is a first run; a cloud folder or an unreadable hist
   const moved = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? { roots: [{ rootPath: '/Volumes/gone', count: 1, latestAt: 1, latestSize: 1 }] } : url.startsWith('/api/fs/list') ? new Error('That folder no longer exists.') : assert.fail(`unexpected ${url}`)) });
   await moved.run();
   assert.deepEqual(moved.started, [], 'a folder that has gone falls back to the welcome screen, not a boot error');
+});
+
+/* ══════════════ B38 review F1.2 — a scan nobody started is not sent as a person's ══════════════ */
+
+test('the restore\'s own rescan is unattended — expired, relaunched or gone — so it never asks for elevation; a folder someone asked for is theirs (F1.2)', async () => {
+  // Review F1.2: B04 sends every startScan as interactive, and B38 made the
+  // boot restore routine. Interactive is what lets a scan run Automatic at
+  // Turbo and, on Windows with the ntfs-mft engine, raise an administrator
+  // prompt — so a relaunch asked for elevation with nobody pressing anything.
+  const ROOTS = { roots: [{ rootPath: '/Users/x/corpus', count: 7, latestAt: 1_700_000_100_000, latestSize: 8_800_000_000 }] };
+  for (const [what, answer] of [
+    ['nothing held: the history names the folder (B38)', (url: string) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? ROOTS : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
+    ['held, but gone when asked (D57)', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? gone() : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
+  ] as const) {
+    const h = restore({ answer });
+    await h.run();
+    assert.deepEqual(h.started, ['/Users/x/corpus'], `${what}: scanned again`);
+    assert.deepEqual(h.startedWith, [{ unattended: true }], `${what}: as a scan nobody started`);
+  }
+  // `?path=` is a person's request: the VS Code extension's "Scan with TreeMap" on a folder they chose.
+  const asked = restore({ search: '?path=' + encodeURIComponent('/Users/x/Projects'), answer: (url) => assert.fail(`unexpected ${url}`) });
+  await asked.run();
+  assert.deepEqual(asked.started, ['/Users/x/Projects']);
+  assert.deepEqual(asked.startedWith, [undefined], 'a folder someone asked for is started as theirs');
 });

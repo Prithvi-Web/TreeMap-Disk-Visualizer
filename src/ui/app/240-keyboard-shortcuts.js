@@ -381,7 +381,11 @@ async function restoreLastSession() {
     toast(reopen.outcome === 'gone'
       ? `Your last scan of ${last.rootPath} is no longer held — scanning it again.`
       : `Couldn’t reopen your last scan of ${last.rootPath} (${reopen.reason}) — scanning it again.`);
-    await startScan(last.rootPath);
+    // Nobody pressed anything: the page is putting back what was on screen.
+    // Sent as unattended, it runs at the background budget and never raises
+    // an administrator prompt at launch (review F1.2). `?path=` above is a
+    // person's own request, and goes as theirs.
+    await startScan(last.rootPath, { unattended: true });
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
   }

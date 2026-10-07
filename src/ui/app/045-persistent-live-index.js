@@ -349,11 +349,13 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       headers: { 'Content-Type': 'application/json' },
       // interactive: a person started this scan here (ScanOptions.interactive)
       // — the one kind that runs Automatic at Turbo and may raise an
-      // administrator prompt. Always so: startScan, the window's own Scan,
-      // is the only caller, and `quiet` says only that an index paint is
-      // already on screen. Keyed on `quiet`, every rescan of an indexed
-      // folder — ⌘R, Rescan, Scan — ran at the background budget (B04).
-      body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: true }),
+      // administrator prompt. Who started it is the caller's to say, never
+      // `quiet`, which says only that an index paint is already on screen:
+      // keyed on `quiet`, every rescan of an indexed folder — ⌘R, Rescan,
+      // Scan — ran at the background budget (B04). Every caller is a person's
+      // click, drop or request except the boot-time restore, which passes
+      // `unattended` — a relaunch must not ask for elevation (review F1.2).
+      body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);

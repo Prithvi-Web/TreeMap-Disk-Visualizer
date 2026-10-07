@@ -977,6 +977,21 @@ test('a scan a person starts is sent as theirs (interactive) whether or not the 
   assert.deepEqual(h.chrome.map((c) => !!c.quiet), [true, true], 'both chrome calls are quiet: the painted tree is not wiped');
 });
 
+test('a scan nobody started — the boot-time restore — is never sent as a person\'s, index or no index (B04 review F1.2)', async () => {
+  // Review F1.2: B38 made the boot restore routine (every relaunch, every
+  // reload past the 30-minute expiry), and B04 sent every startScan as
+  // interactive — the one kind that runs Automatic at Turbo and, with the
+  // ntfs-mft engine on Windows, may raise an administrator prompt. Launching
+  // TreeMap would have asked for elevation with nobody pressing anything.
+  for (const indexed of [true, false]) {
+    const h = startScanHarness({ indexed, onScreen: null });
+    await h.run('/Users/x/corpus', { unattended: true });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(h.posts.length, 1, `indexed=${indexed}: one scan request`);
+    assert.equal(h.posts[0].interactive, false, `indexed=${indexed}: an unattended scan is not sent as a person's`);
+  }
+});
+
 test('a new scan takes down the last folder\'s donut total, largest file and forecast too; a quiet refresh leaves them (B05)', () => {
   // B05: during a whole /Applications scan the File Types ring still read
   // "8.8 GB All types", Quick Stats "holiday-4k.mov · 3.0 GB — Largest file"
