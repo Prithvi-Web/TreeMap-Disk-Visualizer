@@ -78,7 +78,8 @@ test('a listing orders its folders with one collator made once, never one per co
   // The sort runs on every subfolder, on the event loop, before the cut. Counted, not timed: during one
   // listing nothing calls String.prototype.localeCompare and no Intl.Collator is made.
   const dir = fs.realpathSync(fileTempDir('treemap-fslist-collator-'));
-  const names = Array.from({ length: 520 }, (_, i) => `${i % 2 ? 'b' : 'B'}${pad(519 - i)}`);
+  // Distinct names made in reverse order; how names that differ only in case or accent order is the next test's.
+  const names = Array.from({ length: 520 }, (_, i) => `n${pad(519 - i)}`);
   for (const name of [...names, '.z', '.A']) fs.mkdirSync(path.join(dir, name));
   const counts = { localeCompare: 0, collatorsMade: 0 };
   const realLocaleCompare = String.prototype.localeCompare;
@@ -106,6 +107,30 @@ test('a listing orders its folders with one collator made once, never one per co
   assert.deepEqual({ first: r.body.dirs.slice(0, 3).map((d: { name: string }) => d.name), total: r.body.total },
     { first: expected.slice(0, 3), total: 522 });
   assert.deepEqual(r.body.dirs.map((d: { name: string }) => d.name), expected.slice(0, 500));
+});
+
+test('names that differ only in letter case or accents are equal to the order — "Apple" and "apple", "résumé" and "resume" keep the order the folder was read in, as localeCompare with sensitivity "base" kept them — while a different letter still decides (POL item 2 review, F2.5)', async () => {
+  // A disk that folds case (APFS, NTFS) cannot hold both "Apple" and "apple", so the folder read is stood in
+  // for: it answers in an order chosen here, the opposite of the one a case- and accent-sensitive collator
+  // gives (lower case first, unaccented first). Equal names keep that order: the sort is stable.
+  const dir = fs.realpathSync(fileTempDir('treemap-fslist-base-'));
+  const read = ['Banana', 'Apple', 'apple', 'résumé', 'resume', '.Z', '.z'];
+  const entry = (name: string) => ({ name, isDirectory: () => true, isSymbolicLink: () => false });
+  const promises = fs.promises as { readdir: unknown };
+  const realReaddir = promises.readdir;
+  promises.readdir = async function (p: fs.PathLike, ...rest: unknown[]) {
+    if (String(p) === dir) return read.map(entry);
+    return (realReaddir as (...a: unknown[]) => unknown).call(fs.promises, p, ...rest);
+  };
+  let r: { status: number; body: any };
+  try {
+    r = await listing(dir);
+  } finally {
+    promises.readdir = realReaddir;
+  }
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual({ names: r.body.dirs.map((d: { name: string }) => d.name), total: r.body.total },
+    { names: ['Apple', 'apple', 'Banana', 'résumé', 'resume', '.Z', '.z'], total: 7 });
 });
 
 test('a folder with 500 or fewer subfolders sends every one, dot-folders last, with total equal to the count sent (POL item 2)', async () => {
