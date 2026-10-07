@@ -115,7 +115,9 @@ OpenAPI 3 spec).
      (`src/services/rulepacks/*.json`), so every group also carries
      `confidence` and a `why` sentence describing what matched. **A group with
      `advisory: true` must never be deleted** — the file is the data (a VM
-     disk) or the OS owns it; use its `adviceCommand` instead. If a pack is
+     disk) or the OS owns it; use its `adviceCommand` instead. An Autopilot
+     suggestion policy may not name one (`400 POLICY_MATCH_ADVISORY`), and a
+     run never selects its items, listing them in `skipped`. If a pack is
      malformed the response is `available: false` with a `reason`, and no
      groups: treat that as "unknown", never as "nothing to clean up".
    - `GET /api/packages/orphans` — package-manager artifacts split into

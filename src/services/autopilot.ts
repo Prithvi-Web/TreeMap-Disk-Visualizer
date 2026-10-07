@@ -9,7 +9,7 @@ import {
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
 import { SPILL_DIR } from './spillSweep';
 import { cleanupSuggestionsFor } from './cleanupMemo';
-import { loadRuleCatalog } from './rulePacks';
+import { loadRuleCatalog, ruleCatalogStatus } from './rulePacks';
 import { matchCustomRules } from './scanQueries';
 import { parse } from './query/parse';
 import { isEmptyQuery } from './query/evaluate';
@@ -201,6 +201,7 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
   // switching off or deleting any other policy. It selects nothing where it
   // stands (the evaluator never matches an unknown).
   if (match.kind === 'query' && (!existing || !sameScope(existing, policy))) refuseUnanswerable(name, match.q);
+  if (match.kind === 'suggestion' && (!existing || !sameScope(existing, policy))) refuseAdvisory(name, match.groupIds);
   return policy;
 }
 
@@ -262,6 +263,30 @@ function linkFolderAdvice(leadsTo: string | null): string {
     // Unreadable: it may still be the folder the person means, as with any folder a policy names.
   }
   return isLink ? 'Choose the folder itself.' : `Choose "${leadsTo}" itself.`;
+}
+
+/**
+ * A suggestion policy may not name a group whose rule only advises (final review F1.11): the file is
+ * the data — a VM disk, Xcode's archives, a photo library's derivatives — or the OS owns it, and
+ * AGENTS.md says such a group "must never be deleted". Clean Up offers no cart button for one; a
+ * policy took any id and, approved, trashed the Docker disk image unattended. Refused where a person
+ * saves it, as an unanswerable query is (an unchanged policy an earlier build saved is not, so the
+ * list it rides in can still be saved — its runs leave the group alone, `selectCandidates`). Rule
+ * packs that cannot be read leave nothing to check here; nothing is selected from them either.
+ */
+function refuseAdvisory(policyName: string, groupIds: readonly string[]): void {
+  const status = ruleCatalogStatus();
+  if (!status.ok) return;
+  const c = status.catalog;
+  const advice = new Map([...c.projectDirectory, ...c.directory, ...c.file, ...c.location, ...c.staleFiles]
+    .filter((rule) => rule.action === 'advice').map((rule) => [rule.id, rule]));
+  const named = groupIds.map((id) => advice.get(id)).filter((rule) => rule !== undefined);
+  if (named.length === 0) return;
+  const insteads = named.map((rule) => rule.adviceCommand).filter((cmd): cmd is string => typeof cmd === 'string' && cmd.length > 0);
+  throw new AppError(400, 'POLICY_MATCH_ADVISORY',
+    `The policy "${policyName}" asks to clean up ${named.map((rule) => `“${rule.title}”`).join(' and ')}, which TreeMap only advises on and never deletes: ` +
+    'the files are the data, or the system owns them. Remove ' + (named.length === 1 ? 'it' : 'them') + ' from the policy' +
+    (insteads.length > 0 ? `, and reclaim the space this way instead: ${insteads.join('; ')}` : '') + '.');
 }
 
 /**
@@ -430,7 +455,8 @@ export function selectCandidates(
   if (match.kind === 'suggestion') {
     const wanted = new Set(match.groupIds);
     for (const group of groups) {
-      if (!wanted.has(group.id)) continue;
+      // An advice-only group is never selected, whatever the policy names (final review F1.11).
+      if (!wanted.has(group.id) || group.advisory) continue;
       for (const item of group.items) {
         out.push({
           path: item.path,
@@ -550,7 +576,8 @@ async function resolveCandidates(
   const mayBeInSpill = spillCandidateTest(policy.path);
   const matched: Candidate[] = [];
   let inSpill = 0;
-  for (const c of await matchCandidates(policy)) {
+  const { candidates: raw, leftAlone: byRule } = await matchCandidates(policy);
+  for (const c of raw) {
     if (mayBeInSpill(c.path) && spillCheck(c.path)) inSpill++;
     else matched.push(c);
   }
@@ -573,7 +600,7 @@ async function resolveCandidates(
   // records a failed run and simulate surfaces the error, so an unreadable
   // pause list stops the deleter instead of silently unpausing it.
   const noted = await suppressedNoteRoots();
-  if (noted.length === 0) return { candidates: matched, leftAlone: spillSkipped };
+  if (noted.length === 0) return { candidates: matched, leftAlone: [...byRule, ...spillSkipped] };
   const prepared = prepareSuppressed(noted, policy.path); // candidates are spelled from the policy's folder (F1.13)
   const candidates: Candidate[] = [];
   // Collapsed to ONE entry per note root with a count (review round 1,
@@ -595,7 +622,7 @@ async function resolveCandidates(
     path: root,
     reason: `Left alone — your note on ${root} pauses automatic cleanup around it (${n} matched item${n === 1 ? '' : 's'}).`,
   }));
-  return { candidates, leftAlone: [...spillSkipped, ...noteSkipped] };
+  return { candidates, leftAlone: [...byRule, ...spillSkipped, ...noteSkipped] };
 }
 
 /** The full check of a candidate that may be in the spill folder: `isSpillPath`, or a test's stand-in. */
@@ -634,8 +661,11 @@ export function assertSavedPolicyPath(p: unknown): void {
   }
 }
 
-/** Scan the policy's folder and resolve its match into raw candidates. */
-async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
+/**
+ * Scan the policy's folder and resolve its match into raw candidates, and what it matched but leaves
+ * alone by rule: an advice-only group's items, each said with the group's own advice (final review F1.11).
+ */
+async function matchCandidates(policy: AutopilotPolicy): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
   // A folder saved as a link is scanned as the link itself, matching nothing,
   // as before QA D78: every check of the folder was made of that spelling.
   const scan = await startScan(policy.path, { followLinkRoot: false });
@@ -654,7 +684,12 @@ async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
     // Sliced, so a run on its timer never holds the app (U-16). Notes are
     // applied by resolveCandidates, after the match, so none are passed here.
     const groups = await cleanupSuggestionsFor(source, ignore, loadRuleCatalog(), []);
-    return selectCandidates(groups, [], policy.match);
+    const wanted = new Set(policy.match.groupIds);
+    const leftAlone = groups.filter((g) => g.advisory && wanted.has(g.id)).flatMap((g) => g.items.map((item) => ({
+      path: item.path,
+      reason: `Left alone — “${g.title}” is advice only: TreeMap never deletes it${g.adviceCommand ? `. Instead: ${g.adviceCommand}` : ''}.`,
+    })));
+    return { candidates: selectCandidates(groups, [], policy.match), leftAlone };
   }
   if (policy.match.kind === 'query') {
     // Through `executeAgainstScan` — the same evaluator the query box and
@@ -678,7 +713,7 @@ async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
     // is a different blast radius from one that trashes the files in it. A
     // person can still stage a folder by hand, where they can see it.
     const files = outcome.hits.filter((h) => !h.isDir);
-    return selectCandidates([], files.map((h) => ({ path: h.path, name: h.name, size: h.size })), policy.match);
+    return { candidates: selectCandidates([], files.map((h) => ({ path: h.path, name: h.name, size: h.size })), policy.match), leftAlone: [] };
   }
   const hits = matchCustomRules(
     source,
@@ -686,7 +721,7 @@ async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
     MAX_ITEMS_PER_RUN,
     Date.now(),
   );
-  return selectCandidates([], hits.files, policy.match);
+  return { candidates: selectCandidates([], hits.files, policy.match), leftAlone: [] };
 }
 
 export interface SimulationResult {

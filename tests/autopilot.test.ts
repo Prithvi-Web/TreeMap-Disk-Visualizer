@@ -40,6 +40,7 @@ import { AutopilotPolicy, AutopilotRun, CleanupSuggestionGroup } from '../src/mo
 import { AppError } from '../src/middleware/errorHandler';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { buildOpenApiDocument } from '../src/api/openapi';
+import { loadRuleCatalog } from '../src/services/rulePacks';
 import http from 'node:http';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -146,6 +147,14 @@ async function call(method: string, url: string, body: unknown): Promise<{ statu
   }
 }
 
+/** A rule id this platform's packs mark advice-only (final review F1.11). */
+const ADVICE_ONLY_ID = ((): string => {
+  const c = loadRuleCatalog();
+  const rule = [...c.projectDirectory, ...c.directory, ...c.file, ...c.location, ...c.staleFiles].find((r) => r.action === 'advice');
+  assert.ok(rule, 'this platform has an advice-only rule');
+  return rule.id;
+})();
+
 test('every refusal PUT /api/autopilot/policies and POST /api/autopilot/simulate give is named in the published spec', async () => {
   // A client generated from GET /api/openapi.json learns a route's error codes
   // from its description. The duplicate-flag refusal above reuses
@@ -163,6 +172,7 @@ test('every refusal PUT /api/autopilot/policies and POST /api/autopilot/simulate
     ['POLICY_MATCH_INVALID', { path: tmp, match: { ...ok, dup: true } }],
     ['POLICY_QUERY_INVALID', { path: tmp, match: { kind: 'query', q: 'nosuchfield:1' } }],
     ['POLICY_QUERY_UNANSWERABLE', { path: tmp, match: { kind: 'query', q: 'dupe:yes' } }],
+    ['POLICY_MATCH_ADVISORY', { path: tmp, match: { kind: 'suggestion', groupIds: [ADVICE_ONLY_ID] } }],
   ];
   if (IS_UNIX) {
     // A folder given as a link (POL item 5); making a link needs a privilege on Windows.
