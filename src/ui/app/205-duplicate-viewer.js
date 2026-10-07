@@ -208,12 +208,14 @@ function renderNearDupes() {
   const clusters = n.clusters;
   // Images the pass could not confirm were on this disk were never compared,
   // and the job says how many: a hole in the answer, never a finding. So are
-  // images the decoder could not read (B20) — every .heic on a Mac.
+  // images the decoder could not read (B20) — every .heic on a Mac — and so
+  // are the smaller images past the pass's cap (truncated).
   const unread = Number(n.unreadable) || 0;
   const unreadTypes = (n.unreadableTypes || []).slice(0, 3)
     .map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ');
-  const leftOut = (n.reason
-    ? `<div class="nd-note">${icon('alert', 14)} ${escapeHtml(n.reason)}</div>` : '') +
+  const leftOut = (n.truncated
+    ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '') +
+    (n.reason ? `<div class="nd-note">${icon('alert', 14)} ${escapeHtml(n.reason)}</div>` : '') +
     (unread ? `<div class="nd-note">${icon('alert', 14)} ${formatCount(unread)} image${unread === 1 ? '' : 's'} could not be read, ` +
       `so ${unread === 1 ? 'it was' : 'they were'} not compared${unreadTypes ? ` (${escapeHtml(unreadTypes)})` : ''}.</div>` : '');
   if (!clusters.length) {
@@ -231,9 +233,7 @@ function renderNearDupes() {
   FxNum.rollHtml($('ndSummary'),
     `<b>${formatCount(n.clusterCount)}</b> similar-image ${n.clusterCount === 1 ? 'group' : 'groups'} — up to <b>${formatBytes(n.totalReclaimable)}</b> reclaimable` +
     (n.clusterCount > clusters.length ? ` <span class="num">(top ${clusters.length} shown)</span>` : ''), state.near.loadedFor);
-  const note = n.truncated
-    ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '';
-  body.innerHTML = note + leftOut + '<div class="nd-list"></div>';
+  body.innerHTML = leftOut + '<div class="nd-list"></div>';
   ndAppendClusters();
   updateNdToolbar();
 }

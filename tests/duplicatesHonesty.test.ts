@@ -277,6 +277,20 @@ test('near-duplicates: images that could not be read are counted, and the librar
   }
 });
 
+test('near-duplicates: a pass that hit its image cap does not call the library tidy — the smaller images were never compared (B20 review)', () => {
+  // perceptualDupes keeps only the largest 8,000 images and says so with
+  // truncated: true. An empty result over that is "none among the largest",
+  // not a tidy library.
+  const capped = renderNear({ ...none, compared: 8000, truncated: true });
+  assert.doesNotMatch(capped.body, /tidy/, `the library is not called tidy when images were left out: ${capped.body}`);
+  assert.match(capped.body, /Only the largest images were compared/, `and the cap is named: ${capped.body}`);
+  assert.match(capped.summary, /among the images compared/, `the summary says what was searched: ${capped.summary}`);
+
+  const found = renderNear({ ...none, compared: 8000, truncated: true, clusters: [{}], clusterCount: 1, totalReclaimable: 10 });
+  assert.equal((found.body.match(/Only the largest images were compared/g) ?? []).length, 1, `a result with groups names the cap once: ${found.body}`);
+  assert.equal(found.appended, 1, 'and still lists the groups');
+});
+
 test('near-duplicates: the reason is shown as text, never as markup', () => {
   const r = renderNear({ ...none, reason: '<img src=x onerror=alert(1)> were not compared' });
   assert.ok(r.body.includes('&lt;img src=x onerror=alert(1)&gt; were not compared'), `escaped: ${r.body}`);
