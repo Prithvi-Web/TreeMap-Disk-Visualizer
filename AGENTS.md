@@ -940,9 +940,11 @@ read-what-you-saw) permission to act.
   newest run, awaiting approval, made for its folder and match as they are
   now (each run records its `scope`), and `409 APPROVAL_NOT_ASKED` for a run
   that asked nothing. Editing a policy's folder or match revokes its approval
-  and makes its preview due at the next check. Approving a run held by
-  `requireConfirmationAbove` lets the next run delete up to what it matched,
-  once (`approvedBytes`); a bigger match asks again.
+  and makes its preview due at the next check, as does a first preview an
+  earlier build recorded (it carries no `scope`). Approving a run lets the
+  next run delete up to what it matched past `requireConfirmationAbove`,
+  once (`approvedBytes`, spent by that run even if it only previews); a
+  bigger match asks again.
 - **Journal.** Significant disk changes noticed by scheduled scans are
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an

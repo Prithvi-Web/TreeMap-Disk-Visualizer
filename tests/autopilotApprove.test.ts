@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-autopilotApprove-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { approvePolicy, approvePolicyForTests, listPolicies, runPolicy, savePolicies } from '../src/services/autopilot';
+import { approvePolicy, approvePolicyForTests, listPolicies, runDuePolicies, runPolicy, savePolicies } from '../src/services/autopilot';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AppError } from '../src/middleware/errorHandler';
@@ -131,6 +131,69 @@ test('a run an earlier build recorded, with no scope, is not approved - and the 
     assert.equal(refused.code, 'APPROVAL_STALE', refused.message);
     assert.equal((await policyNow('older-build')).approvedAt, undefined);
     assert.equal((await policyNow('older-build')).lastRunAt, undefined, 'a fresh preview is due at the next check, not after the cooldown');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('a first preview an earlier build recorded is previewed again at the next check, not after the cooldown - and that preview can be approved', async () => {
+  const dir = folder('upgrade', { 'a.log': 1000 });
+  await savePolicies([{ id: 'upgrade', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false, enabled: true }]);
+  try {
+    const old = await runOnce('upgrade');
+    const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+    delete store.runs.find((r) => r.id === old.id)?.scope; // as v5.0.x recorded it
+    await writeJsonFile('autopilot.json', store);
+    const stampedAt = (await policyNow('upgrade')).lastRunAt;
+    assert.ok(stampedAt, 'the old preview started its cooldown');
+    const ran = await withOpenFileCheck('clear', () => runDuePolicies(stampedAt + 60_000));
+    assert.equal(ran.length, 1, 'the next check previews it again, inside the cooldown');
+    assert.equal(ran[0].status, 'awaiting-approval', 'a preview: nothing is deleted');
+    assert.ok(ran[0].scope, 'made for the policy as it is now');
+    assert.ok(fs.existsSync(path.join(dir, 'a.log')));
+    const again = await withOpenFileCheck('clear', () => runDuePolicies(stampedAt + 120_000));
+    assert.deepEqual(again, [], 'and once previewed, it waits out its cooldown as before');
+    await approvePolicy('upgrade', ran[0].id);
+    assert.ok((await policyNow('upgrade')).approvedAt);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('an approved policy whose newest run an earlier build held for its size still waits out its cooldown - only a preview is ever brought forward', async () => {
+  const dir = folder('upgrade-approved', { 'a.bin': 5000 });
+  await savePolicies([{ id: 'upgrade-approved', name: 'Bins', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true, requireConfirmationAbove: 1000 }]);
+  try {
+    await approvePolicyForTests('upgrade-approved');
+    const held = await runOnce('upgrade-approved');
+    assert.equal(held.status, 'awaiting-approval');
+    const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+    delete store.runs.find((r) => r.id === held.id)?.scope; // as v5.0.x recorded it
+    await writeJsonFile('autopilot.json', store);
+    const stampedAt = (await policyNow('upgrade-approved')).lastRunAt as number;
+    const ran = await withOpenFileCheck('clear', () => runDuePolicies(stampedAt + 60_000));
+    assert.deepEqual(ran, [], 'not brought forward: its next run could delete');
+    assert.ok(fs.existsSync(path.join(dir, 'a.bin')));
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('an approval\'s allowance is spent by the next run even when that run only previews - it never waits for the policy to be switched to deleting', async () => {
+  const dir = folder('preview-spends', { 'a.bin': 5000 });
+  const base = { id: 'preview-spends', name: 'Bins', path: dir, match: { kind: 'custom', exts: ['bin'] }, enabled: true, requireConfirmationAbove: 1000 };
+  await savePolicies([{ ...base, dryRunFirst: true }]);
+  try {
+    const first = await runOnce('preview-spends');
+    await approvePolicy('preview-spends', first.id);
+    assert.equal((await policyNow('preview-spends')).approvedBytes, 5000);
+    const preview = await runOnce('preview-spends');
+    assert.equal(preview.mode, 'dry-run');
+    assert.equal((await policyNow('preview-spends')).approvedBytes, undefined, 'spent by that preview');
+    await savePolicies([{ ...(await policyNow('preview-spends')), dryRunFirst: false }]); // not a scope change: approval kept
+    const live = await withOpenFileCheck('clear', async () => runPolicy(await policyNow('preview-spends'), { ignoreCooldown: true }));
+    assert.equal(live.status, 'awaiting-approval', 'over the limit, it asks first');
+    assert.ok(fs.existsSync(path.join(dir, 'a.bin')));
   } finally {
     await savePolicies([]);
   }
@@ -301,6 +364,7 @@ test('the page offers Approve only on a policy\'s newest run awaiting approval t
   const buttons = [...host.innerHTML.matchAll(/data-ap-approve="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(buttons, ['a-new'], 'one button, on the run that shows what the policy matches now');
   assert.match(host.innerHTML, /changed since this run, or ran again/, 'a stale run says why it offers no approval');
+  assert.match(host.innerHTML, /earlier version of TreeMap/, 'and a run an earlier build recorded says that instead');
 });
 
 test('the approval names the run, and its confirm says the folder, the match and how much', async () => {

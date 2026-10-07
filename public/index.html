@@ -26510,6 +26510,7 @@ function renderAutopilotRuns(runs) {
         ${more}${skipped}
         <div class="ap-run-actions">
           ${approvable.has(r.id) ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.id)}"><span data-icon="check"></span>Approve this run</button>`
+            : needsApproval && !r.scope ? `<span class="muted">Recorded by an earlier version of TreeMap, so it cannot be approved — the policy previews again at its next check; approve that run.</span>`
             : needsApproval ? `<span class="muted">This policy has changed since this run, or ran again, so this is not what it would do now — approve its newest run.</span>` : ''}
           ${(r.bytesDeleted > 0 || unconfirmed > 0) && !r.undoneAt ? `<button class="btn" data-ap-undo="${escapeHtml(r.id)}"><span data-icon="refresh"></span>Undo this run</button>` : ''}
         </div>

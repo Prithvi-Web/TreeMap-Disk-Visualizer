@@ -927,6 +927,9 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     return record();
   }
 
+  // An approval's allowance is for the next run, whatever that run does — a preview included, or a
+  // preview-only policy switched to deleting later would spend an approval of long ago (F1.10).
+  spentAllowance = policy.approvedBytes;
   if (opts.dryRun || policy.dryRunFirst) {
     run.blockedReason = 'Simulated — this policy is set to preview every run rather than delete.';
     return record();
@@ -936,7 +939,6 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   // cap and executed: the size itself is the signal that something is wrong —
   // unless the person approved a run of this policy that matched at least this
   // much, which this run spends (F1.10: approving a held run let nothing run).
-  spentAllowance = policy.approvedBytes;
   if (heldForSize(policy, run.bytesMatched)) {
     run.status = 'awaiting-approval';
     run.blockedReason =
@@ -1083,7 +1085,9 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
       throw new AppError(409, 'APPROVAL_STALE',
         `“${policy.name}” has changed, or run again, since that run, so it is not what that run showed. ` +
         'Approve its newest run, which shows what it matches now' +
-        (policy.approvedAt ? '.' : ' — a fresh preview comes at its next check, within a minute.'));
+        (policy.approvedAt ? '.' : policy.enabled
+          ? ' — a fresh preview comes at its next check, within a minute.'
+          : ' — a fresh preview comes at its next check once it is switched on.'));
     }
     if (!policy.approvedAt) policy.approvedAt = Date.now();
     policy.approvedBytes = run.bytesMatched;
@@ -1190,6 +1194,12 @@ export interface AutopilotUndo {
 
 /* ---------------- the scheduled tick ---------------- */
 
+/** Whether a policy's newest run is a preview awaiting approval that an earlier build recorded, with no scope. */
+function newestRunIsUnscopedPreview(runs: AutopilotRun[], policyId: string): boolean {
+  const newest = runs.find((r) => r.policyId === policyId);
+  return newest !== undefined && newest.status === 'awaiting-approval' && newest.scope === undefined;
+}
+
 /**
  * Run every policy that is due. Called by the existing Scheduler's tick rather
  * than a second timer of its own (§B1: extend the Scheduler, don't duplicate).
@@ -1204,12 +1214,17 @@ export async function runDuePolicies(now = Date.now()): Promise<AutopilotRun[]> 
   const out: AutopilotRun[] = [];
   for (const id of ids) {
     if (policiesInFlight.has(id)) continue;
-    const policy = (await loadStore()).policies.find((p) => p.id === id);
+    const store = await loadStore();
+    const policy = store.policies.find((p) => p.id === id);
     if (!policy || !policy.enabled) continue;
-    const due = !policy.lastRunAt || now - policy.lastRunAt >= policy.cooldownDays * 86_400_000;
+    // A first preview an earlier build recorded carries no scope, so it cannot be approved
+    // (`approvePolicy`): the policy previews again now rather than after its cooldown. A policy never
+    // approved only previews, so nothing is deleted by it (final review F1.7).
+    const previewAgain = !policy.approvedAt && newestRunIsUnscopedPreview(store.runs, policy.id);
+    const due = previewAgain || !policy.lastRunAt || now - policy.lastRunAt >= policy.cooldownDays * 86_400_000;
     if (!due) continue;
     try {
-      out.push(await runPolicy(policy));
+      out.push(await runPolicy(policy, previewAgain ? { ignoreCooldown: true } : {}));
     } catch (err) {
       console.error('[treemap] autopilot policy failed:', err);
     }
