@@ -139,6 +139,10 @@ cloudRouter.post('/cloud/trash', idempotency, guardBodyPaths, storageModeGate, a
     }
   }
   const result = await trashCloudPaths(scan as ScanResult & { root: FileNode }, body.paths);
-  await appendAudit({ action: 'cloud.trash', source: 'http', tokenId: tokenIdFor('http'), paths: body.paths, bytes: null, dryRun: false, outcome: 'ok' });
+  // As the local delete's line does (final review F1.13): a path the provider did not trash is an error.
+  await appendAudit({
+    action: 'cloud.trash', source: 'http', tokenId: tokenIdFor('http'), paths: body.paths, bytes: null, dryRun: false,
+    outcome: result.failed.length === 0 ? 'ok' : 'error', ...(result.failed.length > 0 ? { code: 'PARTIAL_FAILURE' } : {}),
+  });
   res.json(result);
 });

@@ -81,7 +81,12 @@ systemRouter.post('/trash/empty', idempotency, async (req: Request, res: Respons
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to empty the Trash');
   }
   const result = await emptyTrash();
-  await appendAudit({ action: 'trash.empty', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: null, dryRun: false, outcome: 'ok' });
+  // The line says what happened (final review F1.13): an item the emptier could not remove is an error.
+  const partial = !result.emptied || result.failed.length > 0;
+  await appendAudit({
+    action: 'trash.empty', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: null, dryRun: false,
+    outcome: partial ? 'error' : 'ok', ...(partial ? { code: 'PARTIAL_FAILURE' } : {}),
+  });
   res.json(result);
 });
 
@@ -97,7 +102,12 @@ systemRouter.post('/system/snapshots/purge', idempotency, async (req: Request, r
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to purge local snapshots');
   }
   const result = await purgeSnapshots();
-  await appendAudit({ action: 'snapshots.purge', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: null, dryRun: false, outcome: 'ok' });
+  // A purge that failed, or failed for some, is an error on the line too (final review F1.13).
+  const partial = !result.ok || result.failed > 0;
+  await appendAudit({
+    action: 'snapshots.purge', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: null, dryRun: false,
+    outcome: partial ? 'error' : 'ok', ...(partial ? { code: 'PARTIAL_FAILURE' } : {}),
+  });
   res.json(result);
 });
 

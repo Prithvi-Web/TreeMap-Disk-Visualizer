@@ -142,10 +142,11 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
 cartRouter.post('/cart/undo', idempotency, async (req: Request, res: Response) => {
   const { runId } = req.body as { runId?: unknown };
   try {
-    const job = await undoCartRun(String(runId ?? ''));
+    // The audit names the places this undo writes (final review F1.13); the answer is the rest.
+    const { puttingBack, ...job } = await undoCartRun(String(runId ?? ''));
     await appendAudit({
       action: 'cart.undo', source: 'http', tokenId: tokenIdFor('http'),
-      paths: [], bytes: job.bytesTotal, dryRun: false, outcome: 'ok',
+      paths: puttingBack, bytes: job.bytesTotal, dryRun: false, outcome: 'ok',
     });
     res.status(202).json(job);
   } catch (err) {

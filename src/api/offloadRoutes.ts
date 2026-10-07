@@ -150,8 +150,15 @@ offloadRouter.post('/offload/restore', idempotency, async (req: Request, res: Re
     return;
   }
 
+  // The places it writes, named (final review F1.13): each record it takes, as startRestore takes
+  // them — read before it starts, which a fast restore could otherwise finish first.
+  const restoring: string[] = [];
+  for (const id of ids as string[]) {
+    const entry = await getOffloadEntry(id);
+    if (entry && !entry.restoredAt) restoring.push(entry.originalPath);
+  }
   const job = await startRestore(ids as string[]);
-  await appendAudit({ action: 'offload.restore', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: job.bytesTotal, dryRun: false, outcome: 'ok' });
+  await appendAudit({ action: 'offload.restore', source: 'http', tokenId: tokenIdFor('http'), paths: restoring, bytes: job.bytesTotal, dryRun: false, outcome: 'ok' });
   res.status(202).json({ jobId: job.jobId });
 });
 

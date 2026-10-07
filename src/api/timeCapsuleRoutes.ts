@@ -75,10 +75,13 @@ timeCapsuleRouter.get('/timecapsule', async (_req: Request, res: Response) => {
 timeCapsuleRouter.post('/timecapsule/:id/restore', idempotency, async (req: Request, res: Response) => {
   const id = String(req.params.id);
   try {
+    // The place it writes, named (final review F1.13): a restore writes at the original path. Read
+    // before it starts, which a fast restore could otherwise finish first.
+    const entry = await getCapsuleEntry(id);
     const job = await startCapsuleRestore([id]);
     await appendAudit({
       action: 'timecapsule.restore', source: 'http', tokenId: tokenIdFor('http'),
-      paths: [], bytes: job.bytesTotal, dryRun: false, outcome: 'ok',
+      paths: entry ? [entry.originalPath] : [], bytes: job.bytesTotal, dryRun: false, outcome: 'ok',
     });
     res.status(202).json({ jobId: job.jobId });
   } catch (err) {

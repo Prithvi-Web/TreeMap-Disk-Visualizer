@@ -230,7 +230,7 @@ export async function commitCart(paths: string[], runId?: string): Promise<CartC
  * the user unsure what came back. Same wording and same failure mode as
  * Autopilot's undo, because it is the same guarantee.
  */
-export async function undoCartRun(runId: string): Promise<CartUndoResult> {
+export async function undoCartRun(runId: string): Promise<CartUndoResult & { puttingBack: string[] }> {
   if (typeof runId !== 'string' || !runId) {
     throw new AppError(400, 'RUN_ID_REQUIRED', 'Body must include the "runId" the commit returned');
   }
@@ -240,7 +240,11 @@ export async function undoCartRun(runId: string): Promise<CartUndoResult> {
   // (FG3c) — or that no copy is held at all.
   if (plan.undoable.length === 0) throw nothingToUndo('commit', plan);
   const job: TimeCapsuleJob = await startCapsuleRestore(plan.undoable.map((e) => e.id));
-  return { jobId: job.jobId, entryCount: plan.undoable.length, bytesTotal: job.bytesTotal, ...passedOverOf(plan), ...unrestorableOf(plan) };
+  return {
+    jobId: job.jobId, entryCount: plan.undoable.length, bytesTotal: job.bytesTotal, ...passedOverOf(plan), ...unrestorableOf(plan),
+    // The places it writes, for the audit line (final review F1.13); not part of the HTTP answer.
+    puttingBack: plan.undoable.map((e) => e.originalPath),
+  };
 }
 
 /** What an undo puts back, and each copy of an unconfirmed item it passed over, saying why (FG3c). */

@@ -919,6 +919,10 @@ read-what-you-saw) permission to act.
   `offload.start`, `refused`, with its code, over HTTP and MCP alike.
   A cart commit's line lists what was confirmed moved in `paths` and, apart,
   anything whose trash step was not confirmed either way in `unverified`.
+  A line's `outcome` is the operation's own: emptying the Trash, purging
+  snapshots and a cloud trash that failed, wholly or for some, are `error`
+  with `PARTIAL_FAILURE`, as a local delete is; and a restore's line (Time
+  Capsule, cart undo, offload restore) names the original paths it writes.
   `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
   write the same log. Config writes differ by consequence: Autopilot policy
   saves and approvals DO audit (a standing instruction to delete is worth a
