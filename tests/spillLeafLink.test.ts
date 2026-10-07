@@ -122,8 +122,12 @@ test('Autopilot leaves the leftover alone over the folder holding the link, the 
       assert.match(left[0].reason, /\(1 matched item\)/, what);
       // Counted: the full check ran for the candidates under the real app-data folder, as the
       // scan spells them, and for nothing else.
-      const underAppData = root === REAL ? items.length : items.filter((p) => p.startsWith(path.join(root, 'real-tm') + path.sep)).length;
-      assert.equal(full, underAppData + 1, `${what}: one full check per candidate under app-data, the leftover included, and none for the rest`);
+      const inAppData = (p: string): boolean => root === REAL || p.startsWith(path.join(root, 'real-tm') + path.sep);
+      const underAppData = items.filter(inAppData).length;
+      // The audit log this file's requests wrote in app-data is a candidate too, left alone as a safety
+      // record (the final review, F1.11) after its spill check: counted here with the items.
+      const recordsLeft = (answer.body.skipped as { path: string; reason: string }[]).filter((s) => /agent policy and its audit log/.test(s.reason) && inAppData(s.path)).length;
+      assert.equal(full, underAppData + recordsLeft + 1, `${what}: one full check per candidate under app-data, the leftover included, and none for the rest`);
     }
   } finally {
     setSpillCheckForTests(null);
