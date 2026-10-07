@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-historyRuleChange-data-');
+
 import { compileIgnore } from '../src/utils/glob';
 
 /**
