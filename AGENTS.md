@@ -523,16 +523,20 @@ OpenAPI 3 spec).
      waiting on a volume that stopped answering, nothing more is started:
      an item not yet copied is left undeleted as `CAPSULE_COPY_FAILED` (and
      a dry run says so), and one whose turn comes at its look right before
-     its trash step as `CAPSULE_UNREADABLE`. Four looks have no limit yet.
+     its trash step as `CAPSULE_UNREADABLE`. Five looks have no limit yet.
      Two come before anything is deleted — where each item of the batch is
      on the disk, taken before anything is copied, and what stands at each
      path, noted just before the Trash is asked: a path that never answers
-     there holds the request, and nothing is deleted while it waits. Two
-     come after the trash step has run — what stands at the place of an
-     item whose trash step reported a failure, and at a path inside an item
-     that went to the Trash: a path that never answers there holds the
-     response though items are already in the Trash. Their copies are kept,
-     and held from eviction until the request ends. Older copies are
+     there holds the request, and nothing is deleted while it waits. One is
+     each item's own trash step, which looks at the path once more before it
+     asks the Trash: the items go one at a time, so a path that never
+     answers there holds the request with the batch's earlier items already
+     in the Trash (`DELETE /api/files`, an offload and Autopilot take the
+     same step). Two come after the trash step has run — what stands at the
+     place of an item whose trash step reported a failure, and at a path
+     inside an item that went to the Trash: a path that never answers there
+     holds the response though items are already in the Trash. Their copies
+     are kept, and held from eviction until the request ends. Older copies are
      evicted to make room only once the new copy is whole and verified, so an
      item whose copy fails costs no older copy. A run's copies are never evicted to make room while
      a request of that run is under way — its own, or a later chunk of the
