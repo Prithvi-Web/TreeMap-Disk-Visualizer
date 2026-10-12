@@ -12,7 +12,7 @@ import { buildMcpServer } from '../src/mcp/server';
 
 import { INDEX } from './fixtures/liftFrontend';
 import {
-  probeFullDiskAccess, fullDiskAccessCapability, TCC_SYSTEM_DIR, tccUserDir, type FdaProbe,
+  probeFullDiskAccess, fullDiskAccessCapability, type FdaProbe,
 } from '../src/platform/macos/fullDiskAccess';
 import { accessAdvice, granteeFor, type Grantee } from '../src/utils/accessAdvice';
 import { rememberFdaState, lastFdaState, type FdaState } from '../src/utils/fdaState';
@@ -38,7 +38,14 @@ import { refusedPermissionNote } from '../src/services/missingGigabytes';
 /* ══════════════════ the probe ══════════════════ */
 
 const HOME = '/Users/someone';
-const USER_TCC = tccUserDir(HOME);
+/**
+ * The two folders the probe may open, written out rather than imported: built
+ * from the product's own constants, a probe aimed at the wrong folder (or a
+ * typo in the name) answered every test here and said "granted" on a Mac
+ * without access (review F1.6). These are the plan's paths, verbatim.
+ */
+const SYSTEM_TCC = '/Library/Application Support/com.apple.TCC';
+const USER_TCC = '/Users/someone/Library/Application Support/com.apple.TCC';
 
 const errno = (code: string): NodeJS.ErrnoException => Object.assign(new Error(`${code}: from the test`), { code });
 
@@ -63,36 +70,36 @@ function fakeFs(answers: Record<string, string | 'open'>) {
 }
 
 test('the probe: EPERM on the system TCC folder is not-granted, and the per-user folder is never opened', async () => {
-  const f = fakeFs({ [TCC_SYSTEM_DIR]: 'EPERM', [USER_TCC]: 'open' });
+  const f = fakeFs({ [SYSTEM_TCC]: 'EPERM', [USER_TCC]: 'open' });
   const probe = await probeFullDiskAccess(f.deps);
   assert.equal(probe.state, 'not-granted');
-  assert.deepEqual(f.opened, [TCC_SYSTEM_DIR], 'the system folder first, and its EPERM is the answer');
+  assert.deepEqual(f.opened, [SYSTEM_TCC], 'the system folder first, and its EPERM is the answer');
 });
 
 test('the probe: ENOENT on the system folder, then EPERM on the per-user one, is not-granted', async () => {
-  const f = fakeFs({ [TCC_SYSTEM_DIR]: 'ENOENT', [USER_TCC]: 'EPERM' });
+  const f = fakeFs({ [SYSTEM_TCC]: 'ENOENT', [USER_TCC]: 'EPERM' });
   assert.equal((await probeFullDiskAccess(f.deps)).state, 'not-granted');
-  assert.deepEqual(f.opened, [TCC_SYSTEM_DIR, USER_TCC]);
+  assert.deepEqual(f.opened, [SYSTEM_TCC, USER_TCC]);
 });
 
 test('the probe: a folder that opens is granted — closed once, and not one entry read', async () => {
-  const f = fakeFs({ [TCC_SYSTEM_DIR]: 'open', [USER_TCC]: 'EPERM' });
+  const f = fakeFs({ [SYSTEM_TCC]: 'open', [USER_TCC]: 'EPERM' });
   assert.equal((await probeFullDiskAccess(f.deps)).state, 'granted');
-  assert.deepEqual(f.opened, [TCC_SYSTEM_DIR]);
+  assert.deepEqual(f.opened, [SYSTEM_TCC]);
   assert.equal(f.counts.close, 1, 'the directory is closed once');
   assert.equal(f.counts.read, 0, 'and nothing in it is read');
-  const late = fakeFs({ [TCC_SYSTEM_DIR]: 'ENOENT', [USER_TCC]: 'open' });
+  const late = fakeFs({ [SYSTEM_TCC]: 'ENOENT', [USER_TCC]: 'open' });
   assert.equal((await probeFullDiskAccess(late.deps)).state, 'granted', 'the per-user folder opening is a yes too');
   assert.equal(late.counts.close, 1);
   assert.equal(late.counts.read, 0);
 });
 
 test('the probe: ENOENT on both is unknown, naming the errno — never not-granted', async () => {
-  const f = fakeFs({ [TCC_SYSTEM_DIR]: 'ENOENT', [USER_TCC]: 'ENOENT' });
+  const f = fakeFs({ [SYSTEM_TCC]: 'ENOENT', [USER_TCC]: 'ENOENT' });
   const probe = await probeFullDiskAccess(f.deps);
   assert.equal(probe.state, 'unknown');
   assert.match((probe as { reason: string }).reason, /ENOENT/, 'the reason names what the folders answered');
-  const odd = fakeFs({ [TCC_SYSTEM_DIR]: 'EIO', [USER_TCC]: 'ENOENT' });
+  const odd = fakeFs({ [SYSTEM_TCC]: 'EIO', [USER_TCC]: 'ENOENT' });
   const oddProbe = await probeFullDiskAccess(odd.deps);
   assert.equal(oddProbe.state, 'unknown');
   assert.match((oddProbe as { reason: string }).reason, /EIO/);
@@ -100,13 +107,13 @@ test('the probe: ENOENT on both is unknown, naming the errno — never not-grant
 
 test('the probe never opens Desktop, Documents or Downloads (each raises a macOS prompt), nor anything off macOS', async () => {
   for (const answers of [
-    { [TCC_SYSTEM_DIR]: 'EPERM' }, { [TCC_SYSTEM_DIR]: 'open' },
-    { [TCC_SYSTEM_DIR]: 'ENOENT', [USER_TCC]: 'ENOENT' }, { [TCC_SYSTEM_DIR]: 'ENOENT', [USER_TCC]: 'open' },
+    { [SYSTEM_TCC]: 'EPERM' }, { [SYSTEM_TCC]: 'open' },
+    { [SYSTEM_TCC]: 'ENOENT', [USER_TCC]: 'ENOENT' }, { [SYSTEM_TCC]: 'ENOENT', [USER_TCC]: 'open' },
   ] as Array<Record<string, string>>) {
     const f = fakeFs(answers);
     await probeFullDiskAccess(f.deps);
     for (const p of f.opened) {
-      assert.ok([TCC_SYSTEM_DIR, USER_TCC].includes(p), `only the two TCC folders are opened, not ${p}`);
+      assert.ok([SYSTEM_TCC, USER_TCC].includes(p), `only the two TCC folders are opened, not ${p}`);
       assert.doesNotMatch(p, /\/(Desktop|Documents|Downloads)(\/|$)/);
     }
   }
@@ -125,8 +132,8 @@ const WEB: Grantee = granteeFor({}, {});
 
 test('the capability is available only when granted; unknown and not-granted are unavailable with a reason; off macOS it is a macOS setting', () => {
   const cases: Array<[FdaProbe, boolean, FdaState]> = [
-    [{ state: 'granted', answeredBy: TCC_SYSTEM_DIR }, true, 'granted'],
-    [{ state: 'not-granted', answeredBy: TCC_SYSTEM_DIR }, false, 'not-granted'],
+    [{ state: 'granted', answeredBy: SYSTEM_TCC }, true, 'granted'],
+    [{ state: 'not-granted', answeredBy: SYSTEM_TCC }, false, 'not-granted'],
     [{ state: 'unknown', reason: 'the two folders it checks answered ENOENT and ENOENT' }, false, 'unknown'],
   ];
   for (const [probe, available, state] of cases) {
