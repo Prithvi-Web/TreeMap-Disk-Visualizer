@@ -24,6 +24,9 @@ import type { ScanResult } from '../src/models/types';
  * exact lookup uses. A path with nothing at it folds nothing (there is nothing to size); an entry
  * there has every name as the volume stores it but its own last name, when it is a link; and one batch
  * of such links folds each folder's names once.
+ *
+ * A name more than one sibling folds to is no answer: "unknown", never one of their sizes, since a
+ * wrong size reaches the byte cap and the audit (the final review, F3.4).
  */
 
 const ROOT = fs.realpathSync(fileTempDir('treemap-knownSizeOfCost-root-'));
@@ -37,6 +40,23 @@ const WINDOWS = process.platform === 'win32';
 if (!WINDOWS) for (let i = 0; i < LINKS; i++) fs.symlinkSync(path.join(BIG, `f${i}.bin`), path.join(BIG, `l${i}`));
 /** Whether this volume folds case, as macOS's and Windows' do by default. */
 const CASE_FOLDS = fs.existsSync(path.join(BIG, 'F0.BIN'));
+
+/** The size of each file whose name folds as another sibling's does: never the answer for a path that is not it. */
+const OTHER_BYTES = 5000;
+/**
+ * Names that fold alike, which every volume keeps apart: a link `l0` and a different file `Ｌ0`
+ * (fullwidth), which `foldName` reads as one name; and a link `m0` no other name folds to.
+ */
+const AMBIGUOUS = path.join(ROOT, 'ambiguous');
+fs.mkdirSync(AMBIGUOUS);
+fs.writeFileSync(path.join(AMBIGUOUS, 'target.bin'), Buffer.alloc(7, 1));
+fs.writeFileSync(path.join(AMBIGUOUS, 'Ｌ0'), Buffer.alloc(OTHER_BYTES, 1));
+if (!WINDOWS) for (const name of ['l0', 'm0']) fs.symlinkSync(path.join(AMBIGUOUS, 'target.bin'), path.join(AMBIGUOUS, name));
+/** Two files whose names fold alike, `R0` and `Ｒ0`, beside which a test makes a link `𝐫0` (folding the same) after the scan. */
+const LATE = path.join(ROOT, 'late');
+fs.mkdirSync(LATE);
+fs.writeFileSync(path.join(LATE, 'R0'), Buffer.alloc(11, 1));
+fs.writeFileSync(path.join(LATE, 'Ｒ0'), Buffer.alloc(OTHER_BYTES, 1));
 
 let scan: ScanResult;
 let names = 0;
@@ -86,4 +106,24 @@ test('a batch of links spelled in another case is sized, folding the folder\'s n
     { sizes: first.value, 'names folded': first.names, 'a later batch, names folded': later.names },
     { sizes: listed, 'names folded': FILES + LINKS, 'a later batch, names folded': FILES + LINKS },
   );
+});
+
+test('a name more than one sibling folds to is "unknown", never one of their sizes: a link spelled in another case beside a different file whose name folds the same, and a link the scan never listed beside two that fold alike — while a link alone in its fold is sized (the final review, F3.4)', { skip: WINDOWS && 'needs links' }, () => {
+  const late = path.join(LATE, '𝐫0'); // made after the scan: the scan never listed it
+  fs.symlinkSync(path.join(LATE, 'R0'), late);
+  try {
+    const sizes: Record<string, number | null> = { 'a link the scan never listed, beside R0 and Ｒ0': knownSizeOf(late) };
+    const expected: Record<string, number | null> = { 'a link the scan never listed, beside R0 and Ｒ0': null };
+    if (CASE_FOLDS) {
+      const listed = knownSizeOf(path.join(AMBIGUOUS, 'm0'));
+      assert.ok(listed !== null, 'the link m0 is sized by its own spelling');
+      sizes['the link l0, spelled L0, beside Ｌ0'] = knownSizeOf(path.join(AMBIGUOUS, 'L0'));
+      sizes['the link m0, spelled M0, alone in its fold'] = knownSizeOf(path.join(AMBIGUOUS, 'M0'));
+      expected['the link l0, spelled L0, beside Ｌ0'] = null;
+      expected['the link m0, spelled M0, alone in its fold'] = listed;
+    }
+    assert.deepEqual(sizes, expected);
+  } finally {
+    fs.rmSync(late);
+  }
 });
