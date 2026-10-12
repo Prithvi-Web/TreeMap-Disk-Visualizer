@@ -1007,6 +1007,66 @@ test('Scan holds its button while the path is looked up, and a press the person 
   }
 });
 
+test('"Checking that the folder exists…" leaves the scan\'s live region when the check ends without a scan — an offer, a path changed, a newer press — and a running scan\'s sentence is never taken with it (final review F2.4)', async () => {
+  // Scan wrote the sentence into #scanAnnounce (role=status) and nothing took
+  // it back unless a scan started: after an offer, or a press dropped, the
+  // region still said a check was under way.
+  const CHECKING = /^Checking that the folder exists…$/;
+  // The check finds no such folder, and offers the one without the space.
+  {
+    const { $, offers, click, type } = boxesRuntime(strictListing);
+    type('pathInput', DOCS + ' ');
+    const pending = click('scanBtn');
+    assert.match($('scanAnnounce').textContent, CHECKING, 'control: the check is said while it runs');
+    await pending;
+    assert.equal(offers.length, 1, 'control: the folder without the space is offered');
+    assert.equal($('scanAnnounce').textContent, '', 'the check is no longer said to be running — the offer, in #toasts, says what it found');
+  }
+  // The box changed while the check ran: the press is dropped, out loud.
+  {
+    const g = gate();
+    const { $, toasts, click, type } = boxesRuntime(slowStray(g));
+    type('pathInput', DOCS + ' ');
+    const pending = click('scanBtn');
+    type('pathInput', '/data');
+    g.open();
+    await pending;
+    assert.match(toasts.at(-1) ?? '', /^Nothing was scanned/, 'control: the press is dropped');
+    assert.equal($('scanAnnounce').textContent, '', 'and the check is no longer said to be running');
+  }
+  // Enter takes over while Scan is held: the newer press holds the button,
+  // and ends the check the older press announced as it settles.
+  {
+    const g = gate();
+    const { $, scanned, click, type } = boxesRuntime(slowStray(g));
+    type('pathInput', DOCS + ' ');
+    const held = click('scanBtn');
+    type('pathInput', '/data');
+    await $('pathInput').listeners.keydown({ key: 'Enter' });
+    await settle();
+    assert.deepEqual(scanned.map(([p]) => p), ['/data'], 'control: Enter scanned the path in the box');
+    assert.equal($('scanAnnounce').textContent, '', 'the older press\'s check is no longer said to be running');
+    g.open();
+    await held;
+    assert.equal($('scanAnnounce').textContent, '', 'nor said again when its lookup lands');
+  }
+  // A scan started some other way while the check ran (Recent, the dock):
+  // the region says that scan now, and the check ending leaves it alone.
+  {
+    const g = gate();
+    const { rt, $, toasts, click, type } = boxesRuntime(slowShots(g));
+    type('pathInput', SLOW);
+    const pending = click('scanBtn');
+    assert.match($('scanAnnounce').textContent, CHECKING, 'control: the check is said');
+    rt.scanning(true);
+    $('scanAnnounce').textContent = 'Scanning…'; // what beginScanChrome says
+    g.open();
+    await pending;
+    assert.equal(toasts.at(-1), 'A scan is already running', 'control: the press is dropped');
+    assert.equal($('scanAnnounce').textContent, 'Scanning…', 'and the running scan\'s sentence stays');
+  }
+});
+
 /* ══════════════ The toast an offer rides in (final review F1.12) ══════════════ */
 
 type ToastBtn = { label: string; attrs: Record<string, string>; listeners: Array<() => void>; addEventListener(t: string, f: () => void): void; click(): void; focus(): void };

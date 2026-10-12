@@ -1426,11 +1426,12 @@ async function scanTheBox() {
   // scan's live region (final review F1.11).
   const incremental = !$('fastRescanWrap').hidden && $('fastRescan').checked;
   const seq = ++scanPressSeq;
+  const checking = 'Checking that the folder exists…';
   btn.disabled = true;
   if (boxLooksUp(p)) {
     btn.setAttribute('aria-busy', 'true');
     btn.innerHTML = icon('search', 16) + 'Checking…';
-    $('scanAnnounce').textContent = 'Checking that the folder exists…';
+    $('scanAnnounce').textContent = checking;
   }
   let meant = null;
   try {
@@ -1442,6 +1443,10 @@ async function scanTheBox() {
     if (seq === scanPressSeq) {
       btn.removeAttribute('aria-busy');
       if (state.scanning) btn.disabled = false; else setScanButtonMode('scan');
+      // And the check is over: the live region stops saying one is running,
+      // however it ended — an offer, a press dropped — unless a scan started
+      // meanwhile has said its own sentence there (final review F2.4).
+      if ($('scanAnnounce').textContent === checking) $('scanAnnounce').textContent = '';
     }
   }
   // A newer press took over — Enter, or the folder offered, chosen — and
