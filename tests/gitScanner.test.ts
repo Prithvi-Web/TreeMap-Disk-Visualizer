@@ -15,6 +15,7 @@ import { createScanRecord } from '../src/services/diskScanner';
 import { createApp } from '../src/server';
 import { readAudit } from '../src/services/audit';
 import { commandsOf, recordGit } from './fixtures/gitRecorder';
+import { listAsWindowsNode20 } from './fixtures/windowsListing';
 
 /**
  * FG4 — `git gc` runs only on a repository whose data is really where it looks, and keeps what
@@ -159,6 +160,28 @@ test('a link anywhere inside .git is refused, naming it', async (t) => {
   assert.equal(result.ok, false);
   assert.ok((result.error ?? '').includes('pack-elsewhere'), result.error);
   assert.deepEqual(plans, []);
+});
+
+test('a link anywhere inside .git that the listing reads as a folder — Windows under Node 20, whose libuv types a link to a folder and a junction as folders — is refused, naming it', async (t) => {
+  const { repo } = scannedRepo();
+  const elsewhere = tmp('treemap-gitgc-winlist-');
+  const link = path.join(repo, '.git', 'objects', 'pack-elsewhere');
+  try {
+    fs.symlinkSync(elsewhere, link, 'dir');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  const listing = listAsWindowsNode20();
+  let outcome: Awaited<ReturnType<typeof gcWithStandIn>>;
+  try {
+    outcome = await gcWithStandIn(repo);
+  } finally {
+    listing.restore();
+  }
+  assert.equal(outcome.result.ok, false, 'gc was not run through the link');
+  assert.ok((outcome.result.error ?? '').includes('pack-elsewhere'), outcome.result.error);
+  assert.deepEqual(outcome.plans, []);
 });
 
 test('a repository whose settings are refused is never gc\'d, and git only read it', async () => {

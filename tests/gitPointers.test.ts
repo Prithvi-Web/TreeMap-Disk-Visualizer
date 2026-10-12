@@ -12,6 +12,7 @@ import { ALTERNATES_ENTRY_BUDGET, vetRepository } from '../src/services/gitSafe'
 import { readRepoState } from '../src/services/gitRecoverability';
 import type { GitRecoverability } from '../src/services/recoverabilityTypes';
 import { commandsOf, recordGit } from './fixtures/gitRecorder';
+import { listAsWindowsNode20 } from './fixtures/windowsListing';
 
 /**
  * FG4c — every file through which git follows a path is read by TreeMap before git starts.
@@ -257,6 +258,55 @@ test('a link at the top of the git folder is judged by where it leads', async (t
 
   const read = await vetRecorded(root, under(root, elsewhere));
   assert.equal(read.vetting.ok, true, `the same link into a scanned folder goes on: ${JSON.stringify(read.vetting)}`);
+});
+
+test('a link at the top of the git folder, or of the common folder, is judged by where it leads where a listing reads it as a folder — Windows under Node 20, whose libuv types a link to a folder and a junction as folders', async (t) => {
+  const root = fakeRepo();
+  const elsewhere = tmp('treemap-gitptr-winlist-');
+  try {
+    fs.symlinkSync(elsewhere, path.join(root, '.git', 'refs'), 'dir');
+  } catch {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  // The worktree layout of the common-folder test below: a linked worktree whose commondir holds the link.
+  const shared = tmp('treemap-gitptr-winlist-wt-');
+  const common = path.join(shared, 'main.git');
+  const admin = path.join(common, 'worktrees', 'wt');
+  fs.mkdirSync(admin, { recursive: true });
+  fs.mkdirSync(path.join(common, 'objects', 'info'), { recursive: true });
+  const work = path.join(shared, 'wt');
+  fs.mkdirSync(work);
+  fs.writeFileSync(path.join(work, '.git'), `gitdir: ${admin}\n`);
+  fs.writeFileSync(path.join(admin, 'commondir'), '../..\n');
+  fs.symlinkSync(elsewhere, path.join(common, 'refs'), 'dir');
+
+  const listing = listAsWindowsNode20();
+  let typed: [boolean, boolean] | null = null;
+  let top: Awaited<ReturnType<typeof vetRecorded>>;
+  let read: Awaited<ReturnType<typeof vetRecorded>>;
+  let worktree: Awaited<ReturnType<typeof vetRepository>>;
+  let rec: ReturnType<typeof recordGit> | null = null;
+  try {
+    for await (const entry of await fs.promises.opendir(path.join(root, '.git'))) {
+      if (entry.name === 'refs') typed = [entry.isDirectory(), entry.isSymbolicLink()];
+    }
+    top = await vetRecorded(root, under(root));
+    read = await vetRecorded(root, under(root, elsewhere));
+    rec = recordGit(() => ({ code: 128, stderr: 'the recorder: no git call was expected' }));
+    worktree = await vetRepository(work, { insideScannedRoot: under(shared) });
+  } finally {
+    rec?.restore();
+    listing.restore();
+  }
+  assert.deepEqual(typed, [true, false], 'the listing reads the link as a folder, as Windows does under Node 20');
+  assert.equal(!top.vetting.ok && top.vetting.kind, 'refused', JSON.stringify(top.vetting));
+  assert.ok((!top.vetting.ok ? top.vetting.reason : '').includes(elsewhere), !top.vetting.ok ? top.vetting.reason : '');
+  assert.deepEqual(top.calls, [], 'git was never started');
+  assert.equal(read.vetting.ok, true, `the same link into a scanned folder goes on: ${JSON.stringify(read.vetting)}`);
+  assert.equal(!worktree.ok && worktree.kind, 'refused', JSON.stringify(worktree));
+  assert.ok((!worktree.ok ? worktree.reason : '').includes(elsewhere), !worktree.ok ? worktree.reason : '');
+  assert.deepEqual(rec?.calls, [], 'the worktree\'s git was never started either');
 });
 
 /* ══════════════════ A pointer's `..` after its links (review #2) ══════════════════ */

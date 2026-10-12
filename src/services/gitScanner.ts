@@ -1,5 +1,6 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
+import { listedFolderIsReal } from '../utils/listedFolder';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { insideAnyScanRoot } from '../middleware/pathGuard';
 import { ScanStore, TreeSource, asStore, Flag } from './scanStore';
@@ -155,7 +156,9 @@ export function setGitGcStepForTests(step: ((plan: GitGcPlan) => Promise<GitGcOu
 
 /**
  * The first link, or special file, anywhere under `dir` (the folder itself excluded); null when
- * there is none; `limit` when there are more entries than that to look at.
+ * there is none; `limit` when there are more entries than that to look at. An entry the listing
+ * calls a folder is asked again (`listedFolderIsReal`): on Windows Node 20's listing calls a link
+ * to a folder, and a junction, a folder, and the walk would have gone through it.
  */
 async function firstLinkInside(dir: string): Promise<string | null | 'limit'> {
   const pending = [dir];
@@ -166,7 +169,7 @@ async function firstLinkInside(dir: string): Promise<string | null | 'limit'> {
     for await (const entry of await fsp.opendir(current)) {
       if (++seen > GC_WALK_LIMIT) return 'limit';
       const full = path.join(current, entry.name);
-      if (entry.isDirectory()) pending.push(full);
+      if (entry.isDirectory() && (await listedFolderIsReal(full))) pending.push(full);
       else if (!entry.isFile()) return full;
     }
   }

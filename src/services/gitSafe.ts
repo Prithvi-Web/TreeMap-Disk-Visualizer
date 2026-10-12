@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import fs, { promises as fsp } from 'fs';
 import os from 'os';
 import path from 'path';
+import { listedFolderIsReal } from '../utils/listedFolder';
 
 /**
  * Every git command TreeMap runs goes through this module (FG4).
@@ -512,17 +513,21 @@ async function alternatesRefusal(objects: string, opts: VetOptions, depth: numbe
  * Why git must not be sent where a link at the top of the git folder `dir` leads (a linked
  * `objects`, `refs`, `config`, `HEAD`…), or null: git follows each while it starts, before any
  * setting is vetted (FG4c). A link deeper inside is not looked for here (RISKS R115). Names are
- * read as bytes, so a link is read by the name it has, whatever that name decodes to.
+ * read as bytes, so a link is read by the name it has, whatever that name decodes to. An entry the
+ * listing calls a folder is asked again (`listedFolderIsReal`): on Windows Node 20's listing calls
+ * a link to a folder, and a junction, a folder.
  */
 async function topLevelLinkRefusal(dir: string, opts: VetOptions): Promise<string | null> {
   let count = 0;
   const prefix = Buffer.from(`${dir}${path.sep}`);
   for await (const entry of await fsp.opendir(dir, { encoding: 'buffer' } as unknown as fs.OpenDirOptions)) {
     if (++count > TOP_LEVEL_LIMIT) return `${shown(dir)} holds too many entries to check, so TreeMap did not run Git on it.`;
-    if (!entry.isSymbolicLink()) continue;
-    if (opts.signal?.aborted) return CANCELLED;
     const name = entry.name as unknown as Buffer;
-    const text = await linkText(Buffer.concat([prefix, name]));
+    const full = Buffer.concat([prefix, name]);
+    const isLink = entry.isSymbolicLink() || (entry.isDirectory() && !(await listedFolderIsReal(full)));
+    if (!isLink) continue;
+    if (opts.signal?.aborted) return CANCELLED;
+    const text = await linkText(full);
     if (text === undefined) return inexact(path.join(dir, name.toString('utf8')));
     const leads = await pointerLeads(text, dir, opts);
     if ('refusal' in leads) return leads.refusal;
