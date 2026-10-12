@@ -158,12 +158,24 @@ function requireCompleteScanMcp(scanId: string): ScanResult {
 /**
  * What trash_paths says it did, from what moveToTrash reports: "moved to the Trash" only for what
  * moved, and how many were not (each with its reason in `failed`). A fixed sentence beside
- * reclaimedBytes 0 told an agent a delete had happened that had not (the final review, F1.25).
+ * reclaimedBytes 0 told an agent a delete had happened that had not (the final review, F1.25). An
+ * item whose Trash step did not answer in time (`stopped`) is neither: the Trash may still finish
+ * moving it, so it is "not confirmed", never "not moved" — an agent told it was not moved could
+ * report no delete, or retry one the Trash then completes (the final review, F2.6).
  */
-function trashNote(moved: number, notMoved: number): string {
-  if (moved === 0) return notMoved === 0 ? 'Nothing was moved to the Trash.' : 'Nothing was moved to the Trash — `failed` says why for each item.';
-  const done = `${moved} item${moved === 1 ? ' was' : 's were'} moved to the OS Trash and can be restored from there`;
-  return notMoved === 0 ? `${done}.` : `${done}; ${notMoved} ${notMoved === 1 ? 'was' : 'were'} not — \`failed\` says why.`;
+function trashNote(moved: number, failed: readonly { stopped?: boolean }[]): string {
+  const unanswered = failed.filter((item) => item.stopped === true).length;
+  const notMoved = failed.length - unanswered;
+  if (moved === 0 && unanswered === 0) return notMoved === 0 ? 'Nothing was moved to the Trash.' : 'Nothing was moved to the Trash — `failed` says why for each item.';
+  const was = (n: number): string => (n === 1 ? 'was' : 'were');
+  const clauses = [
+    moved > 0 ? `${moved} item${moved === 1 ? ' was' : 's were'} moved to the OS Trash and can be restored from there` : 'Nothing was confirmed moved to the Trash',
+    ...(unanswered > 0
+      ? [`${unanswered} item${unanswered === 1 ? '' : 's'} ${was(unanswered)} not confirmed — the Trash did not answer in time and may still finish moving ${unanswered === 1 ? 'it' : 'them'}`]
+      : []),
+    ...(notMoved > 0 ? [`${notMoved} ${was(notMoved)} not moved`] : []),
+  ];
+  return failed.length === 0 ? `${clauses[0]}.` : `${clauses.join('; ')}. \`failed\` says which, and why.`;
 }
 
 /**
@@ -885,7 +897,7 @@ export function buildMcpServer(): McpServer {
           failed: result.failed,
           reclaimedBytes: freed,
           reclaimedFormatted: formatBytes(freed),
-          note: trashNote(result.deleted.length, result.failed.length),
+          note: trashNote(result.deleted.length, result.failed),
         });
       }),
   );

@@ -15,7 +15,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer, setToolWaitClockForTests } from '../src/mcp/server';
 import { peekScan } from '../src/services/diskScanner';
-import { setTrashStepForTests } from '../src/services/cleaner';
+import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { formatBytes } from '../src/utils/formatBytes';
 import { waitFor } from './fixtures/waitFor';
 
@@ -308,6 +308,37 @@ test('trash_paths says what really happened: "moved to the Trash" only for what 
     assert.match(notes['nothing moved'], /^Nothing was moved to the Trash/);
     assert.doesNotMatch(notes['nothing moved'], /were moved to the OS Trash/);
     assert.match(notes['some moved'], /^1 item was moved to the OS Trash and can be restored from there; 1 was not/);
+  } finally {
+    setTrashStepForTests(null);
+    fs.rmSync(standIn, { recursive: true, force: true });
+  }
+});
+
+test('trash_paths never says an item was not moved when the Trash may still move it: one whose Trash step did not answer in time is "not confirmed", apart from one that was not moved (the final review, F2.6)', async () => {
+  // osascript stopped at its time limit has already handed Finder the move, which can still finish:
+  // moveToTrash fails such an item with `stopped: true`. The Trash step is stood in for.
+  const standIn = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-trash-'));
+  const moves = write('pending-moves.txt', 'moves');
+  const late = [write('pending-late-1.txt', 'late'), write('pending-late-2.txt', 'late')];
+  const refused = write('pending-refused.txt', 'refused');
+  setTrashStepForTests(async (p) => {
+    if (late.includes(p)) throw new CommandStopped('osascript was stopped at its time limit');
+    if (p === refused) throw new Error('the Trash refused it');
+    fs.renameSync(p, path.join(standIn, path.basename(p)));
+  });
+  try {
+    const answerTo = async (paths: string[]): Promise<{ note: string; stopped: number }> => {
+      const r = await call('trash_paths', { paths, dryRun: false });
+      assert.ok(!r.isError, JSON.stringify(r.content));
+      const failed = r.structuredContent!.failed as { stopped?: boolean }[];
+      return { note: String(r.structuredContent!.note), stopped: failed.filter((f) => f.stopped === true).length };
+    };
+    const allLate = await answerTo(late);
+    const mixed = await answerTo([moves, late[0], refused]);
+    assert.deepEqual([allLate.stopped, mixed.stopped], [2, 1], 'the stand-in stopped the items it was meant to');
+    assert.doesNotMatch(allLate.note, /Nothing was moved|were not moved|was not moved/);
+    assert.match(allLate.note, /^Nothing was confirmed moved to the Trash; 2 items were not confirmed — the Trash did not answer in time and may still finish moving them./);
+    assert.match(mixed.note, /^1 item was moved to the OS Trash and can be restored from there; 1 item was not confirmed — the Trash did not answer in time and may still finish moving it; 1 was not moved./);
   } finally {
     setTrashStepForTests(null);
     fs.rmSync(standIn, { recursive: true, force: true });
