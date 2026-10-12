@@ -6,7 +6,17 @@ import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
-const DATA_DIR = isolatedDataDir('treemap-snapshotReplaceRules-data-');
+// App-data is reached through a link in the scanned folder, as a person who moved it to a bigger
+// volume and linked it back has it: TreeMap spells it SCANNED/hop/treemap-data, where SCANNED/hop
+// leads to VOL — so app-data really is VOL/treemap-data, and SCANNED/hop is a link TreeMap reaches
+// its agent policy and audit log through.
+const VOL = fs.realpathSync(isolatedDataDir('treemap-snapshotReplaceRules-vol-'));
+const DATA_DIR = path.join(VOL, 'treemap-data');
+const SCANNED = fs.realpathSync(fileTempDir('treemap-snapshotReplaceRules-scanned-'));
+const HOP = path.join(SCANNED, 'hop');
+fs.mkdirSync(DATA_DIR);
+fs.symlinkSync(VOL, HOP, 'junction');
+process.env.TREEMAP_DATA_DIR = path.join(HOP, 'treemap-data');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
@@ -16,21 +26,22 @@ import { updateSettings } from '../src/services/settings';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { resetIdempotencyCache } from '../src/middleware/idempotency';
 import { platform } from '../src/platform';
+import { invalidateCapabilities } from '../src/platform/capabilities';
 import { POLICY_FILE } from '../src/services/policy';
-import type { VolumeSnapshotRef } from '../src/platform/types';
+import type { OpenHandleInfo, VolumeSnapshotRef } from '../src/platform/types';
 
 /**
  * POST /api/system/snapshots/restore with `overwrite: true` moves the file at the destination to the
  * Trash before it restores over it — a delete, and it was held to none of a delete's rules (the
  * final review, F1.12, F1.16): a file in no scan, under agent-policy.json's protectedPaths or past
  * its byte cap went to the Trash first, before the password prompt or any proof the path is in a
- * snapshot. The file it replaces is now held to the rules DELETE /api/files holds a path to.
+ * snapshot. The file it replaces is now held to the rules DELETE /api/files holds a path to — and a
+ * refusal of that file, whichever step refuses it, is audited against that file (F2.9, F3.1).
  *
  * The snapshots, the restore itself and the Trash are stood in for: nothing privileged runs, and
  * nothing reaches the machine's Trash.
  */
 
-const SCANNED = fs.realpathSync(fileTempDir('treemap-snapshotReplaceRules-scanned-'));
 const ELSEWHERE = fs.realpathSync(fileTempDir('treemap-snapshotReplaceRules-elsewhere-'));
 const STAND_IN_TRASH = fs.realpathSync(fileTempDir('treemap-snapshotReplaceRules-trash-'));
 const POLICY_PATH = path.join(DATA_DIR, POLICY_FILE);
@@ -39,15 +50,18 @@ const SNAPSHOTS: VolumeSnapshotRef[] = [{ id: 'com.apple.TimeMachine.2026-09-01-
 let port = 0;
 let server: http.Server;
 const trashed: string[] = [];
-type Provider = Record<'listSnapshots' | 'recoverFromSnapshots' | 'restoreFolderRefusal', unknown>;
+type Provider = Record<'listSnapshots' | 'recoverFromSnapshots' | 'restoreFolderRefusal' | 'getOpenHandlesBatch' | 'probeOpenHandleGuard', unknown>;
 const provider = platform() as unknown as Provider;
 const saved = { list: provider.listSnapshots, recover: provider.recoverFromSnapshots, folder: provider.restoreFolderRefusal };
 
+/** The Trash, stood in for: the file is moved aside here, never to the machine's Trash. */
+async function standInTrash(p: string): Promise<void> {
+  trashed.push(p);
+  fs.renameSync(p, path.join(STAND_IN_TRASH, `${trashed.length}-${path.basename(p)}`));
+}
+
 before(async () => {
-  setTrashStepForTests(async (p) => {
-    trashed.push(p);
-    fs.renameSync(p, path.join(STAND_IN_TRASH, `${trashed.length}-${path.basename(p)}`));
-  });
+  setTrashStepForTests(standInTrash);
   provider.listSnapshots = async () => SNAPSHOTS;
   provider.restoreFolderRefusal = async () => null;
   provider.recoverFromSnapshots = async (_s: VolumeSnapshotRef[], _o: string, d: string) => {
@@ -149,6 +163,63 @@ test('the file a restore replaces is held to the rules a delete is: outside ever
   });
   assert.deepEqual(trashed, [], 'nothing was moved to the Trash');
   assert.deepEqual([outside, protectedOne, path.join(SCANNED, 'present.txt')].map((p) => fs.existsSync(p)), [true, true, true]);
+});
+
+test('a file the Trash step itself refuses or fails to take — a link TreeMap reaches its records through, a file another program holds open, a file the Trash would not take — is not replaced, and the audit names that file, not the one asked for (the final review, F3.1)', async () => {
+  const held = fileAt(path.join(SCANNED, 'held.txt'), 'open in another program');
+  const stuck = fileAt(path.join(SCANNED, 'stuck.txt'), 'the Trash will not take it');
+  const answers: Record<string, string> = {};
+  const audited: Record<string, unknown> = {};
+  trashed.length = 0;
+
+  answers['a link TreeMap reaches its records through'] = await restoreOver(HOP);
+  audited['a link TreeMap reaches its records through'] = await newestAudit();
+
+  // Another program holds `held` open, as the open-file check (B2) reports it.
+  const probes = { batch: provider.getOpenHandlesBatch, guard: provider.probeOpenHandleGuard };
+  provider.probeOpenHandleGuard = async () => ({ available: true, mechanism: 'test' });
+  provider.getOpenHandlesBatch = async (paths: string[]): Promise<{ handles: OpenHandleInfo[]; complete: boolean }> => ({
+    handles: paths.filter((p) => p === held).map((p) => ({ path: p, pid: process.pid + 1, processName: 'a stand-in editor' })),
+    complete: true,
+  });
+  invalidateCapabilities();
+  try {
+    answers['a file another program holds open'] = await restoreOver(held);
+    audited['a file another program holds open'] = await newestAudit();
+  } finally {
+    provider.getOpenHandlesBatch = probes.batch;
+    provider.probeOpenHandleGuard = probes.guard;
+    invalidateCapabilities();
+  }
+
+  setTrashStepForTests(async (p) => {
+    if (p === stuck) throw new Error('the Trash did not take it (a test)');
+    await standInTrash(p);
+  });
+  try {
+    answers['a file the Trash would not take'] = await restoreOver(stuck);
+    audited['a file the Trash would not take'] = await newestAudit();
+  } finally {
+    setTrashStepForTests(standInTrash);
+  }
+
+  assert.deepEqual(answers, {
+    'a link TreeMap reaches its records through': '403 SAFETY_RECORD',
+    'a file another program holds open': '409 OPEN_HANDLE_CONFLICT',
+    'a file the Trash would not take': '409 DESTINATION_NOT_CLEARED',
+  });
+  const refusal = (code: string, p: string): unknown => ({ action: 'snapshots.restore', outcome: 'refused', code, paths: [p] });
+  assert.deepEqual(audited, {
+    'a link TreeMap reaches its records through': refusal('SAFETY_RECORD', HOP),
+    'a file another program holds open': refusal('OPEN_HANDLE_CONFLICT', held),
+    'a file the Trash would not take': refusal('DESTINATION_NOT_CLEARED', stuck),
+  });
+  assert.deepEqual(trashed, [], 'nothing was moved to the Trash');
+  assert.deepEqual(
+    [fs.lstatSync(HOP).isSymbolicLink(), fs.readFileSync(held, 'utf8'), fs.readFileSync(stuck, 'utf8')],
+    [true, 'open in another program', 'the Trash will not take it'],
+    'each is where it was, as it was',
+  );
 });
 
 test('a file the rules allow is still replaced, and a restore to a name nothing holds is not a delete at all', async () => {

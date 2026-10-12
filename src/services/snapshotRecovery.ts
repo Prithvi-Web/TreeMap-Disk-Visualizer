@@ -164,10 +164,11 @@ export interface RestoreRequest {
  * asked for a password only to be told afterwards that the target was taken.
  */
 /**
- * A refusal of the file a restore with `overwrite` would replace (`assertMayReplace`): answered as the
- * refusal it wraps, and naming that file, `replaced`, for the audit — the record of what was refused
- * for which path. Audited under the file asked for, a protected file's refusal was recorded against a
- * path that is not protected (the final review, F2.9).
+ * A refusal of the file a restore with `overwrite` would replace — by the rules it is held to
+ * (`assertMayReplace`) or by the Trash step that clears it (`trashReplaced`): answered as the refusal
+ * it wraps, and naming that file, `replaced`, for the audit — the record of what was refused for which
+ * path. Audited under the file asked for, a protected file's refusal was recorded against a path that
+ * is not protected (the final review, F2.9), and so was a file the Trash step refused (F3.1).
  */
 export class ReplaceRefused extends AppError {
   readonly replaced: string;
@@ -175,6 +176,11 @@ export class ReplaceRefused extends AppError {
     super(refusal.status, refusal.code, refusal.message, refusal.details);
     this.replaced = replaced;
   }
+}
+
+/** `err`, a refusal of the file at `destination`, as `ReplaceRefused`; anything else as it is. */
+function asReplaceRefused(destination: string, err: unknown): unknown {
+  return err instanceof AppError ? new ReplaceRefused(destination, err) : err;
 }
 
 /**
@@ -193,7 +199,33 @@ async function assertMayReplace(destination: string): Promise<void> {
     assertPathsAllowed(policy, [destination]);
     assertBytesCap(policy, knownSizeOf(destination));
   } catch (err) {
-    throw err instanceof AppError ? new ReplaceRefused(destination, err) : err;
+    throw asReplaceRefused(destination, err);
+  }
+}
+
+/**
+ * The file a restore with `overwrite` replaces, moved to the Trash rather than unlinked. Nothing in
+ * TreeMap hard-deletes, and this is the one spot in a *recovery* feature where a careless `rm` would
+ * destroy the newer copy while restoring an older one. B2's open-file guard applies here too, so
+ * replacing a file something else is using is refused rather than done behind its back.
+ *
+ * The RESULT is checked. `moveToTrash` reports failures rather than throwing, so ignoring it meant a
+ * file that could not be trashed was treated as cleared — and then handed to a recovery path that
+ * overwrites it as root.
+ *
+ * Every refusal here is of that file — one of TreeMap's safety records or a link it reaches them
+ * through (SAFETY_RECORD), a file another program holds open (OPEN_HANDLE_CONFLICT), one the Trash did
+ * not take (DESTINATION_NOT_CLEARED) — so each is `ReplaceRefused`, audited against it (F3.1).
+ */
+async function trashReplaced(destination: string): Promise<void> {
+  try {
+    const trashed = await moveToTrash([destination]);
+    if (trashed.failed.length > 0) {
+      throw new AppError(409, 'DESTINATION_NOT_CLEARED',
+        `${destination} could not be moved to the Trash (${trashed.failed[0].reason}), so nothing was restored over it.`);
+    }
+  } catch (err) {
+    throw asReplaceRefused(destination, err);
   }
 }
 
@@ -289,23 +321,8 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
 
   let replacedToTrash = false;
   if (occupied && request.overwrite) {
-    // The replaced file goes to the Trash rather than being unlinked. Nothing
-    // in TreeMap hard-deletes, and this is the one spot in a *recovery*
-    // feature where a careless `rm` would destroy the newer copy while
-    // restoring an older one. B2's open-file guard applies here too, so
-    // replacing a file something else is using is refused rather than done
-    // behind its back.
-    //
-    // The RESULT is checked. `moveToTrash` reports failures rather than
-    // throwing, so ignoring it meant a file that could not be trashed was
-    // treated as cleared — and then handed to a recovery path that overwrites
-    // it as root.
     await assertMayReplace(destination);
-    const trashed = await moveToTrash([destination]);
-    if (trashed.failed.length > 0) {
-      throw new AppError(409, 'DESTINATION_NOT_CLEARED',
-        `${destination} could not be moved to the Trash (${trashed.failed[0].reason}), so nothing was restored over it.`);
-    }
+    await trashReplaced(destination);
     replacedToTrash = true;
   }
 
