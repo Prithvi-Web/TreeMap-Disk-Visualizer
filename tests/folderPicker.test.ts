@@ -177,12 +177,25 @@ test('a new listing opens at its top, with the cut-list note and ".." in view, a
     [BIG]: { path: BIG, parent: '/home/u', dirs: ['a', 'b'].map(dir), total: 1234 },
     '/empty': { path: '/empty', parent: null, dirs: [], total: 0 },
   };
-  const doc: { activeElement: unknown } = { activeElement: null };
+  const body = { a: 'the page' };
+  const doc: { activeElement: unknown } = { activeElement: body };
   const { rt, $ } = browseRuntime((p) => listings[p] ?? HOME, doc);
   const list = $('browseList');
   const focused: string[] = [];
-  const aRow = { a: 'row in the list' };
-  list.contains = (other) => other === aRow;
+  // The list as the DOM keeps it (POL item 2 review, F3.3): replacing its rows destroys them, the focused
+  // one with them, and focus falls to the page — so whether focus WAS in the list can only be read before
+  // the rows are replaced. A fake whose answer ignored the order passed a page that read it after.
+  const rowsInList = new Set<unknown>();
+  let html = list.innerHTML;
+  Object.defineProperty(list, 'innerHTML', {
+    get: () => html,
+    set: (next: string) => {
+      html = next;
+      if (rowsInList.has(doc.activeElement)) doc.activeElement = body;
+      rowsInList.clear();
+    },
+  });
+  list.contains = (other) => rowsInList.has(other);
   list.querySelector = (sel) => {
     const first = /class="browse-item" data-p="([^"]*)"/.exec(list.innerHTML);
     return sel === '.browse-item' && first ? { focus: () => { focused.push(first[1]); } } : null;
@@ -191,7 +204,9 @@ test('a new listing opens at its top, with the cut-list note and ".." in view, a
   await rt.openBrowse(null);
   const step = async (p: string, focusInList: boolean) => {
     list.scrollTop = 900; // scrolled down the listing on screen
-    doc.activeElement = focusInList ? aRow : null;
+    const aRow = { a: 'a row of the listing on screen' };
+    rowsInList.add(aRow);
+    doc.activeElement = focusInList ? aRow : body;
     focused.length = 0;
     await rt.browseTo(p);
     return { scrollTop: list.scrollTop, focused: [...focused] };
