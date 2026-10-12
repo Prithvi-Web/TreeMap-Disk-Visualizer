@@ -250,9 +250,17 @@ const listingOf = (entries: Dirent[]) => {
 };
 
 /**
+ * A path the look hands a fake, in the spelling the test writes: the look joins a
+ * folder found inside the one it was given with `path.join`, which on Windows
+ * spells `/x/outer` and `mnt` as `\x\outer\mnt` — the same folder there.
+ */
+const asWritten = (p: string): string => p.split(path.sep).join('/');
+
+/**
  * Calls of the test's own: a stat or listing of a path `hangs` names never
  * answers, and its deadline has passed; every other answers at once (a folder,
  * listing `contents[p]`), and its deadline never passes. `asked` lists them.
+ * Each path is read as the test writes it (`asWritten`).
  */
 function hangsAt(hangs: (p: string) => boolean, contents: Record<string, Dirent[]>, driveOf: (p: string) => string) {
   const asked: string[] = [];
@@ -263,9 +271,9 @@ function hangsAt(hangs: (p: string) => boolean, contents: Record<string, Dirent[
     return lastHung ? new Promise<T>(() => { /* stopped answering */ }) : Promise.resolve(answer());
   };
   setEmptyCheckForTests({
-    driveOf: async (p) => driveOf(p),
-    lstat: (p) => call('stat', p, () => aFolder),
-    opendir: (p) => call('list', p, () => listingOf(contents[p] ?? [])),
+    driveOf: async (p) => driveOf(asWritten(p)),
+    lstat: (p) => call('stat', asWritten(p), () => aFolder),
+    opendir: (p) => call('list', asWritten(p), () => listingOf(contents[asWritten(p)] ?? [])),
     deadline: () => {
       const late = lastHung ? Promise.resolve() : new Promise<void>(() => {});
       lastHung = false;
