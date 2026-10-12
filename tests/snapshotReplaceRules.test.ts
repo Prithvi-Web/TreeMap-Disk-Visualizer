@@ -97,26 +97,55 @@ function restoreOver(destination: string): Promise<string> {
   });
 }
 
+/** The newest line of the audit log, as GET /api/audit reads it back. */
+function newestAudit(): Promise<{ action: string; outcome: string; code?: string; paths: string[] }> {
+  resetRateLimiter();
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: '/api/audit?limit=1' }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => { buf += c; });
+      res.on('end', () => {
+        const [line] = (JSON.parse(buf) as { entries: { action: string; outcome: string; code?: string; paths: string[] }[] }).entries;
+        resolve({ action: line.action, outcome: line.outcome, code: line.code, paths: line.paths });
+      });
+    }).on('error', reject);
+  });
+}
+
 /** A file at `p` with `text`, made now. */
 function fileAt(p: string, text: string): string {
   fs.writeFileSync(p, text);
   return p;
 }
 
-test('the file a restore replaces is held to the rules a delete is: outside every scan, protected, or past the byte cap, it is refused before anything is moved to the Trash', async () => {
+test('the file a restore replaces is held to the rules a delete is: outside every scan, protected, or past the byte cap, it is refused before anything is moved to the Trash — and the audit names the file refused (the final review, F2.9)', async () => {
   const outside = fileAt(path.join(ELSEWHERE, 'taxes.pdf'), 'in no scan');
   const protectedOne = fileAt(path.join(SCANNED, 'keep.pdf'), 'protected');
+  const present = path.join(SCANNED, 'present.txt');
   const answers: Record<string, string> = {};
+  const audited: Record<string, unknown> = {};
   answers['a file in no scan'] = await restoreOver(outside);
+  audited['a file in no scan'] = await newestAudit();
   fs.writeFileSync(POLICY_PATH, JSON.stringify({ protectedPaths: [protectedOne] }));
   answers['a protected file'] = await restoreOver(protectedOne);
+  audited['a protected file'] = await newestAudit();
   fs.writeFileSync(POLICY_PATH, JSON.stringify({ maxBytesPerOperation: 5 }));
-  answers['a file past the byte cap'] = await restoreOver(path.join(SCANNED, 'present.txt')); // 9 bytes, as the scan sized it
+  answers['a file past the byte cap'] = await restoreOver(present); // 9 bytes, as the scan sized it
+  audited['a file past the byte cap'] = await newestAudit();
   fs.rmSync(POLICY_PATH, { force: true });
   assert.deepEqual(answers, {
     'a file in no scan': '403 OUTSIDE_SCAN_ROOT',
     'a protected file': '403 POLICY_PROTECTED_PATH',
     'a file past the byte cap': '403 POLICY_BYTES_EXCEEDED',
+  });
+  // The audit is the record of what was done to which paths: the refused file is the one the restore
+  // would have replaced, not the one it was asked to bring back.
+  const refusal = (code: string, p: string): unknown => ({ action: 'snapshots.restore', outcome: 'refused', code, paths: [p] });
+  assert.deepEqual(audited, {
+    'a file in no scan': refusal('OUTSIDE_SCAN_ROOT', outside),
+    'a protected file': refusal('POLICY_PROTECTED_PATH', protectedOne),
+    'a file past the byte cap': refusal('POLICY_BYTES_EXCEEDED', present),
   });
   assert.deepEqual(trashed, [], 'nothing was moved to the Trash');
   assert.deepEqual([outside, protectedOne, path.join(SCANNED, 'present.txt')].map((p) => fs.existsSync(p)), [true, true, true]);

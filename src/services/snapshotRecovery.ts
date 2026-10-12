@@ -164,19 +164,37 @@ export interface RestoreRequest {
  * asked for a password only to be told afterwards that the target was taken.
  */
 /**
+ * A refusal of the file a restore with `overwrite` would replace (`assertMayReplace`): answered as the
+ * refusal it wraps, and naming that file, `replaced`, for the audit — the record of what was refused
+ * for which path. Audited under the file asked for, a protected file's refusal was recorded against a
+ * path that is not protected (the final review, F2.9).
+ */
+export class ReplaceRefused extends AppError {
+  readonly replaced: string;
+  constructor(replaced: string, refusal: AppError) {
+    super(refusal.status, refusal.code, refusal.message, refusal.details);
+    this.replaced = replaced;
+  }
+}
+
+/**
  * The file a restore with `overwrite` replaces goes to the Trash first: a delete, held to the rules
  * DELETE /api/files holds a path to (the final review, F1.12, F1.16) — inside a root this server
  * scanned, and allowed by agent-policy.json (allowedRoots, protectedPaths, the byte cap). Refused
- * before anything privileged runs and before anything is moved to the Trash.
+ * before anything privileged runs and before anything is moved to the Trash, as `ReplaceRefused`.
  */
 async function assertMayReplace(destination: string): Promise<void> {
-  if (!insideAnyScanRoot(destination)) {
-    throw new AppError(403, 'OUTSIDE_SCAN_ROOT',
-      `${destination} is outside every scanned root, so TreeMap did not replace it — scan its folder first, or restore beside it.`);
+  try {
+    if (!insideAnyScanRoot(destination)) {
+      throw new AppError(403, 'OUTSIDE_SCAN_ROOT',
+        `${destination} is outside every scanned root, so TreeMap did not replace it — scan its folder first, or restore beside it.`);
+    }
+    const policy = await getPolicy();
+    assertPathsAllowed(policy, [destination]);
+    assertBytesCap(policy, knownSizeOf(destination));
+  } catch (err) {
+    throw err instanceof AppError ? new ReplaceRefused(destination, err) : err;
   }
-  const policy = await getPolicy();
-  assertPathsAllowed(policy, [destination]);
-  assertBytesCap(policy, knownSizeOf(destination));
 }
 
 export async function restoreFromSnapshot(request: RestoreRequest): Promise<SnapshotRestoreOutcome> {

@@ -6,7 +6,7 @@ import { guardQueryPath, assertNotSpillPath, assertNotAppDataPath } from '../mid
 import { sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
-import { findDeleted, restoreFromSnapshot } from '../services/snapshotRecovery';
+import { findDeleted, ReplaceRefused, restoreFromSnapshot } from '../services/snapshotRecovery';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { diskUsage } from '../services/diskUsage';
 import { listVolumes, volumesUnavailableReason } from '../services/volumes';
@@ -161,9 +161,10 @@ systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request,
     res.json(outcome);
   } catch (err) {
     if (err instanceof AppError) {
+      // A refusal of the file the restore would replace names that file; any other, the one asked for.
       await appendAudit({
         action: 'snapshots.restore', source: 'http', tokenId: tokenIdFor('http'),
-        paths: [String(body.path)], bytes: null, dryRun: false, outcome: 'refused', code: err.code,
+        paths: [err instanceof ReplaceRefused ? err.replaced : String(body.path)], bytes: null, dryRun: false, outcome: 'refused', code: err.code,
       });
     }
     throw err;
