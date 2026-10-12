@@ -210,6 +210,34 @@ test('an index saved under a link\'s own path (a one-row index of the link) is n
   }
 });
 
+test('the published spec says what the two index routes answer for a link the index holds: the tree is 404 PATH_NOT_FOUND, the status indexed false and root null (final review F2.1)', { skip: NO_LINKS }, async () => {
+  // AGENTS.md names /api/openapi.json the machine-readable contract; it listed INDEX_NOT_BUILT alone for
+  // the tree's 404, and said nothing of a link, so an agent reading it could not expect either answer.
+  const { real, link } = linkTree();
+  const parent = path.dirname(real);
+  await buildIndex(parent, { live: false });
+  const { base, close } = await listen();
+  try {
+    const answers = [
+      await treeOf(base, link), // a link the index holds
+      await treeOf(base, path.join(parent, 'not-there')), // a path inside an indexed folder that the index does not hold
+      await treeOf(base, fs.realpathSync(fileTempDir('treemap-indexBuildRoot-unindexed-'))), // a folder no index holds
+    ];
+    assert.deepEqual(answers.map((a) => [a.status, a.json.code]), [[404, 'PATH_NOT_FOUND'], [404, 'PATH_NOT_FOUND'], [404, 'INDEX_NOT_BUILT']]);
+    const status = await statusOf(base, link);
+    assert.deepEqual([status.json.indexed, status.json.root], [false, null]);
+
+    const doc = (await get(base, '/api/openapi.json')).json as { paths: Record<string, { get: { responses: Record<string, { description: string; content?: Record<string, { schema: { description?: string } }> }> } }> };
+    const tree404 = doc.paths['/api/index/tree'].get.responses['404'].description;
+    for (const answer of answers) assert.ok(tree404.includes(String(answer.json.code)), `the tree's 404 names ${String(answer.json.code)}: ${tree404}`);
+    assert.match(tree404, /PATH_NOT_FOUND — [^;]*\blink\b/, 'and says a link the index holds is answered so');
+    const statusSaid = doc.paths['/api/index/status'].get.responses['200'].content?.['application/json'].schema.description ?? '';
+    assert.match(statusSaid, /\blink\b[^.]*\bindexed false and root null\b/, `the status says a link answers indexed false and root null: ${statusSaid}`);
+  } finally {
+    await close();
+  }
+});
+
 /* ══════════════════ a root that cannot be walked ══════════════════ */
 
 test('a build of a folder that is not there any more is refused with a sentence before it touches anything: the saved index, its rows and its state are kept — explicit or capped', async (t) => {

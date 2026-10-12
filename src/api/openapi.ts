@@ -2498,7 +2498,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '200': jsonResponse(
         'Index status',
         opaque(
-          '{ roots[], dbPath, dbBytes, autoBuild } or, with ?path=, { path, indexed, root, running[], autoBuild, stoppedAtCap }. autoBuild is { maxEntries }: the most items a folder may hold for TreeMap to index it on its own after a scan. stoppedAtCap is { maxEntries, at, reason } when the last capped build of exactly that folder stopped at its cap (kept until a build of it completes or its index is deleted), else null. A root is current when state is ready and live is true',
+          '{ roots[], dbPath, dbBytes, autoBuild } or, with ?path=, { path, indexed, root, running[], autoBuild, stoppedAtCap }. autoBuild is { maxEntries }: the most items a folder may hold for TreeMap to index it on its own after a scan. stoppedAtCap is { maxEntries, at, reason } when the last capped build of exactly that folder stopped at its cap (kept until a build of it completes or its index is deleted), else null. A root is current when state is ready and live is true. A link inside an indexed folder, or a folder indexed under a link\'s own path, answers indexed false and root null: the index holds the link itself, not the folder it points to, so scan it to see that folder',
         ),
       ),
     },
@@ -2516,7 +2516,9 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Indexed tree', opaque('root FileNode plus state/live/builtAt and counters')),
       '202': indexBuilding202,
-      '404': errorResponse('INDEX_NOT_BUILT — that folder has not been indexed yet'),
+      '404': errorResponse(
+        'INDEX_NOT_BUILT — that folder has not been indexed yet; PATH_NOT_FOUND — the path is not in the index, or it is a link the index holds as the link itself (scan it to see the folder it points to)',
+      ),
       '500': errorResponse('INDEX_BUILD_FAILED — the build of the index that holds this folder failed'),
     },
   },
