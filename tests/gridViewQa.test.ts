@@ -80,8 +80,8 @@ type FakeEl = {
   contains(n: unknown): boolean; focus(opts?: unknown): void; remove(): void;
 };
 
-/** Where keyboard focus is: what `document.activeElement` answers in the harness. */
-const FOCUS: { active: FakeEl | null } = { active: null };
+/** Where keyboard focus is: what `document.activeElement` answers in the harness, and the options it was moved with. */
+const FOCUS: { active: FakeEl | null; opts: unknown } = { active: null, opts: undefined };
 
 function fakeEl(id = ''): FakeEl {
   const el: FakeEl = {
@@ -102,7 +102,7 @@ function fakeEl(id = ''): FakeEl {
       return el.children.find((c) => /\bgcell\b/.test(c.className) && (m[1] === undefined || String(c.dataset.i) === m[1])) || null;
     },
     contains: (n) => n === el || el.children.includes(n as FakeEl),
-    focus: () => { FOCUS.active = el; }, remove: () => {},
+    focus: (opts) => { FOCUS.active = el; FOCUS.opts = opts; }, remove: () => {},
   };
   return el;
 }
@@ -444,4 +444,89 @@ test('Clear leaves focus alone when it was not in the bar (B13)', async () => {
   g.els.gridSearch.focus(); // somewhere else entirely
   pressClear(g);
   assert.equal(FOCUS.active, g.els.gridSearch, 'a control outside the bar keeps its focus');
+});
+
+/** 400 equal files: 256 px tiles, four to a 1200 px row, a row every 268 px — a grid far taller than its window. */
+function tallPlant(g: Grid) {
+  const kids: Node[] = [];
+  for (let i = 0; i < 400; i++) kids.push(file('/r', `Clip${i}.mov`, 1000));
+  g.state.root!.children = kids;
+  for (const k of kids) g.state.pathIndex.set(k.path, k);
+}
+
+/** The tile focus is on, and whether any of it is inside the grid's visible window. */
+function focusedTile(g: Grid): { i: number; y0: number; y1: number; inView: boolean } {
+  const at = FOCUS.active;
+  assert.ok(at && /\bgcell\b/.test(at.className), `focus is on a tile (${at ? at.id || at.className : 'nothing'})`);
+  const i = Number(at!.dataset.i);
+  const c = g.state.grid.layout[i];
+  const top = g.els.gridScroll.scrollTop, bottom = top + g.els.gridScroll.clientHeight;
+  return { i, y0: c.y, y1: c.y + c.side, inView: c.y + c.side > top && c.y < bottom };
+}
+
+/** Type into the filter box and let its debounce and the re-render run out. */
+async function typeFilter(g: Grid, text: string) {
+  const input = g.els.gridSearch.listeners.input?.[0];
+  assert.ok(input, 'the filter box listens for input');
+  g.els.gridSearch.value = text;
+  input!({ target: g.els.gridSearch });
+  for (const [id, fn] of [...g.timers]) { g.timers.delete(id); fn(); }
+  await g.settle();
+}
+
+test('Clear never scrolls the grid: focus goes to a tile that is on screen, without moving it (B13 review F1.3)', async () => {
+  // Review: with the anchored tile scrolled out of the rendered window, focus
+  // went to the first tile DRAWN — up to 200 px above the visible area — and
+  // tile.focus() with no options scrolled the grid to it on Clear.
+  const g = gridHarness();
+  tallPlant(g);
+  g.els.gridScroll.clientHeight = 700;
+  await g.renderGrid();
+  g.onCellClick({ metaKey: true }, 2); // select a tile in the first row
+  g.els.gridScroll.scrollTop = 3000; // then scroll well past it
+  g.els.selClearBtn.focus();
+  pressClear(g);
+  const far = focusedTile(g);
+  assert.ok(far.inView, `focus went to tile ${far.i} at y ${far.y0}–${far.y1}; the grid shows 3000–3700`);
+  assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'and moving it there does not scroll the grid');
+
+  // The anchored tile still drawn (inside the 200 px margin) but above the window.
+  const h = gridHarness();
+  tallPlant(h);
+  h.els.gridScroll.clientHeight = 700;
+  await h.renderGrid();
+  h.onCellClick({ metaKey: true }, 2); // y 0–256
+  h.els.gridScroll.scrollTop = 400;
+  h.els.selClearBtn.focus();
+  pressClear(h);
+  const near = focusedTile(h);
+  assert.ok(near.inView, `focus went to tile ${near.i} at y ${near.y0}–${near.y1}; the grid shows 400–1100`);
+  assert.equal(near.i, 4, 'the first tile on screen, as the anchored one is not');
+  assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling');
+});
+
+test('with the anchor gone, Clear hands focus to the first tile on screen; with no tiles at all, to the filter box (B13 review F1.6)', async () => {
+  // A filter keystroke re-lays the grid, which drops the anchor, while the
+  // selection and its bar stay up.
+  const g = gridHarness();
+  await g.renderGrid();
+  g.onCellClick({ metaKey: true }, 1);
+  await typeFilter(g, 'o'); // "Fonts" and "Notes.txt" both still match
+  assert.equal(g.state.grid.anchor, null, 'the re-lay dropped the anchor (precondition)');
+  assert.ok(g.els.selectionBar.cls.has('visible'), 'and the bar is still up (precondition)');
+  g.els.selClearBtn.focus();
+  pressClear(g);
+  assert.equal(focusedTile(g).i, 0, 'the first tile on screen');
+  assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling');
+
+  const e = gridHarness();
+  await e.renderGrid();
+  e.onCellClick({ metaKey: true }, 1);
+  await typeFilter(e, 'zzz'); // nothing matches: no tile is drawn
+  assert.equal(e.els.gridInner.children.length, 0, 'no tile is drawn (precondition)');
+  assert.ok(e.els.selectionBar.cls.has('visible'), 'the bar is still up (precondition)');
+  e.els.selClearBtn.focus();
+  pressClear(e);
+  assert.equal(FOCUS.active, e.els.gridSearch, 'focus goes to the filter box, never to <body>');
+  assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling');
 });

@@ -30431,17 +30431,27 @@ function updateSelectionBar() {
   bar.classList.add('visible');
 }
 /* Clear hides the bar it sits in. Focus that was in the bar goes back to the
-   grid — the tile the selection was anchored on, else the first tile drawn —
-   instead of falling to <body> with the bar (QA B13). Focus anywhere else is
-   left where it is. */
+   grid — the tile the selection was anchored on, else the first tile on
+   screen, else the filter box — instead of falling to <body> with the bar
+   (QA B13). Never a tile off screen, and without scrolling: the grid stays
+   where the user left it (B13 review F1.3). Focus anywhere else is left where
+   it is. */
 function gridClearSelection() {
   const hadFocus = $('selectionBar').contains(document.activeElement);
   state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true);
   if (!hadFocus) return;
-  const at = state.grid.anchor;
-  const tile = (at !== null && gridInner.querySelector(`.gcell[data-i="${at}"]`)) || gridInner.querySelector('.gcell');
-  if (tile) tile.focus();
+  const tile = gridTileOnScreen(state.grid.anchor);
+  if (tile) tile.focus({ preventScroll: true });
   else $('gridSearch').focus({ preventScroll: true });
+}
+/** The drawn tile at layout index `prefer` if any of it is in view, else the first drawn tile that is; null when none is. */
+function gridTileOnScreen(prefer) {
+  const top = gridScroll.scrollTop, bottom = top + gridScroll.clientHeight;
+  const inView = (i) => { const c = state.grid.layout[i]; return !!c && c.y + c.side > top && c.y < bottom; };
+  const drawn = (i) => gridInner.querySelector(`.gcell[data-i="${i}"]`);
+  if (prefer !== null && inView(prefer) && drawn(prefer)) return drawn(prefer);
+  for (let i = state.grid.rangeStart; i <= state.grid.rangeEnd; i++) if (inView(i) && drawn(i)) return drawn(i);
+  return null;
 }
 $('selClearBtn').addEventListener('click', gridClearSelection);
 $('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.selection]));
