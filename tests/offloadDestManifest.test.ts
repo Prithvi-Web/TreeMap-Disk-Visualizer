@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { createApp } from '../src/server';
 import { SPILL_DIR } from '../src/services/spillSweep';
 import { startScan } from '../src/services/diskScanner';
-import { getOffloadJob } from '../src/services/offload';
+import { getOffloadJob, setDestRecordFloorForTests } from '../src/services/offload';
 import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cleaner';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import type { OffloadJob } from '../src/models/types';
@@ -256,6 +256,55 @@ test('a record on the drive that cannot be read whole is never replaced: it is k
     assert.ok((job.error ?? '').includes(aside[0]), `${what}: and the job names where`);
     assert.equal(driveEntries(dest).length, 1, `${what}: the new record lists the copy made there`);
   }
+});
+
+/** The names beside the drive's record that a write set aside. */
+const setAside = (dest: string): string[] => fs.readdirSync(dest).filter((n) => n.startsWith(`${DEST_MANIFEST.replace(/\.json$/, '')}.unreadable-`));
+
+test('the drive\'s record of this machine\'s own offloads is read whole however large it grows - never set aside, a new copy on every offload (final review F2.4)', async () => {
+  // The record grows with every file offloaded to the drive, and TreeMap's own record now keeps every
+  // file still offloaded (F1.9): past the 32 MiB it read whole — some 50,000 files — every offload set
+  // TreeMap's own record aside as "could not be read whole", leaving another ~50 MB copy on the drive
+  // each time. The size read whole regardless is lowered here, so a few entries pass it.
+  const dest = destination('own-grows');
+  const first = await offloadOne(dest);
+  assert.equal(first.error, undefined, first.error);
+  const stop = setDestRecordFloorForTests(fs.statSync(path.join(dest, DEST_MANIFEST)).size + 1);
+  try {
+    for (let n = 2; n <= 4; n++) {
+      const job = await offloadOne(dest);
+      assert.equal(job.status, 'complete', job.error);
+      assert.equal(job.error, undefined, `offload ${n}: nothing to report (${job.error})`);
+    }
+  } finally {
+    stop();
+  }
+  assert.deepEqual(setAside(dest), [], 'nothing was set aside');
+  assert.equal(driveEntries(dest).length, 4, 'one record, listing every copy made there');
+});
+
+test('a record on the drive far larger than this machine\'s own entries there is still kept beside a new one, never read whole (final review F2.4)', async () => {
+  const dest = destination('foreign-big');
+  const record = path.join(dest, DEST_MANIFEST);
+  // Entries another machine wrote — many times what this machine has there.
+  const foreign = Array.from({ length: 200 }, (_, i) => ({
+    id: `other-${i}`, name: `f-${i}`, originalPath: `/Users/other/f-${i}`, destRoot: dest, destPath: path.join(dest, `f-${i}`), size: 1, hash: 'h', offloadedAt: 1,
+  }));
+  fs.writeFileSync(record, JSON.stringify({ entries: foreign }, null, 2));
+  const was = fs.readFileSync(record);
+  const stop = setDestRecordFloorForTests(1024);
+  let job: OffloadJob;
+  try {
+    job = await offloadOne(dest);
+  } finally {
+    stop();
+  }
+  assert.equal(job.status, 'complete', job.error);
+  assert.match(job.error ?? '', /could not be read whole \(it is larger than/, `the job says why (${job.error})`);
+  const aside = setAside(dest);
+  assert.equal(aside.length, 1, `kept beside (${fs.readdirSync(dest).join(', ')})`);
+  assert.ok(fs.readFileSync(path.join(dest, aside[0])).equals(was), 'byte for byte');
+  assert.equal(driveEntries(dest).length, 1, 'the new record lists the copy made there');
 });
 
 /** A record whose entries JSON reads but cannot write back: nested past what JSON.stringify recurses through. */

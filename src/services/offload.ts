@@ -174,8 +174,19 @@ async function withDestRecord<T>(destRoot: string, fn: () => Promise<T>): Promis
   }
 }
 
-/** The largest record on a drive this reads whole; a larger one is kept as it is, beside a new one. */
+/** A record on a drive this size or smaller is always read whole; a larger one only within `driveRecordLimit`. */
 const MAX_DEST_MANIFEST_BYTES = 32 * 1024 * 1024;
+let destRecordFloor = MAX_DEST_MANIFEST_BYTES;
+
+/**
+ * Test-only: a smaller size for the record on a drive that is always read whole (final review F2.4), so
+ * a test shows the limit with a few entries rather than 32 MiB of them. The suite's ForTests idiom:
+ * returns the function that removes it.
+ */
+export function setDestRecordFloorForTests(bytes: number): () => void {
+  destRecordFloor = bytes;
+  return () => { destRecordFloor = MAX_DEST_MANIFEST_BYTES; };
+}
 
 /**
  * Opening a new file exclusively: created here or not at all, never an existing name — a link at the
@@ -202,9 +213,23 @@ function notPlainFile(st: fs.Stats | fs.BigIntStats | undefined, file: string): 
 /** The record on the drive, as read: its entries and any other fields, verbatim — or why it cannot be read whole. */
 type DriveRecord = { fields: Record<string, unknown>; entries: unknown[] } | { unreadable: string };
 
-/** Reads the open record whole, or says why not. Never throws. */
-async function readDriveRecord(handle: fsp.FileHandle, size: number): Promise<DriveRecord> {
-  if (size > MAX_DEST_MANIFEST_BYTES) return { unreadable: `it is larger than ${formatBytes(MAX_DEST_MANIFEST_BYTES)}` };
+/**
+ * The largest record on a drive this reads whole (final review F2.4): 32 MiB, or twice what this
+ * destination's own entries come to as the record writes them, whichever is more. The record grows with
+ * every file offloaded there, and TreeMap's own record keeps every file still offloaded (F1.9): past a
+ * fixed 32 MiB — some 50,000 files — every offload set TreeMap's own record aside as one it could not
+ * read, a new copy of it left on the drive each time. Twice this machine's own entries is the scale it
+ * already holds them at; a record larger still — another machine's, or one someone put there — is kept
+ * as it is, beside a new one.
+ */
+function driveRecordLimit(allEntries: OffloadEntry[], destRoot: string): number {
+  const own = serializeRecord({ fields: {}, entries: [] }, allEntries, destRoot) ?? '';
+  return Math.max(destRecordFloor, 2 * Buffer.byteLength(own, 'utf8'));
+}
+
+/** Reads the open record whole when it is no larger than `limit`, or says why not. Never throws. */
+async function readDriveRecord(handle: fsp.FileHandle, size: number, limit: number): Promise<DriveRecord> {
+  if (size > limit) return { unreadable: `it is larger than ${formatBytes(limit)}` };
   let text: string;
   try {
     text = await handle.readFile('utf8');
@@ -262,8 +287,8 @@ function serializeRecord(record: { fields: Record<string, unknown>; entries: unk
  * it is followed, and nothing in it is dropped (FG3b): every entry already there is carried as it
  * stands, one of this destination's replaced only by its own newer self (the same id), with no look
  * at the disk per entry. An entry written while the drive was mounted under another name, or by
- * another machine, is kept. A record that cannot be read whole — too large, unreadable, not JSON,
- * not a list of entries — is never replaced: it is renamed aside, under a new name beside the new
+ * another machine, is kept. A record that cannot be read whole — too large (`driveRecordLimit`),
+ * unreadable, not JSON, not a list of entries — is never replaced: it is renamed aside, under a new name beside the new
  * record, and the answer says so.
  */
 async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): Promise<string | null> {
@@ -292,7 +317,7 @@ async function writeDestManifest(destRoot: string, allEntries: OffloadEntry[]): 
         const st = await handle.stat();
         const changed = notPlainFile(st, file);
         if (changed) return notWritten(changed);
-        record = await readDriveRecord(handle, st.size);
+        record = await readDriveRecord(handle, st.size, st.size > destRecordFloor ? driveRecordLimit(allEntries, destRoot) : destRecordFloor);
       } finally {
         await handle.close();
       }

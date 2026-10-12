@@ -343,6 +343,14 @@ async function loadOffloadIndex() {
   renderOffloadIndex();
 }
 
+/**
+ * The most rows the Offloaded tab draws for one destination (final review F2.4).
+ * TreeMap's record keeps every file still offloaded (F1.9), and a drive given a
+ * photo library in batches drew 80,000 rows each time the tab opened. The
+ * newest are shown and the rest counted; the search reaches any of them.
+ */
+const OFFLOAD_ROWS_PER_DESTINATION = 200;
+
 function renderOffloadIndex() {
   const host = $('offloadBody');
   const idx = state.offload.index;
@@ -363,7 +371,7 @@ function renderOffloadIndex() {
     const entries = idx.entries.filter(e => e.destRoot === d.root &&
       (!q || e.name.toLowerCase().includes(q) || e.originalPath.toLowerCase().includes(q)));
     if (q && !entries.length) return '';
-    const rows = entries.map(e => `
+    const rows = entries.slice(0, OFFLOAD_ROWS_PER_DESTINATION).map(e => `
       <div class="bp-item${e.restoredAt ? ' offl-restored' : ''}">
         ${chipFor({ type: 'file', extension: (e.name.split('.').pop() || '').toLowerCase() }, 13)}
         <div class="meta" style="flex:1;min-width:0;">
@@ -375,7 +383,9 @@ function renderOffloadIndex() {
         ${e.restoredAt ? '' : `
           <button class="icon-btn" data-offl-reveal="${escapeHtml(e.id)}" title="Reveal at the destination" aria-label="Reveal ${escapeHtml(e.name)} at its destination" ${d.mounted ? '' : 'disabled'}>${icon('external', 13)}</button>
           <button class="pill" data-offl-restore="${escapeHtml(e.id)}" title="Copy back to the original location and verify" ${d.mounted ? '' : 'disabled'}>Restore</button>`}
-      </div>`).join('');
+      </div>`).join('') + (entries.length > OFFLOAD_ROWS_PER_DESTINATION
+      ? `<div class="bp-item muted">…and ${formatCount(entries.length - OFFLOAD_ROWS_PER_DESTINATION)} more ${q ? 'matches here — narrow the search to see them' : 'here — search by name or folder to find one'}.</div>`
+      : '');
     return `
       <div class="bp-acc offl-acc${d.mounted ? '' : ' offl-unmounted'}" data-acc="${di}">
         <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
