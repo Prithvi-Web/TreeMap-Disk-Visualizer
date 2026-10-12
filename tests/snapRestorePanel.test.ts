@@ -24,7 +24,21 @@ function host(): FakeHost {
 
 type RestoreFn = (targetPath: string, host: FakeHost) => Promise<void>;
 
-/** The shipped `restoreFromSnapshot` (and the helper it calls), wired to `answer`. */
+/** A shipped function declaration, by a balanced-brace scan from its opening brace (it holds no brace in a string). */
+function shipped(name: string): string {
+  const start = INDEX.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} is in the shipped page`);
+  const open = INDEX.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  throw new Error(`${name} has no balanced body`);
+}
+
+/** The shipped `restoreFromSnapshot` (and the helpers it calls — snapFolderRefusedText reads a path's
+    folder with the page's tmParentPath), wired to `answer`. */
 function harness(answer: () => Promise<unknown>): { restore: RestoreFn; toasts: string[]; wired: number } {
   const start = INDEX.indexOf('async function restoreFromSnapshot');
   assert.notEqual(start, -1, 'restoreFromSnapshot is in the shipped page');
@@ -35,7 +49,7 @@ function harness(answer: () => Promise<unknown>): { restore: RestoreFn; toasts: 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const factory = new Function(
     'api', 'icon', 'escapeHtml', 'formatBytes', 'formatCount', 'wireSnapshotActions', 'toast',
-    `'use strict';\n${src}\nreturn restoreFromSnapshot;`,
+    `'use strict';\n${src}\n${shipped('tmParentPath')}\nreturn restoreFromSnapshot;`,
   ) as (...deps: unknown[]) => RestoreFn;
   const restore = factory(
     answer,

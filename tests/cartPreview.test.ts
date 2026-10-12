@@ -244,7 +244,7 @@ test('on macOS and Linux a backslash in a folder’s name is part of the name ev
     (new Function('state', `${declsOf(['applyLiveDelta', 'tmParentPath'])}\nreturn applyLiveDelta;`)({ root: { path: root }, pathIndex }) as (e: unknown) => void)(ev);
     return Object.fromEntries([...pathIndex].map(([p, n]) => [p, n.size]));
   };
-  const liveRegionFor = lift<(p: string, byPath: Map<string, string>) => string | null>(['liveRegionFor'], 'liveRegionFor');
+  const liveRegionFor = lift<(p: string, byPath: Map<string, string>) => string | null>(['liveRegionFor', 'tmParentPath'], 'liveRegionFor');
   assert.deepEqual({
     posix: live('/data', {
       '/data': { type: 'dir', size: 100 }, '/data/a': { type: 'dir', size: 10 },
@@ -276,7 +276,7 @@ test('on macOS and Linux a backslash in a folder’s name is part of the name ev
   }, { inside: '/dev/disk4', sibling: '/dev/disk0', windows: '/dev/w1', windowsLonger: null });
 
   // The restore panel's sentence names the folder the copy would go into.
-  const snapFolderRefusedText = lift<(p: string) => string>(['snapFolderRefusedText'], 'snapFolderRefusedText');
+  const snapFolderRefusedText = lift<(p: string) => string>(['snapFolderRefusedText', 'tmParentPath'], 'snapFolderRefusedText');
   assert.deepEqual({
     posix: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('/data/a\\b/f\\g.txt'))?.[1], // the file "f\g.txt"
     windows: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('C:\\x\\f.txt'))?.[1],
@@ -401,15 +401,20 @@ test('a global-search hit outside the scan on screen, opened while a scan is run
   });
 });
 
-test('a whole drive’s scan and a share’s are rooted at a folder whose path ends in its separator — "/", "C:\\", "\\\\srv\\share\\" as Windows spells a share’s root — and the page climbs to it: Live mode grows every folder above a change up to that root, a share’s changes pulse to it, the preview and Disk City’s Up find it as a folder’s parent, and the “Writing now” rows name each file from below it without losing a letter (POL item 7 review, F2.7 and F2.8)', () => {
+test('a whole drive’s scan and a share’s are rooted at a folder whose path ends in its separator — "/", "C:\\", "\\\\srv\\share\\" as Windows spells a share’s root — and the page climbs to it: Live mode grows every folder above a change up to that root and stops at the top of a change outside the scan, a change directly in the root lights the root, the preview and Disk City’s Up find it as a folder’s parent, a file at the root is recovered into it, and the “Writing now” rows name each file from below it without losing a letter (POL item 7 review, F2.7, F2.8, F3.5 and F3.6)', () => {
   type Node = { type: string; size: number };
+  // The climb is counted, never timed: a climb that cannot stop would hang the page's live handler,
+  // and this test with it, rather than fail. Past CLIMB_BOUND steps it is not climbing toward anything.
+  const CLIMB_BOUND = 64;
   const live = (root: string, nodes: Record<string, Node>, ev: Record<string, unknown>): Record<string, number> => {
     const pathIndex = new Map(Object.entries(nodes));
-    (new Function('state', `${declsOf(['applyLiveDelta', 'tmParentPath'])}\nreturn applyLiveDelta;`)({ root: { path: root }, pathIndex }) as (e: unknown) => void)(ev);
+    const realParentPath = declsOf(['tmParentPath']).replace('function tmParentPath(', 'function realParentPath(');
+    const counted = `let climbs = 0;\nfunction tmParentPath(p) {\n  if (++climbs > ${CLIMB_BOUND}) throw new Error('Live mode is still climbing at ' + JSON.stringify(p) + ' after ${CLIMB_BOUND} steps');\n  return realParentPath(p);\n}`;
+    (new Function('state', `${declsOf(['applyLiveDelta'])}\n${realParentPath}\n${counted}\nreturn applyLiveDelta;`)({ root: { path: root }, pathIndex }) as (e: unknown) => void)(ev);
     return Object.fromEntries([...pathIndex].map(([p, n]) => [p, n.size]));
   };
-  const liveRegionFor = lift<(p: string, byPath: Map<string, string>) => string | null>(['liveRegionFor'], 'liveRegionFor');
-  const snapFolderRefusedText = lift<(p: string) => string>(['snapFolderRefusedText'], 'snapFolderRefusedText');
+  const liveRegionFor = lift<(p: string, byPath: Map<string, string>) => string | null>(['liveRegionFor', 'tmParentPath'], 'liveRegionFor');
+  const snapFolderRefusedText = lift<(p: string) => string>(['snapFolderRefusedText', 'tmParentPath'], 'snapFolderRefusedText');
   const dir = (size: number): Node => ({ type: 'dir', size });
   const file = (size: number): Node => ({ type: 'file', size });
   const share = '\\\\srv\\share\\'; // path.win32.resolve('\\\\srv\\share'): the root of a share's scan
@@ -434,27 +439,57 @@ test('a whole drive’s scan and a share’s are rooted at a folder whose path e
     // Nothing above the scan's root is touched, and a change at the root itself climbs nowhere.
     stopsAtTheRoot: live('/data/d', { '/data': dir(500), '/data/d': dir(100), '/data/d/f': file(5) }, { path: '/data/d/f', kind: 'modified', size: 15, delta: 10 }),
     atTheRoot: live('/data/d', { '/data': dir(500), '/data/d': dir(100) }, { path: '/data/d', kind: 'modified', size: 0, delta: 10 }),
-    sharePulse: liveRegionFor(`${share}d\\f`, new Map([[`${share}d`, 'D']])),
+    // A change outside the scan (a watcher's path that differs from the root by case, or by a link) climbs
+    // to the top of its own path — "/", another drive's "D:\", another share's root — and stops there:
+    // nothing is touched, and the call returns (F3.5).
+    outsideTheRoot: live('/data/d', { '/data': dir(500), '/data/d': dir(100), '/data/d/f': file(5) }, { path: '/elsewhere/f', kind: 'modified', size: 15, delta: 10 }),
+    outsideOnAnotherDrive: live('C:\\d', { 'C:\\d': dir(100), 'C:\\d\\f': file(5) }, { path: 'D:\\x\\f', kind: 'modified', size: 15, delta: 10 }),
+    outsideOnAnotherShare: live(`${share}d`, { [`${share}d`]: dir(100), [`${share}d\\f`]: file(5) }, { path: '\\\\other\\s\\x\\f', kind: 'modified', size: 15, delta: 10 }),
+    // A change directly in a whole drive's or a share's root folder, or below one with nothing drawn
+    // between, lights the root's region — the circle-pack and Voronoi views draw the root — as a change
+    // in any other scanned folder lights that folder (F3.6).
+    diskPulseAtItsRoot: liveRegionFor('/f', new Map([['/', 'ROOT']])),
+    drivePulseAtItsRoot: liveRegionFor('C:\\f', new Map([['C:\\', 'ROOT']])),
+    sharePulseAtItsRoot: liveRegionFor(`${share}f`, new Map([[share, 'ROOT']])),
+    sharePulseThroughItsRoot: liveRegionFor(`${share}d\\f`, new Map([[share, 'ROOT']])),
     shareParent: tmParentPath(`${share}x`),
     shareRootIsItsOwnParent: tmParentPath(share),
     sharePreview: drawnKids(share, [{ path: `${share}x` }, { path: `${share}y` }]),
     shareCityUp: cityUpFrom(share, `${share}x`),
     driveCityUp: cityUpFrom('C:\\', 'C:\\x'),
-    shareRestoreFolder: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText(`${share}x\\f.txt`))?.[1],
+    // A file at a drive's or a share's root is recovered into that root, named as the folder it is —
+    // not as the file itself ("/f.txt") nor as "C:", the drive's current folder (F3.6).
+    restoreAtDiskRoot: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('/f.txt'))?.[1],
+    restoreAtDriveRoot: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText('C:\\f.txt'))?.[1],
+    restoreAtShareRoot: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText(`${share}f.txt`))?.[1],
   }, {
     wholeDisk: { '/': 110, '/Users': 60, '/Users/f': 15 },
     wholeDrive: { 'C:\\': 110, 'C:\\x': 60, 'C:\\x\\f': 15 },
     share: { [share]: 110, [`${share}d`]: 20, [`${share}d\\f`]: 15 },
     stopsAtTheRoot: { '/data': 500, '/data/d': 110, '/data/d/f': 15 },
     atTheRoot: { '/data': 500, '/data/d': 100 },
-    sharePulse: 'D',
+    outsideTheRoot: { '/data': 500, '/data/d': 100, '/data/d/f': 5 },
+    outsideOnAnotherDrive: { 'C:\\d': 100, 'C:\\d\\f': 5 },
+    outsideOnAnotherShare: { [`${share}d`]: 100, [`${share}d\\f`]: 5 },
+    diskPulseAtItsRoot: 'ROOT',
+    drivePulseAtItsRoot: 'ROOT',
+    sharePulseAtItsRoot: 'ROOT',
+    sharePulseThroughItsRoot: 'ROOT',
     shareParent: share,
     shareRootIsItsOwnParent: share,
     sharePreview: [`${share}x`, `${share}y`],
     shareCityUp: share, // "\\srv\share" is outside the scan: the server refused it 403
     driveCityUp: 'C:\\',
-    shareRestoreFolder: `${share}x`,
+    restoreAtDiskRoot: '/',
+    restoreAtDriveRoot: 'C:\\',
+    restoreAtShareRoot: share,
   });
+  // Controls, not pins: these held before the F2.7 fix too. A share's change in a drawn sub-folder
+  // lights that sub-folder, the deepest region, and a file in one is recovered beside it (F3.6).
+  assert.deepEqual({
+    sharePulseInASubfolder: liveRegionFor(`${share}d\\f`, new Map([[`${share}d`, 'D'], [share, 'ROOT']])),
+    shareRestoreInASubfolder: /beside the original, in ([^,]*),/.exec(snapFolderRefusedText(`${share}x\\f.txt`))?.[1],
+  }, { sharePulseInASubfolder: 'D', shareRestoreInASubfolder: `${share}x` });
 
   // The feed's rows, as renderLiveFeed writes them: each file named from below the root.
   const feed = (root: string, paths: string[]): string[] => {

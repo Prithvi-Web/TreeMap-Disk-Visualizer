@@ -364,12 +364,11 @@ function snapNewerUnreadText(newerUnread) {
 }
 
 /** What the panel says when the folder the copy would go into is refused: the folder, why, and what is left to do.
-    "\" separates only a Windows path (POL item 7), so the folder of "/data/a\b/f.txt" is "/data/a\b". */
+    "\" separates only a Windows path (POL item 7), so the folder of "/data/a\b/f.txt" is "/data/a\b"; and the
+    folder of a file at a drive's or a share's root is that root, "/", "C:\" or "\\srv\share\" — never the file
+    itself, nor "C:" (POL item 7 review, F3.6). tmParentPath is the page's one reading of a path's folder. */
 function snapFolderRefusedText(targetPath) {
-  const cut = /^(?:[A-Za-z]:|\\\\)/.test(targetPath)
-    ? Math.max(targetPath.lastIndexOf('/'), targetPath.lastIndexOf('\\'))
-    : targetPath.lastIndexOf('/');
-  const folder = cut > 0 ? targetPath.slice(0, cut) : targetPath;
+  const folder = tmParentPath(targetPath) || targetPath;
   return `This panel puts a recovered copy beside the original, in ${folder}, and TreeMap will not write a copy made ` +
     'as administrator there: another account owns that folder, or other accounts can change it. Trying again here ' +
     'would be refused the same way. A program using TreeMap\'s API can recover it into a folder of yours instead, ' +

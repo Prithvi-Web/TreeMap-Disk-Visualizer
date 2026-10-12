@@ -1228,18 +1228,20 @@ function applyLiveDelta(ev) {
   }
 }
 
-/** Match an event path to the deepest visible region (rect or arc), "\" a
-    separator only in a Windows path, as applyLiveDelta climbs. */
+/** Match an event path to the deepest visible region (rect, arc or cell),
+    climbing with tmParentPath as applyLiveDelta does: "\" a separator only in
+    a Windows path, and a whole drive's or a share's root reached as the folder
+    it is ("/", "C:\", "\\srv\share\"), so a change directly in it lights the
+    root the circle-pack and Voronoi views draw (POL item 7 review, F3.6). */
 function liveRegionFor(path_, byPath) {
-  let p = path_;
-  const windows = /^(?:[A-Za-z]:|\\\\)/.test(p);
-  for (;;) {
+  for (let p = path_; p; ) {
     const hit = byPath.get(p);
     if (hit) return hit;
-    const cut = windows ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/');
-    if (cut <= 0) return null;
-    p = p.slice(0, cut);
+    const up = tmParentPath(p);
+    if (up === p) return null; // the top of the path, and nothing drawn on the way
+    p = up;
   }
+  return null;
 }
 
 function onLiveActivity(frame) {
