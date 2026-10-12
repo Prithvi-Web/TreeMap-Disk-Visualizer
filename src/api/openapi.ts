@@ -1370,7 +1370,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     destructive: false,
     parameters: [scanIdQuery, queryParam('threshold', 'Max Hamming distance 0–32 (default 10)', int())],
     responses: {
-      '200': jsonResponse('Clusters', opaque('status, scanId, threshold, available, decoder, reason? (with available false, why — no decoder, no image confirmed on this disk, or no image readable; with available true, how many images were not compared because nobody could confirm their data is on this disk), clusters[], clusterCount, totalReclaimable, truncated, compared (images fingerprinted and compared), unreadable (images the decoder could not read — not compared, never dropped silently), unreadableTypes[] ({ extension, count }, most first), tookMs')),
+      '200': jsonResponse('Clusters', opaque('status, scanId, threshold, available, decoder, reason? (with available false, why — no decoder, no image confirmed on this disk, or no image readable; with available true, how many images were not compared because nobody could confirm their data is on this disk, and how many because they are online-only), clusters[], clusterCount, totalReclaimable, truncated (more images than the 8,000-image cap; set on an unavailable answer too), compared (images fingerprinted and compared), unreadable (images the decoder could not read — not compared, never dropped silently), unreadableTypes[] ({ extension, count }, most first), tookMs')),
       '202': jsonResponse('Hashing in progress', obj({ status: str("'running'"), hashed: int(), toHash: int() }, ['status', 'hashed', 'toHash'])),
     },
   },

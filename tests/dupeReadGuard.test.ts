@@ -315,9 +315,10 @@ test('the near-duplicate pass asks before it decodes: what has left the disk, or
     assert.deepEqual(opens, { 'local-a.png': 1, 'local-b.png': 1, 'broken.png': 1 },
       'the local candidates were opened — the undecodable one too, and seen — and nothing else');
     // The evicted file is online-only now, left out as a placeholder is. The
-    // unanswered one may be on this disk: leaving it out is a gap in the
-    // answer, and the answer says so rather than reading as complete.
-    assert.deepEqual([job.available, job.reason], [true, NOT_COMPARED_ONE], 'the one image nobody could vouch for is named as not compared');
+    // unanswered one may be on this disk. Both are gaps in the answer, and
+    // the answer names each rather than reading as complete.
+    assert.deepEqual([job.available, job.reason], [true, `${NOT_COMPARED_ONE} ${ONLINE_TWO}`],
+      'the one image nobody could vouch for, and the two online-only ones (cloud.png, evicted.png), are named as not compared');
   } finally {
     realNative();
   }
@@ -326,6 +327,27 @@ test('the near-duplicate pass asks before it decodes: what has left the disk, or
 // What the near-duplicate job says, word for word, about images it could not confirm were on this disk.
 const NOT_COMPARED_ONE = '1 image was not compared: TreeMap could not confirm its data is on this disk, and opening it could download it.';
 const NONE_COMPARED = 'No image was compared: TreeMap could not confirm that the images are on this disk, and opening one that is online-only would download it. Near-duplicates are unknown here, not none.';
+// …and about online-only images — a placeholder in the scan, or one whose data has left since (B20 review).
+const ONLINE_ONE = '1 image was not compared: it is online-only, and opening it would download it.';
+const ONLINE_TWO = '2 images were not compared: they are online-only, and opening one would download it.';
+const ONLINE_THREE = '3 images were not compared: they are online-only, and opening one would download it.';
+
+test('B20: an online-only image is never compared, and the answer counts it — a pass that skipped some never reads as complete', needsSharp, async () => {
+  // Two local pictures with different pixels and nothing else readable would
+  // be "no near-duplicates — your image library looks tidy", while cloud.png
+  // (a placeholder in the scan) and evicted.png (its data has left since)
+  // were never looked at. The page withholds "tidy" whenever a reason is set.
+  const b = await scanned();
+  standIn((name) => (name === 'evicted.png' ? 0 : 1));
+  try {
+    const { result: job, opens } = await watchingOpens(() => finished(getNearDupeJob(b.scan, 4)));
+    assert.deepEqual([opens['cloud.png'], opens['evicted.png']], [undefined, undefined], 'neither online-only image was opened');
+    assert.deepEqual([job.available, job.compared, job.reason], [true, 3, ONLINE_TWO],
+      'local-a, local-b and unsure were compared; the two online-only images are counted, not dropped');
+  } finally {
+    realNative();
+  }
+});
 
 test('when the module cannot ask at all, the near-duplicate pass reports unknown, never "none found"', needsSharp, async () => {
   // Every candidate is a real local file carrying the same pixels, so a pass
@@ -339,8 +361,8 @@ test('when the module cannot ask at all, the near-duplicate pass reports unknown
     assert.deepEqual(opens, {}, 'nothing was opened');
     assert.deepEqual(
       [job.available, job.reason, job.clusters, job.clusterCount],
-      [false, NONE_COMPARED, [], 0],
-      'unavailable, with the reason: an empty list here would say "no near-duplicates", which nobody checked',
+      [false, `${NONE_COMPARED} ${ONLINE_ONE}`, [], 0],
+      'unavailable, with the reason — and cloud.png, a placeholder, counted apart: an empty list here would say "no near-duplicates", which nobody checked',
     );
   } finally {
     realNative();
@@ -377,7 +399,8 @@ test('an image deleted since the scan is not an image nobody could vouch for', n
     const { result: job, opens } = await watchingOpens(() => finished(getNearDupeJob(b.scan, 4)));
     assert.deepEqual(clustered(job), [['local-a.png', 'local-b.png']]);
     assert.equal(opens['trashed.png'], undefined, 'the deleted image was never opened');
-    assert.deepEqual([job.available, job.reason], [true, undefined], 'and it is not reported as one nobody could vouch for');
+    assert.deepEqual([job.available, job.reason], [true, ONLINE_THREE],
+      'and it is not reported as one nobody could vouch for, nor as online-only: those are cloud.png, evicted.png and unsure.png');
   } finally {
     realNative();
   }
@@ -401,7 +424,7 @@ test('an entry the pass cannot look at is not taken for deleted', { skip: NO_CHM
   try {
     assert.throws(() => fs.lstatSync(path.join(locked, 'hidden.png')), /EACCES/, 'the fixture really hides the entry');
     const { result: job } = await watchingOpens(() => finished(getNearDupeJob(b.scan, 4)));
-    assert.deepEqual([job.available, job.reason], [true, NOT_COMPARED_ONE], 'one image nobody could vouch for, not a deleted one');
+    assert.deepEqual([job.available, job.reason], [true, `${NOT_COMPARED_ONE} ${ONLINE_THREE}`], 'one image nobody could vouch for, not a deleted one');
   } finally {
     fs.chmodSync(locked, 0o755);
     realNative();
@@ -440,7 +463,9 @@ test('the near-duplicate pass asks in chunks, and the event loop turns between t
     assert.ok(calls.every((n) => n <= 256), `no ask carries more than 256 paths: ${JSON.stringify(calls)}`);
     assert.equal(calls.length, Math.ceil(total / 256), `and the list is split no finer than that: ${JSON.stringify(calls)}`);
     assert.deepEqual(turnedBefore, calls.map(() => true), 'the event loop turned before each ask after the first');
-    assert.deepEqual([job.available, job.reason, job.clusterCount], [true, undefined, 0], 'answered "not here" is an answer: nothing is unknown');
+    assert.deepEqual([job.available, job.reason, job.clusterCount],
+      [true, '600 images were not compared: they are online-only, and opening one would download it.', 0],
+      'answered "not here" is an answer — none is unknown — and the 600 it left out are counted, never an empty "none found"');
   } finally {
     realNative();
   }
@@ -453,7 +478,7 @@ test('the near-duplicate pass with no module that can ask: the scan’s flags al
     const { result: job, opens } = await watchingOpens(() => finished(getNearDupeJob(b.scan, 4)));
     assert.deepEqual(clustered(job), [['evicted.png', 'local-a.png', 'local-b.png', 'unsure.png']]);
     assert.deepEqual(opens, { 'local-a.png': 1, 'local-b.png': 1, 'evicted.png': 1, 'unsure.png': 1, 'broken.png': 1 });
-    assert.equal(job.reason, undefined, 'nothing was asked, so nothing is unknown: the flags answered for every file');
+    assert.equal(job.reason, ONLINE_ONE, 'nothing was asked, so nothing is unknown: the flags answered for every file, and left out only cloud.png');
   } finally {
     realNative();
   }
@@ -505,7 +530,7 @@ test('B20: the near-duplicate pass says how many images it compared and how many
       [true, 4, 1, [{ extension: 'png', count: 1 }]],
       'four pictures fingerprinted; broken.png could not be read, and is counted rather than vanishing',
     );
-    assert.equal(job.reason, undefined, 'the reason stays the locality note (none here); the counts carry the rest');
+    assert.equal(job.reason, ONLINE_ONE, 'the reason names what was left out — cloud.png, online-only; the counts carry the rest');
   } finally {
     realNative();
   }

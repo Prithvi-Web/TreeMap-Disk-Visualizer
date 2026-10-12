@@ -140,13 +140,20 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   // Collect candidate images, largest first; cap to bound the O(n²) pass.
   // Candidates carry bare ids until the cap lands; only the kept set
   // materializes names and paths.
+  // An online-only image is never opened, so never compared — and that is a
+  // gap in the answer, counted like the others (B20 review): a pass that
+  // skipped some must not read as complete. A link or a second name of a
+  // hard link is not a gap; its file is counted under its own name.
   const candidates: { id: number; size: number }[] = [];
+  let onlineOnly = 0;
   store.eachFile(store.rootId, (id) => {
     const size = store.size(id);
     if (size < MIN_IMAGE_BYTES) return;
-    if (store.flag(id, Flag.HardlinkDup) || store.flag(id, Flag.Symlink) || store.flag(id, Flag.CloudPlaceholder)) return;
+    if (store.flag(id, Flag.HardlinkDup) || store.flag(id, Flag.Symlink)) return;
     const ext = store.extension(id);
-    if (ext && IMAGE_EXT.has(ext)) candidates.push({ id, size });
+    if (!ext || !IMAGE_EXT.has(ext)) return;
+    if (store.flag(id, Flag.CloudPlaceholder)) onlineOnly++;
+    else candidates.push({ id, size });
   });
   candidates.sort((a, b) => b.size - a.size);
   // The smaller images past the cap are never tried. That is recorded here,
@@ -159,10 +166,10 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   // file after its scan (RISKS R71), so just before any decode each kept
   // image is asked about again — of its directory entry, never the file —
   // a chunk at a time, so a long list never holds the event loop. One whose
-  // data has left is left out as a placeholder is. One nobody could vouch
-  // for is left out too (no answer is not a yes), and that is a gap in the
-  // answer, so the job says how many; with none compared at all it is
-  // unavailable, since an empty list would read as "none found".
+  // data has left is left out as a placeholder is, and counted with them.
+  // One nobody could vouch for is left out too (no answer is not a yes), and
+  // that is a gap in the answer, so the job says how many; with none compared
+  // at all it is unavailable, since an empty list would read as "none found".
   const local = new Set<number>();
   let unconfirmed = 0;
   for (let at = 0; at < candidates.length; at += LOCALITY_CHUNK) {
@@ -170,7 +177,7 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
     if (job.cancelled) return;
     const chunk = candidates.slice(at, at + LOCALITY_CHUNK).map((c) => c.id);
     const settled = new Set<number>();
-    for (const id of stillLocal(chunk, (i) => store.path(i), (i) => { settled.add(i); })) {
+    for (const id of stillLocal(chunk, (i) => store.path(i), (i) => { settled.add(i); onlineOnly++; })) {
       local.add(id);
       settled.add(id);
     }
@@ -183,17 +190,21 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
       unconfirmed++;
     }
   }
+  const onlineNote = onlineOnly === 0 ? ''
+    : onlineOnly === 1 ? '1 image was not compared: it is online-only, and opening it would download it.'
+      : `${formatCount(onlineOnly)} images were not compared: they are online-only, and opening one would download it.`;
   if (unconfirmed > 0 && local.size === 0) {
     job.available = false;
-    job.reason = 'No image was compared: TreeMap could not confirm that the images are on this disk, and opening one that is online-only would download it. Near-duplicates are unknown here, not none.';
+    job.reason = 'No image was compared: TreeMap could not confirm that the images are on this disk, and opening one that is online-only would download it. Near-duplicates are unknown here, not none.' +
+      (onlineNote ? ` ${onlineNote}` : '');
     finishEmpty(job);
     return;
   }
-  if (unconfirmed > 0) {
-    job.reason = unconfirmed === 1
-      ? '1 image was not compared: TreeMap could not confirm its data is on this disk, and opening it could download it.'
+  const unconfirmedNote = unconfirmed === 0 ? ''
+    : unconfirmed === 1 ? '1 image was not compared: TreeMap could not confirm its data is on this disk, and opening it could download it.'
       : `${unconfirmed} images were not compared: TreeMap could not confirm their data is on this disk, and opening one could download it.`;
-  }
+  const leftOut = [unconfirmedNote, onlineNote].filter(Boolean).join(' ');
+  if (leftOut) job.reason = leftOut;
   const images: CandidateImage[] = candidates.filter((c) => local.has(c.id)).map(({ id, size }) => ({
     name: store.name(id),
     path: store.path(id),
