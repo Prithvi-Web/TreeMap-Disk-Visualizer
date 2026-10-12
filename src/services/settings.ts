@@ -124,7 +124,11 @@ function normalizeBudgets(raw: unknown): BudgetEntry[] {
   for (const entry of raw.slice(0, MAX_BUDGETS * 4)) {
     const e = entry as Partial<BudgetEntry>;
     if (typeof e?.path !== 'string') continue;
-    const path = e.path.trim().slice(0, 1000);
+    // Leading whitespace only, as sanitizePath and normalizeSchedules read a
+    // path: whitespace at its end is part of a folder's name, and trimming it
+    // stored a budget set on "Screenshots " as one on its sibling
+    // "Screenshots" (final review F2.1).
+    const path = e.path.replace(/^\s+/, '').slice(0, 1000);
     const maxBytes = Number(e.maxBytes);
     if (!path || path.includes('\0') || !Number.isFinite(maxBytes) || maxBytes <= 0) continue;
     byPath.set(path, { path, maxBytes: Math.round(maxBytes) });

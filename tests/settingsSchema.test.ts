@@ -43,3 +43,31 @@ test('a scheduled scan\'s folder keeps the whitespace at its end — part of its
     'the trailing space stays, leading whitespace goes, and a blank folder is no schedule');
   await updateSettings({ schedules: [] });
 });
+
+test('a folder budget keeps the whitespace at its end — part of its name — and loses only leading whitespace, as a schedule\'s folder does (final review F2.1)', async () => {
+  // normalizeBudgets trimmed both ends after sanitizePath had kept the end,
+  // so a budget set on "Screenshots " was stored as — and measured against —
+  // its sibling "Screenshots", and the two folders' budgets collapsed into
+  // one. The 1000-character cap applies to the path once its leading
+  // whitespace is gone.
+  const long = '/' + 'x'.repeat(1100);
+  await updateSettings({
+    budgets: [
+      { path: '/Users/me/Screenshots ', maxBytes: 1000 },
+      { path: '/Users/me/Screenshots', maxBytes: 2000 },
+      { path: '  /Users/me/Documents', maxBytes: 3000 },
+      { path: '   ', maxBytes: 4000 },
+      { path: `   ${long}`, maxBytes: 5000 },
+    ],
+  });
+  // A long path is shown by its start and length, so a failure reads.
+  const shown = (p: string) => (p.length > 100 ? `${p.slice(0, 4)}… ${p.length} chars` : p);
+  const saved = (await getSettings()).budgets.map((b) => [shown(b.path), b.maxBytes]);
+  assert.deepEqual(saved, [
+    ['/Users/me/Screenshots ', 1000],
+    ['/Users/me/Screenshots', 2000],
+    ['/Users/me/Documents', 3000],
+    ['/xxx… 1000 chars', 5000],
+  ], 'the trailing space stays (two folders, two budgets), leading whitespace goes, a blank folder is no budget, and the cap counts the path without its leading whitespace');
+  await updateSettings({ budgets: [] });
+});
