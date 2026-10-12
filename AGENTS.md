@@ -874,7 +874,9 @@ read-what-you-saw) permission to act.
   never be trashed/offloaded (nor anything containing them); the byte cap
   refuses any single oversized operation. Violations are
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
-  "POLICY_BYTES_EXCEEDED" }`. An absent or empty file imposes nothing. The
+  "POLICY_BYTES_EXCEEDED" }`. An entry may begin with `~` for your home
+  folder, and every gate reads an entry alike — where it lives and where it
+  really is. An absent or empty file imposes nothing. The
   policy is deliberately not writable through the API. It governs local paths
   only: a connected cloud account's scan and `POST /api/cloud/trash` are not
   held to it. A policy file that is there but will not parse refuses every

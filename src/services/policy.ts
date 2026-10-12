@@ -24,6 +24,10 @@ import { formatBytes } from '../utils/formatBytes';
  *     "protectedPaths": ["/Users/me/projects/keep-forever"],
  *     "maxBytesPerOperation": 10737418240
  *   }
+ *
+ * An entry may begin with `~` for the home folder, as a path a request carries may. Every gate reads
+ * an entry the same way (`placesOfEntry`), the scan's own (`insideAllowedRoots`, from `startScan`)
+ * included, so no two of them disagree on one root (the final review, F2.2, F2.5).
  */
 
 export const POLICY_FILE = 'agent-policy.json';
@@ -98,13 +102,24 @@ export async function getPolicy(): Promise<AgentPolicy> {
  */
 export function assertScanAllowed(policy: AgentPolicy, rootPath: string): void {
   if (policy.allowedRoots.length === 0) return;
-  const where = path.normalize(canonicalDirOf(rootLivesAt(rootPath)));
-  if (policy.allowedRoots.flatMap(placesOfEntry).some((root) => isInside(root, where))) return;
+  if (insideAllowedRoots(policy.allowedRoots, path.normalize(canonicalDirOf(rootLivesAt(rootPath))))) return;
   throw new AppError(
     403,
     'POLICY_ROOT_NOT_ALLOWED',
     `"${rootPath}" is outside the allowed roots — edit agent-policy.json (allowedRoots) to widen them`,
   );
+}
+
+/**
+ * Whether the place `where` (where a path really is or lives, on the Data volume's short spelling, as
+ * `canonicalDirOf` gives one) lies inside one of `allowedRoots`, each read as every gate reads an entry
+ * (`placesOfEntry`). The one reading for the route's gate (`assertScanAllowed`) and the scan's own
+ * (`startScan`, which judges where a root really is before it walks): reading the entries apart, the
+ * route allowed a root written with `~` or on the Data volume's long spelling and the scan then refused
+ * it, blaming a link that was not there (the final review, F2.2, F2.5).
+ */
+export function insideAllowedRoots(allowedRoots: readonly string[], where: string): boolean {
+  return allowedRoots.flatMap(placesOfEntry).some((root) => isInside(root, where));
 }
 
 /** A policy entry as a path: a leading `~` is the home folder, as a path a request carries reads it. */

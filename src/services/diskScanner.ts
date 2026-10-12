@@ -40,7 +40,7 @@ import { memoryRoomFor, noRestartRefusal } from './scan/nativeMemory';
 import { formatCount } from '../utils/formatCount';
 import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
-import { aliasNamespaceOf, isInside, isSpillFolderName, isSpillPath, sanitizePath } from '../utils/pathSanitizer';
+import { aliasNamespaceOf, canonicalDirOf, isSpillFolderName, isSpillPath, sanitizePath } from '../utils/pathSanitizer';
 import { meansGone } from '../utils/errno';
 
 /**
@@ -735,23 +735,21 @@ export async function scanRootPathOf(given: string): Promise<string> {
 /**
  * The agent policy's allowed roots confine what a scan walks (AGENTS.md), judged where it really is: `place`,
  * the folder a link root leads to or where the root taken as given lies, must be inside an allowed root, as
- * written or where that root really is. The caller checked the root's spelling; a link — the root itself, or a
- * folder above it — can lie inside an allowed root while what it leads to lies anywhere, and a scan grants
- * actions on what it walked.
+ * read as every other gate reads it (`insideAllowedRoots`: a leading `~` the home folder, where it lives and
+ * where it really is). The caller checked the root's spelling; a link — the root itself, or a folder above it —
+ * can lie inside an allowed root while what it leads to lies anywhere, and a scan grants actions on what it
+ * walked.
  */
 async function assertWalkAllowed(given: string, place: string, isLinkRoot: boolean): Promise<void> {
   // Imported when called: policy.ts reads the scans (`allScans`), and a module
   // cycle is refused (tests/importCycles.test.ts).
-  const { getPolicy } = await import('./policy');
+  const { getPolicy, insideAllowedRoots } = await import('./policy');
   const { allowedRoots } = await getPolicy();
   if (allowedRoots.length === 0) return;
-  for (const allowed of allowedRoots) {
-    if (isInside(allowed, place)) return;
-    const real = await fsp.realpath(allowed).catch(() => null);
-    if (real !== null && isInside(real, place)) return;
-  }
-  // Where it leads is not named: it lies outside every root this caller may see.
-  const why = isLinkRoot ? 'is a link to a folder outside the allowed roots' : 'lies outside the allowed roots where it really is (a folder above it is a link)';
+  if (insideAllowedRoots(allowedRoots, path.normalize(canonicalDirOf(place)))) return;
+  // Where it leads is not named: it lies outside every root this caller may see. Nor is a link blamed
+  // unless the root is one: a root outside them for any reason reads the same.
+  const why = isLinkRoot ? 'is a link to a folder outside the allowed roots' : 'lies outside the allowed roots where it really is';
   throw new AppError(403, 'POLICY_ROOT_NOT_ALLOWED', `"${given}" ${why} — edit agent-policy.json (allowedRoots) to widen them`);
 }
 

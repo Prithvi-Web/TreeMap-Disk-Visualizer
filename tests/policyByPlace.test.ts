@@ -232,3 +232,52 @@ test('an allowed root is compared exactly, never folded: a folder the volume tel
     for (const folder of Object.values(others)) fs.rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test('every gate reads an allowed root alike: the route\'s gate and the scan\'s own agree on an entry written with ~ or on the Data volume\'s long spelling, and a refused scan blames no link that is not there (the final review, F2.2, F2.5)', { skip: WINDOWS && 'the home folder is read from HOME here' }, async () => {
+  const desktop = path.join(HOME, 'Desktop');
+  const documents = path.join(HOME, 'Documents');
+  const entries: Record<string, string> = { '~/Desktop': '~/Desktop' };
+  if (DARWIN) entries['Desktop on the Data volume'] = `/System/Volumes/Data${desktop}`;
+  /** The route's gate (assertScanAllowed, also the index build's) for `root`. */
+  const gate = (entry: string, root: string): string => {
+    try {
+      assertScanAllowed({ allowedRoots: [entry], protectedPaths: [], maxBytesPerOperation: null }, root);
+      return 'allowed';
+    } catch (err) {
+      return err instanceof AppError ? err.code : String(err);
+    }
+  };
+  /** A scan of `root` (its own gate, which every caller of startScan meets), settled; or the refusal's code and sentence. */
+  const scanOf = async (root: string): Promise<string> => {
+    try {
+      const scan = await startScan(root);
+      await waitFor(() => scan.status !== 'running', `the scan of ${root}`);
+      return scan.status === 'complete' ? 'allowed' : `failed: ${scan.error}`;
+    } catch (err) {
+      return err instanceof AppError ? `${err.code}${/link/.test(err.message) ? ', blaming a link' : ''}` : String(err);
+    }
+  };
+  const prior = process.env.HOME;
+  process.env.HOME = HOME;
+  const answers: Record<string, string> = {};
+  try {
+    for (const [what, entry] of Object.entries(entries)) {
+      withPolicy({ allowedRoots: [entry] });
+      answers[`${what}: the route's gate, Desktop`] = gate(entry, desktop);
+      answers[`${what}: a scan of Desktop`] = await scanOf(desktop);
+      answers[`${what}: the route's gate, Documents`] = gate(entry, documents);
+      answers[`${what}: a scan of Documents`] = await scanOf(documents);
+    }
+  } finally {
+    process.env.HOME = prior;
+    fs.rmSync(POLICY_PATH, { force: true });
+  }
+  const expected: Record<string, string> = {};
+  for (const what of Object.keys(entries)) {
+    expected[`${what}: the route's gate, Desktop`] = 'allowed';
+    expected[`${what}: a scan of Desktop`] = 'allowed';
+    expected[`${what}: the route's gate, Documents`] = 'POLICY_ROOT_NOT_ALLOWED';
+    expected[`${what}: a scan of Documents`] = 'POLICY_ROOT_NOT_ALLOWED';
+  }
+  assert.deepEqual(answers, expected);
+});
