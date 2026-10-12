@@ -354,6 +354,49 @@ test('a stale approval says when the fresh preview comes - at the next check whi
   }
 });
 
+test('a stale approval names the newest run only when that run can be approved - otherwise it says what comes next, as the scheduler does it (final review F3.1)', async () => {
+  const dir = folder('stale-next', { 'a.bin': 5000 });
+  const base = { name: 'Bins', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true, requireConfirmationAbove: 1000 };
+  try {
+    // Approved: a run held for its size, then one that only simulated — the newest asks nothing.
+    await savePolicies([{ ...base, id: 'stale-next' }]);
+    await approvePolicyForTests('stale-next');
+    const held = await runOnce('stale-next');
+    assert.equal(held.status, 'awaiting-approval');
+    const simulated = await withOpenFileCheck('clear', async () => runPolicy(await policyNow('stale-next'), { dryRun: true, ignoreCooldown: true }));
+    assert.equal(simulated.status, 'completed');
+    const approved = await refusal(approvePolicy('stale-next', held.id));
+    assert.equal(approved.code, 'APPROVAL_STALE', approved.message);
+    assert.doesNotMatch(approved.message, /Approve its newest run/, `its newest run asks nothing: ${approved.message}`);
+    assert.match(approved.message, /It is not previewed again: its next scheduled run looks afresh — it runs every 7 days — and if that run asks first too, approve it there\.$/, approved.message);
+    assert.equal((await refusal(approvePolicy('stale-next', simulated.id))).code, 'APPROVAL_NOT_ASKED', 'the newest run is not one to approve');
+    await savePolicies([{ ...(await policyNow('stale-next')), enabled: false, cooldownDays: 1 }]);
+    const approvedOff = (await refusal(approvePolicy('stale-next', held.id))).message;
+    assert.match(approvedOff, /it runs every 1 day once it is switched on — /, approvedOff);
+    assert.doesNotMatch(approvedOff, /Approve its newest run/, approvedOff);
+
+    // Never approved: its newest run, the one refused, was made before an edit of its match.
+    await savePolicies([{ ...base, id: 'stale-edit' }]);
+    const seen = await runOnce('stale-edit');
+    await savePolicies([{ ...base, id: 'stale-edit', match: { kind: 'custom', exts: ['bin', 'tmp'] } }]);
+    const edited = await refusal(approvePolicy('stale-edit', seen.id));
+    assert.equal(edited.code, 'APPROVAL_STALE', edited.message);
+    assert.doesNotMatch(edited.message, /Approve its newest run/, `the newest run is the one refused: ${edited.message}`);
+    assert.match(edited.message, /A fresh preview of what it matches now comes at its next check, within a minute; approve that run\.$/, edited.message);
+    await savePolicies([{ ...(await policyNow('stale-edit')), enabled: false }]);
+    const editedOff = (await refusal(approvePolicy('stale-edit', seen.id))).message;
+    assert.match(editedOff, /A fresh preview of what it matches now comes at its next check once it is switched on; approve that run\.$/, editedOff);
+    await savePolicies([{ ...(await policyNow('stale-edit')), enabled: true }]);
+    const next = await withOpenFileCheck('clear', () => runDuePolicies());
+    assert.deepEqual(next.map((r) => [r.policyId, r.status]), [['stale-edit', 'awaiting-approval']], 'as it says: the next check previews it');
+    await approvePolicy('stale-edit', next[0].id);
+    assert.ok((await policyNow('stale-edit')).approvedAt, 'and that preview is the one approved');
+    assert.ok(fs.existsSync(path.join(dir, 'a.bin')), 'nothing was deleted on the way');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
 test('a simulation after a held run is approved says a real run would go ahead - and asks again once the match grows past what was approved (final review F2.8)', async () => {
   const dir = folder('simulate-approved', { 'a.bin': 5000 });
   await savePolicies([{ id: 'simulate-approved', name: 'Bins', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true, requireConfirmationAbove: 1000 }]);

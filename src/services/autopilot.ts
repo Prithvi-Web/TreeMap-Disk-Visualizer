@@ -1099,10 +1099,7 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
       }
       throw new AppError(409, 'APPROVAL_STALE',
         `“${policy.name}” has changed, or run again, since that run, so it is not what that run showed. ` +
-        'Approve its newest run, which shows what it matches now' +
-        (policy.approvedAt ? '.' : policy.enabled
-          ? ' — a fresh preview comes at its next check, within a minute.'
-          : ' — a fresh preview comes at its next check once it is switched on.'));
+        afterStaleApproval(policy, newest));
     }
     if (!policy.approvedAt) policy.approvedAt = Date.now();
     policy.approvedBytes = run.bytesMatched;
@@ -1110,6 +1107,28 @@ export async function approvePolicy(policyId: string, runId: string): Promise<Au
     await saveStore(store);
     return policy;
   });
+}
+
+/**
+ * What comes after a stale approval is refused, as the scheduler does it and as the page's
+ * `unapprovableRunNote` says it (final review F3.1). The newest run is named only when it can be
+ * approved — awaiting approval, and made for the policy as it is now: told to approve a newest run that
+ * asked nothing, a client was refused again. A policy not yet approved previews afresh at the next check
+ * (`approvePolicy` has just cleared its cooldown), which passes over a policy switched off; an approved
+ * one is never brought forward, and looks afresh at its next scheduled run.
+ */
+function afterStaleApproval(policy: AutopilotPolicy, newest: AutopilotRun | undefined): string {
+  const approvable = newest?.status === 'awaiting-approval' && newest.scope !== undefined && sameScope(newest.scope, policy);
+  if (!policy.approvedAt) {
+    const when = policy.enabled ? 'at its next check, within a minute' : 'at its next check once it is switched on';
+    return approvable
+      ? `Approve its newest run, which shows what it matches now — a fresh preview comes ${when}.`
+      : `A fresh preview of what it matches now comes ${when}; approve that run.`;
+  }
+  if (approvable) return 'Approve its newest run, which shows what it matches now.';
+  const days = policy.cooldownDays;
+  return `It is not previewed again: its next scheduled run looks afresh — it runs every ${days} day${days === 1 ? '' : 's'}` +
+    `${policy.enabled ? '' : ' once it is switched on'} — and if that run asks first too, approve it there.`;
 }
 
 /**
