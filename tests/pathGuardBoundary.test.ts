@@ -259,7 +259,9 @@ test('a scan of / does not permit a path inside a fixed never-descend folder (/V
   }
 });
 
-test('a scan of / under stay, with the diagnosis Mac’s real mount table, still grants what it listed — and nothing on the drives it did not enter (the U-25 security review, F1)', async () => {
+test('a scan of / under stay, with the diagnosis Mac’s real mount table, still grants what it listed — and nothing on the drives it did not enter (the U-25 security review, F1)', async (t) => {
+  // On Windows / is the current drive's root, and no table names a drive inside a folder.
+  if (NO_TABLE) return t.skip(NO_TABLE);
   // /System/Volumes/Data is one of the mounts the table lists under the fixed
   // /System/Volumes, and the Data volume's own spelling of the root is "/": an
   // exclusion taken through canonicalDirOf on its own became "/", and every
@@ -291,7 +293,8 @@ test('a scan of / under stay, with the diagnosis Mac’s real mount table, still
   }
 });
 
-test('a drive named with a word-final sigma is the same drive in either sigma (the U-25 security review, F7)', () => {
+test('a drive named with a word-final sigma is the same drive in either sigma (the U-25 security review, F7)', (t) => {
+  if (NO_TABLE) return t.skip(NO_TABLE);
   const root = fs.realpathSync(fileTempDir('treemap-guard-sigma-'));
   const drive = path.join(root, 'ΔΙΣΚΟΣ');
   const record = createScanRecord(root);

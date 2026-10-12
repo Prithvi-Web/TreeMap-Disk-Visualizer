@@ -390,6 +390,9 @@ async function bothEngines(t: TestContext, tree: Tree, rule: 'stay' | 'cross', m
 }
 
 test('(e) a drive mounted inside, as the mount table names it: the native engine and the walker agree under stay and under cross, and only cross counts the drive', async (t) => {
+  // The boundary list is read from a mount table, by POSIX paths (mountBoundaries.isAtOrUnder); Windows keeps
+  // none — a drive mounted in a folder is a reparse point there, which the engines treat as a link.
+  if (process.platform === 'win32') return t.skip('Windows keeps no mount table, so no scan there has a drive inside it to stop at');
   const tree = boundaryTree();
   const stay = await bothEngines(t, tree, 'stay', [tree.mnt]);
   if (!stay) return;

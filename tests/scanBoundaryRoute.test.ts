@@ -153,7 +153,9 @@ test('a mount under a folder no walk descends into is listed as not reached — 
   assert.deepEqual([sim.reached, sim.entered], [true, false]);
 });
 
-test('a nullfs or bind view says whether what it shows again is a folder the scan listed (TS review R10)', async () => {
+test('a nullfs or bind view says whether what it shows again is a folder the scan listed (TS review R10)', async (t) => {
+  // A view is a mount table's entry, judged by POSIX paths; Windows keeps no table and has no such view.
+  if (NO_TABLE) return t.skip(NO_TABLE);
   const slash = createScanRecord('/');
   slash.status = 'complete';
   const sim = '/Library/Developer/CoreSimulator/Volumes/iOS_22E238';

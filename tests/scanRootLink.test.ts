@@ -181,15 +181,21 @@ test('a link to a folder TreeMap may not look into fails as a scan of that folde
 test('the drives mounted inside are found under the folder’s own path, and a fast rescan of the link reuses the cache its last scan wrote', { skip: NO_LINKS }, async () => {
   const f = linkTree();
   const sub = path.join(f.real, 'sub');
-  const table: MountTable = { source: 'mount', entries: [{ mountPoint: sub, filesystem: 'apfs', options: ['apfs', 'local'], source: '/dev/disk99s1' }], reason: null };
-  setBoundaryDepsForTests({ readTable: async () => table, aliases: async () => () => [] });
+  // Windows keeps no mount table (a drive mounted in a folder is a reparse point there, and the boundary
+  // list is read by POSIX paths): there only the fast rescan's half is asked.
+  const table: MountTable | null = process.platform === 'win32'
+    ? null
+    : { source: 'mount', entries: [{ mountPoint: sub, filesystem: 'apfs', options: ['apfs', 'local'], source: '/dev/disk99s1' }], reason: null };
+  if (table) setBoundaryDepsForTests({ readTable: async () => table, aliases: async () => () => [] });
   try {
     await updateSettings({ scanBoundary: 'stay' });
     const first = await scanOf(f.link, 'walker');
-    assert.deepEqual(first.boundary?.mounts?.map((m) => m.path), [sub], 'the table’s mount, under the folder');
-    assert.ok(first.boundary?.neverDescend.includes(sub), 'and the walk was told not to enter it');
-    const store = storeOf(first);
-    assert.equal(store.findByPath(path.join(sub, 'b.txt')), -1, 'so the drive was not entered');
+    if (table) {
+      assert.deepEqual(first.boundary?.mounts?.map((m) => m.path), [sub], 'the table’s mount, under the folder');
+      assert.ok(first.boundary?.neverDescend.includes(sub), 'and the walk was told not to enter it');
+      const store = storeOf(first);
+      assert.equal(store.findByPath(path.join(sub, 'b.txt')), -1, 'so the drive was not entered');
+    }
     await settled(); // the fast-rescan cache is written after the scan answers
     const again = await scanOf(f.link, 'walker', { incremental: true });
     assert.equal(again.rootPath, f.real);
