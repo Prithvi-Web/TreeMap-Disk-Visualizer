@@ -600,3 +600,25 @@ test('in Reclaim colour, the settled re-solve asks for the scores of the cells i
   m.pass(400);
   assert.deepEqual(m.w.events, ['solve', 'scores'], 'a window drag settles through the same draw, and asks too');
 });
+
+test('a re-solve still waiting when the renderer, the view or the map changes draws nothing — the change draws for itself (B26 review F2.3)', () => {
+  // Review: a row changing height arms the settle timer, and switching the
+  // renderer does not clear it (only leaving the view does). Its guard is
+  // all that stops it painting over the map the switch just drew.
+  type World = ReturnType<typeof cellsWorld>;
+  const changes: Array<[string, (m: World) => void]> = [
+    ['the renderer became the Treemap', (m) => { m.state.treemap.mode = 'treemap'; }],
+    ['the renderer became the Sunburst', (m) => { m.state.treemap.mode = 'sunburst'; }],
+    ['another view came up', (m) => { m.state.view = 'dashboard'; }],
+    ['the map went away', (m) => { m.state.treemap.rootPath = null; }],
+  ];
+  for (const [what, change] of changes) {
+    const m = cellsWorld();
+    m.w.above = 42; // the query row appears: a re-solve is waiting
+    m.frame(false);
+    assert.deepEqual(m.w.events, [], `${what}: nothing is drawn before the wait ends (precondition)`);
+    change(m);
+    m.pass(400);
+    assert.deepEqual(m.w.events, [], `${what} while the re-solve waited: it draws nothing`);
+  }
+});
