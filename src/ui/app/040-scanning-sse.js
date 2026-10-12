@@ -276,6 +276,10 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   state.scanning = true;
   state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
   state.scanGen++; // this scan's identity while its request is in flight
+  // A scan paints the Full Disk Access notice only if it sets one itself
+  // (startScanRequest → preScanAccessNotice, after this): a cloud scan never
+  // does, and must not inherit the last disk scan's (U-11, review F1.2).
+  state.accessNotice = null;
   // Above the `quiet` branch on purpose: a background refresh of a whole drive
   // is exactly as long as a foreground one, so it gets a Stop too.
   setScanButtonMode('stop');

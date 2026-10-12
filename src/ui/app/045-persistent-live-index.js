@@ -635,6 +635,7 @@ async function startCloudScan(providerId, providerName) {
 function endScanChrome() {
   state.scanning = false;
   state.abortScan = null;
+  state.accessNotice = null; // the Full Disk Access notice ends with the scan it was set for (U-11)
   setScanButtonMode('scan');
   $('headerSpin').classList.remove('on');
   $('progressTrack').classList.remove('active');

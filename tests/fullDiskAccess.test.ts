@@ -561,6 +561,52 @@ test('a scan that stops or fails takes its notice with it: the row is repainted 
   assert.equal(h.els.accessRow.hidden, true, 'no notice once nothing is scanning, and no refusals of its own to show');
 });
 
+/**
+ * beginScanChrome and endScanChrome out of the built page, run over `state`.
+ * Every other name they reach (the spinner, the FX, the tour, `$`) is an
+ * inert stand-in that accepts any call or property: what is under test is
+ * what the two functions do to `state`, so nothing else needs to be real.
+ */
+function scanChrome(state: Record<string, unknown>): { begin: (opts?: object) => void; end: () => void } {
+  const src = `${braced('function beginScanChrome(')}\n${braced('function endScanChrome(')}`;
+  const inert: unknown = new Proxy(function inert() { /* stand-in */ }, {
+    get: (_t, k) => (k === Symbol.toPrimitive ? () => 0 : inert),
+    set: () => true,
+    apply: () => inert,
+  });
+  const own = new Set(['beginScanChrome', 'endScanChrome']);
+  const scope = new Proxy({ state } as Record<PropertyKey, unknown>, {
+    has: (_t, k) => typeof k === 'string' && !own.has(k),
+    get: (t, k) => (k === Symbol.unscopables ? undefined : k in t ? t[k] : inert),
+    set: (t, k, v) => { t[k] = v; return true; },
+  });
+  // Not strict on purpose: `with` is how every other page name becomes the stand-in.
+  return new Function('scope', `with (scope) { ${src}\nreturn { begin: beginScanChrome, end: endScanChrome }; }`)(scope) as ReturnType<typeof scanChrome>;
+}
+
+test('the notice belongs to the scan that set it: it ends with that scan, and a scan that never set it (a cloud account) paints none', () => {
+  // Review F1.2: state.accessNotice was set by preScanAccessNotice and cleared
+  // only by the next disk scan. A cloud scan (beginScanChrome, never
+  // preScanAccessNotice) after a / scan on a Mac without access then painted
+  // "macOS keeps TreeMap out of the folders it protects (Mail, Messages,
+  // Safari, the Trash)" on its first repaint — false for a cloud account.
+  const h = pageHarness({ fda: 'not-granted', refused: { dirs: 0, examples: [] } });
+  Object.assign(h.state, { scanGen: 0, whatsNew: { seq: 0 } }); // the state beginScanChrome counts on
+  const chrome = scanChrome(h.state);
+  chrome.begin(); // startScanRequest: the chrome, then the notice
+  h.notice('/');
+  assert.equal(h.state.accessNotice, '/', 'a / scan without access sets it');
+  chrome.end();
+  assert.equal(h.state.accessNotice ?? null, null, 'and the end of that scan clears it');
+
+  h.state.accessNotice = '/'; // left behind however a scan ended
+  chrome.begin(); // startCloudScan: the chrome, and no notice of its own
+  h.els.accessText.textContent = '';
+  h.render(); // a mid-scan repaint (the recheck, or the last scan's late probe)
+  assert.equal(h.els.accessRow.hidden, true, 'a scan that did not set the notice never paints it');
+  assert.doesNotMatch(h.els.accessText.textContent, /Mail, Messages, Safari/);
+});
+
 test('after the button, the next focus asks the server once, repaints the row from its answer, and emits no capabilities topic', async () => {
   const h = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] } });
   h.render();
