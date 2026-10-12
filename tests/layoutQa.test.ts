@@ -134,8 +134,12 @@ test('the Offloaded and Time Capsule search boxes fill their field — the place
 
 /* ══════════════ B13 — emptying the cart hands focus back, never to <body> ══════════════ */
 
-/** Several page declarations (functions, or `const x = …;`) in one scope, run with `deps`. */
-function runPageDecls<T>(names: string[], deps: Record<string, unknown>, returns: string): T {
+/**
+ * Several page declarations (functions, or `const x = …;`) in one scope, run
+ * with `deps` — and `extra`, a stretch of the page's own top-level code (its
+ * listener wiring), run after them in the same scope.
+ */
+function runPageDecls<T>(names: string[], deps: Record<string, unknown>, returns: string, extra = ''): T {
   const parts = names.map((name) => {
     let start = INDEX.indexOf(`function ${name}(`);
     if (INDEX.lastIndexOf('async ', start) === start - 6) start -= 6;
@@ -160,7 +164,17 @@ function runPageDecls<T>(names: string[], deps: Record<string, unknown>, returns
   });
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  return new Function(...keys, `'use strict';\n${parts.join('\n')}\nreturn ${returns};`)(...keys.map((k) => deps[k])) as T;
+  return new Function(...keys, `'use strict';\n${parts.join('\n')}\n${extra}\nreturn ${returns};`)(...keys.map((k) => deps[k])) as T;
+}
+
+/** The page's own text from `from` up to (not including) `to`, where `from` is unique. */
+function pageBetween(from: string, to: string): string {
+  const at = INDEX.indexOf(from);
+  assert.notEqual(at, -1, `"${from}" is in the built page`);
+  assert.equal(INDEX.indexOf(from, at + 1), -1, `"${from}" is there once`);
+  const end = INDEX.indexOf(to, at);
+  assert.notEqual(end, -1, `"${to}" follows it`);
+  return INDEX.slice(at, end);
 }
 
 type CartEl = {
@@ -388,6 +402,7 @@ function refitWorld(opts: { view?: string; drawnAt: string; above: number; footH
       ? { paddingTop: '10px', paddingBottom: '10px' }
       : { marginTop: '12px', paddingBottom: `${opts.padB ?? 48}px` }),
     drawView: () => { draws.push('draw'); },
+    isCells: () => false, // the rectangle map: cheap to redraw, so it follows at once
   }, '{ tmRefitMap }');
   return { fns, draws };
 }
@@ -424,4 +439,94 @@ test('every row that can push the map or its footer is watched (B26)', () => {
   const wiring = INDEX.slice(rows!.index, rows!.index + 600);
   assert.match(wiring, /new ResizeObserver\(\(\) => tmRefitMap\(\)\)/, 'a change of size refits the map');
   assert.match(wiring, /for \(const sel of TM_CHROME_ROWS\)[^}]*\.observe\(/, 'and every listed row is observed');
+});
+
+/**
+ * A Voronoi (or Circles) map with the page's own refit and its own window
+ * resize handler, on a clock that only moves when the test moves it. A solve
+ * is a drawCells; it sizes the canvas to what the map should be, as
+ * tmSizeCanvas does. A frame is what a browser does in one: the resize event,
+ * then the ResizeObserver delivery (the toolbar's width followed the window,
+ * so it fires), then 16 ms pass and any timer that is due runs.
+ */
+function cellsWorld() {
+  const w = { innerHeight: 900, above: 0, now: 0, solves: 0, zoomRunning: false, hidden: false };
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  let tid = 0;
+  const resizeHandlers: Array<() => void> = [];
+  const wrap = {
+    getBoundingClientRect: () => ({ top: 150 + w.above }),
+    parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: 17 }) }) },
+    closest: () => ({}),
+  };
+  const tmCanvas = { style: { height: '' } };
+  const state = { view: 'treemap', treemap: { rootPath: '/c', mode: 'voronoi', get altZoomRaf() { return w.zoomRunning ? 7 : 0; } } };
+  type Fns = { treemapCanvasHeight(el: unknown): number; tmRefitMap(): void };
+  let fns: Fns;
+  const drawCells = () => { w.solves++; tmCanvas.style.height = fns.treemapCanvasHeight(wrap) + 'px'; };
+  fns = runPageDecls<Fns>(['treemapCanvasHeight', 'tmRefitMap'], {
+    $: (id: string) => (id === 'treemapWrap' ? wrap : null),
+    state, tmCanvas,
+    window: { get innerHeight() { return w.innerHeight; }, addEventListener: (t: string, f: () => void) => { if (t === 'resize') resizeHandlers.push(f); } },
+    document: { get hidden() { return w.hidden; } },
+    getComputedStyle: (el: unknown) => (el === wrap ? { paddingTop: '10px', paddingBottom: '10px' } : { marginTop: '12px', paddingBottom: '48px' }),
+    isCells: () => true, drawCells, drawView: drawCells,
+    setTimeout: (fn: () => void, ms: number) => { timers.set(++tid, { at: w.now + ms, fn }); return tid; },
+    clearTimeout: (id: number) => { timers.delete(id); },
+  }, '{ treemapCanvasHeight, tmRefitMap }',
+  // The window's resize handler, exactly as the page registers it.
+  pageBetween('let tmResizeDeb = 0;', '/* ── Feature 20'));
+  assert.equal(resizeHandlers.length, 1, 'the treemap registers one window resize handler');
+  const pass = (ms: number) => {
+    const until = w.now + ms;
+    for (;;) {
+      const due = [...timers].filter(([, t]) => t.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      timers.delete(due[0]);
+      w.now = due[1].at;
+      due[1].fn();
+    }
+    w.now = until;
+  };
+  const frame = (resized: boolean) => {
+    if (resized) for (const h of resizeHandlers) h();
+    fns.tmRefitMap();
+    pass(16);
+  };
+  drawCells(); // the map as first drawn
+  return { w, fns, frame, pass };
+}
+
+test('a window drag re-solves a Voronoi map once, after it settles — the refit waits with the resize handler (B26 review F1.1)', () => {
+  // Review: the toolbar's width follows the window, so the ResizeObserver
+  // fired on every frame of a corner drag, found the canvas height stale
+  // (the resize handler deliberately waits 160 ms for cells) and re-solved
+  // the layout — 30 full solves for 30 frames, where the handler does one.
+  const m = cellsWorld();
+  for (let i = 0; i < 30; i++) { m.w.innerHeight -= 3; m.frame(true); }
+  assert.equal(m.w.solves - 1, 0, `a 30-frame drag re-solved the map ${m.w.solves - 1} times while it was still moving`);
+  m.pass(400);
+  assert.equal(m.w.solves - 1, 1, 'and exactly once when it settled');
+  m.fns.tmRefitMap();
+  m.pass(400);
+  assert.equal(m.w.solves - 1, 1, 'which fitted it: nothing is owed afterwards');
+});
+
+test('a row that changes height re-solves a Voronoi map once, and never under the level zoom that is running (B26 review F1.1)', () => {
+  const m = cellsWorld();
+  m.w.zoomRunning = true; // a drill-in's transition is playing over the layout it just built
+  m.w.above = 42; // and the query row appears above the map
+  m.frame(false);
+  assert.equal(m.w.solves - 1, 0, 'nothing is solved under the zoom: a solve cancels it and the map jumps');
+  m.pass(1000);
+  assert.equal(m.w.solves - 1, 0, 'it keeps waiting while the zoom runs');
+  m.w.zoomRunning = false;
+  m.pass(400);
+  assert.equal(m.w.solves - 1, 1, 'and refits once the zoom has finished');
+  // A hidden tab runs no frames, so its zoom never finishes: nobody is watching, refit anyway.
+  const h = cellsWorld();
+  h.w.zoomRunning = true; h.w.hidden = true; h.w.above = 42;
+  h.frame(false);
+  h.pass(400);
+  assert.equal(h.w.solves - 1, 1, 'in a hidden tab the refit does not wait for a zoom that cannot end');
 });

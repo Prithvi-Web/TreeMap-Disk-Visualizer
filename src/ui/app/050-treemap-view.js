@@ -416,12 +416,18 @@ function treemapCanvasHeight(wrap) {
  * toolbar that wraps, a footer that wraps, the room the cart pill reserves at
  * the bottom of <main>. The footer — legend, counts, hint — then fell below
  * the window. A no-op unless the height the map should have differs from the
- * one it was drawn at, so a Voronoi map is never re-solved for nothing, and
- * nothing before the first draw, which measures for itself.
+ * one it was drawn at, and nothing before the first draw, which measures for
+ * itself.
+ *
+ * Voronoi and Circles re-solve through tmCellsSettle, the resize handler's
+ * own wait (B26 review F1.1): a corner drag moves the toolbar's width every
+ * frame, so this fires every frame against a height the handler has not
+ * redrawn yet — and solving here then re-solved the layout once a frame.
  */
 function tmRefitMap() {
   if (state.view !== 'treemap' || !state.treemap.rootPath || !tmCanvas.style.height) return;
   if (tmCanvas.style.height === treemapCanvasHeight($('treemapWrap')) + 'px') return;
+  if (isCells()) { tmCellsSettle(); return; }
   drawView();
 }
 const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock'];

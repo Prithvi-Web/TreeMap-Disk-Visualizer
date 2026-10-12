@@ -791,13 +791,26 @@ setTreemapColorMode(state.treemap.colorMode); // reflect persisted choice on loa
    slideshow, so the two solved renderers wait for the drag to settle; the
    treemap and the sunburst are cheap enough to keep following the edge live. */
 let tmResizeDeb = 0;
+/**
+ * The one wait both doors share: this handler and tmRefitMap, which a drag
+ * fires on every frame too (the toolbar's width follows the window). Each
+ * restarts the same timer, so a drag costs one solve after it settles. The
+ * drill-in's level zoom owns the canvas while it runs, and a solve under it
+ * cancels it and the map jumps, so the solve waits for it to finish — unless
+ * the tab is hidden, where no frame runs and the zoom never would.
+ */
+function tmCellsSettle() {
+  clearTimeout(tmResizeDeb);
+  tmResizeDeb = setTimeout(() => {
+    if (state.view !== 'treemap' || !isCells() || !state.treemap.rootPath) return;
+    if (state.treemap.altZoomRaf && !document.hidden) { tmCellsSettle(); return; }
+    drawCells();
+  }, 160);
+}
 window.addEventListener('resize', () => {
   if (state.view !== 'treemap' || !state.treemap.rootPath) return;
   if (!isCells()) { drawView(); return; }
-  clearTimeout(tmResizeDeb);
-  tmResizeDeb = setTimeout(() => {
-    if (state.view === 'treemap' && isCells() && state.treemap.rootPath) drawCells();
-  }, 160);
+  tmCellsSettle();
 });
 
 /* ── Feature 20 — time-slider treemap: scrub through snapshot history ── */
