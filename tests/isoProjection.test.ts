@@ -645,6 +645,23 @@ test('B12: the Type key names every colour the city draws, biggest first, in the
   assert.deepEqual(cityTypeKey([]), { shown: [], more: 0 }, 'an empty city has an empty key');
 });
 
+test('B12: a city of more colours than the legend has room for shows its six biggest and counts the rest (review F1.7)', () => {
+  // Review F1.7: the key above has four colours and an explicit max, so the
+  // default of six was never reached — a key of 3, 7 or 60 colours passed.
+  // Eight colours here, drawn smallest first, so the key must sort.
+  const { cityTypeKey, EXT_KIND } = typeKeyKit;
+  Object.assign(EXT_KIND, { png: 'image', js: 'code', pdf: 'pdf', dmg: 'disk' }); // as the page fills them
+  const blocks = [
+    blk('/r/g.dmg', 'file', 100, 'dmg'), blk('/r/f.pdf', 'file', 200, 'pdf'), blk('/r/e.js', 'file', 300, 'js'),
+    blk('/r/d.zip', 'file', 400, 'zip'), blk('/r/c.mp3', 'file', 500, 'mp3'), blk('/r/b.mov', 'file', 600, 'mov'),
+    blk('/r/a.png', 'file', 700, 'png'), blk('/r/D', 'dir', 800),
+  ];
+  const key = cityTypeKey(blocks);
+  assert.deepEqual(key.shown.map((e) => e.label), ['folders', 'images', 'video', 'audio', 'archives', 'code'],
+    'six swatches, and they are the six colours covering the most bytes');
+  assert.equal(key.more, 2, 'and the two past six are counted, not dropped');
+});
+
 test('B12: the legend shows the Type key only in Type mode, and works it out once per city, not once per frame', () => {
   const start = INDEX.indexOf('function renderCityChrome(');
   assert.notEqual(start, -1);
