@@ -543,6 +543,30 @@ test('B20: when no image could be read, near-duplicates are unknown — never an
   }
 });
 
+test('B20: past the 8,000-image cap with none readable, the answer counts what it tried, names the cap, and says truncated (a big HEIC library)', needsSharp, async () => {
+  // 8,003 pictures that exist only in the scan: with no module to ask, the
+  // flags call them local, and every decode fails. The pass tries the 8,000
+  // largest; the other 3 are past its cap and never tried — "the 8,000
+  // images here" and truncated:false would both be untrue.
+  const scan = pictureEntries(8_003);
+  noModule();
+  try {
+    const job = await finished(getNearDupeJob(scan, 4));
+    assert.deepEqual(
+      [job.available, job.truncated, job.compared, job.unreadable, job.unreadableTypes],
+      [false, true, 0, 8_000, [{ extension: 'png', count: 8_000 }]],
+      'unavailable, and the cap is recorded even though the pass ended before clustering',
+    );
+    assert.equal(job.reason,
+      'No image was compared: the 8,000 images TreeMap tried could not be read (8,000 .png), and the 3 smaller ones past its 8,000-image limit were not tried. Near-duplicates are unknown here, not none.');
+    const one = await finished(getNearDupeJob(pictureEntries(8_001), 4));
+    assert.deepEqual([one.available, one.truncated, one.reason], [false, true,
+      'No image was compared: the 8,000 images TreeMap tried could not be read (8,000 .png), and the 1 smaller one past its 8,000-image limit was not tried. Near-duplicates are unknown here, not none.']);
+  } finally {
+    realNative();
+  }
+});
+
 test('B20: GET /api/near-duplicates carries the compared and unreadable counts', needsSharp, async () => {
   const b = await scanned();
   noModule();

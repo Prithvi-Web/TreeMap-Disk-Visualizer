@@ -149,11 +149,12 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
     if (ext && IMAGE_EXT.has(ext)) candidates.push({ id, size });
   });
   candidates.sort((a, b) => b.size - a.size);
-  let truncated = false;
-  if (candidates.length > MAX_IMAGES) {
-    candidates.length = MAX_IMAGES;
-    truncated = true;
-  }
+  // The smaller images past the cap are never tried. That is recorded here,
+  // before any answer can end the pass early, so every answer carries it —
+  // an unavailable one included (B20 review).
+  const pastCap = Math.max(0, candidates.length - MAX_IMAGES);
+  if (pastCap > 0) candidates.length = MAX_IMAGES;
+  job.truncated = pastCap > 0; // reflects the MAX_IMAGES cap only
   // Decoding an online-only file downloads it, and a sync client can evict a
   // file after its scan (RISKS R71), so just before any decode each kept
   // image is asked about again — of its directory entry, never the file —
@@ -229,10 +230,15 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   if (entries.length === 0 && job.unreadable > 0) {
     // Every image it tried failed to decode — all HEIC on a Mac, whose bundled
     // decoder reads HEIF only as .avif. Unknown, like a locality it could not confirm.
+    // Past the cap, "the images here" would count only the ones it tried.
     const types = job.unreadableTypes.slice(0, 3).map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ');
-    const what = job.unreadable === 1 ? 'the 1 image here' : `the ${formatCount(job.unreadable)} images here`;
+    const tried = `the ${formatCount(job.unreadable)} image${job.unreadable === 1 ? '' : 's'}`;
+    const what = pastCap > 0 ? `${tried} TreeMap tried` : `${tried} here`;
+    const cap = pastCap === 0 ? ''
+      : `, and the ${pastCap === 1 ? '1 smaller one' : `${formatCount(pastCap)} smaller ones`} past its ` +
+        `${formatCount(MAX_IMAGES)}-image limit ${pastCap === 1 ? 'was' : 'were'} not tried`;
     job.available = false;
-    job.reason = `No image was compared: ${what} could not be read (${types}). Near-duplicates are unknown here, not none.` +
+    job.reason = `No image was compared: ${what} could not be read (${types})${cap}. Near-duplicates are unknown here, not none.` +
       (job.reason ? ` ${job.reason}` : '');
     finishEmpty(job);
     return;
@@ -297,7 +303,6 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   // while slicing here dropped groups the user could act on WITHOUT setting
   // `truncated`, so they simply vanished with nothing to indicate it.
   job.clusters = clusters;
-  job.truncated = truncated; // reflects the MAX_IMAGES cap only
   job.status = 'complete';
   job.finishedAt = Date.now();
 }
