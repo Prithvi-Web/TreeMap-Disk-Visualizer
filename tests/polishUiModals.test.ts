@@ -485,6 +485,36 @@ test('a panel a sheet opens over itself — the reclaim-score breakdown from Cle
   assert.ok(clean.contains(doc.activeElement), 'focus landing anywhere else outside the sheet is pulled back in, as before');
 });
 
+/* Review F2.3, the other order: the breakdown opened from a page row with no
+   sheet up holds focus on its close button, and then a sheet opens — `?`
+   only flips `.open` and leaves focus to the net. The F1.3 exemption left
+   focus in the breakdown, so the sheet opened with the keyboard and the
+   screen reader outside it: Enter acted on the breakdown, and the first
+   Escape closed the breakdown instead of the sheet. */
+test('a sheet that opens while the breakdown holds focus takes focus itself, and gives it back when it closes (review F2.3)', () => {
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const focusin: Array<(e: { target: FEl }) => void> = [];
+  (doc as unknown as { addEventListener: (type: string, fn: (e: { target: FEl }) => void) => void }).addEventListener =
+    (type, fn) => { if (type === 'focusin') focusin.push(fn); };
+  const api = loadModalNet(doc);
+  // openReclaimWhy, as a badge in a page row runs it, with no sheet open.
+  const pop = doc.getElementById('rcPopover')!;
+  const close = append(pop, mkOf(doc)('button', 'rcPopClose', ['icon-btn']));
+  pop.hidden = false;
+  close.focus();
+  for (const fn of focusin) fn({ target: close });
+  assert.equal(doc.activeElement, close, 'opened from a page row, the breakdown has focus');
+  const sheet = doc.getElementById('shortcutsModal')!;
+  setOpen(api, sheet, true);
+  const at = doc.activeElement;
+  assert.ok(sheet.contains(at), `the sheet that just opened has focus (it is on <${at?.tag} id=${at?.id}>)`);
+  api.syncModalLayers(); // a later class flip on a backdrop runs the net again
+  assert.ok(sheet.contains(doc.activeElement), 'and the sheet keeps it when the net runs again, not the breakdown');
+  setOpen(api, sheet, false);
+  assert.equal(doc.activeElement, close, 'closed, the sheet gives focus back to the breakdown it was opened over');
+});
+
 /* ══════════════ a11y-keyboard-2 — shortcuts stop at the scrim; Escape closes the top layer ══════════════ */
 
 test('while a dialog is open, global shortcuts never reach the views underneath', () => {

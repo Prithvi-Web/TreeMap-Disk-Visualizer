@@ -835,10 +835,18 @@ function modalTrapTab(e, top) {
   if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
   else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
 }
+/* A sheet has opened since the net last placed focus. It takes focus wherever
+   focus was, the breakdown included: a sheet opened over the breakdown is the
+   top layer now, and left there, Enter acted on the breakdown and the first
+   Escape closed it instead of the sheet (review F2.3). Only a re-run of the
+   net with no sheet newly open leaves focus in a panel the top sheet opened
+   over itself (review F1.3). */
+let modalJustOpened = false;
 function modalOpened(el) {
   modalOrder.set(el, ++modalOpenSeq);
   const prev = lastFocus && lastFocus.isConnected !== false && !el.contains(lastFocus) ? lastFocus : null;
   modalPrevFocus.set(el.id, prev);
+  modalJustOpened = true;
 }
 function modalClosed(el) {
   syncModalLayers(false); // lift inert first, or the restored focus is refused
@@ -870,8 +878,11 @@ function syncModalLayers(moveFocus = true) {
       if (el.style) el.style.zIndex = el === top && open.length > 1 ? '101' : '';
     } else if (el.id !== 'toasts' && el.id !== 'tooltip' && !MODAL_OVERLAYS.includes(el.id) && !el.classList.contains('blob')) el.inert = !!top;
   }
+  if (!moveFocus) return;
+  const opened = modalJustOpened;
+  modalJustOpened = false;
   const active = document.activeElement;
-  if (moveFocus && top && !top.contains(active) && !inModalOverlay(active)) modalFocusInto(top);
+  if (top && !top.contains(active) && (opened || !inModalOverlay(active))) modalFocusInto(top);
 }
 const modalNet = new MutationObserver((records) => {
   for (const r of records) {
