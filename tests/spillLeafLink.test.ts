@@ -20,7 +20,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { setSpillCheckForTests } from '../src/services/autopilot';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { aliasNamespaceOf, foldName, isSpillPath, spillCandidateTest, win32Normalize } from '../src/utils/pathSanitizer';
+import { aliasNamespaceOf, foldName, isSpillPath, SAFETY_RECORD_NAMES, spillCandidateTest, win32Normalize } from '../src/utils/pathSanitizer';
 import { isThisMachine } from '../src/utils/win32Host';
 import { SPILL_DIR } from '../src/services/spillSweep';
 
@@ -112,6 +112,12 @@ test('Autopilot leaves the leftover alone over the folder holding the link, the 
   try {
     for (const [root, what] of roots) {
       full = 0;
+      // The safety records in app-data the policy matches — the audit log this file's requests wrote —
+      // are candidates too, left alone (the final review, F1.11) after their spill check. Known here
+      // from the disk before the run's own scan (the run audits itself after it), as this walk spells
+      // them, not from the answer, so a record the answer wrongly lists as an item is caught (F2.7).
+      const records = SAFETY_RECORD_NAMES.filter((name) => fs.existsSync(path.join(REAL, name)) && fs.statSync(path.join(REAL, name)).size >= 1)
+        .map((name) => (root === REAL ? path.join(REAL, name) : path.join(root, 'real-tm', name)));
       const answer = await simulate(root);
       assert.equal(answer.status, 200, `${what}: ${JSON.stringify(answer.body).slice(0, 200)}`);
       const items = (answer.body.items as { path: string }[]).map((i) => i.path);
@@ -124,10 +130,9 @@ test('Autopilot leaves the leftover alone over the folder holding the link, the 
       // scan spells them, and for nothing else.
       const inAppData = (p: string): boolean => root === REAL || p.startsWith(path.join(root, 'real-tm') + path.sep);
       const underAppData = items.filter(inAppData).length;
-      // The audit log this file's requests wrote in app-data is a candidate too, left alone as a safety
-      // record (the final review, F1.11) after its spill check: counted here with the items.
-      const recordsLeft = (answer.body.skipped as { path: string; reason: string }[]).filter((s) => /agent policy and its audit log/.test(s.reason) && inAppData(s.path)).length;
-      assert.equal(full, underAppData + recordsLeft + 1, `${what}: one full check per candidate under app-data, the leftover included, and none for the rest`);
+      const skippedPaths = (answer.body.skipped as { path: string; reason: string }[]).filter((s) => /agent policy and its audit log/.test(s.reason)).map((s) => s.path);
+      assert.deepEqual({ items: records.filter((p) => items.includes(p)), skipped: records.filter((p) => skippedPaths.includes(p)) }, { items: [], skipped: records }, `${what}: the records are left alone, and said to be`);
+      assert.equal(full, underAppData + records.length + 1, `${what}: one full check per candidate under app-data, the leftover included, and none for the rest`);
     }
   } finally {
     setSpillCheckForTests(null);

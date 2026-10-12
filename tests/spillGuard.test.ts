@@ -29,7 +29,7 @@ import { relocateSecret } from '../src/services/securityHygieneScanner';
 import { approvePolicy, listPolicies, runDuePolicies, savePolicies, setSpillCheckForTests } from '../src/services/autopilot';
 import { platform } from '../src/platform';
 import { AppError } from '../src/middleware/errorHandler';
-import { isSpillPath } from '../src/utils/pathSanitizer';
+import { isSpillPath, SAFETY_RECORD_NAMES } from '../src/utils/pathSanitizer';
 import { SPILL_DIR } from '../src/services/spillSweep';
 import type { FileNode, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
@@ -477,15 +477,19 @@ test('Autopilot pays the full spill check only for candidates under app-data', a
     assert.equal(full, 0, 'and cost no full check at all');
     full = 0;
     fs.writeFileSync(left, 'what a crash left');
+    // The safety records in app-data the policy matches — the audit log this file's requests wrote —
+    // are candidates too, left alone (the final review, F1.11) after their spill check. Known here from
+    // the disk before the run's own scan (the run audits itself after it), not from the answer, so a
+    // record the answer wrongly lists as an item is caught (F2.7).
+    const records = SAFETY_RECORD_NAMES.map((name) => path.join(APP, name)).filter((p) => fs.existsSync(p) && fs.statSync(p).size >= 1);
     const holding = await request('POST', '/api/autopilot/simulate', { policy: { path: HOME, match: { kind: 'custom', minBytes: 1 } } });
     assert.equal(holding.status, 200, JSON.stringify(holding.body).slice(0, 200));
     const items = (holding.body.items as { path: string }[]).map((i) => i.path);
     assert.ok(items.filter((p) => p.startsWith(USER + path.sep)).length >= 20, 'a folder holding app-data matched the user\'s files');
     const underApp = items.filter((p) => p.startsWith(APP + path.sep)).length;
-    // The audit log this file's requests wrote in app-data is a candidate too, left alone as a safety
-    // record (the final review, F1.11) after its spill check: counted here with the items.
-    const recordsLeft = (holding.body.skipped as { path: string; reason: string }[]).filter((sk) => sk.path.startsWith(APP + path.sep) && /agent policy and its audit log/.test(sk.reason)).length;
-    assert.equal(full, underApp + recordsLeft + 1, 'one full check per candidate under app-data, the leftover included, and none for the rest');
+    const skippedPaths = (holding.body.skipped as { path: string; reason: string }[]).filter((sk) => /agent policy and its audit log/.test(sk.reason)).map((sk) => sk.path);
+    assert.deepEqual({ items: records.filter((p) => items.includes(p)), skipped: records.filter((p) => skippedPaths.includes(p)) }, { items: [], skipped: records }, 'the records are left alone, and said to be');
+    assert.equal(full, underApp + records.length + 1, 'one full check per candidate under app-data, the leftover included, and none for the rest');
     assert.ok((holding.body.skipped as { path: string }[]).some((sk) => sk.path === SPILL), 'and the leftover is still left alone');
   } finally {
     setSpillCheckForTests(null);

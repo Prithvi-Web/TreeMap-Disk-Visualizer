@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 // App-data sits in a scanned home folder, as ~/Library/Application Support/TreeMap does: there the
 // scanned-root rule allows a request that names a path in it.
 const HOME = fs.realpathSync(isolatedDataDir('treemap-safetyRecords-home-'));
@@ -19,12 +19,12 @@ import { createApp } from '../src/server';
 import { buildMcpServer } from '../src/mcp/server';
 import { startScan } from '../src/services/diskScanner';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
-import { normalizePolicy, simulatePolicy } from '../src/services/autopilot';
+import { normalizePolicy, setRecordCheckForTests, simulatePolicy } from '../src/services/autopilot';
 import { protectAndTrash } from '../src/services/timeCapsule';
 import { relocateSecret } from '../src/services/securityHygieneScanner';
 import { POLICY_FILE } from '../src/services/policy';
 import { auditFilePath } from '../src/services/audit';
-import { SAFETY_RECORD_NAMES } from '../src/utils/pathSanitizer';
+import { SAFETY_RECORD_NAMES, takesSafetyRecord } from '../src/utils/pathSanitizer';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { AppError } from '../src/middleware/errorHandler';
 import { updateSettings } from '../src/services/settings';
@@ -187,4 +187,81 @@ test('a relocation of the agent policy out of app-data is refused, and the file 
   // The service's own check, for a caller that skipped the route's.
   await assert.rejects(relocateSecret(POLICY, moved), /agent policy or its audit log/);
   assert.deepEqual([fs.existsSync(POLICY), fs.existsSync(moved)], [true, false]);
+});
+
+test('a second name of a safety record that no fold explains — an 8.3 short name on Windows, stood in for by a hard link — is refused by identity; a second name of another file is not (the final review, F2.8)', async () => {
+  // No fold turns AGENTP~9.JSO into agent-policy.json: only the identity check knows it is the policy.
+  const policyAlias = path.join(APP, 'AGENTP~9.JSO');
+  const keptAlias = path.join(APP, 'KEPTJS~9.JSO');
+  fs.linkSync(POLICY, policyAlias);
+  fs.linkSync(KEPT, keptAlias);
+  try {
+    assert.deepEqual(
+      {
+        'takesSafetyRecord, the policy\'s second name': takesSafetyRecord(policyAlias),
+        'takesSafetyRecord, kept.json\'s second name': takesSafetyRecord(keptAlias),
+        'DELETE /api/files, the policy\'s second name': await send('DELETE', '/api/files', { paths: [policyAlias], dryRun: true }),
+        'DELETE /api/files, kept.json\'s second name': await send('DELETE', '/api/files', { paths: [keptAlias], dryRun: true }),
+      },
+      {
+        'takesSafetyRecord, the policy\'s second name': true,
+        'takesSafetyRecord, kept.json\'s second name': false,
+        'DELETE /api/files, the policy\'s second name': '403 SAFETY_RECORD',
+        'DELETE /api/files, kept.json\'s second name': '200',
+      },
+    );
+  } finally {
+    fs.rmSync(policyAlias, { force: true });
+    fs.rmSync(keptAlias, { force: true });
+  }
+});
+
+test('Autopilot over a folder above app-data — the home folder, typed as it is and through a link above it — leaves the records alone and says so, and pays the full record check only for candidates in app-data (the final review, F2.7)', async () => {
+  // A file of the person's own beside app-data: a candidate the cheap test must pass over.
+  const own = path.join(HOME, 'Documents', 'own.json');
+  fs.mkdirSync(path.dirname(own), { recursive: true });
+  fs.writeFileSync(own, '{"mine":true}');
+  // A link to the folder holding HOME, so HOME can be typed through it.
+  const via = path.join(fs.realpathSync(fileTempDir('treemap-safetyRecords-via-')), 'up');
+  fs.symlinkSync(path.dirname(HOME), via, 'junction');
+  const checked: string[] = [];
+  setRecordCheckForTests((p) => {
+    checked.push(p);
+    return takesSafetyRecord(p);
+  });
+  try {
+    const verdicts: Record<string, unknown> = {};
+    for (const [what, root] of [['HOME as it is', HOME], ['HOME through a link above it', path.join(via, path.basename(HOME))]] as const) {
+      checked.length = 0;
+      const app = path.join(root, path.relative(HOME, APP)); // app-data as this walk spells it
+      const policy = normalizePolicy({ name: what, path: root, match: { kind: 'custom', exts: ['json', 'jsonl'], minBytes: 0 }, enabled: true });
+      const result = await simulatePolicy(policy);
+      const wouldDelete = result.items.map((i) => i.path);
+      verdicts[what] = {
+        'the policy and the log would be deleted': [path.join(app, POLICY_FILE), path.join(app, 'audit.jsonl')].filter((p) => wouldDelete.includes(p)),
+        'what it left alone, and why': result.skipped.filter((s) => /agent policy and its audit log/.test(s.reason)).map((s) => s.path).sort(),
+        'own.json and kept.json would be deleted': [path.join(root, 'Documents', 'own.json'), path.join(app, 'kept.json')].every((p) => wouldDelete.includes(p)),
+        'the full check ran for the records': [path.join(app, POLICY_FILE), path.join(app, 'audit.jsonl')].every((p) => checked.includes(p)),
+        'the full check ran for a candidate outside app-data': checked.filter((p) => !p.startsWith(app + path.sep)),
+      };
+    }
+    const expected = (root: string): unknown => {
+      const app = path.join(root, path.relative(HOME, APP));
+      return {
+        'the policy and the log would be deleted': [],
+        'what it left alone, and why': [path.join(app, POLICY_FILE), path.join(app, 'audit.jsonl')].sort(),
+        'own.json and kept.json would be deleted': true,
+        'the full check ran for the records': true,
+        'the full check ran for a candidate outside app-data': [],
+      };
+    };
+    assert.deepEqual(verdicts, {
+      'HOME as it is': expected(HOME),
+      'HOME through a link above it': expected(path.join(via, path.basename(HOME))),
+    });
+  } finally {
+    setRecordCheckForTests(null);
+    fs.rmSync(own, { force: true });
+    fs.unlinkSync(via);
+  }
 });

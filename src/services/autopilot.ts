@@ -554,7 +554,7 @@ async function resolveCandidates(
   // absent policy means no limits, and the log is the record of what was done. Each named, as only
   // these few can match. Only a candidate in app-data, or above it, pays the full check.
   const mayHoldRecord = safetyRecordCandidateTest(policy.path);
-  const records = matched.filter((c) => mayHoldRecord(c.path) && takesSafetyRecord(c.path));
+  const records = matched.filter((c) => mayHoldRecord(c.path) && recordCheck(c.path));
   for (const c of records) {
     matched.splice(matched.indexOf(c), 1);
     spillSkipped.push({ path: c.path, reason: "Left alone — TreeMap's agent policy and its audit log, and the folders and links TreeMap reaches them through, are never removed or moved, by Autopilot or any other way through TreeMap." });
@@ -595,6 +595,14 @@ let spillCheck: (p: string) => boolean = isSpillPath;
 /** Test seam: what Autopilot runs as the full spill-folder check (to count it); null restores `isSpillPath`. */
 export function setSpillCheckForTests(fn: ((p: string) => boolean) | null): void {
   spillCheck = fn ?? isSpillPath;
+}
+
+/** The full check of a candidate that may be a safety record or a way to one: `takesSafetyRecord`, or a test's stand-in. */
+let recordCheck: (p: string) => boolean = takesSafetyRecord;
+
+/** Test seam: what Autopilot runs as the full safety-record check (to count it); null restores `takesSafetyRecord`. */
+export function setRecordCheckForTests(fn: ((p: string) => boolean) | null): void {
+  recordCheck = fn ?? takesSafetyRecord;
 }
 
 /**
