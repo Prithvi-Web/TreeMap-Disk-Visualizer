@@ -594,6 +594,7 @@ const schemas: Json = {
       hash: str('Full SHA-256, verified on offload and restore'),
       offloadedAt: int(),
       restoredAt: int('Present once copied back and re-verified'),
+      originalKept: bool('Present (true) when the offload left the original in place rather than moving it to the Trash — a folder that gained a file during the copy, an original open at the trash step, one the Trash refused — so its copy freed no space'),
     },
     ['id', 'name', 'originalPath', 'destPath', 'destRoot', 'size', 'hash', 'offloadedAt'],
   ),

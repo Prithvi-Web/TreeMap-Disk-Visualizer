@@ -34,7 +34,8 @@ function pageConstants(): string {
   return [...INDEX.matchAll(/^const OFFLOAD_[A-Z_]+ = [^;\n]+;$/gm)].map((m) => m[0]).join('\n');
 }
 
-interface Entry { id: string; name: string; originalPath: string; destPath: string; destRoot: string; size: number; hash: string; offloadedAt: number; restoredAt?: number }
+interface Entry { id: string; name: string; originalPath: string; destPath: string; destRoot: string; size: number; hash: string; offloadedAt: number; restoredAt?: number; originalKept?: boolean }
+interface Index { destinations: { root: string; mounted: boolean; lastSeenAt: number; totalBytes: number; activeCount: number; restoredCount: number }[]; entries: Entry[] }
 
 /** `count` offloaded files on `root`, newest first, as GET /api/offload/index serves them. */
 function entriesOn(root: string, count: number, name = (i: number): string => `photo-${i}.jpg`): Entry[] {
@@ -44,22 +45,26 @@ function entriesOn(root: string, count: number, name = (i: number): string => `p
   }));
 }
 
-/** What the Offloaded tab shows for `entries`, with `q` in its search box. */
-function shown(entries: Entry[], q = ''): string {
-  const roots = [...new Set(entries.map((e) => e.destRoot))];
+/** What the Offloaded tab draws for `index`, with `q` in its search box: its body, and the line above it. */
+function drawn(index: Index, q = ''): { body: string; info: string } {
   const els: Record<string, { innerHTML: string; textContent: string; querySelectorAll: () => never[] }> = {};
   const $ = (id: string): (typeof els)[string] => (els[id] ??= { innerHTML: '', textContent: '', querySelectorAll: () => [] });
-  const index = {
-    destinations: roots.map((root) => ({ root, mounted: true, lastSeenAt: 1, totalBytes: 0, activeCount: entries.filter((e) => e.destRoot === root).length, restoredCount: 0 })),
-    entries,
-  };
   const render = new Function(
     '$', 'state', 'formatCount', 'formatBytes', 'formatDate', 'escapeHtml', 'chipFor', 'icon', 'FxNum', 'api', 'runRestoreJob', 'toast',
     `${pageConstants()}\n${pageFunction('renderOffloadIndex')}; return renderOffloadIndex;`,
   )($, { offload: { index, q } }, String, (n: number) => `${n} B`, String, (s: string) => s, () => '', () => '',
     { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, async () => ({}), () => undefined, () => undefined) as () => void;
   render();
-  return $('offloadBody').innerHTML;
+  return { body: $('offloadBody').innerHTML, info: $('offloadInfo').innerHTML };
+}
+
+/** What the Offloaded tab shows for `entries`, with `q` in its search box. */
+function shown(entries: Entry[], q = ''): string {
+  const roots = [...new Set(entries.map((e) => e.destRoot))];
+  return drawn({
+    destinations: roots.map((root) => ({ root, mounted: true, lastSeenAt: 1, totalBytes: 0, activeCount: entries.filter((e) => e.destRoot === root).length, restoredCount: 0 })),
+    entries,
+  }, q).body;
 }
 
 const rowIds = (html: string): string[] => [...html.matchAll(/data-offl-restore="([^"]+)"/g)].map((m) => m[1]);
@@ -81,4 +86,32 @@ test('the bound is per destination, and a search finds a file beyond it', () => 
   const matches = shown(entriesOn('/Volumes/Archive', 2_500), 'photo-1');
   assert.equal(rowIds(matches).length, 200, 'a search matching more than the bound is bounded too');
   assert.match(matches, /more matches here — narrow the search to see them\./, matches.slice(-300));
+});
+
+/** The row drawn for the entry `id` in `body`. */
+function rowOf(body: string, id: string): string {
+  const row = body.split('<div class="bp-item').find((chunk) => chunk.includes(`data-offl-restore="${id}"`));
+  assert.ok(row, `${id} is drawn`);
+  return row;
+}
+
+/** The line above the list, as read: its markup dropped. */
+const infoText = (index: Index): string => drawn(index).info.replace(/<[^>]+>/g, '');
+
+test('the line above the list counts as freed only the originals that went to the Trash, and a copy whose original was kept says so (final review F3.2)', () => {
+  const index = (entries: Entry[]): Index => ({
+    destinations: [{ root: '/Volumes/A', mounted: true, lastSeenAt: 1, totalBytes: 0, activeCount: entries.length, restoredCount: 0 }],
+    entries,
+  });
+  const [first, second, third, fourth] = entriesOn('/Volumes/A', 4);
+  const one = index([first, second, { ...third, originalKept: true }]);
+  assert.match(infoText(one), /^3 offloaded files across 1 destination — 2000 B freed locally\. 1 was copied with its original left in place, so it is not counted\.$/, infoText(one));
+  assert.match(rowOf(drawn(one).body, third.id), /original left in place/, 'the row of the copy whose original was kept says so');
+  assert.doesNotMatch(rowOf(drawn(one).body, first.id), /left in place/, 'a row whose original went to the Trash does not');
+
+  const two = index([first, { ...second, originalKept: true }, { ...third, originalKept: true }, { ...fourth, restoredAt: 5, originalKept: true }]);
+  assert.match(infoText(two), /^3 offloaded files across 1 destination — 1000 B freed locally\. 2 were copied with their originals left in place, so they are not counted\.$/, infoText(two));
+
+  const none = index([first, second]);
+  assert.match(infoText(none), /^2 offloaded files across 1 destination — 2000 B freed locally\.$/, infoText(none));
 });

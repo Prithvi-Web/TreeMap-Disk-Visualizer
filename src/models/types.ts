@@ -864,6 +864,13 @@ export interface OffloadEntry {
   offloadedAt: number;
   /** Set once the entry has been copied back and re-verified. */
   restoredAt?: number;
+  /**
+   * Set when the offload left the original in place rather than moving it to the Trash (final review
+   * F3.2): a selected folder that gained a file during the copy, an original found open at the trash
+   * step, one the Trash refused or did not answer about. The copy stands and is recorded; no space was
+   * freed by it. Absent on every other entry, and on every entry an earlier build recorded.
+   */
+  originalKept?: true;
 }
 
 export type OffloadJobStatus = 'running' | 'complete' | 'error' | 'cancelled';

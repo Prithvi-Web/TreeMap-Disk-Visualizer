@@ -863,6 +863,21 @@ export async function startOffload(
   return job;
 }
 
+/**
+ * Whether `src` is one of `tops` or lies inside one. Each planned file was named under its selected item
+ * (`planOffload`), so this walks up the file's own folders: a look per level, never one per selected
+ * item for each of up to MAX_FILES_PER_JOB files.
+ */
+function isUnder(src: string, tops: ReadonlySet<string>): boolean {
+  if (tops.size === 0) return false;
+  for (let at = src; ;) {
+    if (tops.has(at)) return true;
+    const up = path.dirname(at);
+    if (up === at) return false;
+    at = up;
+  }
+}
+
 async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string[], destDir: string, listed: ListedSelection): Promise<void> {
   const createdFiles: string[] = [];
   let createdDirs: string[] = [];
@@ -929,6 +944,11 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
         `so it was not moved to the Trash. Its verified copies stand at ${destDir}.`;
       job.error = job.error ? `${job.error} Also: ${kept}` : kept;
     }
+    // Every selected item the Trash did not take — a folder left in place, an original found open, one
+    // the Trash refused or did not answer about — is still here: its copies are recorded as such, so
+    // the Offloaded tab never counts them as space freed (final review F3.2).
+    const gone = new Set(trashed.deleted);
+    const keptTops = new Set(topPaths.filter((p) => !gone.has(p)));
 
     // BOOKKEEPING, past the point of no return — and therefore never a reason
     // to roll back.
@@ -966,6 +986,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
             size: r.size,
             hash: r.hash,
             offloadedAt: now,
+            ...(isUnder(r.src, keptTops) ? { originalKept: true as const } : {}),
           });
         }
         store.destinations[destDir] = { lastSeenAt: now };
