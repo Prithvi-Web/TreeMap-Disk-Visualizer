@@ -30,6 +30,7 @@ import { startScan } from '../src/services/diskScanner';
 import { updateSettings } from '../src/services/settings';
 import { boundaryRecord, readMountTable, setBoundaryDepsForTests, type MountTable } from '../src/utils/mountBoundaries';
 import { formatBytes } from '../src/utils/formatBytes';
+import { lastFdaState, rememberFdaState } from '../src/utils/fdaState';
 import { platform } from '../src/platform';
 
 /**
@@ -855,9 +856,23 @@ test('a refusal names the fix for the platform it happened on', async () => {
   const linux = lineOf(await buildStatement(scan, sourcesFixture({ platform: 'linux' })), 'unscannable');
   assert.ok(!linux.notes.some((n) => /Full Disk Access|administrator/i.test(n)));
   assert.ok(linux.notes.some((n) => /permission/.test(n)), 'Linux still explains what refused');
-  const mac = lineOf(await buildStatement(scan, sourcesFixture()), 'unscannable');
-  assert.ok(mac.notes.some((n) => /Full Disk Access/.test(n)), 'macOS unchanged');
-  assert.ok(!mac.notes.some((n) => /administrator/i.test(n)));
+  // macOS words the note by the probed Full Disk Access state (Track U, U-11),
+  // so each state is pinned here: inheriting whatever this machine probed made
+  // the test pass or fail by test order and by the runner's own access. What
+  // a Mac is never told is to run TreeMap as an administrator; saying that
+  // TreeMap does not ask for administrator rights is the true sentence.
+  const RUN_ELEVATED = /\brun(ning)? (TreeMap |it )?as (an )?administrator\b|Run as administrator/i;
+  const saved = lastFdaState();
+  try {
+    for (const state of ['not-granted', 'granted', 'unknown', null] as const) {
+      rememberFdaState(state);
+      const mac = lineOf(await buildStatement(scan, sourcesFixture()), 'unscannable');
+      assert.ok(mac.notes.some((n) => /Full Disk Access/.test(n)), `${String(state)}: macOS names its own setting`);
+      assert.ok(!mac.notes.some((n) => RUN_ELEVATED.test(n)), `${String(state)}: a Mac is never told to run TreeMap as an administrator: ${mac.notes.join(' | ')}`);
+    }
+  } finally {
+    rememberFdaState(saved);
+  }
 });
 
 test('a measured figure is kept even when no restore point is listed; a doubtful empty listing is an unknown, not a zero', async () => {
