@@ -7936,9 +7936,12 @@ async function loadTrash() {
 function openTrashModal() {
   const t = state.trash;
   const atLeast = t && t.complete === false;
-  $('trashModalMeta').textContent = t
-    ? `· ${atLeast ? 'at least ' : ''}${formatBytes(t.totalBytes)} · ${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}`
-    : '';
+  // The header says what the row says. Nothing sized and part unread, "at
+  // least 0 B · 0 items" is true of every Trash and reads as a count; the body
+  // below gives the server's reason (B02 review F2.4).
+  $('trashModalMeta').textContent = !t ? ''
+    : atLeast && !(t.totalBytes > 0) ? '· couldn’t read all of it'
+    : `· ${atLeast ? 'at least ' : ''}${formatBytes(t.totalBytes)} · ${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}`;
   const body = $('trashModalBody');
   if (!t || !t.items || !t.items.length) {
     // "The Trash is empty" is a claim about the disk. Only make it when the

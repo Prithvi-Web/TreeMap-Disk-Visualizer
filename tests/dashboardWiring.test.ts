@@ -494,6 +494,40 @@ test('a Trash TreeMap could not read says so and why — never "at least 0 B" (B
   assert.equal(empty.trashFact.hidden, true, 'an empty Trash read in full has no row, as before');
 });
 
+type SheetEl = { textContent: string; innerHTML: string; disabled: boolean; cls: Set<string>; classList: { add: (c: string) => void } };
+const sheetEl = (): SheetEl => { const e: SheetEl = { textContent: '', innerHTML: '', disabled: true, cls: new Set(), classList: { add: (c) => { e.cls.add(c); } } }; return e; };
+
+/** openTrashModal out of the built page, run over the answer the row was painted from. */
+function openTrashWith(answer: unknown) {
+  const src = slice('function openTrashModal', "$('trashFact').addEventListener('click', openTrashModal);");
+  const els: Record<string, SheetEl> = {};
+  const $ = (id: string) => (els[id] ??= sheetEl());
+  new Function('state', '$', 'formatBytes', 'formatCount', 'escapeHtml', 'icon', 'chipFor', `'use strict'; ${src} return openTrashModal;`)(
+    { trash: answer }, $, (n: number) => `${n} B`, pageFormatCount, (s: string) => s, () => '', () => '',
+  )();
+  return els;
+}
+
+test('the Trash sheet\'s header says what the row says — never "at least 0 B · 0 items" (B02 review F2.4)', () => {
+  // Review F2.4: F1.5 made the row say "Couldn't read all of it" for this
+  // answer, the everyday one on a Mac without Full Disk Access, but the sheet
+  // the row opens still titled itself "Trash · at least 0 B · 0 items" — the
+  // vacuous floor B02 set out to remove, read as a count by a screen reader,
+  // over a body saying the Trash could not be read.
+  const reason = 'macOS would not let TreeMap read the Trash. Give it Full Disk Access in System Settings.';
+  const unread = openTrashWith({ totalBytes: 0, itemCount: 0, complete: false, incompleteReason: reason });
+  assert.equal(unread.trashModal.cls.has('open'), true, 'the sheet opens');
+  assert.doesNotMatch(unread.trashModalMeta.textContent, /at least 0|0 items/, 'no floor of nothing in the header');
+  assert.equal(unread.trashModalMeta.textContent, '· couldn’t read all of it', 'the header says what the row says');
+  assert.match(unread.trashModalBody.innerHTML, /Full Disk Access/, 'and the body gives the server\'s reason');
+  assert.equal(unread.emptyTrashBtn.disabled, false, 'Empty Trash stays on: the platform\'s own emptier may reach what TreeMap could not read');
+
+  const partial = openTrashWith({ totalBytes: 5000, itemCount: 3, complete: false, incompleteReason: reason });
+  assert.equal(partial.trashModalMeta.textContent, '· at least 5000 B · 3 items', 'a real floor is still a floor');
+  const one = openTrashWith({ totalBytes: 2000, itemCount: 1, complete: true, items: [{ name: 'a.txt', size: 2000 }] });
+  assert.equal(one.trashModalMeta.textContent, '· 2000 B · 1 item', 'a Trash read in full states its size and count; one item is "1 item"');
+});
+
 /* ══════════════ B18 — the System card follows the disk, not the page load ══════════════ */
 
 test('the System card\'s disk figures are read again whenever a scan lands (B18)', async () => {
