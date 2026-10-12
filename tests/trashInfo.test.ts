@@ -113,6 +113,37 @@ test('a vanished Trash location is NOT a problem', async () => {
   });
 });
 
+test('on a Mac the unreadable-Trash sentence follows its errno and the Full Disk Access state', { skip: process.platform !== 'darwin' && 'the Full Disk Access sentences are macOS-only' }, async () => {
+  // Track U, U-11 (review F1.7): an EACCES Trash is its own permissions, which
+  // Full Disk Access does not open, so it is never told to grant it; an EPERM
+  // under not-granted is the privacy gate, and names whom to grant it to.
+  const { getTrashInfo } = await import('../src/services/trash');
+  const { lastFdaState, rememberFdaState } = await import('../src/utils/fdaState');
+  const { granteeFor } = await import('../src/utils/accessAdvice');
+  const saved = lastFdaState();
+  try {
+    rememberFdaState('not-granted');
+    await withTrash(async (dir) => {
+      for (const code of ['EACCES', 'EPERM']) {
+        const restore = failReaddir(dir, code);
+        try {
+          const reason = (await getTrashInfo()).incompleteReason ?? '';
+          if (code === 'EACCES') {
+            assert.doesNotMatch(reason, /\bGive\b/, `EACCES is never answered with Full Disk Access: ${reason}`);
+            assert.match(reason, /Full Disk Access does not change that/);
+          } else {
+            assert.ok(reason.includes(`Give ${granteeFor().name} Full Disk Access`), `EPERM names whom to grant it to: ${reason}`);
+          }
+        } finally {
+          restore();
+        }
+      }
+    });
+  } finally {
+    rememberFdaState(saved);
+  }
+});
+
 test('any unreadable errno counts, not just the one seen in the wild', async () => {
   // EPERM is what this Mac produces, but the rule is about the CLASS. Written
   // against EPERM alone, an EACCES or EIO Trash would go back to reporting a

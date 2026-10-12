@@ -409,6 +409,31 @@ test('a bundle whose contents could not be listed is unrecognised, never invisib
   assert.match(lib.reason ?? '', /could not be read|read into/i, 'and the reason says why');
 });
 
+test('on a Mac an unreadable bundle\'s reason ends with the Full Disk Access sentence for the state', { skip: process.platform !== 'darwin' && 'the Full Disk Access sentences are macOS-only' }, () => {
+  // Track U, U-11 (review F1.7): "on macOS this usually means TreeMap lacks
+  // Full Disk Access" was false on a Mac that has it. The reason is the one
+  // builder's sentence for a count, under whatever the state is.
+  const root = tmp();
+  const bundle: import('../src/models/types').FileNode = {
+    name: 'Photos Library.photoslibrary', path: path.join(root, 'Photos Library.photoslibrary'),
+    type: 'dir', modifiedAt: Date.now(), isHidden: false, size: 1000, children: [],
+  };
+  const tree: import('../src/models/types').FileNode = {
+    name: path.basename(root), path: root, type: 'dir', modifiedAt: Date.now(), isHidden: false, size: 1000, children: [bundle],
+  };
+  const saved = lastFdaState();
+  try {
+    for (const state of ['not-granted', 'granted', 'unknown'] as const) {
+      rememberFdaState(state);
+      const reason = scanMediaLibraries(tree).libraries[0].reason ?? '';
+      const want = accessAdvice({ code: null, state, grantee: granteeFor(), retry: 'scan again' });
+      assert.ok(reason.endsWith(` ${want}`), `${state}: ${reason}`);
+    }
+  } finally {
+    rememberFdaState(saved);
+  }
+});
+
 test('the media rulepack entries defer to this surface — the two must tell one story', () => {
   // The review's RD-2: an agent reading /api/cleanup/suggestions (advisory:
   // never trash from there) and /api/media (derivatives removable) must not
@@ -468,6 +493,7 @@ test('GET /api/media serves the report over a real scan — route wiring, not ju
 
 /* ── Track U, U-11 (review F1.5): a scan's refusals keep the state they happened under ── */
 import { lastFdaState, rememberFdaState } from '../src/utils/fdaState';
+import { accessAdvice, granteeFor } from '../src/utils/accessAdvice';
 
 /** A scan record over one Photos library the walk could not read into, served by the real app. */
 async function serveUnreadableBundle(fdaState: 'granted' | 'not-granted' | null) {
