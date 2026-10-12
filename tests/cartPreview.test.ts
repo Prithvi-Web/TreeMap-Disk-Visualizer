@@ -556,7 +556,8 @@ test('a staged folder and a file inside it are not both counted', () => {
   // pairwise `paths.some` inside `paths.filter` this replaced was 250,000
   // string comparisons for a 500-item cart.
   const body = slice('function tmCartRoots', 'function tmBuildPreview');
-  assert.match(body, /const staged = new Set\(paths\)/);
+  // A Set of the staged folders the scan holds (B06 review: an unknown one hides nothing).
+  assert.match(body, /const staged = new Set\(paths\.filter\(\(p\) => cartNode\(p\)\)\)/);
   assert.match(body, /if \(staged\.has\(dir\)\) return false/);
   assert.match(body, /if \(dir === tmParentPath\(dir\)\) break/, 'and it terminates at the filesystem root');
 });
@@ -924,4 +925,16 @@ test('a staged folder above this map that the scan does not hold is unknown — 
   assert.deepEqual([held.freedBytes, held.stagedInView, held.outsideUnsized], [600, 600, 0]);
   assert.equal(held.nodes!.length, 1, 'one hatched block, and nothing else drawn');
   assert.ok(Math.abs(held.nodes![0]!.w * held.nodes![0]!.h - 10_000) < 1e-6, 'covering the whole map');
+});
+
+test('a known staged file under a staged folder this scan does not hold is drawn — the unknown folder hides nothing (B06 review)', () => {
+  // The commit sends a.iso (the scan holds it) and leaves the folder above
+  // out; the Preview shows the same: a.iso hatched, the folder unknown.
+  const { nodes, sizes } = projectsMap();
+  const out = buildPreviewWith(nodes, PROJECTS, 600, [ABOVE, `${PROJECTS}/a.iso`], sizes);
+  assert.deepEqual(
+    [out.freedBytes, out.stagedInView, out.outsideView, out.outsideUnsized],
+    [400, 400, 1, 1],
+    'a.iso is hatched at its size, and the folder above is counted as not shown, size unknown',
+  );
 });

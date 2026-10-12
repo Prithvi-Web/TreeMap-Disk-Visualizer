@@ -453,6 +453,22 @@ test('the cleanup-target meter does not count an unsized staged item as 0 B: unk
   assert.deepEqual((await cartShows([MOV.path, other[0]!], { [MOV.path]: MOV })).goal, [[3_000_000_000, 1]], 'one of two unsized');
 });
 
+test('a known staged file under a staged folder this scan does not hold is counted — the unknown folder hides nothing (B06 review)', async () => {
+  // Review: Downloads staged from another scan, and Downloads/Projects/a.iso
+  // staged from this one. The total folded a.iso into the folder nobody could
+  // size and read "Up to 0 B", while the commit still sends a.iso.
+  const DOWNLOADS = '/c/Downloads';
+  const ISO = { name: 'a.iso', path: '/c/Downloads/Projects/a.iso', size: 400 };
+  const shown = await cartShows([DOWNLOADS, ISO.path], { [ISO.path]: ISO });
+  assert.match(shown.foot, /Up to <b>400 B<\/b>, freed when you empty the Trash · 1 not in this scan, not counted/, shown.foot);
+  assert.equal(shown.pill, '400 B+', 'the pill counts a.iso, marked a floor for the folder it cannot size');
+  assert.deepEqual(shown.goal, [[400, 1]], 'and the target meter is handed the same figure');
+
+  // A folder the scan does hold still counts a file inside it once (D60).
+  const held = await cartShows([DOWNLOADS, ISO.path], { [ISO.path]: ISO, [DOWNLOADS]: { name: 'Downloads', path: DOWNLOADS, size: 1_000 } });
+  assert.equal(held.pill, '1000 B', 'a.iso is inside Downloads, already in its 1,000 bytes');
+});
+
 test('after a commit, the cart says where the files went, not that space was recovered (B29)', () => {
   const els: Record<string, { innerHTML: string; hidden: boolean; classList: { add(): void } }> = {};
   const deps: Record<string, unknown> = {

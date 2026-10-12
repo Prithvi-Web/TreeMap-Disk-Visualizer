@@ -170,6 +170,11 @@ function tmDrawnTree() {
  * Staging a folder and then a file inside it is ordinary — the file's bytes
  * are already counted in the folder's, and taking both would free the same
  * space twice and produce a map whose areas do not add up.
+ *
+ * Only a folder the scan holds stands for what is inside it. One it does not
+ * hold (the cart outlives scans) has no size here and is left out of the
+ * commit, so a file inside it that the scan does hold stands alone — it is
+ * sized, drawn and trashed — rather than vanishing into an unknown (B06).
  */
 function tmCartRoots() {
   const paths = [...state.cart];
@@ -177,7 +182,7 @@ function tmCartRoots() {
   // hold 500 paths, and `paths.some` inside `paths.filter` is 250,000 string
   // comparisons for a question each path can answer about itself in a handful
   // of Map probes: is any directory above me also staged?
-  const staged = new Set(paths);
+  const staged = new Set(paths.filter((p) => cartNode(p)));
   return paths.filter((p) => {
     for (let dir = tmParentPath(p); dir; dir = tmParentPath(dir)) {
       if (staged.has(dir)) return false;
