@@ -515,6 +515,40 @@ test('a sheet that opens while the breakdown holds focus takes focus itself, and
   assert.equal(doc.activeElement, close, 'closed, the sheet gives focus back to the breakdown it was opened over');
 });
 
+/* Review F3.3: the mark a sheet's opening leaves is spent by the net's own
+   pass, never by the pass a closing sheet runs first (moveFocus false). One
+   observer batch can carry both — sheet B opening and sheet A closing, in
+   that record order — and the closing pass runs between B's opening and the
+   batch's final pass. Spent there, the final pass saw no sheet newly open
+   and left focus in the breakdown: the F2.3 bug again. */
+test('a sheet that opens in the same batch as another closes still takes focus from the breakdown (review F3.3)', () => {
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const focusin: Array<(e: { target: FEl }) => void> = [];
+  (doc as unknown as { addEventListener: (type: string, fn: (e: { target: FEl }) => void) => void }).addEventListener =
+    (type, fn) => { if (type === 'focusin') focusin.push(fn); };
+  const api = loadModalNet(doc);
+  const a = doc.getElementById('cleanModal')!;
+  const b = doc.getElementById('shortcutsModal')!;
+  setOpen(api, a, true);
+  // The breakdown, opened from a badge in sheet A, holds focus.
+  const pop = doc.getElementById('rcPopover')!;
+  const close = append(pop, mkOf(doc)('button', 'rcPopClose', ['icon-btn']));
+  pop.hidden = false;
+  close.focus();
+  for (const fn of focusin) fn({ target: close });
+  assert.equal(doc.activeElement, close, 'the breakdown has focus over sheet A');
+  // One MutationObserver batch, as the net's callback runs it: B's record
+  // (opened), then A's (closed), then the one final pass.
+  b.classList.add('open'); b.shown = true;
+  a.classList.remove('open'); a.shown = false;
+  api.modalOpened(b);
+  api.modalClosed(a);
+  api.syncModalLayers();
+  const at = doc.activeElement;
+  assert.ok(b.contains(at), `sheet B, opened in the batch that closed A, has focus (it is on <${at?.tag} id=${at?.id}>)`);
+});
+
 /* ══════════════ a11y-keyboard-2 — shortcuts stop at the scrim; Escape closes the top layer ══════════════ */
 
 test('while a dialog is open, global shortcuts never reach the views underneath', () => {

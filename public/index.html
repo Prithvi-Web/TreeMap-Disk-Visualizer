@@ -35477,7 +35477,10 @@ function modalTrapTab(e, top) {
    top layer now, and left there, Enter acted on the breakdown and the first
    Escape closed it instead of the sheet (review F2.3). Only a re-run of the
    net with no sheet newly open leaves focus in a panel the top sheet opened
-   over itself (review F1.3). */
+   over itself (review F1.3). The mark is spent by the net's own pass, never
+   by the one a closing sheet runs first (moveFocus false): one observer batch
+   can open one sheet and close another, and the closing pass runs between
+   them (review F3.3). */
 let modalJustOpened = false;
 function modalOpened(el) {
   modalOrder.set(el, ++modalOpenSeq);
