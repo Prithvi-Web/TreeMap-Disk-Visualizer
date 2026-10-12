@@ -73,6 +73,8 @@ test('an advice-only group is never selected, whatever the policy asks for', () 
 });
 
 const LIGHTROOM = process.platform === 'darwin' || process.platform === 'win32' ? false : 'the Lightroom rules are for macOS and Windows';
+/** The Lightroom previews rule's own advice (rulepacks/common.json), as a skipped row gives it. */
+const INSTEAD = /Instead: Lightroom Classic ▸ Edit ▸ Catalog Settings ▸ File Handling ▸ Automatically Discard 1:1 Previews/;
 
 test('a policy an earlier build saved with an advice-only group is not refused while unchanged, and its runs leave that group alone, saying so', { skip: LIGHTROOM }, async () => {
   const dir = fs.realpathSync(fileTempDir('treemap-autopilotAdvisory-run-'));
@@ -91,11 +93,14 @@ test('a policy an earlier build saved with an advice-only group is not refused w
     const preview = await simulatePolicy((await listPolicies())[0]);
     assert.deepEqual(preview.items, [], 'nothing is offered for deletion');
     assert.ok(preview.skipped.some((s) => s.path === previews && /advice only/.test(s.reason)), JSON.stringify(preview.skipped));
+    // With the group's own advice, so the refusal says what to do instead (final review F2.10).
+    assert.ok(preview.skipped.some((s) => s.path === previews && INSTEAD.test(s.reason)), JSON.stringify(preview.skipped));
     const run = await withOpenFileCheck('clear', async () => runPolicy((await listPolicies())[0]));
     assert.equal(run.bytesDeleted, 0, run.blockedReason);
     assert.deepEqual(trashed, [], 'the Trash step was never reached');
     assert.ok(fs.existsSync(path.join(previews, 'preview.jpg')), 'it is where it was');
     assert.ok(run.skipped.some((s) => s.path === previews && /advice only/.test(s.reason)), JSON.stringify(run.skipped));
+    assert.ok(run.skipped.some((s) => s.path === previews && INSTEAD.test(s.reason)), JSON.stringify(run.skipped));
   } finally {
     await savePolicies([]);
   }
