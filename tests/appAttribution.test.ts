@@ -235,7 +235,7 @@ test('windows: a dot-prefixed app folder (%APPDATA%\\.minecraft) is named for th
   const roaming = (n: string) => dir(wj('AppData', 'Roaming', n), [file(wj('AppData', 'Roaming', n, 'f'), 100)]);
   const build = () => dir('C:\\', [
     dir(pf, [dir(path.join(pf, 'Minecraft'), [file(path.join(pf, 'Minecraft', 'mc.exe'), 100)])]),
-    dir(wj(), [dir(wj('AppData'), [dir(wj('AppData', 'Roaming'), [roaming('.minecraft'), roaming('.vscode'), roaming('zoom.us')])])]),
+    dir(wj(), [dir(wj('AppData'), [dir(wj('AppData', 'Roaming'), [roaming('.minecraft'), roaming('.vscode'), roaming('zoom.us'), roaming('.python3.11')])])]),
   ]);
   const programFilesFirst = build();
   const usersFirst = build();
@@ -243,8 +243,9 @@ test('windows: a dot-prefixed app folder (%APPDATA%\\.minecraft) is named for th
   for (const [order, root] of [['Program Files first', programFilesFirst], ['the user folder first', usersFirst]] as const) {
     const names = attributeTree(root, ctxFor('win32', WH)).apps.map((a) => a.name).sort();
     assert.ok(!names.some((n) => n.startsWith('.')), `no app is shown with a leading dot (${order}): ${JSON.stringify(names)}`);
-    assert.deepEqual(names, ['Minecraft', 'Vscode', 'zoom.us'],
-      `.minecraft and Program Files\\Minecraft are one "Minecraft" whichever is walked first, .vscode is "Vscode", zoom.us is whole (${order})`);
+    assert.deepEqual(names, ['Minecraft', 'Vscode', 'python3.11', 'zoom.us'],
+      `.minecraft and Program Files\\Minecraft are one "Minecraft" whichever is walked first, .vscode is "Vscode", zoom.us is whole, ` +
+      `and .python3.11 keeps its inner dot but not its leading one (${order})`);
   }
 });
 
