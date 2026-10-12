@@ -661,6 +661,60 @@ test('a Disk City load overtaken while it asks again without the floor lands not
   assert.equal(c.state.treemap.rootPath, '/r/x', 'the overtaken retry does not replace the newer folder');
 });
 
+/**
+ * The page's own renderCityChrome over a city that drew `drawn` of `total`
+ * nodes, returning the coverage line it writes (#cityLod).
+ */
+function cityNote(o: { drawn: number; total: number; nodes?: Array<{ isTrash?: boolean }>; minSize?: number; history?: boolean }): string {
+  const lod = { textContent: '', hidden: true };
+  const state = {
+    city: { drawn: o.drawn, total: o.total, unknownHeight: 0, unresolved: 0, height: 'staleness', colour: 'size' },
+    treemap: { nodes: o.nodes ?? Array.from({ length: o.total }, () => ({})), minSize: o.minSize, history: { active: o.history === true }, rootSize: 0 },
+  };
+  run<() => void>(
+    `${pageConst('UNITS')}\n${braced('function formatBytes(')}\n${pageConst('TM_SERVER_NODE_CAP')}\n${braced('function renderCityChrome(')}`,
+    { state, $: (id: string) => (id === 'cityLod' ? lod : null), formatCount: (n: number) => n.toLocaleString('en-US') },
+    'renderCityChrome',
+  )();
+  assert.equal(lod.hidden, false, 'the coverage line is shown');
+  return lod.textContent;
+}
+
+test('Disk City says "showing all" only of what its nodes can hold: the floor they were asked with, and the server\'s node cap (review F3.5)', async () => {
+  // A folder of 10 files of 5 MB and 30 of 3,000 bytes. The 4 KB ask returns
+  // the 10, so there is no retry, and the city said "showing all 10" while
+  // the 30 were not drawn at all.
+  const files = [
+    ...Array.from({ length: 10 }, (_, i) => ({ path: `/r/d/big${i}`, size: 5_000_000 })),
+    ...Array.from({ length: 30 }, (_, i) => ({ path: `/r/d/small${i}`, size: 3000 })),
+  ];
+  const c = cityLoader(async (root, m) => ({ root: { path: root, name: 'd', size: 50_090_000 }, nodes: files.filter((f) => f.size >= m) }));
+  await c.loadCity('/r/d');
+  assert.equal(c.state.treemap.nodes.length, 10, 'control: the floor kept the 10 large files and no retry asked for the rest');
+  assert.equal(c.state.treemap.minSize, 4000, 'control: the nodes were asked for with the 4 KB floor');
+  const said = cityNote({ drawn: 10, total: 10, nodes: c.state.treemap.nodes as [], minSize: c.state.treemap.minSize });
+  assert.doesNotMatch(said, /^showing all 10$/, 'not "all" of a folder whose 30 small files are not drawn');
+  assert.equal(said, 'showing all 10 items of 4.0 KB or more', 'all of the items at or over the floor, which it names');
+  assert.equal(cityNote({ drawn: 10, total: 40, minSize: 4000 }), 'showing 10 of 40 items of 4.0 KB or more — zoom in for more');
+
+  // Asked with no floor (the retry), or laid out from a snapshot on the time
+  // slider, nothing was left out by size, and "all" is true.
+  assert.equal(cityNote({ drawn: 30, total: 30, minSize: 1 }), 'showing all 30');
+  assert.equal(cityNote({ drawn: 30, total: 30, minSize: 4000, history: true }), 'showing all 30', 'a snapshot\'s layout has no floor, as tmNodeCapNote reads it');
+  assert.equal(cityNote({ drawn: 30, total: 30 }), 'showing all 30', 'nor do nodes nobody recorded a floor for');
+
+  // The server sends at most TM_SERVER_NODE_CAP nodes; a folder that reached
+  // it has more than the city holds.
+  const cap = run<number>(pageConst('TM_SERVER_NODE_CAP'), {}, 'TM_SERVER_NODE_CAP');
+  assert.equal(cap, 20_000, 'control: the cap the server keeps to');
+  const reach = 'the map holds at most 20,000 items, and this folder reached that — drill in for the rest';
+  assert.equal(cityNote({ drawn: cap, total: cap, minSize: 1 }), `showing 20,000 · ${reach}`);
+  assert.equal(cityNote({ drawn: 900, total: cap, minSize: 4000 }), `showing 900 of 20,000 items of 4.0 KB or more — zoom in for more · ${reach}`);
+  assert.equal(cityNote({ drawn: cap - 1, total: cap - 1, minSize: 1 }), 'showing all 19,999', 'one under the cap is all there is');
+  const withTrash = [...Array.from({ length: cap - 1 }, () => ({})), { isTrash: true }];
+  assert.equal(cityNote({ drawn: cap, total: cap, nodes: withTrash, minSize: 1 }), 'showing all 20,000', 'the Trash cell the page adds is not one the server sent');
+});
+
 /* ══════════════ the page says which units it counts in ══════════════ */
 
 test('Settings → "How TreeMap measures space" says sizes are decimal, and what that means against Finder and Explorer', () => {
