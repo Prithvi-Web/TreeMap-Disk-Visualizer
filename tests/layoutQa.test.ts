@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { selectAll } from './fixtures/fakeSelector';
 
 /**
  * Layout found wrong by driving the real page (browser QA of 6 Oct 2026,
@@ -178,7 +179,8 @@ function pageBetween(from: string, to: string): string {
 }
 
 type CartEl = {
-  id: string; cls: Set<string>; parent: CartEl | null; connected: boolean; disabled?: boolean; innerHTML?: string;
+  id: string; tagName: string; attrs: Record<string, string>; cls: Set<string>; parent: CartEl | null; children: CartEl[];
+  connected: boolean; disabled?: boolean; innerHTML?: string;
   classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean; toggle(c: string, on?: boolean): void };
   contains(n: unknown): boolean; focus(opts?: unknown): void; getClientRects(): unknown[]; readonly isConnected: boolean;
   listeners: Record<string, Array<(e: unknown) => void>>; addEventListener(type: string, fn: (e: unknown) => void): void;
@@ -215,12 +217,17 @@ function cartWiring(): string {
 /** Lets the page's awaited repaint run out (microtasks only — nothing is timed). */
 async function settled() { for (let i = 0; i < 10; i++) await Promise.resolve(); }
 
-/** The cart dock and a view beside it: what focus can land on, and whether it is painted. */
+/**
+ * The cart dock and a view beside it: what focus can land on, and whether it
+ * is painted. Laid out as the page has them — the dock a child of <body>,
+ * outside every view — with each element's tag and attributes, and the
+ * page's selectors answered over that tree (B13 review F3.2).
+ */
 function cartWorld() {
   const focus: { active: CartEl | null } = { active: null };
-  const make = (id: string, parent: CartEl | null): CartEl => {
+  const make = (id: string, parent: CartEl | null, tagName = 'button', attrs: Record<string, string> = {}): CartEl => {
     const el: CartEl = {
-      id, cls: new Set(), parent, connected: true,
+      id, tagName, attrs, cls: new Set(), parent, children: [], connected: true,
       classList: {
         add: (c) => { el.cls.add(c); }, remove: (c) => { el.cls.delete(c); }, contains: (c) => el.cls.has(c),
         toggle: (c, on) => { if (on ?? !el.cls.has(c)) el.cls.add(c); else el.cls.delete(c); },
@@ -240,25 +247,31 @@ function cartWorld() {
       listeners: {},
       addEventListener: (type, fn) => { (el.listeners[type] ||= []).push(fn); },
     };
+    if (parent) parent.children.push(el);
     return el;
   };
-  const body = make('body', null);
-  const dock = make('cartDock', body);
-  const els: Record<string, CartEl> = { cartDock: dock };
-  els.cartPanel = make('cartPanel', dock);
+  const body = make('body', null, 'body');
+  const view = make('view-treemap', body, 'section');
+  view.cls.add('view'); view.cls.add('active');
+  const toolbar = make('', view, 'div');
+  const up = make('tmUpBtn', toolbar);
+  up.disabled = true; // at the scan root there is nowhere up to go
+  const els: Record<string, CartEl> = { tmUpBtn: up };
+  els.viewFirst = make('tmSearch', toolbar, 'input', { type: 'text' });
+  els.opener = make('addToCartBtn', view);
+  const dock = make('cartDock', body, 'div');
+  els.cartDock = dock;
+  els.cartPanel = make('cartPanel', dock, 'div');
   els.cartClear = make('cartClear', els.cartPanel);
   els.cartCollapse = make('cartCollapse', els.cartPanel);
   els.cartTrash = make('cartTrash', els.cartPanel);
-  els.cartList = make('cartList', els.cartPanel);
-  els.cartTab = make('cartTab', dock);
-  const view = make('view-treemap', body);
-  els.viewFirst = make('tmUpBtn', view);
-  els.opener = make('addToCartBtn', view);
+  els.cartList = make('cartList', els.cartPanel, 'div');
+  els.cartTab = make('cartTab', dock, 'div', { role: 'button', tabindex: '0' });
   const state = { cart: new Set(['/c/a', '/c/b']) };
   const document = {
     body,
     get activeElement() { return focus.active ?? body; },
-    querySelectorAll: (sel: string) => (/\.view\.active/.test(sel) ? [els.viewFirst, els.opener] : []),
+    querySelectorAll: (sel: string) => selectAll(body, sel),
   };
   // The page's own renderCart — its ORDER is the fix: the dock loses .show
   // before the drawer closes, so cartFocusReturn sees an emptied cart (B13
@@ -295,13 +308,13 @@ test('Clear in the cart hands focus back to where it came from, never to <body> 
   assert.equal(w.focus.active, w.els.opener, 'focus is back on the control it came from');
 });
 
-test('with the control it came from gone, an emptied cart hands focus to the view on screen (B13)', async () => {
+test('with the control it came from gone, an emptied cart hands focus to the view on screen (B13, B13 review F3.2)', async () => {
   const w = cartWorld();
   fire(w.els.cartDock, 'focusin', { relatedTarget: w.els.opener });
   w.els.cartClear.focus();
   w.els.opener.connected = false; // the row it came from was re-rendered away
   fire(w.els.cartClear, 'click'); await settled();
-  assert.equal(w.focus.active, w.els.viewFirst, 'the first control of the view on screen');
+  assert.equal(w.focus.active, w.els.viewFirst, 'the first enabled control of the view on screen — the search box, as Up is disabled at the root');
 });
 
 test('collapsing a cart that still holds items returns focus to its tab, and a Clear made from outside moves no focus (B13)', async () => {

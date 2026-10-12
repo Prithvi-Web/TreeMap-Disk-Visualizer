@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { selectAll } from './fixtures/fakeSelector';
 
 /**
  * Grid view and the cards that share its file (QA D43, D44, D02, D21) and the
@@ -70,7 +71,7 @@ function px(v: string | undefined, what: string): number {
 
 type Node = { name: string; path: string; size: number; type: 'file' | 'dir'; children?: Node[]; modifiedAt?: number; extension?: string };
 type FakeEl = {
-  id: string; value: string; disabled: boolean; hidden: boolean; innerHTML: string; className: string;
+  id: string; tagName: string; parent: FakeEl | null; value: string; disabled: boolean; hidden: boolean; innerHTML: string; className: string;
   tabIndex: number; dataset: Record<string, string>; style: Record<string, string> & { cssText?: string };
   attrs: Record<string, string>; cls: Set<string>; children: FakeEl[]; listeners: Record<string, ((e: unknown) => void)[]>;
   clientWidth: number; clientHeight: number; scrollTop: number;
@@ -83,18 +84,18 @@ type FakeEl = {
 /** Where keyboard focus is: what `document.activeElement` answers in the harness, and the options it was moved with. */
 const FOCUS: { active: FakeEl | null; opts: unknown } = { active: null, opts: undefined };
 
-function fakeEl(id = ''): FakeEl {
+function fakeEl(id = '', tagName = 'div', attrs: Record<string, string> = {}): FakeEl {
   const el: FakeEl = {
-    id, value: '', disabled: false, hidden: false, innerHTML: '', className: '', tabIndex: -1, dataset: {}, style: {},
-    attrs: {}, cls: new Set(), children: [], listeners: {}, clientWidth: 1220, clientHeight: 100000, scrollTop: 0,
+    id, tagName, parent: null, value: '', disabled: false, hidden: false, innerHTML: '', className: '', tabIndex: -1, dataset: {}, style: {},
+    attrs: { ...attrs }, cls: new Set(), children: [], listeners: {}, clientWidth: 1220, clientHeight: 100000, scrollTop: 0,
     classList: {
       add: (c) => { el.cls.add(c); }, remove: (c) => { el.cls.delete(c); }, contains: (c) => el.cls.has(c),
       toggle: (c, on) => { if (on ?? !el.cls.has(c)) el.cls.add(c); else el.cls.delete(c); },
     },
     setAttribute: (k, v) => { el.attrs[k] = v; },
     addEventListener: (t, f) => { (el.listeners[t] ||= []).push(f); },
-    appendChild: (c) => { el.children.push(c); },
-    replaceChildren: (f) => { el.children = [...f.children]; },
+    appendChild: (c) => { el.children.push(c); c.parent = el; },
+    replaceChildren: (f) => { el.children = [...f.children]; for (const c of el.children) c.parent = el; },
     // Only the tile lookups the Grid makes for focus; anything else finds nothing, as before.
     querySelector: (sel) => {
       const m = /^\.gcell(?:\[data-i="(\d+)"\])?$/.exec(sel || '');
@@ -103,8 +104,8 @@ function fakeEl(id = ''): FakeEl {
     },
     contains: (n) => n === el || el.children.includes(n as FakeEl),
     focus: (opts) => { FOCUS.active = el; FOCUS.opts = opts; }, remove: () => {},
-    // Painted unless hidden: what "on screen" means to the page's activeViewControl.
-    getClientRects: () => (el.hidden ? [] : [{}]),
+    // Painted unless it or a parent is hidden: what "on screen" means to the page's activeViewControl.
+    getClientRects: () => { for (let p: FakeEl | null = el; p; p = p.parent) if (p.hidden) return []; return [{}]; },
   };
   return el;
 }
@@ -116,8 +117,8 @@ type Grid = {
       selection: Set<string>; anchor: number | null; rangeStart: number; rangeEnd: number };
   };
   els: Record<string, FakeEl>;
-  /** The view on screen, for when the Grid is not it: its controls in document order, and the sidebar tab that is selected. */
-  screen: { controls: FakeEl[]; tab: FakeEl | null };
+  /** The document the page queries, for when the Grid is not the view on screen: see `screenOf`. */
+  screen: { body: FakeEl };
   crumbsCb: { fn: ((p: string) => void) | null };
   timers: Map<number, () => void>;
   renderGrid(): Promise<void>; onCellClick(e: Record<string, boolean>, i: number): void; gridUp(): void;
@@ -164,14 +165,15 @@ function gridHarness(opts: { escape?: boolean } = {}): Grid {
   const crumbsCb: { fn: ((p: string) => void) | null } = { fn: null };
   const timers = new Map<number, () => void>();
   let tid = 0;
-  const screen: Grid['screen'] = { controls: [], tab: null };
+  const screen: Grid['screen'] = { body: fakeEl('body', 'body') };
   const document = {
-    createElement: () => fakeEl(),
+    createElement: (tag = 'div') => fakeEl('', tag),
     createDocumentFragment: () => { const f = { children: [] as FakeEl[], appendChild(c: FakeEl) { f.children.push(c); } }; return f; },
     get activeElement() { return FOCUS.active; },
-    // The view on screen's controls, and the selected sidebar tab: nothing else is looked up here.
-    querySelectorAll: (sel: string) => (/\.view\.active/.test(sel) ? [...screen.controls] : []),
-    querySelector: (sel: string) => (/^\.tabbar button\[aria-selected="true"\]$/.test(sel) ? screen.tab : null),
+    // The page's own selectors, answered over a fake document (B13 review F3.2): a
+    // stub that matched on ".view.active" alone held whatever the selector said.
+    querySelectorAll: (sel: string) => selectAll(screen.body, sel),
+    querySelector: (sel: string) => selectAll(screen.body, sel)[0] ?? null,
   };
   const pending: Promise<unknown>[] = [];
   const deps: Record<string, unknown> = {
@@ -595,25 +597,80 @@ async function selectionThenLeave(view: string): Promise<Grid> {
   return g;
 }
 
-test('Clear pressed with the Grid hidden hands focus to the view on screen, or to its tab — never to the hidden filter box (B13 review F2.4)', async () => {
+/**
+ * The document behind `g`'s queries while `view` is up, as the page builds
+ * it: the sidebar's tab bar with that view's tab selected, the Grid's own
+ * section hidden (its filter box inside it), and the view's
+ * `<section class="view active">` holding `controls` in document order.
+ * `make` builds each element with its tag and attributes; anything that is
+ * not a control — the section itself, a wrapper, a label — is in the tree
+ * too, so a selector that matched it would find it.
+ */
+function screenOf(g: Grid, view: string, controls: FakeEl[]): { tab: FakeEl; section: FakeEl } {
+  const body = g.screen.body;
+  const nav = fakeEl('', 'nav'); nav.cls.add('tabbar');
+  const gridTab = fakeEl('tabGrid', 'button', { 'aria-selected': 'false' });
+  const tab = fakeEl(`tab-${view}`, 'button', { 'aria-selected': 'true' });
+  nav.appendChild(gridTab); nav.appendChild(tab);
+  const gridView = fakeEl('view-grid', 'section'); gridView.cls.add('view'); gridView.hidden = true;
+  gridView.appendChild(g.els.gridSearch); // the filter box: in the Grid, which is display:none now
+  const section = fakeEl(`view-${view}`, 'section'); section.cls.add('view'); section.cls.add('active');
+  const wrap = fakeEl('', 'div'); // a toolbar row: not a control, and its controls are still in the view
+  for (const c of controls) wrap.appendChild(c);
+  section.appendChild(wrap);
+  body.appendChild(nav); body.appendChild(gridView); body.appendChild(section);
+  return { tab, section };
+}
+
+test('Clear pressed with the Grid hidden hands focus to the view on screen, or to its tab — never to the hidden filter box (B13 review F2.4, F3.2)', async () => {
   // Review: the bar outlives a view switch, and Clear's fallback focused
   // #gridSearch inside the hidden Grid — a no-op in a browser — so focus
   // fell to <body> with the bar, the B13 symptom.
+  // Review F3.2: the document the page queries now answers its own
+  // selector, and the first control on screen is not a button — the
+  // Dashboard's "What's new" strip is a div in the tab order.
   const g = await selectionThenLeave('dashboard');
-  const offscreen = fakeEl('dashOffscreen'); offscreen.hidden = true;
-  const disabled = fakeEl('dashDisabled'); disabled.disabled = true;
-  g.screen.controls = [offscreen, disabled, fakeEl('dashRescan'), fakeEl('dashMore')];
-  g.screen.tab = fakeEl('tabDashboard');
+  const offscreen = fakeEl('dashOffscreen', 'button'); offscreen.hidden = true;
+  const disabled = fakeEl('dashDisabled', 'button'); disabled.disabled = true;
+  screenOf(g, 'dashboard', [
+    offscreen, disabled,
+    fakeEl('dashCard', 'div', { tabindex: '-1' }), // focusable by script only: not a stop in the tab order
+    fakeEl('dashLabel', 'span'),
+    fakeEl('whatsNewBody', 'div', { role: 'button', tabindex: '0' }),
+    fakeEl('dashRescan', 'button'),
+  ]);
   g.els.selClearBtn.focus();
   pressClear(g);
   assert.ok(!g.els.selectionBar.cls.has('visible'), 'the bar slides away');
-  assert.equal(FOCUS.active?.id, 'dashRescan', 'the first enabled control on screen in the view that is up');
+  assert.equal(FOCUS.active?.id, 'whatsNewBody', 'the first enabled control on screen in the view that is up');
   assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling it');
 
   // A view with nothing to offer (its capability notice instead of controls): its sidebar tab.
   const b = await selectionThenLeave('apps');
-  b.screen.tab = fakeEl('tabApps');
+  const { tab } = screenOf(b, 'apps', [fakeEl('appsNotice', 'p')]);
   b.els.selClearBtn.focus();
   pressClear(b);
-  assert.equal(FOCUS.active?.id, 'tabApps', 'the selected sidebar tab, when the view has no control on screen');
+  assert.equal(FOCUS.active, tab, 'the selected sidebar tab, when the view has no control on screen');
+});
+
+test('every kind of control the page counts can take focus when Clear is pressed from another view — a button, a text box, a menu, anything in the tab order (B13 review F3.2)', async () => {
+  // Review: with the stub answering any ".view.active" selector, the page's
+  // could lose a part — inputs, menus, [tabindex="0"] — or shrink to
+  // ".view.active", the sections themselves, and nothing went red. Here
+  // each kind is the only control in its view, behind things that are not
+  // controls, so each part of the selector has to find it.
+  const kinds: Array<[string, () => FakeEl]> = [
+    ['a button', () => fakeEl('only', 'button')],
+    ['a text box', () => fakeEl('only', 'input', { type: 'text' })],
+    ['a menu', () => fakeEl('only', 'select')],
+    ['a canvas in the tab order', () => fakeEl('only', 'canvas', { tabindex: '0' })],
+  ];
+  for (const [kind, make] of kinds) {
+    const g = await selectionThenLeave('city');
+    const only = make();
+    screenOf(g, 'city', [fakeEl('', 'span'), fakeEl('', 'canvas', { tabindex: '-1' }), only]);
+    g.els.selClearBtn.focus();
+    pressClear(g);
+    assert.equal(FOCUS.active, only, `${kind}: focus lands on it (got ${FOCUS.active ? `${FOCUS.active.tagName}#${FOCUS.active.id}` : 'nothing'})`);
+  }
 });
