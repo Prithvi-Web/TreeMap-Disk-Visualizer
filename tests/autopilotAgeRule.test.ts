@@ -39,6 +39,14 @@ function unitDecls(): string {
 
 type Box = { value: unknown; checked: boolean; defaultValue: string; defaultChecked: boolean; innerHTML: string; textContent: string; classList: { add(): void; remove(): void } };
 
+/**
+ * The editor's source, lifted from the 1.8 MB page once: none of it depends on the age under test,
+ * and lifting it again for every editor cost the 2,000-age loop below ~10 ms a pass (review F1.3).
+ */
+let editorSource: string | undefined;
+const liftEditorSource = (): string =>
+  (editorSource ??= `${unitDecls()}\nlet apDraft = null;\n${braced('function openPolicyEditor(')}\n${braced('function policyFromEditor(')}`);
+
 /** The page's policy editor — openPolicyEditor and policyFromEditor as they ship — over fake inputs, on "My own rules". */
 function editor(): { open: (p: unknown) => void; read: () => Record<string, any>; $: (id: string) => Box } {
   const els: Record<string, Box> = {};
@@ -47,7 +55,7 @@ function editor(): { open: (p: unknown) => void; read: () => Record<string, any>
     classList: { add() {}, remove() {} },
   });
   const seg = { dataset: { apmatch: 'custom' } };
-  const source = `${unitDecls()}\nlet apDraft = null;\n${braced('function openPolicyEditor(')}\n${braced('function policyFromEditor(')}`;
+  const source = liftEditorSource();
   const deps: Record<string, unknown> = {
     $, icon: () => '', state: { system: { homeDir: '/home/u' } },
     setApMatchKind() {}, validateApQuery() {}, renderApGroupList() {}, asPath: (p: string) => p,
@@ -83,10 +91,11 @@ test('Autopilot: a stored age opens as its exact figure in days, and Save — no
   assert.equal(String(ed.$('apRuleAgeDays').value), '0.5', 'a 12-hour rule opens as 0.5 days');
   assert.equal(ed.read().match.maxAgeMs, DAY / 2, 'and saves untouched as 12 hours, not the 1-day floor a typed figure meets');
 
-  // Every age a rule can hold comes back as it was.
+  // Every age a rule can hold comes back as it was — one editor, opened on each stored rule in turn,
+  // as a person opens one policy after another.
   const drifted: string[] = [];
+  const e = editor();
   for (const ms of storedAges()) {
-    const e = editor();
     e.open(policy(ms));
     const shown = String(e.$('apRuleAgeDays').value);
     const saved = e.read().match.maxAgeMs;
