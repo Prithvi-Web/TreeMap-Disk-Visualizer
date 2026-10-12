@@ -317,6 +317,27 @@ test('sentences read like the feature promises, from the entry fields alone', ()
   );
 });
 
+test('on macOS and Linux a folder beside the home folder whose name runs on with a backslash is not shown under ~ — "\\" is part of a name there, and the folder "me\\x" is not inside "me" — while a Windows home reads either separator as before (POL item 7 review, F3.2)', () => {
+  const said = (changed: string, home: string): string => sentenceFor('Docker', changed, 100, home);
+  assert.deepEqual({
+    sibling: said('/Users/me\\x/f', '/Users/me'),
+    inside: said('/Users/me/x/f', '/Users/me'),
+    theHomeItself: said('/Users/me', '/Users/me'),
+    longerSibling: said('/Users/mex/f', '/Users/me'),
+    windows: said('C:\\Users\\me\\x', 'C:\\Users\\me'),
+    windowsForwardSlash: said('C:\\Users\\me/x', 'C:\\Users\\me'),
+    windowsSibling: said('C:\\Users\\mex', 'C:\\Users\\me'),
+  }, {
+    sibling: `Docker added ${formatBytes(100)} (/Users/me\\x/f)`,
+    inside: `Docker added ${formatBytes(100)} (~/x/f)`,
+    theHomeItself: `Docker added ${formatBytes(100)} (~)`,
+    longerSibling: `Docker added ${formatBytes(100)} (/Users/mex/f)`,
+    windows: `Docker added ${formatBytes(100)} (~\\x)`,
+    windowsForwardSlash: `Docker added ${formatBytes(100)} (~/x)`,
+    windowsSibling: `Docker added ${formatBytes(100)} (C:\\Users\\mex)`,
+  });
+});
+
 /* ─────────────── Portable mode: a read-only session persists NOTHING ─────────────── */
 
 const NO_CHMOD = process.platform === 'win32'
