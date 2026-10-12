@@ -680,8 +680,7 @@ function cartFocusReturn() {
   const usable = (el) => !!el && el.isConnected !== false && !dock.contains(el) && el.getClientRects().length > 0;
   const target = dock.classList.contains('show') ? $('cartTab')
     : usable(cartFocus.from) ? cartFocus.from
-    : [...document.querySelectorAll('.view.active button, .view.active input, .view.active select, .view.active [tabindex="0"]')]
-      .find((el) => !el.disabled && usable(el));
+    : activeViewControl(usable);
   if (target) target.focus({ preventScroll: true });
 }
 $('cartDock').addEventListener('focusin', cartNoteFocusIn);

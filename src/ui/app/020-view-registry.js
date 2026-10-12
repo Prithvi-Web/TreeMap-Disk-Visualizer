@@ -324,6 +324,18 @@ function switchView(name) {
 }
 
 /**
+ * The first enabled control on screen in the view that is up, or null: where
+ * keyboard focus goes when the thing that held it disappears — an emptied
+ * cart, the Grid's selection bar cleared from another view — rather than
+ * falling to <body> (QA B13). `usable` says what counts as on screen; the
+ * cart narrows it to leave out its own dock.
+ */
+function activeViewControl(usable = (el) => el.getClientRects().length > 0) {
+  return [...document.querySelectorAll('.view.active button, .view.active input, .view.active select, .view.active [tabindex="0"]')]
+    .find((el) => !el.disabled && usable(el)) || null;
+}
+
+/**
  * The *unavailable* state (§3.5 #5) for a capability-gated view: the specific
  * reason, never a blank panel.
  */

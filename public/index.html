@@ -7448,6 +7448,18 @@ function switchView(name) {
 }
 
 /**
+ * The first enabled control on screen in the view that is up, or null: where
+ * keyboard focus goes when the thing that held it disappears — an emptied
+ * cart, the Grid's selection bar cleared from another view — rather than
+ * falling to <body> (QA B13). `usable` says what counts as on screen; the
+ * cart narrows it to leave out its own dock.
+ */
+function activeViewControl(usable = (el) => el.getClientRects().length > 0) {
+  return [...document.querySelectorAll('.view.active button, .view.active input, .view.active select, .view.active [tabindex="0"]')]
+    .find((el) => !el.disabled && usable(el)) || null;
+}
+
+/**
  * The *unavailable* state (§3.5 #5) for a capability-gated view: the specific
  * reason, never a blank panel.
  */
@@ -29515,8 +29527,7 @@ function cartFocusReturn() {
   const usable = (el) => !!el && el.isConnected !== false && !dock.contains(el) && el.getClientRects().length > 0;
   const target = dock.classList.contains('show') ? $('cartTab')
     : usable(cartFocus.from) ? cartFocus.from
-    : [...document.querySelectorAll('.view.active button, .view.active input, .view.active select, .view.active [tabindex="0"]')]
-      .find((el) => !el.disabled && usable(el));
+    : activeViewControl(usable);
   if (target) target.focus({ preventScroll: true });
 }
 $('cartDock').addEventListener('focusin', cartNoteFocusIn);
@@ -30462,14 +30473,19 @@ function updateSelectionBar() {
    screen, else the filter box — instead of falling to <body> with the bar
    (QA B13). Never a tile off screen, and without scrolling: the grid stays
    where the user left it (B13 review F1.3). Focus anywhere else is left where
-   it is. */
+   it is.
+   The bar outlives a view switch — ⌘⌫ trashes the selection from any view —
+   so Clear can be pressed with the Grid hidden, where no tile and not the
+   filter box can take focus. The view on screen takes it then, or its
+   sidebar tab when it has no control to offer (B13 review F2.4). */
 function gridClearSelection() {
   const hadFocus = $('selectionBar').contains(document.activeElement);
   state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true);
   if (!hadFocus) return;
-  const tile = gridTileOnScreen(state.grid.anchor);
-  if (tile) tile.focus({ preventScroll: true });
-  else $('gridSearch').focus({ preventScroll: true });
+  const target = state.view === 'grid'
+    ? gridTileOnScreen(state.grid.anchor) || $('gridSearch')
+    : activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  if (target) target.focus({ preventScroll: true });
 }
 /** The drawn tile at layout index `prefer` if any of it is in view, else the first drawn tile that is; null when none is. */
 function gridTileOnScreen(prefer) {

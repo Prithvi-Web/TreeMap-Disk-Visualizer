@@ -77,7 +77,7 @@ type FakeEl = {
   classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean; toggle(c: string, on?: boolean): void };
   setAttribute(k: string, v: string): void; addEventListener(t: string, f: (e: unknown) => void): void;
   appendChild(c: FakeEl): void; replaceChildren(f: { children: FakeEl[] }): void; querySelector(sel?: string): FakeEl | null;
-  contains(n: unknown): boolean; focus(opts?: unknown): void; remove(): void;
+  contains(n: unknown): boolean; focus(opts?: unknown): void; remove(): void; getClientRects(): unknown[];
 };
 
 /** Where keyboard focus is: what `document.activeElement` answers in the harness, and the options it was moved with. */
@@ -103,17 +103,21 @@ function fakeEl(id = ''): FakeEl {
     },
     contains: (n) => n === el || el.children.includes(n as FakeEl),
     focus: (opts) => { FOCUS.active = el; FOCUS.opts = opts; }, remove: () => {},
+    // Painted unless hidden: what "on screen" means to the page's activeViewControl.
+    getClientRects: () => (el.hidden ? [] : [{}]),
   };
   return el;
 }
 
 type Grid = {
   state: {
-    root: Node | null; pathIndex: Map<string, Node>;
+    root: Node | null; pathIndex: Map<string, Node>; view: string;
     grid: { path: string; sort: string; query: string; layout: { it: Node; x: number; y: number; side: number }[]; totalH: number;
       selection: Set<string>; anchor: number | null; rangeStart: number; rangeEnd: number };
   };
   els: Record<string, FakeEl>;
+  /** The view on screen, for when the Grid is not it: its controls in document order, and the sidebar tab that is selected. */
+  screen: { controls: FakeEl[]; tab: FakeEl | null };
   crumbsCb: { fn: ((p: string) => void) | null };
   timers: Map<number, () => void>;
   renderGrid(): Promise<void>; onCellClick(e: Record<string, boolean>, i: number): void; gridUp(): void;
@@ -160,10 +164,14 @@ function gridHarness(opts: { escape?: boolean } = {}): Grid {
   const crumbsCb: { fn: ((p: string) => void) | null } = { fn: null };
   const timers = new Map<number, () => void>();
   let tid = 0;
+  const screen: Grid['screen'] = { controls: [], tab: null };
   const document = {
     createElement: () => fakeEl(),
     createDocumentFragment: () => { const f = { children: [] as FakeEl[], appendChild(c: FakeEl) { f.children.push(c); } }; return f; },
     get activeElement() { return FOCUS.active; },
+    // The view on screen's controls, and the selected sidebar tab: nothing else is looked up here.
+    querySelectorAll: (sel: string) => (/\.view\.active/.test(sel) ? [...screen.controls] : []),
+    querySelector: (sel: string) => (/^\.tabbar button\[aria-selected="true"\]$/.test(sel) ? screen.tab : null),
   };
   const pending: Promise<unknown>[] = [];
   const deps: Record<string, unknown> = {
@@ -188,6 +196,7 @@ function gridHarness(opts: { escape?: boolean } = {}): Grid {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const escape = opts.escape ? `function escapeInGrid() { ${escapeGridBranch()} }` : 'const escapeInGrid = undefined;';
   const api = new Function(...names, `'use strict'; ${src}
+    ${braced('function activeViewControl(')}
     ${escape}
     return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid };`)(...names.map((n) => deps[n])) as
     Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid'>;
@@ -197,7 +206,7 @@ function gridHarness(opts: { escape?: boolean } = {}): Grid {
     renderGrid: () => { const p = api.renderGrid(); pending.push(p); return p; },
   };
   return {
-    state: state as unknown as Grid['state'], els, crumbsCb, timers, ...wrapped,
+    state: state as unknown as Grid['state'], els, screen, crumbsCb, timers, ...wrapped,
     settle: async () => {
       while (pending.length) await pending.shift();
       // Navigation calls the lifted renderGrid itself, unawaited: let its awaits run out.
@@ -573,4 +582,38 @@ test('Escape in the Grid clears the selection through the same door as Clear, so
   h.escapeInGrid!();
   assert.equal(h.state.grid.selection.size, 0, 'the selection is cleared');
   assert.equal(FOCUS.active, tile, 'focus on a tile stays on that tile');
+});
+
+/** The Grid with a selection made, then another view brought up: the bar stays (⌘⌫ works from any view), the Grid is display:none. */
+async function selectionThenLeave(view: string): Promise<Grid> {
+  const g = gridHarness();
+  await g.renderGrid();
+  g.onCellClick({ metaKey: true }, 1);
+  g.state.view = view; // switchView: the Grid is hidden…
+  g.els.gridScroll.clientHeight = 0; // …so its scroller has no height and no tile is on screen
+  assert.ok(g.els.selectionBar.cls.has('visible'), 'the bar is still up (precondition)');
+  return g;
+}
+
+test('Clear pressed with the Grid hidden hands focus to the view on screen, or to its tab — never to the hidden filter box (B13 review F2.4)', async () => {
+  // Review: the bar outlives a view switch, and Clear's fallback focused
+  // #gridSearch inside the hidden Grid — a no-op in a browser — so focus
+  // fell to <body> with the bar, the B13 symptom.
+  const g = await selectionThenLeave('dashboard');
+  const offscreen = fakeEl('dashOffscreen'); offscreen.hidden = true;
+  const disabled = fakeEl('dashDisabled'); disabled.disabled = true;
+  g.screen.controls = [offscreen, disabled, fakeEl('dashRescan'), fakeEl('dashMore')];
+  g.screen.tab = fakeEl('tabDashboard');
+  g.els.selClearBtn.focus();
+  pressClear(g);
+  assert.ok(!g.els.selectionBar.cls.has('visible'), 'the bar slides away');
+  assert.equal(FOCUS.active?.id, 'dashRescan', 'the first enabled control on screen in the view that is up');
+  assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling it');
+
+  // A view with nothing to offer (its capability notice instead of controls): its sidebar tab.
+  const b = await selectionThenLeave('apps');
+  b.screen.tab = fakeEl('tabApps');
+  b.els.selClearBtn.focus();
+  pressClear(b);
+  assert.equal(FOCUS.active?.id, 'tabApps', 'the selected sidebar tab, when the view has no control on screen');
 });

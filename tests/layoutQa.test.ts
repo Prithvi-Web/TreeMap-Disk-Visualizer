@@ -265,7 +265,7 @@ function cartWorld() {
   // review F1.4). Only its counters, the goal bar and the FX are stubbed.
   const fns = runPageDecls<{
     cartClear(): void; cartDockToggle(open?: boolean, o?: { focus?: boolean }): void;
-  }>(['cartFocus', 'cartNoteFocusIn', 'cartFocusReturn', 'cartDockToggle', 'cartClear', 'renderCart'], {
+  }>(['cartFocus', 'cartNoteFocusIn', 'activeViewControl', 'cartFocusReturn', 'cartDockToggle', 'cartClear', 'renderCart'], {
     $: (id: string) => els[id], document, state,
     requestAnimationFrame: (f: () => void) => { f(); return 1; },
     CART_PAGE: 200, cartShown: 200,

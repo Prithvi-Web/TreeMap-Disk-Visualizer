@@ -239,14 +239,19 @@ function updateSelectionBar() {
    screen, else the filter box — instead of falling to <body> with the bar
    (QA B13). Never a tile off screen, and without scrolling: the grid stays
    where the user left it (B13 review F1.3). Focus anywhere else is left where
-   it is. */
+   it is.
+   The bar outlives a view switch — ⌘⌫ trashes the selection from any view —
+   so Clear can be pressed with the Grid hidden, where no tile and not the
+   filter box can take focus. The view on screen takes it then, or its
+   sidebar tab when it has no control to offer (B13 review F2.4). */
 function gridClearSelection() {
   const hadFocus = $('selectionBar').contains(document.activeElement);
   state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true);
   if (!hadFocus) return;
-  const tile = gridTileOnScreen(state.grid.anchor);
-  if (tile) tile.focus({ preventScroll: true });
-  else $('gridSearch').focus({ preventScroll: true });
+  const target = state.view === 'grid'
+    ? gridTileOnScreen(state.grid.anchor) || $('gridSearch')
+    : activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  if (target) target.focus({ preventScroll: true });
 }
 /** The drawn tile at layout index `prefer` if any of it is in view, else the first drawn tile that is; null when none is. */
 function gridTileOnScreen(prefer) {
