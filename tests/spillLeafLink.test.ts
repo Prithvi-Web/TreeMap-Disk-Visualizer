@@ -194,20 +194,34 @@ test('nothing in the app trims a run of dots and spaces with a regex anchored at
   // A structural guard, because the repo counts rather than times and no output can tell the two forms
   // apart: over every string up to length 7 the regex and the loop agree. The shape is a greedy run that
   // can fail after it, tried from each start in the run: a class — or a group of alternatives — holding a
-  // space (or \s, \x20,  ) and a dot (escaped or not), repeated with +, * or {n,}, then an end anchor,
-  // a lookahead, a group or a class. Its first form knew only `[ .]` and `[. ]` before `$` or `(?=`, and
-  // `[\s.]+$`, `[ \.]+$`, `(?:\.| )+$`, `[ .]{1,}$` and `[ .]+([\\/]|$)` all passed it (its review, F2.6).
-  const run = /(\[(?!\^)((?:\\.|[^\]\\])*)\]|\((?:\?:)?((?:\\.|[^()\\])*)\))(?:[+*]|\{\d+,\})\??(?=\$|\(|\[)/g;
+  // space (or \s, \x20,  ) and a dot (escaped or not), repeated with +, * or {n,}, then — past every
+  // `)` closing a group the run sits in, with its quantifier — anything that can fail: an end anchor, a
+  // lookahead, a group, a class, an escape, a literal. Only the regex's end, a string's end (a RegExp
+  // built from one) or `|` ending its alternative follows a run that cannot fail. Its first form knew
+  // only `[ .]` and `[. ]` before `$` or `(?=`, and `[\s.]+$`, `[ \.]+$`, `(?:\.| )+$`, `[ .]{1,}$` and
+  // `[ .]+([\\/]|$)` all passed it (its review, F2.6); its second knew only `$`, `(` or `[` straight after
+  // the run, and `([ .]+)$`, `(?:[\s.]+)$`, `^(.*?)([. ]+)$`, `[ .]+\/?$` and `[ .]+\s*$` passed that
+  // (its review, F3.4) — each as slow on a long run as `[ .]+$`.
+  const run = /(\[(?!\^)((?:\\.|[^\]\\])*)\]|\((?:\?:)?((?:\\.|[^()\\])*)\))(?:[+*]|\{\d+,\})\??(?=(?:\)(?:[+*?]|\{\d+,\d*\})?)*(?![/'"`|)+*?{]|$))/g;
   const shape = { test: (line: string): boolean => [...line.matchAll(run)].some((m) => {
     const held = m[2] ?? m[3] ?? '';
     return /(?: |\\s|\\x20|\\u0020)/.test(held) && /\./.test(held);
   }) };
   assert.deepEqual({
-    caught: ['[ .]+$', '[. ]*$', '[ .]+(?=[\\\\/]|$)', '[ \\.]+$', '[\\s.]+$', '[.\\s]+$', '[\\x20.]+$', '(?:\\.| )+$', '[ .]{1,}$', '[ .]+([\\\\/]|$)']
+    caught: ['[ .]+$', '[. ]*$', '[ .]+(?=[\\\\/]|$)', '[ \\.]+$', '[\\s.]+$', '[.\\s]+$', '[\\x20.]+$', '(?:\\.| )+$', '[ .]{1,}$', '[ .]+([\\\\/]|$)',
+      // A run wrapped in a group, or followed by an escape or a literal, before the part that fails (F3.4).
+      '([ .]+)$', '(?:[ .]+)$', '(?:[\\s.]+)$', '^(.*?)([. ]+)$', '[ .]+\\/?$', '[ .]+\\s*$', '[ .]+x', '((?:\\.| )+)$', '(?:[ .]+)+$', '[ .]+?$']
       .filter((spelling) => !shape.test(`.replace(/${spelling}/, '')`)),
-    passed: ['[^ .]+$', '[ .]+', '\\s+$', '[a-z.]+$', '[ .]{1,5}$', '[\\s]+$']
+    passed: ['[^ .]+$', '[ .]+', '\\s+$', '[a-z.]+$', '[ .]{1,5}$', '[\\s]+$',
+      // Nothing that can fail follows the run: the regex ends, past any group closing round it, or its alternative does.
+      '([ .]+)', '(?:[ .]+)', '([ .]+)?', '([ .]+)*', '[ .]+|x$']
       .filter((spelling) => shape.test(`.replace(/${spelling}/, '')`)),
-  }, { caught: [], passed: [] }, 'every spelling of the shape is caught, and a run without both, or bounded, or not followed by anything that can fail, is not');
+    // A RegExp built from a string ends where the string does.
+    strings: [`new RegExp('[ .]+$')`, 'new RegExp(`([ .]+)$`)', `new RegExp('[ .]+')`, `new RegExp("([ .]+)", 'g')`].map((line) => shape.test(line)),
+    // An index expression is not a run: `counts[a.b ? x : y]++` holds a space and a dot, and a `+` after it.
+    indexing: shape.test("counts[en.sizeA === null ? 'added' : 'grew']++;"),
+  }, { caught: [], passed: [], strings: [true, true, false, false], indexing: false },
+  'every spelling of the shape is caught, and a run without both, or bounded, or not followed by anything that can fail, is not');
   const files: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
