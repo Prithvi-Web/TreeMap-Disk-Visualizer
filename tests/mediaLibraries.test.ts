@@ -465,3 +465,46 @@ test('GET /api/media serves the report over a real scan — route wiring, not ju
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+
+/* ── Track U, U-11 (review F1.5): a scan's refusals keep the state they happened under ── */
+import { lastFdaState, rememberFdaState } from '../src/utils/fdaState';
+
+/** A scan record over one Photos library the walk could not read into, served by the real app. */
+async function serveUnreadableBundle(fdaState: 'granted' | 'not-granted' | null) {
+  resetRateLimiter();
+  const root = tmp();
+  const bundle: import('../src/models/types').FileNode = {
+    name: 'Photos Library.photoslibrary', path: path.join(root, 'Photos Library.photoslibrary'),
+    type: 'dir', modifiedAt: Date.now(), isHidden: false, size: 123_456_789, children: [],
+  };
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = { name: path.basename(root), path: root, type: 'dir', modifiedAt: Date.now(), isHidden: false, size: bundle.size, children: [bundle] };
+  scan.fdaState = fdaState;
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const reason = () => new Promise<string>((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/media?scanId=${scan.scanId}` }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { buf += c; });
+      res.on('end', () => resolve(String(JSON.parse(buf).libraries[0].reason)));
+    }).on('error', reject);
+  });
+  return { reason, close: () => new Promise<void>((r) => server.close(() => r())) };
+}
+
+test('GET /api/media words an unreadable library by the Full Disk Access state its scan ran under', { skip: process.platform !== 'darwin' && 'the advice is macOS-only' }, async () => {
+  const saved = lastFdaState();
+  const before = await serveUnreadableBundle('not-granted');
+  try {
+    rememberFdaState('granted'); // switched on after the scan, and the server asked again
+    const reason = await before.reason();
+    assert.match(reason, /Full Disk Access is on now, so a new scan can read the folders macOS kept TreeMap out of\.$/, reason);
+    assert.doesNotMatch(reason, /does not change that/, 'never "does not change that" about a refusal Full Disk Access caused');
+  } finally {
+    rememberFdaState(saved);
+    await before.close();
+  }
+});

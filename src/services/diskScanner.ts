@@ -42,6 +42,7 @@ import { newScanStorageMode } from './storageMode';
 import { SlicedWalk, SliceOptions, walkInSlices } from './slices';
 import { aliasNamespaceOf, canonicalDirOf, isSpillFolderName, isSpillPath, sanitizePath } from '../utils/pathSanitizer';
 import { meansGone } from '../utils/errno';
+import { lastFdaState } from '../utils/fdaState';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -857,6 +858,9 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     startedAt: Date.now(),
     createdAt: Date.now(),
     cancelled: false,
+    // The Full Disk Access state this scan runs under (U-11, review F1.5):
+    // its refusals are worded by it later, whatever the state is by then.
+    fdaState: lastFdaState(),
     // The budget this scan runs under, captured now (the settings read above
     // handed the budget module the persisted setting) and kept on the record.
     // A scan a person started raises Automatic to Turbo while it runs (U-13).

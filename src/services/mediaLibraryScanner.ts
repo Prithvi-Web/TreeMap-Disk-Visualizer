@@ -1,7 +1,8 @@
 import path from 'path';
 import { ScanStore, TreeSource, asStore } from './scanStore';
 import { checkOpenHandles } from './openHandleGuard';
-import { accessAdviceNow } from '../utils/accessAdvice';
+import { scanAccessAdvice, granteeFor } from '../utils/accessAdvice';
+import { lastFdaState, type FdaState } from '../utils/fdaState';
 
 /**
  * mediaLibraryScanner — deep media-library awareness (§8.1).
@@ -341,8 +342,14 @@ function readCaptureOneCatalog(store: ScanStore, id: number, libPath: string): M
 
 /* ────────────────────────── entry point ────────────────────────── */
 
-/** Every media library inside a completed scan, split into its documented parts. */
-export function scanMediaLibraries(source: TreeSource): MediaReport {
+/**
+ * Every media library inside a completed scan, split into its documented parts.
+ *
+ * `scanState` is the Full Disk Access state the scan ran under (its
+ * `fdaState`, Track U U-11, review F1.5): an unreadable bundle's reason is
+ * worded by it, not by the state when someone asks.
+ */
+export function scanMediaLibraries(source: TreeSource, opts: { scanState?: FdaState | null } = {}): MediaReport {
   const store = asStore(source);
   const libraries: MediaLibrary[] = [];
 
@@ -368,7 +375,9 @@ export function scanMediaLibraries(source: TreeSource): MediaReport {
         // Why, on macOS, follows the probed Full Disk Access state (Track U, U-11):
         // a guess that it is missing was false on a Mac that has it.
         reason: `This ${APP_NAMES[bundleApp]} library could not be read into — the scan saw the bundle but not its contents — so only its total size is reported and nothing is offered.` +
-          (process.platform === 'darwin' ? ` ${accessAdviceNow({ code: null })}` : ''),
+          (process.platform === 'darwin'
+            ? ` ${scanAccessAdvice({ scanState: opts.scanState, nowState: lastFdaState(), grantee: granteeFor(), retry: 'scan again' })}`
+            : ''),
       }));
       return;
     }

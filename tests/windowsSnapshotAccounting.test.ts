@@ -362,9 +362,11 @@ test('no UI part still carries a bare Mac sentence outside a word table', () => 
 });
 
 test('server: the refusal note, the sparse-files detail and the allocation verdict speak the platform’s language', () => {
-  // macOS: worded by the probed Full Disk Access state (Track U, U-11 — an intended copy change).
-  assert.match(refusedPermissionNote(3, 'darwin', 'not-granted'), /^3 refused permission\. Give .+ Full Disk Access in System Settings/);
-  assert.doesNotMatch(refusedPermissionNote(3, 'darwin', 'granted'), /\bGive\b/, 'nothing to grant once it is on');
+  // macOS: worded by the Full Disk Access state its scan ran under, beside the
+  // state now (Track U, U-11 — an intended copy change). Both are given, so
+  // the answer never depends on what this machine probed.
+  assert.match(refusedPermissionNote(3, 'darwin', 'not-granted', 'not-granted'), /^3 refused permission\. Give .+ Full Disk Access in System Settings/);
+  assert.doesNotMatch(refusedPermissionNote(3, 'darwin', 'granted', 'granted'), /\bGive\b/, 'nothing to grant once it is on');
   assert.match(refusedPermissionNote(3, 'win32'), /^3 refused permission — running TreeMap as an administrator may let Windows read more of these\. /);
   assert.ok(refusedPermissionNote(3, 'win32').endsWith(ELEVATE_HOW), 'the one shared instruction, tray steps included');
   assert.match(refusedPermissionNote(1, 'linux'), /^1 refused permission — they belong to another user or to the system, so this account is not allowed to read them\.$/);

@@ -21,6 +21,8 @@ import { capabilitySummary } from '../src/api/platformRoutes';
 import { permissionDeniedMessage } from '../src/middleware/errorHandler';
 import { describeFsError } from '../src/utils/errno';
 import { refusedPermissionNote } from '../src/services/missingGigabytes';
+import { startScan } from '../src/services/diskScanner';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * Track U, U-11: TreeMap knows whether Full Disk Access is on, and says the
@@ -318,6 +320,25 @@ test('describeFsError: an EPERM from a write, a removal or an unnamed call also 
     // The cause chain describeFsError already walks carries the call too: a
     // wrapped read is still the privacy gate.
     assert.doesNotMatch(describeFsError(new Error('wrapped', { cause: withSyscall('scandir') })), HEDGE);
+  } finally {
+    rememberFdaState(saved);
+  }
+});
+
+test('a disk scan records the Full Disk Access state it started under, so its refusals are worded by it later', async () => {
+  // Review F1.5: the Missing GB note and an unreadable bundle's reason are
+  // built on request, long after the scan; worded by the state now, a grant
+  // that came on meanwhile made them say Full Disk Access "does not change"
+  // refusals it caused.
+  const dir = fileTempDir('treemap-fda-stamp-');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
+  const saved = lastFdaState();
+  try {
+    rememberFdaState('not-granted');
+    const scan = await startScan(dir);
+    rememberFdaState('granted'); // switched on while it ran
+    await waitFor(() => scan.status !== 'running', 'the stamped scan settling', 50);
+    assert.equal(scan.fdaState, 'not-granted', 'the state when it started, not the state now');
   } finally {
     rememberFdaState(saved);
   }

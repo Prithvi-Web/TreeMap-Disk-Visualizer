@@ -8,7 +8,7 @@ import { storeOf } from './scanStore';
 import { boundaryReport } from './boundaryReport';
 import { formatBytes } from '../utils/formatBytes';
 import { separatorOf } from '../utils/pathSeparator';
-import { accessAdvice, granteeFor } from '../utils/accessAdvice';
+import { scanAccessAdvice, granteeFor } from '../utils/accessAdvice';
 import { lastFdaState, type FdaState } from '../utils/fdaState';
 import type { ScanResult } from '../models/types';
 import type { LogicalVolumeInfo, VolumeTopology } from '../platform/types';
@@ -967,12 +967,20 @@ export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLi
  * out: TreeMap stays in the system tray after its window closes, and a copy
  * started with "Run as administrator" meets the single-instance lock and
  * exits at once, so the user believes they elevated and did not. On macOS the
- * fix follows the probed Full Disk Access state (Track U, U-11): a count is
- * worded by it, since the scan does not keep EPERM and EACCES apart.
+ * fix follows the Full Disk Access state (Track U, U-11): a count is worded
+ * by it, since the scan does not keep EPERM and EACCES apart. The state is
+ * the one the scan ran under (`scanState`, review F1.5; none recorded is
+ * worded by the state now), with the state now beside it: refused without
+ * it and on now is "on now", never "does not change that".
  */
-export function refusedPermissionNote(denied: number, plat: NodeJS.Platform, access: FdaState | null = lastFdaState()): string {
+export function refusedPermissionNote(
+  denied: number,
+  plat: NodeJS.Platform,
+  scanState?: FdaState | null,
+  nowState: FdaState | null = lastFdaState(),
+): string {
   const head = `${String(denied)} refused permission`;
-  if (plat === 'darwin') return `${head}. ${accessAdvice({ code: null, state: access, grantee: granteeFor(), retry: 'scan again' })}`;
+  if (plat === 'darwin') return `${head}. ${scanAccessAdvice({ scanState, nowState, grantee: granteeFor(), retry: 'scan again' })}`;
   if (plat === 'win32') return `${head} — running TreeMap as an administrator may let Windows read more of these. ${ELEVATE_HOW}`;
   if (plat === 'linux') return `${head} — they belong to another user or to the system, so this account is not allowed to read them.`;
   return `${head}.`;
@@ -1016,7 +1024,7 @@ function unscannableLine(scan: ScanResult, plat: NodeJS.Platform): StatementLine
     };
   }
   const notes: string[] = [];
-  if (denied > 0) notes.push(refusedPermissionNote(denied, plat));
+  if (denied > 0) notes.push(refusedPermissionNote(denied, plat, scan.fdaState));
   if (broken > 0) notes.push(`${String(broken)} could not be read for another reason, such as a mount that stopped responding.`);
   return {
     id: 'unscannable',

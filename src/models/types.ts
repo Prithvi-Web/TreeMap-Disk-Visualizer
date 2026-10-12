@@ -9,6 +9,7 @@ import type { StorageMode } from '../services/storageMode';
 import type { EntryProjection } from '../services/scan/projection';
 import type { MemoryRoom } from '../services/scan/nativeMemory';
 import type { BoundaryRule, ScanBoundaryRecord } from '../utils/mountBoundaries';
+import type { FdaState } from '../utils/fdaState';
 
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
@@ -219,6 +220,16 @@ export interface ScanResult {
   deniedEntries?: number;
   /** Individual entries that failed to stat for any other reason. */
   unreadableEntries?: number;
+  /**
+   * The Full Disk Access state the probe had last found when this scan
+   * started (Track U, U-11; review F1.5): its refusals are worded by the
+   * state they happened under, not by whatever is true when someone asks,
+   * so a grant that came on meanwhile is "on now", never "does not change
+   * that". Null when nothing had probed yet in this process, and absent on a
+   * record that predates it; both are worded by the state now. Never served:
+   * like the refusal counts above, it is off every whitelisted response.
+   */
+  fdaState?: FdaState | null;
   /**
    * Where the scan's rows live (Phase 4, `services/storageMode.ts`): `memory` for every
    * scan until T16's chooser exists; absent reads as `memory`. Only the availability

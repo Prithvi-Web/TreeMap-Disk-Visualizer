@@ -875,6 +875,32 @@ test('a refusal names the fix for the platform it happened on', async () => {
   }
 });
 
+test('a Mac\'s refusals are worded by the Full Disk Access state their scan ran under, not by the state now', async () => {
+  // Review F1.5. Granted while the app runs (the page's "Open Privacy
+  // settings", then its recheck asks the server again), the server's state
+  // turns granted, and the granted sentence — "Full Disk Access does not
+  // change that" — is false about refusals Full Disk Access caused. The scan
+  // keeps the state it started under, and the note is worded by that.
+  const note = async (fdaState: unknown): Promise<string> => {
+    const scan = scanFixture({ engine: 'walker', deniedDirs: 3, store: storeOfSize(GB), ...(fdaState === undefined ? {} : { fdaState }) } as Partial<ScanResult>);
+    return lineOf(await buildStatement(scan, sourcesFixture()), 'unscannable').notes.join(' | ');
+  };
+  const saved = lastFdaState();
+  try {
+    rememberFdaState('granted');
+    assert.equal(await note('not-granted'), '3 refused permission. Full Disk Access is on now, so a new scan can read the folders macOS kept TreeMap out of.',
+      'refused without it, and it is on now: a new scan can read them');
+    assert.match(await note('granted'), /^3 refused permission\. macOS, another account, or the folder's own permissions refuse TreeMap here; Full Disk Access does not change that/,
+      'refused with it on: it does not help');
+    rememberFdaState('not-granted');
+    assert.match(await note('not-granted'), /^3 refused permission\. Give /, 'refused without it, still off: grant it');
+    assert.match(await note(null), /^3 refused permission\. Give /, 'nothing had probed when the scan started: worded by the state now');
+    assert.match(await note(undefined), /^3 refused permission\. Give /, 'a record from before the stamp existed: the state now');
+  } finally {
+    rememberFdaState(saved);
+  }
+});
+
 test('a measured figure is kept even when no restore point is listed; a doubtful empty listing is an unknown, not a zero', async () => {
   const kept = await buildStatement(
     scanFixture({ store: storeOfSize(GB) }),

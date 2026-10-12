@@ -102,6 +102,29 @@ export function accessAdvice(input: { code: AccessCode; state: FdaState | null; 
   return `TreeMap could not tell whether ${who} has Full Disk Access. If not, ${grant.charAt(0).toLowerCase()}${grant.slice(1)} If it does, ${REFUSAL}`;
 }
 
+/** A scan refused without Full Disk Access, and it is on now. */
+const ON_NOW = 'Full Disk Access is on now, so a new scan can read the folders macOS kept TreeMap out of.';
+
+/**
+ * The sentence for a scan's refused count, worded by the state the scan ran
+ * under (`scanState`, stamped on the scan when it started) rather than the
+ * state now (review F1.5). Granted while the app runs, the state now is
+ * granted, and its sentence — Full Disk Access "does not change that" — is
+ * false about refusals Full Disk Access caused; those are on now instead. A
+ * scan with no recorded state (nothing had probed when it started, or a
+ * record from before the stamp) is worded by the state now.
+ */
+export function scanAccessAdvice(input: {
+  scanState: FdaState | null | undefined;
+  nowState: FdaState | null;
+  grantee: Grantee;
+  retry?: string;
+}): string {
+  const state = input.scanState ?? input.nowState;
+  if (state === 'not-granted' && input.nowState === 'granted') return ON_NOW;
+  return accessAdvice({ code: null, state, grantee: input.grantee, retry: input.retry });
+}
+
 /** `accessAdvice` for this process now: the state the probe last found, and this process's grantee. */
 export function accessAdviceNow(input: { code: AccessCode; retry?: string }): string {
   return accessAdvice({ ...input, state: lastFdaState(), grantee: granteeFor() });

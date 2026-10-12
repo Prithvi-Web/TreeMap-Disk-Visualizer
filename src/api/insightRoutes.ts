@@ -336,7 +336,7 @@ insightRouter.get('/games', storageModeGate, (req: Request, res: Response) => {
  */
 insightRouter.get('/media', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
-  res.json({ scanId: scan.scanId, ...(await guardMediaReport(scanMediaLibraries(storeOf(scan)))) });
+  res.json({ scanId: scan.scanId, ...(await guardMediaReport(scanMediaLibraries(storeOf(scan), { scanState: scan.fdaState }))) });
 });
 
 /**
