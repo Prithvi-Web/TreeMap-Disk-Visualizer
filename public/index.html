@@ -36052,7 +36052,9 @@ document.addEventListener('keydown', (e) => {
     // keys, which are canvas gestures; this key is not.
     if (state.view === 'city') { cityUp(); return; }
     if (state.view === 'grid') {
-      if (state.grid.selection.size) { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); return; }
+      // Clear's own door: focus that was in the selection bar comes back to
+      // the grid instead of falling to <body> with it (B13 review F1.8).
+      if (state.grid.selection.size) { gridClearSelection(); return; }
       gridUp();
       return;
     }

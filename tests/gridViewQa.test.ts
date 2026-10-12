@@ -118,12 +118,29 @@ type Grid = {
   timers: Map<number, () => void>;
   renderGrid(): Promise<void>; onCellClick(e: Record<string, boolean>, i: number): void; gridUp(): void;
   gridItems(): Node[]; updateSelectionBar(): void;
+  /** The Escape key's Grid branch, out of the page's keydown handler (gridHarness({ escape: true })). */
+  escapeInGrid?(): void;
   settle(): Promise<void>;
 };
 
+/** The Grid branch of the page keydown handler's Escape chain, as the page has it. */
+function escapeGridBranch(): string {
+  const handler = braced("document.addEventListener('keydown', (e) => {\n  const mod = e.metaKey || e.ctrlKey;");
+  const esc = handler.indexOf("if (e.key === 'Escape') {");
+  assert.notEqual(esc, -1, 'the keydown handler has an Escape chain');
+  const at = handler.indexOf("if (state.view === 'grid') {", esc);
+  assert.notEqual(at, -1, 'and a Grid branch in it');
+  let depth = 0;
+  for (let i = handler.indexOf('{', at); i < handler.length; i++) {
+    if (handler[i] === '{') depth++;
+    else if (handler[i] === '}' && --depth === 0) return handler.slice(at, i + 1);
+  }
+  return assert.fail('the Grid branch closes');
+}
+
 const file = (dir: string, name: string, size: number): Node => ({ name, path: `${dir}/${name}`, size, type: 'file', modifiedAt: 1 });
 
-function gridHarness(): Grid {
+function gridHarness(opts: { escape?: boolean } = {}): Grid {
   const src = slice('/* ───────────────────────────── Grid view ───────────────────────────── */',
     '/* ───────────────────────────── Apps view (Feature 18) ───────────────────────────── */');
   const els: Record<string, FakeEl> = {};
@@ -137,7 +154,7 @@ function gridHarness(): Grid {
   const pathIndex = new Map<string, Node>([[root.path, root], [fonts.path, fonts], [other.path, other],
     ...fonts.children!.map((c) => [c.path, c] as [string, Node])]);
   const state = {
-    root, pathIndex, scanId: 's1',
+    root, pathIndex, scanId: 's1', view: 'grid',
     grid: { path: '/r', sort: 'size', query: '', layout: [], totalH: 0, selection: new Set<string>(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   };
   const crumbsCb: { fn: ((p: string) => void) | null } = { fn: null };
@@ -169,9 +186,11 @@ function gridHarness(): Grid {
   };
   const names = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const escape = opts.escape ? `function escapeInGrid() { ${escapeGridBranch()} }` : 'const escapeInGrid = undefined;';
   const api = new Function(...names, `'use strict'; ${src}
-    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar };`)(...names.map((n) => deps[n])) as
-    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar'>;
+    ${escape}
+    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid };`)(...names.map((n) => deps[n])) as
+    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid'>;
   // renderGrid is async; navigation calls it without awaiting.
   const wrapped = {
     ...api,
@@ -529,4 +548,29 @@ test('with the anchor gone, Clear hands focus to the first tile on screen; with 
   pressClear(e);
   assert.equal(FOCUS.active, e.els.gridSearch, 'focus goes to the filter box, never to <body>');
   assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling');
+});
+
+test('Escape in the Grid clears the selection through the same door as Clear, so focus in the bar comes back too (B13 review F1.8)', async () => {
+  // Review: Escape cleared the selection with its own three statements and
+  // never moved focus, so a keyboard user on "Move to Trash" was dropped to
+  // <body> when the bar slid away — the B13 symptom, by another key.
+  const g = gridHarness({ escape: true });
+  await g.renderGrid();
+  g.onCellClick({ metaKey: true }, 1);
+  g.els.selTrashBtn.focus(); // tabbed into the bar
+  g.escapeInGrid!();
+  assert.equal(g.state.grid.selection.size, 0, 'Escape clears the selection');
+  assert.ok(!g.els.selectionBar.cls.has('visible'), 'and the bar slides away');
+  const at = FOCUS.active;
+  assert.ok(at && /\bgcell\b/.test(at.className), `focus is back on a tile, not on the hidden button (${at ? at.id || at.className : 'nothing'})`);
+  assert.equal(String(at!.dataset.i), '1', 'the tile the selection was anchored on');
+  // Pressed from a tile, Escape clears and leaves focus where it is.
+  const h = gridHarness({ escape: true });
+  await h.renderGrid();
+  h.onCellClick({ metaKey: true }, 0);
+  const tile = h.els.gridInner.children[1];
+  tile.focus();
+  h.escapeInGrid!();
+  assert.equal(h.state.grid.selection.size, 0, 'the selection is cleared');
+  assert.equal(FOCUS.active, tile, 'focus on a tile stays on that tile');
 });
