@@ -927,7 +927,8 @@ test('a stale index badge gives the server\'s reason, escaped, and keeps the old
 /**
  * startScan and startScanRequest out of the built page. `indexed` says what
  * the index probe answers; `painted` whether the index paint succeeds. Every
- * POST /api/scan body is recorded, and so is every badge paint.
+ * POST /api/scan body is recorded, and so is every badge and index-line
+ * paint, with how many of each, and the line's generation, when the probe went out.
  */
 function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus' }: { indexed: boolean; painted?: boolean; onScreen?: string | null }) {
   const src = slice('async function startScan(path', 'function quietRescanFailed(');
@@ -936,25 +937,32 @@ function startScanHarness({ indexed, painted = true, onScreen = '/Users/x/corpus
   const chrome: Array<Record<string, unknown>> = [];
   const noop = () => {};
   const state: Record<string, unknown> = { scanning: false, scanGen: 0, root: onScreen ? { path: onScreen } : null };
-  let lineGen = 0;
+  const lines: unknown[] = [];
   let probeAt = -1;
+  let linesAtProbe = -1;
+  let genAtProbe = -1;
+  let gen: () => number = () => 0; // the page's own indexLineGen, read once the Function below has made it
   const deps: Record<string, unknown> = {
     state, toast: noop, closeEventSource: noop, disableLive: noop,
     beginScanChrome: (o: Record<string, unknown> = {}) => { chrome.push(o); state.scanning = true; },
-    indexStatusFor: async (p: string) => { probeAt = badges.length; return indexed ? { indexed: true, path: p, root: { path: '/Users/x/corpus', state: 'ready', live: true } } : { indexed: false }; },
+    indexStatusFor: async (p: string) => { probeAt = badges.length; linesAtProbe = lines.length; genAtProbe = gen(); return indexed ? { indexed: true, path: p, root: { path: '/Users/x/corpus', state: 'ready', live: true } } : { indexed: false }; },
     openFromIndex: async () => painted,
     renderIndexBadge: (info: unknown) => { badges.push(info); },
-    renderIndexLine: noop,
-    bumpIndexLineGen: () => { lineGen++; },
+    renderIndexLine: (line: unknown) => { lines.push(line); },
     api: async (url: string, opts: { body: string }) => { if (url === '/api/scan') posts.push(JSON.parse(opts.body)); return { scanId: 'new' }; },
     abandonIfStopped: () => false, followScanProgress: noop, quietRescanFailed: noop, failScan: noop,
     performance: { now: () => 0 },
   };
-  // `indexLineGen` is 045's own `let`; the slice does not carry it, so it is declared here for the code to bump.
-  const run = new Function(...Object.keys(deps), `'use strict'; let indexLineGen = 0; ${src} return startScan;`)(
+  // `indexLineGen` is 045's own `let`; the slice does not carry it, so it is
+  // declared here for the code to bump, and handed back so a test can read it.
+  const page = new Function(...Object.keys(deps), `'use strict'; let indexLineGen = 0; ${src} return { startScan, gen: () => indexLineGen };`)(
     ...Object.values(deps),
-  ) as (p: string, o?: Record<string, unknown>) => Promise<void>;
-  return { run, posts, badges, chrome, state, lineGen: () => lineGen, badgesBeforeProbe: () => probeAt };
+  ) as { startScan: (p: string, o?: Record<string, unknown>) => Promise<void>; gen: () => number };
+  gen = page.gen;
+  return {
+    run: page.startScan, posts, badges, chrome, state, lines, gen: () => gen(),
+    badgesBeforeProbe: () => probeAt, linesBeforeProbe: () => linesAtProbe, genAtProbe: () => genAtProbe,
+  };
 }
 
 test('a scan a person starts is sent as theirs (interactive) whether or not the index painted first (B04)', async () => {
@@ -1030,12 +1038,23 @@ test('a scan of another folder takes the index badge down before the index is as
   await other.run('/Users/x/corpus/Projects');
   assert.equal(other.badges[0], null, 'the badge of the folder on screen is taken down');
   assert.equal(other.badgesBeforeProbe(), 1, 'before the probe is sent, not after it answers');
+  // Review F1.6: the badge's line goes with it, and its generation moves on,
+  // so a build of the last folder still running can no longer paint
+  // "Indexing this folder…" beside the new scan.
+  assert.deepEqual(other.lines, [null], 'the badge\'s line is taken down too');
+  assert.equal(other.linesBeforeProbe(), 1, 'the line too, before the probe is sent');
+  assert.equal(other.gen(), 1, 'and the line\'s generation moves on once: the last folder\'s build can no longer paint it');
+  assert.equal(other.genAtProbe(), 1, 'the generation too, before the probe is sent');
   const same = startScanHarness({ indexed: false, onScreen: '/Users/x/corpus' });
   await same.run('/Users/x/corpus');
   assert.deepEqual(same.badges, [], 'a rescan of the folder on screen leaves its badge to the index paint');
+  assert.deepEqual(same.lines, [], 'and its line');
+  assert.equal(same.gen(), 0, 'and the line\'s generation: a build of the folder on screen still owns the line');
   const first = startScanHarness({ indexed: false, onScreen: null });
   await first.run('/Users/x/corpus');
   assert.equal(first.badges[0], null, 'with nothing on screen there is nothing to keep');
+  assert.deepEqual(first.lines, [null], 'nor any line to keep');
+  assert.equal(first.gen(), 1, 'and no build may paint one');
 });
 
 test('the index paint takes the last folder\'s ring and forecast down while its lists are pending (B05, B08)', async () => {
