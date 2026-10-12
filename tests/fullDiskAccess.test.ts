@@ -447,7 +447,7 @@ function pageHarness(opts: { platform?: string; fda?: FdaState | null; refused?:
     }
     await settle();
   };
-  return { ...fns, els, $, state, toasts, asked, emitted, fire };
+  return { ...fns, els, $, state, toasts, asked, emitted, fire, doc };
 }
 
 test('the refused row\'s hint is the server\'s sentence for the state it probed, and the button is hidden exactly when granted', () => {
@@ -621,6 +621,10 @@ test('after the button, the next focus asks the server once, repaints the row fr
   assert.equal(h.els.accessOpenBtn.hidden, true, 'granted now: the button goes');
   assert.match(h.els.accessHint.textContent, /Full Disk Access is on now/, 'and the row says a new scan can read what was refused');
   assert.equal(((h.state.capabilities as { fullDiskAccess: { state: string } }).fullDiskAccess).state, 'granted', 'the page keeps the new answer');
+  // Review F1.9: only fullDiskAccess is replaced. Dropping the rest would
+  // enable views the registry had blocked with a reason, which then ask the
+  // server for what this machine cannot answer.
+  assert.deepEqual((h.state.capabilities as { volumeTopology: unknown }).volumeTopology, { available: true }, 'every other capability is kept as it was');
   await h.fire('focus');
   assert.equal(h.asked.length, 1, 'once per use of the button, not on every focus');
   // An answer that is still not-granted repaints the same advice; a failed one leaves the row alone.
@@ -635,6 +639,22 @@ test('after the button, the next focus asks the server once, repaints the row fr
   failed.arm();
   await failed.fire('focus');
   assert.equal(failed.els.accessHint.textContent, ADVICE['not-granted']);
+});
+
+test('the recheck waits for the window to be visible: going hidden neither asks nor spends it', async () => {
+  // Review F1.8: the person clicks "Open Privacy settings", and System
+  // Settings comes forward, so this window often goes hidden first. Spent
+  // there, before anything was switched on, the one ask never comes back
+  // and the row never updates.
+  const h = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] } });
+  h.render();
+  h.arm();
+  h.doc.visibilityState = 'hidden';
+  await h.fire('visibilitychange');
+  assert.equal(h.asked.length, 0, 'going hidden asks nothing');
+  h.doc.visibilityState = 'visible';
+  await h.fire('visibilitychange');
+  assert.equal(h.asked.filter(([u]) => u === '/api/platform/capabilities/refresh').length, 1, 'and coming back asks once: going hidden did not spend it');
 });
 
 test('the button arms the recheck, and its fallback toast uses the server\'s sentence', async () => {
