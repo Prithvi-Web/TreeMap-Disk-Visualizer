@@ -25,6 +25,8 @@ fs.symlinkSync(VOL, HOP, 'junction');
 fs.symlinkSync(path.join(HOP, 'treemap-data'), LINK, 'junction');
 process.env.TREEMAP_DATA_DIR = LINK;
 process.env.TREEMAP_NO_GDU = '1';
+/** Whether this volume folds case, as macOS's and Windows' do by default. */
+const CASE_FOLDS = fs.existsSync(path.join(T, 'HOME'));
 
 import { createApp } from '../src/server';
 import { startScan } from '../src/services/diskScanner';
@@ -119,6 +121,14 @@ test('a delete of the link TreeMap reaches app-data by, of a link on the way to 
     'the folder holding that link too': BIG,
     'app-data where it really is': REAL,
   };
+  // Each entry on TreeMap's way to app-data is judged by identity, so any spelling of it is caught —
+  // pinned here on a volume that folds case, as the hard-link stand-in below pins it where the system
+  // makes a second name of a link (the final review, F3.3).
+  if (CASE_FOLDS) {
+    targets['the link, in another case'] = path.join(SUPPORT, 'treemap');
+    targets['a folder above it, in another case'] = path.join(HOME, 'LIBRARY');
+    targets['the hop, in another case'] = path.join(BIG, 'HOP');
+  }
   const answers: Record<string, string> = {};
   for (const [what, p] of Object.entries(targets)) answers[what] = await dryRunDelete(p);
   answers['a file beside the link'] = await dryRunDelete(path.join(SUPPORT, 'beside.txt'));
