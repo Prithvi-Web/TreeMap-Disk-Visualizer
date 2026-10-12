@@ -1,4 +1,5 @@
-import { AgentPolicy } from '../models/types';
+import { AgentPolicy, ScanResult } from '../models/types';
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { appDataDir, readJsonFileChecked } from './storage';
@@ -219,11 +220,12 @@ export function assertBytesCap(policy: AgentPolicy, bytes: number | null): void 
 
 /**
  * Recursive size of `p` according to any completed scan that contains it: by its
- * own spelling, or else by where it lives (`placeOfTarget`), spelled as that scan
+ * own spelling, or else by where it is (`placeToSize`), spelled as that scan
  * spells its paths (the final review, F1.4). Found by its text alone, a folder
  * spelled through a link in its parents, in another case or on the Data volume's
  * long spelling was "size unknown" — so the byte cap let it through and the audit
- * counted nothing — while the delete took the folder the scan had sized.
+ * counted nothing — while the delete took the folder the scan had sized. A path
+ * with nothing at it is not looked for by place: there is nothing there to take.
  */
 export function knownSizeOf(p: string): number | null {
   const complete = allScans().filter((scan) => scan.status === 'complete' && (scan.store || scan.root));
@@ -232,22 +234,42 @@ export function knownSizeOf(p: string): number | null {
     const id = store.findByPath(p);
     if (id !== -1) return store.size(id);
   }
-  const where = placeOfTarget(p);
+  const where = placeToSize(p);
+  if (where === null) return null;
   for (const scan of complete) {
     const store = storeOf(scan);
-    const id = nodeAtPlace(store, scan.rootPath, where);
+    const id = nodeAtPlace(scan, store, where);
     if (id !== -1) return store.size(id);
   }
   return null;
 }
 
 /**
- * The node of the scan rooted at `rootPath` that lies at `where` (a place, `placeOfTarget`), or -1:
- * the names below the root's own place (`rootLivesAt`) walked from the root's node, each by its
- * exact name or else by the one child whose name folds the same (the last name keeps the case it was
- * typed in; the folders above it are realpath's, as the volume stores them).
+ * Where `p` is, to find it in a scan by place: an entry that is not a link by realpath's answer, every
+ * name as the volume stores it — so each is found as the scan listed it, with no fold; a link by where
+ * it lives (`placeOfTarget`: its folders as stored, its own name as typed, the one name a fold may have
+ * to find). Null when nothing is there: a file gone since the scan has nothing to size, and looking
+ * for its name among its siblings folded every sibling's name, path by path (the final review, F2.3).
  */
-function nodeAtPlace(store: ReturnType<typeof storeOf>, rootPath: string, where: string): number {
+function placeToSize(p: string): string | null {
+  let entry: fs.Stats | undefined;
+  try {
+    entry = fs.lstatSync(p, { throwIfNoEntry: false });
+  } catch {
+    return placeOfTarget(p); // unreadable: by where it lives, as before
+  }
+  if (entry === undefined) return null;
+  const real = entry.isSymbolicLink() ? null : realPlaceNow(p);
+  return real === null ? placeOfTarget(p) : path.normalize(real);
+}
+
+/**
+ * The node of `scan` (its store, `store`) that lies at `where` (a place, `placeToSize`), or -1: the
+ * names below the root's own place (`rootLivesAt`) walked from the root's node, each by its exact name
+ * or else by the one child whose name folds the same (`childNamed`).
+ */
+function nodeAtPlace(scan: ScanResult, store: ReturnType<typeof storeOf>, where: string): number {
+  const { rootPath } = scan;
   const rootAt = path.normalize(rootPlaceNow(rootPath));
   const rootNames = foldedNamesOf(rootAt);
   const names = where.slice(path.parse(where).root.length).split(path.sep).filter((name) => name.length > 0);
@@ -255,25 +277,46 @@ function nodeAtPlace(store: ReturnType<typeof storeOf>, rootPath: string, where:
   let id = store.findByPath(rootPath);
   for (const name of names.slice(rootNames.length - 1)) {
     if (id === -1) return -1;
-    id = childNamed(store, id, name);
+    id = childNamed(scan, store, id, name);
   }
   return id;
 }
 
+/** A name as `childNamed` compares it when the exact one is not there. */
+function foldedName(name: string): string {
+  return foldName(name).toUpperCase().toLowerCase();
+}
+
+/**
+ * Each folder's children by folded name (`foldedName`; -1 for a name more than one child folds to), per
+ * scan, kept for one synchronous batch: a request sizes up to 500 paths in one turn of the event loop,
+ * and folding every sibling's name for each held the server for seconds on a large folder (the final
+ * review, F2.3). Dropped when the turn ends, so a later batch reads the scan as it is then.
+ */
+let foldedChildren: Map<ScanResult, Map<number, Map<string, number>>> | null = null;
+
 /** The child of `parent` named `name`, or the one child whose name folds the same; -1 when none (or more than one) does. */
-function childNamed(store: ReturnType<typeof storeOf>, parent: number, name: string): number {
+function childNamed(scan: ScanResult, store: ReturnType<typeof storeOf>, parent: number, name: string): number {
   const exact = store.childByName(parent, name);
   if (exact !== -1) return exact;
-  const wanted = foldName(name).toUpperCase().toLowerCase();
-  let found = -1;
-  let count = 0;
-  store.forEachChild(parent, (child) => {
-    if (foldName(store.name(child)).toUpperCase().toLowerCase() === wanted) {
-      found = child;
-      count += 1;
-    }
-  });
-  return count === 1 ? found : -1;
+  if (foldedChildren === null) {
+    foldedChildren = new Map();
+    queueMicrotask(() => {
+      foldedChildren = null;
+    });
+  }
+  let perScan = foldedChildren.get(scan);
+  if (perScan === undefined) foldedChildren.set(scan, (perScan = new Map()));
+  let byName = perScan.get(parent);
+  if (byName === undefined) {
+    const made = new Map<string, number>();
+    store.forEachChild(parent, (child) => {
+      const key = foldedName(store.name(child));
+      made.set(key, made.has(key) ? -1 : child);
+    });
+    perScan.set(parent, (byName = made));
+  }
+  return byName.get(foldedName(name)) ?? -1;
 }
 
 /** Where a scan's root is, as `rootLivesAt` reads it, on the Data volume's short spelling as `canonicalDirOf` gives a path. */
