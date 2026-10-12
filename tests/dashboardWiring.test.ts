@@ -472,6 +472,17 @@ test('a Trash TreeMap could not read says so and why — never "at least 0 B" (B
   assert.equal(unread.trashFact.title, reason, 'and the reason the server gave is on the row');
   assert.equal(Number(unread.sysTrash.dataset.v), 0, 'the roll restarts from nothing when a size comes');
 
+  // Review F1.5: `complete: false` with nothing found is also what the server
+  // answers when one location could not be read and the others were read and
+  // found empty (~/.Trash read, a drive's .Trashes refused) — the answer
+  // cannot tell the two apart. "Couldn't read it" claimed none of it was read.
+  // The row says what is true of both.
+  const partEmpty = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: false, incompleteReason: 'Part of the Trash could not be read (EACCES).' });
+  for (const [what, row] of [['nothing read', unread], ['part read, found empty', partEmpty]] as const) {
+    assert.equal(row.sysTrash.textContent, 'Couldn’t read all of it', `${what}: a sentence true either way — not "none of it could be read"`);
+  }
+  assert.equal(partEmpty.trashFact.title, 'Part of the Trash could not be read (EACCES).', 'and the server\'s own sentence says which');
+
   const partial = await loadTrashWith({ totalBytes: 5000, itemCount: 3, complete: false, incompleteReason: reason });
   assert.equal(partial.sysTrash.textContent, 'at least 5000 B · 3', 'a real floor is still a floor');
   assert.equal(partial.trashFact.title, reason, 'with the reason it is only a floor');

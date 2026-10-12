@@ -7914,12 +7914,15 @@ async function loadTrash() {
     if (t && (t.totalBytes > 0 || t.complete === false)) {
       const prefix = t.complete === false ? 'at least ' : '';
       const suffix = t.itemCount ? ` · ${formatCount(t.itemCount)}` : '';
-      // Nothing read at all: "at least 0 B" is true of every Trash and says
-      // nothing (B02). The row says it could not be read, and why — the
-      // server's sentence, also in the sheet the row opens.
+      // Nothing found, and part of it unread: "at least 0 B" is true of every
+      // Trash and says nothing (B02). Nor can the row say none of it was read:
+      // the same answer comes back when one location was refused and the rest
+      // were read and found empty (review F1.5). It says what is true either
+      // way, and the server's sentence — on the row and in the sheet it
+      // opens — says which.
       if (t.complete === false && !(t.totalBytes > 0)) {
         $('sysTrash').dataset.v = 0;
-        $('sysTrash').textContent = 'Couldn’t read it';
+        $('sysTrash').textContent = 'Couldn’t read all of it';
       } else countUp($('sysTrash'), t.totalBytes, (v) => prefix + formatBytes(v) + suffix);
       el.title = t.complete === false
         ? (t.incompleteReason || 'Part of the Trash could not be read, so TreeMap cannot say what is in it.')
