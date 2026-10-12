@@ -13,6 +13,8 @@ import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AppError } from '../src/middleware/errorHandler';
 import type { AutopilotPolicy, AutopilotRun } from '../src/models/types';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { withinHangGuard } from './fixtures/waitFor';
+import { setRootCheckForTests } from '../src/services/diskScanner';
 import { INDEX } from './fixtures/liftFrontend';
 import http from 'node:http';
 import { createApp } from '../src/server';
@@ -323,6 +325,149 @@ test('POST /api/autopilot/policies/:id/approve takes the run being approved: wit
   }
 });
 
+/* ─────────────── a run under way while the policy changes (final review F2.1) ─────────────── */
+
+/**
+ * Holds every scan at its last look before it settles, until `release`: a policy's run is then under
+ * way — its folder scanned, its record not yet written — as a big folder leaves it for minutes.
+ */
+function holdScans(): { reached: Promise<void>; release: () => void } {
+  let open!: () => void;
+  const released = new Promise<void>((resolve) => { open = resolve; });
+  let reach!: () => void;
+  const reached = new Promise<void>((resolve) => { reach = resolve; });
+  setRootCheckForTests(async () => {
+    reach();
+    await released;
+  });
+  return {
+    reached: withinHangGuard(reached, 'the run reaching its scan\'s last look'),
+    release: () => {
+      setRootCheckForTests(null);
+      open();
+    },
+  };
+}
+
+test('a policy edited while its first preview is under way previews the edit at the next check - the run made for the old scope starts no cooldown (final review F2.1)', async () => {
+  const dir = folder('inflight-edit', { 'a.log': 1000, 'b.txt': 1000 });
+  const before = { id: 'inflight-edit', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false, enabled: true };
+  await savePolicies([before]);
+  try {
+    const hold = holdScans();
+    try {
+      const tick = withOpenFileCheck('clear', () => runDuePolicies());
+      await hold.reached;
+      await savePolicies([{ ...before, match: { kind: 'custom', exts: ['log', 'txt'] } }]);
+      hold.release();
+      const [old] = await tick;
+      assert.deepEqual(old?.scope?.match, { kind: 'custom', exts: ['log'] }, 'the run under way was made for the old scope');
+    } finally {
+      hold.release();
+    }
+    assert.equal((await policyNow('inflight-edit')).lastRunAt, undefined, 'and starts no cooldown for the edited policy');
+    const ran = await withOpenFileCheck('clear', () => runDuePolicies(Date.now() + 60_000));
+    assert.equal(ran.length, 1, 'the next check previews the edited scope');
+    assert.equal(ran[0].status, 'awaiting-approval', 'a preview: nothing is deleted');
+    assert.deepEqual(ran[0].items.map((i) => i.name).sort(), ['a.log', 'b.txt']);
+    await approvePolicy('inflight-edit', ran[0].id);
+    assert.ok((await policyNow('inflight-edit')).approvedAt, 'and that preview is the one approved');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('approving a held run while the policy\'s next run is under way lets the run after it go ahead at the next check, not after a cooldown (final review F2.1)', async () => {
+  const dir = folder('inflight-approve', { 'a.bin': 5000 });
+  await savePolicies([{ id: 'inflight-approve', name: 'Bins', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true, requireConfirmationAbove: 1000, cooldownDays: 1 }]);
+  try {
+    await approvePolicyForTests('inflight-approve');
+    const held = await runOnce('inflight-approve');
+    assert.equal(held.status, 'awaiting-approval');
+    // A day on, its cooldown over (the run checks it by the clock, so the stamp is moved back a day)...
+    const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+    const saved = store.policies.find((p) => p.id === 'inflight-approve');
+    assert.ok(saved?.lastRunAt, 'the held run started its cooldown');
+    saved.lastRunAt -= 86_400_000;
+    await writeJsonFile('autopilot.json', store);
+    const hold = holdScans();
+    try {
+      // ...the scheduler starts its next run, and the person approves the held one meanwhile.
+      const tick = withOpenFileCheck('clear', () => runDuePolicies());
+      await hold.reached;
+      await approvePolicy('inflight-approve', held.id);
+      hold.release();
+      const [during] = await tick;
+      assert.equal(during?.status, 'awaiting-approval', 'the run under way read the policy before the approval');
+    } finally {
+      hold.release();
+    }
+    assert.equal((await policyNow('inflight-approve')).lastRunAt, undefined, 'and does not restart the cooldown the approval cleared');
+    const ran = await withOpenFileCheck('clear', () => runDuePolicies(Date.now() + 60_000));
+    assert.equal(ran.length, 1, 'the next check runs it');
+    assert.equal(ran[0].mode, 'live', ran[0].blockedReason);
+    assert.equal(ran[0].bytesDeleted, 5000, ran[0].blockedReason);
+    assert.ok(!fs.existsSync(path.join(dir, 'a.bin')), 'what the person approved was deleted');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('a first approval given while a run is under way is not undone by that run: the policy goes ahead at the next check (final review F2.1)', async () => {
+  const dir = folder('inflight-first', { 'a.log': 1000 });
+  await savePolicies([{ id: 'inflight-first', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false, enabled: true }]);
+  try {
+    const older = await runOnce('inflight-first');
+    const newest = await withOpenFileCheck('clear', async () => runPolicy(await policyNow('inflight-first'), { ignoreCooldown: true }));
+    // An older run's Approve, sent by a client: refused, and the policy's preview is due at the next check.
+    const stale = await refusal(approvePolicy('inflight-first', older.id));
+    assert.equal(stale.code, 'APPROVAL_STALE', stale.message);
+    assert.equal((await policyNow('inflight-first')).lastRunAt, undefined);
+    const hold = holdScans();
+    try {
+      const tick = withOpenFileCheck('clear', () => runDuePolicies());
+      await hold.reached;
+      await approvePolicy('inflight-first', newest.id);
+      hold.release();
+      const [during] = await tick;
+      assert.equal(during?.status, 'awaiting-approval', 'the run under way read the policy before it was approved');
+    } finally {
+      hold.release();
+    }
+    assert.equal((await policyNow('inflight-first')).lastRunAt, undefined, 'and starts no cooldown for the policy now approved');
+    const ran = await withOpenFileCheck('clear', () => runDuePolicies(Date.now() + 60_000));
+    assert.equal(ran.length, 1, 'the next check runs it');
+    assert.equal(ran[0].mode, 'live', ran[0].blockedReason);
+    assert.ok(!fs.existsSync(path.join(dir, 'a.log')), 'what the person approved was deleted');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('a policy never approved whose newest preview was made for a scope since edited is previewed again at the next check (final review F2.1)', async () => {
+  const dir = folder('stale-preview', { 'a.log': 1000, 'b.txt': 1000 });
+  await savePolicies([{ id: 'stale-preview', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log', 'txt'] }, dryRunFirst: false, enabled: true }]);
+  try {
+    const seen = await runOnce('stale-preview');
+    // As a build before this fix left it: the newest preview made for the scope before an edit, its cooldown started.
+    const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+    const recorded = store.runs.find((r) => r.id === seen.id);
+    assert.ok(recorded);
+    recorded.scope = { path: dir, match: { kind: 'custom', exts: ['log'] } };
+    await writeJsonFile('autopilot.json', store);
+    const stampedAt = (await policyNow('stale-preview')).lastRunAt;
+    assert.ok(stampedAt, 'the old preview started its cooldown');
+    const ran = await withOpenFileCheck('clear', () => runDuePolicies(stampedAt + 60_000));
+    assert.equal(ran.length, 1, 'the next check previews it again, inside the cooldown');
+    assert.equal(ran[0].status, 'awaiting-approval', 'a preview: nothing is deleted');
+    assert.deepEqual(ran[0].scope?.match, { kind: 'custom', exts: ['log', 'txt'] }, 'made for the policy as it is now');
+    const again = await withOpenFileCheck('clear', () => runDuePolicies(stampedAt + 120_000));
+    assert.deepEqual(again, [], 'and once previewed, it waits out its cooldown as before');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
 /* ─────────────── the page ─────────────── */
 
 
@@ -355,16 +500,83 @@ const RUNS = [
 test('the page offers Approve only on a policy\'s newest run awaiting approval that was made for its folder and match as they are now', () => {
   const approvable = new Function(`${pageSource('approvableRunIds')}; return approvableRunIds;`)() as (runs: unknown[], policies: unknown[]) => Set<string>;
   assert.deepEqual([...approvable(RUNS, [POLICY_A, POLICY_B])], ['a-new']);
+  const html = renderedRuns(RUNS, [POLICY_A, POLICY_B]);
+  const buttons = [...html.matchAll(/data-ap-approve="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(buttons, ['a-new'], 'one button, on the run that shows what the policy matches now');
+  assert.match(html, /changed since this run, or ran again/, 'a stale run says why it offers no approval');
+  assert.match(html, /earlier version of TreeMap/, 'and a run an earlier build recorded says that instead');
+});
+
+/** The page's renderAutopilotRuns, evaluated: the history it shows for `runs` of `policies`. */
+function renderedRuns(runs: unknown[], policies: unknown[]): string {
   const host = { innerHTML: '', querySelectorAll: () => [] };
   const render = new Function(
     '$', 'state', 'formatBytes', 'formatCount', 'escapeHtml', 'icon', 'formatDate', 'approveAutopilotRun', 'undoAutopilotRun',
-    `${pageSource('AP_STATUS_LABEL')} ${pageSource('approvableRunIds')} ${pageSource('renderAutopilotRuns')}; return renderAutopilotRuns;`,
-  )(() => host, { autopilot: { policies: [POLICY_A, POLICY_B] } }, String, String, (s: string) => s, () => '', String, () => undefined, () => undefined) as (runs: unknown[]) => void;
-  render(RUNS);
-  const buttons = [...host.innerHTML.matchAll(/data-ap-approve="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(buttons, ['a-new'], 'one button, on the run that shows what the policy matches now');
-  assert.match(host.innerHTML, /changed since this run, or ran again/, 'a stale run says why it offers no approval');
-  assert.match(host.innerHTML, /earlier version of TreeMap/, 'and a run an earlier build recorded says that instead');
+    `${pageSource('AP_STATUS_LABEL')} ${pageSource('approvableRunIds')} ${INDEX.includes('function unapprovableRunNote(') ? pageSource('unapprovableRunNote') : ''} ${pageSource('renderAutopilotRuns')}; return renderAutopilotRuns;`,
+  )(() => host, { autopilot: { policies } }, String, String, (s: string) => s, () => '', String, () => undefined, () => undefined) as (runs: unknown[]) => void;
+  render(runs);
+  return host.innerHTML;
+}
+
+/** What one run of `html` says in place of an Approve button. */
+function noteOf(html: string, runId: string): string {
+  const at = html.indexOf(`data-run="${runId}"`);
+  assert.notEqual(at, -1, `${runId} is shown`);
+  const next = html.indexOf('data-run="', at + 1);
+  const note = html.slice(at, next === -1 ? undefined : next).match(/<span class="muted">([^<]*)<\/span>/);
+  return note ? note[1] : '';
+}
+
+test('a run that cannot be approved says what comes next, as the scheduler does it (final review F2.1, F2.3)', () => {
+  const policy = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> & { id: string; path: string; match: unknown } =>
+    ({ id, name: id, path: `/home/me/${id}`, match: { kind: 'custom', exts: ['log'] }, requireConfirmationAbove: 1000, cooldownDays: 7, enabled: true, ...extra });
+  const run = (id: string, p: { id: string }, status: string, scope: unknown): Record<string, unknown> => ({
+    id, policyId: p.id, policyName: p.id, at: 1, mode: 'dry-run', status, items: [], bytesMatched: 2000, bytesDeleted: 0, skipped: [], ...(scope ? { scope } : {}),
+  });
+  const now = (p: { path: string; match: unknown }): unknown => ({ path: p.path, match: p.match });
+  const editedOn = policy('edited-on'); // never approved, on: its newest preview was made before an edit
+  const olderOff = policy('older-build-off', { enabled: false }); // never approved, off: its newest run an earlier build recorded
+  const olderApproved = policy('older-build-approved', { approvedAt: 5 }); // approved: its newest run held by an earlier build
+  const ranAgain = policy('ran-again'); // an older preview; the newest is current
+  const ranSince = policy('ran-since', { approvedAt: 5 }); // an older held run; the newest completed
+  const approvedOff = policy('approved-off', { approvedAt: 5, enabled: false, cooldownDays: 1 }); // approved, off: its newest held by an earlier build
+  const removed = { id: 'removed' }; // a policy since deleted
+  const html = renderedRuns([
+    run('edited-newest', editedOn, 'awaiting-approval', { path: editedOn.path, match: { kind: 'custom', exts: ['tmp'] } }),
+    run('off-newest', olderOff, 'awaiting-approval', null),
+    run('approved-newest', olderApproved, 'awaiting-approval', null),
+    run('approved-off-newest', approvedOff, 'awaiting-approval', null),
+    run('removed-newest', removed, 'awaiting-approval', null),
+    run('again-new', ranAgain, 'awaiting-approval', now(ranAgain)),
+    run('again-old', ranAgain, 'awaiting-approval', now(ranAgain)),
+    run('since-new', ranSince, 'completed', now(ranSince)),
+    run('since-old', ranSince, 'awaiting-approval', now(ranSince)),
+  ], [editedOn, olderOff, olderApproved, ranAgain, ranSince, approvedOff]);
+
+  const edited = noteOf(html, 'edited-newest');
+  assert.match(edited, /changed since this run/, edited);
+  assert.match(edited, /previews what it matches now at its next check; approve that run/, edited);
+  assert.doesNotMatch(edited, /approve its newest run/, `it is the newest: ${edited}`);
+
+  const off = noteOf(html, 'off-newest');
+  assert.match(off, /earlier version of TreeMap/, off);
+  assert.match(off, /once it is switched on/, `the scheduler passes over a policy switched off: ${off}`);
+  assert.doesNotMatch(off, /at its next check/, off);
+
+  const approved = noteOf(html, 'approved-newest');
+  assert.match(approved, /earlier version of TreeMap/, approved);
+  assert.match(approved, /not previewed again/, `an approved policy is never brought forward: ${approved}`);
+  assert.match(approved, /every 7 days/, `it says when its next run comes: ${approved}`);
+  assert.doesNotMatch(approved, /previews what it matches now|at its next check|switched on/, approved);
+  const approvedOffNote = noteOf(html, 'approved-off-newest');
+  assert.match(approvedOffNote, /every 1 day once it is switched on/, approvedOffNote);
+
+  assert.equal(noteOf(html, 'removed-newest'), 'Recorded by an earlier version of TreeMap, so it cannot be approved.', 'a removed policy has nothing next');
+
+  assert.match(noteOf(html, 'again-old'), /approve its newest run\./, 'a newer run can be approved: it is named');
+  const since = noteOf(html, 'since-old');
+  assert.match(since, /ran again/, since);
+  assert.doesNotMatch(since, /approve its newest run/, `the newest run asks nothing, so none is offered: ${since}`);
 });
 
 test('the approval names the run, and its confirm says the folder, the match and how much', async () => {

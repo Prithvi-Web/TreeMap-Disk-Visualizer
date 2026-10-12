@@ -26466,9 +26466,37 @@ function approvableRunIds(runs, policies) {
   return out;
 }
 
+/**
+ * Why a run awaiting approval offers no Approve, and what comes next — as the
+ * server schedules it (final review F2.1, F2.3). A newer run of the policy is
+ * named only when it can be approved. A policy not yet approved previews what
+ * it matches now at the scheduler's next check, which passes over a policy
+ * switched off; an approved one is never brought forward, and looks afresh at
+ * its next scheduled run.
+ */
+function unapprovableRunNote(r, runs, policies, approvable) {
+  const newest = runs.find(x => x.policyId === r.policyId);
+  if (newest !== r) {
+    const why = r.scope ? 'This policy has changed since this run, or ran again, so this is not what it would do now'
+      : 'Recorded by an earlier version of TreeMap, so it cannot be approved';
+    return why + (newest && approvable.has(newest.id) ? ' — approve its newest run.' : '.');
+  }
+  const why = r.scope ? 'This policy has changed since this run, so this is not what it would do now'
+    : 'Recorded by an earlier version of TreeMap, so it cannot be approved';
+  const policy = policies.find(p => p.id === r.policyId);
+  if (!policy) return why + '.';
+  if (!policy.approvedAt) {
+    return `${why} — it previews what it matches now ${policy.enabled ? 'at its next check' : 'once it is switched on'}; approve that run.`;
+  }
+  const days = policy.cooldownDays;
+  return `${why}. It is not previewed again: its next scheduled run looks afresh — it runs every ${days} day${days === 1 ? '' : 's'}` +
+    `${policy.enabled ? '' : ' once it is switched on'} — and if that run asks first too, approve it there.`;
+}
+
 function renderAutopilotRuns(runs) {
   const host = $('apRuns');
-  const approvable = approvableRunIds(runs, state.autopilot.policies || []);
+  const policies = state.autopilot.policies || [];
+  const approvable = approvableRunIds(runs, policies);
   if (!runs.length) {
     host.innerHTML = `<div class="muted">Nothing has run yet. Each run will be listed here with exactly what it removed — or why it decided not to.</div>`;
     return;
@@ -26510,8 +26538,7 @@ function renderAutopilotRuns(runs) {
         ${more}${skipped}
         <div class="ap-run-actions">
           ${approvable.has(r.id) ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.id)}"><span data-icon="check"></span>Approve this run</button>`
-            : needsApproval && !r.scope ? `<span class="muted">Recorded by an earlier version of TreeMap, so it cannot be approved — the policy previews again at its next check; approve that run.</span>`
-            : needsApproval ? `<span class="muted">This policy has changed since this run, or ran again, so this is not what it would do now — approve its newest run.</span>` : ''}
+            : needsApproval ? `<span class="muted">${unapprovableRunNote(r, runs, policies, approvable)}</span>` : ''}
           ${(r.bytesDeleted > 0 || unconfirmed > 0) && !r.undoneAt ? `<button class="btn" data-ap-undo="${escapeHtml(r.id)}"><span data-icon="refresh"></span>Undo this run</button>` : ''}
         </div>
       </div>

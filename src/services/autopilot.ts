@@ -401,7 +401,8 @@ export async function savePolicies(raw: unknown): Promise<AutopilotPolicy[]> {
         delete policy.approvedBytes;
         // The new scope has never been previewed: its preview is due at the next tick, not after the
         // cooldown the old scope's last run started — it deletes nothing until approved (final review
-        // F1.7), and approving a run of the old scope is refused (`approvePolicy`).
+        // F1.7), approving a run of the old scope is refused (`approvePolicy`), and a run of the old
+        // scope still under way starts no cooldown over it when it finishes (`unchangedSince`, F2.1).
         delete policy.lastRunAt;
       }
       next.push(policy);
@@ -854,7 +855,9 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     const fresh = await loadStore();
     fresh.runs.unshift(run);
     const live = fresh.policies.find((p) => p.id === policy.id);
-    if (live) live.lastRunAt = now;
+    // Its cooldown only while the policy is still the one it ran for (final review F2.1): a scope edit
+    // or an approval made meanwhile cleared it so that what comes next is due at the next check.
+    if (live && unchangedSince(live, policy)) live.lastRunAt = now;
     // Once: an allowance a newer approval wrote meanwhile is left for the run after this.
     if (live && spentAllowance !== undefined && live.approvedBytes === spentAllowance) delete live.approvedBytes;
     await saveStore(fresh);
@@ -1031,6 +1034,17 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   return record();
 }
 
+/**
+ * Whether a policy as it is now is the one a run read when it began (final review F2.1): the same folder
+ * and match, the same approval, and its cooldown where the run found it. A scope edit (`savePolicies`) and
+ * an approval (`approvePolicy`) clear `lastRunAt` so that what comes next — the edited scope's preview,
+ * the approved run — is due at the next check; a run that was under way meanwhile and finished after
+ * started a full cooldown over it, and the new scope sat unpreviewed, or the approved run waited, for days.
+ */
+function unchangedSince(live: AutopilotPolicy, seen: AutopilotPolicy): boolean {
+  return sameScope(live, seen) && live.approvedAt === seen.approvedAt && live.lastRunAt === seen.lastRunAt;
+}
+
 function toRunItem(c: Candidate): AutopilotRunItem {
   return {
     path: c.path,
@@ -1058,7 +1072,8 @@ function toRunItem(c: Candidate): AutopilotRunItem {
  *
  * The run that earned the approval stamped `lastRunAt`, which would otherwise leave the person waiting
  * out a full cooldown right after saying "yes, do it": it is cleared, and the next tick picks the policy
- * up — a policy still running is not started again by it (`runPolicy`, FG3f #2). A stale approval of a
+ * up — a policy still running is not started again by it (`runPolicy`, FG3f #2), nor does that run,
+ * finishing after, start a cooldown over the approval (`unchangedSince`, F2.1). A stale approval of a
  * policy not yet approved clears it too, so its current scope is previewed at the next tick; that
  * preview deletes nothing.
  */
@@ -1194,10 +1209,14 @@ export interface AutopilotUndo {
 
 /* ---------------- the scheduled tick ---------------- */
 
-/** Whether a policy's newest run is a preview awaiting approval that an earlier build recorded, with no scope. */
-function newestRunIsUnscopedPreview(runs: AutopilotRun[], policyId: string): boolean {
-  const newest = runs.find((r) => r.policyId === policyId);
-  return newest !== undefined && newest.status === 'awaiting-approval' && newest.scope === undefined;
+/**
+ * Whether a policy's newest run is a preview awaiting approval that was not made for the policy as it is
+ * now, so cannot be approved (`approvePolicy`): one an earlier build recorded, with no scope (F1.7), or
+ * one made for a folder or match since edited (final review F2.1).
+ */
+function newestPreviewIsStale(runs: AutopilotRun[], policy: AutopilotPolicy): boolean {
+  const newest = runs.find((r) => r.policyId === policy.id);
+  return newest !== undefined && newest.status === 'awaiting-approval' && (newest.scope === undefined || !sameScope(newest.scope, policy));
 }
 
 /**
@@ -1217,10 +1236,11 @@ export async function runDuePolicies(now = Date.now()): Promise<AutopilotRun[]> 
     const store = await loadStore();
     const policy = store.policies.find((p) => p.id === id);
     if (!policy || !policy.enabled) continue;
-    // A first preview an earlier build recorded carries no scope, so it cannot be approved
-    // (`approvePolicy`): the policy previews again now rather than after its cooldown. A policy never
-    // approved only previews, so nothing is deleted by it (final review F1.7).
-    const previewAgain = !policy.approvedAt && newestRunIsUnscopedPreview(store.runs, policy.id);
+    // A newest preview that cannot be approved — an earlier build recorded it with no scope, or it was
+    // made for a scope since edited — leaves the person nothing to approve: the policy previews again
+    // now rather than after its cooldown. A policy never approved only previews, so nothing is deleted
+    // by it (final review F1.7, F2.1).
+    const previewAgain = !policy.approvedAt && newestPreviewIsStale(store.runs, policy);
     const due = previewAgain || !policy.lastRunAt || now - policy.lastRunAt >= policy.cooldownDays * 86_400_000;
     if (!due) continue;
     try {
