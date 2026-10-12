@@ -163,18 +163,52 @@ test('the metadata lane survives a boot burst several times over', async () => {
   }
 });
 
-test('hammering an endpoint that walks the disk is still rate limited', async () => {
+/** How many responses came back with each status: `{ 200: n, 429: m }`. */
+function tally(results: Res[]): Record<number, number> {
+  const out: Record<number, number> = {};
+  for (const r of results) out[r.status] = (out[r.status] ?? 0) + 1;
+  return out;
+}
+
+/**
+ * The flood is judged with the limiter's clock held still. The strict lane
+ * refills 10 tokens a second from `Date.now()`, so how many of 60 "simultaneous"
+ * requests get through depends on how long the server takes to answer them: on
+ * 12 Oct 2026 a loaded machine served them over ~260 ms, the bucket rightly
+ * refilled 2.6 tokens, 22 got through, and the old `<= 21` failed on a product
+ * that was right. With the clock still, the answer is a count — exactly the
+ * burst allowance, and every other request refused — whatever the machine.
+ * The count is read from the lane table, so that it is what the limiter
+ * publishes; the table itself is pinned to what the docs promise agents.
+ *
+ * Only `Date` is mocked (node:test's mock timers, Node 20.11 and later), so the
+ * sockets and the server's own timers run on the real clock. The second half
+ * checks that the clock held still is the one the limiter reads: one second
+ * later on it, exactly the sustained rate gets through. A limiter moved to some
+ * other clock lets none through there and fails here, instead of quietly
+ * putting the wall clock back into the flood.
+ */
+test('hammering an endpoint that walks the disk is still rate limited', async (t) => {
   const s = await listen();
+  const strict = rateLimitLanes.describe().find((l) => l.name === 'api')!;
+  const flood = 60;
+  const list = () => req(s.port, 'GET', `/api/fs/list?path=${encodeURIComponent(tmp)}`);
   try {
+    assert.deepEqual({ burst: strict.burst, sustainedPerSecond: strict.sustainedPerSecond }, { burst: 20, sustainedPerSecond: 10 },
+      'the strict burst allowance is unchanged — the split must not widen it (AGENTS.md and the OpenAPI text promise bursts of 20 at 10/s)');
+
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
     // 60 directory listings at once is not a boot, it is a runaway client.
-    const results = await Promise.all(
-      Array.from({ length: 60 }, () => req(s.port, 'GET', `/api/fs/list?path=${encodeURIComponent(tmp)}`)),
-    );
-    const limited = results.filter((r) => r.status === 429).length;
-    assert.ok(limited > 0, 'the strict lane must still refuse a flood');
-    assert.ok(results.filter((r) => r.status === 200).length <= 21,
-      'the strict burst allowance is unchanged — the split must not widen it');
+    const results = await Promise.all(Array.from({ length: flood }, list));
+    assert.deepEqual(tally(results), { 200: strict.burst, 429: flood - strict.burst },
+      'the strict lane lets exactly its burst allowance through a flood and refuses the rest — the split must not widen it');
+
+    t.mock.timers.tick(1000);
+    const later = await Promise.all(Array.from({ length: strict.burst }, list));
+    assert.deepEqual(tally(later), { 200: strict.sustainedPerSecond, 429: strict.burst - strict.sustainedPerSecond },
+      'one second later on the same clock, exactly the sustained rate has refilled');
   } finally {
+    t.mock.timers.reset();
     await s.close();
   }
 });
