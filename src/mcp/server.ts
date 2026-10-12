@@ -7,7 +7,7 @@ import {
   collectLargestFolders,
   compareTrees,
 } from '../services/diskScanner';
-import { getDuplicateJob } from '../services/duplicateFinder';
+import { DEFAULT_DUPLICATE_MIN_SIZE, getDuplicateJob } from '../services/duplicateFinder';
 import { computeFacts } from '../services/facts';
 import type { ReclaimScoreFactValue } from '../services/facts';
 import { cleanupSuggestionsFor } from '../services/cleanupMemo';
@@ -553,10 +553,12 @@ export function buildMcpServer(): McpServer {
         '"full" (whole files that still match), and hashed/toHash count that pass\'s files. Call ' +
         'find_duplicates again with the same arguments to keep polling. Groups come ' +
         'back largest-reclaimable first. Cloud placeholders are never opened (opening one downloads it); ' +
-        'they are counted in notHashed instead.',
+        'they are counted in notHashed instead. Files under minSizeBytes are left out; it defaults to ' +
+        '1 KB (1,000 bytes - sizes are decimal), the smallest size the Duplicates view offers.',
       inputSchema: {
         scanId: z.string().min(1).describe('A completed scan from scan_path'),
-        minSizeBytes: z.number().int().min(1).default(1024).describe('Ignore files smaller than this'),
+        minSizeBytes: z.number().int().min(1).default(DEFAULT_DUPLICATE_MIN_SIZE)
+          .describe(`Ignore files smaller than this many bytes (default ${DEFAULT_DUPLICATE_MIN_SIZE.toLocaleString('en-US')} bytes = 1 KB)`),
         limit: z.number().int().min(1).max(500).default(25).describe('Maximum duplicate groups to return'),
         filesPerGroup: z.number().int().min(1).max(100).default(10).describe('Maximum file paths listed per group'),
         waitMs: waitMsSchema,

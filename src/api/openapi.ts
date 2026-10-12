@@ -1347,7 +1347,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Content-identical duplicate groups (background hashing; 202 with progress while running)',
     tag: 'insights',
     destructive: false,
-    parameters: [scanIdQuery, queryParam('minSize', 'Ignore files smaller than this (default 1024)', int())],
+    parameters: [scanIdQuery, queryParam('minSize', 'Ignore files smaller than this (default 1000 — 1 KB; sizes are decimal)', int())],
     responses: {
       '200': jsonResponse(
         'Groups, largest reclaimable first',

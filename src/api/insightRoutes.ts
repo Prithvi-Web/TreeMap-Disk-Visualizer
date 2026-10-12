@@ -6,7 +6,7 @@ import {
   compareTrees,
 } from '../services/diskScanner';
 import { emptyFoldersForScan } from '../services/emptyFolders';
-import { getDuplicateJob } from '../services/duplicateFinder';
+import { DEFAULT_DUPLICATE_MIN_SIZE, getDuplicateJob } from '../services/duplicateFinder';
 import { getNearDupeJob } from '../services/perceptualDupes';
 import { warmThumbnails } from '../services/thumbnailCache';
 import { trackWrite } from '../utils/backgroundWrites';
@@ -79,7 +79,7 @@ function requireCompleteScan(req: Request, idSource: unknown): ScanResult & { ro
  */
 insightRouter.get('/duplicates', storageModeGate, (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
-  const minSize = clampInt(req.query.minSize, 1024, 1, Number.MAX_SAFE_INTEGER);
+  const minSize = clampInt(req.query.minSize, DEFAULT_DUPLICATE_MIN_SIZE, 1, Number.MAX_SAFE_INTEGER);
 
   const job = getDuplicateJob(scan, minSize);
   if (job.status === 'running') {

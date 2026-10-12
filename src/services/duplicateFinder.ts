@@ -34,6 +34,13 @@ import { stillLocal } from './dataLocality';
 const PARTIAL_BYTES = 64 * 1024;
 /** How many groups a completed job reports. `groupCount` still counts them all. */
 export const REPORTED_GROUPS = 500;
+/**
+ * The smallest file looked at when the caller names no minimum: 1 KB, decimal
+ * (1,000 bytes, as every size TreeMap prints counts), the Duplicates view's
+ * smallest choice. One figure for GET /api/duplicates and the MCP tool
+ * find_duplicates, which each kept a 1,024 of their own (the LEFT brief, item 5).
+ */
+export const DEFAULT_DUPLICATE_MIN_SIZE = 1_000;
 /** How many files are hashed concurrently. */
 const HASH_CONCURRENCY = 4;
 /** How many placeholders `notHashed` names; it counts them all. */
