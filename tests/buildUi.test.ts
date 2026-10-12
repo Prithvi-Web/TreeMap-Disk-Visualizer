@@ -139,13 +139,18 @@ test('the Docker build stage copies every file outside src/ that src/ imports', 
  * Whether `.dockerignore` keeps `rel` (a path from the context root, `/`-separated) out of the build
  * context, read as Docker reads it: each line a pattern from the root, `*` and `?` within one name, `**`
  * across names, `!` re-including, the last line that matches deciding, and a line that matches a
- * folder matching everything in it. Character classes are not read; no line here uses one.
+ * folder matching everything in it. Character classes (`[…]`) and `\` escapes are not interpreted, so
+ * a line using either throws, naming itself: read as literal text it would match nothing, and a
+ * pattern Docker honours would slip past every check built on this (review F1.4).
  */
 function dockerIgnores(lines: string[], rel: string): boolean {
   const rules = lines
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
     .map((line) => {
+      if (/[[\\]/.test(line)) {
+        throw new Error(`.dockerignore line "${line}" uses a character class or an escape, which dockerIgnores() does not interpret — teach it them before adding the line`);
+      }
       const negated = line.startsWith('!');
       const pattern = path.posix.normalize((negated ? line.slice(1) : line).trim().replace(/^\/+/, '')).replace(/\/+$/, '');
       let re = '';
@@ -194,6 +199,16 @@ test('.dockerignore keeps out nothing the Docker build stage copies, and the sta
   assert.equal(dockerIgnores(['docs', '!docs/keep.md'], 'docs/keep.md'), false, 'control: a later ! line re-includes');
   assert.equal(dockerIgnores(['**/*.map'], 'src/a/b.js.map'), true, 'control: ** crosses folders');
   assert.equal(dockerIgnores(['*.log'], 'src/x.log'), false, 'control: * stays in one name, from the root');
+  // A line this reading cannot interpret fails here, naming itself, rather than being read as literal
+  // text that matches nothing: Docker honours `[s]rc` and `sr\c` as `src`, so either one would keep src/
+  // out of the image while the check below stayed green (review F1.4).
+  for (const unread of ['[s]rc', 's[r]c', 'native/index.d.t[s]', 'src/ui/[0-9]*', 'sr\\c', '!src/[a]']) {
+    assert.throws(
+      () => dockerIgnores([unread], 'src/index.ts'),
+      (e: Error) => e.message.includes(`"${unread}"`) && /character class or an escape/.test(e.message),
+      `a "${unread}" line is refused by name, not read as a literal`,
+    );
+  }
   for (const needed of ['package.json', 'package-lock.json', 'tsconfig.json', 'scripts', 'src', 'native/index.d.ts']) {
     assert.ok(copied.includes(needed), `control: the build stage copies ${needed} (copied: ${copied.join(', ')})`);
   }
