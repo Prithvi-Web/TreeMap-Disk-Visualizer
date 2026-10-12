@@ -194,7 +194,7 @@ async function startEncode(paths) {
         (failed.length ? `<div class="vid-failed">${failed.map(f =>
           `<div>${escapeHtml(baseName(f.path))}: ${escapeHtml(f.error || 'failed')}</div>`).join('')}</div>` : '');
       toast(`Re-encoded ${ok} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} smaller once you empty the Trash`);
-      rescan();
+      rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     }
   };
   videoJobStream.onerror = () => {

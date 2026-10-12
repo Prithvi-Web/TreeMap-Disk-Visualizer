@@ -9032,9 +9032,11 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       // administrator prompt. Who started it is the caller's to say, never
       // `quiet`, which says only that an index paint is already on screen:
       // keyed on `quiet`, every rescan of an indexed folder — ⌘R, Rescan,
-      // Scan — ran at the background budget (B04). Every caller is a person's
-      // click, drop or request except the boot-time restore, which passes
-      // `unattended` — a relaunch must not ask for elevation (review F1.2).
+      // Scan — ran at the background budget (B04). A caller nobody need be
+      // present for passes `unattended`: the boot-time restore (review F1.2)
+      // and the rescan at the end of a job that runs on after its click — an
+      // offload, the cart's undo, a video re-encode (review F2.1). Neither may
+      // ask for elevation. The rest are a person's click, drop or request.
       body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
@@ -23443,7 +23445,7 @@ async function runOffloadJob(paths, dest) {
       if (removedFromCart) { saveCart(); void renderCart(); refreshCartButtons(); }
       refreshDock(); // the destination's free space just changed (QA D6)
       loadOffloadIndex();
-      rescan();
+      rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     });
   } catch (e) {
     toast(e.message, 'error');
@@ -27682,8 +27684,13 @@ async function reofferBlockedTrash(paths, err) {
   openHandleSeq++; // this panel is painted directly, not by the async check
   renderOpenHandleWarning({ conflicts: err.conflicts || [], checked: true }, paths.length);
 }
-function rescan() {
-  if (state.root && !state.scanning) startScan(state.root.path);
+/* `opts` goes to startScan. A rescan a person asks for — ⌘R, Rescan, a delete
+   they just confirmed — passes none and is sent as theirs. The end of a job
+   that runs on after its click (an offload, the cart's undo, a video
+   re-encode) passes { unattended: true }: nobody need be at the machine when
+   it lands, and it must not raise an administrator prompt (review F2.1). */
+function rescan(opts) {
+  if (state.root && !state.scanning) startScan(state.root.path, opts);
 }
 
 /* ───────────────────────────── Folder budgets (Feature 15) ───────────────────────────── */
@@ -29291,7 +29298,7 @@ async function cartUndoRun(runId) {
         if (!ev || !ev.warning) toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
         cartLastRun = null;
       }
-      rescan();
+      rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     },
     onSettled: () => { renderCart(); refreshCartButtons(); },
   });
@@ -33036,7 +33043,7 @@ async function startEncode(paths) {
         (failed.length ? `<div class="vid-failed">${failed.map(f =>
           `<div>${escapeHtml(baseName(f.path))}: ${escapeHtml(f.error || 'failed')}</div>`).join('')}</div>` : '');
       toast(`Re-encoded ${ok} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} smaller once you empty the Trash`);
-      rescan();
+      rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     }
   };
   videoJobStream.onerror = () => {

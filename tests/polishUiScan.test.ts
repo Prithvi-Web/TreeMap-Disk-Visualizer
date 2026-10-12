@@ -1000,6 +1000,97 @@ test('a scan nobody started — the boot-time restore — is never sent as a per
   }
 });
 
+/**
+ * The jobs that run on after a click, out of the built page: runOffloadJob,
+ * watchJob, cartUndoRun and startEncode, with rescan, startScan and
+ * startScanRequest behind them. api, EventSource and the DOM are stubs; each
+ * job's progress stream is kept so a test can send it the `complete` the
+ * server sends when the job ends, whether or not anyone is at the machine.
+ */
+function jobRescanHarness({ indexed }: { indexed: boolean }) {
+  const src = [
+    slice('async function startScan(path', 'function quietRescanFailed('),
+    braced('function rescan('),
+    braced('async function runOffloadJob('),
+    braced('function watchJob('),
+    braced('function watchOffloadJob('),
+    braced('async function cartUndoRun('),
+    braced('async function startEncode('),
+  ].join('\n');
+  const posts: Array<Record<string, unknown>> = [];
+  const streams: Array<{ url: string; onmessage?: (m: { data: string }) => void; close: () => void; readyState: number }> = [];
+  class FakeEventSource {
+    static CLOSED = 2;
+    url: string; readyState = 1; onmessage?: (m: { data: string }) => void; onerror?: () => void;
+    constructor(url: string) { this.url = url; streams.push(this); }
+    close() { this.readyState = 2; }
+  }
+  const noop = () => {};
+  const dom = makeDom();
+  const state: Record<string, unknown> = { scanning: false, scanGen: 0, root: { path: '/Users/x/Videos' }, scanId: 'old', cart: new Map() };
+  const deps: Record<string, unknown> = {
+    state, $: dom.$, toast: noop, EventSource: FakeEventSource, FxBeam: { attach: noop }, icon: () => '', closeModal: noop,
+    formatBytes: String, formatCount: String, baseName: (p: string) => p, escapeHtml: (s: string) => s,
+    saveCart: noop, renderCart: noop, refreshCartButtons: noop, refreshDock: noop, loadOffloadIndex: noop, passedOverToast: () => '',
+    OFFLOAD_PHASE_LABEL: { checking: 'Checking free space…' },
+    api: async (url: string, opts: { body: string }) => {
+      if (url === '/api/scan') { posts.push(JSON.parse(opts.body)); return { scanId: 'new' }; }
+      if (url === '/api/offload') return { jobId: 'off1' };
+      if (url === '/api/cart/undo') return { jobId: 'undo1', entryCount: 2 };
+      if (url === '/api/compression/encode') return { jobId: 'enc1' };
+      throw new Error(`unexpected request ${url}`);
+    },
+    closeEventSource: noop, disableLive: noop,
+    beginScanChrome: () => { state.scanning = true; },
+    indexStatusFor: async (p: string) => (indexed ? { indexed: true, path: p, root: { path: p, state: 'ready', live: true } } : { indexed: false }),
+    openFromIndex: async () => true, renderIndexBadge: noop, renderIndexLine: noop,
+    abandonIfStopped: () => false, followScanProgress: noop, quietRescanFailed: noop, failScan: noop,
+    performance: { now: () => 0 },
+  };
+  const page = new Function(...Object.keys(deps),
+    `'use strict'; let indexLineGen = 0; let activeJob = null; let videoJobStream = null; let cartLastRun = null;
+     ${src} return { rescan, runOffloadJob, cartUndoRun, startEncode };`,
+  )(...Object.values(deps)) as {
+    rescan: () => void; runOffloadJob: (paths: string[], dest: string) => Promise<void>;
+    cartUndoRun: (runId: string) => Promise<void>; startEncode: (paths: string[]) => Promise<void>;
+  };
+  return { page, posts, streams };
+}
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+
+test('the rescan that ends a long job — an offload, the cart\'s undo, a video re-encode — is not sent as a person\'s; a rescan asked for still is (B04 review F2.1)', async () => {
+  // Review F2.1: each of these jobs rescans the folder when its progress
+  // stream says `complete`, which can be long after the click that started it,
+  // with nobody at the machine. rescan() passed no options, so the scan went
+  // as interactive — on Windows with the ntfs-mft engine, the kind that may
+  // raise an administrator prompt, and under Automatic the Turbo budget.
+  const jobs: Array<[string, (p: ReturnType<typeof jobRescanHarness>['page']) => Promise<void>, Record<string, unknown>]> = [
+    ['an offload', (p) => p.runOffloadJob(['/Users/x/Videos/big'], '/Volumes/Ext'), { type: 'complete' }],
+    ['the cart\'s undo', (p) => p.cartUndoRun('run1'), { type: 'complete' }],
+    ['a video re-encode', (p) => p.startEncode(['/Users/x/Videos/a.mov']), { type: 'complete', results: [{ ok: true, path: '/Users/x/Videos/a.mov' }], savedBytes: 1 }],
+  ];
+  for (const indexed of [false, true]) {
+    for (const [what, start, complete] of jobs) {
+      const h = jobRescanHarness({ indexed });
+      await start(h.page);
+      await settle();
+      assert.equal(h.streams.length, 1, `indexed=${indexed}, ${what}: the job's progress stream is open`);
+      assert.equal(h.posts.length, 0, `indexed=${indexed}, ${what}: nothing is rescanned while the job runs`);
+      h.streams[0].onmessage!({ data: JSON.stringify(complete) });
+      await settle();
+      assert.equal(h.posts.length, 1, `indexed=${indexed}, ${what}: the job's end rescans the folder`);
+      assert.equal(h.posts[0].path, '/Users/x/Videos', `indexed=${indexed}, ${what}: the folder on screen is the one rescanned`);
+      assert.equal(h.posts[0].interactive, false, `indexed=${indexed}, ${what}: the rescan at the job's end is not sent as a person's`);
+    }
+    // ⌘R, the palette's Rescan and a delete just confirmed call rescan() as it is: a person asked.
+    const h = jobRescanHarness({ indexed });
+    h.page.rescan();
+    await settle();
+    assert.equal(h.posts.length, 1, `indexed=${indexed}: a rescan asked for is sent`);
+    assert.equal(h.posts[0].interactive, true, `indexed=${indexed}: a rescan a person asks for is still sent as theirs`);
+  }
+});
+
 test('a new scan takes down the last folder\'s donut total, largest file and forecast too; a quiet refresh leaves them (B05)', () => {
   // B05: during a whole /Applications scan the File Types ring still read
   // "8.8 GB All types", Quick Stats "holiday-4k.mov · 3.0 GB — Largest file"

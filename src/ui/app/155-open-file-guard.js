@@ -388,6 +388,11 @@ async function reofferBlockedTrash(paths, err) {
   openHandleSeq++; // this panel is painted directly, not by the async check
   renderOpenHandleWarning({ conflicts: err.conflicts || [], checked: true }, paths.length);
 }
-function rescan() {
-  if (state.root && !state.scanning) startScan(state.root.path);
+/* `opts` goes to startScan. A rescan a person asks for — ⌘R, Rescan, a delete
+   they just confirmed — passes none and is sent as theirs. The end of a job
+   that runs on after its click (an offload, the cart's undo, a video
+   re-encode) passes { unattended: true }: nobody need be at the machine when
+   it lands, and it must not raise an administrator prompt (review F2.1). */
+function rescan(opts) {
+  if (state.root && !state.scanning) startScan(state.root.path, opts);
 }

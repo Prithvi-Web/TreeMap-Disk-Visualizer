@@ -631,7 +631,7 @@ async function cartUndoRun(runId) {
         if (!ev || !ev.warning) toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
         cartLastRun = null;
       }
-      rescan();
+      rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     },
     onSettled: () => { renderCart(); refreshCartButtons(); },
   });

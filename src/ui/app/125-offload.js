@@ -43,7 +43,7 @@ async function runOffloadJob(paths, dest) {
       if (removedFromCart) { saveCart(); void renderCart(); refreshCartButtons(); }
       refreshDock(); // the destination's free space just changed (QA D6)
       loadOffloadIndex();
-      rescan();
+      rescan({ unattended: true }); // the job ends when it ends, not at a click (review F2.1)
     });
   } catch (e) {
     toast(e.message, 'error');
