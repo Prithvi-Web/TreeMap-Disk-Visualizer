@@ -523,7 +523,11 @@ test('a calendar day becomes a query for the files that day counted — never it
       'a click on the cell shows the files it counted — not the folder or the root modified that day');
     assert.deepEqual(await run(calendar('2026-10-01', '2026-10-02')), theDaysFiles, 'and so does a dragged range');
 
-    const journal = queryFrom(['journalOpen'], `journalOpen({ at: ${day}, path: '/b23/made-today', rootPath: '/b23' })`, {
+    // journalOpen asks whether the entry is in the scan by folder boundary,
+    // with the map's own tmIsInside (POL item 7 review, F2.1), so the page's
+    // tmIsInside is loaded beside it: the day's query is checked on the path
+    // that opens the map, through the same boundary rule the page uses.
+    const journal = queryFrom(['journalOpen', 'tmIsInside'], `journalOpen({ at: ${day}, path: '/b23/made-today', rootPath: '/b23' })`, {
       state: { root: { path: '/b23' }, pathIndex: new Map([['/b23/made-today', { type: 'dir' }]]), treemap: {} },
     });
     assert.deepEqual(await run(journal), theDaysFiles, 'a journal entry opens the same day the same way');
