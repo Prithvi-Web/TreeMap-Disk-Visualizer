@@ -17,6 +17,11 @@ import { lastFdaState, type FdaState } from './fdaState';
  *  - EPERM, or a count of refusals: by the probed state — not-granted names
  *    who to grant it to, granted gives the refusal sentence, and unknown (or
  *    no probe yet) says both, since TreeMap cannot tell which is true.
+ *  - A count under not-granted (`code: null`) also says what granting will
+ *    not open. The scan keeps no errno per refused folder, so a count can
+ *    hold a folder closed by its own permissions, and the grant sentence
+ *    alone sent that person round the loop: grant, relaunch, rescan, the
+ *    same refusal (review F1.3).
  *
  * The page writes none of these: the capability carries the sentence for a
  * refused count (`fullDiskAccess.advice`) and the page shows it as is.
@@ -73,7 +78,16 @@ const REFUSAL =
   'and TreeMap does not ask for administrator rights to get past them.';
 
 /**
- * The sentence for one refusal, or for a count of them (`code: null`).
+ * Said after the grant sentence when the refusal may not be macOS's privacy
+ * gate at all: a count, or a refusal whose cause the caller cannot name. True
+ * of a chmod-000 folder, another account's folder and a file locked in Finder.
+ */
+const NOT_PERMISSIONS =
+  'Full Disk Access does not override permissions or locks that you or another account set on a folder or file.';
+
+/**
+ * The sentence for one refusal, or for a count of them (`code: null`, which
+ * is also how a caller words a refusal whose cause it cannot name).
  *
  * `retry` is what the person does once it is fixed: "scan again" by default,
  * "try again" where the refused thing was an action.
@@ -83,7 +97,7 @@ export function accessAdvice(input: { code: AccessCode; state: FdaState | null; 
   const retry = input.retry ?? 'scan again';
   if (code === 'EACCES' || state === 'granted') return REFUSAL;
   const grant = grantSentence(grantee, retry);
-  if (state === 'not-granted') return grant;
+  if (state === 'not-granted') return code === 'EPERM' ? grant : `${grant} ${NOT_PERMISSIONS}`;
   const who = grantee.desktop ? 'it' : grantee.name;
   return `TreeMap could not tell whether ${who} has Full Disk Access. If not, ${grant.charAt(0).toLowerCase()}${grant.slice(1)} If it does, ${REFUSAL}`;
 }

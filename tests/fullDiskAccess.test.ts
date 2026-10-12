@@ -208,6 +208,21 @@ test('EACCES never tells anyone to grant Full Disk Access; granted never does; n
   }
 });
 
+test('a count under not-granted says Full Disk Access will not open what permissions or a lock keep closed; a single EPERM is the privacy gate alone', () => {
+  // The scan keeps no errno per refused folder (review F1.3): a count can hold
+  // the person's own chmod-000 folder or another account's, which granting
+  // Full Disk Access does not open. Unhedged, the grant sentence sent them
+  // round the loop U-11 exists to end: grant, relaunch, rescan, same refusal.
+  const HEDGE = 'Full Disk Access does not override permissions or locks that you or another account set on a folder or file.';
+  for (const grantee of [DESKTOP, WEB]) {
+    const count = accessAdvice({ code: null, state: 'not-granted', grantee });
+    assert.ok(count.startsWith(`Give ${grantee.name} Full Disk Access`), 'the grant still comes first: most refusals on a Mac are the privacy gate');
+    assert.ok(count.endsWith(` ${HEDGE}`), `a count says what granting will not open: ${count}`);
+    const eperm = accessAdvice({ code: 'EPERM', state: 'not-granted', grantee });
+    assert.ok(!eperm.includes(HEDGE), `one EPERM from a read is the privacy gate, and says only that: ${eperm}`);
+  }
+});
+
 test('unknown says both: what to grant if it is off, and what refuses if it is on', () => {
   for (const state of ['unknown', null] as const) {
     for (const code of ['EPERM', null] as const) {
