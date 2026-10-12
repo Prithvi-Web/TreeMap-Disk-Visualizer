@@ -891,3 +891,37 @@ test('the preview banner marks its figure as a floor when some staged items are 
   const enter = slice('function enterCartPreview', 'function exitCartPreview');
   assert.match(enter, /tmPreview\.outsideUnsized = built\.outsideUnsized;/, 'turning the preview on carries the unknown count to the banner');
 });
+
+/* ══════════════ B06 review, round 2: a staged folder above the map ══════════════ */
+
+/** A map rooted at Projects, two files on it, and the folder above it — the cart outlives the scan it was filled from. */
+const PROJECTS = '/Users/me/Downloads/Projects';
+const ABOVE = '/Users/me/Downloads';
+function projectsMap(): { nodes: DrawnNode[]; sizes: Record<string, number> } {
+  const mk = (name: string, size: number): DrawnNode => ({
+    name, path: `${PROJECTS}/${name}`, size, type: 'file', depth: 1, expanded: false, x: 0, y: 0, w: 0, h: 0,
+  });
+  return {
+    nodes: [mk('a.iso', 400), mk('b.iso', 200)],
+    sizes: { [`${PROJECTS}/a.iso`]: 400, [`${PROJECTS}/b.iso`]: 200 },
+  };
+}
+
+test('a staged folder above this map that the scan does not hold is unknown — never the whole map hatched (B06 review)', () => {
+  // Downloads was staged in a wide scan; this scan is of Projects, and holds
+  // no Downloads. The cart calls it "not in this scan" and will not trash it,
+  // so the preview must not show the whole map going.
+  const { nodes, sizes } = projectsMap();
+  const out = buildPreviewWith(nodes, PROJECTS, 600, [ABOVE], sizes);
+  assert.deepEqual(
+    [out.nodes, out.freedBytes, out.stagedInView, out.outsideView, out.outsideUnsized],
+    [null, 0, 0, 1, 1],
+    'nothing hatched, and the item is counted as not shown and of unknown size',
+  );
+
+  // Held by the scan — a drill-down inside a wider scan — it does stage everything on screen.
+  const held = buildPreviewWith(nodes, PROJECTS, 600, [ABOVE], { ...sizes, [ABOVE]: 5_000 });
+  assert.deepEqual([held.freedBytes, held.stagedInView, held.outsideUnsized], [600, 600, 0]);
+  assert.equal(held.nodes!.length, 1, 'one hatched block, and nothing else drawn');
+  assert.ok(Math.abs(held.nodes![0]!.w * held.nodes![0]!.h - 10_000) < 1e-6, 'covering the whole map');
+});

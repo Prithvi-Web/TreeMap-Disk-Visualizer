@@ -215,6 +215,10 @@ function tmBuildPreview() {
     // Staging the folder the map is rooted at — or anything above it — frees
     // everything on screen. Drawn as one hatched canvas, which is the truth.
     if (p === root.path || tmIsInside(root.path, p)) {
+      // …for a folder the scan holds. The cart outlives scans, and a staged
+      // folder above this map that this scan does not hold has no size here
+      // and is one the cart will not trash: unknown, never the whole map (B06).
+      if (bytes === null) { outsideView++; outsideUnsized++; continue; }
       stagedInView += root.size;
       addFreed(root.path, root.size);
       removedAll = true; // one flag; the walk below skips every child
