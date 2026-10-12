@@ -77,8 +77,8 @@ after(async () => {
   assert.deepEqual(trashed, [], 'nothing was trashed');
 });
 
-/** A dry-run DELETE /api/files of one path: its status and code. */
-function dryRunDelete(p: string): Promise<string> {
+/** A dry-run DELETE /api/files of one path: its status, and the refusal's code and sentence. */
+function dryRunAnswer(p: string): Promise<{ status: number; code: string; error: string }> {
   resetRateLimiter();
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({ paths: [p], dryRun: true });
@@ -89,15 +89,21 @@ function dryRunDelete(p: string): Promise<string> {
         res.setEncoding('utf8');
         res.on('data', (c: string) => { buf += c; });
         res.on('end', () => {
-          let code = '';
-          try { code = (JSON.parse(buf) as { code?: string }).code ?? ''; } catch { /* not JSON */ }
-          resolve(`${res.statusCode}${code ? ` ${code}` : ''}`);
+          let body: { code?: string; error?: string } = {};
+          try { body = JSON.parse(buf) as { code?: string; error?: string }; } catch { /* not JSON */ }
+          resolve({ status: res.statusCode ?? 0, code: body.code ?? '', error: body.error ?? '' });
         });
       },
     );
     r.on('error', reject);
     r.end(payload);
   });
+}
+
+/** A dry-run DELETE /api/files of one path: its status and code. */
+async function dryRunDelete(p: string): Promise<string> {
+  const { status, code } = await dryRunAnswer(p);
+  return `${status}${code ? ` ${code}` : ''}`;
 }
 
 test('the policy is read through the links, so this file tests what it means to', async () => {
@@ -119,6 +125,16 @@ test('a delete of the link TreeMap reaches app-data by, of a link on the way to 
   answers['a file beside the hop'] = await dryRunDelete(path.join(BIG, 'beside.txt'));
   const expected = Object.fromEntries(Object.keys(targets).map((what) => [what, '403 SAFETY_RECORD']));
   assert.deepEqual(answers, { ...expected, 'a file beside the link': '200', 'a file beside the hop': '200' });
+});
+
+test('the refusal says truly what it refused: a folder holding a link TreeMap reaches the records through holds neither the policy nor the log, and is named as what it is (the final review, F3.2)', async () => {
+  const sentences: Record<string, string> = {};
+  for (const [what, p] of [['a folder above the link', path.join(HOME, 'Library')], ['the folder holding the hop', BIG]] as const) {
+    const { code, error } = await dryRunAnswer(p);
+    sentences[what] = `${code}: ${error.replace(`"${p}"`, '<the path>').split('. ')[0]}`;
+  }
+  const sentence = "SAFETY_RECORD: <the path> is TreeMap's agent policy or its audit log, a folder that holds them, or a folder or link TreeMap reaches them through";
+  assert.deepEqual(sentences, { 'a folder above the link': sentence, 'the folder holding the hop': sentence });
 });
 
 test('the Trash step itself refuses the link, and the policy still reads afterwards', async () => {

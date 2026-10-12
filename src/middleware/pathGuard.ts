@@ -498,17 +498,20 @@ export function assertNotAppDataPath(p: string): void {
 
 /**
  * The refusal for removing or moving TreeMap's agent policy or its audit log, a folder that holds
- * them, or a link TreeMap reaches them through (`takesSafetyRecord`), or null (the final review, F1.11,
- * F1.20, F2.1). The policy is deliberately not writable through the API, and an absent one means "no
- * limits"; the audit is the record of what was done. Asked only by the doors that remove or move what
- * a request names — never by open or preview: a person edits the policy by opening it.
+ * them, or a folder or link TreeMap reaches them through (`takesSafetyRecord`), or null (the final
+ * review, F1.11, F1.20, F2.1). A folder TreeMap passes on its way to app-data — the one holding a link
+ * it reaches app-data through, say — holds neither record when they are wherever the link leads, so
+ * the sentence names it as what it is, as Autopilot's reason for leaving it alone does; it once read
+ * "a folder that holds them" (F3.2). The policy is deliberately not writable through the API, and an
+ * absent one means "no limits"; the audit is the record of what was done. Asked only by the doors that
+ * remove or move what a request names — never by open or preview: a person edits the policy by opening it.
  */
 export function safetyRecordRefusal(p: string): AppError | null {
   if (!takesSafetyRecord(p)) return null;
   return new AppError(
     403,
     'SAFETY_RECORD',
-    `"${p}" is TreeMap's agent policy or its audit log, a folder that holds them, or a link TreeMap reaches them through. TreeMap never removes or moves any of these: ` +
+    `"${p}" is TreeMap's agent policy or its audit log, a folder that holds them, or a folder or link TreeMap reaches them through. TreeMap never removes or moves any of these: ` +
       'an absent policy means no limits at all, and the audit is the record of what was done. Change them yourself, outside TreeMap.',
   );
 }
