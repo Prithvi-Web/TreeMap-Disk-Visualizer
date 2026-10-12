@@ -205,3 +205,30 @@ test('an index build is held to allowedRoots where its root really is, as a scan
     fs.rmSync(POLICY_PATH, { force: true });
   }
 });
+
+test('an allowed root is compared exactly, never folded: a folder the volume tells apart from it is outside it, though its name folds the same (the final review, F2.11)', async (t) => {
+  // Ｄesktop (a fullwidth Ｄ, which no volume folds to D, though a fold of names does) is another folder
+  // everywhere; on a volume that keeps case, so is desktop.
+  const others: Record<string, string> = { 'Ｄesktop (a fullwidth Ｄ)': path.join(HOME, 'Ｄesktop') };
+  if (!CASE_FOLDS) others['desktop (another case, on a volume that keeps it)'] = path.join(HOME, 'desktop');
+  for (const folder of Object.values(others)) {
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'x.txt'), 'elsewhere');
+  }
+  const desktop = fs.statSync(path.join(HOME, 'Desktop')).ino;
+  const distinct = Object.entries(others).filter(([, folder]) => fs.statSync(folder).ino !== desktop);
+  if (distinct.length === 0) {
+    t.skip('this volume reads every such name as Desktop');
+    return;
+  }
+  withPolicy({ allowedRoots: [path.join(HOME, 'Desktop')] });
+  try {
+    const answers: Record<string, string> = {};
+    for (const [what, folder] of distinct) answers[`${what}/x.txt`] = await dryRunDelete([path.join(folder, 'x.txt')]);
+    answers['Desktop/notes.txt'] = await dryRunDelete([path.join(HOME, 'Desktop', 'notes.txt')]);
+    assert.deepEqual(answers, { ...Object.fromEntries(distinct.map(([what]) => [`${what}/x.txt`, '403 POLICY_ROOT_NOT_ALLOWED'])), 'Desktop/notes.txt': 'ok, 5 bytes' });
+  } finally {
+    fs.rmSync(POLICY_PATH, { force: true });
+    for (const folder of Object.values(others)) fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
