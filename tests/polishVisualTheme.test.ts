@@ -108,18 +108,23 @@ const fmt = (n: number) => n.toFixed(2);
  * A CSS colour expression as the page would paint it over `ground`:
  * `var(--x)` through the palette, hex/rgb(a) composited, and
  * `color-mix(in srgb, A P%, B)` mixed after resolving both arms (with
- * `transparent` meaning "the ground shows through").
+ * `transparent` meaning "the ground shows through"), and `currentColor` as
+ * `current` — the element's own text colour, where the caller knows it.
  */
-function paint(expr: string, palette: Record<string, string>, ground: RGB): RGB {
+function paint(expr: string, palette: Record<string, string>, ground: RGB, current?: RGB): RGB {
   const e = expr.trim();
   const v = /^var\((--[a-z0-9-]+)\)$/.exec(e);
   if (v) {
     assert.ok(palette[v[1]], `${v[1]} is declared`);
-    return paint(palette[v[1]], palette, ground);
+    return paint(palette[v[1]], palette, ground, current);
   }
   if (e === 'transparent') return ground;
+  if (e === 'currentColor') {
+    assert.ok(current, 'currentColor is painted only where the text colour is known');
+    return current!;
+  }
   const cm = /^color-mix\(in srgb,\s*(.+?)\s+([\d.]+)%,\s*(.+)\)$/.exec(e);
-  if (cm) return mix(paint(cm[1], palette, ground), +cm[2] / 100, paint(cm[3], palette, ground));
+  if (cm) return mix(paint(cm[1], palette, ground, current), +cm[2] / 100, paint(cm[3], palette, ground, current));
   return over(e, ground);
 }
 
@@ -396,13 +401,83 @@ test('every reclaim score the badge prints clears 4.5:1 — resting or hovered, 
   assert.equal(checked, 2 * 3 * 4 * 101 * 2, `every score was measured (${checked})`);
 });
 
-test('no reclaim score is printed in its raw ramp colour — the tooltip and the breakdown take the badge’s ink, and medium confidence still looks different (B21 review F1.7)', () => {
+test('no reclaim score is printed in its raw ramp colour — the tooltip and the breakdown take the badge’s ink (B21 review F1.7)', () => {
   const code = INDEX.slice(INDEX.indexOf('<script>'));
   const raw = [...code.matchAll(/color:\s*\$\{reclaimColor\(/g)].length;
   assert.equal(raw, 0, 'a raw reclaim colour as text is 1.4–2.6:1 on a light card');
   const inks = [...code.matchAll(/color:\s*\$\{reclaimInk\(/g)].length;
   assert.ok(inks >= 2, `the tooltip's score line and the breakdown's badge take the ink (${inks})`);
-  const medium = ruleFor('.rc-badge.conf-medium').body;
-  const own = [...medium.matchAll(/([a-z-]+)\s*:\s*([^;]+)/g)].filter(([, k, v]) => !(k === 'border-style' && v.trim() === 'solid'));
-  assert.ok(own.length > 0, 'a medium-confidence badge still differs from a high-confidence one by more than its tilde');
+});
+
+/* ═══════════════ B21 review F2.2 — medium confidence looks medium, measured ═══════════════ */
+
+/**
+ * The ring a score badge paints at `confidence`, as the cascade resolves it:
+ * the base `.rc-badge` border, then each border declaration of
+ * `.rc-badge.conf-<confidence>` in order (no such rule: the base ring), and
+ * that rule's opacity, which dims the ring with everything else.
+ */
+function badgeRing(confidence: string): { style: string; colour: string; opacity: number } {
+  const shorthand = (v: string) => {
+    const m = /^\S+\s+(solid|dashed|dotted|double)\s+(.+)$/.exec(v);
+    assert.ok(m, `a border shorthand reads "width style colour" (got "${v}")`);
+    return { style: m![1], colour: m![2].trim() };
+  };
+  const base = prop(ruleFor('.rc-badge').body, 'border');
+  assert.ok(base, 'the badge draws a ring');
+  let { style, colour } = shorthand(base!);
+  const own = RULES.find((r) => parts(r).includes(`.rc-badge.conf-${confidence}`));
+  if (!own) return { style, colour, opacity: 1 };
+  for (const [, k, v] of own.body.matchAll(/([a-z-]+)\s*:\s*([^;]+)/g)) {
+    if (k === 'border') ({ style, colour } = shorthand(v.trim()));
+    else if (k === 'border-style') style = v.trim();
+    else if (k === 'border-color') colour = v.trim();
+  }
+  const opacity = prop(own.body, 'opacity');
+  return { style, colour, opacity: opacity === null ? 1 : Number(opacity) };
+}
+
+/**
+ * How loud a medium-confidence ring may be, as a share of a high-confidence
+ * ring's contrast with the same ground. Two-thirds keeps the difference one
+ * that is seen at a glance rather than measured: today's 55% ring sits at
+ * under half on every ground, and a ring mixed at 80% or more would pass for
+ * a full one.
+ */
+const MEDIUM_RING_MAX_SHARE = 2 / 3;
+
+test('a medium-confidence badge draws a ring quieter than a high-confidence one, and not a low one’s dashes — on every ground, at every score, in both themes (B21 review F2.2)', () => {
+  // Review: the only guard here passed with any declaration at all in the
+  // medium rule — `border-color: currentColor`, which paints exactly the
+  // high-confidence ring, kept it green. Measured instead: the ring each
+  // confidence paints, in the badge's own ink, against the ground under it.
+  const badge = lift<(path: string, fact: { score: number; confidence: string }) => string>(
+    ['escapeHtml', 'hexToRgb', 'C_TEAL', 'mix', 'C_RC_LOW', 'reclaimRgb', 'reclaimColor', 'reclaimInk', 'reclaimBadge'], 'reclaimBadge');
+  const ring = { high: badgeRing('high'), medium: badgeRing('medium'), low: badgeRing('low') };
+  assert.notEqual(ring.medium.style, ring.low.style, `a medium ring is not drawn like a low one (${ring.low.style})`);
+  let checked = 0;
+  for (const [name, palette] of THEMES) {
+    const { page, card } = grounds(palette);
+    const surfaces: Array<[string, RGB]> = [
+      ['the card', card], ['the page', page],
+      ['a chip on the card', paint('var(--surface-2)', palette, card)],
+      ['a chip on the page', paint('var(--surface-2)', palette, page)],
+    ];
+    for (const [where, ground] of surfaces) {
+      for (let score = 0; score <= 100; score++) {
+        const loudness = (confidence: 'high' | 'medium') => {
+          const printed = /style="color:([^"]+)"/.exec(badge('/c/x.mov', { score, confidence }));
+          assert.ok(printed, 'the badge prints its score in a colour');
+          const ink = paint(printed![1].replace(/var\(--reclaim-ink\)/g, palette['--reclaim-ink']), palette, ground);
+          const r = ring[confidence];
+          return contrast(mix(paint(r.colour, palette, ground, ink), r.opacity, ground), ground);
+        };
+        const high = loudness('high'), medium = loudness('medium');
+        checked++;
+        assert.ok(medium <= high * MEDIUM_RING_MAX_SHARE,
+          `${name}: a medium-confidence ${score} rings at ${fmt(medium)}:1 on ${where}, a high one at ${fmt(high)}:1 — not a third quieter (${ring.medium.colour})`);
+      }
+    }
+  }
+  assert.equal(checked, 2 * 4 * 101, `every score was measured (${checked})`);
 });
