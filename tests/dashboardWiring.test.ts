@@ -528,6 +528,43 @@ test('the Trash sheet\'s header says what the row says — never "at least 0 B �
   assert.equal(one.trashModalMeta.textContent, '· 2000 B · 1 item', 'a Trash read in full states its size and count; one item is "1 item"');
 });
 
+/* Review F3.2: the F2.4 cases never fed the header a Trash read in full and
+   found empty, nor a partial read that sized nothing but counted something —
+   so keying the header's sentence on anything but the row's own condition
+   passed. Both answers are reachable: Empty Trash leaves a full, empty answer
+   in state while the synthetic Trash cell stays drawn until the next layout,
+   and clicking it opens this sheet; a partial read can find only empty files.
+   Then one answer table runs through the row and the sheet it opens, so the
+   two cannot drift apart. */
+test('the Trash row and the sheet it opens agree on every answer, a full and empty read included (review F3.2)', async () => {
+  const reason = 'Part of the Trash could not be read (EACCES).';
+  const emptyRead = openTrashWith({ totalBytes: 0, itemCount: 0, complete: true, items: [] });
+  assert.equal(emptyRead.trashModalMeta.textContent, '· 0 B · 0 items', 'a Trash read in full and found empty says so: nothing in it, not "couldn’t read"');
+  assert.match(emptyRead.trashModalBody.innerHTML, /The Trash is empty\./, 'over a body that says the Trash is empty');
+  const emptyFiles = openTrashWith({ totalBytes: 0, itemCount: 3, complete: false, incompleteReason: reason });
+  assert.equal(emptyFiles.trashModalMeta.textContent, '· couldn’t read all of it',
+    'a partial read that sized nothing says what the row says, whatever it counted — not "at least 0 B · 3 items"');
+
+  const answers = [
+    { totalBytes: 0, itemCount: 0, complete: false, incompleteReason: reason },
+    { totalBytes: 0, itemCount: 3, complete: false, incompleteReason: reason },
+    { totalBytes: 5000, itemCount: 3, complete: false, incompleteReason: reason },
+    { totalBytes: 2000, itemCount: 1, complete: true, items: [{ name: 'a.txt', size: 2000 }] },
+    { totalBytes: 0, itemCount: 0, complete: true, items: [] },
+  ];
+  for (const answer of answers) {
+    const { totalBytes, itemCount, complete } = answer;
+    const row = await loadTrashWith(answer);
+    const sheet = openTrashWith(answer);
+    const rowText = row.trashFact.hidden ? '(no row)' : row.sysTrash.textContent; // an empty Trash read in full has no row
+    const rowUnread = rowText === 'Couldn’t read all of it';
+    const headerUnread = sheet.trashModalMeta.textContent === '· couldn’t read all of it';
+    assert.equal(headerUnread, rowUnread,
+      `${totalBytes} B, ${itemCount} items, complete ${complete}: the header says "couldn’t read all of it" exactly when the row does ` +
+      `(row "${rowText}", header "${sheet.trashModalMeta.textContent}")`);
+  }
+});
+
 /* ══════════════ B18 — the System card follows the disk, not the page load ══════════════ */
 
 test('the System card\'s disk figures are read again whenever a scan lands (B18)', async () => {
