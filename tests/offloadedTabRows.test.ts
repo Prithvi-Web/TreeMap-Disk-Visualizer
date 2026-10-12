@@ -1,10 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-offloadedTabRows-data-');
 
 import { INDEX } from './fixtures/liftFrontend';
+import { getOffloadIndex } from '../src/services/offload';
+import { writeJsonFile } from '../src/services/storage';
 
 /**
  * The Offloaded tab draws at most 200 rows per destination (final review F2.4). TreeMap's record now keeps
@@ -114,4 +117,27 @@ test('the line above the list counts as freed only the originals that went to th
 
   const none = index([first, second]);
   assert.match(infoText(none), /^2 offloaded files across 1 destination — 2000 B freed locally\.$/, infoText(none));
+});
+
+test('the index serves each destination\'s files newest first, whatever order its record holds them in - so the tab draws the newest 200 (final review F3.4)', async () => {
+  // The record is appended to as each offload finishes, so it holds a drive's files oldest first.
+  const appended = fileTempDir('treemap-offloadedTabRows-appended-');
+  const shuffled = fileTempDir('treemap-offloadedTabRows-shuffled-');
+  const tag = (root: string, at: number): string => `${path.basename(root)}-${at}`;
+  const entry = (root: string, at: number): Entry => ({
+    id: tag(root, at), name: `photo-${at}.jpg`, originalPath: `/Users/me/Pictures/photo-${at}.jpg`, destPath: path.join(root, `photo-${at}.jpg`),
+    destRoot: root, size: 1000, hash: 'h', offloadedAt: 1_000_000 + at,
+  });
+  const ages = Array.from({ length: 500 }, (_, i) => i);
+  await writeJsonFile('offload-manifest.json', {
+    entries: [...ages.map((at) => entry(appended, at)), ...ages.map((i) => entry(shuffled, (i * 211) % 500))],
+    destinations: {},
+  });
+  const index = (await getOffloadIndex()) as unknown as Index;
+  const served = index.entries.map((e) => e.offloadedAt);
+  assert.deepEqual(served, [...served].sort((a, b) => b - a), 'newest first');
+  const ids = rowIds(drawn(index).body);
+  for (const root of [appended, shuffled]) {
+    assert.deepEqual(ids.filter((id) => id.startsWith(`${path.basename(root)}-`)), ages.slice(-200).reverse().map((at) => tag(root, at)), `${root} draws its newest 200, newest first`);
+  }
 });
