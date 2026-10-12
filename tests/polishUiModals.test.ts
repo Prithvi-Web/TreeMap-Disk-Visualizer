@@ -315,6 +315,28 @@ test('closing a sheet whose offer holds focus gives focus back to where the shee
   assert.deepEqual(retired, ['settingsModal', 'confirmModal'], 'and only the top sheet\'s offers go');
 });
 
+test('a close that placed focus elsewhere still takes the offers made in the sheet with it, and leaves focus where the close put it (final review F3.2)', () => {
+  // Only giving focus back depends on where the close left it; the offers go
+  // on every close. Above, focus is on the offer as the sheet closes, so an
+  // offer retired only when focus drifted could not be told apart. An action
+  // that closes the sheet and puts focus elsewhere (the palette's search box)
+  // would leave the sheet's offer live for 12 s, its choice acting for a
+  // sheet that is gone (F2.3).
+  const doc = makeDoc();
+  const p = pageWith(doc);
+  const retired: string[] = [];
+  const api = loadModalNet(doc, (sheet) => { retired.push(sheet); });
+  p.pageBtn.focus(); api.noteFocus(p.pageBtn);
+  setOpen(api, p.confirm, true);
+  // The action that closed the sheet moved focus itself (cmdkRun → summonGlobalSearch).
+  const search = append(p.side, mkOf(doc)('input', 'gsearch'));
+  p.confirm.classList.remove('open'); p.confirm.shown = false; p.confirm.inert = false;
+  p.side.inert = false; search.focus();
+  api.modalClosed(p.confirm); api.syncModalLayers();
+  assert.equal(doc.activeElement, search, 'control: focus stays where the action put it — this close did not leave it adrift');
+  assert.deepEqual(retired, ['confirmModal'], 'and the offers made in the sheet go with it all the same');
+});
+
 test('every backdrop is wired into the net, and the close funnel is untouched', () => {
   const net = slice('/* ── Focus discipline for every dialog ── */', '/* ── end focus discipline ── */');
   assert.match(net, /new MutationObserver\(/, 'the net observes class flips, so no caller has to change');
