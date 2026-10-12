@@ -798,13 +798,17 @@ let tmResizeDeb = 0;
  * drill-in's level zoom owns the canvas while it runs, and a solve under it
  * cancels it and the map jumps, so the solve waits for it to finish — unless
  * the tab is hidden, where no frame runs and the zoom never would.
+ *
+ * The solve goes through drawView, the door every other draw takes, because
+ * a resized map draws cells it never drew: in Reclaim colour those need
+ * scores, and only drawView asks for them (B26 review F2.1).
  */
 function tmCellsSettle() {
   clearTimeout(tmResizeDeb);
   tmResizeDeb = setTimeout(() => {
     if (state.view !== 'treemap' || !isCells() || !state.treemap.rootPath) return;
     if (state.treemap.altZoomRaf && !document.hidden) { tmCellsSettle(); return; }
-    drawCells();
+    drawView();
   }, 160);
 }
 window.addEventListener('resize', () => {

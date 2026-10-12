@@ -483,9 +483,14 @@ test('every row that can push the map or its footer is watched (B26)', () => {
  * tmSizeCanvas does. A frame is what a browser does in one: the resize event,
  * then the ResizeObserver delivery (the toolbar's width followed the window,
  * so it fires), then 16 ms pass and any timer that is due runs.
+ *
+ * Which renderer draws is decided by the page's own isCells, isSun and
+ * drawView, and each draw is recorded as what it is: `solve` (drawCells),
+ * `treemap`, `sunburst` — and `scores` when a draw asks for the Reclaim
+ * scores of what it drew.
  */
-function cellsWorld() {
-  const w = { innerHeight: 900, above: 0, now: 0, solves: 0, zoomRunning: false, hidden: false };
+function cellsWorld(opts: { colorMode?: string; above?: number } = {}) {
+  const w = { innerHeight: 900, above: opts.above ?? 0, now: 0, solves: 0, zoomRunning: false, hidden: false, events: [] as string[] };
   const timers = new Map<number, { at: number; fn: () => void }>();
   let tid = 0;
   const resizeHandlers: Array<() => void> = [];
@@ -495,17 +500,26 @@ function cellsWorld() {
     closest: () => ({}),
   };
   const tmCanvas = { style: { height: '' } };
-  const state = { view: 'treemap', treemap: { rootPath: '/c', mode: 'voronoi', get altZoomRaf() { return w.zoomRunning ? 7 : 0; } } };
+  const state = {
+    view: 'treemap',
+    treemap: {
+      rootPath: '/c' as string | null, mode: 'voronoi', colorMode: opts.colorMode ?? 'size',
+      get altZoomRaf() { return w.zoomRunning ? 7 : 0; },
+    },
+  };
   type Fns = { treemapCanvasHeight(el: unknown): number; tmRefitMap(): void };
   let fns: Fns;
-  const drawCells = () => { w.solves++; tmCanvas.style.height = fns.treemapCanvasHeight(wrap) + 'px'; };
-  fns = runPageDecls<Fns>(['treemapCanvasHeight', 'tmRefitMap'], {
+  const drawCells = () => { w.solves++; w.events.push('solve'); tmCanvas.style.height = fns.treemapCanvasHeight(wrap) + 'px'; };
+  fns = runPageDecls<Fns>(['isCells', 'isSun', 'drawView', 'treemapCanvasHeight', 'tmRefitMap'], {
     $: (id: string) => (id === 'treemapWrap' ? wrap : null),
     state, tmCanvas,
     window: { get innerHeight() { return w.innerHeight; }, addEventListener: (t: string, f: () => void) => { if (t === 'resize') resizeHandlers.push(f); } },
     document: { get hidden() { return w.hidden; } },
     getComputedStyle: (el: unknown) => (el === wrap ? { paddingTop: '10px', paddingBottom: '10px' } : { marginTop: '12px', paddingBottom: '48px' }),
-    isCells: () => true, drawCells, drawView: drawCells,
+    drawCells,
+    drawTreemap: () => { w.events.push('treemap'); },
+    drawSunburst: () => { w.events.push('sunburst'); },
+    fetchScoresForTreemap: () => { w.events.push('scores'); },
     setTimeout: (fn: () => void, ms: number) => { timers.set(++tid, { at: w.now + ms, fn }); return tid; },
     clearTimeout: (id: number) => { timers.delete(id); },
   }, '{ treemapCanvasHeight, tmRefitMap }',
@@ -523,13 +537,15 @@ function cellsWorld() {
     }
     w.now = until;
   };
-  const frame = (resized: boolean) => {
+  // `observed` false: no watched row changed size (a height-only drag leaves the toolbar's width alone).
+  const frame = (resized: boolean, observed = true) => {
     if (resized) for (const h of resizeHandlers) h();
-    fns.tmRefitMap();
+    if (observed) fns.tmRefitMap();
     pass(16);
   };
   drawCells(); // the map as first drawn
-  return { w, fns, frame, pass };
+  w.events.length = 0;
+  return { w, state, fns, frame, pass };
 }
 
 test('a window drag re-solves a Voronoi map once, after it settles — the refit waits with the resize handler (B26 review F1.1)', () => {
@@ -564,4 +580,23 @@ test('a row that changes height re-solves a Voronoi map once, and never under th
   h.frame(false);
   h.pass(400);
   assert.equal(h.w.solves - 1, 1, 'in a hidden tab the refit does not wait for a zoom that cannot end');
+});
+
+test('in Reclaim colour, the settled re-solve asks for the scores of the cells it drew — after a row closes and after a window drag (B26 review F2.1)', () => {
+  // Review: F1.1 moved the refit from drawView() to a bare drawCells(), and
+  // only drawView asks for scores. A map that grew drew cells it had never
+  // drawn, and they painted as unscored grey ("scored N of M") until
+  // something else asked. The window's resize handler had the same gap.
+  const m = cellsWorld({ colorMode: 'reclaim', above: 42 }); // drawn with the query row above it
+  m.w.above = 0; // the row closes: the map is taller, and draws cells it never drew
+  m.frame(false);
+  assert.deepEqual(m.w.events, [], 'nothing yet: the re-solve waits for things to settle');
+  m.pass(400);
+  assert.deepEqual(m.w.events, ['solve', 'scores'], 'the re-solve asks for the scores of what it drew, once it has drawn it');
+  m.w.events.length = 0;
+  // The window dragged taller by its bottom edge: the toolbar keeps its width,
+  // so no watched row changes size and only the window's resize event fires.
+  for (let i = 0; i < 10; i++) { m.w.innerHeight += 3; m.frame(true, false); }
+  m.pass(400);
+  assert.deepEqual(m.w.events, ['solve', 'scores'], 'a window drag settles through the same draw, and asks too');
 });
