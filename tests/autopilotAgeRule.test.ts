@@ -1,7 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { INDEX } from './fixtures/liftFrontend';
+// The reason test below loads the Autopilot service; keep it off the real app data.
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-autopilot-age-test-');
+process.env.TREEMAP_NO_GDU = '1';
+
+import { INDEX, lift } from './fixtures/liftFrontend';
+import { selectCandidates } from '../src/services/autopilot';
 
 /**
  * An Autopilot rule's age opens as exactly what the policy stored, and Save — nothing touched —
@@ -13,9 +19,15 @@ import { INDEX } from './fixtures/liftFrontend';
  * back, so opening the policy and pressing Save rewrote the rule an unattended deleter runs —
  * 36 hours became 48, 12 hours a whole day. The size boxes were fixed the same way by QA-4u
  * (dab3d5b, 8f54072): the box shows the exact figure, and a figure nobody typed keeps its bytes.
+ *
+ * The policy card and the reason each picked item carries state that same age, exactly, too
+ * (review F1.1, F1.2, F1.5): the matcher compares milliseconds, so "older than 2d" on a 36-hour
+ * rule describes a rule nobody wrote.
  */
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const MINUTE = 60_000;
 
 /** The `{ … }` block that starts at the first `{` after `anchor`, anchor included. */
 function braced(anchor: string): string {
@@ -123,4 +135,79 @@ test('Autopilot: a whole-day age still opens as its whole number, and a figure a
   ed.open(policy(DAY / 2));
   ed.$('apRuleAgeOn').checked = false;
   assert.equal(ed.read().match.maxAgeMs, undefined, 'an age rule ticked off sends no age');
+});
+
+/**
+ * The milliseconds a stated age adds up to, or why it is not one. Each part is a whole number over 0
+ * of a smaller unit than the part before it, so nothing can be rounded away and nothing said twice;
+ * `units` maps each unit's spelling (as the card or the sentence writes it) to its milliseconds.
+ */
+function addUp(text: string, units: Record<string, number>, spaced: boolean): number | string {
+  const tokens = text.split(' ');
+  const parts = spaced ? tokens.flatMap((t, i) => (i % 2 ? [] : [`${t} ${tokens[i + 1]}`])) : tokens;
+  let total = 0;
+  let previous = Infinity;
+  for (const part of parts) {
+    const m = /^([1-9]\d*) ?([a-z]+)$/.exec(part);
+    if (!m) return `"${part}" in "${text}" is not a whole number over 0 and a unit`;
+    const size = units[m[2]];
+    if (size === undefined) return `"${m[2]}" in "${text}" is not a unit`;
+    if (size >= previous) return `"${text}" does not go from larger units to smaller`;
+    previous = size;
+    total += Number(m[1]) * size;
+  }
+  return total;
+}
+
+const CARD_UNITS = { d: DAY, h: HOUR, min: MINUTE, s: 1_000, ms: 1 };
+/** The sentence's units, singular for one and plural otherwise — "1 day", never "1 days". */
+function sentenceUnits(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [word, ms] of Object.entries({ day: DAY, hour: HOUR, minute: MINUTE, second: 1_000, millisecond: 1 })) {
+    out[word] = ms; out[`${word}s`] = ms;
+  }
+  return out;
+}
+
+test('Autopilot: the policy card states the age rule exactly — a 36-hour rule reads "1d 12h", never "2d" (review F1.1, F1.5)', () => {
+  const describeMatch = lift<(m: unknown) => string>(['describeMatch', 'ruleAgeText'], 'describeMatch');
+  const card = (maxAgeMs: number) => describeMatch({ kind: 'custom', maxAgeMs });
+
+  assert.equal(card(1.5 * DAY), 'older than 1d 12h', 'a 36-hour rule — the editor opens it as 1.5 — is not "older than 2d"');
+  assert.equal(card(DAY / 2), 'older than 12h', 'a 12-hour rule is not "older than 1d"');
+  assert.equal(card(HOUR), 'older than 1h', 'an hour-old rule is not "older than 0d"');
+  assert.equal(card(90 * MINUTE), 'older than 1h 30min', 'minutes are "min", never "m", which a query reads as months');
+  assert.equal(card(180 * DAY), 'older than 180d', 'a whole-day rule reads as it always did');
+
+  // Every age a rule can hold: the card adds up to it exactly, and a whole-day age is its days alone.
+  const wrong: string[] = [];
+  for (const ms of storedAges()) {
+    const text = card(ms);
+    const stated = text.startsWith('older than ') ? addUp(text.slice('older than '.length), CARD_UNITS, false) : `"${text}"`;
+    if (stated !== ms || (ms % DAY === 0 && text !== `older than ${ms / DAY}d`)) wrong.push(`${ms} ms: card "${text}" states ${stated}`);
+  }
+  assert.deepEqual(wrong.slice(0, 5), [], `${wrong.length} stored ages are misstated on the card`);
+});
+
+test('Autopilot: the reason each picked item carries states the age rule exactly — 36 hours is "1 day 12 hours", never "2 days" (review F1.2)', () => {
+  const reason = (maxAgeMs: number) =>
+    selectCandidates([], [{ path: '/home/u/a.bin', name: 'a.bin', size: 1 }], { kind: 'custom', maxAgeMs })[0].reason;
+  const rule = 'matched your rule: is older than ';
+
+  assert.equal(reason(1.5 * DAY), `${rule}1 day 12 hours`, 'a 36-hour rule is not "older than 2 days" in the preview, the run record or the Time Capsule');
+  assert.equal(reason(DAY / 2), `${rule}12 hours`, 'a 12-hour rule is not "older than 1 days"');
+  assert.equal(reason(5 * HOUR), `${rule}5 hours`, 'a 5-hour rule is not "older than 0 days"');
+  assert.equal(reason(DAY), `${rule}1 day`, 'one day is "1 day", not "1 days"');
+  assert.equal(reason(90 * DAY), `${rule}90 days`, 'a whole-day rule reads as it always did');
+
+  const words = sentenceUnits();
+  const wrong: string[] = [];
+  for (const ms of storedAges()) {
+    const text = reason(ms);
+    const age = text.startsWith(rule) ? text.slice(rule.length) : '';
+    const stated = age ? addUp(age, words, true) : `"${text}"`;
+    const plurals = age.split(' ').every((w, i, all) => i % 2 === 0 || (all[i - 1] === '1') === !w.endsWith('s'));
+    if (stated !== ms || !plurals) wrong.push(`${ms} ms: "${text}" states ${stated}${plurals ? '' : ', mis-pluralised'}`);
+  }
+  assert.deepEqual(wrong.slice(0, 5), [], `${wrong.length} stored ages are misstated in the reason`);
 });

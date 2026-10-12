@@ -111,7 +111,7 @@ function describeMatch(match) {
   if (match.kind === 'query') return `files matching ${match.q}`;
   const parts = [];
   if (match.minBytes) parts.push(`over ${formatBytes(match.minBytes)}`);
-  if (match.maxAgeMs) parts.push(`older than ${Math.round(match.maxAgeMs / 86400000)}d`);
+  if (match.maxAgeMs) parts.push(`older than ${ruleAgeText(match.maxAgeMs)}`);
   if (match.exts?.length) parts.push(match.exts.map(e => '.' + e).join('/'));
   return parts.join(', ');
 }
@@ -160,6 +160,24 @@ function unapprovableRunNote(r, runs, policies, approvable) {
   const days = policy.cooldownDays;
   return `${why}. It is not previewed again: its next scheduled run looks afresh — it runs every ${days} day${days === 1 ? '' : 's'}` +
     `${policy.enabled ? '' : ' once it is switched on'} — and if that run asks first too, approve it there.`;
+}
+
+/**
+ * A rule's age as the card states it, exactly: whole days as "180d", and anything else in the whole
+ * days, hours, minutes, seconds and milliseconds it adds up to — 36 hours is "1d 12h", never rounded
+ * to "2d". The matcher compares milliseconds and this line is where a person checks what an
+ * unattended deleter runs, so it may not describe a different rule. Minutes are "min": a query reads
+ * "m" as months. The server's reason sentence (describeAge in autopilot.ts) states the same parts.
+ */
+function ruleAgeText(ms) {
+  let rest = ms;
+  const parts = [];
+  for (const [size, unit] of [[86400000, 'd'], [3600000, 'h'], [60000, 'min'], [1000, 's'], [1, 'ms']]) {
+    const n = size === 1 ? rest : Math.floor(rest / size);
+    if (n > 0) parts.push(`${n}${unit}`);
+    rest -= n * size;
+  }
+  return parts.join(' ');
 }
 
 function renderAutopilotRuns(runs) {

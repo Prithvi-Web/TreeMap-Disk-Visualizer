@@ -481,9 +481,31 @@ export function selectCandidates(
 function describeCustom(match: Extract<AutopilotMatch, { kind: 'custom' }>): string {
   const parts: string[] = [];
   if (match.minBytes) parts.push(`is at least ${formatBytes(match.minBytes)}`);
-  if (match.maxAgeMs) parts.push(`is older than ${Math.round(match.maxAgeMs / 86_400_000)} days`);
+  if (match.maxAgeMs) parts.push(`is older than ${describeAge(match.maxAgeMs)}`);
   if (match.exts?.length) parts.push(`ends in ${match.exts.map((e) => `.${e}`).join(', ')}`);
   return `matched your rule: ${parts.join(' and ')}`;
+}
+
+const AGE_UNITS: ReadonlyArray<readonly [ms: number, unit: string]> = [
+  [86_400_000, 'day'], [3_600_000, 'hour'], [60_000, 'minute'], [1_000, 'second'], [1, 'millisecond'],
+];
+
+/**
+ * A rule's age in words, exactly: whole days as "90 days", and anything else in the whole days,
+ * hours, minutes, seconds and milliseconds it adds up to — 36 hours is "1 day 12 hours", never
+ * rounded to "2 days". The matcher compares milliseconds, and this sentence is every picked item's
+ * recorded reason (the preview, the run record, the Time Capsule entry), so it may not state a rule
+ * that is not the one that ran. The policy card (ruleAgeText in the page) states the same parts.
+ */
+function describeAge(ms: number): string {
+  let rest = ms;
+  const parts: string[] = [];
+  for (const [size, unit] of AGE_UNITS) {
+    const n = size === 1 ? rest : Math.floor(rest / size);
+    if (n > 0) parts.push(`${n} ${unit}${n === 1 ? '' : 's'}`);
+    rest -= n * size;
+  }
+  return parts.join(' ');
 }
 
 /**
