@@ -532,6 +532,30 @@ test('the cart pill leaves the bottom of the page clear, so the treemap’s hint
   assert.ok(padB({ active: [] }) < withCart, 'and with no cart the page keeps its own, smaller bottom margin');
 });
 
+test('the Grid fills <main> exactly with the cart up as well as without — the room the pill takes is not an outer scroll (B36 review F1.2)', () => {
+  // Review: the Grid owns the window (min-height 100vh less main's padding,
+  // so <main> never scrolls around it). B36 raised main's bottom padding
+  // from 48 to 76 px while the cart holds anything, and the Grid did not
+  // follow: <main> grew a 28 px scroll and the Grid's toolbar slid away.
+  let checked = 0;
+  for (const H of [MIN_H, 800, 900, 1200]) {
+    for (const cart of [false, true]) {
+      const st: PageState = { active: [...(cart ? ['#cartDock.show'] : []), '#view-grid.active'] };
+      const main = cascade('main', st);
+      const [padT, , padB0] = sides4(main.get('padding')!);
+      const padB = main.has('padding-bottom') ? px(main.get('padding-bottom')) : padB0;
+      const grid = cascade('#view-grid.active', st);
+      const minH = evalLen(grid.get('min-height')!, scope(st, grid), 1440, H);
+      const used = padT + minH + padB;
+      assert.equal(used, H,
+        `${H}px tall${cart ? ', cart up' : ''}: <main> holds ${padT} + ${minH} + ${padB} = ${used}px — ` +
+        (used > H ? `the page scrolls ${used - H}px around the Grid` : `${H - used}px of window sits empty under it`));
+      checked++;
+    }
+  }
+  assert.equal(checked, 8, 'every height was checked with and without the cart');
+});
+
 test('while a dialog is open, toasts sit above the sheet, at the smallest window too (D08)', () => {
   const up = cascade('#toasts', { active: ['.modal-backdrop.open'] });
   assert.equal(up.get('bottom'), 'auto', 'no longer anchored to the bottom, where a tall sheet keeps its footer buttons');
