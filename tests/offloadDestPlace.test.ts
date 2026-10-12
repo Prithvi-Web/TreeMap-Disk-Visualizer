@@ -130,3 +130,29 @@ test('an offload never copies through a link: a link in the selection, or one se
   assert.deepEqual(fs.readdirSync(D), [], 'nothing was written at the destination');
   await assert.rejects(prepareOffload(scan, [G], D), (err: unknown) => err instanceof AppError && err.message.includes(path.join(G, 'out')), 'the sentence names the link');
 });
+
+test('two folders the volume tells apart are two folders: an offload from one into the other is planned, never refused as one inside the other — their places are compared exactly, never folded (the final review, F2.4, F2.10)', async (t) => {
+  // Photos and Ｐhotos (a fullwidth Ｐ, which no volume folds to P, though a fold of names does) are two
+  // folders everywhere; on a volume that keeps case, so are Photos and photos.
+  const photos = path.join(R, 'Photos');
+  const others: Record<string, string> = { 'Ｐhotos (a fullwidth Ｐ)': path.join(R, 'Ｐhotos') };
+  if (!CASE_FOLDS) others['photos (another case, on a volume that keeps it)'] = path.join(R, 'photos');
+  for (const folder of [photos, ...Object.values(others)]) {
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'x.txt'), folder);
+  }
+  const distinct = Object.fromEntries(Object.entries(others).filter(([, folder]) => fs.statSync(folder).ino !== fs.statSync(photos).ino));
+  if (Object.keys(distinct).length === 0) {
+    t.skip('this volume reads every such name as Photos');
+    return;
+  }
+  const rescan = await startScan(R);
+  await waitFor(() => rescan.status !== 'running', `the rescan of ${R}`);
+  scan = rescan;
+  const answers: Record<string, string> = {};
+  for (const [what, folder] of Object.entries(distinct)) {
+    answers[`Photos into ${what}`] = await verdict([photos], folder);
+    answers[`${what}/x.txt into Photos`] = await verdict([path.join(folder, 'x.txt')], photos);
+  }
+  assert.deepEqual(answers, Object.fromEntries(Object.keys(answers).map((how) => [how, 'planned'])));
+});
