@@ -459,6 +459,20 @@ test('a panel a sheet opens over itself — the reclaim-score breakdown from Cle
   const close = append(pop, mkOf(doc)('button', 'rcPopClose', ['icon-btn']));
   pop.hidden = false;
   assert.equal(pop.inert, false, 'open over Clean Up, the breakdown is not inert — clicks land on it, Tab and a screen reader reach it');
+  // The exemption is the breakdown's alone (review F2.2). The right-click
+  // menu, the plain-words popover and the preview pane are opened from the
+  // page, which nobody can reach while a sheet is up: left live, they would be
+  // reachable under its scrim.
+  for (const id of ['ctxMenu', 'nlPop', 'previewPane']) {
+    const panel = doc.getElementById(id)!;
+    assert.ok(panel && panel.parent === doc.body, `#${id} is a body-level panel`);
+    assert.equal(panel.inert, true, `#${id} stays inert under the sheet: what opens it lives in the page`);
+  }
+  const live = doc.body.children
+    .filter((c) => !c.cls.has('modal-backdrop') && !c.cls.has('blob') && !c.inert)
+    .map((c) => '#' + (c.id || c.tag)).sort();
+  assert.deepEqual(live, ['#rcPopover', '#toasts', '#tooltip'],
+    'beside the toasts and the tooltip, the breakdown is the only body-level panel the sheet leaves live');
   close.focus();
   for (const fn of focusin) fn({ target: close });
   assert.equal(doc.activeElement, close, 'its close button takes focus, and the net does not pull it back into the sheet');
