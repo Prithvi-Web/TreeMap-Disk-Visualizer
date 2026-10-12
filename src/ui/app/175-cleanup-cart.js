@@ -75,13 +75,14 @@ function cartAddMany(paths) {
 function cartPreviewInvalidated() {
   if (!tmPreview.on) return;
   if (!state.cart.size) { exitCartPreview(); return; }
-  const saved = tmPreview.saved;
-  state.treemap.nodes = saved;      // rebuild from the real layout, never from a preview
-  tmPreview.on = false;
-  tmPreview.saved = null;
+  // Rebuild from the real layout, never from a preview: put it back as an
+  // exit does — chrome off, hover and selection cleared — then enter again.
+  exitCartPreview(true);
   enterCartPreview();
-  // enterCartPreview refuses when nothing staged is on this map; if it did,
-  // the real layout is already back in place and the chrome is already off.
+  // enterCartPreview refuses (and says why) when nothing staged is on this map
+  // any more — the last item on it was just taken out. The preview is then
+  // over, and the real map put back above is what the canvas must show.
+  if (!tmPreview.on && state.view === 'treemap' && isRectMap()) drawTreemap();
 }
 
 /**

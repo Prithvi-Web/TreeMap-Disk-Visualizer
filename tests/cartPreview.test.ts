@@ -938,3 +938,105 @@ test('a known staged file under a staged folder this scan does not hold is drawn
     'a.iso is hatched at its size, and the folder above is counted as not shown, size unknown',
   );
 });
+
+/* ══════════════ B06 review, round 2: the preview ends when nothing staged is left on the map ══════════════ */
+
+/** One function declaration, or one `const NAME = …;` line, from the built page. */
+function pageSource(name: string): string {
+  const fn = INDEX.indexOf(`function ${name}(`);
+  if (fn === -1) {
+    const at = INDEX.indexOf(`const ${name} = `);
+    assert.notEqual(at, -1, `${name} was located in public/index.html`);
+    return INDEX.slice(at, INDEX.indexOf(';\n', at) + 1);
+  }
+  const open = INDEX.indexOf('{', INDEX.indexOf(')', fn));
+  for (let i = open, depth = 0; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(fn, i + 1);
+  }
+  return assert.fail(`${name} never closes`);
+}
+
+/**
+ * The page's own preview, cart and chrome code over a fake DOM: the map shows
+ * /r with /r/a (60 B) and /r/b (40 B); /other/x (5,000 B) is outside it.
+ */
+function previewPage(cart: string[]) {
+  const real = [
+    { name: 'a', path: '/r/a', size: 60, type: 'dir', depth: 1, expanded: false },
+    { name: 'b', path: '/r/b', size: 40, type: 'dir', depth: 1, expanded: false },
+  ];
+  const pathIndex = new Map<string, { path: string; size: number }>(real.map((n) => [n.path, n]));
+  pathIndex.set('/other/x', { path: '/other/x', size: 5_000 });
+  const state = {
+    cart: new Set(cart), view: 'treemap', pathIndex, nodeCache: new Map(),
+    treemap: { nodes: real as unknown[], rootPath: '/r', rootSize: 100, mode: 'squarify', history: { active: false }, hover: null as unknown, kbSel: null as unknown },
+  };
+  const wrapProps: Record<string, string> = {};
+  const wrap = {
+    previewing: false,
+    classList: { toggle(_c: string, on: boolean) { wrap.previewing = on; } },
+    style: {
+      setProperty(k: string, v: string) { wrapProps[k] = v; }, removeProperty(k: string) { delete wrapProps[k]; },
+      getPropertyValue: (k: string) => wrapProps[k] ?? '',
+    },
+  };
+  const button = { pressed: '', setAttribute(_k: string, v: string) { button.pressed = v; }, classList: { toggle() {} } };
+  const banner = { hidden: true, offsetHeight: 40 };
+  const els: Record<string, unknown> = { treemapWrap: wrap, cartPreview: button, tmPreviewBanner: banner, tmPreviewText: { innerHTML: '' } };
+  const drawn: unknown[][] = [];
+  const toasts: string[] = [];
+  const deps: Record<string, unknown> = {
+    state, $: (id: string) => els[id] ?? null,
+    toast: (m: string) => { toasts.push(m); }, hideTooltip() {}, drawTreemap: () => { drawn.push(state.treemap.nodes); },
+    isSun: () => false, isCells: () => false, isRectMap: () => true,
+    escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n} B`, formatCount: String,
+    saveCart() {}, renderCart() {}, refreshCartButtons() {}, ResizeObserver: undefined,
+  };
+  const names = ['tmPreview', 'TM_PREVIEW_BANNER_INSET', 'tmWorstRatio', 'tmSquarify', 'tmParentPath', 'tmIsInside', 'tmDrawnTree',
+    'tmCartRoots', 'tmBuildPreview', 'enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'tmPreviewPadSync',
+    'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle'];
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `${names.map(pageSource).join('\n')}\nreturn { tmPreview, enterCartPreview, exitCartPreview, cartToggle };`)(
+    ...keys.map((k) => deps[k]),
+  ) as { tmPreview: { on: boolean }; enterCartPreview(): void; exitCartPreview(): void; cartToggle(p: string): void };
+  /** What a person sees: is a preview up, by every sign of one. */
+  const shows = () => ({
+    on: page.tmPreview.on, bannerHidden: banner.hidden, previewing: wrap.previewing, pressed: button.pressed,
+    pad: wrapProps['--tm-preview-pad'] ?? null,
+  });
+  return { page, state, real, drawn, toasts, shows };
+}
+
+const NO_PREVIEW = { on: false, bannerHidden: true, previewing: false, pressed: 'false', pad: null };
+
+test('un-staging the last staged item on the map ends the preview — banner, outline and toggle off, the real map drawn (B06 review)', () => {
+  // Review: /r/b on the map and /other/x outside it, preview on; removing /r/b
+  // left the banner up ("the hatched areas are the 40 B…"), its Exit button
+  // dead, and the hatched map on the canvas.
+  const p = previewPage(['/r/b', '/other/x']);
+  p.page.enterCartPreview();
+  assert.deepEqual(p.shows(), { on: true, bannerHidden: false, previewing: true, pressed: 'true', pad: '60px' }, 'the preview is up');
+  p.state.treemap.hover = { path: '/r — freed' }; // the pointer rests on the hatched block
+
+  p.page.cartToggle('/r/b');
+  assert.deepEqual(p.shows(), NO_PREVIEW, 'nothing staged is on this map any more: no banner, no outline, the toggle off');
+  assert.equal(p.state.treemap.nodes, p.real, 'the real layout is back — the very array, not a rebuild');
+  assert.equal(p.drawn.at(-1), p.real, 'and it is what the canvas draws last, not the hatched preview');
+  assert.equal(p.state.treemap.hover, null, 'no hover left on a rectangle that is gone');
+});
+
+test('un-staging one of two staged items on the map rebuilds the preview from the real layout (B06 review)', () => {
+  const p = previewPage(['/r/a', '/r/b']);
+  p.page.enterCartPreview();
+  p.page.cartToggle('/r/a');
+  assert.deepEqual(p.shows(), { on: true, bannerHidden: false, previewing: true, pressed: 'true', pad: '60px' }, 'still previewing');
+  const last = p.drawn.at(-1) as Array<{ path: string; size: number; freed?: boolean }>;
+  assert.notEqual(last, p.real, 'a preview is drawn');
+  assert.deepEqual(last.map((n) => [n.path, n.size, Boolean(n.freed)]), [['/r/a', 60, false], ['/r — freed', 40, true]],
+    '/r/a is back on the map at its size, and only /r/b is hatched');
+  p.page.exitCartPreview();
+  assert.deepEqual(p.shows(), NO_PREVIEW);
+  assert.equal(p.state.treemap.nodes, p.real, 'exiting puts the real layout back');
+});
