@@ -72,8 +72,12 @@ interface LinkTree {
   base: string;
 }
 
+/**
+ * The tree, under a folder spelled by the native realpath, as a scan resolves a link root: the JS one
+ * keeps the temp folder as typed, and the Windows runner's is the 8.3 `RUNNER~1` (CI run 38318285188).
+ */
 function linkTree(): LinkTree {
-  const base = fs.realpathSync(fileTempDir('treemap-scanRootLink-'));
+  const base = fs.realpathSync.native(fileTempDir('treemap-scanRootLink-'));
   const real = path.join(base, 'real');
   fs.mkdirSync(path.join(real, 'sub'), { recursive: true });
   fs.writeFileSync(path.join(real, 'a.txt'), 'a'.repeat(1000));

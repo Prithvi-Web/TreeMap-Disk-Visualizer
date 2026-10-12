@@ -60,9 +60,13 @@ interface LinkTree {
   link: string;
 }
 
-/** `real/{a.txt, sub/b.txt}`, and `link` → `real`. Only the parent is a real path. */
+/**
+ * `real/{a.txt, sub/b.txt}`, and `link` → `real`. Only the parent is a real path — by the native
+ * realpath, as a scan resolves a link root: the JS one keeps the temp folder as typed, and the Windows
+ * runner's is the 8.3 `RUNNER~1` (CI run 38318285188).
+ */
 function linkTree(): LinkTree {
-  const base = fs.realpathSync(fileTempDir('treemap-indexBuildRoot-'));
+  const base = fs.realpathSync.native(fileTempDir('treemap-indexBuildRoot-'));
   const real = path.join(base, 'real');
   fs.mkdirSync(path.join(real, 'sub'), { recursive: true });
   fs.writeFileSync(path.join(real, 'a.txt'), 'a'.repeat(1000));
