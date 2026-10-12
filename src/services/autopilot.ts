@@ -552,7 +552,8 @@ async function resolveCandidates(
   }];
   // Nor the agent policy or its audit log, nor a folder holding them (the final review, F1.11): an
   // absent policy means no limits, and the log is the record of what was done. Each named, as only
-  // these few can match. Only a candidate in app-data, or above it, pays the full check.
+  // these few can match. Only a candidate in app-data, above it, or on TreeMap's way to it (a link it
+  // reaches app-data through, F2.1) pays the full check.
   const mayHoldRecord = safetyRecordCandidateTest(policy.path);
   const records = matched.filter((c) => mayHoldRecord(c.path) && recordCheck(c.path));
   for (const c of records) {
