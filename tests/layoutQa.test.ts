@@ -178,10 +178,39 @@ function pageBetween(from: string, to: string): string {
 }
 
 type CartEl = {
-  id: string; cls: Set<string>; parent: CartEl | null; connected: boolean; disabled?: boolean;
+  id: string; cls: Set<string>; parent: CartEl | null; connected: boolean; disabled?: boolean; innerHTML?: string;
   classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean; toggle(c: string, on?: boolean): void };
   contains(n: unknown): boolean; focus(opts?: unknown): void; getClientRects(): unknown[]; readonly isConnected: boolean;
+  listeners: Record<string, Array<(e: unknown) => void>>; addEventListener(type: string, fn: (e: unknown) => void): void;
 };
+
+/** Deliver an event to what the page registered on `el` — nothing reaches a listener the page did not add. */
+function fire(el: CartEl, type: string, e: unknown = {}) {
+  for (const fn of el.listeners[type] || []) fn(e);
+}
+
+/**
+ * The cart's own listener wiring, as the page runs it at load: every
+ * `$('…').addEventListener(…)` statement between cartFocusReturn and the
+ * document-wide click delegate. Lifted as a block, not line by line, so a
+ * registration that goes missing is a listener that never fires here.
+ */
+function cartWiring(): string {
+  const fr = INDEX.indexOf('function cartFocusReturn(');
+  assert.notEqual(fr, -1, 'cartFocusReturn is in the built page');
+  let depth = 0, end = -1;
+  for (let i = INDEX.indexOf('{', fr); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const stop = INDEX.indexOf("document.addEventListener('click', (e) => {", end);
+  assert.ok(end > fr && stop > end, 'the wiring sits between cartFocusReturn and the click delegate');
+  const block = INDEX.slice(end, stop);
+  for (const line of block.split('\n').map((l) => l.trim()).filter(Boolean)) {
+    assert.match(line, /^\$\('\w+'\)\.addEventListener\(/, `only listener registrations are lifted: ${line}`);
+  }
+  return block;
+}
 
 /** Lets the page's awaited repaint run out (microtasks only — nothing is timed). */
 async function settled() { for (let i = 0; i < 10; i++) await Promise.resolve(); }
@@ -208,6 +237,8 @@ function cartWorld() {
         return el.connected ? [{}] : [];
       },
       get isConnected() { return el.connected; },
+      listeners: {},
+      addEventListener: (type, fn) => { (el.listeners[type] ||= []).push(fn); },
     };
     return el;
   };
@@ -217,6 +248,8 @@ function cartWorld() {
   els.cartPanel = make('cartPanel', dock);
   els.cartClear = make('cartClear', els.cartPanel);
   els.cartCollapse = make('cartCollapse', els.cartPanel);
+  els.cartTrash = make('cartTrash', els.cartPanel);
+  els.cartList = make('cartList', els.cartPanel);
   els.cartTab = make('cartTab', dock);
   const view = make('view-treemap', body);
   els.viewFirst = make('tmUpBtn', view);
@@ -227,20 +260,20 @@ function cartWorld() {
     get activeElement() { return focus.active ?? body; },
     querySelectorAll: (sel: string) => (/\.view\.active/.test(sel) ? [els.viewFirst, els.opener] : []),
   };
+  // The page's own renderCart — its ORDER is the fix: the dock loses .show
+  // before the drawer closes, so cartFocusReturn sees an emptied cart (B13
+  // review F1.4). Only its counters, the goal bar and the FX are stubbed.
   const fns = runPageDecls<{
-    cartClear(): void; cartDockToggle(open?: boolean, o?: { focus?: boolean }): void; cartNoteFocusIn(e: { relatedTarget: unknown }): void;
-  }>(['cartFocus', 'cartNoteFocusIn', 'cartFocusReturn', 'cartDockToggle', 'cartClear'], {
+    cartClear(): void; cartDockToggle(open?: boolean, o?: { focus?: boolean }): void;
+  }>(['cartFocus', 'cartNoteFocusIn', 'cartFocusReturn', 'cartDockToggle', 'cartClear', 'renderCart'], {
     $: (id: string) => els[id], document, state,
     requestAnimationFrame: (f: () => void) => { f(); return 1; },
     CART_PAGE: 200, cartShown: 200,
-    saveCart() {}, refreshCartButtons() {}, cartPreviewInvalidated() {},
-    // renderCart's part in this: an empty cart hides the dock and closes the drawer.
-    renderCart: async () => {
-      await null;
-      dock.classList.toggle('show', state.cart.size > 0);
-      if (state.cart.size === 0) fns.cartDockToggle(false);
-    },
-  }, '{ cartClear, cartDockToggle, cartNoteFocusIn }');
+    saveCart() {}, refreshCartButtons() {}, cartPreviewInvalidated() {}, cartTrashAll() {},
+    ensureNodes: async () => {}, fxCartPulseSync() {}, countUp() {}, FxNum: { rollText() {}, rollHtml() {} },
+    renderCartGoal() {}, cartTotalBytes: () => 0, cartNode: () => null,
+    escapeHtml: String, icon: () => '', formatBytes: String, formatCount: String,
+  }, '{ cartClear, cartDockToggle }', cartWiring());
   dock.classList.add('show');
   fns.cartDockToggle(true);
   return { els, focus, state, fns, body };
@@ -249,12 +282,14 @@ function cartWorld() {
 test('Clear in the cart hands focus back to where it came from, never to <body> (B13)', async () => {
   // QA: Clear emptied the cart, the panel and the pill disappeared, and focus
   // landed on <body>. The tab the drawer normally returns to is hidden with it.
+  // Everything goes through what the page registered (B13 review F1.4, F1.5):
+  // focusin on the dock, the click on Clear, and the real renderCart behind it.
   const w = cartWorld();
-  w.fns.cartNoteFocusIn({ relatedTarget: w.els.opener }); // tabbed into the dock from the view
-  w.fns.cartNoteFocusIn({ relatedTarget: w.els.cartTab }); // then moved around inside it
+  fire(w.els.cartDock, 'focusin', { relatedTarget: w.els.opener }); // tabbed into the dock from the view
+  fire(w.els.cartDock, 'focusin', { relatedTarget: w.els.cartTab }); // then moved around inside it
   w.els.cartClear.focus();
   assert.equal(w.focus.active, w.els.cartClear, 'focus is on Clear');
-  w.fns.cartClear(); await settled();
+  fire(w.els.cartClear, 'click'); await settled();
   assert.equal(w.state.cart.size, 0, 'the cart is empty');
   assert.ok(!w.els.cartDock.cls.has('show'), 'and the dock is hidden, tab and all');
   assert.equal(w.focus.active, w.els.opener, 'focus is back on the control it came from');
@@ -262,18 +297,18 @@ test('Clear in the cart hands focus back to where it came from, never to <body> 
 
 test('with the control it came from gone, an emptied cart hands focus to the view on screen (B13)', async () => {
   const w = cartWorld();
-  w.fns.cartNoteFocusIn({ relatedTarget: w.els.opener });
+  fire(w.els.cartDock, 'focusin', { relatedTarget: w.els.opener });
   w.els.cartClear.focus();
   w.els.opener.connected = false; // the row it came from was re-rendered away
-  w.fns.cartClear(); await settled();
+  fire(w.els.cartClear, 'click'); await settled();
   assert.equal(w.focus.active, w.els.viewFirst, 'the first control of the view on screen');
 });
 
 test('collapsing a cart that still holds items returns focus to its tab, and a Clear made from outside moves no focus (B13)', async () => {
   const w = cartWorld();
-  w.fns.cartNoteFocusIn({ relatedTarget: w.els.opener });
+  fire(w.els.cartDock, 'focusin', { relatedTarget: w.els.opener });
   w.els.cartCollapse.focus();
-  w.fns.cartDockToggle(false);
+  fire(w.els.cartCollapse, 'click');
   assert.equal(w.focus.active, w.els.cartTab, 'the tab is the way back in while the cart has items');
   const v = cartWorld();
   v.els.opener.focus();
