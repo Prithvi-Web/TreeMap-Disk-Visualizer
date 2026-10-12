@@ -233,11 +233,19 @@ test('an allowed root is compared exactly, never folded: a folder the volume tel
   }
 });
 
-test('every gate reads an allowed root alike: the route\'s gate and the scan\'s own agree on an entry written with ~ or on the Data volume\'s long spelling, and a refused scan blames no link that is not there (the final review, F2.2, F2.5)', { skip: WINDOWS && 'the home folder is read from HOME here' }, async () => {
+test('every gate reads an allowed root alike: the route\'s gate and the scan\'s own agree on an entry written with ~ or on the Data volume\'s long spelling, and on a root typed on that long spelling, and a refused scan blames no link that is not there (the final review, F2.2, F2.5, F3.5)', { skip: WINDOWS && 'the home folder is read from HOME here' }, async () => {
   const desktop = path.join(HOME, 'Desktop');
   const documents = path.join(HOME, 'Documents');
-  const entries: Record<string, string> = { '~/Desktop': '~/Desktop' };
+  const entries: Record<string, string> = { '~/Desktop': '~/Desktop', 'Desktop as written': desktop };
   if (DARWIN) entries['Desktop on the Data volume'] = `/System/Volumes/Data${desktop}`;
+  // A root typed on the Data volume's long spelling is judged where it lives too: realpath keeps that
+  // spelling, and the scan's own gate reads it on the short one (`canonicalDirOf`), as every entry is
+  // read (the final review, F3.5).
+  const roots: Record<string, string> = { Desktop: desktop, Documents: documents };
+  if (DARWIN) {
+    roots['Desktop typed on the Data volume'] = `/System/Volumes/Data${desktop}`;
+    roots['Documents typed on the Data volume'] = `/System/Volumes/Data${documents}`;
+  }
   /** The route's gate (assertScanAllowed, also the index build's) for `root`. */
   const gate = (entry: string, root: string): string => {
     try {
@@ -263,10 +271,10 @@ test('every gate reads an allowed root alike: the route\'s gate and the scan\'s 
   try {
     for (const [what, entry] of Object.entries(entries)) {
       withPolicy({ allowedRoots: [entry] });
-      answers[`${what}: the route's gate, Desktop`] = gate(entry, desktop);
-      answers[`${what}: a scan of Desktop`] = await scanOf(desktop);
-      answers[`${what}: the route's gate, Documents`] = gate(entry, documents);
-      answers[`${what}: a scan of Documents`] = await scanOf(documents);
+      for (const [name, root] of Object.entries(roots)) {
+        answers[`${what}: the route's gate, ${name}`] = gate(entry, root);
+        answers[`${what}: a scan of ${name}`] = await scanOf(root);
+      }
     }
   } finally {
     process.env.HOME = prior;
@@ -274,10 +282,11 @@ test('every gate reads an allowed root alike: the route\'s gate and the scan\'s 
   }
   const expected: Record<string, string> = {};
   for (const what of Object.keys(entries)) {
-    expected[`${what}: the route's gate, Desktop`] = 'allowed';
-    expected[`${what}: a scan of Desktop`] = 'allowed';
-    expected[`${what}: the route's gate, Documents`] = 'POLICY_ROOT_NOT_ALLOWED';
-    expected[`${what}: a scan of Documents`] = 'POLICY_ROOT_NOT_ALLOWED';
+    for (const name of Object.keys(roots)) {
+      const answer = name.startsWith('Desktop') ? 'allowed' : 'POLICY_ROOT_NOT_ALLOWED';
+      expected[`${what}: the route's gate, ${name}`] = answer;
+      expected[`${what}: a scan of ${name}`] = answer;
+    }
   }
   assert.deepEqual(answers, expected);
 });
