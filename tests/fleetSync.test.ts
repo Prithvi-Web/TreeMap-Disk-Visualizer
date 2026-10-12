@@ -301,13 +301,15 @@ test('remote scanning is refused until it is separately turned on', async () => 
   const offer = beginPairing();
   const secret = (await call(cfg, 'POST', '/fleet/pair', { body: { code: offer.code, instanceId: 'p' } })).body.secret;
 
+  // A folder of this machine on every OS: on Windows a peer's root must be on one of its drives, and /tmp is not.
+  const folder = path.resolve(os.tmpdir());
   // Paired is not enough — §D1 makes this a second, separate decision.
-  const refused = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: '/tmp' } });
+  const refused = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: folder } });
   assert.equal(refused.status, 403);
   assert.match(refused.body.error, /does not accept scans started from other machines/);
 
   cfg.allowRemoteScan = true;
-  const accepted = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: '/tmp' } });
+  const accepted = await call(cfg, 'POST', '/fleet/scan', { secret, body: { path: folder } });
   assert.equal(accepted.status, 202);
   assert.equal(accepted.body.scanId, 'scan-1');
   assert.equal(Object.keys(accepted.body).length, 1, 'a scan id, never a result');
