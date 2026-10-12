@@ -189,7 +189,7 @@ function reclaimTooltipLine(node) {
   const unknowns = fact.missing.length
     ? ` · ${fact.missing.length} signal${fact.missing.length === 1 ? '' : 's'} unknown`
     : '';
-  return `<div class="t-line num"><span class="t-strong" style="color:${reclaimColor(fact.score)}">Reclaim ${fact.score}</span>` +
+  return `<div class="t-line num"><span class="t-strong" style="color:${reclaimInk(fact.score)}">Reclaim ${fact.score}</span>` +
     `${lead}${unknowns} · right-click for the breakdown</div>`;
 }
 

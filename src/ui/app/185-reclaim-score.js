@@ -240,7 +240,7 @@ function reclaimConfidenceWording(fact) {
  */
 function reclaimBadge(path, fact) {
   if (!fact) return '';
-  const colour = reclaimColor(fact.score);
+  const colour = reclaimInk(fact.score);
   // A tilde, not a letter.
   //
   // The first version suffixed the confidence initial — "66.4M", "43.3H" —
@@ -375,7 +375,7 @@ function openReclaimWhy(path, anchorEl, point) {
   pop.innerHTML = `
     <div class="rc-pop-scroll">
     <div class="rc-pop-head">
-      <span class="rc-badge conf-${escapeHtml(fact.confidence)}" style="color:${reclaimColor(fact.score)}" aria-hidden="true">${fact.confidence === 'high' ? '' : '~'}${fact.score}</span>
+      <span class="rc-badge conf-${escapeHtml(fact.confidence)}" style="color:${reclaimInk(fact.score)}" aria-hidden="true">${fact.confidence === 'high' ? '' : '~'}${fact.score}</span>
       <b id="rcPopTitle" title="${escapeHtml(path)}">${escapeHtml(path.split(/[\\/]/).filter(Boolean).pop() || path)}</b>
       <div style="flex:1"></div>
       <button class="icon-btn" id="rcPopClose" aria-label="Close the score breakdown">${icon('x', 14)}</button>

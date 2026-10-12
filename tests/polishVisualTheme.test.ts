@@ -345,3 +345,64 @@ test('no size figure paints its ramp colour raw — every text use goes through 
   const inks = [...code.matchAll(/color:\s*\$\{sizeInk\(/g)].length;
   assert.ok(inks >= 13, `the badges and the tooltip take the ink (${inks})`);
 });
+
+/* ═══════════════ B21 review F1.7 — a reclaim score printed in its ramp colour reads too ═══════════════ */
+
+/**
+ * The reclaim ramp (grey → amber → teal) printed raw as the score badge's
+ * text: on a light card a 50 measured 1.36:1, and the best candidates 1.7–2.0
+ * — while the size beside it, through sizeInk, passed. In Reclaim order the
+ * badge is the only measure in a Largest Files row (B03). Measured here is
+ * what the badge itself prints, resting and hovered (its hover tints its own
+ * ground), at each confidence (whatever the confidence rule does to the
+ * badge's opacity), on the card, the page and a chip, in both themes.
+ */
+test('every reclaim score the badge prints clears 4.5:1 — resting or hovered, at every confidence, in both themes (B21 review F1.7)', () => {
+  const badge = lift<(path: string, fact: { score: number; confidence: string }) => string>(
+    ['escapeHtml', 'hexToRgb', 'C_TEAL', 'mix', 'C_RC_LOW', 'reclaimRgb', 'reclaimColor', 'reclaimInk', 'reclaimBadge'], 'reclaimBadge');
+  const tint = /^color-mix\(in srgb, currentColor ([\d.]+)%, transparent\)$/.exec(prop(ruleFor('.rc-badge:hover').body, 'background') ?? '');
+  assert.ok(tint, 'a hovered or focused badge tints its ground with its own ink');
+  const hoverShare = +tint![1] / 100;
+  let checked = 0;
+  for (const [name, palette] of THEMES) {
+    const { page, card } = grounds(palette);
+    const surfaces: Array<[string, RGB]> = [
+      ['the card', card], ['the page', page],
+      ['a chip on the card', paint('var(--surface-2)', palette, card)],
+      ['a chip on the page', paint('var(--surface-2)', palette, page)],
+    ];
+    for (const confidence of ['high', 'medium', 'low']) {
+      const rule = RULES.find((r) => parts(r).includes(`.rc-badge.conf-${confidence}`));
+      const opacity = rule && prop(rule.body, 'opacity') !== null ? Number(prop(rule.body, 'opacity')) : 1;
+      for (const [where, ground] of surfaces) {
+        for (let score = 0; score <= 100; score++) {
+          const printed = /style="color:([^"]+)"/.exec(badge('/c/x.mov', { score, confidence }));
+          assert.ok(printed, 'the badge prints its score in a colour');
+          if (printed![1].includes('var(--reclaim-ink)')) assert.ok(palette['--reclaim-ink'], `${name} declares the ramp's share of a score ink`);
+          const expr = printed![1].replace(/var\(--reclaim-ink\)/g, palette['--reclaim-ink']);
+          const ink = paint(expr, palette, ground);
+          for (const hovered of [false, true]) {
+            // The badge's opacity takes its text and its own background together.
+            const back = hovered ? mix(ink, hoverShare, ground) : ground;
+            const ratio = contrast(mix(ink, opacity, ground), mix(back, opacity, ground));
+            checked++;
+            assert.ok(ratio >= 4.5,
+              `${name}: a ${confidence}-confidence ${score}${hovered ? ', hovered,' : ''} measures ${fmt(ratio)}:1 on ${where} (${expr}${opacity < 1 ? `, opacity ${opacity}` : ''})`);
+          }
+        }
+      }
+    }
+  }
+  assert.equal(checked, 2 * 3 * 4 * 101 * 2, `every score was measured (${checked})`);
+});
+
+test('no reclaim score is printed in its raw ramp colour — the tooltip and the breakdown take the badge’s ink, and medium confidence still looks different (B21 review F1.7)', () => {
+  const code = INDEX.slice(INDEX.indexOf('<script>'));
+  const raw = [...code.matchAll(/color:\s*\$\{reclaimColor\(/g)].length;
+  assert.equal(raw, 0, 'a raw reclaim colour as text is 1.4–2.6:1 on a light card');
+  const inks = [...code.matchAll(/color:\s*\$\{reclaimInk\(/g)].length;
+  assert.ok(inks >= 2, `the tooltip's score line and the breakdown's badge take the ink (${inks})`);
+  const medium = ruleFor('.rc-badge.conf-medium').body;
+  const own = [...medium.matchAll(/([a-z-]+)\s*:\s*([^;]+)/g)].filter(([, k, v]) => !(k === 'border-style' && v.trim() === 'solid'));
+  assert.ok(own.length > 0, 'a medium-confidence badge still differs from a high-confidence one by more than its tilde');
+});

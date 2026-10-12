@@ -42,7 +42,10 @@
 /* A score built on two of six signals must not look like one built on all
    six. Low confidence is dashed — visible before the number is read. */
 .rc-badge.conf-low { border-style: dashed; }
-.rc-badge.conf-medium { border-style: solid; opacity: 0.88; }
+/* Medium confidence quietens the ring, not the number: an opacity on the
+   whole badge took its score under 4.5:1 in the light theme (B21 review
+   F1.7). The tilde before the score says "approximately" either way. */
+.rc-badge.conf-medium { border-style: solid; border-color: color-mix(in srgb, currentColor 55%, transparent); }
 .rc-none { flex: none; font-size: 11px; color: var(--text-3); font-style: italic; }
 .rc-why { margin: 2px 0 8px; padding: 9px 11px; border-radius: var(--r-sm); background: var(--surface-2);
   border: 1px solid var(--hairline); font-size: 12px; line-height: 1.55; color: var(--text-2); }

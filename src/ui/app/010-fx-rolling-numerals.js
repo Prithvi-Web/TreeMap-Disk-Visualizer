@@ -518,6 +518,18 @@ function reclaimColor(score, alpha = 1) {
   const c = reclaimRgb(score);
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
 }
+/**
+ * The colour to PRINT a reclaim score in: the ramp mixed toward the body ink
+ * by the theme's --reclaim-ink share, as sizeInk does for sizes. The badge,
+ * the tooltip's score line and the breakdown's header printed the raw ramp,
+ * 1.36:1 for a 50 on a light card (B21 review F1.7). The ramp itself
+ * (reclaimRgb) stays the fill of the map's Reclaim mode and of Disk City.
+ * tests/polishVisualTheme.test.ts measures every score the badge prints in
+ * both themes.
+ */
+function reclaimInk(score) {
+  return `color-mix(in srgb, ${reclaimColor(score)} var(--reclaim-ink), var(--text-1))`;
+}
 /* ── Diff overlay (time slider): green = grew, red = shrank vs previous snapshot ── */
 const C_DIFF_SAME = [116, 122, 134];
 function diffRgb(n) {

@@ -46,6 +46,10 @@
      from --text-1). 60% keeps the hue on dark glass at 6.5:1 or better
      across the whole ramp; the light block re-tunes it (QA B21). */
   --size-ink:      60%;
+  /* The same for the reclaim score's grey → amber → teal (reclaimInk). Its
+     low end is the dark grey #5A6472, 3.1:1 raw on dark glass; at 50% the
+     worst score, hovered on a chip, is 5.0:1 (B21 review F1.7). */
+  --reclaim-ink:   50%;
 
   --tm-canvas-bg:  rgba(0,0,0,0.30);
   --scrim:         rgba(2,4,10,0.60);
@@ -150,6 +154,10 @@
      card (the Libraries and Apps totals), and even a 60% share left 2.6:1.
      At 36% the worst point of the ramp, on a badge chip, is ~5.0:1 (QA B21). */
   --size-ink:      36%;
+  /* The reclaim ramp's amber-to-teal half is lighter still on a white card
+     (a raw 50 measured 1.36:1); at 28% the worst score, hovered on a chip,
+     is 5.1:1 (B21 review F1.7). */
+  --reclaim-ink:   28%;
 
   /* The dark theme's #FFD60A yellow is near-invisible on light cards
      (~1.5:1). Text and badges using --warn need this darker amber here.
