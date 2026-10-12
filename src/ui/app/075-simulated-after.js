@@ -339,6 +339,28 @@ function tmHatchPattern(ctx) {
   return tmHatch;
 }
 
+/**
+ * Why there is nothing to preview, when no staged item is on this map.
+ *
+ * "Open the folder they are in" is advice only for an item this scan holds
+ * elsewhere. An item it does not hold has no size here and is one the cart
+ * will not trash (B06): no folder of this scan can preview it, so it is named
+ * as not in this scan, the cart's own words, and never sent to a folder.
+ */
+function tmPreviewRefusal(built) {
+  if (!built || !built.outsideView) return 'Nothing staged is drawn on this map.';
+  const n = built.outsideView;
+  const unsized = built.outsideUnsized || 0;
+  const sized = n - unsized;
+  if (sized <= 0) {
+    return `The ${formatCount(n)} staged item${n === 1 ? ' is' : 's are'} not in this scan — size unknown, so there is nothing to preview.`;
+  }
+  const none = `None of the ${formatCount(n)} staged item${n === 1 ? '' : 's'} is inside this folder`;
+  if (!unsized) return `${none} — open the folder ${n === 1 ? 'it is in to preview it' : 'they are in to preview them'}.`;
+  const rest = sized === 1 ? 'the other one is in to preview it' : `the other ${formatCount(sized)} are in to preview them`;
+  return `${none}. ${formatCount(unsized)} ${unsized === 1 ? 'is' : 'are'} not in this scan — size unknown; open the folder ${rest}.`;
+}
+
 /** Turn the preview on, or say honestly why it cannot run. */
 function enterCartPreview() {
   if (tmPreview.on) { exitCartPreview(); return; }
@@ -356,15 +378,7 @@ function enterCartPreview() {
   if (!state.cart.size) { toast('Your cart is empty — there is nothing to take out of the map', 'error'); return; }
 
   const built = tmBuildPreview();
-  if (!built || !built.nodes) {
-    toast(
-      built && built.outsideView
-        ? `None of the ${formatCount(built.outsideView)} staged item${built.outsideView === 1 ? '' : 's'} is inside this folder — open the folder they are in to preview them.`
-        : 'Nothing staged is drawn on this map.',
-      'error', 7000,
-    );
-    return;
-  }
+  if (!built || !built.nodes) { toast(tmPreviewRefusal(built), 'error', 7000); return; }
   tmPreview.on = true;
   tmPreview.saved = state.treemap.nodes;
   tmPreview.freedBytes = built.freedBytes;

@@ -994,7 +994,7 @@ function previewPage(cart: string[]) {
     saveCart() {}, renderCart() {}, refreshCartButtons() {}, ResizeObserver: undefined,
   };
   const names = ['tmPreview', 'TM_PREVIEW_BANNER_INSET', 'tmWorstRatio', 'tmSquarify', 'tmParentPath', 'tmIsInside', 'tmDrawnTree',
-    'tmCartRoots', 'tmBuildPreview', 'enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'tmPreviewPadSync',
+    'tmCartRoots', 'tmBuildPreview', 'tmPreviewRefusal', 'enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'tmPreviewPadSync',
     'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle'];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -1039,4 +1039,61 @@ test('un-staging one of two staged items on the map rebuilds the preview from th
   p.page.exitCartPreview();
   assert.deepEqual(p.shows(), NO_PREVIEW);
   assert.equal(p.state.treemap.nodes, p.real, 'exiting puts the real layout back');
+});
+
+/* ══════════════ B06 review, round 3: the refusal names an item this scan does not hold ══════════════ */
+
+/** The last toast the page raised, or '' when it raised none. */
+const lastToast = (p: ReturnType<typeof previewPage>): string => p.toasts.at(-1) ?? '';
+
+test('Preview with only items this scan does not hold says they are not in it — not "open the folder they are in" (B06 review)', () => {
+  // '/' is a folder above the map and '/gone/y.bin' is elsewhere; this scan
+  // holds neither, so no folder of it can preview them, and the cart calls
+  // them "not in this scan — size unknown".
+  const one = previewPage(['/']);
+  one.page.enterCartPreview();
+  assert.equal(one.page.tmPreview.on, false, 'there is nothing to preview');
+  assert.equal(lastToast(one), 'The 1 staged item is not in this scan — size unknown, so there is nothing to preview.');
+
+  const two = previewPage(['/', '/gone/y.bin']);
+  two.page.enterCartPreview();
+  assert.equal(lastToast(two), 'The 2 staged items are not in this scan — size unknown, so there is nothing to preview.');
+});
+
+test('un-staging the last item on the map, with only items this scan does not hold left, says they are not in it (B06 review)', () => {
+  const p = previewPage(['/r/b', '/gone/y.bin']);
+  p.page.enterCartPreview();
+  p.page.cartToggle('/r/b');
+  assert.deepEqual(p.shows(), NO_PREVIEW, 'the preview is over');
+  assert.equal(lastToast(p), 'The 1 staged item is not in this scan — size unknown, so there is nothing to preview.');
+});
+
+test('a refusal gives the "open the folder" advice only for items elsewhere in this scan, and names the rest (B06 review)', () => {
+  const mixed = previewPage(['/other/x', '/gone/y.bin']);
+  mixed.page.enterCartPreview();
+  assert.equal(lastToast(mixed),
+    'None of the 2 staged items is inside this folder. 1 is not in this scan — size unknown; open the folder the other one is in to preview it.');
+
+  // Unequal counts, so the not-in-scan number and the other number cannot trade places unseen.
+  const moreSized = previewPage(['/other/x', '/other/z', '/gone/y.bin']);
+  moreSized.state.pathIndex.set('/other/z', { path: '/other/z', size: 7 });
+  moreSized.page.enterCartPreview();
+  assert.equal(lastToast(moreSized),
+    'None of the 3 staged items is inside this folder. 1 is not in this scan — size unknown; open the folder the other 2 are in to preview them.');
+
+  const moreUnsized = previewPage(['/other/x', '/', '/gone/y.bin']);
+  moreUnsized.page.enterCartPreview();
+  assert.equal(lastToast(moreUnsized),
+    'None of the 3 staged items is inside this folder. 2 are not in this scan — size unknown; open the folder the other one is in to preview it.');
+});
+
+test('a refusal for items that are all elsewhere in this scan keeps the "open the folder" advice, in the right number (B06 review)', () => {
+  const one = previewPage(['/other/x']);
+  one.page.enterCartPreview();
+  assert.equal(lastToast(one), 'None of the 1 staged item is inside this folder — open the folder it is in to preview it.');
+
+  const two = previewPage(['/other/x', '/other/z']);
+  two.state.pathIndex.set('/other/z', { path: '/other/z', size: 7 });
+  two.page.enterCartPreview();
+  assert.equal(lastToast(two), 'None of the 2 staged items is inside this folder — open the folder they are in to preview them.');
 });
