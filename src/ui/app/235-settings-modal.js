@@ -645,7 +645,7 @@ async function settingsFoldersChecked(body) {
     offerMeant(found.p, found.meant, () => {
       if (seq !== settingsSaveSeq) return;
       document.querySelectorAll('#schedList .s-path').forEach((box) => { if (asPath(box.value) === found.p) box.value = found.meant; });
-    });
+    }, 'Use that folder', 'settingsModal');
     return false;
   }
   return true;
@@ -837,8 +837,12 @@ function modalClosed(el) {
   const active = document.activeElement;
   // The close already placed focus (the palette restores its own, an action
   // opened a search box): leave it. Otherwise focus fell to <body> when the
-  // sheet stopped painting, or is still nominally inside it.
-  const drifted = !active || active === document.body || el.contains(active);
+  // sheet stopped painting, is still nominally inside it, or is on an offer
+  // the sheet made (#toasts is exempt from inert) — and that offer goes with
+  // the sheet (toastsRetire), its choice being for a sheet that is gone
+  // (final review F2.2, F2.3).
+  const drifted = !active || active === document.body || el.contains(active) || $('toasts').contains(active);
+  toastsRetire(el.id);
   if (drifted && prev && prev.focus && prev.isConnected !== false) prev.focus({ preventScroll: true });
 }
 function syncModalLayers(moveFocus = true) {

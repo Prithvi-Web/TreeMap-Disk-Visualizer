@@ -172,7 +172,7 @@ type ModalApi = {
   modalTrapTab: (e: { shiftKey: boolean; preventDefault: () => void }, top: FEl) => void; noteFocus: (el: FEl) => void;
 };
 
-function loadModalNet(doc: FDoc): ModalApi {
+function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {}): ModalApi {
   const src = slice('/* ── Focus discipline for every dialog ── */', '/* ── end focus discipline ── */');
   const $ = (id: string) => doc.getElementById(id);
   // The net installs a MutationObserver so that adding `.open` at any of the
@@ -180,10 +180,12 @@ function loadModalNet(doc: FDoc): ModalApi {
   // the reactions directly (setOpen calls modalOpened/modalClosed), so the
   // observer only has to exist without throwing at eval time.
   class FakeObserver { observe() { /* the tests call the reactions themselves */ } disconnect() {} }
-  return new Function('document', '$', 'MutationObserver',
+  // toastsRetire (the toast family's, in 015) is what a closing sheet asks to
+  // retire the offers made in it; a test that cares records the calls.
+  return new Function('document', '$', 'MutationObserver', 'toastsRetire',
     `'use strict'; ${src}
      return { openModals, topModal, modalFocusTarget, modalFocusables, syncModalLayers, modalOpened, modalClosed, modalTrapTab, noteFocus };`,
-  )(doc, $, FakeObserver) as ModalApi;
+  )(doc, $, FakeObserver, toastsRetire) as ModalApi;
 }
 
 /** Open or close a backdrop the way every caller does — by class — then run the net's reaction. */
@@ -278,6 +280,39 @@ test('a close that already placed focus elsewhere is left alone — the palette 
   p.side.inert = false; search.focus();
   api.modalClosed(p.confirm); api.syncModalLayers();
   assert.equal(doc.activeElement, search, 'the net does not yank focus back from where the action put it');
+});
+
+test('closing a sheet whose offer holds focus gives focus back to where the sheet was opened from, and the offers made in it go with it (final review F2.2, F2.3)', () => {
+  // An offer made in answer to a press in a sheet takes focus (offerMeant),
+  // and #toasts is exempt from inert. Escape closed the sheet with focus on
+  // the offer's button — neither <body> nor inside the sheet — so the net
+  // treated focus as placed by the close and never gave it back.
+  const doc = makeDoc();
+  const p = pageWith(doc);
+  const retired: string[] = [];
+  const api = loadModalNet(doc, (sheet) => { retired.push(sheet); });
+  const offer = append(p.toasts, mkOf(doc)('button', 'offerBtn'));
+  p.pageBtn.focus(); api.noteFocus(p.pageBtn);
+  setOpen(api, p.settings, true);
+  assert.equal(doc.activeElement, p.settingsSave, 'control: the sheet took focus');
+  api.noteFocus(p.settingsSave);
+  offer.focus(); api.noteFocus(offer); // Save made an offer, which took focus
+  assert.equal(doc.activeElement, offer, 'control: the offer holds focus with the sheet open');
+  setOpen(api, p.settings, false); // Escape
+  assert.equal(doc.activeElement, p.pageBtn, 'focus goes back to the control that opened the sheet, not left on an offer for a sheet that is gone');
+  assert.deepEqual(retired, ['settingsModal'], 'and the offers made in the sheet go with it');
+
+  // Stacked: the top sheet's offer holds focus as it closes — focus goes back
+  // to the control in the sheet underneath that opened it (not merely into
+  // that sheet's primary button), and only the closing sheet's offers go.
+  setOpen(api, p.settings, true);
+  p.settingsInput.focus(); api.noteFocus(p.settingsInput);
+  setOpen(api, p.confirm, true);
+  assert.equal(doc.activeElement, p.ok, 'control: the top sheet took focus');
+  offer.focus(); api.noteFocus(offer);
+  setOpen(api, p.confirm, false);
+  assert.equal(doc.activeElement, p.settingsInput, 'focus goes back to the control in the sheet underneath that opened the top sheet');
+  assert.deepEqual(retired, ['settingsModal', 'confirmModal'], 'and only the top sheet\'s offers go');
 });
 
 test('every backdrop is wired into the net, and the close funnel is untouched', () => {

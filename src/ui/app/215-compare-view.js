@@ -308,9 +308,11 @@ function trailingBlanks(p) {
     there (`label`) — a path in it could not shrink, and hung off the toast
     and past the window's edge (final review F1.9). It answers the person's
     own press, so its button takes focus: from inside a sheet the keyboard
-    could not reach it otherwise (final review F1.10). */
-function offerMeant(p, meant, choose, label = 'Use that folder') {
-  toastAction(`${noFolderNamed(p)} Did you mean “${meant}”?`, label, choose, 'error', 12000, { focus: true });
+    could not reach it otherwise (final review F1.10). `sheet` is the id of
+    the sheet the press was made in: the offer goes when that sheet closes
+    (final review F2.2, F2.3). */
+function offerMeant(p, meant, choose, label = 'Use that folder', sheet = null) {
+  toastAction(`${noFolderNamed(p)} Did you mean “${meant}”?`, label, choose, 'error', 12000, { focus: true, sheet });
 }
 /** "No folder is named “…” — the path ends with a space." */
 function noFolderNamed(p) {
@@ -416,7 +418,7 @@ async function browseTo(path, typed = false) {
     // An overtaken listing is not looked up further: nothing would show it.
     const meant = typed && seq === browseSeq ? await meantFolder(path, e) : null;
     if (seq !== browseSeq) return false;
-    if (meant) offerMeant(path, meant, () => browseTo(meant), 'Open that folder');
+    if (meant) offerMeant(path, meant, () => browseTo(meant), 'Open that folder', 'browseModal');
     else toast(e.message, 'error');
     return false;
   }

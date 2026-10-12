@@ -6948,6 +6948,20 @@ async function ensureNodes(paths) {
 
 /** Each toast with a button names its message for that button (aria-describedby). */
 let toastActionSeq = 0;
+/** The offers made in each sheet, by the sheet's id (toastAction's `sheet`). */
+const sheetToasts = new Map();
+/**
+ * A sheet closed (modalClosed): the offers made in it go, their choices with
+ * them. An offer's choice acts on the sheet it was made in, and one holding
+ * focus never times out — so it outlived a sheet closed by Escape, its choice
+ * doing nothing (the policy editor, Settings) or re-listing a picker nobody
+ * could see (final review F2.2, F2.3).
+ */
+function toastsRetire(sheet) {
+  const goes = sheetToasts.get(sheet);
+  sheetToasts.delete(sheet);
+  if (goes) for (const go of goes) go();
+}
 /**
  * A toast with one button — for the cases where the right next step is a
  * single click away (scan again, try again). `fn` runs once and the toast
@@ -6960,8 +6974,11 @@ let toastActionSeq = 0;
  * sheet open Tab cycles inside the sheet, so a keyboard could not reach the
  * choice at all (final review F1.10). A toast holding focus does not time out
  * from under it.
+ *
+ * `sheet`: the id of the sheet the toast was made in; it goes when that sheet
+ * closes (toastsRetire).
  */
-function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = false } = {}) {
+function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = false, sheet = null } = {}) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   const msgId = 'toastMsg' + (++toastActionSeq);
@@ -6982,6 +6999,10 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
     if (held && back && back.isConnected !== false && back.focus) back.focus({ preventScroll: true });
   };
   btn.addEventListener('click', () => { if (done) return; gone(); fn(); });
+  if (sheet) {
+    if (!sheetToasts.has(sheet)) sheetToasts.set(sheet, new Set());
+    sheetToasts.get(sheet).add(gone);
+  }
   $('toasts').appendChild(el);
   if (focus) btn.focus({ preventScroll: true });
   const expire = () => {
@@ -26922,7 +26943,7 @@ $('apPreviewBtn').addEventListener('click', async () => {
     const meant = await meantFolder(draft.policy.path, e);
     if (meant && seq === apSaveSeq) {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(noFolderNamed(draft.policy.path))}</div>`;
-      offerMeant(draft.policy.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
+      offerMeant(draft.policy.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; }, 'Use that folder', 'apModal');
     } else {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
     }
@@ -26977,7 +26998,7 @@ $('apSaveBtn').addEventListener('click', async () => {
     }
     if (meant) {
       // Only into the editor it was offered for, while no other press has come since.
-      offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
+      offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; }, 'Use that folder', 'apModal');
       return;
     }
   }
@@ -32417,9 +32438,11 @@ function trailingBlanks(p) {
     there (`label`) — a path in it could not shrink, and hung off the toast
     and past the window's edge (final review F1.9). It answers the person's
     own press, so its button takes focus: from inside a sheet the keyboard
-    could not reach it otherwise (final review F1.10). */
-function offerMeant(p, meant, choose, label = 'Use that folder') {
-  toastAction(`${noFolderNamed(p)} Did you mean “${meant}”?`, label, choose, 'error', 12000, { focus: true });
+    could not reach it otherwise (final review F1.10). `sheet` is the id of
+    the sheet the press was made in: the offer goes when that sheet closes
+    (final review F2.2, F2.3). */
+function offerMeant(p, meant, choose, label = 'Use that folder', sheet = null) {
+  toastAction(`${noFolderNamed(p)} Did you mean “${meant}”?`, label, choose, 'error', 12000, { focus: true, sheet });
 }
 /** "No folder is named “…” — the path ends with a space." */
 function noFolderNamed(p) {
@@ -32525,7 +32548,7 @@ async function browseTo(path, typed = false) {
     // An overtaken listing is not looked up further: nothing would show it.
     const meant = typed && seq === browseSeq ? await meantFolder(path, e) : null;
     if (seq !== browseSeq) return false;
-    if (meant) offerMeant(path, meant, () => browseTo(meant), 'Open that folder');
+    if (meant) offerMeant(path, meant, () => browseTo(meant), 'Open that folder', 'browseModal');
     else toast(e.message, 'error');
     return false;
   }
@@ -35014,7 +35037,7 @@ async function settingsFoldersChecked(body) {
     offerMeant(found.p, found.meant, () => {
       if (seq !== settingsSaveSeq) return;
       document.querySelectorAll('#schedList .s-path').forEach((box) => { if (asPath(box.value) === found.p) box.value = found.meant; });
-    });
+    }, 'Use that folder', 'settingsModal');
     return false;
   }
   return true;
@@ -35206,8 +35229,12 @@ function modalClosed(el) {
   const active = document.activeElement;
   // The close already placed focus (the palette restores its own, an action
   // opened a search box): leave it. Otherwise focus fell to <body> when the
-  // sheet stopped painting, or is still nominally inside it.
-  const drifted = !active || active === document.body || el.contains(active);
+  // sheet stopped painting, is still nominally inside it, or is on an offer
+  // the sheet made (#toasts is exempt from inert) — and that offer goes with
+  // the sheet (toastsRetire), its choice being for a sheet that is gone
+  // (final review F2.2, F2.3).
+  const drifted = !active || active === document.body || el.contains(active) || $('toasts').contains(active);
+  toastsRetire(el.id);
   if (drifted && prev && prev.focus && prev.isConnected !== false) prev.focus({ preventScroll: true });
 }
 function syncModalLayers(moveFocus = true) {

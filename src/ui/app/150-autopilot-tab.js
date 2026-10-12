@@ -491,7 +491,7 @@ $('apPreviewBtn').addEventListener('click', async () => {
     const meant = await meantFolder(draft.policy.path, e);
     if (meant && seq === apSaveSeq) {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(noFolderNamed(draft.policy.path))}</div>`;
-      offerMeant(draft.policy.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
+      offerMeant(draft.policy.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; }, 'Use that folder', 'apModal');
     } else {
       host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
     }
@@ -546,7 +546,7 @@ $('apSaveBtn').addEventListener('click', async () => {
     }
     if (meant) {
       // Only into the editor it was offered for, while no other press has come since.
-      offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; });
+      offerMeant(edited.path, meant, () => { if (seq === apSaveSeq) $('apPath').value = meant; }, 'Use that folder', 'apModal');
       return;
     }
   }

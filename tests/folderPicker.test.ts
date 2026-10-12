@@ -86,10 +86,10 @@ function fakeEl(id: string): FakeEl {
 }
 
 /** A toast with one button (the page's toastAction): what it said, its button, and a click on it. */
-type Offer = { msg: string; label: string; kind: string; focus: boolean; choose: () => Promise<unknown> };
+type Offer = { msg: string; label: string; kind: string; focus: boolean; sheet: string | null; choose: () => Promise<unknown> };
 function offerRecorder(offers: Offer[]) {
-  return (msg: string, label: string, fn: () => unknown, kind = 'success', _ms?: number, opts?: { focus?: boolean }) => {
-    offers.push({ msg, label, kind, focus: !!opts?.focus, choose: () => Promise.resolve(fn()) });
+  return (msg: string, label: string, fn: () => unknown, kind = 'success', _ms?: number, opts?: { focus?: boolean; sheet?: string | null }) => {
+    offers.push({ msg, label, kind, focus: !!opts?.focus, sheet: opts?.sheet ?? null, choose: () => Promise.resolve(fn()) });
   };
 }
 
@@ -1057,11 +1057,18 @@ function toastRuntime() {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   // The counter that names each toast's message for its button, where the page has one.
   const seqDecl = INDEX.includes('let toastActionSeq = 0;') ? 'let toastActionSeq = 0;' : '';
-  const toastAction = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout',
-    `'use strict'; ${seqDecl} ${braced('function toastAction(')} return toastAction;`,
-  )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout) as
-    (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean }) => void;
-  return { toastAction, doc, shown, timers, fire };
+  // The offers each sheet made, and what retires them as it closes, where the page has them.
+  const retire = INDEX.includes('const sheetToasts = new Map();')
+    ? `const sheetToasts = new Map(); ${braced('function toastsRetire(')}` : 'const toastsRetire = undefined;';
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const made = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout',
+    `'use strict'; ${seqDecl} ${retire} ${braced('function toastAction(')} return { toastAction, toastsRetire };`,
+  )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout) as {
+    toastAction: (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean; sheet?: string }) => void;
+    /** A sheet closing (modalClosed): the offers made in it go. */
+    toastsRetire: ((sheet: string) => void) | undefined;
+  };
+  return { toastAction: made.toastAction, toastsRetire: made.toastsRetire, doc, shown, timers, fire };
 }
 
 test('an offer\'s button acts once: a double-click, or a click while the toast fades out, does not run its choice again (final review F1.12)', () => {
@@ -1183,6 +1190,60 @@ test('an offer takes focus, so a keyboard reaches it with a sheet open or not, a
   assert.deepEqual(pulled, [sheet], 'control: focus that lands on the page under a sheet is pulled back into it');
   heard.focusin!({ target: inToast });
   assert.deepEqual(pulled, [sheet], 'focus on an offer\'s button stays there');
+});
+
+test('an offer made in a sheet goes when that sheet closes — its choice with it, even while it holds focus — the other offers stay, and each offer names the sheet it was made in (final review F2.2, F2.3)', async () => {
+  // An offer holding focus never timed out, so one made in the policy editor,
+  // Settings or the picker outlived the sheet when Escape closed it: its
+  // choice then did nothing (the editor and Settings retire the press) or
+  // re-listed a picker nobody could see. modalClosed retires the closing
+  // sheet's offers and hands focus back to the sheet's opener (polishUiModals
+  // evaluates that side).
+  const { toastAction, toastsRetire, doc, shown, fire } = toastRuntime();
+  assert.equal(typeof toastsRetire, 'function', 'the page retires the offers a sheet made');
+  const ran: string[] = [];
+  toastAction('No folder is named “/c ”', 'Scan that folder', () => { ran.push('card'); }, 'error', 12000, { focus: true });
+  toastAction('No folder is named “/b ”', 'Open that folder', () => { ran.push('picker'); }, 'error', 12000, { focus: true, sheet: 'browseModal' });
+  toastAction('No folder is named “/a ”', 'Use that folder', () => { ran.push('editor'); }, 'error', 12000, { focus: true, sheet: 'apModal' });
+  const [card, picker, editor] = shown;
+  assert.equal(doc.activeElement, editor.button, 'control: the editor\'s offer holds focus');
+  toastsRetire!('apModal'); // Escape closed the editor
+  assert.ok(editor.cls.has('out'), 'the editor\'s offer goes as the editor closes, though it holds focus');
+  editor.button!.click();
+  assert.equal(ran.length, 0, 'and a click on it as it fades makes no choice');
+  assert.ok(!card.cls.has('out') && !picker.cls.has('out'), 'the Scan card\'s offer and the picker\'s stay');
+
+  // The editor opened again makes an offer of its own, which goes when the
+  // editor closes again.
+  toastAction('No folder is named “/d ”', 'Use that folder', () => { ran.push('editor again'); }, 'error', 12000, { focus: true, sheet: 'apModal' });
+  const again = shown[3];
+  toastsRetire!('apModal');
+  assert.ok(again.cls.has('out'), 'an offer made in the editor opened again goes when it closes again');
+  again.button!.click();
+  card.button!.click();
+  assert.deepEqual(ran, ['card'], 'control: the offer no sheet made is still a choice');
+  assert.ok(!picker.cls.has('out'), 'control: the picker\'s offer is still up');
+  fire();
+  assert.ok(editor.removed && again.removed, 'a retired offer leaves the page');
+
+  // Each offer names the sheet it was made in — the Scan card none.
+  const { rt, offers, click, type } = boxesRuntime(strictListing);
+  type('pathInput', DOCS + ' ');
+  await click('scanBtn');
+  type('apPath', DOCS + ' ');
+  await click('apSaveBtn');
+  await click('browseBtn');
+  rt.openPolicyEditor(null);
+  type('apPath', DOCS + ' ');
+  await click('apPreviewBtn');
+  assert.equal(offers.length, 4, 'control: the Scan card, Save in the editor, the picker and Preview each made an offer');
+  assert.deepEqual(offers.map((o) => o.sheet), [null, 'apModal', 'browseModal', 'apModal'],
+    'the Scan card\'s offer belongs to no sheet; the editor\'s and the picker\'s to theirs');
+  const settings = settingsRuntime(strictListing, []);
+  settings.addRow(DOCS + ' ');
+  await settings.save();
+  assert.equal(settings.offers.length, 1, 'control: Settings made an offer');
+  assert.equal(settings.offers[0].sheet, 'settingsModal', 'and it belongs to Settings');
 });
 
 test('a path the lookup cannot even spell — a pasted lone surrogate before a trailing space — never leaves Scan held: it is scanned as typed, for the scan to report (final review F1.5)', async () => {

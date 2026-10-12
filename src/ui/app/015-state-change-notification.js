@@ -165,6 +165,20 @@ async function ensureNodes(paths) {
 
 /** Each toast with a button names its message for that button (aria-describedby). */
 let toastActionSeq = 0;
+/** The offers made in each sheet, by the sheet's id (toastAction's `sheet`). */
+const sheetToasts = new Map();
+/**
+ * A sheet closed (modalClosed): the offers made in it go, their choices with
+ * them. An offer's choice acts on the sheet it was made in, and one holding
+ * focus never times out — so it outlived a sheet closed by Escape, its choice
+ * doing nothing (the policy editor, Settings) or re-listing a picker nobody
+ * could see (final review F2.2, F2.3).
+ */
+function toastsRetire(sheet) {
+  const goes = sheetToasts.get(sheet);
+  sheetToasts.delete(sheet);
+  if (goes) for (const go of goes) go();
+}
 /**
  * A toast with one button — for the cases where the right next step is a
  * single click away (scan again, try again). `fn` runs once and the toast
@@ -177,8 +191,11 @@ let toastActionSeq = 0;
  * sheet open Tab cycles inside the sheet, so a keyboard could not reach the
  * choice at all (final review F1.10). A toast holding focus does not time out
  * from under it.
+ *
+ * `sheet`: the id of the sheet the toast was made in; it goes when that sheet
+ * closes (toastsRetire).
  */
-function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = false } = {}) {
+function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = false, sheet = null } = {}) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   const msgId = 'toastMsg' + (++toastActionSeq);
@@ -199,6 +216,10 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
     if (held && back && back.isConnected !== false && back.focus) back.focus({ preventScroll: true });
   };
   btn.addEventListener('click', () => { if (done) return; gone(); fn(); });
+  if (sheet) {
+    if (!sheetToasts.has(sheet)) sheetToasts.set(sheet, new Set());
+    sheetToasts.get(sheet).add(gone);
+  }
   $('toasts').appendChild(el);
   if (focus) btn.focus({ preventScroll: true });
   const expire = () => {
