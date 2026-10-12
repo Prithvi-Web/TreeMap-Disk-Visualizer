@@ -411,30 +411,48 @@ test('no reclaim score is printed in its raw ramp colour — the tooltip and the
 
 /* ═══════════════ B21 review F2.2 — medium confidence looks medium, measured ═══════════════ */
 
+/** Every keyword `border-style` takes; `none` and `hidden` draw nothing. */
+const BORDER_STYLES = ['none', 'hidden', 'solid', 'dashed', 'dotted', 'double', 'groove', 'ridge', 'inset', 'outset'];
+
 /**
  * The ring a score badge paints at `confidence`, as the cascade resolves it:
  * the base `.rc-badge` border, then each border declaration of
  * `.rc-badge.conf-<confidence>` in order (no such rule: the base ring), and
- * that rule's opacity, which dims the ring with everything else.
+ * that rule's opacity, which dims the ring with everything else. `width` is
+ * in px; a shorthand that leaves a part out resets it to its initial value,
+ * as the cascade does (`border: none` is a 3px-medium ring of style none).
  */
-function badgeRing(confidence: string): { style: string; colour: string; opacity: number } {
+function badgeRing(confidence: string): { width: number; style: string; colour: string; opacity: number } {
+  const length = (v: string) => {
+    const m = /^(\d*\.?\d+)(px)?$/.exec(v.trim());
+    assert.ok(m && (m[2] || +m[1] === 0), `a border width is a px length (got "${v}")`);
+    return +m![1];
+  };
   const shorthand = (v: string) => {
-    const m = /^\S+\s+(solid|dashed|dotted|double)\s+(.+)$/.exec(v);
-    assert.ok(m, `a border shorthand reads "width style colour" (got "${v}")`);
-    return { style: m![1], colour: m![2].trim() };
+    const tokens = layers(v.replace(/\s+(?![^(]*\))/g, ','));
+    const out = { width: 3, style: 'none', colour: 'currentColor' };
+    for (const t of tokens) {
+      if (BORDER_STYLES.includes(t)) out.style = t;
+      else if (/^\d*\.?\d+(px)?$/.test(t)) out.width = length(t);
+      else out.colour = t;
+    }
+    return out;
   };
   const base = prop(ruleFor('.rc-badge').body, 'border');
   assert.ok(base, 'the badge draws a ring');
-  let { style, colour } = shorthand(base!);
+  let { width, style, colour } = shorthand(base!);
   const own = RULES.find((r) => parts(r).includes(`.rc-badge.conf-${confidence}`));
-  if (!own) return { style, colour, opacity: 1 };
+  if (!own) return { width, style, colour, opacity: 1 };
   for (const [, k, v] of own.body.matchAll(/([a-z-]+)\s*:\s*([^;]+)/g)) {
-    if (k === 'border') ({ style, colour } = shorthand(v.trim()));
+    if (k === 'border') ({ width, style, colour } = shorthand(v.trim()));
+    else if (k === 'border-width') width = length(v);
     else if (k === 'border-style') style = v.trim();
     else if (k === 'border-color') colour = v.trim();
+    // A per-side or logical longhand would change the ring without this reading it: say so rather than measure the wrong ring.
+    else assert.ok(!/^border-(top|right|bottom|left|block|inline|image)/.test(k), `the badge ring is read from border, border-width, border-style and border-color only (got ${k})`);
   }
   const opacity = prop(own.body, 'opacity');
-  return { style, colour, opacity: opacity === null ? 1 : Number(opacity) };
+  return { width, style, colour, opacity: opacity === null ? 1 : Number(opacity) };
 }
 
 /**
@@ -446,14 +464,31 @@ function badgeRing(confidence: string): { style: string; colour: string; opacity
  */
 const MEDIUM_RING_MAX_SHARE = 2 / 3;
 
-test('a medium-confidence badge draws a ring quieter than a high-confidence one, and not a low one’s dashes — on every ground, at every score, in both themes (B21 review F2.2)', () => {
+/**
+ * How faint a medium-confidence ring may get: 2:1 against the ground under
+ * it, on every ground, at every score. Not WCAG's 3:1 for a non-text
+ * indicator, because the ring is not what carries the state — the tilde
+ * before the score and the badge's accessible name say "medium confidence"
+ * in words, and the score itself, at 4.5:1 or better, is what identifies the
+ * control. But the ring is the at-a-glance difference between medium and
+ * low, so it has to be seen: a 5% ring measures 1.06:1 and a transparent one
+ * 1:1, both of which the ceiling above accepts. Today's 55% ring measures
+ * 2.44:1 at its faintest; a ring mixed under about 45% falls below the floor.
+ */
+const MEDIUM_RING_MIN_CONTRAST = 2;
+
+test('a medium-confidence badge draws a ring — seen, but quieter than a high-confidence one, and not a low one’s dashes — on every ground, at every score, in both themes (B21 review F2.2, F3.1)', () => {
   // Review: the only guard here passed with any declaration at all in the
   // medium rule — `border-color: currentColor`, which paints exactly the
   // high-confidence ring, kept it green. Measured instead: the ring each
   // confidence paints, in the badge's own ink, against the ground under it.
+  // Review F3.1: that measure had a ceiling and no floor, so a medium ring
+  // that vanished (transparent, `border-style: none`, a 5% mix) passed.
   const badge = lift<(path: string, fact: { score: number; confidence: string }) => string>(
     ['escapeHtml', 'hexToRgb', 'C_TEAL', 'mix', 'C_RC_LOW', 'reclaimRgb', 'reclaimColor', 'reclaimInk', 'reclaimBadge'], 'reclaimBadge');
   const ring = { high: badgeRing('high'), medium: badgeRing('medium'), low: badgeRing('low') };
+  assert.ok(!['none', 'hidden'].includes(ring.medium.style), `a medium badge draws its ring (border-style ${ring.medium.style})`);
+  assert.ok(ring.medium.width > 0, `a medium ring has a width (${ring.medium.width}px)`);
   assert.notEqual(ring.medium.style, ring.low.style, `a medium ring is not drawn like a low one (${ring.low.style})`);
   let checked = 0;
   for (const [name, palette] of THEMES) {
@@ -476,6 +511,8 @@ test('a medium-confidence badge draws a ring quieter than a high-confidence one,
         checked++;
         assert.ok(medium <= high * MEDIUM_RING_MAX_SHARE,
           `${name}: a medium-confidence ${score} rings at ${fmt(medium)}:1 on ${where}, a high one at ${fmt(high)}:1 — not a third quieter (${ring.medium.colour})`);
+        assert.ok(medium >= MEDIUM_RING_MIN_CONTRAST,
+          `${name}: a medium-confidence ${score} rings at ${fmt(medium)}:1 on ${where} — fainter than ${MEDIUM_RING_MIN_CONTRAST}:1, a ring nobody sees (${ring.medium.colour})`);
       }
     }
   }
