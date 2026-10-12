@@ -74,34 +74,89 @@ test('a single-file root is said once, though it kept two engines off', async ()
   assert.equal(times(scan.engineReason, /single file/), 1, scan.engineReason);
 });
 
-test('an incremental rescan the walker serves is said once (D45)', async () => {
-  // Where the native engine can run, a fast-rescan request no longer keeps it
-  // off (tests/fastRescanEngine.test.ts); without one, gdu's rule says it.
+/**
+ * gdu's own rule on Windows, where it is never wanted (RISKS R59, `gduRuleFor`): there it is the one gdu
+ * always gives, so its rules for a fast rescan or a "don't scan" pattern never speak, and neither the
+ * fast rescan nor the pattern is a cause of anything being kept off.
+ */
+const GDU_ON_WINDOWS = /on Windows gdu keys no hard links \(it reads every file id as 0\), so a tree that has them would be counted more than once; the built-in walker keys them by file id/;
+
+/**
+ * A fast rescan the walker serves, where the native engine cannot run: the second scan of a tree, its
+ * engine chosen with `platform` standing in for this machine's (`asWindows`) or as this machine is.
+ */
+async function walkerFastRescan(platform: 'here' | 'win32'): Promise<ScanResult> {
   const root = tree();
   resetNativeForTests();
   resetEngineBudgetForTests();
   setNativeLoadOptionsForTests({ path: path.join(os.tmpdir(), 'treemap-no-native-here.node') });
   try {
     await scanOf(root, 'auto');
-    const scan = await scanOf(root, 'auto', { incremental: true });
-    assert.ok(scan.engine === 'walker' || scan.engine === 'turbo-walker', scan.engine);
-    assert.equal(times(scan.engineReason, /incremental rescan/), 1, scan.engineReason);
+    await updateSettings({ engine: 'auto' });
+    const start = (): Promise<ScanResult> => startScan(root, { incremental: true });
+    const scan = platform === 'win32' ? await asWindows(start) : await start();
+    await waitFor(() => scan.status !== 'running', `the fast rescan of ${root} settling`);
+    assert.equal(scan.status, 'complete', scan.error);
+    await settled();
+    return getScan(scan.scanId) ?? scan;
   } finally {
     setNativeLoadOptionsForTests(null);
     resetNativeForTests();
     resetEngineBudgetForTests();
   }
-});
+}
 
-test('two causes are both said: a gdu setting refused by a pattern names the setting and the pattern', async () => {
+/** A scan the gdu setting asks for, with one "don't scan" pattern, its engine chosen as `walkerFastRescan`'s is. */
+async function gduWithPattern(platform: 'here' | 'win32'): Promise<ScanResult> {
   const root = tree();
   await updateSettings({ ignore: [{ pattern: 'skip', scope: 'scan' }] });
   try {
-    const scan = await scanOf(root, 'gdu');
-    assert.match(scan.engineReason ?? '', /the Scan engine setting asks for gdu; the scan has 1 "don't scan" pattern gdu cannot express/);
+    await updateSettings({ engine: 'gdu' });
+    const start = (): Promise<ScanResult> => startScan(root);
+    const scan = platform === 'win32' ? await asWindows(start) : await start();
+    resetNativeForTests(); // Windows may have sent the loader looking for a Windows module
+    await waitFor(() => scan.status !== 'running', `the scan of ${root} settling`);
+    assert.equal(scan.status, 'complete', scan.error);
+    await settled();
+    return getScan(scan.scanId) ?? scan;
   } finally {
     await updateSettings({ ignore: [] });
   }
+}
+
+/** The fast rescan's sentence as `platform` gives it: each cause once — and on Windows the fast rescan is none. */
+function assertFastRescanSaidOnce(scan: ScanResult, platform: NodeJS.Platform): void {
+  assert.ok(scan.engine === 'walker' || scan.engine === 'turbo-walker', scan.engine);
+  if (platform === 'win32') {
+    assert.equal(times(scan.engineReason, GDU_ON_WINDOWS), 1, `gdu's rule on Windows, once: ${scan.engineReason}`);
+    assert.equal(times(scan.engineReason, /incremental rescan/), 0, `no engine was kept off for a fast rescan: ${scan.engineReason}`);
+  } else {
+    assert.equal(times(scan.engineReason, /incremental rescan/), 1, scan.engineReason);
+  }
+}
+
+/** The gdu setting and what refused it, both said: the pattern — or on Windows gdu's own rule there. */
+function assertSettingAndCauseSaid(scan: ScanResult, platform: NodeJS.Platform): void {
+  if (platform === 'win32') {
+    assert.match(scan.engineReason ?? '', new RegExp(`the Scan engine setting asks for gdu; ${GDU_ON_WINDOWS.source}`));
+  } else {
+    assert.match(scan.engineReason ?? '', /the Scan engine setting asks for gdu; the scan has 1 "don't scan" pattern gdu cannot express/);
+  }
+}
+
+test('an incremental rescan the walker serves is said once (D45)', async () => {
+  // Where the native engine can run, a fast-rescan request no longer keeps it
+  // off (tests/fastRescanEngine.test.ts); without one, gdu's rule says it.
+  assertFastRescanSaidOnce(await walkerFastRescan('here'), process.platform);
+});
+
+test('two causes are both said: a gdu setting refused by a pattern names the setting and the pattern', async () => {
+  assertSettingAndCauseSaid(await gduWithPattern('here'), process.platform);
+});
+
+test('on Windows gdu\'s own rule is the one it gives (R59), said once: a fast rescan the walker serves names no rescan as a cause, and a gdu setting names the setting and that rule (Windows stood in where this is not Windows)', async () => {
+  assertFastRescanSaidOnce(await walkerFastRescan('win32'), 'win32');
+  assertSettingAndCauseSaid(await gduWithPattern('win32'), 'win32');
 });
 
 /** Windows while `startScan` decides which engine runs (as tests/scanMftMode.test.ts stands it in). */

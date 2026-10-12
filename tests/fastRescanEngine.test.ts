@@ -121,7 +121,10 @@ test('where the native engine cannot run, Automatic’s fast rescan is the walke
     assert.ok(isWalker(again), again.engine);
     assert.equal(again.incremental, true);
     assert.ok((again.cachedDirs ?? 0) > 0, `cachedDirs ${again.cachedDirs}`);
-    assert.equal(times(again.engineReason, /incremental rescan/), 1, again.engineReason);
+    // gdu's rule, said once: for a fast rescan — or, on Windows, the one gdu always gives there (RISKS
+    // R59), where the fast rescan keeps no engine off (tests/engineReasonClauses.test.ts holds both).
+    const gduRule = process.platform === 'win32' ? /on Windows gdu keys no hard links/ : /incremental rescan/;
+    assert.equal(times(again.engineReason, gduRule), 1, again.engineReason);
     assert.equal(times(again.engineReason, SKIPPED), 0, again.engineReason);
   } finally {
     setNativeLoadOptionsForTests(null);

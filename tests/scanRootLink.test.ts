@@ -123,7 +123,9 @@ const LINK_SENTENCE = (link: string, real: string): string => `${link} is a link
 /* ─────────────────────────── the folder a link points to ─────────────────────────── */
 
 for (const engine of ['walker', 'native', 'gdu'] as const) {
-  test(`${engine}: a root that is a link to a folder is scanned as that folder, by the folder's own path, and the scan says so (D78)`, { skip: NO_LINKS }, async (t) => {
+  // gdu is never wanted on Windows (RISKS R59, gduRuleFor): a scan the gdu setting asks for runs the walker there.
+  const noGdu = engine === 'gdu' && process.platform === 'win32' && 'gdu keys no hard links on Windows (RISKS R59); the scan chain never uses it there';
+  test(`${engine}: a root that is a link to a folder is scanned as that folder, by the folder's own path, and the scan says so (D78)`, { skip: NO_LINKS || noGdu }, async (t) => {
     if (!(await has(t, engine))) return;
     const f = linkTree();
     const scan = await scanOf(f.link, engine);
