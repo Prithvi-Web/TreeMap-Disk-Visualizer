@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-autopilotApprove-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { approvePolicy, approvePolicyForTests, listPolicies, runDuePolicies, runPolicy, savePolicies, simulatePolicy } from '../src/services/autopilot';
+import { approvePolicy, approvePolicyForTests, listPolicies, listRuns, runDuePolicies, runPolicy, savePolicies, simulatePolicy } from '../src/services/autopilot';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AppError } from '../src/middleware/errorHandler';
@@ -583,6 +583,47 @@ test('a policy never approved whose newest preview was made for a scope since ed
     assert.deepEqual(ran[0].scope?.match, { kind: 'custom', exts: ['log', 'txt'] }, 'made for the policy as it is now');
     const again = await withOpenFileCheck('clear', () => runDuePolicies(stampedAt + 120_000));
     assert.deepEqual(again, [], 'and once previewed, it waits out its cooldown as before');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+/* ─────────────── a policy switched off (final review F3.3) ─────────────── */
+
+test('the scheduler passes over a policy switched off - approved and due, or with a preview to redo - and runs it at the first check after it is switched on (final review F3.3)', async () => {
+  const approvedDir = folder('off-approved', { 'a.log': 1000 });
+  const previewDir = folder('off-preview', { 'b.log': 1000 });
+  const logs = (id: string, dir: string): Record<string, unknown> =>
+    ({ id, name: id, path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false, enabled: true });
+  const ids = ['off-approved', 'off-preview'];
+  const runsOfBoth = async (): Promise<number> => (await listRuns(200)).filter((r) => ids.includes(r.policyId)).length;
+  const switchBoth = async (enabled: boolean): Promise<void> => {
+    await savePolicies([{ ...(await policyNow('off-approved')), enabled }, { ...(await policyNow('off-preview')), enabled }]);
+  };
+  await savePolicies([logs('off-approved', approvedDir), logs('off-preview', previewDir)]);
+  try {
+    // Never approved, its newest preview one an earlier build recorded: on, it is previewed again at once (F1.7).
+    const old = await runOnce('off-preview');
+    const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+    delete store.runs.find((r) => r.id === old.id)?.scope;
+    await writeJsonFile('autopilot.json', store);
+    // Approved and never run: on, it is due at once.
+    await approvePolicyForTests('off-approved');
+    await switchBoth(false);
+    assert.ok((await policyNow('off-approved')).approvedAt, 'switching off keeps the approval');
+    const before = await runsOfBoth();
+    const off = await withOpenFileCheck('clear', () => runDuePolicies(Date.now() + 60_000));
+    assert.deepEqual(off.map((r) => r.policyId), [], 'neither is run nor previewed while switched off');
+    assert.equal(await runsOfBoth(), before, 'and no run of either is recorded');
+    assert.ok(fs.existsSync(path.join(approvedDir, 'a.log')), 'nothing is deleted by a policy switched off');
+
+    await switchBoth(true);
+    const on = await withOpenFileCheck('clear', () => runDuePolicies(Date.now() + 60_000));
+    const ran = new Map(on.map((r) => [r.policyId, r]));
+    assert.equal(ran.get('off-approved')?.mode, 'live', `switched on, the approved policy runs at the next check: ${ran.get('off-approved')?.blockedReason}`);
+    assert.ok(!fs.existsSync(path.join(approvedDir, 'a.log')), 'and deletes what it matches');
+    assert.equal(ran.get('off-preview')?.status, 'awaiting-approval', 'and the other is previewed again');
+    assert.ok(fs.existsSync(path.join(previewDir, 'b.log')), 'a preview deletes nothing');
   } finally {
     await savePolicies([]);
   }
