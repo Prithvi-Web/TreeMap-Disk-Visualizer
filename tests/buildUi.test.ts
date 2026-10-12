@@ -135,6 +135,95 @@ test('the Docker build stage copies every file outside src/ that src/ imports', 
   }
 });
 
+/**
+ * Whether `.dockerignore` keeps `rel` (a path from the context root, `/`-separated) out of the build
+ * context, read as Docker reads it: each line a pattern from the root, `*` and `?` within one name, `**`
+ * across names, `!` re-including, the last line that matches deciding, and a line that matches a
+ * folder matching everything in it. Character classes are not read; no line here uses one.
+ */
+function dockerIgnores(lines: string[], rel: string): boolean {
+  const rules = lines
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .map((line) => {
+      const negated = line.startsWith('!');
+      const pattern = path.posix.normalize((negated ? line.slice(1) : line).trim().replace(/^\/+/, '')).replace(/\/+$/, '');
+      let re = '';
+      for (let i = 0; i < pattern.length; i++) {
+        const c = pattern[i];
+        if (c === '*' && pattern[i + 1] === '*') {
+          i++;
+          if (pattern[i + 1] === '/') { i++; re += '(?:.*/)?'; } else re += '.*';
+        } else if (c === '*') re += '[^/]*';
+        else if (c === '?') re += '[^/]';
+        else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      }
+      return { negated, re: new RegExp(`^${re}$`) };
+    });
+  const parts = rel.split('/');
+  const selfAndFolders = parts.map((_, i) => parts.slice(0, i + 1).join('/'));
+  let ignored = false;
+  for (const rule of rules) if (selfAndFolders.some((p) => rule.re.test(p))) ignored = !rule.negated;
+  return ignored;
+}
+
+/**
+ * The COPY lines above are only half of what reaches the stage: `.dockerignore` filters the build
+ * context before any of them runs, so a pattern over a file the stage copies — or over anything inside
+ * a folder it copies, src/ui say — fails `npm run build` in the image however right the COPY lines are.
+ * And tsc compiles what tsconfig.json includes, so every root it names must be copied too. Read from
+ * the three files, so a new pattern, a new COPY or a new include root cannot slip past (the LEFT brief,
+ * item 3: the stage once lacked native/index.d.ts, and nothing that ran said so).
+ */
+test('.dockerignore keeps out nothing the Docker build stage copies, and the stage copies every root tsconfig compiles', () => {
+  const dockerfile = readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
+  const buildStage = dockerfile.slice(0, dockerfile.indexOf('# ---- runtime'));
+  const copied = [...buildStage.matchAll(/^COPY (?!--)(.+)$/gm)]
+    .flatMap((m) => m[1].trim().split(/\s+/).slice(0, -1))
+    .map((c) => c.replace(/^\.\//, '').replace(/\/$/, ''));
+  const ignore = readFileSync(path.join(repoRoot, '.dockerignore'), 'utf8').split('\n');
+
+  // Controls: the reading above finds the lines that matter, and keeps out what it should — the
+  // dependencies the stage installs itself, and the native build's output and prebuilt module.
+  assert.deepEqual(
+    ['node_modules/express/index.js', 'dist/index.js', 'native/treemap-core/target/release/libx.rlib', 'native/prebuilt/darwin-arm64/treemap_core.node']
+      .filter((p) => !dockerIgnores(ignore, p)),
+    [],
+    'the build context leaves out node_modules, dist and the native build output',
+  );
+  assert.equal(dockerIgnores(['docs', '!docs/keep.md'], 'docs/keep.md'), false, 'control: a later ! line re-includes');
+  assert.equal(dockerIgnores(['**/*.map'], 'src/a/b.js.map'), true, 'control: ** crosses folders');
+  assert.equal(dockerIgnores(['*.log'], 'src/x.log'), false, 'control: * stays in one name, from the root');
+  for (const needed of ['package.json', 'package-lock.json', 'tsconfig.json', 'scripts', 'src', 'native/index.d.ts']) {
+    assert.ok(copied.includes(needed), `control: the build stage copies ${needed} (copied: ${copied.join(', ')})`);
+  }
+
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  const visit = (rel: string): void => {
+    const full = path.join(repoRoot, ...rel.split('/'));
+    if (statSync(full).isDirectory()) {
+      for (const name of readdirSync(full)) visit(`${rel}/${name}`);
+      return;
+    }
+    (dockerIgnores(ignore, rel) ? dropped : kept).push(rel);
+  };
+  for (const source of copied) visit(source);
+  const visited = [...kept, ...dropped];
+  assert.ok(visited.includes('src/ui/manifest.json') && visited.includes('native/index.d.ts'), 'control: the walk reached inside every source');
+  assert.deepEqual(dropped, [], 'the build stage copies these, and .dockerignore keeps them out of the context');
+
+  const tsconfig = JSON.parse(readFileSync(path.join(repoRoot, 'tsconfig.json'), 'utf8')) as { include: string[] };
+  for (const include of tsconfig.include) {
+    // The literal folders a pattern starts with: src/**/*.ts compiles from src.
+    const root = include.split('/').filter((part, i, all) => all.slice(0, i + 1).every((p) => !/[*?[{]/.test(p))).join('/');
+    assert.ok(
+      copied.some((c) => root === c || root.startsWith(`${c}/`)),
+      `tsconfig.json compiles ${include}, so the build stage must COPY ${root || 'the folder it names'} (copied: ${copied.join(', ')})`,
+    );
+  }
+});
+
 test('the image takes the generated page from the stage that built it', () => {
   const dockerfile = readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
   const runtime = dockerfile.slice(dockerfile.indexOf('# ---- runtime'));
