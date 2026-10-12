@@ -50,6 +50,26 @@ test('a recovered folder reports the bytes of the files in it, not its directory
   assert.equal(out.sizeBytes, 3_000_000);
 });
 
+test('a link in a recovered folder is counted as itself, never followed to what it names (final review F2.7)', { skip: process.platform === 'win32' ? 'links need privileges on Windows' : false }, async () => {
+  const snapshot = fileTempDir('treemap-snapshotRecoveredSize-links-');
+  const folder = path.join(snapshot, 'Project');
+  fs.mkdirSync(folder);
+  fs.writeFileSync(path.join(folder, 'notes.txt'), Buffer.alloc(1000, 1));
+  // A large folder beside it, which a link inside the recovered folder names.
+  const big = path.join(fileTempDir('treemap-snapshotRecoveredSize-links-big-'), 'big');
+  fs.mkdirSync(big);
+  fs.writeFileSync(path.join(big, 'a.bin'), Buffer.alloc(2_000_000, 2));
+  fs.writeFileSync(path.join(big, 'b.bin'), Buffer.alloc(2_000_000, 3));
+  let link = '';
+  standInRecovery(folder, (destination) => {
+    link = path.join(destination, 'big-link');
+    fs.symlinkSync(big, link, 'dir');
+  });
+  const destination = path.join(fileTempDir('treemap-snapshotRecoveredSize-links-dest-'), 'Project (recovered)');
+  const out = await restoreFromSnapshot({ path: path.join(fileTempDir('treemap-snapshotRecoveredSize-links-home-'), 'Project'), destination });
+  assert.equal(out.sizeBytes, 1000 + fs.lstatSync(link).size, 'the file, and the link\'s own size — not the 4 MB it names');
+});
+
 test('a recovered file still reports its own size', async () => {
   const snapshot = fileTempDir('treemap-snapshotRecoveredSize-file-');
   const notes = path.join(snapshot, 'notes.txt');
