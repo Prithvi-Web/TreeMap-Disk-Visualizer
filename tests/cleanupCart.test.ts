@@ -447,6 +447,15 @@ test('the cleanup-target meter does not count an unsized staged item as 0 B: unk
   assert.match(all.line, /<b>3000000000 B<\/b> of 50000000000 B staged/, `no mark when everything is sized: ${all.line}`);
   assert.match(all.label, /Cleanup target: 3000000000 B of 50000000000 B staged, 6 percent/, all.label);
 
+  // Past the target, the figure that met it is still a floor while some items are unsized.
+  const metSome = goalShows(60_000_000_000, 1, 2);
+  assert.equal(metSome.met, true, 'the sized part alone meets the target');
+  assert.match(metSome.line, /Target met\.<\/b> <span>60000000000 B\+ staged toward 50000000000 B\./, `marked a floor: ${metSome.line}`);
+  assert.match(metSome.label, /Cleanup target met: at least 60000000000 B staged toward 50000000000 B/, metSome.label);
+  const metAll = goalShows(60_000_000_000, 0, 1);
+  assert.match(metAll.line, /Target met\.<\/b> <span>60000000000 B staged toward 50000000000 B\./, `no mark when everything is sized: ${metAll.line}`);
+  assert.match(metAll.label, /Cleanup target met: 60000000000 B staged toward 50000000000 B/, metAll.label);
+
   // renderCart hands the meter the same unknown count the pill and footer use.
   const other = ['/elsewhere/a/node_modules', '/elsewhere/b/node_modules'];
   assert.deepEqual((await cartShows(other, {})).goal, [[0, 2]], 'all unsized: the meter is told 2 unknown');
