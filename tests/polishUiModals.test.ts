@@ -170,6 +170,7 @@ type ModalApi = {
   openModals: () => FEl[]; topModal: () => FEl | null; modalFocusTarget: (b: FEl) => FEl;
   modalFocusables: (root: FEl) => FEl[]; syncModalLayers: () => void; modalOpened: (el: FEl) => void; modalClosed: (el: FEl) => void;
   modalTrapTab: (e: { shiftKey: boolean; preventDefault: () => void }, top: FEl) => void; noteFocus: (el: FEl) => void;
+  inModalOverlay: (node: FEl | null) => boolean; modalFocusInto: (backdrop: FEl) => void;
 };
 
 function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {}): ModalApi {
@@ -184,7 +185,8 @@ function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {
   // retire the offers made in it; a test that cares records the calls.
   return new Function('document', '$', 'MutationObserver', 'toastsRetire',
     `'use strict'; ${src}
-     return { openModals, topModal, modalFocusTarget, modalFocusables, syncModalLayers, modalOpened, modalClosed, modalTrapTab, noteFocus };`,
+     return { openModals, topModal, modalFocusTarget, modalFocusables, syncModalLayers, modalOpened, modalClosed, modalTrapTab, noteFocus,
+       inModalOverlay, modalFocusInto };`,
   )(doc, $, FakeObserver, toastsRetire) as ModalApi;
 }
 
@@ -489,8 +491,10 @@ test('a panel a sheet opens over itself — the reclaim-score breakdown from Cle
    sheet up holds focus on its close button, and then a sheet opens — `?`
    only flips `.open` and leaves focus to the net. The F1.3 exemption left
    focus in the breakdown, so the sheet opened with the keyboard and the
-   screen reader outside it: Enter acted on the breakdown, and the first
-   Escape closed the breakdown instead of the sheet. */
+   screen reader outside it: Enter acted on the breakdown. This test pins
+   focus only. The first Escape closing the breakdown instead of the sheet
+   was the breakdown's own listener, which focus did not reach: the review
+   F3.1 tests below pin where Escape goes. */
 test('a sheet that opens while the breakdown holds focus takes focus itself, and gives it back when it closes (review F2.3)', () => {
   const doc = makeDoc();
   pageFromMarkup(doc);
@@ -547,6 +551,146 @@ test('a sheet that opens in the same batch as another closes still takes focus f
   api.syncModalLayers();
   const at = doc.activeElement;
   assert.ok(b.contains(at), `sheet B, opened in the batch that closed A, has focus (it is on <${at?.tag} id=${at?.id}>)`);
+});
+
+/**
+ * The reclaim-score breakdown out of the built page — its open, its close and
+ * its Escape listener — over the real markup and the real net, with the
+ * app-wide handler's sheet branch for a key the breakdown lets through.
+ * `escape()` dispatches as the browser does: the document's capture listeners
+ * (the breakdown's) first, the bubble phase only if none stopped it. Focus
+ * reports itself as the browser's does (focusin), so the net sees every move;
+ * and the panel's innerHTML is modelled: cleared, its close button is gone,
+ * and focus on it falls to <body>.
+ */
+function breakdownHarness() {
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const focusin: Array<(e: { target: FEl }) => void> = [];
+  (doc as unknown as { addEventListener: (type: string, fn: (e: { target: FEl }) => void) => void }).addEventListener =
+    (type, fn) => { if (type === 'focusin') focusin.push(fn); };
+  let at: FEl | null = doc.activeElement;
+  Object.defineProperty(doc, 'activeElement', {
+    get: () => at,
+    set: (el: FEl | null) => { const moved = el !== at; at = el; if (moved && el && el !== doc.body) for (const fn of focusin) fn({ target: el }); },
+  });
+  const api = loadModalNet(doc);
+  const mk = mkOf(doc);
+  const pop = doc.getElementById('rcPopover')!;
+  Object.defineProperty(pop, 'innerHTML', {
+    get: () => '',
+    set: (html: string) => {
+      for (const c of pop.children.splice(0)) {
+        Object.assign(c, { parent: null, shown: false, isConnected: false });
+        if (at === c) at = doc.body;
+      }
+      if (html.includes('id="rcPopClose"')) append(pop, mk('button', 'rcPopClose', ['icon-btn']));
+    },
+  });
+  const keydown: Array<(e: unknown) => void> = [];
+  const document = {
+    addEventListener: (type: string, fn: (e: unknown) => void, capture?: boolean) => { if (type === 'keydown' && capture === true) keydown.push(fn); },
+    contains: (n: FEl) => doc.root.contains(n),
+    querySelector: (sel: string) => doc.querySelector(sel),
+    get activeElement() { return doc.activeElement; },
+  };
+  const fact = { score: 82, confidence: 'high', components: [], missing: [] };
+  const panel = new Function('document', '$', 'window', 'CSS', 'scoreFor', 'scoreKnown', 'toast', 'escapeHtml', 'reclaimColor', 'icon',
+    'reclaimWhyHtml', 'reclaimRadarAxes', 'RC_AXIS_ORDER', 'FxCharts', 'ctxTarget', 'topModal', 'inModalOverlay', 'modalFocusInto',
+    `'use strict'; ${slice('/* ── the popover ── */', '/* ── sorting ──')}\nreturn { openReclaimWhy, closeReclaimWhy };`,
+  )(document, (id: string) => doc.getElementById(id), { innerWidth: 1280, innerHeight: 800 }, { escape: (s: string) => s },
+    () => fact, () => true, () => {}, (s: string) => s, () => '#3a3', () => '', () => '', () => [], [], { radar: () => ({ destroy() {} }) }, null,
+    api.topModal, api.inModalOverlay, api.modalFocusInto,
+  ) as { openReclaimWhy: (path: string, anchor: FEl) => void; closeReclaimWhy: () => void };
+  const branch = slice('const openModal = topModal();', '// Focus goes back to whatever opened the menu');
+  const sheetEscape = new Function('topModal', 'closeModal', 'cmdkClose', `'use strict'; return () => { ${branch} };`)(
+    api.topModal, (id: string) => setOpen(api, doc.getElementById(id)!, false), () => {},
+  ) as () => void;
+  const escape = () => {
+    let stopped = false;
+    const e = { key: 'Escape', target: doc.activeElement, stopPropagation: () => { stopped = true; }, preventDefault: () => {} };
+    for (const fn of keydown) fn(e);
+    if (!stopped) sheetEscape();
+  };
+  /** A score badge — the breakdown's opener — in `parent`. */
+  const badgeIn = (parent: FEl, path: string) => Object.assign(append(parent, mk('button', '', ['rc-badge'], { 'data-rc-why': path })),
+    { getBoundingClientRect: () => ({ left: 40, top: 300, bottom: 318 }) });
+  assert.equal(keydown.length, 1, 'the breakdown listens for Escape on the document, in the capture phase');
+  return { doc, api, pop, escape, badgeIn, ...panel };
+}
+
+/* Review F3.1: Escape goes to the layer the keyboard is in, latest first.
+   F2.3 gave focus to a sheet opened over the breakdown, but the breakdown's
+   Escape listener — on the document, in the capture phase — still took the
+   first Escape whenever the breakdown showed, and stopped it before the
+   sheet's handler saw it: `?` over a breakdown opened from a page row, then
+   Escape, closed the breakdown and left the sheet up. */
+test('Escape closes the layer that holds the keyboard: a sheet opened over the breakdown closes first (review F3.1)', () => {
+  const h = breakdownHarness();
+  const path = '/Users/me/Movies/render-final.mov';
+  const badge = h.badgeIn(h.doc.querySelector('main')!, path);
+  badge.focus();
+  h.openReclaimWhy(path, badge);
+  const close = h.doc.getElementById('rcPopClose')!;
+  assert.equal(h.doc.activeElement, close, 'opened from a page row, the breakdown has focus');
+  const sheet = h.doc.getElementById('shortcutsModal')!;
+  setOpen(h.api, sheet, true); // `?`
+  assert.ok(sheet.contains(h.doc.activeElement), 'the sheet opened over it has focus (F2.3)');
+  h.escape();
+  assert.equal(sheet.classList.contains('open'), false, 'the first Escape closes the sheet, the layer the keyboard is in');
+  assert.equal(h.pop.hidden, false, 'and leaves the breakdown the sheet opened over');
+  assert.equal(h.doc.activeElement, close, 'which has focus back');
+  h.escape();
+  assert.equal(h.pop.hidden, true, 'the second Escape closes the breakdown');
+  assert.equal(h.doc.activeElement, badge, 'and focus is back on the badge that opened it');
+});
+
+test('a breakdown opened over a sheet still takes the first Escape, wherever focus is in that sheet (review F3.1)', () => {
+  const h = breakdownHarness();
+  const clean = h.doc.getElementById('cleanModal')!;
+  setOpen(h.api, clean, true);
+  const path = '/Users/me/Library/Caches/com.example.app';
+  const badge = h.badgeIn(clean.querySelector('.modal')!, path);
+  badge.focus();
+  h.openReclaimWhy(path, badge);
+  assert.equal(h.doc.activeElement, h.doc.getElementById('rcPopClose'), 'the breakdown takes focus over Clean Up (F1.3)');
+  h.escape();
+  assert.equal(h.pop.hidden, true, 'Escape closes the breakdown, the layer opened last');
+  assert.equal(clean.classList.contains('open'), true, 'and leaves Clean Up open');
+  assert.equal(h.doc.activeElement, badge, 'with focus back on the badge in it');
+  // Tab out of the breakdown wraps into the sheet and leaves the breakdown up.
+  h.openReclaimWhy(path, badge);
+  badge.focus();
+  h.escape();
+  assert.equal(h.pop.hidden, true, 'focus in Clean Up: the first Escape is still the breakdown\'s, which opened after the sheet');
+  assert.equal(clean.classList.contains('open'), true, 'and Clean Up stays');
+  h.escape();
+  assert.equal(clean.classList.contains('open'), false, 'the next Escape closes Clean Up');
+  // The sheet closes under the breakdown, with focus outside both: no sheet is left to take the key.
+  setOpen(h.api, clean, true);
+  h.openReclaimWhy(path, badge);
+  badge.focus();
+  setOpen(h.api, clean, false);
+  h.escape();
+  assert.equal(h.pop.hidden, true, 'with no sheet up, Escape closes the breakdown');
+});
+
+test('a breakdown holding focus under a later sheet closes on Escape, and focus goes into the sheet, not <body> (review F3.1)', () => {
+  const h = breakdownHarness();
+  const path = '/Users/me/Movies/render-final.mov';
+  const badge = h.badgeIn(h.doc.querySelector('main')!, path);
+  badge.focus();
+  h.openReclaimWhy(path, badge);
+  const sheet = h.doc.getElementById('shortcutsModal')!;
+  setOpen(h.api, sheet, true);
+  const close = h.doc.getElementById('rcPopClose')!;
+  close.focus(); // a click back in the breakdown, which paints above every sheet
+  assert.equal(h.doc.activeElement, close, 'the breakdown stays live over the sheet: a click there gives it focus');
+  h.escape();
+  assert.equal(h.pop.hidden, true, 'Escape goes to the breakdown, which holds the keyboard');
+  assert.equal(sheet.classList.contains('open'), true, 'and the sheet stays');
+  const at = h.doc.activeElement;
+  assert.ok(sheet.contains(at), `focus goes into the sheet — the badge behind it is inert — not to <body> (it is on <${at?.tag} id=${at?.id}>)`);
 });
 
 /* ══════════════ a11y-keyboard-2 — shortcuts stop at the scrim; Escape closes the top layer ══════════════ */

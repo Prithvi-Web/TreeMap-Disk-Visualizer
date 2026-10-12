@@ -837,13 +837,15 @@ function modalTrapTab(e, top) {
 }
 /* A sheet has opened since the net last placed focus. It takes focus wherever
    focus was, the breakdown included: a sheet opened over the breakdown is the
-   top layer now, and left there, Enter acted on the breakdown and the first
-   Escape closed it instead of the sheet (review F2.3). Only a re-run of the
-   net with no sheet newly open leaves focus in a panel the top sheet opened
-   over itself (review F1.3). The mark is spent by the net's own pass, never
-   by the one a closing sheet runs first (moveFocus false): one observer batch
-   can open one sheet and close another, and the closing pass runs between
-   them (review F3.3). */
+   layer the keyboard is in now, and left in the breakdown, Enter acted on it
+   (review F2.3). Moving focus did not move Escape: the breakdown's own
+   listener (185) took the first one until it learnt to yield to a sheet
+   opened after it (review F3.1). Only a re-run of the net with no sheet
+   newly open leaves focus in a panel the top sheet opened over itself
+   (review F1.3). The mark is spent by the net's own pass, never by the one a
+   closing sheet runs first (moveFocus false): one observer batch can open
+   one sheet and close another, and the closing pass runs between them
+   (review F3.3). */
 let modalJustOpened = false;
 function modalOpened(el) {
   modalOrder.set(el, ++modalOpenSeq);

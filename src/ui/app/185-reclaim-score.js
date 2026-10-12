@@ -338,6 +338,9 @@ function reclaimRadarAxes(fact) {
 
 let rcPopoverPath = null;
 let rcPopoverOpener = null;
+/** The sheet on top when the breakdown opened, null over the page. A sheet on
+    top that is not this one opened after the breakdown (review F3.1). */
+let rcPopoverOver = null;
 /** The radar's handle. One panel, one chart — every open pairs with a drop. */
 let rcRadarHandle = null;
 function rcRadarDrop() {
@@ -365,6 +368,7 @@ function openReclaimWhy(path, anchorEl, point) {
   }
   rcPopoverPath = path;
   rcPopoverOpener = anchorEl || null;
+  rcPopoverOver = topModal();
   // Everything scrolls inside .rc-pop-scroll, never the panel, whose opaque
   // fill and ring would scroll away with the rows (POL item 3). The close
   // button is inside it too, so the keys that scroll still scroll it.
@@ -426,7 +430,15 @@ function closeReclaimWhy() {
   pop.innerHTML = '';
   rcPopoverPath = null;
   rcPopoverOpener = null;
+  rcFocusBack(opener, path);
+  // A sheet opened after the breakdown made the page behind it inert, and an
+  // inert opener refuses focus, which then drops to <body> under the sheet:
+  // the sheet takes it instead (review F3.1).
+  const top = topModal();
+  if (top && !top.contains(document.activeElement)) modalFocusInto(top);
+}
 
+function rcFocusBack(opener, path) {
   // Focus goes back where it came from, or it lands on <body> and a keyboard
   // user loses their place in the list they were reading.
   //
@@ -463,8 +475,21 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('#ctxMenu [data-act="score"]') && ctxTarget && rcPopoverPath === ctxTarget.path) return;
   if (!$('rcPopover').hidden && !e.target.closest('#rcPopover')) closeReclaimWhy();
 });
+/* Escape closes the layer the keyboard is in, the latest first. The
+   breakdown paints above every sheet, but a sheet opened after it — `?` over
+   a breakdown opened from a page row — takes focus (the net in 235, review
+   F2.3), so that sheet is what Escape means: it closes and hands focus back
+   to the breakdown, whose Escape is the next one. Until review F3.1 this
+   listener, in the capture phase, took every Escape while the breakdown
+   showed and stopped it before the sheet's handler saw it. The breakdown
+   keeps the key when no sheet is up, when it opened over the top sheet, or
+   when it holds focus itself. */
+function rcPopoverOwnsEscape() {
+  const top = topModal();
+  return !top || top === rcPopoverOver || inModalOverlay(document.activeElement);
+}
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('rcPopover').hidden) { e.stopPropagation(); closeReclaimWhy(); }
+  if (e.key === 'Escape' && !$('rcPopover').hidden && rcPopoverOwnsEscape()) { e.stopPropagation(); closeReclaimWhy(); }
 }, true);
 
 /* ── sorting ──
