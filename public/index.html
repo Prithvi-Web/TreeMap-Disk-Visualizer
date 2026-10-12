@@ -20403,6 +20403,14 @@ function altRefineSchedule(root, geo, resume) {
     renderAltNote();
     if (!out.done) altRefineSchedule(root, geo, out.resume);
     fxShapeSync(!out.done); // FX: the chip settles the moment the queue does
+    // drawView asked for Reclaim scores while only the first slice was drawn;
+    // the shapes the later slices added stayed unscored grey (B26 review
+    // F3.3). Asked once the map is finished — ensureScores skips what is
+    // known — and the legend recounts against it while they load.
+    if (out.done && state.treemap.colorMode === 'reclaim') {
+      fetchScoresForTreemap();
+      renderTmLegend();
+    }
   });
 }
 

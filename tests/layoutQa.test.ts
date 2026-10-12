@@ -136,7 +136,7 @@ test('the Offloaded and Time Capsule search boxes fill their field — the place
 /* ══════════════ B13 — emptying the cart hands focus back, never to <body> ══════════════ */
 
 /**
- * Several page declarations (functions, or `const x = …;`) in one scope, run
+ * Several page declarations (functions, or `const x = …;` / `let x = …;`) in one scope, run
  * with `deps` — and `extra`, a stretch of the page's own top-level code (its
  * listener wiring), run after them in the same scope.
  */
@@ -145,7 +145,7 @@ function runPageDecls<T>(names: string[], deps: Record<string, unknown>, returns
     let start = INDEX.indexOf(`function ${name}(`);
     if (INDEX.lastIndexOf('async ', start) === start - 6) start -= 6;
     if (start < 0) {
-      const at = INDEX.indexOf(`const ${name} = `);
+      const at = [`const ${name} = `, `let ${name} = `].map((d) => INDEX.indexOf(d)).find((i) => i !== -1) ?? -1;
       assert.notEqual(at, -1, `${name} is in the built page`);
       return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
     }
@@ -634,4 +634,74 @@ test('a re-solve still waiting when the renderer, the view or the map changes dr
     m.pass(400);
     assert.deepEqual(m.w.events, [], `${what} while the re-solve waited: it draws nothing`);
   }
+});
+
+/* ══════════════ B26 review F3.3 — the shapes a refined layout adds are asked about too ══════════════ */
+
+/**
+ * A Voronoi map whose layout takes several slices, drawn as a settled
+ * re-solve draws it: the page's own drawView, buildCells, refinement loop
+ * and score fetch, lifted together. The solver returns `slices[i]` shapes on
+ * its i-th call, finished on the last; each animation frame the loop asks
+ * for runs on `frame()`. Recorded: the paths of every ensureScores call, and
+ * every legend render.
+ */
+function refineWorld(colorMode: string, slices: number[]) {
+  const asked: string[][] = [];
+  let legends = 0;
+  const frames: Array<() => void> = [];
+  let call = 0;
+  const solve = () => {
+    const i = call++;
+    const cells = Array.from({ length: slices[i] }, (_, k) => ({ n: { path: `/r/c${k}` } }));
+    return { cells, done: i === slices.length - 1, resume: { slice: i + 1 }, note: '' };
+  };
+  const state = {
+    scanId: 's1', view: 'treemap',
+    treemap: { mode: 'voronoi', colorMode, rootPath: '/r', cells: [] as Array<{ n: { path: string } }>,
+      altNote: '', altMs: 0, altRaf: 0, altZoomRaf: 0, altZoom: null },
+  };
+  const fns = runPageDecls<{ drawView(): void }>(
+    ['altRefineSeq', 'tmScoreChain', 'isSun', 'isCells', 'drawView', 'drawnCells', 'buildCells',
+      'altRefiningNote', 'altRefineCancel', 'altRefineSchedule', 'tmScoreKey', 'fetchScoresForTreemap'], {
+      state, AbortController,
+      sunburstRoot: () => ({ path: '/r' }),
+      layoutVoronoi: solve, layoutCirclePack: solve,
+      performance: { now: () => 0 },
+      requestAnimationFrame: (f: () => void) => frames.push(f), cancelAnimationFrame: () => {},
+      fxShapeSync() {}, repaintCells() {}, renderAltNote() {}, drawTreemap() {}, drawSunburst() {},
+      renderTmLegend: () => { legends++; },
+      formatCount: String, reclaimAskableNode: () => true, TM_SCORE_CAP: 6000,
+      ensureScores: (paths: string[]) => { asked.push([...paths]); return Promise.resolve(); },
+    }, '{ drawView }',
+    // drawCells as the page has it, less the canvas: it lays the map out.
+    'function drawCells() { buildCells({ cssW: 800, cssH: 600, dpr: 1 }); }');
+  return {
+    state, asked, frames, legends: () => legends, drawView: fns.drawView,
+    frame: () => { const f = frames.shift(); assert.ok(f, 'a frame is waiting'); f!(); },
+  };
+}
+
+test('in Reclaim colour, the shapes a Voronoi layout adds after its first slice are asked about once it finishes, and the legend recounts (B26 review F3.3)', () => {
+  // Review: drawView asked for the scores of what was drawn while only the
+  // first slice was, and the refinement frames that drew the rest asked
+  // nothing — those shapes stayed in unscored grey until something else did.
+  const m = refineWorld('reclaim', [3, 7, 12]);
+  m.drawView();
+  assert.deepEqual(m.asked.map((a) => a.length), [3], 'the draw asks for the slice it drew (precondition)');
+  m.frame();
+  assert.equal(m.state.treemap.cells.length, 7, 'a second slice is drawn');
+  assert.deepEqual(m.asked.map((a) => a.length), [3], 'nothing is asked while the layout is still filling in');
+  m.frame();
+  assert.equal(m.frames.length, 0, 'the layout is finished (precondition)');
+  const everAsked = new Set(m.asked.flat());
+  const unasked = m.state.treemap.cells.map((c) => c.n.path).filter((p) => !everAsked.has(p));
+  assert.deepEqual(unasked, [], 'every shape on the finished map has been asked about');
+  assert.equal(m.asked.length, 2, 'in one more ask, made when the layout finished');
+  assert.equal(m.legends(), 1, 'and the legend recounts against the finished map while they load');
+
+  const s = refineWorld('size', [3, 7, 12]);
+  s.drawView(); s.frame(); s.frame();
+  assert.deepEqual(s.asked, [], 'in Size colour nothing is asked');
+  assert.equal(s.legends(), 0, 'and the legend is not redrawn');
 });
