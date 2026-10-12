@@ -27189,7 +27189,7 @@ function openPolicyEditor(policy) {
   if (kind === 'custom') {
     const m = apDraft.match;
     $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;
-    if (m.maxAgeMs) $('apRuleAgeDays').value = Math.round(m.maxAgeMs / 86400000);
+    if (m.maxAgeMs) $('apRuleAgeDays').value = m.maxAgeMs / 86400000; // exact: 36 hours is 1.5, never rounded to 2
     $('apRuleSizeOn').checked = m.minBytes !== undefined;
     if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / 1048576);
     $('apRuleExtOn').checked = Boolean(m.exts?.length);
@@ -27285,6 +27285,13 @@ function policyFromEditor() {
     if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
     if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * 1048576;
     if ($('apRuleExtOn').checked) match.exts = $('apRuleExts').value.split(',').map(s => s.trim()).filter(Boolean);
+    // An age rule the box still shows as it was opened keeps the milliseconds
+    // the policy stored — a part of a day too (36 hours opens as "1.5"), and
+    // one under the box's 1-day floor. Only a figure a person types is read as
+    // days and held to that floor, so Save never rewrites a rule nobody edited
+    // (the LEFT brief, item 6; as 8f54072 did for the size rule).
+    const openedAge = apDraft && apDraft.match ? apDraft.match.maxAgeMs : undefined;
+    if (match.maxAgeMs !== undefined && openedAge > 0 && Number($('apRuleAgeDays').value) === openedAge / 86400000) match.maxAgeMs = openedAge;
   }
   const gb = (id) => { const n = Number($(id).value); return Number.isFinite(n) && n > 0 ? Math.round(n * GB) : null; };
   return {
