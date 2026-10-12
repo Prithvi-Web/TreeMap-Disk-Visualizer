@@ -41,8 +41,8 @@ const ABSENT = new Set(['ENOENT', 'ENOTDIR']);
 /** The absences, plus paths the kernel will never resolve. */
 const UNRESOLVABLE = new Set([...ABSENT, 'ELOOP', 'ENAMETOOLONG', 'EINVAL']);
 
-/** Walk an error and its causes for the first fs errno anyone recorded. */
-function errnoOf(err: unknown): { code?: string; errno?: number } | null {
+/** Walk an error and its causes for the first fs errno anyone recorded, with the call that raised it when it says. */
+function errnoOf(err: unknown): { code?: string; errno?: number; syscall?: string } | null {
   // `cause` is walked because this codebase chains errors (`diskUsage` does),
   // and a wrapped fs error with the answer inside it must not read as "could
   // not tell" just because the wrapper carries no code of its own. The depth
@@ -55,11 +55,23 @@ function errnoOf(err: unknown): { code?: string; errno?: number } | null {
     // stopping at the first string made the wrapped fs error underneath
     // invisible the moment one of them wrapped it. The walk exists precisely
     // for wrapped errors.
-    if (typeof node.code === 'string' && /^E[A-Z]+$/.test(node.code)) return { code: node.code };
+    if (typeof node.code === 'string' && /^E[A-Z]+$/.test(node.code)) {
+      return typeof node.syscall === 'string' ? { code: node.code, syscall: node.syscall } : { code: node.code };
+    }
     if (typeof node.errno === 'number') return { errno: node.errno };
   }
   return null;
 }
+
+/**
+ * The calls whose EPERM on macOS is the privacy gate refusing a look: listing
+ * a folder or reading what an entry is (Track U, U-11; review F1.4). A write,
+ * a removal, an `open` (which may be for writing) or a call nobody named can
+ * be refused EPERM by a lock (`chflags uchg`, Finder's Locked), another
+ * account's ownership or System Integrity Protection too, none of which Full
+ * Disk Access lifts, so those are worded as a refusal of unknown cause.
+ */
+const READS = new Set(['scandir', 'opendir', 'readdir', 'stat', 'lstat', 'readlink']);
 
 /**
  * libuv's numeric codes, for an error that lost its own properties crossing a
@@ -108,19 +120,23 @@ export function meansGone(err: unknown): boolean {
  * subprocess printed.
  */
 export function describeFsError(err: unknown): string {
-  const code = errnoOf(err)?.code;
+  const found = errnoOf(err);
+  const code = found?.code;
   switch (code) {
     case 'ENOENT':
     case 'ENOTDIR':
       return 'it is no longer there';
     case 'EACCES':
-    case 'EPERM':
+    case 'EPERM': {
+      if (process.platform !== 'darwin') return 'TreeMap is not allowed to touch it — check the folder\'s permissions';
       // On macOS the fix depends on the errno and on whether Full Disk Access
-      // is on (Track U, U-11), so it comes from the one builder. No final
+      // is on (Track U, U-11), so it comes from the one builder. An EPERM is
+      // the privacy gate only when a read raised it; any other is worded as
+      // a refusal whose cause TreeMap cannot name (`code: null`). No final
       // period: every answer here is a clause a caller may wrap.
-      return process.platform === 'darwin'
-        ? `macOS would not let TreeMap touch it. ${accessAdviceNow({ code, retry: 'try again' }).replace(/\.$/, '')}`
-        : 'TreeMap is not allowed to touch it — check the folder\'s permissions';
+      const access = code === 'EPERM' && !READS.has(found?.syscall ?? '') ? null : code;
+      return `macOS would not let TreeMap touch it. ${accessAdviceNow({ code: access, retry: 'try again' }).replace(/\.$/, '')}`;
+    }
     case 'EBUSY':
     case 'ETXTBSY':
       return 'a program still has it open';

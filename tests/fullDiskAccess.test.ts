@@ -295,6 +295,34 @@ test('the callers follow the state: the error handler, describeFsError and the M
   }
 });
 
+test('describeFsError: an EPERM from a write, a removal or an unnamed call also says what Full Disk Access will not lift; one from a read is the privacy gate', { skip: process.platform !== 'darwin' && 'the sentences are macOS-only' }, () => {
+  // Review F1.4: `fsp.rm` on a file locked in Finder (`chflags uchg`) fails
+  // EPERM, and so do chmod, utimes and chown on another account's file. The
+  // grant sentence alone told that person Full Disk Access was the fix, and
+  // dropped the "check the folder's permissions" the old wording offered.
+  const HEDGE = /Full Disk Access does not override permissions or locks that you or another account set on a folder or file/;
+  const withSyscall = (syscall: string | undefined): NodeJS.ErrnoException => Object.assign(errno('EPERM'), syscall ? { syscall } : {});
+  const saved = lastFdaState();
+  try {
+    rememberFdaState('not-granted');
+    for (const syscall of ['unlink', 'rmdir', 'rename', 'chmod', 'utime', 'open', 'copyfile', undefined]) {
+      const s = describeFsError(withSyscall(syscall));
+      assert.match(s, /Give .* Full Disk Access/, `${String(syscall)}: it may still be the privacy gate`);
+      assert.match(s, HEDGE, `${String(syscall)}: and it may be a lock or another account's permissions: ${s}`);
+    }
+    for (const syscall of ['scandir', 'opendir', 'lstat', 'stat']) {
+      const s = describeFsError(withSyscall(syscall));
+      assert.match(s, /Give .* Full Disk Access/, `${syscall}: a refused read is the privacy gate`);
+      assert.doesNotMatch(s, HEDGE, `${syscall}: and says only that`);
+    }
+    // The cause chain describeFsError already walks carries the call too: a
+    // wrapped read is still the privacy gate.
+    assert.doesNotMatch(describeFsError(new Error('wrapped', { cause: withSyscall('scandir') })), HEDGE);
+  } finally {
+    rememberFdaState(saved);
+  }
+});
+
 const canLock = process.platform !== 'win32' && (typeof process.getuid !== 'function' || process.getuid() !== 0);
 
 test('an agent refused a folder by its own permissions is told its errno\'s sentence over MCP, never to grant Full Disk Access', { skip: !canLock && 'needs a chmod-000 folder' }, async () => {
