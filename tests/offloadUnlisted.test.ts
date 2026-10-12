@@ -159,6 +159,64 @@ test('a file that appears in a selected folder after its copies were made leaves
   assert.ok((await getOffloadIndex()).entries.some((e) => e.originalPath === a), 'and is recorded');
 });
 
+/** Folders `names` under a new root, each holding a.txt, and a complete scan listing exactly that. */
+function projects(label: string, names: string[]): { root: string; folders: string[]; scan: ScanResult } {
+  const root = fs.realpathSync(fileTempDir(`treemap-offloadUnlisted-${label}-`));
+  const children = names.map((name) => {
+    const folder = path.join(root, name);
+    fs.mkdirSync(folder);
+    const a = path.join(folder, 'a.txt');
+    fs.writeFileSync(a, `listed in ${name}`);
+    const file = { name: 'a.txt', path: a, size: fs.statSync(a).size, type: 'file' as const, modifiedAt: Date.now(), isHidden: false };
+    return { name, path: folder, size: file.size, type: 'dir' as const, modifiedAt: Date.now(), isHidden: false, children: [file] };
+  });
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = { name: path.basename(root), path: root, size: children.reduce((sum, c) => sum + c.size, 0), type: 'dir', modifiedAt: Date.now(), isHidden: false, children };
+  return { root, folders: children.map((c) => c.path), scan };
+}
+
+/** Offloads `folders` of `scan`, a file appearing in each of `gaining` while the copies are made. */
+async function offloadWhileGaining(label: string, scan: ScanResult, folders: string[], gaining: string[]): Promise<OffloadJob> {
+  const dest = fileTempDir(`treemap-offloadUnlisted-${label}-dest-`);
+  const undo = setOffloadVerifyForTests((_dest, hash) => {
+    for (const folder of gaining) {
+      const late = path.join(folder, 'made-during-the-copy.txt');
+      if (!fs.existsSync(late)) fs.writeFileSync(late, 'written while the offload ran');
+    }
+    return hash;
+  });
+  try {
+    return await withOpenFileCheck('clear', async () => {
+      const prepared = await prepareOffload(scan, folders, dest);
+      return settled((await startOffload(scan, folders, dest, prepared)).jobId);
+    });
+  } finally {
+    undo();
+  }
+}
+
+test('a folder that gains a file during the copy is left in place alone: the other selected folders go to the Trash (final review F2.5)', async () => {
+  const { folders: [projA, projB], scan } = projects('two', ['projA', 'projB']);
+  const before = trashedPaths.length;
+  const job = await offloadWhileGaining('two', scan, [projA, projB], [projA]);
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [projB], 'the untouched folder went to the Trash after its copies verified');
+  assert.ok(fs.existsSync(path.join(projA, 'made-during-the-copy.txt')) && fs.existsSync(path.join(projA, 'a.txt')), 'the one that gained a file is in place');
+  assert.match(job.error ?? '', /projA was left in place: it now holds made-during-the-copy\.txt/, job.error);
+  assert.doesNotMatch(job.error ?? '', /projB|more folder/, `only the folder held back is named (${job.error})`);
+});
+
+test('two of three folders gaining a file are both left in place, the first named and the other counted (final review F2.5)', async () => {
+  const { folders: [projA, projB, projC], scan } = projects('three', ['projA', 'projB', 'projC']);
+  const before = trashedPaths.length;
+  const job = await offloadWhileGaining('three', scan, [projA, projB, projC], [projA, projC]);
+  assert.equal(job.status, 'complete', job.error);
+  assert.deepEqual(trashedPaths.slice(before), [projB], 'only the untouched folder went to the Trash');
+  assert.ok(fs.existsSync(path.join(projA, 'a.txt')) && fs.existsSync(path.join(projC, 'a.txt')), 'both that gained a file are in place');
+  assert.match(job.error ?? '', /projA was left in place \(and 1 more folder\): /, job.error);
+});
+
 test('an OS junk file the scan did not list (.DS_Store) does not hold a folder back', async () => {
   const { root, proj, a } = project('junk', ['.DS_Store']);
   const dest = fileTempDir('treemap-offloadUnlisted-junk-dest-');
