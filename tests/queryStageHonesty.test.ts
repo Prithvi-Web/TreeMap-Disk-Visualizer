@@ -83,6 +83,7 @@ async function queryThenStage(q: string, hits: Hit[], opts: { cart?: string[]; t
     saveCart: () => {},
     renderCart: async () => {},
     refreshCartButtons: () => {},
+    cartPreviewInvalidated: () => {}, // no Preview is up here; tests/cartPreview.test.ts drives a real one
     toast: (msg: string, kind?: string) => { toasts.push({ msg, kind }); },
     formatCount: (n: number) => Number(n).toLocaleString('en-US'),
   };

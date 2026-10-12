@@ -949,10 +949,11 @@ function pageSource(name: string): string {
     assert.notEqual(at, -1, `${name} was located in public/index.html`);
     return INDEX.slice(at, INDEX.indexOf(';\n', at) + 1);
   }
+  const start = INDEX.startsWith('async ', fn - 6) ? fn - 6 : fn; // an async function keeps its `async`
   const open = INDEX.indexOf('{', INDEX.indexOf(')', fn));
   for (let i = open, depth = 0; i < INDEX.length; i++) {
     if (INDEX[i] === '{') depth++;
-    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(fn, i + 1);
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
   }
   return assert.fail(`${name} never closes`);
 }
@@ -995,18 +996,31 @@ function previewPage(cart: string[]) {
   };
   const names = ['tmPreview', 'TM_PREVIEW_BANNER_INSET', 'tmWorstRatio', 'tmSquarify', 'tmParentPath', 'tmIsInside', 'tmDrawnTree',
     'tmCartRoots', 'tmBuildPreview', 'tmPreviewRefusal', 'enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'tmPreviewPadSync',
-    'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle'];
+    'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle', 'tmStageMatches'];
   const keys = Object.keys(deps);
+  // The query box's last answer, which the real tmStageMatches stages from:
+  // `stageMatches(paths)` sets it to those files and presses Stage.
+  const src = `let tmLastHits = { paths: [], total: 0, truncated: false, stage: null };
+    ${names.map(pageSource).join('\n')}
+    return {
+      tmPreview, enterCartPreview, exitCartPreview, cartToggle,
+      stageMatches: async (paths) => {
+        tmLastHits = { paths, total: paths.length, truncated: false, stage: { paths, noun: 'file' } };
+        await tmStageMatches();
+      },
+    };`;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const page = new Function(...keys, `${names.map(pageSource).join('\n')}\nreturn { tmPreview, enterCartPreview, exitCartPreview, cartToggle };`)(
-    ...keys.map((k) => deps[k]),
-  ) as { tmPreview: { on: boolean }; enterCartPreview(): void; exitCartPreview(): void; cartToggle(p: string): void };
+  const page = new Function(...keys, src)(...keys.map((k) => deps[k])) as {
+    tmPreview: { on: boolean; freedBytes: number }; enterCartPreview(): void; exitCartPreview(): void; cartToggle(p: string): void;
+    stageMatches(paths: string[]): Promise<void>;
+  };
   /** What a person sees: is a preview up, by every sign of one. */
   const shows = () => ({
     on: page.tmPreview.on, bannerHidden: banner.hidden, previewing: wrap.previewing, pressed: button.pressed,
     pad: wrapProps['--tm-preview-pad'] ?? null,
   });
-  return { page, state, real, drawn, toasts, shows };
+  const bannerText = () => (els.tmPreviewText as { innerHTML: string }).innerHTML;
+  return { page, state, real, drawn, toasts, shows, bannerText };
 }
 
 const NO_PREVIEW = { on: false, bannerHidden: true, previewing: false, pressed: 'false', pad: null };
@@ -1096,4 +1110,37 @@ test('a refusal for items that are all elsewhere in this scan keeps the "open th
   two.state.pathIndex.set('/other/z', { path: '/other/z', size: 7 });
   two.page.enterCartPreview();
   assert.equal(lastToast(two), 'None of the 2 staged items is inside this folder — open the folder they are in to preview them.');
+});
+
+/* ══════════════ B06 review, round 3: Stage matches while the Preview is up ══════════════ */
+
+test('staging query matches while the Preview is up rebuilds it for the cart as it now is (B06 review)', async () => {
+  // Review: with /r/b staged and the Preview up, "Stage matches" added /r/a to
+  // the cart while the banner, the status line and the hatching kept showing
+  // the 40 B of the cart as it was.
+  const p = previewPage(['/r/b']);
+  p.page.enterCartPreview();
+  assert.match(p.bannerText(), /<b>40 B<\/b>/, 'the preview is up, for /r/b alone');
+
+  await p.page.stageMatches(['/r/a']);
+  assert.deepEqual([...p.state.cart].sort(), ['/r/a', '/r/b'], 'the match is in the cart');
+  assert.equal(p.shows().on, true, 'still previewing');
+  assert.equal(p.page.tmPreview.freedBytes, 100, 'the preview stages both');
+  assert.match(p.bannerText(), /<b>100 B<\/b>/, `the banner says so: ${p.bannerText()}`);
+  const last = (p.drawn.at(-1) ?? []) as Array<{ path: string; size: number; freed?: boolean }>;
+  assert.deepEqual(last.map((n) => [n.path, n.size, Boolean(n.freed)]), [['/r — freed', 100, true]],
+    'and the canvas hatches /r/a as well as /r/b');
+});
+
+test('staging matches that are all in the cart already leaves the Preview untouched (B06 review)', async () => {
+  const p = previewPage(['/r/b']);
+  p.page.enterCartPreview();
+  const shown = p.state.treemap.nodes;
+  const draws = p.drawn.length;
+  const hover = { path: '/r/a' };
+  p.state.treemap.hover = hover;
+  await p.page.stageMatches(['/r/b']);
+  assert.equal(p.state.treemap.nodes, shown, 'the same preview, not a rebuild of an unchanged cart');
+  assert.equal(p.drawn.length, draws, 'nothing redrawn');
+  assert.equal(p.state.treemap.hover, hover, 'and the pointer keeps what it rests on');
 });

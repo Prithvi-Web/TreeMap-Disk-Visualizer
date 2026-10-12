@@ -338,6 +338,10 @@ async function tmStageMatches() {
   saveCart();
   await renderCart();
   refreshCartButtons();
+  // A Preview that is up is a picture of the cart as it was: rebuilt, as every
+  // other way into the cart does (cartAddMany), once renderCart has resolved
+  // the new items' sizes. A press that added nothing leaves it alone.
+  if (added) cartPreviewInvalidated();
   const already = paths.length - added;
   const sentences = [
     `Staged ${formatCount(added)} ${stage.noun}${added === 1 ? '' : 's'}` +
