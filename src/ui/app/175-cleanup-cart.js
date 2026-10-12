@@ -678,9 +678,12 @@ function cartNoteFocusIn(e) {
 function cartFocusReturn() {
   const dock = $('cartDock');
   const usable = (el) => !!el && el.isConnected !== false && !dock.contains(el) && el.getClientRects().length > 0;
+  // `usable` is for the remembered control, which can be gone or in the
+  // dock. The view's controls need no such care: this branch runs once the
+  // dock has lost .show, and a display:none dock has nothing on screen.
   const target = dock.classList.contains('show') ? $('cartTab')
     : usable(cartFocus.from) ? cartFocus.from
-    : activeViewControl(usable);
+    : activeViewControl();
   if (target) target.focus({ preventScroll: true });
 }
 $('cartDock').addEventListener('focusin', cartNoteFocusIn);

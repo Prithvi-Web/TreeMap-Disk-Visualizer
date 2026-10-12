@@ -327,12 +327,12 @@ function switchView(name) {
  * The first enabled control on screen in the view that is up, or null: where
  * keyboard focus goes when the thing that held it disappears — an emptied
  * cart, the Grid's selection bar cleared from another view — rather than
- * falling to <body> (QA B13). `usable` says what counts as on screen; the
- * cart narrows it to leave out its own dock.
+ * falling to <body> (QA B13). On screen means painted: a control in a
+ * hidden part of the view has no client rects.
  */
-function activeViewControl(usable = (el) => el.getClientRects().length > 0) {
+function activeViewControl() {
   return [...document.querySelectorAll('.view.active button, .view.active input, .view.active select, .view.active [tabindex="0"]')]
-    .find((el) => !el.disabled && usable(el)) || null;
+    .find((el) => !el.disabled && el.getClientRects().length > 0) || null;
 }
 
 /**
