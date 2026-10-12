@@ -80,12 +80,15 @@ test('the page reads a "Don’t scan" pattern as the scanner does: the same answ
   // pattern below, each beside a path that only the UNescaped reading would
   // match ("Photos old" for "Photos (old)", "diskXiso" for "*.iso", …), so a
   // port that stopped escaping any of them disagrees with the scanner here.
+  // "WIDE FOLDER" has a path spelled its own way: the scanner folds case on
+  // macOS and Windows but not on Linux, so on Linux "/c/Wide folder" is no
+  // match for it, and the page must agree on both spellings everywhere.
   const patterns = [
     'Wide folder', '*.iso', 'node_modules', 'cache?', `${home}/Library`, '~/projects/**/dist', '/data/', 'WIDE FOLDER',
     'Photos (old)', 'Backup [2019]', 'a+b', 'x{1}', 'cost$', '^top', 'a|b', '/c/build (old)',
   ];
   const paths = [
-    '/c/Wide folder', '/c/x/Wide folder', '/c/Wide folder/inner', '/c/disk.iso', '/c/disk.iso.bak', '/c/diskXiso', '/c/a/node_modules',
+    '/c/Wide folder', '/c/WIDE FOLDER', '/c/x/Wide folder', '/c/Wide folder/inner', '/c/disk.iso', '/c/disk.iso.bak', '/c/diskXiso', '/c/a/node_modules',
     '/c/cache1', '/c/cache12', `${home}/Library`, `${home}/Library/Caches`, `${home}/Libraryx`,
     `${home}/projects/a/b/dist`, `${home}/projects/dist`, `${home}/projects/a/dist/x.js`, '/data', '/data/deep/file', '/database',
     '/c/Photos (old)', '/c/Photos old', '/c/Backup [2019]', '/c/Backup 2', '/c/a+b', '/c/ab', '/c/x{1}', '/c/x',
