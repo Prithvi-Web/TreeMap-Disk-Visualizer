@@ -852,6 +852,49 @@ test('the listener FleetRuntime starts hands a paired peer’s scan to startPeer
   }
 });
 
+test('this machine tells the network the version it is, read from its own package.json: the desktop app is started by Electron, not npm, so npm_package_version is not there to read, and peers saw a blank version (the LEFT brief, item 1)', async () => {
+  const saved = process.env.npm_package_version;
+  // As the packaged app runs: npm sets this only for a process it starts itself.
+  delete process.env.npm_package_version;
+  try {
+    const shipped = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as { version: string }).version;
+    assert.match(shipped, /^\d+\.\d+\.\d+/, 'control: package.json names a version');
+    const cfg = defaultConfig();
+    assert.equal((await fleetRuntime().summary(cfg)).version, shipped, 'the summary a paired peer reads');
+    assert.equal(fleetRuntime().advertisedTxt(cfg).v, shipped, 'and the mDNS record every machine on the network reads');
+    assert.deepEqual(
+      [fleetRuntime().advertisedTxt(cfg).id, fleetRuntime().advertisedTxt(cfg).label],
+      [cfg.instanceId, cfg.label],
+      'the record still names this machine as it did',
+    );
+  } finally {
+    if (saved === undefined) delete process.env.npm_package_version;
+    else process.env.npm_package_version = saved;
+  }
+  // apply() binds a LAN socket, so what it advertises is read from its source, as the hooks are above.
+  const runtimeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'fleet', 'fleetRuntime.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
+  assert.deepEqual(
+    (runtimeSource.match(/\btxt:[^\n]*/g) ?? []).map((line) => line.trim()),
+    ['txt: this.advertisedTxt(cfg),'],
+    'apply() advertises the record advertisedTxt builds, and nothing else does',
+  );
+  // And no code anywhere reads the variable that only exists under `npm run` (a comment may name it).
+  const readers: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) { walk(full); continue; }
+      if (!/\.(ts|js|cjs)$/.test(name)) continue;
+      const code = fs.readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
+      if (code.includes('npm_package_version')) readers.push(path.relative(path.join(__dirname, '..'), full));
+    }
+  };
+  walk(path.join(__dirname, '..', 'src'));
+  walk(path.join(__dirname, '..', 'electron'));
+  assert.deepEqual(readers, [], 'no shipped code reads npm_package_version');
+});
+
 test('only this machine’s allowedRoots refusal is the peer’s 403: a policy file that cannot be read, or any other refusal the scan meets, is this server’s own failure — 500, its detail kept here — and nothing is scanned (the SEC-2c review, F2.10)', async () => {
   // The receiver passed any 403 AppError on word for word, and nothing pinned the line that chose: a
   // receiver passing on EVERY AppError — a corrupt agent-policy.json's 500 POLICY_UNREADABLE among them,

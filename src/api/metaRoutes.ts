@@ -22,6 +22,7 @@ import { MCP_TOOL_NAMES } from '../mcp/toolNames';
 import { capabilitySummary } from './platformRoutes';
 import { SuggestionCategory } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
+import { APP_VERSION } from '../utils/appVersion';
 
 /**
  * metaRoutes — self-description for agents: the OpenAPI document and a
@@ -29,8 +30,6 @@ import { storageModeGate } from '../middleware/storageModeGate';
  * registry (src/api/openapi.ts), so they cannot disagree about what exists.
  * Read-only and side-effect-free by construction.
  */
-
-const { version: APP_VERSION } = require('../../package.json') as { version: string };
 
 export const metaRouter = Router();
 

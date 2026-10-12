@@ -6,6 +6,7 @@ import { ScanResult } from '../../models/types';
 import { DiscoveredPeer, MdnsResponder } from './mdns';
 import { buildSummary, FleetSummary } from './fleetSummary';
 import { assertScanAllowed, getPolicy } from '../policy';
+import { APP_VERSION } from '../../utils/appVersion';
 
 /**
  * fleetRuntime — owns the socket, and therefore owns the opt-in (§D1).
@@ -74,7 +75,7 @@ class FleetRuntime {
     return buildSummary({
       label: cfg.label,
       instanceId: cfg.instanceId,
-      version: process.env.npm_package_version || '',
+      version: APP_VERSION,
       acceptsRemoteScan: cfg.allowRemoteScan,
       usage,
       // Three scalars, pulled out here so no scan object reaches the builder.
@@ -111,6 +112,15 @@ class FleetRuntime {
     };
   }
 
+  /**
+   * The mDNS TXT record this machine advertises: who it is and which version.
+   * Its own method so what the network reads can be tested without joining
+   * the multicast group (apply() does that).
+   */
+  advertisedTxt(cfg: FleetConfig): Record<string, string> {
+    return { id: cfg.instanceId, label: cfg.label, v: APP_VERSION };
+  }
+
   /** Bring the socket and the advertisement in line with the config. */
   async apply(cfg: FleetConfig): Promise<void> {
     if (!cfg.enabled) {
@@ -131,7 +141,7 @@ class FleetRuntime {
       instanceName: cfg.instanceId.slice(0, 8),
       port: this.server.port,
       address: addresses[0],
-      txt: { id: cfg.instanceId, label: cfg.label, v: process.env.npm_package_version || '' },
+      txt: this.advertisedTxt(cfg),
     });
     this.mdns.on('peer', (peer: DiscoveredPeer) => this.remember(peer));
     try {

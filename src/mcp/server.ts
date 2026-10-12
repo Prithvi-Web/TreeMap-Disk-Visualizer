@@ -31,6 +31,7 @@ import { OffloadJob, ScanResult } from '../models/types';
 import { assertToolAvailable } from '../services/storageMode';
 import { assertSameBoundary, drivesSentence } from '../services/boundaryReport';
 import { MCP_TOOL_NAMES } from './toolNames';
+import { APP_VERSION } from '../utils/appVersion';
 
 /**
  * TreeMap MCP server — the agent-facing face of the disk visualizer.
@@ -49,10 +50,6 @@ import { MCP_TOOL_NAMES } from './toolNames';
  *  - offload copies, verifies hashes, and only then trashes originals;
  *  - dryRun on destructive tools reports the exact manifest without acting.
  */
-
-// The MCP server's reported version always matches the app's. Resolved at
-// runtime so the compiled dist/mcp build reads the same repo-root file.
-const { version: APP_VERSION } = require('../../package.json') as { version: string };
 
 /**
  * The single source of truth for which tools this server exposes, in

@@ -12,12 +12,10 @@
 
 import { FEATURES, ROUTE_FEATURES, STORAGE_MODES, canBeOff, featuresOf, isOff } from '../services/storageMode';
 import { NOT_EMPTY_CODES } from '../services/emptyFolderCheck';
+import { APP_VERSION } from '../utils/appVersion';
 
 /** Why an "only empty folders" delete left a path where it is (U-4b L4): one code per reason. */
 const EMPTY_FOLDER_REFUSAL_CODES: readonly string[] = Object.values(NOT_EMPTY_CODES);
-
-// Resolved at runtime so the served spec always reports the app's version.
-const { version: APP_VERSION } = require('../../package.json') as { version: string };
 
 type Json = Record<string, unknown>;
 
