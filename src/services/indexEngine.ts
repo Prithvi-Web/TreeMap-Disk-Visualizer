@@ -17,6 +17,7 @@ import { holdWatchesOf, onWatchSetChange, watchesShareOneStream } from '../platf
 import type { FileNode } from '../models/types';
 import { meansAbsent, meansGone } from '../utils/errno';
 import { formatCount } from '../utils/formatCount';
+import { hardlinkKey } from './diskScanner';
 
 /**
  * IndexEngine (A1) — the persistent, live-updated file index.
@@ -1058,8 +1059,13 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
 
   /** What the walk leaves out (U-24): the boundary the caller composed, or the fixed list. */
   const leftOut = opts.neverDescend ? new Set(opts.neverDescend) : null;
-  /** Inodes already counted, so a hard link is not double-counted. */
-  const seenInodes = new Set<number>();
+  /**
+   * Files already counted, by device and id (`hardlinkKey`), so a hard link is
+   * not double-counted. An id alone is one number on two drives, and a double
+   * cannot tell two NTFS ids past 2^53 apart: either would zero a file as
+   * another's hard link (the LEFT brief, item 4).
+   */
+  const seenInodes = new Set<string>();
   /** The folders met so far, each with the running total of what is in it; written last. */
   const folders = new FolderTable();
 
@@ -1118,11 +1124,12 @@ async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
       // does — otherwise a Time Machine-style tree reports several times its
       // real size.
       if (!entry.isDir && !entry.isSymlink && entry.nlink > 1) {
-        if (seenInodes.has(entry.ino)) {
+        const key = await hardlinkKey(entry.path, entry);
+        if (seenInodes.has(key)) {
           flags |= FLAG.HARDLINK_DUPLICATE;
           size = 0;
         } else {
-          seenInodes.add(entry.ino);
+          seenInodes.add(key);
         }
       }
       // A file claiming bytes it does not occupy is a cloud placeholder.

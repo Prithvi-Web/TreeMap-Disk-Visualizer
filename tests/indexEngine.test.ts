@@ -45,6 +45,8 @@ import {
   setFlushTimersForTests,
 } from '../src/services/indexEngine';
 import { setWatchImplForTests, type WatchListener } from '../src/platform/watchRegistry';
+import { platform } from '../src/platform';
+import type { RawEntry } from '../src/platform/types';
 import type { FileNode } from '../src/models/types';
 import { awaitWatchLive, silentWatchReason, watchBrings } from './fixtures/watchReady';
 import { waitFor } from './fixtures/waitFor';
@@ -253,6 +255,48 @@ test('a hard link is counted once, not once per name', async () => {
     deleteIndex(dir);
     await fsp.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('a hard link is one device and one id: two drives that share an inode number hold two files, and two ids past 2^53 that are one number as doubles are two files (the LEFT brief, item 4)', async (t) => {
+  // The index keyed the files it had counted by `ino` alone, a double. One number on two drives
+  // (a mount inside the indexed folder) zeroed the second file as the first's hard link; so did
+  // two NTFS ids past 2^53, which a double cannot tell apart. The walker keys by `${dev}:${ino}`,
+  // read exactly when a double cannot hold the id (hardlinkKey) — the index now does the same.
+  const dir = await mkTmp();
+  const sizes: Record<string, number> = { 'a.bin': 1_000, 'b.bin': 2_000, 'c.bin': 4_000, 'd.bin': 8_000 };
+  for (const [name, bytes] of Object.entries(sizes)) await fsp.writeFile(path.join(dir, name), Buffer.alloc(bytes, 1));
+  await fsp.link(path.join(dir, 'd.bin'), path.join(dir, 'd-link.bin')); // a real hard link: one file, two names
+  const provider = platform() as unknown as { fastEnumerate: (root: string, opts: object) => AsyncIterable<RawEntry> };
+  const real = provider.fastEnumerate.bind(provider);
+  t.after(async () => {
+    delete (provider as { fastEnumerate?: unknown }).fastEnumerate;
+    deleteIndex(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+  const PAST = 2 ** 53; // 2^53 and 2^53 + 1 are this one number as doubles
+  assert.equal(PAST + 1, PAST, 'control: a double cannot tell the two ids apart');
+  provider.fastEnumerate = async function* (root: string, opts: object): AsyncIterable<RawEntry> {
+    for await (const entry of real(root, opts)) {
+      if (entry.name === 'a.bin') yield { ...entry, dev: 1, ino: 42, nlink: 2 }; // inode 42 on one drive…
+      else if (entry.name === 'b.bin') yield { ...entry, dev: 2, ino: 42, nlink: 2 }; // …and inode 42 on another
+      else if (['c.bin', 'd.bin', 'd-link.bin'].includes(entry.name)) yield { ...entry, ino: PAST, nlink: 2 }; // their own ids, read exactly, differ — but d's two names
+      else yield entry;
+    }
+  };
+
+  const root = await buildIndex(dir, { live: false });
+  const children = readTree(dir)!.root.children!;
+  assert.deepEqual(children.map((c) => c.name).sort(), ['a.bin', 'b.bin', 'c.bin', 'd-link.bin', 'd.bin'], 'control: every name is indexed');
+  const zeroed = new Set(children.filter((c) => c.hardlinkDuplicate === true).map((c) => c.name));
+  assert.deepEqual([zeroed.has('a.bin'), zeroed.has('b.bin')], [false, false], 'one inode number on two drives is two files, neither zeroed');
+  // Which of c and d the walk hands over first is the listing's order, so neither is assumed.
+  assert.equal(
+    ['c.bin', 'd.bin', 'd-link.bin'].filter((n) => zeroed.has(n)).length,
+    1,
+    'ids past 2^53 are told apart exactly: c and d are two files, and of their three names only d\'s second is zeroed',
+  );
+  assert.equal(zeroed.has('c.bin'), false, 'and the name zeroed is one of d\'s, never c.bin');
+  assert.equal(root.totalSize, 15_000, 'so the folder holds a, b, c and d once each');
 });
 
 // Skipped on Windows because both halves of the premise are POSIX-shaped:
