@@ -7,7 +7,7 @@ import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-autopilotApprove-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
-import { approvePolicy, approvePolicyForTests, listPolicies, runDuePolicies, runPolicy, savePolicies } from '../src/services/autopilot';
+import { approvePolicy, approvePolicyForTests, listPolicies, runDuePolicies, runPolicy, savePolicies, simulatePolicy } from '../src/services/autopilot';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AppError } from '../src/middleware/errorHandler';
@@ -321,6 +321,83 @@ test('POST /api/autopilot/policies/:id/approve takes the run being approved: wit
     assert.ok(ok.body.policy.approvedAt, 'approved');
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
+    await savePolicies([]);
+  }
+});
+
+test('a stale approval says when the fresh preview comes - at the next check while the policy is on, once it is switched on while it is off, and nothing of a preview once it is approved (final review F2.6)', async () => {
+  const dir = folder('stale-words', { 'a.log': 1000 });
+  const base = { id: 'stale-words', name: 'Logs', path: dir, match: { kind: 'custom', exts: ['log'] }, dryRunFirst: false };
+  /** The refusal of approving the older of two runs of the policy saved as `extra`, after `approve` when given. */
+  const staleRefusal = async (extra: Record<string, unknown>, approve = false): Promise<AppError> => {
+    await savePolicies([{ ...base, ...extra }]);
+    if (approve) await approvePolicyForTests('stale-words');
+    const older = await withOpenFileCheck('clear', async () => runPolicy(await policyNow('stale-words'), { ignoreCooldown: true }));
+    await withOpenFileCheck('clear', async () => runPolicy(await policyNow('stale-words'), { ignoreCooldown: true }));
+    const refused = await refusal(approvePolicy('stale-words', older.id));
+    assert.equal(refused.code, 'APPROVAL_STALE', refused.message);
+    await savePolicies([]);
+    return refused;
+  };
+  try {
+    const on = await staleRefusal({ enabled: true });
+    assert.match(on.message, /a fresh preview comes at its next check, within a minute\./, on.message);
+    assert.doesNotMatch(on.message, /switched on/, on.message);
+    const off = await staleRefusal({ enabled: false });
+    assert.match(off.message, /a fresh preview comes at its next check once it is switched on\./, `the scheduler passes over a policy switched off: ${off.message}`);
+    assert.doesNotMatch(off.message, /within a minute/, off.message);
+    const approved = await staleRefusal({ enabled: true, requireConfirmationAbove: 100 }, true); // each run held for its size
+    assert.match(approved.message, /Approve its newest run, which shows what it matches now\.$/, approved.message);
+    assert.doesNotMatch(approved.message, /fresh preview/, `an approved policy is not previewed afresh: ${approved.message}`);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('a simulation after a held run is approved says a real run would go ahead - and asks again once the match grows past what was approved (final review F2.8)', async () => {
+  const dir = folder('simulate-approved', { 'a.bin': 5000 });
+  await savePolicies([{ id: 'simulate-approved', name: 'Bins', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true, requireConfirmationAbove: 1000 }]);
+  try {
+    await approvePolicyForTests('simulate-approved');
+    const held = await runOnce('simulate-approved');
+    assert.equal(held.status, 'awaiting-approval');
+    await approvePolicy('simulate-approved', held.id);
+    const allowed = await simulatePolicy(await policyNow('simulate-approved'));
+    assert.equal(allowed.wouldBlockReason, undefined, `the next run deletes what was approved: ${allowed.wouldBlockReason}`);
+    assert.equal(allowed.bytesWouldDelete, 5000);
+    fs.writeFileSync(path.join(dir, 'b.bin'), Buffer.alloc(5000, 1));
+    const grown = await simulatePolicy(await policyNow('simulate-approved'));
+    assert.match(grown.wouldBlockReason ?? '', /A real run would stop and ask/, `more than was approved: ${grown.wouldBlockReason}`);
+    assert.ok(fs.existsSync(path.join(dir, 'a.bin')) && fs.existsSync(path.join(dir, 'b.bin')), 'a simulation deletes nothing');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('an approval\'s allowance survives a save that keeps the policy\'s scope, and a scope edit takes it away (final review F2.9)', async () => {
+  const dir = folder('allowance-saved', { 'a.bin': 5000 });
+  const base = { id: 'allowance-saved', name: 'Bins', path: dir, match: { kind: 'custom', exts: ['bin'] }, dryRunFirst: false, enabled: true, requireConfirmationAbove: 1000 };
+  await savePolicies([base]);
+  try {
+    await approvePolicyForTests('allowance-saved');
+    const held = await runOnce('allowance-saved');
+    await approvePolicy('allowance-saved', held.id);
+    // The page re-sends the whole list for every edit: a rename between the approval and the run.
+    await savePolicies([{ ...(await policyNow('allowance-saved')), name: 'Renamed bins' }]);
+    assert.equal((await policyNow('allowance-saved')).approvedBytes, 5000, 'the allowance is kept');
+    const live = await runOnce('allowance-saved');
+    assert.equal(live.mode, 'live', live.blockedReason);
+    assert.equal(live.bytesDeleted, 5000, live.blockedReason);
+    fs.writeFileSync(path.join(dir, 'b.bin'), Buffer.alloc(5000, 1));
+    const again = await withOpenFileCheck('clear', async () => runPolicy(await policyNow('allowance-saved'), { ignoreCooldown: true }));
+    assert.equal(again.status, 'awaiting-approval');
+    await approvePolicy('allowance-saved', again.id);
+    assert.equal((await policyNow('allowance-saved')).approvedBytes, 5000);
+    await savePolicies([{ ...(await policyNow('allowance-saved')), match: { kind: 'custom', exts: ['bin', 'tmp'] } }]);
+    const edited = await policyNow('allowance-saved');
+    assert.equal(edited.approvedBytes, undefined, 'a scope edit takes the allowance away');
+    assert.equal(edited.approvedAt, undefined, 'and the approval');
+  } finally {
     await savePolicies([]);
   }
 });
