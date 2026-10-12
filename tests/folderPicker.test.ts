@@ -1067,6 +1067,32 @@ test('"Checking that the folder exists…" leaves the scan\'s live region when t
   }
 });
 
+test('"Checking that the folder exists…" is taken back only by the press that holds Scan: an overtaken press whose own lookup lands first leaves it while the newer press is still checking (final review F3.1)', async () => {
+  // Scan, then Enter on the same path that ends in a space: two presses, each
+  // looking the path up with a request of its own. Above, the newer press
+  // (/data) has no lookup and empties the region itself, so an overtaken
+  // press that cleared it too could not be told from one that leaves it.
+  // Here the overtaken press's lookup lands first, while the newer press is
+  // still checking: clearing then would silence a check still under way.
+  const CHECKING = /^Checking that the folder exists…$/;
+  const lookups = [gate(), gate()]; // the presses' lookups, in the order they are asked
+  const waiting = [...lookups];
+  const { $, offers, click, type } = boxesRuntime((p) => (p === DOCS + ' ' ? waiting.shift()!.opened.then(() => notFound()) : strictListing(p)));
+  type('pathInput', DOCS + ' ');
+  const older = click('scanBtn');
+  void $('pathInput').listeners.keydown({ key: 'Enter' }); // the newer press, held on its own lookup
+  await settle();
+  assert.equal(waiting.length, 0, 'control: each press looks the path up with a request of its own');
+  lookups[0].open();
+  await older;
+  await settle();
+  assert.match($('scanAnnounce').textContent, CHECKING, 'the overtaken press, landing first, leaves the sentence: the newer press is still checking');
+  lookups[1].open();
+  await settle();
+  assert.equal(offers.length, 1, 'control: the newer press, landing, offers the folder without the space');
+  assert.equal($('scanAnnounce').textContent, '', 'and its check, over, is no longer said to be running');
+});
+
 /* ══════════════ The toast an offer rides in (final review F1.12) ══════════════ */
 
 type ToastBtn = { label: string; attrs: Record<string, string>; listeners: Array<() => void>; addEventListener(t: string, f: () => void): void; click(): void; focus(): void };
