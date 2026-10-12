@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { withinHangGuard } from './fixtures/waitFor';
 isolatedDataDir('treemap-scanBoundary-data-');
 
 import { parseBsdMount, parseProcMounts, type MountEntry } from '../src/platform/atime';
@@ -312,7 +313,12 @@ test('a mount point whose stat never answers holds one I/O thread, however many 
     asked.push(p);
     return new Promise((resolve) => { answers.set(p, resolve); });
   };
-  const isDirectory = boundedIsDirectory(stat, 1);
+  const bounded = boundedIsDirectory(stat, 1);
+  // A real stat that hangs holds the event loop open (libuv counts the request); this one is a promise,
+  // and the look's own timer is unref'd, so on Node 20 — whose test runner cancels a test once the loop
+  // has nothing left — the look was cancelled before its timer fired (the Windows CI leg). The hang
+  // guard holds the loop as the real stat would, and fails with a message should the look never answer.
+  const isDirectory = (p: string): Promise<boolean | null> => withinHangGuard(bounded(p), `the bounded look at ${p}`);
   assert.equal(await isDirectory('/mnt/dead'), null, 'not known in time: kept, the safe side');
   assert.equal(await isDirectory('/mnt/dead'), null);
   assert.equal(await isDirectory('/mnt/dead'), null);
