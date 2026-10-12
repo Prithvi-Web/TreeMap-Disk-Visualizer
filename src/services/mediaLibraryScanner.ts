@@ -1,6 +1,7 @@
 import path from 'path';
 import { ScanStore, TreeSource, asStore } from './scanStore';
 import { checkOpenHandles } from './openHandleGuard';
+import { accessAdviceNow } from '../utils/accessAdvice';
 
 /**
  * mediaLibraryScanner — deep media-library awareness (§8.1).
@@ -364,7 +365,10 @@ export function scanMediaLibraries(source: TreeSource): MediaReport {
     if (bundleApp && !kids.length) {
       libraries.push(finishLibrary(bundleApp, store.name(id), nodePath, store.size(id), [], {
         recognised: false,
-        reason: `This ${APP_NAMES[bundleApp]} library could not be read into — the scan saw the bundle but not its contents (on macOS this usually means TreeMap lacks Full Disk Access) — so only its total size is reported and nothing is offered.`,
+        // Why, on macOS, follows the probed Full Disk Access state (Track U, U-11):
+        // a guess that it is missing was false on a Mac that has it.
+        reason: `This ${APP_NAMES[bundleApp]} library could not be read into — the scan saw the bundle but not its contents — so only its total size is reported and nothing is offered.` +
+          (process.platform === 'darwin' ? ` ${accessAdviceNow({ code: null })}` : ''),
       }));
       return;
     }

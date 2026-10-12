@@ -8,6 +8,8 @@ import { storeOf } from './scanStore';
 import { boundaryReport } from './boundaryReport';
 import { formatBytes } from '../utils/formatBytes';
 import { separatorOf } from '../utils/pathSeparator';
+import { accessAdvice, granteeFor } from '../utils/accessAdvice';
+import { lastFdaState, type FdaState } from '../utils/fdaState';
 import type { ScanResult } from '../models/types';
 import type { LogicalVolumeInfo, VolumeTopology } from '../platform/types';
 import type { SnapshotAccounting } from './snapshotAccounting';
@@ -964,11 +966,13 @@ export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLi
  * The usual fix for a refused folder, per OS. Windows gets the trap spelled
  * out: TreeMap stays in the system tray after its window closes, and a copy
  * started with "Run as administrator" meets the single-instance lock and
- * exits at once, so the user believes they elevated and did not.
+ * exits at once, so the user believes they elevated and did not. On macOS the
+ * fix follows the probed Full Disk Access state (Track U, U-11): a count is
+ * worded by it, since the scan does not keep EPERM and EACCES apart.
  */
-export function refusedPermissionNote(denied: number, plat: NodeJS.Platform): string {
+export function refusedPermissionNote(denied: number, plat: NodeJS.Platform, access: FdaState | null = lastFdaState()): string {
   const head = `${String(denied)} refused permission`;
-  if (plat === 'darwin') return `${head} — granting Full Disk Access usually resolves these.`;
+  if (plat === 'darwin') return `${head}. ${accessAdvice({ code: null, state: access, grantee: granteeFor(), retry: 'scan again' })}`;
   if (plat === 'win32') return `${head} — running TreeMap as an administrator may let Windows read more of these. ${ELEVATE_HOW}`;
   if (plat === 'linux') return `${head} — they belong to another user or to the system, so this account is not allowed to read them.`;
   return `${head}.`;

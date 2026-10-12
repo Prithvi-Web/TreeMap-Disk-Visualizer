@@ -122,7 +122,7 @@ async function run(fn: () => Promise<ToolResult>): Promise<ToolResult> {
           return fail('Path does not exist', 'PATH_NOT_FOUND');
         case 'EACCES':
         case 'EPERM':
-          return fail(permissionDeniedMessage((err as NodeJS.ErrnoException).path), 'PERMISSION_DENIED');
+          return fail(permissionDeniedMessage((err as NodeJS.ErrnoException).path, (err as NodeJS.ErrnoException).code), 'PERMISSION_DENIED');
         case 'ENOTDIR':
           return fail('Path is not a directory', 'NOT_A_DIRECTORY');
       }

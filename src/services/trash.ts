@@ -3,6 +3,7 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
 import { meansAbsent, describeFsError } from '../utils/errno';
+import { accessAdviceNow, accessCodeOf } from '../utils/accessAdvice';
 import { refuseUnderTestRunner } from './realMachineGuard';
 
 /**
@@ -201,8 +202,9 @@ export async function getTrashInfo(): Promise<TrashInfo> {
 /** One actionable sentence for why the Trash could not be fully measured. */
 function describeSweepProblem(code: string | null): string {
   if (code === 'EPERM' || code === 'EACCES') {
+    // On macOS the fix follows the errno and the probed Full Disk Access state (Track U, U-11).
     return process.platform === 'darwin'
-      ? 'macOS would not let TreeMap read the Trash. Give it Full Disk Access in System Settings › Privacy & Security to see what is in there.'
+      ? `macOS would not let TreeMap read the Trash, so this total is a minimum. ${accessAdviceNow({ code: accessCodeOf(code), retry: 'look again' })}`
       : 'TreeMap does not have permission to read part of the Trash, so this total is a minimum.';
   }
   if (code === null) return 'The Trash is larger than TreeMap walks in one pass, so this total is a minimum.';

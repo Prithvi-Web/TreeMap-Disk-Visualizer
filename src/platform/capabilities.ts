@@ -1,6 +1,9 @@
 import { platform } from './index';
 import { runGit } from '../services/gitSafe';
-import type { Capabilities, CapabilityState } from './types';
+import { probeFullDiskAccess, fullDiskAccessCapability } from './macos/fullDiskAccess';
+import { granteeFor } from '../utils/accessAdvice';
+import { rememberFdaState } from '../utils/fdaState';
+import type { Capabilities, CapabilityState, FullDiskAccessCapability } from './types';
 
 /**
  * Runtime capability detection (§2.2).
@@ -72,6 +75,7 @@ async function detect(): Promise<Capabilities> {
     lastUsed,
     backupMembership,
     gitStatus,
+    fullDiskAccess,
   ] = await Promise.all([
     safeProbe('Fast scanning', () => p.probeFastEnumeration(), unavailable('readdir')),
     safeProbe('Live updates', () => p.probeLiveIndex(), unavailable('fs.watch')),
@@ -91,6 +95,11 @@ async function detect(): Promise<Capabilities> {
     safeProbe('Last-opened dates', () => p.probeLastUsed(), unavailable('none')),
     safeProbe('Backup status', () => p.probeBackupMembership(), unavailable('none')),
     safeProbe('Git status', () => probeGitStatus(), unavailable('git')),
+    safeProbe('Full Disk Access', () => probeFullDiskAccessState(), {
+      ...unavailable('none'),
+      state: 'unknown' as const,
+      grantee: granteeFor().name,
+    }),
   ]);
 
   return {
@@ -110,6 +119,7 @@ async function detect(): Promise<Capabilities> {
     lastUsed,
     backupMembership,
     gitStatus,
+    fullDiskAccess,
     // Not probed: reading a sync client's own local state needs no tool and
     // touches no network, so there is nothing that can be missing. Whether a
     // given path is in a sync folder is a per-path question the fact provider
@@ -119,6 +129,18 @@ async function detect(): Promise<Capabilities> {
       mechanism: "sync client's own local state (never a network call)",
     },
   };
+}
+
+/**
+ * Full Disk Access (Track U, U-11), probed on macOS, and the state recorded
+ * where the error sentences read it (`fdaState.ts`: errno.ts and
+ * errorHandler.ts cannot import this file without a cycle). Recorded only
+ * on macOS: elsewhere there is no such setting, and nothing words one.
+ */
+async function probeFullDiskAccessState(): Promise<FullDiskAccessCapability> {
+  const probe = await probeFullDiskAccess();
+  if (probe.state !== 'unavailable') rememberFdaState(probe.state);
+  return fullDiskAccessCapability(probe, granteeFor());
 }
 
 /**

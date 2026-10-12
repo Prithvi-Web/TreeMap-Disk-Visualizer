@@ -63,6 +63,9 @@ function restoreDashboardPanels() {
   $('statLargest').textContent = largest ? largest.name + ' · ' + formatBytes(largest.size) : '–';
   // The forecast is about the folder on screen, read by its path (B05).
   if (state.root) void renderGrowthProjection();
+  // The refused row too: a stopped or failed whole-disk scan's notice
+  // ("their size will not be in this total") goes with it (Track U, U-11).
+  if (typeof renderRefusedFolders === 'function') renderRefusedFolders();
 }
 
 /**

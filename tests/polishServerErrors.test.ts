@@ -16,6 +16,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { errorHandler, permissionDeniedMessage } from '../src/middleware/errorHandler';
 import { describeFsError } from '../src/utils/errno';
+import { accessAdviceNow } from '../src/utils/accessAdvice';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
 import { startScan, getScan, describeScanError } from '../src/services/diskScanner';
 
@@ -25,7 +26,10 @@ import { startScan, getScan, describeScanError } from '../src/services/diskScann
  *  - EACCES/EPERM used to reach the page as the bare words "Permission
  *    denied" (proven on the isolated server: GET /api/fs/list on a chmod-000
  *    folder). The contract now: code PERMISSION_DENIED, message
- *    "TreeMap isn't allowed to read {path}." with the macOS remedy appended.
+ *    "TreeMap isn't allowed to read {path}." with, on macOS, the sentence
+ *    `accessAdvice` builds for the errno and the probed Full Disk Access
+ *    state (Track U, U-11: an intended copy change — "Give TreeMap Full Disk
+ *    Access" was false for an EACCES, for a Mac that has it, and in web mode).
  *  - A failed Move to Trash stored `err.message` verbatim, so toasts read
  *    "ENOENT: no such file or directory, lstat '/Users/…'".
  *  - A root that disappears mid-scan was either a raw errno string on the
@@ -67,10 +71,13 @@ function errno(code: string, message: string, p?: string): NodeJS.ErrnoException
 /* ───────────────────────── PERMISSION_DENIED text ───────────────────────── */
 
 test('permissionDeniedMessage is the shared contract, remedy included on macOS', () => {
-  const m = permissionDeniedMessage('/Users/me/Documents');
+  const m = permissionDeniedMessage('/Users/me/Documents', 'EPERM');
   assert.ok(m.startsWith("TreeMap isn't allowed to read /Users/me/Documents."), m);
   if (process.platform === 'darwin') {
-    assert.match(m, /Full Disk Access in System Settings › Privacy & Security, then try again\.$/);
+    // The remedy is accessAdvice's, for the errno and the state the probe last found (U-11).
+    assert.equal(m, `TreeMap isn't allowed to read /Users/me/Documents. ${accessAdviceNow({ code: 'EPERM', retry: 'try again' })}`);
+    assert.equal(permissionDeniedMessage('/x', 'EACCES'), `TreeMap isn't allowed to read /x. ${accessAdviceNow({ code: 'EACCES', retry: 'try again' })}`);
+    assert.doesNotMatch(permissionDeniedMessage('/x', 'EACCES'), /\bGive\b/, 'a folder\'s own permissions are never answered with Full Disk Access');
   } else {
     assert.equal(m, "TreeMap isn't allowed to read /Users/me/Documents.");
   }
@@ -88,16 +95,16 @@ test('an EACCES thrown from a route answers 403 PERMISSION_DENIED with the frien
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as { port: number }).port;
   try {
-    for (const [url, p] of [['/denied', '/x/y'], ['/eperm', '/x/z']] as const) {
+    for (const [url, p, code] of [['/denied', '/x/y', 'EACCES'], ['/eperm', '/x/z', 'EPERM']] as const) {
       const r = await req(port, 'GET', url);
       assert.equal(r.status, 403);
       assert.equal(r.body.code, 'PERMISSION_DENIED', 'the code is unchanged, so every client keyed on it still works');
-      assert.equal(r.body.error, permissionDeniedMessage(p));
+      assert.equal(r.body.error, permissionDeniedMessage(p, code), 'worded for its own errno');
       assert.doesNotMatch(r.body.error, /EACCES|EPERM|scandir|lstat/);
     }
     const r = await req(port, 'GET', '/nopath');
     assert.equal(r.status, 403);
-    assert.equal(r.body.error, permissionDeniedMessage(undefined));
+    assert.equal(r.body.error, permissionDeniedMessage(undefined, 'EACCES'));
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }
@@ -117,7 +124,9 @@ test('POST /api/scan on a folder the OS refuses answers 403 with the remedy, not
     const r = await req(port, 'POST', '/api/scan?wait=true&waitMs=10000', { path: locked });
     assert.equal(r.status, 403, `got ${r.status} ${JSON.stringify(r.body)}`);
     assert.equal(r.body.code, 'PERMISSION_DENIED');
-    assert.equal(r.body.error, permissionDeniedMessage(locked));
+    assert.equal(r.body.error, permissionDeniedMessage(locked, 'EACCES'));
+    // A chmod-000 folder is its own permissions: Full Disk Access does not open it, and nothing says it would (U-11).
+    assert.doesNotMatch(r.body.error, /\bGive\b/);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
     fs.chmodSync(locked, 0o755);
@@ -185,7 +194,11 @@ test('describeScanError maps the disk\'s answer to the sentence the status line 
   assert.match(gone, /unplugged|moved/);
   assert.doesNotMatch(gone, /ENOENT|lstat/);
   const denied = describeScanError(errno('EPERM', 'EPERM: operation not permitted', '/Users/me/Library/Mail'));
-  assert.equal(denied, permissionDeniedMessage('/Users/me/Library/Mail'));
+  assert.equal(denied, permissionDeniedMessage('/Users/me/Library/Mail', 'EPERM'));
+  // Each refusal is worded for its own errno (Track U, U-11): an EACCES is the folder's own permissions.
+  const eacces = describeScanError(errno('EACCES', 'EACCES: permission denied', '/Users/me/locked'));
+  assert.equal(eacces, permissionDeniedMessage('/Users/me/locked', 'EACCES'));
+  if (process.platform === 'darwin') assert.doesNotMatch(eacces, /\bGive\b/, 'Full Disk Access does not change a folder\'s own permissions');
   assert.equal(describeScanError(new Error('gdu exploded')), 'gdu exploded', 'an ordinary error keeps its own words');
   assert.equal(describeScanError('boom'), 'boom');
 });

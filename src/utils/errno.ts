@@ -34,6 +34,8 @@
  * discarded or overwritten. `meansGone` for a `stat`.** Before changing either
  * set, walk the call sites and ask what a wrong answer costs at each one.
  */
+import { accessAdviceNow } from './accessAdvice';
+
 const ABSENT = new Set(['ENOENT', 'ENOTDIR']);
 
 /** The absences, plus paths the kernel will never resolve. */
@@ -113,8 +115,11 @@ export function describeFsError(err: unknown): string {
       return 'it is no longer there';
     case 'EACCES':
     case 'EPERM':
+      // On macOS the fix depends on the errno and on whether Full Disk Access
+      // is on (Track U, U-11), so it comes from the one builder. No final
+      // period: every answer here is a clause a caller may wrap.
       return process.platform === 'darwin'
-        ? 'macOS would not let TreeMap touch it — give TreeMap Full Disk Access in System Settings › Privacy & Security, or check the folder\'s permissions'
+        ? `macOS would not let TreeMap touch it. ${accessAdviceNow({ code, retry: 'try again' }).replace(/\.$/, '')}`
         : 'TreeMap is not allowed to touch it — check the folder\'s permissions';
     case 'EBUSY':
     case 'ETXTBSY':

@@ -106,6 +106,12 @@ test('the page formatBytes rolls 1024 of a unit into the next unit, like the ser
 
 /* ══════════════ first-run-1 / first-run-4 — a refused folder is named, not congratulated ══════════════ */
 
+/** The server's answer on a Mac without Full Disk Access; `advice` is what the hint shows. */
+const NOT_GRANTED = {
+  available: false, mechanism: 'm', state: 'not-granted', grantee: 'TreeMap',
+  advice: 'Give TreeMap Full Disk Access in System Settings › Privacy & Security › Full Disk Access, then quit and reopen TreeMap and scan again.',
+};
+
 type RefusedHarness = {
   render: () => void; probe: () => Promise<void>;
   els: Record<string, El>; state: Record<string, unknown>; toasts: string[]; asked: string[];
@@ -119,6 +125,8 @@ function refusedHarness(opts: {
   scanRefused?: Record<string, unknown> | null;
   /** The home folder the server reports ('/Users/x' when omitted). */
   homeDir?: string;
+  /** The server's Full Disk Access answer (Track U, U-11); a Mac without it when omitted. */
+  fullDiskAccess?: Record<string, unknown> | null;
 }): RefusedHarness {
   const src = slice('/* ── Refused folders ── */', '/* ── end refused folders ── */');
   const { $, els } = makeDom();
@@ -127,6 +135,8 @@ function refusedHarness(opts: {
   const state: Record<string, unknown> = {
     scanStats: opts.stats, root: opts.root, scanId: opts.scanId, scanRefused: opts.scanRefused ?? null,
     system: { platform: opts.platform || 'darwin', homeDir: opts.homeDir ?? '/Users/x' },
+    // The hint is the server's sentence for the state it probed (U-11): this stands in for it.
+    capabilities: { fullDiskAccess: opts.fullDiskAccess === undefined ? NOT_GRANTED : opts.fullDiskAccess },
     pathIndex: new Map(Object.entries((opts.root.children as Array<{ path: string }> | undefined || []).reduce((m, c) => ({ ...m, [c.path]: c }), {}))),
   };
   const api = async (url: string) => {
@@ -153,7 +163,7 @@ test('the server\'s refused count paints the dashboard row, names the folders, a
   assert.equal(h.els.accessRow.hidden, false, 'the row shows');
   assert.match(h.els.accessText.textContent, /2 folders could not be read/, 'the count');
   assert.match(h.els.accessText.textContent, /Desktop, Documents/, 'named by their last path segment');
-  assert.match(h.els.accessHint.textContent, /Full Disk Access/, 'the fix is named — macOS is protecting them');
+  assert.equal(h.els.accessHint.textContent, NOT_GRANTED.advice, 'the fix is the server\'s sentence for the state it probed (U-11)');
   assert.doesNotMatch(h.els.accessHint.textContent, /TREEMAP_NO_GDU|errno|EACCES|403/, 'in plain words');
   assert.equal((h.state.scanRefused as { dirs: number }).dirs, 2, 'and the tour can read it');
   assert.equal(h.els.accessOpenBtn.hidden, false, 'the Privacy settings button is offered on macOS');
@@ -292,12 +302,14 @@ test('the probe checks Desktop, Documents and Downloads under a home-folder scan
 function privacyButtonHarness(bridge: unknown) {
   const handler = braced('async function openFullDiskAccessSettings(');
   const wiring = slice("$('accessOpenBtn').addEventListener('click'", '/* ── Scan queue ── */');
+  // U-11: the fallback toast reads the server's Full Disk Access answer (none here), and the click arms a recheck.
+  const info = braced('function fullDiskAccessInfo(');
   const { $, els } = makeDom();
   const toasts: string[] = [];
   const windowOpens: unknown[][] = [];
   const win = { treemapDesktop: bridge, open: (...args: unknown[]) => { windowOpens.push(args); return null; } };
-  const run = new Function('$', 'window', 'toast', `'use strict'; ${handler}\n${wiring}\nreturn openFullDiskAccessSettings;`)(
-    $, win, (m: string) => toasts.push(m),
+  const run = new Function('$', 'window', 'toast', 'state', 'armFullDiskAccessRecheck', `'use strict'; ${info}\n${handler}\n${wiring}\nreturn openFullDiskAccessSettings;`)(
+    $, win, (m: string) => toasts.push(m), { capabilities: null }, () => {},
   ) as () => Promise<void>;
   const click = async (): Promise<void> => {
     for (const fn of els.accessOpenBtn.listeners.click || []) fn();

@@ -508,6 +508,19 @@ export interface HardwareEncodeCapability extends CapabilityState {
 }
 
 /**
+ * Track U, U-11 — whether macOS lets TreeMap into the folders it protects.
+ * `available` is true only when `state` is `granted`; `unknown` is unavailable
+ * with its reason (U-D13). Off macOS: unavailable, "a macOS setting".
+ */
+export interface FullDiskAccessCapability extends CapabilityState {
+  state: 'granted' | 'not-granted' | 'unknown';
+  /** Who the grant belongs to: "TreeMap" in the desktop app, else the app that started the server. */
+  grantee: string;
+  /** The sentence for a count of refused folders under this state (macOS only), from `accessAdvice`. */
+  advice?: string;
+}
+
+/**
  * One entry per capability-gated feature. Every field is detected at runtime —
  * kernel version, filesystem, hardware and privilege all vary independently of
  * `process.platform`, so nothing here may be inferred from the OS alone.
@@ -534,6 +547,8 @@ export interface Capabilities {
   backupMembership: CapabilityState;
   /** v4 §1.2c — whether a sync client holds a remote copy of a path. */
   cloudResidency: CapabilityState;
+  /** Track U, U-11 — Full Disk Access, probed on macOS. */
+  fullDiskAccess: FullDiskAccessCapability;
 }
 
 export type PlatformName = 'windows' | 'macos' | 'linux';

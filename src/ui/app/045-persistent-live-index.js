@@ -342,6 +342,7 @@ async function startScan(path, opts = {}) {
 async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   try {
     beginScanChrome({ quiet });
+    preScanAccessNotice(path); // U-11: a notice beside the scan, never a question in front of it
     const gen = state.scanGen; // this request's identity for the abandon check below
     const t0 = performance.now();
     const resp = await api('/api/scan', {
@@ -1126,6 +1127,65 @@ function lastPathSegment(p) {
   return parts.length ? parts[parts.length - 1] : String(p);
 }
 
+/* Track U, U-11. Whether Full Disk Access is on is the server's answer
+   (/api/platform/capabilities → fullDiskAccess: { state, grantee, advice }),
+   and so is every sentence that says what to do about it: `advice` is built
+   by the server's one builder for the state it probed, naming whoever the
+   grant belongs to (TreeMap in the desktop app; in a browser tab, the app
+   that started the server). The page shows it as is, and writes none of its
+   own: "Give TreeMap Full Disk Access" was false for a folder's own
+   permissions, on a Mac that already had it, and in web mode. */
+
+/** The server's Full Disk Access answer, or null where there is none (a failed load, an older server). */
+function fullDiskAccessInfo() {
+  const fda = state.capabilities && state.capabilities.fullDiskAccess;
+  return fda && typeof fda.state === 'string' ? fda : null;
+}
+
+/** The hint under the refused count on a Mac, for the state the server probed. */
+function accessHintFor(fda) {
+  if (fda && fda.state === 'granted' && state.accessGrantedSinceScan) {
+    // Switched on after this scan ran: what it refused may be readable now.
+    return 'Full Disk Access is on now, so a new scan can read the folders macOS kept TreeMap out of.';
+  }
+  if (fda && typeof fda.advice === 'string' && fda.advice) return fda.advice;
+  // No answer from the server: say what is known, and name no one to grant it to.
+  return 'macOS or the folders’ own permissions kept TreeMap out of them. Privacy settings show whether Full Disk Access is on.';
+}
+
+/** A scan of the whole disk or of the home folder: the scans that lose what macOS protects. */
+function isWholeDiskOrHome(p) {
+  const s = String(p || '').trim();
+  if (s === '/' || s === '~' || s === '~/') return true;
+  const home = String((state.system || {}).homeDir || '').replace(/\/+$/, '');
+  return !!home && s.replace(/\/+$/, '') === home;
+}
+
+/** Paint the before-the-total notice into the access row (no count yet, and no byte figure: U-D14). */
+function paintAccessNotice() {
+  const fda = fullDiskAccessInfo();
+  $('accessText').textContent = 'macOS keeps TreeMap out of the folders it protects (Mail, Messages, Safari, the Trash), so their size will not be in this total.';
+  $('accessHint').textContent = accessHintFor(fda);
+  $('accessOpenBtn').hidden = !!fda && fda.state === 'granted';
+  $('accessMissingBtn').hidden = true; // nothing is missing yet: the scan has not finished
+  $('accessRow').hidden = false;
+}
+
+/**
+ * Before a scan of / or the home folder on a Mac without Full Disk Access,
+ * say what the total will leave out — a notice beside the running scan,
+ * never a question in front of it (U-Q12). Returns whether it showed.
+ */
+function preScanAccessNotice(path) {
+  state.accessGrantedSinceScan = false;
+  const mac = (state.system || {}).platform === 'darwin';
+  const fda = mac ? fullDiskAccessInfo() : null;
+  state.accessNotice = fda && fda.state === 'not-granted' && isWholeDiskOrHome(path) ? path : null;
+  if (!state.accessNotice) return false;
+  paintAccessNotice();
+  return true;
+}
+
 /**
  * Paint (or hide) the "could not be read" row from whatever we know.
  *
@@ -1149,6 +1209,12 @@ function renderRefusedFolders() {
   // Another scan's refusals are dropped, not merely hidden: the tour reads
   // state.scanRefused too (170), and would repeat them as this scan's.
   if (state.scanRefused && state.scanRefused.scanId !== state.scanId) state.scanRefused = null;
+  // While a whole-disk or home scan runs without Full Disk Access, its notice
+  // is what the row says: this scan has refused nothing yet that it can count.
+  if (state.scanning && state.accessNotice) {
+    paintAccessNotice();
+    return;
+  }
   const found = state.scanRefused;
   if (!found || !found.dirs) {
     row.hidden = true;
@@ -1160,10 +1226,13 @@ function renderRefusedFolders() {
   $('accessText').textContent =
     `${formatCount(n)} folder${n === 1 ? '' : 's'} could not be read` +
     (names.length ? ` — ${names.join(', ')}` : '');
+  const fda = mac ? fullDiskAccessInfo() : null;
   $('accessHint').textContent = mac
-    ? 'macOS is protecting them. Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.'
+    ? accessHintFor(fda)
     : 'TreeMap does not have permission to open them. Check the folder’s permissions, then scan again.';
-  $('accessOpenBtn').hidden = !mac;
+  // Nothing to switch on once it is on; off macOS there is no such setting.
+  $('accessOpenBtn').hidden = !mac || (!!fda && fda.state === 'granted');
+  $('accessMissingBtn').hidden = false;
   row.hidden = false;
 }
 
@@ -1222,7 +1291,7 @@ async function probeRefusedFolders() {
     const line = mac
       ? 'macOS would not let TreeMap look inside this folder.'
       : 'TreeMap is not allowed to read this folder.';
-    const fix = mac ? ' Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.' : '';
+    const fix = mac ? ' ' + accessHintFor(fullDiskAccessInfo()) : '';
     const el = $('scanStatus');
     el.classList.add('error');
     el.innerHTML = escapeHtml(line);
@@ -1338,6 +1407,39 @@ subscribe(TOPIC.scan, (scanId) => {
 });
 $('mountsNoteSettingsBtn').addEventListener('click', () => cmdkOpenSettingsSection('Drives mounted inside a folder'));
 /* ── end drives mounted inside ── */
+/* ── Full Disk Access recheck ── */
+/* Track U, U-11. After "Open Privacy settings" the person is in System
+   Settings. The next time this window has focus, the server is asked once
+   whether Full Disk Access is on now, and the refused row is repainted from
+   its answer. TOPIC.capabilities is NOT emitted: its listeners (held-up
+   space runs lsof and ps, the disk layout card asks diskutil) would redo
+   their own work for an answer that concerns this row alone. */
+let accessRecheckArmed = false;
+/** The button was used: the next focus asks. */
+function armFullDiskAccessRecheck() {
+  accessRecheckArmed = true;
+}
+async function recheckFullDiskAccess() {
+  if (!accessRecheckArmed) return;
+  accessRecheckArmed = false; // once per use of the button: focus and visibilitychange arrive together
+  const before = fullDiskAccessInfo();
+  let fda = null;
+  try {
+    const res = await api('/api/platform/capabilities/refresh', { method: 'POST' });
+    fda = res && res.capabilities ? res.capabilities.fullDiskAccess : null;
+  } catch {
+    return; // no answer: the row stays as it was
+  }
+  if (!fda || typeof fda.state !== 'string') return;
+  if (fda.state === 'granted' && (!before || before.state !== 'granted')) state.accessGrantedSinceScan = true;
+  state.capabilities = { ...(state.capabilities || {}), fullDiskAccess: fda };
+  renderRefusedFolders();
+}
+window.addEventListener('focus', () => { void recheckFullDiskAccess(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void recheckFullDiskAccess();
+});
+/* ── end Full Disk Access recheck ── */
 /**
  * "Open Privacy settings": the desktop shell opens the Full Disk Access pane
  * when asked for it BY NAME. The page holds no settings URL, and the shell's
@@ -1356,11 +1458,18 @@ async function openFullDiskAccessSettings() {
       // The call failed: nothing opened, so the words below are the answer.
     }
   }
-  toast('Open System Settings › Privacy & Security › Full Disk Access, switch TreeMap on, then scan again.', 'success', 9000);
+  // The server's sentence names whom to switch on and what to restart (U-11);
+  // without one, the path alone, naming no one.
+  const fda = fullDiskAccessInfo();
+  toast(fda && fda.state !== 'granted' && fda.advice
+    ? 'System Settings did not open from here. ' + fda.advice
+    : 'Open System Settings › Privacy & Security › Full Disk Access to switch it on, then scan again.', 'success', 9000);
 }
 $('accessOpenBtn').addEventListener('click', () => {
+  armFullDiskAccessRecheck(); // the next focus asks whether it is on now
   void openFullDiskAccessSettings();
 });
+$('accessMissingBtn').addEventListener('click', () => switchView('missing'));
 
 /* ── Scan queue ── */
 /* Several folders can arrive at once — a stack dropped from Finder, or the

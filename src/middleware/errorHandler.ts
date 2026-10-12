@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { PathRejectedError } from '../utils/pathSanitizer';
+import { accessAdviceNow, accessCodeOf } from '../utils/accessAdvice';
 
 /** Throw anywhere in a route; the handler below turns it into clean JSON. */
 export class AppError extends Error {
@@ -29,15 +30,17 @@ export class AppError extends Error {
  *
  * Shared by the HTTP error handler, the MCP tools and the scanner's own error
  * text, so the Browse modal, the Scan button and an agent all read the same
- * words — and on macOS the words include the ten-second fix, because on a
- * fresh Mac the folders the Browse modal offers first (Desktop, Documents,
- * Downloads) are exactly the ones that answer this way until Full Disk Access
- * is granted. The page shows `error.message` as is.
+ * words. On macOS the fix comes from `accessAdvice` (Track U, U-11), which
+ * reads the errno and the probed Full Disk Access state: on a fresh Mac the
+ * folders the Browse modal offers first (Desktop, Documents, Downloads)
+ * answer EPERM until access is granted, while an EACCES is the folder's own
+ * permissions, which granting it does not change. The page shows
+ * `error.message` as is.
  */
-export function permissionDeniedMessage(p: string | undefined): string {
+export function permissionDeniedMessage(p: string | undefined, code?: string): string {
   const base = `TreeMap isn't allowed to read ${p ? p : 'this folder'}.`;
   return process.platform === 'darwin'
-    ? `${base} Give TreeMap Full Disk Access in System Settings › Privacy & Security, then try again.`
+    ? `${base} ${accessAdviceNow({ code: accessCodeOf(code), retry: 'try again' })}`
     : base;
 }
 
@@ -48,7 +51,7 @@ function fromNodeError(err: NodeJS.ErrnoException): AppError | null {
       return new AppError(404, 'PATH_NOT_FOUND', 'Path does not exist');
     case 'EACCES':
     case 'EPERM':
-      return new AppError(403, 'PERMISSION_DENIED', permissionDeniedMessage(err.path));
+      return new AppError(403, 'PERMISSION_DENIED', permissionDeniedMessage(err.path, err.code));
     case 'ENOTDIR':
       return new AppError(400, 'NOT_A_DIRECTORY', 'Path is not a directory');
     default:

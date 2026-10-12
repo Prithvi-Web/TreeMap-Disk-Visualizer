@@ -154,7 +154,7 @@ export function describeScanError(err: unknown): string {
   if (code === 'ENOENT') {
     return 'The folder disappeared while TreeMap was scanning it — was a drive unplugged, or the folder moved?';
   }
-  if (code === 'EACCES' || code === 'EPERM') return permissionDeniedMessage(e?.path);
+  if (code === 'EACCES' || code === 'EPERM') return permissionDeniedMessage(e?.path, code);
   return err instanceof Error ? err.message : String(err);
 }
 

@@ -160,7 +160,7 @@
 .access-body { flex: 1; min-width: 0; }
 .access-text { font-size: 13px; font-weight: 600; }
 .access-hint { font-size: 11.5px; margin-top: 3px; line-height: 1.5; }
-#accessOpenBtn { flex: none; align-self: center; }
+#accessOpenBtn, #accessMissingBtn { flex: none; align-self: center; }
 
 /* The note over a map with nothing to draw. */
 .tm-empty-note {
