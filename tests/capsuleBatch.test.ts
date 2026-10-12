@@ -21,11 +21,14 @@ const ROOT = path.resolve('/stand-in');
  * the real disk's realpath follows to where they lead, as `stat` does, while `lstat` reads the link.
  */
 function diskOf(entries: Record<string, { dir: boolean; dev: number; linkTo?: string }>, failing: string[] = [], failingLstat: string[] = []): PlaceReader {
-  /** Where a path leads: each link on the way followed, and the last name too when `followLast`. */
+  /**
+   * Where a path leads: each link on the way followed, and the last name too when `followLast`. The names
+   * are those after the root: on Windows the root holds the drive (`D:\`), which is no name to join.
+   */
   const resolved = (p: string, followLast: boolean): string => {
     const full = path.resolve(p);
-    const names = full.split(path.sep).filter(Boolean);
     let at = path.parse(full).root;
+    const names = full.slice(at.length).split(path.sep).filter(Boolean);
     for (const [i, name] of names.entries()) {
       at = path.join(at, name);
       const link = entries[at]?.linkTo;
