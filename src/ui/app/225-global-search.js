@@ -149,6 +149,14 @@ async function gsearchGoTo(targetPath) {
   // drilled into now, the map would ask a scan that has not finished (POL
   // item 7 review, F2.9).
   if (!state.root || !(folder === state.root.path || tmIsInside(folder, state.root.path))) {
+    // startScan refuses while a scan runs — the quiet refresh behind an
+    // index-first paint included — so promising a scan of this folder, or
+    // writing it into the path box, would both be untrue (POL item 7
+    // review, F3.1).
+    if (state.scanning) {
+      toast(`A scan is already running, so “${hit.name}” in ${hit.rootPath} can’t be shown yet. Open the result again once that scan finishes.`, 'error');
+      return;
+    }
     toast(`“${hit.name}” is in ${hit.rootPath}, not the scan on screen — scanning that folder now. Open the result again when the scan finishes.`);
     $('pathInput').value = hit.rootPath;
     await startScan(hit.rootPath);

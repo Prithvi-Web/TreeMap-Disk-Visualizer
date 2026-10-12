@@ -365,6 +365,42 @@ test('the journal’s “Show on treemap” and a global-search hit ask whether 
   assert.deepEqual(said, ['“f” is in /b, not the scan on screen — scanning that folder now. Open the result again when the scan finishes.']);
 });
 
+test('a global-search hit outside the scan on screen, opened while a scan is running, says a scan is running and starts nothing — startScan would refuse the scan of its folder, so the hit no longer promises one, and the path box keeps what it held (POL item 7 review, F3.1)', async () => {
+  type Hit = { path: string; type: string; parentPath: string; rootPath: string; name: string };
+  const open = async (scanning: boolean, root: string | null, hit: Hit): Promise<{ log: string[]; pathBox: string }> => {
+    const log: string[] = [];
+    const pathBox = { value: '/typed/before', blur: () => undefined };
+    const state = { scanning, root: root === null ? null : { path: root }, treemap: { rootPath: root } };
+    const goTo = new Function(
+      'state', '$', 'gsearch', 'gsearchClose', 'toast', 'startScan', 'switchView', 'loadTreemap', 'tmApplyQuery',
+      `${declsOf(['gsearchGoTo', 'tmIsInside'])}\nreturn gsearchGoTo;`,
+    )(state, (id: string) => (id === 'pathInput' ? pathBox : { value: '', blur: () => undefined }), { hits: [hit] }, () => undefined,
+      (text: string, kind?: string) => log.push(kind ? `toast (${kind}): ${text}` : `toast: ${text}`),
+      async (p: string) => { log.push(`scan ${p}`); },
+      (view: string) => log.push(`view ${view}`),
+      async (p: string) => { log.push(`load ${p}`); },
+      () => undefined) as (p: string) => Promise<void>;
+    await goTo(hit.path);
+    return { log, pathBox: pathBox.value };
+  };
+  const hit: Hit = { path: '/b/c/f', type: 'file', parentPath: '/b/c', rootPath: '/b', name: 'f' };
+  const busy = 'toast (error): A scan is already running, so “f” in /b can’t be shown yet. Open the result again once that scan finishes.';
+  assert.deepEqual({
+    // The quiet refresh behind an index-first paint, or a scan started over the previous one's map.
+    whileAScanRuns: await open(true, '/a', hit),
+    // The first scan of the session, with nothing on screen yet.
+    whileTheFirstScanRuns: await open(true, null, hit),
+    idle: await open(false, '/a', hit),
+  }, {
+    whileAScanRuns: { log: [busy], pathBox: '/typed/before' },
+    whileTheFirstScanRuns: { log: [busy], pathBox: '/typed/before' },
+    idle: {
+      log: ['toast: “f” is in /b, not the scan on screen — scanning that folder now. Open the result again when the scan finishes.', 'scan /b'],
+      pathBox: '/b',
+    },
+  });
+});
+
 test('a whole drive’s scan and a share’s are rooted at a folder whose path ends in its separator — "/", "C:\\", "\\\\srv\\share\\" as Windows spells a share’s root — and the page climbs to it: Live mode grows every folder above a change up to that root, a share’s changes pulse to it, the preview and Disk City’s Up find it as a folder’s parent, and the “Writing now” rows name each file from below it without losing a letter (POL item 7 review, F2.7 and F2.8)', () => {
   type Node = { type: string; size: number };
   const live = (root: string, nodes: Record<string, Node>, ev: Record<string, unknown>): Record<string, number> => {
