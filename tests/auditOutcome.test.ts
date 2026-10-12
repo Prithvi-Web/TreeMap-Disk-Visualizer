@@ -19,7 +19,7 @@ import { saveTokens } from '../src/services/cloud/oauth';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { commitCart } from '../src/services/cartCommit';
 import { getCapsuleJob, protectItems } from '../src/services/timeCapsule';
-import { getOffloadIndex, getOffloadJob, prepareOffload, startOffload } from '../src/services/offload';
+import { getOffloadIndex, getOffloadJob, prepareOffload, setAfterManifestLoadForTests, startOffload } from '../src/services/offload';
 import type { AuditEntry, FileNode } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
@@ -183,11 +183,12 @@ test('a cart undo\'s line names the original paths it writes', async () => {
   await waitFor(() => getCapsuleJob(started.body.jobId)?.status !== 'running', 'the undo finishing');
 });
 
-test('an offload restore\'s line names the original paths it writes', async () => {
-  const src = fs.realpathSync(fileTempDir('treemap-auditOutcome-offload-'));
+/** Offloads one new file of a folder of its own, and answers its original path and its record's id. */
+async function offloadedEntry(label: string): Promise<{ original: string; id: string }> {
+  const src = fs.realpathSync(fileTempDir(`treemap-auditOutcome-${label}-`));
   const original = path.join(src, 'away.bin');
   fs.writeFileSync(original, Buffer.alloc(2048, 4));
-  const dest = fileTempDir('treemap-auditOutcome-offload-dest-');
+  const dest = fileTempDir(`treemap-auditOutcome-${label}-dest-`);
   const scan = createScanRecord(src);
   scan.status = 'complete';
   scan.root = { name: path.basename(src), path: src, size: 2048, type: 'dir', modifiedAt: 0, isHidden: false, children: [{ name: 'away.bin', path: original, size: 2048, type: 'file', modifiedAt: 0, isHidden: false }] };
@@ -195,8 +196,35 @@ test('an offload restore\'s line names the original paths it writes', async () =
   await waitFor(() => getOffloadJob(job.jobId)?.status !== 'running', 'the offload finishing');
   const entry = (await getOffloadIndex()).entries.find((e) => e.originalPath === original);
   assert.ok(entry, getOffloadJob(job.jobId)?.error);
-  const started = await post('/api/offload/restore', { ids: [entry.id] });
+  return { original, id: entry.id };
+}
+
+test('an offload restore\'s line names the original paths it writes', async () => {
+  const { original, id } = await offloadedEntry('offload');
+  const started = await post('/api/offload/restore', { ids: [id] });
   assert.equal(started.status, 202, JSON.stringify(started.body));
   assert.deepEqual((await lastLine('offload.restore')).paths, [original]);
   await waitFor(() => getOffloadJob(started.body.jobId)?.status !== 'running', 'the restore finishing');
+});
+
+test('a restore request reads the offload record once for all its ids, never once per id (final review F2.2)', async () => {
+  // Each read is the whole record: up to 500 ids against a record of tens of thousands of entries took
+  // seconds of reads before anything began.
+  const { id } = await offloadedEntry('lookups');
+  const ids = [id, ...Array.from({ length: 9 }, (_, i) => `not-recorded-${i}`)];
+  let reads = 0;
+  const stop = setAfterManifestLoadForTests(async () => { reads++; });
+  try {
+    const dry = await post('/api/offload/restore', { ids, dryRun: true });
+    assert.equal(dry.status, 200, JSON.stringify(dry.body));
+    assert.deepEqual(dry.body.wouldRestore.map((e: { id: string }) => e.id), [id], 'the one recorded id');
+    assert.equal(reads, 1, 'a dry run of ten ids reads the record once');
+    reads = 0;
+    const none = await post('/api/offload/restore', { ids: ids.slice(1) });
+    assert.equal(none.status, 404, JSON.stringify(none.body));
+    assert.equal(none.body.code, 'NOTHING_TO_RESTORE');
+    assert.equal(reads, 2, 'a real one reads it once for its audit line, and once as the restore starts');
+  } finally {
+    stop();
+  }
 });

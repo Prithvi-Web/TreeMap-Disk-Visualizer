@@ -1215,3 +1215,14 @@ export async function getOffloadEntry(id: string): Promise<OffloadEntry | undefi
   const store = await loadManifest();
   return store.entries.find((e) => e.id === id);
 }
+
+/**
+ * The record of each of `ids`, in order (undefined where there is none), from one read of the manifest
+ * (final review F2.2): a restore request of up to 500 ids looked each one up with a read of the whole
+ * manifest — seconds of reads before anything began, once the record held tens of thousands of entries.
+ */
+export async function getOffloadEntries(ids: readonly string[]): Promise<(OffloadEntry | undefined)[]> {
+  const byId = new Map<string, OffloadEntry>();
+  for (const e of (await loadManifest()).entries) if (!byId.has(e.id)) byId.set(e.id, e);
+  return ids.map((id) => byId.get(id));
+}

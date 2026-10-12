@@ -8,6 +8,7 @@ import {
   cancelOffloadJob,
   getOffloadIndex,
   getOffloadEntry,
+  getOffloadEntries,
   restoreRefusal,
 } from '../services/offload';
 import { openPath } from '../services/cleaner';
@@ -18,7 +19,7 @@ import { appendAudit, tokenIdFor } from '../services/audit';
 import { liesInside, sanitizePath } from '../utils/pathSanitizer';
 import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
-import { FileNode, OffloadJob, OffloadStreamEvent, ScanResult } from '../models/types';
+import { FileNode, OffloadEntry, OffloadJob, OffloadStreamEvent, ScanResult } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
@@ -125,6 +126,8 @@ offloadRouter.post('/offload/restore', idempotency, async (req: Request, res: Re
     throw new AppError(400, 'IDS_REQUIRED', 'Body must include a non-empty "ids" array');
   }
   if (ids.length > 500) throw new AppError(400, 'TOO_MANY_IDS', 'At most 500 restores per request');
+  // Every id's record from one read of the manifest, never one read per id (final review F2.2).
+  const recorded = await getOffloadEntries(ids as string[]);
 
   if (dryRun === true) {
     const entries = [];
@@ -132,8 +135,7 @@ offloadRouter.post('/offload/restore', idempotency, async (req: Request, res: Re
     // passes it. What only the run itself can find — something now at the place, a copy missing or
     // changed — still fails that entry then. A check that throws refuses the entry, as the run does.
     const refused = [];
-    for (const id of ids as string[]) {
-      const entry = await getOffloadEntry(id);
+    for (const entry of recorded) {
       if (!entry || entry.restoredAt) continue;
       let reason: string | null;
       try {
@@ -152,11 +154,7 @@ offloadRouter.post('/offload/restore', idempotency, async (req: Request, res: Re
 
   // The places it writes, named (final review F1.13): each record it takes, as startRestore takes
   // them — read before it starts, which a fast restore could otherwise finish first.
-  const restoring: string[] = [];
-  for (const id of ids as string[]) {
-    const entry = await getOffloadEntry(id);
-    if (entry && !entry.restoredAt) restoring.push(entry.originalPath);
-  }
+  const restoring = recorded.filter((entry): entry is OffloadEntry => entry !== undefined && !entry.restoredAt).map((entry) => entry.originalPath);
   const job = await startRestore(ids as string[]);
   await appendAudit({ action: 'offload.restore', source: 'http', tokenId: tokenIdFor('http'), paths: restoring, bytes: job.bytesTotal, dryRun: false, outcome: 'ok' });
   res.status(202).json({ jobId: job.jobId });
