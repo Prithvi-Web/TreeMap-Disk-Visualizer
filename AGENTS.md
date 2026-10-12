@@ -688,7 +688,9 @@ read-what-you-saw) permission to act.
   app-data, and deleting what a scan covers there, are unchanged — but for
   **the agent policy and the audit log** (`agent-policy.json`, `audit.jsonl`):
   no request removes or moves either, nor app-data itself or any folder above
-  it — `DELETE /api/files`, the cart, an offload, a relocation, the MCP tools —
+  it, nor a link TreeMap reaches app-data through (its data folder moved to
+  a bigger volume and linked back) or a folder holding one —
+  `DELETE /api/files`, the cart, an offload, a relocation, the MCP tools —
   `403 { code: "SAFETY_RECORD" }`, however the path is spelled, dry runs too;
   Autopilot leaves them alone and names them in `skipped`. An absent policy
   means no limits, and the log is the record of what was done; change either

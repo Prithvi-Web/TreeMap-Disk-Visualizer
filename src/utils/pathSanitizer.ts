@@ -455,8 +455,11 @@ function startOf(realFolder: string, target: string): { at: string; names: strin
  * Windows follows 63 links — so where the walk stopped says nothing of where the system lands. Settled
  * there, with the names left joined, the answer was the next link's own place in the scan, and a chain
  * of long targets to a second name, or out of the scan, was granted (the SEC-2d review, F3.1).
+ *
+ * `visit`, when given, is told every entry the walk finds there — each folder it passes and each link
+ * it reads — as the walk spells it (`appDataWay`).
  */
-function walkNames(at: string, names: readonly string[], walk: LinkWalk): string {
+function walkNames(at: string, names: readonly string[], walk: LinkWalk, visit?: (entry: string) => void): string {
   const pending = [...names];
   let here = at;
   const settle = (rest: readonly string[]): string => {
@@ -489,6 +492,7 @@ function walkNames(at: string, names: readonly string[], walk: LinkWalk): string
       entry = undefined;
     }
     if (entry === undefined) return settle([name, ...pending]);
+    visit?.(next);
     if (!entry.isSymbolicLink()) {
       here = next;
       continue;
@@ -1026,7 +1030,9 @@ export const SAFETY_RECORD_NAMES: readonly string[] = Object.freeze(['agent-poli
  * by identity under a name no fold explains (an 8.3 short name) — or a folder that holds them: app-data
  * itself, or a folder above it. An ABSENT policy means "no limits", so a delete of the file lifted
  * every rail the human set, and a delete of the log erased the record of it. A link elsewhere that
- * leads to one is not one: removing a link removes the link.
+ * leads to one is not one: removing a link removes the link — unless TreeMap itself reaches app-data
+ * through it (`appDataWay`): then removing the link, or a folder holding it, takes app-data away from
+ * TreeMap, the policy reads as absent, and the log starts afresh (the final review, F2.1).
  */
 export function takesSafetyRecord(p: string): boolean {
   if (p.startsWith('cloud://')) return false;
@@ -1038,35 +1044,94 @@ export function takesSafetyRecord(p: string): boolean {
     return SAFETY_RECORD_NAMES.some((record) => foldName(record) === name || sameEntry(at.where, path.join(at.appData, record)));
   }
   const { folded } = appDataNames();
-  const names = namesOf(path.normalize(canonicalDirOf(p))).map((name) => foldName(name));
-  return names.length < folded.length && names.every((name, i) => name === folded[i]); // a folder above app-data
+  const where = path.normalize(canonicalDirOf(p));
+  const names = namesOf(where).map((name) => foldName(name));
+  if (names.length < folded.length && names.every((name, i) => name === folded[i])) return true; // a folder above app-data
+  return onTheWayToAppData(where);
+}
+
+/**
+ * Every entry TreeMap passes on its way to app-data as it spells it (`appDataDir()`), walked as the
+ * system walks it (`walkNames`): each folder from the root down, and each link — app-data's own
+ * spelling a link (TREEMAP_DATA_DIR naming one, or the folder moved to a bigger volume and linked
+ * back), or a link a target passes through. Removing any of them takes app-data from TreeMap as
+ * surely as removing app-data does — and every folder holding one is itself an entry, since the walk
+ * reaches each by the folders above it. Each entry where it lives (`canonicalDirOf`: its folders as
+ * the volume stores them, its own name as walked), and its identity (`identityOf`), which names it
+ * however a request spells it: another case, an 8.3 short name. Remembered for as long as `canonDir`
+ * remembers a folder.
+ */
+interface AppDataWay {
+  spelled: string;
+  madeAt: number;
+  /** Each entry where it lives. */
+  places: string[];
+  /** Each entry's identity. */
+  ids: Set<string>;
+}
+let appDataWayMemo: AppDataWay | null = null;
+function appDataWay(): AppDataWay {
+  const spelled = path.resolve(appDataDir());
+  const now = Date.now();
+  if (appDataWayMemo?.spelled === spelled && now - appDataWayMemo.madeAt < CANON_CACHE_TTL_MS) return appDataWayMemo;
+  const entries: string[] = [];
+  const { root } = path.parse(spelled);
+  walkNames(root, namesIn(spelled.slice(root.length)), newLinkWalk(), (entry) => entries.push(entry));
+  const places = [...new Set(entries.map((entry) => path.normalize(canonicalDirOf(entry))))];
+  const ids = new Set(entries.map(identityOf).filter((id): id is string => id !== null));
+  appDataWayMemo = { spelled, madeAt: now, places, ids };
+  return appDataWayMemo;
+}
+
+/**
+ * Whether the place `where` is an entry on TreeMap's way to app-data (`appDataWay`), by identity:
+ * whatever name it is asked by. A path with nothing at it is none — there is nothing to remove.
+ */
+function onTheWayToAppData(where: string): boolean {
+  const id = identityOf(where);
+  return id !== null && appDataWay().ids.has(id);
+}
+
+/** An existing entry's device and id, links not followed; null when there is none, or none to trust (an id of 0). */
+function identityOf(p: string): string | null {
+  try {
+    const entry = fs.lstatSync(p, { bigint: true, throwIfNoEntry: false });
+    return entry === undefined || entry.ino === 0n ? null : `${entry.dev}:${entry.ino}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * A cheap test over the paths a walk of `root` lists, as `spillCandidateTest` is: false for every path
- * that can be neither in app-data nor a folder above it — so neither a safety record nor a folder
- * holding one — true for one that may be, which `takesSafetyRecord` must still judge. On any doubt it
- * passes every path on.
+ * that can be neither in app-data nor a folder above it, nor an entry on TreeMap's way to app-data
+ * (`appDataWay`) — so neither a safety record nor a folder or link it is reached through — true for
+ * one that may be, which `takesSafetyRecord` must still judge. On any doubt it passes every path on.
  */
 export function safetyRecordCandidateTest(root: string): (p: string) => boolean {
   if (!path.isAbsolute(root)) return () => true;
   let appData: string;
   let scanned: string;
+  let way: string[];
   try {
     const appDataAt = realLocationOf(appDataDir());
     const rootAt = realLocationOf(root);
     if (fs.statSync(appDataAt, { bigint: true }).dev !== fs.statSync(rootAt, { bigint: true }).dev) return () => true;
     appData = foldForCompare(appDataAt);
     scanned = foldForCompare(rootAt);
+    way = appDataWay().places.map(foldForCompare);
   } catch {
     return () => true;
   }
   if (isInside(appData, scanned)) return () => true; // the walk lies in app-data
-  if (!isInside(scanned, appData)) return () => false; // app-data lies outside it, and so above none of it
-  const listed = path.join(foldForCompare(root), path.relative(scanned, appData));
+  // App-data, and each entry on the way to it, as the walk spells them: its own root, then the place below it.
+  const asListed = (place: string): string => path.join(foldForCompare(root), path.relative(scanned, place));
+  const listed = isInside(scanned, appData) ? asListed(appData) : null;
+  const entries = new Set(way.filter((place) => isInside(scanned, place)).map(asListed));
+  if (listed === null && entries.size === 0) return () => false; // neither lies in the walk
   return (p) => {
     const folded = foldForCompare(p);
-    return isInside(listed, folded) || isInside(folded, listed);
+    return (listed !== null && (isInside(listed, folded) || isInside(folded, listed))) || entries.has(folded);
   };
 }
 

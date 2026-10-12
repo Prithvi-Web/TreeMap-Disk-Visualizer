@@ -557,7 +557,7 @@ async function resolveCandidates(
   const records = matched.filter((c) => mayHoldRecord(c.path) && takesSafetyRecord(c.path));
   for (const c of records) {
     matched.splice(matched.indexOf(c), 1);
-    spillSkipped.push({ path: c.path, reason: "Left alone — TreeMap's agent policy and its audit log are never removed or moved, by Autopilot or any other way through TreeMap." });
+    spillSkipped.push({ path: c.path, reason: "Left alone — TreeMap's agent policy and its audit log, and the folders and links TreeMap reaches them through, are never removed or moved, by Autopilot or any other way through TreeMap." });
   }
   // FAILS CLOSED: suppressedNoteRoots throws NOTES_UNREADABLE on a corrupt
   // notes.json, and the throw is deliberately not caught here — runPolicy
