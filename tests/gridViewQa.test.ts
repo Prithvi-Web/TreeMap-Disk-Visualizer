@@ -536,12 +536,14 @@ test('Clear never scrolls the grid: focus goes to a tile that is on screen, with
 });
 
 test('with the anchor gone, Clear hands focus to the first tile on screen; with no tiles at all, to the filter box (B13 review F1.6)', async () => {
-  // A filter keystroke re-lays the grid, which drops the anchor, while the
-  // selection and its bar stay up.
+  // A filter keystroke re-lays the grid, and one that leaves another file (or
+  // none) at the anchor's position drops the anchor, while the selection and
+  // its bar stay up. (A re-lay that keeps the same file there keeps it — the
+  // preview pane narrowing the Grid, QA C04.)
   const g = gridHarness();
   await g.renderGrid();
   g.onCellClick({ metaKey: true }, 1);
-  await typeFilter(g, 'o'); // "Fonts" and "Notes.txt" both still match
+  await typeFilter(g, 'notes'); // only "Notes.txt" matches: nothing is at position 1 now
   assert.equal(g.state.grid.anchor, null, 'the re-lay dropped the anchor (precondition)');
   assert.ok(g.els.selectionBar.cls.has('visible'), 'and the bar is still up (precondition)');
   g.els.selClearBtn.focus();

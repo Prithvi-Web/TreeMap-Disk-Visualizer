@@ -556,6 +556,40 @@ test('the Grid fills <main> exactly with the cart up as well as without — the 
   assert.equal(checked, 8, 'every height was checked with and without the cart');
 });
 
+/* ══════════════ C04 — the preview pane narrows the page, it never covers it ══════════════ */
+
+test('with the preview pane open the page lays out left of it, at every window size — nothing in <main> is under the pane (C04, the B22 remainder)', () => {
+  // QA re-check: the pane was a fixed layer over the right 330 px of the page.
+  // In "Preview after" with the cart collapsed, "Exit preview" and the end of
+  // the banner sat under it (unclickable); the Grid's Sort control and half its
+  // Filter box were hidden; at 1024×700 the selected tile itself was under it.
+  // Every one of those lives in <main>, an in-flow item of <body>'s grid: the
+  // body's right padding is what the content column ends at.
+  assert.equal(declsOf('body').get('display'), 'grid', '<body> lays the sidebar and <main> out as a grid');
+  assert.ok(!/fixed|absolute/.test(declsOf('main').get('position') || ''), '<main> is in flow, so the body\'s padding bounds it');
+  const pane = declsOf('#previewPane');
+  assert.equal(pane.get('right'), '0', 'the pane is pinned to the window\'s right edge');
+  let checked = 0;
+  for (const W of [640, MIN_W, 1180, 1320, 1440, 1920, 2560]) {
+    for (const collapsed of [false, true]) {
+      for (const preview of [false, true]) {
+        const st: PageState = { active: collapsed ? ['#sideNav.collapsed'] : [], preview };
+        const body = cascade('body', st);
+        const padR = body.has('padding-right') ? evalLen(body.get('padding-right')!, scope(st), W, MIN_H) : 0;
+        const label = `${W}px, sidebar ${collapsed ? 'rail' : 'open'}${preview ? ', preview' : ''}`;
+        if (preview) {
+          const paneW = Math.min(px(pane.get('width')), evalLen(pane.get('max-width')!, scope(st), W, MIN_H));
+          assert.ok(W - padR <= W - paneW, `${label}: the page's column ends at ${W - padR}px, the pane starts at ${W - paneW}px`);
+        } else {
+          assert.equal(padR, 0, `${label}: with the pane shut the page keeps the whole window`);
+        }
+        checked++;
+      }
+    }
+  }
+  assert.equal(checked, 28, 'every size and state was checked');
+});
+
 test('while a dialog is open, toasts sit above the sheet, at the smallest window too (D08)', () => {
   const up = cascade('#toasts', { active: ['.modal-backdrop.open'] });
   assert.equal(up.get('bottom'), 'auto', 'no longer anchored to the bottom, where a tall sheet keeps its footer buttons');

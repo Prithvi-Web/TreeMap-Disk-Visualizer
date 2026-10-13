@@ -38,6 +38,7 @@ function gridItems() {
 }
 
 function layoutGrid(items) {
+  const prev = state.grid.layout;
   const width = gridScroll.clientWidth - 20;
   const maxSize = items.reduce((m, it) => Math.max(m, it.size), 1);
   const layout = [];
@@ -60,7 +61,13 @@ function layoutGrid(items) {
   // the layout. Clearing it here rather than at each call site is deliberate:
   // this is the only place `state.grid.layout` is ever written, so no rebuild
   // path can quietly skip the reset the way a per-call-site version would.
-  state.grid.anchor = null;
+  // Kept only where the very same file still sits at that position: a re-flow
+  // of the same list into a new width. The preview pane narrows the page
+  // (QA C04), and it opens on the plain click that sets the anchor — dropped
+  // there, the next shift-click selected one file instead of the range.
+  const a = state.grid.anchor;
+  const same = a !== null && prev && prev[a] && layout[a] && prev[a].it.path === layout[a].it.path;
+  if (!same) state.grid.anchor = null;
 }
 
 let gridSeq = 0;

@@ -46,6 +46,8 @@ type GridState = {
 
 type Harness = {
   state: GridState;
+  /** The Grid's scroller: its width is what the layout flows into. */
+  scroll: { clientWidth: number };
   layoutGrid(items: Item[]): void;
   onCellClick(e: { shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean }, i: number): void;
   navigations: string[];
@@ -69,6 +71,7 @@ function harness(): Harness {
     },
   };
   const navigations: string[] = [];
+  const scroll = { clientWidth: 1220 };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const mod = new Function(
     'GAP', 'MIN_SQ', 'MAX_SQ', 'gridScroll', 'state',
@@ -76,7 +79,7 @@ function harness(): Harness {
     `'use strict'; ${src}\nreturn { layoutGrid, onCellClick };`,
   )(
     12, 64, 256,
-    { clientWidth: 1220 },
+    scroll,
     state,
     () => {},
     () => {},
@@ -89,7 +92,7 @@ function harness(): Harness {
   ) as Pick<Harness, 'layoutGrid' | 'onCellClick'>;
   assert.equal(typeof mod.layoutGrid, 'function', 'layoutGrid is spliced into the page');
   assert.equal(typeof mod.onCellClick, 'function', 'onCellClick is spliced into the page');
-  return { state, navigations, ...mod };
+  return { state, scroll, navigations, ...mod };
 }
 
 test('rebuilding the layout drops the anchor that indexed into the old one', () => {
@@ -147,4 +150,30 @@ test('an anchor at position 0 is a real anchor, not a missing one', () => {
   assert.equal(h.state.grid.anchor, 0);
   h.onCellClick({ shiftKey: true }, 2);
   assert.equal(h.state.grid.selection.size, 3, '0 is falsy but it is still an anchor');
+});
+
+test('a re-flow of the same files keeps the anchor — the preview pane opening beside the Grid on the click that set it (QA C04)', () => {
+  // The open preview pane narrows the page now (QA C04), and the Grid re-flows
+  // its tiles into the narrower scroller — on the very click that set the
+  // anchor, since a plain click on a file opens the pane. Dropping the anchor
+  // there turned the next shift-click into a plain click: no range.
+  const h = harness();
+  h.layoutGrid(files(40));
+  h.onCellClick({}, 5); // a plain click on a file: it is selected, and the pane opens
+  assert.equal(h.state.grid.anchor, 5, 'the click sets the anchor (precondition)');
+  assert.equal(h.state.grid.layout[3].y, 0, 'control: four tiles to a row at the full width');
+  h.scroll.clientWidth = 1220 - 330; // the pane took its width
+  h.layoutGrid(files(40));
+  assert.ok(h.state.grid.layout[3].y > 0, 'control: three to a row beside the pane — the tiles really re-flowed');
+  assert.equal(h.state.grid.anchor, 5, 'the same file is still at position 5, so it is still the anchor');
+  h.onCellClick({ shiftKey: true }, 8);
+  assert.deepEqual([...h.state.grid.selection].sort(),
+    ['/root/f5.bin', '/root/f6.bin', '/root/f7.bin', '/root/f8.bin'], 'and a shift-click selects the range from it');
+
+  // A rebuild that puts another file at that position still drops it.
+  const r = harness();
+  r.layoutGrid(files(40));
+  r.onCellClick({}, 5);
+  r.layoutGrid(files(40).reverse()); // a sort flipped: position 5 is f34 now
+  assert.equal(r.state.grid.anchor, null, 'a different file at the anchor\'s position is not the anchor');
 });

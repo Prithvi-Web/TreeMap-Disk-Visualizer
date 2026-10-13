@@ -1648,6 +1648,17 @@ body:has(#cartDock.show) #view-grid.active { min-height: calc(100vh - 96px); }
   border-left: 1px solid var(--hairline-2); box-shadow: var(--shadow-3);
   transform: translateX(100%); transition: transform var(--dur-2) var(--ease); }
 #previewPane.open { transform: none; }
+/* The open pane NARROWS the page; it never covers it. As a layer over the
+   right 330 px it hid "Exit preview" and the end of the Preview-after banner,
+   the Grid's Sort control and half its Filter box, and at 1024×700 the very
+   tile whose file it showed (QA C04, the B22 remainder). The body gives the
+   pane its width back as padding, so main — every view, toolbar and banner
+   in it — lays out in the strip left of the pane. --tr-pane is that width
+   (095-timeslider-floating.css), the one the toasts and the selection bar
+   already keep clear of. The views that draw to a size (the treemap canvas,
+   Disk City, the Grid's tiles) re-fit on the window's resize signal, which
+   openPreview and closePreview replay (previewReflow). */
+body.preview-open { padding-right: var(--tr-pane); }
 #previewPane.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -webkit-mask: none;
   inset: 0 auto 0 -1px; width: 1px; border-left: 1px solid rgba(255,255,255,0.08); }
 .pv-head { display: flex; align-items: center; gap: 10px; padding: 13px 14px; border-bottom: 1px solid var(--hairline); }
@@ -2616,9 +2627,12 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 /* Left-anchored and narrowed while the dock is open: the dock is a fixed
    366px layer over the right of the map, and a centred banner disappeared
    under it at 860px — the one width where the message matters most, because
-   there is least room to work out what happened. */
+   there is least room to work out what happened. Never below 240 px, a line
+   of the message beside "Exit preview": on a page the open preview pane has
+   narrowed (060-preview-pane.css), a 1024 px window leaves a 402 px map, and
+   the dock's 402 px left the banner nothing at all (QA C04). */
 body.cart-open .tm-preview-banner { left: 14px; transform: none;
-  max-width: calc(100% - 402px); }
+  max-width: max(240px, calc(100% - 402px)); }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
@@ -29986,13 +30000,25 @@ function highlightCode(src, ext) {
 
 let pvReqId = 0;
 let pvPrevFocus = null; // where focus was before the pane took it
+/**
+ * The open pane narrows the page (body.preview-open, 060-preview-pane.css —
+ * QA C04): the content column changes width with no window resize, and the
+ * views that draw to a size — the treemap canvas, Disk City, the Grid's
+ * tiles, the Compare split — re-fit only on that signal. Without it the map
+ * stayed drawn at the old width, its right side cut off by its wrap. The
+ * signal is replayed, as the sidebar does when it collapses
+ * (scheduleSideNavReflow); a resize twice is harmless.
+ */
+function previewReflow() { window.dispatchEvent(new Event('resize')); }
 function openPreview(node) {
   if (!node || node.type !== 'file') return;
   if (node.path.startsWith('cloud://')) { toast('Quick Look needs file contents — cloud scans never download any'); return; }
   const pane = $('previewPane');
   const wasOpen = previewIsOpen();
   pane.hidden = false;
+  const narrows = !document.body.classList.contains('preview-open');
   document.body.classList.add('preview-open');
+  if (narrows) previewReflow();
   requestAnimationFrame(() => pane.classList.add('open'));
   // Focus moves into the pane — it is the last block of markup, so its Close
   // button is otherwise dozens of Tab stops away — and returns on close.
@@ -30099,7 +30125,9 @@ function renderPreviewMeta(node, data) {
 function closePreview() {
   const pane = $('previewPane');
   pane.classList.remove('open');
+  const widens = document.body.classList.contains('preview-open');
   document.body.classList.remove('preview-open');
+  if (widens) previewReflow(); // the page has its width back: re-fit to it
   pvReqId++; // cancel any in-flight render
   setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
   // Only when the pane still holds focus: a close that came from elsewhere
@@ -30662,6 +30690,7 @@ function gridItems() {
 }
 
 function layoutGrid(items) {
+  const prev = state.grid.layout;
   const width = gridScroll.clientWidth - 20;
   const maxSize = items.reduce((m, it) => Math.max(m, it.size), 1);
   const layout = [];
@@ -30684,7 +30713,13 @@ function layoutGrid(items) {
   // the layout. Clearing it here rather than at each call site is deliberate:
   // this is the only place `state.grid.layout` is ever written, so no rebuild
   // path can quietly skip the reset the way a per-call-site version would.
-  state.grid.anchor = null;
+  // Kept only where the very same file still sits at that position: a re-flow
+  // of the same list into a new width. The preview pane narrows the page
+  // (QA C04), and it opens on the plain click that sets the anchor — dropped
+  // there, the next shift-click selected one file instead of the range.
+  const a = state.grid.anchor;
+  const same = a !== null && prev && prev[a] && layout[a] && prev[a].it.path === layout[a].it.path;
+  if (!same) state.grid.anchor = null;
 }
 
 let gridSeq = 0;

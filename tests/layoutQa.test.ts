@@ -436,6 +436,83 @@ test('the "Preview after" banner may use its whole max-width, and "Exit preview"
   assert.match(INDEX, /<button class="pill" id="tmPreviewExit">Exit preview<\/button>/, 'the button is the one in the banner');
 });
 
+/* ══════════════ C04 — the preview pane narrows the page, and the views re-fit to it ══════════════ */
+
+/**
+ * The page's openPreview and closePreview with their own state, on stubs that
+ * record two things in order: a real change of <body>'s preview-open class,
+ * and each window resize the page dispatches — with whether the page was
+ * narrowed when it went out.
+ */
+function previewWorld() {
+  const log: string[] = [];
+  const bodyCls = new Set<string>();
+  type El = { id: string; hidden: boolean; innerHTML: string; textContent: string; title: string; classList: unknown; focus(): void; contains(x: unknown): boolean };
+  const doc = { activeElement: null as unknown, body: {
+    classList: {
+      add: (c: string) => { if (!bodyCls.has(c)) { bodyCls.add(c); log.push('+' + c); } },
+      remove: (c: string) => { if (bodyCls.has(c)) { bodyCls.delete(c); log.push('-' + c); } },
+      contains: (c: string) => bodyCls.has(c),
+    },
+  }, contains: () => true };
+  const els = new Map<string, El>();
+  const $ = (id: string): El => {
+    if (!els.has(id)) {
+      const cls = new Set<string>();
+      const e: El = { id, hidden: true, innerHTML: '', textContent: '', title: '',
+        classList: { add: (c: string) => cls.add(c), remove: (c: string) => cls.delete(c), contains: (c: string) => cls.has(c) },
+        focus() { doc.activeElement = e; }, contains: (x: unknown) => x === e };
+      els.set(id, e);
+    }
+    return els.get(id)!;
+  };
+  const fns = runPageDecls<{ open(n: unknown): void; close(): void }>(
+    ['pvReqId', 'pvPrevFocus', 'PV_IMG_EXT', 'previewExt', 'previewReflow', 'openPreview', 'closePreview', 'previewIsOpen'], {
+      $, document: doc,
+      window: { dispatchEvent: (e: { type: string }) => { log.push(`${e.type} (${bodyCls.has('preview-open') ? 'narrowed' : 'whole window'})`); return true; } },
+      Event: class { type: string; constructor(t: string) { this.type = t; } },
+      requestAnimationFrame: (cb: () => void) => cb(), setTimeout: () => 0,
+      toast() {}, chipFor: () => '', formatBytes: String, formatDate: String, escapeHtml: String,
+      loadProvenance() {}, api: () => new Promise(() => {}), Image: class {}, highlightCode: String, renderPreviewMeta() {},
+    }, '{ open: openPreview, close: closePreview }');
+  return { ...fns, log };
+}
+
+test('opening the preview pane and closing it re-fit the views beside it — the page changed width with no window resize (C04)', () => {
+  // The open pane narrows the page now rather than covering it. The width-
+  // sensitive views — the treemap canvas, Disk City, the Grid's tiles, the
+  // Compare split — redraw on the window's resize signal, and a width the
+  // pane takes or gives back raises none: the map stayed drawn at the old
+  // width, its right side cut off by the wrap. The page replays the signal,
+  // as the sidebar does when it collapses.
+  const w = previewWorld();
+  const file = (name: string) => ({ type: 'file', path: '/c/' + name, name, size: 1, modifiedAt: 0 });
+  w.open(file('a.mov'));
+  assert.deepEqual(w.log, ['+preview-open', 'resize (narrowed)'], 'opening narrows the page, then the views are told to re-fit to it');
+  w.log.length = 0;
+  w.open(file('b.mov'));
+  assert.deepEqual(w.log, [], 'another file in the open pane changes no width, so nothing is re-fitted');
+  w.close();
+  assert.deepEqual(w.log, ['-preview-open', 'resize (whole window)'], 'closing gives the width back, and the views re-fit to it');
+  w.log.length = 0;
+  w.close();
+  assert.deepEqual(w.log, [], 'closing a pane that is already shut changes nothing');
+});
+
+test('with the preview pane and the cart both open in the smallest window, the "Preview after" banner keeps a readable width (C04)', () => {
+  // The banner is narrowed by the open dock's 402 px; on a page the pane has
+  // narrowed, that left it nothing at 1024 px: 1024 − 244 (the sidebar and its
+  // margin) − 330 (the pane) − 48 (<main>'s padding) = 402 px of map.
+  const side = sheetPx(declsFor(':root').get('--side-w'), 'the sidebar width') + 12;
+  const pane = sheetPx(declsFor('#previewPane').get('width'), 'the pane width');
+  const mainPad = 2 * sheetPx((declsFor('main').get('padding') || '').split(/\s+/)[1], "<main>'s side padding");
+  const map = 1024 - side - pane - mainPad;
+  assert.equal(map, 402, 'control: the map the smallest window leaves beside the pane');
+  const d = new Map([...declsFor('.tm-preview-banner'), ...declsFor('body.cart-open .tm-preview-banner')]);
+  const maxW = cssPx(d.get('max-width')!.replace(/(\d+(?:\.\d+)?)%/g, (_m, n: string) => `${(Number(n) / 100) * map}px`), map);
+  assert.ok(maxW >= 240, `the banner may run ${maxW.toFixed(0)} px — a line of its message and "Exit preview" need 240`);
+});
+
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
 
 /** The treemap's measured height, with a row of `above` px pushing it down, and whether it redrew. */

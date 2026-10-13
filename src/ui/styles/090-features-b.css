@@ -262,9 +262,12 @@
 /* Left-anchored and narrowed while the dock is open: the dock is a fixed
    366px layer over the right of the map, and a centred banner disappeared
    under it at 860px — the one width where the message matters most, because
-   there is least room to work out what happened. */
+   there is least room to work out what happened. Never below 240 px, a line
+   of the message beside "Exit preview": on a page the open preview pane has
+   narrowed (060-preview-pane.css), a 1024 px window leaves a 402 px map, and
+   the dock's 402 px left the banner nothing at all (QA C04). */
 body.cart-open .tm-preview-banner { left: 14px; transform: none;
-  max-width: calc(100% - 402px); }
+  max-width: max(240px, calc(100% - 402px)); }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);

@@ -10,6 +10,17 @@
   border-left: 1px solid var(--hairline-2); box-shadow: var(--shadow-3);
   transform: translateX(100%); transition: transform var(--dur-2) var(--ease); }
 #previewPane.open { transform: none; }
+/* The open pane NARROWS the page; it never covers it. As a layer over the
+   right 330 px it hid "Exit preview" and the end of the Preview-after banner,
+   the Grid's Sort control and half its Filter box, and at 1024×700 the very
+   tile whose file it showed (QA C04, the B22 remainder). The body gives the
+   pane its width back as padding, so main — every view, toolbar and banner
+   in it — lays out in the strip left of the pane. --tr-pane is that width
+   (095-timeslider-floating.css), the one the toasts and the selection bar
+   already keep clear of. The views that draw to a size (the treemap canvas,
+   Disk City, the Grid's tiles) re-fit on the window's resize signal, which
+   openPreview and closePreview replay (previewReflow). */
+body.preview-open { padding-right: var(--tr-pane); }
 #previewPane.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -webkit-mask: none;
   inset: 0 auto 0 -1px; width: 1px; border-left: 1px solid rgba(255,255,255,0.08); }
 .pv-head { display: flex; align-items: center; gap: 10px; padding: 13px 14px; border-bottom: 1px solid var(--hairline); }

@@ -41,13 +41,25 @@ function highlightCode(src, ext) {
 
 let pvReqId = 0;
 let pvPrevFocus = null; // where focus was before the pane took it
+/**
+ * The open pane narrows the page (body.preview-open, 060-preview-pane.css —
+ * QA C04): the content column changes width with no window resize, and the
+ * views that draw to a size — the treemap canvas, Disk City, the Grid's
+ * tiles, the Compare split — re-fit only on that signal. Without it the map
+ * stayed drawn at the old width, its right side cut off by its wrap. The
+ * signal is replayed, as the sidebar does when it collapses
+ * (scheduleSideNavReflow); a resize twice is harmless.
+ */
+function previewReflow() { window.dispatchEvent(new Event('resize')); }
 function openPreview(node) {
   if (!node || node.type !== 'file') return;
   if (node.path.startsWith('cloud://')) { toast('Quick Look needs file contents — cloud scans never download any'); return; }
   const pane = $('previewPane');
   const wasOpen = previewIsOpen();
   pane.hidden = false;
+  const narrows = !document.body.classList.contains('preview-open');
   document.body.classList.add('preview-open');
+  if (narrows) previewReflow();
   requestAnimationFrame(() => pane.classList.add('open'));
   // Focus moves into the pane — it is the last block of markup, so its Close
   // button is otherwise dozens of Tab stops away — and returns on close.
@@ -154,7 +166,9 @@ function renderPreviewMeta(node, data) {
 function closePreview() {
   const pane = $('previewPane');
   pane.classList.remove('open');
+  const widens = document.body.classList.contains('preview-open');
   document.body.classList.remove('preview-open');
+  if (widens) previewReflow(); // the page has its width back: re-fit to it
   pvReqId++; // cancel any in-flight render
   setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
   // Only when the pane still holds focus: a close that came from elsewhere
