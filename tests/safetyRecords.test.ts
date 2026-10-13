@@ -7,7 +7,8 @@ import path from 'node:path';
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 // App-data sits in a scanned home folder, as ~/Library/Application Support/TreeMap does: there the
 // scanned-root rule allows a request that names a path in it.
-const HOME = fs.realpathSync(isolatedDataDir('treemap-safetyRecords-home-'));
+const HOME_DIR = isolatedDataDir('treemap-safetyRecords-home-');
+const HOME = fs.realpathSync(HOME_DIR);
 const APP = path.join(HOME, 'Library', 'Application Support', 'TreeMap');
 fs.mkdirSync(APP, { recursive: true });
 process.env.TREEMAP_DATA_DIR = APP;

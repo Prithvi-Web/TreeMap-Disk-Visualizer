@@ -10,7 +10,8 @@ import { isolatedDataDir } from './fixtures/dataDir';
 // BIG/hop/treemap-data, where BIG/hop is itself a link to VOL — so app-data really is
 // VOL/treemap-data. Everything sits in one folder this file scans, so the scanned-root rule allows a
 // request that names any of it.
-const T = fs.realpathSync(isolatedDataDir('treemap-safetyRecordsLink-'));
+const T_DIR = isolatedDataDir('treemap-safetyRecordsLink-');
+const T = fs.realpathSync(T_DIR);
 const HOME = path.join(T, 'home');
 const BIG = path.join(T, 'big');
 const VOL = path.join(T, 'vol');

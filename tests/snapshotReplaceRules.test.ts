@@ -10,7 +10,8 @@ import { waitFor } from './fixtures/waitFor';
 // volume and linked it back has it: TreeMap spells it SCANNED/hop/treemap-data, where SCANNED/hop
 // leads to VOL — so app-data really is VOL/treemap-data, and SCANNED/hop is a link TreeMap reaches
 // its agent policy and audit log through.
-const VOL = fs.realpathSync(isolatedDataDir('treemap-snapshotReplaceRules-vol-'));
+const VOL_DIR = isolatedDataDir('treemap-snapshotReplaceRules-vol-');
+const VOL = fs.realpathSync(VOL_DIR);
 const DATA_DIR = path.join(VOL, 'treemap-data');
 const SCANNED = fs.realpathSync(fileTempDir('treemap-snapshotReplaceRules-scanned-'));
 const HOP = path.join(SCANNED, 'hop');
