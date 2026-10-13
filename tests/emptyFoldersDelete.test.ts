@@ -59,6 +59,12 @@ before(async () => {
 
 beforeEach(() => {
   trashed.length = 0;
+  // Every test starts with the strict lane's whole burst. The file sends some thirty requests to
+  // DELETE /api/files, more than the 20 the lane allows at once; the lane refills 10 a second, so
+  // whether the last ones were refused depended on how fast the machine answered — a fast CI runner
+  // got 429s, and the audit tests and the hang-up test below failed or hung on a product that was
+  // right (CI run 38318285188). No test here sends more than four, so this is a count, not a time.
+  resetRateLimiter();
 });
 
 after(async () => {
@@ -512,8 +518,17 @@ test('a dry run whose caller hangs up while it looks is still audited (U-4b revi
     const payload = JSON.stringify({ paths: [at('still')], onlyEmptyFolders: true, dryRun: true, ignoreOpenHandles: true });
     const r = http.request({ host: '127.0.0.1', port, path: '/api/files', method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } });
     r.on('error', () => { /* the hang-up below */ });
+    // A request answered before its look began — refused 429 by the rate limiter, say — leaves `looking`
+    // pending for ever, and the file then hung until its 20-minute limit (CI run 38318285188): such an
+    // answer fails the test at once, with its status, instead.
+    const answeredFirst = new Promise<never>((_, reject) => {
+      r.on('response', (res) => {
+        res.resume();
+        reject(new assert.AssertionError({ message: `the dry run was answered ${String(res.statusCode)} before its look began` }));
+      });
+    });
     r.end(payload);
-    await looking;
+    await Promise.race([looking, answeredFirst]);
     r.destroy(); // the caller is gone while the look runs
     release();
     await waitFor(async () => (await readAudit(1000)).length > before, 'the dry run\'s audit entry');
