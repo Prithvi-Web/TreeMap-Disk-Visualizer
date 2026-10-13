@@ -102,9 +102,15 @@
    START edge and took "…", the one way to the hidden levels, under the fade
    beside the Up button. Nothing is folded away any more, so nothing needs
    the fade: the trail packs to the start and drops the mask, and the folder
-   on screen gives up width instead — its name ellipsizes (.crumb-nm) and its
-   tooltip holds the whole path. */
+   on screen gives up width instead — its name ellipsizes (.crumb-nm), and
+   the trail's own tooltip holds the whole path (renderCrumbs): the folder
+   on screen takes no pointer events, so its title never shows. The crumbs
+   give up padding first (review F1.9): at 10 px a side, "…" and the
+   folder's own padding left its name 15 px of the 88, one letter and an
+   ellipsis; at 6 px the name has about twice that, and "…" stays a 25 px
+   target. */
 .crumbs.crumbs-tight { justify-content: flex-start; -webkit-mask-image: none; mask-image: none; }
+.crumbs.crumbs-tight button { padding: 0 6px; }
 .crumbs.crumbs-tight button[aria-current="true"] { flex: 0 1 auto; min-width: 0; }
 .tm-toolbar label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .tm-toolbar .field { position: relative; }

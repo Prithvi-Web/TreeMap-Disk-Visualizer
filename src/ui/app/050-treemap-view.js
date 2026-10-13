@@ -138,6 +138,7 @@ function renderCrumbs(host, path, onPick) {
   // Measured as a trail always is, never as the last fit left it: the tight
   // mark packs to the start, where every trail would read as overflowing.
   host.classList.remove('crumbs-tight');
+  host.title = '';
   let fold = 0;
   crumbsPaint(host, crumbs, fold, onPick);
   while (fold < crumbs.length - 1 && crumbsOverflow(host)) crumbsPaint(host, crumbs, ++fold, onPick);
@@ -145,8 +146,13 @@ function renderCrumbs(host, path, onPick) {
   // (QA C05): at 1024×768 "… › Archives" spilled "…" under the fade beside
   // the Up button, where the hidden levels could be neither seen nor opened.
   // The tight trail keeps "…" at its start and lets the folder on screen
-  // give up width instead (035-treemap.css).
-  if (crumbsOverflow(host)) host.classList.add('crumbs-tight');
+  // give up width instead (035-treemap.css). Its name is cut short there, and
+  // its own title never shows — it takes no pointer events — so the trail
+  // carries the whole path as its tooltip (review F1.9).
+  if (crumbsOverflow(host)) {
+    host.classList.add('crumbs-tight');
+    host.title = crumbs[crumbs.length - 1].path;
+  }
   host._crumbs = { path, onPick, width: host.clientWidth };
   crumbsWatch(host);
   if (kept) {

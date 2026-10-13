@@ -856,6 +856,45 @@ test('C05: a trail folded as far as it goes and still too wide keeps "…" on sc
   assert.ok(host.clientWidth - host.natural() >= crumbsCss().fade, 'and the trail clears the fade as before');
 });
 
+test('C05 (review F1.9): folded tight, the folder on screen keeps room for its name, and its whole path shows on hover', () => {
+  // At 1024×768 the trail is ~88 px. Folded tight, "…" and the folder on
+  // screen kept their 10 px paddings: 33 px for "…", 18 for the separator and
+  // its gaps, and 22 of the folder's remaining 37 px went to padding and
+  // border — a 15 px name, one letter and an ellipsis. Nor could its title
+  // help: the folder on screen takes no pointer events, so it never shows.
+  const ruleBody = (sel: string) => {
+    const at = INDEX.indexOf(sel + ' {');
+    return at === -1 ? null : INDEX.slice(at, INDEX.indexOf('}', at));
+  };
+  const padX = (body: string | null) => {
+    const m = body && /padding:\s*0 (\d+)px/.exec(body);
+    return m ? Number(m[1]) : null;
+  };
+  const base = padX(ruleBody('.crumbs button'));
+  assert.equal(base, 10, 'control: a crumb is padded 10 px a side');
+  const pad = padX(ruleBody('.crumbs.crumbs-tight button')) ?? base!;
+  const BORDER = 2, ELLIPSIS = 11, CHEVRON = 12, TRAIL = 88; // "…" at 12.5 px; icon('chevronRight', 12)
+  const more = 2 * pad + BORDER + ELLIPSIS;
+  const folder = TRAIL - more - 2 * crumbsCss().gap - CHEVRON;
+  const name = folder - 2 * pad - BORDER;
+  assert.ok(name >= 28, `the folder's name has ${name} px of the ${TRAIL} px trail — four characters at this file's 7 px a character need 28`);
+  assert.ok(more >= 24, `and "…" stays a ${more} px target, at least 24 px wide`);
+
+  // Its whole path on hover: on the trail, as the folder's own button takes no pointer events.
+  const current = ruleBody('.crumbs button[aria-current="true"]');
+  assert.match(current ?? '', /pointer-events:\s*none/, 'control: the folder on screen takes no pointer events');
+  assert.doesNotMatch(ruleBody('.crumbs.crumbs-tight button[aria-current="true"]') ?? '', /pointer-events/, 'control: nor does it when tight');
+  const h = crumbsHarness();
+  const host = makeHost(TRAIL) as ReturnType<typeof makeHost> & { title?: string };
+  h.render(host, DEEP, h.onPick);
+  assert.ok(host.cls.has('crumbs-tight'), 'control: tight at 88 px');
+  assert.equal(host.title, DEEP, 'a pointer over the folder\'s name lands on the trail, whose tooltip is the whole path');
+  host.clientWidth = 420;
+  h.observers[0].cb();
+  assert.ok(!host.cls.has('crumbs-tight'), 'control: at 420 px the trail is not tight');
+  assert.equal(host.title, '', 'and the trail\'s tooltip goes with the mark: each crumb has its own');
+});
+
 /* ══════════════ QA-6 review MEDIUM-1 — the "…" menu works from the keyboard ══════════════ */
 
 /** A narrow trail, so only "…" and the folder on screen are left: the harness, and the "…" crumb. */
