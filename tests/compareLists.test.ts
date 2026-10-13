@@ -63,8 +63,9 @@ function fakeSelect() {
 }
 
 interface Scan { scanId: string; rootPath: string; finishedAt: number; totalSize: number }
+interface Snap { id: string; rootPath: string; takenAt: number; totalSize: number }
 
-function harness(scans: Scan[]) {
+function harness(scans: Scan[], snapshots: Snap[] = []) {
   const cmpA = fakeSelect();
   const cmpB = fakeSelect();
   const body = { innerHTML: 'PROMPT' };
@@ -75,15 +76,23 @@ function harness(scans: Scan[]) {
     cmpA, cmpB, cmpBody: body, cmpInfo: info,
     cmpRunBtn: { addEventListener: (_t: string, fn: () => Promise<void>) => { button.click = fn; } },
   };
-  const server = { scans: [...scans] };
+  // `fail`: every comparison the server is asked for fails with this message.
+  const server = { scans: [...scans], snapshots: [...snapshots], fail: null as string | null };
   const state = { root: { path: '/c/corpus' }, compare: { options: [] as unknown[], result: null as unknown } };
   const noop = () => {};
   const deps: Record<string, unknown> = {
     state, $: (id: string) => els[id] ?? assert.fail(`the compare view touched #${id}`),
     api: async (url: string) => {
       if (url === '/api/scans') return { scans: server.scans };
-      if (url.startsWith('/api/snapshots?')) return { snapshots: [] };
-      if (url.startsWith('/api/compare?')) { compared.push(url); return { entries: [], totalDelta: 0, truncated: false }; }
+      if (url.startsWith('/api/snapshots?')) return { snapshots: server.snapshots };
+      if (url.startsWith('/api/compare?') || url.startsWith('/api/snapshots/compare?')) {
+        compared.push(url);
+        if (server.fail) throw new Error(server.fail);
+        if (url.startsWith('/api/compare?')) return { entries: [], totalDelta: 0, truncated: false };
+        const at = (id: string | null) => ({ takenAt: server.snapshots.find((x) => x.id === id)!.takenAt });
+        const q = new URLSearchParams(url.slice(url.indexOf('?') + 1));
+        return { entries: [], totalDelta: 0, a: at(q.get('a')), b: at(q.get('b')) };
+      }
       return assert.fail(`unexpected request ${url}`);
     },
     formatWhen: (t: number) => `t${t}`, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s),
@@ -104,6 +113,7 @@ function harness(scans: Scan[]) {
 }
 
 const scan = (scanId: string, rootPath: string, finishedAt: number, totalSize = 1000): Scan => ({ scanId, rootPath, finishedAt, totalSize });
+const snap = (id: string, rootPath: string, takenAt: number, totalSize = 1000): Snap => ({ id, rootPath, takenAt, totalSize });
 
 test('C08: each entry in Before and After names its folder, so scans of different folders are told apart without opening the list', async () => {
   const h = harness([
@@ -164,6 +174,42 @@ test('C08: a comparison that lands after the picks changed is not drawn under th
   await landing;
   assert.doesNotMatch(h.body.innerHTML, /RESULT/, 'the answer for s2 → s3 is dropped');
 });
+
+test('C08: a history comparison that lands after the picks changed is not drawn under them either — the pair a person compares once their scans have left memory', async () => {
+  const h = harness([], [snap('h1', '/c/corpus', 100), snap('h2', '/c/corpus', 200), snap('h3', '/c/corpus', 300)]);
+  await h.load();
+  assert.deepEqual([h.cmpA.value, h.cmpB.value], ['snap:h2', 'snap:h3'], 'control: the newest two snapshots');
+  await h.click();
+  assert.equal(h.body.innerHTML, 'RESULT t200 → t300', 'control: a history comparison is drawn when nothing changed');
+  const landing = h.click(); // h2 → h3 asked for again
+  h.cmpA.pick('snap:h1'); // changed while the server answers
+  await landing;
+  assert.doesNotMatch(h.body.innerHTML, /RESULT/, 'the answer for h2 → h3 is dropped');
+  assert.match(h.body.innerHTML, /press Compare/, 'and the picks-changed notice stays');
+});
+
+const failureCases: Array<[string, () => ReturnType<typeof harness>, string]> = [
+  ['scans', () => harness([scan('s1', '/c/corpus', 100), scan('s2', '/c/corpus', 200), scan('s3', '/c/corpus', 300)]), 'scan:s1'],
+  ['history', () => harness([], [snap('h1', '/c/corpus', 100), snap('h2', '/c/corpus', 200), snap('h3', '/c/corpus', 300)]), 'snap:h1'],
+];
+for (const [kind, make, other] of failureCases) {
+  test(`C08: a comparison of ${kind} that fails after the picks changed does not write "Compare failed" over the picks-changed notice`, async () => {
+    const unchanged = make();
+    await unchanged.load();
+    unchanged.server.fail = 'the record is gone';
+    await unchanged.click();
+    assert.match(unchanged.body.innerHTML, /Compare failed: the record is gone/, 'control: a failure under the same picks is said');
+
+    const h = make();
+    await h.load();
+    h.server.fail = 'the record is gone';
+    const landing = h.click();
+    h.cmpA.pick(other);
+    await landing;
+    assert.doesNotMatch(h.body.innerHTML, /Compare failed/, 'the failure of a pair no longer picked is not reported over the new picks');
+    assert.match(h.body.innerHTML, /press Compare/, 'the picks-changed notice stays');
+  });
+}
 
 test('C08: the lists are wired to keep the result honest when a person changes them', () => {
   assert.match(INDEX, /\$\('cmpA'\)\.addEventListener\('change', cmpSyncResult\);/);
