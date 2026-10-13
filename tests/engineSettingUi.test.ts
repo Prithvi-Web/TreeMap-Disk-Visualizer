@@ -405,7 +405,7 @@ test('C10: the walker\'s line says why it ran, in plain words, on the line itsel
   assert.equal(linked.engineHint.textContent, 'Used because the root is a single file, which the built-in walker records without a listing.');
   // A faster engine that FAILED: its reason is a developer's (a module path, a rebuild command), so the line says it plainly and the hover keeps the detail.
   const fell = walker({ ioThreads: 4, engineReason: 'the built-in walker ran: the native module is not loaded: no native module at /x/treemap_core.node for darwin-arm64; the legacy engines run instead; CPU seconds are not measured per scan by this engine', fallbackReason: 'the native module is not loaded: no native module at /x/treemap_core.node for darwin-arm64; the legacy engines run instead' });
-  assert.equal(fell.engineHint.textContent, 'Used because a faster engine could not run on this computer — point at the line above for the details.');
+  assert.equal(fell.engineHint.textContent, 'Used because a faster engine could not run on this computer.');
   assert.match(fell.engineText.title, /no native module/, 'which the hover still gives');
   for (const row of [rule, linked, fell]) {
     assert.doesNotMatch(row.engineHint.textContent + row.engineText.textContent, /Node|glob|I\/O|saturat|thread/i, 'no developer words on the line');
@@ -427,9 +427,53 @@ test('C10: when the Scan engine setting asked for gdu and a rule kept it off, th
   const file = 'the root is a single file, which needs no gdu process';
   assert.equal(walker(`${file} (the Scan engine setting asked for gdu)`, file),
     'Used because the root is a single file, which needs no gdu process, though the Scan engine setting asked for gdu.');
-  // gdu tried and failed: its sentence is an exception's, so the line stays plain and the hover has it.
+  // gdu tried and failed: its sentence is an exception's, so the line stays plain and the disclosure under it has it.
   assert.equal(walker('gdu failed: spawn /x/gdu ENOENT', 'gdu failed: spawn /x/gdu ENOENT'),
-    'Used because a faster engine could not run on this computer — point at the line above for the details.');
+    'Used because a faster engine could not run on this computer.');
+});
+
+/* The failure's own sentence sat only in the line's hover title, and the hint
+   said "point at the line above for the details": a keyboard, a touch screen
+   or a screen reader had no way to it (C10 review F2.3). It is now in a
+   disclosure under the line, which all of them reach. */
+
+test('C10: when a faster engine failed, its sentence is in a disclosure under the line, and the hint names no pointer', () => {
+  const fallbackReason = 'the native module is not loaded: no native module at /x/treemap_core.node for darwin-arm64; the legacy engines run instead';
+  const fell = runEngineRow({
+    engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 4, fallbackReason,
+    engineReason: `the built-in walker ran: ${fallbackReason}; CPU seconds are not measured per scan by this engine`,
+  });
+  assert.ok(fell.engineWhy && fell.engineWhyText, 'the row writes its disclosure');
+  assert.equal(fell.engineWhy.hidden, false, 'the disclosure is shown');
+  assert.equal(fell.engineWhyText.textContent, fallbackReason, 'holding the sentence of what could not run');
+  assert.doesNotMatch(fell.engineHint.textContent, /point at|hover|the line above/i, 'and the hint sends nobody to a pointer');
+  const gduFailed = runEngineRow({ engine: 'turbo-walker', durationMs: 2000, scanned: 9, ioThreads: 4, fallbackReason: 'gdu failed: spawn /x/gdu ENOENT', engineReason: 'the built-in walker ran: gdu failed: spawn /x/gdu ENOENT' });
+  assert.ok(gduFailed.engineWhy && gduFailed.engineWhyText, 'the row writes its disclosure');
+  assert.equal(gduFailed.engineWhy.hidden, false);
+  assert.equal(gduFailed.engineWhyText.textContent, 'gdu failed: spawn /x/gdu ENOENT');
+});
+
+test('C10: the disclosure is there only when something failed — never for a rule, a setting kept off gdu, or another engine', () => {
+  const rows = {
+    'a rule chose the walker': { engine: 'walker', fallbackReason: null, engineReason: 'the built-in walker ran: the root is a single file, which the built-in walker records without a listing' },
+    'the gdu setting kept off by a rule': { engine: 'walker', fallbackReason: 'the root is a single file, which needs no gdu process (the Scan engine setting asked for gdu)', engineReason: 'the built-in walker ran: the root is a single file, which needs no gdu process' },
+    'gdu ran after the native engine failed': { engine: 'gdu-turbo', fallbackReason: 'the native module is not loaded', engineReason: 'gdu ran: the native module is not loaded' },
+    'an older stats shape': { engine: 'walker' },
+  };
+  for (const [name, over] of Object.entries(rows)) {
+    // Each element starts shown, as a failed scan before this one would have left it.
+    const row = runEngineRow({ durationMs: 2000, scanned: 1234, ioThreads: 4, ...over });
+    assert.ok(row.engineWhy && row.engineWhyText, `${name}: the row sets its disclosure`);
+    assert.equal(row.engineWhy.hidden, true, `${name}: no disclosure`);
+    assert.equal(row.engineWhyText.textContent, '', `${name}: and no sentence left in it from an earlier scan`);
+  }
+});
+
+test('C10: the engine line\'s disclosure is a real one in the page — a summary a keyboard, a touch and a screen reader can open', () => {
+  const row = /<div class="snap-row" id="engineRow" hidden>([\s\S]*?)<\/div>\s*<\/div>/.exec(INDEX);
+  assert.ok(row, 'the engine row is in the page');
+  assert.match(row[1], /<details class="engine-why" id="engineWhy" hidden><summary>Why the faster engine could not run<\/summary><span class="muted" id="engineWhyText"><\/span><\/details>/,
+    'a details element, hidden until something failed, opened by its summary');
 });
 
 test('C10: a real scan the gdu setting asked for, kept off gdu by a rule (a "don\'t scan" pattern here), puts that rule on the line', async () => {

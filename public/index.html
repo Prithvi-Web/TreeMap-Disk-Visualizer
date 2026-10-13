@@ -1921,6 +1921,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .snap-meta b { font-weight: 600; }
 .snap-meta .muted { font-size: 10.5px; line-height: 1.35; }
 .snap-row .pill { flex: none; }
+/* The engine line's failure sentence (C10 review F2.3): a disclosure, so a
+   keyboard, a touch and a screen reader reach it, not only a pointer's hover. */
+.engine-why > summary { cursor: var(--cur-hand); font-size: 10.5px; color: var(--text-2); width: fit-content; border-radius: var(--r-sm); }
+.engine-why > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.engine-why > .muted { display: block; margin-top: 2px; overflow-wrap: anywhere; }
 .pill.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .git-bd { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 
@@ -3689,7 +3694,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           </div>
           <div class="snap-row" id="engineRow" hidden>
             <span class="ic" data-icon="zap" data-size="16"></span>
-            <div class="snap-meta"><b id="engineText"></b><span class="muted" id="engineHint"></span></div>
+            <div class="snap-meta"><b id="engineText"></b><span class="muted" id="engineHint"></span><details class="engine-why" id="engineWhy" hidden><summary>Why the faster engine could not run</summary><span class="muted" id="engineWhyText"></span></details></div>
           </div>
         </div>
 
@@ -9926,7 +9931,9 @@ function renderDiskNotes() {
       // When a rule chose it — a "don't scan" pattern, the setting, a single
       // file — that rule is the first clause of the engine's own reason. When
       // a faster engine failed, its sentence is a developer's (a module path,
-      // a rebuild command): the line says so plainly and the hover keeps it.
+      // a rebuild command): the line says so plainly and the disclosure under
+      // it holds the sentence. The hover title alone reached only a pointer;
+      // a keyboard, a touch and a screen reader had no way to it (C10 review).
       // One fallback is no failure: the Scan engine setting asked for gdu and
       // a rule kept it off (a pattern, a single file, a rescan), or no gdu was
       // there to run. The server names it "<rule> (the Scan engine setting
@@ -9937,10 +9944,13 @@ function renderDiskNotes() {
       const reason = typeof s.engineReason === 'string' ? s.engineReason : '';
       const fallback = typeof s.fallbackReason === 'string' ? s.fallbackReason : '';
       const ruleAt = reason.indexOf(WALKER_RAN);
+      const failed = walker && !!fallback && !fallback.endsWith(GDU_ASKED);
       const why = !walker ? ''
         : fallback.endsWith(GDU_ASKED) ? `Used because ${fallback.slice(0, -GDU_ASKED.length)}, though the Scan engine setting asked for gdu.`
-          : fallback ? 'Used because a faster engine could not run on this computer — point at the line above for the details.'
+          : failed ? 'Used because a faster engine could not run on this computer.'
             : ruleAt === -1 ? '' : `Used because ${reason.slice(ruleAt + WALKER_RAN.length).split('; ')[0]}.`;
+      $('engineWhy').hidden = !failed;
+      $('engineWhyText').textContent = failed ? fallback : '';
       const reads = walker && s.ioThreads > 4 ? `It reads up to ${s.ioThreads} files and folders at once, which keeps the disk busy.` : '';
       $('engineHint').textContent = s.engine === 'native'
         ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'

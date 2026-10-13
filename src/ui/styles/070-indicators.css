@@ -105,5 +105,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .snap-meta b { font-weight: 600; }
 .snap-meta .muted { font-size: 10.5px; line-height: 1.35; }
 .snap-row .pill { flex: none; }
+/* The engine line's failure sentence (C10 review F2.3): a disclosure, so a
+   keyboard, a touch and a screen reader reach it, not only a pointer's hover. */
+.engine-why > summary { cursor: var(--cur-hand); font-size: 10.5px; color: var(--text-2); width: fit-content; border-radius: var(--r-sm); }
+.engine-why > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.engine-why > .muted { display: block; margin-top: 2px; overflow-wrap: anywhere; }
 .pill.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .git-bd { font-size: 11px; color: var(--text-2); white-space: nowrap; }
