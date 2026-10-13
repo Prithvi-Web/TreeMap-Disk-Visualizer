@@ -388,6 +388,28 @@ test('C06: a list that fails to load says so, and a late answer never paints ano
   assert.doesNotMatch(twice.els.refusedModalBody.innerHTML, /\/x\/first/, 'and the older answer, arriving last, does not overwrite it');
 });
 
+test('C06: an older ask that fails after a newer ask has painted its list does not put "could not load" over that list', async () => {
+  // The mirror of the late answer above: there both asks succeeded. Here the
+  // older one fails, and its failure arrives last.
+  const answers: Array<{ ok: () => void; fail: () => void }> = [];
+  const h = refusedHarness({
+    stats: { refused: { dirs: 1, examples: [] } }, root: { path: '/x', size: 5e9 }, scanId: 's1',
+    refusedList: (ask) => new Promise((resolve, reject) => answers.push({
+      ok: () => resolve({ scanId: 's1', status: 'complete', dirs: 1, paths: [`/x/ask${ask}`], unnamed: 0, unnamedReason: null }),
+      fail: () => reject(Object.assign(new Error('Scan not found or expired.'), { status: 404, code: 'SCAN_NOT_FOUND' })),
+    })),
+  });
+  const first = h.openList();
+  const second = h.openList();
+  answers[1].ok();
+  await second;
+  assert.match(h.els.refusedModalBody.innerHTML, /\/x\/ask2/, 'control: the newer ask painted its list');
+  answers[0].fail();
+  await first;
+  assert.doesNotMatch(h.els.refusedModalBody.innerHTML, /could not load/, 'the older ask\'s failure is not shown over the newer list');
+  assert.match(h.els.refusedModalBody.innerHTML, /\/x\/ask2/, 'which is still there');
+});
+
 test('C06: "Show all" sits in the access row and opens the sheet, a dialog with its count, its list, its note and a close', () => {
   assert.match(INDEX, /<div class="access-actions">\s*<button class="btn" id="accessListBtn" hidden>[^<]*<\/button>/, 'first in the row\'s buttons: it is about the sentence');
   assert.match(INDEX, /\$\('accessListBtn'\)\.addEventListener\('click', \(\) => void openRefusedList\(\)\);/, 'wired to the sheet');
