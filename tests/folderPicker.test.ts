@@ -1259,6 +1259,12 @@ test('an offer takes focus, so a keyboard reaches it with a sheet open or not, a
   const guardAt = INDEX.indexOf("document.addEventListener('focusin', (e) => {\n  noteFocus(e.target);");
   assert.notEqual(guardAt, -1, 'the page has its focusin guard');
   const guard = INDEX.slice(guardAt, INDEX.indexOf('\n});', guardAt) + '\n});'.length);
+  // The guard also lets focus stay in a panel a sheet's own content opens over it (inModalOverlay,
+  // BQA-1 B31): the page's own list and test, lifted as the guard is, never a stand-in that agrees with itself.
+  const overlayAt = INDEX.indexOf('const MODAL_OVERLAYS = ');
+  assert.notEqual(overlayAt, -1, 'the page lists the panels a sheet opens over it');
+  const overlayFnAt = INDEX.indexOf('function inModalOverlay(', overlayAt);
+  const overlay = INDEX.slice(overlayAt, INDEX.indexOf('\n}\n', overlayFnAt) + '\n}\n'.length);
   const inSheet = { id: 'save' };
   const inToast = { id: 'offer' };
   const onPage = { id: 'map' };
@@ -1267,7 +1273,7 @@ test('an offer takes focus, so a keyboard reaches it with a sheet open or not, a
   const pulled: unknown[] = [];
   const heard: { focusin?: (e: { target: unknown }) => void } = {};
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  new Function('document', '$', 'noteFocus', 'topModal', 'modalFocusInto', `'use strict'; ${guard}`)(
+  new Function('document', '$', 'noteFocus', 'topModal', 'modalFocusInto', `'use strict'; ${overlay}\n${guard}`)(
     { addEventListener: (t: string, f: (e: { target: unknown }) => void) => { if (t === 'focusin') heard.focusin = f; } },
     (id: string) => { assert.equal(id, 'toasts'); return toasts; },
     () => {}, () => sheet, (s: unknown) => { pulled.push(s); });
@@ -1276,6 +1282,9 @@ test('an offer takes focus, so a keyboard reaches it with a sheet open or not, a
   assert.deepEqual(pulled, [sheet], 'control: focus that lands on the page under a sheet is pulled back into it');
   heard.focusin!({ target: inToast });
   assert.deepEqual(pulled, [sheet], 'focus on an offer\'s button stays there');
+  const inBreakdown = { id: 'rcPopClose', closest: (sel: string) => (sel === '#rcPopover' ? {} : null) };
+  heard.focusin!({ target: inBreakdown });
+  assert.deepEqual(pulled, [sheet], 'focus in the score breakdown a sheet opened over it stays there (B31)');
 });
 
 test('an offer made in a sheet goes when that sheet closes — its choice with it, even while it holds focus — the other offers stay, and each offer names the sheet it was made in (final review F2.2, F2.3)', async () => {
