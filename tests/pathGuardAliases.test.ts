@@ -802,6 +802,58 @@ test('a link the walk cannot look up by its whole spelling — a long name in a 
   }
 });
 
+test('where realpath names the first missing folder rather than the length, as glibc 2.33 and later do, a path longer than the system takes is still answered as spelled at the cost of a few calls (Linux CI)', () => {
+  // glibc's realpath reads a spelling name by name and fails ENOENT at the first name that is not there,
+  // however long the rest is; macOS's refuses the length first, with ENAMETOOLONG. The Linux runners
+  // (CI run 38318285188) therefore climbed the 20,000 names one at a time — 40,001 realpaths and lstats,
+  // 6 s of a held server — though the system's own lstat refuses the spelling for its length, so no call
+  // can act through it. Modelled here, so that every runner checks what glibc does. Each ask has a
+  // spelling of its own, so neither is answered from what the other left in the memo.
+  const real = fs.realpathSync.native;
+  const sync = fs as unknown as { lstatSync: (...args: unknown[]) => unknown };
+  const lstat = sync.lstatSync;
+  const missing = ['glibc-s', 'glibc-i'].map((name) => path.join(T, name)); // names that are not in T
+  const longUnder = (first: string): string => path.join(first, ...Array<string>(20_000).fill('a'), 'f.txt');
+  const asks: Record<string, () => unknown> = {
+    sanitizePath: () => sanitizePath(longUnder(missing[0])) === longUnder(missing[0]),
+    insideAnyScanRoot: () => typeof insideAnyScanRoot(longUnder(missing[1])),
+  };
+  let calls = 0;
+  fs.realpathSync.native = ((p: fs.PathLike, ...rest: unknown[]) => {
+    calls += 1;
+    const spelled = String(p);
+    if (missing.some((first) => spelled === first || spelled.startsWith(first + path.sep))) {
+      throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${spelled.slice(0, 80)}…'`), { code: 'ENOENT' });
+    }
+    return (real as (...a: unknown[]) => string)(p, ...rest);
+  }) as typeof real;
+  sync.lstatSync = (...args: unknown[]) => {
+    calls += 1;
+    return lstat(...args);
+  };
+  const answers: Record<string, unknown> = {};
+  try {
+    for (const [name, ask] of Object.entries(asks)) {
+      calls = 0;
+      try {
+        answers[name] = ask();
+      } catch (err) {
+        answers[name] = `threw ${err instanceof Error ? err.name : String(err)}`;
+      }
+      answers[`${name}, its cost`] = calls <= 8 ? 'a few calls' : `${calls} realpaths and lstats`;
+    }
+  } finally {
+    fs.realpathSync.native = real;
+    sync.lstatSync = lstat;
+  }
+  assert.deepEqual(answers, {
+    sanitizePath: true, // as spelled, whichever error realpath gave
+    'sanitizePath, its cost': 'a few calls',
+    insideAnyScanRoot: 'boolean',
+    'insideAnyScanRoot, its cost': 'a few calls',
+  });
+});
+
 test('a chain of links is followed link by link to a second name at its end: a link to a link to /.resolve or /.vol is refused beneath it and as itself', { skip: !DARWIN && 'the namespaces are macOS’s' }, () => {
   // Every link the F3 test makes leads to a second name in one step, so nothing pinned that the walk
   // goes on through a link to the next one: a walk that stopped at the first target passed it all

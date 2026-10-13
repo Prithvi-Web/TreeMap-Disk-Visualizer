@@ -313,29 +313,28 @@ const CLIMB = Symbol('climb');
  * (ENAMETOOLONG: longer than the system's limit on a path, or a name longer than its limit on a name).
  * No call acts through such a spelling, so there is no place to find — and climbing toward one a name
  * at a time, as every other failure climbs, held the server for seconds and then overflowed the
- * stack on a path a request may make a megabyte long (the SEC-2c review, F2.2). A realpath that
- * refuses only the length of where a spelling leads (glibc before 2.33) climbs like any failure.
- * CLIMB when the parents must answer.
+ * stack on a path a request may make a megabyte long (the SEC-2c review, F2.2). It is lstat that
+ * decides, whatever realpath answered: macOS's realpath refuses the length first (ENAMETOOLONG), but
+ * glibc's (2.33 and later) reads a spelling name by name and answers ENOENT at the first name that is
+ * not there, however long the rest — and on the Linux runners the climb went on through 20,000 names,
+ * 40,001 calls and 6 s of a held server (CI run 38318285188). A realpath that refuses only the length
+ * of where a spelling leads (glibc before 2.33), lstat taking the spelling itself, climbs like any
+ * failure. CLIMB when the parents must answer.
  */
 function folderPlace(dir: string): string | typeof CLIMB {
   try {
     return strip(fs.realpathSync.native(dir));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENAMETOOLONG' && spellingTooLong(dir)) return dir;
+  } catch {
+    // Judged by the one lstat below, whichever error it was.
   }
+  const text = linkTextOrTooLong(dir);
+  if (text === SPELLING_TOO_LONG) return dir;
   // A link realpath could not follow is judged where it says it leads, never as a folder here.
-  return whereLinkLeads(dir) ?? CLIMB;
+  return linkLeadsFrom(dir, text) ?? CLIMB;
 }
 
-/** Whether the system refuses `p`'s spelling itself: lstat answers ENAMETOOLONG. */
-function spellingTooLong(p: string): boolean {
-  try {
-    fs.lstatSync(p, { throwIfNoEntry: false });
-    return false;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ENAMETOOLONG';
-  }
-}
+/** `linkTextOrTooLong`'s answer when the system refuses a spelling itself: lstat answers ENAMETOOLONG. */
+const SPELLING_TOO_LONG = Symbol('spelling too long');
 
 /**
  * `names` joined under `place`, as `path.join` does — except under a second name
@@ -358,7 +357,11 @@ function joinUnder(place: string, ...names: string[]): string {
  * from the folder the link really is in (`startOf`). Null when `p` is not a link.
  */
 function whereLinkLeads(p: string): string | null {
-  const target = readLinkAt(p);
+  return linkLeadsFrom(p, readLinkAt(p));
+}
+
+/** `whereLinkLeads` for the link at `p` whose text is `target` (null: `p` is not a link). */
+function linkLeadsFrom(p: string, target: string | null): string | null {
   if (target === null) return null;
   if (aliasNamespaceOf(target) !== null) return target;
   const folder = canonDir(path.dirname(p));
@@ -368,12 +371,18 @@ function whereLinkLeads(p: string): string | null {
 
 /** The text of the link at `p`; null when `p` is not a link, or cannot be read (then judged as spelled). */
 function readLinkAt(p: string): string | null {
+  const text = linkTextOrTooLong(p);
+  return text === SPELLING_TOO_LONG ? null : text;
+}
+
+/** `readLinkAt`'s answer, from one lstat — or SPELLING_TOO_LONG when that lstat refuses `p`'s spelling for its length. */
+function linkTextOrTooLong(p: string): string | null | typeof SPELLING_TOO_LONG {
   try {
     const entry = fs.lstatSync(p, { throwIfNoEntry: false });
     if (entry === undefined || !entry.isSymbolicLink()) return null;
     return fs.readlinkSync(p);
-  } catch {
-    return null;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENAMETOOLONG' ? SPELLING_TOO_LONG : null;
   }
 }
 
