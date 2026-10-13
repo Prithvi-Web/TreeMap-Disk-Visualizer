@@ -266,18 +266,22 @@ function placeToSize(p: string): string | null {
 /**
  * The node of `scan` (its store, `store`) that lies at `where` (a place, `placeToSize`), or -1: the
  * names below the root's own place (`rootLivesAt`) walked from the root's node, each by its exact name
- * or else by the one child whose name folds the same (`childNamed`).
+ * or else by the one child whose name folds the same and which the volume answers that name with
+ * (`childNamed`).
  */
 function nodeAtPlace(scan: ScanResult, store: ReturnType<typeof storeOf>, where: string): number {
   const { rootPath } = scan;
   const rootAt = path.normalize(rootPlaceNow(rootPath));
   const rootNames = foldedNamesOf(rootAt);
-  const names = where.slice(path.parse(where).root.length).split(path.sep).filter((name) => name.length > 0);
+  const { root } = path.parse(where);
+  const names = where.slice(root.length).split(path.sep).filter((name) => name.length > 0);
   if (!namesContain(rootNames, foldedNamesOf(where))) return -1;
   let id = store.findByPath(rootPath);
+  let folder = path.join(root, ...names.slice(0, rootNames.length - 1));
   for (const name of names.slice(rootNames.length - 1)) {
     if (id === -1) return -1;
-    id = childNamed(scan, store, id, name);
+    id = childNamed(scan, store, id, folder, name);
+    folder = path.join(folder, name);
   }
   return id;
 }
@@ -287,16 +291,30 @@ function foldedName(name: string): string {
   return foldName(name).toUpperCase().toLowerCase();
 }
 
-/**
- * Each folder's children by folded name (`foldedName`; -1 for a name more than one child folds to), per
- * scan, kept for one synchronous batch: a request sizes up to 500 paths in one turn of the event loop,
- * and folding every sibling's name for each held the server for seconds on a large folder (the final
- * review, F2.3). Dropped when the turn ends, so a later batch reads the scan as it is then.
- */
-let foldedChildren: Map<ScanResult, Map<number, Map<string, number>>> | null = null;
+/** A child of a folder in a scan: its node, and its name as the scan stored it; node -1 for a folded name more than one child has. */
+interface FoldedChild {
+  id: number;
+  name: string;
+}
 
-/** The child of `parent` named `name`, or the one child whose name folds the same; -1 when none (or more than one) does. */
-function childNamed(scan: ScanResult, store: ReturnType<typeof storeOf>, parent: number, name: string): number {
+/**
+ * Each folder's children by folded name (`foldedName`), per scan, kept for one synchronous batch: a
+ * request sizes up to 500 paths in one turn of the event loop, and folding every sibling's name for
+ * each held the server for seconds on a large folder (the final review, F2.3). Dropped when the turn
+ * ends, so a later batch reads the scan as it is then.
+ */
+let foldedChildren: Map<ScanResult, Map<number, Map<string, FoldedChild>>> | null = null;
+
+/**
+ * The child of `parent` (the folder at `folder`) named `name`; or else the one child whose name folds
+ * the same, if the volume answers `name` with that very child — it folds names, and folds these two
+ * together; -1 otherwise. `foldName` folds more than any volume does (`Ｘ1` for `x1`), and a volume that
+ * keeps case keeps `x1` and `X1` apart: an entry the scan never listed (made after it) beside a sibling
+ * whose name only folds the same is another file, and its size was that sibling's — so the byte cap
+ * judged a file the request never named (the final review's third round, an observation). Unknown is
+ * the answer there, as for a name more than one child folds to (F3.4).
+ */
+function childNamed(scan: ScanResult, store: ReturnType<typeof storeOf>, parent: number, folder: string, name: string): number {
   const exact = store.childByName(parent, name);
   if (exact !== -1) return exact;
   if (foldedChildren === null) {
@@ -309,14 +327,29 @@ function childNamed(scan: ScanResult, store: ReturnType<typeof storeOf>, parent:
   if (perScan === undefined) foldedChildren.set(scan, (perScan = new Map()));
   let byName = perScan.get(parent);
   if (byName === undefined) {
-    const made = new Map<string, number>();
+    const made = new Map<string, FoldedChild>();
     store.forEachChild(parent, (child) => {
-      const key = foldedName(store.name(child));
-      made.set(key, made.has(key) ? -1 : child);
+      const stored = store.name(child);
+      const key = foldedName(stored);
+      made.set(key, made.has(key) ? { id: -1, name: stored } : { id: child, name: stored });
     });
     perScan.set(parent, (byName = made));
   }
-  return byName.get(foldedName(name)) ?? -1;
+  const match = byName.get(foldedName(name));
+  if (match === undefined || match.id === -1) return -1;
+  return sameEntry(path.join(folder, name), path.join(folder, match.name)) ? match.id : -1;
+}
+
+/** Whether two paths name one existing entry, by the volume's own answer: one device and id, links not followed (an id of 0 is no answer). */
+function sameEntry(a: string, b: string): boolean {
+  try {
+    const first = fs.lstatSync(a, { bigint: true, throwIfNoEntry: false });
+    if (first === undefined || first.ino === 0n) return false;
+    const second = fs.lstatSync(b, { bigint: true, throwIfNoEntry: false });
+    return second !== undefined && first.dev === second.dev && first.ino === second.ino;
+  } catch {
+    return false; // unreadable: nothing shows they are one
+  }
 }
 
 /** Where a scan's root is, as `rootLivesAt` reads it, on the Data volume's short spelling as `canonicalDirOf` gives a path. */

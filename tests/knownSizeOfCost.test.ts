@@ -57,6 +57,14 @@ const LATE = path.join(ROOT, 'late');
 fs.mkdirSync(LATE);
 fs.writeFileSync(path.join(LATE, 'R0'), Buffer.alloc(11, 1));
 fs.writeFileSync(path.join(LATE, 'Ｒ0'), Buffer.alloc(OTHER_BYTES, 1));
+/**
+ * One file alone in each fold, `Ｘ1` and `Ｙ1` (fullwidth), beside which a test makes, after the scan, a
+ * link `x1` and a file `y1`: names `foldName` reads as theirs, which every volume keeps apart.
+ */
+const APART = path.join(ROOT, 'apart');
+fs.mkdirSync(APART);
+fs.writeFileSync(path.join(APART, 'target.bin'), Buffer.alloc(7, 1));
+for (const name of ['Ｘ1', 'Ｙ1']) fs.writeFileSync(path.join(APART, name), Buffer.alloc(OTHER_BYTES, 1));
 
 let scan: ScanResult;
 let names = 0;
@@ -125,5 +133,25 @@ test('a name more than one sibling folds to is "unknown", never one of their siz
     assert.deepEqual(sizes, expected);
   } finally {
     fs.rmSync(late);
+  }
+});
+
+test('an entry the scan never listed is "unknown" beside the one scanned sibling whose name folds the same but which the volume keeps apart — never that sibling\'s size, since the byte cap would then judge a different file than the one named', () => {
+  const made: string[] = [];
+  try {
+    const sizes: Record<string, number | null> = {};
+    const file = path.join(APART, 'y1');
+    fs.writeFileSync(file, Buffer.alloc(13, 1));
+    made.push(file);
+    sizes['a file y1 made after the scan, beside Ｙ1'] = knownSizeOf(file);
+    if (!WINDOWS) {
+      const link = path.join(APART, 'x1');
+      fs.symlinkSync(path.join(APART, 'target.bin'), link);
+      made.push(link);
+      sizes['a link x1 made after the scan, beside Ｘ1'] = knownSizeOf(link);
+    }
+    assert.deepEqual(sizes, Object.fromEntries(Object.keys(sizes).map((what) => [what, null])));
+  } finally {
+    for (const p of made) fs.rmSync(p);
   }
 });
