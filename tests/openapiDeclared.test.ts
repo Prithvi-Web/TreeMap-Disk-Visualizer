@@ -74,6 +74,33 @@ test('a snapshot restore and a relocation declare their 400 and 403 (F1.23)', ()
   assert.match(said('post', '/api/security/relocate', '403'), /OUTSIDE_SCAN_ROOT/);
 });
 
+test('every route that refuses a safety record, and every other place the document names SAFETY_RECORD, lists the cases the refusal itself names: the agent policy or the audit log, a folder that holds them, or a folder or link TreeMap reaches them through — a folder holding such a link among them', () => {
+  // The refusal's own sentence (safetyRecordRefusal), read from the code.
+  assert.ok(source('src/middleware/pathGuard.ts').includes('agent policy or its audit log, a folder that holds them, or a folder or link TreeMap reaches them through'), 'the refusal names these cases');
+  const cases = 'the agent policy or the audit log, a folder that holds them (app-data, a folder above it), or a folder or link TreeMap reaches them through';
+  const verdict = (text: string): string => (!text.includes('SAFETY_RECORD') ? 'does not name SAFETY_RECORD' : text.includes(cases) ? 'names its cases' : 'names SAFETY_RECORD without all its cases');
+  const verdicts: Record<string, string> = {};
+  let doors = 0;
+  for (const name of fs.readdirSync(path.join(REPO, 'src', 'api')).filter((file) => file.endsWith('Routes.ts'))) {
+    for (const m of source(path.join('src', 'api', name)).matchAll(/\w+Router\.(get|post|put|delete|patch)\('([^']+)',[^\n]*\brefuseSafetyRecords\b/g)) {
+      const route = `/api${m[2].replace(/:(\w+)/g, '{$1}')}`;
+      verdicts[`${m[1].toUpperCase()} ${route}, its 403`] = verdict(said(m[1], route, '403'));
+      doors++;
+    }
+  }
+  assert.ok(doors >= 4, `the delete, the offload, the cart commit and the relocation refuse a safety record (found ${doors})`);
+  const walk = (value: unknown, at: string): void => {
+    if (typeof value === 'string') {
+      if (value.includes('SAFETY_RECORD')) verdicts[at] = verdict(value);
+    } else if (value !== null && typeof value === 'object') {
+      for (const [key, inner] of Object.entries(value)) walk(inner, `${at}/${key}`);
+    }
+  };
+  walk(doc, '#');
+  assert.ok('#/info/description' in verdicts, 'the document\'s own description names SAFETY_RECORD');
+  assert.deepEqual(verdicts, Object.fromEntries(Object.keys(verdicts).map((at) => [at, 'names its cases'])));
+});
+
 test('every route the idempotency middleware wraps declares the Idempotency-Key header, the cart\'s two included (F1.24)', () => {
   const missing: string[] = [];
   const routeFiles = fs.readdirSync(path.join(REPO, 'src', 'api')).filter((name) => name.endsWith('Routes.ts'));
