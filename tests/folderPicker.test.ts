@@ -1197,12 +1197,32 @@ test('outside a sheet an offer goes on Escape, and Tab moves on from the control
   assert.equal(rt.doc.activeElement, box, 'and focus goes back where it was');
   assert.ok(esc.defaultPrevented && esc.stopped, 'the key is the offer\'s alone: the map behind it does not climb a folder as well');
   assert.equal(ran, 0, 'dismissing it chooses nothing');
+  // A dismissed offer, still fading, answers no key: they are the page's again (review F1.6).
+  const late = [rt.key(btn, 'Tab'), rt.key(btn, 'Escape')];
+  assert.equal(rt.doc.activeElement, box, 'a key on an offer already dismissed moves nothing');
+  assert.ok(late.every((e) => !e.defaultPrevented && !e.stopped), 'and is left to the page');
+
+  // A Tab chord is the browser's or the system's, never the offer's (review F1.6).
+  rt.toastAction('No folder is named “/v ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
+  const chordBtn = rt.shown[1].button!;
+  for (const mod of ['ctrlKey', 'altKey', 'metaKey'] as const) {
+    chordBtn.focus();
+    const e = rt.key(chordBtn, 'Tab', { [mod]: true });
+    assert.ok(!e.defaultPrevented && rt.doc.activeElement === chordBtn, `${mod}+Tab is left alone`);
+    const s = rt.key(chordBtn, 'Tab', { [mod]: true, shiftKey: true });
+    assert.ok(!s.defaultPrevented && rt.doc.activeElement === chordBtn, `${mod}+Shift+Tab is left alone`);
+  }
 
   // An offer whose control has gone from the page moves on to the page's first stop.
+  box.focus();
   rt.toastAction('No folder is named “/z ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
   rt.page.stops.splice(rt.page.stops.indexOf(box), 1); // the path box went with the Scan card
-  rt.key(rt.shown[1].button!, 'Tab');
+  const goneBtn = rt.shown[2].button!;
+  rt.key(goneBtn, 'Tab');
   assert.equal(rt.doc.activeElement, search, 'Tab with its control gone goes to the first stop, never to <body>');
+  goneBtn.focus();
+  rt.key(goneBtn, 'Tab', { shiftKey: true });
+  assert.equal(rt.doc.activeElement, map, 'and Shift+Tab to the last stop, the one a keyboard reaches #toasts from (review F1.6)');
 
   // An offer answering the page's last stop wraps to its first — never onto
   // itself or another offer still fading out in #toasts.
@@ -1220,6 +1240,39 @@ test('outside a sheet an offer goes on Escape, and Tab moves on from the control
   const e2 = rt.key(inSheet.button!, 'Tab');
   assert.ok(!inSheet.cls.has('out') && !e1.defaultPrevented && !e1.stopped && !e2.defaultPrevented,
     'an offer made in a sheet leaves both keys to the sheet');
+});
+
+test('Escape on an offer with no control to go back to hands focus to the page\'s last stop, never to <body> as the toast goes (review F1.1)', () => {
+  // Only an offer made with { focus: true } knows the control it answers. The
+  // others ("These results expire … Scan again", an error's "Scan again",
+  // "Deleted the saved view … Undo") are reached by Tab from the page's last
+  // stop, #toasts being the last thing in the page. Escape dismissed one and
+  // left focus on its button, which went 320 ms later: focus fell to <body>.
+  const rt = toastRuntime();
+  const stop = (id: string) => { const s = { id, isConnected: true, focus() { rt.doc.activeElement = s; } }; return s; };
+  const search = stop('gsearch'), box = stop('pathInput'), map = stop('treemapCanvas');
+  rt.page.stops.push(search, box, map);
+  map.focus();
+  rt.toastAction('These results expire in a minute', 'Scan again', () => {}, 'success', 12000);
+  const quiet = rt.shown[0];
+  assert.equal(rt.doc.activeElement, map, 'control: an offer made without { focus } does not take it');
+  quiet.button!.focus(); // Tab from the last stop
+  const esc = rt.key(quiet.button!, 'Escape');
+  assert.ok(quiet.cls.has('out') && esc.defaultPrevented && esc.stopped, 'control: Escape dismisses it, and the key is its alone');
+  rt.fire();
+  assert.ok(quiet.removed, 'control: the toast has gone');
+  assert.equal(rt.doc.activeElement, map, 'focus is on the stop a keyboard reached it from, not <body>');
+
+  // An offer that took focus from a control since gone from the page.
+  box.focus();
+  rt.toastAction('No folder is named “/x ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
+  const orphan = rt.shown[1];
+  box.isConnected = false; // the path box went with the Scan card
+  rt.page.stops.splice(rt.page.stops.indexOf(box), 1);
+  rt.key(orphan.button!, 'Escape');
+  rt.fire();
+  assert.ok(orphan.removed, 'control: the toast has gone');
+  assert.equal(rt.doc.activeElement, map, 'with the control it answers gone, Escape hands focus to the last stop too');
 });
 
 test('an offer\'s button acts once: a double-click, or a click while the toast fades out, does not run its choice again (final review F1.12)', () => {

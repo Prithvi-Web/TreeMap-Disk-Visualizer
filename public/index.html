@@ -7182,11 +7182,23 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
   // it — or, with that control gone, from the page's first stop. Inside a
   // sheet both keys are the sheet's: Escape closes it, its offers with it,
   // and Tab cycles inside it (modalTrapTab).
+  // An offer with no control to go back to (made without `focus`, or its
+  // control since gone) hands focus on Escape to the page's last stop, the one
+  // a keyboard reaches #toasts from, as Shift+Tab does: left on the button,
+  // focus fell to <body> as the toast went (review F1.1).
   btn.addEventListener('keydown', (e) => {
     if (done || topModal()) return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); gone(); return; }
+    const pageStops = () => modalFocusables(document.body).filter((x) => !$('toasts').contains(x));
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      const to = back && back.isConnected !== false ? null : pageStops().at(-1);
+      gone();
+      if (to) to.focus();
+      return;
+    }
     if (e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey) return;
-    const stops = modalFocusables(document.body).filter((x) => !$('toasts').contains(x));
+    const stops = pageStops();
     const at = back ? stops.indexOf(back) : -1;
     const to = e.shiftKey ? (at === -1 ? stops[stops.length - 1] : back) : stops[(at + 1) % stops.length];
     if (!to) return;
