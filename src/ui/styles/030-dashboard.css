@@ -150,17 +150,22 @@
 /* ── Folders the OS refused ──
    A quiet advisory row, not an error card: the scan did work, it just could
    not see everything. Uses the shared warning recipe so it reads correctly
-   in both themes (the literal yellow it replaced measured 1.09:1 on white). */
+   in both themes (the literal yellow it replaced measured 1.09:1 on white).
+   It wraps (U-11, review F1.10): the sentence keeps 260px before anything sits
+   beside it, and in a narrower column the buttons go under it as one group.
+   Unwrapped, two buttons left the sentence 91px wide at the default window. */
 .access-row {
-  display: flex; align-items: flex-start; gap: 10px; margin-top: 12px;
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; margin-top: 12px;
   padding: 11px 13px; border-radius: var(--r-md);
   background: var(--warn-soft); border: 1px solid var(--warn-line);
 }
 .access-row .ic { color: var(--warn); flex: none; margin-top: 1px; }
-.access-body { flex: 1; min-width: 0; }
+.access-body { flex: 1 1 260px; min-width: 0; }
 .access-text { font-size: 13px; font-weight: 600; }
 .access-hint { font-size: 11.5px; margin-top: 3px; line-height: 1.5; }
-#accessOpenBtn, #accessMissingBtn { flex: none; align-self: center; }
+.access-text, .access-hint { overflow-wrap: anywhere; }
+.access-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; align-self: center; min-width: 0; }
+#accessOpenBtn, #accessMissingBtn { flex: none; }
 
 /* The note over a map with nothing to draw. */
 .tm-empty-note {

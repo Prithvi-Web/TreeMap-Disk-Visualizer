@@ -489,6 +489,28 @@ test('"What\'s missing?" sits in the refused row, opens the Missing view, and pr
   assert.deepEqual(views, ['missing']);
 });
 
+/** A CSS rule of the built page, from its selector to its closing brace. */
+function cssRule(selector: string): string {
+  const at = INDEX.indexOf(`${selector} {`);
+  assert.notEqual(at, -1, `the ${selector} rule is in the built page`);
+  return INDEX.slice(at, INDEX.indexOf('}', at));
+}
+
+test('the access row reflows rather than starving its sentence: the buttons go under the text in a narrow column', () => {
+  // Review F1.10: a second button in a row that could not wrap left the
+  // sentence 91px at the default 1320x880 window (9 lines; 17 in web mode),
+  // and 27px with the sidebar collapsed, where "administrator" painted over
+  // the buttons. Measured by arithmetic on the shipped CSS; a browser is the
+  // real check, and this holds the rules that produce it.
+  assert.match(cssRule('.access-row'), /flex-wrap:\s*wrap/, 'the row wraps');
+  const basis = /flex:\s*1 1 (\d+)px/.exec(cssRule('.access-body'));
+  assert.ok(basis && Number(basis[1]) >= 240, 'the sentence keeps a readable width before anything sits beside it');
+  assert.match(INDEX, /<div class="access-actions">\s*<button class="btn" id="accessMissingBtn" hidden>[^<]*<\/button>\s*<button class="btn" id="accessOpenBtn" hidden>[^<]*<\/button>\s*<\/div>/,
+    'the two buttons are one group, so they wrap together, never one at a time');
+  assert.match(cssRule('.access-actions'), /flex-wrap:\s*wrap/, 'and the group stacks its own buttons in a column too narrow for both');
+  assert.match(cssRule('.access-text, .access-hint'), /overflow-wrap:\s*anywhere/, 'a word longer than the column breaks instead of painting over the buttons');
+});
+
 test('before a scan of / or the home folder without Full Disk Access, the row says what the total will leave out — and the scan is not held', async () => {
   const NOTICE = /macOS keeps TreeMap out of the folders it protects \(Mail, Messages, Safari, the Trash\), so their size will not be in this total\./;
   for (const p of ['/', '/Users/x', '/Users/x/', '~']) {
