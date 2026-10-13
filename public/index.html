@@ -4941,8 +4941,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div style="flex:1"></div>
       <!-- Not "Cancel" (QA D73): the budget, engine and drive choices save the
            moment they are picked, and closing cannot undo them. What closing
-           drops is the edits Save would keep. -->
-      <button class="btn" data-close="settingsModal">Close without saving</button>
+           drops is the edits Save would keep.
+           The sheet opens here, its [autofocus] (review F1.4): its first
+           fields are the Theme choices, which save the moment one is picked,
+           and an arrow key on arrival moved the theme. -->
+      <button class="btn" data-close="settingsModal" autofocus>Close without saving</button>
       <button class="btn btn-primary" id="settingsSaveBtn"><span data-icon="check"></span>Save</button>
     </div>
   </div>
@@ -36222,9 +36225,11 @@ function modalFocusables(root) {
    a button that commits or destroys (QA C01). The footer's primary or danger
    button used to take it, so an Enter pressed out of habit saved the policy
    the Autopilot editor had only just opened on, and the Trash sheet opened on
-   "Empty Trash…". An [autofocus] control still wins: its sheet chose it. A
-   radio group is entered at its checked radio, as Tab enters it — on the
-   first, unchecked one, Space would switch Settings' theme on arrival. */
+   "Empty Trash…". An [autofocus] control still wins: its sheet chose it —
+   Settings chooses its "Close without saving", as its first fields save the
+   moment one is picked and an arrow key on arrival moved the theme (review
+   F1.4). A radio group is entered at its checked radio, as Tab enters it —
+   on the first, unchecked one, Space would pick it. */
 function modalFocusTarget(backdrop) {
   const dlg = backdrop.querySelector('.modal') || backdrop;
   const live = (el) => !el.disabled && el.getClientRects().length;

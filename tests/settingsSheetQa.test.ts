@@ -300,7 +300,7 @@ test('every choice that saves the moment it is picked says so (D73)', () => {
 test('the footer offers "Close without saving", not a Cancel that cannot undo the choices already saved (D73)', () => {
   const foot = settingsFooter();
   assert.doesNotMatch(foot, />Cancel</, 'no Cancel: the budget, engine and drive choices were saved when they were picked');
-  assert.match(foot, /<button class="btn" data-close="settingsModal">Close without saving<\/button>/, 'closing drops only the edits Save would keep');
+  assert.match(foot, /<button class="btn" data-close="settingsModal"[^>]*>Close without saving<\/button>/, 'closing drops only the edits Save would keep');
   assert.match(foot, /id="settingsSaveBtn"/, 'Save is still there');
 });
 

@@ -835,9 +835,11 @@ function modalFocusables(root) {
    a button that commits or destroys (QA C01). The footer's primary or danger
    button used to take it, so an Enter pressed out of habit saved the policy
    the Autopilot editor had only just opened on, and the Trash sheet opened on
-   "Empty Trash…". An [autofocus] control still wins: its sheet chose it. A
-   radio group is entered at its checked radio, as Tab enters it — on the
-   first, unchecked one, Space would switch Settings' theme on arrival. */
+   "Empty Trash…". An [autofocus] control still wins: its sheet chose it —
+   Settings chooses its "Close without saving", as its first fields save the
+   moment one is picked and an arrow key on arrival moved the theme (review
+   F1.4). A radio group is entered at its checked radio, as Tab enters it —
+   on the first, unchecked one, Space would pick it. */
 function modalFocusTarget(backdrop) {
   const dlg = backdrop.querySelector('.modal') || backdrop;
   const live = (el) => !el.disabled && el.getClientRects().length;

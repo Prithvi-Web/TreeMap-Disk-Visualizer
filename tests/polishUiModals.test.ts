@@ -449,10 +449,30 @@ test('every dialog in the shipped page is live when it opens: no inert ancestor,
   }
 });
 
+/**
+ * Where an arrow key moves a choice, as the browser does it: on a radio, to
+ * the next radio of its name — checking it, which fires its change — and on
+ * anything else, nowhere. Native, so modelled (review F1.4).
+ */
+function arrowPicks(doc: FDoc, at: FEl): FEl | null {
+  const radio = (el: FEl) => el.tag === 'input' && el.attrs.type === 'radio';
+  if (!radio(at)) return null;
+  const group = doc.querySelectorAll('input').filter((r) => radio(r) && r.attrs.name === at.attrs.name);
+  return group[(group.indexOf(at) + 1) % group.length];
+}
+
+/** The radio groups the page says save the moment one is picked: the id of each group its "saves it straight away" line introduces. */
+const SAVED_ON_PICK = [...INDEX.matchAll(/saves it straight away[^<]*<\/div>\s*<div id="([\w-]+)" role="radiogroup"/g)].map((m) => m[1]);
+
 test('every sheet in the shipped page opens on its first field or a safe control — never on a button that commits or destroys (C01)', () => {
   // QA re-check C01: the Autopilot editor opened on "Save policy", so Enter
   // saved at once; the Trash sheet opened on "Empty Trash…". Every sheet is
   // opened here from the page's own markup and the net's own rules.
+  // Nor on a choice that saves the moment it changes (review F1.4): Settings
+  // opened on its Theme radios, and an arrow key — to scroll the long sheet —
+  // moved the theme and saved it.
+  assert.ok(SAVED_ON_PICK.includes('themeOptions') && SAVED_ON_PICK.length >= 4,
+    `control: the page's own copy names the groups that save on a pick (${SAVED_ON_PICK.join(', ')})`);
   const doc = makeDoc();
   pageFromMarkup(doc);
   const api = loadModalNet(doc);
@@ -463,6 +483,9 @@ test('every sheet in the shipped page opens on its first field or a safe control
     assert.ok(sheet.contains(at), `#${sheet.id} open: focus is in it`);
     assert.ok(!at.cls.has('btn-primary') && !at.cls.has('btn-danger'),
       `#${sheet.id} opens on <${at.tag} id=${at.id} class="${[...at.cls].join(' ')}">, a button that commits or destroys`);
+    const picked = arrowPicks(doc, at);
+    assert.ok(!picked || !SAVED_ON_PICK.some((g) => picked.closest('#' + g)),
+      `#${sheet.id} opens on #${at.id}: an arrow key there would pick #${picked?.id}, which saves the moment it is picked`);
     landed[sheet.id] = at;
     doc.activeElement = doc.body;
     setOpen(api, sheet, false);
@@ -473,24 +496,57 @@ test('every sheet in the shipped page opens on its first field or a safe control
   assert.equal(landed.confirmModal.id, 'confirmCancel', 'Move to Trash? opens on Cancel');
   assert.equal(landed.browseModal.id, 'browseCurrent', 'the folder picker opens on its path field, not "Scan this folder"');
   assert.equal(landed.askModal.id, 'askInput', 'and a field a sheet marks [autofocus] still wins');
+  const settings = landed.settingsModal;
+  assert.ok(settings.attrs['data-close'] === 'settingsModal' && settings.closest('.modal-foot'),
+    `Settings opens on its footer's "Close without saving", not on a choice that saves the moment it is picked (it opens on #${settings.id})`);
 });
 
-test('a sheet whose first field is a radio group opens on the checked choice — Space or an arrow on arrival changes nothing (C01)', () => {
-  // Settings opens on its Theme choice, which saves the moment it is picked.
-  // Focus on an unchecked "System" would make Space switch the theme; the
-  // group is entered at its checked radio, as Tab enters it.
+test('a sheet whose first field is a radio group opens on the checked choice, as Tab enters it — so Space on arrival changes nothing (C01)', () => {
+  // A form's radio group, saved by its sheet's own button. Focus on the
+  // first, unchecked choice would make Space pick it; the group is entered at
+  // its checked radio, as Tab enters it. (A group that saves the moment it is
+  // picked is no place to land at all: see the shipped-sheet test above.)
   const doc = makeDoc();
   const mk = mkOf(doc);
-  const sheet = append(doc.body, mk('div', 'settingsModal', ['modal-backdrop']));
+  const sheet = append(doc.body, mk('div', 'formModal', ['modal-backdrop']));
   const dlg = append(sheet, mk('div', '', ['modal']));
-  const group = append(append(dlg, mk('div', '', ['modal-body'])), mk('div', 'themeOptions'));
-  const radios = ['system', 'light', 'dark'].map((v) => Object.assign(append(group, mk('input', 'themeChoice-' + v)),
-    { type: 'radio', name: 'themeChoice', checked: v === 'dark' }));
-  append(append(dlg, mk('div', '', ['modal-foot'])), mk('button', 'settingsSaveBtn', ['btn', 'btn-primary']));
+  const group = append(append(dlg, mk('div', '', ['modal-body'])), mk('div', 'unitOptions'));
+  const radios = ['kb', 'mb', 'gb'].map((v) => Object.assign(append(group, mk('input', 'unit-' + v)),
+    { type: 'radio', name: 'unit', checked: v === 'gb' }));
+  append(append(dlg, mk('div', '', ['modal-foot'])), mk('button', 'formSaveBtn', ['btn', 'btn-primary']));
   sheet.shown = false;
   const api = loadModalNet(doc);
   setOpen(api, sheet, true);
-  assert.equal(doc.activeElement, radios[2], 'focus is on Dark, the choice in force');
+  assert.equal(doc.activeElement, radios[2], 'focus is on GB, the choice in force');
+});
+
+test('a sheet lands on its [autofocus] control wherever it sits, and passes over a field that is disabled or not painted (C01 review F1.5)', () => {
+  // In the shipped page the one [autofocus] field is also its sheet's only
+  // field, so that test held with the rule gone. Here it sits after another.
+  const sheetWith = (build: (body: FEl, foot: FEl, mk: ReturnType<typeof mkOf>) => void) => {
+    const doc = makeDoc();
+    const mk = mkOf(doc);
+    const sheet = append(doc.body, mk('div', 'formModal', ['modal-backdrop']));
+    const dlg = append(sheet, mk('div', '', ['modal']));
+    const body = append(dlg, mk('div', '', ['modal-body']));
+    const foot = append(dlg, mk('div', '', ['modal-foot']));
+    build(body, foot, mk);
+    append(foot, mk('button', 'formSaveBtn', ['btn', 'btn-primary']));
+    sheet.shown = false;
+    const api = loadModalNet(doc);
+    setOpen(api, sheet, true);
+    return doc.activeElement!.id;
+  };
+  assert.equal(sheetWith((body, _f, mk) => { append(body, mk('input', 'first')); append(body, mk('input', 'chosen', [], { autofocus: '' })); }),
+    'chosen', 'an [autofocus] field after another field wins');
+  assert.equal(sheetWith((body, foot, mk) => { append(body, mk('input', 'first')); append(foot, mk('button', 'closeBtn', ['btn'], { 'data-close': 'formModal', autofocus: '' })); }),
+    'closeBtn', 'so does an [autofocus] safe button, fields before it or not');
+  assert.equal(sheetWith((body, _f, mk) => { append(body, Object.assign(mk('input', 'off'), { disabled: true })); append(body, mk('input', 'next')); }),
+    'next', 'a disabled first field is passed over for the next one');
+  assert.equal(sheetWith((body, _f, mk) => { append(body, Object.assign(mk('input', 'gone'), { hidden: true })); append(body, mk('input', 'next')); }),
+    'next', 'as is one that is not painted');
+  assert.equal(sheetWith((body, _f, mk) => { append(body, mk('input', 'first')); append(body, Object.assign(mk('input', 'chosen', [], { autofocus: '' }), { disabled: true })); }),
+    'first', 'and a disabled [autofocus] field gives way to the first live field');
 });
 
 test('a sheet\'s footer buttons keep their label on one line — "Save policy" no longer wraps beside the note (C01)', () => {

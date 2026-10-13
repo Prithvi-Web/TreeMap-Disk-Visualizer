@@ -236,8 +236,11 @@
       <div style="flex:1"></div>
       <!-- Not "Cancel" (QA D73): the budget, engine and drive choices save the
            moment they are picked, and closing cannot undo them. What closing
-           drops is the edits Save would keep. -->
-      <button class="btn" data-close="settingsModal">Close without saving</button>
+           drops is the edits Save would keep.
+           The sheet opens here, its [autofocus] (review F1.4): its first
+           fields are the Theme choices, which save the moment one is picked,
+           and an arrow key on arrival moved the theme. -->
+      <button class="btn" data-close="settingsModal" autofocus>Close without saving</button>
       <button class="btn btn-primary" id="settingsSaveBtn"><span data-icon="check"></span>Save</button>
     </div>
   </div>
