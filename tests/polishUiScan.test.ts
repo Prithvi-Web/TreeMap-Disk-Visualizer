@@ -146,10 +146,12 @@ function refusedHarness(opts: {
     if ((opts.missing || []).includes(p)) { const e = Object.assign(new Error('not found'), { status: 404, code: 'PATH_NOT_FOUND' }); throw e; }
     return { entries: [] };
   };
-  const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'TOPIC', 'window',
+  const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'TOPIC', 'window', 'document',
     `'use strict'; ${src} return { render: renderRefusedFolders, probe: probeRefusedFolders };`)(
     $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n), () => {}, { scan: 'scan' },
     { treemapDesktop: null, open: () => {} },
+    // Hiding the Privacy button asks where keyboard focus is (U-11, review F1.11): nowhere here.
+    { activeElement: null },
   ) as { render: () => void; probe: () => Promise<void> };
   return { render: fns.render, probe: fns.probe, els, state, toasts, asked, $ };
 }

@@ -1162,14 +1162,31 @@ function isWholeDiskOrHome(p) {
   return !!home && s.replace(/\/+$/, '') === home;
 }
 
+/**
+ * Show or hide "Open Privacy settings". Hidden while it has keyboard focus,
+ * [hidden] takes it out of the page and focus falls to <body>, losing a
+ * keyboard user's place — the recheck does exactly that when it finds access
+ * switched on (U-11, review F1.11). Focus moves to "What's missing?" when it
+ * shows, or else to the row, which says what changed. Called once the row
+ * and the other button are painted, so whatever takes focus is on screen.
+ */
+function setAccessOpenHidden(hide) {
+  const btn = $('accessOpenBtn');
+  const hadFocus = hide && !btn.hidden && document.activeElement === btn;
+  btn.hidden = hide;
+  if (!hadFocus) return;
+  const missing = $('accessMissingBtn');
+  (missing.hidden ? $('accessRow') : missing).focus();
+}
+
 /** Paint the before-the-total notice into the access row (no count yet, and no byte figure: U-D14). */
 function paintAccessNotice() {
   const fda = fullDiskAccessInfo();
   $('accessText').textContent = 'macOS keeps TreeMap out of the folders it protects (Mail, Messages, Safari, the Trash), so their size will not be in this total.';
   $('accessHint').textContent = accessHintFor(fda);
-  $('accessOpenBtn').hidden = !!fda && fda.state === 'granted';
   $('accessMissingBtn').hidden = true; // nothing is missing yet: the scan has not finished
   $('accessRow').hidden = false;
+  setAccessOpenHidden(!!fda && fda.state === 'granted');
 }
 
 /**
@@ -1231,10 +1248,10 @@ function renderRefusedFolders() {
   $('accessHint').textContent = mac
     ? accessHintFor(fda)
     : 'TreeMap does not have permission to open them. Check the folder’s permissions, then scan again.';
-  // Nothing to switch on once it is on; off macOS there is no such setting.
-  $('accessOpenBtn').hidden = !mac || (!!fda && fda.state === 'granted');
   $('accessMissingBtn').hidden = false;
   row.hidden = false;
+  // Nothing to switch on once it is on; off macOS there is no such setting.
+  setAccessOpenHidden(!mac || (!!fda && fda.state === 'granted'));
 }
 
 /**

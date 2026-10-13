@@ -413,13 +413,14 @@ function pageHarness(opts: { platform?: string; fda?: FdaState | null; refused?:
   const src = block('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
     block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */');
   const els: Record<string, El> = {};
-  const $ = (id: string) => (els[id] ??= el());
+  // focus() moves the document's activeElement as a browser's does: never onto a hidden element.
+  const $ = (id: string): El => (els[id] ??= Object.assign(el(), { focus: () => { if (!els[id].hidden) doc.activeElement = els[id]; } }));
   const toasts: string[] = [];
   const asked: Array<[string, unknown]> = [];
   const emitted: Array<[string, unknown]> = [];
   const winListeners: Record<string, Array<() => void>> = {};
   const docListeners: Record<string, Array<() => void>> = {};
-  const doc = { visibilityState: 'visible', addEventListener: (n: string, fn: () => void) => { (docListeners[n] ??= []).push(fn); } };
+  const doc = { visibilityState: 'visible', activeElement: null as unknown, addEventListener: (n: string, fn: () => void) => { (docListeners[n] ??= []).push(fn); } };
   const win = { treemapDesktop: null, addEventListener: (n: string, fn: () => void) => { (winListeners[n] ??= []).push(fn); } };
   const state: Record<string, unknown> = {
     scanStats: opts.refused === undefined ? null : { refused: opts.refused ?? { dirs: 0, examples: [] } },
@@ -655,6 +656,37 @@ test('the recheck waits for the window to be visible: going hidden neither asks 
   h.doc.visibilityState = 'visible';
   await h.fire('visibilitychange');
   assert.equal(h.asked.filter(([u]) => u === '/api/platform/capabilities/refresh').length, 1, 'and coming back asks once: going hidden did not spend it');
+});
+
+test('when the recheck hides a focused "Open Privacy settings", focus moves to what stays, never to the page body', async () => {
+  // Review F1.11: a keyboard user presses the button, switches access on in
+  // System Settings and comes back; the window restores focus to the button,
+  // and the recheck hides it. [hidden] takes it out of the page, focus fell
+  // to <body>, and their place was lost.
+  const h = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] } });
+  h.render();
+  h.arm();
+  h.doc.activeElement = h.els.accessOpenBtn;
+  await h.fire('focus');
+  assert.equal(h.els.accessOpenBtn.hidden, true, 'granted now: the button goes');
+  assert.equal(h.doc.activeElement, h.els.accessMissingBtn, 'and focus moves to "What\u2019s missing?", beside it');
+  // The notice beside a running scan has no "What's missing?": the row takes focus.
+  const n = pageHarness({ fda: 'not-granted', scanning: true });
+  n.notice('/');
+  n.arm();
+  n.doc.activeElement = n.els.accessOpenBtn;
+  await n.fire('focus');
+  assert.equal(n.els.accessOpenBtn.hidden, true);
+  assert.equal(n.doc.activeElement, n.els.accessRow, 'the row itself, which says what changed');
+  // Focus anywhere else is left where it is.
+  const o = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] } });
+  o.render();
+  o.arm();
+  const elsewhere = o.$('scanBtn');
+  o.doc.activeElement = elsewhere;
+  await o.fire('focus');
+  assert.equal(o.els.accessOpenBtn.hidden, true);
+  assert.equal(o.doc.activeElement, elsewhere, 'a hidden button that did not have focus moves nobody');
 });
 
 test('the button arms the recheck, and its fallback toast uses the server\'s sentence', async () => {

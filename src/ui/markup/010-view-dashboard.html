@@ -103,8 +103,11 @@
                a scan that read everything says nothing here. On a Mac this
                is the everyday state of a fresh install, and saying "0 B,
                looks clean" about a folder nobody was allowed to read is the
-               confident wrongness this app exists to avoid. -->
-          <div class="access-row" id="accessRow" role="status" aria-live="polite" hidden>
+               confident wrongness this app exists to avoid.
+               tabindex="-1": focus lands on the row when the recheck hides
+               the focused "Open Privacy settings" and no other button is
+               left (U-11, review F1.11); it is never in the Tab order. -->
+          <div class="access-row" id="accessRow" role="status" aria-live="polite" tabindex="-1" hidden>
             <span data-icon="alert" data-size="14"></span>
             <div class="access-body">
               <div class="access-text" id="accessText"></div>
