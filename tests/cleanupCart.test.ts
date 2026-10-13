@@ -598,10 +598,10 @@ const SPACE_LATER = 'Up to that much space comes back, but only when you empty t
 const CAPSULE_SPACE = 'The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.';
 
 /** The confirm sheet's manifest for a dry run that would move `MOV`, the capsule on or off. */
-function sheetSays(capsule: { available: boolean; reason?: string }): string {
+function sheetSays(capsule: { available: boolean; reason?: string }, moving: Node[] = [MOV], conflicts: string[] = []): string {
   const plan = {
-    items: [{ path: MOV.path, bytes: MOV.size, willDelete: true }], bytesWouldFree: MOV.size, bytesSkipped: 0, evicts: [],
-    capsule, openHandles: { checked: true, complete: true, conflicts: [] }, batches: 1,
+    items: moving.map((n) => ({ path: n.path, bytes: n.size, willDelete: true })), bytesWouldFree: moving.reduce((s, n) => s + n.size, 0),
+    bytesSkipped: 0, evicts: [], capsule, openHandles: { checked: true, complete: true, conflicts: conflicts.map((p) => ({ path: p })) }, batches: 1,
   };
   const keys = ['formatCount', 'formatBytes', 'escapeHtml', 'icon', 'baseName', 'state'];
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -683,4 +683,63 @@ test('the cart\'s two sentences about space are written once, and a portable ses
   const portable = fnSource('loadPortableMode');
   assert.match(portable, /if \(!portableInfo\.writable\) \{ state\.capsuleOff = true; void renderCart\(\); \}/,
     'the session that saves nothing (timeCapsule\'s isEphemeral: portable and not writable) turns the capsule sentence off');
+});
+
+/* ══════════════════════ D08 — one item is "it", never "all 1" ══════════════════════ */
+
+test('a one-item run is spoken of as one: "Puts it back where it was", never "all 1" (QA third pass D08)', () => {
+  // QA third pass D08: "Puts all 1 back where they were" under a one-item run.
+  const one = plainText(summarySays());
+  assert.match(one, /Puts it back where it was, from the Time Capsule — byte for byte, with its permissions and the dates it was last modified and opened\./, one);
+  assert.doesNotMatch(one, /\ball 1\b|where they were|their permissions/, one);
+  const two = plainText(summarySays({ trashed: [MOV.path, DMG.path] }));
+  assert.match(two, /Puts all 2 back where they were, from the Time Capsule — byte for byte, with their permissions and the dates they were last modified and opened\./, two);
+  // Nothing confirmed moved, one item the Trash may have taken.
+  const unsure = plainText(summarySays({ trashed: [], unverified: [{ path: MOV.path, reason: 'The Trash did not answer.' }] }));
+  assert.match(unsure, /Puts it back if the Trash has taken it, from the Time Capsule/, unsure);
+  const unsureTwo = plainText(summarySays({ trashed: [], unverified: [{ path: MOV.path, reason: 'r' }, { path: DMG.path, reason: 'r' }] }));
+  assert.match(unsureTwo, /Puts back any of them the Trash has taken, from the Time Capsule/, unsureTwo);
+});
+
+test('the rest of the cart\'s one-item sentences agree in number: the sheet, a refused move, an open file, the undo (QA third pass D08)', async () => {
+  const sheet = plainText(sheetSays({ available: true }));
+  assert.match(sheet, /It is copied into the Time Capsule and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy\./, sheet);
+  assert.doesNotMatch(sheet, /Each one|whole batch/, sheet);
+  const sheetTwo = plainText(sheetSays({ available: true }, [MOV, DMG]));
+  assert.match(sheetTwo, /Each one is copied into the Time Capsule .* so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies\./, sheetTwo);
+  const open = plainText(sheetSays({ available: true }, [MOV], [MOV.path]));
+  assert.match(open, /It is open in another program right now, which will stop the move\./, open);
+  const openTwo = plainText(sheetSays({ available: true }, [MOV, DMG], [MOV.path]));
+  assert.match(openTwo, /1 of these is open in another program right now, which will stop the whole batch\./, openTwo);
+
+  const refused = plainText(summarySays({ failedToTrash: [{ path: DMG.path, reason: 'in use' }] }));
+  assert.match(refused, /1 could not be moved to the Trash \(in use\)\. It is untouched, and its copy was discarded\./, refused);
+  const refusedTwo = plainText(summarySays({ failedToTrash: [{ path: DMG.path, reason: 'in use' }, { path: '/c/x', reason: 'in use' }] }));
+  assert.match(refusedTwo, /2 could not be moved to the Trash \(in use\)\. Those are untouched, and their copies were discarded\./, refusedTwo);
+});
+
+test('the Time Capsule keeps its copies for "1 day", not "1 days" (QA third pass D08)', () => {
+  const shown = (retentionDays: number): string => {
+    const texts: Record<string, string> = {};
+    const el = (id: string) => ({ id, hidden: true, innerHTML: '', textContent: '', classList: { add() {}, remove() {} }, querySelectorAll: () => [] });
+    const els: Record<string, ReturnType<typeof el>> = {};
+    const deps: Record<string, unknown> = {
+      $: (id: string) => (els[id] ??= el(id)),
+      state: { capsule: { q: '', index: {
+        status: { available: true, usedBytes: 10, capBytes: 100, retentionDays },
+        entries: [{ id: 'e1', name: 'a.mov', originalPath: '/c/a.mov', sizeBytes: 10, capturedAt: 1, hasPayload: true, runId: 'r1' }], events: [],
+      } } },
+      FxCharts: { gauge: () => ({ update() {}, destroy() {} }) },
+      FxNum: { rollText: (e: { id: string }, t: string) => { texts[e.id] = t; }, rollHtml: (e: { id: string }, h: string) => { texts[e.id] = h; } },
+      formatBytes: (n: number) => `${n} B`, formatCount: String, formatDate: String, escapeHtml: (s: unknown) => String(s),
+      icon: () => '', chipFor: () => '', renderCapsuleEvents: () => {}, capsuleGaugeHide: () => {}, restoreFromCapsule: () => {},
+      forgetCapsuleEntry: () => {},
+    };
+    const keys = Object.keys(deps);
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(...keys, `let capsuleGaugeHandle = null;\n${fnSource('renderCapsule')}\nreturn renderCapsule;`)(...keys.map((k) => deps[k]))();
+    return texts.capsuleGaugeText ?? '';
+  };
+  assert.match(shown(1), /kept for 1 day$/, shown(1));
+  assert.match(shown(30), /kept for 30 days$/, shown(30));
 });

@@ -682,6 +682,21 @@ test('an undo that passed over an unconfirmed item says so, rather than that eve
   assert.match(whole.join(' | '), /Everything from that run is back — 2 items/, 'and a whole undo still says so');
 });
 
+test('undoing a one-item run says "Putting it back…", and a larger one "Putting everything back…" (QA third pass D08)', async () => {
+  const titleOf = async (entryCount: number): Promise<string> => {
+    const src = `${slice('function passedOverToast', 'function restoreFromCapsule')}; ${slice('async function cartUndoRun', '// Drawer + delegated row-button wiring.')}`;
+    let title = '';
+    const cartUndoRun = new Function('api', 'closeModal', 'watchJob', 'toast', 'formatCount', 'rescan', 'renderCart', 'refreshCartButtons', 'cartLastRun',
+      `${src}; return cartUndoRun;`)(() => Promise.resolve({ jobId: 'j', entryCount, bytesTotal: 1 }), () => undefined,
+      (opts: { title: string }) => { title = opts.title; }, () => undefined, String, () => undefined, () => undefined, () => undefined, null,
+    ) as (runId: string) => Promise<void>;
+    await cartUndoRun('run-1');
+    return title;
+  };
+  assert.equal(await titleOf(1), 'Putting it back…');
+  assert.equal(await titleOf(3), 'Putting everything back…');
+});
+
 test('an undo that passed over copies for different reasons names each with its own, never one copy\'s for all (FG3d #7)', async () => {
   const inPlace = 'It is still in its place, so there was nothing to put back; its copy stays in the Time Capsule.';
   const occupied = 'Something stands where it was that TreeMap cannot show is the item it copied — the original may be in the Trash.';

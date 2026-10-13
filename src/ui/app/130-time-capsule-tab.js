@@ -87,7 +87,7 @@ function renderCapsule() {
     if (capsuleGaugeHandle) capsuleGaugeHandle.update(spec);
     else capsuleGaugeHandle = FxCharts.gauge($('capsuleGaugeCanvas'), spec);
     FxNum.rollText($('capsuleGaugeText'),
-      `${formatBytes(idx.status.usedBytes)} of ${formatBytes(idx.status.capBytes)} · kept for ${idx.status.retentionDays} days`);
+      `${formatBytes(idx.status.usedBytes)} of ${formatBytes(idx.status.capBytes)} · kept for ${formatCount(idx.status.retentionDays)} day${idx.status.retentionDays === 1 ? '' : 's'}`);
   } else {
     capsuleGaugeHide();
   }

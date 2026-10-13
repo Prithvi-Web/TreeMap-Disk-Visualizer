@@ -24769,7 +24769,7 @@ function renderCapsule() {
     if (capsuleGaugeHandle) capsuleGaugeHandle.update(spec);
     else capsuleGaugeHandle = FxCharts.gauge($('capsuleGaugeCanvas'), spec);
     FxNum.rollText($('capsuleGaugeText'),
-      `${formatBytes(idx.status.usedBytes)} of ${formatBytes(idx.status.capBytes)} · kept for ${idx.status.retentionDays} days`);
+      `${formatBytes(idx.status.usedBytes)} of ${formatBytes(idx.status.capBytes)} · kept for ${formatCount(idx.status.retentionDays)} day${idx.status.retentionDays === 1 ? '' : 's'}`);
   } else {
     capsuleGaugeHide();
   }
@@ -30135,7 +30135,10 @@ function cartManifestHtml(plan, missingFromScan) {
   if (capsuleOff) {
     html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
   } else if (going.length) {
-    html += `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies.</div>`;
+    // One item is "it", not "each one" of a "batch" (D08).
+    html += going.length === 1
+      ? `<div class="cart-mf-note">It is copied into the <b>Time Capsule</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy.</div>`
+      : `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies.</div>`;
   }
   // The sheet the person decides on says what the summary will after it (D07).
   if (going.length) html += `<div class="cart-mf-note">${cartSpaceSaid(!capsuleOff)}</div>`;
@@ -30159,7 +30162,9 @@ function cartManifestHtml(plan, missingFromScan) {
   const oh = plan.openHandles;
   const conflicts = (oh && oh.conflicts) || [];
   if (conflicts.length) {
-    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(conflicts.length)} of these ${conflicts.length === 1 ? 'is' : 'are'} open in another program right now, which will stop the whole batch.</div>`;
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${going.length === 1 && conflicts.length === 1
+      ? 'It is open in another program right now, which will stop the move.'
+      : `${formatCount(conflicts.length)} of these ${conflicts.length === 1 ? 'is' : 'are'} open in another program right now, which will stop the whole batch.`}</div>`;
   }
   // openHandleGuard's rule: a guard that cannot check must never answer
   // "nothing is open". The server reports three states and the conflicts list
@@ -30314,7 +30319,7 @@ function cartCommitSummary(result) {
       `</div>`;
   }
   if (failed.length) {
-    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). Those are untouched, and their copies were discarded.</div>`;
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). ${failed.length === 1 ? 'It is untouched, and its copy was discarded.' : 'Those are untouched, and their copies were discarded.'}</div>`;
   }
   if (unverified.length) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(unverified.length)} could not be confirmed as moved to the Trash: ${escapeHtml(unverified[0].reason)} ${unverified.length === 1 ? 'It stays' : 'They stay'} in your cart.</div>`;
@@ -30327,10 +30332,17 @@ function cartCommitSummary(result) {
     // age-based rule stopped matching the very files it had just been used to
     // find. Not "original dates" (FG3f #10): that reads as every date, the date
     // created included, and nothing sets a creation date back.
+    // What the undo puts back: what was trashed, else what may have been.
+    // One is "it", never "all 1" (D08).
+    const one = (trashed.length || unverified.length) === 1;
     html += `<div class="cart-mf-undo"><button class="btn" data-cart-undo="${escapeHtml(result.runId)}">` +
       `${icon('refresh', 14)}Undo this run</button>` +
-      `<span class="muted">${trashed.length ? `Puts all ${formatCount(trashed.length)} back where they were` : 'Puts back any of them the Trash has taken'}, from the Time Capsule — ` +
-      `byte for byte, with their permissions and the dates they were last modified and opened.</span></div>`;
+      `<span class="muted">${trashed.length
+        ? (one ? 'Puts it back where it was' : `Puts all ${formatCount(trashed.length)} back where they were`)
+        : (one ? 'Puts it back if the Trash has taken it' : 'Puts back any of them the Trash has taken')}, from the Time Capsule — ` +
+      (one
+        ? 'byte for byte, with its permissions and the dates it was last modified and opened.'
+        : 'byte for byte, with their permissions and the dates they were last modified and opened.') + `</span></div>`;
   }
 
   $('confirmTitle').innerHTML = icon('checkCircle', 18) + 'Done';
@@ -30362,7 +30374,7 @@ async function cartUndoRun(runId) {
   // Through the same progress dialog every other copy-and-verify job uses —
   // it IS the capsule's restore, not a second one (§10: no new pathway).
   watchJob({
-    title: 'Putting everything back…',
+    title: job.entryCount === 1 ? 'Putting it back…' : 'Putting everything back…',
     icon: 'clock',
     progressUrl: `/api/timecapsule/jobs/${encodeURIComponent(job.jobId)}/progress`,
     cancelUrl: `/api/timecapsule/jobs/${encodeURIComponent(job.jobId)}/cancel`,
