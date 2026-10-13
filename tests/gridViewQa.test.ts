@@ -151,6 +151,19 @@ function gridHarness(opts: { escape?: boolean } = {}): Grid {
   const els: Record<string, FakeEl> = {};
   const $ = (id: string) => (els[id] ||= fakeEl(id));
   FOCUS.active = null;
+  // A browser keeps a scroller's scrollTop inside what it can scroll — its
+  // content (#gridInner, and the scroller's own padding above and below it)
+  // less its window — when it is set, and again when the content shrinks. A
+  // plain number let a scroll be restored before the content had grown to
+  // hold it, which a browser clamps short (review F2.2).
+  const pad = px(declsOf('#gridScroll').get('padding'), 'the Grid scroller\'s padding');
+  const scroller = $('gridScroll'), inner = $('gridInner');
+  let scrollTop = 0, innerH = '';
+  const range = () => Math.max(0, (parseFloat(innerH) || 0) + 2 * pad - scroller.clientHeight);
+  Object.defineProperty(scroller, 'scrollTop', { get: () => scrollTop, set: (v: number) => { scrollTop = Math.max(0, Math.min(v, range())); } });
+  Object.defineProperty(inner.style, 'height', {
+    enumerable: true, get: () => innerH, set: (v: string) => { innerH = v; scrollTop = Math.min(scrollTop, range()); },
+  });
   // The selection bar holds its four controls, as the markup does.
   $('selectionBar').children.push($('selInfo'), $('selOffloadBtn'), $('selTrashBtn'), $('selClearBtn'));
   const fonts: Node = { name: 'Fonts', path: '/r/Fonts', size: 3000, type: 'dir', children: [file('/r/Fonts', 'a.ttf', 2000), file('/r/Fonts', 'b.otf', 1000)] };
@@ -559,18 +572,44 @@ test('a re-flow into a new width keeps the tile just clicked where it was on scr
   await g.renderGrid();
   assert.equal(fromTop(g, 45), was, 'and stays there as the Grid widens again');
 
+  // A Grid scrolled to its foot. Three to a row, the clicked tile sits lower
+  // than the shorter Grid could scroll: restored before the Grid grew to its
+  // new height, the scroll stops short and the tile lands below the window.
+  const foot = gridHarness();
+  const sixty: Node[] = [];
+  for (let i = 0; i < 60; i++) sixty.push(file('/r', `Clip${i}.mov`, 1000));
+  foot.state.root!.children = sixty;
+  for (const k of sixty) foot.state.pathIndex.set(k.path, k);
+  foot.els.gridScroll.clientHeight = 700;
+  await foot.renderGrid(); // fifteen rows, 4020 px: it scrolls 3340 px at most
+  foot.els.gridScroll.scrollTop = 3300;
+  assert.equal(foot.els.gridScroll.scrollTop, 3300, 'control: within what the Grid can scroll');
+  foot.onCellClick({}, 52); // y 3484–3740
+  const atFoot = fromTop(foot, 52);
+  assert.ok(atFoot >= 0 && atFoot + 256 <= 700, `control: tile 52 is on screen, ${atFoot} px from the top`);
+  foot.els.gridScroll.clientWidth = 890; // the pane opens
+  await foot.renderGrid();
+  assert.ok(foot.state.grid.layout[52].y - atFoot > 3340, 'control: the tile now needs more scroll than the four-to-a-row Grid had');
+  assert.equal(fromTop(foot, 52), atFoot, 'the clicked tile is where it was, the Grid grown to hold the scroll first');
+
   // The anchor scrolled out of view: the first tile in view keeps its place
-  // (a sidebar fold, a window resize), and the off-screen anchor is not pulled in.
+  // (a sidebar fold, a window resize), and the off-screen anchor is not pulled
+  // in. "In view" is any of it: tile 44 is cut by the top, tile 48 is the
+  // first wholly on screen, and three to a row they sit one row further apart
+  // than they did (rows 14 and 16, not 11 and 12), so keeping the wrong one
+  // moves tile 44.
   const h = gridHarness();
   tallPlant(h);
   h.els.gridScroll.clientHeight = 700;
   await h.renderGrid();
   h.onCellClick({ metaKey: true }, 2); // the anchor, on the first row
-  h.els.gridScroll.scrollTop = 2800; // then on down: tile 40 (y 2680–2936) is the first in view
-  const first = fromTop(h, 40);
+  h.els.gridScroll.scrollTop = 3000; // then on down: tile 44 (y 2948–3204) is the first in view
+  const first = fromTop(h, 44);
+  assert.ok(first < 0 && first + 256 > 0, `control: tile 44 is partly above the top (${first} px)`);
+  assert.ok(fromTop(h, 48) >= 0, 'control: tile 48 is the first wholly on screen');
   h.els.gridScroll.clientWidth = 890;
   await h.renderGrid();
-  assert.equal(fromTop(h, 40), first, 'the first tile in view keeps its place, partly above the top as it was');
+  assert.equal(fromTop(h, 44), first, 'the first tile in view keeps its place, partly above the top as it was');
 
   // A new order is not a re-flow: another file at that position, and the
   // scroller is left where it was, as before.
