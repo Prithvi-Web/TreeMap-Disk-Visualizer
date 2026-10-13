@@ -247,6 +247,35 @@ test('closing a dialog gives focus back to where it came from and lifts inert', 
   assert.equal(p.side.inert, false);
 });
 
+test('a sheet that focuses itself as it opens still gives focus back to the control that opened it — the duplicate viewer\'s Compare button (QA third pass D05)', () => {
+  // openDupeViewer adds `.open` and focuses its dialog in the same breath;
+  // the net's observer runs modalOpened a microtask later, when the last
+  // focus it knows of is already inside the sheet. It kept nothing to return
+  // to, and Escape or × left focus on <body>.
+  const doc = makeDoc();
+  const p = pageWith(doc);
+  const api = loadModalNet(doc);
+  p.pageBtn.focus(); api.noteFocus(p.pageBtn); // the Compare button, pressed with Enter
+  p.confirm.classList.add('open'); p.confirm.shown = true;
+  p.confirmDlg.setAttribute('tabindex', '-1');
+  p.confirmDlg.focus(); api.noteFocus(p.confirmDlg); // the sheet focuses itself: focusin fires at once
+  api.modalOpened(p.confirm); api.syncModalLayers(); // then the observer
+  assert.equal(doc.activeElement, p.confirmDlg, 'control: the net leaves alone the focus the sheet placed');
+  doc.activeElement = doc.body; // Escape: the sheet stops painting
+  setOpen(api, p.confirm, false);
+  assert.equal(doc.activeElement, p.pageBtn, 'focus is back on the button that opened the sheet, not on <body>');
+
+  // Stacked: a sheet opened from inside another, focusing itself, returns into the one below.
+  setOpen(api, p.settings, true);
+  p.settingsSave.focus(); api.noteFocus(p.settingsSave);
+  p.confirm.classList.add('open'); p.confirm.shown = true;
+  p.confirmDlg.focus(); api.noteFocus(p.confirmDlg);
+  api.modalOpened(p.confirm); api.syncModalLayers();
+  doc.activeElement = doc.body;
+  setOpen(api, p.confirm, false);
+  assert.equal(doc.activeElement, p.settingsSave, 'into the sheet it was opened from');
+});
+
 test('a dialog with no field and no Cancel focuses the sheet itself, and Tab cycles inside it', () => {
   const doc = makeDoc();
   const p = pageWith(doc);

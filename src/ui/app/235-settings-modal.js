@@ -779,7 +779,14 @@ document.querySelectorAll('.modal-backdrop').forEach(bd =>
    - closing restores focus to where it was before the sheet opened, unless
      the close already put it somewhere (the palette hands off to its action).
    `inert` is native in Electron's Chromium — no dependency. */
-let lastFocus = null;             // the most recently focused element, anywhere
+/* The last few focused elements, anywhere, newest last. Not just the last
+   one: a sheet that focuses itself as it opens — the duplicate viewer does,
+   in the same breath as its `.open` — has moved focus inside by the time the
+   observer below runs, so "the last focus" named the sheet and the close had
+   nowhere to return to (QA third pass D05). A few entries cover every focus
+   move one synchronous open can make. */
+const FOCUS_TRAIL_MAX = 8;
+const focusTrail = [];
 const modalPrevFocus = new Map(); // backdrop id → the element to return focus to
 
 /* Body-level panels a sheet's own content opens over it, painted above every
@@ -795,7 +802,18 @@ function inModalOverlay(node) {
   return !!(node && node.closest && MODAL_OVERLAYS.some((id) => node.closest('#' + id)));
 }
 
-function noteFocus(el) { lastFocus = el; }
+function noteFocus(el) {
+  focusTrail.push(el);
+  if (focusTrail.length > FOCUS_TRAIL_MAX) focusTrail.shift();
+}
+/** Where focus was before `sheet` took it: the newest focus outside the sheet that is still in the page, or null. */
+function focusBefore(sheet) {
+  for (let i = focusTrail.length - 1; i >= 0; i--) {
+    const el = focusTrail[i];
+    if (el && el.isConnected !== false && !sheet.contains(el)) return el;
+  }
+  return null;
+}
 document.addEventListener('focusin', (e) => {
   noteFocus(e.target);
   // Belt and braces over inert: focus that lands outside the top sheet (a
@@ -884,8 +902,7 @@ function modalTrapTab(e, top) {
 let modalJustOpened = false;
 function modalOpened(el) {
   modalOrder.set(el, ++modalOpenSeq);
-  const prev = lastFocus && lastFocus.isConnected !== false && !el.contains(lastFocus) ? lastFocus : null;
-  modalPrevFocus.set(el.id, prev);
+  modalPrevFocus.set(el.id, focusBefore(el));
   modalJustOpened = true;
 }
 function modalClosed(el) {
