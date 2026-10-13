@@ -209,3 +209,41 @@ test('a scan of one file, its name typed in another case, sizes that file by the
   await scanned(path.join(ROOT, 'SOLO.BIN'));
   assert.equal(knownSizeOf(solo), SOLO_BYTES);
 });
+
+test('a name found by its fold counts only on the volume\'s own word that both names are one entry — one device AND one id, an id that is not 0, an answer at all — shown with a stand-in for that one question (the review of LEFT2, F1.4)', () => {
+  const file = path.join(APART, 'y1'); // made after the scan, beside Ｙ1, whose name folds the same
+  const sibling = path.join(APART, 'Ｙ1');
+  fs.writeFileSync(file, Buffer.alloc(13, 1));
+  /** What the stand-in answers when the identity of `file`, then of `sibling`, is asked (bigint, links not followed). */
+  type Identity = { dev: bigint; ino: bigint } | 'throws';
+  const answers: Record<string, [Identity, Identity]> = {
+    'one device and one id': [{ dev: 1n, ino: 42n }, { dev: 1n, ino: 42n }],
+    'one id on two devices': [{ dev: 1n, ino: 42n }, { dev: 2n, ino: 42n }],
+    'an id of 0 for both': [{ dev: 1n, ino: 0n }, { dev: 1n, ino: 0n }],
+    'no answer: the look fails': ['throws', 'throws'],
+  };
+  type Lstat = (p: fs.PathLike, options?: { bigint?: boolean }) => unknown;
+  const host = fs as unknown as { lstatSync: Lstat };
+  const real = host.lstatSync;
+  const sizes: Record<string, number | null> = {};
+  try {
+    for (const [what, [first, second]] of Object.entries(answers)) {
+      host.lstatSync = (p, options) => {
+        const answer = p === file ? first : p === sibling ? second : null;
+        if (answer === null || options?.bigint !== true) return real(p, options);
+        if (answer === 'throws') throw Object.assign(new Error(`EIO: i/o error, lstat '${String(p)}'`), { code: 'EIO' });
+        return answer;
+      };
+      sizes[what] = knownSizeOf(file);
+    }
+  } finally {
+    host.lstatSync = real;
+    fs.rmSync(file);
+  }
+  assert.deepEqual(sizes, {
+    'one device and one id': OTHER_BYTES, // the stand-in reaches the rule: Ｙ1's size
+    'one id on two devices': null,
+    'an id of 0 for both': null,
+    'no answer: the look fails': null,
+  });
+});
