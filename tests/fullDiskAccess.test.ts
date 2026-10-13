@@ -421,6 +421,30 @@ function openTag(id: string): string | null {
 }
 
 /**
+ * Whether the element with id `inner` sits inside the one with id `outer` in
+ * the built page: `outer` is followed from its opening tag to the close that
+ * matches it, counting tags of its own name. The page harness takes the
+ * access row's nesting from here rather than from a list of its own, so a
+ * button moved out of the row in the markup is out of it in the harness too
+ * (review F3.4: with a fixed list, the buttons moved out kept every test
+ * green, though in a browser `row.contains(button)` was false and the focus
+ * keeper let focus fall to <body>).
+ */
+function nestedIn(outer: string, inner: string): boolean {
+  const open = new RegExp(`<([a-z][a-z0-9]*)\\b[^>]*\\bid="${outer}"[^>]*>`).exec(INDEX);
+  const at = new RegExp(`<[a-z][a-z0-9]*\\b[^>]*\\bid="${inner}"[^>]*>`).exec(INDEX);
+  if (!open || !at || at.index <= open.index) return false;
+  const tags = new RegExp(`<(/?)${open[1]}\\b[^>]*>`, 'g');
+  tags.lastIndex = open.index + open[0].length;
+  let depth = 1;
+  for (let t = tags.exec(INDEX); t; t = tags.exec(INDEX)) {
+    depth += t[1] ? -1 : 1;
+    if (depth === 0) return at.index < t.index;
+  }
+  return false;
+}
+
+/**
  * Whether `focus()` can land on the element, judged as a browser judges it
  * from the shipped markup: a button can take focus, and anything else only
  * when it carries a tabindex. A stub that let any element take focus kept
@@ -446,9 +470,9 @@ function pageHarness(opts: {
     block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */') +
     INDEX.slice(INDEX.indexOf('async function startScanRequest('), INDEX.indexOf('function quietRescanFailed('));
   const els: Record<string, El> = {};
-  // The row's parts, as the markup nests them: hiding the row hides them too.
-  const ROW_PARTS = ['accessText', 'accessHint', 'accessMissingBtn', 'accessOpenBtn'];
-  const parentOf = (id: string): string | null => (ROW_PARTS.includes(id) ? 'accessRow' : null);
+  // The row's parts, as the shipped markup nests them: hiding the row hides
+  // them too, and focus on one of them is inside the row.
+  const parentOf = (id: string): string | null => (id !== 'accessRow' && nestedIn('accessRow', id) ? 'accessRow' : null);
   const idOf = (e: unknown): string | null => Object.keys(els).find((k) => els[k] === e) ?? null;
   const rendered = (id: string): boolean => {
     const up = parentOf(id);
@@ -589,6 +613,9 @@ test('the access row reflows rather than starving its sentence: the buttons go u
   assert.ok(basis && Number(basis[1]) >= 240, 'the sentence keeps a readable width before anything sits beside it');
   assert.match(INDEX, /<div class="access-actions">\s*<button class="btn" id="accessMissingBtn" hidden>[^<]*<\/button>\s*<button class="btn" id="accessOpenBtn" hidden>[^<]*<\/button>\s*<\/div>/,
     'the two buttons are one group, so they wrap together, never one at a time');
+  for (const id of ['accessText', 'accessHint', 'accessMissingBtn', 'accessOpenBtn']) {
+    assert.ok(nestedIn('accessRow', id), `#${id} sits inside #accessRow: hiding the row hides it, and focus on it is the row's to keep`);
+  }
   assert.match(cssRule('.access-actions'), /flex-wrap:\s*wrap/, 'and the group stacks its own buttons in a column too narrow for both');
   assert.match(cssRule('.access-text, .access-hint'), /overflow-wrap:\s*anywhere/, 'a word longer than the column breaks instead of painting over the buttons');
 });
