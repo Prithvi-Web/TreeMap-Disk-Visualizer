@@ -57,9 +57,13 @@ function harness() {
       rootPath: '/corpus',
     },
   };
+  /** URLs whose answers are held until the test releases them (`held`). */
+  const holding = new Set<string>();
+  const held: Array<{ url: string; release: () => void }> = [];
   const api = async (url: string, opts?: { body?: string }) => {
     const body = opts && opts.body ? JSON.parse(opts.body) : {};
     asked.push({ url, body });
+    if (holding.has(url)) await new Promise<void>((release) => held.push({ url, release }));
     if (url === '/api/query/validate') return { ok: true };
     // Each scan's answer names the scan, so the matches say which tree they came from.
     // A degraded answer, so the query leaves a message up that a clear must take down.
@@ -69,9 +73,12 @@ function harness() {
     };
   };
   const noop = () => {};
+  /** How often the Stage offer was synced, and the map seeded with hits. */
+  const calls = { stage: 0, seed: 0 };
   const deps: Record<string, unknown> = {
     state, api, $: (id: string) => (id === 'tmSearch' ? box : { hidden: true, value: '' }),
-    tmSetQueryMessage: (text: string) => { said.push(text); }, tmSyncStageButton: noop, seedNodes: noop,
+    tmSetQueryMessage: (text: string) => { said.push(text); },
+    tmSyncStageButton: () => { calls.stage++; }, seedNodes: () => { calls.seed++; },
     tmStageable: () => null, formatCount: String, tmUndrawnMessage: () => '',
     isSun: () => false, isCells: () => false, renderSearchOverlay: noop, presentTreemap: noop, presentView: noop,
     presentSunburst: noop, presentCells: noop, renderCellsStatus: noop, clearTimeout, setTimeout,
@@ -96,7 +103,7 @@ function harness() {
     state.treemap.rootPath = root;
     page.scanChanged(scanId);
   };
-  return { ...page, state, asked, said, box, type, scanned };
+  return { ...page, state, asked, said, box, type, scanned, holding, held, calls };
 }
 
 test('C11: a grammar query asked of one folder is cleared when a scan of another folder opens', async () => {
@@ -114,6 +121,35 @@ test('C11: a grammar query asked of one folder is cleared when a scan of another
   assert.equal(h.state.treemap.queryMode, 'bare');
   assert.equal(h.state.treemap.matchTotal, null, 'the status line has no total to compare against');
   assert.equal(h.said[h.said.length - 1], '', 'and the query\'s message goes with it');
+});
+
+test('C11: a query still being answered when a scan of another folder opens lands nowhere — its answer, or its go-ahead, is the old folder\'s', async () => {
+  // With the Treemap already on screen, finishScan's switchView does not
+  // unmount it, so the scan announcement is the only thing that stops a
+  // reply on its way: without it the old tree's matches land under the
+  // emptied box and dim the new map.
+  const query = async (url: string) => {
+    const h = harness();
+    h.holding.add(url);
+    await h.type('size>1gb');
+    assert.equal(h.held.length, 1, `control: ${url} was asked, and is still being answered`);
+    assert.equal(h.state.treemap.matchedPaths, null, 'control: nothing has landed yet');
+    h.scanned('s2', '/Applications');
+    const before = { ...h.calls };
+    h.held[0].release();
+    await turns(12);
+    return { h, before };
+  };
+
+  const answered = await query('/api/query');
+  assert.deepEqual(
+    { query: answered.h.state.treemap.query, mode: answered.h.state.treemap.queryMode, matched: answered.h.state.treemap.matchedPaths, total: answered.h.state.treemap.matchTotal },
+    { query: '', mode: 'bare', matched: null, total: null },
+    'the answer for /corpus is not put on the map of /Applications');
+  assert.deepEqual(answered.h.calls, answered.before, 'nor its hits seeded, nor a Stage offer made of them');
+
+  const validated = await query('/api/query/validate');
+  assert.deepEqual(validated.h.asked.filter((a) => a.url === '/api/query'), [], 'a query validated for /corpus is not then run against /Applications');
 });
 
 test('C11: a bare word asked of one folder is cleared too — judged against another folder\'s map, it is a filter nobody typed for it', async () => {
