@@ -111,6 +111,44 @@ test('a custom rule with nothing set is refused — it would match every file', 
   );
 });
 
+test('an age or size that rounds to nothing is no rule: refused as empty, never stored as a 0 that matches every file', () => {
+  // A rule is kept in whole milliseconds and whole bytes, and a figure under
+  // half of one rounds to 0. A stored 0 is no rule at all - no file is younger
+  // than 0 ms or smaller than 0 bytes - so it selected every file under the
+  // folder, and each item's recorded reason read "matched your rule: ",
+  // stating nothing (review F2.1). It is the empty rule and is refused as one.
+  const tmp = os.tmpdir();
+  const empty = (err: unknown) => err instanceof AppError && err.code === 'POLICY_MATCH_EMPTY';
+  assert.throws(() => normalizePolicy({ path: tmp, match: { kind: 'custom', maxAgeMs: 0.4 } }), empty,
+    'an age of 0.4 ms is the empty rule');
+  assert.throws(() => normalizePolicy({ path: tmp, match: { kind: 'custom', minBytes: 0.4 } }), empty,
+    'a size of 0.4 bytes is the empty rule');
+  assert.deepEqual(normalizePolicy({ path: tmp, match: { kind: 'custom', maxAgeMs: 0.4, exts: ['tmp'] } }).match,
+    { kind: 'custom', exts: ['tmp'] }, 'beside a real rule, the age that rounds away is left out, not stored as 0');
+  // Half a unit or more rounds to a whole one, which is a rule, and every item
+  // it picks says what it is.
+  const kept: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+    [{ kind: 'custom', maxAgeMs: 0.5 }, { kind: 'custom', maxAgeMs: 1 }],
+    [{ kind: 'custom', minBytes: 0.5 }, { kind: 'custom', minBytes: 1 }],
+  ];
+  for (const [sent, stored] of kept) {
+    const p = normalizePolicy({ path: tmp, match: sent });
+    assert.deepEqual(p.match, stored, `${JSON.stringify(sent)} is kept as ${JSON.stringify(stored)}`);
+    const [picked] = selectCandidates([], [{ path: path.join(tmp, 'a'), name: 'a', size: 5 }], p.match);
+    assert.match(picked.reason, /^matched your rule: \S/, `the reason ${JSON.stringify(sent)}'s items carry states the rule`);
+  }
+});
+
+test('PUT /api/autopilot/policies refuses an age that rounds to nothing, as it refuses an empty rule', async () => {
+  const tmp = os.tmpdir();
+  try {
+    const put = await call('PUT', '/api/autopilot/policies', { policies: [{ path: tmp, match: { kind: 'custom', maxAgeMs: 0.4 } }] });
+    assert.deepEqual([put.status, put.body.code], [400, 'POLICY_MATCH_EMPTY'], `refused, not stored (${put.body.error})`);
+  } finally {
+    await savePolicies([]);
+  }
+});
+
 test('a custom rule carrying the Clean Up duplicate flag is refused, not saved without it', () => {
   // `dup` is a Clean Up rule (GET /api/cleanup/rules?dup=1) with no policy
   // equivalent. Dropping it quietly would store a policy WIDER than the rule

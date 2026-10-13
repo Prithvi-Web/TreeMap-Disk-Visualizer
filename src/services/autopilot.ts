@@ -321,14 +321,17 @@ function normalizeMatch(raw: unknown): AutopilotMatch {
   if (m.kind === 'custom') {
     // Clean Up's duplicate rule has no policy equivalent; dropping it would save a policy wider than the one sent.
     if (m.dup !== undefined && m.dup !== false) throw new AppError(400, 'POLICY_MATCH_INVALID', 'The duplicates rule cannot be part of a policy — a policy has no way to check for duplicates, so it would match everything the other rules match');
-    const maxAgeMs = Number(m.maxAgeMs);
-    const minBytes = Number(m.minBytes);
+    // Kept in whole milliseconds and whole bytes, and judged once rounded: a
+    // figure under half of one rounds to 0, which is no rule at all (it would
+    // select every file), so it is left out like a missing one.
+    const maxAgeMs = Math.round(Number(m.maxAgeMs));
+    const minBytes = Math.round(Number(m.minBytes));
     const exts = Array.isArray(m.exts)
       ? m.exts.filter((e): e is string => typeof e === 'string').map((e) => e.trim().toLowerCase().replace(/^\./, '')).filter(Boolean).slice(0, 50)
       : [];
     const out: AutopilotMatch = { kind: 'custom' };
-    if (Number.isFinite(maxAgeMs) && maxAgeMs > 0) out.maxAgeMs = Math.round(maxAgeMs);
-    if (Number.isFinite(minBytes) && minBytes > 0) out.minBytes = Math.round(minBytes);
+    if (Number.isFinite(maxAgeMs) && maxAgeMs > 0) out.maxAgeMs = maxAgeMs;
+    if (Number.isFinite(minBytes) && minBytes > 0) out.minBytes = minBytes;
     if (exts.length) out.exts = exts;
     // A custom match with nothing set would select every file under the path.
     // That is never what someone meant, and unattended it would be a disaster.
