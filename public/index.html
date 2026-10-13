@@ -25384,6 +25384,20 @@ function mgSegmentBytes(lines, id) {
   return total;
 }
 
+/**
+ * A line's count, said as what it counts (QA third pass D09). The claim-
+ * against-hold line counts the files that claim more than they take, and
+ * its figure is the net of those against every other file's rounding — so a
+ * bare "4 items" beside "−7.3 GB" read as four files making up 7.3 GB, where
+ * the Dashboard says those four claim 7.6 GB more. The line's notes say both
+ * parts; its count says which files it is.
+ */
+function mgCountSaid(line) {
+  const n = line.count;
+  if (line.id === 'sparseFiles') return `${formatCount(n)} file${n === 1 ? ' claims' : 's claim'} more than ${n === 1 ? 'it takes' : 'they take'}`;
+  return `${formatCount(n)} ${n === 1 ? 'item' : 'items'}`;
+}
+
 function renderMissing() {
   const d = missingData;
   if (!d) return;
@@ -25459,8 +25473,7 @@ function renderMissing() {
     const value = known
       ? `<div class="mg-v ${line.bytes < 0 ? 'mg-minus' : ''}">${line.bytes < 0 ? '−' : ''}${escapeHtml(formatBytes(Math.abs(line.bytes)))}</div>`
       : `<div class="mg-v mg-unknown">unknown</div>`;
-    const count = line.count !== null
-      ? `<span class="mg-count">${escapeHtml(formatCount(line.count))} ${line.count === 1 ? 'item' : 'items'}</span>` : '';
+    const count = line.count !== null ? `<span class="mg-count">${escapeHtml(mgCountSaid(line))}</span>` : '';
     return (
       `<div class="mg-row ${line.id === 'unaccounted' ? 'is-residual' : ''}" data-mg-row="${line.id}">` +
         `<div class="mg-l">` +

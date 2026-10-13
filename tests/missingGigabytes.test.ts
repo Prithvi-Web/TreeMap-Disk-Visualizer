@@ -1046,3 +1046,39 @@ test('Windows: no mount table is read, so the line says why there is nothing to 
   assert.doesNotMatch(line.detail, /No drive is mounted inside/, 'nothing was read that could say so');
   assertBalances(s);
 });
+
+test('the claim-against-hold row counts what it says it counts: "4 files claim more than they take", never "4 items" beside the net (QA third pass D09)', () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = index.indexOf('const MG_SEG = {');
+  const end = index.indexOf('/* Segment → its row.', start);
+  type El = { textContent: string; innerHTML: string; classList: { add(): void; remove(): void } };
+  const render = (lines: unknown[]): string => {
+    const els: Record<string, El> = {};
+    const stubs: Record<string, unknown> = {
+      $: (id: string): El => (els[id] ||= { textContent: '', innerHTML: '', classList: { add() {}, remove() {} } }),
+      state: {}, api: async () => null, skeletonRows: () => '',
+      escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${String(n)} B`, formatCount: (n: number) => String(n),
+    };
+    const keys = Object.keys(stubs);
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const show = new Function(...keys, `${index.slice(start, end)}; return (d) => { missingData = d; renderMissing(); };`)(
+      ...keys.map((k) => stubs[k]),
+    ) as (d: unknown) => void;
+    show({
+      scanId: 's', rootPath: '/c',
+      volume: { mountPoint: '/', totalBytes: 100, usedBytes: 60, freeBytes: 40, reservedBytes: 0, mechanism: 'm', mechanismLabel: 'what macOS reports' },
+      lines, unaccountedBytes: 0, coversWholeVolume: false, caveats: [], generatedAt: 0,
+    });
+    return els.missingBody.innerHTML;
+  };
+  const sparse = (count: number) => ({ id: 'sparseFiles', label: 'What these files claim, against what they hold', bytes: -7, available: true,
+    detail: 'd', count, notes: ['the parts'], remedy: null });
+  const four = render([sparse(4)]);
+  assert.match(four, /<span class="mg-count">4 files claim more than they take<\/span>/, four);
+  assert.doesNotMatch(four, /4 items/, 'not a bare count beside a net the four do not make up');
+  assert.match(four, /<li>the parts<\/li>/, 'and the parts are said under it');
+  assert.match(render([sparse(1)]), /<span class="mg-count">1 file claims more than it takes<\/span>/);
+  // Every other count stays a count of items.
+  const refused = render([{ id: 'unscannable', label: 'Refused to the scan', bytes: null, available: false, reason: 'r', detail: 'd', count: 3, notes: [], remedy: null }]);
+  assert.match(refused, /<span class="mg-count">3 items<\/span>/, refused);
+});

@@ -19,6 +19,7 @@ isolatedDataDir('treemap-sparse-data-');
 import { startScan, peekScan } from '../src/services/diskScanner';
 import { sparseLine } from '../src/services/missingGigabytes';
 import { ScanResult } from '../src/models/types';
+import { formatBytes } from '../src/utils/formatBytes';
 
 /**
  * A file can claim more room than it occupies, and TreeMap counted the claim.
@@ -223,4 +224,29 @@ test('the line explains both directions, because a user will meet both', () => {
   assert.match(line.detail!, /small file/i, 'and so is the opposite case, which is commoner');
   assert.doesNotMatch(line.label, /but do not occupy/,
     'a label that only describes one direction contradicts itself when the number is positive');
+});
+
+test('the line says both of its parts, so its count goes with the bytes of the files it counts (QA third pass D09)', () => {
+  // QA third pass D09: the Dashboard said "4 files claim 7.6 GB more than
+  // they take"; Missing GB, "4 items · −7.3 GB". The count is the files that
+  // claim more than they take; the bytes are the net of those against every
+  // other file's rounding the other way. Both stay as they are — the receipt
+  // must balance on the net — and the line says the two parts plainly.
+  const line = sparseLine(baseScan({ sparseFiles: 4, sparseBytes: 7_600_000_000, slackBytes: 300_000_000 }), 'darwin');
+  assert.equal(line.bytes, -7_300_000_000, 'control: the line is still the net');
+  assert.equal(line.count, 4, 'control: and its count the files that claim more');
+  const said = line.notes.join(' ');
+  assert.ok(said.includes(`4 files claim ${formatBytes(7_600_000_000)} more than they take`), `the Dashboard's own figure for those files: ${said}`);
+  assert.ok(said.includes(`the rest take ${formatBytes(300_000_000)} more than they claim`), `and the part that nets against it: ${said}`);
+  assert.match(said, /this line is the difference/, said);
+
+  const one = sparseLine(baseScan({ sparseFiles: 1, sparseBytes: 9_000, slackBytes: 4_000 }), 'darwin');
+  assert.ok(one.notes.join(' ').includes(`1 file claims ${formatBytes(9_000)} more than it takes`), one.notes.join(' '));
+
+  // No rounding the other way: the count and the bytes are already the same files.
+  assert.deepEqual(sparseLine(baseScan({ sparseFiles: 4, sparseBytes: 7_600_000_000, slackBytes: 0 }), 'darwin').notes, [],
+    'nothing to reconcile, nothing said');
+  // Only the rounding: no file claims more, and the count of 0 says so.
+  const holds = sparseLine(baseScan({ sparseFiles: 0, sparseBytes: 0, slackBytes: 11_000_000 }), 'darwin');
+  assert.match(holds.notes.join(' '), /^No file here claims more than it takes; files take 11\.0 MB more than they claim/, holds.notes.join(' '));
 });

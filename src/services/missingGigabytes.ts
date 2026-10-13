@@ -7,6 +7,7 @@ import { groupZombies, RESTART_REFUSES } from './zombieHandles';
 import { storeOf } from './scanStore';
 import { boundaryReport } from './boundaryReport';
 import { formatBytes } from '../utils/formatBytes';
+import { formatCount } from '../utils/formatCount';
 import { separatorOf } from '../utils/pathSeparator';
 import { scanAccessAdvice, granteeFor } from '../utils/accessAdvice';
 import { lastFdaState, type FdaState } from '../utils/fdaState';
@@ -908,6 +909,23 @@ function sparseDetail(plat: NodeJS.Platform): string {
   return `Some files reserve room they have not filled — ${reserver} is the usual one — and ${compressor}, so they claim more than they hold. A very small file is the other way round: the disk hands out room in fixed-size pieces, so it holds a little more than it claims. The line above counted what every file claims; this is the difference, whichever way it falls.`;
 }
 
+/**
+ * The line's two parts, in words (QA third pass D09). Its count is the files
+ * that claim more than they take, and its bytes the net of those against
+ * every other file's rounding the other way — so "4 items · −7.3 GB" sat
+ * beside the Dashboard's "4 files claim 7.6 GB more than they take" and
+ * read as another set of files. The net stays (the receipt balances on it);
+ * this says the parts it is made of. Said only when there is rounding to
+ * make the difference: without it the count and the bytes are the same files.
+ */
+function sparseParts(count: number, sparse: number, slack: number): string {
+  const rest = `take ${formatBytes(slack)} more than they claim, rounded up to the disk’s fixed-size pieces`;
+  if (count === 0) return `No file here claims more than it takes; files ${rest} — this line adds that back.`;
+  const one = count === 1;
+  return `${formatCount(count)} file${one ? ' claims' : 's claim'} ${formatBytes(sparse)} more than ${one ? 'it takes' : 'they take'}, ` +
+    `and the rest ${rest} — this line is the difference.`;
+}
+
 export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLine {
   const label = 'What these files claim, against what they hold';
   const detail = sparseDetail(plat);
@@ -935,6 +953,7 @@ export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLi
   const bytes = (scan.sparseBytes ?? 0) - (scan.slackBytes ?? 0);
   const count = scan.sparseFiles ?? 0;
   const notes: string[] = [];
+  if ((scan.slackBytes ?? 0) > 0) notes.push(sparseParts(count, scan.sparseBytes ?? 0, scan.slackBytes ?? 0));
   if (scan.incremental === true && (scan.cachedDirs ?? 0) > 0) {
     notes.push(
       'This was a fast rescan: folders that had not changed were read from the last scan and not measured again, so this figure is a floor rather than a total. The rest is in Unaccounted.',
