@@ -2195,7 +2195,7 @@ const FxCharts = (() => {
        points: [{ t, v }],            // v may be negative (deltas)
        height?: 220,
        formatValue?: signed bytes, formatTime?: fxDate,
-       posName?: 'Grew', negName?: 'Freed',
+       posName?: 'Grew', negName?: 'Freed',  // a zero point reads 'No change'
      } */
   function profitLine(canvas, spec) {
     const host = anchor(canvas);
@@ -2203,8 +2203,11 @@ const FxCharts = (() => {
     let s = spec, progress = REDUCED ? 1 : 0, hoverT = null;
     const life = makeLife(host, () => render());
 
-    const fmtSigned = (v) => (v < 0 ? '−' : '+') + fmtBytes(Math.abs(v));
-    const toneFor = (v) => (v < 0 ? tone('--fx-neg', '#5E7FA6') : tone('--accent', '#0A84FF'));
+    // A change of zero is neither growth nor a shrink: no sign, no growth
+    // tone, and its own name — hovering one read "Grew +0 B" (review F1.3).
+    const fmtSigned = (v) => (v === 0 ? fmtBytes(0) : (v < 0 ? '−' : '+') + fmtBytes(Math.abs(v)));
+    const toneFor = (v) => (v < 0 ? tone('--fx-neg', '#5E7FA6') : v > 0 ? tone('--accent', '#0A84FF') : tone('--text-3', '#8a8a93'));
+    const nameFor = (v) => (v < 0 ? (s.negName || 'Freed') : v > 0 ? (s.posName || 'Grew') : 'No change');
 
     function frame() {
       const w = Math.max(260, host.clientWidth || 260);
@@ -2358,7 +2361,7 @@ const FxCharts = (() => {
         if (p) {
           tip.show(m.fmtT(p.t), [{
             color: toneFor(p.v),
-            name: p.v < 0 ? (s.negName || 'Freed') : (s.posName || 'Grew'),
+            name: nameFor(p.v),
             value: m.fmtV(p.v),
           }], m.X.to(p.t), y);
         }

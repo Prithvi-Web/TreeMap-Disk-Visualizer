@@ -29,7 +29,7 @@ const SRC = (() => {
 
 /* ══════════════ the recording canvas ══════════════ */
 
-type Call = { op: string; args: unknown[]; font: string; baseline: string; align: string };
+type Call = { op: string; args: unknown[]; font: string; baseline: string; align: string; fill: string };
 
 function recordingCtx() {
   const calls: Call[] = [];
@@ -43,7 +43,7 @@ function recordingCtx() {
     get(o, k: string) {
       if (k in o) return o[k];
       return (...args: unknown[]) => {
-        calls.push({ op: k, args, font: String(o.font), baseline: String(o.textBaseline), align: String(o.textAlign) });
+        calls.push({ op: k, args, font: String(o.font), baseline: String(o.textBaseline), align: String(o.textAlign), fill: String(o.fillStyle) });
       };
     },
     set(o, k: string, v) { o[k] = v; return true; },
@@ -65,7 +65,9 @@ function makeEl(tag = 'div'): El {
     appendChild(c: El) { c.parentElement = el; el.children.push(c); return c; },
     append(...cs: El[]) { for (const c of cs) el.appendChild(c); },
     remove() { if (el.parentElement) el.parentElement.children = el.parentElement.children.filter((c: El) => c !== el); },
-    addEventListener() {}, removeEventListener() {},
+    listeners: {} as Record<string, Array<(e: unknown) => void>>,
+    addEventListener(t: string, f: (e: unknown) => void) { (el.listeners[t] ??= []).push(f); },
+    removeEventListener(t: string, f: (e: unknown) => void) { el.listeners[t] = (el.listeners[t] ?? []).filter((g: unknown) => g !== f); },
     getBoundingClientRect() { return { left: 0, top: 0, width: el.clientWidth, height: 200 }; },
     querySelectorAll() { return []; },
   };
@@ -105,6 +107,9 @@ function loadKit() {
     function formatDay(ms) { return 'day' + ms; }
     function getComputedStyle() { return { position: 'relative' }; }
   `;
+  // Animation frames wait for the test to run them (frame()): nothing runs on its own.
+  let frames: Array<(t: number) => void> = [];
+  const frame = () => { const due = frames; frames = []; for (const f of due) f(16); };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fx = new Function('document', 'Canvas2D', 'requestAnimationFrame', 'cancelAnimationFrame', 'FxNum', 'performance',
     `'use strict'; ${stubs}\n${SRC}\nreturn FxCharts;`,
@@ -118,12 +123,12 @@ function loadKit() {
       toLocal: (_cv: El, x: number, y: number) => ({ x, y }),
       roundRect() {},
     },
-    () => 0, () => {},
+    (f: (t: number) => void) => frames.push(f), () => {},
     { rollText(el: El, s: string) { el.textContent = s; } },
     { now: () => 0 },
   );
   const rec = () => (canvas.ctx ??= recordingCtx());
-  return { fx, host, canvas, rec };
+  return { fx, host, canvas, rec, frame };
 }
 
 /** The calls of the LAST frame painted — a mount can paint more than once. */
@@ -308,6 +313,41 @@ test('C07: the net-change strip ticks in whole bytes — a 1 B change never prin
   });
   const own = texts(k.rec().calls).filter((c) => c.align === 'right').sort((a, b) => (a.args[2] as number) - (b.args[2] as number));
   assert.deepEqual(own.map((c) => c.args[0]), ['0.4', '0.2', '0 B', '-0.2', '-0.4'], 'its own formatter, its own steps');
+});
+
+test('C07 (review F1.3): hovering a change of zero says "No change" and "0 B" in a neutral tone — never "Grew +0 B" in the growth colour', () => {
+  // The axis and the caption stopped claiming growth when nothing grew; the
+  // hover did not: a zero point read "Grew +0 B", its tooltip dot and the
+  // crosshair dot in the accent (growth) tone.
+  const values = [0, 5000, 0, -3000];
+  const k = loadKit();
+  k.fx.profitLine(k.canvas, { points: values.map((v, i) => ({ t: T0 + i * DAY, v })), height: 120, posName: 'Grew', negName: 'Freed' });
+  const tip = k.host.children.find((c) => c.className === 'fx-tip')!;
+  const plotL = 62, plotR = k.canvas.width - 14; // padL, and the width less padR
+  /** Hover point i: the tooltip's one row (dot colour, name, value) and the crosshair dot's fill. */
+  const hover = (i: number) => {
+    for (const f of k.canvas.listeners.mousemove ?? []) f({ clientX: plotL + (i * (plotR - plotL)) / (values.length - 1), clientY: 40 });
+    k.frame();
+    const rows = tip.children.filter((c) => c.className === 'fx-tip-row');
+    assert.equal(rows.length, 1, `point ${i}: one row`);
+    const [dot, name, value] = rows[0].children;
+    const calls = lastFrame(k.rec().calls);
+    let arc = -1;
+    calls.forEach((c, j) => { if (c.op === 'arc') arc = j; });
+    const fill = calls.slice(arc).find((c) => c.op === 'fill');
+    return { dot: String(dot.style.background), name: name.textContent, value: value.textContent, crosshair: fill?.fill };
+  };
+  const grew = hover(1), freed = hover(3);
+  assert.deepEqual([grew.name, grew.value, freed.name, freed.value], ['Grew', '+5.0 KB', 'Freed', '−3.0 KB'], 'control: a growth and a shrink read as such');
+  assert.notEqual(grew.dot, freed.dot, 'control: growth and shrink have their own tones');
+  assert.equal(grew.crosshair, grew.dot, 'control: the crosshair dot wears the hovered point\'s tone');
+  for (const i of [0, 2]) {
+    const zero = hover(i);
+    assert.equal(zero.name, 'No change', `point ${i}: nothing grew, and it says so`);
+    assert.equal(zero.value, '0 B', `point ${i}: the amount is 0 B, with no sign`);
+    assert.ok(zero.dot !== grew.dot && zero.dot !== freed.dot, `point ${i}: its dot is neither the growth nor the shrink tone (${zero.dot})`);
+    assert.equal(zero.crosshair, zero.dot, `point ${i}: nor is the crosshair dot`);
+  }
 });
 
 /* ══════════════ D14 / D24 — legend wording ══════════════ */
