@@ -186,7 +186,9 @@ const RESULT = { status: 'complete', scanId: 's9', root: { path: '/Users/x/corpu
 function restore(opts: {
   answer: (url: string) => unknown; box?: string; focused?: boolean; onResult?: (state: Record<string, unknown>) => void; search?: string;
 }): Restore {
-  const src = slice('function requestedPath()', 'void restoreLastSession();');
+  // `?path=` is read as every path box is (asPath, defined beside the folder
+  // picker), so that comes along from the page too, as in fastRescan above.
+  const src = slice('function asPath(', '\n}\n') + '\n}\n' + slice('function requestedPath()', 'void restoreLastSession();');
   const els: Record<string, El> = {};
   const $ = (id: string) => (els[id] ??= el());
   $('pathInput').value = opts.box ?? '/Users/x'; // what loadSystem puts there

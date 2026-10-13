@@ -385,6 +385,9 @@ function scanStartHarness(indexed: boolean) {
     state, $, api, log, performance, console,
     toast: noop, closeEventSource: noop, disableLive: noop, icon: () => '', REDUCED: true, escapeHtml: (s: string) => s,
     fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, tourScanStarted: noop,
+    // The chrome takes the last folder's ring down while the lists load (B05);
+    // like the donut's loading state beside it, a picture, not a step.
+    clearDonut: noop,
     skeletonRows: () => '', setScanButtonMode: (mode: string) => { log.push(`button ${mode}`); },
     renderIndexBadge: noop, renderIndexLine: noop, indexTree: noop, switchView: noop, clearScanQueue: noop, restoreDashboardPanels: noop,
     followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },
