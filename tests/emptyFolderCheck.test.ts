@@ -258,18 +258,27 @@ const listingOf = (entries: Dirent[]) => {
 const asWritten = (p: string): string => p.split(path.sep).join('/');
 
 /**
- * Calls of the test's own: a stat or listing of a path `hangs` names never
- * answers, and its deadline has passed; every other answers at once (a folder,
- * listing `contents[p]`), and its deadline never passes. `asked` lists them.
- * Each path is read as the test writes it (`asWritten`).
+ * Calls of the test's own: a stat or listing of a path `hangs` names (told
+ * which of the two it is asked about) never answers, and its deadline has
+ * passed; every other answers (a folder, listing `contents[p]`) — at once, or
+ * once the test opens its gate in `gates` (keyed as `asked` writes the call) —
+ * and its deadline never passes. `asked` lists them. Each path is read as the
+ * test writes it (`asWritten`).
  */
-function hangsAt(hangs: (p: string) => boolean, contents: Record<string, Dirent[]>, driveOf: (p: string) => string) {
+function hangsAt(
+  hangs: (p: string, kind: 'stat' | 'list') => boolean,
+  contents: Record<string, Dirent[]>,
+  driveOf: (p: string) => string,
+  gates: Record<string, Promise<void>> = {},
+) {
   const asked: string[] = [];
   let lastHung = false;
-  const call = <T>(kind: string, p: string, answer: () => T): Promise<T> => {
+  const call = <T>(kind: 'stat' | 'list', p: string, answer: () => T): Promise<T> => {
     asked.push(`${kind} ${p}`);
-    lastHung = hangs(p);
-    return lastHung ? new Promise<T>(() => { /* stopped answering */ }) : Promise.resolve(answer());
+    lastHung = hangs(p, kind);
+    if (lastHung) return new Promise<T>(() => { /* stopped answering */ });
+    const gate = gates[`${kind} ${p}`];
+    return gate ? gate.then(answer) : Promise.resolve(answer());
   };
   setEmptyCheckForTests({
     driveOf: async (p) => driveOf(asWritten(p)),
@@ -307,6 +316,29 @@ test('R1: a nested folder that hangs on a drive whose root answers is withheld a
   const again = await stillEmptyFolder('/x/outer', true);
   assert.match(reasonOf(again), /the folder mnt inside it did not answer a moment ago/);
   assert.deepEqual(asked.filter((a) => a.endsWith(' /x/outer/mnt')), ['stat /x/outer/mnt'], 'one thread held, not one per look: its own stat, which hangs, and it is never read');
+});
+
+// The two R1 tests again with mnt's stat answering and its listing the call that hangs (the WIN review, F2.1):
+// since every folder is stat'ed before it is read (F1.1), a nested folder that hangs at all hangs at its stat
+// in the tests above, and its listing's own call — its drive, its name in the sentence — went untested.
+test('R1, its listing: a dead mount nested inside a candidate, whose stat answers and whose listing hangs, silences the mount\'s own drive, never the candidate\'s (the WIN review, F2.1)', async () => {
+  const asked = hangsAt((p, kind) => (p === '/x/outer/mnt' && kind === 'list') || p === '/nas', { '/x/outer': [dirent('mnt', true)] }, onNas);
+  const outer = await stillEmptyFolder('/x/outer', true);
+  assert.equal(whyOf(outer), 'no-answer');
+  assert.match(reasonOf(outer), /^the folder mnt inside it did not answer within/, 'the sentence names the folder whose listing hung');
+  assert.deepEqual(await stillEmptyFolder('/x/healthy', true), { empty: true }, 'on the boot drive, which never touched the nas');
+  assert.match(reasonOf(await stillEmptyFolder('/nas/share', true)), /the drive it is on did not answer a moment ago/, 'the nas itself is silent');
+  assert.deepEqual(asked, ['stat /x/outer', 'list /x/outer', 'stat /x/outer/mnt', 'list /x/outer/mnt', 'stat /nas', 'stat /x/healthy', 'list /x/healthy'], 'the root asked about mnt\'s listing is the nas\'s');
+});
+
+test('R1, its listing: a nested folder whose listing hangs on a drive whose root answers is withheld alone, and not asked again while that listing is out (the WIN review, F2.1)', async () => {
+  const asked = hangsAt((p, kind) => p === '/x/outer/mnt' && kind === 'list', { '/x/outer': [dirent('mnt', true)] }, onNas);
+  assert.match(reasonOf(await stillEmptyFolder('/x/outer', true)), /^the folder mnt inside it did not answer within/);
+  assert.deepEqual(await stillEmptyFolder('/x/healthy', true), { empty: true });
+  assert.deepEqual(await stillEmptyFolder('/nas/other', true), { empty: true }, 'the nas answered for its root: it is not silent');
+  const again = await stillEmptyFolder('/x/outer', true);
+  assert.match(reasonOf(again), /^the folder mnt inside it did not answer a moment ago/, 'mnt is the folder its listing left silent');
+  assert.deepEqual(asked.filter((a) => a.endsWith(' /x/outer/mnt')), ['stat /x/outer/mnt', 'list /x/outer/mnt'], 'one thread held, not one per look: its listing, and it is not asked again');
 });
 
 test('a folder that is its drive\'s own root and does not answer is not asked twice: its silence is the drive\'s', async () => {
@@ -463,6 +495,34 @@ test('a call on a mount nested in the folder looked at counts against the nested
   const c = await stillEmptyFolder('/nas/c', true);
   assert.deepEqual(asked, ['stat /x/o', 'list /x/o', 'stat /x/o/m', 'stat /nas', 'stat /nas/b'], 'c was not asked: no third thread on the nas');
   assert.match(reasonOf(c), /^two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'the nas holds two: m\'s stat and b\'s');
+});
+
+test('a listing of a mount nested in the folder looked at counts against the nested drive too: m\'s stat answers, its listing and /nas/b\'s stat hang, and a third folder there is not asked (the WIN review, F2.1)', async () => {
+  // As the test above, with m's listing the call that hangs: counted on the drive /x/o is on instead, the
+  // nas would hold one call, its root would be asked again for b, and c would start.
+  const asked = hangsAt((p, kind) => (p === '/x/o/m' && kind === 'list') || p === '/nas/b', { '/x/o': [dirent('m', true)] }, onNasAt('/x/o/m'));
+  assert.match(reasonOf(await stillEmptyFolder('/x/o', true)), /^the folder m inside it did not answer within/);
+  assert.match(reasonOf(await stillEmptyFolder('/nas/b', true)), /^it did not answer within/);
+  const c = await stillEmptyFolder('/nas/c', true);
+  assert.deepEqual(asked, ['stat /x/o', 'list /x/o', 'stat /x/o/m', 'list /x/o/m', 'stat /nas', 'stat /nas/b'], 'c was not asked: no third thread on the nas');
+  assert.match(reasonOf(c), /^two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'the nas holds two: m\'s listing and b\'s stat');
+});
+
+test('a folder inside the one looked at whose drive went silent between its stat and its listing is not read, and the sentence names it and its drive (the WIN review, F2.1)', async () => {
+  // Two looks at once (a GET's looks run four at a time): mnt's stat is still out when /nas/a and the
+  // nas's root hang in the other; mnt's stat then answers, and its listing finds the nas silent.
+  let mntStatAnswers = (): void => {};
+  const mntStat = new Promise<void>((resolve) => { mntStatAnswers = resolve; });
+  const asked = hangsAt((p) => p === '/nas/a' || p === '/nas', { '/x/outer': [dirent('mnt', true)] }, onNas, { 'stat /x/outer/mnt': mntStat });
+  const outer = stillEmptyFolder('/x/outer', true);
+  await settle();
+  assert.deepEqual(asked, ['stat /x/outer', 'list /x/outer', 'stat /x/outer/mnt'], 'mnt\'s stat is out');
+  assert.equal(whyOf(await stillEmptyFolder('/nas/a', true)), 'no-answer');
+  mntStatAnswers();
+  const verdict = await outer;
+  assert.equal(whyOf(verdict), 'no-answer');
+  assert.match(reasonOf(verdict), /^the folder mnt inside it is on a drive that did not answer a moment ago, so TreeMap did not ask it again/);
+  assert.deepEqual(asked, ['stat /x/outer', 'list /x/outer', 'stat /x/outer/mnt', 'stat /nas/a', 'stat /nas'], 'mnt is never read');
 });
 
 test('a drive\'s own root offered while the drive already holds a call, and hanging, keeps the drive silent until that root answers', async () => {
