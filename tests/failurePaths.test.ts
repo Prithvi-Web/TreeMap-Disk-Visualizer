@@ -388,6 +388,9 @@ function scanStartHarness(indexed: boolean) {
     // The chrome takes the last folder's ring down while the lists load (B05);
     // like the donut's loading state beside it, a picture, not a step.
     clearDonut: noop,
+    // The Full Disk Access notice beside the scan (U-11), asked for alongside the request and never
+    // awaited: a notice, not a step of starting one.
+    scanAccessNotice: async () => {},
     skeletonRows: () => '', setScanButtonMode: (mode: string) => { log.push(`button ${mode}`); },
     renderIndexBadge: noop, renderIndexLine: noop, indexTree: noop, switchView: noop, clearScanQueue: noop, restoreDashboardPanels: noop,
     followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },

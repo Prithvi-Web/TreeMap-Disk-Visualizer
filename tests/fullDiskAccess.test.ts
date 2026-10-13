@@ -775,9 +775,10 @@ test('a scan that stops or fails takes its notice with it: the row is repainted 
   let repaints = 0;
   const noop = (): void => {};
   const $ = (): El & { dataset: Record<string, unknown> } => ({ ...el(), dataset: {} });
-  new Function('state', '$', 'renderBigFiles', 'renderBigFolders', 'renderDonut', 'fxDonutLoadingSync', 'renderDiskNotes', 'countUp', 'renderRefusedFolders',
+  // clearDonut: with no types, the last folder's ring comes off the card (B05) — a picture, as the donut's loading state is.
+  new Function('state', '$', 'renderBigFiles', 'renderBigFolders', 'renderDonut', 'fxDonutLoadingSync', 'clearDonut', 'renderDiskNotes', 'countUp', 'renderRefusedFolders',
     `'use strict'; ${restore}\nrestoreDashboardPanels();`)(
-    { largest: [], bigFolders: [], types: [], donut: {}, scanStats: null }, $, noop, noop, noop, noop, noop, noop, () => { repaints++; },
+    { largest: [], bigFolders: [], types: [], donut: {}, scanStats: null }, $, noop, noop, noop, noop, noop, noop, noop, () => { repaints++; },
   );
   assert.equal(repaints, 1, 'the access row is repainted once');
   const h = pageHarness({ fda: 'not-granted', scanning: true });
