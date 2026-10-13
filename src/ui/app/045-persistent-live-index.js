@@ -967,12 +967,20 @@ function renderDiskNotes() {
       // file — that rule is the first clause of the engine's own reason. When
       // a faster engine failed, its sentence is a developer's (a module path,
       // a rebuild command): the line says so plainly and the hover keeps it.
+      // One fallback is no failure: the Scan engine setting asked for gdu and
+      // a rule kept it off (a pattern, a single file, a rescan), or no gdu was
+      // there to run. The server names it "<rule> (the Scan engine setting
+      // asked for gdu)", the rule in its own plain words, and that rule is
+      // why the walker ran (C10 review).
       const WALKER_RAN = 'the built-in walker ran: ';
+      const GDU_ASKED = ' (the Scan engine setting asked for gdu)';
       const reason = typeof s.engineReason === 'string' ? s.engineReason : '';
+      const fallback = typeof s.fallbackReason === 'string' ? s.fallbackReason : '';
       const ruleAt = reason.indexOf(WALKER_RAN);
       const why = !walker ? ''
-        : s.fallbackReason ? 'Used because a faster engine could not run on this computer — point at the line above for the details.'
-          : ruleAt === -1 ? '' : `Used because ${reason.slice(ruleAt + WALKER_RAN.length).split('; ')[0]}.`;
+        : fallback.endsWith(GDU_ASKED) ? `Used because ${fallback.slice(0, -GDU_ASKED.length)}, though the Scan engine setting asked for gdu.`
+          : fallback ? 'Used because a faster engine could not run on this computer — point at the line above for the details.'
+            : ruleAt === -1 ? '' : `Used because ${reason.slice(ruleAt + WALKER_RAN.length).split('; ')[0]}.`;
       const reads = walker && s.ioThreads > 4 ? `It reads up to ${s.ioThreads} files and folders at once, which keeps the disk busy.` : '';
       $('engineHint').textContent = s.engine === 'native'
         ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'

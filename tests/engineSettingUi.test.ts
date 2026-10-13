@@ -6,13 +6,17 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Every settings write lands in a directory of this file's own.
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-engine-setting-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { getSettings, updateSettings } from '../src/services/settings';
+import { getScan, gduRuleFor, startScan } from '../src/services/diskScanner';
+import { buildScanStats } from '../src/api/scanRoutes';
+import { settled } from '../src/utils/backgroundWrites';
 import { INDEX, lift } from './fixtures/liftFrontend';
 
 /**
@@ -407,6 +411,53 @@ test('C10: the walker\'s line says why it ran, in plain words, on the line itsel
     assert.doesNotMatch(row.engineHint.textContent + row.engineText.textContent, /Node|glob|I\/O|saturat|thread/i, 'no developer words on the line');
   }
   assert.equal(walker({}).engineHint.textContent, 'It reads up to 16 files and folders at once, which keeps the disk busy.', 'an older stats shape gives no reason, and none is invented');
+});
+
+test('C10: when the Scan engine setting asked for gdu and a rule kept it off, the line names the rule — nothing failed', () => {
+  // The server names that fallback "<rule> (the Scan engine setting asked for
+  // gdu)" (diskScanner, startScan). Nothing could not run: a rule chose the
+  // walker, and the line said "a faster engine could not run on this computer".
+  const walker = (fallbackReason: string, rule: string) => runEngineRow({
+    engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 4, fallbackReason,
+    engineReason: `the built-in walker ran: the Scan engine setting asks for gdu; ${rule}; CPU seconds are not measured per scan by this engine`,
+  }).engineHint.textContent;
+  const pattern = 'the scan has 1 "don\'t scan" pattern gdu cannot express';
+  assert.equal(walker(`${pattern} (the Scan engine setting asked for gdu)`, pattern),
+    'Used because the scan has 1 "don\'t scan" pattern gdu cannot express, though the Scan engine setting asked for gdu.');
+  const file = 'the root is a single file, which needs no gdu process';
+  assert.equal(walker(`${file} (the Scan engine setting asked for gdu)`, file),
+    'Used because the root is a single file, which needs no gdu process, though the Scan engine setting asked for gdu.');
+  // gdu tried and failed: its sentence is an exception's, so the line stays plain and the hover has it.
+  assert.equal(walker('gdu failed: spawn /x/gdu ENOENT', 'gdu failed: spawn /x/gdu ENOENT'),
+    'Used because a faster engine could not run on this computer — point at the line above for the details.');
+});
+
+test('C10: a real scan the gdu setting asked for, kept off gdu by a rule (a "don\'t scan" pattern here), puts that rule on the line', async () => {
+  const root = fs.realpathSync(fileTempDir('treemap-engine-setting-gdu-rule-'));
+  fs.mkdirSync(path.join(root, 'skip'));
+  fs.writeFileSync(path.join(root, 'a.bin'), 'aaaa');
+  fs.writeFileSync(path.join(root, 'skip', 'c.bin'), 'c');
+  await updateSettings({ engine: 'gdu', ignore: [{ pattern: 'skip', scope: 'scan' }] });
+  try {
+    const started = await startScan(root);
+    await waitFor(() => started.status !== 'running', `the scan of ${root} settling`);
+    assert.equal(started.status, 'complete', started.error);
+    await settled();
+    const stats = buildScanStats(getScan(started.scanId) ?? started) as unknown as Record<string, unknown>;
+    assert.ok(stats.engine === 'walker' || stats.engine === 'turbo-walker', `control: the walker ran (${String(stats.engine)})`);
+    assert.ok(stats.fallbackReason, 'control: the server names it a fallback');
+    // The rule the server gives here: the pattern, or on Windows gdu's own rule there, which comes first (R59).
+    const rule = gduRuleFor({ forced: 'gdu', rootIsDir: true, incremental: false, ignoreCount: 1, noGdu: true, platform: process.platform });
+    assert.ok(rule, 'control: a rule keeps gdu off');
+    if (process.platform !== 'win32') assert.equal(rule, 'the scan has 1 "don\'t scan" pattern gdu cannot express', 'control: off Windows, the pattern');
+    // A scan of three entries can finish inside a millisecond; the row needs a duration to show at all.
+    const hint = runEngineRow({ ...stats, durationMs: 2000 }).engineHint.textContent;
+    assert.ok(hint.startsWith(`Used because ${rule}, though the Scan engine setting asked for gdu.`), hint);
+    assert.doesNotMatch(hint, /could not run/, 'nothing failed');
+  } finally {
+    await updateSettings({ engine: 'auto', ignore: [] });
+    await settled();
+  }
 });
 
 test('C10: a scan too short to measure a speed by states no speed — one file is not "1,000/s"', () => {
