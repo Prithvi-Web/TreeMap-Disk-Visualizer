@@ -21,9 +21,16 @@ import type { FullDiskAccessCapability } from '../types';
 
 export const TCC_SYSTEM_DIR = '/Library/Application Support/com.apple.TCC';
 
-/** The per-user TCC folder, asked when the system one gives no answer. */
+/**
+ * The per-user TCC folder, asked when the system one gives no answer.
+ *
+ * Joined with `path.posix`, never the host's `path`: this is a macOS path, so it is spelled the macOS
+ * way whatever machine asks. Joined by Windows' rules (a Windows CI runner checking the probe with
+ * `platform: 'darwin'`) it was `\Users\someone\Library\Application Support\com.apple.TCC`, a folder no
+ * Mac has (CI run 38345032466).
+ */
 export function tccUserDir(home: string): string {
-  return path.join(home, 'Library', 'Application Support', 'com.apple.TCC');
+  return path.posix.join(home, 'Library', 'Application Support', 'com.apple.TCC');
 }
 
 /** What the probe needs of the file system, so a test can answer for it. */
