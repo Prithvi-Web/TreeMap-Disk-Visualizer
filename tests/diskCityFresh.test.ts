@@ -693,6 +693,31 @@ test('C03: a count ask that fails is asked again at the next entry, for what it 
   assert.deepEqual(h.countAsks.map((a) => a.paths).slice(2), [['/corpus/f3']], 'the file the failed batch held is asked again, and only it');
 });
 
+test('C03: a count ask whose FIRST batch fails asks again, at the next entry, for the batches it never sent as well', async () => {
+  // The case above fails the last batch, where "what it had not answered"
+  // and "the batch that failed" are the same paths. Here the first batch
+  // fails while the second has not been sent: releasing only the failing
+  // batch would leave f3 marked asked, never asked again, and its building
+  // flat for the rest of the scan (C03 review F3.2).
+  const h = cityHarness({ batch: 2 });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  await h.loadCity('/corpus');
+  assert.deepEqual(h.countAsks.map((a) => a.paths), [['/corpus/f1', '/corpus/f2']], 'control: the first batch, the second not sent yet');
+  h.countAsks[0].fail(new Error('the connection dropped'));
+  await settle();
+  assert.equal(h.countAsks.length, 1, 'control: the failure sent nothing more');
+  h.card!.setHeight('files'); // the next entry: Files chosen again
+  assert.deepEqual(h.countAsks.map((a) => a.paths).slice(1), [['/corpus/f1', '/corpus/f2']], 'the failed batch is asked again');
+  h.countAsks[1].answer(countAnswer(h.countAsks[1].paths));
+  await settle();
+  assert.deepEqual(h.countAsks.map((a) => a.paths).slice(2), [['/corpus/f3']], 'and so is the batch the failure never sent');
+  h.countAsks[2].answer(countAnswer(h.countAsks[2].paths));
+  await settle();
+  assert.equal(h.state.city.unknownHeight, 0, 'every building drawn stands at its count');
+});
+
 /** Disk City up on s1's /corpus with its count ask in flight, then a rescan s2 of the folder asking its own. */
 async function rescanWhileCounting() {
   const h = cityHarness();
