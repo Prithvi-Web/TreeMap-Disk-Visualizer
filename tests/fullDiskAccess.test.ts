@@ -412,12 +412,33 @@ const ADVICE: Record<FdaState, string> = {
 };
 const fdaCap = (state: FdaState) => ({ available: state === 'granted', mechanism: 'm', state, grantee: 'the test grantee', advice: ADVICE[state] });
 
+/** An element's opening tag in the built page, by id, or null when the page has none. */
+function openTag(id: string): string | null {
+  const m = new RegExp(`<[a-z][a-z0-9]*\\b[^>]*\\bid="${id}"[^>]*>`).exec(INDEX);
+  return m ? m[0] : null;
+}
+
+/**
+ * Whether `focus()` can land on the element, judged as a browser judges it
+ * from the shipped markup: a button can take focus, and anything else only
+ * when it carries a tabindex. A stub that let any element take focus kept
+ * the F1.11 row-focus test green with the row's `tabindex="-1"` deleted,
+ * though a `<div>` without one ignores `.focus()` (review F2.3).
+ */
+function focusableInMarkup(id: string): boolean {
+  const tag = openTag(id);
+  return !!tag && (/^<button\b/.test(tag) || /\btabindex="-?\d+"/.test(tag));
+}
+
 function pageHarness(opts: { platform?: string; fda?: FdaState | null; refused?: { dirs: number; examples: string[] } | null; scanning?: boolean; refresh?: () => unknown }) {
   const src = block('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
     block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */');
   const els: Record<string, El> = {};
-  // focus() moves the document's activeElement as a browser's does: never onto a hidden element.
-  const $ = (id: string): El => (els[id] ??= Object.assign(el(), { focus: () => { if (!els[id].hidden) doc.activeElement = els[id]; } }));
+  // focus() moves the document's activeElement as a browser's does: never onto
+  // a hidden element, and never onto one the markup does not make focusable.
+  const $ = (id: string): El => (els[id] ??= Object.assign(el(), {
+    focus: () => { if (!els[id].hidden && focusableInMarkup(id)) doc.activeElement = els[id]; },
+  }));
   const toasts: string[] = [];
   const asked: Array<[string, unknown]> = [];
   const emitted: Array<[string, unknown]> = [];
@@ -688,6 +709,11 @@ test('when the recheck hides a focused "Open Privacy settings", focus moves to w
   // System Settings and comes back; the window restores focus to the button,
   // and the recheck hides it. [hidden] takes it out of the page, focus fell
   // to <body>, and their place was lost.
+  // The row can take focus only because its markup says so, and it stays out
+  // of the Tab order: -1, never 0 (review F2.3).
+  const rowTag = openTag('accessRow');
+  assert.ok(rowTag, 'the access row is in the page');
+  assert.match(rowTag, /\btabindex="-1"/, '#accessRow carries tabindex="-1": a <div> without one ignores focus()');
   const h = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] } });
   h.render();
   h.arm();
