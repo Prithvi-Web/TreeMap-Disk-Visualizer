@@ -494,6 +494,65 @@ test('every row that can push the map or its footer is watched (B26)', () => {
   assert.match(wiring, /for \(const sel of TM_CHROME_ROWS\)[^}]*\.observe\(/, 'and every listed row is observed');
 });
 
+/* ══════════════ B36 remainder — at the desktop window's minimum the map gives way, never the footer ══════════════ */
+
+/** One px length from the stylesheet ("10px", or the first side of a shorthand). */
+function sheetPx(v: string | undefined, what: string): number {
+  const m = /^(\d+(?:\.\d+)?)px\b/.exec((v || '').trim());
+  assert.ok(m, `${what} is a px length (${v})`);
+  return Number(m![1]);
+}
+
+/**
+ * The page's treemapCanvasHeight in a window `H` px tall, with the map's wrap
+ * starting `top` px down and a footer `footH` px tall, while the cart holds
+ * something. The wrap's padding, the footer's top margin and the bottom room
+ * <main> keeps for the cart pill are the stylesheet's own.
+ */
+function mapWithCart(H: number, top: number, footH: number) {
+  const pad = sheetPx(declsFor('#treemapWrap').get('padding'), "#treemapWrap's padding");
+  const footGap = sheetPx(declsFor('.tm-foot').get('margin-top'), "the footer's top margin");
+  const padB = sheetPx(declsFor('body:has(#cartDock.show) main').get('padding-bottom'), 'the room <main> keeps for the cart pill');
+  const wrap = {
+    getBoundingClientRect: () => ({ top }),
+    parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: footH }) }) },
+    closest: () => ({}),
+  };
+  const height = runPageDecls<(w: unknown) => number>(['treemapCanvasHeight'], {
+    window: { innerHeight: H },
+    getComputedStyle: (el: unknown) => (el === wrap
+      ? { paddingTop: `${pad}px`, paddingBottom: `${pad}px` }
+      : { marginTop: `${footGap}px`, paddingBottom: `${padB}px` }),
+  }, 'treemapCanvasHeight')(wrap);
+  // Where the footer's last line (the hint) ends, and where the room kept for the pill begins.
+  return { height, footEnd: top + pad + height + pad + footGap + footH, pillRoom: H - padB };
+}
+
+test('at the desktop window\'s minimum the map gives up height so its footer stays above the cart pill (B36 remainder)', () => {
+  // QA re-check (12 Oct 2026): fixed at 1440×900 and 1280×800, but at
+  // 1024×700 — the desktop window's minimum — the pill still covered the hint
+  // and the "12,488 nodes · …" counts, and at 1024×768 it covered the hint in
+  // Reclaim colour. The rows above the map (the toolbar on two rows, a saved
+  // view's chip row, the time-lapse bar wrapped to two lines) start its wrap
+  // at y 250, and the map kept a 360 px floor: the footer was pushed under
+  // the pill however much room <main> kept for it.
+  const cases: Array<[string, number, number, number]> = [
+    // label, window height, wrap top, footer height (measured, shots/332 and 331)
+    ['1024×700, Size colour: legend and counts, then the hint', 700, 250, 40],
+    ['1024×768, Reclaim colour: the legend note wraps to two lines', 768, 250, 76],
+    ['1024×700, Reclaim colour', 700, 250, 76],
+  ];
+  for (const [label, H, top, footH] of cases) {
+    const m = mapWithCart(H, top, footH);
+    assert.ok(m.footEnd <= m.pillRoom,
+      `${label}: the hint ends at y ${m.footEnd} under a ${m.height} px map; the room kept for the pill starts at y ${m.pillRoom}`);
+  }
+  // The map still never collapses: in a window with no room left at all it
+  // keeps a usable floor, and the page scrolls to the footer instead.
+  const tiny = mapWithCart(480, 250, 76);
+  assert.ok(tiny.height >= 200, `a window with no room left still draws a ${tiny.height} px map`);
+});
+
 /**
  * A Voronoi (or Circles) map with the page's own refit and its own window
  * resize handler, on a clock that only moves when the test moves it. A solve

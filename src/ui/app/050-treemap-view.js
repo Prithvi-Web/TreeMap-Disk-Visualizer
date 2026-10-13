@@ -393,8 +393,17 @@ function reclaimCoverageNote() {
  * about 126 px of dead space below the chart on a 720 px-tall window. Measure
  * what is actually above and below instead, so the chart fills the window and
  * still fits when the toolbar wraps to two lines.
+ *
+ * The floor is for a window with no room left at all, where the page then
+ * scrolls to the footer. It was 360 px, and at the desktop window's minimum
+ * (1024×700) the rows above the map — the toolbar on two rows, a saved
+ * view's chips, the time-lapse bar on two lines — left less than that: the
+ * map kept its 360 and pushed the footer under the cart pill, hint and counts
+ * with it, as it did at 1024×768 in Reclaim colour, whose legend wraps (QA
+ * B36 re-check). The map gives way first now; the footer is what explains it.
  */
 function treemapCanvasHeight(wrap) {
+  const MIN_H = 200; // the floor, for a window with no room left (above)
   const top = wrap.getBoundingClientRect().top;
   // Called before the view is laid out (hidden tab): fall back to the floor.
   if (!(top > 0)) return 420;
@@ -406,7 +415,7 @@ function treemapCanvasHeight(wrap) {
     : 28;
   const main = wrap.closest('main');
   const mainPadB = main ? parseFloat(getComputedStyle(main).paddingBottom) : 24;
-  return Math.max(360, Math.floor(window.innerHeight - top - padY - below - mainPadB));
+  return Math.max(MIN_H, Math.floor(window.innerHeight - top - padY - below - mainPadB));
 }
 
 /**
