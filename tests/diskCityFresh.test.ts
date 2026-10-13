@@ -72,7 +72,7 @@ function fakeDom() {
  * names the scan and the folder it was asked for, so what Disk City built
  * from says which scan it came from.
  */
-function harness(opts: { realCard?: boolean; lapse?: boolean } = {}) {
+function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } = {}) {
   const asked: string[] = [];
   const built: Node[][] = [];
   const $ = fakeDom();
@@ -94,7 +94,16 @@ function harness(opts: { realCard?: boolean; lapse?: boolean } = {}) {
       colour: 'reclaim', height: 'staleness',
     },
   };
-  const api = async (url: string) => {
+  // Facts the city asks for later (subtree counts, reclaim scores), held until a test lands them.
+  const countAsks: Array<{ paths: string[]; answer: (res: unknown) => void }> = [];
+  const scoreAsks: Array<{ paths: string[]; land: () => void }> = [];
+  const reclaim = { scores: new Map<string, unknown>() };
+  const api = async (url: string, init?: { body?: string }) => {
+    if (url === '/api/facts') {
+      const body = JSON.parse(init!.body!) as { paths: string[]; providers: string[] };
+      assert.deepEqual(body.providers, ['subtreeCount'], 'the city asks the fact layer for counts only');
+      return new Promise((answer) => countAsks.push({ paths: body.paths, answer }));
+    }
     asked.push(url);
     const m = /^\/api\/scan\/([^/]+)\/treemap\?.*root=([^&]+)/.exec(url);
     assert.ok(m, `the stub serves the treemap layout only, not ${url}`);
@@ -119,9 +128,17 @@ function harness(opts: { realCard?: boolean; lapse?: boolean } = {}) {
     // A rebuild makes new blocks for the same paths, as the page's does.
     buildCity: () => { built.push(state.treemap.nodes.slice()); state.city.blocks = state.city.blocks.map((b) => ({ ...b })); },
     cityEnter: noop, renderCityTable: noop, cityFetchFacts: noop, drawCity: noop, cityMorphHeights: () => false,
-    // One base colour per mode, so a card says which mode it was painted in.
-    cityRgb: (_n: unknown, mode: string) => (mode === 'type' ? [191, 90, 242] : mode === 'age' ? [10, 200, 10] : [58, 64, 72]),
-    reclaim: { scores: new Map() }, localStorage: { setItem: noop, getItem: () => null },
+    // One base colour per mode, so a card says which mode it was painted in;
+    // in Reclaim, grey until the building is scored and red once it is.
+    cityRgb: (n: Node, mode: string) => (mode === 'type' ? [191, 90, 242] : mode === 'age' ? [10, 200, 10]
+      : reclaim.scores.has(n.path) ? [231, 63, 63] : [58, 64, 72]),
+    reclaim, localStorage: { setItem: noop, getItem: () => null },
+    // The reclaim scores' own loader: the scores land when the test says so.
+    ensureScores: (paths: string[], onLanded: () => void) => {
+      scoreAsks.push({ paths, land: () => { for (const p of paths) reclaim.scores.set(p, { score: 80 }); onLanded(); } });
+      return Promise.resolve();
+    },
+    cityInvalidate: noop, window: {},
     // finishScan's surroundings.
     endScanChrome: noop, indexTree: noop, updateSelectionBar: noop, DUP_PAGE: 100, icon: () => '',
     formatCount: (n: number) => String(n), formatBytes: (n: number) => `${n} B`, escapeHtml: (s: string) => s,
@@ -135,6 +152,9 @@ function harness(opts: { realCard?: boolean; lapse?: boolean } = {}) {
   const cardNames = ['cityShowCard', 'cityMoveCard', 'cityRefreshCard', 'cityCardKey', 'cityAgeDays', 'cityAgeWords', 'cityJitter', 'cityUp', 'tmParentPath',
     'citySetColour', 'citySetHeight', 'cityMode', 'CITY_COLOUR_LABEL', 'CITY_HEIGHT_LABEL'];
   if (!opts.realCard) deps.cityShowCard = noop;
+  // The city's own fact loaders, over the held counts and scores above.
+  const factNames = ['TM_SCORE_CAP', 'RECLAIM_BATCH', 'cityFetchFacts', 'cityLoadCounts'];
+  if (opts.facts) delete deps.cityFetchFacts;
   // The time-lapse's own transport, animated as it plays by default (motion
   // not reduced, rectangle map), over a frame queue the test pumps by hand.
   const frames = { queue: [] as Array<[number, (t: number) => unknown]>, next: 0, clock: 0 };
@@ -160,7 +180,8 @@ function harness(opts: { realCard?: boolean; lapse?: boolean } = {}) {
       setHeight: (m: string) => void;
       jitter: (rgb: number[], path: string) => number[];
     };
-  }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : []), ...(opts.lapse ? lapseNames : [])], deps,
+  }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : []), ...(opts.lapse ? lapseNames : []),
+    ...(opts.facts ? factNames : [])], deps,
     `{ loadTreemap, loadCity, finishScan, setHistoryIndex${opts.realCard
       ? ', card: { show: cityShowCard, up: cityUp, setColour: citySetColour, setHeight: citySetHeight, jitter: cityJitter }'
       : ''}${opts.lapse ? ', lapse: { start: lapseStart, stop: lapseStop }' : ''} }`,
@@ -177,7 +198,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean } = {}) {
   };
   /** The scan:folder every node Disk City was last handed names. */
   const lastBuilt = () => [...new Set((built[built.length - 1] ?? []).map((n) => n.name))];
-  return { ...page, state, asked, built, lastBuilt, $, pump, frames };
+  return { ...page, state, asked, built, lastBuilt, $, pump, frames, countAsks, scoreAsks };
 }
 
 interface Block { n: Node & { modifiedAt?: number }; rgb: number[]; z: number }
@@ -347,11 +368,12 @@ const dotOf = (html: string): string => {
 const rgbText = (rgb: number[]): string => `rgb(${rgb.map((v) => Math.round(v)).join(',')})`;
 
 /** A city holding one video file, with its card up as a pointer left it. */
-async function cityWithCard() {
-  const h = harness({ realCard: true });
+async function cityWithCard(opts: { facts?: boolean; colour?: string } = {}) {
+  const h = harness({ realCard: true, facts: opts.facts });
   h.state.scanId = 's1';
   h.state.root = { path: '/corpus', size: 1 };
   h.state.view = 'city';
+  if (opts.colour) h.state.city.colour = opts.colour;
   await h.loadCity('/corpus/Media/Clips');
   const n = { path: '/corpus/Media/Clips/clip027.m4v', name: 'clip027.m4v', size: 5_000_000, type: 'file', modifiedAt: 0 };
   const b: Block = { n, rgb: h.card!.jitter([58, 64, 72], n.path), z: 1 };
@@ -398,4 +420,36 @@ test('C13: changing what height means rebuilds the card for the new city', async
   h.card!.setHeight('files');
   assert.equal(card.hidden, false);
   assert.match(card.innerHTML, /Holds<\/span><b>still counting…/, 'by file count, it says the count is on its way');
+});
+
+/* The switch by keyboard leaves the pointer where it was, so no pointer move
+   rebuilds the card when the facts the new mode waits for land: the card must
+   be rebuilt by their landing (C13 review F1.2, F1.10). */
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('C13: a card switched to file counts by keyboard says the count once it lands, not "still counting…" for good', async () => {
+  const { h, card, n } = await cityWithCard({ facts: true });
+  h.card!.setHeight('files');
+  assert.match(card.innerHTML, /Holds<\/span><b>still counting…/, 'control: the count is on its way');
+  assert.equal(h.countAsks.length, 1, 'control: the city asked for the counts');
+  h.countAsks[0].answer({ providers: { subtreeCount: { available: true, values: { [n.path]: { files: 7, dirs: 2 } } } } });
+  await settle();
+  assert.equal(card.hidden, false, 'the card stays up over the building under the pointer');
+  assert.match(card.innerHTML, /Holds<\/span><b>7 files · 2 folders/, 'it says what the building holds');
+  assert.doesNotMatch(card.innerHTML, /still counting/, 'and no longer that the count is on its way');
+});
+
+test('C13: a card switched to Reclaim by keyboard takes the score and the colour once the scores land', async () => {
+  const { h, card, n } = await cityWithCard({ facts: true, colour: 'type' });
+  h.card!.setColour('reclaim');
+  assert.match(card.innerHTML, /Reclaim score<\/span><b>not scored/, 'control: no score yet');
+  assert.equal(dotOf(card.innerHTML), rgbText(h.card!.jitter([58, 64, 72], n.path)), 'control: the unscored grey');
+  assert.equal(h.scoreAsks.length, 1, 'control: the city asked for the scores');
+  h.scoreAsks[0].land();
+  const scored = rgbText(h.card!.jitter([231, 63, 63], n.path));
+  assert.equal(rgbText(h.state.city.blocks[0].rgb), scored, 'control: the building is repainted in its score\'s colour');
+  assert.equal(card.hidden, false);
+  assert.match(card.innerHTML, /Reclaim score<\/span><b>80 \/ 100/, 'the card reads the score that landed');
+  assert.equal(dotOf(card.innerHTML), scored, 'and its dot is the colour the building now wears');
 });

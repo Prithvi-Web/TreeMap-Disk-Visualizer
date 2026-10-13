@@ -1569,6 +1569,10 @@ function cityFetchFacts() {
       if (state.view !== 'city') return;
       for (const b of state.city.blocks) b.rgb = cityJitter(cityRgb(b.n, state.city.colour), b.n.path);
       cityInvalidate();
+      // A card raised before the scores landed says "not scored" in the grey
+      // the building no longer wears; with the pointer still (a switch by
+      // keyboard), nothing else rebuilds it (C13 review).
+      cityRefreshCard();
     });
   }
   if (c.height === 'files') {
@@ -1600,6 +1604,9 @@ async function cityLoadCounts(paths, key) {
       if (state.view === 'city' && state.city.height === 'files') {
         buildCity(); cityInvalidate(); renderCityTable();
       }
+      // The card's "Holds" row, the same way: "still counting…" until the
+      // pointer moved, even after the count had arrived (C13 review).
+      if (state.view === 'city') cityRefreshCard();
     }
   } catch (err) {
     state.city.countsFor = null; // a later entry retries rather than remembering a blip
