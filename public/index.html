@@ -9161,8 +9161,10 @@ async function startScan(path, opts = {}) {
 async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   try {
     beginScanChrome({ quiet });
-    preScanAccessNotice(path); // U-11: a notice beside the scan, never a question in front of it
     const gen = state.scanGen; // this request's identity for the abandon check below
+    // U-11: a notice beside the scan, never a question in front of it — its
+    // answer is asked for alongside the scan request, not awaited before it.
+    void scanAccessNotice(path, gen);
     const t0 = performance.now();
     const resp = await api('/api/scan', {
       method: 'POST',
@@ -10025,13 +10027,44 @@ function paintAccessNotice() {
  * never a question in front of it (U-Q12). Returns whether it showed.
  */
 function preScanAccessNotice(path) {
-  state.accessTurnedOn = null; // what the recheck learned was about the last scan's refusals
   const mac = (state.system || {}).platform === 'darwin';
   const fda = mac ? fullDiskAccessInfo() : null;
   state.accessNotice = fda && fda.state === 'not-granted' && isWholeDiskOrHome(path) ? path : null;
   if (!state.accessNotice) return false;
   keepAccessFocus(paintAccessNotice);
   return true;
+}
+
+/**
+ * A scan's start: ask the server whether Full Disk Access is on, then decide
+ * the notice (review F2.1). The page's own answer is read once, at load, and
+ * goes stale exactly where it matters: in web mode the fix the server
+ * prescribes is to restart the server, and nothing reloads the open tab, so
+ * a / scan on a server that now had the grant still said macOS would keep
+ * folders out of its total, and its refusals were still worded "Give … Full
+ * Disk Access". On a cold start the answer was not in yet, and a
+ * first-minute whole-disk scan had no notice at all. The answer kept here is
+ * also what the scan's refused row is worded by when it ends: the state the
+ * scan ran under.
+ *
+ * Called beside the scan request, never awaited in front of it. A GET, so
+ * the server's own 30-second answer serves and no probe is re-run; only
+ * `fullDiskAccess` is replaced, and TOPIC.capabilities is not emitted (see
+ * the recheck below). An answer that arrives after its scan has ended, or
+ * after another scan began (`gen`), paints nothing; with no answer, the
+ * page's own decides.
+ */
+async function scanAccessNotice(path, gen) {
+  state.accessTurnedOn = null; // what the recheck learned was about the last scan's refusals
+  try {
+    const res = await api('/api/platform/capabilities');
+    const fda = res && res.capabilities ? res.capabilities.fullDiskAccess : null;
+    if (fda && typeof fda.state === 'string') state.capabilities = { ...(state.capabilities || {}), fullDiskAccess: fda };
+  } catch {
+    // No answer: the page's own is what there is.
+  }
+  if (gen !== state.scanGen || !state.scanning) return false;
+  return preScanAccessNotice(path);
 }
 
 /**

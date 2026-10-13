@@ -430,9 +430,19 @@ function focusableInMarkup(id: string): boolean {
   return !!tag && (/^<button\b/.test(tag) || /\btabindex="-?\d+"/.test(tag));
 }
 
-function pageHarness(opts: { platform?: string; fda?: FdaState | null; refused?: { dirs: number; examples: string[] } | null; scanning?: boolean; refresh?: () => unknown }) {
+/**
+ * The page's refused-row and recheck blocks, and its real startScanRequest,
+ * over stand-ins. `refresh` answers POST /api/platform/capabilities/refresh
+ * (the recheck); `current` answers GET /api/platform/capabilities (a scan's
+ * start), by default with the page's own answer, or no answer without one.
+ */
+function pageHarness(opts: {
+  platform?: string; fda?: FdaState | null; refused?: { dirs: number; examples: string[] } | null; scanning?: boolean;
+  refresh?: () => unknown; current?: () => unknown;
+}) {
   const src = block('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
-    block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */');
+    block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */') +
+    INDEX.slice(INDEX.indexOf('async function startScanRequest('), INDEX.indexOf('function quietRescanFailed('));
   const els: Record<string, El> = {};
   // The row's parts, as the markup nests them: hiding the row hides them too.
   const ROW_PARTS = ['accessText', 'accessHint', 'accessMissingBtn', 'accessOpenBtn'];
@@ -477,18 +487,39 @@ function pageHarness(opts: { platform?: string; fda?: FdaState | null; refused?:
     system: { platform: opts.platform || 'darwin', homeDir: '/Users/x' },
     capabilities: opts.fda ? { volumeTopology: { available: true }, fullDiskAccess: fdaCap(opts.fda) } : null,
     pathIndex: new Map(),
+    scanGen: 0,
   };
+  /** What a scan start did, in order: the chrome, each request, the stream. */
+  const order: string[] = [];
   const api = async (url: string, options?: unknown) => {
     asked.push([url, options]);
+    order.push(url);
     if (url === '/api/platform/capabilities/refresh') return opts.refresh ? opts.refresh() : { capabilities: { fullDiskAccess: fdaCap('granted') } };
+    if (url === '/api/platform/capabilities') {
+      if (opts.current) return opts.current();
+      // By default the server agrees with the page; with no answer on the page, it gives none.
+      const now = (state.capabilities as { fullDiskAccess?: unknown } | null)?.fullDiskAccess;
+      if (now) return { capabilities: { fullDiskAccess: now } };
+      throw new Error('Couldn’t reach TreeMap');
+    }
+    if (url === '/api/scan') return { scanId: 's2' };
     return { entries: [] };
   };
+  // startScanRequest's neighbours, doing to `state` what the page's do.
+  const beginScanChrome = (): void => {
+    order.push('chrome');
+    Object.assign(state, { scanning: true, scanGen: (state.scanGen as number) + 1, accessNotice: null });
+  };
+  const followScanProgress = (): void => { order.push('follow'); };
   const TOPIC = { scan: 'scan', capabilities: 'capabilities' };
   const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'TOPIC', 'window', 'document',
-    `'use strict'; ${src} return { render: renderRefusedFolders, notice: preScanAccessNotice, arm: armFullDiskAccessRecheck };`)(
+    'beginScanChrome', 'performance', 'abandonIfStopped', 'followScanProgress', 'failScan', 'quietRescanFailed',
+    `'use strict'; ${src} return { render: renderRefusedFolders, notice: preScanAccessNotice, arm: armFullDiskAccessRecheck, scan: startScanRequest };`)(
     $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n),
     (topic: string, payload: unknown) => { emitted.push([topic, payload]); }, TOPIC, win, doc,
-  ) as { render: () => void; notice: (p: string) => boolean; arm: () => void };
+    beginScanChrome, { now: () => 0 }, () => false, followScanProgress,
+    (m: string) => assert.fail(`the scan failed: ${m}`), () => assert.fail('a quiet rescan failed'),
+  ) as { render: () => void; notice: (p: string) => boolean; arm: () => void; scan: (p: string) => Promise<void> };
   const settle = async (): Promise<void> => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
   const fire = async (...names: string[]): Promise<void> => {
     for (const n of names) {
@@ -497,7 +528,7 @@ function pageHarness(opts: { platform?: string; fda?: FdaState | null; refused?:
     }
     await settle();
   };
-  return { ...fns, els, $, state, toasts, asked, emitted, fire, doc };
+  return { ...fns, els, $, state, toasts, asked, emitted, fire, doc, order };
 }
 
 test('the refused row\'s hint is the server\'s sentence for the state it probed, and the button is hidden exactly when granted', () => {
@@ -586,17 +617,90 @@ test('before a scan of / or the home folder without Full Disk Access, the row sa
     assert.equal(h.notice(p), false, `${why}: no notice`);
     assert.equal(h.$('accessRow').hidden, true, `${why}: the row is left alone`);
   }
-  // The scan runs alongside it: startScanRequest paints the notice and goes on to POST /api/scan.
-  const src = INDEX.slice(INDEX.indexOf('async function startScanRequest('), INDEX.indexOf('function quietRescanFailed('));
-  const order: string[] = [];
-  const run = new Function('beginScanChrome', 'state', 'performance', 'api', 'abandonIfStopped', 'followScanProgress', 'failScan', 'quietRescanFailed', 'preScanAccessNotice',
-    `'use strict'; ${src} return startScanRequest;`)(
-    () => order.push('chrome'), { scanGen: 1 }, { now: () => 0 },
-    async (url: string) => { order.push(url); return { scanId: 's9' }; }, () => false, () => order.push('follow'),
-    (m: string) => assert.fail(m), () => assert.fail('quiet'), (p: string) => { order.push(`notice ${p}`); return true; },
-  ) as (p: string) => Promise<void>;
-  await run('/');
-  assert.deepEqual(order, ['chrome', 'notice /', '/api/scan', 'follow'], 'the notice never stands between the click and the scan');
+  // The scan runs alongside it: startScanRequest asks for the notice's answer and goes on to POST /api/scan.
+  const s = pageHarness({ fda: 'not-granted' });
+  await s.scan('/');
+  await s.fire();
+  assert.deepEqual(s.order, ['chrome', '/api/platform/capabilities', '/api/scan', 'follow'], 'the notice never stands between the click and the scan');
+  assert.equal(s.$('accessRow').hidden, false, 'and it shows beside the running scan');
+  assert.match(s.els.accessText.textContent, NOTICE);
+});
+
+test('a scan asks the server whether Full Disk Access is on before deciding its notice, and the page keeps that answer for the scan\'s refusals', async () => {
+  // Review F2.1: the page read the answer once, at load. In web mode the fix
+  // the server prescribes is to restart the server, and nothing reloads the
+  // open tab: a / scan on a server that now had the grant still said macOS
+  // would keep folders out of the total, offered Open Privacy settings, and
+  // worded a chmod-000 refusal "Give … Full Disk Access" — the loop U-11
+  // exists to end. On a cold start the answer was not in yet, and a
+  // first-minute whole-disk scan had no notice at all.
+  const NOTICE = /macOS keeps TreeMap out of the folders it protects/;
+  const restarted = pageHarness({ fda: 'not-granted', current: () => ({ capabilities: { fullDiskAccess: fdaCap('granted') } }) });
+  await restarted.scan('/');
+  await restarted.fire();
+  const gets = restarted.asked.filter(([u]) => u === '/api/platform/capabilities');
+  assert.equal(gets.length, 1, 'the scan asked once');
+  assert.equal((gets[0][1] as { method?: string } | undefined)?.method ?? 'GET', 'GET', 'a GET: the server\'s own 30-second answer serves, and no probe is re-run');
+  assert.equal(restarted.$('accessRow').hidden, true, 'no notice: this server can read what macOS protects');
+  const caps = restarted.state.capabilities as { fullDiskAccess: { state: string }; volumeTopology: unknown };
+  assert.equal(caps.fullDiskAccess.state, 'granted', 'the page keeps the new answer');
+  assert.deepEqual(caps.volumeTopology, { available: true }, 'and every other capability as it was');
+  assert.equal(restarted.emitted.filter(([t]) => t === 'capabilities').length, 0, 'TOPIC.capabilities is not emitted');
+  // The scan ends refused only folders closed by their own permissions.
+  Object.assign(restarted.state, { scanning: false, scanId: 's2', scanStats: { refused: { dirs: 1, examples: ['/Users/x/locked'] } } });
+  restarted.render();
+  assert.equal(restarted.els.accessHint.textContent, ADVICE.granted, 'its refusals are worded by the state it ran under, not "Give … Full Disk Access"');
+  assert.equal(restarted.els.accessOpenBtn.hidden, true, 'and nothing is offered to switch on');
+
+  const cold = pageHarness({ fda: null, current: () => ({ capabilities: { fullDiskAccess: fdaCap('not-granted') } }) });
+  await cold.scan('/');
+  await cold.fire();
+  assert.equal(cold.$('accessRow').hidden, false, 'a cold start: the server\'s answer brings the notice');
+  assert.match(cold.els.accessText.textContent, NOTICE);
+  assert.equal(cold.els.accessHint.textContent, ADVICE['not-granted']);
+
+  // Beside the scan, not in front of it: the scan request goes out while the
+  // answer is on its way, and nothing is painted from the old answer meanwhile.
+  // (A scan whose answer is held back is never awaited before the answer is
+  // released: a scan that waited for it would hang here instead of failing.)
+  let answer: (v: unknown) => void = () => {};
+  const slow = pageHarness({ fda: 'not-granted', current: () => new Promise((r) => { answer = r; }) });
+  const slowRun = slow.scan('/');
+  await slow.fire();
+  assert.deepEqual(slow.order, ['chrome', '/api/platform/capabilities', '/api/scan', 'follow'], 'the scan went out without waiting');
+  assert.equal(slow.$('accessRow').hidden, true, 'no notice from the start-up answer while the server is asked');
+  answer({ capabilities: { fullDiskAccess: fdaCap('not-granted') } });
+  await slow.fire();
+  await slowRun;
+  assert.equal(slow.$('accessRow').hidden, false, 'the notice comes with the answer');
+
+  // An answer that comes after its scan is over, or after another scan began, paints nothing.
+  let late: (v: unknown) => void = () => {};
+  const ended = pageHarness({ fda: 'not-granted', current: () => new Promise((r) => { late = r; }) });
+  const endedRun = ended.scan('/');
+  await ended.fire();
+  ended.state.scanning = false; // the scan finished, or was stopped, first
+  late({ capabilities: { fullDiskAccess: fdaCap('not-granted') } });
+  await ended.fire();
+  await endedRun;
+  assert.equal(ended.$('accessRow').hidden, true, 'no notice for a scan that is over');
+  const answers: Array<(v: unknown) => void> = [];
+  const next = pageHarness({ fda: 'not-granted', current: () => new Promise((r) => { answers.push(r); }) });
+  const firstRun = next.scan('/');
+  await next.fire();
+  const secondRun = next.scan('/Users/x/Projects'); // a second scan began before the first one's answer
+  await next.fire();
+  answers[0]({ capabilities: { fullDiskAccess: fdaCap('not-granted') } });
+  await next.fire();
+  assert.equal(next.$('accessRow').hidden, true, 'the first scan\'s answer does not paint over the second scan');
+  for (const release of answers) release({ capabilities: { fullDiskAccess: fdaCap('not-granted') } });
+  await Promise.all([firstRun, secondRun]);
+
+  // No answer: the page's own is what there is.
+  const offline = pageHarness({ fda: 'not-granted', current: () => { throw new Error('Couldn’t reach TreeMap'); } });
+  await offline.scan('/');
+  await offline.fire();
+  assert.equal(offline.$('accessRow').hidden, false, 'without an answer, the page\'s own decides');
 });
 
 test('while the scan runs the notice stays; once it settles the row is the scan\'s own', () => {
@@ -738,9 +842,9 @@ test('the recheck says "on now" only when the page knew access was off; with no 
   await off.fire('focus');
   assert.match(off.els.accessHint.textContent, ON_NOW);
   // And a new scan forgets it: its own refusals are worded by its own state.
-  off.state.scanning = true;
-  off.notice('/Users/x/Projects');
-  off.state.scanning = false;
+  await off.scan('/Users/x/Projects');
+  await off.fire();
+  Object.assign(off.state, { scanning: false, scanId: 's2', scanStats: { refused: { dirs: 2, examples: [] } } });
   off.render();
   assert.equal(off.els.accessHint.textContent, ADVICE.granted, 'the next scan\'s refusals are worded by the state it ran under');
 });
