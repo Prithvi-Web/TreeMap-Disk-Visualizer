@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { NativeStore, ScanStartOptions, WalkResult } from '../native/index';
+import type { NativeBudget, NativeStore, ScanStartOptions, WalkResult } from '../native/index';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-nativeCompletion-data-');
@@ -465,8 +465,20 @@ test('real module: the edge fixture\'s columns and a synthetic walk\'s, numbered
     await unlockAndRemove(root, locked);
   }
   const synthetic = path.join((core as unknown as { syntheticTempFolder(): string }).syntheticTempFolder(), `completion-${process.pid}`);
-  const cols = await realColumns(core, synthetic, { neverDescend: [], wantAtime: false, maxWorkers: 4, synthetic: { entries: 20_000, seed: 9, fanOut: 12, depth: 5 } });
-  assert.ok(columnParentsDecrease(cols), 'four workers interleaved the synthetic walk\'s listings');
+  // A walk runs at most as many workers as the governor allows, and the budget the module starts with,
+  // Balanced, allows one for every two cores: ONE on a three-core machine such as the macOS CI runner,
+  // whose columns then never interleave (CI run 38318285188 failed here). Turbo allows one a core, so
+  // the walk asks for four and gets at least two on every machine of two cores or more. The budget the
+  // module starts with (tm-node's STARTING_BUDGET: Balanced, in auto mode) is put back after.
+  const governor = core as unknown as { governorConfigure(budget: NativeBudget, auto: boolean): void };
+  governor.governorConfigure({ preset: 'turbo' }, false);
+  let cols: WalkResult;
+  try {
+    cols = await realColumns(core, synthetic, { neverDescend: [], wantAtime: false, maxWorkers: 4, synthetic: { entries: 20_000, seed: 9, fanOut: 12, depth: 5 } });
+  } finally {
+    governor.governorConfigure({ preset: 'balanced' }, true);
+  }
+  assert.ok(columnParentsDecrease(cols), `the walk's workers (${cols.stats.workersPeak} at most at once) interleaved the synthetic walk's listings`);
   assertIngestFast(synthetic, () => cols, 'a synthetic walk of 20,000 entries');
 });
 
