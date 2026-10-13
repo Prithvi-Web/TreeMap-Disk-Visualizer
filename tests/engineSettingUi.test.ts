@@ -320,11 +320,14 @@ test('the engine row’s hover title is the reason the engine ran, with the fall
 
 type RowEl = { hidden: boolean; textContent: string; title: string; innerHTML: string; dataset: Record<string, unknown>; classList: { add(): void; remove(): void; toggle(): void }; setAttribute(): void; closest(): null; querySelectorAll(): never[] };
 
-/** renderDiskNotes, run out of the page against these stats; the elements it wrote, by id. */
-function runEngineRow(scanStats: Record<string, unknown>): Record<string, RowEl> {
+/**
+ * renderDiskNotes, run out of the page against these stats; the elements it
+ * wrote, by id. Pass the elements an earlier run returned to write to them
+ * again, as the page's own elements are written by one scan after another.
+ */
+function runEngineRow(scanStats: Record<string, unknown>, els: Record<string, RowEl> = {}): Record<string, RowEl> {
   const src = slice('function renderDiskNotes()', 'async function renderCloudSafe');
   const formatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
-  const els: Record<string, RowEl> = {};
   const $ = (id: string) => (els[id] ??= { hidden: false, textContent: '', title: '', innerHTML: '', dataset: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, closest: () => null, querySelectorAll: () => [] });
   const engineBudgetNote = lift<(s: unknown) => string>(['budgetPresetLabel', 'engineBudgetNote'], 'engineBudgetNote');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -460,12 +463,19 @@ test('C10: the disclosure is there only when something failed — never for a ru
     'gdu ran after the native engine failed': { engine: 'gdu-turbo', fallbackReason: 'the native module is not loaded', engineReason: 'gdu ran: the native module is not loaded' },
     'an older stats shape': { engine: 'walker' },
   };
+  // The page's elements are the same from one scan to the next, so each row
+  // is written over what a failed scan just left in them: the disclosure
+  // shown, its sentence inside (C10 review F3.3 — fresh elements started
+  // empty, and a row that never cleared the sentence passed).
+  const fallbackReason = 'the native module is not loaded: no native module at /x/treemap_core.node for darwin-arm64';
+  const failedScan = { engine: 'walker', durationMs: 2000, scanned: 9, ioThreads: 4, fallbackReason, engineReason: `the built-in walker ran: ${fallbackReason}` };
   for (const [name, over] of Object.entries(rows)) {
-    // Each element starts shown, as a failed scan before this one would have left it.
-    const row = runEngineRow({ durationMs: 2000, scanned: 1234, ioThreads: 4, ...over });
-    assert.ok(row.engineWhy && row.engineWhyText, `${name}: the row sets its disclosure`);
+    const els = runEngineRow(failedScan);
+    assert.equal(els.engineWhy.hidden, false, `control, before ${name}: the failed scan shows its disclosure`);
+    assert.equal(els.engineWhyText.textContent, fallbackReason, `control, before ${name}: holding its sentence`);
+    const row = runEngineRow({ durationMs: 2000, scanned: 1234, ioThreads: 4, ...over }, els);
     assert.equal(row.engineWhy.hidden, true, `${name}: no disclosure`);
-    assert.equal(row.engineWhyText.textContent, '', `${name}: and no sentence left in it from an earlier scan`);
+    assert.equal(row.engineWhyText.textContent, '', `${name}: and no sentence left in it from the scan before`);
   }
 });
 
