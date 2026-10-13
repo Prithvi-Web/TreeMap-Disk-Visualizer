@@ -76,6 +76,33 @@ test('a snapshot restore and a relocation declare their 400 and 403 (F1.23)', ()
   assert.match(said('post', '/api/security/relocate', '403'), /OUTSIDE_SCAN_ROOT/);
 });
 
+test('a snapshot restore\'s 409 names every 409 the restore can answer: each code its own module throws, and OPEN_HANDLE_CONFLICT, which the Trash step answers when another program holds the file being replaced open (the review of LEFT2, F3.3)', () => {
+  const recovery = source('src/services/snapshotRecovery.ts');
+  // The premise: the file a restore replaces goes to the Trash step with no ignoreOpenHandles, and the
+  // Trash step refuses a file another program holds open with 409 OPEN_HANDLE_CONFLICT
+  // (snapshotReplaceRules drives it).
+  assert.match(recovery, /await moveToTrash\(\[destination\]\);/, 'the restore asks the Trash step to check for open files');
+  assert.match(source('src/services/cleaner.ts'), /new AppError\(409, 'OPEN_HANDLE_CONFLICT'/, 'the Trash step answers a file held open with 409 OPEN_HANDLE_CONFLICT');
+  const declared403 = said('post', '/api/system/snapshots/restore', '403');
+  const declared409 = said('post', '/api/system/snapshots/restore', '409');
+  const names = (text: string, code: string): boolean => new RegExp(`\\b${code}\\b`).test(text);
+  // Every code the restore's module throws: its 403s (OUTSIDE_SCAN_ROOT, for the file it would
+  // replace) by their status there, and every other one a 409. Read from the code, not the document:
+  // the 403's own text names DESTINATION_IS_FOLDER as what answers a folder instead.
+  const thrown = [...new Set([...recovery.matchAll(/'([A-Z][A-Z_]*[A-Z])'/g)].map((m) => m[1]))];
+  const its403s = [...recovery.matchAll(/AppError\(403, '([A-Z_]+)'/g)].map((m) => m[1]);
+  const its409s = [...thrown.filter((code) => !its403s.includes(code)), 'OPEN_HANDLE_CONFLICT'];
+  assert.deepEqual({
+    'what snapshotReplaceRules drives, missing from the census': ['DESTINATION_IS_FOLDER', 'DESTINATION_NOT_CLEARED', 'OPEN_HANDLE_CONFLICT'].filter((code) => !its409s.includes(code)),
+    'a 403 the restore answers that its 403 does not name': its403s.filter((code) => !names(declared403, code)),
+    'a 409 the restore answers that its 409 does not name': its409s.filter((code) => !names(declared409, code)),
+  }, {
+    'what snapshotReplaceRules drives, missing from the census': [],
+    'a 403 the restore answers that its 403 does not name': [],
+    'a 409 the restore answers that its 409 does not name': [],
+  });
+});
+
 test('every route that refuses a safety record — by its middleware, or through the Trash step or the refusal it reaches — and every other place the document names SAFETY_RECORD, lists the cases the refusal itself names: the agent policy or the audit log, a folder that holds them, or a folder or link TreeMap reaches them through — a folder holding such a link among them; but a snapshot restore, which meets only one of them, names that one and what answers the rest (the review of LEFT2, F2.1)', () => {
   // The refusal's own sentence (safetyRecordRefusal), read from the code.
   assert.ok(source('src/middleware/pathGuard.ts').includes('agent policy or its audit log, a folder that holds them, or a folder or link TreeMap reaches them through'), 'the refusal names these cases');
