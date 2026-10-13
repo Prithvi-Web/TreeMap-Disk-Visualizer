@@ -1102,7 +1102,9 @@ type ToastBtn = { label: string; attrs: Record<string, string>; listeners: Array
   addEventListener(t: string, f: (e: ToastKey) => void): void; click(): void; focus(): void };
 /** A control on the page, as the page's modalFocusables reads one (toastRuntime's `stop`). */
 type PageStop = { id: string; isConnected: boolean; disabled: boolean; tabIndex: number; visibility: string;
-  getAttribute(k: string): string | null; getClientRects(): unknown[]; focus(): void };
+  /** The options its last focus() was called with. */
+  focusOpts: unknown;
+  getAttribute(k: string): string | null; getClientRects(): unknown[]; focus(opts?: unknown): void };
 type ToastEl = { cls: Set<string>; html: string; innerHTML: string; button: ToastBtn | null; removed: boolean; className: string;
   classList: { add(c: string): void; contains(c: string): boolean }; querySelector(sel: string): ToastBtn | null; contains(x: unknown): boolean; remove(): void };
 
@@ -1127,9 +1129,9 @@ function toastRuntime() {
    * refuses focus to a control hidden that way, or gone from the page.
    */
   const stop = (id: string, visibility = 'visible'): PageStop => {
-    const s: PageStop = { id, isConnected: true, disabled: false, tabIndex: 0, visibility,
+    const s: PageStop = { id, isConnected: true, disabled: false, tabIndex: 0, visibility, focusOpts: undefined,
       getAttribute: () => null, getClientRects: () => [{}],
-      focus() { if (s.visibility === 'visible' && s.isConnected && !s.disabled) doc.activeElement = s; } };
+      focus(opts) { s.focusOpts = opts; if (s.visibility === 'visible' && s.isConnected && !s.disabled) doc.activeElement = s; } };
     return s;
   };
   const shown: ToastEl[] = [];
@@ -1335,6 +1337,54 @@ test('the page\'s last stop is one a keyboard can land on: Escape and Shift+Tab 
   expired.focus();
   rt.key(expired, 'Escape');
   assert.equal(rt.doc.activeElement, bar[2], 'with the bar up, Escape hands focus to its Clear, the last stop');
+});
+
+test('an offer chosen from the keyboard hands focus on as it goes — back to the control it answers, else into the sheet on top, else to the page\'s last stop — never to <body> (review F2.3)', () => {
+  // Enter or Space on a focused button is its click. An offer made without
+  // { focus: true } — "Deleted the saved view … Undo", an error's "Scan
+  // again", "These results expire … Scan again" — has no control to go back
+  // to, so its choice left focus on its button, which went 320 ms later:
+  // focus fell to <body>, as it did on Escape before review F1.1.
+  const rt = toastRuntime();
+  const { stop } = rt;
+  const search = stop('gsearch'), box = stop('pathInput'), map = stop('treemapCanvas');
+  rt.page.stops.push(search, box, map);
+  map.focus();
+  let ran = 0;
+  rt.toastAction('Deleted the saved view “Big videos”', 'Undo', () => { ran++; }, 'success', 12000);
+  const quiet = rt.shown[0];
+  quiet.button!.focus(); // Tab from the map
+  quiet.button!.click(); // Enter
+  assert.equal(ran, 1, 'control: the choice is made');
+  rt.fire();
+  assert.ok(quiet.removed, 'control: the offer has gone');
+  assert.equal(rt.doc.activeElement, map, 'focus is on the page\'s last stop, the one a keyboard reached the offer from — not <body>');
+  // The last stop can be off screen — the Grid draws tiles, each a stop, 200 px
+  // below its window — and a toast going is no reason to scroll the page.
+  assert.deepEqual(map.focusOpts, { preventScroll: true }, 'handed there without scrolling the page');
+
+  // A control still in the page that can no longer take focus is no place to
+  // go back to: its focus() leaves focus on the offer.
+  box.focus();
+  rt.toastAction('No folder is named “/x ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
+  const answered = rt.shown[1];
+  box.visibility = 'hidden';
+  answered.button!.click();
+  rt.fire();
+  assert.equal(rt.doc.activeElement, map, 'with the control it answers unable to take focus, focus goes to the page\'s last stop');
+
+  // Over a sheet the page behind is inert, and its last stop no place for
+  // focus: it goes into the sheet, where the sheet opens (modalFocusInto) —
+  // its first field or its Cancel, never its Save.
+  const cancel = stop('settingsCancelBtn');
+  const sheet = { id: 'settingsModal', target: cancel };
+  rt.page.sheet = sheet;
+  rt.toastAction('These results expire in a minute', 'Scan again', () => {}, 'success', 12000);
+  const over = rt.shown[2];
+  over.button!.focus(); // a press on it
+  over.button!.click();
+  assert.deepEqual(rt.page.into, [sheet], 'focus is handed into the sheet on top');
+  assert.equal(rt.doc.activeElement, cancel, 'onto the control the sheet opens on');
 });
 
 test('an offer\'s button acts once: a double-click, or a click while the toast fades out, does not run its choice again (final review F1.12)', () => {
