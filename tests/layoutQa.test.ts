@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { selectAll } from './fixtures/fakeSelector';
+import { selectAll, type SelectorNode } from './fixtures/fakeSelector';
 
 /**
  * Layout found wrong by driving the real page (browser QA of 6 Oct 2026,
@@ -845,4 +845,82 @@ test('in Reclaim colour, the shapes a Voronoi layout adds after its first slice 
   s.drawView(); s.frame(); s.frame();
   assert.deepEqual(s.asked, [], 'in Size colour nothing is asked');
   assert.equal(s.legends(), 0, 'and the legend is not redrawn');
+});
+
+/* ══════════════ D04 — a toolbar label never wraps away from its control ══════════════ */
+
+const VOID_TAGS = new Set(['input', 'br', 'img', 'hr', 'meta', 'link', 'source', 'col', 'wbr', 'area', 'base', 'embed', 'param', 'track']);
+
+/** The page's <body> as a tree the fake selector walks — scripts and comments left out. */
+function markupTree(): SelectorNode {
+  const html = INDEX.slice(INDEX.indexOf('<body')).replace(/<script[\s\S]*?<\/script>/g, '').replace(/<!--[\s\S]*?-->/g, '');
+  const root: SelectorNode = { tagName: 'root', id: '', cls: new Set(), attrs: {}, parent: null, children: [] };
+  let cur = root;
+  for (const m of html.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/g)) {
+    const tag = m[2].toLowerCase();
+    if (m[1]) {
+      let n: SelectorNode | null = cur;
+      while (n && n !== root && n.tagName !== tag) n = n.parent;
+      if (n && n !== root) cur = n.parent!;
+      continue;
+    }
+    const attrs: Record<string, string> = {};
+    for (const a of m[3].matchAll(/([\w:-]+)(?:="([^"]*)")?/g)) attrs[a[1]] = a[2] ?? '';
+    const el: SelectorNode = { tagName: tag, id: attrs.id || '', cls: new Set((attrs.class || '').split(/\s+/).filter(Boolean)), attrs, parent: cur, children: [] };
+    cur.children.push(el);
+    if (!VOID_TAGS.has(tag)) cur = el;
+  }
+  return root;
+}
+
+/** Selectors the fake DOM reads: compounds joined by spaces, nothing more. */
+const readableSelector = (sel: string) => /^[\w\s.#[\]="-]+$/.test(sel);
+
+/** The declarations the sheet gives `el`, from every rule whose selector the fake DOM can match it with, in source order. */
+function sheetFor(root: SelectorNode, el: SelectorNode): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of RULES) {
+    if (!r.selectors.some((sel) => readableSelector(sel) && selectAll(root, sel).includes(el))) continue;
+    for (const d of r.body.split(';')) {
+      const i = d.indexOf(':');
+      if (i !== -1) out.set(d.slice(0, i).trim(), d.slice(i + 1).trim());
+    }
+  }
+  return out;
+}
+
+test('a label in a toolbar that wraps travels with its control — "Sort", "After" and the rest never end a row while their menu starts the next (D04)', () => {
+  // QA at 1024 px: the Grid three levels deep left "Sort" at the end of the
+  // first row (965, 28) and its menu at the start of the second (268, 60);
+  // History › Compare ended row one with "After" (649, 70) and began row
+  // two with its list (268, 102). A wrapping flex row breaks between its
+  // ITEMS, and each label was an item of its own beside its control's.
+  const root = markupTree();
+  const wrapping = new Set<SelectorNode>();
+  for (const r of RULES) {
+    if (!/flex-wrap:\s*wrap/.test(r.body)) continue;
+    for (const sel of r.selectors) if (readableSelector(sel)) for (const el of selectAll(root, sel)) wrapping.add(el);
+  }
+  const byId = new Map(selectAll(root, '[id]').map((el) => [el.id, el] as [string, SelectorNode]));
+  const inside = (a: SelectorNode, b: SelectorNode) => { for (let p: SelectorNode | null = b; p; p = p.parent) if (p === a) return true; return false; };
+  const checked: string[] = [];
+  for (const label of selectAll(root, 'label[for]')) {
+    const id = label.attrs.for;
+    const control = byId.get(id);
+    assert.ok(control, `#${id}, the control a label names, is in the page`);
+    let item = label, row = label.parent;
+    while (row && !wrapping.has(row)) { item = row; row = row.parent; }
+    if (!row) continue; // not in a row that wraps
+    const where = `#${id} in .${[...row.cls].join('.') || row.id}`;
+    assert.notEqual(item, label, `${where}: the label is a flex item of its own, so the row can wrap between it and its control`);
+    assert.ok(inside(item, control!), `${where}: the label's item does not hold its control`);
+    // A row of its own that does not wrap (one that did would be the row
+    // found above, and the label an item of it).
+    assert.match(sheetFor(root, item).get('display') || '', /^(inline-)?flex$/, `${where}: the pair lays its label and control out in a row`);
+    assert.equal(sheetFor(root, label).get('white-space'), 'nowrap', `${where}: the label keeps its words on one line beside the control`);
+    checked.push(id);
+  }
+  for (const id of ['gridSort', 'cmpA', 'cmpB', 'trendRoot', 'dupMinSize', 'ndThreshold', 'tmDepth']) {
+    assert.ok(checked.includes(id), `#${id}'s label was found in its wrapping toolbar and checked (checked: ${checked.join(', ')})`);
+  }
 });

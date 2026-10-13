@@ -643,6 +643,16 @@ select { cursor: var(--cur-hand); appearance: none; -webkit-appearance: none; pa
   background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
   background-size: 5px 5px; background-repeat: no-repeat; }
 select option { background: var(--glass-strong); color: var(--text-1); }
+/* A label and the control it names, as ONE item of a toolbar that wraps (QA
+   D04). A wrapping flex row breaks between its items, and a loose label was
+   an item of its own: at 1024 px "Sort" ended the Grid toolbar's first row
+   while its menu began the second, and Compare's "After" did the same. The
+   pair goes to a row together and never wraps apart; in a strip narrower
+   than its longest option the control gives up width, not the label.
+   tests/layoutQa.test.ts holds every label in a wrapping row to this. */
+.label-pair { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.label-pair label { flex: none; white-space: nowrap; }
+.label-pair select { min-width: 0; }
 .ic { display: inline-block; vertical-align: -3px; flex: none; }
 .chip {
   display: inline-flex; align-items: center; justify-content: center;
@@ -4100,15 +4110,17 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <span data-icon="search"></span>
         <input type="text" id="gridSearch" placeholder="Filter files…  ( / )" aria-label="Filter files by name" autocomplete="off">
       </div>
-      <label for="gridSort">Sort</label>
-      <select id="gridSort" aria-label="Sort grid by">
-        <option value="size">Size</option>
-        <option value="name">Name</option>
-        <option value="date">Date modified</option>
-        <option value="accessed">Last accessed</option>
-        <option value="reclaim">Reclaim score</option>
-        <option value="type">Type</option>
-      </select>
+      <span class="label-pair">
+        <label for="gridSort">Sort</label>
+        <select id="gridSort" aria-label="Sort grid by">
+          <option value="size">Size</option>
+          <option value="name">Name</option>
+          <option value="date">Date modified</option>
+          <option value="accessed">Last accessed</option>
+          <option value="reclaim">Reclaim score</option>
+          <option value="type">Type</option>
+        </select>
+      </span>
     </div>
     <div class="glass" id="gridScroll"><div id="gridInner"></div></div>
   </section>
@@ -4184,13 +4196,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="dup-toolbar">
         <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
         <div class="spacer"></div>
-        <label for="dupMinSize">Ignore files under</label>
-        <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
-          <option value="1000">1 KB</option>
-          <option value="100000" selected>100 KB</option>
-          <option value="1000000">1 MB</option>
-          <option value="10000000">10 MB</option>
-        </select>
+        <span class="label-pair">
+          <label for="dupMinSize">Ignore files under</label>
+          <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
+            <option value="1000">1 KB</option>
+            <option value="100000" selected>100 KB</option>
+            <option value="1000000">1 MB</option>
+            <option value="10000000">10 MB</option>
+          </select>
+        </span>
         <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
         <button class="btn" id="dupOffloadBtn" disabled title="Copy the selected duplicates to another drive, verify, then trash them locally"><span data-icon="archive"></span>Offload…</button>
         <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
@@ -4208,12 +4222,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="dup-toolbar">
         <span class="dup-summary" id="ndSummary">Looking for similar images…</span>
         <div class="spacer"></div>
-        <label for="ndThreshold">Match</label>
-        <select id="ndThreshold" aria-label="How similar images must be to be grouped">
-          <option value="6">Very similar</option>
-          <option value="10" selected>Similar</option>
-          <option value="14">Loosely similar</option>
-        </select>
+        <span class="label-pair">
+          <label for="ndThreshold">Match</label>
+          <select id="ndThreshold" aria-label="How similar images must be to be grouped">
+            <option value="6">Very similar</option>
+            <option value="10" selected>Similar</option>
+            <option value="14">Loosely similar</option>
+          </select>
+        </span>
         <button class="btn" id="ndAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
         <button class="btn btn-danger" id="ndTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
       </div>
@@ -4224,8 +4240,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <!-- ═══════════ Trends ═══════════ -->
   <section class="view" id="view-trends" role="tabpanel" aria-label="Trends" hidden>
     <div class="trends-toolbar">
-      <label for="trendRoot">Folder</label>
-      <select id="trendRoot" aria-label="Folder to show history for"></select>
+      <span class="label-pair">
+        <label for="trendRoot">Folder</label>
+        <select id="trendRoot" aria-label="Folder to show history for"></select>
+      </span>
       <span class="muted" id="trendInfo"></span>
     </div>
     <div class="trends-grid">
@@ -4304,11 +4322,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   </div>
     <div id="histPanelCompare" class="pane-fade" hidden>
     <div class="trends-toolbar">
-      <label for="cmpA">Before</label>
-      <select id="cmpA" aria-label="Older scan or snapshot"></select>
+      <span class="label-pair">
+        <label for="cmpA">Before</label>
+        <select id="cmpA" aria-label="Older scan or snapshot"></select>
+      </span>
       <span class="muted">→</span>
-      <label for="cmpB">After</label>
-      <select id="cmpB" aria-label="Newer scan or snapshot"></select>
+      <span class="label-pair">
+        <label for="cmpB">After</label>
+        <select id="cmpB" aria-label="Newer scan or snapshot"></select>
+      </span>
       <button class="btn btn-primary" id="cmpRunBtn"><span data-icon="diff"></span>Compare</button>
       <span class="muted" id="cmpInfo"></span>
     </div>

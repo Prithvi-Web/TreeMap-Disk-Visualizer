@@ -189,6 +189,16 @@ select { cursor: var(--cur-hand); appearance: none; -webkit-appearance: none; pa
   background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
   background-size: 5px 5px; background-repeat: no-repeat; }
 select option { background: var(--glass-strong); color: var(--text-1); }
+/* A label and the control it names, as ONE item of a toolbar that wraps (QA
+   D04). A wrapping flex row breaks between its items, and a loose label was
+   an item of its own: at 1024 px "Sort" ended the Grid toolbar's first row
+   while its menu began the second, and Compare's "After" did the same. The
+   pair goes to a row together and never wraps apart; in a strip narrower
+   than its longest option the control gives up width, not the label.
+   tests/layoutQa.test.ts holds every label in a wrapping row to this. */
+.label-pair { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.label-pair label { flex: none; white-space: nowrap; }
+.label-pair select { min-width: 0; }
 .ic { display: inline-block; vertical-align: -3px; flex: none; }
 .chip {
   display: inline-flex; align-items: center; justify-content: center;

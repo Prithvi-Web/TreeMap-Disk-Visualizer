@@ -8,15 +8,17 @@
         <span data-icon="search"></span>
         <input type="text" id="gridSearch" placeholder="Filter files…  ( / )" aria-label="Filter files by name" autocomplete="off">
       </div>
-      <label for="gridSort">Sort</label>
-      <select id="gridSort" aria-label="Sort grid by">
-        <option value="size">Size</option>
-        <option value="name">Name</option>
-        <option value="date">Date modified</option>
-        <option value="accessed">Last accessed</option>
-        <option value="reclaim">Reclaim score</option>
-        <option value="type">Type</option>
-      </select>
+      <span class="label-pair">
+        <label for="gridSort">Sort</label>
+        <select id="gridSort" aria-label="Sort grid by">
+          <option value="size">Size</option>
+          <option value="name">Name</option>
+          <option value="date">Date modified</option>
+          <option value="accessed">Last accessed</option>
+          <option value="reclaim">Reclaim score</option>
+          <option value="type">Type</option>
+        </select>
+      </span>
     </div>
     <div class="glass" id="gridScroll"><div id="gridInner"></div></div>
   </section>

@@ -8,13 +8,15 @@
       <div class="dup-toolbar">
         <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
         <div class="spacer"></div>
-        <label for="dupMinSize">Ignore files under</label>
-        <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
-          <option value="1000">1 KB</option>
-          <option value="100000" selected>100 KB</option>
-          <option value="1000000">1 MB</option>
-          <option value="10000000">10 MB</option>
-        </select>
+        <span class="label-pair">
+          <label for="dupMinSize">Ignore files under</label>
+          <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
+            <option value="1000">1 KB</option>
+            <option value="100000" selected>100 KB</option>
+            <option value="1000000">1 MB</option>
+            <option value="10000000">10 MB</option>
+          </select>
+        </span>
         <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
         <button class="btn" id="dupOffloadBtn" disabled title="Copy the selected duplicates to another drive, verify, then trash them locally"><span data-icon="archive"></span>Offload…</button>
         <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
@@ -32,12 +34,14 @@
       <div class="dup-toolbar">
         <span class="dup-summary" id="ndSummary">Looking for similar images…</span>
         <div class="spacer"></div>
-        <label for="ndThreshold">Match</label>
-        <select id="ndThreshold" aria-label="How similar images must be to be grouped">
-          <option value="6">Very similar</option>
-          <option value="10" selected>Similar</option>
-          <option value="14">Loosely similar</option>
-        </select>
+        <span class="label-pair">
+          <label for="ndThreshold">Match</label>
+          <select id="ndThreshold" aria-label="How similar images must be to be grouped">
+            <option value="6">Very similar</option>
+            <option value="10" selected>Similar</option>
+            <option value="14">Loosely similar</option>
+          </select>
+        </span>
         <button class="btn" id="ndAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
         <button class="btn btn-danger" id="ndTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
       </div>

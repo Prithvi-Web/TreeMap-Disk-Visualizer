@@ -33,11 +33,15 @@
   </div>
     <div id="histPanelCompare" class="pane-fade" hidden>
     <div class="trends-toolbar">
-      <label for="cmpA">Before</label>
-      <select id="cmpA" aria-label="Older scan or snapshot"></select>
+      <span class="label-pair">
+        <label for="cmpA">Before</label>
+        <select id="cmpA" aria-label="Older scan or snapshot"></select>
+      </span>
       <span class="muted">→</span>
-      <label for="cmpB">After</label>
-      <select id="cmpB" aria-label="Newer scan or snapshot"></select>
+      <span class="label-pair">
+        <label for="cmpB">After</label>
+        <select id="cmpB" aria-label="Newer scan or snapshot"></select>
+      </span>
       <button class="btn btn-primary" id="cmpRunBtn"><span data-icon="diff"></span>Compare</button>
       <span class="muted" id="cmpInfo"></span>
     </div>
