@@ -210,19 +210,24 @@ test('a scan of one file, its name typed in another case, sizes that file by the
   assert.equal(knownSizeOf(solo), SOLO_BYTES);
 });
 
-test('a name found by its fold counts only on the volume\'s own word that both names are one entry — one device AND one id, an id that is not 0, an answer at all — shown with a stand-in for that one question (the review of LEFT2, F1.4)', () => {
+test('a name found by its fold counts only on the volume\'s own word that both names are one entry — one device AND one id, an id that is not 0, an answer at all, an entry at both names — shown with a stand-in for that one question (the review of LEFT2, F1.4, F2.3)', () => {
   const file = path.join(APART, 'y1'); // made after the scan, beside Ｙ1, whose name folds the same
   const sibling = path.join(APART, 'Ｙ1');
   fs.writeFileSync(file, Buffer.alloc(13, 1));
-  /** What the stand-in answers when the identity of `file`, then of `sibling`, is asked (bigint, links not followed). */
-  type Identity = { dev: bigint; ino: bigint } | 'throws';
+  /**
+   * What the stand-in answers when the identity of `file`, then of `sibling`, is asked (bigint, links
+   * not followed). 'gone' is what the volume says of a name nothing is at any more — a scanned sibling
+   * removed since the scan: no entry, as `lstatSync` reports it when asked not to throw for that.
+   */
+  type Identity = { dev: bigint; ino: bigint } | 'throws' | 'gone';
   const answers: Record<string, [Identity, Identity]> = {
     'one device and one id': [{ dev: 1n, ino: 42n }, { dev: 1n, ino: 42n }],
     'one id on two devices': [{ dev: 1n, ino: 42n }, { dev: 2n, ino: 42n }],
     'an id of 0 for both': [{ dev: 1n, ino: 0n }, { dev: 1n, ino: 0n }],
     'no answer: the look fails': ['throws', 'throws'],
+    'the scanned sibling is gone since the scan': [{ dev: 1n, ino: 42n }, 'gone'],
   };
-  type Lstat = (p: fs.PathLike, options?: { bigint?: boolean }) => unknown;
+  type Lstat = (p: fs.PathLike, options?: { bigint?: boolean; throwIfNoEntry?: boolean }) => unknown;
   const host = fs as unknown as { lstatSync: Lstat };
   const real = host.lstatSync;
   const sizes: Record<string, number | null> = {};
@@ -232,6 +237,10 @@ test('a name found by its fold counts only on the volume\'s own word that both n
         const answer = p === file ? first : p === sibling ? second : null;
         if (answer === null || options?.bigint !== true) return real(p, options);
         if (answer === 'throws') throw Object.assign(new Error(`EIO: i/o error, lstat '${String(p)}'`), { code: 'EIO' });
+        if (answer === 'gone') {
+          if (options.throwIfNoEntry === false) return undefined;
+          throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${String(p)}'`), { code: 'ENOENT' });
+        }
         return answer;
       };
       sizes[what] = knownSizeOf(file);
@@ -245,5 +254,6 @@ test('a name found by its fold counts only on the volume\'s own word that both n
     'one id on two devices': null,
     'an id of 0 for both': null,
     'no answer: the look fails': null,
+    'the scanned sibling is gone since the scan': null, // nothing is there to be one entry with y1
   });
 });
