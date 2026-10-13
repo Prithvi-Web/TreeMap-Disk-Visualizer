@@ -60,7 +60,7 @@ function fakeDom() {
     if (!els.has(id)) {
       els.set(id, {
         id, hidden: false, disabled: false, textContent: '', innerHTML: '', dataset: {}, style: {},
-        classList: { add() {}, remove() {}, toggle() {} }, offsetWidth: 230, offsetHeight: 90, clientWidth: 900, clientHeight: 600,
+        classList: { add() {}, remove() {}, toggle() {} }, querySelectorAll: () => [], offsetWidth: 230, offsetHeight: 90, clientWidth: 900, clientHeight: 600,
       });
     }
     return els.get(id)!;
@@ -72,7 +72,7 @@ function fakeDom() {
  * names the scan and the folder it was asked for, so what Disk City built
  * from says which scan it came from.
  */
-function harness() {
+function harness(opts: { realCard?: boolean } = {}) {
   const asked: string[] = [];
   const built: Node[][] = [];
   const $ = fakeDom();
@@ -85,7 +85,10 @@ function harness() {
       nodes: [] as Node[], minSize: undefined as number | undefined, hover: null, kbSel: null,
       history: { active: false, scrubbing: false, snaps: [] as Array<{ id: string; takenAt: number }>, index: 0, seq: 0, tree: null, viewingAt: 0 },
     },
-    city: { hover: null, pan: { x: 0, y: 0 }, zoom: 1, blocks: [], counts: new Map(), countsFor: null },
+    city: {
+      hover: null, pan: { x: 0, y: 0 }, zoom: 1, blocks: [] as Block[], counts: new Map(), countsFor: null,
+      colour: 'reclaim', height: 'staleness',
+    },
   };
   const api = async (url: string) => {
     asked.push(url);
@@ -109,8 +112,12 @@ function harness() {
       nodes: [{ path: `${state.root!.path}/old`, name: `snapshot:${snap.takenAt}`, size: 1, type: 'file' }],
     }),
     // Disk City's own drawing is not under test: what it was handed to draw is.
-    buildCity: () => { built.push(state.treemap.nodes.slice()); }, cityEnter: noop, renderCityTable: noop, cityFetchFacts: noop,
-    cityShowCard: noop,
+    // A rebuild makes new blocks for the same paths, as the page's does.
+    buildCity: () => { built.push(state.treemap.nodes.slice()); state.city.blocks = state.city.blocks.map((b) => ({ ...b })); },
+    cityEnter: noop, renderCityTable: noop, cityFetchFacts: noop, drawCity: noop, cityMorphHeights: () => false,
+    // One base colour per mode, so a card says which mode it was painted in.
+    cityRgb: (_n: unknown, mode: string) => (mode === 'type' ? [191, 90, 242] : mode === 'age' ? [10, 200, 10] : [58, 64, 72]),
+    reclaim: { scores: new Map() }, localStorage: { setItem: noop, getItem: () => null },
     // finishScan's surroundings.
     endScanChrome: noop, indexTree: noop, updateSelectionBar: noop, DUP_PAGE: 100, icon: () => '',
     formatCount: (n: number) => String(n), formatBytes: (n: number) => `${n} B`, escapeHtml: (s: string) => s,
@@ -120,17 +127,33 @@ function harness() {
     loadDashboardLists: () => new Promise(() => {}),
     buildIndexInBackground: noop, formatClock: () => '10:31 PM',
   };
+  // The card's own code where a test reads the card; a no-op where none does.
+  const cardNames = ['cityShowCard', 'cityMoveCard', 'cityRefreshCard', 'cityCardKey', 'cityAgeDays', 'cityAgeWords', 'cityJitter', 'cityUp', 'tmParentPath',
+    'citySetColour', 'citySetHeight', 'cityMode', 'CITY_COLOUR_LABEL', 'CITY_HEIGHT_LABEL'];
+  if (!opts.realCard) deps.cityShowCard = noop;
   const page = load<{
     loadTreemap: (p: string) => Promise<void>;
     loadCity: (p: string | null) => Promise<void>;
     finishScan: (root: unknown, ms: number, stats: unknown) => Promise<void>;
     setHistoryIndex: (i: number) => Promise<void>;
-  }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex'], deps,
-    '{ loadTreemap, loadCity, finishScan, setHistoryIndex }', 'let tmLoadSeq = 0; let cityLoadSeq = 0;');
+    card?: {
+      show: (b: Block | null, px?: number, py?: number) => void;
+      up: () => void;
+      setColour: (m: string) => void;
+      setHeight: (m: string) => void;
+      jitter: (rgb: number[], path: string) => number[];
+    };
+  }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : [])], deps,
+    `{ loadTreemap, loadCity, finishScan, setHistoryIndex${opts.realCard
+      ? ', card: { show: cityShowCard, up: cityUp, setColour: citySetColour, setHeight: citySetHeight, jitter: cityJitter }'
+      : ''} }`,
+    'let tmLoadSeq = 0; let cityLoadSeq = 0;');
   /** The scan:folder every node Disk City was last handed names. */
   const lastBuilt = () => [...new Set((built[built.length - 1] ?? []).map((n) => n.name))];
-  return { ...page, state, asked, built, lastBuilt };
+  return { ...page, state, asked, built, lastBuilt, $ };
 }
+
+interface Block { n: Node & { modifiedAt?: number }; rgb: number[]; z: number }
 
 test('C03: Disk City entered straight after a scan of another folder draws that scan, never the last one the Treemap held', async () => {
   const h = harness();
@@ -207,4 +230,68 @@ test('C03: a past snapshot the time slider put in the Treemap is not drawn by Di
   h.asked.length = 0;
   await h.loadCity('/corpus');
   assert.deepEqual(h.lastBuilt(), ['s1:/corpus'], 'Disk City draws the scan, fetched again');
+});
+
+/* ══════════════ C13 — the hover card follows the city it describes ══════════════ */
+
+/** The card's colour dot, as the page writes it. */
+const dotOf = (html: string): string => {
+  const m = /class="cc-dot" style="background:(rgb\([^)]*\))"/.exec(html);
+  assert.ok(m, `the card has a colour dot: ${html.slice(0, 120)}`);
+  return m[1];
+};
+const rgbText = (rgb: number[]): string => `rgb(${rgb.map((v) => Math.round(v)).join(',')})`;
+
+/** A city holding one video file, with its card up as a pointer left it. */
+async function cityWithCard() {
+  const h = harness({ realCard: true });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  await h.loadCity('/corpus/Media/Clips');
+  const n = { path: '/corpus/Media/Clips/clip027.m4v', name: 'clip027.m4v', size: 5_000_000, type: 'file', modifiedAt: 0 };
+  const b: Block = { n, rgb: h.card!.jitter([58, 64, 72], n.path), z: 1 };
+  h.state.city.blocks = [b];
+  h.card!.show(b, 40, 50);
+  const card = h.$('cityCard') as { hidden: boolean; innerHTML: string };
+  assert.equal(card.hidden, false, 'control: the card is up');
+  return { h, card, n };
+}
+
+test('C13: Escape climbing out of a folder takes the hover card with it, at every level', async () => {
+  const { h, card } = await cityWithCard();
+  h.card!.up(); // the document's Escape handler, in Disk City
+  assert.equal(card.hidden, true, 'the card describing a building of the folder being left goes at once');
+  await Promise.resolve();
+  card.hidden = false; // a pointer crossed a building while the parent loaded
+  h.card!.up();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(card.hidden, true, 'and at the next level too');
+  assert.equal(h.state.treemap.rootPath, '/corpus', 'control: two levels were climbed');
+});
+
+test('C13: a card up while the layout is replaced is hidden when the new city lands', async () => {
+  const { h, card } = await cityWithCard();
+  const landing = h.loadCity('/corpus/Media');
+  card.hidden = false; // shown for the old layout while the new one was asked for
+  await landing;
+  assert.equal(card.hidden, true, 'the building it described is not in the city drawn now');
+});
+
+test('C13: the card\'s colour dot is the colour mode now chosen, not the one it was built in', async () => {
+  const { h, card, n } = await cityWithCard();
+  assert.equal(dotOf(card.innerHTML), rgbText(h.card!.jitter([58, 64, 72], n.path)), 'control: built in Reclaim, it wears the reclaim colour');
+  assert.match(card.innerHTML, /Reclaim score/, 'control: and the reclaim row');
+  h.card!.setColour('type');
+  assert.equal(card.hidden, false, 'the card stays up for the building still under the pointer');
+  assert.equal(dotOf(card.innerHTML), rgbText(h.card!.jitter([191, 90, 242], n.path)), 'its dot is the Type colour the building is now painted');
+  assert.doesNotMatch(card.innerHTML, /Reclaim score/, 'and it no longer reads a reclaim score that is not on the map');
+});
+
+test('C13: changing what height means rebuilds the card for the new city', async () => {
+  const { h, card } = await cityWithCard();
+  assert.doesNotMatch(card.innerHTML, /still counting/, 'control: by staleness, the card says nothing of a count');
+  h.card!.setHeight('files');
+  assert.equal(card.hidden, false);
+  assert.match(card.innerHTML, /Holds<\/span><b>still counting…/, 'by file count, it says the count is on its way');
 });

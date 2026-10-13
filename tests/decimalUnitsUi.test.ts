@@ -598,7 +598,7 @@ test('Disk City asks for the map with the Treemap\'s 4 KB floor, and records it 
     {
       state, $: dom().$,
       api: async (u: string) => { asked.push(u); return { root: { path: '/r', name: 'r', size: 9000 }, nodes: [{ path: '/r/f', size: 4000 }] }; },
-      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {},
+      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {}, cityShowCard() {},
     },
     'loadCity',
   );
@@ -625,7 +625,7 @@ function cityLoader(serve: (root: string, minSize: number) => Promise<{ root: { 
         asked.push(ask);
         return serve(...ask);
       },
-      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {},
+      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {}, cityShowCard() {},
     },
     'loadCity',
   );

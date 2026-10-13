@@ -1497,6 +1497,9 @@ async function loadCity(rootPath) {
   const scanAtRequest = state.scanId;
   const held = state.treemap.nodesFor;
   const fresh = !!held && held.scanId === scanAtRequest && held.path === want && state.treemap.nodes.length > 0;
+  // The hover card describes a building of the folder being left (C13): Esc
+  // climbing two levels left "clip027.m4v" standing over the parent's city.
+  cityShowCard(null);
 
   if (!fresh) {
     try {
@@ -1527,6 +1530,7 @@ async function loadCity(rootPath) {
     }
   }
   c.hover = null;
+  cityShowCard(null); // again: a pointer may have raised one over the old city while this loaded
   c.pan = { x: 0, y: 0 };
   c.zoom = 1;
   renderCrumbs($('cityCrumbs'), state.treemap.rootPath, (p) => loadCity(p));
@@ -1658,6 +1662,8 @@ function cityShowCard(b, px, py) {
     (b.n.type === 'dir' ? `<div class="cc-hint">Click to go inside · Esc to come back out</div>` : '');
   card.dataset.path = b.n.path;
   card.dataset.k = cityCardKey(b); // what this card was built from — a later fact invalidates it
+  card.dataset.px = String(px); // where the pointer was: cityRefreshCard rebuilds it there
+  card.dataset.py = String(py);
   card.hidden = false;
 
   // Kept inside the panel and away from the cursor, flipping side rather than
@@ -1668,6 +1674,21 @@ function cityShowCard(b, px, py) {
   const top = py + 18 + ch > wrap.clientHeight ? py - 18 - ch : py + 18;
   card.style.left = Math.max(8, Math.min(left, wrap.clientWidth - cw - 8)) + 'px';
   card.style.top = Math.max(8, Math.min(top, wrap.clientHeight - ch - 8)) + 'px';
+}
+
+/**
+ * The card on screen, rebuilt from what the city holds now — for a change
+ * the pointer did not make (C13). A colour or height switch by keyboard
+ * left the card painting the old mode's dot and rows until the pointer next
+ * moved: "clip027.m4v" in the reclaim colour over a map in Type. The block
+ * is found again by path, since a rebuild makes new ones; gone, the card goes.
+ */
+function cityRefreshCard() {
+  const card = $('cityCard');
+  if (!card || card.hidden) return;
+  const b = state.city.blocks.find((x) => x.n.path === card.dataset.path);
+  if (!b) { cityShowCard(null); return; }
+  cityShowCard(b, Number(card.dataset.px) || 0, Number(card.dataset.py) || 0);
 }
 
 /** "3 weeks ago", not "21 days" — the card is read at a glance. */
@@ -1757,6 +1778,8 @@ function cityCardKey(b) {
 function cityMoveCard(px, py) {
   const card = $('cityCard');
   if (!card || card.hidden) return;
+  card.dataset.px = String(px);
+  card.dataset.py = String(py);
   const wrap = $('cityWrap');
   const cw = card.offsetWidth || 230, ch = card.offsetHeight || 90;
   const left = px + 18 + cw > wrap.clientWidth ? px - 18 - cw : px + 18;
@@ -1831,6 +1854,7 @@ function citySetHeight(requested) {
   const before = new Map(state.city.blocks.map((b) => [b.n.path, b.z]));
   buildCity();
   if (!cityMorphHeights(before)) drawCity();
+  cityRefreshCard();
   renderCityTable();
   cityFetchFacts();
 }
@@ -1847,7 +1871,7 @@ function citySetColour(requested) {
   // the moment you switch to Type or Age — which is the thing the jitter was
   // written to prevent — until something happens to rebuild the layout.
   for (const b of state.city.blocks) b.rgb = cityJitter(cityRgb(b.n, mode), b.n.path);
-  drawCity(); cityFetchFacts();
+  drawCity(); cityRefreshCard(); cityFetchFacts();
 }
 
 $('cityHeightSeg').addEventListener('click', (e) => {
