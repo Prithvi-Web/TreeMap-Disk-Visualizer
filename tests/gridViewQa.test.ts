@@ -121,6 +121,8 @@ type Grid = {
   screen: { body: FakeEl };
   crumbsCb: { fn: ((p: string) => void) | null };
   timers: Map<number, () => void>;
+  /** What the page around the Grid holds: whether the cart dock is up (the selection bar's state is its own element's). */
+  page: { cart: boolean };
   renderGrid(): Promise<void>; onCellClick(e: Record<string, boolean>, i: number): void; gridUp(): void;
   gridItems(): Node[]; updateSelectionBar(): void;
   /** The Escape key's Grid branch, out of the page's keydown handler (gridHarness({ escape: true })). */
@@ -155,11 +157,14 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean } = {}): Grid {
   // content (#gridInner, and the scroller's own padding above and below it)
   // less its window — when it is set, and again when the content shrinks. A
   // plain number let a scroll be restored before the content had grown to
-  // hold it, which a browser clamps short (review F2.2).
-  const pad = px(declsOf('#gridScroll').get('padding'), 'the Grid scroller\'s padding');
+  // hold it, which a browser clamps short (review F2.2). The padding is the
+  // sheet's for the page as it stands: the foot grows while the selection
+  // bar is up (QA D02), and getComputedStyle answers the page with the same.
+  const page = { cart: false };
   const scroller = $('gridScroll'), inner = $('gridInner');
+  const pads = () => scrollerPads({ cart: page.cart, bar: els.selectionBar.cls.has('visible') });
   let scrollTop = 0, innerH = '';
-  const range = () => Math.max(0, (parseFloat(innerH) || 0) + 2 * pad - scroller.clientHeight);
+  const range = () => Math.max(0, (parseFloat(innerH) || 0) + pads().top + pads().bottom - scroller.clientHeight);
   Object.defineProperty(scroller, 'scrollTop', { configurable: true, get: () => scrollTop, set: (v: number) => { scrollTop = Math.max(0, Math.min(v, range())); } });
   Object.defineProperty(inner.style, 'height', {
     enumerable: true, get: () => innerH, set: (v: string) => { innerH = v; scrollTop = Math.min(scrollTop, range()); },
@@ -191,6 +196,10 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean } = {}): Grid {
   const pending: Promise<unknown>[] = [];
   const deps: Record<string, unknown> = {
     $, state, document, window: { addEventListener: () => {} },
+    getComputedStyle: (el: FakeEl) => {
+      assert.equal(el, scroller, 'the Grid asks the computed style of its scroller only');
+      return { paddingTop: `${pads().top}px`, paddingBottom: `${pads().bottom}px` };
+    },
     // A frame runs at once with { raf: true }, so a scroll of #gridScroll draws its tiles.
     requestAnimationFrame: opts.raf ? (cb: () => void) => { cb(); return 0; } : () => 0,
     setTimeout: (fn: () => void) => { const id = ++tid; timers.set(id, fn); return id; },
@@ -222,7 +231,7 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean } = {}): Grid {
     renderGrid: () => { const p = api.renderGrid(); pending.push(p); return p; },
   };
   return {
-    state: state as unknown as Grid['state'], els, screen, crumbsCb, timers, ...wrapped,
+    state: state as unknown as Grid['state'], els, screen, crumbsCb, timers, page, ...wrapped,
     settle: async () => {
       while (pending.length) await pending.shift();
       // Navigation calls the lifted renderGrid itself, unawaited: let its awaits run out.
@@ -793,9 +802,21 @@ function padSide(v: string | undefined, side: number, what: string): number {
   return pick === '0' ? 0 : px(pick, what);
 }
 
-/** What one Grid element computes to: its own rule, then the cart's override while the cart holds anything. */
-function gridDecls(selector: string, cart: boolean): Map<string, string> {
-  return new Map([...declsOf(selector), ...(cart ? declsOf(`body:has(#cartDock.show) ${selector}`) : [])]);
+/** What one Grid element computes to: its own rule, then those for the cart and the selection bar being up, by specificity. */
+function gridDecls(selector: string, page: { cart: boolean; bar?: boolean }): Map<string, string> {
+  return new Map([...declsOf(selector),
+    ...(page.cart ? declsOf(`body:has(#cartDock.show) ${selector}`) : []),
+    ...(page.bar ? declsOf(`body:has(#selectionBar.visible) ${selector}`) : []),
+    ...(page.bar && page.cart ? declsOf(`body:has(#selectionBar.visible):has(#cartDock.show) ${selector}`) : [])]);
+}
+
+/** The Grid scroller's top and bottom padding, in px, as the sheet computes them for that page. */
+function scrollerPads(page: { cart: boolean; bar: boolean }): { top: number; bottom: number } {
+  const sc = gridDecls('#gridScroll', page);
+  return {
+    top: padSide(sc.get('padding'), 0, 'the scroller\'s top padding'),
+    bottom: sc.has('padding-bottom') ? px(sc.get('padding-bottom'), 'the scroller\'s bottom padding') : padSide(sc.get('padding'), 2, 'the scroller\'s bottom padding'),
+  };
 }
 
 /**
@@ -807,18 +828,21 @@ function gridDecls(selector: string, cart: boolean): Map<string, string> {
  * tiles plus its padding instead of scrolling them: what QA measured, a
  * scroller 1,123,657 px tall with nothing to scroll (D01).
  */
-function sheetScrollerH(W: number, H: number, cart: boolean, innerH: number): number {
-  const view = gridDecls('#view-grid.active', cart);
-  const scroller = gridDecls('#gridScroll', cart);
-  const toolbar = px(declsOf('.btn').get('min-height'), 'a toolbar control\'s height') +
-    px(declsOf('.grid-toolbar').get('margin-bottom'), 'the Grid toolbar\'s bottom margin');
-  const pad = padSide(scroller.get('padding'), 0, 'the scroller\'s top padding') +
-    (scroller.has('padding-bottom') ? px(scroller.get('padding-bottom'), 'the scroller\'s bottom padding') : padSide(scroller.get('padding'), 2, 'the scroller\'s bottom padding'));
-  const content = toolbar + innerH + pad;
+function sheetScrollerH(W: number, H: number, page: { cart: boolean; bar: boolean }, innerH: number): number {
+  const view = gridDecls('#view-grid.active', page);
+  const scroller = gridDecls('#gridScroll', page);
+  const pads = scrollerPads(page);
+  const content = gridToolbarH() + innerH + pads.top + pads.bottom;
   let viewH = view.has('height') ? sheetLen(view.get('height')!, W, H) : Math.max(view.has('min-height') ? sheetLen(view.get('min-height')!, W, H) : 0, content);
   if (view.has('max-height')) viewH = Math.min(viewH, sheetLen(view.get('max-height')!, W, H));
   const floor = scroller.has('min-height') ? sheetLen(scroller.get('min-height')!, W, H) : 0;
-  return Math.max(floor, viewH - toolbar);
+  return Math.max(floor, viewH - gridToolbarH());
+}
+
+/** The Grid toolbar on one row: the page's 30 px controls and the toolbar's bottom margin. */
+function gridToolbarH(): number {
+  return px(declsOf('.btn').get('min-height'), 'a toolbar control\'s height') +
+    px(declsOf('.grid-toolbar').get('margin-bottom'), 'the Grid toolbar\'s bottom margin');
 }
 
 /**
@@ -828,11 +852,13 @@ function sheetScrollerH(W: number, H: number, cart: boolean, innerH: number): nu
  */
 function sizeFromSheet(g: Grid, W: number, H: number, cart: boolean): void {
   const sc = g.els.gridScroll;
+  g.page.cart = cart;
   sc.clientWidth = W - 244 - 48; // the expanded sidebar and its margin, then <main>'s side padding
   Object.defineProperty(sc, 'clientHeight', {
-    configurable: true, get: () => sheetScrollerH(W, H, cart, parseFloat(g.els.gridInner.style.height) || 0),
+    configurable: true,
+    get: () => sheetScrollerH(W, H, { cart, bar: g.els.selectionBar.cls.has('visible') }, parseFloat(g.els.gridInner.style.height) || 0),
   });
-  if (!/^(auto|scroll)$/.test(gridDecls('#gridScroll', cart).get('overflow-y') || '')) {
+  if (!/^(auto|scroll)$/.test(gridDecls('#gridScroll', { cart }).get('overflow-y') || '')) {
     Object.defineProperty(sc, 'scrollTop', { configurable: true, get: () => 0, set: () => {} });
   }
 }
@@ -897,4 +923,96 @@ test('the Grid scrolls inside itself, bounded by the window: a 25,600-file folde
       assert.equal(fromTop(), was, `${label}: the clicked tile is where it was on screen`);
     }
   }
+});
+
+/* ══════════════ C04 remainder (b) — a clicked tile is never left under the bars its click raised ══════════════ */
+
+/**
+ * Where a tile is in the window, top and bottom, in a W×H window: <main>'s top
+ * padding and the toolbar row are above the scroller, then its own padding.
+ */
+function tileInWindow(g: Grid, i: number): { top: number; bottom: number } {
+  const c = g.state.grid.layout[i];
+  const main = padSide(declsOf('main').get('padding'), 0, "<main>'s top padding");
+  const top = main + gridToolbarH() + scrollerPads({ cart: g.page.cart, bar: g.els.selectionBar.cls.has('visible') }).top + c.y - g.els.gridScroll.scrollTop;
+  return { top, bottom: top + c.side };
+}
+
+/** The cart pill's top edge in an H px window while the selection bar is up: the dock's lifted bottom plus the pill's height. */
+function pillTopWhileBarUp(H: number): number {
+  const tab = declsOf('#cartTab');
+  const pillH = 2 * padSide(tab.get('padding'), 0, "the pill's padding") + 2 + Math.max(17, px(tab.get('font-size'), "the pill's font") * 1.35);
+  return H - px(declsOf('body:has(#selectionBar.visible) #cartDock').get('bottom'), "the dock's lifted bottom") - pillH;
+}
+
+/** Eight of the largest tiles, then three a third their size: two full rows and a short last one. */
+function picturesPlant(g: Grid): void {
+  const big = 1e9, kids: Node[] = [];
+  for (let i = 0; i < 8; i++) kids.push(file('/r', `photos_${String(i).padStart(6, '0')}.raw`, big));
+  for (let i = 8; i < 11; i++) kids.push(file('/r', `photos_${String(i).padStart(6, '0')}.tiff`, big * 0.365));
+  g.state.root!.children = kids;
+  for (const k of kids) g.state.pathIndex.set(k.path, k);
+}
+
+test('a tile clicked at the foot of the Grid is brought clear of the selection bar and the cart pill its click raised — the pane opening on it, or not (C04 remainder b)', async () => {
+  // QA: at 1440×900 with something staged, Grid › Pictures, a plain click on
+  // a last-row photo opens the pane; the same click raises the selection bar
+  // and the pill steps up above it. The re-flow kept the tile where it was —
+  // which was now under the pill.
+  const W = 1440, H = 900;
+  const g = gridHarness();
+  picturesPlant(g);
+  sizeFromSheet(g, W, H, true);
+  await g.renderGrid();
+  const last = g.state.grid.layout.length - 1;
+  const pill = pillTopWhileBarUp(H);
+  g.onCellClick({ metaKey: true }, 0); // a selection is already up: the bar stands, the pill above it
+  assert.equal(g.els.gridScroll.scrollTop, 0, 'a ⌘-click that raises the bar over the foot scrolls nothing for a tile clear of it');
+  assert.ok(tileInWindow(g, last).bottom > pill, `control: the last tile reaches y ${tileInWindow(g, last).bottom}, below the pill's top (${pill.toFixed(0)}) — beside the bar and the pill, where a click finds it`);
+  g.onCellClick({}, last); // a plain click on a file: it is selected and the pane opens…
+  g.els.gridScroll.clientWidth -= 330; // …narrowing the page…
+  await g.renderGrid(); // …and the Grid re-flows into it
+  let at = tileInWindow(g, last);
+  assert.ok(at.bottom <= pill, `the clicked tile ends at y ${at.bottom}; the pill starts at ${pill.toFixed(1)}`);
+
+  // The pane already open and nothing selected: the click raises the bar
+  // with no re-flow, and the tile under it is brought clear all the same.
+  const p = gridHarness();
+  picturesPlant(p);
+  sizeFromSheet(p, W, H, true);
+  p.els.gridScroll.clientWidth -= 330;
+  await p.renderGrid();
+  const pLast = p.state.grid.layout.length - 1;
+  p.els.gridScroll.scrollTop = 10_000; // scrolled to the end: the last tile is on screen, at the foot
+  const gridFoot = padSide(declsOf('main').get('padding'), 0, "<main>'s top padding") + gridToolbarH() + p.els.gridScroll.clientHeight;
+  assert.ok(tileInWindow(p, pLast).bottom <= gridFoot, 'control: the last tile is wholly on screen to be clicked');
+  assert.ok(tileInWindow(p, pLast).bottom > pill, 'control: and it reaches below where the pill will stand');
+  p.onCellClick({}, pLast);
+  at = tileInWindow(p, pLast);
+  assert.ok(at.bottom <= pill, `with the pane already open the clicked tile ends at y ${at.bottom}; the pill starts at ${pill.toFixed(1)}`);
+
+  // Mid-way down a long folder, where the Grid could scroll much further: a
+  // ⌘-click that raises the bar moves the tile just clear, no further.
+  const t = gridHarness();
+  evenPlant(t, 400);
+  sizeFromSheet(t, W, H, true);
+  await t.renderGrid();
+  t.els.gridScroll.scrollTop = 20 * 268; // row 20 at the top: rows 22 and 23 are near the foot
+  const k = 22 * 4;
+  assert.ok(tileInWindow(t, k).bottom > pill && tileInWindow(t, k).top < pill, `control: tile ${k} straddles where the pill will stand (y ${tileInWindow(t, k).top}–${tileInWindow(t, k).bottom})`);
+  t.onCellClick({ metaKey: true }, k);
+  at = tileInWindow(t, k);
+  assert.ok(at.bottom <= pill, `the ⌘-clicked tile ends at y ${at.bottom}; the pill starts at ${pill.toFixed(1)}`);
+  assert.ok(at.bottom >= pill - 20, `and the Grid moved no further than that (the tile ends at y ${at.bottom})`);
+
+  // A click made while the bar was already up scrolls nothing: the tile was
+  // where the pointer found it, beside the bars.
+  const q = gridHarness();
+  picturesPlant(q);
+  sizeFromSheet(q, W, H, true);
+  await q.renderGrid();
+  q.onCellClick({ metaKey: true }, 0);
+  assert.equal(q.els.gridScroll.scrollTop, 0, 'control: nothing is scrolled');
+  q.onCellClick({ metaKey: true }, q.state.grid.layout.length - 1);
+  assert.equal(q.els.gridScroll.scrollTop, 0, 'a ⌘-click with the bar already up scrolls nothing under the pointer');
 });

@@ -91,6 +91,23 @@ function gridScrollKeep(keep) {
   if (!c || c.it.path !== keep.path) return;
   gridScroll.scrollTop = Math.max(0, c.y - keep.offset);
 }
+/* A tile just clicked is never left under the bars the click raised (QA C04
+   remainder). The plain click that opens the preview pane raises the
+   selection bar too, and the cart pill steps up above it, over the foot of
+   the Grid — and the re-flow kept the tile where it was, under the pill. The
+   room the scroller keeps at its foot while the bar is up (040-grid.css, QA
+   D02) is where those bars stand, so it is read back from the scroller: a
+   tile reaching into it, or its GAP short of it, is scrolled up just clear,
+   never further. (The scroller's 420 px floor leaves room above any tile.) */
+function gridScrollClear(i) {
+  const c = state.grid.layout[i];
+  if (!c) return;
+  const cs = getComputedStyle(gridScroll);
+  const padTop = parseFloat(cs.paddingTop) || 0, padBottom = parseFloat(cs.paddingBottom) || 0;
+  const tileTop = padTop + c.y - gridScroll.scrollTop; // in the scroller's window
+  const over = tileTop + c.side + GAP - (gridScroll.clientHeight - padBottom);
+  if (over > 0) gridScroll.scrollTop += over;
+}
 
 let gridSeq = 0;
 async function renderGrid() {
@@ -128,6 +145,7 @@ async function renderGrid() {
   layoutGrid(items);
   gridInner.style.height = state.grid.totalH + 'px';
   gridScrollKeep(keep);
+  if (keep && keep.i === state.grid.anchor) gridScrollClear(keep.i);
   state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
   renderCrumbs($('gridCrumbs'), state.grid.path, (p) => gridNavigate(p));
@@ -199,6 +217,7 @@ gridScroll.addEventListener('scroll', () => {
 function onCellClick(e, i) {
   const { it } = state.grid.layout[i];
   const sel = state.grid.selection;
+  const barWasUp = sel.size > 0;
   // Second line of defence for the same trap. layoutGrid() clears the anchor on
   // every rebuild, but this handler is the point of USE and it must not depend
   // on that promise being kept: a future rebuild path that writes the layout
@@ -226,6 +245,7 @@ function onCellClick(e, i) {
     if (it.type === 'file') openPreview(it);
   }
   updateSelectionBar();
+  if (!barWasUp && sel.has(it.path)) gridScrollClear(i);
   renderGridWindow(true);
 }
 
