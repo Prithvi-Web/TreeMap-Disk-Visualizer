@@ -20,7 +20,10 @@ fs.symlinkSync(VOL, HOP, 'junction');
 process.env.TREEMAP_DATA_DIR = path.join(HOP, 'treemap-data');
 process.env.TREEMAP_NO_GDU = '1';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createApp } from '../src/server';
+import { buildMcpServer } from '../src/mcp/server';
 import { startScan } from '../src/services/diskScanner';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
@@ -50,6 +53,8 @@ const SNAPSHOTS: VolumeSnapshotRef[] = [{ id: 'com.apple.TimeMachine.2026-09-01-
 
 let port = 0;
 let server: http.Server;
+let client: Client;
+let scanId = '';
 const trashed: string[] = [];
 type Provider = Record<'listSnapshots' | 'recoverFromSnapshots' | 'restoreFolderRefusal' | 'getOpenHandlesBatch' | 'probeOpenHandleGuard', unknown>;
 const provider = platform() as unknown as Provider;
@@ -72,11 +77,16 @@ before(async () => {
   server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   port = (server.address() as { port: number }).port;
+  const mcp = buildMcpServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  client = new Client({ name: 'treemap-snapshot-replace-rules-test', version: '0.0.0' });
+  await Promise.all([mcp.connect(serverTransport), client.connect(clientTransport)]);
   await updateSettings({ engine: 'walker' });
   fs.writeFileSync(path.join(SCANNED, 'present.txt'), 'there now');
   const scan = await startScan(SCANNED);
   await waitFor(() => scan.status !== 'running', `the scan of ${SCANNED}`);
   assert.equal(scan.status, 'complete', scan.error);
+  scanId = scan.scanId;
 });
 
 after(async () => {
@@ -85,17 +95,23 @@ after(async () => {
   provider.recoverFromSnapshots = saved.recover;
   provider.restoreFolderRefusal = saved.folder;
   fs.rmSync(POLICY_PATH, { force: true });
+  await client.close();
   await new Promise<void>((r) => server.close(() => r()));
 });
 
 /** POST /api/system/snapshots/restore replacing `destination`: its status and code. */
 function restoreOver(destination: string): Promise<string> {
+  return send('POST', '/api/system/snapshots/restore', { path: path.join(ELSEWHERE, 'gone.txt'), destination, overwrite: true });
+}
+
+/** A request with a JSON body: its status and code, or its status alone when it has none. */
+function send(method: string, url: string, body: unknown): Promise<string> {
   resetRateLimiter();
   resetIdempotencyCache();
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({ path: path.join(ELSEWHERE, 'gone.txt'), destination, overwrite: true });
+    const payload = JSON.stringify(body);
     const r = http.request(
-      { host: '127.0.0.1', port, path: '/api/system/snapshots/restore', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+      { host: '127.0.0.1', port, path: url, method, headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
       (res) => {
         let buf = '';
         res.setEncoding('utf8');
@@ -112,20 +128,28 @@ function restoreOver(destination: string): Promise<string> {
   });
 }
 
-/** The newest line of the audit log, as GET /api/audit reads it back. */
-function newestAudit(): Promise<{ action: string; outcome: string; code?: string; paths: string[] }> {
+type AuditLine = { action: string; outcome: string; code?: string; paths: string[] };
+
+/** The newest `limit` lines of the audit log, newest first, as GET /api/audit reads them back. */
+function auditLines(limit: number): Promise<AuditLine[]> {
   resetRateLimiter();
   return new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port, path: '/api/audit?limit=1' }, (res) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/audit?limit=${limit}` }, (res) => {
       let buf = '';
       res.setEncoding('utf8');
       res.on('data', (c: string) => { buf += c; });
       res.on('end', () => {
-        const [line] = (JSON.parse(buf) as { entries: { action: string; outcome: string; code?: string; paths: string[] }[] }).entries;
-        resolve({ action: line.action, outcome: line.outcome, code: line.code, paths: line.paths });
+        const lines = (JSON.parse(buf) as { entries: AuditLine[] }).entries;
+        resolve(lines.map((line) => ({ action: line.action, outcome: line.outcome, code: line.code, paths: line.paths })));
       });
     }).on('error', reject);
   });
+}
+
+/** The newest line of the audit log, as GET /api/audit reads it back. */
+async function newestAudit(): Promise<AuditLine> {
+  const [line] = await auditLines(1);
+  return line;
 }
 
 /** A file at `p` with `text`, made now. */
@@ -285,6 +309,48 @@ test('what the capability manifest, AGENTS.md and SECURITY.md say of the audit i
     'the manifest: a restore records its refusal of the file it would replace, SAFETY_RECORD among them': true,
     'AGENTS.md: SAFETY_RECORD falls on both sides of the line': true,
     'AGENTS.md: a restore records its refusal of the file it would replace, SAFETY_RECORD among them': true,
+  });
+});
+
+test('SAFETY_RECORD where a delete, the cart, an offload, a relocation or an MCP tool refuses it leaves no line in the audit, and a restore\'s refusal of the same link is the one line the audit gains — what the manifest and AGENTS.md say in the test above, as behaviour (the review of LEFT2, F3.2)', async () => {
+  trashed.length = 0;
+  const dest = path.join(SCANNED, 'offload-dest');
+  fs.mkdirSync(dest, { recursive: true });
+  /** An MCP tool's refusal: the code its error names. */
+  const mcpRefusal = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    const text = ((await client.callTool({ name, arguments: args })) as { content?: { text: string }[] }).content?.[0]?.text ?? '';
+    return /^Error \(([A-Z_]+)\)/.exec(text)?.[1] ?? `no refusal: ${text.slice(0, 80)}`;
+  };
+  const before = await auditLines(1000);
+  const answers = {
+    'DELETE /api/files (dry run)': await send('DELETE', '/api/files', { paths: [HOP], dryRun: true }),
+    'POST /api/cart/commit (dry run)': await send('POST', '/api/cart/commit', { paths: [HOP], dryRun: true }),
+    'POST /api/offload (dry run)': await send('POST', '/api/offload', { scanId, paths: [HOP], dest, dryRun: true }),
+    'POST /api/security/relocate': await send('POST', '/api/security/relocate', { path: HOP, to: path.join(SCANNED, 'moved-hop'), confirm: true }),
+    'MCP trash_paths (dry run)': await mcpRefusal('trash_paths', { paths: [HOP], dryRun: true }),
+    'MCP offload (dry run)': await mcpRefusal('offload', { scanId, paths: [HOP], dest, dryRun: true }),
+    'POST /api/system/snapshots/restore, overwrite': await restoreOver(HOP),
+  };
+  const after = await auditLines(1000);
+  assert.ok(after.length < 1000, 'the whole log was read back');
+  assert.deepEqual({
+    answers,
+    'what the audit gained, newest first': after.slice(0, after.length - before.length),
+    'moved to the Trash': trashed,
+    'the link is where it was': fs.lstatSync(HOP).isSymbolicLink(),
+  }, {
+    answers: {
+      'DELETE /api/files (dry run)': '403 SAFETY_RECORD',
+      'POST /api/cart/commit (dry run)': '403 SAFETY_RECORD',
+      'POST /api/offload (dry run)': '403 SAFETY_RECORD',
+      'POST /api/security/relocate': '403 SAFETY_RECORD',
+      'MCP trash_paths (dry run)': 'SAFETY_RECORD',
+      'MCP offload (dry run)': 'SAFETY_RECORD',
+      'POST /api/system/snapshots/restore, overwrite': '403 SAFETY_RECORD',
+    },
+    'what the audit gained, newest first': [{ action: 'snapshots.restore', outcome: 'refused', code: 'SAFETY_RECORD', paths: [HOP] }],
+    'moved to the Trash': [],
+    'the link is where it was': true,
   });
 });
 
