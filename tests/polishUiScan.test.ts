@@ -914,6 +914,28 @@ test('the scan speaks: start, progress every ten seconds, finish and failure', (
   assert.match(follow, /\$\('progressTrack'\)\.setAttribute\('aria-valuetext'/, 'and the bar states its count');
 });
 
+test('a progress frame counts one item as "1 item", on the line, in the live region and on the bar (C14)', () => {
+  // The first frame of a scan read "Scanning… 1 items".
+  const follow = slice('function followScanProgress(', 'async function startCloudScan(');
+  const branch = follow.slice(follow.indexOf("if (msg.type === 'progress') {"), follow.indexOf("} else if (msg.type === 'complete')")) + '}';
+  const frame = (scanned: number, secs: number) => {
+    const els: Record<string, { innerHTML: string; textContent: string; attrs: Record<string, string>; setAttribute(k: string, v: string): void }> = {};
+    const $ = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } });
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function('msg', 'status', 'fastTag', 't0', 'performance', '$', 'formatCount', `let lastAnnounced = -10;\n${branch}`)(
+      { type: 'progress', scanned, currentPath: '/x' }, $('scanStatus'), '', 0, { now: () => secs * 1000 }, $, (n: number) => n.toLocaleString('en-US'));
+    return { line: els.scanStatus.innerHTML, said: els.scanAnnounce.textContent, bar: els.progressTrack.attrs['aria-valuetext'] };
+  };
+  const one = frame(1, 0.1);
+  assert.match(one.line, /Scanning… <b>1<\/b> item ·/, `the line: ${one.line}`);
+  assert.equal(one.said, '1 item scanned so far', 'the live region');
+  assert.equal(one.bar, '1 item scanned', 'the bar');
+  const many = frame(2400, 0.1);
+  assert.match(many.line, /Scanning… <b>2,400<\/b> items ·/, 'many stay plural');
+  assert.equal(many.said, '2,400 items scanned so far');
+  assert.equal(frame(0, 0.1).bar, '0 items scanned', 'and none is "0 items"');
+});
+
 /* ══════════════ desktop-polish-8 — drag feedback and a queue of dropped folders ══════════════ */
 
 test('dragging a folder over the window lights a drop hint, and leaving it puts the hint out', () => {

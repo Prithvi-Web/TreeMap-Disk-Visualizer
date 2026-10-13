@@ -568,19 +568,20 @@ function followScanProgress(scanId, path, fast, t0) {
     if (msg.type === 'progress') {
       const secs = (performance.now() - t0) / 1000;
       const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
+      const items = msg.scanned === 1 ? 'item' : 'items'; // the first frame is often "1 item" (C14)
       // The "searching" orb in the well beside this line is the activity
       // indicator now — the status carries only the numbers.
       status.innerHTML =
-        `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+        `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> ${items}` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
       $('scanMeta').textContent = msg.currentPath;
       // A live region fed every frame would never stop talking; one sentence
       // every ten seconds says the scan is alive and how far it has got.
       if (secs - lastAnnounced >= 10) {
         lastAnnounced = secs;
-        $('scanAnnounce').textContent = `${formatCount(msg.scanned)} items scanned so far`;
+        $('scanAnnounce').textContent = `${formatCount(msg.scanned)} ${items} scanned so far`;
       }
-      $('progressTrack').setAttribute('aria-valuetext', `${formatCount(msg.scanned)} items scanned`);
+      $('progressTrack').setAttribute('aria-valuetext', `${formatCount(msg.scanned)} ${items} scanned`);
     } else if (msg.type === 'complete') {
       stop(); // and abandon a poll in flight: the frame is what it was waiting for
       let root = msg.root;

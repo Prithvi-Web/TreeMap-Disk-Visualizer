@@ -242,7 +242,10 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
     // Every image it tried failed to decode — all HEIC on a Mac, whose bundled
     // decoder reads HEIF only as .avif. Unknown, like a locality it could not confirm.
     // Past the cap, "the images here" would count only the ones it tried.
-    const types = job.unreadableTypes.slice(0, 3).map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ');
+    // Three types by name, the rest counted as others: never a type left unsaid (C14).
+    const others = job.unreadableTypes.slice(3).reduce((sum, t) => sum + t.count, 0);
+    const types = job.unreadableTypes.slice(0, 3).map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ') +
+      (others > 0 ? `, and ${formatCount(others)} other${others === 1 ? '' : 's'}` : '');
     const tried = `the ${formatCount(job.unreadable)} image${job.unreadable === 1 ? '' : 's'}`;
     const what = pastCap > 0 ? `${tried} TreeMap tried` : `${tried} here`;
     const cap = pastCap === 0 ? ''

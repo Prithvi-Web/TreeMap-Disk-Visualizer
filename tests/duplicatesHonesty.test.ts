@@ -252,6 +252,22 @@ test('near-duplicates: images the pass could not vouch for are named, and an emp
   assert.ok(!renderNear({ ...none, clusters: [{}], clusterCount: 1 }).body.includes('not compared'), 'and no note is invented');
 });
 
+test('near-duplicates: the unreadable note names three types and counts the rest as others, never leaving types out unsaid (C14)', () => {
+  // "(1,037 .heic, 1,009 .jpeg, 634 .png)" stood for six types: the three
+  // others were dropped without a word, and the counts no longer added up.
+  const six = [
+    { extension: 'heic', count: 1037 }, { extension: 'jpeg', count: 1009 }, { extension: 'png', count: 634 },
+    { extension: 'gif', count: 200 }, { extension: 'webp', count: 100 }, { extension: 'tiff', count: 12 },
+  ];
+  const many = renderNear({ ...none, compared: 40, unreadable: 2992, unreadableTypes: six });
+  assert.match(many.body, /2992 images could not be read, so they were not compared \(1037 \.heic, 1009 \.jpeg, 634 \.png, and 312 others\)/,
+    `the three named, and the other 312 counted: ${many.body}`);
+  const oneMore = renderNear({ ...none, compared: 40, unreadable: 2681, unreadableTypes: [...six.slice(0, 3), { extension: 'tif', count: 1 }] });
+  assert.match(oneMore.body, /\(1037 \.heic, 1009 \.jpeg, 634 \.png, and 1 other\)/, `one other is one: ${oneMore.body}`);
+  const three = renderNear({ ...none, compared: 40, unreadable: 2680, unreadableTypes: six.slice(0, 3) });
+  assert.match(three.body, /\(1037 \.heic, 1009 \.jpeg, 634 \.png\)\./, `every type named, nothing more said: ${three.body}`);
+});
+
 test('near-duplicates: images that could not be read are counted, and the library is not called tidy over them (B20)', () => {
   const heic = { ...none, compared: 40, unreadable: 5300, unreadableTypes: [{ extension: 'heic', count: 5300 }] };
   const empty = renderNear(heic);

@@ -211,8 +211,12 @@ function renderNearDupes() {
   // images the decoder could not read (B20) — every .heic on a Mac — and so
   // are the smaller images past the pass's cap (truncated).
   const unread = Number(n.unreadable) || 0;
-  const unreadTypes = (n.unreadableTypes || []).slice(0, 3)
-    .map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ');
+  // Three types by name, most first; the rest counted, never left unsaid
+  // (C14: "(1,037 .heic, 1,009 .jpeg, 634 .png)" stood for six types).
+  const types = n.unreadableTypes || [];
+  const others = types.slice(3).reduce((sum, t) => sum + (Number(t.count) || 0), 0);
+  const unreadTypes = types.slice(0, 3).map((t) => `${formatCount(t.count)} .${t.extension}`).join(', ') +
+    (others ? `, and ${formatCount(others)} other${others === 1 ? '' : 's'}` : '');
   const leftOut = (n.truncated
     ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '') +
     (n.reason ? `<div class="nd-note">${icon('alert', 14)} ${escapeHtml(n.reason)}</div>` : '') +

@@ -568,6 +568,33 @@ test('B20: when no image could be read, near-duplicates are unknown — never an
   }
 });
 
+test('C14: with more unreadable types than the reason names, the rest are counted as others', needsSharp, async () => {
+  // Three types named of five: the reason said "(3 .png, 2 .webp, 1 .gif)"
+  // for six unreadable pictures of eight, the .heic and .tiff unsaid.
+  const dir = fileTempDir('tm-near-unreadable-types-');
+  const scan = createScanRecord(dir);
+  const store = new PackedScanStore(dir, path.sep, { name: path.basename(dir), isDir: true, size: 0, modifiedAt: 0, isHidden: false });
+  for (const name of ['a.heic', 'b-1.png', 'b-2.png', 'b-3.png', 'c-1.webp', 'c-2.webp', 'd.gif', 'e.tiff']) {
+    fs.writeFileSync(path.join(dir, name), 'not a decodable picture\n'.repeat(400));
+    store.addNode(store.rootId, {
+      name, isDir: false, size: fs.statSync(path.join(dir, name)).size, modifiedAt: 1, isHidden: false, extension: path.extname(name).slice(1),
+    });
+  }
+  store.finalize();
+  store.sumSizes();
+  scan.store = store;
+  scan.status = 'complete';
+  noModule();
+  try {
+    const job = await finished(getNearDupeJob(scan, 4));
+    assert.equal(job.unreadableTypes?.length, 5, 'control: five types could not be read');
+    assert.equal(job.reason,
+      'No image was compared: the 8 images here could not be read (3 .png, 2 .webp, 1 .gif, and 2 others). Near-duplicates are unknown here, not none.');
+  } finally {
+    realNative();
+  }
+});
+
 test('B20: past the 8,000-image cap with none readable, the answer counts what it tried, names the cap, and says truncated (a big HEIC library)', needsSharp, async () => {
   // 8,003 pictures that exist only in the scan: with no module to ask, the
   // flags call them local, and every decode fails. The pass tries the 8,000
