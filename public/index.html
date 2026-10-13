@@ -33273,6 +33273,9 @@ function wireSnapshotActions(scope) {
 
 /* ───────────────────────────── Compare view ───────────────────────────── */
 async function loadCompareOptions() {
+  // The pair a comparison on screen answers is kept through a reload, so new
+  // scans do not move the lists off it while the result stays below (C08).
+  const shown = state.compare.result;
   try {
     const [scansRes, snapsRes] = await Promise.all([api('/api/scans'), api('/api/snapshots?all=true')]);
     const options = [];
@@ -33286,6 +33289,7 @@ async function loadCompareOptions() {
     if (!options.length) {
       $('cmpA').innerHTML = $('cmpB').innerHTML = '<option>No scans yet</option>';
       $('cmpA').disabled = $('cmpB').disabled = true;
+      cmpSyncResult();
       return;
     }
     $('cmpA').disabled = $('cmpB').disabled = false;
@@ -33295,7 +33299,9 @@ async function loadCompareOptions() {
       if (!byRoot.has(o.rootPath)) byRoot.set(o.rootPath, []);
       byRoot.get(o.rootPath).push(o);
     }
-    const label = (o) => `${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${formatWhen(o.when)} · ${formatBytes(o.size)}`;
+    // Led by the folder's name (C08): a closed list shows one option, and
+    // corpus, Mail, Projects and a single file were told apart only by size.
+    const label = (o) => `${lastPathSegment(o.rootPath)} · ${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${formatWhen(o.when)} · ${formatBytes(o.size)}`;
     const html = [...byRoot.entries()].map(([root, list]) =>
       `<optgroup label="${escapeHtml(root)}">` +
       list.sort((x, y) => y.when - x.when).map(o =>
@@ -33313,13 +33319,38 @@ async function loadCompareOptions() {
     const scans = list.filter((o) => o.kind === 'scan');
     const snaps = list.filter((o) => o.kind === 'snap');
     const pool = scans.length >= 2 ? scans : snaps.length >= 2 ? snaps : list;
-    $('cmpB').value = `${pool[0].kind}:${pool[0].id}`;
-    if (pool.length > 1) $('cmpA').value = `${pool[1].kind}:${pool[1].id}`;
-    $('cmpInfo').textContent = pool.length < 2 ? 'Only one record of this folder so far — scan it again to have something to compare.' : '';
+    if (shown && parseCmp(shown.a) && parseCmp(shown.b)) {
+      $('cmpA').value = shown.a;
+      $('cmpB').value = shown.b;
+      $('cmpInfo').textContent = '';
+    } else {
+      $('cmpB').value = `${pool[0].kind}:${pool[0].id}`;
+      if (pool.length > 1) $('cmpA').value = `${pool[1].kind}:${pool[1].id}`;
+      $('cmpInfo').textContent = pool.length < 2 ? 'Only one record of this folder so far — scan it again to have something to compare.' : '';
+    }
+    cmpSyncResult();
   } catch (e) {
     toast('Could not load scans: ' + e.message, 'error');
   }
 }
+
+/**
+ * The comparison on screen is about the two picks the lists show, or it goes
+ * (C08). `state.compare.result` is the pair it answers, as the two lists'
+ * values; a reload that lost one of them, or a person picking another scan,
+ * takes the comparison down rather than leaving it under a pair it is not
+ * about. Picking the old pair again brings nothing back: Compare does.
+ */
+function cmpSyncResult() {
+  const shown = state.compare.result;
+  if (!shown || (shown.a === $('cmpA').value && shown.b === $('cmpB').value)) return;
+  state.compare.result = null;
+  cmpCountsDrop();
+  fxHuntBeamSync('cmpBody', false);
+  $('cmpBody').innerHTML = '<div class="card glass"><div class="muted">The picks changed since the last comparison — press Compare to compare these two.</div></div>';
+}
+$('cmpA').addEventListener('change', cmpSyncResult);
+$('cmpB').addEventListener('change', cmpSyncResult);
 
 /** The "Don't scan" rules a Compare pick ran with: a live scan's under its scan id, a snapshot's under its own (B24). */
 function cmpCoverage(o) {
@@ -33343,6 +33374,9 @@ $('cmpRunBtn').addEventListener('click', async () => {
     return;
   }
   const body = $('cmpBody');
+  // The pair this comparison answers: a pick changed before it lands drops it (C08).
+  const pair = { a: $('cmpA').value, b: $('cmpB').value };
+  state.compare.result = pair;
   cmpCountsDrop(); // the rewrite below would strand a live counts handle
   body.innerHTML = `<div class="card glass dup-progress">${icon('loader', 20, REDUCED ? '' : 'spin')}<span>Comparing…</span></div>`;
   // FX: the md ring marks the diff computing — on with the progress card,
@@ -33353,15 +33387,18 @@ $('cmpRunBtn').addEventListener('click', async () => {
   try {
     if (a.kind === 'scan') {
       const diff = await api(`/api/compare?scanIdA=${a.id}&scanIdB=${b.id}`);
+      if (state.compare.result !== pair) return; // the picks changed meanwhile: cmpSyncResult has spoken
       fxHuntBeamSync('cmpBody', false);
       renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, deep: true, whenA: a.when, whenB: b.when, rules });
     } else {
       const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
+      if (state.compare.result !== pair) return;
       fxHuntBeamSync('cmpBody', false);
       // §7.4 — a same-root snapshot pair also gets the split-slider maps.
       renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath, rules });
     }
   } catch (e) {
+    if (state.compare.result !== pair) return;
     fxHuntBeamSync('cmpBody', false);
     body.innerHTML = `<div class="card glass"><div class="muted">Compare failed: ${escapeHtml(e.message)}</div></div>`;
   }
