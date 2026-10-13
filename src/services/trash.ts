@@ -199,16 +199,22 @@ export async function getTrashInfo(): Promise<TrashInfo> {
   };
 }
 
-/** One actionable sentence for why the Trash could not be fully measured. */
+/**
+ * One actionable sentence for why the Trash could not be fully measured: what
+ * could not be read, and what to do. It claims no total (browser re-check C02):
+ * the sheet that shows it over a Trash it could not read at all has none to
+ * show, and said "so this total is a minimum" beside nothing. Where a figure is
+ * shown, "at least" goes with the figure.
+ */
 function describeSweepProblem(code: string | null): string {
   if (code === 'EPERM' || code === 'EACCES') {
     // On macOS the fix follows the errno and the probed Full Disk Access state (Track U, U-11).
     return process.platform === 'darwin'
-      ? `macOS would not let TreeMap read the Trash, so this total is a minimum. ${accessAdviceNow({ code: accessCodeOf(code), retry: 'look again' })}`
-      : 'TreeMap does not have permission to read part of the Trash, so this total is a minimum.';
+      ? `macOS would not let TreeMap read the Trash. ${accessAdviceNow({ code: accessCodeOf(code), retry: 'look again' })}`
+      : 'TreeMap does not have permission to read part of the Trash.';
   }
-  if (code === null) return 'The Trash is larger than TreeMap walks in one pass, so this total is a minimum.';
-  return `Part of the Trash could not be read (${code}), so this total is a minimum.`;
+  if (code === null) return 'The Trash holds more than TreeMap reads in one pass, so the rest of it was not counted.';
+  return `Part of the Trash could not be read (${code}).`;
 }
 
 /* ---------- Empty Trash ---------- */

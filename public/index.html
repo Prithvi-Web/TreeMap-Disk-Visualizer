@@ -4967,7 +4967,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     </div>
     <div class="modal-body" id="trashModalBody"></div>
     <div class="modal-foot">
-      <span class="muted" style="flex:1;">Items restore from here until the Trash is emptied.</span>
+      <span class="muted" style="flex:1;" id="trashModalNote"></span>
       <button class="btn btn-danger" id="emptyTrashBtn"><span data-icon="trash" data-size="14"></span>Empty Trash…</button>
     </div>
   </div>
@@ -8178,19 +8178,27 @@ function openTrashModal() {
     : atLeast && !(t.totalBytes > 0) ? '· couldn’t read all of it'
     : `· ${atLeast ? 'at least ' : ''}${formatBytes(t.totalBytes)} · ${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}`;
   const body = $('trashModalBody');
-  if (!t || !t.items || !t.items.length) {
+  const listed = !!(t && t.items && t.items.length);
+  // What could not be read, said plainly (C02): the server's sentence, then
+  // what that leaves unknown — over no items, that nothing can be listed or
+  // sized; over a partial list, that the list is only what could be read.
+  const unreadNote = (after) => `<div class="muted" style="padding:${listed ? '4px 2px 12px' : '18px 2px'};display:flex;align-items:flex-start;gap:8px;">${icon('alert', 15)}` +
+    `<span>${escapeHtml(`${t.incompleteReason || 'Part of the Trash could not be read.'} ${after}`)}</span></div>`;
+  if (!listed) {
     // "The Trash is empty" is a claim about the disk. Only make it when the
     // sweep actually finished; otherwise say what happened and how to fix it.
     body.innerHTML = atLeast
-      ? `<div class="muted" style="padding:18px 2px;display:flex;align-items:flex-start;gap:8px;">${icon('alert', 15)}<span>${escapeHtml(t.incompleteReason || 'Part of the Trash could not be read, so TreeMap cannot say what is in it.')}</span></div>`
+      ? unreadNote('TreeMap cannot list what is in it or say how much space it takes.')
       : `<div class="muted" style="padding:18px 2px;display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} The Trash is empty.</div>`;
   } else {
-    body.innerHTML = '<div class="trash-list">' + t.items.map((it) =>
+    body.innerHTML = (atLeast ? unreadNote('The items below are the ones TreeMap could read.') : '') + '<div class="trash-list">' + t.items.map((it) =>
       `<div class="trash-item">${chipFor({ type: 'file', extension: (it.name.split('.').pop() || '').toLowerCase() }, 14)}` +
       `<span class="nm" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>` +
       `<span class="sz num">${formatBytes(it.size)}</span></div>`
     ).join('') + '</div>';
   }
+  // About the items listed, so said only over a list (C02).
+  $('trashModalNote').textContent = listed ? 'Items restore from here until the Trash is emptied.' : '';
   // Enabled when there is something to empty OR when we could not tell —
   // the platform's own emptier has permissions the enumeration does not, so
   // refusing to even try is the one thing that cannot help.

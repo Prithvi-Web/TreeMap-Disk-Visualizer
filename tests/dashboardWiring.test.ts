@@ -528,6 +528,28 @@ test('the Trash sheet\'s header says what the row says — never "at least 0 B �
   assert.equal(one.trashModalMeta.textContent, '· 2000 B · 1 item', 'a Trash read in full states its size and count; one item is "1 item"');
 });
 
+test('C02: a Trash TreeMap could not read gets a sheet that says so plainly — no total it does not show, no items it does not list', () => {
+  const reason = 'macOS would not let TreeMap read the Trash. Give it Full Disk Access in System Settings.';
+  const unread = openTrashWith({ totalBytes: 0, itemCount: 0, complete: false, incompleteReason: reason });
+  assert.match(unread.trashModalBody.innerHTML,
+    /macOS would not let TreeMap read the Trash\. Give it Full Disk Access in System Settings\. TreeMap cannot list what is in it or say how much space it takes\./,
+    `what could not be read, and what that leaves unknown: ${unread.trashModalBody.innerHTML}`);
+  assert.equal(unread.trashModalNote.textContent, '', 'no "Items restore from here" over a sheet that lists no items');
+
+  const partial = openTrashWith({ totalBytes: 5000, itemCount: 2, complete: false, incompleteReason: 'Part of the Trash could not be read (EACCES).',
+    items: [{ name: 'a.txt', size: 3000 }, { name: 'b.txt', size: 2000 }] });
+  assert.match(partial.trashModalBody.innerHTML, /Part of the Trash could not be read \(EACCES\)\. The items below are the ones TreeMap could read\./,
+    `a partial read says what it could not read above what it lists: ${partial.trashModalBody.innerHTML}`);
+  assert.match(partial.trashModalBody.innerHTML, /a\.txt[\s\S]*b\.txt/, 'and lists them');
+  assert.equal(partial.trashModalNote.textContent, 'Items restore from here until the Trash is emptied.', 'items listed: the note is about them');
+
+  const whole = openTrashWith({ totalBytes: 2000, itemCount: 1, complete: true, items: [{ name: 'a.txt', size: 2000 }] });
+  assert.doesNotMatch(whole.trashModalBody.innerHTML, /could not|cannot/, 'a Trash read in full has no caveat');
+  assert.equal(whole.trashModalNote.textContent, 'Items restore from here until the Trash is emptied.');
+  const empty = openTrashWith({ totalBytes: 0, itemCount: 0, complete: true, items: [] });
+  assert.equal(empty.trashModalNote.textContent, '', 'an empty Trash has nothing to restore');
+});
+
 /* Review F3.2: the F2.4 cases never fed the header a Trash read in full and
    found empty, nor a partial read that sized nothing but counted something —
    so keying the header's sentence on anything but the row's own condition

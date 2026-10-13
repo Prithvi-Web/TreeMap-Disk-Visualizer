@@ -163,6 +163,24 @@ test('any unreadable errno counts, not just the one seen in the wild', async () 
   });
 });
 
+test('C02: the reason says what could not be read and what to do, and claims no total — the sheet that shows it may have none to show', async () => {
+  // The sheet over an unreadable Trash said "so this total is a minimum"
+  // beside no total at all. "At least" belongs to a figure, where one is shown.
+  await withTrash(async (dir) => {
+    const { getTrashInfo } = await import('../src/services/trash');
+    for (const code of ['EPERM', 'EACCES', 'EIO']) {
+      const restore = failReaddir(dir, code);
+      try {
+        const reason = (await getTrashInfo()).incompleteReason ?? '';
+        assert.match(reason, /Trash/, `${code}: it says what could not be read: ${reason}`);
+        assert.doesNotMatch(reason, /total|minimum/i, `${code}: and claims no total: ${reason}`);
+      } finally {
+        restore();
+      }
+    }
+  });
+});
+
 test('emptying really empties, and says so', async () => {
   await withTrash(async (dir) => {
     const { emptyTrash } = await import('../src/services/trash');
