@@ -813,7 +813,6 @@ function gameCartRows(t) {
           <span class="gl"><i class="gp-shaderCache"></i>Shader cache</span>
           <span class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</span>
           <span class="size-badge num">${formatBytes(c.bytes)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(c.path)}"
-            aria-label="Add the shader cache for ${escapeHtml(t.name)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(c.path, `the shader cache for ${t.name}`)}
         </div>`).join('') + `</div>`;
 }

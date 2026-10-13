@@ -75,7 +75,7 @@ async function renderPane(data: Record<string, unknown>): Promise<string> {
     chipFor: () => '',
     formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
     whyLeftOut: pageWhyLeftOut((n: number) => (n ?? 0).toLocaleString('en-US')),
-    refreshCartButtons: () => {},
+    refreshCartButtons: () => {}, cartButtonHtml: () => '',
     updateCleanSummary: () => {},
     loadEmptyFoldersSeq: 0, // the page's own counter of loads (final review F1.8)
   });
@@ -153,7 +153,7 @@ function loadsByHand() {
     chipFor: () => '',
     formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
     whyLeftOut: pageWhyLeftOut((n: number) => (n ?? 0).toLocaleString('en-US')),
-    refreshCartButtons: () => {},
+    refreshCartButtons: () => {}, cartButtonHtml: () => '',
     updateCleanSummary: () => {},
     loadEmptyFoldersSeq: 0,
   };

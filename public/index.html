@@ -10116,7 +10116,7 @@ async function renderCloudSafe() {
         <div class="clean-list">` + g.files.map((n) =>
           `<div class="clean-item">${chipFor(n, 13)}<div class="meta"><div class="nm">${escapeHtml(n.name)}</div><div class="pth" title="${escapeHtml(n.path)}">${escapeHtml(n.path)}</div></div>` +
           `<span class="dt num">${formatDate(n.modifiedAt)}</span><span class="size-badge num">${formatBytes(n.size)}</span>` +
-          `<button class="icon-btn" data-cart-add="${escapeHtml(n.path)}" aria-label="Add ${escapeHtml(n.name)} to cleanup cart">${icon('plus', 13)}</button></div>`
+          cartButtonHtml(n.path, n.name) + `</div>`
         ).join('') + `</div>
       </div>`
     ).join('');
@@ -10935,7 +10935,7 @@ function renderBigFiles() {
       ${reclaimBadge(f.path, scoreFor(f.path)) || (state.bigFilesSort === 'reclaim' && scoreKnown(f.path) ? '<span class="rc-none" title="None of the six signals could be read for this file">not scored</span>' : `<span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>`)}
       <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
-        <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
+        ${cartButtonHtml(f.path, f.name, 14)}
         <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 14)}</button>
         <button class="icon-btn danger" data-trash="${escapeHtml(f.path)}" title="Move to Trash" aria-label="Move ${escapeHtml(f.name)} to Trash">${icon('trash', 14)}</button>
       </span>
@@ -29794,6 +29794,23 @@ function cartPreviewInvalidated() {
 }
 
 /**
+ * A per-row cart toggle for `path`, drawn in the state it is in. Every one in
+ * the app is written here (QA third pass D11): eleven templates each wrote
+ * "Add … to cleanup cart" into the label, so a staged item — ✓ icon, "Remove"
+ * tooltip — still told a screen reader that pressing it adds. `name` is what
+ * the label calls the item: a file's name, "the shader cache for Portal".
+ */
+function cartButtonHtml(path, name, px = 13) {
+  const staged = state.cart.has(path);
+  return `<button class="icon-btn${staged ? ' cartin' : ''}" data-cart-add="${escapeHtml(path)}" data-cart-name="${escapeHtml(name)}" ` +
+    `data-cartin="${staged ? '1' : '0'}" title="${cartButtonTitle(staged)}" aria-label="${escapeHtml(cartButtonLabel(name, staged))}">` +
+    `${icon(staged ? 'check' : 'plus', px)}</button>`;
+}
+function cartButtonTitle(staged) { return staged ? 'Remove from cleanup cart' : 'Add to cleanup cart'; }
+/** What pressing the toggle does, with the item's name: the label a screen reader reads, as the tooltip and the icon say it. */
+function cartButtonLabel(name, staged) { return staged ? `Remove ${name} from cleanup cart` : `Add ${name} to cleanup cart`; }
+
+/**
  * Sync the +/✓ state of every per-row "add to cart" button currently on screen.
  *
  * Buttons already showing the right icon are left completely alone. Rewriting
@@ -29809,7 +29826,10 @@ function refreshCartButtons(roots = [document]) {
     b.dataset.cartin = want;
     b.classList.toggle('cartin', inIt);
     b.innerHTML = icon(inIt ? 'check' : 'plus', 14);
-    b.setAttribute('title', inIt ? 'Remove from cleanup cart' : 'Add to cleanup cart');
+    b.setAttribute('title', cartButtonTitle(inIt));
+    // The label follows too (D11): the tooltip and the ✓ said "remove" while it still said "Add".
+    const name = b.getAttribute('data-cart-name');
+    if (name !== null) b.setAttribute('aria-label', cartButtonLabel(name, inIt));
   });
   // The duplicates funnel's "staged in cart" stage reads the same set these
   // buttons reflect — every cart mutation passes through here, so this is
@@ -31933,8 +31953,7 @@ function gameCartRows(t) {
           <span class="gl"><i class="gp-shaderCache"></i>Shader cache</span>
           <span class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</span>
           <span class="size-badge num">${formatBytes(c.bytes)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(c.path)}"
-            aria-label="Add the shader cache for ${escapeHtml(t.name)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(c.path, `the shader cache for ${t.name}`)}
         </div>`).join('') + `</div>`;
 }
 
@@ -32019,8 +32038,7 @@ function renderMedia() {
           <span class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</span>
           <span class="muted">${escapeHtml(c.regenerationCost || '')}</span>
           <span class="size-badge num">${formatBytes(c.bytes)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(c.path)}"
-            aria-label="Add ${escapeHtml(c.label || MEDIA_PART[c.kind].label)} of ${escapeHtml(lib.appName || lib.kind)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(c.path, `${c.label || MEDIA_PART[c.kind].label} of ${lib.appName || lib.kind}`)}
         </div>`).join('');
     return `<div class="game-lib">${head}${held}
       <div class="game-bar">${bar}</div>
@@ -32202,7 +32220,7 @@ function renderApps() {
           <span class="lbl">${escapeHtml(loc.path)}</span>
           <span class="size-badge num" style="color:${sizeInk(loc.bytes)}">${formatBytes(loc.bytes)}</span>
           ${APP_CART_CATEGORIES.has(loc.category)
-            ? `<button class="icon-btn" data-cart-add="${escapeHtml(loc.path)}" aria-label="Add ${escapeHtml(loc.path)} to cleanup cart">${icon('plus', 13)}</button>`
+            ? cartButtonHtml(loc.path, loc.path)
             : `<span class="adv-spacer" title="${escapeHtml(APP_CAT_LABEL[loc.category])} — this is the app or your own data, not a rebuildable cache, so TreeMap does not offer to stage it"></span>`}
         </div>`).join('') + `
       </div>
@@ -32481,7 +32499,7 @@ function dupFillGroup(groupEl) {
           ${fi === 0 ? '<span class="tag">newest</span>' : ''}
           <span class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
           <span class="dt num">${formatDate(f.modifiedAt)}</span>
-          <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 13)}</button>
+          ${cartButtonHtml(f.path, f.name)}
           <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
         </div>`).join('');
   groupEl.dataset.filled = '1';
@@ -32808,7 +32826,7 @@ function ndItemHtml(f, fi) {
           <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
           <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
           <div class="acts">
-            <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 14)}</button>
+            ${cartButtonHtml(f.path, f.name, 14)}
             <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
           </div>
         </div>
@@ -34482,7 +34500,7 @@ async function loadEmptyFolders() {
             <div class="nm">${escapeHtml(f.name)}</div>
             <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
           </div>
-          <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(f.path, f.name)}
         </div>`).join('') + '</div>';
     // v4 §4.2 — these are stageable one at a time, so their staged state has
     // to be reflected the moment the list is rebuilt.
@@ -34614,7 +34632,7 @@ async function renderPackageOrphans() {
           </div>
           <span class="dt num">${formatDate(e.modifiedAt)}</span>
           <span class="size-badge num">${formatBytes(e.size)}</span>
-          ${selectable ? `<button class="icon-btn" data-cart-add="${escapeHtml(e.path)}" aria-label="Add ${escapeHtml(e.name)} to cleanup cart">${icon('plus', 13)}</button>` : ''}
+          ${selectable ? cartButtonHtml(e.path, e.name) : ''}
         </div>`;
       }).join('') + `</div></div>`;
     }).join('') + `</div>`;
@@ -34670,7 +34688,7 @@ async function renderBrowserProfiles() {
           <input type="checkbox" class="bp-ck" data-path="${escapeHtml(it.path)}" data-bytes="${it.bytes}" data-p="${pi}" aria-label="Select ${escapeHtml(it.label)}">
           <span class="lbl">${escapeHtml(it.label)}</span>
           <span class="size-badge num" style="color:${sizeInk(it.bytes)}">${formatBytes(it.bytes)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.label)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(it.path, it.label)}
         </div>`).join('');
       return `<div class="bp-acc" data-acc="${pi}">
         <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
@@ -34797,7 +34815,7 @@ function renderSmartGroups(catalog) {
           <span class="dt num">${formatDate(it.modifiedAt)}</span>
           ${reclaimBadge(it.path, scoreFor(it.path))}
           <span class="size-badge num">${formatBytes(it.size)}</span>
-          ${adv ? '' : `<button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>`}
+          ${adv ? '' : cartButtonHtml(it.path, it.name)}
         </div>`).join('') + `</div>
     </div>`;
     }).join('');
@@ -35153,7 +35171,7 @@ async function runCleanFind(fetcher) {
         </div>
         <span class="dt num">${formatDate(f.modifiedAt)}</span>
         <span class="size-badge num" style="color:${sizeInk(f.size)}">${formatBytes(f.size)}</span>
-        <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+        ${cartButtonHtml(f.path, f.name)}
       </div>`).join('') + '</div>';
   refreshCartButtons(); // v4 §4.2
   $('cleanAll').addEventListener('change', (e) => {

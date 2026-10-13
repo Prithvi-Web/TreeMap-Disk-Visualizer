@@ -2014,7 +2014,7 @@ test('an advisory group is never offered for deletion', () => {
   // item can reach the delete path.
   assert.match(fn, /adv\s*\n?\s*\?[^]*?adv-mark[^]*?:\s*`<input type="checkbox" class="smart-all"/, 'no select-all on an advisory group');
   assert.match(fn, /\$\{adv \? '<span class="adv-spacer"><\/span>' : `<input type="checkbox" class="smart-ck"/, 'no per-item checkbox');
-  assert.match(fn, /\$\{adv \? '' : `<button class="icon-btn" data-cart-add=/, 'no add-to-cart button');
+  assert.match(fn, /\$\{adv \? '' : cartButtonHtml\(/, 'no add-to-cart button');
   assert.match(fn, /Do not move this to the Trash/, 'and the panel says so plainly');
 });
 
@@ -2056,7 +2056,7 @@ test('an in-use package artifact is never offered for deletion by this panel', (
   const fn = code.slice(code.indexOf('async function renderPackageOrphans'), code.indexOf('const BROWSER_FAV'));
   assert.match(fn, /const selectable = e\.kind !== 'active' && !e\.advisory;/, 'active and advisory rows are not selectable');
   assert.match(fn, /selectable\s*\n?\s*\?\s*`<input type="checkbox" class="pkg-ck"/, 'only selectable rows get a checkbox');
-  assert.match(fn, /\$\{selectable \? `<button class="icon-btn" data-cart-add=/, 'and only they get a cart button');
+  assert.match(fn, /\$\{selectable \? cartButtonHtml\(/, 'and only they get a cart button');
 });
 
 test('the package panel feeds the one Clean Up selection, deduped by path', () => {

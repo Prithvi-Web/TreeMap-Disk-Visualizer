@@ -79,8 +79,7 @@ function renderMedia() {
           <span class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</span>
           <span class="muted">${escapeHtml(c.regenerationCost || '')}</span>
           <span class="size-badge num">${formatBytes(c.bytes)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(c.path)}"
-            aria-label="Add ${escapeHtml(c.label || MEDIA_PART[c.kind].label)} of ${escapeHtml(lib.appName || lib.kind)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(c.path, `${c.label || MEDIA_PART[c.kind].label} of ${lib.appName || lib.kind}`)}
         </div>`).join('');
     return `<div class="game-lib">${head}${held}
       <div class="game-bar">${bar}</div>
@@ -262,7 +261,7 @@ function renderApps() {
           <span class="lbl">${escapeHtml(loc.path)}</span>
           <span class="size-badge num" style="color:${sizeInk(loc.bytes)}">${formatBytes(loc.bytes)}</span>
           ${APP_CART_CATEGORIES.has(loc.category)
-            ? `<button class="icon-btn" data-cart-add="${escapeHtml(loc.path)}" aria-label="Add ${escapeHtml(loc.path)} to cleanup cart">${icon('plus', 13)}</button>`
+            ? cartButtonHtml(loc.path, loc.path)
             : `<span class="adv-spacer" title="${escapeHtml(APP_CAT_LABEL[loc.category])} — this is the app or your own data, not a rebuildable cache, so TreeMap does not offer to stage it"></span>`}
         </div>`).join('') + `
       </div>

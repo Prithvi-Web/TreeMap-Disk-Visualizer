@@ -139,8 +139,11 @@ test('near-duplicate clusters wrap instead of scrolling sideways: no nested scro
 
 test('a mid-scroll append touches only the clusters it inserted', () => {
   const item = braced('function ndItemHtml(');
-  assert.match(item, /data-cartin=/, 'cart state is stamped at build time, so the cart walk has nothing to rewrite');
-  assert.match(item, /icon\(cartHas\(f\.path\) \? 'check' : 'plus', 14\)/, 'with the icon refreshCartButtons would have written');
+  // Through the one cart-toggle helper (QA third pass D11), which stamps the state as it draws.
+  assert.match(item, /cartButtonHtml\(f\.path, f\.name, 14\)/, 'the toggle is drawn by the cart helper, at the size the walk writes');
+  const helper = braced('function cartButtonHtml(');
+  assert.match(helper, /data-cartin=/, 'cart state is stamped at build time, so the cart walk has nothing to rewrite');
+  assert.match(helper, /icon\(staged \? 'check' : 'plus', px\)/, 'with the icon refreshCartButtons would have written');
   const append = braced('function ndAppendClusters(');
   assert.match(append, /const firstNew = list\.children\.length/, 'the append remembers where the new clusters start');
   assert.match(append, /ndSyncNewNodes\(\[\.\.\.list\.children\]\.slice\(firstNew\)\)/, 'and syncs only those');

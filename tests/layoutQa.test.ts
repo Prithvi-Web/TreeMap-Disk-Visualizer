@@ -54,7 +54,8 @@ function bigFileRows(sort: 'size' | 'reclaim', scoreOf: (p: string) => Score, kn
     byReclaimDesc: () => () => 0,
     reclaimBadge: (_p: string, fact: Score) => (fact ? `<button type="button" class="rc-badge conf-${fact.confidence}">${fact.score}</button>` : ''),
     scoreFor: scoreOf, scoreKnown: known,
-    refreshCartButtons() {}, nodeFor: () => null, confirmTrash() {}, openInOS() {}, showCtxMenu() {},
+    refreshCartButtons() {}, cartButtonHtml: () => '<button class="icon-btn"></button>',
+    nodeFor: () => null, confirmTrash() {}, openInOS() {}, showCtxMenu() {},
   });
   render();
   const rows = host.innerHTML.split('<div class="bigfile">').slice(1);

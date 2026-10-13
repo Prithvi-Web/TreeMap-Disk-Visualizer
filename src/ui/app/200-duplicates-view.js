@@ -172,7 +172,7 @@ function dupFillGroup(groupEl) {
           ${fi === 0 ? '<span class="tag">newest</span>' : ''}
           <span class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
           <span class="dt num">${formatDate(f.modifiedAt)}</span>
-          <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 13)}</button>
+          ${cartButtonHtml(f.path, f.name)}
           <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
         </div>`).join('');
   groupEl.dataset.filled = '1';
@@ -499,7 +499,7 @@ function ndItemHtml(f, fi) {
           <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
           <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
           <div class="acts">
-            <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 14)}</button>
+            ${cartButtonHtml(f.path, f.name, 14)}
             <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
           </div>
         </div>

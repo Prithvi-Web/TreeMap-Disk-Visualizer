@@ -188,7 +188,7 @@ test('Games offers a cart button on the shader cache only', () => {
   // Nothing else in the Games renderer may hand out a cart button.
   const games = slice(INDEX, 'function renderGames', 'function clearShaderCaches');
   assert.ok(games.includes('gameCartRows(t)'), 'the shader rows are actually rendered');
-  assert.ok(!games.includes('data-cart-add'), 'the title rows themselves carry no cart button');
+  assert.ok(!games.includes('data-cart-add') && !games.includes('cartButtonHtml('), 'the title rows themselves carry no cart button');
 });
 
 test('advisory Smart Suggestion groups get no cart button at all — not a disabled one', () => {
@@ -196,7 +196,7 @@ test('advisory Smart Suggestion groups get no cart button at all — not a disab
   assert.notEqual(start, -1);
   const body = INDEX.slice(start, INDEX.indexOf('smartSortPills', start));
   assert.ok(body.length > 500, 'the renderSmartGroups slice is non-empty');
-  assert.match(body, /\$\{adv \? '' : `<button class="icon-btn" data-cart-add=/,
+  assert.match(body, /\$\{adv \? '' : cartButtonHtml\(/,
     'an advisory row renders an empty string where the button would be');
 });
 
@@ -204,7 +204,95 @@ test('Security findings have no cart path anywhere', () => {
   // §4.2: security findings have no delete path in the app at all, so they get
   // no cart button — not a disabled one, none.
   const body = slice(INDEX, 'function renderSecurity', 'function confirmRelocateSecret');
-  assert.ok(!body.includes('data-cart-add'), 'security findings are never stageable for deletion');
+  assert.ok(!body.includes('data-cart-add') && !body.includes('cartButtonHtml('), 'security findings are never stageable for deletion');
+});
+
+/* ══════════════════════ D11 — a cart toggle says what pressing it does ══════════════════════ */
+
+type Toggle = { attrs: Record<string, string>; cls: Set<string>; innerHTML: string; dataset: Record<string, string> };
+
+/** The page's own cart-toggle helpers over a cart holding `staged`, and a button parsed out of the markup they write. */
+function cartToggles(staged: string[]) {
+  const state = { cart: new Set(staged), view: 'dashboard' };
+  const deps: Record<string, unknown> = {
+    state,
+    icon: (name: string) => `<svg data-icon="${name}"></svg>`,
+    updateDupToolbar: () => {}, document: { querySelectorAll: () => [] },
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `${['escapeHtml', 'cartButtonHtml', 'cartButtonTitle', 'cartButtonLabel', 'refreshCartButtons'].map(fnSource).join('\n')}
+    return { cartButtonHtml, refreshCartButtons };`)(...keys.map((k) => deps[k])) as {
+    cartButtonHtml: (path: string, name: string, px?: number) => string; refreshCartButtons: (roots: unknown[]) => void;
+  };
+  /** A button as a browser would build it from the markup: its attributes, classes, data-* and content. */
+  const parse = (html: string): Toggle => {
+    const open = /^<button([^>]*)>([\s\S]*)<\/button>$/.exec(html.trim());
+    assert.ok(open, `one button is written: ${html}`);
+    const attrs: Record<string, string> = {};
+    for (const m of open![1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[m[1]] = m[2].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const dataset: Record<string, string> = {};
+    for (const [k, v] of Object.entries(attrs)) if (k.startsWith('data-')) dataset[k.slice(5).replace(/-(\w)/g, (_s, c: string) => c.toUpperCase())] = v;
+    return { attrs, cls: new Set((attrs.class || '').split(/\s+/).filter(Boolean)), innerHTML: open![2], dataset };
+  };
+  /** refreshCartButtons over that one button, as the page walks a scope. */
+  const refresh = (b: Toggle) => page.refreshCartButtons([{
+    querySelectorAll: () => [{
+      getAttribute: (k: string) => b.attrs[k] ?? null, setAttribute: (k: string, v: string) => { b.attrs[k] = v; },
+      dataset: new Proxy(b.dataset, { set: (t, k: string, v: string) => { t[k] = v; b.attrs['data-' + k] = v; return true; } }),
+      classList: { toggle: (c: string, on: boolean) => { if (on) b.cls.add(c); else b.cls.delete(c); } },
+      set innerHTML(h: string) { b.innerHTML = h; }, get innerHTML() { return b.innerHTML; },
+    }],
+  }]);
+  return { state, html: page.cartButtonHtml, parse, refresh };
+}
+
+test('a cart toggle tells a screen reader what pressing it does: "Remove … from cleanup cart" on a staged item (QA third pass D11)', () => {
+  // QA third pass D11: on a staged item the tooltip said "Remove from cleanup
+  // cart" and the icon was ✓, but the label a screen reader reads still said
+  // "Add holiday-4k.mov to cleanup cart" — on the Dashboard's Largest Files,
+  // Duplicates and Clean Up rows alike.
+  const t = cartToggles([MOV.path]);
+  const staged = t.parse(t.html(MOV.path, MOV.name, 14));
+  assert.equal(staged.attrs['aria-label'], 'Remove holiday-4k.mov from cleanup cart', 'a staged item: pressing it removes');
+  assert.equal(staged.attrs.title, 'Remove from cleanup cart');
+  assert.match(staged.innerHTML, /data-icon="check"/);
+  assert.ok(staged.cls.has('cartin'));
+  assert.equal(staged.dataset.cartin, '1', 'stamped, so the cart walk has nothing to rewrite');
+  const fresh = t.parse(t.html(DMG.path, DMG.name));
+  assert.equal(fresh.attrs['aria-label'], 'Add Installer.dmg to cleanup cart', 'an item not staged: pressing it adds');
+  assert.equal(fresh.attrs.title, 'Add to cleanup cart');
+  assert.match(fresh.innerHTML, /data-icon="plus"/);
+  assert.equal(fresh.dataset.cartin, '0');
+  const odd = t.parse(t.html('/c/a"b.txt', 'a"b <x>.txt'));
+  assert.equal(odd.attrs['aria-label'], 'Add a"b <x>.txt to cleanup cart', 'a name is escaped into the attribute, not cut short by it');
+  assert.equal(odd.attrs['data-cart-add'], '/c/a"b.txt');
+});
+
+test('a cart toggle\'s label follows the cart both ways as the item is staged and unstaged (QA third pass D11)', () => {
+  const t = cartToggles([]);
+  const b = t.parse(t.html(MOV.path, MOV.name, 14));
+  t.state.cart.add(MOV.path);
+  t.refresh(b);
+  assert.equal(b.attrs['aria-label'], 'Remove holiday-4k.mov from cleanup cart', 'staged: the label says it removes');
+  assert.equal(b.attrs.title, 'Remove from cleanup cart', 'as the tooltip says');
+  assert.match(b.innerHTML, /data-icon="check"/);
+  t.state.cart.delete(MOV.path);
+  t.refresh(b);
+  assert.equal(b.attrs['aria-label'], 'Add holiday-4k.mov to cleanup cart', 'unstaged: it adds again');
+  assert.equal(b.attrs.title, 'Add to cleanup cart');
+});
+
+test('every cart toggle in the app is written by the one helper, so none can be drawn in the wrong state (QA third pass D11)', () => {
+  // The labels were written in twelve places, each with "Add …" fixed in it;
+  // the games' shader rows were never synced to the cart at all.
+  const writes = [...CODE.matchAll(/data-cart-add="/g)].length;
+  assert.equal(writes, 1, `one place writes a cart toggle (found ${writes})`);
+  assert.match(fnSource('cartButtonHtml'), /data-cart-add="/, 'and it is cartButtonHtml');
+  for (const fn of ['renderCloudSafe', 'renderBigFiles', 'gameCartRows', 'renderMedia', 'renderApps', 'dupFillGroup', 'ndItemHtml',
+    'loadEmptyFolders', 'renderPackageOrphans', 'renderBrowserProfiles', 'renderSmartGroups', 'runCleanFind']) {
+    assert.match(fnSource(fn), /cartButtonHtml\(/, `${fn} draws its cart toggles with cartButtonHtml`);
+  }
 });
 
 /* ══════════════════════ the cart list is paged, and says so ══════════════════════ */

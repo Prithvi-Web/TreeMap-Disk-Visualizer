@@ -86,6 +86,23 @@ function cartPreviewInvalidated() {
 }
 
 /**
+ * A per-row cart toggle for `path`, drawn in the state it is in. Every one in
+ * the app is written here (QA third pass D11): eleven templates each wrote
+ * "Add … to cleanup cart" into the label, so a staged item — ✓ icon, "Remove"
+ * tooltip — still told a screen reader that pressing it adds. `name` is what
+ * the label calls the item: a file's name, "the shader cache for Portal".
+ */
+function cartButtonHtml(path, name, px = 13) {
+  const staged = state.cart.has(path);
+  return `<button class="icon-btn${staged ? ' cartin' : ''}" data-cart-add="${escapeHtml(path)}" data-cart-name="${escapeHtml(name)}" ` +
+    `data-cartin="${staged ? '1' : '0'}" title="${cartButtonTitle(staged)}" aria-label="${escapeHtml(cartButtonLabel(name, staged))}">` +
+    `${icon(staged ? 'check' : 'plus', px)}</button>`;
+}
+function cartButtonTitle(staged) { return staged ? 'Remove from cleanup cart' : 'Add to cleanup cart'; }
+/** What pressing the toggle does, with the item's name: the label a screen reader reads, as the tooltip and the icon say it. */
+function cartButtonLabel(name, staged) { return staged ? `Remove ${name} from cleanup cart` : `Add ${name} to cleanup cart`; }
+
+/**
  * Sync the +/✓ state of every per-row "add to cart" button currently on screen.
  *
  * Buttons already showing the right icon are left completely alone. Rewriting
@@ -101,7 +118,10 @@ function refreshCartButtons(roots = [document]) {
     b.dataset.cartin = want;
     b.classList.toggle('cartin', inIt);
     b.innerHTML = icon(inIt ? 'check' : 'plus', 14);
-    b.setAttribute('title', inIt ? 'Remove from cleanup cart' : 'Add to cleanup cart');
+    b.setAttribute('title', cartButtonTitle(inIt));
+    // The label follows too (D11): the tooltip and the ✓ said "remove" while it still said "Add".
+    const name = b.getAttribute('data-cart-name');
+    if (name !== null) b.setAttribute('aria-label', cartButtonLabel(name, inIt));
   });
   // The duplicates funnel's "staged in cart" stage reads the same set these
   // buttons reflect — every cart mutation passes through here, so this is

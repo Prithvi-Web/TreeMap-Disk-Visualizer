@@ -1070,7 +1070,7 @@ async function renderCloudSafe() {
         <div class="clean-list">` + g.files.map((n) =>
           `<div class="clean-item">${chipFor(n, 13)}<div class="meta"><div class="nm">${escapeHtml(n.name)}</div><div class="pth" title="${escapeHtml(n.path)}">${escapeHtml(n.path)}</div></div>` +
           `<span class="dt num">${formatDate(n.modifiedAt)}</span><span class="size-badge num">${formatBytes(n.size)}</span>` +
-          `<button class="icon-btn" data-cart-add="${escapeHtml(n.path)}" aria-label="Add ${escapeHtml(n.name)} to cleanup cart">${icon('plus', 13)}</button></div>`
+          cartButtonHtml(n.path, n.name) + `</div>`
         ).join('') + `</div>
       </div>`
     ).join('');
@@ -1889,7 +1889,7 @@ function renderBigFiles() {
       ${reclaimBadge(f.path, scoreFor(f.path)) || (state.bigFilesSort === 'reclaim' && scoreKnown(f.path) ? '<span class="rc-none" title="None of the six signals could be read for this file">not scored</span>' : `<span class="fx-li-pct num">${Math.round((f.size / max) * 100)}%</span>`)}
       <span class="size-badge num" style="color:${sizeInk(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
-        <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
+        ${cartButtonHtml(f.path, f.name, 14)}
         <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 14)}</button>
         <button class="icon-btn danger" data-trash="${escapeHtml(f.path)}" title="Move to Trash" aria-label="Move ${escapeHtml(f.name)} to Trash">${icon('trash', 14)}</button>
       </span>

@@ -315,12 +315,12 @@ function runRenderCloudSafe(apiImpl: () => Promise<unknown>) {
   const noop = () => {};
   const fn = new Function(
     '$', 'state', 'api', 'seedNodes', 'formatCount', 'formatBytes', 'escapeHtml', 'chipFor',
-    'formatDate', 'icon', 'refreshCartButtons',
+    'formatDate', 'icon', 'refreshCartButtons', 'cartButtonHtml',
     `'use strict'; ${src} return renderCloudSafe;`,
   )(
     $, { scanId: 's1' }, apiImpl, noop,
     (n: number) => String(n), (n: number) => n + ' B', (s: string) => String(s),
-    () => '', () => '', () => '', noop,
+    () => '', () => '', () => '', noop, () => '',
   ) as () => Promise<void>;
   return fn().then(() => els);
 }

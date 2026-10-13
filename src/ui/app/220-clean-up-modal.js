@@ -290,7 +290,7 @@ async function loadEmptyFolders() {
             <div class="nm">${escapeHtml(f.name)}</div>
             <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
           </div>
-          <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(f.path, f.name)}
         </div>`).join('') + '</div>';
     // v4 §4.2 — these are stageable one at a time, so their staged state has
     // to be reflected the moment the list is rebuilt.
@@ -422,7 +422,7 @@ async function renderPackageOrphans() {
           </div>
           <span class="dt num">${formatDate(e.modifiedAt)}</span>
           <span class="size-badge num">${formatBytes(e.size)}</span>
-          ${selectable ? `<button class="icon-btn" data-cart-add="${escapeHtml(e.path)}" aria-label="Add ${escapeHtml(e.name)} to cleanup cart">${icon('plus', 13)}</button>` : ''}
+          ${selectable ? cartButtonHtml(e.path, e.name) : ''}
         </div>`;
       }).join('') + `</div></div>`;
     }).join('') + `</div>`;
@@ -478,7 +478,7 @@ async function renderBrowserProfiles() {
           <input type="checkbox" class="bp-ck" data-path="${escapeHtml(it.path)}" data-bytes="${it.bytes}" data-p="${pi}" aria-label="Select ${escapeHtml(it.label)}">
           <span class="lbl">${escapeHtml(it.label)}</span>
           <span class="size-badge num" style="color:${sizeInk(it.bytes)}">${formatBytes(it.bytes)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.label)} to cleanup cart">${icon('plus', 13)}</button>
+          ${cartButtonHtml(it.path, it.label)}
         </div>`).join('');
       return `<div class="bp-acc" data-acc="${pi}">
         <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
@@ -605,7 +605,7 @@ function renderSmartGroups(catalog) {
           <span class="dt num">${formatDate(it.modifiedAt)}</span>
           ${reclaimBadge(it.path, scoreFor(it.path))}
           <span class="size-badge num">${formatBytes(it.size)}</span>
-          ${adv ? '' : `<button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>`}
+          ${adv ? '' : cartButtonHtml(it.path, it.name)}
         </div>`).join('') + `</div>
     </div>`;
     }).join('');
@@ -961,7 +961,7 @@ async function runCleanFind(fetcher) {
         </div>
         <span class="dt num">${formatDate(f.modifiedAt)}</span>
         <span class="size-badge num" style="color:${sizeInk(f.size)}">${formatBytes(f.size)}</span>
-        <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+        ${cartButtonHtml(f.path, f.name)}
       </div>`).join('') + '</div>';
   refreshCartButtons(); // v4 §4.2
   $('cleanAll').addEventListener('change', (e) => {
