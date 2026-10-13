@@ -312,7 +312,10 @@ test('describeFsError: an EPERM from a write, a removal or an unnamed call also 
       assert.match(s, /Give .* Full Disk Access/, `${String(syscall)}: it may still be the privacy gate`);
       assert.match(s, HEDGE, `${String(syscall)}: and it may be a lock or another account's permissions: ${s}`);
     }
-    for (const syscall of ['scandir', 'opendir', 'lstat', 'stat']) {
+    // Every read describeFsError counts as the privacy gate, each by name
+    // (review F2.4: two of the six were never asked about, and dropping them
+    // from the set passed): a refused readlink is a read too.
+    for (const syscall of ['scandir', 'opendir', 'readdir', 'stat', 'lstat', 'readlink']) {
       const s = describeFsError(withSyscall(syscall));
       assert.match(s, /Give .* Full Disk Access/, `${syscall}: a refused read is the privacy gate`);
       assert.doesNotMatch(s, HEDGE, `${syscall}: and says only that`);
