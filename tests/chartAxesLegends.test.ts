@@ -266,6 +266,50 @@ test('D04: with no data a chart says "No data yet." and prints no axis numbers',
   }
 });
 
+/* ══════════════ C07 — Trends' net change when nothing changed ══════════════ */
+
+/** The net-change strip as Trends mounts it, and its y-axis labels top to bottom with each one's row. */
+function netStrip(values: number[]) {
+  const k = loadKit();
+  k.fx.profitLine(k.canvas, { points: values.map((v, i) => ({ t: T0 + i * DAY, v })), height: 120 });
+  const rows = texts(k.rec().calls).filter((c) => c.align === 'right')
+    .map((c) => ({ s: String(c.args[0]), y: (c.args[2] as number) - 3.5 }))
+    .sort((a, b) => a.y - b.y);
+  return { k, rows };
+}
+
+test('C07: a net-change strip whose every change is zero prints one "0 B" row through the middle — no "+1 B" ticks', () => {
+  // QA re-check C07: scans of a folder that did not change drew the axis
+  // "+1 B, +1 B, +1 B, +0 B, +0 B, 0 B" — an invented [0, 1] domain ticked
+  // at fifths of a byte, each rounded by formatBytes.
+  const { k, rows } = netStrip([0, 0, 0]);
+  assert.deepEqual(rows.map((r) => r.s), ['0 B'], 'one row, and it says 0 B');
+  const mid = (14 + (k.canvas.height - 26)) / 2; // between padT and the plot's floor
+  assert.ok(Math.abs(rows[0].y - mid) < 0.5, `the zero row runs through the middle of the plot (${mid}), not along an edge (${rows[0].y})`);
+  // Nor is a [0, 1] domain invented for a caller that formats its own values.
+  const own = loadKit();
+  own.fx.profitLine(own.canvas, { points: [0, 0, 0].map((v, i) => ({ t: T0 + i * DAY, v })), height: 120, formatValue: (v: number) => v.toFixed(1) });
+  assert.deepEqual(texts(own.rec().calls).filter((c) => c.align === 'right').map((c) => c.args[0]), ['0 B'],
+    'with its own formatter too, nothing changed is one zero row');
+});
+
+test('C07: the net-change strip ticks in whole bytes — a 1 B change never prints the same amount twice', () => {
+  // A 1 B change ticked at half bytes: "−2 B, −1 B, −1 B, 0 B". Bytes come whole.
+  for (const values of [[1, 0, 1], [-1, 0, -1], [2, -1, 0]]) {
+    const { rows } = netStrip(values);
+    const said = rows.map((r) => r.s);
+    assert.equal(new Set(said).size, said.length, `${values}: every tick names a different amount (${said.join(', ')})`);
+    assert.ok(said.includes('0 B'), `${values}: the zero row is labelled (${said.join(', ')})`);
+  }
+  // Whole steps are a rule about bytes: a caller formatting its own values keeps the kit's finer steps.
+  const k = loadKit();
+  k.fx.profitLine(k.canvas, {
+    points: [0.2, -0.3, 0.1].map((v, i) => ({ t: T0 + i * DAY, v })), height: 120, formatValue: (v: number) => v.toFixed(1),
+  });
+  const own = texts(k.rec().calls).filter((c) => c.align === 'right').sort((a, b) => (a.args[2] as number) - (b.args[2] as number));
+  assert.deepEqual(own.map((c) => c.args[0]), ['0.4', '0.2', '0 B', '-0.2', '-0.4'], 'its own formatter, its own steps');
+});
+
 /* ══════════════ D14 / D24 — legend wording ══════════════ */
 
 /** Mount the rings legend and read each row's name span and count span. */

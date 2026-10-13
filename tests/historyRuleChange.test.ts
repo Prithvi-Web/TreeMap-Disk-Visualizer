@@ -219,3 +219,27 @@ test('Trends’ last-change list says a folder is scanned again, not new, and wh
   assert.match(host.innerHTML, /· scanned again</, `the row: ${host.innerHTML}`);
   assert.match(host.innerHTML, /your “Don’t scan” rules changed/, 'and the head says why the total moved');
 });
+
+test('Trends’ last-change line says the total did not change when it did not — not "grew by 0 B" in the growth colour (QA C07)', async () => {
+  const head = async (totalDelta: number) => {
+    const host = { innerHTML: '' };
+    const render = load<() => Promise<void>>(['renderTrendDeltas', 'deltaRow'], {
+      ...base(ON_OFF),
+      state: { system: SYSTEM, trends: { snapshots: SNAPS.slice(2), path: '/c' } }, // s4 → s5: the same rules
+      $: () => host,
+      api: async () => ({ totalDelta, entries: [] }),
+      formatDate: (t: number) => `d${t}`, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s), chipFor: () => '',
+      FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
+    }, 'renderTrendDeltas');
+    await render();
+    return host.innerHTML;
+  };
+  const still = await head(0);
+  assert.match(still, /total did not change/, `nothing changed, and it says so: ${still}`);
+  assert.doesNotMatch(still, /grew|shrank|#ff6b61|var\(--ok\)/, 'no growth (or shrink) word or colour for a change of nothing');
+  // Controls: a real change keeps its word, amount and colour.
+  const grew = await head(5_000_000);
+  assert.match(grew, /total grew by\s*<b class="num" style="color:#ff6b61">5000000 B<\/b>/, `growth: ${grew}`);
+  const shrank = await head(-3_000_000);
+  assert.match(shrank, /total shrank by\s*<b class="num" style="color:var\(--ok\)">3000000 B<\/b>/, `shrink: ${shrank}`);
+});

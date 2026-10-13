@@ -2219,9 +2219,19 @@ const FxCharts = (() => {
       const [t0, t1] = math.extent(pts.map((p) => p.t));
       const [vLo, vHi] = math.extent(pts.map((p) => p.v));
       // zero always inside the domain: the chart argues about that axis
-      const ticks = math.niceTicks(Math.min(0, vLo * 1.05), Math.max(0, vHi * 1.05) || 1, 4);
+      const lo = Math.min(0, vLo * 1.05), hi = Math.max(0, vHi * 1.05);
+      // Every change zero: one row, 0 B, through the middle. An invented
+      // [0, 1] domain ticked at fifths of a byte read "+1 B, +1 B, +1 B,
+      // +0 B, +0 B, 0 B" once formatBytes rounded it (QA C07).
+      let ticks = lo === 0 && hi === 0 ? [0] : math.niceTicks(lo, hi, 4);
+      // Bytes come whole: a step under one byte printed the same amount twice.
+      if (!s.formatValue && ticks.length > 1 && ticks[1] - ticks[0] < 1) {
+        ticks = [];
+        for (let v = Math.floor(lo); v <= Math.ceil(hi); v++) ticks.push(v);
+      }
+      const [d0, d1] = ticks.length > 1 ? [ticks[0], ticks[ticks.length - 1]] : [-1, 1];
       const X = math.scaleTime(t0, t1, f.padL, f.width - f.padR);
-      const Y = math.scaleLinear(ticks[0], ticks[ticks.length - 1], f.height - f.padB, f.padT);
+      const Y = math.scaleLinear(d0, d1, f.height - f.padB, f.padT);
       const runs = math.zeroSplit(pts.map((p) => ({ x: p.t, y: p.v })));
       return { pts, runs, ticks, X, Y, t0, t1, fmtV, fmtT };
     }

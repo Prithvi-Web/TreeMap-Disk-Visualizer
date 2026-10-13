@@ -213,11 +213,14 @@ async function renderTrendDeltas() {
   const a = snaps[snaps.length - 2], b = snaps[snaps.length - 1];
   try {
     const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
-    const up = diff.totalDelta >= 0;
+    const up = diff.totalDelta > 0;
     // A change of "Don't scan" rules between the two is what was scanned (B24).
     const rules = coverageRules(coverageFor(a.rootPath, a.id), coverageFor(b.rootPath, b.id));
-    const head = `<div class="muted" style="margin-bottom:10px;" >${formatDate(a.takenAt)} → ${formatDate(b.takenAt)} — total ${up ? 'grew' : 'shrank'} by
-      <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b>` +
+    // No change is said as none — not "grew by 0 B" in the growth colour (QA C07).
+    const total = diff.totalDelta === 0 ? 'total did not change'
+      : `total ${up ? 'grew' : 'shrank'} by
+      <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b>`;
+    const head = `<div class="muted" style="margin-bottom:10px;" >${formatDate(a.takenAt)} → ${formatDate(b.takenAt)} — ${total}` +
       (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
       `</div>`;
     if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
