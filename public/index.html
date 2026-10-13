@@ -1740,6 +1740,22 @@ body.preview-open { padding-right: var(--tr-pane); }
    already scrolls sideways by design — because a calc() that goes negative
    is clamped to 0 and would collapse the dock to nothing instead. */
 body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 370px)); }
+/* The cart OPEN beside the open pane, in a window too narrow for both (QA
+   C04 remainder). Left of the pane the open dock is 366 px of a column the
+   sidebar and the pane leave 450 px of at 1024: the "Preview after" banner,
+   held left of it but never under 240 px, sat beneath it with "Exit
+   preview". Below 1236 px — the sidebar's 244 + the banner's 14 px inset and
+   240 px + the dock's 366 and its 348 px offset + <main>'s 24 — there is no
+   room for both, so while the cart is open it stands over the pane, at its
+   resting edge, and the banner takes the map less the 34 px of it the dock
+   still overlaps and a 14 px gap each side (62 px). The pane's head and its
+   close button stay clear above the dock; collapsing the cart puts the pill
+   back left of the pane. tests/layoutQa.test.ts checks the two apart at
+   every width from the desktop window's minimum up, in both sidebar states. */
+@media (max-width: 1235px) {
+  body.preview-open.cart-open #cartDock { right: 22px; max-width: 92vw; }
+  body.preview-open.cart-open .tm-preview-banner { max-width: max(240px, calc(100% - 62px)); }
+}
 
 /* ── Global search (A4) ── */
 /* Lives at the top of the sidebar with the full column width to itself —

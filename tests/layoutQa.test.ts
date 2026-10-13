@@ -513,6 +513,75 @@ test('with the preview pane and the cart both open in the smallest window, the "
   assert.ok(maxW >= 240, `the banner may run ${maxW.toFixed(0)} px — a line of its message and "Exit preview" need 240`);
 });
 
+/**
+ * The declarations the sheet gives exactly `selector` in a window W px wide:
+ * rules outside any @media block, and those inside `@media (max-width: Npx)`
+ * blocks that hold at W, in source order. (declsFor reads every rule as if it
+ * always applied.)
+ */
+function declsAt(selector: string, W: number): Map<string, string> {
+  const blocks: Array<{ from: number; to: number; max: number | null }> = [];
+  for (const m of SHEET.matchAll(/@media\s*([^{]*)\{/g)) {
+    let depth = 0, to = -1;
+    for (let i = m.index! + m[0].length - 1; i < SHEET.length; i++) {
+      if (SHEET[i] === '{') depth++;
+      else if (SHEET[i] === '}' && --depth === 0) { to = i; break; }
+    }
+    const max = /^\(max-width:\s*(\d+(?:\.\d+)?)px\)\s*$/.exec(m[1].trim());
+    blocks.push({ from: m.index!, to, max: max ? Number(max[1]) : null });
+  }
+  const out = new Map<string, string>();
+  for (const m of SHEET.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    const sels = m[1].trim().split(',').map((x) => x.trim().replace(/\s+/g, ' '));
+    if (!sels.includes(selector)) continue;
+    const inBlock = blocks.find((b) => m.index! > b.from && m.index! < b.to);
+    if (inBlock && (inBlock.max === null || W > inBlock.max)) continue; // a query this reader cannot evaluate, or one that does not hold
+    for (const d of m[2].split(';')) {
+      const i = d.indexOf(':');
+      if (i !== -1) out.set(d.slice(0, i).trim(), d.slice(i + 1).trim());
+    }
+  }
+  return out;
+}
+
+test('with the cart open beside the open preview pane, the cart dock covers neither the "Preview after" banner nor "Exit preview", at any window size (C04 remainder c)', () => {
+  // QA at 1024×700: the pane open, the cart open, "Preview after" on. The
+  // dock stands left of the pane (right: 348 px), 366 px wide in a 450 px
+  // column, and the banner — held left of where the dock would be, but never
+  // under 240 px — sat under it: "Exit preview" and most of the banner were
+  // covered (shots/160). The banner runs from its left inset to its whole
+  // max-width (B30), and "Exit preview" is its last item.
+  const root = declsFor(':root');
+  const paneW = sheetPx(declsFor('#previewPane').get('width'), 'the pane width');
+  const mainPad = sheetPx((declsFor('main').get('padding') || '').split(/\s+/)[1], "<main>'s side padding");
+  let checked = 0;
+  for (const W of [1024, 1100, 1180, 1235, 1236, 1280, 1320, 1440, 1920]) {
+    for (const rail of [false, true]) {
+      const side = sheetPx(root.get(rail ? '--side-w-rail' : '--side-w'), 'the sidebar width') + 12;
+      const map = W - side - paneW - 2 * mainPad;
+      const label = `${W} px, sidebar ${rail ? 'rail' : 'open'} (a ${map} px map)`;
+      // The dock: its resting rule, the pane's shift, and any rule for the cart open beside the pane.
+      const dock = new Map([...declsAt('#cartDock', W), ...declsAt('body.preview-open #cartDock', W), ...declsAt('body.preview-open.cart-open #cartDock', W)]);
+      const dockW = Math.min(cssPx(dock.get('width')!, W), cssPx(dock.get('max-width')!.replace(/(\d+(?:\.\d+)?)vw/g, (_m, n: string) => `${(Number(n) / 100) * W}px`), W));
+      const dockLeft = W - cssPx(dock.get('right')!, W) - dockW;
+      // The banner, in the map's wrap at the column's left edge.
+      const d = new Map([...declsAt('.tm-preview-banner', W), ...declsAt('body.cart-open .tm-preview-banner', W), ...declsAt('body.preview-open.cart-open .tm-preview-banner', W)]);
+      const pct = (v: string) => cssPx(v.replace(/(\d+(?:\.\d+)?)%/g, (_m, n: string) => `${(Number(n) / 100) * map}px`), map);
+      const bannerLeft = side + mainPad + pct(d.get('left')!);
+      const bannerW = pct(d.get('max-width')!);
+      assert.ok(bannerW >= 240, `${label}: the banner may run ${bannerW.toFixed(0)} px — a line of its message and "Exit preview" need 240`);
+      assert.ok(bannerLeft + bannerW <= dockLeft,
+        `${label}: the banner and "Exit preview" run to x ${(bannerLeft + bannerW).toFixed(0)}; the open cart starts at x ${dockLeft.toFixed(0)}`);
+      // And it uses the strip it has: held to 240 px beside a dock that has
+      // moved out of the way, it wrapped to ten lines and pushed the map down.
+      assert.ok(bannerW >= dockLeft - bannerLeft - 28,
+        `${label}: the banner may run ${bannerW.toFixed(0)} px of the ${(dockLeft - bannerLeft).toFixed(0)} px left of the open cart`);
+      checked++;
+    }
+  }
+  assert.equal(checked, 18, 'every size and sidebar state was checked');
+});
+
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
 
 /** The treemap's measured height, with a row of `above` px pushing it down, and whether it redrew. */
