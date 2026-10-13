@@ -72,7 +72,7 @@ function fakeDom() {
  * names the scan and the folder it was asked for, so what Disk City built
  * from says which scan it came from.
  */
-function harness(opts: { realCard?: boolean } = {}) {
+function harness(opts: { realCard?: boolean; lapse?: boolean } = {}) {
   const asked: string[] = [];
   const built: Node[][] = [];
   const $ = fakeDom();
@@ -83,7 +83,11 @@ function harness(opts: { realCard?: boolean } = {}) {
     treemap: {
       mode: 'treemap', colorMode: 'size', rootPath: null as string | null, rootName: '', rootSize: 0, maxDepth: 4,
       nodes: [] as Node[], minSize: undefined as number | undefined, hover: null, kbSel: null,
-      history: { active: false, scrubbing: false, snaps: [] as Array<{ id: string; takenAt: number }>, index: 0, seq: 0, tree: null, viewingAt: 0 },
+      history: {
+        active: false, scrubbing: false, snaps: [] as Array<{ id: string; takenAt: number }>, index: 0, seq: 0, tree: null, viewingAt: 0,
+        cache: new Map<string, unknown>(),
+      },
+      lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null, completed: false },
     },
     city: {
       hover: null, pan: { x: 0, y: 0 }, zoom: 1, blocks: [] as Block[], counts: new Map(), countsFor: null,
@@ -131,11 +135,24 @@ function harness(opts: { realCard?: boolean } = {}) {
   const cardNames = ['cityShowCard', 'cityMoveCard', 'cityRefreshCard', 'cityCardKey', 'cityAgeDays', 'cityAgeWords', 'cityJitter', 'cityUp', 'tmParentPath',
     'citySetColour', 'citySetHeight', 'cityMode', 'CITY_COLOUR_LABEL', 'CITY_HEIGHT_LABEL'];
   if (!opts.realCard) deps.cityShowCard = noop;
+  // The time-lapse's own transport, animated as it plays by default (motion
+  // not reduced, rectangle map), over a frame queue the test pumps by hand.
+  const frames = { queue: [] as Array<[number, (t: number) => unknown]>, next: 0, clock: 0 };
+  const lapseNames = ['LAPSE_SEG_MS', 'LAPSE_HOLD_MAX_MS', 'lapseFetching', 'lapseStart', 'lapseStop', 'lapseApplySnap', 'lapseSeekTo', 'lapsePrefetch', 'lapseLerpNodes'];
+  if (opts.lapse) {
+    Object.assign(deps, {
+      REDUCED: false, isRectMap: () => true, lapseReflect: noop, drawTreemap: noop,
+      performance: { now: () => frames.clock },
+      requestAnimationFrame: (cb: (t: number) => unknown) => { frames.queue.push([++frames.next, cb]); return frames.next; },
+      cancelAnimationFrame: (id: number) => { frames.queue = frames.queue.filter(([at]) => at !== id); },
+    });
+  }
   const page = load<{
     loadTreemap: (p: string) => Promise<void>;
     loadCity: (p: string | null) => Promise<void>;
     finishScan: (root: unknown, ms: number, stats: unknown) => Promise<void>;
     setHistoryIndex: (i: number) => Promise<void>;
+    lapse?: { start: () => void; stop: () => void };
     card?: {
       show: (b: Block | null, px?: number, py?: number) => void;
       up: () => void;
@@ -143,14 +160,24 @@ function harness(opts: { realCard?: boolean } = {}) {
       setHeight: (m: string) => void;
       jitter: (rgb: number[], path: string) => number[];
     };
-  }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : [])], deps,
+  }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : []), ...(opts.lapse ? lapseNames : [])], deps,
     `{ loadTreemap, loadCity, finishScan, setHistoryIndex${opts.realCard
       ? ', card: { show: cityShowCard, up: cityUp, setColour: citySetColour, setHeight: citySetHeight, jitter: cityJitter }'
-      : ''} }`,
-    'let tmLoadSeq = 0; let cityLoadSeq = 0;');
+      : ''}${opts.lapse ? ', lapse: { start: lapseStart, stop: lapseStop }' : ''} }`,
+    'let tmLoadSeq = 0; let cityLoadSeq = 0; let tmAnimFrame = 0; let lapseExporting = false; let lapseInternalStart = false;');
+  /** Run `count` animation frames, 100 ms apart, letting each frame's awaits settle. */
+  const pump = async (count: number) => {
+    for (let i = 0; i < count; i++) {
+      frames.clock += 100;
+      const due = frames.queue;
+      frames.queue = [];
+      for (const [, cb] of due) await cb(frames.clock);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
   /** The scan:folder every node Disk City was last handed names. */
   const lastBuilt = () => [...new Set((built[built.length - 1] ?? []).map((n) => n.name))];
-  return { ...page, state, asked, built, lastBuilt, $ };
+  return { ...page, state, asked, built, lastBuilt, $, pump, frames };
 }
 
 interface Block { n: Node & { modifiedAt?: number }; rgb: number[]; z: number }
@@ -230,6 +257,83 @@ test('C03: a past snapshot the time slider put in the Treemap is not drawn by Di
   h.asked.length = 0;
   await h.loadCity('/corpus');
   assert.deepEqual(h.lastBuilt(), ['s1:/corpus'], 'Disk City draws the scan, fetched again');
+});
+
+test('C03: Disk City re-entered on the folder it drew itself costs no request', async () => {
+  const h = harness();
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  await h.loadCity('/corpus/Mail');
+  assert.deepEqual(h.lastBuilt(), ['s1:/corpus/Mail'], 'control: Disk City fetched Mail');
+  h.asked.length = 0;
+  await h.loadCity('/corpus/Mail'); // a visit to another view and back
+  assert.deepEqual(h.asked, [], 'the nodes it fetched are reused for the same scan and folder');
+  assert.deepEqual(h.lastBuilt(), ['s1:/corpus/Mail']);
+});
+
+/**
+ * The Treemap on a scan of /corpus with three past snapshots of it cached, as
+ * the time bar's prefetch leaves them: every rectangle a snapshot holds names
+ * the snapshot, and its root size is not the live one.
+ */
+async function treemapWithSnapshots() {
+  const h = harness({ lapse: true });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  await h.loadTreemap('/corpus');
+  const hist = h.state.treemap.history;
+  hist.snaps = [1000, 2000, 3000].map((takenAt) => ({ id: `snap-${takenAt}`, takenAt }));
+  for (const s of hist.snaps) {
+    hist.cache.set(s.id, {
+      snapshot: { takenAt: s.takenAt }, tree: { path: '/corpus' }, root: { path: '/corpus', size: s.takenAt },
+      nodes: [1, 2, 3].map((i) => ({ path: `/corpus/f${i}`, name: `snapshot:${s.takenAt}`, size: s.takenAt, type: 'file', x: 10 * i, y: 0, w: 10, h: 10 })),
+    });
+  }
+  (h.$('tmTimeSlider') as { value: string }).value = String(hist.snaps.length); // the thumb at Live
+  return h;
+}
+const drawnNames = (h: ReturnType<typeof harness>) => [...new Set(h.state.treemap.nodes.map((n) => n.name))];
+
+test('C03: a time-lapse paused on a past snapshot is not drawn by Disk City as the live scan', async () => {
+  const h = await treemapWithSnapshots();
+  h.lapse!.start(); // Play, animated
+  await h.pump(6);
+  assert.equal(h.state.treemap.lapse.playing, true, 'control: the time-lapse is playing');
+  h.lapse!.stop(); // Pause: the map settles on the snapshot the slider names
+  assert.deepEqual(drawnNames(h), ['snapshot:1000'], 'control: the Treemap shows a past snapshot');
+  h.state.view = 'city';
+  h.lapse!.stop(); // the Treemap's unmount, on the way to Disk City
+  h.asked.length = 0;
+  await h.loadCity(h.state.treemap.rootPath); // Disk City's mount
+  assert.deepEqual(h.lastBuilt(), ['s1:/corpus'], 'Disk City draws the live scan');
+  assert.equal(h.asked.length, 1, 'which it asked the server for');
+  assert.equal(h.state.treemap.rootSize, 30000, 'and the live folder\'s size, not the snapshot\'s');
+});
+
+test('C03: a time-lapse played to its end is not drawn by Disk City as the live scan', async () => {
+  const h = await treemapWithSnapshots();
+  h.lapse!.start();
+  // Two one-second segments at 100 ms a frame: well inside 60 frames.
+  for (let i = 0; i < 60 && h.state.treemap.lapse.playing; i++) await h.pump(1);
+  assert.equal(h.state.treemap.lapse.completed, true, 'control: the run finished');
+  assert.deepEqual(drawnNames(h), ['snapshot:3000'], 'control: the Treemap ends on the newest snapshot');
+  h.state.view = 'city';
+  h.lapse!.stop();
+  h.asked.length = 0;
+  await h.loadCity(h.state.treemap.rootPath);
+  assert.deepEqual(h.lastBuilt(), ['s1:/corpus'], 'Disk City draws the live scan');
+  assert.equal(h.asked.length, 1);
+});
+
+test('C03: no rectangles but the ones fetched for the scan are reused — a blend mid-segment is not', async () => {
+  const h = await treemapWithSnapshots();
+  h.lapse!.start();
+  await h.pump(4);
+  assert.deepEqual(drawnNames(h), ['snapshot:2000'], 'control: the map holds a blend on its way to a snapshot');
+  h.asked.length = 0;
+  await h.loadCity(h.state.treemap.rootPath); // reached without the Treemap's unmount settling the blend
+  assert.deepEqual(h.lastBuilt(), ['s1:/corpus'], 'Disk City draws the live scan');
+  assert.equal(h.asked.length, 1);
 });
 
 /* ══════════════ C13 — the hover card follows the city it describes ══════════════ */

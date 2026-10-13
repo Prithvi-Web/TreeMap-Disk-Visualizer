@@ -1485,8 +1485,17 @@ function renderCityTable() {
    were, so a scan of corpus after the Treemap had drawn corpus/Mail left
    Mail's nodes under corpus's path, and the city drew Mail's 4,396 items
    under corpus's name. The nodes carry the scan and the folder they were
-   fetched for (`nodesFor`, set by whoever fetched them, cleared by whatever
-   swaps in rectangles that are not a scan's), and only that pair reuses them. */
+   fetched for (`nodesFor`, set by whoever fetched them), and only that pair
+   reuses them.
+
+   And only while the array on the map is the one fetched. The map also holds
+   rectangles that are no scan's: the time slider's past snapshot, the
+   time-lapse's blend between two (left there by a pause, the end of a run or
+   the view being left), the cart preview's simulated "after", an export's
+   frame. A record that every such writer had to remember to clear was
+   forgotten by the time-lapse, and the city drew a past snapshot under the
+   live folder's name (C03 review). The record names the array itself, so
+   any other array fails it without its writer doing anything. */
 
 let cityLoadSeq = 0;
 async function loadCity(rootPath) {
@@ -1496,7 +1505,8 @@ async function loadCity(rootPath) {
   const c = state.city;
   const scanAtRequest = state.scanId;
   const held = state.treemap.nodesFor;
-  const fresh = !!held && held.scanId === scanAtRequest && held.path === want && state.treemap.nodes.length > 0;
+  const fresh = !!held && held.nodes === state.treemap.nodes && held.scanId === scanAtRequest && held.path === want
+    && state.treemap.nodes.length > 0;
   // The hover card describes a building of the folder being left (C13): Esc
   // climbing two levels left "clip027.m4v" standing over the parent's city.
   cityShowCard(null);
@@ -1520,7 +1530,7 @@ async function loadCity(rootPath) {
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
-      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path };
+      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes };
       state.treemap.minSize = floor; // what tmNodeCapNote may say these nodes leave out
       state.treemap.hover = null;
     } catch (e) {
