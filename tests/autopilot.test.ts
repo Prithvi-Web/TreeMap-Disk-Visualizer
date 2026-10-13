@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 
 // Isolate policies, run history, the capsule and settings from the user's real
 // app data. An Autopilot test that wrote to the real store would leave standing
@@ -137,6 +138,25 @@ test('an age or size that rounds to nothing is no rule: refused as empty, never 
     const [picked] = selectCandidates([], [{ path: path.join(tmp, 'a'), name: 'a', size: 5 }], p.match);
     assert.match(picked.reason, /^matched your rule: \S/, `the reason ${JSON.stringify(sent)}'s items carry states the rule`);
   }
+});
+
+test('beside a real rule, an age or a size that rounds to nothing is left out, never stored as a 0', () => {
+  // The size half of the rule above, and each figure beside the other. A
+  // stored 0 opens in the editor as a ticked box with no figure, and an
+  // untouched Save then sends the box's default in its place - 100 MB, 180
+  // days - so the rule nobody edited would change (review F3.2).
+  const tmp = os.tmpdir();
+  const DAY = 86_400_000;
+  const cases: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+    [{ kind: 'custom', minBytes: 0.4, exts: ['tmp'] }, { kind: 'custom', exts: ['tmp'] }],
+    [{ kind: 'custom', minBytes: 0.4, maxAgeMs: DAY }, { kind: 'custom', maxAgeMs: DAY }],
+    [{ kind: 'custom', maxAgeMs: 0.4, minBytes: 2048 }, { kind: 'custom', minBytes: 2048 }],
+  ];
+  const misstored = cases
+    .map(([sent, want]) => ({ sent, want, got: normalizePolicy({ path: tmp, match: sent }).match }))
+    .filter(({ want, got }) => !isDeepStrictEqual(got, want))
+    .map(({ sent, got }) => `${JSON.stringify(sent)} was stored as ${JSON.stringify(got)}`);
+  assert.deepEqual(misstored, [], 'the figure that rounds away is left out beside any real rule');
 });
 
 test('PUT /api/autopilot/policies refuses an age that rounds to nothing, as it refuses an empty rule', async () => {
