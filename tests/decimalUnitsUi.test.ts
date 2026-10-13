@@ -788,6 +788,15 @@ test('the docs say a size inside a sentence is for a person to read: most print 
   }
 });
 
+test('PLATFORM_NOTES\' Size units section keeps the file\'s 80-column wrap: no line runs past it', () => {
+  const notes = readFileSync(path.join(__dirname, '..', 'docs/PLATFORM_NOTES.md'), 'utf8');
+  const at = notes.indexOf('## Size units');
+  assert.notEqual(at, -1, 'PLATFORM_NOTES has its units section');
+  const lines = notes.slice(at, notes.indexOf('\n## ', at + 1)).split('\n');
+  assert.ok(lines.length > 10, 'the section is read whole');
+  assert.deepEqual(lines.filter((line) => line.length > 80).map((line) => `${line.length} columns: ${line}`), []);
+});
+
 test('the agent summary is described as it answers: a formatted twin beside every size but the forecast\'s topGrowers[].bytesPerDay, which is raw bytes only (review F3.2)', () => {
   // AGENTS.md, the route's own comment and its OpenAPI summary all said the
   // summary gives "every number as raw bytes plus a formatted string". The
