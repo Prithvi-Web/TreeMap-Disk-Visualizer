@@ -1317,7 +1317,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/scans',
-    summary: 'Completed scans currently in memory (30-minute TTL)',
+    summary: "Completed scans currently in memory (30-minute TTL), except a dry run's: the scan an Autopilot Preview or a preview-only policy run makes is held but not listed",
     tag: 'scan',
     destructive: false,
     responses: {

@@ -502,7 +502,7 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `GET /api/scan/:id/budgets` | Saved folder budgets cross-referenced against this scan |
 | `GET /api/scan/:id/export?format=csv\|pdf` | Download the scan as CSV (files / folders) or a PDF report |
 | `GET /api/missing-gigabytes?scanId=` | The accounting statement for the volume: the lines sum to used space exactly, and the residual is its own `unaccounted` line. A line that could not be measured reports `bytes: null` with a reason, never `0` |
-| `GET /api/scans` | Completed scans currently in memory |
+| `GET /api/scans` | Completed scans currently in memory, except a dry run's: the scan an Autopilot Preview or a preview-only policy run makes is held but not listed |
 | `POST /api/facts` | Per-path derived facts as a sidecar (`size`, `lastUsed`, `recoverability`, `reclaimScore`). A path absent from `values` was **not computable** — never a zero |
 | `GET /api/large-files?scanId=` | Top N largest files |
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |

@@ -483,6 +483,20 @@ test('AGENTS.md says what a dry run keeps, and what an Autopilot run that can on
   assert.match(text, /An Autopilot run that can only preview \(a policy never approved, or set to preview every run\) scans the same way, but it is still a run: it adds its run record to `autopilot\.json`, starts the policy's cooldown, and spends an approval's one-time allowance \(`approvedBytes`\)\./);
 });
 
+test('the spec and the README say what GET /api/scans leaves out, as AGENTS.md and the route do (C12 review F2.1)', () => {
+  // GET /api/openapi.json is the machine-readable equivalent AGENTS.md names,
+  // and it said the endpoint lists every completed scan in memory, a dry
+  // run's included; the README's row said the same.
+  const claim = /except a dry run's: the scan an Autopilot Preview or a preview-only policy run makes is held but not listed/;
+  const e = ENDPOINTS.find((x) => x.method === 'get' && x.path === '/api/scans');
+  assert.ok(e, 'GET /api/scans is described');
+  assert.match(e.summary, claim, 'the spec says which scans it leaves out');
+  const row = /^\| `GET \/api\/scans` \| (.*) \|$/m.exec(read('README.md'));
+  assert.ok(row, 'the README lists GET /api/scans');
+  assert.match(row[1], claim, 'and the README says the same');
+  assert.match(read('src', 'api', 'insightRoutes.ts'), /\.filter\(\(s\) => s\.status === 'complete' && s\.store && isRecorded\(s\)\)/, 'which is what the route does');
+});
+
 test('AGENTS.md says how the index readers answer an index that is not finished, as the routes and the spec do (review F1.6)', () => {
   const routes = read('src', 'api', 'indexRoutes.ts');
   const tree = between(routes, "indexRouter.get('/index/tree'", 'const maxNodes');
