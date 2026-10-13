@@ -262,10 +262,15 @@ function served(url: string): Promise<unknown> {
   });
 }
 
-test('what the capability manifest and AGENTS.md say of the audit is what a restore records: SAFETY_RECORD goes unrecorded where a door refuses it before its endpoint, but a restore\'s refusal of the file it would replace is recorded, SAFETY_RECORD among them, as the test above it shows (the review of LEFT2, F2.2)', async () => {
+test('what the capability manifest, AGENTS.md and SECURITY.md say of the audit is what a restore records: SAFETY_RECORD goes unrecorded where a door refuses it before its endpoint, but a restore\'s refusal of the file it would replace is recorded, OUTSIDE_SCAN_ROOT and SAFETY_RECORD among them, as the tests above it show (the review of LEFT2, F2.2, F3.1)', async () => {
   const audit = String((await served('/api/capabilities') as { safety: { audit: string } }).safety.audit);
   const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8').replace(/\s+/g, ' ');
+  const security = fs.readFileSync(path.join(__dirname, '..', 'SECURITY.md'), 'utf8').replace(/\s+/g, ' ');
   assert.deepEqual({
+    // SECURITY.md says a request the path rules refuse — outside every scanned folder among them — is
+    // not recorded; the restore is the exception, and says so beside it (F3.1).
+    'SECURITY.md: a restore records its refusal of the file it would replace, outside every scanned folder among them':
+      /A snapshot restore told to replace a file judges that file inside its endpoint, so every refusal of it there is recorded against that file \(`snapshots\.restore`, refused, with its code\) — outside every scanned folder, refused by the agent policy, open in another program, or a link TreeMap reaches its agent policy and audit log through\./.test(security),
     'the manifest: the doors where SAFETY_RECORD is not recorded':
       /as SAFETY_RECORD is where a delete, the cart, an offload, a relocation or an MCP tool refuses it;/.test(audit),
     'the manifest: a restore records its refusal of the file it would replace, SAFETY_RECORD among them':
@@ -275,6 +280,7 @@ test('what the capability manifest and AGENTS.md say of the audit is what a rest
     'AGENTS.md: a restore records its refusal of the file it would replace, SAFETY_RECORD among them':
       /A snapshot restore with `overwrite` judges the file it would replace inside its endpoint, so every refusal of that file — `OUTSIDE_SCAN_ROOT`, the policy's, an open file's, and `SAFETY_RECORD` for a link TreeMap reaches app-data through — is recorded against it: `snapshots\.restore`, `refused`, with its code\./.test(agents),
   }, {
+    'SECURITY.md: a restore records its refusal of the file it would replace, outside every scanned folder among them': true,
     'the manifest: the doors where SAFETY_RECORD is not recorded': true,
     'the manifest: a restore records its refusal of the file it would replace, SAFETY_RECORD among them': true,
     'AGENTS.md: SAFETY_RECORD falls on both sides of the line': true,
