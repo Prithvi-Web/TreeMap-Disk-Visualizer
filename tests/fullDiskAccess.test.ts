@@ -713,6 +713,38 @@ test('after the button, the next focus asks the server once, repaints the row fr
   assert.equal(failed.els.accessHint.textContent, ADVICE['not-granted']);
 });
 
+test('the recheck says "on now" only when the page knew access was off; with no earlier answer it says what it cannot know', async () => {
+  // Review F2.2: a missing or "unknown" earlier answer was read as "off". On a
+  // Mac that had access all along, whose scan was refused chmod-000 folders,
+  // the row then promised that a new scan could read them — and the rescan
+  // refused the same folders. The server says "on now" only for a scan it
+  // knows ran without access; the page holds to the same rule.
+  const ON_NOW = /Full Disk Access is on now/;
+  const HEDGE = 'Full Disk Access is on. If it was off when this scan ran, a new scan can read the folders macOS kept TreeMap out of; folders closed by their own permissions stay closed.';
+  for (const fda of [null, 'unknown'] as const) {
+    const h = pageHarness({ fda, refused: { dirs: 2, examples: ['/Users/x/locked'] } });
+    h.render();
+    h.arm();
+    await h.fire('focus');
+    assert.equal(h.asked.filter(([u]) => u === '/api/platform/capabilities/refresh').length, 1, `${fda}: the recheck asked`);
+    assert.doesNotMatch(h.els.accessHint.textContent, ON_NOW, `${fda}: no claim about when access came on`);
+    assert.equal(h.els.accessHint.textContent, HEDGE, `${fda}: what is known, and what a rescan will not open`);
+    assert.equal(h.els.accessOpenBtn.hidden, true, `${fda}: on now, so nothing is left to switch on`);
+  }
+  // A known "off" before is still "on now".
+  const off = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] } });
+  off.render();
+  off.arm();
+  await off.fire('focus');
+  assert.match(off.els.accessHint.textContent, ON_NOW);
+  // And a new scan forgets it: its own refusals are worded by its own state.
+  off.state.scanning = true;
+  off.notice('/Users/x/Projects');
+  off.state.scanning = false;
+  off.render();
+  assert.equal(off.els.accessHint.textContent, ADVICE.granted, 'the next scan\'s refusals are worded by the state it ran under');
+});
+
 test('the recheck waits for the window to be visible: going hidden neither asks nor spends it', async () => {
   // Review F1.8: the person clicks "Open Privacy settings", and System
   // Settings comes forward, so this window often goes hidden first. Spent

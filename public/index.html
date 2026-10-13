@@ -9964,9 +9964,16 @@ function fullDiskAccessInfo() {
 
 /** The hint under the refused count on a Mac, for the state the server probed. */
 function accessHintFor(fda) {
-  if (fda && fda.state === 'granted' && state.accessGrantedSinceScan) {
-    // Switched on after this scan ran: what it refused may be readable now.
+  if (fda && fda.state === 'granted' && state.accessTurnedOn === 'was-off') {
+    // Switched on after this scan ran without it: what it refused may be readable now.
     return 'Full Disk Access is on now, so a new scan can read the folders macOS kept TreeMap out of.';
+  }
+  if (fda && fda.state === 'granted' && state.accessTurnedOn === 'was-unknown') {
+    // On now, but the page never knew whether it was on when this scan ran
+    // (no answer, or "unknown"). "On now" would promise a rescan that may
+    // refuse the same folders, and the server's "does not change that" may
+    // be false: both halves are said (review F2.2).
+    return 'Full Disk Access is on. If it was off when this scan ran, a new scan can read the folders macOS kept TreeMap out of; folders closed by their own permissions stay closed.';
   }
   if (fda && typeof fda.advice === 'string' && fda.advice) return fda.advice;
   // No answer from the server: say what is known, and name no one to grant it to.
@@ -10018,7 +10025,7 @@ function paintAccessNotice() {
  * never a question in front of it (U-Q12). Returns whether it showed.
  */
 function preScanAccessNotice(path) {
-  state.accessGrantedSinceScan = false;
+  state.accessTurnedOn = null; // what the recheck learned was about the last scan's refusals
   const mac = (state.system || {}).platform === 'darwin';
   const fda = mac ? fullDiskAccessInfo() : null;
   state.accessNotice = fda && fda.state === 'not-granted' && isWholeDiskOrHome(path) ? path : null;
@@ -10277,7 +10284,11 @@ async function recheckFullDiskAccess() {
     return; // no answer: the row stays as it was
   }
   if (!fda || typeof fda.state !== 'string') return;
-  if (fda.state === 'granted' && (!before || before.state !== 'granted')) state.accessGrantedSinceScan = true;
+  // "Off before" only when the page was told so: a missing or "unknown"
+  // answer is not one (review F2.2), and the server words it the same way.
+  if (fda.state === 'granted' && (!before || before.state !== 'granted')) {
+    state.accessTurnedOn = before && before.state === 'not-granted' ? 'was-off' : 'was-unknown';
+  }
   state.capabilities = { ...(state.capabilities || {}), fullDiskAccess: fda };
   renderRefusedFolders();
 }
