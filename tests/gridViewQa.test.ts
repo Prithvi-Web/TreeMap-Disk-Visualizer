@@ -524,6 +524,42 @@ test('the Move-to-Trash sheet’s total counts a folder and a file inside it onc
   assert.match(els.confirmText.innerHTML, /<b>4 items<\/b>/, 'the sheet still names every item it will move');
 });
 
+test('the Move-to-Trash sheet promises the way back only until the Trash is emptied — local or a cloud provider\'s (QA third pass D06)', async () => {
+  // QA third pass D06's sweep: "You can restore it from the Trash at any
+  // time." This sheet is DELETE /api/files — no Time Capsule copy — so an
+  // emptied Trash gives nothing back; and a provider empties its own trash
+  // after the time it keeps deleted files.
+  const src = slice('/* ───────────────────────────── Trash (confirm + execute) ',
+    '/* ───────────────────────────── Open-file guard (B2)');
+  const sizes: Record<string, { name: string; size: number }> = {
+    '/r/A': { name: 'A', size: 100 }, '/r/B': { name: 'B', size: 10 },
+    'cloud://drive/x.bin': { name: 'x.bin', size: 7 }, 'cloud://drive/y.bin': { name: 'y.bin', size: 3 },
+  };
+  const els: Record<string, FakeEl> = {};
+  const deps: Record<string, unknown> = {
+    $: (id: string) => (els[id] ||= fakeEl(id)),
+    ensureNodes: async () => {}, nodeFor: (p: string) => sizes[p], resetOpenHandleWarning: () => {},
+    checkOpenHandlesFor: async () => {}, cloudProviderOfScan: () => ({ name: 'Google Drive', trashLabel: 'Google Drive trash' }),
+    cloudTrashPaths: () => {}, icon: () => '', escapeHtml: (s: string) => String(s), formatBytes: (n: number) => `${n} B`,
+  };
+  const names = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const confirmTrash = new Function(...names, `'use strict'; ${braced('function tmParentPath(')}\n${src} return confirmTrash;`)(
+    ...names.map((n) => deps[n])) as (p: string[]) => Promise<void>;
+  const sheet = async (paths: string[]) => { await confirmTrash(paths); return els.confirmText.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '); };
+  for (const [paths, pronoun] of [[['/r/A'], 'it'], [['/r/A', '/r/B'], 'them']] as const) {
+    const said = await sheet([...paths]);
+    assert.doesNotMatch(said, /any ?time/i, `no way back "at any time": ${said}`);
+    assert.match(said, new RegExp(`put ${pronoun} back from the Trash until the Trash is emptied`), said);
+  }
+  for (const [paths, pronoun] of [[['cloud://drive/x.bin'], 'it'], [['cloud://drive/x.bin', 'cloud://drive/y.bin'], 'them']] as const) {
+    const said = await sheet([...paths]);
+    assert.doesNotMatch(said, /any ?time/i, `a provider keeps deleted files for its own time, not for ever: ${said}`);
+    assert.match(said, new RegExp(`restore ${pronoun} from there until it is emptied`), said);
+    assert.match(said, /by the provider/, `and says the provider empties it too: ${said}`);
+  }
+});
+
 /* ══════════════ B13 — Clear hands keyboard focus back to the grid ══════════════ */
 
 /** Press Clear in the selection bar, as its click handler sees it. */

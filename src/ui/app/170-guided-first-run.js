@@ -122,7 +122,7 @@ function tourRender() {
       <p>${tour.staged > 0
         ? `Everything you added is waiting in the cleanup cart at the bottom. Nothing has been deleted.`
         : `You added nothing — also fine. The cart at the bottom is where anything you stage waits.`}
-        Committing the cart runs a preview first, protects files in the Time Capsule, and every run has a one-click Undo.</p>
+        Committing the cart runs a preview first, protects files in the Time Capsule, and a run can be undone in one click until the Time Capsule removes its copies.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete — the map is yours'); });
   }

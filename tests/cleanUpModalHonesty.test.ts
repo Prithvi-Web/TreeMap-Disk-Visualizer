@@ -621,3 +621,78 @@ test('beside real candidates, the unreadable ones are still mentioned', async ()
   assert.match(html, /a\.mp4/, 'the candidate is listed');
   assert.match(html, /1 more large video couldn’t be read/, html);
 });
+
+/* ══════════════ D06 — no promise of recovery the code does not keep ══════════════ */
+
+/** The page with every comment removed: what a person can be shown. */
+const SHOWN = INDEX
+  .replace(/<!--[\s\S]*?-->/g, ' ')
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
+
+/** Every sentence in `text` that offers a way back — recover, restore, undo, put back. */
+function recoverySentences(text: string): string[] {
+  return text
+    .replace(/<[^>]+>/g, '\n').replace(/\$\{[^}]*\}/g, ' X ')
+    .split(/(?<=[.!?])\s+|\n|`|'\s*\+\s*'/)
+    .map((s) => s.trim())
+    .filter((s) => /\brecoverabl|\brestor(e|ed)\b|\bundo(ne)?\b|\bput (it|them|everything) back\b/i.test(s));
+}
+
+test('the Clean Up sheet says where its removals go: the Trash, until it is emptied, with no Time Capsule copy; and Shrink Video is lossy (QA third pass D06)', () => {
+  // QA third pass D06: "Nothing is removed until you confirm — and everything
+  // goes to the system Trash, recoverable any time." Clean Up's moves are
+  // DELETE /api/files, which keeps no Time Capsule copy (Settings and the
+  // Time Capsule view both say so): once the Trash is emptied, nothing comes
+  // back. And Shrink Video's original goes to the Trash after a lossy encode.
+  const at = INDEX.indexOf('<div id="cleanPaneRules"');
+  assert.notEqual(at, -1, 'the Clean Up sheet is in the page');
+  const open = INDEX.lastIndexOf('<div class="muted"', at);
+  const said = INDEX.slice(open, INDEX.indexOf('</div>', open)).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  assert.doesNotMatch(said, /any ?time/i, `no "recoverable any time": ${said}`);
+  assert.match(said, /Nothing is removed until you confirm/, said);
+  assert.match(said, /system Trash/, said);
+  assert.match(said, /until the Trash is emptied/, `the way back ends when the Trash is emptied: ${said}`);
+  assert.match(said, /not copied to the Time Capsule/, `and no capsule copy outlives it: ${said}`);
+  assert.match(said, /Shrink Video/, said);
+  assert.match(said, /quality/, `the re-encode loses quality for good: ${said}`);
+  // What the sentence says of Clean Up is what Clean Up does: its moves are trashPaths, never the cart commit.
+  assert.match(declOf('runCleanTrash'), /await trashPaths\(chunk,/, 'Clean Up moves through trashPaths');
+});
+
+test('no sentence on any page promises a way back "any time", and every promise past an emptied Trash says when it ends (QA third pass D06)', () => {
+  // The sweep behind D06: "You can restore it from the Trash at any time"
+  // (the Trash sheet every view opens), "Restore any time from the
+  // provider's own trash" (providers empty theirs on their own), and the
+  // Time Capsule's "even after emptying the Trash", which holds only until
+  // the capsule lets the copy go — its retention and its size cap.
+  const sentences = recoverySentences(SHOWN);
+  assert.ok(sentences.length >= 10, `the sweep reads the page's recovery sentences (${sentences.length})`);
+  for (const s of sentences) {
+    assert.doesNotMatch(s, /any ?time|forever|always/i, `a way back with no end is promised: "${s}"`);
+    if (/even after (you )?empty(ing)? the Trash/i.test(s)) assert.match(s, /\buntil\b/, `"even after emptying the Trash" says until when: "${s}"`);
+    // An undo from the Time Capsule lasts as long as its copy: retention and the size cap let copies go.
+    if (/Time Capsule/.test(s) && /can be undone|you can undo|undo (it|this|them)\b/i.test(s)) assert.match(s, /\buntil\b/, `an undo from the Time Capsule says until when: "${s}"`);
+  }
+});
+
+test('what the server and the docs tell an agent about the Trash says when the way back ends (QA third pass D06)', () => {
+  const root = path.join(__dirname, '..');
+  const sources: Array<[string, string]> = [
+    ['src/mcp/server.ts', readFileSync(path.join(root, 'src/mcp/server.ts'), 'utf8')],
+    ['src/api/metaRoutes.ts', readFileSync(path.join(root, 'src/api/metaRoutes.ts'), 'utf8')],
+    ['src/api/openapi.ts', readFileSync(path.join(root, 'src/api/openapi.ts'), 'utf8')],
+    ['src/services/cloud/providers.ts', readFileSync(path.join(root, 'src/services/cloud/providers.ts'), 'utf8')],
+    ['README.md', readFileSync(path.join(root, 'README.md'), 'utf8')],
+    ['AGENTS.md', readFileSync(path.join(root, 'AGENTS.md'), 'utf8')],
+  ];
+  let seen = 0;
+  for (const [file, text] of sources) {
+    for (const m of text.matchAll(/[^.\n]*\brecoverable(?!ity)[^\n]*/gi)) {
+      seen++;
+      // Bounded ("until", "while") or hedged ("often": snapshots may still hold a file the Trash has let go).
+      assert.match(m[0], /\buntil\b|\bwhile\b|\boften\b/, `${file}: "${m[0]}" says recoverable with no end — the Trash is emptied, a provider empties its own`);
+    }
+  }
+  assert.ok(seen >= 6, `the sweep found the server's and the docs' own "recoverable" (${seen})`);
+});

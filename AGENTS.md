@@ -459,7 +459,7 @@ OpenAPI 3 spec).
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
-     Trash** — recoverable, never a hard delete. With `onlyEmptyFolders: true`
+     Trash** — recoverable until the Trash is emptied, never a hard delete. With `onlyEmptyFolders: true`
      each path is looked at again right before its own Trash step, and one
      that cannot be shown still an empty folder is left where it is, in
      `failed[]` with `refused: true` and a code saying why:

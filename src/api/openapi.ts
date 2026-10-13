@@ -558,7 +558,7 @@ const schemas: Json = {
       }, ['path', 'reason'])),
     },
     ['deleted', 'failed'],
-    'Every delete is a move to the OS Trash — recoverable, never a hard delete',
+    'Every delete is a move to the OS Trash — recoverable until the Trash is emptied, never a hard delete',
   ),
   OpenHandleConflict: obj(
     {

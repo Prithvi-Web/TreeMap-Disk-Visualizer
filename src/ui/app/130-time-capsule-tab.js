@@ -101,7 +101,7 @@ function renderCapsule() {
     host.innerHTML =
       `<div class="muted" style="line-height:1.6;">Nothing here yet — and that’s the normal state.<br>` +
       `The Time Capsule keeps a checked copy of everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash, ` +
-      `so you can undo it even after emptying the Trash. Files you move to the Trash any other way (right-click, the Grid, ` +
+      `so you can undo it even after emptying the Trash, until the copy expires or is dropped to make room. Files you move to the Trash any other way (right-click, the Grid, ` +
       `Duplicates, Clean Up) go to the Trash only and aren’t copied here.</div>`;
     renderCapsuleEvents(idx.events);
     return;

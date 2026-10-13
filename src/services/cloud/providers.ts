@@ -269,7 +269,7 @@ const dropbox: CloudProvider = {
   scope: 'files.metadata.read files.content.write account_info.read',
   needsClientSecret: false,
   extraAuthParams: { token_access_type: 'offline' },
-  trashLabel: 'Dropbox deleted files (recoverable on dropbox.com)',
+  trashLabel: 'Dropbox deleted files (recoverable on dropbox.com while Dropbox keeps them)',
   async account(token) {
     const me = await apiJson(env('TM_DROPBOX_API', 'https://api.dropboxapi.com/2') + '/users/get_current_account', token, { method: 'POST', body: 'null' });
     return String((me.email as string | undefined) ?? 'Dropbox account');

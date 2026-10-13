@@ -4502,7 +4502,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div id="apPreview"></div>
       </div>
       <div class="modal-foot">
-        <span class="muted" style="font-size:11.5px;">Anything deleted is copied to the Time Capsule first, and can be undone.</span>
+        <span class="muted" style="font-size:11.5px;">Anything deleted is copied to the Time Capsule first, and can be undone until the Time Capsule removes the copy.</span>
         <div style="flex:1"></div>
         <button class="btn" id="apPreviewBtn"><span data-icon="search"></span>Preview</button>
         <button class="btn btn-primary" id="apSaveBtn">Save policy</button>
@@ -4559,7 +4559,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <button role="tab" aria-selected="false" data-pane="video"><span data-icon="video"></span>Shrink Video</button>
         <button role="tab" aria-selected="false" data-pane="cloud" id="cleanTabCloud" hidden><span data-icon="cloud"></span>Cloud-safe</button>
       </div>
-      <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
+      <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Time Capsule, so it can be put back only until the Trash is emptied. Shrink Video’s re-encode loses a little quality for good, and the original then goes to the Trash too.</div>
       <div id="cleanPaneRules" class="pane-fade">
         <!-- v4 §4.5 — the ladder: a saved view is a Clean Up rule, and a Clean
              Up rule is an Autopilot policy. One matching engine throughout. -->
@@ -4940,7 +4940,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="clock"></span>Time Capsule</div>
-      <div class="muted" style="margin-bottom:10px;">Everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash is copied here first and checked — so you can undo it even after emptying the Trash. Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash only and aren't copied.</div>
+      <div class="muted" style="margin-bottom:10px;">Everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash is copied here first and checked — so you can undo it even after emptying the Trash, until the copy expires or is dropped to make room (the two settings below). Files you move to the Trash any other way (right-click, the Grid, Duplicates, Clean Up) go to the Trash only and aren't copied.</div>
       <div class="rule-row">
         <span data-icon="clock"></span><label for="capsuleRetentionDays">Keep copies for</label>
         <input type="number" id="capsuleRetentionDays" min="1" max="365" value="30" aria-label="How many days to keep Time Capsule copies">
@@ -24781,7 +24781,7 @@ function renderCapsule() {
     host.innerHTML =
       `<div class="muted" style="line-height:1.6;">Nothing here yet — and that’s the normal state.<br>` +
       `The Time Capsule keeps a checked copy of everything <b>Autopilot</b> or the <b>cleanup cart</b> moves to the Trash, ` +
-      `so you can undo it even after emptying the Trash. Files you move to the Trash any other way (right-click, the Grid, ` +
+      `so you can undo it even after emptying the Trash, until the copy expires or is dropped to make room. Files you move to the Trash any other way (right-click, the Grid, ` +
       `Duplicates, Clean Up) go to the Trash only and aren’t copied here.</div>`;
     renderCapsuleEvents(idx.events);
     return;
@@ -27721,7 +27721,7 @@ function renderAutopilot() {
       `<div class="muted" style="line-height:1.6;">No policies yet. A policy is a standing instruction — ` +
       `"clear old build folders in my Projects folder", say — that TreeMap carries out on its own.<br>` +
       `<b>Nothing is ever deleted on the first run:</b> you always see exactly what it matched and approve it first, ` +
-      `and everything it removes is copied to the Time Capsule so you can undo it.</div>`;
+      `and everything it removes is copied to the Time Capsule so you can undo it, until the Time Capsule removes the copy.</div>`;
   } else {
     const live = policies.filter(p => p.enabled && p.approvedAt && !p.dryRunFirst).length;
     $('apInfo').innerHTML =
@@ -27942,7 +27942,7 @@ function approveAutopilotRun(runId) {
         : '')
     : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
       `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
-    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and any run can be undone from here.</span>`;
+    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and a run can be undone from here until the Time Capsule removes its copies.</span>`;
   $('confirmModal').classList.add('open');
 }
 
@@ -28321,15 +28321,16 @@ async function confirmTrash(paths) {
     $('confirmText').innerHTML = (paths.length === 1
       ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to ${escapeHtml(provider.trashLabel)}?`
       : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to ${escapeHtml(provider.trashLabel)}?`) +
-      `<br><span style="color:var(--text-3)">Restore any time from the provider's own trash.</span>`;
+      // Until it is emptied (D06): a provider empties its own trash after the time it keeps deleted files.
+      `<br><span style="color:var(--text-3)">You can restore ${paths.length === 1 ? 'it' : 'them'} from there until it is emptied — by you, or by the provider after the time it keeps deleted files.</span>`;
     onConfirmTrash = () => cloudTrashPaths(paths);
     $('confirmModal').classList.add('open');
     return;
   }
   $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
   $('confirmText').innerHTML = paths.length === 1
-    ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can restore it from the Trash at any time.</span>`
-    : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`;
+    ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can put it back from the Trash until the Trash is emptied.</span>`
+    : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can put them back from the Trash until the Trash is emptied.</span>`;
   $('confirmModal').classList.add('open');
   void checkOpenHandlesFor(paths);
 }
@@ -29560,7 +29561,7 @@ function tourRender() {
       <p>${tour.staged > 0
         ? `Everything you added is waiting in the cleanup cart at the bottom. Nothing has been deleted.`
         : `You added nothing — also fine. The cart at the bottom is where anything you stage waits.`}
-        Committing the cart runs a preview first, protects files in the Time Capsule, and every run has a one-click Undo.</p>
+        Committing the cart runs a preview first, protects files in the Time Capsule, and a run can be undone in one click until the Time Capsule removes its copies.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete — the map is yours'); });
   }
@@ -30130,7 +30131,7 @@ function cartManifestHtml(plan, missingFromScan) {
   if (plan.capsule && plan.capsule.available === false) {
     html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
   } else if (going.length) {
-    html += `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash.</div>`;
+    html += `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies.</div>`;
   }
   if (staying.length) {
     html += `<div class="cart-mf-left"><b>${formatCount(staying.length)} will be left in place</b>` +

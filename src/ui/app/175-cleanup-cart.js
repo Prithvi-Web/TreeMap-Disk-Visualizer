@@ -422,7 +422,7 @@ function cartManifestHtml(plan, missingFromScan) {
   if (plan.capsule && plan.capsule.available === false) {
     html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
   } else if (going.length) {
-    html += `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash.</div>`;
+    html += `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies.</div>`;
   }
   if (staying.length) {
     html += `<div class="cart-mf-left"><b>${formatCount(staying.length)} will be left in place</b>` +

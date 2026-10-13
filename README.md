@@ -53,7 +53,7 @@
 > [!TIP]
 > **No Node. No setup. No telemetry.** The desktop app is fully self-contained and scans the disk
 > of the machine it runs on. Deletes always go to your **system Trash** — nothing is ever
-> hard-deleted, so every action is recoverable.
+> hard-deleted, and anything moved there can be put back until the Trash is emptied.
 
 <br>
 

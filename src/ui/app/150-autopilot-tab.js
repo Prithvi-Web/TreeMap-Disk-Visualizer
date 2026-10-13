@@ -60,7 +60,7 @@ function renderAutopilot() {
       `<div class="muted" style="line-height:1.6;">No policies yet. A policy is a standing instruction — ` +
       `"clear old build folders in my Projects folder", say — that TreeMap carries out on its own.<br>` +
       `<b>Nothing is ever deleted on the first run:</b> you always see exactly what it matched and approve it first, ` +
-      `and everything it removes is copied to the Time Capsule so you can undo it.</div>`;
+      `and everything it removes is copied to the Time Capsule so you can undo it, until the Time Capsule removes the copy.</div>`;
   } else {
     const live = policies.filter(p => p.enabled && p.approvedAt && !p.dryRunFirst).length;
     $('apInfo').innerHTML =
@@ -281,7 +281,7 @@ function approveAutopilotRun(runId) {
         : '')
     : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
       `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
-    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and any run can be undone from here.</span>`;
+    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and a run can be undone from here until the Time Capsule removes its copies.</span>`;
   $('confirmModal').classList.add('open');
 }
 
@@ -660,15 +660,16 @@ async function confirmTrash(paths) {
     $('confirmText').innerHTML = (paths.length === 1
       ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to ${escapeHtml(provider.trashLabel)}?`
       : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to ${escapeHtml(provider.trashLabel)}?`) +
-      `<br><span style="color:var(--text-3)">Restore any time from the provider's own trash.</span>`;
+      // Until it is emptied (D06): a provider empties its own trash after the time it keeps deleted files.
+      `<br><span style="color:var(--text-3)">You can restore ${paths.length === 1 ? 'it' : 'them'} from there until it is emptied — by you, or by the provider after the time it keeps deleted files.</span>`;
     onConfirmTrash = () => cloudTrashPaths(paths);
     $('confirmModal').classList.add('open');
     return;
   }
   $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
   $('confirmText').innerHTML = paths.length === 1
-    ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can restore it from the Trash at any time.</span>`
-    : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`;
+    ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can put it back from the Trash until the Trash is emptied.</span>`
+    : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can put them back from the Trash until the Trash is emptied.</span>`;
   $('confirmModal').classList.add('open');
   void checkOpenHandlesFor(paths);
 }

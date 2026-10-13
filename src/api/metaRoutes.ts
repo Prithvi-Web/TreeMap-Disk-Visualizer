@@ -192,7 +192,7 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       lanes: rateLimitLanes.describe(),
     },
     safety: {
-      trashOnlyDeletes: 'Deletes move files to the OS Trash (recoverable); nothing is hard-deleted',
+      trashOnlyDeletes: 'Deletes move files to the OS Trash (recoverable until the Trash is emptied); nothing is hard-deleted',
       scannedRootRule:
         'Destructive and OS-touching endpoints only accept paths inside a root this server has actually scanned',
       pathSanitization:
@@ -235,7 +235,7 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       'Poll GET /api/scan/{scanId}/stats until status is "complete" (or stream /progress via SSE)',
       'GET /api/agent/summary?scanId= for the whole picture in one call, or explore: /api/large-files, /api/large-folders, /api/cleanup/suggestions, /api/duplicates, /api/forecast',
       'Confirm intent with the user, dry-run the destructive call (dryRun: true), then act: DELETE /api/files or POST /api/offload',
-      'Anything trashed is recoverable from the OS Trash',
+      'Anything trashed is recoverable from the OS Trash until the Trash is emptied',
     ],
     mcp: {
       transport: 'stdio',

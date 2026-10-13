@@ -286,7 +286,7 @@ export function buildMcpServer(): McpServer {
         'TreeMap disk-space tools. Workflow: scan_path first (returns a scanId), then ' +
         'get_largest / cleanup_suggestions / find_duplicates against that scanId, then — only when the ' +
         'user has confirmed — trash_paths or offload, ideally after a dryRun:true pass. ' +
-        'Deletes always go to the OS Trash (recoverable); nothing outside a scanned root can be touched. ' +
+        'Deletes always go to the OS Trash (recoverable until the Trash is emptied); nothing outside a scanned root can be touched. ' +
         'Size fields are raw bytes; many carry a formatted twin named after them (sizeFormatted, ' +
         'bytesFormatted, …), not all, so read the raw field. Formatted strings are in decimal units ' +
         '(1 KB = 1,000 bytes, 1 MB = 1,000,000 bytes, 1 GB = 1,000,000,000 bytes), as Finder counts them.',
@@ -828,7 +828,7 @@ export function buildMcpServer(): McpServer {
     {
       title: 'Move paths to the Trash',
       description:
-        'Move files/folders to the system Trash / Recycle Bin (recoverable — never a hard delete). DESTRUCTIVE ' +
+        'Move files/folders to the system Trash / Recycle Bin (recoverable until the Trash is emptied — never a hard delete). DESTRUCTIVE ' +
         'unless dryRun: true, which reports what would be trashed and the bytes that would be reclaimed without ' +
         'touching anything — dry-run first, and only act once the user has confirmed. Every path must lie inside ' +
         'a folder this server has scanned (run scan_path first); cloud and in-archive paths are refused.',
