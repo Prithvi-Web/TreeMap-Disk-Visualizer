@@ -176,6 +176,18 @@ const schemas: Json = {
     ['scanId', 'rule', 'source', 'reason', 'notEntered', 'entered', 'crossedUnlisted', 'mountsListed', 'mounts'],
     'Which drives mounted inside the scanned folder the scan did not enter, or entered (Track U, U-26).',
   ),
+  RefusedFolders: obj(
+    {
+      scanId: str(),
+      status: { type: 'string', enum: ['running', 'complete', 'error'], description: 'The scan\u2019s status; the list is final once it is complete' },
+      dirs: int('How many folders the operating system would not let the scan list: the same count as /stats refused.dirs'),
+      paths: arr(str(), 'Their absolute paths in path order, at most 10,000 (the smallest); /stats names only the first five'),
+      unnamed: int('Refused folders counted but not in paths (past the 10,000); 0 when every one is named'),
+      unnamedReason: nullable(str('Why some are not named, in a sentence; null when unnamed is 0')),
+    },
+    ['scanId', 'status', 'dirs', 'paths', 'unnamed', 'unnamedReason'],
+    'Every folder a scan was refused, by path (browser re-check C06). A refused folder has no knowable size, so none is given.',
+  ),
   BudgetGauge: obj(
     {
       path: str(), name: str(), maxBytes: int(),
@@ -1199,6 +1211,18 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     parameters: [pathParam('scanId', 'Scan id')],
     responses: {
       '200': jsonResponse('The scan boundary', ref('ScanBoundary')),
+      '404': errorResponse('SCAN_NOT_FOUND — unknown or expired scanId'),
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/scan/{scanId}/refused',
+    summary: 'Every folder the operating system would not let the scan list, by path, in path order — /stats names five; past 10,000 the rest are counted with the reason in words',
+    tag: 'scan',
+    destructive: false,
+    parameters: [pathParam('scanId', 'Scan id')],
+    responses: {
+      '200': jsonResponse('The refused folders', ref('RefusedFolders')),
       '404': errorResponse('SCAN_NOT_FOUND — unknown or expired scanId'),
     },
   },

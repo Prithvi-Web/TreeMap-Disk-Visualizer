@@ -14,6 +14,24 @@
   </div>
 </div>
 
+<!-- ═══════════ Folders a scan could not read (browser re-check C06) ═══════════
+     The Dashboard's row names five and counts the rest; this names every one,
+     from GET /api/scan/:scanId/refused. Nothing in it commits, so it opens on
+     itself (the focus net's fallback), and closes like every sheet. -->
+<div class="modal-backdrop" id="refusedModal" role="dialog" aria-modal="true" aria-label="Folders TreeMap could not read">
+  <div class="modal" style="width:620px;max-width:92vw;">
+    <div class="modal-head">
+      <h3><span data-icon="alert" data-size="17"></span>Folders TreeMap could not read <span class="num" id="refusedModalMeta"></span></h3>
+      <button class="close-x" data-close="refusedModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="modal-body" id="refusedModalBody"></div>
+    <div class="modal-foot">
+      <span class="muted" style="flex:1;" id="refusedModalNote"></span>
+      <button class="btn" data-close="refusedModal">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Keyboard shortcuts (Feature 6) ═══════════ -->
 <div class="modal-backdrop" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
   <div class="modal" style="width:540px;max-width:92vw;">

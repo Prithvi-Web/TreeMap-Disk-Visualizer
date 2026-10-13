@@ -1,6 +1,7 @@
 import type { ScanResult } from '../models/types';
 import { Flag, type ScanStore } from './scanStore';
 import { noteRefusedBelow } from '../utils/mountBoundaries';
+import { formatCount } from '../utils/formatCount';
 
 /**
  * Folders the OS would not let a scan list, counted and named.
@@ -14,6 +15,16 @@ import { noteRefusedBelow } from '../utils/mountBoundaries';
  */
 export const REFUSED_EXAMPLES = 5;
 
+/**
+ * How many refused folders a scan names in full (browser re-check C06): the
+ * page said "69 folders could not be read" and named five, and nothing in
+ * the app could name the other 64. GET /api/scan/:scanId/refused serves this
+ * list. It is bounded, so a scan refused hundreds of thousands of folders
+ * holds a list of a known size: past the cap the smallest paths are named, as
+ * the five examples are, and the rest are counted and said to be.
+ */
+export const REFUSED_LIST_CAP = 10_000;
+
 /** Insert `p` into the sorted list if it belongs among the `cap` smallest. */
 export function keepSmallest(list: string[], p: string, cap = REFUSED_EXAMPLES): void {
   if (list.length >= cap && p >= list[list.length - 1]) return;
@@ -25,19 +36,77 @@ export function keepSmallest(list: string[], p: string, cap = REFUSED_EXAMPLES):
 }
 
 /**
+ * Add `p` to `list`, a refused-folder list read by `refusedFolders`. Paths are
+ * appended as the walk meets them and cut back to the REFUSED_LIST_CAP
+ * smallest whenever the list reaches twice the cap, so the list never holds
+ * twice the cap and the cut is paid once per cap's worth of paths. What the
+ * cut keeps is the smallest of everything seen, so the answer does not depend
+ * on the order the walk met the folders in.
+ */
+export function keepRefusedPath(list: string[], p: string): void {
+  list.push(p);
+  if (list.length >= 2 * REFUSED_LIST_CAP) {
+    list.sort();
+    list.length = REFUSED_LIST_CAP;
+  }
+}
+
+/**
  * One more folder refused to `scan`. The walker and the native ingest name a
  * refused folder here, so this is also where a drive mounted beneath it is
  * recorded as never reached (Track U, U-24): it was not "not entered", nothing
  * got near it. The native memory path's sliced adopt (U-35) keeps its own
- * count and examples and records the drives through `noteUnlistedBelow`. gdu
- * names no refused folder (U-12), and the native memory path names no
- * unreadable one, so there a drive beneath such a folder reads as reached.
+ * count and paths, added with `addRefused`, and records the drives through
+ * `noteUnlistedBelow`. gdu names no refused folder (U-12), and the native
+ * memory path names no unreadable one, so there a drive beneath such a folder
+ * reads as reached.
  */
 export function noteRefused(scan: ScanResult, dirPath: string): void {
   scan.deniedDirs = (scan.deniedDirs ?? 0) + 1;
   scan.deniedExamples = scan.deniedExamples ?? [];
   keepSmallest(scan.deniedExamples, dirPath);
+  scan.deniedPaths = scan.deniedPaths ?? [];
+  keepRefusedPath(scan.deniedPaths, dirPath);
   if (scan.boundary) noteRefusedBelow(scan.boundary, dirPath);
+}
+
+/**
+ * Refusals counted apart from the record — a gdu shard, the native memory
+ * path's adopt — added to it: `count` to the count, and every one of `paths`
+ * (each part keeps its own with `keepRefusedPath`, so they include its
+ * smallest) to the list and among the five examples.
+ */
+export function addRefused(scan: ScanResult, count: number, paths: readonly string[]): void {
+  scan.deniedDirs = (scan.deniedDirs ?? 0) + count;
+  scan.deniedExamples = scan.deniedExamples ?? [];
+  scan.deniedPaths = scan.deniedPaths ?? [];
+  for (const p of paths) {
+    keepSmallest(scan.deniedExamples, p);
+    keepRefusedPath(scan.deniedPaths, p);
+  }
+}
+
+/** What GET /api/scan/:scanId/refused says of a scan's refused folders, but its id and status. */
+export interface RefusedFolderList {
+  /** How many folders the scan was refused: /stats' `refused.dirs`. */
+  dirs: number;
+  /** Their absolute paths in path order, at most REFUSED_LIST_CAP (the smallest). */
+  paths: string[];
+  /** Refused folders counted but not in `paths`; 0 when every one is named. */
+  unnamed: number;
+  /** Why some are not named, in a sentence; null when none are left out. */
+  unnamedReason: string | null;
+}
+
+/** The folders `scan` was refused, every one by path up to the cap, the rest counted. */
+export function refusedFolders(scan: ScanResult): RefusedFolderList {
+  const dirs = scan.deniedDirs ?? 0;
+  const paths = [...(scan.deniedPaths ?? [])].sort().slice(0, REFUSED_LIST_CAP);
+  const unnamed = Math.max(0, dirs - paths.length);
+  const unnamedReason = unnamed > 0
+    ? `TreeMap names the first ${formatCount(REFUSED_LIST_CAP)} of them, in path order; the other ${formatCount(unnamed)} ${unnamed === 1 ? 'was' : 'were'} counted but not named.`
+    : null;
+  return { dirs, paths, unnamed, unnamedReason };
 }
 
 /**

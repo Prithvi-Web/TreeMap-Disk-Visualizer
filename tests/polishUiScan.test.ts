@@ -118,6 +118,8 @@ const NOT_GRANTED = {
 
 type RefusedHarness = {
   render: () => void; probe: () => Promise<void>;
+  /** The page's openRefusedList (C06): the sheet that names every refused folder. */
+  openList: () => Promise<void>;
   els: Record<string, El>; state: Record<string, unknown>; toasts: string[]; asked: string[];
   $: (id: string) => El;
   /** Emit a topic as the page does (wired harnesses only: the page's own TOPIC.scan subscriber hears it). */
@@ -146,6 +148,8 @@ function refusedHarness(opts: {
    * event loop later (review F3.6). Every other harness emits into nothing.
    */
   wired?: boolean;
+  /** GET /api/scan/:id/refused, answered per ask (1 for the first): resolve with the body, or reject (C06). */
+  refusedList?: (ask: number) => Promise<unknown>;
 }): RefusedHarness {
   const src = slice('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
     (opts.wired ? slice('/* ── end refused folders ── */', '/* ── Drives mounted inside the folder ── */') : '');
@@ -166,8 +170,13 @@ function refusedHarness(opts: {
     capabilities: { fullDiskAccess: opts.fullDiskAccess === undefined ? NOT_GRANTED : opts.fullDiskAccess },
     pathIndex: new Map(Object.entries((opts.root.children as Array<{ path: string }> | undefined || []).reduce((m, c) => ({ ...m, [c.path]: c }), {}))),
   };
+  let listAsks = 0;
   const api = async (url: string) => {
     asked.push(url);
+    if (/^\/api\/scan\/[^/]+\/refused$/.test(url)) {
+      if (!opts.refusedList) return assert.fail(`no answer scripted for ${url}`);
+      return opts.refusedList(++listAsks);
+    }
     if (opts.wired) {
       await new Promise((r) => setImmediate(r)); // a request takes a turn of the loop, as the network's does
       if (asked.length > WIRED_ASK_CAP) { const e = Object.assign(new Error('not found'), { status: 404, code: 'PATH_NOT_FOUND' }); throw e; }
@@ -178,15 +187,20 @@ function refusedHarness(opts: {
     return { entries: [] };
   };
   const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'subscribe', 'TOPIC', 'window', 'document',
-    `'use strict'; ${src} return { render: renderRefusedFolders, probe: probeRefusedFolders };`)(
-    $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n),
+    `'use strict'; ${src} return { render: renderRefusedFolders, probe: probeRefusedFolders, openList: openRefusedList };`)(
+    $, state, api, (m: string) => toasts.push(m), () => '', escapeForPage, (n: number) => String(n),
     opts.wired ? emit : () => {}, subscribe, { scan: 'scan' },
     { treemapDesktop: null, open: () => {} },
     // Hiding the Privacy button asks where keyboard focus is (U-11, review F1.11): nowhere here.
     { activeElement: null },
-  ) as { render: () => void; probe: () => Promise<void> };
+  ) as { render: () => void; probe: () => Promise<void>; openList: () => Promise<void> };
   const settle = async (n: number): Promise<void> => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
-  return { render: fns.render, probe: fns.probe, els, state, toasts, asked, $, emit, emitted, settle };
+  return { render: fns.render, probe: fns.probe, openList: fns.openList, els, state, toasts, asked, $, emit, emitted, settle };
+}
+
+/** The page's escapeHtml, as it escapes: what the harness hands the page, and what a test looks for. */
+function escapeForPage(s: string): string {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 test('the server\'s refused count paints the dashboard row, names the folders, and says what to do on a Mac', () => {
@@ -261,8 +275,127 @@ test('a clean scan clears the last scan\'s refused folders: the server\'s 0 is a
   assert.match(probed.$('accessText').textContent, /^1 folder could not be read/);
   const counted = refusedHarness({ stats: { refused: { dirs: 3, examples: ['/Users/x/corpus/a'] } }, root: corpus, scanId: 's2', scanRefused: seventyBefore });
   counted.render();
-  assert.match(counted.$('accessText').textContent, /^3 folders could not be read — a$/, 'the server\'s count, not the last scan\'s');
+  assert.match(counted.$('accessText').textContent, /^3 folders could not be read — a and 2 more$/, 'the server\'s count, not the last scan\'s');
   assert.equal((counted.state.scanRefused as { scanId: string } | null)?.scanId, 's2', 'stamped with the scan it describes');
+});
+
+/* ══════════════ browser re-check C06 — every refused folder is reachable ══════════════ */
+
+/** /System/Library's five smallest refused folders, as /stats names them. */
+const FIVE = ['AssetsV2', 'Caches', 'Fonts', 'Frameworks', 'Graphics'].map((n) => `/System/Library/${n}`);
+
+test('C06: the row says how many it does not name, and offers the whole list only when some are unnamed', () => {
+  // "69 folders could not be read — AssetsV2, Caches, Fonts, Frameworks,
+  // Graphics" read as the whole list: nothing said 64 more, and nothing
+  // anywhere listed them.
+  const h = refusedHarness({ stats: { refused: { dirs: 69, examples: FIVE } }, root: { path: '/System/Library', size: 5e9 }, scanId: 's1' });
+  h.render();
+  assert.equal(h.els.accessText.textContent, '69 folders could not be read — AssetsV2, Caches, Fonts, Frameworks, Graphics and 64 more');
+  assert.equal(h.els.accessListBtn.hidden, false, 'the whole list is offered');
+  assert.equal(h.els.accessListBtn.textContent, 'Show all 69');
+  const one = refusedHarness({ stats: { refused: { dirs: 6, examples: FIVE } }, root: { path: '/System/Library', size: 5e9 }, scanId: 's1' });
+  one.render();
+  assert.match(one.els.accessText.textContent, /, Graphics and 1 more$/);
+  const unnamedAll = refusedHarness({ stats: { refused: { dirs: 4, examples: [] } }, root: { path: '/System/Library', size: 5e9 }, scanId: 's1' });
+  unnamedAll.render();
+  assert.equal(unnamedAll.els.accessText.textContent, '4 folders could not be read', 'no names: no "and 4 more" after nothing');
+  assert.equal(unnamedAll.els.accessListBtn.hidden, false, 'but the list still names them');
+  const all = refusedHarness({ stats: { refused: { dirs: 2, examples: ['/Users/x/Desktop', '/Users/x/Documents'] } }, root: { path: '/Users/x', size: 5e9 }, scanId: 's1' });
+  all.$('accessListBtn').hidden = false; // as the last scan left it
+  all.render();
+  assert.equal(all.els.accessText.textContent, '2 folders could not be read — Desktop, Documents', 'every one named: nothing more to say');
+  assert.equal(all.els.accessListBtn.hidden, true, 'and no list to offer');
+  // A whole-disk scan's notice, while it runs, has no list yet.
+  h.state.scanning = true;
+  h.state.accessNotice = '/';
+  h.render();
+  assert.equal(h.els.accessListBtn.hidden, true, 'the running scan\'s notice offers no list');
+});
+
+test('C06: the list sheet names every folder the server lists for this scan, escaped, with the count and what to do', async () => {
+  const paths = Array.from({ length: 69 }, (_, i) => `/System/Library/F${String(i).padStart(2, '0')} & <b>`);
+  const h = refusedHarness({
+    stats: { refused: { dirs: 69, examples: paths.slice(0, 5) } }, root: { path: '/System/Library', size: 5e9 }, scanId: 's1',
+    refusedList: async () => ({ scanId: 's1', status: 'complete', dirs: 69, paths, unnamed: 0, unnamedReason: null }),
+  });
+  h.render();
+  await h.openList();
+  assert.deepEqual(h.asked, ['/api/scan/s1/refused'], 'the server\'s list for the scan on screen');
+  assert.equal(h.els.refusedModal.cls.has('open'), true, 'the sheet opens');
+  assert.equal(h.els.refusedModalMeta.textContent, '· 69');
+  const body = h.els.refusedModalBody.innerHTML;
+  assert.equal((body.match(/class="refused-item"/g) || []).length, 69, 'a row for every folder');
+  let at = -1;
+  for (const p of paths) {
+    const i = body.indexOf(`>${escapeForPage(p)}</`);
+    assert.ok(i > at, `${p} is listed, after the one before it`);
+    at = i;
+  }
+  assert.doesNotMatch(body, /<b>/, 'a path is text, never markup');
+  assert.equal(h.els.refusedModalNote.textContent, NOT_GRANTED.advice, 'and what to do about them, as the row says it');
+});
+
+test('C06: past what the server names, the sheet says how many it counted but could not name, and why', async () => {
+  const reason = 'TreeMap names the first 10,000 of them, in path order; the other 2 were counted but not named.';
+  const h = refusedHarness({
+    stats: { refused: { dirs: 5, examples: FIVE } }, root: { path: '/System/Library', size: 5e9 }, scanId: 's1',
+    refusedList: async () => ({ scanId: 's1', status: 'complete', dirs: 5, paths: FIVE.slice(0, 3), unnamed: 2, unnamedReason: reason }),
+  });
+  await h.openList();
+  assert.equal(h.els.refusedModalMeta.textContent, '· 5', 'the count is the server\'s, though no row painted one first');
+  const body = h.els.refusedModalBody.innerHTML;
+  assert.ok(body.includes(reason), 'the server\'s reason is in the sheet');
+  assert.ok(body.indexOf(reason) < body.indexOf('class="refused-item"'), 'above the list it qualifies');
+  assert.equal((body.match(/class="refused-item"/g) || []).length, 3);
+});
+
+test('C06: a list that fails to load says so, and a late answer never paints another scan\'s folders or overwrites a newer ask', async () => {
+  const failed = refusedHarness({
+    stats: { refused: { dirs: 69, examples: FIVE } }, root: { path: '/System/Library', size: 5e9 }, scanId: 's1',
+    refusedList: async () => { throw Object.assign(new Error('Scan not found or expired.'), { status: 404, code: 'SCAN_NOT_FOUND' }); },
+  });
+  await failed.openList();
+  assert.match(failed.els.refusedModalBody.innerHTML, /TreeMap could not load the list: Scan not found or expired\.</, 'the server\'s words, one full stop');
+  assert.doesNotMatch(failed.els.refusedModalBody.innerHTML, /refused-item/);
+
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  const late = refusedHarness({
+    stats: { refused: { dirs: 69, examples: FIVE } }, root: { path: '/System/Library', size: 5e9 }, scanId: 's1',
+    refusedList: async () => { await gate; return { scanId: 's1', status: 'complete', dirs: 69, paths: FIVE, unnamed: 0, unnamedReason: null }; },
+  });
+  const opening = late.openList();
+  assert.match(late.els.refusedModalBody.innerHTML, /Loading/, 'while it loads, it says so');
+  late.state.scanId = 's2'; // another scan landed meanwhile
+  release();
+  await opening;
+  assert.doesNotMatch(late.els.refusedModalBody.innerHTML, /refused-item/, 'the earlier scan\'s folders are not shown as this scan\'s');
+  assert.match(late.els.refusedModalBody.innerHTML, /new scan/i, 'it says why there is no list');
+
+  const answers: Array<() => void> = [];
+  const lists = [['/x/first'], ['/x/second']];
+  const twice = refusedHarness({
+    stats: { refused: { dirs: 1, examples: [] } }, root: { path: '/x', size: 5e9 }, scanId: 's1',
+    refusedList: (ask) => new Promise((r) => answers.push(() => r({ scanId: 's1', status: 'complete', dirs: 1, paths: lists[ask - 1], unnamed: 0, unnamedReason: null }))),
+  });
+  const first = twice.openList();
+  const second = twice.openList();
+  answers[1]();
+  await second;
+  answers[0]();
+  await first;
+  assert.match(twice.els.refusedModalBody.innerHTML, /\/x\/second/, 'the newer ask paints');
+  assert.doesNotMatch(twice.els.refusedModalBody.innerHTML, /\/x\/first/, 'and the older answer, arriving last, does not overwrite it');
+});
+
+test('C06: "Show all" sits in the access row and opens the sheet, a dialog with its count, its list, its note and a close', () => {
+  assert.match(INDEX, /<div class="access-actions">\s*<button class="btn" id="accessListBtn" hidden>[^<]*<\/button>/, 'first in the row\'s buttons: it is about the sentence');
+  assert.match(INDEX, /\$\('accessListBtn'\)\.addEventListener\('click', \(\) => void openRefusedList\(\)\);/, 'wired to the sheet');
+  assert.match(INDEX, /<div class="modal-backdrop" id="refusedModal" role="dialog" aria-modal="true" aria-label="Folders TreeMap could not read">/);
+  const sheet = slice('id="refusedModal"', '<!-- ═══');
+  for (const id of ['refusedModalMeta', 'refusedModalBody', 'refusedModalNote']) assert.match(sheet, new RegExp(`id="${id}"`), `#${id} is in the sheet`);
+  assert.match(sheet, /data-close="refusedModal"/, 'and it closes');
+  assert.doesNotMatch(sheet, /btn-primary|btn-danger|autofocus/, 'nothing in it commits, so it opens on itself');
 });
 
 test('a home scan probes the protected folders inside the home folder however its name is spelled — on macOS and Linux a backslash in it is part of the name; on Windows it is the separator (POL item 7 review, F1.2)', async () => {

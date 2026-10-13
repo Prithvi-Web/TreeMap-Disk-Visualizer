@@ -510,6 +510,7 @@ function resetCounters(scan: ScanResult): void {
   scan.cloudBytes = 0;
   scan.deniedDirs = 0;
   scan.deniedExamples = [];
+  scan.deniedPaths = [];
   scan.vanishedDirs = 0;
   scan.unreadableDirs = 0;
   scan.deniedEntries = 0;

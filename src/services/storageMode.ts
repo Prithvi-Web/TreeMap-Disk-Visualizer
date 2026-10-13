@@ -174,6 +174,11 @@ export const FEATURES = {
     label: 'the drives a scan did not enter (/boundary)',
     classified: 'it reads the boundary kept on the scan’s record; only the bytes inside entered drives need the tree, and those are null with the reason outside memory mode',
   },
+  refused: {
+    ...TOTALS,
+    label: 'the folders a scan was refused (/refused)',
+    classified: 'it reads the refused folders kept on the scan’s record, never its rows',
+  },
   // Not the store at all.
   noStore: {
     ...NO_STORE,
@@ -248,6 +253,7 @@ export const ROUTE_FEATURES: Readonly<Record<string, RouteEntry>> = {
   'POST /api/scan/:scanId/nodes': 'nodes',
   'GET /api/scan/:scanId/stats': 'stats',
   'GET /api/scan/:scanId/boundary': 'boundary',
+  'GET /api/scan/:scanId/refused': 'refused',
   'GET /api/scan/:scanId/budgets': 'budgets',
   'GET /api/scan/:scanId/budget-gauges': 'budgets',
   'GET /api/scan/:scanId/export': EXPORT,

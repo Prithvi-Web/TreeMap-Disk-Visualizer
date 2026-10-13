@@ -33,6 +33,7 @@ import { statToInput } from '../src/services/scan/nodeInput';
 import { Flag, PackedScanStore, forceFinalizePermutationForTests, type NodeInput } from '../src/services/scanStore';
 import { neverDescendPaths } from '../src/utils/mountBoundaries';
 import { createScanRecord } from '../src/services/diskScanner';
+import { noteRefused, refusedFolders } from '../src/services/scanRefusals';
 import { platform } from '../src/platform';
 import type { ScanResult } from '../src/models/types';
 
@@ -615,6 +616,34 @@ test('refused folders are added to a record that already holds some, as noteRefu
   const drained = prefilled();
   adoptNativeStore(drained.scan, drained.store, syntheticTaken(spec));
   assertSameAdopt(drained, want, 'drained');
+});
+
+test('C06: the adopt names every folder the walk was refused, not only five — drained and at every slice size, beside what the record already named', async () => {
+  // Browser re-check C06: the page could name five of 69 refused folders and
+  // no more, because no engine kept more. The adopt keeps every path now, and
+  // GET /api/scan/:scanId/refused serves them (scanRefusals.refusedFolders).
+  const spec: TakenSpec = { folders: 6, filesPerFolder: 4, denied: 31, textEvery: 0, cloudEvery: 0, seed: 12 };
+  const before = `${ADOPT_ROOT}/0 first`;
+  const prefilled = (): Adopted => {
+    const target = freshTarget();
+    noteRefused(target.scan, before); // a folder the record already named, as the walker names one
+    return target;
+  };
+  const check = (got: Adopted, taken: NativeStore, what: string): void => {
+    const refused = [...taken.counters.deniedDirs].map((id) => got.store.path(id));
+    assert.equal(new Set(refused).size, 31, `${what}: the spec refused 31 distinct folders`);
+    assert.deepEqual(refusedFolders(got.scan), { dirs: 32, paths: [before, ...refused].sort(), unnamed: 0, unnamedReason: null }, `${what}: every one by path, in path order`);
+  };
+  const drained = prefilled();
+  const drainedTaken = syntheticTaken(spec);
+  adoptNativeStore(drained.scan, drained.store, drainedTaken);
+  check(drained, drainedTaken, 'drained');
+  for (const slice of [1, 7, 100_000]) {
+    const got = prefilled();
+    const taken = syntheticTaken(spec);
+    await adoptNativeStoreInSlices(got.scan, got.store, taken, { sliceNodes: slice, yieldTurn: immediate });
+    check(got, taken, `slices of ${slice}`);
+  }
 });
 
 test('cloudBytes is one sum from 0 in the candidates\' order across slices, and so is sparseBytes past 2^53 (RISKS R91)', async () => {

@@ -91,6 +91,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .trash-item:last-child { border-bottom: none; }
 .trash-item .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trash-item .sz { color: var(--text-2); white-space: nowrap; }
+/* C06: every folder a scan could not read, by path. A path is the whole
+   answer here, so it wraps rather than being cut short. */
+.refused-list { max-height: 56vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
+.refused-item { padding: 7px 13px; font-size: 12px; font-family: var(--mono, ui-monospace, monospace); overflow-wrap: anywhere; border-bottom: 1px solid var(--hairline); }
+.refused-item:last-child { border-bottom: none; }
 
 /* ── OS snapshot accounting (Feature 9) ── */
 .snap-row { display: flex; align-items: center; gap: 11px; margin-top: 12px; padding: 10px 13px; border-radius: var(--r-md); border: 1px solid var(--hairline); background: var(--surface-1); font-size: 12.5px; }

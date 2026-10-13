@@ -3,7 +3,7 @@ import { CONTAINER_RULES } from '../../utils/containerKind';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, containerKindId } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
-import { keepSmallest, markUnlisted, noteUnlistedBelow } from '../scanRefusals';
+import { addRefused, keepRefusedPath, markUnlisted, noteUnlistedBelow } from '../scanRefusals';
 import { platform } from '../../platform';
 import type { ScanModule } from './native';
 import type { EntryProjection } from './projection';
@@ -350,13 +350,14 @@ class Adoption implements SliceWork {
   private cloudBytes = 0;
   private readonly guesses: number[] = [];
   /**
-   * The refused folders passed so far: how many, and the five smallest paths
-   * (`keepSmallest`, the record's own rule) — never every path, which for a
-   * scan refused tens of thousands of folders would be megabytes held across
-   * every turn of the adopt. `finish` adds both to the record.
+   * The refused folders passed so far: how many, and their paths as
+   * `keepRefusedPath` keeps them (C06) — every one up to REFUSED_LIST_CAP, the
+   * smallest past it, so a scan refused tens of thousands of folders holds a
+   * bounded list across the turns of the adopt. `finish` adds both to the
+   * record, which takes the five examples from them.
    */
   private deniedCount = 0;
-  private readonly deniedExamples: string[] = [];
+  private readonly deniedPaths: string[] = [];
 
   constructor(
     private readonly scan: ScanResult,
@@ -389,7 +390,7 @@ class Adoption implements SliceWork {
       const id = taken.counters.deniedDirs[this.next - this.cloudEnd];
       const dirPath = store.path(id);
       this.deniedCount++;
-      keepSmallest(this.deniedExamples, dirPath);
+      keepRefusedPath(this.deniedPaths, dirPath);
       markUnlisted(store, id); // never listed, so never offered as empty (U-4)
       // A drive mounted beneath it was never reached (U-24), as `noteRefused` records it.
       noteUnlistedBelow(this.scan, dirPath);
@@ -432,12 +433,10 @@ class Adoption implements SliceWork {
     }
     if (counters.slackBytes > 0) scan.slackBytes = counters.slackBytes;
     if (this.deniedCount > 0) {
-      // What `noteRefused` once a folder would leave: the count added to, and
-      // the five smallest of the record's paths and these (each of the five
-      // smallest overall is among the five smallest of its own part).
-      scan.deniedDirs = (scan.deniedDirs ?? 0) + this.deniedCount;
-      scan.deniedExamples = scan.deniedExamples ?? [];
-      for (const example of this.deniedExamples) keepSmallest(scan.deniedExamples, example);
+      // What `noteRefused` once a folder would leave: the count added to, the
+      // paths to the record's list, and the five smallest of the record's paths
+      // and these as its examples.
+      addRefused(scan, this.deniedCount, this.deniedPaths);
     }
     // The build counts the folders that vanished or could not be read without
     // naming them, so none can be marked here: Empty Folders' second look on disk

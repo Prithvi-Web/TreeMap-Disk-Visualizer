@@ -1200,11 +1200,12 @@ function isWholeDiskOrHome(p) {
  * reviews F1.11 and F2.6). [hidden] takes an element out of the page, and a
  * focused one hands focus to <body>: "Open Privacy settings" once the
  * recheck finds access on, "What's missing?" when a scan's notice replaces
- * its count, the whole row when a rescan refused nothing. So where focus is
- * is read before `paint` runs; if it was in the row and is gone after, it
- * moves to the first button still showing there, else to the row itself
- * (which says what changed), else — the row gone — to the Scan button above
- * it. Focus anywhere else is never moved.
+ * its count, "Show all" when a rescan names every folder it was refused
+ * (C06), the whole row when a rescan refused nothing. So where focus is is
+ * read before `paint` runs; if it was in the row and is gone after, it moves
+ * to "What's missing?", else the next button still showing there, else to
+ * the row itself (which says what changed), else — the row gone — to the
+ * Scan button above it. Focus anywhere else is never moved.
  */
 function keepAccessFocus(paint) {
   const row = $('accessRow');
@@ -1212,7 +1213,7 @@ function keepAccessFocus(paint) {
   const inRow = !!was && (was === row || row.contains(was));
   paint();
   if (!inRow || (!row.hidden && !was.hidden)) return;
-  const stays = ['accessMissingBtn', 'accessOpenBtn'].map((id) => $(id)).find((b) => !row.hidden && !b.hidden);
+  const stays = ['accessMissingBtn', 'accessOpenBtn', 'accessListBtn'].map((id) => $(id)).find((b) => !row.hidden && !b.hidden);
   (stays || (row.hidden ? $('scanBtn') : row)).focus();
 }
 
@@ -1222,6 +1223,7 @@ function paintAccessNotice() {
   $('accessText').textContent = 'macOS keeps TreeMap out of the folders it protects (Mail, Messages, Safari, the Trash), so their size will not be in this total.';
   $('accessHint').textContent = accessHintFor(fda);
   $('accessMissingBtn').hidden = true; // nothing is missing yet: the scan has not finished
+  $('accessListBtn').hidden = true; // nor any list of what it was refused
   $('accessRow').hidden = false;
   $('accessOpenBtn').hidden = !!fda && fda.state === 'granted';
 }
@@ -1333,9 +1335,15 @@ function paintRefusedRow() {
   const mac = (state.system || {}).platform === 'darwin';
   const names = (found.examples || []).map(lastPathSegment).filter(Boolean);
   const n = found.dirs;
+  // The row names at most five (the server's examples). It says how many it
+  // does not name, and offers the server's list of every one (C06): "69
+  // folders could not be read — " and five names read as the whole list.
+  const more = n - names.length;
   $('accessText').textContent =
     `${formatCount(n)} folder${n === 1 ? '' : 's'} could not be read` +
-    (names.length ? ` — ${names.join(', ')}` : '');
+    (names.length ? ` — ${names.join(', ')}${more > 0 ? ` and ${formatCount(more)} more` : ''}` : '');
+  $('accessListBtn').textContent = `Show all ${formatCount(n)}`;
+  $('accessListBtn').hidden = !(more > 0);
   const fda = mac ? fullDiskAccessInfo() : null;
   $('accessHint').textContent = mac
     ? accessHintFor(fda)
@@ -1423,6 +1431,47 @@ async function probeRefusedFolders() {
     toast(line + fix, 'error', 15000);
   }
   emit(TOPIC.scan, state.scanId);
+}
+
+/**
+ * The sheet "Show all" opens (browser re-check C06): every folder this scan
+ * was refused, by path, from GET /api/scan/:scanId/refused — the row names
+ * five, and nothing else in the app named the rest. The count and the hint
+ * are the row's own. An answer is painted only for the ask that is still the
+ * latest, and only for the scan still on screen: a list that arrives after a
+ * new scan landed is another scan's, and says so rather than standing in for
+ * this one's.
+ */
+let refusedListAsk = 0;
+async function openRefusedList() {
+  const scanId = state.scanId;
+  const ask = ++refusedListAsk;
+  const found = state.scanRefused;
+  $('refusedModalMeta').textContent = found && found.dirs ? `· ${formatCount(found.dirs)}` : '';
+  $('refusedModalNote').textContent = $('accessHint').textContent;
+  const body = $('refusedModalBody');
+  const note = (text) => `<div class="muted" style="padding:4px 2px 12px;display:flex;align-items:flex-start;gap:8px;">${icon('alert', 15)}<span>${escapeHtml(text)}</span></div>`;
+  body.innerHTML = '<div class="muted" style="padding:18px 2px;">Loading the list…</div>';
+  $('refusedModal').classList.add('open');
+  let list;
+  try {
+    list = await api(`/api/scan/${encodeURIComponent(scanId)}/refused`);
+  } catch (e) {
+    if (ask !== refusedListAsk) return;
+    const why = String((e && e.message) || 'the server did not answer').replace(/\.$/, '');
+    body.innerHTML = note(`TreeMap could not load the list: ${why}.`);
+    return;
+  }
+  if (ask !== refusedListAsk) return; // opened again since: the newer ask paints
+  if (scanId !== state.scanId) {
+    body.innerHTML = note('A new scan finished while this list loaded. Open the list again from the Dashboard to see the folders that scan could not read.');
+    return;
+  }
+  $('refusedModalMeta').textContent = `· ${formatCount(list.dirs)}`;
+  body.innerHTML = (list.unnamedReason ? note(list.unnamedReason) : '') +
+    '<div class="refused-list">' +
+    (list.paths || []).map((p) => `<div class="refused-item">${escapeHtml(p)}</div>`).join('') +
+    '</div>';
 }
 /* ── end refused folders ── */
 subscribe(TOPIC.scan, (scanId) => {
@@ -1619,6 +1668,7 @@ $('accessOpenBtn').addEventListener('click', () => {
   void openFullDiskAccessSettings();
 });
 $('accessMissingBtn').addEventListener('click', () => switchView('missing'));
+$('accessListBtn').addEventListener('click', () => void openRefusedList());
 
 /* ── Scan queue ── */
 /* Several folders can arrive at once — a stack dropped from Finder, or the

@@ -611,9 +611,9 @@ test('the access row reflows rather than starving its sentence: the buttons go u
   assert.match(cssRule('.access-row'), /flex-wrap:\s*wrap/, 'the row wraps');
   const basis = /flex:\s*1 1 (\d+)px/.exec(cssRule('.access-body'));
   assert.ok(basis && Number(basis[1]) >= 240, 'the sentence keeps a readable width before anything sits beside it');
-  assert.match(INDEX, /<div class="access-actions">\s*<button class="btn" id="accessMissingBtn" hidden>[^<]*<\/button>\s*<button class="btn" id="accessOpenBtn" hidden>[^<]*<\/button>\s*<\/div>/,
-    'the two buttons are one group, so they wrap together, never one at a time');
-  for (const id of ['accessText', 'accessHint', 'accessMissingBtn', 'accessOpenBtn']) {
+  assert.match(INDEX, /<div class="access-actions">\s*<button class="btn" id="accessListBtn" hidden>[^<]*<\/button>\s*<button class="btn" id="accessMissingBtn" hidden>[^<]*<\/button>\s*<button class="btn" id="accessOpenBtn" hidden>[^<]*<\/button>\s*<\/div>/,
+    'the buttons are one group (with C06\'s "Show all"), so they wrap together, never one at a time');
+  for (const id of ['accessText', 'accessHint', 'accessListBtn', 'accessMissingBtn', 'accessOpenBtn']) {
     assert.ok(nestedIn('accessRow', id), `#${id} sits inside #accessRow: hiding the row hides it, and focus on it is the row's to keep`);
   }
   assert.match(cssRule('.access-actions'), /flex-wrap:\s*wrap/, 'and the group stacks its own buttons in a column too narrow for both');
@@ -1162,6 +1162,17 @@ test('any repaint that hides the focused part of the access row moves focus to w
   g.state.scanStats = { refused: { dirs: 0, examples: [] } };
   g.render();
   assert.equal(g.doc.activeElement, g.$('scanBtn'), 'with no other button showing, the row gone, the Scan button takes it');
+
+  // C06: "Show all", focused, goes when a rescan names every folder it was
+  // refused; "What's missing?" beside it takes focus, as it does for the others.
+  const l = pageHarness({ fda: 'not-granted', refused: { dirs: 3, examples: ['/Users/x/Library/Mail'] } });
+  l.render();
+  assert.equal(l.els.accessListBtn.hidden, false, 'two of the three unnamed: the list is offered');
+  l.doc.activeElement = l.els.accessListBtn;
+  l.state.scanStats = { refused: { dirs: 1, examples: ['/Users/x/Library/Mail'] } };
+  l.render();
+  assert.equal(l.els.accessListBtn.hidden, true, 'every one named now: no list to offer');
+  assert.equal(l.doc.activeElement, l.els.accessMissingBtn, 'and focus moves to "What’s missing?", never to the page body');
 
   // A repaint that hides nothing focused moves nobody.
   const s = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] } });

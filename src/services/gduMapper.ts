@@ -1,7 +1,7 @@
 import { FileNode } from '../models/types';
 import { detectContainerKind } from '../utils/containerKind';
 import { ScanStore, NodeInput, Flag } from './scanStore';
-import { keepSmallest, markUnlisted } from './scanRefusals';
+import { keepRefusedPath, keepSmallest, markUnlisted } from './scanRefusals';
 
 /**
  * gdu's JSON export -> TreeMap's FileNode.
@@ -47,6 +47,8 @@ export interface GduMapStats {
   deniedDirs: number;
   /** Up to five of those, smallest paths first (scanRefusals.keepSmallest). */
   deniedExamples: string[];
+  /** Every one of those by path, as scanRefusals.keepRefusedPath keeps them (C06). */
+  deniedPaths: string[];
 }
 
 interface GduMeta {
@@ -90,10 +92,11 @@ export interface GduMapOptions {
   blocksAreMeaningful?: boolean;
 }
 
-/** A directory gdu could not read: counted, and named while there is room. */
+/** A directory gdu could not read: counted, and named. */
 function noteDenied(stats: GduMapStats, p: string): void {
   stats.deniedDirs++;
   keepSmallest(stats.deniedExamples, p);
+  keepRefusedPath(stats.deniedPaths, p);
 }
 
 /**
@@ -117,6 +120,7 @@ export function mapGduTree(
     cloudBytes: 0,
     deniedDirs: 0,
     deniedExamples: [],
+    deniedPaths: [],
   };
   const seen = opts.seenInodes ?? new Set<number>();
   const cloudFor = opts.cloudProviderFor;
@@ -272,6 +276,7 @@ export function mapGduTreeIntoStore(
     cloudBytes: 0,
     deniedDirs: 0,
     deniedExamples: [],
+    deniedPaths: [],
   };
   const seen = opts.seenInodes ?? new Set<number>();
   const cloudFor = opts.cloudProviderFor;

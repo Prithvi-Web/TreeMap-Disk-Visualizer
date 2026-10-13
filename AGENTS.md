@@ -103,6 +103,12 @@ OpenAPI 3 spec).
      did not enter. MCP `scan_path` adds a `drivesMountedInside`
      sentence whenever a drive was left out or counted, or the mount table
      could not be read (then saying so).
+   - `GET /api/scan/{scanId}/refused` — every folder the operating system
+     would not let the scan list, by absolute path in path order: `{ scanId,
+     status, dirs, paths, unnamed, unnamedReason }`. `/stats` counts them in
+     `refused.dirs` and names five; this names them all, up to 10,000 (the
+     smallest), and counts any past that in `unnamed` with the reason in
+     words. A refused folder's size is unknowable, so none is given.
    - `GET /api/volumes` — attached external drives with free/total bytes; a
      drive whose stats cannot be read is listed with nulls and a reason.
    - `GET /api/scan/{scanId}/calendar` — bytes and file counts per local day

@@ -205,6 +205,13 @@ export interface ScanResult {
   deniedDirs?: number;
   /** Up to five of those, the smallest paths in sorted order (see scanRefusals). */
   deniedExamples?: string[];
+  /**
+   * Every one of those by path, as `keepRefusedPath` keeps them: unsorted, and
+   * cut back to the REFUSED_LIST_CAP smallest whenever it reaches twice that
+   * (browser re-check C06). Read through `refusedFolders`, which sorts it;
+   * served by GET /api/scan/:scanId/refused, never by /stats.
+   */
+  deniedPaths?: string[];
   /** Directories that disappeared between being listed and being read. */
   vanishedDirs?: number;
   /** Directories that failed to list for any other reason, including the deadline. */

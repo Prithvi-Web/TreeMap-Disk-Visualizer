@@ -20,6 +20,7 @@ import { scanBudget } from '../services/engineBudget';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
 import { boundaryResponse } from '../services/boundaryReport';
+import { refusedFolders } from '../services/scanRefusals';
 
 export const scanRouter = Router();
 
@@ -526,6 +527,19 @@ scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
 scanRouter.get('/scan/:scanId/boundary', (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
   res.json(boundaryResponse(scan));
+});
+
+/**
+ * GET /api/scan/:scanId/refused — every folder the OS would not let the scan
+ * list, by path (browser re-check C06). /stats names five, and its shape is
+ * held byte for byte (DESIGN §12), so the whole list is served here: up to
+ * REFUSED_LIST_CAP paths in path order, the rest counted in `unnamed` with
+ * the reason in words. Read off the scan's record, so it answers in every
+ * storage mode and while the scan runs (`status` says whether it is final).
+ */
+scanRouter.get('/scan/:scanId/refused', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  res.json({ scanId: scan.scanId, status: scan.status, ...refusedFolders(scan) });
 });
 
 /**
