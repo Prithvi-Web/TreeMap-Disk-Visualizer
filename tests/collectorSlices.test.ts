@@ -48,6 +48,15 @@ const LIMITS = [1, 10, 20, 500];
 const MINIMUMS = [0, 1, MIB];
 const immediate = (): Promise<void> => Promise.resolve();
 
+/**
+ * A folder at the top of this machine's file system, spelled as a scan root is spelled here: `/shapes`
+ * on macOS and Linux, `D:\shapes` on Windows (the working folder's drive). Every scan root on Windows
+ * has a drive or a share, and a store reads its separator off that (separatorOf). `path.join(path.sep,
+ * …)` gave Windows the drive-less `\shapes`, which a store reads as "/" while the trees here join their
+ * paths with "\": a lookup below the top missed (Windows CI run 38345032466).
+ */
+const absRoot = (...names: string[]): string => path.resolve(path.sep, ...names);
+
 /** A fuzz pair whose files share a handful of sizes, so the lists' ties decide their order. */
 function tiedPair(seed: number, mutate: boolean): { obj: ObjectScanStore; packed: PackedScanStore } {
   const { obj, packed } = buildPair(seed, seed, 1_500);
@@ -102,7 +111,7 @@ test('a container\'s listing, a file root and an empty root are walked as eachFi
   // Review of U-17, finding 2: no fuzz tree held these, so a walk that went
   // into a container's listing (whose entries are not files on disk) would
   // have stayed green.
-  const root = path.join(path.sep, 'shapes');
+  const root = absRoot('shapes');
   const file = (at: string, name: string, size: number): FileNode => ({ name, path: path.join(at, name), size, type: 'file', modifiedAt: 0, isHidden: false, extension: name.split('.').pop() });
   const zipAt = path.join(root, 'archive.zip');
   const listing: FileNode[] = [
@@ -122,9 +131,9 @@ test('a container\'s listing, a file root and an empty root are walked as eachFi
   const shapes: Array<[string, ScanStore]> = [
     ['an expanded container, object store', withListing(ObjectScanStore.wrap(structuredClone(tree)))],
     ['an expanded container, packed store', withListing(buildStoreFromTree(tree))],
-    ['a file root, object store', ObjectScanStore.wrap(file(path.sep, 'solo.bin', 7))],
-    ['a file root, packed store', buildStoreFromTree(file(path.sep, 'solo.bin', 7))],
-    ['an empty root, packed store', buildStoreFromTree({ name: 'none', path: path.join(path.sep, 'none'), type: 'dir', size: 0, modifiedAt: 0, isHidden: false, children: [] })],
+    ['a file root, object store', ObjectScanStore.wrap(file(absRoot(), 'solo.bin', 7))],
+    ['a file root, packed store', buildStoreFromTree(file(absRoot(), 'solo.bin', 7))],
+    ['an empty root, packed store', buildStoreFromTree({ name: 'none', path: absRoot('none'), type: 'dir', size: 0, modifiedAt: 0, isHidden: false, children: [] })],
   ];
   for (const [what, store] of shapes) {
     const options = { sliceNodes: 2, yieldTurn: immediate };
@@ -160,7 +169,7 @@ test('a sliced walk of the files visits them in the order eachFile does, tombsto
 
 /** 50 folders of 1,000 files under one root. */
 function wideStore(): ScanStore {
-  const root = path.join(path.sep, 'wide');
+  const root = absRoot('wide');
   const kids: FileNode[] = [];
   for (let d = 0; d < 50; d++) {
     const at = path.join(root, `d${d}`);

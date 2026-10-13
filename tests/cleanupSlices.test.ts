@@ -65,6 +65,16 @@ const T = 1_790_000_000_000;
 /** A reading of the real clock, used only as a seed: the drained walk reads the real clock itself. */
 const SEED_NOW = Date.now();
 
+/**
+ * A folder at the top of this machine's file system, spelled as a scan root is spelled here: `/fz` on
+ * macOS and Linux, `D:\fz` on Windows (the working folder's drive). Every scan root on Windows has
+ * a drive or a share — sanitizePath resolves it — and a store reads its separator off that
+ * (separatorOf). `path.join(path.sep, …)` gave Windows the drive-less `\fz`, which a store reads as
+ * "/" while the trees here join their paths with "\": lookups below the top missed, and the packed
+ * store spelled paths no rule names (Windows CI run 38345032466).
+ */
+const absRoot = (...names: string[]): string => path.resolve(path.sep, ...names);
+
 const STORES: ReadonlyArray<readonly [string, (tree: FileNode) => ScanStore]> = [
   ['object store', (tree) => ObjectScanStore.wrap(tree)],
   ['packed store', (tree) => buildStoreFromTree(tree)],
@@ -265,11 +275,14 @@ const immediate = (): Promise<void> => Promise.resolve();
 /* ──────────────────────── the same answer, byte for byte ──────────────────────── */
 
 test('the sliced walk and the drained walk give the pre-change answer, observer order included, on fuzz trees with every rule kind', async () => {
-  const fired = new Set<string>();
+  // The rules each kind of store fired, apart: a store whose paths no rule names (a drive-less root
+  // read with the wrong separator, as on the Windows runner) passed the differential while the other
+  // store fired every rule for it.
+  const fired = new Map<string, Set<string>>(STORES.map(([kind]) => [kind, new Set<string>()]));
   for (const platform of ['linux', 'darwin', 'win32'] as const) {
     await withPlatform(platform, async () => {
       for (let seed = 1; seed <= 24; seed++) {
-        const root = path.join(path.sep, 'fz', `root${seed}`);
+        const root = absRoot('fz', `root${seed}`);
         const catalog = testCatalog(root);
 
         // The sliced walk, on a clock of its own: thresholds land on files.
@@ -279,7 +292,7 @@ test('the sliced walk and the drained walk give the pre-change answer, observer 
             const label = `${platform}, seed ${seed}, ${v.label}, ${kind}`;
             const want = recorder();
             const oracle = oracleCleanupSuggestions(make(exact), v.ignore, catalog, want.observe, v.suppressed, T);
-            for (const g of oracle) fired.add(g.id);
+            for (const g of oracle) fired.get(kind)?.add(g.id);
             const got = recorder();
             const sliced = await collectCleanupSuggestionsAsync(make(exact), v.ignore, catalog, got.observe, v.suppressed, {
               now: () => T, sliceNodes: 5, yieldTurn: immediate,
@@ -296,7 +309,7 @@ test('the sliced walk and the drained walk give the pre-change answer, observer 
             const label = `${platform}, seed ${seed + 1000}, ${v.label}, ${kind}`;
             const want = recorder();
             const oracle = oracleCleanupSuggestions(make(loose), v.ignore, catalog, want.observe, v.suppressed);
-            for (const g of oracle) fired.add(g.id);
+            for (const g of oracle) fired.get(kind)?.add(g.id);
             const got = recorder();
             const drained = collectCleanupSuggestions(make(loose), v.ignore, catalog, got.observe, v.suppressed);
             assert.equal(JSON.stringify(drained), JSON.stringify(oracle), `${label}: the drained walk answers what the old walk answered`);
@@ -307,7 +320,9 @@ test('the sliced walk and the drained walk give the pre-change answer, observer 
     });
   }
   // A differential that never fires a rule proves nothing about that rule.
-  assert.deepEqual([...fired].sort(), [...RULE_IDS].sort(), 'the fuzz trees fired every rule of the test catalog');
+  for (const [kind, ids] of fired) {
+    assert.deepEqual([...ids].sort(), [...RULE_IDS].sort(), `${kind}: the fuzz trees fired every rule of the test catalog`);
+  }
 });
 
 test('the shipped rule packs give the pre-change answer through the rewritten walk', async () => {
@@ -327,11 +342,11 @@ test('the shipped rule packs give the pre-change answer through the rewritten wa
 });
 
 test('a U+0130 location is found wherever case folds, and only there', async () => {
-  const root = path.join(path.sep, 'dotted');
+  const root = absRoot('dotted');
   const catalog = testCatalog(root);
   // The rule says "İstanbul/Cache"; the disk says "i̇stanbul/cache": one code unit longer, the same folded.
   const at = path.join(root, 'i̇stanbul');
-  const tree = dirAt(path.sep, 'dotted', [dirAt(root, 'i̇stanbul', [dirAt(at, 'cache', [fileAt(path.join(at, 'cache'), 'x.bin', 10, 0)])])]);
+  const tree = dirAt(path.dirname(root), 'dotted', [dirAt(root, 'i̇stanbul', [dirAt(at, 'cache', [fileAt(path.join(at, 'cache'), 'x.bin', 10, 0)])])]);
   for (const [platform, expected] of [['darwin', 1], ['win32', 1], ['linux', 0]] as const) {
     await withPlatform(platform, async () => {
       for (const [kind, make] of STORES) {
@@ -350,7 +365,7 @@ test('the Autopilot selects through the rewritten matcher exactly what it select
     { kind: 'suggestion', groupIds: ['s-old', 's-small', 'l-browser', 'l-dotted', 'p-rust', 'p-maven', 'p-web'] },
   ];
   for (let seed = 1; seed <= 16; seed++) {
-    const root = path.join(path.sep, 'ap', `root${seed}`);
+    const root = absRoot('ap', `root${seed}`);
     const catalog = testCatalog(root);
     const tree = fuzzTree(seed, root, 700, nearThresholds(T));
     for (const [kind, make] of STORES) {
@@ -380,7 +395,7 @@ function wideTree(root: string, folderCount: number, filesEach: number): { tree:
 
 test('the walk hands the loop back once per slice of 16,384 children, and a turn queued before it runs before it answers', async () => {
   assert.equal(CLEANUP_SLICE_NODES, 16_384, 'the slice the plan fixes');
-  const { tree, examined } = wideTree(path.join(path.sep, 'wide'), 50, 1_000);
+  const { tree, examined } = wideTree(absRoot('wide'), 50, 1_000);
   for (const [kind, make] of STORES) {
     let yields = 0;
     const yieldTurn = (): Promise<void> => new Promise<void>((resolve) => { yields++; setImmediate(resolve); });
@@ -414,10 +429,10 @@ test('a store other than the packed one answers its own child paths, as a legacy
 });
 
 test('each name is read once, and a folder\'s names again only when a sibling-gated rule names one of its children', () => {
-  const root = path.join(path.sep, 'names');
+  const root = absRoot('names');
   const a = path.join(root, 'a');
   const b = path.join(root, 'b');
-  const tree = dirAt(path.sep, 'names', [
+  const tree = dirAt(path.dirname(root), 'names', [
     dirAt(root, 'a', Array.from({ length: 5 }, (_, i) => fileAt(a, `f${i}.dat`, 10, 0))),
     dirAt(root, 'b', [dirAt(b, 'target', [fileAt(path.join(b, 'target'), 'o.rlib', 10, 0)]), fileAt(b, 'Cargo.toml', 1, 0), fileAt(b, 'x.dat', 1, 0), fileAt(b, 'y.dat', 1, 0)]),
   ]);
@@ -497,7 +512,7 @@ const MUTABLE_STORES: ReadonlyArray<readonly [string, (tree: FileNode) => ScanSt
 
 test('a store changed during a walk is walked again, and the answer is the changed store\'s', async () => {
   for (const [kind, make] of MUTABLE_STORES) {
-    const store = make(projectsTree(path.join(path.sep, 'changing')));
+    const store = make(projectsTree(absRoot('changing')));
     const { result, yieldsPerAttempt, heard } = await walkWhileChanging(store, growFirstClaim, (turn) => turn === 1);
     assert.equal(result.attempts, 2, `${kind}: the change on the first turn started a second walk`);
     assert.equal(yieldsPerAttempt.length, 2, `${kind}: two attempts began`);
@@ -512,7 +527,7 @@ test('a store changed during a walk is walked again, and the answer is the chang
 test('a store that keeps changing is walked at most three times, the last in one turn', async () => {
   assert.equal(CLEANUP_MAX_ATTEMPTS, 3, 'U-D9: at most 3 attempts');
   for (const [kind, make] of MUTABLE_STORES) {
-    const store = make(projectsTree(path.join(path.sep, 'storm')));
+    const store = make(projectsTree(absRoot('storm')));
     const { result, yieldsPerAttempt } = await walkWhileChanging(store, growFirstClaim, () => true);
     assert.equal(result.attempts, CLEANUP_MAX_ATTEMPTS, `${kind}: a change on every turn ends at the third attempt`);
     assert.deepEqual(yieldsPerAttempt, [1, 1, 0], `${kind}: the first two gave up at their first turn; the last took none`);
@@ -524,7 +539,7 @@ test('a wrapped object store counts its edits: the memo answers it once per vers
   resetCleanupMemoForTests();
   setCleanupMemoOptionsForTests({ yieldTurn: immediate, sliceNodes: 4 });
   try {
-    const store = ObjectScanStore.wrap(projectsTree(path.join(path.sep, 'wrapped')));
+    const store = ObjectScanStore.wrap(projectsTree(absRoot('wrapped')));
     const catalog = loadRuleCatalog();
     for (let edits = 0; edits <= 3; edits++) {
       if (edits > 0) growFirstClaim(store, edits);
@@ -543,7 +558,7 @@ test('a second wrap of an edited tree starts at version 0 again, and is answered
   resetCleanupMemoForTests();
   setCleanupMemoOptionsForTests({ yieldTurn: immediate, sliceNodes: 4 });
   try {
-    const tree = projectsTree(path.join(path.sep, 'rewrapped'));
+    const tree = projectsTree(absRoot('rewrapped'));
     const catalog = loadRuleCatalog();
     const first = ObjectScanStore.wrap(tree);
     const before = JSON.stringify(await cleanupSuggestionsFor(first, [], catalog, []));
@@ -567,7 +582,7 @@ test('two requests at once make one walk; a changed size, ignore list, note list
     resetCleanupMemoForTests();
     setCleanupMemoOptionsForTests({ yieldTurn: immediate, sliceNodes: 3 });
     try {
-      const root = path.join(path.sep, 'memo');
+      const root = absRoot('memo');
       const tree = projectsTree(root);
       const store = make(tree);
       const catalog = loadRuleCatalog();
@@ -615,12 +630,12 @@ test('a stale-files threshold crossed between two requests gives the fresh answe
   let clock = T;
   setCleanupMemoOptionsForTests({ yieldTurn: immediate, now: () => clock });
   try {
-    const root = path.join(path.sep, 'stale');
+    const root = absRoot('stale');
     const catalog = testCatalog(root);
     const dl = path.join(root, 'Downloads');
     // 30.5 days and 2 seconds from crossing the small-file rule; the 90-day rule needs far longer.
     const young = T - 30.5 * DAY + 2_000;
-    const tree = dirAt(path.sep, 'stale', [dirAt(root, 'Downloads', [fileAt(dl, 'setup.dmg', 5_000, young), fileAt(dl, 'old.iso', 5_000, T - 400 * DAY)])]);
+    const tree = dirAt(path.dirname(root), 'stale', [dirAt(root, 'Downloads', [fileAt(dl, 'setup.dmg', 5_000, young), fileAt(dl, 'old.iso', 5_000, T - 400 * DAY)])]);
     for (const [kind, make] of STORES) {
       resetCleanupMemoForTests();
       clock = T;
@@ -645,10 +660,10 @@ test('a request that joins a walk begun before a threshold it is already past ge
   let clock = T;
   setCleanupMemoOptionsForTests({ yieldTurn: immediate, sliceNodes: 1, now: () => clock });
   try {
-    const root = path.join(path.sep, 'joined');
+    const root = absRoot('joined');
     const catalog = testCatalog(root);
     const dl = path.join(root, 'Downloads');
-    const tree = dirAt(path.sep, 'joined', [dirAt(root, 'Downloads', [fileAt(dl, 'setup.dmg', 5_000, T - 30.5 * DAY + 2_000), fileAt(dl, 'old.iso', 5_000, T - 400 * DAY)])]);
+    const tree = dirAt(path.dirname(root), 'joined', [dirAt(root, 'Downloads', [fileAt(dl, 'setup.dmg', 5_000, T - 30.5 * DAY + 2_000), fileAt(dl, 'old.iso', 5_000, T - 400 * DAY)])]);
     for (const [kind, make] of STORES) {
       resetCleanupMemoForTests();
       clock = T;
@@ -678,12 +693,12 @@ test('a look at the git repos does not cost the next suggestions request a walk'
   resetCleanupMemoForTests();
   setCleanupMemoOptionsForTests({ yieldTurn: immediate });
   try {
-    const root = path.join(path.sep, 'repos');
+    const root = absRoot('repos');
     const repo = (name: string, flagged: boolean): FileNode => {
       const at = path.join(root, name);
       return { ...dirAt(root, name, [dirAt(at, '.git', [fileAt(path.join(at, '.git'), 'HEAD', 23, 0)]), dirAt(at, 'node_modules', [fileAt(path.join(at, 'node_modules'), 'i.js', 40, 0)])]), ...(flagged ? { gitRepo: true } : {}) };
     };
-    const tree = dirAt(path.sep, 'repos', [repo('marked', true), repo('unmarked', false)]);
+    const tree = dirAt(path.dirname(root), 'repos', [repo('marked', true), repo('unmarked', false)]);
     const store = buildStoreFromTree(tree);
     const catalog = loadRuleCatalog();
     await cleanupSuggestionsFor(store, [], catalog, []);
@@ -704,7 +719,7 @@ test('a walk that fails is not remembered', async () => {
   resetCleanupMemoForTests();
   setCleanupMemoOptionsForTests({ yieldTurn: immediate });
   try {
-    const store = ObjectScanStore.wrap(projectsTree(path.join(path.sep, 'failing')));
+    const store = ObjectScanStore.wrap(projectsTree(absRoot('failing')));
     const childIds = store.childIds.bind(store);
     let fail = true;
     store.childIds = (id: number): number[] => {
@@ -724,7 +739,7 @@ test('the rule claims are every non-advisory match in walk order, uncapped, and 
   setCleanupMemoOptionsForTests({ yieldTurn: immediate, sliceNodes: 50 });
   try {
     // 250 node_modules: past the 200 items a group lists, so a capped list would lose 50 claims.
-    const root = path.join(path.sep, 'claims');
+    const root = absRoot('claims');
     const kids: FileNode[] = [];
     for (let p = 0; p < 250; p++) {
       const at = path.join(root, `p${p}`);
@@ -758,7 +773,7 @@ test('the rule claims are every non-advisory match in walk order, uncapped, and 
 
 test('the Reclaim Score\'s rule claims come from the memo, walked once for the same store', async () => {
   resetCleanupMemoForTests();
-  const store = buildStoreFromTree(projectsTree(path.join(path.sep, 'reclaim')));
+  const store = buildStoreFromTree(projectsTree(absRoot('reclaim')));
   const first = await computeRuleClaims(store);
   const second = await computeRuleClaims(store);
   assert.equal(cleanupMemoCountsForTests().claims, 1, 'two score batches, one walk');
