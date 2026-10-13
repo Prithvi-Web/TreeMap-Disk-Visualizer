@@ -49,6 +49,9 @@
    oscillator parameters) regenerate via a data-theme MutationObserver. */
 const FxBeam = (() => {
   const TYPES = ['md', 'sm', 'line', 'pulse-inner', 'pulse-outside'];
+  // What a reduced-motion rule says in place of its animation, spelled in pieces: the build's banner
+  // check counts comment openers and closers in each part's text, string literals included.
+  const REDUCED_NOTE = ' /' + '* reduced: static *' + '/';
 
   /* ── Palette — the blue/black family (ocean-derived, --accent-anchored) ──
      Every rgb is a comma-joined triplet so gradients can wrap it in either
@@ -428,7 +431,7 @@ const FxBeam = (() => {
        positioned .fx-beam-strip overlay) still wins. Repeating it here would
        outrank that from a later sheet and pull the overlay back into flow. */
     return `${baseRegs(id)}
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
   border-radius: ${radius}px;
   overflow: hidden;
 }
@@ -568,7 +571,7 @@ ${pausedRule(id)}`}`;
       .join('\n');
     return `${regs}
 @property --fxb-o-${id} { syntax: "<number>"; initial-value: 0; inherits: true; }
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
   border-radius: ${radius}px;
   overflow: hidden;
 }
@@ -760,7 +763,7 @@ ${pausedRule(id)}`}`;
   overflow: visible;
   isolation: isolate;
 }
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
 }
 [data-fxbeam="${id}"][data-fxbeam-fading] {${wrapperAnim('fade-out')}
 }
@@ -819,7 +822,7 @@ ${pausedRule(id)}`}`;
 [data-fxbeam="${id}"] {
   isolation: isolate;
 }
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
   border-radius: ${radius}px;
   overflow: hidden;
 }

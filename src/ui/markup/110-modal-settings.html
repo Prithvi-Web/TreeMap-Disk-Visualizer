@@ -202,7 +202,7 @@
       <div id="cloudAccounts"></div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
-      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart Suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
+      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart Suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/&#42;&#42;/dist</b><!-- the stars as entities: the build's banner check counts comment openers and closers in each part -->.</div>
       <div id="ignoreList"></div>
       <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
 

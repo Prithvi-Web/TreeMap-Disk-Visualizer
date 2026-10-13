@@ -4773,7 +4773,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div id="cloudAccounts"></div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
-      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart Suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
+      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely; <b>Don't suggest</b> keeps them out of Smart Suggestions only. While any pattern is set to Don't scan or Both, every scan uses the built-in walker, which is slower than the native engine. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/&#42;&#42;/dist</b><!-- the stars as entities: the build's banner check counts comment openers and closers in each part -->.</div>
       <div id="ignoreList"></div>
       <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
 
@@ -8192,7 +8192,8 @@ function ignorePatternTest(pattern) {
   };
   if (/[/\\]/.test(p)) {
     const trimmed = p.replace(/[/\\]+$/, '');
-    const self = toRe(trimmed), beneath = toRe(trimmed + '/**');
+    // '/' + '**', never one string: the build's banner check counts comment openers and closers in each part.
+    const self = toRe(trimmed), beneath = toRe(trimmed + '/' + '**');
     return (fullPath) => self.test(fullPath) || beneath.test(fullPath);
   }
   const nameRe = toRe(p);
@@ -15480,6 +15481,9 @@ const FxOrbs = (() => {
    oscillator parameters) regenerate via a data-theme MutationObserver. */
 const FxBeam = (() => {
   const TYPES = ['md', 'sm', 'line', 'pulse-inner', 'pulse-outside'];
+  // What a reduced-motion rule says in place of its animation, spelled in pieces: the build's banner
+  // check counts comment openers and closers in each part's text, string literals included.
+  const REDUCED_NOTE = ' /' + '* reduced: static *' + '/';
 
   /* ── Palette — the blue/black family (ocean-derived, --accent-anchored) ──
      Every rgb is a comma-joined triplet so gradients can wrap it in either
@@ -15859,7 +15863,7 @@ const FxBeam = (() => {
        positioned .fx-beam-strip overlay) still wins. Repeating it here would
        outrank that from a later sheet and pull the overlay back into flow. */
     return `${baseRegs(id)}
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
   border-radius: ${radius}px;
   overflow: hidden;
 }
@@ -15999,7 +16003,7 @@ ${pausedRule(id)}`}`;
       .join('\n');
     return `${regs}
 @property --fxb-o-${id} { syntax: "<number>"; initial-value: 0; inherits: true; }
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
   border-radius: ${radius}px;
   overflow: hidden;
 }
@@ -16191,7 +16195,7 @@ ${pausedRule(id)}`}`;
   overflow: visible;
   isolation: isolate;
 }
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
 }
 [data-fxbeam="${id}"][data-fxbeam-fading] {${wrapperAnim('fade-out')}
 }
@@ -16250,7 +16254,7 @@ ${pausedRule(id)}`}`;
 [data-fxbeam="${id}"] {
   isolation: isolate;
 }
-[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || REDUCED_NOTE}
   border-radius: ${radius}px;
   overflow: hidden;
 }

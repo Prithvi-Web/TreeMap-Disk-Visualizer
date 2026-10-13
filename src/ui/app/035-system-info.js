@@ -335,7 +335,8 @@ function ignorePatternTest(pattern) {
   };
   if (/[/\\]/.test(p)) {
     const trimmed = p.replace(/[/\\]+$/, '');
-    const self = toRe(trimmed), beneath = toRe(trimmed + '/**');
+    // '/' + '**', never one string: the build's banner check counts comment openers and closers in each part.
+    const self = toRe(trimmed), beneath = toRe(trimmed + '/' + '**');
     return (fullPath) => self.test(fullPath) || beneath.test(fullPath);
   }
   const nameRe = toRe(p);
