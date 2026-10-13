@@ -74,7 +74,7 @@ test('a snapshot restore and a relocation declare their 400 and 403 (F1.23)', ()
   assert.match(said('post', '/api/security/relocate', '403'), /OUTSIDE_SCAN_ROOT/);
 });
 
-test('every route that refuses a safety record, and every other place the document names SAFETY_RECORD, lists the cases the refusal itself names: the agent policy or the audit log, a folder that holds them, or a folder or link TreeMap reaches them through — a folder holding such a link among them', () => {
+test('every route that refuses a safety record — by its middleware, or through the Trash step or the refusal it reaches — and every other place the document names SAFETY_RECORD, lists the cases the refusal itself names: the agent policy or the audit log, a folder that holds them, or a folder or link TreeMap reaches them through — a folder holding such a link among them', () => {
   // The refusal's own sentence (safetyRecordRefusal), read from the code.
   assert.ok(source('src/middleware/pathGuard.ts').includes('agent policy or its audit log, a folder that holds them, or a folder or link TreeMap reaches them through'), 'the refusal names these cases');
   const cases = 'the agent policy or the audit log, a folder that holds them (app-data, a folder above it), or a folder or link TreeMap reaches them through';
@@ -89,6 +89,36 @@ test('every route that refuses a safety record, and every other place the docume
     }
   }
   assert.ok(doors >= 4, `the delete, the offload, the cart commit and the relocation refuse a safety record (found ${doors})`);
+  // A route refuses one without that middleware too: the Trash step and the Time Capsule refuse a
+  // safety record whatever asked them, and a snapshot restore's overwrite reaches the Trash step (the
+  // review of LEFT2, F1.3). Every place in src that refuses one, with the routes whose answer carries
+  // that 403 — or why none does. A place the table does not name fails here until it does.
+  const refusers: Record<string, string | string[]> = {
+    'src/middleware/pathGuard.ts': 'the refusal itself, and the middleware the routes above carry',
+    'src/services/cleaner.ts': 'the Trash step, reached by the places below',
+    'src/services/timeCapsule.ts': 'the Time Capsule, reached by the cart commit and Autopilot below',
+    'src/api/fileRoutes.ts': ['delete /api/files'],
+    'src/services/cartCommit.ts': ['post /api/cart/commit'],
+    'src/services/securityHygieneScanner.ts': ['post /api/security/relocate'],
+    'src/services/snapshotRecovery.ts': ['post /api/system/snapshots/restore'],
+    'src/services/offload.ts': 'the offload job, which trashes the originals after its route has answered 202',
+    'src/services/compressionAdvisor.ts': 'the encode job, which trashes an original after its route has answered 202',
+    'src/services/autopilot.ts': 'a run Autopilot starts itself: a refusal there is a failed run, not an answer to a request',
+    'src/mcp/server.ts': 'the MCP tools, which answer in their own words rather than over HTTP',
+  };
+  const refusing = /(?<!function )\b(?:moveToTrash|protectAndTrash|assertNotSafetyRecord|safetyRecordRefusal)\(/;
+  const found = (fs.readdirSync(path.join(REPO, 'src'), { recursive: true }) as string[])
+    .filter((rel) => rel.endsWith('.ts'))
+    .map((rel) => ['src', ...rel.split(path.sep)].join('/'))
+    .filter((rel) => refusing.test(source(rel)));
+  assert.deepEqual(found.sort(), Object.keys(refusers).sort(), 'every place that refuses a safety record is in the table');
+  for (const routes of Object.values(refusers)) {
+    if (typeof routes === 'string') continue;
+    for (const door of routes) {
+      const [method, route] = door.split(' ');
+      verdicts[`${method.toUpperCase()} ${route}, its 403`] = verdict(said(method, route, '403'));
+    }
+  }
   const walk = (value: unknown, at: string): void => {
     if (typeof value === 'string') {
       if (value.includes('SAFETY_RECORD')) verdicts[at] = verdict(value);

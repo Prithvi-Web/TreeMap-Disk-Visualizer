@@ -2910,7 +2910,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     },
     responses: {
       '400': errorResponse('PATH_REQUIRED without a path; PATH_INVALID or PATH_BLOCKED for the path or the destination'),
-      '403': errorResponse('SPILL_PATH for the path or the destination; APP_DATA_PATH for the destination; with overwrite, for the file it would replace, OUTSIDE_SCAN_ROOT, or POLICY_ROOT_NOT_ALLOWED, POLICY_PROTECTED_PATH or POLICY_BYTES_EXCEEDED from agent-policy.json'),
+      '403': errorResponse('SPILL_PATH for the path or the destination; APP_DATA_PATH for the destination; with overwrite, for the file it would replace: OUTSIDE_SCAN_ROOT; SAFETY_RECORD for the agent policy or the audit log, a folder that holds them (app-data, a folder above it), or a folder or link TreeMap reaches them through, which no request removes or moves; or POLICY_ROOT_NOT_ALLOWED, POLICY_PROTECTED_PATH or POLICY_BYTES_EXCEEDED from agent-policy.json'),
       '200': jsonResponse('Recovered', obj(
         {
           restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()),
