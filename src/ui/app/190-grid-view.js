@@ -85,7 +85,7 @@ function gridScrollAnchor() {
   const i = a !== null && inView(layout[a]) ? a : layout.findIndex(inView);
   return i === -1 ? null : { i, path: layout[i].it.path, offset: layout[i].y - top };
 }
-/** Put that tile back at its offset — only where the same file holds the same place, so a new folder, order or filter leaves the scroller alone. */
+/** Put that tile back at its offset — only where the same file holds the same place. (A new folder, order or filter never comes here: it starts at its top, renderGrid.) */
 function gridScrollKeep(keep) {
   const c = keep && state.grid.layout[keep.i];
   if (!c || c.it.path !== keep.path) return;
@@ -108,6 +108,16 @@ function gridScrollClear(i) {
   const over = tileTop + c.side + GAP - (gridScroll.clientHeight - padBottom);
   if (over > 0) gridScroll.scrollTop += over;
 }
+
+/* The list the layout was last drawn from: its folder, filter and order. The
+   same list drawn again — a re-flow into a new width, a rescan, the view
+   shown again — keeps the Grid's place; any other list starts at its top
+   (review F1.1, F1.4). Since the Grid is its own scroller (QA D01) its
+   toolbar stays on screen, so a folder opened, Up, a crumb, a filter or a
+   sort is made from deep in a folder, and nothing but the browser's clamp
+   touched the old offset: a folder opened at its last rows, and a filter or
+   a new order hid its first — largest — matches off the top. */
+let gridShown = '';
 
 let gridSeq = 0;
 async function renderGrid() {
@@ -141,11 +151,17 @@ async function renderGrid() {
   }
 
   const items = gridItems();
+  const shown = JSON.stringify([state.grid.path, state.grid.query.trim().toLowerCase(), state.grid.sort]);
+  const sameList = shown === gridShown;
+  gridShown = shown;
   const keep = gridScrollAnchor();
   layoutGrid(items);
   gridInner.style.height = state.grid.totalH + 'px';
-  gridScrollKeep(keep);
-  if (keep && keep.i === state.grid.anchor) gridScrollClear(keep.i);
+  if (!sameList) gridScroll.scrollTop = 0;
+  else {
+    gridScrollKeep(keep);
+    if (keep && keep.i === state.grid.anchor) gridScrollClear(keep.i);
+  }
   state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
   renderCrumbs($('gridCrumbs'), state.grid.path, (p) => gridNavigate(p));

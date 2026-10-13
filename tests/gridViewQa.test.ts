@@ -621,8 +621,10 @@ test('a re-flow into a new width keeps the tile just clicked where it was on scr
   await h.renderGrid();
   assert.equal(fromTop(h, 44), first, 'the first tile in view keeps its place, partly above the top as it was');
 
-  // A new order is not a re-flow: another file at that position, and the
-  // scroller is left where it was, as before.
+  // A new order is not a re-flow: another file holds that position, so
+  // nothing is kept in place. It starts at its top (review F1.4): left where
+  // it was, the Grid — its own scroller since QA D01 — showed the middle of
+  // the new order, its first entries off the top.
   const s = gridHarness();
   const kids: Node[] = [];
   for (let i = 0; i < 400; i++) kids.push(file('/r', `Clip${i}.mov`, i % 2 ? 10 : 1000)); // big and small, alternating
@@ -636,7 +638,7 @@ test('a re-flow into a new width keeps the tile just clicked where it was on scr
   await s.renderGrid();
   assert.ok(s.state.grid.layout[40].it.path !== before.it.path && s.state.grid.layout[40].y !== before.y,
     'control: by name, another file holds position 40, at another height');
-  assert.equal(s.els.gridScroll.scrollTop, 2800, 'the scroller is left where it was');
+  assert.equal(s.els.gridScroll.scrollTop, 0, 'the new order starts at its top');
 });
 
 test('with the anchor gone, Clear hands focus to the first tile on screen; with no tiles at all, to the filter box (B13 review F1.6)', async () => {
@@ -1015,4 +1017,93 @@ test('a tile clicked at the foot of the Grid is brought clear of the selection b
   assert.equal(q.els.gridScroll.scrollTop, 0, 'control: nothing is scrolled');
   q.onCellClick({ metaKey: true }, q.state.grid.layout.length - 1);
   assert.equal(q.els.gridScroll.scrollTop, 0, 'a ⌘-click with the bar already up scrolls nothing under the pointer');
+});
+
+/* ══════════════ review F1.1, F1.4 — another list starts at its top ══════════════ */
+
+/** /r: `n` files of one size, then folder A (`m` files of the same size) as the last tile. */
+function deepPlant(g: Grid, n: number, m: number): void {
+  evenPlant(g, n);
+  const inA: Node[] = [];
+  for (let i = 0; i < m; i++) inA.push(file('/r/A', `a${String(i).padStart(5, '0')}.bin`, 4096));
+  const a: Node = { name: 'A', path: '/r/A', size: 4096, type: 'dir', children: inA };
+  g.state.root!.children!.push(a);
+  for (const k of [a, ...inA]) g.state.pathIndex.set(k.path, k);
+}
+
+test('a folder opened, Up, a crumb, a filter or a sort shows the new list from its top; a re-flow of the same list keeps its place (review F1.1, F1.4)', async () => {
+  // Since the Grid is its own scroller (D01), its toolbar stays on screen and
+  // all of these are made from deep in a folder. Nothing reset the scroller:
+  // the browser only clamped the old offset to the new list, so a folder
+  // opened at its last rows, and a filter or a sort hid its first, largest
+  // matches off the top.
+  const g = gridHarness({ raf: true });
+  deepPlant(g, 300, 400);
+  sizeFromSheet(g, 1440, 900, false);
+  await g.renderGrid();
+  const sc = g.els.gridScroll;
+  const scroll = (to: number) => { sc.scrollTop = to; for (const f of sc.listeners.scroll || []) f({}); };
+  const fresh = (what: string) => {
+    assert.equal(sc.scrollTop, 0, `${what}: the Grid opens at its top (scrollTop ${sc.scrollTop})`);
+    const drawn = g.els.gridInner.children.map((c) => Number(c.dataset.i));
+    assert.equal(Math.min(...drawn), 0, `${what}: and its first tile is drawn (the first drawn is ${Math.min(...drawn)})`);
+  };
+
+  // A folder tile clicked at the foot of a long folder.
+  scroll(1e9);
+  const folder = g.state.grid.layout.findIndex((c) => c.it.path === '/r/A');
+  const top = g.state.grid.layout[folder].y - sc.scrollTop;
+  assert.ok(sc.scrollTop > 10_000 && top >= 0 && top < sc.clientHeight, `control: deep in /r (scrollTop ${sc.scrollTop}), folder A is on screen`);
+  g.onCellClick({}, folder);
+  await g.settle();
+  assert.equal(g.state.grid.path, '/r/A', 'control: the click opened A');
+  fresh('a folder opened from the foot of its parent');
+
+  // Up, from the end of that folder.
+  scroll(1e9);
+  assert.ok(sc.scrollTop > 10_000, `control: scrolled to the end of A (${sc.scrollTop})`);
+  g.gridUp();
+  await g.settle();
+  assert.equal(g.state.grid.path, '/r', 'control: Up went back to /r');
+  fresh('Up from the end of a folder');
+
+  // A crumb, likewise.
+  g.onCellClick({}, g.state.grid.layout.findIndex((c) => c.it.path === '/r/A'));
+  await g.settle();
+  scroll(1e9);
+  g.crumbsCb.fn!('/r');
+  await g.settle();
+  fresh('a crumb clicked from the end of a folder');
+
+  // A filter typed deep in the folder.
+  scroll(1e9);
+  const input = g.els.gridSearch.listeners.input![0];
+  g.els.gridSearch.value = 'f001';
+  input({ target: g.els.gridSearch });
+  for (const fn of [...g.timers.values()]) fn();
+  await g.settle();
+  assert.equal(g.state.grid.layout.length, 100, 'control: the filter matched f00100–f00199');
+  fresh('a filter typed deep in the folder');
+  scroll(1e9);
+  g.els.gridSearch.value = '';
+  input({ target: g.els.gridSearch });
+  for (const fn of [...g.timers.values()]) fn();
+  await g.settle();
+  fresh('the filter emptied');
+
+  // A new order chosen deep in the folder.
+  scroll(1e9);
+  g.els.gridSort.listeners.change![0]({ target: { value: 'name' } });
+  await g.settle();
+  assert.equal(g.state.grid.sort, 'name', 'control: the order changed');
+  fresh('a new order');
+
+  // The same list re-flowed — the pane opening, the window resized — keeps its place.
+  scroll(30 * 268);
+  const at = sc.scrollTop;
+  await g.renderGrid();
+  assert.equal(sc.scrollTop, at, 'the same list drawn again keeps its place');
+  sc.clientWidth -= 330;
+  await g.renderGrid();
+  assert.ok(sc.scrollTop > 0, `and re-flowed into a narrower column it is not sent to the top (scrollTop ${sc.scrollTop})`);
 });
