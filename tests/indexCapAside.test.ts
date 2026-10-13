@@ -128,7 +128,12 @@ test('while a capped rebuild runs, every reader sees the saved index and never a
   fs.mkdirSync(path.join(dir, 'sub'));
   addFiles(path.join(dir, 'sub'), 600, 'q');
   const saved = await buildIndex(dir, { live: false });
-  const savedHits = searchIndex('q0').total;
+  // Files only: a search matches folder names too, and every fixture folder of this file is named by
+  // mkdtemp's random suffix — one holding "q0" or "Q0" (a chance of about one in a hundred a run)
+  // counted as a 107th hit and failed the CI pt-BR leg (run 38318285188). The rows the property is
+  // about are q000…: files, here and in the build being written aside.
+  const qFiles = () => searchIndex('q0', { type: 'file' });
+  const savedHits = qFiles().total;
   assert.equal(savedHits, 106, 'the saved index holds six files here, and a hundred of sub\'s six hundred (q000 to q099)');
   const roots = listRoots();
   const known = new Set(roots.map((r) => r.id));
@@ -148,7 +153,7 @@ test('while a capped rebuild runs, every reader sees the saved index and never a
       assert.deepEqual(listRoots(), roots, 'listRoots names the saved roots only');
       assert.equal(getRoot(dir)?.id, saved.id, 'getRoot answers with the saved root');
       assert.equal(getRoot(dir)?.state, 'ready');
-      const found = searchIndex('q0');
+      const found = qFiles();
       assert.equal(found.total, savedHits, 'search finds what the saved index holds, and no row twice');
       assert.ok(found.hits.every((h) => h.path.startsWith(dir + path.sep)), `every hit is a real path under the folder: ${found.hits.map((h) => h.path).join(', ')}`);
       return false;
@@ -161,7 +166,7 @@ test('while a capped rebuild runs, every reader sees the saved index and never a
   await reclaimsSettled();
   assert.equal(count('SELECT COUNT(*) c FROM nodes WHERE root_id = ?', saved.id), 0, 'and the saved rows went with it');
   assert.equal(count('SELECT COUNT(*) c FROM roots'), roots.length, 'one root at the folder, as before');
-  assert.equal(searchIndex('q0').total, savedHits, 'search finds the same files once');
+  assert.equal(qFiles().total, savedHits, 'search finds the same files once');
 });
 
 test('a crash in the middle of a capped rebuild leaves the saved index', async () => {
