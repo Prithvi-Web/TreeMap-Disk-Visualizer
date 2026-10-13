@@ -145,7 +145,7 @@ function escapeGridBranch(): string {
 
 const file = (dir: string, name: string, size: number): Node => ({ name, path: `${dir}/${name}`, size, type: 'file', modifiedAt: 1 });
 
-function gridHarness(opts: { escape?: boolean } = {}): Grid {
+function gridHarness(opts: { escape?: boolean; raf?: boolean } = {}): Grid {
   const src = slice('/* ───────────────────────────── Grid view ───────────────────────────── */',
     '/* ───────────────────────────── Apps view (Feature 18) ───────────────────────────── */');
   const els: Record<string, FakeEl> = {};
@@ -160,7 +160,7 @@ function gridHarness(opts: { escape?: boolean } = {}): Grid {
   const scroller = $('gridScroll'), inner = $('gridInner');
   let scrollTop = 0, innerH = '';
   const range = () => Math.max(0, (parseFloat(innerH) || 0) + 2 * pad - scroller.clientHeight);
-  Object.defineProperty(scroller, 'scrollTop', { get: () => scrollTop, set: (v: number) => { scrollTop = Math.max(0, Math.min(v, range())); } });
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, get: () => scrollTop, set: (v: number) => { scrollTop = Math.max(0, Math.min(v, range())); } });
   Object.defineProperty(inner.style, 'height', {
     enumerable: true, get: () => innerH, set: (v: string) => { innerH = v; scrollTop = Math.min(scrollTop, range()); },
   });
@@ -191,7 +191,8 @@ function gridHarness(opts: { escape?: boolean } = {}): Grid {
   const pending: Promise<unknown>[] = [];
   const deps: Record<string, unknown> = {
     $, state, document, window: { addEventListener: () => {} },
-    requestAnimationFrame: () => 0,
+    // A frame runs at once with { raf: true }, so a scroll of #gridScroll draws its tiles.
+    requestAnimationFrame: opts.raf ? (cb: () => void) => { cb(); return 0; } : () => 0,
     setTimeout: (fn: () => void) => { const id = ++tid; timers.set(id, fn); return id; },
     clearTimeout: (id: number) => { timers.delete(id); },
     ensureSubtree: async () => {}, ensureScores: async () => {}, RECLAIM_BATCH: 100, byReclaimDesc: () => () => 0,
@@ -768,5 +769,132 @@ test('every kind of control the page counts can take focus when Clear is pressed
     g.els.selClearBtn.focus();
     pressClear(g);
     assert.equal(FOCUS.active, only, `${kind}: focus lands on it (got ${FOCUS.active ? `${FOCUS.active.tagName}#${FOCUS.active.id}` : 'nothing'})`);
+  }
+});
+
+/* ══════════════ D01 — the Grid is its own scroller, bounded by the window ══════════════ */
+
+/** A length from the sheet — px, vh, vw and calc() sums of them — in a W×H window. */
+function sheetLen(v: string, W: number, H: number): number {
+  const e = v.trim()
+    .replace(/(-?\d*\.?\d+)vh/g, (_m, n: string) => String((Number(n) * H) / 100))
+    .replace(/(-?\d*\.?\d+)vw/g, (_m, n: string) => String((Number(n) * W) / 100))
+    .replace(/(-?\d*\.?\d+)px/g, '$1')
+    .replace(/\bcalc\(/g, '(');
+  assert.match(e, /^[\s\d.+\-*/()]*$/, `"${v}" is plain arithmetic once resolved`);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return Function(`"use strict"; return (${e});`)() as number;
+}
+
+/** One side of a padding shorthand, in px: 0 top, 1 right, 2 bottom, 3 left. */
+function padSide(v: string | undefined, side: number, what: string): number {
+  const p = (v || '').trim().split(/\s+/);
+  const pick = [p[0], p[1] ?? p[0], p[2] ?? p[0], p[3] ?? p[1] ?? p[0]][side];
+  return pick === '0' ? 0 : px(pick, what);
+}
+
+/** What one Grid element computes to: its own rule, then the cart's override while the cart holds anything. */
+function gridDecls(selector: string, cart: boolean): Map<string, string> {
+  return new Map([...declsOf(selector), ...(cart ? declsOf(`body:has(#cartDock.show) ${selector}`) : [])]);
+}
+
+/**
+ * The Grid's scroller as the stylesheet lays it out in a window H px tall.
+ * #view-grid.active is a flex column inside <main>; its toolbar is one row of
+ * the page's 30 px controls and its own bottom margin; #gridScroll (flex: 1)
+ * takes what the view has left. A view with no height of its own — only a
+ * min-height — is as tall as what it holds, so its scroller then grows to its
+ * tiles plus its padding instead of scrolling them: what QA measured, a
+ * scroller 1,123,657 px tall with nothing to scroll (D01).
+ */
+function sheetScrollerH(W: number, H: number, cart: boolean, innerH: number): number {
+  const view = gridDecls('#view-grid.active', cart);
+  const scroller = gridDecls('#gridScroll', cart);
+  const toolbar = px(declsOf('.btn').get('min-height'), 'a toolbar control\'s height') +
+    px(declsOf('.grid-toolbar').get('margin-bottom'), 'the Grid toolbar\'s bottom margin');
+  const pad = padSide(scroller.get('padding'), 0, 'the scroller\'s top padding') +
+    (scroller.has('padding-bottom') ? px(scroller.get('padding-bottom'), 'the scroller\'s bottom padding') : padSide(scroller.get('padding'), 2, 'the scroller\'s bottom padding'));
+  const content = toolbar + innerH + pad;
+  let viewH = view.has('height') ? sheetLen(view.get('height')!, W, H) : Math.max(view.has('min-height') ? sheetLen(view.get('min-height')!, W, H) : 0, content);
+  if (view.has('max-height')) viewH = Math.min(viewH, sheetLen(view.get('max-height')!, W, H));
+  const floor = scroller.has('min-height') ? sheetLen(scroller.get('min-height')!, W, H) : 0;
+  return Math.max(floor, viewH - toolbar);
+}
+
+/**
+ * Give a harness's scroller the height the stylesheet gives it, in a W×H
+ * window and the column the sidebar leaves — and no scroll at all unless the
+ * sheet lets its content overflow into one.
+ */
+function sizeFromSheet(g: Grid, W: number, H: number, cart: boolean): void {
+  const sc = g.els.gridScroll;
+  sc.clientWidth = W - 244 - 48; // the expanded sidebar and its margin, then <main>'s side padding
+  Object.defineProperty(sc, 'clientHeight', {
+    configurable: true, get: () => sheetScrollerH(W, H, cart, parseFloat(g.els.gridInner.style.height) || 0),
+  });
+  if (!/^(auto|scroll)$/.test(gridDecls('#gridScroll', cart).get('overflow-y') || '')) {
+    Object.defineProperty(sc, 'scrollTop', { configurable: true, get: () => 0, set: () => {} });
+  }
+}
+
+/** A folder of `n` files of one size, so every tile is the largest (256 px) and the rows are regular. */
+function evenPlant(g: Grid, n: number): void {
+  const kids: Node[] = [];
+  for (let i = 0; i < n; i++) kids.push(file('/r', `f${String(i).padStart(5, '0')}.bin`, 4096));
+  g.state.root!.children = kids;
+  for (const k of kids) g.state.pathIndex.set(k.path, k);
+}
+
+test('the Grid scrolls inside itself, bounded by the window: a 25,600-file folder builds only the tiles near the view, and a re-flow keeps the clicked tile in place (D01, C04)', async () => {
+  // QA: #gridScroll grew to 1,123,657 px — every tile's height — so it had
+  // nothing to scroll (scrollTop always 0) and <main> scrolled the page
+  // instead. renderGridWindow, which builds only the tiles within 200 px of
+  // the scroller's window, saw a window as tall as the folder and built all
+  // 25,600 tiles (~2 s a visit); the toolbar scrolled away with the page; and
+  // the keep-in-place re-flow read the scroller's scrollTop, so it never acted.
+  const N = 25_600;
+  for (const [W, H] of [[1440, 900], [1024, 700]]) {
+    for (const cart of [false, true]) {
+      const label = `${W}×${H}${cart ? ', cart up' : ''}`;
+      const g = gridHarness({ raf: true });
+      evenPlant(g, N);
+      sizeFromSheet(g, W, H, cart);
+      await g.renderGrid();
+      const sc = g.els.gridScroll;
+      const viewH = sc.clientHeight;
+      const built = () => g.els.gridInner.children.length;
+      const perRow = g.state.grid.layout.filter((c) => c.y === 0).length;
+      const rowH = 256 + 12;
+      // renderGridWindow builds what lies within 200 px above and below the
+      // scroller's window, and that window is never taller than the window's.
+      const most = perRow * (Math.ceil((H + 400) / rowH) + 1);
+      assert.ok(built() <= most, `${label}: ${built()} of ${N} tiles are built; the window shows a few rows of ${perRow} (at most ${most})`);
+      assert.ok(viewH < H, `${label}: the scroller is ${viewH} px tall — its window, not its ${g.state.grid.totalH} px of tiles`);
+
+      // Scrolling the Grid moves its own window: half a million px down, the
+      // tiles there are built and the first ones are gone.
+      sc.scrollTop = 500_000;
+      assert.equal(sc.scrollTop, 500_000, `${label}: the Grid itself scrolls that far`);
+      for (const f of sc.listeners.scroll || []) f({});
+      const drawn = g.els.gridInner.children.map((c) => Number(c.dataset.i));
+      assert.ok(drawn.length > 0 && drawn.length <= most, `${label}: scrolled, ${drawn.length} tiles are built`);
+      const first = g.state.grid.layout[Math.min(...drawn)];
+      assert.ok(first.y + first.side >= 500_000 - 200 && first.y <= 500_000 + viewH, `${label}: and they are the ones at the scroll (first at y ${first.y})`);
+
+      // C04: a plain click opens the pane, which narrows the page, and the
+      // Grid re-flows into the narrower column. The clicked tile stays where
+      // it was in the Grid's window — it can only if the Grid is the scroller.
+      sc.scrollTop = 10 * rowH + 100; // row 10 is cut by the top of the window
+      const i = 11 * perRow + perRow - 1; // the last tile of row 11, the first whole row on screen
+      g.onCellClick({}, i);
+      const fromTop = () => g.state.grid.layout[i].y - sc.scrollTop;
+      const was = fromTop();
+      assert.ok(was >= 0 && was + 256 <= viewH, `${label}: control — tile ${i} is wholly on screen, ${was} px down the Grid's window`);
+      const yWas = g.state.grid.layout[i].y;
+      sc.clientWidth -= 330; // the pane takes its width…
+      await g.renderGrid(); // …and the resize it replays re-flows the Grid
+      assert.ok(g.state.grid.layout[i].y > yWas, `${label}: control — fewer to a row, the tile moved down the Grid (${yWas} → ${g.state.grid.layout[i].y})`);
+      assert.equal(fromTop(), was, `${label}: the clicked tile is where it was on screen`);
+    }
   }
 });

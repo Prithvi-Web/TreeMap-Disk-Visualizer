@@ -1257,8 +1257,15 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    hidden-view rule — `.view`, display none — intact. (Written without braces
    deliberately: the CSS slicers several tests use to pull one rule out of the
    built page are brace-matched, and a brace inside a comment hands the next
-   rule a selector made of comment text.) */
-#view-grid.active { display: flex; flex-direction: column; min-height: calc(100vh - 68px); }
+   rule a selector made of comment text.)
+   A height, not a min-height (QA D01): a flex column with only a floor is as
+   tall as what it holds, so #gridScroll grew to every tile's height — 1.1
+   million px in a 25,600-file folder — and had nothing to scroll. <main>
+   scrolled the page instead: the toolbar went with it, renderGridWindow saw a
+   window as tall as the folder and built every tile, and the re-flow that
+   keeps a clicked tile in place read a scrollTop that never moved. Held to
+   the window, the Grid is its own scroller. */
+#view-grid.active { display: flex; flex-direction: column; height: calc(100vh - 68px); }
 #gridScroll { position: relative; flex: 1; min-height: 420px; overflow-y: auto; padding: 10px; }
 #gridInner { position: relative; }
 .gcell { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -1334,8 +1341,8 @@ body:has(#cartDock.show) main { padding-bottom: 76px; }
 /* The Grid fills <main> exactly (040-grid.css: 100vh less main's 20px top
    and 48px bottom padding), so it gives up the same 28 px: 20 + 76 = 96.
    Without this <main> scrolled 28 px around the Grid whenever anything was
-   staged (B36 review F1.2). */
-body:has(#cartDock.show) #view-grid.active { min-height: calc(100vh - 96px); }
+   staged (B36 review F1.2). A height, as the Grid's own rule is (QA D01). */
+body:has(#cartDock.show) #view-grid.active { height: calc(100vh - 96px); }
 #cartPanel { display: none; flex-direction: column; max-height: 54vh; overflow: hidden;
   border: 1px solid var(--hairline-2); border-radius: var(--r-lg); box-shadow: var(--shadow-3);
   --lg-tint: var(--lg-tint-strong);
