@@ -618,7 +618,7 @@ const state = {
           contentBounds: { x0: -87, x1: 87, y0: -26, y1: 50 },
           height: localStorage.getItem('tm-cityheight') || 'staleness',
           colour: localStorage.getItem('tm-citycolour') || 'reclaim',
-          counts: new Map(), countsFor: null, unresolved: 0, raf: 0, drag: null },
+          counts: new Map(), countsAsked: new Set(), unresolved: 0, raf: 0, drag: null },
   // v4 §6.3 / §6.4 — a lasso in flight, and the magnifier. Both are pure
   // overlays over whatever the current renderer last drew: neither holds a
   // tree, a layout or a request of its own.

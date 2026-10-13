@@ -43,15 +43,27 @@ function declSource(name: string): string {
   return assert.fail(`${name} never closes`);
 }
 
+/** Disk City's own `registerView({ id: 'city', … })` call — its onScanChange and mount — cut out of the built page. */
+function cityViewSource(): string {
+  const at = INDEX.indexOf("registerView({\n  id: 'city',");
+  assert.notEqual(at, -1, 'Disk City registers its view in the built page');
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, i + 1) + ');';
+  }
+  return assert.fail('the city view never closes');
+}
+
 /** The named declarations in one scope, `deps` as their globals. */
-function load<T>(names: string[], deps: Record<string, unknown>, returns: string, prelude = ''): T {
+function load<T>(names: string[], deps: Record<string, unknown>, returns: string, prelude = '', tail = ''): T {
   const keys = Object.keys(deps);
-  const src = `'use strict'; ${prelude}\n${names.map(declSource).join('\n')}\nreturn ${returns};`;
+  const src = `'use strict'; ${prelude}\n${names.map(declSource).join('\n')}\n${tail}\nreturn ${returns};`;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   return new Function(...keys, src)(...keys.map((k) => deps[k])) as T;
 }
 
-interface Node { path: string; name: string; size: number; type: string }
+interface Node { path: string; name: string; size: number; type: string; x?: number; y?: number; w?: number; h?: number }
 
 /** One element per id, holding whatever the code under test writes to it. */
 function fakeDom() {
@@ -61,6 +73,7 @@ function fakeDom() {
       els.set(id, {
         id, hidden: false, disabled: false, textContent: '', innerHTML: '', dataset: {}, style: {},
         classList: { add() {}, remove() {}, toggle() {} }, querySelectorAll: () => [], offsetWidth: 230, offsetHeight: 90, clientWidth: 900, clientHeight: 600,
+        addEventListener() {}, removeEventListener() {}, setAttribute() {},
       });
     }
     return els.get(id)!;
@@ -72,7 +85,7 @@ function fakeDom() {
  * names the scan and the folder it was asked for, so what Disk City built
  * from says which scan it came from.
  */
-function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } = {}) {
+function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; realBuild?: boolean; batch?: number } = {}) {
   const asked: string[] = [];
   const built: Node[][] = [];
   const $ = fakeDom();
@@ -90,30 +103,43 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } 
       lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null, completed: false },
     },
     city: {
-      hover: null, pan: { x: 0, y: 0 }, zoom: 1, blocks: [] as Block[], counts: new Map(), countsFor: null,
+      hover: null, pan: { x: 0, y: 0 }, zoom: 1, blocks: [] as Block[], counts: new Map(), countsAsked: new Set<string>(), unknownHeight: 0,
       colour: 'reclaim', height: 'staleness',
     },
   };
+  // Which view the registry has mounted: Disk City's onScanChange reloads only when it is up.
+  const mounted = { id: 'dashboard' };
+  const views: Record<string, { onScanChange: (scanId: string) => void; mount: () => void }> = {};
   // Facts the city asks for later (subtree counts, reclaim scores), held until a test lands them.
-  const countAsks: Array<{ paths: string[]; answer: (res: unknown) => void }> = [];
+  const countAsks: Array<{ scanId: string; paths: string[]; answer: (res: unknown) => void; fail: (err: Error) => void }> = [];
   const scoreAsks: Array<{ paths: string[]; land: () => void }> = [];
   const reclaim = { scores: new Map<string, unknown>() };
   const api = async (url: string, init?: { body?: string }) => {
     if (url === '/api/facts') {
-      const body = JSON.parse(init!.body!) as { paths: string[]; providers: string[] };
+      const body = JSON.parse(init!.body!) as { scanId: string; paths: string[]; providers: string[] };
       assert.deepEqual(body.providers, ['subtreeCount'], 'the city asks the fact layer for counts only');
-      return new Promise((answer) => countAsks.push({ paths: body.paths, answer }));
+      return new Promise((answer, fail) => countAsks.push({ scanId: body.scanId, paths: body.paths, answer, fail }));
     }
     asked.push(url);
     const m = /^\/api\/scan\/([^/]+)\/treemap\?.*root=([^&]+)/.exec(url);
     assert.ok(m, `the stub serves the treemap layout only, not ${url}`);
     const [, scanId, root] = [m[0], m[1], decodeURIComponent(m[2])];
-    const nodes: Node[] = [1, 2, 3].map((i) => ({ path: `${root}/f${i}`, name: `${scanId}:${root}`, size: 5000 * i, type: 'file' }));
+    // Laid out as the server lays them out, so the city's own build can draw
+    // them: three files side by side, and a fourth too small to see until
+    // the city is zoomed in.
+    const nodes: Node[] = [1, 2, 3].map((i) => ({
+      path: `${root}/f${i}`, name: `${scanId}:${root}`, size: 5000 * i, type: 'file', x: 40 * (i - 1), y: 0, w: i === 3 ? 19.5 : 40, h: 100,
+    }));
+    nodes.push({ path: `${root}/f4`, name: `${scanId}:${root}`, size: 10, type: 'file', x: 99.5, y: 0, w: 0.5, h: 0.5 });
     return { root: { path: root, name: root.split('/').pop(), size: 30000 }, nodes };
   };
   const noop = () => {};
   const deps: Record<string, unknown> = {
     state, $, api, REDUCED: true, requestAnimationFrame: noop,
+    // Disk City's view: the registry it registers with, and what it starts when mounted.
+    registerView: (v: { id: string; onScanChange: (scanId: string) => void; mount: () => void }) => { views[v.id] = v; },
+    mountedView: mounted, refreshDock: noop,
+    cityOnPointerDown: noop, cityOnPointerMove: noop, cityOnPointerUp: noop, cityOnPointerLeave: noop, cityOnWheel: noop, cityOnKey: noop, cityOnResize: noop,
     isSun: () => false, isCells: () => false, exitCartPreview: noop,
     // finishScan's completion toast is expected; any other is a loader reporting a failure.
     toast: (m: string) => { if (!/^Scan complete/.test(m)) throw new Error('the page reported: ' + m); },
@@ -122,7 +148,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } 
     disableLive: noop, drawCells: noop, animateSunburstTo: noop, updateTimeLabel: noop,
     historyLayoutFor: async (snap: { takenAt: number }) => ({
       snapshot: { takenAt: snap.takenAt }, tree: null, root: { path: state.root!.path, size: 1 },
-      nodes: [{ path: `${state.root!.path}/old`, name: `snapshot:${snap.takenAt}`, size: 1, type: 'file' }],
+      nodes: [{ path: `${state.root!.path}/old`, name: `snapshot:${snap.takenAt}`, size: 1, type: 'file', x: 0, y: 0, w: 100, h: 100 }],
     }),
     // Disk City's own drawing is not under test: what it was handed to draw is.
     // A rebuild makes new blocks for the same paths, as the page's does.
@@ -138,7 +164,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } 
       scoreAsks.push({ paths, land: () => { for (const p of paths) reclaim.scores.set(p, { score: 80 }); onLanded(); } });
       return Promise.resolve();
     },
-    cityInvalidate: noop, window: {},
+    cityInvalidate: noop, window: { addEventListener: noop, removeEventListener: noop },
     // finishScan's surroundings.
     endScanChrome: noop, indexTree: noop, updateSelectionBar: noop, DUP_PAGE: 100, icon: () => '',
     formatCount: (n: number) => String(n), formatBytes: (n: number) => `${n} B`, escapeHtml: (s: string) => s,
@@ -153,8 +179,17 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } 
     'citySetColour', 'citySetHeight', 'cityMode', 'CITY_COLOUR_LABEL', 'CITY_HEIGHT_LABEL'];
   if (!opts.realCard) deps.cityShowCard = noop;
   // The city's own fact loaders, over the held counts and scores above.
-  const factNames = ['TM_SCORE_CAP', 'RECLAIM_BATCH', 'cityFetchFacts', 'cityLoadCounts'];
+  const factNames = ['TM_SCORE_CAP', ...(opts.batch ? [] : ['RECLAIM_BATCH']), 'cityFetchFacts', 'cityLoadCounts'];
   if (opts.facts) delete deps.cityFetchFacts;
+  if (opts.batch) deps.RECLAIM_BATCH = opts.batch; // the fact layer's batch, small enough to see a second one
+  // The city's own build, over its own geometry, where a test reads what it
+  // built rather than what it was handed; and its own zoom settle, at once.
+  const buildNames = ['isoProject', 'isoBounds', 'isoBehind', 'isoDepthOrder', 'CITY_MAX_H', 'CITY_MIN_H', 'cityMetric', 'cityScaleHeights',
+    'cityVisibleNodes', 'cityContentBounds', 'buildCity', 'cityAfterZoom'];
+  if (opts.realBuild) {
+    delete deps.buildCity;
+    Object.assign(deps, { setTimeout: (fn: () => void) => { fn(); return 1; }, clearTimeout: noop });
+  }
   // The time-lapse's own transport, animated as it plays by default (motion
   // not reduced, rectangle map), over a frame queue the test pumps by hand.
   const frames = { queue: [] as Array<[number, (t: number) => unknown]>, next: 0, clock: 0 };
@@ -173,6 +208,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } 
     finishScan: (root: unknown, ms: number, stats: unknown) => Promise<void>;
     setHistoryIndex: (i: number) => Promise<void>;
     lapse?: { start: () => void; stop: () => void };
+    afterZoom?: () => void;
     card?: {
       show: (b: Block | null, px?: number, py?: number) => void;
       up: () => void;
@@ -181,11 +217,13 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } 
       jitter: (rgb: number[], path: string) => number[];
     };
   }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : []), ...(opts.lapse ? lapseNames : []),
-    ...(opts.facts ? factNames : [])], deps,
+    ...(opts.facts ? factNames : []), ...(opts.realBuild ? buildNames : [])], deps,
     `{ loadTreemap, loadCity, finishScan, setHistoryIndex${opts.realCard
       ? ', card: { show: cityShowCard, up: cityUp, setColour: citySetColour, setHeight: citySetHeight, jitter: cityJitter }'
-      : ''}${opts.lapse ? ', lapse: { start: lapseStart, stop: lapseStop }' : ''} }`,
-    'let tmLoadSeq = 0; let cityLoadSeq = 0; let tmAnimFrame = 0; let lapseExporting = false; let lapseInternalStart = false;');
+      : ''}${opts.lapse ? ', lapse: { start: lapseStart, stop: lapseStop }' : ''}${opts.realBuild ? ', afterZoom: cityAfterZoom' : ''} }`,
+    'let tmLoadSeq = 0; let cityLoadSeq = 0; let tmAnimFrame = 0; let lapseExporting = false; let lapseInternalStart = false;',
+    // The view itself registers where the page's onScanChange and mount can reach the city's own functions.
+    opts.realCard && opts.facts ? cityViewSource() : '');
   /** Run `count` animation frames, 100 ms apart, letting each frame's awaits settle. */
   const pump = async (count: number) => {
     for (let i = 0; i < count; i++) {
@@ -198,7 +236,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean } 
   };
   /** The scan:folder every node Disk City was last handed names. */
   const lastBuilt = () => [...new Set((built[built.length - 1] ?? []).map((n) => n.name))];
-  return { ...page, state, asked, built, lastBuilt, $, pump, frames, countAsks, scoreAsks };
+  return { ...page, state, asked, built, lastBuilt, $, pump, frames, countAsks, scoreAsks, mounted, views };
 }
 
 interface Block { n: Node & { modifiedAt?: number }; rgb: number[]; z: number }
@@ -452,4 +490,208 @@ test('C13: a card switched to Reclaim by keyboard takes the score and the colour
   assert.equal(card.hidden, false);
   assert.match(card.innerHTML, /Reclaim score<\/span><b>80 \/ 100/, 'the card reads the score that landed');
   assert.equal(dotOf(card.innerHTML), scored, 'and its dot is the colour the building now wears');
+});
+
+/* ══════════════ C03 review F2.2 — what Disk City builds before its own fetch lands ══════════════
+
+   loadCity decided rightly whether the nodes on the map were this scan's
+   folder's, but the view's mount built the city from them BEFORE asking it:
+   the Height control's rebuild drew the last scan's buildings under the new
+   folder's name until the fetch landed, and for good if it failed. In Files
+   height that build also asked for the last scan's buildings' counts under
+   the new scan's key, and the real build's ask then found the key taken, so
+   no building of the new folder was ever counted. */
+
+const cityNames = (h: ReturnType<typeof harness>) => [...new Set(h.state.city.blocks.map((b) => b.n.name))];
+const cityPaths = (h: ReturnType<typeof harness>) => h.state.city.blocks.map((b) => b.n.path).sort();
+const countAnswer = (paths: string[], files = 3) => ({
+  providers: { subtreeCount: { available: true, values: Object.fromEntries(paths.map((p) => [p, { files, dirs: 0 }])) } },
+});
+
+/** Disk City with its own build, fact loaders and view, by file count, in the Type colours (no scores to wait on). */
+function cityHarness(opts: { batch?: number } = {}) {
+  const h = harness({ realCard: true, facts: true, realBuild: true, ...opts });
+  h.state.city.height = 'files';
+  h.state.city.colour = 'type';
+  return h;
+}
+
+/**
+ * A scan of `from`, drawn by the Treemap, then a scan `scanId` of `to` landing.
+ * The registry's TOPIC.scan (the city's onScanChange) is the caller's: finishScan
+ * sends it and mounts the view in the same tick, before any fetch can land.
+ */
+async function scanAfterTreemap(h: ReturnType<typeof harness>, from: string, to: string, scanId: string) {
+  h.state.scanId = 's1';
+  h.state.root = { path: from, size: 1 };
+  await h.loadTreemap(from);
+  assert.deepEqual([...new Set(h.state.treemap.nodes.map((n) => n.name))], [`s1:${from}`], 'control: the Treemap holds the last scan');
+  h.state.scanId = scanId;
+  void h.finishScan({ path: to, size: 2 }, 50, { fileCount: 4, dirCount: 1 });
+}
+
+test('C03: Disk City opened after a scan of another folder builds nothing of the last scan while it fetches the new one', async () => {
+  const h = cityHarness();
+  await scanAfterTreemap(h, '/A', '/B', 's2');
+  h.views.city.onScanChange('s2'); // the registry's TOPIC.scan, with the Dashboard up
+  h.state.view = 'city';
+  h.views.city.mount(); // the Disk City tab
+  assert.deepEqual(cityNames(h), [], 'no building of A stands under B\'s name while B is fetched');
+  await settle();
+  assert.deepEqual(cityNames(h), ['s2:/B'], 'control: B is drawn once it lands');
+});
+
+test('C03: Disk City already up when a scan of another folder lands builds nothing of the last scan when the view is mounted again', async () => {
+  const h = cityHarness();
+  h.state.view = 'city';
+  h.mounted.id = 'city';
+  await scanAfterTreemap(h, '/A', '/B', 's2');
+  h.views.city.onScanChange('s2'); // the registry's TOPIC.scan: the city that is up reloads
+  h.views.city.mount(); // finishScan's switchView(state.view) in the same tick, with no unmount between
+  assert.deepEqual(cityNames(h), [], 'the second mount builds nothing of A either');
+  await settle();
+  assert.deepEqual(cityNames(h), ['s2:/B']);
+});
+
+test('C03: in Files height the new folder\'s buildings are the ones counted — no count is asked for the last scan\'s', async () => {
+  const h = cityHarness();
+  await scanAfterTreemap(h, '/A', '/B', 's2');
+  h.views.city.onScanChange('s2');
+  h.state.view = 'city';
+  h.views.city.mount();
+  await settle();
+  assert.deepEqual(cityPaths(h), ['/B/f1', '/B/f2', '/B/f3'], 'control: B\'s buildings are drawn');
+  assert.deepEqual(h.countAsks.map((a) => [a.scanId, ...a.paths]), [['s2', '/B/f1', '/B/f2', '/B/f3']],
+    'one ask, of the new scan, for the buildings drawn');
+  assert.equal(h.state.city.unknownHeight, 3, 'control: drawn flat until their counts land');
+  h.countAsks[0].answer(countAnswer(h.countAsks[0].paths));
+  await settle();
+  assert.equal(h.state.city.unknownHeight, 0, 'and every building drawn stands at its count, none flat for want of one');
+});
+
+/* Each part of the rule, alone: the build takes only the very array fetched
+   for this scan's folder, and takes it at once when it is. */
+const mountCases: Array<{ name: string; setup: (h: ReturnType<typeof harness>) => Promise<void>; drawn: string; fetched: boolean }> = [
+  {
+    name: 'a rescan of the same folder (the scan differs)', drawn: 's2:/corpus', fetched: true,
+    setup: async (h) => {
+      await scanAfterTreemap(h, '/corpus', '/corpus', 's2');
+      h.views.city.onScanChange('s2');
+    },
+  },
+  {
+    name: 'the shared root repointed at another folder of the same scan (the folder differs)', drawn: 's1:/corpus/Projects', fetched: true,
+    setup: async (h) => {
+      h.state.scanId = 's1';
+      h.state.root = { path: '/corpus', size: 1 };
+      await h.loadTreemap('/corpus/Mail');
+      h.state.treemap.rootPath = '/corpus/Projects'; // the Calendar and the Media list repoint it without loading it
+    },
+  },
+  {
+    name: 'a past snapshot the time slider left on the map (the array differs)', drawn: 's1:/corpus', fetched: true,
+    setup: async (h) => {
+      h.state.scanId = 's1';
+      h.state.root = { path: '/corpus', size: 1 };
+      await h.loadTreemap('/corpus');
+      h.state.treemap.history.snaps = [{ id: 'old', takenAt: 1000 }];
+      await h.setHistoryIndex(0);
+      assert.deepEqual([...new Set(h.state.treemap.nodes.map((n) => n.name))], ['snapshot:1000'], 'control: the map holds the snapshot');
+    },
+  },
+];
+for (const c of mountCases) {
+  test(`C03: Disk City's mount builds nothing before its fetch lands after ${c.name}`, async () => {
+    const h = cityHarness();
+    await c.setup(h);
+    h.state.view = 'city';
+    h.asked.length = 0;
+    h.views.city.mount();
+    assert.deepEqual(cityNames(h), [], 'nothing it was not fetched for is built');
+    await settle();
+    assert.deepEqual(cityNames(h), [c.drawn], 'control: what it fetched is drawn');
+    assert.equal(h.asked.length, 1, 'control: which it asked the server for');
+  });
+}
+
+test('C03: Disk City mounted on the scan and folder the Treemap holds builds them at once, with no request', async () => {
+  const h = cityHarness();
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  await h.loadTreemap('/corpus');
+  h.state.view = 'city';
+  h.asked.length = 0;
+  h.views.city.mount();
+  assert.deepEqual(cityNames(h), ['s1:/corpus'], 'the nodes fetched for this scan\'s folder are built as the view mounts');
+  await settle();
+  assert.deepEqual(h.asked, [], 'and shared, not fetched again');
+});
+
+test('C03: buildings a zoom reveals are counted too — the count asked for the last build does not stand for the next', async () => {
+  const h = cityHarness();
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  await h.loadCity('/corpus');
+  assert.deepEqual(cityPaths(h), ['/corpus/f1', '/corpus/f2', '/corpus/f3'], 'control: the smallest file is too small to draw yet');
+  assert.equal(h.countAsks.length, 1, 'control: the drawn buildings were asked for');
+  h.countAsks[0].answer(countAnswer(h.countAsks[0].paths));
+  await settle();
+  h.state.city.zoom = 2;
+  h.afterZoom!(); // the wheel settles
+  assert.deepEqual(cityPaths(h), ['/corpus/f1', '/corpus/f2', '/corpus/f3', '/corpus/f4'], 'control: zoomed in, it is drawn');
+  assert.deepEqual(h.countAsks.map((a) => a.paths), [['/corpus/f1', '/corpus/f2', '/corpus/f3'], ['/corpus/f4']],
+    'it is asked for, and only it — the three already counted are not asked again');
+  assert.equal(h.state.city.unknownHeight, 1, 'control: it stands flat until its count lands');
+  h.countAsks[1].answer(countAnswer(['/corpus/f4']));
+  await settle();
+  assert.equal(h.state.city.unknownHeight, 0, 'every building drawn stands at its count');
+});
+
+test('C03: a count ask that fails is asked again at the next entry, for what it had not answered only', async () => {
+  const h = cityHarness({ batch: 2 });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  await h.loadCity('/corpus');
+  assert.deepEqual(h.countAsks.map((a) => a.paths), [['/corpus/f1', '/corpus/f2']], 'control: the first batch');
+  h.countAsks[0].answer(countAnswer(h.countAsks[0].paths));
+  await settle();
+  assert.deepEqual(h.countAsks.map((a) => a.paths).slice(1), [['/corpus/f3']], 'control: then the second');
+  h.countAsks[1].fail(new Error('the connection dropped'));
+  await settle();
+  h.card!.setHeight('files'); // the next entry: Files chosen again
+  assert.deepEqual(h.countAsks.map((a) => a.paths).slice(2), [['/corpus/f3']], 'the file the failed batch held is asked again, and only it');
+});
+
+/** Disk City up on s1's /corpus with its count ask in flight, then a rescan s2 of the folder asking its own. */
+async function rescanWhileCounting() {
+  const h = cityHarness();
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  h.mounted.id = 'city';
+  await h.loadCity('/corpus');
+  assert.deepEqual(h.countAsks.map((a) => a.scanId), ['s1'], 'control: s1 is counting');
+  h.state.scanId = 's2';
+  void h.finishScan({ path: '/corpus', size: 2 }, 50, { fileCount: 4, dirCount: 1 });
+  h.views.city.onScanChange('s2');
+  await settle();
+  assert.deepEqual(h.countAsks.map((a) => a.scanId), ['s1', 's2'], 'the rescan asks for the same buildings again, of its own scan');
+  return h;
+}
+
+test('C03: a rescan\'s counts are not taken from the last scan\'s answer landing late', async () => {
+  const h = await rescanWhileCounting();
+  h.countAsks[0].answer(countAnswer(h.countAsks[0].paths, 999));
+  await settle();
+  assert.equal(h.state.city.counts.has('/corpus/f1'), false, 'the last scan\'s count is not filed against the rescan\'s building');
+});
+
+test('C03: the last scan\'s count ask failing late does not send the rescan\'s own ask again', async () => {
+  const h = await rescanWhileCounting();
+  h.countAsks[0].fail(new Error('the scan it asked of has gone'));
+  await settle();
+  h.card!.setHeight('files');
+  assert.equal(h.countAsks.length, 2, 'the rescan\'s ask is still on its way; nothing is asked twice');
 });

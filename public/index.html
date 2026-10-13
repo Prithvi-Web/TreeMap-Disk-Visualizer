@@ -6957,7 +6957,7 @@ const state = {
           contentBounds: { x0: -87, x1: 87, y0: -26, y1: 50 },
           height: localStorage.getItem('tm-cityheight') || 'staleness',
           colour: localStorage.getItem('tm-citycolour') || 'reclaim',
-          counts: new Map(), countsFor: null, unresolved: 0, raf: 0, drag: null },
+          counts: new Map(), countsAsked: new Set(), unresolved: 0, raf: 0, drag: null },
   // v4 §6.3 / §6.4 — a lasso in flight, and the magnifier. Both are pure
   // overlays over whatever the current renderer last drew: neither holds a
   // tree, a layout or a request of its own.
@@ -25908,7 +25908,15 @@ function cityContentBounds(blocks) {
  */
 function buildCity() {
   const c = state.city;
-  const nodes = state.treemap.nodes || [];
+  // Only the very array fetched for this scan's folder, by the rule loadCity
+  // reuses nodes by (see there); anything else on the map builds an empty
+  // city. The view's mount rebuilds before loadCity has asked, so a build
+  // that took whatever the map held drew the last scan's buildings under the
+  // new folder's name until the fetch landed, and for good if it failed
+  // (C03 review F2.2).
+  const held = state.treemap.nodesFor;
+  const nodes = held && held.nodes === state.treemap.nodes && held.scanId === state.scanId
+    && held.path === state.treemap.rootPath ? state.treemap.nodes : [];
   c.total = nodes.length;
   if (!nodes.length) {
     c.blocks = []; c.drawn = 0; c.aggregated = 0; c.unresolved = 0; c.unknownHeight = 0;
@@ -27102,24 +27110,33 @@ function cityFetchFacts() {
     });
   }
   if (c.height === 'files') {
-    const key = state.scanId + '|' + state.treemap.rootPath;
-    if (c.countsFor === key) return;
-    c.countsFor = key;
-    void cityLoadCounts(paths, key);
+    // By path, as ensureScores asks for scores: each building of a scan is
+    // asked for once, whichever build drew it. One key per scan and folder
+    // let an ask made for one build stand for the next: a zoom's newly drawn
+    // buildings were never asked for, and a build of the wrong nodes took the
+    // key from the real one (C03 review F2.2).
+    const wanted = paths.filter((p) => !c.countsAsked.has(p));
+    if (!wanted.length) return;
+    for (const p of wanted) c.countsAsked.add(p);
+    void cityLoadCounts(wanted);
   }
 }
 
 /** Fetch subtree counts in the fact layer's own batches. */
-async function cityLoadCounts(paths, key) {
+async function cityLoadCounts(paths) {
   const scanAtRequest = state.scanId;
+  // The scan's own record of what has been asked: a scan change replaces it,
+  // so this ask can release only its own scan's paths.
+  const asked = state.city.countsAsked;
+  let i = 0;
   try {
-    for (let i = 0; i < paths.length; i += RECLAIM_BATCH) {
+    for (; i < paths.length; i += RECLAIM_BATCH) {
       const batch = paths.slice(i, i + RECLAIM_BATCH);
       const res = await api('/api/facts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scanId: scanAtRequest, paths: batch, providers: ['subtreeCount'] }),
       });
-      if (state.scanId !== scanAtRequest || state.city.countsFor !== key) return;
+      if (state.scanId !== scanAtRequest) return;
       const provider = (res.providers && res.providers.subtreeCount) || null;
       const values = (provider && provider.available && provider.values) || {};
       // A path absent from `values` stays absent from the map: unknown is not
@@ -27135,7 +27152,9 @@ async function cityLoadCounts(paths, key) {
       if (state.view === 'city') cityRefreshCard();
     }
   } catch (err) {
-    state.city.countsFor = null; // a later entry retries rather than remembering a blip
+    // A later entry retries rather than remembering a blip — what this ask
+    // had not answered, not the batches already filed.
+    for (const p of paths.slice(i)) asked.delete(p);
     if (window.TREEMAP_DEBUG) console.warn('[treemap] subtree counts failed:', err);
   }
 }
@@ -27447,7 +27466,7 @@ registerView({
   needsScan: true,
   onScanChange() {
     state.city.counts.clear();
-    state.city.countsFor = null;
+    state.city.countsAsked = new Set(); // a new one, not cleared: an ask still out is the last scan's (cityLoadCounts)
     state.city.blocks = [];
     if (mountedView && mountedView.id === 'city') loadCity(state.root ? state.root.path : null);
   },
