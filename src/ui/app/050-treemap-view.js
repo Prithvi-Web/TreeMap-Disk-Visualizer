@@ -92,8 +92,9 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.nodes = data.nodes;
       // Which scan and folder these rectangles are, and which array: Disk City
       // reuses them only while this very array is the one on the map (C03 —
-      // loadCity says why).
-      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes };
+      // loadCity says why). The folder's size and the floor ride with them:
+      // they are what the city's line and size say of a city built from them.
+      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes, size: data.root.size, minSize: floor };
       state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));

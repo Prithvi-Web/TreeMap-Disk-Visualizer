@@ -389,8 +389,13 @@ function buildCity() {
   // new folder's name until the fetch landed, and for good if it failed
   // (C03 review F2.2).
   const held = state.treemap.nodesFor;
-  const nodes = held && held.nodes === state.treemap.nodes && held.scanId === state.scanId
-    && held.path === state.treemap.rootPath ? state.treemap.nodes : [];
+  const from = held && held.nodes === state.treemap.nodes && held.scanId === state.scanId
+    && held.path === state.treemap.rootPath ? held : null;
+  // The record the city stands on: its line and size say what these nodes
+  // hold and nothing the map has since, and a city built from none says it
+  // is loading rather than "showing all 0" (renderCityChrome, C03 review F3.1).
+  c.builtFrom = from;
+  const nodes = from ? from.nodes : [];
   c.total = nodes.length;
   if (!nodes.length) {
     c.blocks = []; c.drawn = 0; c.aggregated = 0; c.unresolved = 0; c.unknownHeight = 0;
@@ -1379,36 +1384,53 @@ function cityInvalidate() {
 
 function renderCityChrome() {
   const c = state.city;
+  // What the line and the size say comes from the record the city was built
+  // from (buildCity), never from the map. finishScan repoints the map's
+  // folder and leaves its nodes, size and floor as the last scan's, so a city
+  // waiting on its own fetch said "showing all 0 items of 4.0 KB or more"
+  // beside the last scan's 4.4 GB, and its live region announced it (C03
+  // review F3.1).
+  const from = c.builtFrom;
   const lod = $('cityLod');
   if (lod) {
-    // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
-    // and saying nothing is lying by omission about what is on screen.
-    //
-    // c.total counts the nodes the server sent, and two things keep a folder's
-    // items out of them before the city sees any (review F3.5). The floor they
-    // were asked with: a folder of 10 large files and 30 of 3 KB said "showing
-    // all 10" with the 30 not drawn at all. It is the floor recorded with the
-    // nodes, read as tmNodeCapNote reads it (a time-slider layout has none).
-    // And the server's node cap: a folder that reached it may hold more than
-    // the city was sent, so "all" is dropped and the line says it reached the
-    // cap, which is true either way. The Trash cell the page adds is not a
-    // node the server sent.
-    const floor = state.treemap.history && state.treemap.history.active ? 0 : (state.treemap.minSize || 0);
-    const items = floor > 1 ? ` items of ${formatBytes(floor)} or more` : '';
-    let sent = 0;
-    for (const n of state.treemap.nodes || []) if (!n.isTrash) sent++;
-    const capped = sent >= TM_SERVER_NODE_CAP;
     const parts = [];
-    if (c.drawn < c.total) {
-      parts.push(`showing ${formatCount(c.drawn)} of ${formatCount(c.total)}${items} — zoom in for more`);
+    // A load that failed is said until the next load starts (loadCity).
+    // Written once, the next redraw — a resize, the Height or Colour control
+    // — wiped it, and a blank plate read as an empty folder (C03 review F3.4).
+    const failed = c.loadFailed;
+    if (failed) parts.push(`${baseName(failed.path)} did not load: ${failed.message}`);
+    if (!from) {
+      if (!failed) parts.push('loading this folder…');
     } else {
-      parts.push(`showing ${capped ? '' : 'all '}${formatCount(c.drawn)}${items}`);
+      // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
+      // and saying nothing is lying by omission about what is on screen.
+      //
+      // c.total counts the nodes the server sent, and two things keep a
+      // folder's items out of them before the city sees any (review F3.5). The
+      // floor they were asked with: a folder of 10 large files and 30 of 3 KB
+      // said "showing all 10" with the 30 not drawn at all. It is the floor
+      // recorded with the nodes, and only a fetch's nodes are ever built from
+      // — never a time-slider layout, so the slider takes nothing off it. And
+      // the server's node cap: a folder that reached it may hold more than the
+      // city was sent, so "all" is dropped and the line says it reached the
+      // cap, which is true either way. The Trash cell the page adds is not a
+      // node the server sent.
+      const floor = from.minSize || 0;
+      const items = floor > 1 ? ` items of ${formatBytes(floor)} or more` : '';
+      let sent = 0;
+      for (const n of from.nodes) if (!n.isTrash) sent++;
+      const capped = sent >= TM_SERVER_NODE_CAP;
+      if (c.drawn < c.total) {
+        parts.push(`showing ${formatCount(c.drawn)} of ${formatCount(c.total)}${items} — zoom in for more`);
+      } else {
+        parts.push(`showing ${capped ? '' : 'all '}${formatCount(c.drawn)}${items}`);
+      }
+      if (capped) {
+        parts.push(`the map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that — drill in for the rest`);
+      }
+      if (c.unknownHeight) parts.push(`${formatCount(c.unknownHeight)} with no ${c.height === 'files' ? 'count' : 'date'} yet, drawn flat`);
+      if (c.unresolved) parts.push(`${formatCount(c.unresolved)} could not be depth-sorted and are drawn last`);
     }
-    if (capped) {
-      parts.push(`the map holds at most ${formatCount(TM_SERVER_NODE_CAP)} items, and this folder reached that — drill in for the rest`);
-    }
-    if (c.unknownHeight) parts.push(`${formatCount(c.unknownHeight)} with no ${c.height === 'files' ? 'count' : 'date'} yet, drawn flat`);
-    if (c.unresolved) parts.push(`${formatCount(c.unresolved)} could not be depth-sorted and are drawn last`);
     lod.textContent = parts.join(' · ');
     lod.hidden = false;
   }
@@ -1444,7 +1466,7 @@ function renderCityChrome() {
   }
 
   const status = $('cityStatus');
-  if (status) status.textContent = state.treemap.rootSize ? formatBytes(state.treemap.rootSize) : '';
+  if (status) status.textContent = from && from.size ? formatBytes(from.size) : '';
 }
 
 /**
@@ -1518,8 +1540,19 @@ async function loadCity(rootPath) {
   // The hover card describes a building of the folder being left (C13): Esc
   // climbing two levels left "clip027.m4v" standing over the parent's city.
   cityShowCard(null);
+  c.loadFailed = null; // a failure is said until the next load starts (renderCityChrome)
 
   if (!fresh) {
+    // A city built from no nodes waits on this fetch: its trail and its Up
+    // are this folder's from now, not a trail the last scan left (C03 review
+    // F3.4). A city that stands keeps its own until the new one lands.
+    if (!c.builtFrom) {
+      renderCrumbs($('cityCrumbs'), want, (p) => loadCity(p));
+      $('cityUpBtn').disabled = want === state.root.path;
+    }
+    // The line, now: "loading", or what still stands without the last
+    // failure. A scan change empties the city without drawing it.
+    renderCityChrome();
     try {
       // The Treemap's own floor (TM_MIN_SIZE), and its own retry without it
       // (loadTreemap), so the nodes the two views share are the same whichever
@@ -1538,12 +1571,16 @@ async function loadCity(rootPath) {
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
-      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes };
+      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path, nodes: data.nodes, size: data.root.size, minSize: floor };
       state.treemap.minSize = floor; // what tmNodeCapNote may say these nodes leave out
       state.treemap.hover = null;
     } catch (e) {
-      $('cityLod').textContent = e.message;
-      $('cityLod').hidden = false;
+      // Overtaken: the newer load says what it drew, and a failure nobody is
+      // waiting on would stand over it until the load after that.
+      if (seq !== cityLoadSeq) return;
+      // Kept, not written once: every redraw says it (renderCityChrome).
+      c.loadFailed = { path: want, message: e.message };
+      renderCityChrome();
       return;
     }
   }
@@ -1942,6 +1979,7 @@ registerView({
     state.city.counts.clear();
     state.city.countsAsked = new Set(); // a new one, not cleared: an ask still out is the last scan's (cityLoadCounts)
     state.city.blocks = [];
+    state.city.builtFrom = null; // its line and size go with its buildings (renderCityChrome)
     if (mountedView && mountedView.id === 'city') loadCity(state.root ? state.root.path : null);
   },
   mount() {

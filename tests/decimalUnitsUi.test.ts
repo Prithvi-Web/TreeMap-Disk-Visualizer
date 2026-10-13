@@ -598,7 +598,7 @@ test('Disk City asks for the map with the Treemap\'s 4 KB floor, and records it 
     {
       state, $: dom().$,
       api: async (u: string) => { asked.push(u); return { root: { path: '/r', name: 'r', size: 9000 }, nodes: [{ path: '/r/f', size: 4000 }] }; },
-      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {}, cityShowCard() {},
+      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {}, cityShowCard() {}, renderCityChrome() {},
     },
     'loadCity',
   );
@@ -625,7 +625,7 @@ function cityLoader(serve: (root: string, minSize: number) => Promise<{ root: { 
         asked.push(ask);
         return serve(...ask);
       },
-      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {}, cityShowCard() {},
+      renderCrumbs() {}, buildCity() {}, cityEnter() {}, renderCityTable() {}, cityFetchFacts() {}, cityShowCard() {}, renderCityChrome() {},
     },
     'loadCity',
   );
@@ -670,8 +670,14 @@ test('a Disk City load overtaken while it asks again without the floor lands not
 function cityNote(o: { drawn: number; total: number; nodes?: Array<{ isTrash?: boolean }>; minSize?: number; history?: boolean }): string {
   const lod = { textContent: '', hidden: true };
   const state = {
-    city: { drawn: o.drawn, total: o.total, unknownHeight: 0, unresolved: 0, height: 'staleness', colour: 'size' },
-    treemap: { nodes: o.nodes ?? Array.from({ length: o.total }, () => ({})), minSize: o.minSize, history: { active: o.history === true }, rootSize: 0 },
+    // What the city was built from: the nodes a fetch recorded, with the floor
+    // it asked them with (C03 review F3.1) — the line reads nothing else.
+    city: {
+      drawn: o.drawn, total: o.total, unknownHeight: 0, unresolved: 0, height: 'staleness', colour: 'size',
+      builtFrom: { nodes: o.nodes ?? Array.from({ length: o.total }, () => ({})), minSize: o.minSize, size: 0 },
+    },
+    // The Treemap's time slider, which the nodes the city was built from never are.
+    treemap: { history: { active: o.history === true } },
   };
   run<() => void>(
     `${pageConst('UNITS')}\n${braced('function formatBytes(')}\n${pageConst('TM_SERVER_NODE_CAP')}\n${braced('function renderCityChrome(')}`,
@@ -694,15 +700,21 @@ test('Disk City says "showing all" only of what its nodes can hold: the floor th
   await c.loadCity('/r/d');
   assert.equal(c.state.treemap.nodes.length, 10, 'control: the floor kept the 10 large files and no retry asked for the rest');
   assert.equal(c.state.treemap.minSize, 4000, 'control: the nodes were asked for with the 4 KB floor');
-  const said = cityNote({ drawn: 10, total: 10, nodes: c.state.treemap.nodes as [], minSize: c.state.treemap.minSize });
+  const record = (c.state.treemap as { nodesFor?: { nodes: []; minSize?: number } }).nodesFor;
+  assert.equal(record?.minSize, 4000, 'and the floor is recorded with the nodes it was asked for');
+  const said = cityNote({ drawn: 10, total: 10, nodes: record!.nodes, minSize: record!.minSize });
   assert.doesNotMatch(said, /^showing all 10$/, 'not "all" of a folder whose 30 small files are not drawn');
   assert.equal(said, 'showing all 10 items of 4.0 KB or more', 'all of the items at or over the floor, which it names');
   assert.equal(cityNote({ drawn: 10, total: 40, minSize: 4000 }), 'showing 10 of 40 items of 4.0 KB or more — zoom in for more');
 
-  // Asked with no floor (the retry), or laid out from a snapshot on the time
-  // slider, nothing was left out by size, and "all" is true.
+  // Asked with no floor (the retry), nothing was left out by size, and "all" is true.
   assert.equal(cityNote({ drawn: 30, total: 30, minSize: 1 }), 'showing all 30');
-  assert.equal(cityNote({ drawn: 30, total: 30, minSize: 4000, history: true }), 'showing all 30', 'a snapshot\'s layout has no floor, as tmNodeCapNote reads it');
+  // The city is built only from nodes a fetch recorded, never from a
+  // snapshot's layout (C03 review F2.2), so the time slider left on a
+  // snapshot while Disk City fetched the live folder takes nothing off the
+  // floor those nodes were asked with (C03 review F3.1).
+  assert.equal(cityNote({ drawn: 30, total: 30, minSize: 4000, history: true }), 'showing all 30 items of 4.0 KB or more',
+    'the floor the built nodes were asked with, whatever the time slider shows');
   assert.equal(cityNote({ drawn: 30, total: 30 }), 'showing all 30', 'nor do nodes nobody recorded a floor for');
 
   // The server sends at most TM_SERVER_NODE_CAP nodes; a folder that reached

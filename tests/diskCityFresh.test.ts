@@ -85,9 +85,18 @@ function fakeDom() {
  * names the scan and the folder it was asked for, so what Disk City built
  * from says which scan it came from.
  */
-function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; realBuild?: boolean; batch?: number } = {}) {
+function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; realBuild?: boolean; batch?: number; realChrome?: boolean } = {}) {
   const asked: string[] = [];
   const built: Node[][] = [];
+  // The stub server's state: a folder's size where a test names one, a
+  // failure while `down` holds a reason, and layouts held back until a test
+  // lands or fails them while `hold` is set.
+  const server = {
+    sizes: {} as Record<string, number>, down: null as string | null, hold: false,
+    held: [] as Array<{ root: string; land: () => void; fail: (reason: string) => void }>,
+  };
+  // Every trail the page drew, as [the element's id, the folder it names].
+  const crumbs: Array<[string, string]> = [];
   const $ = fakeDom();
   const state = {
     scanId: null as string | null, root: null as { path: string; size: number } | null, view: 'treemap', scanning: false,
@@ -131,7 +140,12 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
       path: `${root}/f${i}`, name: `${scanId}:${root}`, size: 5000 * i, type: 'file', x: 40 * (i - 1), y: 0, w: i === 3 ? 19.5 : 40, h: 100,
     }));
     nodes.push({ path: `${root}/f4`, name: `${scanId}:${root}`, size: 10, type: 'file', x: 99.5, y: 0, w: 0.5, h: 0.5 });
-    return { root: { path: root, name: root.split('/').pop(), size: 30000 }, nodes };
+    const layout = { root: { path: root, name: root.split('/').pop(), size: server.sizes[root] ?? 30000 }, nodes };
+    if (server.hold) {
+      return new Promise((land, fail) => server.held.push({ root, land: () => land(layout), fail: (reason) => fail(new Error(reason)) }));
+    }
+    if (server.down) throw new Error(server.down);
+    return layout;
   };
   const noop = () => {};
   const deps: Record<string, unknown> = {
@@ -143,7 +157,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
     isSun: () => false, isCells: () => false, exitCartPreview: noop,
     // finishScan's completion toast is expected; any other is a loader reporting a failure.
     toast: (m: string) => { if (!/^Scan complete/.test(m)) throw new Error('the page reported: ' + m); },
-    renderCrumbs: noop, maybeInjectTrash: noop, exitHistoryState: noop, refreshTimebar: noop, drawView: noop,
+    renderCrumbs: (host: { id: string }, p: string) => { crumbs.push([host.id, p]); }, maybeInjectTrash: noop, exitHistoryState: noop, refreshTimebar: noop, drawView: noop,
     animateTreemapTo: (nodes: Node[]) => { state.treemap.nodes = nodes; },
     disableLive: noop, drawCells: noop, animateSunburstTo: noop, updateTimeLabel: noop,
     historyLayoutFor: async (snap: { takenAt: number }) => ({
@@ -153,7 +167,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
     // Disk City's own drawing is not under test: what it was handed to draw is.
     // A rebuild makes new blocks for the same paths, as the page's does.
     buildCity: () => { built.push(state.treemap.nodes.slice()); state.city.blocks = state.city.blocks.map((b) => ({ ...b })); },
-    cityEnter: noop, renderCityTable: noop, cityFetchFacts: noop, drawCity: noop, cityMorphHeights: () => false,
+    cityEnter: noop, renderCityTable: noop, cityFetchFacts: noop, drawCity: noop, renderCityChrome: noop, cityMorphHeights: () => false,
     // One base colour per mode, so a card says which mode it was painted in;
     // in Reclaim, grey until the building is scored and red once it is.
     cityRgb: (n: Node, mode: string) => (mode === 'type' ? [191, 90, 242] : mode === 'age' ? [10, 200, 10]
@@ -190,6 +204,18 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
     delete deps.buildCity;
     Object.assign(deps, { setTimeout: (fn: () => void) => { fn(); return 1; }, clearTimeout: noop });
   }
+  // The city's own line and size (#cityLod, #cityStatus), written by every
+  // draw as the page's drawCity writes them — and by the reduced-motion
+  // entry, which draws at once. Only the legend's colour keys are stubs.
+  const hooks = { redraw: noop };
+  const chromeNames = ['TM_SERVER_NODE_CAP', 'baseName', 'renderCityChrome'];
+  if (opts.realChrome) {
+    delete deps.renderCityChrome;
+    Object.assign(deps, {
+      drawCity: () => hooks.redraw(), cityEnter: () => hooks.redraw(),
+      C_RC_LOW: [1, 2, 3], C_AMBER: [4, 5, 6], C_TEAL: [7, 8, 9], ageRgb: () => [0, 0, 0], cityTypeKey: () => ({ shown: [], more: 0 }),
+    });
+  }
   // The time-lapse's own transport, animated as it plays by default (motion
   // not reduced, rectangle map), over a frame queue the test pumps by hand.
   const frames = { queue: [] as Array<[number, (t: number) => unknown]>, next: 0, clock: 0 };
@@ -209,6 +235,7 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
     setHistoryIndex: (i: number) => Promise<void>;
     lapse?: { start: () => void; stop: () => void };
     afterZoom?: () => void;
+    chrome?: () => void;
     card?: {
       show: (b: Block | null, px?: number, py?: number) => void;
       up: () => void;
@@ -217,10 +244,11 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
       jitter: (rgb: number[], path: string) => number[];
     };
   }>(['TM_MIN_SIZE', 'loadTreemap', 'loadCity', 'finishScan', 'setHistoryIndex', ...(opts.realCard ? cardNames : []), ...(opts.lapse ? lapseNames : []),
-    ...(opts.facts ? factNames : []), ...(opts.realBuild ? buildNames : [])], deps,
+    ...(opts.facts ? factNames : []), ...(opts.realBuild ? buildNames : []), ...(opts.realChrome ? chromeNames : [])], deps,
     `{ loadTreemap, loadCity, finishScan, setHistoryIndex${opts.realCard
       ? ', card: { show: cityShowCard, up: cityUp, setColour: citySetColour, setHeight: citySetHeight, jitter: cityJitter }'
-      : ''}${opts.lapse ? ', lapse: { start: lapseStart, stop: lapseStop }' : ''}${opts.realBuild ? ', afterZoom: cityAfterZoom' : ''} }`,
+      : ''}${opts.lapse ? ', lapse: { start: lapseStart, stop: lapseStop }' : ''}${opts.realBuild ? ', afterZoom: cityAfterZoom' : ''}${
+      opts.realChrome ? ', chrome: renderCityChrome' : ''} }`,
     'let tmLoadSeq = 0; let cityLoadSeq = 0; let tmAnimFrame = 0; let lapseExporting = false; let lapseInternalStart = false;',
     // The view itself registers where the page's onScanChange and mount can reach the city's own functions.
     opts.realCard && opts.facts ? cityViewSource() : '');
@@ -236,7 +264,8 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
   };
   /** The scan:folder every node Disk City was last handed names. */
   const lastBuilt = () => [...new Set((built[built.length - 1] ?? []).map((n) => n.name))];
-  return { ...page, state, asked, built, lastBuilt, $, pump, frames, countAsks, scoreAsks, mounted, views };
+  if (page.chrome) hooks.redraw = page.chrome;
+  return { ...page, state, asked, built, lastBuilt, $, pump, frames, countAsks, scoreAsks, mounted, views, server, crumbs };
 }
 
 interface Block { n: Node & { modifiedAt?: number }; rgb: number[]; z: number }
@@ -509,7 +538,7 @@ const countAnswer = (paths: string[], files = 3) => ({
 });
 
 /** Disk City with its own build, fact loaders and view, by file count, in the Type colours (no scores to wait on). */
-function cityHarness(opts: { batch?: number } = {}) {
+function cityHarness(opts: { batch?: number; realChrome?: boolean } = {}) {
   const h = harness({ realCard: true, facts: true, realBuild: true, ...opts });
   h.state.city.height = 'files';
   h.state.city.colour = 'type';
@@ -694,4 +723,145 @@ test('C03: the last scan\'s count ask failing late does not send the rescan\'s o
   await settle();
   h.card!.setHeight('files');
   assert.equal(h.countAsks.length, 2, 'the rescan\'s ask is still on its way; nothing is asked twice');
+});
+
+/* ══════════════ C03 review F3.1, F3.4 — what the city says of a folder it has not drawn ══════════════
+
+   The build took only this scan's folder's nodes, but the line under the
+   city and the size beside it still read the map: a city waiting on its
+   fetch said "showing all 0 items of 4.0 KB or more" under the last scan's
+   4.4 GB, the polite live region announced it, and a fetch that failed had
+   its reason wiped by the next redraw — a resize, the Height or Colour
+   control — leaving a blank plate that read as an empty folder. */
+
+/** The line under the city (#cityLod) and the size beside it (#cityStatus). */
+const chromeOf = (h: ReturnType<typeof harness>) => ({
+  lod: (h.$('cityLod') as { textContent: string }).textContent,
+  status: (h.$('cityStatus') as { textContent: string }).textContent,
+});
+const cityTrail = (h: ReturnType<typeof harness>) => h.crumbs.filter(([id]) => id === 'cityCrumbs').map(([, p]) => p);
+const LOADING = { lod: 'loading this folder…', status: '' };
+
+/**
+ * A scan of /B landed while the Treemap still holds a 4.4 GB scan of /A, and
+ * the Disk City tab is about to be pressed. The caller mounts the view, in
+ * its own tick: an await between would let the fetch land first.
+ */
+async function scanOfAnotherBeforeCity(down: string | null = null) {
+  const h = cityHarness({ realChrome: true });
+  h.server.sizes['/A'] = 4_400_000_000;
+  await scanAfterTreemap(h, '/A', '/B', 's2');
+  assert.equal(h.state.treemap.rootSize, 4_400_000_000, 'control: the map still holds A\'s size');
+  h.views.city.onScanChange('s2');
+  h.state.view = 'city';
+  h.server.down = down;
+  return h;
+}
+
+test('C03: Disk City waiting on a new folder says it is loading, with no size and the new folder\'s trail — nothing of the map the last scan left', async () => {
+  const h = await scanOfAnotherBeforeCity();
+  h.views.city.mount(); // the Disk City tab
+  assert.deepEqual(chromeOf(h), LOADING, 'not "showing all 0", and not A\'s 4.4 GB beside it');
+  assert.deepEqual(cityTrail(h), ['/B'], 'the trail names the folder being loaded');
+  assert.equal((h.$('cityUpBtn') as { disabled: boolean }).disabled, true, 'and Up has nowhere to go from the scan\'s own folder');
+  h.chrome!(); // a redraw while it loads: a resize
+  assert.deepEqual(chromeOf(h), LOADING, 'a redraw says the same');
+  await settle();
+  assert.match(chromeOf(h).lod, /^showing 3 of 4 items of 4000 B or more — zoom in for more/, 'control: B\'s own line once it lands');
+  assert.equal(chromeOf(h).status, '30000 B', 'control: and B\'s own size');
+});
+
+test('C03: a fetch for the new folder that fails says so, and no redraw turns it into "showing all 0" under the last scan\'s size', async () => {
+  const h = await scanOfAnotherBeforeCity('Couldn’t reach TreeMap.');
+  h.views.city.mount();
+  await settle();
+  const failed = { lod: 'B did not load: Couldn’t reach TreeMap.', status: '' };
+  assert.deepEqual(chromeOf(h), failed, 'it says which folder did not load, and why');
+  h.chrome!(); // a window resize
+  assert.deepEqual(chromeOf(h), failed, 'a resize repaints the same');
+  h.card!.setHeight('depth'); // the Height control, the natural reaction to a blank city
+  assert.deepEqual(chromeOf(h), failed, 'and so does the Height control');
+  h.card!.setColour('age');
+  assert.deepEqual(chromeOf(h), failed, 'and the Colour control');
+  h.server.down = null;
+  await h.loadCity('/B'); // the next entry
+  assert.match(chromeOf(h).lod, /^showing 3 of 4/, 'a load that lands says what it drew, and nothing of the failure');
+  assert.equal(chromeOf(h).status, '30000 B');
+});
+
+test('C03: Disk City already up when a scan of another folder lands says it is loading until the new folder lands — not the last city\'s line', async () => {
+  const h = cityHarness({ realChrome: true });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/A', size: 1 };
+  h.server.sizes['/A'] = 4_400_000_000;
+  h.state.view = 'city';
+  h.mounted.id = 'city';
+  await h.loadCity('/A');
+  assert.equal(chromeOf(h).status, '4400000000 B', 'control: A is drawn, at its size');
+  h.state.scanId = 's2';
+  void h.finishScan({ path: '/B', size: 2 }, 50, { fileCount: 4, dirCount: 1 });
+  h.views.city.onScanChange('s2'); // the city that is up reloads
+  assert.deepEqual(chromeOf(h), LOADING, 'the last city\'s line and size go with its buildings');
+  h.chrome!(); // a resize before B lands
+  assert.deepEqual(chromeOf(h), LOADING, 'and a redraw does not bring them back');
+  await settle();
+  assert.match(chromeOf(h).lod, /^showing 3 of 4/, 'control: B lands');
+});
+
+test('C03: a drill whose fetch fails says so over the folder still drawn, through a redraw, until the next load', async () => {
+  const h = cityHarness({ realChrome: true });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  await h.loadCity('/corpus');
+  const drawn = chromeOf(h);
+  assert.match(drawn.lod, /^showing 3 of 4/, 'control: /corpus is drawn');
+  h.server.down = 'HTTP 500';
+  await h.loadCity('/corpus/Mail'); // a click on a building
+  const failed = { lod: `Mail did not load: HTTP 500 · ${drawn.lod}`, status: drawn.status };
+  assert.deepEqual(chromeOf(h), failed, 'what did not load, then what is still drawn: /corpus, at its own size');
+  assert.deepEqual(cityTrail(h).slice(-1), ['/corpus'], 'and the trail is still the folder drawn');
+  h.chrome!();
+  assert.deepEqual(chromeOf(h), failed, 'a redraw keeps the failure');
+  h.server.down = null;
+  await h.loadCity('/corpus/Mail');
+  assert.doesNotMatch(chromeOf(h).lod, /did not load/, 'the next load says nothing of the last one\'s failure');
+});
+
+test('C03: a load overtaken by a newer one that landed does not report its failure over the newer city', async () => {
+  const h = cityHarness({ realChrome: true });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.state.view = 'city';
+  await h.loadCity('/corpus');
+  h.server.hold = true;
+  const slow = h.loadCity('/corpus/Mail'); // a click on a building
+  const fast = h.loadCity('/corpus/Docs'); // then on another, before the first answered
+  assert.deepEqual(h.server.held.map((x) => x.root), ['/corpus/Mail', '/corpus/Docs'], 'control: both are asked');
+  h.server.held[1].land();
+  await fast;
+  assert.deepEqual(cityNames(h), ['s1:/corpus/Docs'], 'control: Docs is drawn');
+  h.server.held[0].fail('HTTP 500');
+  await slow;
+  assert.match(chromeOf(h).lod, /^showing 3 of 4/, 'the line is Docs\', with no failure of a load nobody is waiting on');
+});
+
+test('C03: the size and the floor beside the city are those of the nodes it was built from — not of whatever the map holds since', async () => {
+  const h = cityHarness({ realChrome: true });
+  h.state.scanId = 's1';
+  h.state.root = { path: '/corpus', size: 1 };
+  h.server.sizes['/corpus'] = 777_000;
+  await h.loadTreemap('/corpus');
+  h.state.view = 'city';
+  h.views.city.mount(); // on the nodes the Treemap fetched: built at once, with no request
+  const shared = chromeOf(h);
+  assert.deepEqual(shared, { lod: 'showing 3 of 4 items of 4000 B or more — zoom in for more · 3 with no count yet, drawn flat', status: '777000 B' },
+    'the floor and the size the Treemap\'s fetch recorded with its nodes');
+  // A Treemap fetch of another folder, asked before the person switched
+  // views, lands after the city was built: the map moves on, the city does not.
+  h.server.sizes['/corpus/Mail'] = 5_000;
+  await h.loadTreemap('/corpus/Mail');
+  h.state.treemap.minSize = 1;
+  h.chrome!();
+  assert.deepEqual(chromeOf(h), shared, 'the city drawn is still /corpus, and its line and size say so');
 });
