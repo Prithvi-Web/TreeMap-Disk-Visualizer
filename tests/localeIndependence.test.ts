@@ -108,7 +108,7 @@ test('formatCount: the page and the server agree on every input, take numeric st
  * The prelude's two clock formatters, evaluated under a given hour cycle — the
  * machine's own is whatever it is, so both cycles are forced here.
  */
-function clockFormatters(hourCycle: string): { formatWhen: (ms: number) => string; formatClock: (ms: number) => string } {
+function clockFormatters(hourCycle: string): { formatWhen: (ms: number) => string; formatClock: (ms: number) => string; formatWhenSeconds: (ms: number) => string } {
   const prelude = read('src', 'ui', 'app', '000-prelude.js');
   const hour = /const CLOCK_HOUR = [^\n]*;/.exec(prelude);
   assert.ok(hour, 'the hour style is one constant');
@@ -117,7 +117,7 @@ function clockFormatters(hourCycle: string): { formatWhen: (ms: number) => strin
   const end = prelude.indexOf(endAnchor, start);
   assert.ok(start !== -1 && end !== -1, 'and the clock formatters read it');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  return new Function('UI_LOCALE', 'HOUR_CYCLE', `${hour![0]}\n${prelude.slice(start, end + endAnchor.length)}\nreturn { formatWhen, formatClock };`)(UI_LOCALE, hourCycle);
+  return new Function('UI_LOCALE', 'HOUR_CYCLE', `${hour![0]}\n${prelude.slice(start, end + endAnchor.length)}\nreturn { formatWhen, formatClock, formatWhenSeconds };`)(UI_LOCALE, hourCycle);
 }
 
 test('a 12-hour clock reads "5:19 PM", never "05:19 PM"; a 24-hour clock keeps "09:05" (QA D20)', () => {
@@ -132,12 +132,14 @@ test('a 12-hour clock reads "5:19 PM", never "05:19 PM"; a 24-hour clock keeps "
     assert.equal(f.formatClock(morning), '9:05 AM', `${cycle}: no leading zero on the hour`);
     assert.equal(f.formatClock(noon), twelve, `${cycle}: noon`);
     assert.equal(f.formatWhen(evening), 'Sep 6, 5:19 PM', `${cycle}: the short date-and-time, same clock`);
+    assert.equal(f.formatWhenSeconds(evening + 7_000), 'Sep 6, 5:19:07 PM', `${cycle}: to the second, for two Compare picks in one minute`);
   }
   for (const cycle of ['h23', 'h24']) {
     const f = clockFormatters(cycle);
     assert.equal(f.formatClock(evening), '17:19', `${cycle}: a 24-hour clock`);
     assert.equal(f.formatClock(morning), '09:05', `${cycle}: keeps its leading zero, as 24-hour clocks are written`);
     assert.equal(f.formatWhen(morning), 'Sep 6, 09:05', `${cycle}: the short date-and-time, same clock`);
+    assert.equal(f.formatWhenSeconds(morning + 3_000), 'Sep 6, 09:05:03', `${cycle}: to the second, same clock`);
   }
 });
 

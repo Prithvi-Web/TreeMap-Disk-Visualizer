@@ -151,9 +151,9 @@ test('Compare’s header counts a rule’s exclusion apart from removals, and sa
   const ls = browserWith([{ snap: 'a', patterns: [] }, { snap: 'b', patterns: ['Wide folder'] }]);
   const els: Record<string, { innerHTML: string; querySelector: () => null; querySelectorAll: () => unknown[] }> = {};
   const $ = (id: string) => (els[id] ??= { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] });
-  const render = load<(r: unknown) => void>(['renderCompare', 'cmpCountsDrop', 'deltaRow'], {
+  const render = load<(r: unknown) => void>(['renderCompare', 'cmpWhenPair', 'cmpCountsDrop', 'deltaRow'], {
     ...base(ls), $,
-    formatWhen: (t: number) => `t${t}`, formatBytes: (n: number) => `${n} B`, formatCount: String, icon: () => '',
+    formatWhen: (t: number) => `t${t}`, formatWhenSeconds: (t: number) => `t${t}s`, formatBytes: (n: number) => `${n} B`, formatCount: String, icon: () => '',
     escapeHtml: (s: unknown) => String(s), chipFor: () => '', countUp: () => {}, fxBarsIn: () => {},
     FxCharts: { barSquares: () => ({ destroy() {} }) }, initCmpSplit: () => {}, wireSnapshotActions: () => {},
   }, '(r) => renderCompare({ ...r, rules: coverageRules(coverageFor("/c", "a"), coverageFor("/c", "b")) })',
@@ -258,9 +258,9 @@ test('Compare says the total did not change when it did not — not "Total grew 
       querySelector: (sel: string) => (sel === '.cmp-total' && els[id].innerHTML.includes('class="cmp-total"') ? { figure: true } : null),
     });
     const rolled: number[] = [];
-    const render = load<(r: unknown) => void>(['renderCompare', 'cmpCountsDrop', 'deltaRow'], {
+    const render = load<(r: unknown) => void>(['renderCompare', 'cmpWhenPair', 'cmpCountsDrop', 'deltaRow'], {
       ...base(same), $,
-      formatWhen: (t: number) => `t${t}`, formatBytes: (n: number) => `${n} B`, formatCount: String, icon: () => '',
+      formatWhen: (t: number) => `t${t}`, formatWhenSeconds: (t: number) => `t${t}s`, formatBytes: (n: number) => `${n} B`, formatCount: String, icon: () => '',
       escapeHtml: (s: unknown) => String(s), chipFor: () => '', fxBarsIn: () => {},
       // the page's countUp reads el.dataset: handed no element, it throws
       countUp: (el: unknown, n: number) => { assert.ok(el, 'countUp is handed an element to roll'); rolled.push(n); },

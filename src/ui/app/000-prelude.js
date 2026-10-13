@@ -111,6 +111,11 @@ function formatWhen(ms) {
   }
   return s;
 }
+/* The same dialect to the second ("Sep 1, 10:31:45 PM"): only where two
+   moments share a minute and must still be told apart — the Compare lists
+   and heading (QA third pass). Unmemoised: it is asked for rarely. */
+const WHEN_SEC_FMT = new Intl.DateTimeFormat(UI_LOCALE, { month: 'short', day: 'numeric', hour: CLOCK_HOUR, minute: '2-digit', second: '2-digit', hourCycle: HOUR_CYCLE });
+function formatWhenSeconds(ms) { return ms ? WHEN_SEC_FMT.format(ms) : '–'; }
 /* A clock alone ("10:31 PM", or "22:31" on a 24-hour machine): the dashboard's
    "last scan" tile. Same words and same clock as formatWhen. */
 const CLOCK_FMT = new Intl.DateTimeFormat(UI_LOCALE, { hour: CLOCK_HOUR, minute: '2-digit', hourCycle: HOUR_CYCLE });

@@ -26,13 +26,11 @@ async function loadCompareOptions() {
       if (!byRoot.has(o.rootPath)) byRoot.set(o.rootPath, []);
       byRoot.get(o.rootPath).push(o);
     }
-    // Led by the folder's name (C08): a closed list shows one option, and
-    // corpus, Mail, Projects and a single file were told apart only by size.
-    const label = (o) => `${lastPathSegment(o.rootPath)} · ${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${formatWhen(o.when)} · ${formatBytes(o.size)}`;
+    const labels = cmpOptionLabels(options);
     const html = [...byRoot.entries()].map(([root, list]) =>
       `<optgroup label="${escapeHtml(root)}">` +
       list.sort((x, y) => y.when - x.when).map(o =>
-        `<option value="${o.kind}:${o.id}">${escapeHtml(label(o))}</option>`).join('') +
+        `<option value="${o.kind}:${o.id}">${escapeHtml(labels.get(o))}</option>`).join('') +
       '</optgroup>').join('');
     $('cmpA').innerHTML = html;
     $('cmpB').innerHTML = html;
@@ -59,6 +57,37 @@ async function loadCompareOptions() {
   } catch (e) {
     toast('Could not load scans: ' + e.message, 'error');
   }
+}
+
+/**
+ * Every pick's text in Before and After, each one its own (QA third pass).
+ * Led by the folder's name (C08): a closed list shows one option, and
+ * corpus, Mail, Projects and a single file were told apart only by size.
+ * Two scans of a folder made in the same minute still both read "Scan (full
+ * diff) · Oct 13, 3:30 PM · 9.5 GB", so a label that another shares names
+ * its moment to the second, and one that shares even that gets its place in
+ * time, "(2 of 2)". A label that is already its own keeps its minute.
+ */
+function cmpOptionLabels(options) {
+  const text = (o, when) => `${lastPathSegment(o.rootPath)} · ${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${when} · ${formatBytes(o.size)}`;
+  const labels = new Map(options.map((o) => [o, text(o, formatWhen(o.when))]));
+  const shared = () => {
+    const by = new Map();
+    for (const [o, label] of labels) by.set(label, [...(by.get(label) || []), o]);
+    return [...by.values()].filter((group) => group.length > 1);
+  };
+  for (const group of shared()) for (const o of group) labels.set(o, text(o, formatWhenSeconds(o.when)));
+  for (const group of shared()) {
+    const inTime = [...group].sort((a, b) => a.when - b.when);
+    inTime.forEach((o, i) => labels.set(o, `${labels.get(o)} (${i + 1} of ${inTime.length})`));
+  }
+  return labels;
+}
+
+/** The two moments a comparison is between, as its heading names them: to the second when they share a minute (QA third pass). */
+function cmpWhenPair(a, b) {
+  const pair = [formatWhen(a), formatWhen(b)];
+  return pair[0] === pair[1] ? [formatWhenSeconds(a), formatWhenSeconds(b)] : pair;
 }
 
 /**
@@ -267,7 +296,7 @@ function renderCompare(r) {
     </div>` : '';
   $('cmpBody').innerHTML = splitCard + `
     <div class="card glass">
-      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${formatWhen(r.whenA)} → ${formatWhen(r.whenB)}${r.deep ? '' : ' · top-level folders only'}</h2>
+      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${cmpWhenPair(r.whenA, r.whenB).join(' → ')}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">${total}
         &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
         ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${r.truncated ? ' · biggest 1,000 shown' : ''}</div>

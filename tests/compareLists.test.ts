@@ -65,7 +65,8 @@ function fakeSelect() {
 interface Scan { scanId: string; rootPath: string; finishedAt: number; totalSize: number }
 interface Snap { id: string; rootPath: string; takenAt: number; totalSize: number }
 
-function harness(scans: Scan[], snapshots: Snap[] = []) {
+/** `clock`: the page's two date formatters, a minute's and a second's; by default each names the moment exactly. */
+function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: number) => string; second: (t: number) => string } = { minute: (t) => `t${t}`, second: (t) => `t${t}s` }) {
   const cmpA = fakeSelect();
   const cmpB = fakeSelect();
   const body = { innerHTML: 'PROMPT' };
@@ -95,12 +96,13 @@ function harness(scans: Scan[], snapshots: Snap[] = []) {
       }
       return assert.fail(`unexpected request ${url}`);
     },
-    formatWhen: (t: number) => `t${t}`, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s),
+    formatWhen: clock.minute, formatWhenSeconds: clock.second, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s),
     toast: (m: string) => assert.fail(`the page reported: ${m}`), icon: () => '', REDUCED: true,
     cmpCountsDrop: noop, fxHuntBeamSync: noop, coverageRules: () => null, cmpCoverage: () => null,
     renderCompare: (r: { whenA: number; whenB: number }) => { body.innerHTML = `RESULT t${r.whenA} → t${r.whenB}`; },
   };
-  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', ...(/function cmpSyncResult\s*\(/.test(INDEX) ? ['cmpSyncResult'] : [])];
+  const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', ...(/function cmpSyncResult\s*\(/.test(INDEX) ? ['cmpSyncResult'] : []),
+    'cmpOptionLabels'];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `'use strict';\n${names.map(declOf).join('\n')}\n${runButtonSource()}\n` +
@@ -215,3 +217,54 @@ test('C08: the lists are wired to keep the result honest when a person changes t
   assert.match(INDEX, /\$\('cmpA'\)\.addEventListener\('change', cmpSyncResult\);/);
   assert.match(INDEX, /\$\('cmpB'\)\.addEventListener\('change', cmpSyncResult\);/);
 });
+
+/* ══════════════ two scans in one minute read as two ══════════════ */
+
+/** A minute's label and a second's, as the page's formatters resolve them — no more, so equal ones collide as they do on screen. */
+const MINUTE_CLOCK = { minute: (t: number) => `m${Math.floor(t / 60_000)}`, second: (t: number) => `s${Math.floor(t / 1000)}` };
+const T = 1_760_000_040_000; // a minute boundary: T … T + 59.999 s is one minute
+
+test('two scans of a folder made in the same minute read differently in both lists — to the second, and past that by an ordinal (QA third pass)', async () => {
+  // QA third pass: two scans made in the same minute both read "Scan (full
+  // diff) · Oct 13, 3:30 PM · 9.5 GB" in Before and in After, and a closed
+  // list shows one line — nobody could tell which one was picked.
+  const GB = 9_500_000_000;
+  const h = harness([
+    scan('s1', '/c/corpus', T + 5_000, GB), scan('s2', '/c/corpus', T + 41_000, GB), // one minute, two seconds
+    scan('s3', '/c/corpus', T + 50_100, GB), scan('s4', '/c/corpus', T + 50_700, GB), // one second
+    scan('s5', '/c/corpus', T + 3_600_000, GB), // an hour later, alone in its minute
+  ], [snap('h1', '/c/corpus', T + 3_600_000, GB)], MINUTE_CLOCK); // a history record of that same moment
+  await h.load();
+  const texts = h.cmpA.options.map((o) => o.text);
+  assert.equal(new Set(texts).size, texts.length, `every pick reads differently: ${texts.join(' | ')}`);
+  assert.deepEqual(h.cmpB.options.map((o) => o.text), texts, 'and After reads as Before');
+  const sec = (t: number) => `s${Math.floor(t / 1000)}`;
+  assert.equal(h.cmpA.textOf('scan:s1'), `corpus · Scan (full diff) · ${sec(T + 5_000)} · ${GB} B`, 'the same minute: its seconds');
+  assert.equal(h.cmpA.textOf('scan:s2'), `corpus · Scan (full diff) · ${sec(T + 41_000)} · ${GB} B`);
+  assert.equal(h.cmpA.textOf('scan:s3'), `corpus · Scan (full diff) · ${sec(T + 50_100)} · ${GB} B (1 of 2)`, 'the same second: in order of time');
+  assert.equal(h.cmpA.textOf('scan:s4'), `corpus · Scan (full diff) · ${sec(T + 50_700)} · ${GB} B (2 of 2)`);
+  assert.equal(h.cmpA.textOf('scan:s5'), `corpus · Scan (full diff) · m${Math.floor((T + 3_600_000) / 60_000)} · ${GB} B`, 'a label that is already its own keeps its minute');
+  assert.equal(h.cmpA.textOf('snap:h1'), `corpus · History · m${Math.floor((T + 3_600_000) / 60_000)} · ${GB} B`, 'and so does a record of another kind at that moment');
+});
+
+test('two folders with one name, scanned in the same minute, read differently too — a closed list does not show the folder\'s path (QA third pass)', async () => {
+  const h = harness([scan('a', '/c/one/Mail', T + 1_000, 100), scan('b', '/c/two/Mail', T + 2_000, 100)], [], MINUTE_CLOCK);
+  await h.load();
+  assert.notEqual(h.cmpA.textOf('scan:a'), h.cmpA.textOf('scan:b'), `${h.cmpA.textOf('scan:a')} | ${h.cmpA.textOf('scan:b')}`);
+});
+
+test('the comparison\'s heading names its two moments apart when they share a minute (QA third pass)', () => {
+  const src = [lift(['cmpWhenPair'])].join('');
+  const pair = new Function('formatWhen', 'formatWhenSeconds', `${src}\nreturn cmpWhenPair;`)(MINUTE_CLOCK.minute, MINUTE_CLOCK.second) as (a: number, b: number) => string[];
+  assert.deepEqual(pair(T + 5_000, T + 41_000), [`s${Math.floor((T + 5_000) / 1000)}`, `s${Math.floor((T + 41_000) / 1000)}`], 'one minute: the seconds');
+  assert.deepEqual(pair(T, T + 3_600_000), [`m${Math.floor(T / 60_000)}`, `m${Math.floor((T + 3_600_000) / 60_000)}`], 'two minutes: as before');
+  assert.match(declOf('renderCompare'), /cmpWhenPair\(r\.whenA, r\.whenB\)/, 'the heading says them through it');
+});
+
+/** The source of named function declarations, for the heading helper. */
+function lift(names: string[]): string {
+  return names.map((n) => {
+    assert.ok(new RegExp(`function ${n}\\s*\\(`).test(INDEX), `function ${n} exists in the built page`);
+    return declOf(n);
+  }).join('\n');
+}
