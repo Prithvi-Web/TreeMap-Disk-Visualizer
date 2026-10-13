@@ -343,10 +343,24 @@ $('gridSearch').addEventListener('input', (e) => {
 });
 window.addEventListener('resize', () => { if (state.view === 'grid' && state.root) renderGrid(); });
 
+/**
+ * Is the Grid's selection one the person can see — the Grid the view on
+ * screen, and something selected in it? The one test for everything that
+ * acts on that selection: its bar, ⌘⌫ and Delete (QA third pass D03). The
+ * selection is the Grid's and stays in state while another view is up, for
+ * the Grid to show again; nothing anywhere else may act on it.
+ */
+function gridSelectionShown() {
+  return state.view === 'grid' && state.grid.selection.size > 0;
+}
 function updateSelectionBar() {
   const sel = state.grid.selection;
   const bar = $('selectionBar');
-  if (!sel.size) { bar.classList.remove('visible'); return; }
+  // The bar belongs to the Grid and leaves with it (D03). It stood over every
+  // other view — on the Dashboard, beside the Treemap's own selection, behind
+  // the Autopilot editor — offering Offload and Move to Trash for files none
+  // of them shows.
+  if (!gridSelectionShown()) { bar.classList.remove('visible'); return; }
   let total = 0;
   for (const p of sel) total += nodeFor(p)?.size ?? 0;
   $('selInfo').innerHTML = `<b>${sel.size}</b> item${sel.size > 1 ? 's' : ''} selected — ${formatBytes(total)}`;
@@ -358,19 +372,28 @@ function updateSelectionBar() {
    screen, else the filter box — instead of falling to <body> with the bar
    (QA B13). Never a tile off screen, and without scrolling: the grid stays
    where the user left it (B13 review F1.3). Focus anywhere else is left where
-   it is.
-   The bar outlives a view switch — ⌘⌫ trashes the selection from any view —
-   so Clear can be pressed with the Grid hidden, where no tile and not the
-   filter box can take focus. The view on screen takes it then, or its
-   sidebar tab when it has no control to offer (B13 review F2.4). */
+   it is. */
 function gridClearSelection() {
   const hadFocus = $('selectionBar').contains(document.activeElement);
   state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true);
-  if (!hadFocus) return;
+  if (hadFocus) selectionBarFocusOut();
+}
+/* Where focus in the bar goes when the bar goes. In the Grid, back to the
+   grid (above). With the Grid hidden — the bar leaving with it on a view
+   switch (D03) — no tile and not the filter box can take focus, so the view
+   on screen takes it, or its sidebar tab when it has no control to offer
+   (B13 review F2.4). */
+function selectionBarFocusOut() {
   const target = state.view === 'grid'
     ? gridTileOnScreen(state.grid.anchor) || $('gridSearch')
     : activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
   if (target) target.focus({ preventScroll: true });
+}
+/** switchView's half of D03: the bar follows the view on screen, and focus that was in it as it went does not fall to <body>. */
+function selectionBarFollowView() {
+  const hadFocus = $('selectionBar').contains(document.activeElement);
+  updateSelectionBar();
+  if (hadFocus && !$('selectionBar').classList.contains('visible')) selectionBarFocusOut();
 }
 /** The drawn tile at layout index `prefer` if any of it is in view, else the first drawn tile that is; null when none is. */
 function gridTileOnScreen(prefer) {

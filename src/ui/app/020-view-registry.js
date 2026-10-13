@@ -301,6 +301,10 @@ function switchView(name) {
     v.hidden = !on;
   });
   hideTooltip(); hideCtxMenu();
+  // The Grid's selection bar is the Grid's: it goes with the Grid and comes
+  // back with it (QA third pass D03). After the toggles, so focus that was in
+  // the bar finds the view now on screen.
+  selectionBarFollowView();
   $('emptyState').style.display = empty ? 'flex' : 'none';
   // FX: the zero-state CTA halo lives and dies with the welcome screen, and
   // the scan hero follows the active view — both are functions of the state
@@ -327,7 +331,7 @@ function switchView(name) {
 /**
  * The first enabled control on screen in the view that is up, or null: where
  * keyboard focus goes when the thing that held it disappears — an emptied
- * cart, the Grid's selection bar cleared from another view — rather than
+ * cart, the Grid's selection bar leaving with the Grid (D03) — rather than
  * falling to <body> (QA B13). On screen means painted: a control in a
  * hidden part of the view has no client rects.
  */

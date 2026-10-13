@@ -7650,6 +7650,10 @@ function switchView(name) {
     v.hidden = !on;
   });
   hideTooltip(); hideCtxMenu();
+  // The Grid's selection bar is the Grid's: it goes with the Grid and comes
+  // back with it (QA third pass D03). After the toggles, so focus that was in
+  // the bar finds the view now on screen.
+  selectionBarFollowView();
   $('emptyState').style.display = empty ? 'flex' : 'none';
   // FX: the zero-state CTA halo lives and dies with the welcome screen, and
   // the scan hero follows the active view — both are functions of the state
@@ -7676,7 +7680,7 @@ function switchView(name) {
 /**
  * The first enabled control on screen in the view that is up, or null: where
  * keyboard focus goes when the thing that held it disappears — an emptied
- * cart, the Grid's selection bar cleared from another view — rather than
+ * cart, the Grid's selection bar leaving with the Grid (D03) — rather than
  * falling to <body> (QA B13). On screen means painted: a control in a
  * hidden part of the view has no client rects.
  */
@@ -31459,10 +31463,24 @@ $('gridSearch').addEventListener('input', (e) => {
 });
 window.addEventListener('resize', () => { if (state.view === 'grid' && state.root) renderGrid(); });
 
+/**
+ * Is the Grid's selection one the person can see — the Grid the view on
+ * screen, and something selected in it? The one test for everything that
+ * acts on that selection: its bar, ⌘⌫ and Delete (QA third pass D03). The
+ * selection is the Grid's and stays in state while another view is up, for
+ * the Grid to show again; nothing anywhere else may act on it.
+ */
+function gridSelectionShown() {
+  return state.view === 'grid' && state.grid.selection.size > 0;
+}
 function updateSelectionBar() {
   const sel = state.grid.selection;
   const bar = $('selectionBar');
-  if (!sel.size) { bar.classList.remove('visible'); return; }
+  // The bar belongs to the Grid and leaves with it (D03). It stood over every
+  // other view — on the Dashboard, beside the Treemap's own selection, behind
+  // the Autopilot editor — offering Offload and Move to Trash for files none
+  // of them shows.
+  if (!gridSelectionShown()) { bar.classList.remove('visible'); return; }
   let total = 0;
   for (const p of sel) total += nodeFor(p)?.size ?? 0;
   $('selInfo').innerHTML = `<b>${sel.size}</b> item${sel.size > 1 ? 's' : ''} selected — ${formatBytes(total)}`;
@@ -31474,19 +31492,28 @@ function updateSelectionBar() {
    screen, else the filter box — instead of falling to <body> with the bar
    (QA B13). Never a tile off screen, and without scrolling: the grid stays
    where the user left it (B13 review F1.3). Focus anywhere else is left where
-   it is.
-   The bar outlives a view switch — ⌘⌫ trashes the selection from any view —
-   so Clear can be pressed with the Grid hidden, where no tile and not the
-   filter box can take focus. The view on screen takes it then, or its
-   sidebar tab when it has no control to offer (B13 review F2.4). */
+   it is. */
 function gridClearSelection() {
   const hadFocus = $('selectionBar').contains(document.activeElement);
   state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true);
-  if (!hadFocus) return;
+  if (hadFocus) selectionBarFocusOut();
+}
+/* Where focus in the bar goes when the bar goes. In the Grid, back to the
+   grid (above). With the Grid hidden — the bar leaving with it on a view
+   switch (D03) — no tile and not the filter box can take focus, so the view
+   on screen takes it, or its sidebar tab when it has no control to offer
+   (B13 review F2.4). */
+function selectionBarFocusOut() {
   const target = state.view === 'grid'
     ? gridTileOnScreen(state.grid.anchor) || $('gridSearch')
     : activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
   if (target) target.focus({ preventScroll: true });
+}
+/** switchView's half of D03: the bar follows the view on screen, and focus that was in it as it went does not fall to <body>. */
+function selectionBarFollowView() {
+  const hadFocus = $('selectionBar').contains(document.activeElement);
+  updateSelectionBar();
+  if (hadFocus && !$('selectionBar').classList.contains('visible')) selectionBarFocusOut();
 }
 /** The drawn tile at layout index `prefer` if any of it is in view, else the first drawn tile that is; null when none is. */
 function gridTileOnScreen(prefer) {
@@ -37071,8 +37098,12 @@ document.addEventListener('keydown', (e) => {
     else if (state.root) rescan();
     return;
   }
+  // ⌘⌫ / ⌘Delete trash the selection the view on screen shows, and nothing
+  // else (QA third pass D03): pressed on the Dashboard, it opened a Trash
+  // sheet for a Grid selection made two views ago. Not under the "…" menu
+  // either, as plain Delete below (QA-6b review F2.6).
   if (mod && (e.key === 'Backspace' || e.key === 'Delete')) {
-    if (!typing && state.grid.selection.size) { e.preventDefault(); confirmTrash([...state.grid.selection]); }
+    if (!typing && gridSelectionShown() && !ctxMenuIsOpen()) { e.preventDefault(); confirmTrash([...state.grid.selection]); }
     return;
   }
   /* v4 §9.1 — ⌘K/Ctrl+K is the COMMAND PALETTE now; the spec assigns the key
@@ -37105,14 +37136,14 @@ document.addEventListener('keydown', (e) => {
     summonGlobalSearch();
     return;
   }
-  // Plain Backspace / Delete in the grid — never while typing, and the
-  // Cmd/Ctrl-modified variants above keep working exactly as before. Not
-  // while #ctxMenu is open either: the Grid's trail folds into the same "…"
-  // menu, and Backspace pressed in it climbed the Grid behind it, Delete
-  // opened a Trash sheet for the selected rows (QA-6b review F2.6).
+  // Plain Backspace / Delete in the grid — never while typing; the
+  // Cmd/Ctrl-modified variants are above. Not while #ctxMenu is open either:
+  // the Grid's trail folds into the same "…" menu, and Backspace pressed in
+  // it climbed the Grid behind it, Delete opened a Trash sheet for the
+  // selected rows (QA-6b review F2.6).
   if (!mod && !typing && state.view === 'grid' && state.root && !ctxMenuIsOpen()) {
     if (e.key === 'Backspace') { e.preventDefault(); gridUp(); return; }
-    if (e.key === 'Delete' && state.grid.selection.size) {
+    if (e.key === 'Delete' && gridSelectionShown()) {
       e.preventDefault(); confirmTrash([...state.grid.selection]); return;
     }
   }

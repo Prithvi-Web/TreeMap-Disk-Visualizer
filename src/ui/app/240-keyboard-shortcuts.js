@@ -104,8 +104,12 @@ document.addEventListener('keydown', (e) => {
     else if (state.root) rescan();
     return;
   }
+  // ⌘⌫ / ⌘Delete trash the selection the view on screen shows, and nothing
+  // else (QA third pass D03): pressed on the Dashboard, it opened a Trash
+  // sheet for a Grid selection made two views ago. Not under the "…" menu
+  // either, as plain Delete below (QA-6b review F2.6).
   if (mod && (e.key === 'Backspace' || e.key === 'Delete')) {
-    if (!typing && state.grid.selection.size) { e.preventDefault(); confirmTrash([...state.grid.selection]); }
+    if (!typing && gridSelectionShown() && !ctxMenuIsOpen()) { e.preventDefault(); confirmTrash([...state.grid.selection]); }
     return;
   }
   /* v4 §9.1 — ⌘K/Ctrl+K is the COMMAND PALETTE now; the spec assigns the key
@@ -138,14 +142,14 @@ document.addEventListener('keydown', (e) => {
     summonGlobalSearch();
     return;
   }
-  // Plain Backspace / Delete in the grid — never while typing, and the
-  // Cmd/Ctrl-modified variants above keep working exactly as before. Not
-  // while #ctxMenu is open either: the Grid's trail folds into the same "…"
-  // menu, and Backspace pressed in it climbed the Grid behind it, Delete
-  // opened a Trash sheet for the selected rows (QA-6b review F2.6).
+  // Plain Backspace / Delete in the grid — never while typing; the
+  // Cmd/Ctrl-modified variants are above. Not while #ctxMenu is open either:
+  // the Grid's trail folds into the same "…" menu, and Backspace pressed in
+  // it climbed the Grid behind it, Delete opened a Trash sheet for the
+  // selected rows (QA-6b review F2.6).
   if (!mod && !typing && state.view === 'grid' && state.root && !ctxMenuIsOpen()) {
     if (e.key === 'Backspace') { e.preventDefault(); gridUp(); return; }
-    if (e.key === 'Delete' && state.grid.selection.size) {
+    if (e.key === 'Delete' && gridSelectionShown()) {
       e.preventDefault(); confirmTrash([...state.grid.selection]); return;
     }
   }

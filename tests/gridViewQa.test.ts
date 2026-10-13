@@ -130,6 +130,8 @@ type Grid = {
   page: { cart: boolean };
   renderGrid(): Promise<void>; onCellClick(e: Record<string, boolean>, i: number): void; gridUp(): void;
   gridItems(): Node[]; updateSelectionBar(): void;
+  /** The view registry's own switchView, the parts that are not the Grid's stubbed (D03): it hides and shows the `.view` sections of `screen`. */
+  switchView(name: string): void;
   /** The Escape key's Grid branch, out of the page's keydown handler (gridHarness({ escape: true })). */
   escapeInGrid?(): void;
   /** The page's own preview pane, in place of the stub (gridHarness({ preview: true })): Escape and Close both call closePreview. */
@@ -258,6 +260,11 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean 
     },
     nodeFor: (p: string) => pathIndex.get(p), isCloudScan: () => false, confirmTrash: () => {},
     openInOS: () => {}, showCtxMenu: () => {}, showTooltip: () => {}, hideTooltip: () => {}, openPreview: () => {},
+    // switchView's world beyond the Grid (D03): every view mounts nothing and is usable; the sections it
+    // shows and hides are the `.view` elements of `screen` (screenOf).
+    VIEW_BY_ID: new Map(['grid', 'dashboard', 'treemap', 'apps', 'city', 'autopilot'].map((id) => [id, { id, label: id, needsScan: true, mount() {} }])),
+    tabs: [], viewBlockedReason: () => null, hideCtxMenu: () => {}, fxEmptyCtaSync: () => {}, fxScanHeroSync: () => {},
+    renderCapabilityNotice: () => {}, fxViewEnter: () => {}, toast: () => {},
   };
   if (opts.preview) {
     delete deps.openPreview;
@@ -271,10 +278,12 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean 
   const escape = opts.escape ? `function escapeInGrid() { ${escapeGridBranch()} }` : 'const escapeInGrid = undefined;';
   const api = new Function(...names, `'use strict'; ${src}
     ${braced('function activeViewControl(')}
+    let mountedView = null;
+    ${braced('function switchView(')}
     ${escape}
     ${opts.preview ? previewPaneSrc() : 'const closePreview = undefined;'}
-    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid, closePreview, openPreview };`)(...names.map((n) => deps[n])) as
-    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid' | 'closePreview' | 'openPreview'>;
+    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid, switchView, closePreview, openPreview };`)(...names.map((n) => deps[n])) as
+    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid' | 'switchView' | 'closePreview' | 'openPreview'>;
   // renderGrid is async; navigation calls it without awaiting.
   const wrapped = {
     ...api,
@@ -747,15 +756,22 @@ test('Escape in the Grid clears the selection through the same door as Clear, so
   assert.equal(String(FOCUS.active!.dataset.i), String(tile.dataset.i), 'that tile');
 });
 
-/** The Grid with a selection made, then another view brought up: the bar stays (⌘⌫ works from any view), the Grid is display:none. */
-async function selectionThenLeave(view: string): Promise<Grid> {
+/**
+ * The Grid with a tile selected and keyboard focus on the selection bar's
+ * Clear, then `view` brought up through the page's own switchView, with
+ * `controls` on screen in it (screenOf). The Grid goes display:none, so its
+ * scroller has no height and no tile is on screen; the bar goes with it (D03).
+ */
+async function selectionThenLeave(view: string, controls: FakeEl[]): Promise<{ g: Grid; tab: FakeEl }> {
   const g = gridHarness();
   await g.renderGrid();
   g.onCellClick({ metaKey: true }, 1);
-  g.state.view = view; // switchView: the Grid is hidden…
-  g.els.gridScroll.clientHeight = 0; // …so its scroller has no height and no tile is on screen
-  assert.ok(g.els.selectionBar.cls.has('visible'), 'the bar is still up (precondition)');
-  return g;
+  assert.ok(g.els.selectionBar.cls.has('visible'), 'control: the bar is up in the Grid');
+  const { tab } = screenOf(g, view, controls);
+  g.els.selClearBtn.focus(); // a keyboard user in the bar
+  g.els.gridScroll.clientHeight = 0;
+  g.switchView(view);
+  return { g, tab };
 }
 
 /**
@@ -783,38 +799,56 @@ function screenOf(g: Grid, view: string, controls: FakeEl[]): { tab: FakeEl; sec
   return { tab, section };
 }
 
-test('Clear pressed with the Grid hidden hands focus to the view on screen, or to its tab — never to the hidden filter box (B13 review F2.4, F3.2)', async () => {
-  // Review: the bar outlives a view switch, and Clear's fallback focused
-  // #gridSearch inside the hidden Grid — a no-op in a browser — so focus
-  // fell to <body> with the bar, the B13 symptom.
-  // Review F3.2: the document the page queries now answers its own
-  // selector, and the first control on screen is not a button — the
-  // Dashboard's "What's new" strip is a div in the tab order.
-  const g = await selectionThenLeave('dashboard');
+test('the selection bar is the Grid’s: it leaves with the Grid, and comes back with it, its selection kept (D03)', async () => {
+  // QA third pass D03: "1 item selected — 1.7 MB · Offload… · Move to Trash
+  // · Clear" stayed up on the Dashboard, on the Treemap beside the map's own
+  // selection and behind the Autopilot editor — a selection none of them
+  // shows — and ⌘⌫ there opened a Trash sheet for it.
+  for (const view of ['dashboard', 'treemap', 'autopilot']) {
+    const { g } = await selectionThenLeave(view, [fakeEl(`${view}Btn`, 'button')]);
+    assert.ok(!g.els.selectionBar.cls.has('visible'), `${view}: the bar left with the Grid`);
+    assert.equal(g.state.grid.selection.size, 1, `${view}: the selection itself is the Grid's, kept for its return`);
+    g.switchView('grid');
+    assert.ok(g.els.selectionBar.cls.has('visible'), `${view}: back in the Grid, its bar is back with it`);
+    assert.match(g.els.selInfo.innerHTML, /<b>1<\/b> item selected/, `${view}: saying what it holds`);
+  }
+});
+
+test('focus in the selection bar as the Grid leaves goes to the view on screen, or to its tab — never to <body> or the hidden filter box (D03; B13 review F2.4, F3.2)', async () => {
+  // The bar goes with the Grid now (D03), so focus in it — on Clear, Move to
+  // Trash — goes somewhere the keyboard can carry on from, as Clear's own
+  // door has done since B13: the filter box inside the hidden Grid is a
+  // no-op focus in a browser, and focus would fall to <body> with the bar.
+  // Review F3.2: the document the page queries answers its own selector,
+  // and the first control on screen is not a button — the Dashboard's
+  // "What's new" strip is a div in the tab order.
   const offscreen = fakeEl('dashOffscreen', 'button'); offscreen.hidden = true;
   const disabled = fakeEl('dashDisabled', 'button'); disabled.disabled = true;
-  screenOf(g, 'dashboard', [
+  await selectionThenLeave('dashboard', [
     offscreen, disabled,
     fakeEl('dashCard', 'div', { tabindex: '-1' }), // focusable by script only: not a stop in the tab order
     fakeEl('dashLabel', 'span'),
     fakeEl('whatsNewBody', 'div', { role: 'button', tabindex: '0' }),
     fakeEl('dashRescan', 'button'),
   ]);
-  g.els.selClearBtn.focus();
-  pressClear(g);
-  assert.ok(!g.els.selectionBar.cls.has('visible'), 'the bar slides away');
   assert.equal(FOCUS.active?.id, 'whatsNewBody', 'the first enabled control on screen in the view that is up');
   assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling it');
 
   // A view with nothing to offer (its capability notice instead of controls): its sidebar tab.
-  const b = await selectionThenLeave('apps');
-  const { tab } = screenOf(b, 'apps', [fakeEl('appsNotice', 'p')]);
-  b.els.selClearBtn.focus();
-  pressClear(b);
+  const { tab } = await selectionThenLeave('apps', [fakeEl('appsNotice', 'p')]);
   assert.equal(FOCUS.active, tab, 'the selected sidebar tab, when the view has no control on screen');
+
+  // Focus anywhere else is left where it is: a click on a sidebar tab has put it there.
+  const g = gridHarness();
+  await g.renderGrid();
+  g.onCellClick({ metaKey: true }, 1);
+  const { tab: own } = screenOf(g, 'dashboard', [fakeEl('dashRescan', 'button')]);
+  own.focus();
+  g.switchView('dashboard');
+  assert.equal(FOCUS.active, own, 'focus outside the bar stays where it is');
 });
 
-test('every kind of control the page counts can take focus when Clear is pressed from another view — a button, a text box, a menu, anything in the tab order (B13 review F3.2)', async () => {
+test('every kind of control the page counts can take focus as the bar leaves with the Grid — a button, a text box, a menu, anything in the tab order (B13 review F3.2)', async () => {
   // Review: with the stub answering any ".view.active" selector, the page's
   // could lose a part — inputs, menus, [tabindex="0"] — or shrink to
   // ".view.active", the sections themselves, and nothing went red. Here
@@ -827,11 +861,8 @@ test('every kind of control the page counts can take focus when Clear is pressed
     ['a canvas in the tab order', () => fakeEl('only', 'canvas', { tabindex: '0' })],
   ];
   for (const [kind, make] of kinds) {
-    const g = await selectionThenLeave('city');
     const only = make();
-    screenOf(g, 'city', [fakeEl('', 'span'), fakeEl('', 'canvas', { tabindex: '-1' }), only]);
-    g.els.selClearBtn.focus();
-    pressClear(g);
+    await selectionThenLeave('city', [fakeEl('', 'span'), fakeEl('', 'canvas', { tabindex: '-1' }), only]);
     assert.equal(FOCUS.active, only, `${kind}: focus lands on it (got ${FOCUS.active ? `${FOCUS.active.tagName}#${FOCUS.active.id}` : 'nothing'})`);
   }
 });

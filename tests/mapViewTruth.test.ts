@@ -639,7 +639,7 @@ function crumbsHarness(opts: { view?: string; selection?: string[] } = {}) {
   };
   const { render, keydown, exportClick, showCtxMenu, docClick } = load<Page>(
     ['renderCrumbs', 'breadcrumbsFor', 'crumbsPaint', 'crumbFolded', 'crumbsOverflow', 'crumbsWatch', 'showCrumbMenu', 'CRUMB_FADE_PX',
-      ...CTX_MENU_DECLS, 'tmMapKeyYields', 'tmMapTakeFocus', 'showCtxMenu', 'ctxTarget'], {
+      ...CTX_MENU_DECLS, 'tmMapKeyYields', 'tmMapTakeFocus', 'showCtxMenu', 'ctxTarget', 'gridSelectionShown'], {
       state: {
         scanId: 's1', scanning: false,
         root: { path: '/System', name: 'System' }, view: opts.view ?? 'treemap', lasso: { on: false },
@@ -1170,6 +1170,56 @@ test('MEDIUM-1: in the Grid, Backspace and Delete wait while the "…" menu is o
   assert.equal(h.menu.style.display, 'none', 'Escape closes the menu');
   h.keydown(keyEv('Backspace'));
   assert.equal(h.gridMoves.up, 2, 'and the keys are the Grid\'s again');
+});
+
+/** A key pressed with ⌘ (or Ctrl), as the page reads it: metaKey || ctrlKey. */
+const modKeyEv = (key: string, ctrl = false): KeyEv => Object.assign(keyEv(key), ctrl ? { ctrlKey: true } : { metaKey: true });
+
+test('D03: ⌘⌫ and ⌘Delete ask to trash only a selection the view on screen shows — never the Grid\'s, from another view', () => {
+  // QA third pass D03: Grid › Mail, ⌘-click Mailbox 23.mbox, then the
+  // Dashboard — and ⌘⌫ there opened "Move Mailbox 23.mbox (1.7 MB) to the
+  // Trash?" for a selection the Dashboard does not show. Plain Delete and
+  // Escape were already the Grid's alone; the ⌘ variant answered in any view.
+  for (const view of ['dashboard', 'treemap', 'autopilot', 'duplicates']) {
+    const h = crumbsHarness({ view, selection: ['/System/a.mov'] });
+    for (const [key, ctrl] of [['Backspace', false], ['Delete', false], ['Backspace', true], ['Delete', true]] as const) {
+      const ev = modKeyEv(key, ctrl);
+      h.keydown(ev);
+      assert.deepEqual(h.acts, [], `${view}: ${ctrl ? 'Ctrl' : '⌘'}+${key} opens no Trash sheet for the Grid's hidden selection`);
+      assert.equal(ev.defaultPrevented, false, `${view}: nor is the key taken from anything else`);
+    }
+  }
+  // Control: in the Grid, the selection it shows is what the keys trash.
+  const g = crumbsHarness({ view: 'grid', selection: ['/System/a.mov'] });
+  const del = modKeyEv('Backspace');
+  g.keydown(del);
+  assert.deepEqual(g.acts, ['trash'], 'control: in the Grid, ⌘⌫ asks to trash its selection');
+  assert.equal(del.defaultPrevented, true);
+  g.keydown(modKeyEv('Delete', true));
+  assert.deepEqual(g.acts, ['trash', 'trash'], 'control: and Ctrl+Delete');
+  // Nothing selected in the Grid: nothing to ask about.
+  const none = crumbsHarness({ view: 'grid' });
+  none.keydown(modKeyEv('Backspace'));
+  assert.deepEqual(none.acts, [], 'an empty selection asks nothing');
+});
+
+test('D03: ⌘⌫ waits while the "…" menu is open, as plain Delete does — no Trash sheet for the selected tiles under it', () => {
+  // The audit of every shortcut behind D03: plain Delete had learnt the
+  // open-menu guard (QA-6b review F2.6); its ⌘ variant had not.
+  const h = crumbsHarness({ view: 'grid', selection: ['/System/a.mov'] });
+  const host = makeHost(150);
+  h.render(host, DEEP, h.onPick);
+  const more = host.buttons.find((b) => b.more)!;
+  more.focus();
+  more.click();
+  assert.equal(h.menu.style.display, 'block', 'control: the menu is open');
+  const del = modKeyEv('Backspace');
+  h.keydown(del);
+  assert.deepEqual(h.acts, [], '⌘⌫ in the open menu opens no Trash sheet');
+  assert.equal(del.defaultPrevented, false);
+  h.keydown(keyEv('Escape'));
+  h.keydown(modKeyEv('Backspace'));
+  assert.deepEqual(h.acts, ['trash'], 'control: with the menu closed, ⌘⌫ is the Grid\'s again');
 });
 
 test('MEDIUM-1: Tab closes the menu wherever focus is — still on Export, or on the map a right-click left it on (QA-6b review F1.1)', () => {
