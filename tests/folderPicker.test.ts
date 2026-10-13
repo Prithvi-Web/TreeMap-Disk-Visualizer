@@ -1095,7 +1095,10 @@ test('"Checking that the folder exists…" is taken back only by the press that 
 
 /* ══════════════ The toast an offer rides in (final review F1.12) ══════════════ */
 
-type ToastBtn = { label: string; attrs: Record<string, string>; listeners: Array<() => void>; addEventListener(t: string, f: () => void): void; click(): void; focus(): void };
+type ToastKey = { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean;
+  defaultPrevented: boolean; stopped: boolean; preventDefault(): void; stopPropagation(): void };
+type ToastBtn = { label: string; attrs: Record<string, string>; listeners: Array<() => void>; keys: Array<(e: ToastKey) => void>;
+  addEventListener(t: string, f: (e: ToastKey) => void): void; click(): void; focus(): void };
 type ToastEl = { cls: Set<string>; html: string; innerHTML: string; button: ToastBtn | null; removed: boolean; className: string;
   classList: { add(c: string): void; contains(c: string): boolean }; querySelector(sel: string): ToastBtn | null; contains(x: unknown): boolean; remove(): void };
 
@@ -1104,7 +1107,9 @@ type ToastEl = { cls: Set<string>; html: string; innerHTML: string; button: Toas
  * steps (fire): what it put on screen, its button, and where focus is.
  */
 function toastRuntime() {
-  const doc = { activeElement: null as unknown, createElement: () => toastEl() };
+  const doc = { activeElement: null as unknown, body: { tagName: 'BODY' }, createElement: () => toastEl() };
+  /** The page's Tab stops in order, outside #toasts (modalFocusables), and the sheet on top, if any (topModal). */
+  const page = { stops: [] as unknown[], sheet: null as unknown };
   const shown: ToastEl[] = [];
   const timers: { fn: () => void; delay: number; done: boolean }[] = [];
   const setTimeout = (fn: () => void, delay: number) => { timers.push({ fn, delay, done: false }); return timers.length; };
@@ -1123,8 +1128,8 @@ function toastRuntime() {
         const attrs: Record<string, string> = {};
         for (const a of b[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
         const btn: ToastBtn = {
-          label: b[2], attrs, listeners: [],
-          addEventListener(t, f) { if (t === 'click') btn.listeners.push(f); },
+          label: b[2], attrs, listeners: [], keys: [],
+          addEventListener(t, f) { if (t === 'click') btn.listeners.push(f as () => void); else if (t === 'keydown') btn.keys.push(f); },
           click() { for (const f of btn.listeners) f(); },
           focus() { doc.activeElement = btn; },
         };
@@ -1137,7 +1142,7 @@ function toastRuntime() {
     };
     return el;
   }
-  const host = { appendChild(el: ToastEl) { shown.push(el); } };
+  const host = { appendChild(el: ToastEl) { shown.push(el); }, contains: (x: unknown) => shown.some((el) => !el.removed && el.contains(x)) };
   const $ = (id: string) => { assert.equal(id, 'toasts', 'a toast goes in #toasts'); return host; };
   const escapeHtml = lift<(s: string) => string>(['escapeHtml'], 'escapeHtml');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -1147,15 +1152,75 @@ function toastRuntime() {
   const retire = INDEX.includes('const sheetToasts = new Map();')
     ? `const sheetToasts = new Map(); ${braced('function toastsRetire(')}` : 'const toastsRetire = undefined;';
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const made = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout',
+  const made = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout', 'topModal', 'modalFocusables',
     `'use strict'; ${seqDecl} ${retire} ${braced('function toastAction(')} return { toastAction, toastsRetire };`,
-  )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout) as {
+  )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout, () => page.sheet,
+    (root: unknown) => { assert.equal(root, doc.body, 'the stops are the page\'s'); return [...page.stops, ...shown.filter((el) => !el.removed).map((el) => el.button)]; }) as {
     toastAction: (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean; sheet?: string }) => void;
     /** A sheet closing (modalClosed): the offers made in it go. */
     toastsRetire: ((sheet: string) => void) | undefined;
   };
-  return { toastAction: made.toastAction, toastsRetire: made.toastsRetire, doc, shown, timers, fire };
+  /** A key pressed on a toast's button, as its own keydown listeners see it. */
+  const key = (btn: ToastBtn, name: string, mods: Partial<ToastKey> = {}): ToastKey => {
+    const e: ToastKey = { key: name, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, defaultPrevented: false, stopped: false,
+      preventDefault() { e.defaultPrevented = true; }, stopPropagation() { e.stopped = true; }, ...mods };
+    for (const f of btn.keys) f(e);
+    return e;
+  };
+  return { toastAction: made.toastAction, toastsRetire: made.toastsRetire, doc, shown, timers, fire, page, key };
 }
+
+test('outside a sheet an offer goes on Escape, and Tab moves on from the control it answers instead of dropping focus to <body> (QA C09)', () => {
+  // QA re-check C09: the Scan card's "Did you mean …?" offer takes focus, but
+  // outside a sheet Escape did nothing, and Tab left the page — #toasts is its
+  // last element — for <body>.
+  const rt = toastRuntime();
+  const stop = (id: string) => { const s = { id, isConnected: true, focus() { rt.doc.activeElement = s; } }; return s; };
+  const search = stop('gsearch'), box = stop('pathInput'), scan = stop('scanBtn'), map = stop('treemapCanvas');
+  rt.page.stops.push(search, box, scan, map);
+  box.focus(); // Enter in the Scan card's path box
+  let ran = 0;
+  rt.toastAction('No folder is named “/x ” — the path ends with a space. Did you mean “/x”?', 'Scan that folder', () => { ran++; }, 'error', 12000, { focus: true });
+  const offer = rt.shown[0];
+  const btn = offer.button!;
+  assert.equal(rt.doc.activeElement, btn, 'control: the offer takes focus');
+  const tab = rt.key(btn, 'Tab');
+  assert.equal(rt.doc.activeElement, scan, 'Tab moves on to the control after the path box, as if the offer sat beside it');
+  assert.ok(tab.defaultPrevented, 'in place of the browser, which had nothing after the toasts to go to');
+  assert.ok(!offer.cls.has('out'), 'and the offer stays up, to be chosen or to time out');
+  btn.focus();
+  rt.key(btn, 'Tab', { shiftKey: true });
+  assert.equal(rt.doc.activeElement, box, 'Shift+Tab goes back to the path box it answers');
+  btn.focus();
+  const esc = rt.key(btn, 'Escape');
+  assert.ok(offer.cls.has('out'), 'Escape dismisses the offer');
+  assert.equal(rt.doc.activeElement, box, 'and focus goes back where it was');
+  assert.ok(esc.defaultPrevented && esc.stopped, 'the key is the offer\'s alone: the map behind it does not climb a folder as well');
+  assert.equal(ran, 0, 'dismissing it chooses nothing');
+
+  // An offer whose control has gone from the page moves on to the page's first stop.
+  rt.toastAction('No folder is named “/z ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
+  rt.page.stops.splice(rt.page.stops.indexOf(box), 1); // the path box went with the Scan card
+  rt.key(rt.shown[1].button!, 'Tab');
+  assert.equal(rt.doc.activeElement, search, 'Tab with its control gone goes to the first stop, never to <body>');
+
+  // An offer answering the page's last stop wraps to its first — never onto
+  // itself or another offer still fading out in #toasts.
+  map.focus();
+  rt.toastAction('No folder is named “/w ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
+  rt.key(rt.shown[rt.shown.length - 1].button!, 'Tab');
+  assert.equal(rt.doc.activeElement, search, 'Tab from an offer answering the last stop wraps to the first stop');
+
+  // Inside a sheet both keys are the sheet's: Escape closes it, its offers with
+  // it (toastsRetire), and Tab cycles inside it (modalTrapTab).
+  rt.page.sheet = { id: 'apModal' };
+  rt.toastAction('No folder is named “/y ”', 'Use that folder', () => {}, 'error', 12000, { focus: true, sheet: 'apModal' });
+  const inSheet = rt.shown[rt.shown.length - 1];
+  const e1 = rt.key(inSheet.button!, 'Escape');
+  const e2 = rt.key(inSheet.button!, 'Tab');
+  assert.ok(!inSheet.cls.has('out') && !e1.defaultPrevented && !e1.stopped && !e2.defaultPrevented,
+    'an offer made in a sheet leaves both keys to the sheet');
+});
 
 test('an offer\'s button acts once: a double-click, or a click while the toast fades out, does not run its choice again (final review F1.12)', () => {
   // The toast fades for 320 ms before it is removed, and stays clickable

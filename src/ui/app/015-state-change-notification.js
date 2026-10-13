@@ -216,6 +216,24 @@ function toastAction(msg, label, fn, kind = 'success', ms = 12000, { focus = fal
     if (held && back && back.isConnected !== false && back.focus) back.focus({ preventScroll: true });
   };
   btn.addEventListener('click', () => { if (done) return; gone(); fn(); });
+  // Outside a sheet the toast is the page's last stop (QA C09): Escape did
+  // nothing, and Tab left the page for <body>. Escape dismisses it, focus
+  // going back where it was; Tab moves on as if the toast sat right after the
+  // control it answers — to the stop after that control, Shift+Tab back to
+  // it — or, with that control gone, from the page's first stop. Inside a
+  // sheet both keys are the sheet's: Escape closes it, its offers with it,
+  // and Tab cycles inside it (modalTrapTab).
+  btn.addEventListener('keydown', (e) => {
+    if (done || topModal()) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); gone(); return; }
+    if (e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey) return;
+    const stops = modalFocusables(document.body).filter((x) => !$('toasts').contains(x));
+    const at = back ? stops.indexOf(back) : -1;
+    const to = e.shiftKey ? (at === -1 ? stops[stops.length - 1] : back) : stops[(at + 1) % stops.length];
+    if (!to) return;
+    e.preventDefault();
+    to.focus();
+  });
   if (sheet) {
     if (!sheetToasts.has(sheet)) sheetToasts.set(sheet, new Set());
     sheetToasts.get(sheet).add(gone);
