@@ -65,6 +65,17 @@ const APART = path.join(ROOT, 'apart');
 fs.mkdirSync(APART);
 fs.writeFileSync(path.join(APART, 'target.bin'), Buffer.alloc(7, 1));
 for (const name of ['Ｘ1', 'Ｙ1']) fs.writeFileSync(path.join(APART, name), Buffer.alloc(OTHER_BYTES, 1));
+/**
+ * A folder `proj`, holding a file `x`, that a test scans again as a root of its own — one scan's root
+ * inside another's, as is common — and a link `via` that leads to it. Beside it the test makes, after
+ * both scans, a folder `Ｐroj` (fullwidth P) holding another `x`: a name `foldName` reads as the root's
+ * own, which every volume keeps apart.
+ */
+const PROJ = path.join(ROOT, 'proj');
+const PROJ_X_BYTES = 17;
+fs.mkdirSync(PROJ);
+fs.writeFileSync(path.join(PROJ, 'x'), Buffer.alloc(PROJ_X_BYTES, 1));
+if (!WINDOWS) fs.symlinkSync(PROJ, path.join(ROOT, 'via'));
 
 let scan: ScanResult;
 let names = 0;
@@ -154,4 +165,47 @@ test('an entry the scan never listed is "unknown" beside the one scanned sibling
   } finally {
     for (const p of made) fs.rmSync(p);
   }
+});
+
+/** A scan of `root`, started and settled, which `knownSizeOf` reads from then on beside the first. */
+async function scanned(root: string): Promise<ScanResult> {
+  const result = await startScan(root);
+  await waitFor(() => result.status !== 'running', `the scan of ${root}`);
+  assert.equal(result.status, 'complete', result.error);
+  return result;
+}
+
+test('a path beside a second scan\'s root, under a name that folds as that root\'s own but which the volume keeps apart, is "unknown" — never a size from inside that root — while a file only the second scan listed is sized through a link to it', async () => {
+  const late = path.join(PROJ, 'late.bin'); // after the first scan: only the second lists it
+  const LATE_BYTES = 23;
+  fs.writeFileSync(late, Buffer.alloc(LATE_BYTES, 1));
+  await scanned(PROJ);
+  const apart = path.join(ROOT, 'Ｐroj'); // after both scans
+  fs.mkdirSync(apart);
+  fs.writeFileSync(path.join(apart, 'x'), Buffer.alloc(OTHER_BYTES, 1));
+  try {
+    const sizes: Record<string, number | null> = {
+      'Ｐroj/x, beside the second scan\'s root proj, which holds an x': knownSizeOf(path.join(apart, 'x')),
+      'the folder Ｐroj itself': knownSizeOf(apart),
+    };
+    const expected: Record<string, number | null> = {
+      'Ｐroj/x, beside the second scan\'s root proj, which holds an x': null,
+      'the folder Ｐroj itself': null,
+    };
+    if (!WINDOWS) {
+      sizes['proj/late.bin, spelled through the link via'] = knownSizeOf(path.join(ROOT, 'via', 'late.bin'));
+      expected['proj/late.bin, spelled through the link via'] = LATE_BYTES;
+    }
+    assert.deepEqual(sizes, expected);
+  } finally {
+    fs.rmSync(apart, { recursive: true });
+  }
+});
+
+test('a scan of one file, its name typed in another case, sizes that file by the name the volume stores: the volume answers both names with one entry', { skip: !CASE_FOLDS && 'this volume keeps case' }, async () => {
+  const solo = path.join(ROOT, 'Solo.bin'); // after the first scan: only the scan below lists it
+  const SOLO_BYTES = 19;
+  fs.writeFileSync(solo, Buffer.alloc(SOLO_BYTES, 1));
+  await scanned(path.join(ROOT, 'SOLO.BIN'));
+  assert.equal(knownSizeOf(solo), SOLO_BYTES);
 });

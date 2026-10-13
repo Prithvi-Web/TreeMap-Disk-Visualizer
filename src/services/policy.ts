@@ -267,7 +267,10 @@ function placeToSize(p: string): string | null {
  * The node of `scan` (its store, `store`) that lies at `where` (a place, `placeToSize`), or -1: the
  * names below the root's own place (`rootLivesAt`) walked from the root's node, each by its exact name
  * or else by the one child whose name folds the same and which the volume answers that name with
- * (`childNamed`).
+ * (`childNamed`). The part of `where` that folds as the root's place is the root only when it is that
+ * place, or the volume answers it with the root itself (`sameEntry`), as a child found by its fold is:
+ * `Ｐroj` beside a scanned root `proj` folds the same and is another folder, and a path in it was sized
+ * as the file of the same name in `proj` (the review of LEFT2, F1.1).
  */
 function nodeAtPlace(scan: ScanResult, store: ReturnType<typeof storeOf>, where: string): number {
   const { rootPath } = scan;
@@ -276,8 +279,9 @@ function nodeAtPlace(scan: ScanResult, store: ReturnType<typeof storeOf>, where:
   const { root } = path.parse(where);
   const names = where.slice(root.length).split(path.sep).filter((name) => name.length > 0);
   if (!namesContain(rootNames, foldedNamesOf(where))) return -1;
-  let id = store.findByPath(rootPath);
   let folder = path.join(root, ...names.slice(0, rootNames.length - 1));
+  if (folder !== rootAt && !sameEntry(folder, rootAt)) return -1;
+  let id = store.findByPath(rootPath);
   for (const name of names.slice(rootNames.length - 1)) {
     if (id === -1) return -1;
     id = childNamed(scan, store, id, folder, name);
