@@ -67,6 +67,7 @@ const VIEWS = [
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
+      tmRejudgeQuery(); // C11 — a query a previous scan of this folder answered is asked of this one
     },
     unmount() {
       // Phase 2: stop the debounce, invalidate anything already in flight, and

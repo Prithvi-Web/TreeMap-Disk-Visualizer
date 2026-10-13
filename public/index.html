@@ -7308,6 +7308,7 @@ const VIEWS = [
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
+      tmRejudgeQuery(); // C11 — a query a previous scan of this folder answered is asked of this one
     },
     unmount() {
       // Phase 2: stop the debounce, invalidate anything already in flight, and
@@ -22296,14 +22297,16 @@ async function tmRunGrammarQuery(q) {
     return;
   }
   const seq = ++tmQuerySeq;
+  const scanAtRequest = state.scanId;
   try {
     const out = await api('/api/query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scanId: state.scanId, q, limit: 1000, sort: 'size' }),
+      body: JSON.stringify({ scanId: scanAtRequest, q, limit: 1000, sort: 'size' }),
     });
     if (seq !== tmQuerySeq) return; // a newer keystroke, a clear, or an unmount won
     state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
     state.treemap.queryMode = 'grammar';
+    state.treemap.queryScanId = scanAtRequest; // whose tree these matches are (tmRejudgeQuery)
     // What the query matched across the whole scan, so the status line can say
     // "1 of 2" rather than a drawn count that reads as the total.
     state.treemap.matchTotal = out.total;
@@ -22429,6 +22432,7 @@ async function tmValidateQuery(q) {
 function tmApplyQuery(raw) {
   const q = raw.trim();
   state.treemap.query = raw;
+  state.treemap.queryRoot = state.root ? state.root.path : null; // the folder it is asked of (tmQueryScanChanged)
 
   if (!q || !tmIsGrammarQuery(q)) {
     // Empty means "no filter"; a bare word takes the original local path —
@@ -22454,6 +22458,42 @@ function tmApplyQuery(raw) {
     return;
   }
   void tmValidateQuery(q).then((valid) => { if (valid) void tmRunGrammarQuery(q); });
+}
+
+/**
+ * A scan is on screen: a query asked of another folder goes (browser
+ * re-check C11). The Calendar's day query from corpus survived a scan of
+ * /Applications and dimmed the whole new map under "0 matches" — a grammar
+ * query's matches are paths of the old tree, and a bare word judged against
+ * another folder's map is a filter nobody typed for it. Cleared without a
+ * paint: the view that shows the map next draws it from this state. Asked of
+ * this same folder (a rescan), it stays, and tmRejudgeQuery asks it again of
+ * the new scan when the map is shown.
+ */
+function tmQueryScanChanged() {
+  if (!state.treemap.query.trim()) return;
+  const root = state.root ? state.root.path : null;
+  if (root !== null && root === state.treemap.queryRoot) return;
+  tmCancelQueries();
+  $('tmSearch').value = '';
+  state.treemap.query = '';
+  state.treemap.queryRoot = null;
+  state.treemap.queryMode = 'bare';
+  state.treemap.matchedPaths = null;
+  tmClearHits(); // the Stage offer, and the total the status line compares the map against
+  tmSetQueryMessage('', false);
+}
+subscribe(TOPIC.scan, tmQueryScanChanged);
+
+/**
+ * A grammar query another scan answered is asked again of the scan on screen
+ * (C11): the Treemap's mount calls this after a rescan of the same folder, so
+ * its highlights are this tree's. One this scan already answered is left be.
+ */
+function tmRejudgeQuery() {
+  const q = state.treemap.query;
+  if (!q.trim() || state.treemap.queryMode !== 'grammar' || state.treemap.queryScanId === state.scanId) return;
+  tmApplyQuery(q);
 }
 
 $('tmSearch').addEventListener('input', (e) => {
