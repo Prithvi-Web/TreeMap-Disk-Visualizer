@@ -10063,12 +10063,15 @@ function preScanAccessNotice(path) {
  * so however the recheck's ask and this one interleave, a scan that started
  * with access is never told "on now".
  *
- * Called beside the scan request, never awaited in front of it. A GET, so
- * the server's own 30-second answer serves and no probe is re-run; only
- * `fullDiskAccess` is replaced, and TOPIC.capabilities is not emitted (see
- * the recheck below). An answer that arrives after its scan has ended, or
- * after another scan began (`gen`), paints nothing; with no answer, the
- * page's own decides.
+ * Called beside the scan request, never awaited in front of it. A GET: within
+ * the server's 30-second cache no probe is re-run, and past it the server
+ * probes every capability again, as for any read of them — long enough for
+ * a short scan to settle first (review F3.2). Only `fullDiskAccess` is
+ * replaced, and TOPIC.capabilities is not emitted (see the recheck below).
+ * An answer that arrives after another scan began (`gen`) decides nothing
+ * for either scan. One that arrives after its own scan ended paints no
+ * notice, but rewords that scan's refused row, which was painted from the
+ * page's own answer (review F3.2). With no answer, the page's own decides.
  */
 async function scanAccessNotice(path, gen) {
   const held = fullDiskAccessInfo();
@@ -10086,7 +10089,10 @@ async function scanAccessNotice(path, gen) {
   }
   if (gen !== state.scanGen) return false; // another scan began: it keeps the state it started under
   if (fda) state.scanAccessState = fda.state;
-  if (!state.scanning) return false;
+  if (!state.scanning) {
+    if (fda) renderRefusedFolders(); // settled first: word its row by the state it ran under
+    return false;
+  }
   return preScanAccessNotice(path);
 }
 

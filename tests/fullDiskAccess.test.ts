@@ -642,7 +642,7 @@ test('a scan asks the server whether Full Disk Access is on before deciding its 
   await restarted.fire();
   const gets = restarted.asked.filter(([u]) => u === '/api/platform/capabilities');
   assert.equal(gets.length, 1, 'the scan asked once');
-  assert.equal((gets[0][1] as { method?: string } | undefined)?.method ?? 'GET', 'GET', 'a GET: the server\'s own 30-second answer serves, and no probe is re-run');
+  assert.equal((gets[0][1] as { method?: string } | undefined)?.method ?? 'GET', 'GET', 'a GET: within the server\'s 30-second cache, no probe is re-run');
   assert.equal(restarted.$('accessRow').hidden, true, 'no notice: this server can read what macOS protects');
   const caps = restarted.state.capabilities as { fullDiskAccess: { state: string }; volumeTopology: unknown };
   assert.equal(caps.fullDiskAccess.state, 'granted', 'the page keeps the new answer');
@@ -676,7 +676,7 @@ test('a scan asks the server whether Full Disk Access is on before deciding its 
   await slowRun;
   assert.equal(slow.$('accessRow').hidden, false, 'the notice comes with the answer');
 
-  // An answer that comes after its scan is over, or after another scan began, paints nothing.
+  // An answer that comes after its scan is over, or after another scan began, paints no notice.
   let late: (v: unknown) => void = () => {};
   const ended = pageHarness({ fda: 'not-granted', current: () => new Promise((r) => { late = r; }) });
   const endedRun = ended.scan('/');
@@ -686,6 +686,27 @@ test('a scan asks the server whether Full Disk Access is on before deciding its 
   await ended.fire();
   await endedRun;
   assert.equal(ended.$('accessRow').hidden, true, 'no notice for a scan that is over');
+  // Review F3.2: but one that lands after its scan settled rewords that
+  // scan's refused row by the state it ran under. A tab opened before the
+  // server was restarted under an app with the grant still holds
+  // not-granted; a short scan settles before the server answers (past its
+  // 30-second cache it probes everything again), and its row was painted
+  // from the tab's answer — "Give … Full Disk Access" about a folder its own
+  // permissions closed, with "Open Privacy settings" beside it — and stayed
+  // so once the true answer was in.
+  let truth: (v: unknown) => void = () => {};
+  const tab = pageHarness({ fda: 'not-granted', current: () => new Promise((r) => { truth = r; }) });
+  const tabRun = tab.scan('/Users/x/Projects');
+  await tab.fire();
+  Object.assign(tab.state, { scanning: false, scanId: 's2', scanStats: { refused: { dirs: 1, examples: ['/Users/x/Projects/locked'] } } });
+  tab.render(); // the scan settled first
+  assert.equal(tab.els.accessHint.textContent, ADVICE['not-granted'], 'painted from the tab\'s answer while the server\'s is on its way');
+  truth({ capabilities: { fullDiskAccess: fdaCap('granted') } });
+  await tab.fire();
+  await tabRun;
+  assert.equal(tab.els.accessRow.hidden, false, 'the scan\'s refusals stay on screen');
+  assert.equal(tab.els.accessHint.textContent, ADVICE.granted, 'worded now by the state the scan ran under');
+  assert.equal(tab.els.accessOpenBtn.hidden, true, 'with nothing offered to switch on');
   const answers: Array<(v: unknown) => void> = [];
   const next = pageHarness({ fda: 'not-granted', current: () => new Promise((r) => { answers.push(r); }) });
   const firstRun = next.scan('/');
