@@ -4,6 +4,7 @@ import {
   allScans,
   collectLargestFoldersAsync,
   compareTrees,
+  isRecorded,
 } from '../services/diskScanner';
 import { emptyFoldersForScan } from '../services/emptyFolders';
 import { DEFAULT_DUPLICATE_MIN_SIZE, getDuplicateJob } from '../services/duplicateFinder';
@@ -612,10 +613,14 @@ insightRouter.post('/container/expand', guardBodyPath, requireInsideScanRoot, st
   res.json(await expandContainer(scan, containerPath));
 });
 
-/** GET /api/scans — completed scans currently in memory (Compare picker). */
+/**
+ * GET /api/scans — completed scans currently in memory (Compare picker, and the
+ * page's session restore, which reopens the newest). A dry run's scan is not
+ * listed: nobody made it (`isRecorded`, C12 review).
+ */
 insightRouter.get('/scans', (_req: Request, res: Response) => {
   const scans = allScans()
-    .filter((s) => s.status === 'complete' && s.store)
+    .filter((s) => s.status === 'complete' && s.store && isRecorded(s))
     .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     .map((s) => ({
       scanId: s.scanId,

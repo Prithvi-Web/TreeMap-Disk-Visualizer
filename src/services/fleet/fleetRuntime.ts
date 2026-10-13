@@ -1,5 +1,5 @@
 import { diskUsage } from '../diskUsage';
-import { allScans } from '../diskScanner';
+import { allScans, isRecorded } from '../diskScanner';
 import { storeOf } from '../scanStore';
 import { FleetConfig, PeerServerHooks, RunningPeerServer, lanAddresses, loadFleetConfig, startPeerServer } from './fleetSync';
 import { ScanResult } from '../../models/types';
@@ -60,7 +60,8 @@ class FleetRuntime {
 
   /** Everything the network can see about this machine, rebuilt per request. */
   async summary(cfg: FleetConfig): Promise<FleetSummary> {
-    const scans: ScanResult[] = allScans().filter((s) => s.status === 'complete');
+    // A dry run's scan is nobody's, so it is not this machine's last scan (`isRecorded`).
+    const scans: ScanResult[] = allScans().filter((s) => s.status === 'complete' && isRecorded(s));
     const latest = scans.sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))[0];
     let usage: { total: number; used: number; free: number } | null = null;
     try {

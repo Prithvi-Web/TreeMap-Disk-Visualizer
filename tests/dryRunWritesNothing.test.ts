@@ -13,7 +13,9 @@ import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { settled } from '../src/utils/backgroundWrites';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { approvePolicyForTests, normalizePolicy, runPolicy, savePolicies, simulatePolicy } from '../src/services/autopilot';
-import { getScan, startScan } from '../src/services/diskScanner';
+import { allScans, getScan, startScan } from '../src/services/diskScanner';
+import { fleetRuntime } from '../src/services/fleet/fleetRuntime';
+import { defaultConfig } from '../src/services/fleet/fleetSync';
 import { listSnapshots } from '../src/services/snapshots';
 import { waitFor } from './fixtures/waitFor';
 
@@ -189,4 +191,36 @@ test('C12: every dry run over HTTP leaves the data folder as it was, but for the
   assert.equal(lines.slice(-dryRuns.length).filter((l) => l.dryRun).length, dryRuns.length, 'one dry-run line each');
   for (const name of ['a.bin', 'b.bin', path.join('sub', 'c.bin')]) assert.ok(fs.existsSync(path.join(dir, name)), `${name} is where it was`);
   assert.deepEqual(fs.readdirSync(dest), [], 'and nothing was copied');
+});
+
+test('C12: a dry run\'s scan is nobody\'s scan — not listed by GET /api/scans (a reload reopens the newest, Compare offers every one), nor sent to the fleet as this machine\'s last scan', async () => {
+  const dir = tree();
+  const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: dir });
+  assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+  const mine = String(scanned.body.scanId);
+  const listed = async (): Promise<string[]> => {
+    const r = await call('GET', '/api/scans', {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return (r.body.scans as Array<{ scanId: string }>).map((s) => s.scanId);
+  };
+  const before = await listed();
+  assert.equal(before[0], mine, 'control: the scan a person started is listed, newest first');
+  const inMemory = allScans().length;
+
+  const sim = await call('POST', '/api/autopilot/simulate', { policy: { path: dir, match: matchAll } });
+  assert.equal(sim.status, 200, JSON.stringify(sim.body));
+  assert.equal((sim.body.items as unknown[]).length, 3, 'control: the Preview scanned the folder');
+  try {
+    const [fresh] = await savePolicies([{ id: 'preview-listed', name: 'p', path: dir, match: matchAll, dryRunFirst: false, enabled: true }]);
+    const run = await runPolicy(fresh, { ignoreCooldown: true });
+    assert.equal(run.status, 'awaiting-approval', 'control: a run that can only preview');
+  } finally {
+    await savePolicies([]);
+  }
+  assert.equal(allScans().length, inMemory + 2, 'control: both previews\' scans are held in memory, as any scan is');
+
+  assert.deepEqual(await listed(), before, 'neither preview\'s scan is listed');
+  const summary = await fleetRuntime().summary({ ...defaultConfig(), label: 'here' });
+  const latestRecorded = allScans().find((s) => s.scanId === mine)!;
+  assert.equal(summary.lastScanAt, latestRecorded.finishedAt, 'the fleet hears of the person\'s own scan as the last one, not a preview\'s');
 });

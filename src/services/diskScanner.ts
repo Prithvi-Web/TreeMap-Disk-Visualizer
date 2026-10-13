@@ -599,7 +599,20 @@ export function gduRuleCause(o: GduRuleInput): RuleCause | null {
  * pre-landing review of 23 Sep 2026). Nor is a dry run's (`record: false`).
  */
 export function keepsScan(scan: Pick<ScanResult, 'engine'>): boolean {
-  return scan.engine !== 'ntfs-mft' && !unrecorded.has(scan);
+  return scan.engine !== 'ntfs-mft' && isRecorded(scan);
+}
+
+/**
+ * Whether a scan is one somebody made, rather than a dry run's (`record:
+ * false`). A dry run's scan is held in memory like any other while its
+ * candidates are read, and the scanned-root rule and sizes may use it — but
+ * it is nobody's scan to list: GET /api/scans offered an Autopilot Preview's
+ * scan to Compare and to the page's session restore, which reopened it on the
+ * next load as the person's own (C12 review), and the fleet sent it to peers
+ * as this machine's last scan.
+ */
+export function isRecorded(scan: object): boolean {
+  return !unrecorded.has(scan);
 }
 
 /**
