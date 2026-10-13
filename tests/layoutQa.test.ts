@@ -584,10 +584,13 @@ function sheetPx(v: string | undefined, what: string): number {
  * The page's treemapCanvasHeight in a window `H` px tall, with the map's wrap
  * starting `top` px down and a footer `footH` px tall, while the cart holds
  * something. The wrap's padding, the footer's top margin and the bottom room
- * <main> keeps for the cart pill are the stylesheet's own.
+ * <main> keeps for the cart pill are the stylesheet's own — but for the top
+ * padding while "Preview after" is up, which the page measures from its
+ * banner (--tm-preview-pad), given here as `previewPad`.
  */
-function mapWithCart(H: number, top: number, footH: number) {
+function mapWithCart(H: number, top: number, footH: number, previewPad?: number) {
   const pad = sheetPx(declsFor('#treemapWrap').get('padding'), "#treemapWrap's padding");
+  const padTop = previewPad ?? pad;
   const footGap = sheetPx(declsFor('.tm-foot').get('margin-top'), "the footer's top margin");
   const padB = sheetPx(declsFor('body:has(#cartDock.show) main').get('padding-bottom'), 'the room <main> keeps for the cart pill');
   const wrap = {
@@ -598,11 +601,11 @@ function mapWithCart(H: number, top: number, footH: number) {
   const height = runPageDecls<(w: unknown) => number>(['treemapCanvasHeight'], {
     window: { innerHeight: H },
     getComputedStyle: (el: unknown) => (el === wrap
-      ? { paddingTop: `${pad}px`, paddingBottom: `${pad}px` }
+      ? { paddingTop: `${padTop}px`, paddingBottom: `${pad}px` }
       : { marginTop: `${footGap}px`, paddingBottom: `${padB}px` }),
   }, 'treemapCanvasHeight')(wrap);
   // Where the footer's last line (the hint) ends, and where the room kept for the pill begins.
-  return { height, footEnd: top + pad + height + pad + footGap + footH, pillRoom: H - padB };
+  return { height, footEnd: top + padTop + height + pad + footGap + footH, pillRoom: H - padB };
 }
 
 test('at the desktop window\'s minimum the map gives up height so its footer stays above the cart pill (B36 remainder)', () => {
@@ -624,10 +627,22 @@ test('at the desktop window\'s minimum the map gives up height so its footer sta
     assert.ok(m.footEnd <= m.pillRoom,
       `${label}: the hint ends at y ${m.footEnd} under a ${m.height} px map; the room kept for the pill starts at y ${m.pillRoom}`);
   }
+  // QA D12 (third pass, shots/161 and 164): the same window with the preview
+  // pane open — a 402 px map — in "Preview after" with two scans (the time
+  // slider): the toolbar on four rows and the time-lapse bar on three start
+  // the wrap at y 293, the banner pads it by 127 px, and the hint takes two
+  // lines (a 69 px footer). The map kept a 200 px floor: the page grew to
+  // 787 px in a 700 px window and, unscrolled, the pill covered "10 GB+" and
+  // "Preview · 3.2 GB staged for the Trash".
+  const d12 = mapWithCart(700, 293, 69, 127);
+  assert.ok(d12.footEnd <= d12.pillRoom,
+    `1024×700, preview pane, Preview after, time slider: the hint ends at y ${d12.footEnd} under a ${d12.height} px map; the room kept for the pill starts at y ${d12.pillRoom}`);
   // The map still never collapses: in a window with no room left at all it
-  // keeps a usable floor, and the page scrolls to the footer instead.
+  // keeps a usable floor, and the page scrolls to the footer instead. The
+  // floor was 200 px; the state above leaves the map 113, so it is 96 now —
+  // two rows of labelled cells — and the desktop window's minimum fits.
   const tiny = mapWithCart(480, 250, 76);
-  assert.ok(tiny.height >= 200, `a window with no room left still draws a ${tiny.height} px map`);
+  assert.ok(tiny.height >= 96, `a window with no room left still draws a ${tiny.height} px map`);
 });
 
 /**

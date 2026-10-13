@@ -11467,9 +11467,14 @@ function reclaimCoverageNote() {
  * map kept its 360 and pushed the footer under the cart pill, hint and counts
  * with it, as it did at 1024×768 in Reclaim colour, whose legend wraps (QA
  * B36 re-check). The map gives way first now; the footer is what explains it.
+ * The floor then was 200 px, and the same window with the preview pane open
+ * (a 402 px map) in "Preview after" with the time slider up leaves 113: the
+ * toolbar on four rows, the time-lapse bar on three, the banner's 127 px and
+ * a two-line hint. The page grew to 787 px and the pill covered the legend
+ * and the status line (QA D12). It is 96 px — two rows of labelled cells.
  */
 function treemapCanvasHeight(wrap) {
-  const MIN_H = 200; // the floor, for a window with no room left (above)
+  const MIN_H = 96; // the floor, for a window with no room left (above)
   const top = wrap.getBoundingClientRect().top;
   // Called before the view is laid out (hidden tab): fall back to the floor.
   if (!(top > 0)) return 420;
