@@ -1197,6 +1197,106 @@ test('results are keyboard navigable and openable', () => {
   }
 });
 
+/**
+ * The page's global-search section, RUN against a few fake elements: the box,
+ * its results panel and wrap, a control elsewhere on the page. `viewControl`
+ * is what the page's activeViewControl answers (the first control of the view
+ * on screen, or null), `tab` the selected sidebar tab.
+ */
+function gsearchHarness(opts: { viewControl: boolean }) {
+  type El = {
+    id: string; hidden: boolean; disabled: boolean; isConnected: boolean; attrs: Record<string, string>; innerHTML: string;
+    listeners: Record<string, Array<(e: unknown) => void>>; kids: El[];
+    setAttribute(k: string, v: string): void; addEventListener(t: string, f: (e: unknown) => void): void;
+    focus(): void; blur(): void; select(): void; contains(n: unknown): boolean; getClientRects(): unknown[];
+    querySelectorAll(): El[]; classList: { contains(): boolean };
+  };
+  const doc: { active: El | null; body: El | null } = { active: null, body: null };
+  const mk = (id: string): El => {
+    const el: El = {
+      id, hidden: false, disabled: false, isConnected: true, attrs: {}, innerHTML: '', listeners: {}, kids: [],
+      setAttribute: (k, v) => { el.attrs[k] = v; },
+      addEventListener: (t, f) => { (el.listeners[t] ||= []).push(f); },
+      focus: () => { if (el.isConnected && !el.hidden) doc.active = el; },
+      blur: () => { if (doc.active === el) doc.active = doc.body; },
+      select: () => {},
+      contains: (n) => n === el || el.kids.some((k) => k.contains(n)),
+      getClientRects: () => (el.hidden || !el.isConnected ? [] : [{}]),
+      querySelectorAll: () => [],
+      classList: { contains: () => false },
+    };
+    return el;
+  };
+  const els: Record<string, El> = {};
+  for (const id of ['gsearch', 'gsearchResults', 'gsearchWrap', 'sideNav', 'pathInput', 'tmSearch']) els[id] = mk(id);
+  els.gsearchWrap.kids.push(els.gsearch, els.gsearchResults);
+  doc.body = mk('body');
+  const elsewhere = mk('dashRescan'); // a control on the page, outside the search
+  const viewControl = mk('viewFirstControl');
+  const tab = mk('tab-dashboard');
+  const src = INDEX.slice(INDEX.indexOf('/* ─────────────────────── Global search (A4)'), INDEX.indexOf('/* ───────────────────── Allocation diagnostic (A2)'));
+  assert.ok(src.length > 1000, 'the global-search section was found');
+  const deps: Record<string, unknown> = {
+    $: (id: string) => els[id] ?? assert.fail(`the search touched #${id}`),
+    document: {
+      get activeElement() { return doc.active; },
+      addEventListener: () => {},
+      querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : assert.fail(`unexpected query ${sel}`)),
+    },
+    activeViewControl: () => (opts.viewControl ? viewControl : null),
+    applySideNav: () => {}, api: async () => ({ hits: [] }), escapeHtml: String, formatBytes: String, formatCount: String,
+    chipFor: () => '', toast: () => {}, state: {}, setTimeout: () => 0, clearTimeout: () => {},
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(...keys, `'use strict'; ${src}`)(...keys.map((k) => deps[k]));
+  /** Focus moving into the box from `from` (null: from nowhere — the page, or "/" with nothing focused). */
+  const focusBox = (from: El | null) => {
+    if (from) from.focus();
+    els.gsearch.focus();
+    for (const f of els.gsearch.listeners.focus || []) f({ relatedTarget: from, target: els.gsearch });
+  };
+  const escape = () => {
+    const ev = { key: 'Escape', target: els.gsearch, prevented: false, stopped: false,
+      preventDefault() { ev.prevented = true; }, stopPropagation() { ev.stopped = true; } };
+    for (const f of els.gsearch.listeners.keydown || []) f(ev);
+    return ev;
+  };
+  return { els, doc, elsewhere, viewControl, tab, focusBox, escape };
+}
+
+test('Escape in the sidebar search gives focus back to where it came from — never to <body> (QA third pass D10)', () => {
+  // QA third pass D10: "Search all indexed files…", type "holiday", Escape —
+  // focus on <body>. The handler blurred the box on purpose, and a keyboard
+  // user was sent back to the top of the page.
+  const h = gsearchHarness({ viewControl: true });
+  h.focusBox(h.elsewhere);
+  h.els.gsearchResults.hidden = false; // results showing
+  const ev = h.escape();
+  assert.equal(h.els.gsearchResults.hidden, true, 'the results close');
+  assert.equal(h.doc.active, h.elsewhere, 'focus is back on the control it came from');
+  assert.equal(ev.stopped, true, 'and the key is the box\'s alone: the page\'s Escape does not also climb the map or close the cart');
+
+  // Summoned with "/" from nowhere: the view on screen takes focus.
+  const g = gsearchHarness({ viewControl: true });
+  g.focusBox(null);
+  g.escape();
+  assert.equal(g.doc.active, g.viewControl, 'the first control of the view on screen');
+
+  // The control it came from is gone (re-rendered, or in a view no longer shown).
+  const gone = gsearchHarness({ viewControl: true });
+  gone.focusBox(gone.elsewhere);
+  gone.elsewhere.isConnected = false;
+  gone.escape();
+  assert.equal(gone.doc.active, gone.viewControl, 'a control no longer in the page is not where focus goes');
+
+  // A view with nothing on screen to offer: its sidebar tab.
+  const bare = gsearchHarness({ viewControl: false });
+  bare.focusBox(null);
+  bare.escape();
+  assert.equal(bare.doc.active, bare.tab, 'the selected sidebar tab');
+});
+
 test('the keyboard shortcut works even when the sidebar is collapsed to the rail', () => {
   // Focusing a `display: none` element does nothing at all, silently — the
   // rail hides the input, so the shortcut must open the sidebar first.

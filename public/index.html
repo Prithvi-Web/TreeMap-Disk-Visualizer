@@ -35394,6 +35394,7 @@ const gsearch = {
   hits: [],
   selected: -1,
   open: false,
+  cameFrom: null,  // the control focused before the box was, for Escape to go back to (D10)
 };
 
 function gsearchClose() {
@@ -35402,6 +35403,23 @@ function gsearchClose() {
   const panel = $('gsearchResults');
   panel.hidden = true;
   $('gsearch').setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Escape leaves the box (QA third pass D10). It blurred it, and focus fell to
+ * <body>: a keyboard user started again from the top of the page. Focus goes
+ * back to the control it came from, while that is still on screen; else to
+ * the view on screen, or its sidebar tab when it has no control to offer —
+ * the door the cart and the Grid's selection bar use (QA B13).
+ */
+function gsearchLeave() {
+  gsearchClose();
+  const from = gsearch.cameFrom;
+  gsearch.cameFrom = null;
+  // On screen means painted: a control removed or hidden since has no client rects.
+  const usable = !!from && !from.disabled && !$('gsearchWrap').contains(from) && from.getClientRects().length > 0;
+  const target = usable ? from : activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  if (target) target.focus({ preventScroll: true });
 }
 
 /**
@@ -35578,7 +35596,9 @@ $('gsearch').addEventListener('input', (e) => {
 $('gsearch').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown') { e.preventDefault(); gsearchHighlight(1); return; }
   if (e.key === 'ArrowUp') { e.preventDefault(); gsearchHighlight(-1); return; }
-  if (e.key === 'Escape') { e.preventDefault(); gsearchClose(); e.target.blur(); return; }
+  // One press, one meaning: let through, the page's own Escape also climbed
+  // the map or closed the cart behind the box.
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); gsearchLeave(); return; }
   if (e.key === 'Enter') {
     const options = [...$('gsearchResults').querySelectorAll('.gsearch-hit')];
     const pick = options[gsearch.selected >= 0 ? gsearch.selected : 0];
@@ -35586,7 +35606,12 @@ $('gsearch').addEventListener('keydown', (e) => {
   }
 });
 
-$('gsearch').addEventListener('focus', () => { if (gsearch.hits.length) gsearchOpen(); });
+$('gsearch').addEventListener('focus', (e) => {
+  // Where focus came from, for Escape (D10). A move back from the box's own
+  // results keeps what it came from before them.
+  if (!(e.relatedTarget && $('gsearchWrap').contains(e.relatedTarget))) gsearch.cameFrom = e.relatedTarget || null;
+  if (gsearch.hits.length) gsearchOpen();
+});
 document.addEventListener('click', (e) => {
   if (gsearch.open && !$('gsearchWrap').contains(e.target)) gsearchClose();
 });
