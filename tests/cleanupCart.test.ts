@@ -494,7 +494,9 @@ test('after a commit, the cart says where the files went, not that space was rec
   const html = summary({ trashed: ['/c/a', '/c/b'], bytesFreed: 6_500_000_000, runId: 'r1' });
   assert.doesNotMatch(html, /recovered/i, `nothing is recovered by a move to the Trash: ${html}`);
   assert.match(html, /Moved <b>2<\/b> items \(<b>6500000000 B<\/b>\) to the Trash/, html);
-  assert.match(html, /comes back when you empty the Trash, less what the Time Capsule keeps so this can be undone/, html);
+  assert.match(html, /Up to that much space comes back, but only when you empty the Trash\./, html);
+  assert.match(html, /The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it\./, html);
   const bare = summary({ trashed: ['/c/a'], bytesFreed: 10, capsuleUnavailable: 'No capsule in a portable session.' });
-  assert.doesNotMatch(bare, /less what the Time Capsule keeps/, 'no capsule copy is mentioned when none was made');
+  assert.match(bare, /Up to that much space comes back, but only when you empty the Trash\./, 'with no capsule copy, the space still comes back only when the Trash is emptied');
+  assert.doesNotMatch(bare, /Time Capsule also keeps a copy/, 'no capsule copy is mentioned when none was made');
 });

@@ -765,7 +765,7 @@ test('a cart commit stopped by a later batch never says nothing was deleted whil
   assert.match(nothing.toasts.join(' | '), /Nothing was deleted/, 'where nothing was done or may have been, it still says so');
 });
 
-test('the result summary never calls a move to the Trash "recovered": the space comes back once the Trash is emptied and the Time Capsule lets its copy go (final review F1.14)', () => {
+test('the result summary never calls a move to the Trash "recovered": the space comes back only when the Trash is emptied, and the Time Capsule\'s copy takes up space until the Time Capsule removes it (final review F1.14)', () => {
   const src = slice('function cartCommitSummary', '/** Restore a whole committed run from the Time Capsule');
   const els: Record<string, { innerHTML: string; hidden: boolean; classList: { add: () => void } }> = {};
   const el = (id: string): { innerHTML: string; hidden: boolean; classList: { add: () => void } } =>
@@ -777,7 +777,8 @@ test('the result summary never calls a move to the Trash "recovered": the space 
   const text = els.confirmText.innerHTML.replace(/<[^>]+>/g, '');
   assert.doesNotMatch(text, /recovered|freed/i, `nothing is freed by a move to the Trash with a copy kept: "${text}"`);
   assert.match(text, /Moved 3 items \(5 GB\) to the Trash/, text);
-  assert.match(text, /space comes back once the Trash is emptied and the Time Capsule/, text);
+  assert.match(text, /Up to that much space comes back, but only when you empty the Trash\./, text);
+  assert.match(text, /The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it\./, text);
 });
 
 test('items the capsule could not protect are shown as left behind, never as deleted', () => {

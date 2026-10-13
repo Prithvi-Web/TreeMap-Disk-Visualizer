@@ -546,9 +546,11 @@ function cartCommitSummary(result) {
   // Capsule keeps a copy of each for the undo below.
   let html = trashed.length
     // Nothing is freed yet (final review F1.14): the originals are in the Trash and a whole copy of
-    // each was just written to the Time Capsule, which keeps it after the Trash is emptied.
+    // each was just written to the Time Capsule, which keeps it after the Trash is emptied, until the
+    // copy expires or is dropped to make room: until then the copy takes space of its own.
     ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} (<b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b>) to the Trash. ` +
-      `Up to that much comes back when you empty the Trash${result.capsuleUnavailable ? '.' : ', less what the Time Capsule keeps so this can be undone; all of that space comes back once the Trash is emptied and the Time Capsule lets its copy go.'}`
+      'Up to that much space comes back, but only when you empty the Trash.' +
+      (result.capsuleUnavailable ? '' : ' The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.')
     : unverified.length ? `<b>Nothing was confirmed as moved to the Trash.</b>` : `<b>Nothing was deleted.</b>`;
   if (result.capsuleUnavailable) {
     html += `<div class="cart-mf-note">${escapeHtml(result.capsuleUnavailable)}</div>`;
