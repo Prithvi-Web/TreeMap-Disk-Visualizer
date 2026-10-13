@@ -33328,7 +33328,12 @@ function renderCompare(r) {
     if (coverageExplains(en, r.rules || null)) { ruled++; continue; }
     counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
   }
-  const up = r.totalDelta >= 0;
+  const up = r.totalDelta > 0;
+  // No change is said as none, as Trends says it — not "Total grew by 0 B"
+  // in the growth colour (C07 review F1.2).
+  const total = r.totalDelta === 0 ? 'Total did not change'
+    : `Total ${up ? 'grew' : 'shrank'} by
+        <b class="cmp-total" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>`;
   const maxD = Math.abs(r.entries[0]?.delta ?? 0) || 1;
   const splitCard = r.splitRoot ? `
     <div class="card glass" id="cmpSplitCard">
@@ -33347,8 +33352,7 @@ function renderCompare(r) {
   $('cmpBody').innerHTML = splitCard + `
     <div class="card glass">
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${formatWhen(r.whenA)} → ${formatWhen(r.whenB)}${r.deep ? '' : ' · top-level folders only'}</h2>
-      <div class="muted num" style="margin-bottom:12px;">Total ${up ? 'grew' : 'shrank'} by
-        <b class="cmp-total" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>
+      <div class="muted num" style="margin-bottom:12px;">${total}
         &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${
         ruled ? ` · ${ruled} changed by your “Don’t scan” rules` : ''}${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
       ${r.rules ? `<div class="muted" style="margin:-6px 0 12px;">${icon('alert', 13)} Your “Don’t scan” rules changed between these two scans, so part of this difference is what was scanned, not what is on disk.</div>` : ''}
@@ -33360,7 +33364,7 @@ function renderCompare(r) {
   // Animated counts: the from-zero roll the quick stats use, on the totals
   // just computed — and the same four counts again as discrete square
   // stacks, because a count is a number of whole things.
-  countUp($('cmpBody').querySelector('.cmp-total'), Math.abs(r.totalDelta), formatBytes);
+  if (r.totalDelta !== 0) countUp($('cmpBody').querySelector('.cmp-total'), Math.abs(r.totalDelta), formatBytes);
   $('cmpBody').querySelectorAll('.cmp-ct').forEach(el => countUp(el, Number(el.dataset.n)));
   if (r.entries.length) {
     cmpCountsHandle = FxCharts.barSquares($('cmpCounts'), {

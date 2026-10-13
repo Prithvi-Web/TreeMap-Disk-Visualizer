@@ -243,3 +243,48 @@ test('Trends’ last-change line says the total did not change when it did not �
   const shrank = await head(-3_000_000);
   assert.match(shrank, /total shrank by\s*<b class="num" style="color:var\(--ok\)">3000000 B<\/b>/, `shrink: ${shrank}`);
 });
+
+test('Compare says the total did not change when it did not — not "Total grew by 0 B" in the growth colour (C07 review F1.2, F1.10)', () => {
+  // The C07 wording reached Trends but not History › Compare: two scans of an
+  // unchanged folder, or a pair whose growth and shrinkage cancel, read
+  // "Total grew by 0 B" in red above "No differences — nothing changed".
+  const same = browserWith([{ snap: 'a', patterns: [] }, { snap: 'b', patterns: [] }]);
+  const head = (totalDelta: number, entries: unknown[]) => {
+    type Body = { innerHTML: string; querySelector: (sel: string) => unknown; querySelectorAll: () => unknown[] };
+    const els: Record<string, Body> = {};
+    const $ = (id: string) => (els[id] ??= {
+      innerHTML: '', querySelectorAll: () => [],
+      // the figure the total rolls in, when the card has one
+      querySelector: (sel: string) => (sel === '.cmp-total' && els[id].innerHTML.includes('class="cmp-total"') ? { figure: true } : null),
+    });
+    const rolled: number[] = [];
+    const render = load<(r: unknown) => void>(['renderCompare', 'cmpCountsDrop', 'deltaRow'], {
+      ...base(same), $,
+      formatWhen: (t: number) => `t${t}`, formatBytes: (n: number) => `${n} B`, formatCount: String, icon: () => '',
+      escapeHtml: (s: unknown) => String(s), chipFor: () => '', fxBarsIn: () => {},
+      // the page's countUp reads el.dataset: handed no element, it throws
+      countUp: (el: unknown, n: number) => { assert.ok(el, 'countUp is handed an element to roll'); rolled.push(n); },
+      FxCharts: { barSquares: () => ({ destroy() {} }) }, initCmpSplit: () => {}, wireSnapshotActions: () => {},
+    }, '(r) => renderCompare(r)', 'let cmpSplit = null; let cmpCountsHandle = null;');
+    render({ entries, totalDelta, truncated: false, deep: true, whenA: 1, whenB: 2 });
+    const html = els.cmpBody!.innerHTML;
+    const at = html.indexOf('Total ');
+    return { html, line: html.slice(at, html.indexOf('&nbsp;', at)).trim(), rolled };
+  };
+  const unchanged = head(0, []);
+  assert.equal(unchanged.line, 'Total did not change', `nothing changed, and it says so: ${unchanged.line}`);
+  assert.match(unchanged.html, /No differences/, 'control: the card says there are no differences');
+  assert.deepEqual(unchanged.rolled, [], 'no amount is rolled for a total that did not move');
+  const cancelling = head(0, [
+    { name: 'A', path: '/c/A', type: 'dir', sizeA: 10, sizeB: 20, delta: 10 },
+    { name: 'B', path: '/c/B', type: 'dir', sizeA: 20, sizeB: 10, delta: -10 },
+  ]);
+  assert.equal(cancelling.line, 'Total did not change', `growth and shrinkage that cancel: ${cancelling.line}`);
+  assert.doesNotMatch(unchanged.line + cancelling.line, /grew|shrank|#ff6b61|var\(--ok\)/, 'no growth (or shrink) word or colour for a change of nothing');
+  // Controls: a real change keeps its word, amount, colour and roll.
+  const grew = head(5_000_000, []);
+  assert.match(grew.line, /^Total grew by\s*<b class="cmp-total" style="color:#ff6b61">5000000 B<\/b>$/, `growth: ${grew.line}`);
+  assert.deepEqual(grew.rolled, [5_000_000], 'control: a total that moved rolls its amount');
+  const shrank = head(-3_000_000, []);
+  assert.match(shrank.line, /^Total shrank by\s*<b class="cmp-total" style="color:var\(--ok\)">3000000 B<\/b>$/, `shrink: ${shrank.line}`);
+});
