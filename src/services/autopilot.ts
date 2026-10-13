@@ -137,10 +137,16 @@ function clampPositive(value: unknown, fallback: number, min: number, max: numbe
   return Math.min(max, Math.max(min, Math.round(n)));
 }
 
+/**
+ * A limit in whole bytes, or none. Judged once rounded, as the match's age and
+ * size are: a figure under half a byte rounds to 0, and 0 is no limit, as a 0
+ * sent has always been. Stored, a 0 was a real limit to the engine (nothing
+ * fits under it) but no limit to the editor, which opens it blank, so an
+ * untouched Save widened it to none (review F3.1).
+ */
 function optionalBytes(value: unknown): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.round(n);
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /**

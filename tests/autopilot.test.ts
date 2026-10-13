@@ -159,6 +159,27 @@ test('beside a real rule, an age or a size that rounds to nothing is left out, n
   assert.deepEqual(misstored, [], 'the figure that rounds away is left out beside any real rule');
 });
 
+test('a limit that rounds to nothing is no limit, as a 0 is - never stored as a 0 the editor opens blank and saves as no limit', () => {
+  // A limit is kept in whole bytes, and it was judged before it was rounded,
+  // so 0.4 was stored as 0. The engine reads a stored 0 as a real limit -
+  // nothing fits under it - while the policy card leaves it off and the
+  // editor opens its box blank, so an untouched Save sent null and widened it
+  // to no limit at all, keeping the approval (review F3.1). Judged once
+  // rounded, a figure under half a byte is no limit, as a 0 sent always was,
+  // and half a byte or more is a one-byte limit.
+  const tmp = os.tmpdir();
+  const fields = ['maxBytesPerRun', 'maxBytesPerWeek', 'requireConfirmationAbove'] as const;
+  const sentAndStored: Array<[number, number | null]> = [[0.4, null], [0, null], [0.5, 1]];
+  const misstored: string[] = [];
+  for (const field of fields) {
+    for (const [sent, want] of sentAndStored) {
+      const got = normalizePolicy({ path: tmp, match: { kind: 'custom', exts: ['tmp'] }, [field]: sent })[field];
+      if (got !== want) misstored.push(`${field} ${sent} was stored as ${got}, not ${want}`);
+    }
+  }
+  assert.deepEqual(misstored, [], 'every limit is stored as a whole number of bytes above 0, or as no limit');
+});
+
 test('PUT /api/autopilot/policies refuses an age that rounds to nothing, as it refuses an empty rule', async () => {
   const tmp = os.tmpdir();
   try {
