@@ -70,6 +70,28 @@ function layoutGrid(items) {
   if (!same) state.grid.anchor = null;
 }
 
+/* A re-flow of the same list into a new width keeps the Grid's place (review
+   F1.8). The preview pane narrows the page on the very click that opens it
+   (QA C04), and the sidebar folds, and a window resizes: rows multiply or
+   merge and every tile's y moves, while nothing moved the scroller, so the
+   tile just clicked dropped out of view. The tile kept in place is the
+   anchor — the one clicked last — if any of it is in view, else the first
+   tile in view; never an anchor scrolled away, which would jump the Grid. */
+function gridScrollAnchor() {
+  const layout = state.grid.layout || [];
+  const top = gridScroll.scrollTop, bottom = top + gridScroll.clientHeight;
+  const inView = (c) => !!c && c.y + c.side > top && c.y < bottom;
+  const a = state.grid.anchor;
+  const i = a !== null && inView(layout[a]) ? a : layout.findIndex(inView);
+  return i === -1 ? null : { i, path: layout[i].it.path, offset: layout[i].y - top };
+}
+/** Put that tile back at its offset — only where the same file holds the same place, so a new folder, order or filter leaves the scroller alone. */
+function gridScrollKeep(keep) {
+  const c = keep && state.grid.layout[keep.i];
+  if (!c || c.it.path !== keep.path) return;
+  gridScroll.scrollTop = Math.max(0, c.y - keep.offset);
+}
+
 let gridSeq = 0;
 async function renderGrid() {
   // This folder's children may have been pruned out of the tree we were sent.
@@ -102,8 +124,10 @@ async function renderGrid() {
   }
 
   const items = gridItems();
+  const keep = gridScrollAnchor();
   layoutGrid(items);
   gridInner.style.height = state.grid.totalH + 'px';
+  gridScrollKeep(keep);
   state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
   renderCrumbs($('gridCrumbs'), state.grid.path, (p) => gridNavigate(p));

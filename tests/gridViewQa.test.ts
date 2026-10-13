@@ -535,6 +535,61 @@ test('Clear never scrolls the grid: focus goes to a tile that is on screen, with
   assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'without scrolling');
 });
 
+/* ══════════════ review F1.8 — a re-flow keeps the Grid's place ══════════════ */
+
+test('a re-flow into a new width keeps the tile just clicked where it was on screen — the preview pane opening on its click, and closing (review F1.8)', async () => {
+  // The pane narrows the page (QA C04) on the plain click that opens it, and
+  // the Grid re-flows into the narrower column: rows multiply and every
+  // tile's y grows. Nothing moved the scroller, so in a Grid scrolled past
+  // its first screen the tile just clicked dropped out of view.
+  const g = gridHarness();
+  tallPlant(g); // 256 px tiles, four to a 1200 px row, a row every 268 px
+  g.els.gridScroll.clientHeight = 700;
+  await g.renderGrid();
+  g.els.gridScroll.scrollTop = 2800; // rows 10–13 on screen
+  g.onCellClick({}, 45); // a plain click on a file: it is selected, and the pane opens
+  const fromTop = (h: Grid, i: number) => h.state.grid.layout[i].y - h.els.gridScroll.scrollTop;
+  const was = fromTop(g, 45);
+  assert.ok(was >= 0 && was + 256 <= 700, `control: tile 45 is on screen, ${was} px from the top`);
+  g.els.gridScroll.clientWidth = 1220 - 330; // the pane took its width…
+  await g.renderGrid(); // …and the resize it replays re-flows the Grid
+  assert.ok(g.state.grid.layout[45].y > 2948, 'control: three to a row now — the tile really moved down the grid');
+  assert.equal(fromTop(g, 45), was, 'the clicked tile is where it was on screen');
+  g.els.gridScroll.clientWidth = 1220; // the pane closes
+  await g.renderGrid();
+  assert.equal(fromTop(g, 45), was, 'and stays there as the Grid widens again');
+
+  // The anchor scrolled out of view: the first tile in view keeps its place
+  // (a sidebar fold, a window resize), and the off-screen anchor is not pulled in.
+  const h = gridHarness();
+  tallPlant(h);
+  h.els.gridScroll.clientHeight = 700;
+  await h.renderGrid();
+  h.onCellClick({ metaKey: true }, 2); // the anchor, on the first row
+  h.els.gridScroll.scrollTop = 2800; // then on down: tile 40 (y 2680–2936) is the first in view
+  const first = fromTop(h, 40);
+  h.els.gridScroll.clientWidth = 890;
+  await h.renderGrid();
+  assert.equal(fromTop(h, 40), first, 'the first tile in view keeps its place, partly above the top as it was');
+
+  // A new order is not a re-flow: another file at that position, and the
+  // scroller is left where it was, as before.
+  const s = gridHarness();
+  const kids: Node[] = [];
+  for (let i = 0; i < 400; i++) kids.push(file('/r', `Clip${i}.mov`, i % 2 ? 10 : 1000)); // big and small, alternating
+  s.state.root!.children = kids;
+  for (const k of kids) s.state.pathIndex.set(k.path, k);
+  s.els.gridScroll.clientHeight = 700;
+  await s.renderGrid();
+  s.els.gridScroll.scrollTop = 2800;
+  const before = s.state.grid.layout[40];
+  s.state.grid.sort = 'name';
+  await s.renderGrid();
+  assert.ok(s.state.grid.layout[40].it.path !== before.it.path && s.state.grid.layout[40].y !== before.y,
+    'control: by name, another file holds position 40, at another height');
+  assert.equal(s.els.gridScroll.scrollTop, 2800, 'the scroller is left where it was');
+});
+
 test('with the anchor gone, Clear hands focus to the first tile on screen; with no tiles at all, to the filter box (B13 review F1.6)', async () => {
   // A filter keystroke re-lays the grid, and one that leaves another file (or
   // none) at the anchor's position drops the anchor, while the selection and
