@@ -874,7 +874,10 @@ read-what-you-saw) permission to act.
   offload planning, and for an offload restore each record's shape — the
   records the real run would refuse are listed in `refused[]` with their
   reasons), so "dry run succeeded" genuinely means "the real run
-  would act". **Always dry-run, show the user, then act.**
+  would act". It changes nothing persistent but its own line in the audit
+  log: `POST /api/autopilot/simulate`, and an Autopilot run that can only
+  preview, scan the policy's folder without saving a history snapshot or the
+  fast-rescan cache. **Always dry-run, show the user, then act.**
 - **Policy.** The human can create `agent-policy.json` in the app-data
   directory (`GET /api/policy` shows the resolved policy and the file path):
   ```json

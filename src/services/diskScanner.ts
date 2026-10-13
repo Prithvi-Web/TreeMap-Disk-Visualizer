@@ -595,11 +595,18 @@ export function gduRuleCause(o: GduRuleInput): RuleCause | null {
  * to the next unelevated rescan, the history would set it beside ordinary
  * scans as growth that is only what this user cannot list, and both would
  * hold it on disk after a yes given "for this one scan only" (the
- * pre-landing review of 23 Sep 2026).
+ * pre-landing review of 23 Sep 2026). Nor is a dry run's (`record: false`).
  */
 export function keepsScan(scan: Pick<ScanResult, 'engine'>): boolean {
-  return scan.engine !== 'ntfs-mft';
+  return scan.engine !== 'ntfs-mft' && !unrecorded.has(scan);
 }
+
+/**
+ * The scans started with `record: false` (`ScanOptions`): a dry run's, which
+ * must change nothing persistent (browser re-check C12). Beside the record,
+ * not on it, so no response that serialises a scan's fields changes shape.
+ */
+const unrecorded = new WeakSet<object>();
 
 function settleComplete(scan: ScanResult, store: ScanStore): void {
   // Every engine awaits one last look at the root after its cancellation
@@ -660,6 +667,14 @@ export interface ScanOptions {
    * is, as every root link was before.
    */
   followLinkRoot?: boolean;
+  /**
+   * Keep the finished scan in the fast-rescan cache and the snapshot history —
+   * true unless said otherwise. A dry run says otherwise (browser re-check C12):
+   * an Autopilot Preview scanned its folder and saved a snapshot, and the first
+   * real scan on a fresh install then said "Nothing changed since your last
+   * scan moments ago", with the forecast and Trends counting the preview.
+   */
+  record?: boolean;
 }
 
 /** The folder a scan walks, and the link it was given as, when it was given one (D78). */
@@ -889,6 +904,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
     boundary,
   };
   defineRootAccessor(scan);
+  if (opts.record === false) unrecorded.add(scan);
   scans.set(scan.scanId, scan);
 
   /** Why each faster engine did not run, in order — the clauses of a legacy engine's reason. */

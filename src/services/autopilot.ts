@@ -599,6 +599,7 @@ function waitForScan(scanId: string): Promise<void> {
  */
 async function resolveCandidates(
   policy: AutopilotPolicy,
+  scan: { record: boolean },
 ): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
   assertSavedPolicyPath(policy.path);
   // A policy over app-data would otherwise select what a crash left in the
@@ -608,7 +609,7 @@ async function resolveCandidates(
   const mayBeInSpill = spillCandidateTest(policy.path);
   const matched: Candidate[] = [];
   let inSpill = 0;
-  const { candidates: raw, leftAlone: byRule } = await matchCandidates(policy);
+  const { candidates: raw, leftAlone: byRule } = await matchCandidates(policy, scan);
   for (const c of raw) {
     if (mayBeInSpill(c.path) && spillCheck(c.path)) inSpill++;
     else matched.push(c);
@@ -697,10 +698,14 @@ export function assertSavedPolicyPath(p: unknown): void {
  * Scan the policy's folder and resolve its match into raw candidates, and what it matched but leaves
  * alone by rule: an advice-only group's items, each said with the group's own advice (final review F1.11).
  */
-async function matchCandidates(policy: AutopilotPolicy): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
+async function matchCandidates(
+  policy: AutopilotPolicy,
+  opts: { record: boolean },
+): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
   // A folder saved as a link is scanned as the link itself, matching nothing,
   // as before QA D78: every check of the folder was made of that spelling.
-  const scan = await startScan(policy.path, { followLinkRoot: false });
+  // A run that can only preview keeps nothing of its scan (C12, `record`).
+  const scan = await startScan(policy.path, { followLinkRoot: false, record: opts.record });
   await waitForScan(scan.scanId);
   const done = getScan(scan.scanId);
   if (!done || done.status !== 'complete' || (!done.store && !done.root)) {
@@ -784,7 +789,8 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
   const agentPolicy = await getAgentPolicy();
   assertScanAllowed(agentPolicy, policy.path);
 
-  const { candidates: resolved, leftAlone } = await resolveCandidates(policy);
+  // A preview changes nothing persistent: its scan saves no snapshot or cache (C12).
+  const { candidates: resolved, leftAlone } = await resolveCandidates(policy, { record: false });
   const skipped: { path: string; reason: string }[] = [];
   const permitted: Candidate[] = [];
   for (const candidate of resolved) {
@@ -918,7 +924,10 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     // those paths need protecting from, so it binds here too.
     const agentPolicy = await getAgentPolicy();
     assertScanAllowed(agentPolicy, policy.path);
-    const resolvedRun = await resolveCandidates(policy);
+    // A run that can only preview — asked to, set to, or never approved — is
+    // a dry run, and keeps nothing of its scan (C12). One that may delete
+    // keeps it as any scan does.
+    const resolvedRun = await resolveCandidates(policy, { record: !(opts.dryRun || policy.dryRunFirst || !policy.approvedAt) });
     candidates = resolvedRun.candidates;
     // Noted-folder and spill-folder skips land in the run record for the same
     // reason the agent-policy ones below do: visible, never quietly dropped.
