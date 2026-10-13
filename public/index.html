@@ -9875,7 +9875,10 @@ function renderDiskNotes() {
       // row said "index — scanned 106,664 items").
       const label = { native: 'Native engine', 'gdu-turbo': 'gdu', 'turbo-walker': 'Built-in walker', 'ntfs-mft': 'NTFS turbo', walker: 'Built-in walker', cloud: 'Cloud metadata listing', index: 'Saved index' }[s.engine] || s.engine;
       const verb = s.engine === 'index' ? 'read' : 'scanned';
-      const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
+      // A rate over less than a second is mostly the scan's setup, not its
+      // speed: one file in a millisecond read "1,000/s" (C10).
+      const RATE_MIN_MS = 1000;
+      const rate = s.durationMs >= RATE_MIN_MS ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} ${s.scanned === 1 ? 'item' : 'items'} in ${(s.durationMs / 1000).toFixed(1)} s` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
@@ -9885,15 +9888,25 @@ function renderDiskNotes() {
       // refused as an empty one (missingGigabytes.ts), and every scan carries
       // ioThreads, so the I/O-thread hint is the walker's alone.
       const walker = s.engine === 'walker' || s.engine === 'turbo-walker';
+      // Why the walker ran, on the line itself rather than only on hover (C10).
+      // When a rule chose it — a "don't scan" pattern, the setting, a single
+      // file — that rule is the first clause of the engine's own reason. When
+      // a faster engine failed, its sentence is a developer's (a module path,
+      // a rebuild command): the line says so plainly and the hover keeps it.
+      const WALKER_RAN = 'the built-in walker ran: ';
+      const reason = typeof s.engineReason === 'string' ? s.engineReason : '';
+      const ruleAt = reason.indexOf(WALKER_RAN);
+      const why = !walker ? ''
+        : s.fallbackReason ? 'Used because a faster engine could not run on this computer — point at the line above for the details.'
+          : ruleAt === -1 ? '' : `Used because ${reason.slice(ruleAt + WALKER_RAN.length).split('; ')[0]}.`;
+      const reads = walker && s.ioThreads > 4 ? `It reads up to ${s.ioThreads} files and folders at once, which keeps the disk busy.` : '';
       $('engineHint').textContent = s.engine === 'native'
         ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'
         : s.engine === 'gdu-turbo'
           ? 'A bundled gdu process per top-level folder — faster than the built-in walker, but a folder it may not open shows as empty instead of being counted.'
           : s.engine === 'ntfs-mft'
             ? "Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself."
-            : walker && s.ioThreads > 4
-              ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
-              : '';
+            : [why, reads].filter(Boolean).join(' ');
       en.hidden = false;
     } else en.hidden = true;
   }

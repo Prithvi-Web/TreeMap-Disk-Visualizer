@@ -62,7 +62,8 @@ test('a "don\'t scan" pattern is said once, though it kept two engines off (D75)
     const scan = await scanOf(root, 'auto');
     assert.ok(scan.engine === 'walker' || scan.engine === 'turbo-walker', scan.engine);
     assert.equal(times(scan.engineReason, /"don't scan" pattern/), 1, scan.engineReason);
-    assert.match(scan.engineReason ?? '', /the glob dialect that honours them lives in the built-in walker/, 'in the words of the first engine it kept off');
+    assert.match(scan.engineReason ?? '', /the scan has 1 "don't scan" pattern, and only the built-in walker can skip what a pattern names/, 'in the words of the first engine it kept off');
+    assert.doesNotMatch(scan.engineReason ?? '', /glob|dialect/, 'in plain words: the Dashboard shows it (C10)');
   } finally {
     await updateSettings({ ignore: [] });
   }

@@ -132,7 +132,7 @@ function describe(err: unknown): string {
  * a scan the walker produces, and says so when it was asked for and not used.
  */
 export interface EligibilityInput {
-  /** "Don't scan" patterns in force: the glob dialect lives in the walker. */
+  /** "Don't scan" patterns in force: only the built-in walker applies them. */
   ignoreCount: number;
   /** The Scan engine setting. */
   forced: EngineSetting;
@@ -172,6 +172,16 @@ export function nativeRuleCause(input: Omit<EligibilityInput, 'native'>): RuleCa
   return null;
 }
 
+/**
+ * Why "don't scan" patterns keep a scan off a faster engine, in the words the
+ * Dashboard shows on the engine line (C10): it said "the glob dialect that
+ * honours them lives in the built-in walker". One sentence for every engine
+ * the patterns keep off, so it is said once (QA D75).
+ */
+export function ignorePatternClause(n: number): string {
+  return `the scan has ${n} "don't scan" pattern${n === 1 ? '' : 's'}, and only the built-in walker can skip what a pattern names`;
+}
+
 /** The rules that keep a scan off the native engine before any module is consulted, or null. Pure. */
 export function nativeRule(input: Omit<EligibilityInput, 'native'>): string | null {
   if (input.forced === 'gdu') return 'the Scan engine setting asks for gdu';
@@ -180,10 +190,8 @@ export function nativeRule(input: Omit<EligibilityInput, 'native'>): string | nu
   switch (nativeRuleCause(input)) {
     case 'singleFile':
       return `${asked}the root is a single file, which the built-in walker records without a listing`;
-    case 'ignore': {
-      const n = input.ignoreCount;
-      return `${asked}the scan has ${n} "don't scan" pattern${n === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`;
-    }
+    case 'ignore':
+      return `${asked}${ignorePatternClause(input.ignoreCount)}`;
     default:
       return null;
   }

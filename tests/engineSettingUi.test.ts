@@ -382,10 +382,40 @@ test('the engine row names each engine as Settings names it, and each hint is tr
   assert.doesNotMatch(mft, /I\/O threads/, 'an NTFS turbo scan does not take the walker\'s hint');
   assert.match(mft, /^Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself\.$/);
 
-  assert.equal(runEngineRow(stats('cloud')).engineHint.textContent, '', 'a cloud listing reads no disk, so no I/O-thread claim');
-  assert.match(runEngineRow(stats('turbo-walker')).engineHint.textContent, /^8 parallel I\/O threads keep the disk saturated/, 'the walker keeps its own hint');
-  assert.match(runEngineRow(stats('walker', 16)).engineHint.textContent, /^16 parallel I\/O threads/);
+  assert.equal(runEngineRow(stats('cloud')).engineHint.textContent, '', 'a cloud listing reads no disk, so no claim about reading it');
+  assert.equal(runEngineRow(stats('turbo-walker')).engineHint.textContent, 'It reads up to 8 files and folders at once, which keeps the disk busy.', 'the walker keeps its own hint');
+  assert.equal(runEngineRow(stats('walker', 16)).engineHint.textContent, 'It reads up to 16 files and folders at once, which keeps the disk busy.');
   assert.equal(runEngineRow(stats('walker', 4)).engineHint.textContent, '', 'and says nothing at the default pool');
+});
+
+test('C10: the walker\'s line says why it ran, in plain words, on the line itself — not only on hover', () => {
+  // The Dashboard said "16 parallel I/O threads keep the disk saturated
+  // instead of Node's default 4", and the reason the walker ran at all - a
+  // Don't-scan rule - only in the hover title, with "glob dialect" in it.
+  const walker = (over: Record<string, unknown>) => runEngineRow({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 16, fallbackReason: null, ...over });
+  const rule = walker({ engineReason: 'the built-in walker ran: the scan has 1 "don\'t scan" pattern, and only the built-in walker can skip what a pattern names; CPU seconds are not measured per scan by this engine' });
+  assert.equal(rule.engineHint.textContent,
+    'Used because the scan has 1 "don\'t scan" pattern, and only the built-in walker can skip what a pattern names. It reads up to 16 files and folders at once, which keeps the disk busy.');
+  // A root given as a link is told first (D78); the reason after it is the same.
+  const linked = walker({ ioThreads: 4, engineReason: '/tmp is a link to /private/tmp; the built-in walker ran: the root is a single file, which the built-in walker records without a listing; CPU seconds are not measured per scan by this engine' });
+  assert.equal(linked.engineHint.textContent, 'Used because the root is a single file, which the built-in walker records without a listing.');
+  // A faster engine that FAILED: its reason is a developer's (a module path, a rebuild command), so the line says it plainly and the hover keeps the detail.
+  const fell = walker({ ioThreads: 4, engineReason: 'the built-in walker ran: the native module is not loaded: no native module at /x/treemap_core.node for darwin-arm64; the legacy engines run instead; CPU seconds are not measured per scan by this engine', fallbackReason: 'the native module is not loaded: no native module at /x/treemap_core.node for darwin-arm64; the legacy engines run instead' });
+  assert.equal(fell.engineHint.textContent, 'Used because a faster engine could not run on this computer — point at the line above for the details.');
+  assert.match(fell.engineText.title, /no native module/, 'which the hover still gives');
+  for (const row of [rule, linked, fell]) {
+    assert.doesNotMatch(row.engineHint.textContent + row.engineText.textContent, /Node|glob|I\/O|saturat|thread/i, 'no developer words on the line');
+  }
+  assert.equal(walker({}).engineHint.textContent, 'It reads up to 16 files and folders at once, which keeps the disk busy.', 'an older stats shape gives no reason, and none is invented');
+});
+
+test('C10: a scan too short to measure a speed by states no speed — one file is not "1,000/s"', () => {
+  const one = runEngineRow({ engine: 'native', durationMs: 1, scanned: 1, ioThreads: 8 });
+  assert.equal(one.engineText.textContent, 'Native engine — scanned 1 item in 0.0 s', `no rate: ${one.engineText.textContent}`);
+  const quick = runEngineRow({ engine: 'native', durationMs: 400, scanned: 2400, ioThreads: 8 });
+  assert.doesNotMatch(quick.engineText.textContent, /\/s/, 'under a second the rate is mostly the scan\'s setup');
+  const real = runEngineRow({ engine: 'native', durationMs: 1000, scanned: 2400, ioThreads: 8 });
+  assert.match(real.engineText.textContent, / · 2,400\/s$/, 'from a second up it is the engine\'s speed');
 });
 
 test('the Ignore list says that a pattern that skips folders sends every scan to the built-in walker', () => {

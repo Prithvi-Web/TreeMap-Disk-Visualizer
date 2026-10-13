@@ -34,7 +34,7 @@ import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, 
 import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
-import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, nativeRuleCause, rootName, runMftWalk, nativeStorageFor, runNativeWalk, type RuleCause } from './scan/nativeEngine';
+import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, ignorePatternClause, mftOfferedOn, nativeRuleCause, rootName, runMftWalk, nativeStorageFor, runNativeWalk, type RuleCause } from './scan/nativeEngine';
 import { nativeProjection } from './scan/projection';
 import { memoryRoomFor, noRestartRefusal } from './scan/nativeMemory';
 import { formatCount } from '../utils/formatCount';
@@ -952,7 +952,7 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
   const mftRuleCause: RuleCause | null = !mftWanted ? null : !rootIsDir ? 'singleFile' : opts.incremental === true ? 'incremental' : ignore.length > 0 ? 'ignore' : null;
   const mftRule = mftRuleCause === 'singleFile' ? 'the root is a single file, which needs no volume read'
     : mftRuleCause === 'incremental' ? 'this is an incremental rescan, which the turbo mode does not do'
-      : mftRuleCause === 'ignore' ? `the scan has ${ignore.length} "don't scan" pattern${ignore.length === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`
+      : mftRuleCause === 'ignore' ? ignorePatternClause(ignore.length)
         : null;
   if (!native.eligibility.ok && gduRule !== null && forced !== 'walker') {
     if (forced === 'gdu') noteFallback(scan, `${gduRule} (the Scan engine setting asked for gdu)`);
