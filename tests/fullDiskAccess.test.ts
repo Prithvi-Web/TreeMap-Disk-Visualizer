@@ -745,6 +745,66 @@ test('the recheck says "on now" only when the page knew access was off; with no 
   assert.equal(off.els.accessHint.textContent, ADVICE.granted, 'the next scan\'s refusals are worded by the state it ran under');
 });
 
+test('the recheck is spent by an answer that access is on, not by a failed ask or one made before the switch', async () => {
+  // Review F2.5: the arm was cleared before the request went out. In web mode
+  // the hint says to restart the server, and a person back in the tab before
+  // it was up spent the one ask on a refused connection; anyone back before
+  // switching anything on spent it on an unchanged answer. The row and the
+  // pre-scan notice then kept the old not-granted answer.
+  const refreshes = (h: ReturnType<typeof pageHarness>): number => h.asked.filter(([u]) => u === '/api/platform/capabilities/refresh').length;
+  const answers = (...seq: Array<FdaState | 'down'>) => () => {
+    const next = seq.shift();
+    if (next === undefined || next === 'down') throw new Error('Couldn’t reach TreeMap');
+    return { capabilities: { fullDiskAccess: fdaCap(next) } };
+  };
+  const ON_NOW = /Full Disk Access is on now/;
+
+  const down = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] }, refresh: answers('down', 'granted') });
+  down.render();
+  down.arm();
+  await down.fire('focus');
+  assert.equal(refreshes(down), 1);
+  assert.equal(down.els.accessHint.textContent, ADVICE['not-granted'], 'no answer: the row stays as it was');
+  await down.fire('focus'); // the server is back
+  assert.equal(refreshes(down), 2, 'a failed ask does not spend it: the next focus asks again');
+  assert.match(down.els.accessHint.textContent, ON_NOW);
+  assert.equal(down.els.accessOpenBtn.hidden, true);
+
+  const early = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] }, refresh: answers('not-granted', 'granted') });
+  early.render();
+  early.arm();
+  await early.fire('focus'); // back before anything was switched on
+  assert.equal(early.els.accessHint.textContent, ADVICE['not-granted']);
+  await early.fire('focus'); // switched on
+  assert.equal(refreshes(early), 2, 'an answer that is still off does not spend it');
+  assert.match(early.els.accessHint.textContent, ON_NOW);
+  await early.fire('focus', 'visibilitychange');
+  assert.equal(refreshes(early), 2, 'an answer that it is on does: nothing is left to wait for');
+
+  // One ask at a time: a focus while one is out asks nothing more.
+  let release: (v: unknown) => void = () => {};
+  const slow = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] }, refresh: () => new Promise((r) => { release = r; }) });
+  slow.render();
+  slow.arm();
+  await slow.fire('focus');
+  await slow.fire('focus', 'visibilitychange');
+  assert.equal(refreshes(slow), 1, 'one ask in flight at a time');
+  release({ capabilities: { fullDiskAccess: fdaCap('granted') } });
+  await slow.fire();
+  assert.match(slow.els.accessHint.textContent, ON_NOW);
+
+  // Not for ever: a few answers that it is still off, and it stops asking
+  // until the button is used again.
+  const never = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] }, refresh: () => ({ capabilities: { fullDiskAccess: fdaCap('not-granted') } }) });
+  never.render();
+  never.arm();
+  for (let i = 0; i < 5; i++) await never.fire('focus');
+  assert.equal(refreshes(never), 3, 'three answers that it is still off, then no more asks');
+  never.arm();
+  for (let i = 0; i < 5; i++) await never.fire('focus');
+  assert.equal(refreshes(never), 6, 'the button arms it again, for as many answers again');
+});
+
 test('the recheck waits for the window to be visible: going hidden neither asks nor spends it', async () => {
   // Review F1.8: the person clicks "Open Privacy settings", and System
   // Settings comes forward, so this window often goes hidden first. Spent

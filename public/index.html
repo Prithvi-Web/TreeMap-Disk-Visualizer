@@ -10262,27 +10262,43 @@ $('mountsNoteSettingsBtn').addEventListener('click', () => cmdkOpenSettingsSecti
 /* ── end drives mounted inside ── */
 /* ── Full Disk Access recheck ── */
 /* Track U, U-11. After "Open Privacy settings" the person is in System
-   Settings. The next time this window has focus, the server is asked once
+   Settings. The next time this window has focus, the server is asked
    whether Full Disk Access is on now, and the refused row is repainted from
    its answer. TOPIC.capabilities is NOT emitted: its listeners (held-up
    space runs lsof and ps, the disk layout card asks diskutil) would redo
-   their own work for an answer that concerns this row alone. */
+   their own work for an answer that concerns this row alone.
+   What spends the ask is an answer that access is on (review F2.5). A failed
+   ask — the server restarting, as the web-mode sentence tells the person to
+   do — and an answer that it is still off (asked before the switch, or
+   before the restart that makes it count) leave it armed for the next focus.
+   One ask is out at a time, and after ACCESS_RECHECK_ANSWERS answers that it
+   is still off it stops asking until the button is used again: each ask
+   re-runs every capability probe on the server. */
 let accessRecheckArmed = false;
+let accessRecheckAsking = false;
+let accessRecheckAnswers = 0;
+/** The peek before anything was switched on, the return after the switch, the return after a restart. */
+const ACCESS_RECHECK_ANSWERS = 3;
 /** The button was used: the next focus asks. */
 function armFullDiskAccessRecheck() {
   accessRecheckArmed = true;
+  accessRecheckAnswers = 0;
 }
 async function recheckFullDiskAccess() {
-  if (!accessRecheckArmed) return;
-  accessRecheckArmed = false; // once per use of the button: focus and visibilitychange arrive together
+  if (!accessRecheckArmed || accessRecheckAsking) return; // focus and visibilitychange arrive together
+  accessRecheckAsking = true;
   const before = fullDiskAccessInfo();
-  let fda = null;
+  let res = null;
   try {
-    const res = await api('/api/platform/capabilities/refresh', { method: 'POST' });
-    fda = res && res.capabilities ? res.capabilities.fullDiskAccess : null;
+    res = await api('/api/platform/capabilities/refresh', { method: 'POST' });
   } catch {
-    return; // no answer: the row stays as it was
+    res = null; // no answer: the row stays as it was, and the next focus asks again
+  } finally {
+    accessRecheckAsking = false;
   }
+  if (!res) return;
+  const fda = res.capabilities ? res.capabilities.fullDiskAccess : null;
+  if ((fda && fda.state === 'granted') || ++accessRecheckAnswers >= ACCESS_RECHECK_ANSWERS) accessRecheckArmed = false;
   if (!fda || typeof fda.state !== 'string') return;
   // "Off before" only when the page was told so: a missing or "unknown"
   // answer is not one (review F2.2), and the server words it the same way.
