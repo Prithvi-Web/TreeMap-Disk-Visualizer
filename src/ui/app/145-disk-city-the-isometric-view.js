@@ -1476,9 +1476,17 @@ function renderCityTable() {
 /* ── Loading ──────────────────────────────────────────────────────────────
 
    Shares the Treemap's root and nodes outright. If the Treemap already holds
-   this folder, entering Disk City costs no request at all — and the two
-   pictures are provably the same arrangement rather than two that resemble
-   each other.                                                              */
+   this folder OF THIS SCAN, entering Disk City costs no request at all — and
+   the two pictures are provably the same arrangement rather than two that
+   resemble each other.
+
+   "This folder" is not enough (browser re-check C03). finishScan points the
+   shared root path at the new scan's folder and leaves the nodes as they
+   were, so a scan of corpus after the Treemap had drawn corpus/Mail left
+   Mail's nodes under corpus's path, and the city drew Mail's 4,396 items
+   under corpus's name. The nodes carry the scan and the folder they were
+   fetched for (`nodesFor`, set by whoever fetched them, cleared by whatever
+   swaps in rectangles that are not a scan's), and only that pair reuses them. */
 
 let cityLoadSeq = 0;
 async function loadCity(rootPath) {
@@ -1486,8 +1494,11 @@ async function loadCity(rootPath) {
   const want = rootPath || state.treemap.rootPath || state.root.path;
   const seq = ++cityLoadSeq;
   const c = state.city;
+  const scanAtRequest = state.scanId;
+  const held = state.treemap.nodesFor;
+  const fresh = !!held && held.scanId === scanAtRequest && held.path === want && state.treemap.nodes.length > 0;
 
-  if (state.treemap.rootPath !== want || !state.treemap.nodes.length) {
+  if (!fresh) {
     try {
       // The Treemap's own floor (TM_MIN_SIZE), and its own retry without it
       // (loadTreemap), so the nodes the two views share are the same whichever
@@ -1506,6 +1517,7 @@ async function loadCity(rootPath) {
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
+      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path };
       state.treemap.minSize = floor; // what tmNodeCapNote may say these nodes leave out
       state.treemap.hover = null;
     } catch (e) {

@@ -6922,7 +6922,7 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, matchTotal: null, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, scrubbing: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null, completed: false } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], nodesFor: null, pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, matchTotal: null, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, scrubbing: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null, completed: false } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
@@ -10915,6 +10915,7 @@ async function loadTreemap(rootPath, animate = false) {
   // replaces both, so it is dropped silently rather than left to go stale.
   exitCartPreview(true);
   const seq = ++tmLoadSeq;
+  const scanAtRequest = state.scanId; // the scan whatever lands here was asked of (C03)
   state.treemap.kbSel = null;
   // Captured before the tree is replaced: which node will still be on screen
   // afterwards, and where it is right now. Drilling in, that is the folder
@@ -10943,6 +10944,7 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.rootName = node.name;
       state.treemap.rootSize = node.size;
       state.treemap.nodes = [];
+      state.treemap.nodesFor = null; // these renderers hold no rectangles for Disk City to share
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
@@ -10977,6 +10979,9 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
+      // Which scan and folder these rectangles are: Disk City reuses them for
+      // that pair only (C03 — loadCity says why the path alone is not enough).
+      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path };
       state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
@@ -18619,6 +18624,9 @@ async function setHistoryIndex(i) {
     if (seq !== h.seq || state.view !== 'treemap') return; // superseded
     if (state.live.on) { disableLive(); toast('Live mode paused while viewing history'); }
     h.active = true;
+    // The rectangles about to be drawn are a past snapshot's, not this scan's:
+    // Disk City must not take them for the scan (C03).
+    state.treemap.nodesFor = null;
     h.viewingAt = layout.snapshot.takenAt;
     h.tree = layout.tree || null;
     state.treemap.rootSize = layout.root.size;
@@ -26851,9 +26859,17 @@ function renderCityTable() {
 /* ── Loading ──────────────────────────────────────────────────────────────
 
    Shares the Treemap's root and nodes outright. If the Treemap already holds
-   this folder, entering Disk City costs no request at all — and the two
-   pictures are provably the same arrangement rather than two that resemble
-   each other.                                                              */
+   this folder OF THIS SCAN, entering Disk City costs no request at all — and
+   the two pictures are provably the same arrangement rather than two that
+   resemble each other.
+
+   "This folder" is not enough (browser re-check C03). finishScan points the
+   shared root path at the new scan's folder and leaves the nodes as they
+   were, so a scan of corpus after the Treemap had drawn corpus/Mail left
+   Mail's nodes under corpus's path, and the city drew Mail's 4,396 items
+   under corpus's name. The nodes carry the scan and the folder they were
+   fetched for (`nodesFor`, set by whoever fetched them, cleared by whatever
+   swaps in rectangles that are not a scan's), and only that pair reuses them. */
 
 let cityLoadSeq = 0;
 async function loadCity(rootPath) {
@@ -26861,8 +26877,11 @@ async function loadCity(rootPath) {
   const want = rootPath || state.treemap.rootPath || state.root.path;
   const seq = ++cityLoadSeq;
   const c = state.city;
+  const scanAtRequest = state.scanId;
+  const held = state.treemap.nodesFor;
+  const fresh = !!held && held.scanId === scanAtRequest && held.path === want && state.treemap.nodes.length > 0;
 
-  if (state.treemap.rootPath !== want || !state.treemap.nodes.length) {
+  if (!fresh) {
     try {
       // The Treemap's own floor (TM_MIN_SIZE), and its own retry without it
       // (loadTreemap), so the nodes the two views share are the same whichever
@@ -26881,6 +26900,7 @@ async function loadCity(rootPath) {
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
+      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path };
       state.treemap.minSize = floor; // what tmNodeCapNote may say these nodes leave out
       state.treemap.hover = null;
     } catch (e) {

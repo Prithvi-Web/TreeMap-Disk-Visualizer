@@ -27,6 +27,7 @@ async function loadTreemap(rootPath, animate = false) {
   // replaces both, so it is dropped silently rather than left to go stale.
   exitCartPreview(true);
   const seq = ++tmLoadSeq;
+  const scanAtRequest = state.scanId; // the scan whatever lands here was asked of (C03)
   state.treemap.kbSel = null;
   // Captured before the tree is replaced: which node will still be on screen
   // afterwards, and where it is right now. Drilling in, that is the folder
@@ -55,6 +56,7 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.rootName = node.name;
       state.treemap.rootSize = node.size;
       state.treemap.nodes = [];
+      state.treemap.nodesFor = null; // these renderers hold no rectangles for Disk City to share
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
@@ -89,6 +91,9 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;
       state.treemap.nodes = data.nodes;
+      // Which scan and folder these rectangles are: Disk City reuses them for
+      // that pair only (C03 — loadCity says why the path alone is not enough).
+      state.treemap.nodesFor = { scanId: scanAtRequest, path: data.root.path };
       state.treemap.minSize = floor; // what tmNodeCapNote may say this map leaves out
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));

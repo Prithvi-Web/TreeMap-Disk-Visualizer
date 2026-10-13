@@ -927,6 +927,9 @@ async function setHistoryIndex(i) {
     if (seq !== h.seq || state.view !== 'treemap') return; // superseded
     if (state.live.on) { disableLive(); toast('Live mode paused while viewing history'); }
     h.active = true;
+    // The rectangles about to be drawn are a past snapshot's, not this scan's:
+    // Disk City must not take them for the scan (C03).
+    state.treemap.nodesFor = null;
     h.viewingAt = layout.snapshot.takenAt;
     h.tree = layout.tree || null;
     state.treemap.rootSize = layout.root.size;
