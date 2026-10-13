@@ -210,8 +210,10 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       audit:
         'Every destructive request that reaches its endpoint (real, dry-run, or refused there: policy, open files, the offload plan) is appended to an audit log; ' +
         'one refused before that, by the path rules or the storage-mode gate, is not. SPILL_PATH or APP_DATA_PATH on a path the request names (path, paths, ' +
-        'dest, to, destination) is a path rule and not recorded, as SAFETY_RECORD always is; either on a copy the offload plan would make is the plan\'s refusal and is recorded ' +
-        '(offload.start, refused) — GET /api/audit reads it back',
+        'dest, to, destination) is a path rule and not recorded, as SAFETY_RECORD is where a delete, the cart, an offload, a relocation or an MCP tool refuses it; ' +
+        'either on a copy the offload plan would make is the plan\'s refusal and is recorded (offload.start, refused); and a snapshot restore with overwrite judges ' +
+        'the file it would replace inside its endpoint, so every refusal of that file, SAFETY_RECORD for a link TreeMap reaches app-data through among them, ' +
+        'is recorded (snapshots.restore, refused, naming that file) — GET /api/audit reads it back',
       idempotency:
         'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
       appDataFolder:

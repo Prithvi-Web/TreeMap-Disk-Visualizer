@@ -927,6 +927,12 @@ read-what-you-saw) permission to act.
   destination (one holding a link, under a name the volume folds, into the
   spill folder or app-data) it is the plan's refusal, and recorded:
   `offload.start`, `refused`, with its code, over HTTP and MCP alike.
+  `OUTSIDE_SCAN_ROOT` and `SAFETY_RECORD` fall on both sides of that line
+  too. A snapshot restore with `overwrite` judges the file it would replace
+  inside its endpoint, so every refusal of that file — `OUTSIDE_SCAN_ROOT`,
+  the policy's, an open file's, and `SAFETY_RECORD` for a link TreeMap
+  reaches app-data through — is recorded against it: `snapshots.restore`,
+  `refused`, with its code.
   A cart commit's line lists what was confirmed moved in `paths` and, apart,
   anything whose trash step was not confirmed either way in `unverified`.
   A line's `outcome` is the operation's own: emptying the Trash, purging

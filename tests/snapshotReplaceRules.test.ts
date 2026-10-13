@@ -249,6 +249,39 @@ test('of the cases SAFETY_RECORD names, a restore meets only a link TreeMap reac
   });
 });
 
+/** GET `url` from the server above: its JSON body. */
+function served(url: string): Promise<unknown> {
+  resetRateLimiter();
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: url }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => { buf += c; });
+      res.on('end', () => resolve(JSON.parse(buf)));
+    }).on('error', reject);
+  });
+}
+
+test('what the capability manifest and AGENTS.md say of the audit is what a restore records: SAFETY_RECORD goes unrecorded where a door refuses it before its endpoint, but a restore\'s refusal of the file it would replace is recorded, SAFETY_RECORD among them, as the test above it shows (the review of LEFT2, F2.2)', async () => {
+  const audit = String((await served('/api/capabilities') as { safety: { audit: string } }).safety.audit);
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.deepEqual({
+    'the manifest: the doors where SAFETY_RECORD is not recorded':
+      /as SAFETY_RECORD is where a delete, the cart, an offload, a relocation or an MCP tool refuses it;/.test(audit),
+    'the manifest: a restore records its refusal of the file it would replace, SAFETY_RECORD among them':
+      /a snapshot restore with overwrite judges the file it would replace inside its endpoint, so every refusal of that file, SAFETY_RECORD for a link TreeMap reaches app-data through among them, is recorded \(snapshots\.restore, refused, naming that file\)/.test(audit),
+    'AGENTS.md: SAFETY_RECORD falls on both sides of the line':
+      /`OUTSIDE_SCAN_ROOT` and `SAFETY_RECORD` fall on both sides of that line too\./.test(agents),
+    'AGENTS.md: a restore records its refusal of the file it would replace, SAFETY_RECORD among them':
+      /A snapshot restore with `overwrite` judges the file it would replace inside its endpoint, so every refusal of that file — `OUTSIDE_SCAN_ROOT`, the policy's, an open file's, and `SAFETY_RECORD` for a link TreeMap reaches app-data through — is recorded against it: `snapshots\.restore`, `refused`, with its code\./.test(agents),
+  }, {
+    'the manifest: the doors where SAFETY_RECORD is not recorded': true,
+    'the manifest: a restore records its refusal of the file it would replace, SAFETY_RECORD among them': true,
+    'AGENTS.md: SAFETY_RECORD falls on both sides of the line': true,
+    'AGENTS.md: a restore records its refusal of the file it would replace, SAFETY_RECORD among them': true,
+  });
+});
+
 test('a file the rules allow is still replaced, and a restore to a name nothing holds is not a delete at all', async () => {
   trashed.length = 0;
   const present = path.join(SCANNED, 'present.txt');
