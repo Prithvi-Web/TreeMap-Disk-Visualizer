@@ -451,15 +451,42 @@ function crumbsCss() {
  */
 function makeHost(width: number) {
   const h = {
-    clientWidth: width, html: '', buttons: [] as FakeBtn[], seps: 0,
+    clientWidth: width, html: '', buttons: [] as FakeBtn[], seps: 0, cls: new Set<string>(),
+    classList: {
+      add: (c: string) => { h.cls.add(c); }, remove: (c: string) => { h.cls.delete(c); },
+      contains: (c: string) => h.cls.has(c),
+      toggle: (c: string, on?: boolean) => { if (on ?? !h.cls.has(c)) h.cls.add(c); else h.cls.delete(c); },
+    },
     set innerHTML(v: string) { h.html = v; h.buttons = parseButtons(v); h.seps = (v.match(/class="sep"/g) || []).length; },
     get innerHTML() { return h.html; },
     natural(): number {
       const items = h.buttons.map((b) => (b.more ? 30 : Math.min(crumbsCss().maxW, 20 + b.text.length * 7)));
       return items.reduce((a, w) => a + w, 0) + h.seps * 15 + crumbsCss().gap * Math.max(0, items.length + h.seps - 1);
     },
+    /**
+     * Where each button lands: packed to the end, or — under the tight mark
+     * (QA C05), as its own rules read from the built page say — to the start,
+     * with the folder on screen shrinking to its padding and border (22 px)
+     * and no fade. A separator sits between each pair of buttons.
+     */
+    layout() {
+      const tight = h.cls.has('crumbs-tight') ? tightCss() : null;
+      const gap = crumbsCss().gap;
+      const widths = h.buttons.map((b) => (b.more ? 30 : Math.min(crumbsCss().maxW, 20 + b.text.length * 7)));
+      const total = h.natural();
+      const cur = h.buttons.findIndex((b) => b.current);
+      if (tight && tight.shrinks && cur !== -1 && total > h.clientWidth) widths[cur] = Math.max(22, widths[cur] - (total - h.clientWidth));
+      const used = widths.reduce((a, w) => a + w, 0) + h.seps * 15 + gap * Math.max(0, widths.length + h.seps - 1);
+      let x = tight && tight.start ? 0 : h.clientWidth - used;
+      const boxes = h.buttons.map((b, i) => {
+        const box = { more: b.more, current: b.current, left: x, right: x + widths[i] };
+        x = box.right + gap + 15 + gap;
+        return box;
+      });
+      return Object.assign(boxes, { fade: tight && tight.noFade ? 0 : crumbsCss().fade });
+    },
     get firstElementChild() {
-      return h.buttons.length ? { getBoundingClientRect: () => ({ left: h.clientWidth - h.natural() }) } : null;
+      return h.buttons.length ? { getBoundingClientRect: () => ({ left: h.layout()[0].left }) } : null;
     },
     contains: (el: unknown) => h.buttons.includes(el as FakeBtn),
     getBoundingClientRect: () => ({ left: 0, right: h.clientWidth }),
@@ -770,6 +797,63 @@ test('D25: the name inside a crumb ellipsizes (text-overflow does nothing on the
   for (const d of [/min-width:\s*0/, /overflow:\s*hidden/, /text-overflow:\s*ellipsis/, /white-space:\s*nowrap/]) {
     assert.match(rule, d, `.crumb-nm declares ${d}`);
   }
+});
+
+/* ══════════════ C05 — folded as far as it goes, the trail still shows "…" ══════════════ */
+
+/**
+ * What the tight trail's own rules say, read from the built page: whether it
+ * packs to the start, whether the fade is gone, and whether the folder on
+ * screen may shrink below its name.
+ */
+function tightCss() {
+  const rule = (sel: string) => {
+    const at = INDEX.indexOf(sel + ' {');
+    assert.notEqual(at, -1, `${sel} has a rule in the built page`);
+    return INDEX.slice(at, INDEX.indexOf('}', at));
+  };
+  const host = rule('.crumbs.crumbs-tight');
+  const cur = rule('.crumbs.crumbs-tight button[aria-current="true"]');
+  return {
+    start: /justify-content:\s*flex-start/.test(host),
+    noFade: /(^|[\s;{])mask-image:\s*none/.test(host) && /-webkit-mask-image:\s*none/.test(host),
+    shrinks: /flex:\s*0 1 auto/.test(cur) && /min-width:\s*0/.test(cur),
+  };
+}
+
+test('C05: a trail folded as far as it goes and still too wide keeps "…" on screen — it was drawn under the Up button at 1024×768', () => {
+  // QA re-check: at 1024×768, drilled into a folder, the nav flank left the
+  // trail ~88 px. Even "… › Archives" needs more, so — packed to the END —
+  // the overflow spilled past the START edge, and "…" went with it: clipped
+  // and faded out beside the Up button, the hidden levels neither visible nor
+  // reachable. Everything is folded by then, so nothing is left to fade; the
+  // folder on screen gives up width instead (its name ellipsizes, and its
+  // tooltip holds the whole path).
+  for (const width of [150, 88, 60]) {
+    const h = crumbsHarness();
+    const host = makeHost(width);
+    h.render(host, DEEP, h.onPick);
+    assert.deepEqual(host.buttons.map((b) => (b.more ? '…' : b.nm)), ['…', 'AssetData'], `${width} px: only "…" and the folder on screen are left`);
+    const lay = host.layout();
+    const more = lay.find((b) => b.more)!;
+    assert.ok(more.left >= 0 && more.right <= width, `${width} px: "…" spans ${more.left}–${more.right} px of a ${width} px trail`);
+    assert.ok(more.left >= lay.fade, `${width} px: and none of it is under a fade (it starts at ${more.left} px, the fade runs to ${lay.fade} px)`);
+    assert.ok(host.cls.has('crumbs-tight'), `${width} px: the trail is marked tight — it cannot fold any further and still does not fit`);
+    const cur = lay.find((b) => b.current)!;
+    assert.ok(cur.left >= more.right, `${width} px: the folder on screen follows it`);
+    if (width >= 88) assert.ok(cur.right <= width, `${width} px: and fits beside it, its name shortened (${cur.left}–${cur.right} px)`);
+  }
+  // The mark is decided afresh on every fit: widened, the trail lays out as
+  // it always has, folding only what it must.
+  const h = crumbsHarness();
+  const host = makeHost(88);
+  h.render(host, DEEP, h.onPick);
+  assert.ok(host.cls.has('crumbs-tight'), 'control: tight at 88 px');
+  host.clientWidth = 420;
+  h.observers[0].cb();
+  assert.ok(!host.cls.has('crumbs-tight'), 'at 420 px the trail is not tight');
+  assert.equal(host.buttons[0].path, '/System', 'the root is back on screen — a stale mark would have folded it too');
+  assert.ok(host.clientWidth - host.natural() >= crumbsCss().fade, 'and the trail clears the fade as before');
 });
 
 /* ══════════════ QA-6 review MEDIUM-1 — the "…" menu works from the keyboard ══════════════ */

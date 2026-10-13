@@ -135,9 +135,18 @@ function renderCrumbs(host, path, onPick) {
   if (menuHere) hideCtxMenu();
   const kept = inMenu || (!!active && host.contains(active) && active.hasAttribute('data-crumb-more'));
   const crumbs = breadcrumbsFor(path);
+  // Measured as a trail always is, never as the last fit left it: the tight
+  // mark packs to the start, where every trail would read as overflowing.
+  host.classList.remove('crumbs-tight');
   let fold = 0;
   crumbsPaint(host, crumbs, fold, onPick);
   while (fold < crumbs.length - 1 && crumbsOverflow(host)) crumbsPaint(host, crumbs, ++fold, onPick);
+  // Folded as far as it goes and still over the fade or past the start edge
+  // (QA C05): at 1024×768 "… › Archives" spilled "…" under the fade beside
+  // the Up button, where the hidden levels could be neither seen nor opened.
+  // The tight trail keeps "…" at its start and lets the folder on screen
+  // give up width instead (035-treemap.css).
+  if (crumbsOverflow(host)) host.classList.add('crumbs-tight');
   host._crumbs = { path, onPick, width: host.clientWidth };
   crumbsWatch(host);
   if (kept) {

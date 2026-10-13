@@ -96,6 +96,16 @@
 .crumbs button:focus-visible { outline-offset: -2px; background: var(--accent-soft); color: var(--accent-ink); }
 .crumbs button[aria-current="true"]:focus-visible { color: var(--text-1); }
 .crumbs .sep { color: var(--text-3); display: inline-flex; flex: none; }
+/* Folded as far as it goes — only "…" and the folder on screen left — and
+   still too wide (renderCrumbs marks it, QA C05). At 1024×768 the nav flank
+   leaves the trail ~88 px; packed to the end, the overflow spilled past the
+   START edge and took "…", the one way to the hidden levels, under the fade
+   beside the Up button. Nothing is folded away any more, so nothing needs
+   the fade: the trail packs to the start and drops the mask, and the folder
+   on screen gives up width instead — its name ellipsizes (.crumb-nm) and its
+   tooltip holds the whole path. */
+.crumbs.crumbs-tight { justify-content: flex-start; -webkit-mask-image: none; mask-image: none; }
+.crumbs.crumbs-tight button[aria-current="true"] { flex: 0 1 auto; min-width: 0; }
 .tm-toolbar label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .tm-toolbar .field { position: relative; }
 .tm-toolbar .field .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
