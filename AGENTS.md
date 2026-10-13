@@ -881,9 +881,14 @@ read-what-you-saw) permission to act.
   records the real run would refuse are listed in `refused[]` with their
   reasons), so "dry run succeeded" genuinely means "the real run
   would act". It changes nothing persistent but its own line in the audit
-  log: `POST /api/autopilot/simulate`, and an Autopilot run that can only
-  preview, scan the policy's folder without saving a history snapshot or the
-  fast-rescan cache. **Always dry-run, show the user, then act.**
+  log. So does `POST /api/autopilot/simulate`: it scans the policy's folder
+  without saving a history snapshot or the fast-rescan cache, and
+  `GET /api/scans` does not list that scan. An Autopilot run that can only
+  preview (a policy never approved, or set to preview every run) scans the
+  same way, but it is still a run: it adds its run record to
+  `autopilot.json`, starts the policy's cooldown, and spends an approval's
+  one-time allowance (`approvedBytes`). **Always dry-run, show the user,
+  then act.**
 - **Policy.** The human can create `agent-policy.json` in the app-data
   directory (`GET /api/policy` shows the resolved policy and the file path):
   ```json

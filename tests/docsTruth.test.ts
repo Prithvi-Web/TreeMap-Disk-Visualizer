@@ -464,6 +464,25 @@ test('AGENTS.md describes the mountedInside line as mountedInsideLine builds it 
   assert.match(text, /when the mount table could not be read or the scan did not read it; and when the walk went onto a device the table does not list\./);
 });
 
+test('AGENTS.md says what a dry run keeps, and what an Autopilot run that can only preview still records, as autopilot.ts does it (C12 review F1.4)', () => {
+  // The code: a preview's scan is made with record:false, and GET /api/scans
+  // leaves such a scan out; but a policy run, previewing or not, ends in
+  // record(), which adds the run, starts the cooldown and spends the allowance.
+  const autopilot = read('src', 'services', 'autopilot.ts');
+  assert.match(autopilot, /resolveCandidates\(policy, \{ record: false \}\)/, 'the Preview\'s scan keeps nothing');
+  assert.match(autopilot, /resolveCandidates\(policy, \{ record: !\(opts\.dryRun \|\| policy\.dryRunFirst \|\| !policy\.approvedAt\) \}\)/, 'nor does the scan of a run that can only preview');
+  const record = between(autopilot, 'const record = (): Promise<AutopilotRun> => withAutopilotStore(async () => {', '\n  });\n');
+  assert.match(record, /fresh\.runs\.unshift\(run\);/, 'every run adds its record');
+  assert.match(record, /live\.lastRunAt = now;/, 'starts the cooldown');
+  assert.match(record, /delete live\.approvedBytes;/, 'and spends the allowance it read');
+  assert.match(read('src', 'api', 'insightRoutes.ts'), /\.filter\(\(s\) => s\.status === 'complete' && s\.store && isRecorded\(s\)\)/, 'GET /api/scans leaves a dry run\'s scan out');
+  const text = agents();
+  assert.doesNotMatch(text, /nothing persistent but its own line in the audit log: `POST \/api\/autopilot\/simulate`, and an Autopilot run that can only preview/,
+    'a previewing run is not said to change nothing persistent');
+  assert.match(text, /It changes nothing persistent but its own line in the audit log\. So does `POST \/api\/autopilot\/simulate`: it scans the policy's folder without saving a history snapshot or the fast-rescan cache, and `GET \/api\/scans` does not list that scan\./);
+  assert.match(text, /An Autopilot run that can only preview \(a policy never approved, or set to preview every run\) scans the same way, but it is still a run: it adds its run record to `autopilot\.json`, starts the policy's cooldown, and spends an approval's one-time allowance \(`approvedBytes`\)\./);
+});
+
 test('AGENTS.md says how the index readers answer an index that is not finished, as the routes and the spec do (review F1.6)', () => {
   const routes = read('src', 'api', 'indexRoutes.ts');
   const tree = between(routes, "indexRouter.get('/index/tree'", 'const maxNodes');
