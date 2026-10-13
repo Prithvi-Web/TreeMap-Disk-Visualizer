@@ -559,6 +559,55 @@ test('the Grid fills <main> exactly with the cart up as well as without — the 
   assert.equal(checked, 8, 'every height was checked with and without the cart');
 });
 
+/* ══════════════ D02 — the Grid's last row clears the stacked bars ══════════════ */
+
+/** The Grid's scroller: how far above the window's bottom its last row ends when scrolled to the end. */
+function gridFootClearance(st: PageState): number {
+  const main = cascade('main', st);
+  const mainPadB = main.has('padding-bottom') ? px(main.get('padding-bottom')) : sides4(main.get('padding')!)[2];
+  const sc = cascade('#gridScroll', st);
+  const padB = sc.has('padding-bottom') ? px(sc.get('padding-bottom')) : sides4(sc.get('padding')!)[2];
+  // layoutGrid leaves its GAP below the last row: #gridInner is that much taller than the rows.
+  const gap = Number((/^const GAP = (\d+), MIN_SQ = /m.exec(INDEX) || [])[1]);
+  assert.ok(gap > 0, 'the Grid\'s GAP is in the built page');
+  return mainPadB + padB + gap;
+}
+
+test('scrolled to its end, the Grid\'s last row clears the selection bar and the cart pill stacked over it, at every window size (D02)', () => {
+  // QA: with something staged and a tile selected, the pill steps up to
+  // 124 px above the selection bar — ~170 px of stacked bars over the
+  // bottom of the Grid — while the Grid kept 10 px of padding: at 1440×900
+  // the selected last-row tile sat under the pill with nothing to scroll,
+  // and at 1024×768 scrolled to the end it was still under the dock.
+  const pillH = pillHeight();
+  let checked = 0;
+  for (const W of [MIN_W, 1180, 1320, 1440, 1920]) {
+    for (const collapsed of [false, true]) {
+      for (const preview of [false, true]) {
+        for (const cart of [false, true]) {
+          for (const bar of [false, true]) {
+            if (!cart && !bar) continue;
+            const active = ['#view-grid.active', ...(bar ? ['#selectionBar.visible'] : []), ...(cart ? ['#cartDock.show'] : []),
+              ...(collapsed ? ['#sideNav.collapsed'] : [])];
+            const st: PageState = { active, preview };
+            const label = `${W}px, sidebar ${collapsed ? 'rail' : 'open'}${preview ? ', preview' : ''}${bar ? ', a selection' : ''}${cart ? ', cart' : ''}`;
+            let covered = 0;
+            if (bar) { const b = barBox(W, MIN_H, st); covered = Math.max(covered, b.bottom + b.height); }
+            if (cart) covered = Math.max(covered, px(cascade('#cartDock', st).get('bottom')) + pillH);
+            const clear = gridFootClearance(st);
+            assert.ok(clear >= covered + 8,
+              `${label}: the last row ends ${clear}px above the window's bottom; the bars over it reach ${covered.toFixed(0)}px`);
+            checked++;
+          }
+        }
+      }
+    }
+  }
+  assert.equal(checked, 60, 'every size and state was checked');
+  // Nothing up, nothing kept: the Grid's own padding is all there is.
+  assert.equal(gridFootClearance({ active: ['#view-grid.active'] }), 48 + 10 + 12, 'with no bar and no cart the Grid keeps only its own padding');
+});
+
 /* ══════════════ C04 — the preview pane narrows the page, it never covers it ══════════════ */
 
 test('with the preview pane open the page lays out left of it, at every window size — nothing in <main> is under the pane (C04, the B22 remainder)', () => {

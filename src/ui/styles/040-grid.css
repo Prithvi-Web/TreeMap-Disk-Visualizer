@@ -78,3 +78,14 @@
   transition: transform var(--dur-3) var(--ease), visibility 0s linear var(--dur-3); font-size: 13px; }
 #selectionBar.visible { transform: translateX(-50%) translateY(0); visibility: visible;
   transition: transform var(--dur-3) var(--ease), visibility 0s; }
+/* While the bar is up, the Grid keeps room at its foot for it, and for the
+   cart pill stacked above it, so a scroll to the end brings the last row
+   clear of both (QA D02): with only the scroller's 10 px the selected
+   last-row tile sat under the pill at 1440x900 with nothing to scroll. The
+   room is inside the scroller, so the tiles still run on under the floating
+   bars. The last row ends <main>'s bottom padding + this + layoutGrid's 12 px
+   GAP above the window's bottom: 48 + 64 + 12 = 124 px, the line the pill
+   and the toasts step up to over the bar's tallest form; with the cart up,
+   76 + 88 + 12 = 176 px, 10 px over the pill that stands on that line. */
+body:has(#selectionBar.visible) #gridScroll { padding-bottom: 64px; }
+body:has(#selectionBar.visible):has(#cartDock.show) #gridScroll { padding-bottom: 88px; }
