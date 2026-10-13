@@ -671,13 +671,17 @@ test('B12: the legend shows the Type key only in Type mode, and works it out onc
     else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
   }
   const src = INDEX.slice(start, end);
+  // The coverage line names the server's node cap (QA-4u, D09 review F3.5): the page's own figure.
+  const capAt = INDEX.indexOf('const TM_SERVER_NODE_CAP = ');
+  assert.notEqual(capAt, -1, 'the page names the server\'s node cap');
+  const nodeCap = INDEX.slice(capAt, INDEX.indexOf(';', capAt) + 1);
   const els: Record<string, { innerHTML: string; textContent: string; hidden: boolean }> = {};
   const $ = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', hidden: true });
   let keyed = 0;
   const blocks = [blk('/r/A', 'dir', 1)];
   const state = { city: { colour: 'type', height: 'staleness', blocks, drawn: 1, total: 1 }, treemap: { rootSize: 1 } };
   const render = new Function('$', 'state', 'formatCount', 'formatBytes', 'escapeHtml', 'CITY_HEIGHT_LABEL', 'CITY_COLOUR_LABEL',
-    'C_RC_LOW', 'C_AMBER', 'C_TEAL', 'ageRgb', 'cityTypeKey', `'use strict'; ${src} return renderCityChrome;`)(
+    'C_RC_LOW', 'C_AMBER', 'C_TEAL', 'ageRgb', 'cityTypeKey', `'use strict'; ${nodeCap}\n${src} return renderCityChrome;`)(
     $, state, String, String, (s: string) => s, CITY_HEIGHT_LABEL, CITY_COLOUR_LABEL, [1, 2, 3], [4, 5, 6], [7, 8, 9], () => [0, 0, 0],
     () => { keyed++; return { shown: [{ tint: '#0A84FF', label: 'folders' }, { tint: '#BF5AF2', label: 'video' }], more: 3 }; },
   ) as () => void;

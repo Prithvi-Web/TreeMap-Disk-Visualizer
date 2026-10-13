@@ -389,7 +389,8 @@ test('a scheduled scan\'s "Alert if +GB" is read and shown in decimal gigabytes'
   const field = (cls: string, value: string, checked = false) => ({ value, checked, dataset: { i: '0' } });
   const row = { querySelector: (sel: string) => ({ '.s-path': field('', '/r'), '.s-int': field('', '24'), '.s-gb': field('', '3.5'), '.s-pct': field('', ''), '.s-on': field('', '', true) } as Record<string, unknown>)[sel] };
   run<() => void>(
-    braced('function collectSettingsForms('),
+    // Each schedule's folder is read as every path box reads one (asPath, frv-d): the page's own.
+    `${braced('function asPath(')}\n${braced('function collectSettingsForms(')}`,
     { $, settingsData, document: { querySelectorAll: (sel: string) => (sel.includes('sched') ? [row] : []) } },
     'collectSettingsForms',
   )();
@@ -409,7 +410,8 @@ function alertRoundTrip(bytes: number): { shown: string; saved: unknown } {
   const field = (value: string, checked = false) => ({ value, checked, dataset: { i: '0' } });
   const fields: Record<string, unknown> = { '.s-path': field('/r'), '.s-int': field('24'), '.s-gb': field(shown), '.s-pct': field(''), '.s-on': field('', true) };
   run<() => void>(
-    braced('function collectSettingsForms('),
+    // Each schedule's folder is read as every path box reads one (asPath, frv-d): the page's own.
+    `${braced('function asPath(')}\n${braced('function collectSettingsForms(')}`,
     { $, settingsData, document: { querySelectorAll: (sel: string) => (sel.includes('sched') ? [{ querySelector: (s: string) => fields[s] }] : []) } },
     'collectSettingsForms',
   )();
