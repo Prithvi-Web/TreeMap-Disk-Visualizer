@@ -847,6 +847,26 @@ test('the recheck says "on now" only when the page knew access was off; with no 
   Object.assign(off.state, { scanning: false, scanId: 's2', scanStats: { refused: { dirs: 2, examples: [] } } });
   off.render();
   assert.equal(off.els.accessHint.textContent, ADVICE.granted, 'the next scan\'s refusals are worded by the state it ran under');
+  // Review F3.3: so does a scan that ends before the server answers its start.
+  // That answer re-probes every capability once the server's 30-second cache
+  // has gone cold, so a short scan can settle first; what the recheck learned
+  // about the last scan must be gone by then, not when the answer is used.
+  let late: (v: unknown) => void = () => {};
+  const quick = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] }, current: () => new Promise((r) => { late = r; }) });
+  quick.render();
+  quick.arm();
+  await quick.fire('focus');
+  assert.match(quick.els.accessHint.textContent, ON_NOW);
+  const quickRun = quick.scan('/Users/x/Projects');
+  await quick.fire();
+  Object.assign(quick.state, { scanning: false, scanId: 's2', scanStats: { refused: { dirs: 2, examples: [] } } }); // it settled first
+  quick.render();
+  assert.equal(quick.els.accessHint.textContent, ADVICE.granted, 'a scan that settles before its answer is not told "on now" about the last scan');
+  late({ capabilities: { fullDiskAccess: fdaCap('granted') } });
+  await quick.fire();
+  await quickRun;
+  quick.render();
+  assert.equal(quick.els.accessHint.textContent, ADVICE.granted, 'nor once its answer is in');
 });
 
 test('the recheck is spent by an answer that access is on, not by a failed ask or one made before the switch', async () => {
