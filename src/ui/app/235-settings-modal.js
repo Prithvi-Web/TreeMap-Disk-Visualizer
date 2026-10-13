@@ -826,9 +826,15 @@ function openModals() {
 }
 function topModal() { const open = openModals(); return open.length ? open[open.length - 1] : null; }
 
+/* The controls a keyboard can land on, in order. A control hidden by
+   `visibility` keeps its box but cannot take focus — the selection bar's
+   buttons with nothing selected (QA D02) — so it is no stop: counted, it was
+   the page's last one, and an offer handing focus there left it on <body>
+   (review F2.1). */
 function modalFocusables(root) {
   return [...root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
-    .filter((el) => !el.disabled && el.tabIndex >= 0 && el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length);
+    .filter((el) => !el.disabled && el.tabIndex >= 0 && el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length &&
+      getComputedStyle(el).visibility === 'visible');
 }
 /* Where focus lands as a sheet opens: its first field, else its safe way out
    (the footer's Cancel — a [data-close] button), else the sheet itself; never

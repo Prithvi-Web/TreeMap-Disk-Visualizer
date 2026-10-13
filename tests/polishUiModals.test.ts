@@ -65,6 +65,15 @@ type FDoc = {
   addEventListener(): void;
 };
 
+/**
+ * An element's computed `visibility`: the nearest one set on it or a parent
+ * (`style.visibility`), as CSS inherits it — `visible` when none is.
+ */
+function computedVisibility(el: FEl): string {
+  for (let c: FEl | null = el; c; c = c.parent) if (c.style.visibility) return c.style.visibility;
+  return 'visible';
+}
+
 function makeDoc(): FDoc {
   const doc: FDoc = {} as FDoc;
   const matchCompound = (el: FEl, comp: string): boolean => {
@@ -114,7 +123,9 @@ function makeDoc(): FDoc {
       removeAttribute: (k) => { delete el.attrs[k]; },
       hasAttribute: (k) => k in el.attrs,
       focus: () => {
-        // A hidden or inert element cannot take focus — the browser's rule.
+        // A hidden or inert element cannot take focus — the browser's rule —
+        // nor one hidden by visibility, though it keeps its box.
+        if (computedVisibility(el) !== 'visible') return;
         let c: FEl | null = el;
         while (c) { if (c.hidden || !c.shown || c.inert) return; c = c.parent; }
         el.focused++; doc.activeElement = el;
@@ -183,11 +194,11 @@ function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {
   class FakeObserver { observe() { /* the tests call the reactions themselves */ } disconnect() {} }
   // toastsRetire (the toast family's, in 015) is what a closing sheet asks to
   // retire the offers made in it; a test that cares records the calls.
-  return new Function('document', '$', 'MutationObserver', 'toastsRetire',
+  return new Function('document', '$', 'MutationObserver', 'toastsRetire', 'getComputedStyle',
     `'use strict'; ${src}
      return { openModals, topModal, modalFocusTarget, modalFocusables, syncModalLayers, modalOpened, modalClosed, modalTrapTab, noteFocus,
        inModalOverlay, modalFocusInto };`,
-  )(doc, $, FakeObserver, toastsRetire) as ModalApi;
+  )(doc, $, FakeObserver, toastsRetire, (el: FEl) => ({ visibility: computedVisibility(el) })) as ModalApi;
 }
 
 /** Open or close a backdrop the way every caller does — by class — then run the net's reaction. */
@@ -259,6 +270,30 @@ test('a dialog with no field and no Cancel focuses the sheet itself, and Tab cyc
   api.modalTrapTab({ shiftKey: true, preventDefault: () => { prevented++; } }, p.settings);
   assert.equal(doc.activeElement, p.settingsSave, 'Shift+Tab before the first wraps to the last');
   assert.equal(prevented, 2, 'both wraps were the trap, not the browser');
+});
+
+test('a control hidden by visibility is no Tab stop: the trap wraps past it to the last control a keyboard can land on (review F2.1)', () => {
+  // modalFocusables counted every enabled control with a box. One hidden by
+  // `visibility` keeps its box but cannot take focus — the selection bar's
+  // buttons with nothing selected (QA D02) — so a wrap that chose one, or an
+  // offer that handed focus to one, left focus where it was or on <body>.
+  const doc = makeDoc();
+  const p = pageWith(doc);
+  const api = loadModalNet(doc);
+  const extra = append(p.settingsSave.parent!, mkOf(doc)('span', 'settingsMore'));
+  append(extra, mkOf(doc)('button', 'settingsMoreBtn'));
+  extra.style.visibility = 'hidden'; // its button inherits it, as a browser computes it
+  setOpen(api, p.settings, true);
+  assert.deepEqual(api.modalFocusables(p.settings).map((e) => e.id), ['forecastDays', 'settingsSaveBtn'],
+    'a control hidden by its parent\'s visibility is no stop');
+  p.settingsInput.focus();
+  let prevented = 0;
+  api.modalTrapTab({ shiftKey: true, preventDefault: () => { prevented++; } }, p.settings);
+  assert.equal(doc.activeElement, p.settingsSave, 'Shift+Tab before the first wraps to the last control a keyboard can land on');
+  assert.equal(prevented, 1, 'control: the wrap was the trap\'s');
+  extra.style.visibility = 'visible';
+  assert.deepEqual(api.modalFocusables(p.settings).map((e) => e.id), ['forecastDays', 'settingsSaveBtn', 'settingsMoreBtn'],
+    'control: shown, it is a stop again');
 });
 
 test('stacked dialogs: the lower sheet goes inert and focus returns to it, not the page', () => {

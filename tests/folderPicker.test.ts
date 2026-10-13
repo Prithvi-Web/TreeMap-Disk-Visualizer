@@ -1098,18 +1098,40 @@ test('"Checking that the folder exists…" is taken back only by the press that 
 type ToastKey = { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean;
   defaultPrevented: boolean; stopped: boolean; preventDefault(): void; stopPropagation(): void };
 type ToastBtn = { label: string; attrs: Record<string, string>; listeners: Array<() => void>; keys: Array<(e: ToastKey) => void>;
+  disabled: boolean; tabIndex: number; visibility: string; getAttribute(k: string): string | null; getClientRects(): unknown[];
   addEventListener(t: string, f: (e: ToastKey) => void): void; click(): void; focus(): void };
+/** A control on the page, as the page's modalFocusables reads one (toastRuntime's `stop`). */
+type PageStop = { id: string; isConnected: boolean; disabled: boolean; tabIndex: number; visibility: string;
+  getAttribute(k: string): string | null; getClientRects(): unknown[]; focus(): void };
 type ToastEl = { cls: Set<string>; html: string; innerHTML: string; button: ToastBtn | null; removed: boolean; className: string;
   classList: { add(c: string): void; contains(c: string): boolean }; querySelector(sel: string): ToastBtn | null; contains(x: unknown): boolean; remove(): void };
 
 /**
  * The page's toastAction, evaluated with a fake document on a clock the test
- * steps (fire): what it put on screen, its button, and where focus is.
+ * steps (fire): what it put on screen, its button, and where focus is. The
+ * page's Tab stops are counted by the page's own modalFocusables, over the
+ * controls the test puts on the page (`stop`) followed by #toasts — the last
+ * thing in the page.
  */
 function toastRuntime() {
-  const doc = { activeElement: null as unknown, body: { tagName: 'BODY' }, createElement: () => toastEl() };
-  /** The page's Tab stops in order, outside #toasts (modalFocusables), and the sheet on top, if any (topModal). */
-  const page = { stops: [] as unknown[], sheet: null as unknown };
+  const doc = {
+    activeElement: null as unknown, createElement: () => toastEl(),
+    body: { tagName: 'BODY', querySelectorAll: () => [...page.stops, ...shown.filter((el) => !el.removed).map((el) => el.button!)] },
+  };
+  /** The page's controls in DOM order, outside #toasts, the sheet on top, if any (topModal), and each sheet focus was handed into (modalFocusInto). */
+  const page = { stops: [] as PageStop[], sheet: null as unknown, into: [] as unknown[] };
+  /**
+   * A control on the page: enabled, in the Tab order and painted. Its
+   * `visibility` is the computed one — the selection bar's `visibility:
+   * hidden` with nothing selected is inherited by its buttons. A browser
+   * refuses focus to a control hidden that way, or gone from the page.
+   */
+  const stop = (id: string, visibility = 'visible'): PageStop => {
+    const s: PageStop = { id, isConnected: true, disabled: false, tabIndex: 0, visibility,
+      getAttribute: () => null, getClientRects: () => [{}],
+      focus() { if (s.visibility === 'visible' && s.isConnected && !s.disabled) doc.activeElement = s; } };
+    return s;
+  };
   const shown: ToastEl[] = [];
   const timers: { fn: () => void; delay: number; done: boolean }[] = [];
   const setTimeout = (fn: () => void, delay: number) => { timers.push({ fn, delay, done: false }); return timers.length; };
@@ -1128,7 +1150,8 @@ function toastRuntime() {
         const attrs: Record<string, string> = {};
         for (const a of b[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
         const btn: ToastBtn = {
-          label: b[2], attrs, listeners: [], keys: [],
+          label: b[2], attrs, listeners: [], keys: [], disabled: false, tabIndex: 0, visibility: 'visible',
+          getAttribute: (k) => (k in attrs ? attrs[k] : null), getClientRects: () => (el.removed ? [] : [{}]),
           addEventListener(t, f) { if (t === 'click') btn.listeners.push(f as () => void); else if (t === 'keydown') btn.keys.push(f); },
           click() { for (const f of btn.listeners) f(); },
           focus() { doc.activeElement = btn; },
@@ -1151,11 +1174,16 @@ function toastRuntime() {
   // The offers each sheet made, and what retires them as it closes, where the page has them.
   const retire = INDEX.includes('const sheetToasts = new Map();')
     ? `const sheetToasts = new Map(); ${braced('function toastsRetire(')}` : 'const toastsRetire = undefined;';
+  // The page's own count of its Tab stops, never a stand-in that agrees with
+  // itself: a control hidden by visibility kept its box and stayed in the
+  // stand-in's list (review F2.1).
+  const focusables = braced('function modalFocusables(');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const made = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout', 'topModal', 'modalFocusables',
-    `'use strict'; ${seqDecl} ${retire} ${braced('function toastAction(')} return { toastAction, toastsRetire };`,
+  const made = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout', 'topModal', 'modalFocusInto', 'getComputedStyle',
+    `'use strict'; ${seqDecl} ${retire} ${focusables} ${braced('function toastAction(')} return { toastAction, toastsRetire };`,
   )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout, () => page.sheet,
-    (root: unknown) => { assert.equal(root, doc.body, 'the stops are the page\'s'); return [...page.stops, ...shown.filter((el) => !el.removed).map((el) => el.button)]; }) as {
+    (sheet: { target?: PageStop }) => { page.into.push(sheet); sheet.target?.focus(); },
+    (el: { visibility?: string }) => ({ visibility: el.visibility ?? 'visible' })) as {
     toastAction: (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean; sheet?: string }) => void;
     /** A sheet closing (modalClosed): the offers made in it go. */
     toastsRetire: ((sheet: string) => void) | undefined;
@@ -1167,7 +1195,7 @@ function toastRuntime() {
     for (const f of btn.keys) f(e);
     return e;
   };
-  return { toastAction: made.toastAction, toastsRetire: made.toastsRetire, doc, shown, timers, fire, page, key };
+  return { toastAction: made.toastAction, toastsRetire: made.toastsRetire, doc, shown, timers, fire, page, key, stop };
 }
 
 test('outside a sheet an offer goes on Escape, and Tab moves on from the control it answers instead of dropping focus to <body> (QA C09)', () => {
@@ -1175,7 +1203,7 @@ test('outside a sheet an offer goes on Escape, and Tab moves on from the control
   // outside a sheet Escape did nothing, and Tab left the page — #toasts is its
   // last element — for <body>.
   const rt = toastRuntime();
-  const stop = (id: string) => { const s = { id, isConnected: true, focus() { rt.doc.activeElement = s; } }; return s; };
+  const { stop } = rt;
   const search = stop('gsearch'), box = stop('pathInput'), scan = stop('scanBtn'), map = stop('treemapCanvas');
   rt.page.stops.push(search, box, scan, map);
   box.focus(); // Enter in the Scan card's path box
@@ -1249,7 +1277,7 @@ test('Escape on an offer with no control to go back to hands focus to the page\'
   // stop, #toasts being the last thing in the page. Escape dismissed one and
   // left focus on its button, which went 320 ms later: focus fell to <body>.
   const rt = toastRuntime();
-  const stop = (id: string) => { const s = { id, isConnected: true, focus() { rt.doc.activeElement = s; } }; return s; };
+  const { stop } = rt;
   const search = stop('gsearch'), box = stop('pathInput'), map = stop('treemapCanvas');
   rt.page.stops.push(search, box, map);
   map.focus();
@@ -1273,6 +1301,40 @@ test('Escape on an offer with no control to go back to hands focus to the page\'
   rt.fire();
   assert.ok(orphan.removed, 'control: the toast has gone');
   assert.equal(rt.doc.activeElement, map, 'with the control it answers gone, Escape hands focus to the last stop too');
+});
+
+test('the page\'s last stop is one a keyboard can land on: Escape and Shift+Tab on an offer skip the selection bar\'s buttons, hidden by visibility with nothing selected (review F2.1)', () => {
+  // The selection bar comes after every view in the page, and with nothing
+  // selected it is `visibility: hidden` (QA D02): its buttons keep their
+  // boxes but cannot take focus. modalFocusables counted them, so the last
+  // stop an offer handed focus to was the hidden Clear — focus stayed on the
+  // toast's button and fell to <body> as it went, and Shift+Tab did nothing.
+  const rt = toastRuntime();
+  const { stop } = rt;
+  const search = stop('gsearch'), map = stop('treemapCanvas');
+  const bar = [stop('selOffloadBtn', 'hidden'), stop('selTrashBtn', 'hidden'), stop('selClearBtn', 'hidden')];
+  rt.page.stops.push(search, map, ...bar);
+  map.focus();
+  rt.toastAction('These results expire in a minute', 'Scan again', () => {}, 'success', 12000);
+  const quiet = rt.shown[0];
+  quiet.button!.focus(); // Tab from the map, the last stop a keyboard reaches
+  rt.key(quiet.button!, 'Escape');
+  rt.fire();
+  assert.ok(quiet.removed, 'control: the offer has gone');
+  assert.equal(rt.doc.activeElement, map, 'Escape hands focus to the map, the last stop a keyboard can land on — not the hidden Clear, which leaves it on <body>');
+
+  rt.toastAction('These results have expired', 'Scan again', () => {}, 'error', 15000);
+  const expired = rt.shown[1].button!;
+  expired.focus();
+  const back = rt.key(expired, 'Tab', { shiftKey: true });
+  assert.equal(rt.doc.activeElement, map, 'Shift+Tab goes back to the map, the stop a keyboard reached it from');
+  assert.ok(back.defaultPrevented, 'control: in place of the browser');
+
+  // With something selected the bar is up, and its Clear is the page's last stop.
+  for (const b of bar) b.visibility = 'visible';
+  expired.focus();
+  rt.key(expired, 'Escape');
+  assert.equal(rt.doc.activeElement, bar[2], 'with the bar up, Escape hands focus to its Clear, the last stop');
 });
 
 test('an offer\'s button acts once: a double-click, or a click while the toast fades out, does not run its choice again (final review F1.12)', () => {
