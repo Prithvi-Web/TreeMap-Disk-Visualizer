@@ -517,18 +517,22 @@ test('a dry run whose caller hangs up while it looks is still audited (U-4b revi
     const before = (await readAudit(1000)).length;
     const payload = JSON.stringify({ paths: [at('still')], onlyEmptyFolders: true, dryRun: true, ignoreOpenHandles: true });
     const r = http.request({ host: '127.0.0.1', port, path: '/api/files', method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } });
-    r.on('error', () => { /* the hang-up below */ });
-    // A request answered before its look began — refused 429 by the rate limiter, say — leaves `looking`
-    // pending for ever, and the file then hung until its 20-minute limit (CI run 38318285188): such an
-    // answer fails the test at once, with its status, instead.
-    const answeredFirst = new Promise<never>((_, reject) => {
+    // A request that ends before its look began leaves `looking` pending for ever, and the file then hung
+    // until its 20-minute limit (CI run 38318285188). It can end two ways: answered — refused 429 by the
+    // rate limiter, say — or failed on the wire — a reused keep-alive socket the server had already closed
+    // resets, say. Either fails the test at once, saying which, instead. The error the hang-up below raises
+    // comes after the race is settled, so it settles nothing.
+    const endedFirst = new Promise<never>((_, reject) => {
+      r.on('error', (err: NodeJS.ErrnoException) => {
+        reject(new assert.AssertionError({ message: `the dry run's request failed (${err.code ?? err.message}) before its look began` }));
+      });
       r.on('response', (res) => {
         res.resume();
         reject(new assert.AssertionError({ message: `the dry run was answered ${String(res.statusCode)} before its look began` }));
       });
     });
     r.end(payload);
-    await Promise.race([looking, answeredFirst]);
+    await Promise.race([looking, endedFirst]);
     r.destroy(); // the caller is gone while the look runs
     release();
     await waitFor(async () => (await readAudit(1000)).length > before, 'the dry run\'s audit entry');
