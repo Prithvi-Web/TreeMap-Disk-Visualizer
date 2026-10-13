@@ -595,11 +595,12 @@ function breakdownHarness() {
     get activeElement() { return doc.activeElement; },
   };
   const fact = { score: 82, confidence: 'high', components: [], missing: [] };
-  const panel = new Function('document', '$', 'window', 'CSS', 'scoreFor', 'scoreKnown', 'toast', 'escapeHtml', 'reclaimColor', 'icon',
+  const panel = new Function('document', '$', 'window', 'CSS', 'scoreFor', 'scoreKnown', 'toast', 'escapeHtml', 'reclaimColor', 'reclaimInk', 'icon',
     'reclaimWhyHtml', 'reclaimRadarAxes', 'RC_AXIS_ORDER', 'FxCharts', 'ctxTarget', 'topModal', 'inModalOverlay', 'modalFocusInto',
     `'use strict'; ${slice('/* ── the popover ── */', '/* ── sorting ──')}\nreturn { openReclaimWhy, closeReclaimWhy };`,
   )(document, (id: string) => doc.getElementById(id), { innerWidth: 1280, innerHeight: 800 }, { escape: (s: string) => s },
-    () => fact, () => true, () => {}, (s: string) => s, () => '#3a3', () => '', () => '', () => [], [], { radar: () => ({ destroy() {} }) }, null,
+    // reclaimInk is the badge's readable ink (B21): a colour, stood in for as reclaimColor is.
+    () => fact, () => true, () => {}, (s: string) => s, () => '#3a3', () => '#3a3', () => '', () => '', () => [], [], { radar: () => ({ destroy() {} }) }, null,
     api.topModal, api.inModalOverlay, api.modalFocusInto,
   ) as { openReclaimWhy: (path: string, anchor: FEl) => void; closeReclaimWhy: () => void };
   const branch = slice('const openModal = topModal();', '// Focus goes back to whatever opened the menu');

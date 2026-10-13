@@ -267,6 +267,9 @@ function cartWorld() {
   els.cartTrash = make('cartTrash', els.cartPanel);
   els.cartList = make('cartList', els.cartPanel, 'div');
   els.cartTab = make('cartTab', dock, 'div', { role: 'button', tabindex: '0' });
+  // The tab's total, whose title names the items this scan cannot size (B06): a counter's target,
+  // detached, so no focus question ever reaches it.
+  els.cartTabTotal = make('cartTabTotal', null, 'span');
   const state = { cart: new Set(['/c/a', '/c/b']) };
   const document = {
     body,
@@ -285,6 +288,8 @@ function cartWorld() {
     saveCart() {}, refreshCartButtons() {}, cartPreviewInvalidated() {}, cartTrashAll() {},
     ensureNodes: async () => {}, fxCartPulseSync() {}, countUp() {}, FxNum: { rollText() {}, rollHtml() {} },
     renderCartGoal() {}, cartTotalBytes: () => 0, cartNode: () => null,
+    // The count of staged items this scan cannot size (B06), a counter like the total beside it.
+    cartUnknownCount: () => 0,
     escapeHtml: String, icon: () => '', formatBytes: String, formatCount: String,
   }, '{ cartClear, cartDockToggle }', cartWiring());
   dock.classList.add('show');

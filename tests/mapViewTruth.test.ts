@@ -238,7 +238,7 @@ test('B37: a .dmg on screen previews like a plain file — the server cannot lis
 
 test('B37: the tooltip never invites a click "to look inside" a .dmg', () => {
   const tip = { innerHTML: '', style: {} as Record<string, string>, dataset: {} as Record<string, string>, offsetWidth: 0, offsetHeight: 0 };
-  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable'], {
+  const show = load<(x: number, y: number, node: unknown) => void>(['showTooltip', 'containerListable', 'sizeInk'], { // sizeInk: the size line's readable ink (B21), over the sizeColor below
     $: () => tip,
     icon: () => '',
     escapeHtml: (s: unknown) => String(s),
