@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-openapiDeclared-data-');
 
 import { buildOpenApiDocument } from '../src/api/openapi';
+import { createApp } from '../src/server';
 
 /**
  * What GET /api/openapi.json declares for a route is what the route sends (the final review, F1.17,
@@ -129,6 +131,42 @@ test('every route that refuses a safety record — by its middleware, or through
   walk(doc, '#');
   assert.ok('#/info/description' in verdicts, 'the document\'s own description names SAFETY_RECORD');
   assert.deepEqual(verdicts, Object.fromEntries(Object.keys(verdicts).map((at) => [at, 'names its cases'])));
+});
+
+/** GET `url` from the app as the server serves it, its JSON body (one connection, closed after it). */
+async function served(url: string): Promise<Json> {
+  const server = http.createServer(createApp(path.join(REPO, 'public')));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address() as { port: number };
+    const text = await new Promise<string>((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: url, agent: false }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => { body += chunk; });
+        res.on('end', () => resolve(body));
+      }).on('error', reject);
+    });
+    return JSON.parse(text) as Json;
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+test('the capability manifest, wherever it states 403 SAFETY_RECORD, names the cases the refusal does: the agent policy and the audit log, app-data or a folder above it, and a folder or link TreeMap reaches app-data through (the review of LEFT2, F1.2)', async () => {
+  const caps = await served('/api/capabilities');
+  const cases = ['the agent policy and the audit log', 'app-data or a folder above it', 'a folder or link TreeMap reaches app-data through'];
+  const missing: Record<string, string[]> = {};
+  const walk = (value: unknown, at: string): void => {
+    if (typeof value === 'string') {
+      if (value.includes('403 SAFETY_RECORD')) missing[at] = cases.filter((what) => !value.includes(what));
+    } else if (value !== null && typeof value === 'object') {
+      for (const [key, inner] of Object.entries(value)) walk(inner, `${at}/${key}`);
+    }
+  };
+  walk(caps, '#');
+  assert.ok('#/safety/appDataFolder' in missing, 'the manifest\'s app-data rule states 403 SAFETY_RECORD');
+  assert.deepEqual(missing, Object.fromEntries(Object.keys(missing).map((at) => [at, []])));
 });
 
 test('every route the idempotency middleware wraps declares the Idempotency-Key header, the cart\'s two included (F1.24)', () => {

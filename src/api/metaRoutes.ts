@@ -218,7 +218,8 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
         "TreeMap's own app-data folder (settings, Autopilot policies, the offload manifest, the Time Capsule) is never where a request writes, moves " +
         'or copies a file — a relocation\'s to, an offload\'s dest and its copies, a snapshot restore\'s destination, an encode: 403 APP_DATA_PATH, ' +
         'however the path is spelled; reading it and deleting in it are unchanged, but for the agent policy and the audit log (agent-policy.json, ' +
-        'audit.jsonl): no request removes or moves either, nor app-data or a folder above it — 403 SAFETY_RECORD, dry runs too; Autopilot leaves them alone',
+        'audit.jsonl): no request removes or moves either, nor app-data or a folder above it, nor a folder or link TreeMap reaches app-data through ' +
+        '— 403 SAFETY_RECORD, dry runs too; Autopilot leaves them alone',
       spillFolder:
         "TreeMap's own spill folder in app-data (the working files of very large scans) is refused by every endpoint and MCP tool " +
         'that trashes, opens, moves or writes a path: 403 SPILL_PATH, however the path is spelled',
