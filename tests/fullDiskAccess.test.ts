@@ -1055,6 +1055,26 @@ test('the recheck is spent by an answer that access is on, not by a failed ask o
   never.arm();
   for (let i = 0; i < 5; i++) await never.fire('focus');
   assert.equal(refreshes(never), 6, 'the button arms it again, for as many answers again');
+  // Review F3.5: every answer that is not "on" counts, not only "off". A Mac
+  // whose probe answers "unknown" (neither TCC folder opens or refuses) keeps
+  // "Open Privacy settings", and an answer may carry no Full Disk Access at
+  // all; neither may leave the page re-running every capability probe on
+  // the server at each focus for the rest of the session.
+  const notOn: Array<[string, unknown]> = [
+    ['unknown', { capabilities: { fullDiskAccess: fdaCap('unknown') } }],
+    ['no fullDiskAccess', { capabilities: {} }],
+    ['no capabilities', {}],
+  ];
+  for (const [what, answer] of notOn) {
+    const h = pageHarness({ fda: 'unknown', refused: { dirs: 2, examples: [] }, refresh: () => answer });
+    h.render();
+    h.arm();
+    for (let i = 0; i < 5; i++) await h.fire('focus');
+    assert.equal(refreshes(h), 3, `${what}: three answers, then no more asks`);
+    h.arm();
+    for (let i = 0; i < 5; i++) await h.fire('focus');
+    assert.equal(refreshes(h), 6, `${what}: and as many again after the button`);
+  }
 });
 
 test('the recheck waits for the window to be visible: going hidden neither asks nor spends it', async () => {
