@@ -51,6 +51,10 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .modal-head .close-x { margin-left: auto; }
 .modal-body { padding: 16px 22px; overflow-y: auto; flex: 1; }
 .modal-foot { padding: 14px 22px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--hairline); }
+/* A footer button keeps its label on one line; the note beside it wraps
+   instead. In the Autopilot editor "Save policy" shrank to its longest word
+   beside the Time Capsule note and read "Save / policy" (QA C01, B31). */
+.modal-foot .btn { white-space: nowrap; }
 .close-x { border: none; background: var(--surface-2); width: 28px; height: 28px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: var(--cur-hand); color: var(--text-2); transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }

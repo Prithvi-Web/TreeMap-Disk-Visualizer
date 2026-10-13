@@ -770,10 +770,10 @@ document.querySelectorAll('.modal-backdrop').forEach(bd =>
    - the page (everything at body level that is not a backdrop or the toasts)
      goes `inert` while any sheet is up, and so does every open sheet except
      the topmost — Tab, clicks and assistive tech cannot reach underneath;
-   - focus moves INTO the top sheet: an [autofocus] field, else the primary or
-     danger button in its footer (so Enter confirms a Trash sheet), else the
-     sheet itself; a sheet that already placed focus (the palette, the viewer)
-     is left alone;
+   - focus moves INTO the top sheet: an [autofocus] field, else its first
+     field, else its footer's Cancel, else the sheet itself — never a button
+     that commits or destroys (modalFocusTarget); a sheet that already placed
+     focus (the palette, the viewer) is left alone;
    - Tab and Shift+Tab cycle inside the top sheet (modalTrapTab, called from
      the app-wide keydown handler);
    - closing restores focus to where it was before the sheet opened, unless
@@ -830,10 +830,23 @@ function modalFocusables(root) {
   return [...root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
     .filter((el) => !el.disabled && el.tabIndex >= 0 && el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length);
 }
+/* Where focus lands as a sheet opens: its first field, else its safe way out
+   (the footer's Cancel — a [data-close] button), else the sheet itself; never
+   a button that commits or destroys (QA C01). The footer's primary or danger
+   button used to take it, so an Enter pressed out of habit saved the policy
+   the Autopilot editor had only just opened on, and the Trash sheet opened on
+   "Empty Trash…". An [autofocus] control still wins: its sheet chose it. A
+   radio group is entered at its checked radio, as Tab enters it — on the
+   first, unchecked one, Space would switch Settings' theme on arrival. */
 function modalFocusTarget(backdrop) {
   const dlg = backdrop.querySelector('.modal') || backdrop;
-  const pick = (sel) => [...dlg.querySelectorAll(sel)].find((el) => !el.disabled && el.getClientRects().length);
-  const target = pick('[autofocus]') || pick('.modal-foot .btn-primary, .modal-foot .btn-danger');
+  const live = (el) => !el.disabled && el.getClientRects().length;
+  const pick = (sel) => [...dlg.querySelectorAll(sel)].find(live);
+  const first = pick('[autofocus]') || pick('input, select, textarea');
+  const field = first && first.type === 'radio' && first.name
+    ? [...dlg.querySelectorAll('input')].find((r) => r.type === 'radio' && r.name === first.name && r.checked && live(r)) || first
+    : first;
+  const target = field || pick('.modal-foot [data-close]');
   if (target) return target;
   if (!dlg.hasAttribute('tabindex')) dlg.setAttribute('tabindex', '-1');
   return dlg;

@@ -155,7 +155,7 @@ function pageWith(doc: FDoc) {
   const confirmDlg = append(confirm, mk('div', '', ['modal']));
   const confirmClose = append(append(confirmDlg, mk('div', '', ['modal-head'])), mk('button', 'confirmClose', ['close-x']));
   const confirmFoot = append(confirmDlg, mk('div', '', ['modal-foot']));
-  const cancel = append(confirmFoot, mk('button', 'confirmCancel', ['btn']));
+  const cancel = append(confirmFoot, mk('button', 'confirmCancel', ['btn'], { 'data-close': 'confirmModal' }));
   const ok = append(confirmFoot, mk('button', 'confirmOk', ['btn', 'btn-danger']));
   const settings = append(doc.body, mk('div', 'settingsModal', ['modal-backdrop']));
   const settingsDlg = append(settings, mk('div', '', ['modal']));
@@ -199,13 +199,21 @@ function setOpen(api: ModalApi, el: FEl, open: boolean) {
 
 /* ══════════════ a11y-keyboard-1 — every dialog takes, traps and returns focus ══════════════ */
 
-test('opening a dialog moves focus to its primary action — Enter confirms a Trash sheet', () => {
+test('opening a dialog moves focus into it: a confirmation lands on its Cancel, a form on its first field — never on the button that commits or destroys (C01)', () => {
+  // QA re-check C01: focus used to land on the footer's primary or danger
+  // button ("so Enter confirms a Trash sheet"), so an Enter pressed out of
+  // habit saved the Autopilot policy the editor had just opened on. A sheet
+  // opens on its first field or a safe control now.
   const doc = makeDoc();
   const p = pageWith(doc);
   const api = loadModalNet(doc);
+  setOpen(api, p.settings, true);
+  assert.equal(doc.activeElement, p.settingsInput, 'a sheet with a field opens on it, not on Save');
+  doc.activeElement = doc.body;
+  setOpen(api, p.settings, false);
   p.pageBtn.focus(); api.noteFocus(p.pageBtn);
   setOpen(api, p.confirm, true);
-  assert.equal(doc.activeElement, p.ok, 'focus lands on the danger button, so Enter confirms');
+  assert.equal(doc.activeElement, p.cancel, 'a confirmation opens on Cancel, so Enter on arrival trashes nothing');
   assert.equal(p.main.inert, true, 'the page behind is inert');
   assert.equal(p.side.inert, true, 'the sidebar too');
   assert.equal(p.cart.inert, true, 'and the cart dock');
@@ -219,7 +227,7 @@ test('closing a dialog gives focus back to where it came from and lifts inert', 
   const api = loadModalNet(doc);
   p.pageBtn.focus(); api.noteFocus(p.pageBtn);
   setOpen(api, p.confirm, true);
-  assert.equal(doc.activeElement, p.ok);
+  assert.equal(doc.activeElement, p.cancel);
   // The browser drops focus to <body> when the focused button stops painting.
   doc.activeElement = doc.body;
   setOpen(api, p.confirm, false);
@@ -228,14 +236,16 @@ test('closing a dialog gives focus back to where it came from and lifts inert', 
   assert.equal(p.side.inert, false);
 });
 
-test('a dialog with no primary focuses the sheet itself, and Tab cycles inside it', () => {
+test('a dialog with no field and no Cancel focuses the sheet itself, and Tab cycles inside it', () => {
   const doc = makeDoc();
   const p = pageWith(doc);
   const api = loadModalNet(doc);
   p.settingsSave.disabled = true; // nothing to confirm yet
+  p.settingsInput.shown = false; // and no field to land on: a progress sheet, the Trash, the shortcuts
   setOpen(api, p.settings, true);
-  assert.equal(doc.activeElement, p.settingsDlg, 'the sheet takes focus when it has no enabled primary');
+  assert.equal(doc.activeElement, p.settingsDlg, 'the sheet takes focus when it has no field and no Cancel — never its Save');
   assert.equal(p.settingsDlg.getAttribute('tabindex'), '-1', 'and it was made focusable without joining the Tab order');
+  p.settingsInput.shown = true;
   const f = api.modalFocusables(p.settings);
   assert.deepEqual(f.map((e) => e.id), ['forecastDays'], 'the disabled Save is not a Tab stop');
   // Tab from the last focusable wraps to the first; Shift+Tab from the first wraps to the last.
@@ -257,12 +267,12 @@ test('stacked dialogs: the lower sheet goes inert and focus returns to it, not t
   const api = loadModalNet(doc);
   p.pageBtn.focus(); api.noteFocus(p.pageBtn);
   setOpen(api, p.settings, true);
-  assert.equal(doc.activeElement, p.settingsSave);
-  api.noteFocus(p.settingsSave);
+  assert.equal(doc.activeElement, p.settingsInput);
+  p.settingsSave.focus(); api.noteFocus(p.settingsSave); // Save opens a confirmation
   setOpen(api, p.confirm, true);
   assert.equal(api.topModal(), p.confirm, 'the later sheet is on top');
   assert.equal(p.settings.inert, true, 'the sheet underneath cannot be tabbed into');
-  assert.equal(doc.activeElement, p.ok);
+  assert.equal(doc.activeElement, p.cancel);
   doc.activeElement = doc.body;
   setOpen(api, p.confirm, false);
   assert.equal(p.settings.inert, false, 'the lower sheet is live again');
@@ -296,8 +306,8 @@ test('closing a sheet whose offer holds focus gives focus back to where the shee
   const offer = append(p.toasts, mkOf(doc)('button', 'offerBtn'));
   p.pageBtn.focus(); api.noteFocus(p.pageBtn);
   setOpen(api, p.settings, true);
-  assert.equal(doc.activeElement, p.settingsSave, 'control: the sheet took focus');
-  api.noteFocus(p.settingsSave);
+  assert.equal(doc.activeElement, p.settingsInput, 'control: the sheet took focus');
+  p.settingsSave.focus(); api.noteFocus(p.settingsSave);
   offer.focus(); api.noteFocus(offer); // Save made an offer, which took focus
   assert.equal(doc.activeElement, offer, 'control: the offer holds focus with the sheet open');
   setOpen(api, p.settings, false); // Escape
@@ -310,7 +320,7 @@ test('closing a sheet whose offer holds focus gives focus back to where the shee
   setOpen(api, p.settings, true);
   p.settingsInput.focus(); api.noteFocus(p.settingsInput);
   setOpen(api, p.confirm, true);
-  assert.equal(doc.activeElement, p.ok, 'control: the top sheet took focus');
+  assert.equal(doc.activeElement, p.cancel, 'control: the top sheet took focus');
   offer.focus(); api.noteFocus(offer);
   setOpen(api, p.confirm, false);
   assert.equal(doc.activeElement, p.settingsInput, 'focus goes back to the control in the sheet underneath that opened the top sheet');
@@ -437,6 +447,59 @@ test('every dialog in the shipped page is live when it opens: no inert ancestor,
     el.focus();
     assert.ok(doc.activeElement === el, `#${id} takes focus while the Autopilot sheet is open`);
   }
+});
+
+test('every sheet in the shipped page opens on its first field or a safe control — never on a button that commits or destroys (C01)', () => {
+  // QA re-check C01: the Autopilot editor opened on "Save policy", so Enter
+  // saved at once; the Trash sheet opened on "Empty Trash…". Every sheet is
+  // opened here from the page's own markup and the net's own rules.
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const api = loadModalNet(doc);
+  const landed: Record<string, FEl> = {};
+  for (const sheet of doc.querySelectorAll('.modal-backdrop')) {
+    setOpen(api, sheet, true);
+    const at = doc.activeElement!;
+    assert.ok(sheet.contains(at), `#${sheet.id} open: focus is in it`);
+    assert.ok(!at.cls.has('btn-primary') && !at.cls.has('btn-danger'),
+      `#${sheet.id} opens on <${at.tag} id=${at.id} class="${[...at.cls].join(' ')}">, a button that commits or destroys`);
+    landed[sheet.id] = at;
+    doc.activeElement = doc.body;
+    setOpen(api, sheet, false);
+  }
+  assert.ok(Object.keys(landed).length >= 12, `every sheet was opened (${Object.keys(landed).join(', ')})`);
+  assert.equal(landed.apModal.id, 'apName', 'the policy editor opens on its Name field');
+  assert.ok(landed.trashModal.cls.has('modal'), 'the Trash sheet opens on itself — its only button empties the Trash');
+  assert.equal(landed.confirmModal.id, 'confirmCancel', 'Move to Trash? opens on Cancel');
+  assert.equal(landed.browseModal.id, 'browseCurrent', 'the folder picker opens on its path field, not "Scan this folder"');
+  assert.equal(landed.askModal.id, 'askInput', 'and a field a sheet marks [autofocus] still wins');
+});
+
+test('a sheet whose first field is a radio group opens on the checked choice — Space or an arrow on arrival changes nothing (C01)', () => {
+  // Settings opens on its Theme choice, which saves the moment it is picked.
+  // Focus on an unchecked "System" would make Space switch the theme; the
+  // group is entered at its checked radio, as Tab enters it.
+  const doc = makeDoc();
+  const mk = mkOf(doc);
+  const sheet = append(doc.body, mk('div', 'settingsModal', ['modal-backdrop']));
+  const dlg = append(sheet, mk('div', '', ['modal']));
+  const group = append(append(dlg, mk('div', '', ['modal-body'])), mk('div', 'themeOptions'));
+  const radios = ['system', 'light', 'dark'].map((v) => Object.assign(append(group, mk('input', 'themeChoice-' + v)),
+    { type: 'radio', name: 'themeChoice', checked: v === 'dark' }));
+  append(append(dlg, mk('div', '', ['modal-foot'])), mk('button', 'settingsSaveBtn', ['btn', 'btn-primary']));
+  sheet.shown = false;
+  const api = loadModalNet(doc);
+  setOpen(api, sheet, true);
+  assert.equal(doc.activeElement, radios[2], 'focus is on Dark, the choice in force');
+});
+
+test('a sheet\'s footer buttons keep their label on one line — "Save policy" no longer wraps beside the note (C01)', () => {
+  // The Autopilot editor's footer holds a note, Preview and Save policy; the
+  // button shrank to its longest word and read "Save / policy".
+  const sheet = INDEX.slice(INDEX.indexOf('<style>') + 7, INDEX.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const rule = /(?:^|\})\s*\.modal-foot \.btn \{([^}]*)\}/.exec(sheet);
+  assert.ok(rule, 'the footer\'s buttons have a rule of their own');
+  assert.match(rule![1], /white-space:\s*nowrap/, 'a footer button never wraps its label; the note beside it wraps instead');
 });
 
 /* B31's sibling (review F1.3): the net made every body-level element that is
