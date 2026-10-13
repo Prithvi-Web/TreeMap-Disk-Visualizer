@@ -9982,20 +9982,24 @@ function isWholeDiskOrHome(p) {
 }
 
 /**
- * Show or hide "Open Privacy settings". Hidden while it has keyboard focus,
- * [hidden] takes it out of the page and focus falls to <body>, losing a
- * keyboard user's place — the recheck does exactly that when it finds access
- * switched on (U-11, review F1.11). Focus moves to "What's missing?" when it
- * shows, or else to the row, which says what changed. Called once the row
- * and the other button are painted, so whatever takes focus is on screen.
+ * Repaint the access row without losing a keyboard user's place (U-11,
+ * reviews F1.11 and F2.6). [hidden] takes an element out of the page, and a
+ * focused one hands focus to <body>: "Open Privacy settings" once the
+ * recheck finds access on, "What's missing?" when a scan's notice replaces
+ * its count, the whole row when a rescan refused nothing. So where focus is
+ * is read before `paint` runs; if it was in the row and is gone after, it
+ * moves to the first button still showing there, else to the row itself
+ * (which says what changed), else — the row gone — to the Scan button above
+ * it. Focus anywhere else is never moved.
  */
-function setAccessOpenHidden(hide) {
-  const btn = $('accessOpenBtn');
-  const hadFocus = hide && !btn.hidden && document.activeElement === btn;
-  btn.hidden = hide;
-  if (!hadFocus) return;
-  const missing = $('accessMissingBtn');
-  (missing.hidden ? $('accessRow') : missing).focus();
+function keepAccessFocus(paint) {
+  const row = $('accessRow');
+  const was = document.activeElement;
+  const inRow = !!was && (was === row || row.contains(was));
+  paint();
+  if (!inRow || (!row.hidden && !was.hidden)) return;
+  const stays = ['accessMissingBtn', 'accessOpenBtn'].map((id) => $(id)).find((b) => !row.hidden && !b.hidden);
+  (stays || (row.hidden ? $('scanBtn') : row)).focus();
 }
 
 /** Paint the before-the-total notice into the access row (no count yet, and no byte figure: U-D14). */
@@ -10005,7 +10009,7 @@ function paintAccessNotice() {
   $('accessHint').textContent = accessHintFor(fda);
   $('accessMissingBtn').hidden = true; // nothing is missing yet: the scan has not finished
   $('accessRow').hidden = false;
-  setAccessOpenHidden(!!fda && fda.state === 'granted');
+  $('accessOpenBtn').hidden = !!fda && fda.state === 'granted';
 }
 
 /**
@@ -10019,7 +10023,7 @@ function preScanAccessNotice(path) {
   const fda = mac ? fullDiskAccessInfo() : null;
   state.accessNotice = fda && fda.state === 'not-granted' && isWholeDiskOrHome(path) ? path : null;
   if (!state.accessNotice) return false;
-  paintAccessNotice();
+  keepAccessFocus(paintAccessNotice);
   return true;
 }
 
@@ -10033,6 +10037,11 @@ function preScanAccessNotice(path) {
  * in — `scanId` is stamped on it, and one from any other scan is not shown.
  */
 function renderRefusedFolders() {
+  keepAccessFocus(paintRefusedRow);
+}
+
+/** renderRefusedFolders' painting, run inside keepAccessFocus. */
+function paintRefusedRow() {
   const row = $('accessRow');
   const stats = state.scanStats || {};
   // The server's count wins when it sent one, zero included; otherwise
@@ -10070,7 +10079,7 @@ function renderRefusedFolders() {
   $('accessMissingBtn').hidden = false;
   row.hidden = false;
   // Nothing to switch on once it is on; off macOS there is no such setting.
-  setAccessOpenHidden(!mac || (!!fda && fda.state === 'granted'));
+  $('accessOpenBtn').hidden = !mac || (!!fda && fda.state === 'granted');
 }
 
 /**

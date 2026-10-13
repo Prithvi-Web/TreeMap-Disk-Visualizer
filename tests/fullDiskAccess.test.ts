@@ -434,17 +434,42 @@ function pageHarness(opts: { platform?: string; fda?: FdaState | null; refused?:
   const src = block('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
     block('/* ── Full Disk Access recheck ── */', '/* ── end Full Disk Access recheck ── */');
   const els: Record<string, El> = {};
+  // The row's parts, as the markup nests them: hiding the row hides them too.
+  const ROW_PARTS = ['accessText', 'accessHint', 'accessMissingBtn', 'accessOpenBtn'];
+  const parentOf = (id: string): string | null => (ROW_PARTS.includes(id) ? 'accessRow' : null);
+  const idOf = (e: unknown): string | null => Object.keys(els).find((k) => els[k] === e) ?? null;
+  const rendered = (id: string): boolean => {
+    const up = parentOf(id);
+    return !$(id).hidden && (up === null || rendered(up));
+  };
   // focus() moves the document's activeElement as a browser's does: never onto
-  // a hidden element, and never onto one the markup does not make focusable.
+  // an element that is not rendered, and never onto one the markup does not
+  // make focusable. Each element starts as the markup has it, hidden or not.
   const $ = (id: string): El => (els[id] ??= Object.assign(el(), {
-    focus: () => { if (!els[id].hidden && focusableInMarkup(id)) doc.activeElement = els[id]; },
+    hidden: /\shidden[\s>=]/.test(openTag(id) ?? ' hidden>'),
+    focus: () => { if (rendered(id) && focusableInMarkup(id)) focused = id; },
+    contains: (other: unknown): boolean => {
+      for (let at = idOf(other); at !== null; at = parentOf(at)) if (at === id) return true;
+      return false;
+    },
   }));
   const toasts: string[] = [];
   const asked: Array<[string, unknown]> = [];
   const emitted: Array<[string, unknown]> = [];
   const winListeners: Record<string, Array<() => void>> = {};
   const docListeners: Record<string, Array<() => void>> = {};
-  const doc = { visibilityState: 'visible', activeElement: null as unknown, addEventListener: (n: string, fn: () => void) => { (docListeners[n] ??= []).push(fn); } };
+  const body = { tagName: 'BODY' };
+  let focused: string | null = null;
+  const doc = {
+    visibilityState: 'visible',
+    // The focus fixup rule (review F2.6): an element that is no longer
+    // rendered — hidden, or inside something hidden — has handed focus to
+    // <body>. A stub that kept answering with the hidden element could not
+    // show focus being lost.
+    get activeElement(): unknown { return focused === null ? null : rendered(focused) ? els[focused] : body; },
+    set activeElement(e: unknown) { focused = idOf(e); },
+    addEventListener: (n: string, fn: () => void) => { (docListeners[n] ??= []).push(fn); },
+  };
   const win = { treemapDesktop: null, addEventListener: (n: string, fn: () => void) => { (winListeners[n] ??= []).push(fn); } };
   const state: Record<string, unknown> = {
     scanStats: opts.refused === undefined ? null : { refused: opts.refused ?? { dirs: 0, examples: [] } },
@@ -738,6 +763,58 @@ test('when the recheck hides a focused "Open Privacy settings", focus moves to w
   await o.fire('focus');
   assert.equal(o.els.accessOpenBtn.hidden, true);
   assert.equal(o.doc.activeElement, elsewhere, 'a hidden button that did not have focus moves nobody');
+});
+
+test('any repaint that hides the focused part of the access row moves focus to what stays, or to the Scan button, never to the page body', async () => {
+  // Review F2.6: the F1.11 rescue covered one transition. The recheck parks
+  // focus on "What's missing?"; the hint says a new scan can read the
+  // folders, so the person presses ⌘R, which moves no focus; the rescan
+  // refuses nothing and the row goes — with focus inside it, so it fell to
+  // <body>. And a / scan without access, begun with focus on "What's
+  // missing?", hid that button under its notice.
+  const h = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] } });
+  h.render();
+  h.arm();
+  h.doc.activeElement = h.els.accessOpenBtn;
+  await h.fire('focus');
+  assert.equal(h.doc.activeElement, h.els.accessMissingBtn, 'the recheck left focus on "What’s missing?"');
+  h.state.scanStats = { refused: { dirs: 0, examples: [] } }; // ⌘R, and the rescan read everything
+  h.render();
+  assert.equal(h.els.accessRow.hidden, true, 'the rescan refused nothing: the row goes');
+  assert.equal(h.doc.activeElement, h.$('scanBtn'), 'and focus goes to the Scan button above it');
+
+  const n = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] } });
+  n.render();
+  n.doc.activeElement = n.els.accessMissingBtn;
+  n.state.scanning = true;
+  assert.equal(n.notice('/'), true, 'a / scan without access paints its notice');
+  assert.equal(n.els.accessMissingBtn.hidden, true, 'which has no "What’s missing?"');
+  assert.equal(n.doc.activeElement, n.els.accessOpenBtn, 'so focus moves to the button the notice keeps');
+
+  const g = pageHarness({ fda: 'granted', refused: { dirs: 2, examples: [] } });
+  g.render();
+  g.doc.activeElement = g.els.accessMissingBtn;
+  g.state.scanStats = { refused: { dirs: 0, examples: [] } };
+  g.render();
+  assert.equal(g.doc.activeElement, g.$('scanBtn'), 'with no other button showing, the row gone, the Scan button takes it');
+
+  // A repaint that hides nothing focused moves nobody.
+  const s = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] } });
+  s.render();
+  s.doc.activeElement = s.els.accessOpenBtn;
+  s.render();
+  assert.equal(s.doc.activeElement, s.els.accessOpenBtn, 'a button still on screen keeps its focus');
+  s.doc.activeElement = s.els.accessRow;
+  s.render();
+  assert.equal(s.doc.activeElement, s.els.accessRow, 'and so does the row while it shows');
+  // Focus outside the row is never moved, even when the row goes.
+  const o = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: [] } });
+  o.render();
+  const field = o.$('pathInput');
+  o.doc.activeElement = field;
+  o.state.scanStats = { refused: { dirs: 0, examples: [] } };
+  o.render();
+  assert.equal(o.doc.activeElement, field, 'focus outside the row stays where it is');
 });
 
 test('the button arms the recheck, and its fallback toast uses the server\'s sentence', async () => {
