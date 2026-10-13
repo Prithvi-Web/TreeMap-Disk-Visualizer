@@ -1145,13 +1145,23 @@ function fullDiskAccessInfo() {
   return fda && typeof fda.state === 'string' ? fda : null;
 }
 
-/** The hint under the refused count on a Mac, for the state the server probed. */
+/**
+ * The hint under the refused count on a Mac: the server's sentence for the
+ * state it probed (`fda`), unless access is on now and the scan on screen
+ * started without it, or without the page knowing. That is decided by the
+ * state the scan started under (`state.scanAccessState`, kept by
+ * scanAccessNotice), never by a read the recheck made before its ask: a scan
+ * begun while the ask was out learned from its own start that access was
+ * already on, and was still told "on now" (review F3.1). The server words a
+ * scan's count by the same pair (scanAccessAdvice).
+ */
 function accessHintFor(fda) {
-  if (fda && fda.state === 'granted' && state.accessTurnedOn === 'was-off') {
+  const ran = state.scanAccessState;
+  if (fda && fda.state === 'granted' && ran === 'not-granted') {
     // Switched on after this scan ran without it: what it refused may be readable now.
     return 'Full Disk Access is on now, so a new scan can read the folders macOS kept TreeMap out of.';
   }
-  if (fda && fda.state === 'granted' && state.accessTurnedOn === 'was-unknown') {
+  if (fda && fda.state === 'granted' && (ran === null || ran === 'unknown')) {
     // On now, but the page never knew whether it was on when this scan ran
     // (no answer, or "unknown"). "On now" would promise a rescan that may
     // refuse the same folders, and the server's "does not change that" may
@@ -1224,9 +1234,15 @@ function preScanAccessNotice(path) {
  * a / scan on a server that now had the grant still said macOS would keep
  * folders out of its total, and its refusals were still worded "Give … Full
  * Disk Access". On a cold start the answer was not in yet, and a
- * first-minute whole-disk scan had no notice at all. The answer kept here is
- * also what the scan's refused row is worded by when it ends: the state the
- * scan ran under.
+ * first-minute whole-disk scan had no notice at all.
+ *
+ * The state the scan starts under is kept in `state.scanAccessState`, and
+ * the scan's refused row is worded by it when the scan ends (review F3.1):
+ * the page's own answer at once — so a scan that settles before the server
+ * answers forgets whatever the recheck learned about the last scan — then
+ * the server's answer when it comes. Only this scan's own start writes it,
+ * so however the recheck's ask and this one interleave, a scan that started
+ * with access is never told "on now".
  *
  * Called beside the scan request, never awaited in front of it. A GET, so
  * the server's own 30-second answer serves and no probe is re-run; only
@@ -1236,15 +1252,22 @@ function preScanAccessNotice(path) {
  * page's own decides.
  */
 async function scanAccessNotice(path, gen) {
-  state.accessTurnedOn = null; // what the recheck learned was about the last scan's refusals
+  const held = fullDiskAccessInfo();
+  state.scanAccessState = held ? held.state : null; // until the server answers, what the page holds
+  let fda = null;
   try {
     const res = await api('/api/platform/capabilities');
-    const fda = res && res.capabilities ? res.capabilities.fullDiskAccess : null;
-    if (fda && typeof fda.state === 'string') state.capabilities = { ...(state.capabilities || {}), fullDiskAccess: fda };
+    const answer = res && res.capabilities ? res.capabilities.fullDiskAccess : null;
+    if (answer && typeof answer.state === 'string') {
+      fda = answer;
+      state.capabilities = { ...(state.capabilities || {}), fullDiskAccess: answer };
+    }
   } catch {
     // No answer: the page's own is what there is.
   }
-  if (gen !== state.scanGen || !state.scanning) return false;
+  if (gen !== state.scanGen) return false; // another scan began: it keeps the state it started under
+  if (fda) state.scanAccessState = fda.state;
+  if (!state.scanning) return false;
   return preScanAccessNotice(path);
 }
 
@@ -1501,7 +1524,6 @@ function armFullDiskAccessRecheck() {
 async function recheckFullDiskAccess() {
   if (!accessRecheckArmed || accessRecheckAsking) return; // focus and visibilitychange arrive together
   accessRecheckAsking = true;
-  const before = fullDiskAccessInfo();
   let res = null;
   try {
     res = await api('/api/platform/capabilities/refresh', { method: 'POST' });
@@ -1514,10 +1536,15 @@ async function recheckFullDiskAccess() {
   const fda = res.capabilities ? res.capabilities.fullDiskAccess : null;
   if ((fda && fda.state === 'granted') || ++accessRecheckAnswers >= ACCESS_RECHECK_ANSWERS) accessRecheckArmed = false;
   if (!fda || typeof fda.state !== 'string') return;
-  // "Off before" only when the page was told so: a missing or "unknown"
-  // answer is not one (review F2.2), and the server words it the same way.
-  if (fda.state === 'granted' && (!before || before.state !== 'granted')) {
-    state.accessTurnedOn = before && before.state === 'not-granted' ? 'was-off' : 'was-unknown';
+  // The row says "on now" by the state its scan started under, which that
+  // scan's own start keeps (review F3.1). Only a scan this page did not
+  // start has none — one reopened after a reload — and the answer the page
+  // held until now stands for it: read here, after the ask, since a scan
+  // begun while it was out has kept its own. "Off" only when the page was
+  // told so: a missing or "unknown" answer is not one (review F2.2).
+  if (state.scanAccessState === undefined) {
+    const held = fullDiskAccessInfo();
+    state.scanAccessState = held ? held.state : null;
   }
   state.capabilities = { ...(state.capabilities || {}), fullDiskAccess: fda };
   renderRefusedFolders();

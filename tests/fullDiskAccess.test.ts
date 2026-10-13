@@ -411,6 +411,8 @@ const ADVICE: Record<FdaState, string> = {
   unknown: 'The unknown sentence, both halves.',
 };
 const fdaCap = (state: FdaState) => ({ available: state === 'granted', mechanism: 'm', state, grantee: 'the test grantee', advice: ADVICE[state] });
+/** The page's hint once access is on, for a scan that started while the page did not know whether it was (review F2.2). */
+const ON_IF_IT_WAS_OFF = 'Full Disk Access is on. If it was off when this scan ran, a new scan can read the folders macOS kept TreeMap out of; folders closed by their own permissions stay closed.';
 
 /** An element's opening tag in the built page, by id, or null when the page has none. */
 function openTag(id: string): string | null {
@@ -824,7 +826,6 @@ test('the recheck says "on now" only when the page knew access was off; with no 
   // refused the same folders. The server says "on now" only for a scan it
   // knows ran without access; the page holds to the same rule.
   const ON_NOW = /Full Disk Access is on now/;
-  const HEDGE = 'Full Disk Access is on. If it was off when this scan ran, a new scan can read the folders macOS kept TreeMap out of; folders closed by their own permissions stay closed.';
   for (const fda of [null, 'unknown'] as const) {
     const h = pageHarness({ fda, refused: { dirs: 2, examples: ['/Users/x/locked'] } });
     h.render();
@@ -832,7 +833,7 @@ test('the recheck says "on now" only when the page knew access was off; with no 
     await h.fire('focus');
     assert.equal(h.asked.filter(([u]) => u === '/api/platform/capabilities/refresh').length, 1, `${fda}: the recheck asked`);
     assert.doesNotMatch(h.els.accessHint.textContent, ON_NOW, `${fda}: no claim about when access came on`);
-    assert.equal(h.els.accessHint.textContent, HEDGE, `${fda}: what is known, and what a rescan will not open`);
+    assert.equal(h.els.accessHint.textContent, ON_IF_IT_WAS_OFF, `${fda}: what is known, and what a rescan will not open`);
     assert.equal(h.els.accessOpenBtn.hidden, true, `${fda}: on now, so nothing is left to switch on`);
   }
   // A known "off" before is still "on now".
@@ -867,6 +868,85 @@ test('the recheck says "on now" only when the page knew access was off; with no 
   await quickRun;
   quick.render();
   assert.equal(quick.els.accessHint.textContent, ADVICE.granted, 'nor once its answer is in');
+});
+
+test('"on now" is decided by the state the scan on screen started under, never by what the recheck read before its ask', async () => {
+  // Review F3.1: the recheck read the page's answer before its ask went out
+  // and, once the server said access was on, marked the row "was off" from
+  // that read. A scan started while the ask was out learned from its own
+  // start that access was already on, and ran with it; the late answer
+  // still marked it, so its chmod-000 refusals were worded "Full Disk Access
+  // is on now, so a new scan can read the folders macOS kept TreeMap out
+  // of" — the grant, rescan, same refusal loop U-11 removes. The ask re-runs
+  // every capability probe, so the window is seconds wide.
+  const settle = (h: ReturnType<typeof pageHarness>): void => {
+    Object.assign(h.state, { scanning: false, scanId: 's2', scanStats: { refused: { dirs: 2, examples: ['/Users/x/locked'] } } });
+    h.render();
+  };
+  const granted = (): unknown => ({ capabilities: { fullDiskAccess: fdaCap('granted') } });
+
+  // Back from System Settings: the recheck asks, and while it is out the
+  // person presses Scan on a server that already has the grant.
+  let ask: (v: unknown) => void = () => {};
+  const during = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] }, refresh: () => new Promise((r) => { ask = r; }), current: granted });
+  during.render();
+  during.arm();
+  await during.fire('focus');
+  await during.scan('/Users/x');
+  await during.fire();
+  ask(granted());
+  await during.fire();
+  settle(during);
+  assert.equal(during.els.accessHint.textContent, ADVICE.granted, 'a scan that started with access is worded by that, not "on now"');
+
+  // The other order: the scan's own answer is still out when the recheck asks.
+  let answer: (v: unknown) => void = () => {};
+  let ask2: (v: unknown) => void = () => {};
+  const first = pageHarness({ fda: 'not-granted', refused: { dirs: 2, examples: ['/Users/x/Library/Mail'] }, current: () => new Promise((r) => { answer = r; }), refresh: () => new Promise((r) => { ask2 = r; }) });
+  first.render();
+  const firstRun = first.scan('/Users/x/Projects');
+  await first.fire();
+  first.arm();
+  await first.fire('focus');
+  answer(granted());
+  await first.fire();
+  ask2(granted());
+  await first.fire();
+  await firstRun;
+  settle(first);
+  assert.equal(first.els.accessHint.textContent, ADVICE.granted, 'whichever answer lands first');
+
+  // What the page learns after a scan started never rewrites the state that
+  // scan started under: one the server could not judge stays "could not tell".
+  const later: FdaState[] = ['not-granted', 'granted'];
+  const unsure = pageHarness({ fda: 'unknown', current: () => ({ capabilities: { fullDiskAccess: fdaCap('unknown') } }), refresh: () => ({ capabilities: { fullDiskAccess: fdaCap(later.shift() ?? 'granted') } }) });
+  await unsure.scan('/Users/x/Projects');
+  await unsure.fire();
+  settle(unsure);
+  assert.equal(unsure.els.accessHint.textContent, ADVICE.unknown);
+  unsure.arm();
+  await unsure.fire('focus');
+  assert.equal(unsure.els.accessHint.textContent, ADVICE['not-granted'], 'off, by the recheck\'s first answer');
+  await unsure.fire('focus');
+  assert.equal(unsure.els.accessHint.textContent, ON_IF_IT_WAS_OFF, 'on now, for a scan that ran while the server could not tell: both halves, not "on now"');
+
+  // A scan that was overtaken keeps its answer to itself: one that lands
+  // late never becomes the state the next scan started under.
+  const answers: Array<(v: unknown) => void> = [];
+  const two = pageHarness({ fda: 'not-granted', current: () => new Promise((r) => { answers.push(r); }) });
+  const runA = two.scan('/Users/x/Projects');
+  await two.fire();
+  const runB = two.scan('/Users/x/Projects'); // a second scan began before the first one's answer
+  await two.fire();
+  answers[1](granted());
+  await two.fire();
+  answers[0]({ capabilities: { fullDiskAccess: fdaCap('not-granted') } });
+  await two.fire();
+  await Promise.all([runA, runB]);
+  settle(two);
+  two.arm();
+  await two.fire('focus');
+  assert.equal(two.els.accessHint.textContent, ADVICE.granted, 'the second scan started with access, whatever the first one was told');
 });
 
 test('the recheck is spent by an answer that access is on, not by a failed ask or one made before the switch', async () => {
