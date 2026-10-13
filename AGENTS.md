@@ -707,6 +707,11 @@ read-what-you-saw) permission to act.
   a bigger volume and linked back) or a folder holding one —
   `DELETE /api/files`, the cart, an offload, a relocation, the MCP tools —
   `403 { code: "SAFETY_RECORD" }`, however the path is spelled, dry runs too;
+  a snapshot restore's `overwrite` can meet only one of these as the file it
+  would replace, a link TreeMap reaches app-data through, and refuses it the
+  same way (a destination in app-data, the two records included, is
+  `403 APP_DATA_PATH` before that, and a folder is never replaced:
+  `409 DESTINATION_IS_FOLDER`);
   Autopilot leaves them alone and names them in `skipped`. An absent policy
   means no limits, and the log is the record of what was done; change either
   yourself, outside TreeMap. The offload reveal (`POST /api/offload/reveal`) opens a copy only

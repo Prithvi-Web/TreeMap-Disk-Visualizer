@@ -223,6 +223,32 @@ test('a file the Trash step itself refuses or fails to take — a link TreeMap r
   );
 });
 
+test('of the cases SAFETY_RECORD names, a restore meets only a link TreeMap reaches its records through: the agent policy, the audit log and app-data are a destination in app-data, 403 APP_DATA_PATH, and a folder above app-data or one holding that link is never replaced, 409 DESTINATION_IS_FOLDER — as the restore\'s OpenAPI 403 says (the review of LEFT2, F2.1; openapiDeclared holds the words)', async () => {
+  trashed.length = 0;
+  const cases: Record<string, string> = {
+    'the agent policy': POLICY_PATH,
+    'the audit log': path.join(DATA_DIR, 'audit.jsonl'),
+    'app-data': DATA_DIR,
+    'a folder above app-data': VOL,
+    'a folder holding a link TreeMap reaches its records through': SCANNED,
+    'a link TreeMap reaches its records through': HOP,
+  };
+  const answers: Record<string, string> = {};
+  for (const [what, destination] of Object.entries(cases)) answers[what] = await restoreOver(destination);
+  assert.deepEqual({ answers, 'moved to the Trash': trashed, 'an agent policy written': fs.existsSync(POLICY_PATH) }, {
+    answers: {
+      'the agent policy': '403 APP_DATA_PATH',
+      'the audit log': '403 APP_DATA_PATH',
+      'app-data': '403 APP_DATA_PATH',
+      'a folder above app-data': '409 DESTINATION_IS_FOLDER',
+      'a folder holding a link TreeMap reaches its records through': '409 DESTINATION_IS_FOLDER',
+      'a link TreeMap reaches its records through': '403 SAFETY_RECORD',
+    },
+    'moved to the Trash': [],
+    'an agent policy written': false,
+  });
+});
+
 test('a file the rules allow is still replaced, and a restore to a name nothing holds is not a delete at all', async () => {
   trashed.length = 0;
   const present = path.join(SCANNED, 'present.txt');

@@ -76,11 +76,25 @@ test('a snapshot restore and a relocation declare their 400 and 403 (F1.23)', ()
   assert.match(said('post', '/api/security/relocate', '403'), /OUTSIDE_SCAN_ROOT/);
 });
 
-test('every route that refuses a safety record — by its middleware, or through the Trash step or the refusal it reaches — and every other place the document names SAFETY_RECORD, lists the cases the refusal itself names: the agent policy or the audit log, a folder that holds them, or a folder or link TreeMap reaches them through — a folder holding such a link among them', () => {
+test('every route that refuses a safety record — by its middleware, or through the Trash step or the refusal it reaches — and every other place the document names SAFETY_RECORD, lists the cases the refusal itself names: the agent policy or the audit log, a folder that holds them, or a folder or link TreeMap reaches them through — a folder holding such a link among them; but a snapshot restore, which meets only one of them, names that one and what answers the rest (the review of LEFT2, F2.1)', () => {
   // The refusal's own sentence (safetyRecordRefusal), read from the code.
   assert.ok(source('src/middleware/pathGuard.ts').includes('agent policy or its audit log, a folder that holds them, or a folder or link TreeMap reaches them through'), 'the refusal names these cases');
   const cases = 'the agent policy or the audit log, a folder that holds them (app-data, a folder above it), or a folder or link TreeMap reaches them through';
-  const verdict = (text: string): string => (!text.includes('SAFETY_RECORD') ? 'does not name SAFETY_RECORD' : text.includes(cases) ? 'names its cases' : 'names SAFETY_RECORD without all its cases');
+  // A snapshot restore asks of its destination, before anything else, whether it is in app-data —
+  // the agent policy and the audit log are — and never replaces a folder; so the one case its Trash
+  // step can refuse is a link TreeMap reaches its records through. snapshotReplaceRules shows each
+  // answer; its 403 names that case alone, and says what answers the others.
+  const restore403 = said('post', '/api/system/snapshots/restore', '403');
+  const restoreSays = {
+    'its SAFETY_RECORD': 'SAFETY_RECORD for a link TreeMap reaches its agent policy and audit log through, which no request removes or moves (a folder there, one above app-data included, is 409 DESTINATION_IS_FOLDER instead)',
+    'its APP_DATA_PATH': 'APP_DATA_PATH for the destination when it is app-data or anything in it — the agent policy and the audit log among them — however it is spelled, a link that leads there included',
+  };
+  const restoreVerdict = (text: string): string => {
+    const clauses = { 'its SAFETY_RECORD': /SAFETY_RECORD[^;]*/.exec(text)?.[0], 'its APP_DATA_PATH': /APP_DATA_PATH[^;]*/.exec(text)?.[0] };
+    const off = Object.entries(clauses).filter(([what, said]) => said !== restoreSays[what as keyof typeof restoreSays]);
+    return off.length === 0 ? 'names its cases' : `says ${off.map(([what, said]) => `${what} as "${said}"`).join(' and ')}`;
+  };
+  const verdict = (text: string): string => (!text.includes('SAFETY_RECORD') ? 'does not name SAFETY_RECORD' : text === restore403 ? restoreVerdict(text) : text.includes(cases) ? 'names its cases' : 'names SAFETY_RECORD without all its cases');
   const verdicts: Record<string, string> = {};
   let doors = 0;
   for (const name of fs.readdirSync(path.join(REPO, 'src', 'api')).filter((file) => file.endsWith('Routes.ts'))) {
@@ -131,6 +145,19 @@ test('every route that refuses a safety record — by its middleware, or through
   walk(doc, '#');
   assert.ok('#/info/description' in verdicts, 'the document\'s own description names SAFETY_RECORD');
   assert.deepEqual(verdicts, Object.fromEntries(Object.keys(verdicts).map((at) => [at, 'names its cases'])));
+  // AGENTS.md names the doors that answer SAFETY_RECORD: the restore among them, with the one case it
+  // meets and what answers the rest.
+  const agents = source('AGENTS.md').replace(/\s+/g, ' ');
+  const start = agents.indexOf('**the agent policy and the audit log**');
+  const passage = agents.slice(start, agents.indexOf('Autopilot leaves them alone', start));
+  assert.ok(start !== -1 && passage.includes('`403 { code: "SAFETY_RECORD" }`'), `AGENTS.md's passage on the two records: ${passage}`);
+  const door = passage.indexOf('a snapshot restore\'s `overwrite`');
+  const restoreClause = door === -1 ? '' : passage.slice(door);
+  assert.deepEqual(
+    ['a snapshot restore\'s `overwrite`', 'a link TreeMap reaches app-data through', '`403 APP_DATA_PATH`', '`409 DESTINATION_IS_FOLDER`'].filter((what) => !restoreClause.includes(what)),
+    [],
+    `AGENTS.md names the restore among the doors, with the one case it meets and what answers the rest: ${passage}`,
+  );
 });
 
 /** GET `url` from the app as the server serves it, its JSON body (one connection, closed after it). */
