@@ -116,7 +116,16 @@ type RefusedHarness = {
   render: () => void; probe: () => Promise<void>;
   els: Record<string, El>; state: Record<string, unknown>; toasts: string[]; asked: string[];
   $: (id: string) => El;
+  /** Emit a topic as the page does (wired harnesses only: the page's own TOPIC.scan subscriber hears it). */
+  emit: (topic: string, payload: unknown) => void;
+  /** How many times each topic was emitted, the harness's own emits included. */
+  emitted: Record<string, number>;
+  /** Let `n` turns of the event loop pass. */
+  settle: (n: number) => Promise<void>;
 };
+
+/** A wired harness's api stops refusing after this many asks, so a probe that asks without end still ends. */
+const WIRED_ASK_CAP = 50;
 
 function refusedHarness(opts: {
   stats: Record<string, unknown> | null; root: Record<string, unknown>; scanId: string | null;
@@ -127,8 +136,22 @@ function refusedHarness(opts: {
   homeDir?: string;
   /** The server's Full Disk Access answer (Track U, U-11); a Mac without it when omitted. */
   fullDiskAccess?: Record<string, unknown> | null;
+  /**
+   * Run the page's own TOPIC.scan subscriber too, with an emit that reaches
+   * it at once as the page's does, and an api that answers a turn of the
+   * event loop later (review F3.6). Every other harness emits into nothing.
+   */
+  wired?: boolean;
 }): RefusedHarness {
-  const src = slice('/* ── Refused folders ── */', '/* ── end refused folders ── */');
+  const src = slice('/* ── Refused folders ── */', '/* ── end refused folders ── */') +
+    (opts.wired ? slice('/* ── end refused folders ── */', '/* ── Drives mounted inside the folder ── */') : '');
+  const subscribers: Record<string, Array<(payload: unknown) => void>> = {};
+  const emitted: Record<string, number> = {};
+  const emit = (topic: string, payload: unknown): void => {
+    emitted[topic] = (emitted[topic] || 0) + 1;
+    for (const fn of subscribers[topic] || []) fn(payload);
+  };
+  const subscribe = (topic: string, fn: (payload: unknown) => void): void => { (subscribers[topic] ??= []).push(fn); };
   const { $, els } = makeDom();
   const toasts: string[] = [];
   const asked: string[] = [];
@@ -141,19 +164,25 @@ function refusedHarness(opts: {
   };
   const api = async (url: string) => {
     asked.push(url);
+    if (opts.wired) {
+      await new Promise((r) => setImmediate(r)); // a request takes a turn of the loop, as the network's does
+      if (asked.length > WIRED_ASK_CAP) { const e = Object.assign(new Error('not found'), { status: 404, code: 'PATH_NOT_FOUND' }); throw e; }
+    }
     const p = decodeURIComponent(url.split('path=')[1] || '');
     if ((opts.refuse || []).includes(p)) { const e = Object.assign(new Error('TreeMap isn’t allowed to read ' + p + '.'), { status: 403, code: 'PERMISSION_DENIED' }); throw e; }
     if ((opts.missing || []).includes(p)) { const e = Object.assign(new Error('not found'), { status: 404, code: 'PATH_NOT_FOUND' }); throw e; }
     return { entries: [] };
   };
-  const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'TOPIC', 'window', 'document',
+  const fns = new Function('$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatCount', 'emit', 'subscribe', 'TOPIC', 'window', 'document',
     `'use strict'; ${src} return { render: renderRefusedFolders, probe: probeRefusedFolders };`)(
-    $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n), () => {}, { scan: 'scan' },
+    $, state, api, (m: string) => toasts.push(m), () => '', (s: string) => String(s), (n: number) => String(n),
+    opts.wired ? emit : () => {}, subscribe, { scan: 'scan' },
     { treemapDesktop: null, open: () => {} },
     // Hiding the Privacy button asks where keyboard focus is (U-11, review F1.11): nowhere here.
     { activeElement: null },
   ) as { render: () => void; probe: () => Promise<void> };
-  return { render: fns.render, probe: fns.probe, els, state, toasts, asked, $ };
+  const settle = async (n: number): Promise<void> => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+  return { render: fns.render, probe: fns.probe, els, state, toasts, asked, $, emit, emitted, settle };
 }
 
 test('the server\'s refused count paints the dashboard row, names the folders, and says what to do on a Mac', () => {
@@ -292,6 +321,56 @@ test('the probe checks Desktop, Documents and Downloads under a home-folder scan
   stale.state.scanId = 's2';
   await p;
   assert.equal(stale.state.scanRefused, null, 'a superseded probe paints nothing');
+});
+
+test('the probe asks once per scan: the TOPIC.scan it emits does not start it again (review F3.6)', async () => {
+  // Review F3.6: probeRefusedFolders ends with emit(TOPIC.scan), and the
+  // page's own TOPIC.scan subscriber starts the probe. With no `refused` in
+  // the stats (the result-derived fallback, when /stats failed) its one
+  // guard never held, so a refused empty root was asked about again and
+  // again: one /api/fs/list request and one 15-second error toast per cycle,
+  // every TOPIC.scan listener re-run each time, into the rate limiter.
+  const lists = (h: RefusedHarness): number => h.asked.filter((u) => u.startsWith('/api/fs/list?path=')).length;
+  const emptyRoot = { stats: { fileCount: 0, dirCount: 1 }, root: { path: '/Users/x/Documents', size: 0, children: [] }, scanId: 's1', wired: true };
+  const h = refusedHarness({ ...emptyRoot, refuse: ['/Users/x/Documents'] });
+  h.emit('scan', 's1'); // the scan settled
+  await h.settle(40);
+  assert.equal(lists(h), 1, 'the refused root is asked about once');
+  assert.equal(h.toasts.length, 1, 'and said once');
+  assert.equal(h.emitted.scan, 2, 'the settle, and the probe\'s own news of what it found');
+  assert.equal((h.state.scanRefused as { root: boolean }).root, true, 'what it found stands, for the row and the tour');
+  assert.equal(h.els.accessRow.hidden, false);
+  h.emit('scan', 's1'); // any later news of the same scan: a repaint, the tour
+  await h.settle(10);
+  assert.equal(lists(h), 1, 'the same scan is not asked about again');
+
+  // Nor is one whose probe found nothing.
+  const clean = refusedHarness({ ...emptyRoot, missing: ['/Users/x/Documents'] });
+  clean.emit('scan', 's1');
+  await clean.settle(10);
+  clean.emit('scan', 's1');
+  await clean.settle(10);
+  assert.equal(lists(clean), 1, 'a probe that found nothing is not repeated for the same scan');
+
+  // A new scan is asked about afresh.
+  h.state.scanId = 's2';
+  h.emit('scan', 's2');
+  await h.settle(10);
+  assert.equal(lists(h), 2, 'each scan is asked about once');
+
+  // An answer dropped because a rescan landed meanwhile does not count as
+  // asked: when that rescan is stopped and this scan is back on screen, it
+  // is asked about again.
+  const back = refusedHarness({ ...emptyRoot, refuse: ['/Users/x/Documents'] });
+  const dropped = back.probe();
+  back.state.scanId = 's2'; // a rescan landed while the probe was asking
+  await dropped;
+  assert.equal(back.state.scanRefused, null, 'the dropped answer paints nothing');
+  back.state.scanId = 's1'; // Stop put the last scan back
+  back.emit('scan', 's1');
+  await back.settle(10);
+  assert.equal(lists(back), 2, 'it is asked about again');
+  assert.equal((back.state.scanRefused as { root: boolean } | null)?.root, true);
 });
 
 /* ══════════════ Track U U-3 — the Full Disk Access button asks the desktop shell, by name ══════════════ */

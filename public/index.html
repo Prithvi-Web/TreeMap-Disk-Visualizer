@@ -10158,13 +10158,25 @@ function paintRefusedRow() {
  * scanned folder itself when it came back empty, or a protected home folder
  * the scan did not read. A 404 is "not on this machine", which is not a
  * refusal and is not counted.
+ *
+ * Once per scan (review F3.6). The probe ends by emitting TOPIC.scan, whose
+ * subscriber below starts it; with no `refused` in the stats (the
+ * result-derived fallback, when /stats failed) nothing else stopped it, and
+ * a refused empty root was asked about again and again — one request and
+ * one 15-second error toast per cycle, every TOPIC.scan listener re-run
+ * each time. `refusedProbedFor` is the scan it last asked about, found
+ * something or not; an answer dropped because a rescan landed meanwhile
+ * does not count as asked.
  */
+let refusedProbedFor = null;
 async function probeRefusedFolders() {
   const stats = state.scanStats || {};
   if (stats.refused) return; // the server already answered
   const root = state.root;
   if (!root) return;
   const scanId = state.scanId;
+  if (refusedProbedFor === scanId) return; // asked already: its own emit, or later news of the same scan
+  refusedProbedFor = scanId;
   const home = (state.system || {}).homeDir || '';
   // "\" separates only a Windows path (POL item 7): a home folder "/Users/a\b" is asked about as
   // "/Users/a\b/Desktop", never "/Users/a\b\Desktop".
@@ -10196,7 +10208,10 @@ async function probeRefusedFolders() {
     }
   }
   // A rescan may have landed while we were asking; its tree is not this one.
-  if (scanId !== state.scanId) return;
+  if (scanId !== state.scanId) {
+    if (refusedProbedFor === scanId) refusedProbedFor = null; // dropped: asked again if this scan comes back
+    return;
+  }
   if (!refused.length) return;
 
   state.scanRefused = { dirs: refused.length, examples: refused, root: rootRefused, scanId };
