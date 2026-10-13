@@ -12,6 +12,7 @@ import {
   filesystemOn, openListing, setEmptyCheckForTests, setMountTableReaderForTests, SILENT_DRIVE_MEMORY_MS, stillEmptyFolder, type EmptyCheckDeps, type EmptyVerdict,
 } from '../src/services/emptyFolderCheck';
 import { HANG_GUARD_MS } from './fixtures/waitFor';
+import { listAsWindowsNode20 } from './fixtures/windowsListing';
 
 /**
  * U-4b M1, as the U-4b reviews narrowed it (U-4c M1 / M-A): a call that does
@@ -294,7 +295,8 @@ test('R1: a dead mount nested inside a candidate silences the mount\'s own drive
   assert.match(reasonOf(outer), /the folder mnt inside it did not answer within/);
   assert.deepEqual(await stillEmptyFolder('/x/healthy', true), { empty: true }, 'on the boot drive, which never touched the nas');
   assert.match(reasonOf(await stillEmptyFolder('/nas/share', true)), /the drive it is on did not answer a moment ago/, 'the nas itself is silent');
-  assert.deepEqual(asked, ['stat /x/outer', 'list /x/outer', 'list /x/outer/mnt', 'stat /nas', 'stat /x/healthy', 'list /x/healthy']);
+  // mnt is stat'ed before it is read, as every folder is (the WIN review, F1.1): that stat is the call that hangs.
+  assert.deepEqual(asked, ['stat /x/outer', 'list /x/outer', 'stat /x/outer/mnt', 'stat /nas', 'stat /x/healthy', 'list /x/healthy']);
 });
 
 test('R1: a nested folder that hangs on a drive whose root answers is withheld alone, and not asked again while its call is out', async () => {
@@ -304,7 +306,7 @@ test('R1: a nested folder that hangs on a drive whose root answers is withheld a
   assert.deepEqual(await stillEmptyFolder('/nas/other', true), { empty: true }, 'the nas answered for its root: it is not silent');
   const again = await stillEmptyFolder('/x/outer', true);
   assert.match(reasonOf(again), /the folder mnt inside it did not answer a moment ago/);
-  assert.equal(asked.filter((a) => a === 'list /x/outer/mnt').length, 1, 'one thread held, not one per look');
+  assert.deepEqual(asked.filter((a) => a.endsWith(' /x/outer/mnt')), ['stat /x/outer/mnt'], 'one thread held, not one per look: its own stat, which hangs, and it is never read');
 });
 
 test('a folder that is its drive\'s own root and does not answer is not asked twice: its silence is the drive\'s', async () => {
@@ -452,14 +454,15 @@ test('a folder inside the one looked at, on a drive holding two calls that did n
 });
 
 test('a call on a mount nested in the folder looked at counts against the nested drive: with two of its calls out unanswered, a third folder there is not asked (the U-4c review, F3.4)', async () => {
-  // /nas is mounted at /x/o/m too: its root answers; the listing of m, then /nas/b, hang. Counted on
-  // the drive /x/o is on instead, m's listing would leave the nas holding one call, and a third would start.
+  // /nas is mounted at /x/o/m too: its root answers; the stat of m (made before m is read, the WIN review,
+  // F1.1), then /nas/b's, hang. Counted on the drive /x/o is on instead, m's stat would leave the nas
+  // holding one call, and a third would start.
   const asked = hangsAt((p) => p === '/x/o/m' || p === '/nas/b', { '/x/o': [dirent('m', true)] }, onNasAt('/x/o/m'));
   assert.match(reasonOf(await stillEmptyFolder('/x/o', true)), /^the folder m inside it did not answer within/);
   assert.match(reasonOf(await stillEmptyFolder('/nas/b', true)), /^it did not answer within/);
   const c = await stillEmptyFolder('/nas/c', true);
-  assert.deepEqual(asked, ['stat /x/o', 'list /x/o', 'list /x/o/m', 'stat /nas', 'stat /nas/b'], 'c was not asked: no third thread on the nas');
-  assert.match(reasonOf(c), /^two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'the nas holds two: m\'s listing and b\'s stat');
+  assert.deepEqual(asked, ['stat /x/o', 'list /x/o', 'stat /x/o/m', 'stat /nas', 'stat /nas/b'], 'c was not asked: no third thread on the nas');
+  assert.match(reasonOf(c), /^two earlier calls on the drive it is on have not answered yet, so TreeMap did not look at it/, 'the nas holds two: m\'s stat and b\'s');
 });
 
 test('a drive\'s own root offered while the drive already holds a call, and hanging, keeps the drive silent until that root answers', async () => {
@@ -1243,6 +1246,84 @@ test('a folder inside the one looked at that is not there any more makes it unre
   const verdict = await stillEmptyFolder('/x/top', true);
   assert.equal(whyOf(verdict), 'unreadable');
   assert.match(reasonOf(verdict), /the folder inner inside it could not be read \(ENOENT\)/);
+});
+
+/* ─────────────── a link a listing calls a folder (the WIN review, F1.1) ─────────────── */
+
+// Node 20 bundles libuv 1.46, whose Windows fs.Dir read types an entry by FILE_ATTRIBUTE_DIRECTORY before
+// FILE_ATTRIBUTE_REPARSE_POINT: a link to a folder and a junction come out isDirectory(), and Windows'
+// listings are always read as an fs.Dir. Electron 31, which TreeMap ships, is Node 20.
+
+test('every folder a listing names is stat\'ed before it is read: one that is a link, though the listing called it a folder, is content, and is never read (the WIN review, F1.1)', async () => {
+  const asked: string[] = [];
+  const aLink = { isDirectory: () => false };
+  setEmptyCheckForTests({
+    driveOf: async () => '/',
+    lstat: async (p) => { asked.push(`stat ${asWritten(p)}`); return asWritten(p) === '/x/top/ln' ? aLink : aFolder; },
+    opendir: async (p) => { asked.push(`list ${asWritten(p)}`); return listingOf(asWritten(p) === '/x/top' ? [dirent('real', true), dirent('ln', true)] : []); },
+  });
+  const verdict = await stillEmptyFolder('/x/top', true);
+  assert.deepEqual(asked, ['stat /x/top', 'list /x/top', 'stat /x/top/real', 'list /x/top/real', 'stat /x/top/ln'], 'a folder of its own is stat\'ed, then read; the link is stat\'ed, and never read through');
+  assert.deepEqual(verdict, { empty: false, why: 'content', reason: 'it holds ln now, so it is not empty' });
+});
+
+test('a folder a listing names whose own stat fails makes the one looked at unreadable, never gone, and is not read (the WIN review, F1.1)', async () => {
+  const asked: string[] = [];
+  setEmptyCheckForTests({
+    driveOf: async () => '/',
+    lstat: async (p) => {
+      asked.push(`stat ${asWritten(p)}`);
+      if (asWritten(p) === '/x/top/inner') throw enoent('lstat'); // removed since the listing named it
+      return aFolder;
+    },
+    opendir: async (p) => { asked.push(`list ${asWritten(p)}`); return listingOf(asWritten(p) === '/x/top' ? [dirent('inner', true)] : []); },
+  });
+  const verdict = await stillEmptyFolder('/x/top', true);
+  assert.deepEqual(asked, ['stat /x/top', 'list /x/top', 'stat /x/top/inner'], 'inner is stat\'ed before it is read, and its failed stat ends the look');
+  assert.deepEqual(verdict, { empty: false, why: 'unreadable', reason: 'the folder inner inside it could not be looked at (ENOENT), so TreeMap cannot tell that it is empty' });
+});
+
+test('on the disk, a link to an empty folder (a symbolic link, or a junction) inside the folder looked at is content — under Node 20\'s Windows listing, which calls it a folder, too (the WIN review, F1.1)', async (t) => {
+  const base = fs.realpathSync.native(fileTempDir('treemap-emptyFolderCheck-link-'));
+  const target = path.join(base, 'target-empty');
+  fs.mkdirSync(target);
+  const holders: string[] = [];
+  for (const kind of ['dir', 'junction'] as const) {
+    const holder = path.join(base, `holder-${kind}`);
+    fs.mkdirSync(holder);
+    try {
+      fs.symlinkSync(target, path.join(holder, 'link'), kind); // elsewhere than Windows, both are a symbolic link
+      holders.push(holder);
+    } catch {
+      // This system cannot make this kind of link here.
+    }
+  }
+  if (holders.length === 0) {
+    t.skip('this system cannot make a link here');
+    return;
+  }
+  // Read as an fs.Dir, as every Windows listing is, wherever this runs: the table names a file system that types its entries.
+  if (process.platform !== 'win32') {
+    setMountTableReaderForTests(async () => ({ source: 'mount', entries: [{ mountPoint: '/', filesystem: 'apfs', options: [] }], reason: null }));
+  }
+  const listing = listAsWindowsNode20();
+  const typed: unknown[] = [];
+  const verdicts: Array<[string, boolean, EmptyVerdict]> = [];
+  try {
+    for (const holder of holders) {
+      const opened = await openListing(holder);
+      const entry = await opened.read();
+      await opened.close();
+      typed.push([entry?.name, entry?.isDirectory(), entry?.isSymbolicLink()]);
+      for (const ignoreJunk of [true, false]) verdicts.push([path.basename(holder), ignoreJunk, await stillEmptyFolder(holder, ignoreJunk)]);
+    }
+  } finally {
+    listing.restore();
+    setMountTableReaderForTests(null);
+  }
+  assert.deepEqual(typed, holders.map(() => ['link', true, false]), 'the listing reads the link as a folder, as Windows does under Node 20');
+  const content = { empty: false, why: 'content', reason: 'it holds link now, so it is not empty' };
+  assert.deepEqual(verdicts, holders.flatMap((h) => [[path.basename(h), true, content], [path.basename(h), false, content]]), 'a link is content, with the junk rule or without it');
 });
 
 test('a listing is read an entry at a time only where the file system names each entry\'s type; elsewhere whole, its stats off the event loop', async () => {

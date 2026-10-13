@@ -20,8 +20,9 @@ import { isAtOrUnder, readMountTable, type MountTable } from '../utils/mountBoun
  * Empty means what Empty Folders means: nothing anywhere below the folder but
  * other folders and, with the junk rule, OS junk files (`.DS_Store` and kin). A
  * link is never followed: the folder itself must be a folder, and a link inside
- * it is content. Whatever cannot be shown empty is not empty — a folder that
- * refuses, does not answer within `EMPTY_CHECK_DEADLINE_MS`, or holds more than
+ * it is content — every folder below is stat'ed before it is read, however its
+ * listing typed it (`lookAt`). Whatever cannot be shown empty is not empty — a
+ * folder that refuses, does not answer within `EMPTY_CHECK_DEADLINE_MS`, or holds more than
  * `EMPTY_CHECK_MAX_ENTRIES` entries to look through — each with its reason in a
  * sentence.
  *
@@ -299,7 +300,12 @@ export async function filesystemOn(p: string): Promise<string | null> {
  */
 const TYPED_LISTINGS: ReadonlySet<string> = new Set(['apfs', 'hfs', 'ext2', 'ext3', 'ext4', 'btrfs', 'tmpfs', 'zfs', 'f2fs']);
 
-/** Does a listing on this file system name every entry's type? Always on Windows, whose listings carry each entry's attributes. */
+/**
+ * Does a listing on this file system name every entry's type? Always on Windows, whose listings carry
+ * each entry's attributes, so no entry is stat'ed on the event loop. Not always rightly: under Node 20 a
+ * link to a folder, and a junction, come out a folder there — which is why the look stats every folder
+ * before it reads it (`lookAt`), and never takes a listing's word that an entry is a folder.
+ */
 export function listsEntryTypes(filesystem: string | null, platform: NodeJS.Platform): boolean {
   if (platform === 'win32') return true;
   return filesystem !== null && TYPED_LISTINGS.has(filesystem.toLowerCase());
@@ -825,7 +831,20 @@ async function goneUnlessThere(ctx: LookContext, dir: string): Promise<EmptyVerd
   return notEmpty('unreadable', 'it could not be opened (ENOENT), though it is there, so TreeMap cannot tell that it is empty');
 }
 
-/** The look itself: the folder's own stat, then every listing below it, each raced against its deadline and the budget. */
+/**
+ * The look itself: each folder's own stat, then its listing — the folder looked at, then every folder
+ * its listings name — each call raced against its deadline and the budget.
+ *
+ * Every folder is stat'ed before it is read, not only the one looked at (the WIN review, F1.1): a
+ * listing's word that an entry is a folder is not enough. Node 20 bundles libuv 1.46, whose Windows
+ * `fs.Dir` read types an entry by FILE_ATTRIBUTE_DIRECTORY before FILE_ATTRIBUTE_REPARSE_POINT, so a
+ * link to a folder and a junction come out `isDirectory()` there (Electron 31, which TreeMap ships, is
+ * Node 20), and reading one would read where it leads. `lstat` follows no link, and libuv reads a
+ * symbolic link and a drive-letter junction as links: such an entry is content, and is never read. A
+ * volume mounted in a folder (a junction to `\??\Volume{…}`) is read by `lstat` as a folder, and looked
+ * into as before. The stat is the folder's own call, on its own drive, so a nested mount that does not
+ * answer silences its drive, as its listing would.
+ */
 async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promise<EmptyVerdict> {
   const { d } = ctx;
   const named = (folder: string): string => (folder === dir ? 'it' : `the folder ${path.relative(dir, folder)} inside it`);
@@ -833,21 +852,29 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
     notEmpty('no-answer', `${named(folder)} did not answer within ${waitWords(d.deadlineMs)}, so TreeMap cannot tell that it is empty`);
   /** Not asked: the folder's own call, or its drive, went silent before its turn. */
   const hushed = (folder: string, h: Hushed): EmptyVerdict => hushedVerdict(named(folder), folder === dir, h.by);
-  let top: { isDirectory(): boolean } | typeof LATE | typeof SPENT | Hushed;
-  try {
-    top = await answered(ctx, { folder: dir, drive: ctx.drive }, () => d.lstat(dir));
-  } catch (err) {
-    if (codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
-    return notEmpty('unreadable', `it could not be looked at (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
-  }
-  if (top === LATE) return silent(dir);
-  if (top === SPENT) return budgetSpent(d);
-  if (top instanceof Hushed) return hushed(dir, top);
-  if (!top.isDirectory()) return notEmpty('not-a-folder', 'it is not a folder any more');
   const queue = [dir];
   let examined = 0;
   for (let i = 0; i < queue.length; i++) {
     const folder = queue[i];
+    // A folder below may be a mount of its own: its silence is its own drive's (U-4c M1).
+    const drive = folder === dir ? ctx.drive : await budgeted(ctx, driveSafely(d, folder));
+    if (drive === SPENT) return budgetSpent(d);
+    let own: { isDirectory(): boolean } | typeof LATE | typeof SPENT | Hushed;
+    try {
+      own = await answered(ctx, { folder, drive }, () => d.lstat(folder));
+    } catch (err) {
+      // Gone only for the folder looked at: a folder its listing named that went since says nothing of the rest.
+      if (folder === dir && codeOf(err) === 'ENOENT') return notEmpty('gone', 'it is no longer there');
+      return notEmpty('unreadable', `${named(folder)} could not be looked at (${codeOf(err)}), so TreeMap cannot tell that it is empty`);
+    }
+    if (own === LATE) return silent(folder);
+    if (own === SPENT) return budgetSpent(d);
+    if (own instanceof Hushed) return hushed(folder, own);
+    if (!own.isDirectory()) {
+      return folder === dir
+        ? notEmpty('not-a-folder', 'it is not a folder any more')
+        : notEmpty('content', `it holds ${path.relative(dir, folder)} now, so it is not empty`);
+    }
     let found: EmptyVerdict | null = null;
     // Each entry as it is read: the first that settles the question ends the listing (L5).
     const visit = (ent: Dirent): boolean => {
@@ -857,7 +884,8 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
         return true;
       }
       const full = path.join(folder, ent.name);
-      // A folder's entry, never a link to one: a Dirent reports a link as a link.
+      // What the listing calls a folder: on Windows under Node 20, a link to one or a junction too.
+      // Its own stat, in its turn above, tells — before anything reads it.
       if (ent.isDirectory()) {
         queue.push(full);
         return false;
@@ -868,9 +896,6 @@ async function lookAt(ctx: LookContext, dir: string, ignoreJunk: boolean): Promi
     };
     let gaveUp = false;
     let listed: void | typeof LATE | typeof SPENT | Hushed;
-    // A folder below may be a mount of its own: its silence is its own drive's (U-4c M1).
-    const drive = folder === dir ? ctx.drive : await budgeted(ctx, driveSafely(d, folder));
-    if (drive === SPENT) return budgetSpent(d);
     try {
       listed = await answered(ctx, { folder, drive }, () => readListing(d, folder, visit, () => gaveUp));
     } catch (err) {
