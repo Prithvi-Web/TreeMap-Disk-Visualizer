@@ -1120,7 +1120,7 @@ function toastRuntime() {
     activeElement: null as unknown, createElement: () => toastEl(),
     body: { tagName: 'BODY', querySelectorAll: () => [...page.stops, ...shown.filter((el) => !el.removed).map((el) => el.button!)] },
   };
-  /** The page's controls in DOM order, outside #toasts, the sheet on top, if any (topModal), and each sheet focus was handed into (modalFocusInto). */
+  /** The page's controls in DOM order, outside #toasts, the sheet on top, if any (topModal), and each sheet focus was handed into (modalFocusInto asks modalFocusTarget). */
   const page = { stops: [] as PageStop[], sheet: null as unknown, into: [] as unknown[] };
   /**
    * A control on the page: enabled, in the Tab order and painted. Its
@@ -1180,11 +1180,16 @@ function toastRuntime() {
   // itself: a control hidden by visibility kept its box and stayed in the
   // stand-in's list (review F2.1).
   const focusables = braced('function modalFocusables(');
+  // The page's own modalFocusInto too, so how it focuses — without scrolling —
+  // is the page's and not a stand-in's that ignored it (review F3.1). Which
+  // control a sheet opens on is modalFocusTarget's, pinned in polishUiModals:
+  // here it is the sheet's `target`, and each sheet asked lands in `page.into`.
+  const focusInto = braced('function modalFocusInto(');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const made = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout', 'topModal', 'modalFocusInto', 'getComputedStyle',
-    `'use strict'; ${seqDecl} ${retire} ${focusables} ${braced('function toastAction(')} return { toastAction, toastsRetire };`,
+  const made = new Function('document', '$', 'icon', 'escapeHtml', 'setTimeout', 'topModal', 'modalFocusTarget', 'getComputedStyle',
+    `'use strict'; ${seqDecl} ${retire} ${focusables} ${focusInto} ${braced('function toastAction(')} return { toastAction, toastsRetire };`,
   )(doc, $, () => '<svg></svg>', escapeHtml, setTimeout, () => page.sheet,
-    (sheet: { target?: PageStop }) => { page.into.push(sheet); sheet.target?.focus(); },
+    (sheet: { target?: PageStop }) => { page.into.push(sheet); return sheet.target; },
     (el: { visibility?: string }) => ({ visibility: el.visibility ?? 'visible' })) as {
     toastAction: (msg: string, label: string, fn: () => unknown, kind?: string, ms?: number, opts?: { focus?: boolean; sheet?: string }) => void;
     /** A sheet closing (modalClosed): the offers made in it go. */
@@ -1363,11 +1368,23 @@ test('an offer chosen from the keyboard hands focus on as it goes — back to th
   // below its window — and a toast going is no reason to scroll the page.
   assert.deepEqual(map.focusOpts, { preventScroll: true }, 'handed there without scrolling the page');
 
+  // An offer that took focus from a control hands it back there as it is
+  // chosen — no more a reason to scroll the page than any other hand-off
+  // (review F3.1): the path box can sit above the fold of a scrolled page.
+  box.focus(); // Enter in the Scan card's path box
+  rt.toastAction('No folder is named “/v ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
+  const chosen = rt.shown[1];
+  assert.equal(rt.doc.activeElement, chosen.button, 'control: the offer takes focus');
+  chosen.button!.click();
+  rt.fire();
+  assert.equal(rt.doc.activeElement, box, 'chosen, it hands focus back to the control it answers');
+  assert.deepEqual(box.focusOpts, { preventScroll: true }, 'back there without scrolling the page');
+
   // A control still in the page that can no longer take focus is no place to
   // go back to: its focus() leaves focus on the offer.
   box.focus();
   rt.toastAction('No folder is named “/x ”', 'Scan that folder', () => {}, 'error', 12000, { focus: true });
-  const answered = rt.shown[1];
+  const answered = rt.shown[2];
   box.visibility = 'hidden';
   answered.button!.click();
   rt.fire();
@@ -1380,11 +1397,14 @@ test('an offer chosen from the keyboard hands focus on as it goes — back to th
   const sheet = { id: 'settingsModal', target: cancel };
   rt.page.sheet = sheet;
   rt.toastAction('These results expire in a minute', 'Scan again', () => {}, 'success', 12000);
-  const over = rt.shown[2];
+  const over = rt.shown[3];
   over.button!.focus(); // a press on it
   over.button!.click();
   assert.deepEqual(rt.page.into, [sheet], 'focus is handed into the sheet on top');
   assert.equal(rt.doc.activeElement, cancel, 'onto the control the sheet opens on');
+  // By the page's own modalFocusInto, which scrolls neither the page behind
+  // nor the sheet (review F3.1).
+  assert.deepEqual(cancel.focusOpts, { preventScroll: true }, 'handed there without scrolling');
 });
 
 test('an offer\'s button acts once: a double-click, or a click while the toast fades out, does not run its choice again (final review F1.12)', () => {
