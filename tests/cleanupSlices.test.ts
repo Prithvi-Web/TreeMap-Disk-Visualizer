@@ -193,6 +193,11 @@ function folders(tree: FileNode): string[] {
   return out;
 }
 
+/** Every path a tree holds, root included, in pre-order. */
+function everyPath(tree: FileNode): string[] {
+  return [tree.path, ...(tree.children ?? []).flatMap(everyPath)];
+}
+
 /* ───────────────────────────── the catalog ───────────────────────────── */
 
 const ruleBase = (id: string, category: 'regenerable' | 'cache' | 'junk' = 'regenerable') => ({
@@ -327,8 +332,13 @@ test('the sliced walk and the drained walk give the pre-change answer, observer 
 
 test('the shipped rule packs give the pre-change answer through the rewritten walk', async () => {
   const home = path.dirname(loadRuleCatalog().staleFiles[0].withinPath); // {home}, as the packs expanded it
+  // The shipped rules each kind of store fired, apart, and the paths it claimed: a packed store
+  // joining with the wrong separator spells paths the tree does not hold and fires no location rule,
+  // while both walks read the same store and agree (review F1.1).
+  const fired = new Map<string, Set<string>>(STORES.map(([kind]) => [kind, new Set<string>()]));
   for (let seed = 1; seed <= 12; seed++) {
     const tree = fuzzTree(seed, home, 900, farFromThresholds(SEED_NOW));
+    const held = new Set(everyPath(tree));
     for (const [kind, make] of STORES) {
       const want = recorder();
       const oracle = oracleCleanupSuggestions(make(tree), [], loadRuleCatalog(), want.observe, []);
@@ -337,7 +347,16 @@ test('the shipped rule packs give the pre-change answer through the rewritten wa
       assert.equal(JSON.stringify(sliced.groups), JSON.stringify(oracle), `seed ${seed}, ${kind}: the shipped packs answer as before`);
       assert.deepEqual(got.seen, want.seen, `seed ${seed}, ${kind}: observer order`);
       assert.equal(JSON.stringify(collectCleanupSuggestions(make(tree), [], loadRuleCatalog())), JSON.stringify(oracle), `seed ${seed}, ${kind}: drained`);
+      for (const g of oracle) fired.get(kind)?.add(g.id);
+      const strays = oracle.flatMap((g) => g.items.map((item) => item.path)).filter((p) => !held.has(p));
+      assert.deepEqual(strays, [], `seed ${seed}, ${kind}: every path the shipped packs claim is a path of the tree`);
     }
+  }
+  // A differential that fires nothing proves nothing, and two kinds of store reading one tree fire the same rules.
+  const [[, objectFired], ...others] = [...fired];
+  assert.ok(objectFired.size > 0, 'the fuzz trees fired a shipped rule');
+  for (const [kind, ids] of others) {
+    assert.deepEqual([...ids].sort(), [...objectFired].sort(), `${kind}: fired every shipped rule the object store fired, and no other`);
   }
 });
 
@@ -360,10 +379,14 @@ test('a U+0130 location is found wherever case folds, and only there', async () 
 });
 
 test('the Autopilot selects through the rewritten matcher exactly what it selected through the old one', async () => {
-  const matches: AutopilotMatch[] = [
+  const matches: Array<Extract<AutopilotMatch, { kind: 'suggestion' }>> = [
     { kind: 'suggestion', groupIds: ['p-node', 'd-build', 'f-junk'] },
     { kind: 'suggestion', groupIds: ['s-old', 's-small', 'l-browser', 'l-dotted', 'p-rust', 'p-maven', 'p-web'] },
   ];
+  // The groups each kind of store had candidates picked from, per match, apart: a packed store
+  // joining with the wrong separator (the Windows runner's break) picked no location or stale-files
+  // candidate through either matcher, and the comparison below still held (review F1.1).
+  const picked = new Map<string, Array<Set<string>>>(STORES.map(([kind]) => [kind, matches.map(() => new Set<string>())]));
   for (let seed = 1; seed <= 16; seed++) {
     const root = absRoot('ap', `root${seed}`);
     const catalog = testCatalog(root);
@@ -371,9 +394,18 @@ test('the Autopilot selects through the rewritten matcher exactly what it select
     for (const [kind, make] of STORES) {
       const old = oracleCleanupSuggestions(make(tree), [], catalog, undefined, [], T);
       const sliced = await collectCleanupSuggestionsAsync(make(tree), [], catalog, undefined, [], { now: () => T, sliceNodes: 11, yieldTurn: immediate });
-      for (const match of matches) {
-        assert.deepEqual(selectCandidates(sliced.groups, [], match), selectCandidates(old, [], match), `seed ${seed}, ${kind}: the same candidates in the same order`);
+      const groupOf = new Map(old.flatMap((g) => g.items.map((item) => [item.path, g.id] as const)));
+      for (let i = 0; i < matches.length; i++) {
+        const candidates = selectCandidates(sliced.groups, [], matches[i]);
+        assert.deepEqual(candidates, selectCandidates(old, [], matches[i]), `seed ${seed}, ${kind}: the same candidates in the same order`);
+        for (const c of candidates) picked.get(kind)?.[i].add(groupOf.get(c.path) ?? c.path);
       }
+    }
+  }
+  // A comparison that never picks from a group proves nothing about that group.
+  for (const [kind, perMatch] of picked) {
+    for (let i = 0; i < matches.length; i++) {
+      assert.deepEqual([...perMatch[i]].sort(), [...matches[i].groupIds].sort(), `${kind}: policy ${i + 1} picked from every group it names, over the seeds`);
     }
   }
 });
