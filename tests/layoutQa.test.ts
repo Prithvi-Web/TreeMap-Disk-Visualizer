@@ -288,7 +288,7 @@ function cartWorld() {
     CART_PAGE: 200, cartShown: 200,
     saveCart() {}, refreshCartButtons() {}, cartPreviewInvalidated() {}, cartTrashAll() {},
     ensureNodes: async () => {}, fxCartPulseSync() {}, countUp() {}, FxNum: { rollText() {}, rollHtml() {} },
-    renderCartGoal() {}, cartTotalBytes: () => 0, cartNode: () => null,
+    renderCartGoal() {}, cartTotalBytes: () => 0, cartNode: () => null, cartSpaceSaid: () => '',
     // The count of staged items this scan cannot size (B06), a counter like the total beside it.
     cartUnknownCount: () => 0,
     escapeHtml: String, icon: () => '', formatBytes: String, formatCount: String,

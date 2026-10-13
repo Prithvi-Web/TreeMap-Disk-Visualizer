@@ -91,6 +91,7 @@ function harness(plan: { items: { path: string; willDelete: boolean; reason?: st
     ${declOf('confirmTrash')}
     ${declOf('cartTrashAll')}
     ${declOf('cartCommitSummary')}
+    ${declOf('cartSpaceSaid')}
     ${declOf('closeModal')}
     return { cartTrashAll, cartCommitSummary, closeModal, confirmTrash };`;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval

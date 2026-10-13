@@ -442,7 +442,8 @@ function syncCartPreviewChrome() {
     `<b>Preview — nothing has been deleted.</b> The hatched areas are the ` +
     // Staged, not freed (B29): a move to the Trash frees nothing until it is
     // emptied, and a sparse file frees only what it really takes.
-    `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart stages for the Trash; up to that much comes back when you empty it.` + outside;
+    // Said as the cart's footer, sheet and summary say it (D07).
+    `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart stages for the Trash. ${cartSpaceSaid()}` + outside;
   // The banner floats over the map's top edge, and covered the labels of the
   // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
   // by the banner's measured height instead — it wraps to two lines beside

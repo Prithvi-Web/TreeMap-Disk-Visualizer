@@ -240,13 +240,14 @@ async function renderCart() {
   $('cartTabTotal').title = allUnknown ? 'Not in this scan: size unknown'
     : unknown ? `${formatCount(unknown)} not in this scan, not counted` : '';
   FxNum.rollText($('cartHeadCount'), n + ' item' + (n === 1 ? '' : 's'));
-  // What a move to the Trash frees, said as Clean Up says it (D54, B29):
-  // nothing until the Trash is emptied, and then at most the size the files
-  // report — a sparse or shared file frees less.
+  // What a move to the Trash frees, said as the summary says it after the
+  // commit (cartSpaceSaid, D07): nothing until the Trash is emptied, then at
+  // most the size the files report — a sparse or shared file frees less —
+  // and the Time Capsule's copy takes space of its own (D54, B29).
   FxNum.rollHtml($('cartFootTotal'), allUnknown
     ? `${formatCount(n)} item${n === 1 ? '' : 's'} not in this scan — size unknown`
-    : `Up to <b>${formatBytes(total)}</b>, freed when you empty the Trash` +
-      (unknown ? ` · ${formatCount(unknown)} not in this scan, not counted` : ''), 'cart');
+    : `<b>${formatBytes(total)}</b> staged for the Trash` +
+      (unknown ? ` · ${formatCount(unknown)} not in this scan, not counted` : '') + `. ${cartSpaceSaid()}`, 'cart');
   renderCartGoal(total, unknown);
   const list = $('cartList');
   if (n === 0) {
@@ -419,11 +420,14 @@ function cartManifestHtml(plan, missingFromScan) {
     ? `Move <b>${formatCount(going.length)} item${going.length === 1 ? '' : 's'}</b> (${escapeHtml(formatBytes(plan.bytesWouldFree))}) to the Trash?`
     : `<b>Nothing can be moved to the Trash right now.</b>`;
 
-  if (plan.capsule && plan.capsule.available === false) {
+  const capsuleOff = !!(plan.capsule && plan.capsule.available === false);
+  if (capsuleOff) {
     html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
   } else if (going.length) {
     html += `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies.</div>`;
   }
+  // The sheet the person decides on says what the summary will after it (D07).
+  if (going.length) html += `<div class="cart-mf-note">${cartSpaceSaid(!capsuleOff)}</div>`;
   if (staying.length) {
     html += `<div class="cart-mf-left"><b>${formatCount(staying.length)} will be left in place</b>` +
       (plan.bytesSkipped ? ` (${escapeHtml(formatBytes(plan.bytesSkipped))})` : '') +
@@ -460,6 +464,22 @@ function cartManifestHtml(plan, missingFromScan) {
     html += `<div class="cart-mf-note">${formatCount(missingFromScan)} item${missingFromScan === 1 ? '' : 's'} not in the current scan will stay in the cart.</div>`;
   }
   return html;
+}
+
+/**
+ * What committing the cart does to space, in the two sentences every surface
+ * says it with (QA third pass D07): the footer, the Preview banner and the
+ * confirm sheet before the commit, the summary after it. Only the summary
+ * used to say either: the footer promised the space back "when you empty
+ * the Trash" and nothing before the decision said the Time Capsule's copy —
+ * room the dry run already reserves in the capsule — takes space of its
+ * own. `capsule` is false where no copy is kept: a portable session that
+ * saves nothing (state.capsuleOff), a dry run or a commit that found the
+ * capsule off.
+ */
+function cartSpaceSaid(capsule = !state.capsuleOff) {
+  return 'Up to that much space comes back, but only when you empty the Trash.' +
+    (capsule ? ' The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.' : '');
 }
 
 /**
@@ -569,8 +589,7 @@ function cartCommitSummary(result) {
     // each was just written to the Time Capsule, which keeps it after the Trash is emptied, until the
     // copy expires or is dropped to make room: until then the copy takes space of its own.
     ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} (<b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b>) to the Trash. ` +
-      'Up to that much space comes back, but only when you empty the Trash.' +
-      (result.capsuleUnavailable ? '' : ' The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.')
+      cartSpaceSaid(!result.capsuleUnavailable)
     : unverified.length ? `<b>Nothing was confirmed as moved to the Trash.</b>` : `<b>Nothing was deleted.</b>`;
   if (result.capsuleUnavailable) {
     html += `<div class="cart-mf-note">${escapeHtml(result.capsuleUnavailable)}</div>`;

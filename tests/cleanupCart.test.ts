@@ -429,12 +429,12 @@ function fnSource(name: string): string {
 type Node = { name: string; path: string; size: number };
 
 /** Run the page's own renderCart over a cart; what the footer, the pill and the list say. */
-async function cartShows(staged: string[], nodes: Record<string, Node>) {
+async function cartShows(staged: string[], nodes: Record<string, Node>, opts: { capsuleOff?: boolean } = {}) {
   const els: Record<string, { innerHTML: string; textContent: string; title: string; classList: { toggle(): void } }> = {};
   const $ = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', title: '', classList: { toggle() {} } });
   const goal: unknown[][] = [];
   const deps: Record<string, unknown> = {
-    $, state: { cart: new Set(staged) },
+    $, state: { cart: new Set(staged), capsuleOff: opts.capsuleOff },
     ensureNodes: async () => {}, fxCartPulseSync: () => {}, cartDockToggle: () => {},
     renderCartGoal: (...args: unknown[]) => { goal.push(args); },
     nodeFor: (p: string) => nodes[p] ?? null,
@@ -445,7 +445,7 @@ async function cartShows(staged: string[], nodes: Record<string, Node>) {
     },
     formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: (s: unknown) => String(s), icon: () => '',
   };
-  const names = ['renderCart', 'cartTotalBytes', 'cartKnownPaths', 'cartUnknownCount', 'cartNode', 'tmCartRoots', 'tmParentPath'];
+  const names = ['renderCart', 'cartTotalBytes', 'cartKnownPaths', 'cartUnknownCount', 'cartNode', 'tmCartRoots', 'tmParentPath', ...LIFT_SPACE];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const render = new Function(...keys, `let cartShown = 200;\n${names.map(fnSource).join('\n')}\nreturn renderCart;`)(
@@ -485,6 +485,9 @@ function goalShows(staged: number, unknown: number, cartSize: number, target = 5
   return { line: els.cartGoalLine!.innerHTML, label: els.cartGoal!.label, met: els.cartGoal!.met, pulses };
 }
 
+/** cartSpaceSaid (D07): the one place the cart's two sentences about space are written. */
+const LIFT_SPACE = ['cartSpaceSaid'];
+
 const MOV = { name: 'holiday-4k.mov', path: '/c/Videos/holiday-4k.mov', size: 3_000_000_000 };
 const DMG = { name: 'Installer.dmg', path: '/c/Installer.dmg', size: 2_000_000_000 };
 
@@ -493,7 +496,7 @@ test('the cart promises what a move to the Trash does — up to its size, once t
   // already reworded Clean Up to say this, and the cart said it more strongly.
   const shown = await cartShows([MOV.path, DMG.path], { [MOV.path]: MOV, [DMG.path]: DMG });
   assert.doesNotMatch(shown.foot, /Reclaims/, `no promise the Trash has not kept: ${shown.foot}`);
-  assert.match(shown.foot, /Up to <b>5000000000 B<\/b>, freed when you empty the Trash/, shown.foot);
+  assert.match(shown.foot, /<b>5000000000 B<\/b> staged for the Trash\. Up to that much space comes back, but only when you empty the Trash\./, shown.foot);
   assert.equal(shown.pill, '5000000000 B', 'the pill still shows what is staged');
 });
 
@@ -507,7 +510,7 @@ test('staged items the scan does not hold are not counted as 0 B — they are na
   assert.match(none.pillTitle, /size unknown/, 'and it says why on hover');
 
   const some = await cartShows([MOV.path, other[0]!], { [MOV.path]: MOV });
-  assert.match(some.foot, /Up to <b>3000000000 B<\/b>, freed when you empty the Trash · 1 not in this scan, not counted/, some.foot);
+  assert.match(some.foot, /<b>3000000000 B<\/b> staged for the Trash · 1 not in this scan, not counted\. Up to that much space comes back/, some.foot);
   assert.equal(some.pill, '3000000000 B+', 'the pill marks the total as a floor');
   assert.match(some.pillTitle, /1 not in this scan, not counted/);
 
@@ -557,7 +560,7 @@ test('a known staged file under a staged folder this scan does not hold is count
   const DOWNLOADS = '/c/Downloads';
   const ISO = { name: 'a.iso', path: '/c/Downloads/Projects/a.iso', size: 400 };
   const shown = await cartShows([DOWNLOADS, ISO.path], { [ISO.path]: ISO });
-  assert.match(shown.foot, /Up to <b>400 B<\/b>, freed when you empty the Trash · 1 not in this scan, not counted/, shown.foot);
+  assert.match(shown.foot, /<b>400 B<\/b> staged for the Trash · 1 not in this scan, not counted\. Up to that much space comes back/, shown.foot);
   assert.equal(shown.pill, '400 B+', 'the pill counts a.iso, marked a floor for the folder it cannot size');
   assert.deepEqual(shown.goal, [[400, 1]], 'and the target meter is handed the same figure');
 
@@ -575,7 +578,7 @@ test('after a commit, the cart says where the files went, not that space was rec
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const run = new Function(...keys, `let confirmPaths = []; let onConfirmTrash = null;\n${fnSource('cartCommitSummary')}\nreturn cartCommitSummary;`)(
+  const run = new Function(...keys, `let confirmPaths = []; let onConfirmTrash = null;\n${[...LIFT_SPACE, 'cartCommitSummary'].map(fnSource).join('\n')}\nreturn cartCommitSummary;`)(
     ...keys.map((k) => deps[k]),
   ) as (r: unknown) => void;
   const summary = (r: unknown): string => { run(r); return els.confirmText!.innerHTML; };
@@ -587,4 +590,97 @@ test('after a commit, the cart says where the files went, not that space was rec
   const bare = summary({ trashed: ['/c/a'], bytesFreed: 10, capsuleUnavailable: 'No capsule in a portable session.' });
   assert.match(bare, /Up to that much space comes back, but only when you empty the Trash\./, 'with no capsule copy, the space still comes back only when the Trash is emptied');
   assert.doesNotMatch(bare, /Time Capsule also keeps a copy/, 'no capsule copy is mentioned when none was made');
+});
+
+/* ══════════════════════ D07 — before the commit, the cart says what the summary says ══════════════════════ */
+
+const SPACE_LATER = 'Up to that much space comes back, but only when you empty the Trash.';
+const CAPSULE_SPACE = 'The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.';
+
+/** The confirm sheet's manifest for a dry run that would move `MOV`, the capsule on or off. */
+function sheetSays(capsule: { available: boolean; reason?: string }): string {
+  const plan = {
+    items: [{ path: MOV.path, bytes: MOV.size, willDelete: true }], bytesWouldFree: MOV.size, bytesSkipped: 0, evicts: [],
+    capsule, openHandles: { checked: true, complete: true, conflicts: [] }, batches: 1,
+  };
+  const keys = ['formatCount', 'formatBytes', 'escapeHtml', 'icon', 'baseName', 'state'];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(...keys, `${[...LIFT_SPACE, 'cartManifestHtml'].map(fnSource).join('\n')}\nreturn cartManifestHtml;`)(
+    String, (n: number) => `${n} B`, (s: unknown) => String(s), () => '', (p: string) => path.basename(p), { cart: new Set() },
+  )(plan, 0) as string;
+}
+
+/** The Preview banner's sentence for a cart staging `MOV`. */
+function bannerSays(capsuleOff = false): string {
+  const text = { innerHTML: '' };
+  const els: Record<string, unknown> = {
+    tmPreviewText: text, tmPreviewBanner: { hidden: true }, cartPreview: null,
+    treemapWrap: { classList: { toggle() {} }, style: { removeProperty() {} } },
+  };
+  const keys = ['$', 'tmPreview', 'formatBytes', 'formatCount', 'escapeHtml', 'tmPreviewPadSync', 'tmPreviewWatch', 'state'];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(...keys, `${[...LIFT_SPACE, 'syncCartPreviewChrome'].map(fnSource).join('\n')}\nreturn syncCartPreviewChrome;`)(
+    (id: string) => els[id] ?? null, { on: true, freedBytes: MOV.size, outsideView: 0, outsideBytes: 0 },
+    (n: number) => `${n} B`, String, (s: unknown) => String(s), () => false, () => {}, { cart: new Set([MOV.path]), capsuleOff },
+  )();
+  return text.innerHTML;
+}
+
+/** The post-commit summary for a run that moved `MOV`. */
+function summarySays(extra: Record<string, unknown> = {}): string {
+  const els: Record<string, { innerHTML: string; hidden: boolean; classList: { add(): void } }> = {};
+  const keys = ['$', 'formatCount', 'formatBytes', 'escapeHtml', 'icon', 'baseName', 'state'];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(...keys, `let confirmPaths = []; let onConfirmTrash = null;\n${[...LIFT_SPACE, 'cartCommitSummary'].map(fnSource).join('\n')}\nreturn cartCommitSummary;`)(
+    (id: string) => (els[id] ??= { innerHTML: '', hidden: false, classList: { add() {} } }), String, (n: number) => `${n} B`, (s: unknown) => String(s), () => '',
+    (p: string) => path.basename(p), { cart: new Set() },
+  )({ trashed: [MOV.path], bytesFreed: MOV.size, runId: 'r1', ...extra });
+  return els.confirmText!.innerHTML;
+}
+
+const plainText = (html: string) => html.replace(/<[^>]+>/g, '');
+
+test('before the commit the cart says what the summary says: space comes back only when the Trash is emptied, and the Time Capsule\'s copy takes space until it is removed (QA third pass D07)', async () => {
+  // QA third pass D07: the footer said "Up to 3.2 GB, freed when you empty
+  // the Trash", the Preview banner "up to that much comes back when you
+  // empty it", and the confirm sheet nothing about space — while the dry run
+  // reserved 3.2 GB of the capsule's room for a copy. Only the summary, shown
+  // after the decision, said both.
+  const surfaces: Record<string, string> = {
+    'the cart footer': (await cartShows([MOV.path], { [MOV.path]: MOV })).foot,
+    'the Preview banner': bannerSays(),
+    'the confirm sheet': sheetSays({ available: true }),
+    'the summary': summarySays(),
+  };
+  for (const [where, html] of Object.entries(surfaces)) {
+    const text = plainText(html);
+    assert.ok(text.includes(SPACE_LATER), `${where} says the space comes back only when the Trash is emptied: ${text}`);
+    assert.ok(text.includes(CAPSULE_SPACE), `${where} says the Time Capsule's copy takes up space until it is removed: ${text}`);
+  }
+});
+
+test('where no Time Capsule copy is kept, no surface says one is — a portable session that saves nothing, a dry run that finds the capsule off (QA third pass D07)', async () => {
+  const surfaces: Record<string, string> = {
+    'the cart footer': (await cartShows([MOV.path], { [MOV.path]: MOV }, { capsuleOff: true })).foot,
+    'the Preview banner': bannerSays(true),
+    'the confirm sheet': sheetSays({ available: false, reason: 'This portable session saves nothing, so there is nowhere to keep a recoverable copy.' }),
+    'the summary': summarySays({ capsuleUnavailable: 'This portable session saves nothing.' }),
+  };
+  for (const [where, html] of Object.entries(surfaces)) {
+    const text = plainText(html);
+    assert.ok(text.includes(SPACE_LATER), `${where} still says the space comes back only when the Trash is emptied: ${text}`);
+    assert.ok(!text.includes(CAPSULE_SPACE), `${where} claims no copy that is not kept: ${text}`);
+  }
+});
+
+test('the cart\'s two sentences about space are written once, and a portable session that saves nothing tells the cart (QA third pass D07)', () => {
+  for (const sentence of [SPACE_LATER, CAPSULE_SPACE]) {
+    assert.equal(CODE.split(sentence).length - 1, 1, `written in one place: "${sentence}"`);
+  }
+  for (const fn of ['renderCart', 'syncCartPreviewChrome', 'cartManifestHtml', 'cartCommitSummary']) {
+    assert.match(fnSource(fn), /cartSpaceSaid\(/, `${fn} says it through cartSpaceSaid`);
+  }
+  const portable = fnSource('loadPortableMode');
+  assert.match(portable, /if \(!portableInfo\.writable\) \{ state\.capsuleOff = true; void renderCart\(\); \}/,
+    'the session that saves nothing (timeCapsule\'s isEphemeral: portable and not writable) turns the capsule sentence off');
 });

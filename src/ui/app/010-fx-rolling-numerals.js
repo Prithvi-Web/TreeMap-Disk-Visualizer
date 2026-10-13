@@ -629,6 +629,7 @@ const state = {
   games: { loadedFor: null, report: null }, media: { loadedFor: null, report: null },
   security: { loadedFor: null, report: null },
   cost: null,
+  capsuleOff: false, // a portable session that saves nothing: the Time Capsule keeps no copy (D07)
   fleet: { data: null, timer: 0 },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },

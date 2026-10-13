@@ -766,7 +766,8 @@ test('a cart commit stopped by a later batch never says nothing was deleted whil
 });
 
 test('the result summary never calls a move to the Trash "recovered": the space comes back only when the Trash is emptied, and the Time Capsule\'s copy takes up space until the Time Capsule removes it (final review F1.14)', () => {
-  const src = slice('function cartCommitSummary', '/** Restore a whole committed run from the Time Capsule');
+  // With the cart's own sentences about space (cartSpaceSaid, D07).
+  const src = slice('function cartCommitSummary', '/** Restore a whole committed run from the Time Capsule') + slice('function cartSpaceSaid', '/**\n * Protect');
   const els: Record<string, { innerHTML: string; hidden: boolean; classList: { add: () => void } }> = {};
   const el = (id: string): { innerHTML: string; hidden: boolean; classList: { add: () => void } } =>
     (els[id] ??= { innerHTML: '', hidden: false, classList: { add: () => undefined } });

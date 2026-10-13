@@ -818,16 +818,17 @@ test('the preview banner, the status line and the hatched block say staged for t
   const banner = { hidden: true, offsetHeight: 20 };
   const wrap = { classList: { toggle() {} }, style: { removeProperty() {}, getPropertyValue: () => '', setProperty() {} } };
   const els: Record<string, unknown> = { tmPreviewText: text, tmPreviewBanner: banner, treemapWrap: wrap, cartPreview: null };
-  const keys = ['$', 'tmPreview', 'formatBytes', 'formatCount', 'escapeHtml', 'tmPreviewPadSync', 'tmPreviewWatch'];
-  const body = slice('function syncCartPreviewChrome', '/**\n * Pad the wrap');
+  const keys = ['$', 'tmPreview', 'formatBytes', 'formatCount', 'escapeHtml', 'tmPreviewPadSync', 'tmPreviewWatch', 'state'];
+  // With the cart's own sentences about space (cartSpaceSaid, D07).
+  const body = slice('function syncCartPreviewChrome', '/**\n * Pad the wrap') + slice('function cartSpaceSaid', '/**\n * Protect');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const sync = new Function(...keys, `${body}\nreturn syncCartPreviewChrome;`)(
     (id: string) => els[id] ?? null, { on: true, freedBytes: 4_500_000_000, outsideView: 0, outsideBytes: 0 },
-    (n: number) => `${n} B`, String, (s: unknown) => String(s), () => false, () => {},
+    (n: number) => `${n} B`, String, (s: unknown) => String(s), () => false, () => {}, { capsuleOff: false },
   ) as () => void;
   sync();
   assert.doesNotMatch(text.innerHTML, /would free/, text.innerHTML);
-  assert.match(text.innerHTML, /<b>4500000000 B<\/b> this cart stages for the Trash; up to that much comes back when you empty it\./, text.innerHTML);
+  assert.match(text.innerHTML, /<b>4500000000 B<\/b> this cart stages for the Trash\. Up to that much space comes back, but only when you empty the Trash\./, text.innerHTML);
 
   const status = slice('if (tmPreview.on) {\n    $(\'tmStatus\')', 'if (q) {');
   assert.doesNotMatch(status, /would be freed/);
@@ -852,12 +853,13 @@ function bannerFor(preview: Record<string, unknown>): string {
   const banner = { hidden: true, offsetHeight: 20 };
   const wrap = { classList: { toggle() {} }, style: { removeProperty() {}, getPropertyValue: () => '', setProperty() {} } };
   const els: Record<string, unknown> = { tmPreviewText: text, tmPreviewBanner: banner, treemapWrap: wrap, cartPreview: null };
-  const keys = ['$', 'tmPreview', 'formatBytes', 'formatCount', 'escapeHtml', 'tmPreviewPadSync', 'tmPreviewWatch'];
-  const body = slice('function syncCartPreviewChrome', '/**\n * Pad the wrap');
+  const keys = ['$', 'tmPreview', 'formatBytes', 'formatCount', 'escapeHtml', 'tmPreviewPadSync', 'tmPreviewWatch', 'state'];
+  // With the cart's own sentences about space (cartSpaceSaid, D07).
+  const body = slice('function syncCartPreviewChrome', '/**\n * Pad the wrap') + slice('function cartSpaceSaid', '/**\n * Protect');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const sync = new Function(...keys, `${body}\nreturn syncCartPreviewChrome;`)(
     (id: string) => els[id] ?? null, { on: true, freedBytes: 400, ...preview },
-    (n: number) => `${n} B`, String, (s: unknown) => String(s), () => false, () => {},
+    (n: number) => `${n} B`, String, (s: unknown) => String(s), () => false, () => {}, { capsuleOff: false },
   ) as () => void;
   sync();
   return text.innerHTML;
@@ -996,7 +998,7 @@ function previewPage(cart: string[]) {
   };
   const names = ['tmPreview', 'TM_PREVIEW_BANNER_INSET', 'tmWorstRatio', 'tmSquarify', 'tmParentPath', 'tmIsInside', 'tmDrawnTree',
     'tmCartRoots', 'tmBuildPreview', 'tmPreviewRefusal', 'enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'tmPreviewPadSync',
-    'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle', 'tmStageMatches'];
+    'tmPreviewWatch', 'cartPreviewInvalidated', 'cartNode', 'nodeFor', 'cartToggle', 'tmStageMatches', 'cartSpaceSaid'];
   const keys = Object.keys(deps);
   // The query box's last answer, which the real tmStageMatches stages from:
   // `stageMatches(paths)` sets it to those files and presses Stage.
