@@ -453,9 +453,14 @@ const FAST_RESCAN_NOT_USED =
 const FAST_RESCAN_NOT_USED_AFTER_FAILURE =
   'a fast rescan was asked for and not used: the native engine was to walk this folder, so its cache was not read, and the built-in walker that took over when the native engine failed lists every folder afresh';
 
-/** What the walker says when it reads the fast-rescan cache (QA D45): a reused listing holds no file's allocation. */
+/**
+ * What the walker says when it reads the fast-rescan cache (QA D45): which listings it reuses — only those
+ * `listingSettled` vouches for, by SETTLED_LISTING_MS, the seconds said here (CI3 review F2.1: it said every
+ * folder that has not changed) — and that a reused listing holds no file's allocation. Said whenever the
+ * cache is read, before the walk knows how many listings it will reuse: `cachedDirs` counts those.
+ */
 const FAST_RESCAN_PARTIAL =
-  'a fast rescan reuses the listings of folders that have not changed, which record no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh';
+  'a fast rescan reuses the last scan\'s listing of a folder only when the folder\'s modified time is unchanged and was more than 5 seconds older than the start of that scan, and a listing it reuses records no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh';
 
 /** One reason a faster engine did not run, and what it is about when more than one engine has a rule about that (`RuleCause`). */
 interface WhyClause {
@@ -654,7 +659,7 @@ function settleComplete(scan: ScanResult, store: ScanStore): void {
  * the walk continues in the background and mutates the record as it goes.
  */
 export interface ScanOptions {
-  /** Reuse the on-disk mtime cache to skip unchanged subtrees (fast rescan). */
+  /** Read the fast-rescan cache the last scan of this folder saved, and reuse the listings it vouches for (`listingSettled`). */
   incremental?: boolean;
   /**
    * Run at this preset whatever the setting says or later becomes. The

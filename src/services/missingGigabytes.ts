@@ -956,7 +956,7 @@ export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLi
   if ((scan.slackBytes ?? 0) > 0) notes.push(sparseParts(count, scan.sparseBytes ?? 0, scan.slackBytes ?? 0));
   if (scan.incremental === true && (scan.cachedDirs ?? 0) > 0) {
     notes.push(
-      'This was a fast rescan: folders that had not changed were read from the last scan and not measured again, so this figure is a floor rather than a total. The rest is in Unaccounted.',
+      'This was a fast rescan: the folders whose listings it reused from the last scan were not measured again, so this figure is a floor rather than a total. The rest is in Unaccounted.',
     );
   }
   return {

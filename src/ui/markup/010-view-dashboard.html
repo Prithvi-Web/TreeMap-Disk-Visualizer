@@ -67,9 +67,12 @@
           </div>
           <!-- QA D45: never ticked by the page, and not offered where the next
                scan runs on the native engine — an incremental rescan runs on
-               the built-in walker, which is far slower than native there. -->
+               the built-in walker, which is far slower than native there.
+               CI3 review F2.1: a folder's listing is reused only when the
+               folder's time was settled before the last scan began
+               (diskScanner's listingSettled, SETTLED_LISTING_MS). -->
           <label class="fast-rescan" id="fastRescanWrap" hidden>
-            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse the last scan for unchanged folders (built-in walker)
+            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse the last scan for folders unchanged since 5 seconds before it began (built-in walker)
           </label>
           <!-- FX wiring: the well is where the "searching" orb lives while a
                scan runs. It must sit OUTSIDE #scanStatus — followScanProgress

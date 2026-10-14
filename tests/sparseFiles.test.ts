@@ -155,12 +155,18 @@ test('an engine that cannot measure what a file occupies says so, rather than re
   }
 });
 
-test('a fast rescan says its figure is a floor, because unchanged folders were not measured again', () => {
+test('a fast rescan says its figure is a floor, because the folders whose listings it reused were not measured again', () => {
   const line = sparseLine(baseScan({ incremental: true, cachedDirs: 12 }), 'darwin');
   assert.equal(line.available, true);
   assert.equal(line.notes.length, 1);
   assert.match(line.notes[0], /floor/, 'an under-count that says it is one is honest; a silent one is not');
   assert.doesNotMatch(line.notes[0], /\d+(\.\d+)? [KMGT]B/, 'and carries no byte figure of its own');
+  // CI3 review F2.1: it said "folders that had not changed were read from the last scan", and a fast
+  // rescan lists afresh every folder whose time was not settled before the last scan began, unchanged
+  // or not. What was not measured again is the listings it reused, which cachedDirs counts.
+  assert.match(line.notes[0], /the folders whose listings it reused from the last scan were not measured again/, line.notes[0]);
+  // So a fast rescan that reused none measured every file, and its figure is whole.
+  assert.deepEqual(sparseLine(baseScan({ incremental: true, cachedDirs: 0 }), 'darwin').notes, [], 'a fast rescan that reused no listing says nothing of a floor');
 });
 
 /* ── the platform seam, and the gdu engine ── */

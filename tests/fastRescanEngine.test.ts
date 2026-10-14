@@ -185,7 +185,17 @@ function cacheFileOf(root: string): string {
   return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-v2-${crypto.createHash('sha1').update(root).digest('hex').slice(0, 16)}.json`);
 }
 
-const PARTIAL = /a fast rescan reuses the listings of folders that have not changed, which record no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh/;
+/** `text` as a pattern that matches it and nothing else. */
+const literally = (text: string): RegExp => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+/**
+ * The walker's sentence whenever it reads the cache, with the margin SETTLED_LISTING_MS keeps. It said
+ * "a fast rescan reuses the listings of folders that have not changed" (CI3 review F2.1), and a fast
+ * rescan right after a scan of a tree that had just changed reused none of them.
+ */
+const PARTIAL = literally(
+  `a fast rescan reuses the last scan's listing of a folder only when the folder's modified time is unchanged and was more than ${SETTLED_LISTING_MS / 1000} seconds older than the start of that scan, and a listing it reuses records no allocation and no hard-linked bytes: the sparse-file, slack and hard-link figures count only the folders it lists afresh`,
+);
 
 test('a fast rescan counts the online-only files of the folders it reuses, from the nodes it reuses, and says its sparse figures cover only what it listed afresh (D45)', async () => {
   const root = tree();
@@ -291,4 +301,8 @@ test('a fast rescan right after a scan of folders that had just changed reads th
     { incremental: true, cachedDirs: 0, walkedDirs: 2 },
     'the cache was read, and no listing in it reused: both folders were listed afresh',
   );
+  // engineReason, which AGENTS.md tells an agent to read, says the rule that left both listings unused —
+  // not that the listings of folders that have not changed are reused (CI3 review F2.1).
+  assert.equal(times(again.engineReason, PARTIAL), 1, again.engineReason);
+  assert.doesNotMatch(again.engineReason ?? '', /listings of folders that have not changed/, again.engineReason);
 });

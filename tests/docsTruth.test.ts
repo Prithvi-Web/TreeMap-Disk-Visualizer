@@ -483,6 +483,66 @@ test('CURRENT-STATE §3.5 keys the fast-rescan cache on the folder\'s time and i
   assert.ok(reuse.includes('a folder whose time was not settled is written to the cache marked `unlisted`, as one not listed in full is, and the next fast rescan lists it afresh'), 'and says what happens to the rest');
 });
 
+test('engineReason, the Fast rescan box and ScanResult.incremental say a fast rescan reuses only a listing its folder\'s time can vouch for, as the agents\' contract does (CI3 review F2.1)', () => {
+  // 63bf4f08 reworded AGENTS.md, CURRENT-STATE and the HTTP and MCP descriptions. The walker's own
+  // sentence — FAST_RESCAN_PARTIAL, in the engineReason of every fast rescan that read a cache, the field
+  // AGENTS.md tells an agent to read — still said it "reuses the listings of folders that have not
+  // changed", as the box a person ticks and the record's comment did, while a fast rescan right after a
+  // scan of a tree that had just changed reused none of them.
+  const seconds = settledListingSeconds();
+  const scanner = read('src', 'services', 'diskScanner.ts');
+  const constant = /\nconst FAST_RESCAN_PARTIAL =\n\s*'((?:[^'\\\n]|\\.)*)';\n/.exec(scanner);
+  assert.ok(constant, 'FAST_RESCAN_PARTIAL is found in diskScanner.ts');
+  const partial = constant[1].replace(/\\(.)/g, '$1');
+  assert.match(scanner, /legacyReason\('walker', cache === null \? why : \[\.\.\.why, said\(FAST_RESCAN_PARTIAL\)\]\)/, 'the walker says it whenever it read a cache');
+  const rule = `a fast rescan reuses the last scan's listing of a folder only when the folder's modified time is unchanged and was more than ${seconds} seconds older than the start of that scan, `;
+  assert.ok(partial.startsWith(rule), `engineReason states the rule as the code keeps it ("${rule}"): ${partial}`);
+  assert.ok(partial.endsWith('the sparse-file, slack and hard-link figures count only the folders it lists afresh'), `and still what its figures cover: ${partial}`);
+  assert.ok(!partial.includes(';'), `one clause of the sentence legacyReason joins with "; ": ${partial}`);
+
+  const boxes = read('src', 'ui', 'markup', '010-view-dashboard.html').split('\n').filter((l) => l.includes('id="fastRescan"'));
+  assert.equal(boxes.length, 1, 'one Fast rescan box');
+  const box = `Fast rescan — reuse the last scan for folders unchanged since ${seconds} seconds before it began (built-in walker)`;
+  assert.ok(boxes[0].endsWith(box), `the box a person ticks says when a folder's listing is reused ("${box}"): ${boxes[0]}`);
+
+  const comment = /\n {2}\/\*\* ([^\n]*) \*\/\n {2}incremental\?: boolean;\n/.exec(read('src', 'models', 'types.ts'));
+  assert.ok(comment, 'ScanResult.incremental carries a one-line comment');
+  assert.match(comment[1], /^True when this scan read the fast-rescan cache the last scan of this folder saved — not that any listing in it was reused: `cachedDirs` counts those\.$/, `ScanResult.incremental: ${comment[1]}`);
+});
+
+/** Every file under `dir` whose name ends with one of `exts`, relative to the repository. */
+function filesUnder(dir: string, exts: readonly string[], out: string[] = []): string[] {
+  for (const name of readdirSync(path.join(root, dir))) {
+    const rel = path.join(dir, name);
+    if (statSync(path.join(root, rel)).isDirectory()) filesUnder(rel, exts, out);
+    else if (exts.some((ext) => rel.endsWith(ext))) out.push(rel);
+  }
+  return out;
+}
+
+test('no source or contract document says a fast rescan reuses the listing of every folder whose time has not changed (CI3 review F2.1)', () => {
+  // Each of these said it once, in a sixth place after the first five were reworded: the walker's
+  // engineReason sentence, the Fast rescan box, ScanResult.incremental's and ScanOptions.incremental's
+  // comments, the sparse-file line's note, and (63bf4f08) the four the agents read.
+  const OLD = [
+    /listings of folders that have not changed/,
+    /listings of unchanged folders/,
+    /reuse the last scan for unchanged folders/,
+    /reused the on-disk mtime cache/,
+    /skip unchanged subtrees/,
+    /folders? whose modified time has not changed/,
+    /says whether (?:saved )?listings were reused/,
+    /folders that had not changed were read from the last scan/,
+  ];
+  const files = [...filesUnder('src', ['.ts', '.js', '.html']), 'AGENTS.md', 'README.md', ...filesUnder(path.join('docs', 'engine'), ['.md'])];
+  assert.ok(files.includes(path.join('src', 'services', 'diskScanner.ts')) && files.includes(path.join('src', 'ui', 'markup', '010-view-dashboard.html')), 'the sweep reads the scanner and the markup');
+  const said = files.flatMap((file) => {
+    const text = read(file);
+    return OLD.filter((p) => p.test(text)).map((p) => `${file}: ${p.source}`);
+  });
+  assert.deepEqual(said, [], 'each states the rule a reused listing is held to, or says nothing of which listings are reused');
+});
+
 test('AGENTS.md describes the mountedInside line as mountedInsideLine builds it (review F1.6)', () => {
   // The behaviour is tests/missingGigabytes.test.ts's (U-28); this holds the
   // sentence to the branches that produce it.

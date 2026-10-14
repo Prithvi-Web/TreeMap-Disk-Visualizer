@@ -156,7 +156,7 @@ export interface ScanResult {
    * keys of `ScanBudget` and nothing else.
    */
   budget: ScanRecordBudget;
-  /** True when this scan reused the on-disk mtime cache (fast rescan). */
+  /** True when this scan read the fast-rescan cache the last scan of this folder saved — not that any listing in it was reused: `cachedDirs` counts those. */
   incremental?: boolean;
   /** Directories served from the cache (incremental scans only). */
   cachedDirs?: number;
