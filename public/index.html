@@ -24479,9 +24479,14 @@ async function offloadDrives(paths, rest) {
   return { volumes: judged.volumes || [], reason: judged.reason || plain.reason, onADrive };
 }
 
-/** The drives the dock offers, and a drop re-verifies against: another drive for the scanned folder (review F2.1). */
+/**
+ * The drives the dock offers, and a drop re-verifies against: another drive
+ * for the scanned folder (review F2.1). A cloud scan's folder is on no local
+ * drive, so its dock is the plain list.
+ */
 function dockDrives() {
-  return state.root ? offloadDrives([state.root.path], state.root.path) : api('/api/volumes');
+  const root = state.root && !state.root.path.startsWith('cloud://') ? state.root.path : null;
+  return root ? offloadDrives([root], root) : api('/api/volumes');
 }
 
 /**

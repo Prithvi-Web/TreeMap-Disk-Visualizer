@@ -61,7 +61,7 @@ export async function liveApfsContainers(platform: NodeJS.Platform = process.pla
  * or the root for "this computer's own disk" (review F1.5, F2.1): on the same device as one (another
  * folder of that drive), or a volume of the same APFS container. A path or anchor whose device cannot
  * be read shares space with nothing this can name; a device no APFS container is known for shares it
- * only with itself.
+ * only with itself; a cloud folder shares none.
  */
 export async function sameSpaceAs(
   anchors: readonly string[],
@@ -69,7 +69,9 @@ export async function sameSpaceAs(
   containers: ReadonlyMap<bigint, string>,
   deviceOf: DeviceOf,
 ): Promise<Set<string>> {
-  const anchorDevices = (await Promise.all(anchors.map((a) => deviceOf(a)))).filter((d): d is bigint => d !== null);
+  // A cloud folder (cloud://) is on no local drive, and is never looked up on the disk.
+  const local = anchors.filter((a) => !a.startsWith('cloud://'));
+  const anchorDevices = (await Promise.all(local.map((a) => deviceOf(a)))).filter((d): d is bigint => d !== null);
   const anchorContainers = new Set(anchorDevices.map((d) => containers.get(d)).filter((c): c is string => c !== undefined));
   const devices = await Promise.all(paths.map((p) => deviceOf(p)));
   return new Set(paths.filter((_, i) => {

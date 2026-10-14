@@ -250,6 +250,22 @@ test('the dock\'s tiles are judged from the scanned folder: for a scan on Work, 
   assert.deepEqual(asks, ['/api/volumes', `/api/volumes?from=${encodeURIComponent('/Volumes/Work')}`], 'judged again from Work, the drive the scanned folder is on');
 });
 
+test('the dock of a cloud scan is the plain drive list: a cloud folder is on no local drive, so it is never sent to be judged (review F2.1)', async () => {
+  const asks: string[] = [];
+  const names = ['refreshDock', 'tmIsInside', ...['offloadDrives', 'dockDrives'].filter((name) => INDEX.includes(`function ${name}(`))];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const dock = new Function('state', 'api', 'renderDock', `'use strict'; let dockVolumes = []; let dockSeq = 0;
+    ${names.map(pageFunction).join('\n')}
+    return { refreshDock, tiles: () => dockVolumes };`)(
+    { root: { path: 'cloud://gdrive/Photos' } },
+    async (url: string) => { asks.push(url); return { volumes: [ARCHIVE, WORK] }; },
+    () => {},
+  ) as { refreshDock: () => Promise<void>; tiles: () => Drive[] };
+  await dock.refreshDock();
+  assert.deepEqual(asks, ['/api/volumes'], 'only the plain list is asked for');
+  assert.deepEqual(dock.tiles().map((v) => v.path), ['/Volumes/Archive', '/Volumes/Work'], 'and its drives are the tiles');
+});
+
 test('a folder picked for an offload is never moved to bare: the pick asks the dry run, the manifest goes behind the shared confirm, and only Confirm offloads — the same paths, to the same folder (E01)', async () => {
   const h = harness([BACKUP]);
   const paths = ['/Users/me/Mail/Mailbox 23.mbox', '/Users/me/Mail/Mailbox 24.mbox'];

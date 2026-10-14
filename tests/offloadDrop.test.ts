@@ -119,6 +119,17 @@ test('which volumes share the space of the folders named: those on the same devi
     'a drive no APFS container is known for: the volume on the same device as the folder');
 });
 
+test('a cloud folder named as an anchor is on no local drive: it is never looked up on the disk, and shares no volume\'s space (review F2.1)', async () => {
+  const { sameSpaceAs } = await import('../src/services/apfsContainers');
+  const looked: string[] = [];
+  const deviceOf = async (p: string) => { looked.push(p); return p === '/' ? 30n : p === '/Volumes/Dev Space' ? 37n : null; };
+  const containers = new Map<bigint, string>([[30n, 'disk3'], [37n, 'disk3']]);
+  assert.deepEqual([...await sameSpaceAs(['cloud://gdrive/Photos'], ['/Volumes/Dev Space'], containers, deviceOf)], [], 'no local volume shares a cloud folder\'s space');
+  assert.deepEqual(looked.filter((p) => p.startsWith('cloud://')), [], 'and the cloud identifier never reaches the disk');
+  assert.deepEqual([...await sameSpaceAs(['cloud://gdrive/Photos', '/'], ['/Volumes/Dev Space'], containers, deviceOf)], ['/Volumes/Dev Space'],
+    'control: a local folder beside it is still judged');
+});
+
 test('on this Mac, the VM volume and the temp folder share the root\'s space and the device file system does not — read off the real mount table (review F1.5)', { skip: (process.platform !== 'darwin' || !fs.existsSync('/System/Volumes/VM')) && 'needs macOS\'s VM volume' }, async () => {
   const { volumesSharingSpace } = await import('../src/services/volumes') as { volumesSharingSpace?: (anchors: readonly string[], paths: readonly string[]) => Promise<Set<string>> };
   assert.equal(typeof volumesSharingSpace, 'function', 'volumes.ts answers it');
