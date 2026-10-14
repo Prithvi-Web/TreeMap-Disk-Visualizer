@@ -57,6 +57,8 @@ type FEl = {
   querySelector(sel: string): FEl | null; querySelectorAll(sel: string): FEl[];
   getAttribute(k: string): string | null; setAttribute(k: string, v: string): void; removeAttribute(k: string): void; hasAttribute(k: string): boolean;
   focus(): void; click(): void; getClientRects(): { length: number }; addEventListener(): void;
+  /** Set false for an element removed from the page; unset reads as in the page, as the page's own `!== false` checks do. */
+  isConnected?: boolean;
 };
 
 type FDoc = {
@@ -182,6 +184,8 @@ type ModalApi = {
   modalFocusables: (root: FEl) => FEl[]; syncModalLayers: () => void; modalOpened: (el: FEl) => void; modalClosed: (el: FEl) => void;
   modalTrapTab: (e: { shiftKey: boolean; preventDefault: () => void }, top: FEl) => void; noteFocus: (el: FEl) => void;
   inModalOverlay: (node: FEl | null) => boolean; modalFocusInto: (backdrop: FEl) => void;
+  /** How many focus moves the net remembers (D05). */
+  FOCUS_TRAIL_MAX: number;
 };
 
 function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {}): ModalApi {
@@ -197,7 +201,7 @@ function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {
   return new Function('document', '$', 'MutationObserver', 'toastsRetire', 'getComputedStyle',
     `'use strict'; ${src}
      return { openModals, topModal, modalFocusTarget, modalFocusables, syncModalLayers, modalOpened, modalClosed, modalTrapTab, noteFocus,
-       inModalOverlay, modalFocusInto };`,
+       inModalOverlay, modalFocusInto, FOCUS_TRAIL_MAX };`,
   )(doc, $, FakeObserver, toastsRetire, (el: FEl) => ({ visibility: computedVisibility(el) })) as ModalApi;
 }
 
@@ -274,6 +278,49 @@ test('a sheet that focuses itself as it opens still gives focus back to the cont
   doc.activeElement = doc.body;
   setOpen(api, p.confirm, false);
   assert.equal(doc.activeElement, p.settingsSave, 'into the sheet it was opened from');
+});
+
+/** The confirmation sheet opening on itself, as the duplicate viewer does: `.open`, then its own focus, then the net's observer. */
+function openFocusingItself(api: ModalApi, p: ReturnType<typeof pageWith>, insideMoves = 1) {
+  p.confirm.classList.add('open'); p.confirm.shown = true;
+  p.confirmDlg.setAttribute('tabindex', '-1');
+  for (let i = 0; i < insideMoves; i++) { p.confirmDlg.focus(); api.noteFocus(p.confirmDlg); }
+  api.modalOpened(p.confirm); api.syncModalLayers();
+}
+
+test('the focus trail skips a control removed from the page, and keeps a few moves, not every one (review F1.7 of QA third pass D05)', () => {
+  // The newest focus outside the sheet was a row re-rendered away since: the
+  // sheet gives focus back to the newest control still in the page.
+  const doc = makeDoc();
+  const p = pageWith(doc);
+  const api = loadModalNet(doc);
+  const row = append(p.main, mkOf(doc)('button', 'dupeRow'));
+  p.pageBtn.focus(); api.noteFocus(p.pageBtn);
+  row.focus(); api.noteFocus(row);
+  p.main.children.splice(p.main.children.indexOf(row), 1); row.parent = null; row.isConnected = false;
+  openFocusingItself(api, p);
+  doc.activeElement = doc.body; // Escape: the sheet stops painting
+  setOpen(api, p.confirm, false);
+  assert.equal(doc.activeElement, p.pageBtn, 'focus is back on the newest control still in the page, not lost on the one removed');
+
+  // Bounded: the trail holds the page's FOCUS_TRAIL_MAX moves. An opener with
+  // fewer than that inside the sheet after it is still found…
+  const max = api.FOCUS_TRAIL_MAX;
+  /** A page of its own, so each trail starts empty. */
+  const fresh = () => { const d = makeDoc(); const q = pageWith(d); return { d, q, a: loadModalNet(d) }; };
+  const within = fresh();
+  within.q.pageBtn.focus(); within.a.noteFocus(within.q.pageBtn);
+  openFocusingItself(within.a, within.q, max - 1);
+  within.d.activeElement = within.d.body;
+  setOpen(within.a, within.q.confirm, false);
+  assert.equal(within.d.activeElement, within.q.pageBtn, `${max - 1} moves inside the sheet: the opener is still remembered`);
+  // …and one more pushes it out: the trail does not grow with every focus the page ever saw.
+  const past = fresh();
+  past.q.pageBtn.focus(); past.a.noteFocus(past.q.pageBtn);
+  openFocusingItself(past.a, past.q, max);
+  past.d.activeElement = past.d.body;
+  setOpen(past.a, past.q.confirm, false);
+  assert.notEqual(past.d.activeElement, past.q.pageBtn, `${max} moves inside the sheet: the opener has left the trail, which holds ${max} and no more`);
 });
 
 test('a dialog with no field and no Cancel focuses the sheet itself, and Tab cycles inside it', () => {
