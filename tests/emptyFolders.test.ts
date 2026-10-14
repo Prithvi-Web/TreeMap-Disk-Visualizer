@@ -781,6 +781,7 @@ test('walker, fast rescan: a cache written before folders were marked is never r
   // with children and no `unlisted` key. Reused, the folder read as listed in full, and the next cache
   // was written from that tree: the mark was lost for good, until the folder's own time changed.
   const root = onDisk('cached-old-format', ['proj/node_modules/x.js', 'proj/src/', 'plain/']);
+  ageFolders(root); // settled, so only the pattern marks a folder in the cache this build writes
   await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
   try {
     const first = await scanWith('auto', root);
@@ -789,7 +790,16 @@ test('walker, fast rescan: a cache written before folders were marked is never r
     // The same listings as an old build wrote them: under the old name, nothing marked.
     const current = fs.existsSync(cacheFileOf(root)) ? cacheFileOf(root) : legacyCacheFileOf(root);
     const written = fs.readFileSync(current, 'utf8');
-    assert.ok(written.includes('"unlisted":true'), 'this build marks proj');
+    // Exactly proj, for the pattern: a folder whose time is not settled is marked too (diskScanner's
+    // listingSettled), so a substring search of the file would pass with proj's own mark gone.
+    type Cached = { path: string; unlisted?: true; children?: Cached[] };
+    const marked: string[] = [];
+    const visit = (n: Cached): void => {
+      if (n.unlisted === true) marked.push(n.path);
+      n.children?.forEach(visit);
+    };
+    visit(JSON.parse(written) as Cached);
+    assert.deepEqual(marked, [path.join(root, 'proj')], 'this build marks proj, and only proj');
     fs.writeFileSync(legacyCacheFileOf(root), written.split(',"unlisted":true').join(''));
     if (current !== legacyCacheFileOf(root)) fs.rmSync(current);
     const again = await startScan(root, { incremental: true });
