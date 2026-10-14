@@ -35591,7 +35591,17 @@ function summonGlobalSearch() {
   if (gsearch.hits.length) gsearchOpen();
 }
 
+/**
+ * Open the results, for someone in the search. A search typed and then left —
+ * Tab or Escape inside the debounce, or while its request was out — still
+ * answers and repaints the panel, so coming back shows the answer to what the
+ * box says; it no longer reopens the panel around a person who is elsewhere,
+ * its hits tabbable ahead of the sidebar's tabs (review F3.5 of QA third pass
+ * D10). Cancelling the search instead would leave the older answer behind the
+ * newer text, for Enter to open.
+ */
 function gsearchOpen() {
+  if (!$('gsearchWrap').contains(document.activeElement)) return;
   gsearch.open = true;
   $('gsearchResults').hidden = false;
   $('gsearch').setAttribute('aria-expanded', 'true');

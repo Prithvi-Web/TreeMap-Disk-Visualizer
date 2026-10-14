@@ -1230,6 +1230,7 @@ function gsearchHarness(opts: { viewControl: boolean }) {
   };
   const els: Record<string, El> = {};
   for (const id of ['gsearch', 'gsearchResults', 'gsearchWrap', 'sideNav', 'pathInput', 'tmSearch']) els[id] = mk(id);
+  els.gsearchResults.hidden = true; // as the page's markup starts it
   /** Who holds whom, for an event to bubble through as a browser's does. */
   const parents = new Map<El, El>();
   const adopt = (parent: El, child: El) => { parent.kids.push(child); parents.set(child, parent); };
@@ -1248,6 +1249,11 @@ function gsearchHarness(opts: { viewControl: boolean }) {
   const tab = mk('tab-dashboard');
   const src = INDEX.slice(INDEX.indexOf('/* ─────────────────────── Global search (A4)'), INDEX.indexOf('/* ───────────────────── Allocation diagnostic (A2)'));
   assert.ok(src.length > 1000, 'the global-search section was found');
+  /** The debounce timers the search has set and not cleared, run by hand: a count of steps, never a clock. */
+  const timers = new Map<number, () => void>();
+  let nextTimer = 1;
+  /** The searches sent, in order, each held until the test answers it. */
+  const asked: Array<{ url: string; settle(r: unknown): void; fail(e: Error): void }> = [];
   const deps: Record<string, unknown> = {
     $: (id: string) => els[id] ?? assert.fail(`the search touched #${id}`),
     document: {
@@ -1256,8 +1262,10 @@ function gsearchHarness(opts: { viewControl: boolean }) {
       querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : assert.fail(`unexpected query ${sel}`)),
     },
     activeViewControl: () => (opts.viewControl ? viewControl : null),
-    applySideNav: () => {}, api: async () => ({ hits: [] }), escapeHtml: String, formatBytes: String, formatCount: String,
-    chipFor: () => '', toast: () => {}, state: {}, setTimeout: () => 0, clearTimeout: () => {},
+    applySideNav: () => {}, escapeHtml: String, formatBytes: String, formatCount: String, chipFor: () => '', toast: () => {}, state: {},
+    api: (url: string) => new Promise((settle, fail) => { asked.push({ url, settle, fail }); }),
+    setTimeout: (f: () => void) => { timers.set(nextTimer, f); return nextTimer++; },
+    clearTimeout: (id: number) => { timers.delete(id); },
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -1283,7 +1291,21 @@ function gsearchHarness(opts: { viewControl: boolean }) {
     if (!ev.stopped) for (const f of docListeners[type] || []) f(ev);
     return ev;
   };
-  return { els, doc, elsewhere, viewControl, tab, hit, focusBox, escape, fire, pageKeys };
+  /** Typing `text` into the box: its value, then the input event the page debounces. */
+  const type = (text: string) => { (els.gsearch as El & { value?: string }).value = text; fire(els.gsearch, 'input', {}); };
+  /** The debounce running out: every timer still set fires, once. */
+  const elapse = () => { for (const [id, f] of [...timers]) { timers.delete(id); f(); } };
+  /** The server answering search `i` with files named `names`, and the page's continuations running (turns, not time). */
+  const answer = async (i: number, names: string[]) => {
+    asked[i].settle({ hits: names.map((name) => ({ name, path: `/r/${name}`, parentPath: '/r', size: 1, type: 'file' })), total: names.length, roots: ['/r'] });
+    for (let n = 0; n < 3; n++) await new Promise((r) => setImmediate(r));
+  };
+  /** Search `i` failing, likewise. */
+  const refuse = async (i: number) => {
+    asked[i].fail(new Error('Search is not available'));
+    for (let n = 0; n < 3; n++) await new Promise((r) => setImmediate(r));
+  };
+  return { els, doc, elsewhere, viewControl, tab, hit, focusBox, escape, fire, pageKeys, type, elapse, answer, refuse, asked };
 }
 
 test('Escape in the sidebar search gives focus back to where it came from — never to <body> (QA third pass D10)', () => {
@@ -1378,6 +1400,63 @@ test('Escape on a sidebar search result leaves the search as Escape in the box d
   t.els.gsearchResults.hidden = false;
   t.fire(t.els.gsearch, 'focusout', { relatedTarget: null }); // the window losing focus: nothing took it on the page
   assert.equal(t.els.gsearchResults.hidden, false, 'focus going nowhere on the page — another window — leaves them as they were');
+});
+
+test('a search answered after focus left the sidebar search does not reopen its results around someone elsewhere — and coming back shows that answer (review F3.5 of QA third pass D10)', async () => {
+  // Type "foo" and Tab out within the 140 ms debounce: the focusout closed the
+  // panel, then the timer fired, the answer came back, and renderGsearch
+  // reopened it — with focus on the Dashboard tab, its hits tabbable ahead of
+  // the tab list, until a click elsewhere. Escape inside the debounce, and a
+  // Tab out while a request was in flight, did the same.
+  const t = gsearchHarness({ viewControl: true });
+  t.focusBox(t.elsewhere);
+  t.type('foo');
+  t.viewControl.focus();
+  t.fire(t.els.gsearch, 'focusout', { relatedTarget: t.viewControl }); // Tab: out of the search, before the debounce ran out
+  assert.equal(t.els.gsearchResults.hidden, true, 'control: leaving closed the results');
+  t.elapse();
+  assert.equal(t.asked.length, 1, 'control: the search still ran');
+  await t.answer(0, ['foo.zip']);
+  assert.equal(t.els.gsearchResults.hidden, true, 'its answer does not reopen the results around a person who has left');
+  assert.equal(t.els.gsearch.attrs['aria-expanded'], 'false', 'and the box does not say they are open');
+
+  // Escape inside the debounce: focus goes back where it came from, and the answer leaves it there.
+  const e = gsearchHarness({ viewControl: true });
+  e.focusBox(e.elsewhere);
+  e.type('foo');
+  e.escape();
+  e.elapse();
+  await e.answer(0, ['foo.zip']);
+  assert.equal(e.els.gsearchResults.hidden, true, 'Escape left the search, and the late answer does not reopen it');
+  assert.equal(e.doc.active, e.elsewhere, 'focus stays where Escape put it');
+
+  // Results showing, one more letter, Tab out while that search is in flight.
+  const f = gsearchHarness({ viewControl: true });
+  f.focusBox(f.elsewhere);
+  f.type('fo');
+  f.elapse();
+  await f.answer(0, ['fo.txt']);
+  assert.equal(f.els.gsearchResults.hidden, false, 'control: an answer for someone in the box opens the results');
+  f.type('foo');
+  f.elapse();
+  f.viewControl.focus();
+  f.fire(f.els.gsearch, 'focusout', { relatedTarget: f.viewControl });
+  await f.answer(1, ['foo.zip']);
+  assert.equal(f.els.gsearchResults.hidden, true, 'the answer in flight when focus left does not reopen the results');
+  // Back into the box: the results open on the answer to what the box says, not on the older one.
+  f.focusBox(f.viewControl);
+  assert.equal(f.els.gsearchResults.hidden, false, 'coming back opens the results');
+  assert.match(f.els.gsearchResults.innerHTML, /foo\.zip/, 'showing the answer to "foo"');
+  assert.doesNotMatch(f.els.gsearchResults.innerHTML, /fo\.txt/, 'not the one to "fo"');
+
+  // A search that fails after focus left says so the next time the box is entered, not around someone elsewhere.
+  const r = gsearchHarness({ viewControl: true });
+  r.focusBox(r.elsewhere);
+  r.type('foo');
+  r.escape();
+  r.elapse();
+  await r.refuse(0);
+  assert.equal(r.els.gsearchResults.hidden, true, 'a failed search answered after Escape does not reopen the results');
 });
 
 test('the keyboard shortcut works even when the sidebar is collapsed to the rail', () => {
