@@ -1186,6 +1186,34 @@ test('the drawer takes focus when opened from the keyboard and returns it on clo
   assert.equal(doc.activeElement, doc.body, 'a click leaves focus alone');
 });
 
+test('the cart pill says whether the drawer it opens and closes is open: aria-expanded follows every open and close, and it names that drawer (fifth browser pass F11b)', () => {
+  // QA fifth pass F11b: the pill opened and closed the cart panel, but nothing
+  // told a screen reader which: "Review cleanup cart, button" either way.
+  const tabTag = /<div id="cartTab"[^>]*>/.exec(INDEX);
+  assert.ok(tabTag, 'the pill is in the page');
+  assert.match(tabTag![0], /\brole="button"/, 'control: the pill is a button');
+  assert.match(tabTag![0], /\baria-expanded="false"/, 'the pill starts saying the drawer is closed — the page opens with it closed');
+  assert.match(tabTag![0], /\baria-controls="cartPanel"/, 'and names the drawer it opens');
+  assert.match(INDEX, /<div id="cartPanel"/, 'control: the drawer it names is in the page');
+  const focusState = INDEX.slice(INDEX.indexOf('const cartFocus = '), INDEX.indexOf(';', INDEX.indexOf('const cartFocus = ')) + 1);
+  const fn = `${braced('function cartDockToggle(')}\n${focusState}\n${braced('function cartFocusReturn(')}`;
+  const doc = makeDoc();
+  const mk = mkOf(doc);
+  const dock = append(doc.body, mk('div', 'cartDock', ['show']));
+  const panel = append(dock, mk('div', 'cartPanel'));
+  append(panel, mk('button', 'cartCollapse'));
+  const tab = append(dock, mk('div', 'cartTab', [], { tabindex: '0', 'aria-expanded': 'false' }));
+  const toggle = new Function('$', 'document', 'requestAnimationFrame', `'use strict'; ${fn} return cartDockToggle;`)(
+    (id: string) => doc.getElementById(id), doc, (cb: () => void) => cb()) as (open?: boolean, opts?: { focus?: boolean }) => void;
+  const said: Array<[boolean, string | null]> = [];
+  for (const open of [undefined, false, true, true, undefined] as Array<boolean | undefined>) {
+    toggle(open);
+    said.push([dock.classList.contains('open'), tab.getAttribute('aria-expanded')]);
+  }
+  assert.deepEqual(said, [[true, 'true'], [false, 'false'], [true, 'true'], [true, 'true'], [false, 'false']],
+    'each open and close — the pill, its collapse button, Escape, an emptied cart: all go through cartDockToggle — sets aria-expanded to match');
+});
+
 test('the preview pane takes focus on open and gives it back on close', () => {
   const open = braced('function openPreview(');
   const close = braced('function closePreview(');

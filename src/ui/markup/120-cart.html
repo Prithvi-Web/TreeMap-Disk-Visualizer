@@ -23,8 +23,10 @@
   <!-- Named by its own words (QA fourth pass E12, WCAG 2.5.3): "1 · 3.2 GB
        Review cleanup cart". An aria-label of "Open cleanup cart" held none
        of what the pill shows, so a voice user saying "Review" reached
-       nothing; the hidden words only say what is being reviewed. -->
-  <div id="cartTab" role="button" tabindex="0">
+       nothing; the hidden words only say what is being reviewed.
+       aria-expanded says whether the drawer it opens and closes is open
+       (fifth browser pass F11b); cartDockToggle keeps it in step. -->
+  <div id="cartTab" role="button" tabindex="0" aria-expanded="false" aria-controls="cartPanel">
     <span data-icon="cart" data-size="17"></span>
     <span class="c-count" id="cartTabCount">0</span>
     <span class="c-sep">·</span>

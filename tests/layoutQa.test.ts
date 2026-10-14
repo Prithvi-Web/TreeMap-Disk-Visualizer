@@ -185,6 +185,7 @@ type CartEl = {
   classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean; toggle(c: string, on?: boolean): void };
   contains(n: unknown): boolean; focus(opts?: unknown): void; getClientRects(): unknown[]; readonly isConnected: boolean;
   listeners: Record<string, Array<(e: unknown) => void>>; addEventListener(type: string, fn: (e: unknown) => void): void;
+  setAttribute(k: string, v: string): void;
 };
 
 /** Deliver an event to what the page registered on `el` — nothing reaches a listener the page did not add. */
@@ -247,6 +248,7 @@ function cartWorld() {
       get isConnected() { return el.connected; },
       listeners: {},
       addEventListener: (type, fn) => { (el.listeners[type] ||= []).push(fn); },
+      setAttribute: (k, v) => { el.attrs[k] = String(v); },
     };
     if (parent) parent.children.push(el);
     return el;
@@ -327,8 +329,10 @@ test('collapsing a cart that still holds items returns focus to its tab, and a C
   const w = cartWorld();
   fire(w.els.cartDock, 'focusin', { relatedTarget: w.els.opener });
   w.els.cartCollapse.focus();
+  assert.equal(w.els.cartTab.attrs['aria-expanded'], 'true', 'control: the open drawer is said on its pill (F11b)');
   fire(w.els.cartCollapse, 'click');
   assert.equal(w.focus.active, w.els.cartTab, 'the tab is the way back in while the cart has items');
+  assert.equal(w.els.cartTab.attrs['aria-expanded'], 'false', 'and the pill says the drawer is closed (fifth browser pass F11b)');
   const v = cartWorld();
   v.els.opener.focus();
   v.fns.cartClear(); await settled();

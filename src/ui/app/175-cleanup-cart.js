@@ -709,6 +709,9 @@ function cartDockToggle(open, { focus = false } = {}) {
   const hadFocus = dock.contains(document.activeElement);
   dock.classList.toggle('open', next);
   document.body.classList.toggle('cart-open', next);
+  // The pill says which (fifth browser pass F11b): every open and close comes
+  // through here — the pill, the collapse button, Escape, an emptied cart.
+  $('cartTab').setAttribute('aria-expanded', String(next));
   // Keyboard users must land where they can act. A drawer opened from the
   // tab left focus on the tab, with Escape climbing the map instead of
   // closing the drawer; closing from inside it left focus on a hidden button.
