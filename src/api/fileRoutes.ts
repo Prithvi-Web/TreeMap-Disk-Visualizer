@@ -48,10 +48,13 @@ export const MAX_INSTALLED_PROGRAM_PATHS = 2000;
  * pass F01)? -> { parts: [{ path, installedProgram: { kind, name, root } }] },
  * only the paths that are; a path that is no part of one is not listed.
  *
- * Read-only preflight for the Trash sheet, so "it is part of Google Chrome,
+ * Read-only preflight for the Trash sheets, so "it is part of Google Chrome,
  * which will stop working" is said before the person confirms, not found out
- * afterwards. It reads the paths alone — nothing on the disk — through the one
- * detector the dry-run manifests, Autopilot and the Security panel ask.
+ * afterwards. Like the open-file check it answers only for paths inside a
+ * scanned root: one outside every one, or refused by the path rules, refuses
+ * the whole request (review F1.7). It moves nothing; the one detector the
+ * dry-run manifests, Autopilot and the Security panel ask reads the paths'
+ * names, and where each really is (the links in its folders).
  */
 fileRouter.post('/files/installed-programs', guardBodyPathsMax(MAX_INSTALLED_PROGRAM_PATHS), requireInsideScanRoot, (req: Request, res: Response) => {
   const { paths } = req.body as { paths: string[] };

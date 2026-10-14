@@ -791,7 +791,8 @@ const schemas: Json = {
       wouldTrash: arr(obj({
         path: str(),
         bytes: nullable(int('null when no scan knows this path')),
-        installedProgram: { ...ref('InstalledProgram'), description: 'Present only when the path is a part of an installed program (a file inside a Mac app, a program under Program Files, Linux\u2019s /usr): trashing it would stop that program working — say so to the person before acting' },
+        // allOf, never a sibling of $ref: OpenAPI 3.0 readers drop those (review F1.10).
+        installedProgram: { allOf: [ref('InstalledProgram')], description: 'Present only when the path is a part of an installed program (a file inside a Mac app, a program under Program Files, Linux\u2019s /usr): trashing it would stop that program working — say so to the person before acting' },
       }, ['path', 'bytes'])),
       totalKnownBytes: int(),
       openHandles: opaque("B2's preflight, always sent: what a program is holding open right now in these paths — a real run refuses 409 OPEN_HANDLE_CONFLICT on any of them unless ignoreOpenHandles: true"),
@@ -2074,7 +2075,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/files/installed-programs',
-    summary: 'Which of these paths is a part of an installed program (a file inside a Mac app, a program under Program Files, Linux\u2019s /usr)? Read-only pre-flight for a delete: it reads the paths alone, nothing on the disk',
+    summary: 'Which of these paths is a part of an installed program (a file inside a Mac app, a program under Program Files, Linux\u2019s /usr)? Read-only pre-flight for a delete: it moves nothing, and answers only for paths inside a scanned root, as the open-file check does',
     tag: 'files',
     destructive: false,
     requestBody: jsonBody(obj({ paths: arr(str(), 'At most 2000, each inside a scanned root') }, ['paths'])),
@@ -2084,7 +2085,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         ['parts'],
       )),
       '400': errorResponse('TOO_MANY_PATHS — more than 2000 paths'),
-      '403': errorResponse('A path is outside every scanned root'),
+      '403': errorResponse('A path is outside every scanned root, or refused by the path rules (SPILL_PATH, CLOUD_PATH, VIRTUAL_PATH): one such path refuses the whole request'),
     },
   },
   {

@@ -498,8 +498,12 @@ OpenAPI 3 spec).
      (present only then); a re-encode (`POST /api/compression/encode`)
      replaces its files, so ask the route below about them first; and
      `POST /api/files/installed-programs { paths }` (read-only, at most 2000
-     paths, reading nothing on the disk) answers the same for any paths. Say
-     so before acting; a program is removed whole (`root`), never a part at a
+     paths) answers the same for paths inside a scanned root — a path outside
+     every one, or one the path rules refuse, refuses the whole request
+     (`403 OUTSIDE_SCAN_ROOT`, `SPILL_PATH`, `CLOUD_PATH`, `VIRTUAL_PATH`), as
+     the open-file check does. It moves nothing; what it reads on the disk is
+     where each path really is (the links in its folders). Say so before
+     acting; a program is removed whole (`root`), never a part at a
      time. Autopilot never selects one: its run names the program in
      `skipped`, once, with how many matched items it left.
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS

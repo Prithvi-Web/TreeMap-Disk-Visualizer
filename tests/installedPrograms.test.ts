@@ -203,6 +203,18 @@ test('POST /api/files/installed-programs names the installed program each path i
     'the executable and the app.asar are parts of Fake; the loose file and the whole app are not');
   const outside = await call('POST', '/api/files/installed-programs', { paths: ['/definitely/not/scanned/Thing.app/Contents/x'] });
   assert.equal(outside.status, 403, 'a path outside every scanned root is refused, as the open-file check refuses it');
+  const mixed = await call('POST', '/api/files/installed-programs', { paths: [exe, '/definitely/not/scanned/Thing.app/Contents/x'] });
+  assert.deepEqual([mixed.status, mixed.body.code], [403, 'OUTSIDE_SCAN_ROOT'], 'and one such path refuses the whole request (review F1.7)');
+});
+
+test('AGENTS.md says of the route what it does: paths inside a scanned root, one refused path refusing the request — never "for any paths", nor "reading nothing on the disk" (review F1.7)', () => {
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  const at = agents.indexOf('`POST /api/files/installed-programs { paths }`');
+  assert.notEqual(at, -1, 'the route is in AGENTS.md');
+  const said = agents.slice(at, agents.indexOf('\n   - ', at)).replace(/\s+/g, ' ');
+  assert.doesNotMatch(said, /for any paths|reading nothing on the disk/, `it claims nothing the route does not do: ${said}`);
+  assert.match(said, /inside a scanned root/, `it says which paths it answers: ${said}`);
+  assert.match(said, /refuses the whole request/, `and what one refused path does: ${said}`);
 });
 
 test('the dry-run manifests say which paths are parts of an installed program: DELETE /api/files and the cart over HTTP, trash_paths over MCP (F01)', async () => {
@@ -292,6 +304,18 @@ test('the published spec declares the route and the manifests\' installedProgram
   assert.match(said, /parts/, 'its answer is declared');
   const item = doc.components.schemas.TrashDryRunManifest.properties.wouldTrash.items;
   assert.ok(item.properties.installedProgram, 'DELETE /api/files\'s dry run declares installedProgram on each entry');
+  // OpenAPI 3.0: a Reference Object's siblings are ignored, so the field's own
+  // words ride beside an allOf of the schema, never beside a $ref (review F1.10).
+  assert.deepEqual(item.properties.installedProgram.allOf, [{ $ref: '#/components/schemas/InstalledProgram' }], 'the field is the InstalledProgram schema');
+  assert.match(String(item.properties.installedProgram.description), /say so to the person before acting/, 'with its own description where a 3.0 reader keeps it');
+  const refWithSiblings: string[] = [];
+  const walk = (node: unknown, at: string): void => {
+    if (!node || typeof node !== 'object') return;
+    if (!Array.isArray(node) && '$ref' in node && Object.keys(node).length > 1) refWithSiblings.push(at);
+    for (const [k, v] of Object.entries(node)) walk(v, `${at}/${k}`);
+  };
+  walk(doc, '#');
+  assert.deepEqual(refWithSiblings, [], 'no $ref in the document has a sibling a 3.0 reader would drop');
   assert.match(JSON.stringify(doc.paths['/api/cart/commit'].post.responses), /installedProgram/, 'and so does the cart\'s');
   assert.ok(doc.components.schemas.OffloadDryRunManifest.properties.installedProgramParts, 'and the offload dry run\'s installedProgramParts (review F1.4)');
 });
