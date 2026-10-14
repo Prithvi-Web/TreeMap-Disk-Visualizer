@@ -155,6 +155,49 @@ test('the devices compared are the destination\'s and each selected item\'s — 
     (e: unknown) => e instanceof AppError && e.code === 'DEST_SAME_VOLUME', 'with the seam removed, the real devices answer again');
 });
 
+test('every selected item is judged, whichever comes first: one item on the destination\'s drive among items on another refuses the whole offload, naming it (E01, review F1.7)', async () => {
+  assert.equal(typeof setDevice, 'function', 'offload.ts exposes setOffloadDeviceForTests');
+  // Two top-level items: one on "another drive", one on the destination's — the harm E01 describes when
+  // only the first is judged: the second is copied onto its own drive and its original trashed.
+  const root = fs.realpathSync(fileTempDir('treemap-offloadSameVolume-two-'));
+  const items = ['aaa', 'zzz'].map((name) => {
+    const dir = path.join(root, name);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, `${name}.txt`), Buffer.alloc(1000, 1));
+    return dir;
+  });
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = {
+    name: path.basename(root), path: root, size: 2000, type: 'dir', modifiedAt: Date.now(), isHidden: false,
+    children: items.map((dir) => ({
+      name: path.basename(dir), path: dir, size: 1000, type: 'dir' as const, modifiedAt: Date.now(), isHidden: false,
+      children: [{ name: `${path.basename(dir)}.txt`, path: path.join(dir, `${path.basename(dir)}.txt`), size: 1000, type: 'file' as const, modifiedAt: Date.now(), isHidden: false }],
+    })),
+  };
+  const dest = fs.realpathSync(fileTempDir('treemap-offloadSameVolume-two-dest-'));
+  const devices = new Map<string, bigint>([[dest, 2n]]);
+  const restore = setDevice!(async (p) => devices.get(p) ?? null);
+  try {
+    // Each item in turn is the one on the destination's drive, and each is sent first and last.
+    for (const [same, other] of [[items[0], items[1]], [items[1], items[0]]]) {
+      devices.set(same, 2n);
+      devices.set(other, 1n);
+      for (const order of [[same, other], [other, same]]) {
+        await assert.rejects(withOpenFileCheck('clear', () => prepareOffload(scan, order, dest)),
+          (e: unknown) => e instanceof AppError && e.code === 'DEST_SAME_VOLUME' && e.message.includes(`"${path.basename(same)}"`),
+          `${path.basename(same)} on the destination's drive, sent ${order[0] === same ? 'first' : 'second'}: refused, naming it`);
+      }
+    }
+    devices.set(items[0], 1n);
+    devices.set(items[1], 3n);
+    const plan = await withOpenFileCheck('clear', () => prepareOffload(scan, items, dest));
+    assert.equal(plan.plan.length, 2, 'control: with neither on the destination\'s drive, both are planned');
+  } finally {
+    restore();
+  }
+});
+
 test('the refusal is declared where an agent reads: the OpenAPI document\'s 400 for POST /api/offload, AGENTS.md, and the MCP offload tool (E01)', async () => {
   const { buildOpenApiDocument } = await import('../src/api/openapi');
   const doc = buildOpenApiDocument() as { paths: Record<string, Record<string, { responses: Record<string, { description?: string }> }>> };
