@@ -191,8 +191,9 @@ function clearShaderCaches() {
   }
   if (!paths.length) { toast('No shader caches to clear'); return; }
   $('confirmTitle').innerHTML = icon('sparkles', 18) + 'Clear shader caches?';
+  // The Trash holds them until it is emptied: nothing is freed before (D54; review F2.3 of QA third pass D06).
   $('confirmText').innerHTML =
-    `Move <b>${paths.length}</b> shader ${paths.length === 1 ? 'cache' : 'caches'} to the Trash, freeing <b>${formatBytes(bytes)}</b>.<br>` +
+    `Move <b>${paths.length}</b> shader ${paths.length === 1 ? 'cache' : 'caches'} (<b>${formatBytes(bytes)}</b>) to the Trash. The space comes back when you empty the Trash.<br>` +
     `<span style="color:var(--text-3)">Shaders are recompiled automatically. <b>Each affected game will stutter once</b> while it rebuilds them on the next launch — after that it is back to normal. Nothing else about the games is touched.</span>`;
   onConfirmTrash = async () => {
     await trashPaths(paths);

@@ -173,8 +173,11 @@ function confirmEncode(chosen) {
   if (!chosen.length) return;
   const saving = chosen.reduce((s, c) => s + c.estimatedSaving, 0);
   $('confirmTitle').innerHTML = icon('video', 18) + 'Re-encode and replace?';
+  // Smaller once the Trash is emptied, not freed: the original waits there
+  // beside the new file until then (D54; review F2.3 of QA third pass D06).
+  const one = chosen.length === 1;
   $('confirmText').innerHTML =
-    `Re-encode <b>${chosen.length}</b> video ${chosen.length === 1 ? 'file' : 'files'} to HEVC, freeing roughly <b>${formatBytes(saving)}</b>.<br>` +
+    `Re-encode <b>${chosen.length}</b> video ${one ? 'file' : 'files'} to HEVC: roughly <b>${formatBytes(saving)}</b> smaller once you empty the Trash, where ${one ? 'the original goes' : 'the originals go'}.<br>` +
     `<span style="color:var(--text-3)"><b>This is lossy</b> — the picture is compressed again and a little quality is lost permanently. ` +
     `Each new file is checked (it opens, and it runs the full length) <b>before</b> the original is moved to the Trash. ` +
     `If a check fails, that file is left exactly as it is. This can take a long time.</span>`;

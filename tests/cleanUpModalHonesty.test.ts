@@ -637,6 +637,38 @@ test('Shrink Video reports a smaller file and an original in the Trash, not spac
   assert.match(report, /Trash/, 'with where the original went');
 });
 
+/** What a confirm sheet says, as a person reads it: its markup with the tags taken out. */
+const sheetText = (els: Record<string, El>) => els.confirmText.innerHTML.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+
+test('the sheets that ask before a re-encode or a shader-cache clear say the space comes back once the Trash is emptied, not that it is freed (review F2.3 of QA third pass D06)', async () => {
+  // "Re-encode 1 video file to HEVC, freeing roughly 4.2 GB." — the original
+  // goes to the Trash and the new file stays beside it, so disk use rises by
+  // the new file's size until the Trash is emptied; the report after it and
+  // the selection summary already said so. The Games view's "Move 2 shader
+  // caches to the Trash, freeing 1.2 GB" made the same claim.
+  const encode = makeDom();
+  runnable(bodyOf('function confirmEncode(chosen) {'), {
+    $: encode.$, icon: () => '', formatBytes: (n: number) => `${n / 1e9} GB`,
+    startEncode: () => {}, onConfirmTrash: null,
+  }, 'chosen')([{ path: '/v/a.mov', estimatedSaving: 4_200_000_000 }]);
+  const asked = sheetText(encode.els);
+  assert.doesNotMatch(asked, /\bfree(ing|s|d)?\b/i, `nothing is freed by a move to the Trash: "${asked}"`);
+  assert.match(asked, /roughly 4\.2 GB smaller once you empty the Trash/, `the saving, and when it arrives: "${asked}"`);
+  assert.match(asked, /This is lossy/, 'control: the sheet is the re-encode\'s');
+
+  const shaders = makeDom();
+  const component = (p: string, bytes: number) => ({ kind: 'shaderCache', path: p, bytes });
+  runnable(bodyOf('function clearShaderCaches() {'), {
+    $: shaders.$, icon: () => '', formatBytes: (n: number) => `${n / 1e9} GB`, toast: () => assert.fail('there are caches to clear'),
+    state: { games: { report: { libraries: [{ titles: [{ components: [component('/g/a', 700_000_000), { kind: 'base', path: '/g/base', bytes: 9e9 }] }, { components: [component('/g/b', 500_000_000)] }] }] } } },
+    trashPaths: async () => {}, rescan: () => {}, onConfirmTrash: null,
+  })();
+  const cleared = sheetText(shaders.els);
+  assert.doesNotMatch(cleared, /\bfree(ing|s|d)?\b/i, `nothing is freed by a move to the Trash: "${cleared}"`);
+  assert.match(cleared, /Move 2 shader caches \(1\.2 GB\) to the Trash/, `what moves, and its size: "${cleared}"`);
+  assert.match(cleared, /space comes back when you empty the Trash/, `and when the space arrives: "${cleared}"`);
+});
+
 /* ═══════ 6. Shrink Video: "could not be read" is not "already efficient" (D56) ═══════ */
 
 /**
