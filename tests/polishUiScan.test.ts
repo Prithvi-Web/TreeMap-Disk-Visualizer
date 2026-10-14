@@ -1410,7 +1410,8 @@ test('Stop puts back the largest file and the forecast of the tree that stays on
   h.state.settledScanId = 'mail';
   h.beginScanChrome();
   h.restoreDashboardPanels();
-  assert.equal(h.$('statLargest').textContent, 'inbox.mbox · 3000 B', 'the tile is the held scan\'s again');
+  // The name and the size are two elements since design pass G14; read together they are the tile's line.
+  assert.equal(h.$('statLargest').textContent + h.$('statLargestSize').textContent, 'inbox.mbox · 3000 B', 'the tile is the held scan\'s again');
   assert.ok(h.calls.includes('forecast'), 'and the forecast is asked for again, for the folder on screen');
 });
 

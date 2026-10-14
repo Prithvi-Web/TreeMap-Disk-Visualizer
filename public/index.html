@@ -1047,7 +1047,15 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
 .stat-tile .chip { width: 36px; height: 36px; border-radius: 10px; }
 .stat-tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; }
-.stat-tile .v.small { font-size: 13px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The text column may shrink, so its lines ellipsize at the tile's own edge
+   rather than at a fixed 200 px cap, which cut "Google Chrome Framework · 5…"
+   inside a 514 px tile (design pass G14). */
+.stat-tile > div { min-width: 0; }
+.stat-tile .v.small { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The largest file is a name and a size: the name gives way, the size never. */
+.stat-tile .v.stat-largest { display: flex; min-width: 0; }
+.stat-largest .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stat-largest .sz { flex: none; }
 .stat-tile .k { font-size: 11px; color: var(--text-2); margin-top: 2px; }
 
 /* The canvas is a fixed width, so at narrow card widths the legend wraps
@@ -4006,7 +4014,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             <div class="stat-tile tile"><span class="chip" style="--tint:#30D158"><span data-icon="folder"></span></span>
               <div><div class="v num" id="statDirs">–</div><div class="k">Folders</div></div></div>
             <div class="stat-tile tile"><span class="chip" style="--tint:#FF9F0A"><span data-icon="trendUp"></span></span>
-              <div><div class="v small" id="statLargest">–</div><div class="k">Largest file</div></div></div>
+              <!-- Name and size apart (design pass G14): only the name ellipsizes. -->
+              <div><div class="v small stat-largest"><span class="nm" id="statLargest">–</span><span class="sz" id="statLargestSize"></span></div><div class="k">Largest file</div></div></div>
             <div class="stat-tile tile"><span class="chip" style="--tint:#BF5AF2"><span data-icon="clock"></span></span>
               <div><div class="v small num" id="statLastScan">–</div><div class="k">Last scan</div></div></div>
           </div>
@@ -9115,7 +9124,9 @@ function restoreDashboardPanels() {
     else { $(id).dataset.v = 0; $(id).textContent = '–'; }
   }
   const largest = state.largest[0] || null;
-  $('statLargest').textContent = largest ? largest.name + ' · ' + formatBytes(largest.size) : '–';
+  // Name and size apart: only the name gives way to a narrow tile (G14).
+  $('statLargest').textContent = largest ? largest.name : '–';
+  $('statLargestSize').textContent = largest ? ' · ' + formatBytes(largest.size) : '';
   // The forecast is about the folder on screen, read by its path (B05).
   if (state.root) void renderGrowthProjection();
   // The refused row too: a stopped or failed whole-disk scan's notice
@@ -9400,6 +9411,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // B05: the ring's centre total (above), Largest file and the disk-full
   // forecast were the last folder's too, and stood for the whole scan.
   $('statLargest').textContent = '–';
+  $('statLargestSize').textContent = '';
   if ($('growthProj')) $('growthProj').hidden = true;
   renderIndexBadge(null);
   indexLineGen++;
@@ -10223,6 +10235,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
+  $('statLargestSize').textContent = '';
   // Painted from the index: there is no scan yet, so these three would be
   // `?scanId=null` (404) or, worse, the previous scan's id (500 after a stop,
   // or another folder's data). The background scan calls finishScan again with
@@ -10301,7 +10314,9 @@ async function loadDashboardLists() {
     state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
     seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
     const largest = state.largest[0] || null;
-    $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
+    // Name and size apart: only the name gives way to a narrow tile (G14).
+    $('statLargest').textContent = largest ? largest.name : '–';
+    $('statLargestSize').textContent = largest ? ` · ${formatBytes(largest.size)}` : '';
   } catch (e) {
     if (scanId !== state.scanId) return false;
     const retry = (host) => {

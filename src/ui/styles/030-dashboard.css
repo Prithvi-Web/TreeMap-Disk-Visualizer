@@ -97,7 +97,15 @@
 .stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
 .stat-tile .chip { width: 36px; height: 36px; border-radius: 10px; }
 .stat-tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; }
-.stat-tile .v.small { font-size: 13px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The text column may shrink, so its lines ellipsize at the tile's own edge
+   rather than at a fixed 200 px cap, which cut "Google Chrome Framework · 5…"
+   inside a 514 px tile (design pass G14). */
+.stat-tile > div { min-width: 0; }
+.stat-tile .v.small { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The largest file is a name and a size: the name gives way, the size never. */
+.stat-tile .v.stat-largest { display: flex; min-width: 0; }
+.stat-largest .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stat-largest .sz { flex: none; }
 .stat-tile .k { font-size: 11px; color: var(--text-2); margin-top: 2px; }
 
 /* The canvas is a fixed width, so at narrow card widths the legend wraps

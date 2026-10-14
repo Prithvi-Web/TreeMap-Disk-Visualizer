@@ -60,7 +60,9 @@ function restoreDashboardPanels() {
     else { $(id).dataset.v = 0; $(id).textContent = '–'; }
   }
   const largest = state.largest[0] || null;
-  $('statLargest').textContent = largest ? largest.name + ' · ' + formatBytes(largest.size) : '–';
+  // Name and size apart: only the name gives way to a narrow tile (G14).
+  $('statLargest').textContent = largest ? largest.name : '–';
+  $('statLargestSize').textContent = largest ? ' · ' + formatBytes(largest.size) : '';
   // The forecast is about the folder on screen, read by its path (B05).
   if (state.root) void renderGrowthProjection();
   // The refused row too: a stopped or failed whole-disk scan's notice
@@ -345,6 +347,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // B05: the ring's centre total (above), Largest file and the disk-full
   // forecast were the last folder's too, and stood for the whole scan.
   $('statLargest').textContent = '–';
+  $('statLargestSize').textContent = '';
   if ($('growthProj')) $('growthProj').hidden = true;
   renderIndexBadge(null);
   indexLineGen++;

@@ -808,6 +808,7 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
+  $('statLargestSize').textContent = '';
   // Painted from the index: there is no scan yet, so these three would be
   // `?scanId=null` (404) or, worse, the previous scan's id (500 after a stop,
   // or another folder's data). The background scan calls finishScan again with
@@ -886,7 +887,9 @@ async function loadDashboardLists() {
     state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
     seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
     const largest = state.largest[0] || null;
-    $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
+    // Name and size apart: only the name gives way to a narrow tile (G14).
+    $('statLargest').textContent = largest ? largest.name : '–';
+    $('statLargestSize').textContent = largest ? ` · ${formatBytes(largest.size)}` : '';
   } catch (e) {
     if (scanId !== state.scanId) return false;
     const retry = (host) => {

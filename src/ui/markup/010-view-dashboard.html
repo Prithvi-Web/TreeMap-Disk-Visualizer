@@ -146,7 +146,8 @@
             <div class="stat-tile tile"><span class="chip" style="--tint:#30D158"><span data-icon="folder"></span></span>
               <div><div class="v num" id="statDirs">–</div><div class="k">Folders</div></div></div>
             <div class="stat-tile tile"><span class="chip" style="--tint:#FF9F0A"><span data-icon="trendUp"></span></span>
-              <div><div class="v small" id="statLargest">–</div><div class="k">Largest file</div></div></div>
+              <!-- Name and size apart (design pass G14): only the name ellipsizes. -->
+              <div><div class="v small stat-largest"><span class="nm" id="statLargest">–</span><span class="sz" id="statLargestSize"></span></div><div class="k">Largest file</div></div></div>
             <div class="stat-tile tile"><span class="chip" style="--tint:#BF5AF2"><span data-icon="clock"></span></span>
               <div><div class="v small num" id="statLastScan">–</div><div class="k">Last scan</div></div></div>
           </div>

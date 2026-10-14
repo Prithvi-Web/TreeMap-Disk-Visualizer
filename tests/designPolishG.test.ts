@@ -238,3 +238,63 @@ test('G10: a focused Duplicates group header draws its ring inside itself, where
     assert.ok(c >= 3, `${name}: the ring measures ${fmt(c)}:1 against the card (a UI component needs 3:1)`);
   }
 });
+
+/* ══════════════ G14 — Quick Stats always shows the largest file's size ══════════════ */
+
+/** A top-level `[async ]function name(…) {…}` from the built page, brace matched. */
+function fnSource(name: string): string {
+  const at = INDEX.search(new RegExp(`\\n(?:async )?function ${name}\\(`)) + 1;
+  assert.ok(at > 0, `${name} is in the page`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, i + 1);
+  }
+  return assert.fail(`${name} never closes`);
+}
+
+test('G14: the largest file is a name that gives way and a size that never does', () => {
+  // "Google Chrome Framework · 5…": name and size were one string in a
+  // label capped at 200 px inside a 514 px tile, so the size — the fact the
+  // tile exists for — was what got cut.
+  const id = INDEX.indexOf('id="statLargest"');
+  const tile = INDEX.slice(INDEX.lastIndexOf('class="stat-tile', id), INDEX.indexOf('Largest file', id));
+  assert.match(tile, /<span class="nm" id="statLargest">/, 'the name is an element of its own');
+  assert.match(tile, /<span class="sz" id="statLargestSize">/, 'and so is the size, after it');
+  const nm = ruleFor('.stat-largest .nm').body, sz = ruleFor('.stat-largest .sz').body;
+  assert.equal(prop(nm, 'text-overflow'), 'ellipsis', 'the name ellipsizes');
+  assert.equal(prop(nm, 'overflow'), 'hidden');
+  assert.equal(prop(nm, 'min-width'), '0', 'and may shrink below its text');
+  assert.equal(prop(sz, 'flex'), 'none', 'the size never shrinks');
+  assert.equal(cascaded('.stat-tile .v.stat-largest', 'display'), 'flex', 'the two share one line');
+  assert.equal(cascaded('.stat-tile > div', 'min-width'), '0', 'and the tile\'s text column may shrink, so the name can give way inside it');
+  assert.equal(cascaded('.stat-tile .v.small', 'max-width'), null, 'no fixed cap: the line takes the tile\'s width');
+});
+
+test('G14: the dashboard writes the name and the size apart, and clears both', async () => {
+  const els: Record<string, { textContent: string; innerHTML: string }> = {};
+  const $ = (id: string) => (els[id] ??= { textContent: '', innerHTML: '' });
+  const api = async (url: string) => {
+    if (url.includes('large-files')) return { files: [{ name: 'Google Chrome Framework', path: '/A/Google Chrome Framework', size: 5_012_000_000 }] };
+    if (url.includes('file-types')) return { types: [] };
+    return { folders: [] };
+  };
+  const noop = () => {};
+  const run = new Function('$', 'state', 'api', 'seedNodes', 'formatBytes', 'escapeHtml', 'refreshBigFiles', 'renderBigFolders', 'renderDonut', 'fxDonutLoadingSync', 'toast',
+    `'use strict'; ${fnSource('loadDashboardLists')} return loadDashboardLists;`)(
+    $, { scanId: 's1', largest: [], types: [], bigFolders: [], donut: {} }, api, noop, (n: number) => `${(n / 1e9).toFixed(1)} GB`, (s: string) => s,
+    noop, noop, noop, noop, noop) as () => Promise<boolean>;
+  assert.equal(await run(), true);
+  assert.equal(els.statLargest.textContent, 'Google Chrome Framework');
+  assert.equal(els.statLargestSize.textContent, ' · 5.0 GB');
+  // Every place that takes the figure down takes both halves down.
+  const resets = [...INDEX.matchAll(/\$\('statLargest'\)\.textContent = '–';/g)];
+  assert.ok(resets.length >= 2, 'the figure is taken down when a scan starts and when an index paint has none');
+  for (const m of resets) {
+    assert.match(INDEX.slice(m.index!, m.index! + 120), /^\$\('statLargest'\)\.textContent = '–';\s*\$\('statLargestSize'\)\.textContent = '';/,
+      'and its size with it');
+  }
+  const sets = [...INDEX.matchAll(/\$\('statLargest'\)\.textContent = largest \?/g)];
+  assert.ok(sets.length >= 2, 'both painters write the name');
+  for (const m of sets) assert.match(INDEX.slice(m.index!, m.index! + 200), /\$\('statLargestSize'\)\.textContent = largest \?/, 'and the size beside it');
+});
