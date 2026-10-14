@@ -161,7 +161,11 @@ async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, withS
     `Offload ${what}: <b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
     `<b>${escapeHtml(dest)}</b>, verified by reading every byte back from the destination, and only then moved to the Trash here.` +
     notes +
-    `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;
+    `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>` +
+    // An original that is a part of an installed program, from the dry run's
+    // own manifest (review F1.4): once its copy verifies it goes to the Trash,
+    // and the program stops working here.
+    installedProgramWarningHtml(plan.installedProgramParts || [], (plan.wouldTrashAfterVerify || paths).length);
   $('confirmOk').innerHTML = icon('archive', 15) + 'Copy, verify, then trash';
   $('confirmModal').classList.add('open');
   // The picker closes after the sheet opened, in the same task: the focus net

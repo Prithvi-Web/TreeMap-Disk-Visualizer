@@ -17,6 +17,9 @@ import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { setTrashStepForTests } from '../src/services/cleaner';
 import { buildMcpServer } from '../src/mcp/server';
 import { buildOpenApiDocument } from '../src/api/openapi';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+import { withOpenFileCheck } from './fixtures/openFileCheck';
+destinationsOnAnotherDrive(); // every offload destination here stands for another drive (E01)
 
 // Nothing here moves a file: every request is a dry run or a read. The Trash
 // step is replaced by a recorder all the same, and must stay unused.
@@ -176,7 +179,7 @@ async function call(method: string, url: string, body: unknown): Promise<{ statu
 }
 
 /** A scanned folder holding an app — its executable and its app.asar — and a loose file beside it. */
-async function scannedFolderWithAnApp(): Promise<{ dir: string; app: string; exe: string; asar: string; loose: string }> {
+async function scannedFolderWithAnApp(): Promise<{ dir: string; app: string; exe: string; asar: string; loose: string; scanId: string }> {
   const dir = fs.realpathSync(fileTempDir('tm-installed-programs-'));
   const app = path.join(dir, 'Fake.app');
   const exe = path.join(app, 'Contents', 'MacOS', 'Fake');
@@ -188,7 +191,7 @@ async function scannedFolderWithAnApp(): Promise<{ dir: string; app: string; exe
   }
   const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: dir });
   assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
-  return { dir, app, exe, asar, loose };
+  return { dir, app, exe, asar, loose, scanId: scanned.body.scanId };
 }
 
 test('POST /api/files/installed-programs names the installed program each path is a part of, for the Trash sheet to say before anything moves — and nothing for a path that is no part of one (F01)', async () => {
@@ -252,6 +255,34 @@ test('a path reached through a link in its folders is judged where it really is:
   assert.deepEqual(del.body.wouldTrash[0].installedProgram, foo, 'and so does the dry run');
 });
 
+test('the offload dry runs say which originals they would trash are parts of an installed program: POST /api/offload and the MCP offload tool (review F1.4)', async () => {
+  const { app, exe, loose, scanId } = await scannedFolderWithAnApp();
+  const dest = fs.realpathSync(fileTempDir('tm-installed-offload-dest-'));
+  const fake = { kind: 'app', name: 'Fake', root: app };
+  await withOpenFileCheck('clear', async () => {
+    const plan = await call('POST', '/api/offload', { scanId, paths: [exe, loose], dest, dryRun: true });
+    assert.equal(plan.status, 200, JSON.stringify(plan.body));
+    assert.deepEqual(plan.body.installedProgramParts, [{ path: exe, installedProgram: fake }], 'POST /api/offload names the app, and nothing for the loose file');
+    const plain = await call('POST', '/api/offload', { scanId, paths: [loose], dest, dryRun: true });
+    assert.equal(plain.status, 200, JSON.stringify(plain.body));
+    assert.equal('installedProgramParts' in plain.body, false, 'control: a plan with no part of a program reads as it did');
+
+    const mcp = buildMcpServer();
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'treemap-installed-programs-offload-test', version: '0.0.0' });
+    await Promise.all([mcp.connect(serverSide), client.connect(clientSide)]);
+    try {
+      const reply = (await client.callTool({ name: 'offload', arguments: { scanId, paths: [exe, loose], dest, dryRun: true } })) as { isError?: boolean; structuredContent?: Record<string, any> };
+      assert.ok(!reply.isError, JSON.stringify(reply));
+      assert.deepEqual(reply.structuredContent!.installedProgramParts, [{ path: exe, installedProgram: fake }], 'the MCP offload tool names the app');
+    } finally {
+      await client.close();
+    }
+  });
+  assert.ok(fs.existsSync(exe) && fs.existsSync(loose), 'dry runs move nothing');
+  assert.deepEqual(fs.readdirSync(dest), [], 'and copy nothing');
+});
+
 test('the published spec declares the route and the manifests\' installedProgram field (F01)', () => {
   const doc = buildOpenApiDocument() as Record<string, any>;
   const route = doc.paths['/api/files/installed-programs']?.post;
@@ -262,4 +293,5 @@ test('the published spec declares the route and the manifests\' installedProgram
   const item = doc.components.schemas.TrashDryRunManifest.properties.wouldTrash.items;
   assert.ok(item.properties.installedProgram, 'DELETE /api/files\'s dry run declares installedProgram on each entry');
   assert.match(JSON.stringify(doc.paths['/api/cart/commit'].post.responses), /installedProgram/, 'and so does the cart\'s');
+  assert.ok(doc.components.schemas.OffloadDryRunManifest.properties.installedProgramParts, 'and the offload dry run\'s installedProgramParts (review F1.4)');
 });

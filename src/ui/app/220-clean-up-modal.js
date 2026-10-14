@@ -168,12 +168,24 @@ async function loadVideoCandidates() {
     host.querySelectorAll('.vid-ck').forEach(ck => { ck.checked = true; });
     update();
   });
-  $('vidEncodeBtn').addEventListener('click', () => confirmEncode(
-    [...host.querySelectorAll('.vid-ck:checked')].map(ck => videoCandidates[+ck.dataset.i])));
+  // Which of the videos are parts of an installed program, asked before the
+  // sheet opens so its warning is there when it is read (review F1.4).
+  $('vidEncodeBtn').addEventListener('click', async () => {
+    const chosen = [...host.querySelectorAll('.vid-ck:checked')].map(ck => videoCandidates[+ck.dataset.i]);
+    if (!chosen.length) return;
+    const parts = await installedProgramParts(chosen.map(c => c.path));
+    confirmEncode(chosen, parts);
+  });
   update();
 }
 
-function confirmEncode(chosen) {
+/**
+ * The sheet before a re-encode of `chosen`. `parts`: which of them are parts
+ * of an installed program (installedProgramParts, null when the server could
+ * not be asked): replacing one breaks its app — on a Mac its signature too —
+ * so the sheet says so before OK (review F1.4).
+ */
+function confirmEncode(chosen, parts) {
   if (!chosen.length) return;
   const saving = chosen.reduce((s, c) => s + c.estimatedSaving, 0);
   $('confirmTitle').innerHTML = icon('video', 18) + 'Re-encode and replace?';
@@ -184,7 +196,8 @@ function confirmEncode(chosen) {
     `Re-encode <b>${chosen.length}</b> video ${one ? 'file' : 'files'} to HEVC: roughly <b>${formatBytes(saving)}</b> smaller once you empty the Trash, where ${one ? 'the original goes' : 'the originals go'}.<br>` +
     `<span style="color:var(--text-3)"><b>This is lossy</b> — the picture is compressed again and a little quality is lost permanently. ` +
     `Each new file is checked (it opens, and it runs the full length) <b>before</b> the original is moved to the Trash. ` +
-    `If a check fails, that file is left exactly as it is. This can take a long time.</span>`;
+    `If a check fails, that file is left exactly as it is. This can take a long time.</span>` +
+    installedProgramWarningHtml(parts, chosen.length, (n) => `Re-encoding ${n === 1 ? 'it' : 'them'}`);
   setConfirmButton('Re-encode', 'video');
   onConfirmTrash = () => startEncode(chosen.map(c => c.path));
   $('confirmModal').classList.add('open');

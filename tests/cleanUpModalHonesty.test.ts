@@ -823,10 +823,10 @@ test('the sheets that ask before a re-encode or a shader-cache clear say the spa
   // the selection summary already said so. The Games view's "Move 2 shader
   // caches to the Trash, freeing 1.2 GB" made the same claim.
   const encode = makeDom();
-  await runnable(bodyOf('function confirmEncode(chosen) {'), {
+  await runnable(bodyOf('function confirmEncode(chosen, parts) {'), {
     $: encode.$, icon: () => '', formatBytes: (n: number) => `${n / 1e9} GB`,
-    startEncode: () => {}, setConfirmButton: () => {}, onConfirmTrash: null,
-  }, 'chosen')([{ path: '/v/a.mov', estimatedSaving: 4_200_000_000 }]);
+    startEncode: () => {}, setConfirmButton: () => {}, onConfirmTrash: null, installedProgramWarningHtml: () => '',
+  }, 'chosen, parts')([{ path: '/v/a.mov', estimatedSaving: 4_200_000_000 }], []);
   const asked = sheetText(encode.els);
   assert.doesNotMatch(asked, /\bfree(ing|s|d)?\b/i, `nothing is freed by a move to the Trash: "${asked}"`);
   assert.match(asked, /roughly 4\.2 GB smaller once you empty the Trash/, `the saving, and when it arrives: "${asked}"`);
@@ -834,10 +834,10 @@ test('the sheets that ask before a re-encode or a shader-cache clear say the spa
   assert.match(asked, /^Re-encode 1 video file to HEVC: .* where the original goes\./, `one video is spoken of as one: "${asked}"`);
   // Two videos: the plural half of the same sentence (review F3.3 of QA third pass D08).
   const pair = makeDom();
-  await runnable(bodyOf('function confirmEncode(chosen) {'), {
+  await runnable(bodyOf('function confirmEncode(chosen, parts) {'), {
     $: pair.$, icon: () => '', formatBytes: (n: number) => `${n / 1e9} GB`,
-    startEncode: () => {}, setConfirmButton: () => {}, onConfirmTrash: null,
-  }, 'chosen')([{ path: '/v/a.mov', estimatedSaving: 4_200_000_000 }, { path: '/v/b.mov', estimatedSaving: 1_000_000_000 }]);
+    startEncode: () => {}, setConfirmButton: () => {}, onConfirmTrash: null, installedProgramWarningHtml: () => '',
+  }, 'chosen, parts')([{ path: '/v/a.mov', estimatedSaving: 4_200_000_000 }, { path: '/v/b.mov', estimatedSaving: 1_000_000_000 }], []);
   const askedTwo = sheetText(pair.els);
   assert.doesNotMatch(askedTwo, /\bfree(ing|s|d)?\b/i, `nothing is freed by a move to the Trash: "${askedTwo}"`);
   assert.match(askedTwo, /^Re-encode 2 video files to HEVC: roughly 5\.2 GB smaller once you empty the Trash, where the originals go\./,
@@ -907,9 +907,10 @@ test('the Shrink Video pane\'s selection line says the space comes once the Tras
 
   // And the sheet the button opens says the same thing of the same saving.
   const sheet = makeDom();
-  await runnable(bodyOf('function confirmEncode(chosen) {'), {
+  await runnable(bodyOf('function confirmEncode(chosen, parts) {'), {
     $: sheet.$, icon: () => '', formatBytes: (n: number) => `${n / 1e9} GB`, startEncode: () => {}, setConfirmButton: () => {}, onConfirmTrash: null,
-  }, 'chosen')([video('a.mov', 4_200_000_000), video('b.mov', 1_000_000_000)]);
+    installedProgramWarningHtml: () => '',
+  }, 'chosen, parts')([video('a.mov', 4_200_000_000), video('b.mov', 1_000_000_000)], []);
   const asked = sheetText(sheet.els);
   const when = /5\.2 GB smaller once you empty the Trash/;
   assert.ok(when.test(both) && when.test(asked), `the pane and the sheet agree: "${both}" / "${asked}"`);

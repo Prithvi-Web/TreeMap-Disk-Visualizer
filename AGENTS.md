@@ -490,10 +490,13 @@ OpenAPI 3 spec).
      `/usr/src`) is part of that program — judged where the path really is too,
      a link in its folders followed — and moving it to the Trash stops the
      program working. A Steam library's shader caches regenerate, so they are
-     not. The
-     dry-run manifests of `DELETE /api/files`, `trash_paths` and
+     not. The dry-run manifests of `DELETE /api/files`, `trash_paths` and
      `POST /api/cart/commit` mark each such entry with
-     `installedProgram: { kind, name, root }`, and
+     `installedProgram: { kind, name, root }`; the offload dry runs
+     (`POST /api/offload`, the `offload` tool) list each original they would
+     trash that is one in `installedProgramParts: [{ path, installedProgram }]`
+     (present only then); a re-encode (`POST /api/compression/encode`)
+     replaces its files, so ask the route below about them first; and
      `POST /api/files/installed-programs { paths }` (read-only, at most 2000
      paths, reading nothing on the disk) answers the same for any paths. Say
      so before acting; a program is removed whole (`root`), never a part at a

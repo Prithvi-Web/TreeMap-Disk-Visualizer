@@ -100,6 +100,8 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     activeJob: null,
   };
   const names = ['startOffloadFlow', 'offloadPicked', 'dockDrop', 'confirmOffloadPlan', 'tmIsInside', 'lastPathSegment', 'outermostPaths', 'tmParentPath',
+    // What the sheet says of an original that is a part of an installed program (review F1.4).
+    'installedProgramWarningHtml', 'installedProgramWords', 'installedProgramRemoval',
     ...['offloadDrives', 'dockDrives'].filter((name) => INDEX.includes(`function ${name}(`))];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval

@@ -161,6 +161,7 @@ test('dropping the cart on a drive sends only its outermost items, to the dry ru
      ${pageFunction('tmIsInside')}
      ${pageFunction('confirmOffloadPlan')}
      ${pageFunction('lastPathSegment')}
+     ${pageFunction('installedProgramWarningHtml')}
      ${pageFunction('outermostPaths')}
      ${pageFunction('tmParentPath')}
      return { dockDrop, confirm: () => onConfirmTrash };`,

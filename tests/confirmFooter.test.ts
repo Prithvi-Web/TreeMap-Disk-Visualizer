@@ -292,7 +292,7 @@ function okLabelAfter(block: string, arg: unknown): { label: string; icon: strin
     $, icon: (name: string) => `[${name}]`, escapeHtml: (s: string) => s, formatBytes: (n: number) => `${n}B`, formatCount: String,
     toast: () => {}, api: async () => ({}), closeModal: () => {}, rescan: () => {}, baseName: (p: string) => p,
     describeMatch: () => 'files', loadAutopilot: () => {}, loadCapsule: () => {},
-    startEncode: () => {}, emptyTrashAction: () => {}, purgeSnapshotsAction: () => {}, runGitGcAction: () => {},
+    startEncode: () => {}, emptyTrashAction: () => {}, purgeSnapshotsAction: () => {}, runGitGcAction: () => {}, installedProgramWarningHtml: () => '',
     onConfirmTrash: null,
     state: {
       trash: { itemCount: 3, totalBytes: 300, complete: true },
@@ -302,7 +302,7 @@ function okLabelAfter(block: string, arg: unknown): { label: string; icon: strin
     },
   };
   const keys = Object.keys(deps);
-  const params = /^(?:async\s+)?function \w+\((\w*)\)/.exec(block)?.[1] ?? /\((\w*)\) => \{$/.exec(block.slice(0, block.indexOf('{') + 1))?.[1] ?? '';
+  const params = /^(?:async\s+)?function \w+\(([\w, ]*)\)/.exec(block)?.[1] ?? /\((\w*)\) => \{$/.exec(block.slice(0, block.indexOf('{') + 1))?.[1] ?? '';
   const body = block.slice(block.indexOf('{') + 1, -1);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const run = new Function(...keys, `${declOf('setConfirmButton')}\nreturn function (${params}) {${body}\n};`)(...keys.map((k) => deps[k]));
@@ -315,7 +315,7 @@ test('a sheet whose action is not a move to the Trash says on its OK button what
   const gcClick = { target: { closest: (sel: string) => (sel === '[data-gc]' ? { getAttribute: () => '/repos/site' } : null) } };
   const cases: Array<[string, string, unknown, string, string]> = [
     // [what it is, its block, its argument, the OK label, the OK icon]
-    ['the re-encode sheet', blockAt('function confirmEncode(chosen) {'), [{ path: '/v/a.mov', estimatedSaving: 9 }], 'Re-encode', 'video'],
+    ['the re-encode sheet', blockAt('function confirmEncode(chosen, parts) {'), [{ path: '/v/a.mov', estimatedSaving: 9 }], 'Re-encode', 'video'],
     ['Empty the Trash', blockAt("$('emptyTrashBtn').addEventListener('click', () => {"), undefined, 'Empty the Trash', 'trash'],
     ['Purge local snapshots', blockAt("$('snapPurgeBtn').addEventListener('click', () => {"), undefined, 'Purge snapshots', 'clock'],
     ['Forget this copy', blockAt('function forgetCapsuleEntry(id) {'), 'c1', 'Forget this copy', 'trash'],
@@ -345,7 +345,7 @@ test('every place that opens the shared sheet is accounted for, with the OK labe
     [blockAt('function cartCommitSummary(result) {'), 1, 'Close'],
     [blockAt('async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, withSheet = null) {'), 1, 'Copy, verify, then trash'],
     [blockAt('function confirmZombieRestart(p) {'), 1, 'Restart it'],
-    [blockAt('function confirmEncode(chosen) {'), 1, 'Re-encode'],
+    [blockAt('function confirmEncode(chosen, parts) {'), 1, 'Re-encode'],
     [blockAt("$('emptyTrashBtn').addEventListener('click', () => {"), 1, 'Empty the Trash'],
     [blockAt("$('snapPurgeBtn').addEventListener('click', () => {"), 1, 'Purge snapshots'],
     [blockAt('function forgetCapsuleEntry(id) {'), 1, 'Forget this copy'],

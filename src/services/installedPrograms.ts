@@ -66,6 +66,18 @@ export function withInstalledProgram<T extends { path: string }>(entry: T): T & 
 }
 
 /**
+ * Which of `paths` are parts of an installed program, each with the program
+ * (`installedProgramAt`): what the Trash sheets' route answers, and what the
+ * offload dry runs carry for the originals they would trash.
+ */
+export function installedProgramParts(paths: readonly string[]): { path: string; installedProgram: InstalledProgram }[] {
+  return paths.flatMap((p) => {
+    const installedProgram = installedProgramAt(p);
+    return installedProgram ? [{ path: p, installedProgram }] : [];
+  });
+}
+
+/**
  * The program as the server's sentences name it: the app “Google Chrome”, a
  * program installed in “C:\Program Files\Google” (by its folder: Settings ›
  * Apps lists Google Chrome, not Google), or /usr's packages.

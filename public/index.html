@@ -24709,7 +24709,11 @@ async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, withS
     `Offload ${what}: <b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
     `<b>${escapeHtml(dest)}</b>, verified by reading every byte back from the destination, and only then moved to the Trash here.` +
     notes +
-    `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;
+    `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>` +
+    // An original that is a part of an installed program, from the dry run's
+    // own manifest (review F1.4): once its copy verifies it goes to the Trash,
+    // and the program stops working here.
+    installedProgramWarningHtml(plan.installedProgramParts || [], (plan.wouldTrashAfterVerify || paths).length);
   $('confirmOk').innerHTML = icon('archive', 15) + 'Copy, verify, then trash';
   $('confirmModal').classList.add('open');
   // The picker closes after the sheet opened, in the same task: the focus net
@@ -28857,8 +28861,10 @@ function installedProgramRemoval(programs) {
  * What a Trash sheet says when some of the `count` items it moves are parts of
  * an installed program: '' when none is, and a plain admission when the
  * server could not be asked (`parts` null) — silence would read as "none is".
+ * `doing(n)` says what the sheet does to them: a move to the Trash, unless
+ * the sheet is a re-encode's, which replaces them (review F1.4).
  */
-function installedProgramWarningHtml(parts, count) {
+function installedProgramWarningHtml(parts, count, doing) {
   if (parts === null) {
     return `<div class="app-part-warn">${icon('alert', 14)}<span>TreeMap couldn’t check whether ${count === 1 ? 'this is' : 'any of these is'} part of an installed app.</span></div>`;
   }
@@ -28875,7 +28881,7 @@ function installedProgramWarningHtml(parts, count) {
     : only && only.kind === 'program' ? 'will stop that program from working'
       : `can stop ${only ? 'programs that use it' : 'those programs'} from working`;
   return `<div class="app-part-warn">${icon('alert', 14)}<span><b>${who} of ${where}.</b> ` +
-    `Moving ${n === 1 ? 'it' : 'them'} to the Trash ${breaks}. ${installedProgramRemoval(programs)}</span></div>`;
+    `${doing ? doing(n) : `Moving ${n === 1 ? 'it' : 'them'} to the Trash`} ${breaks}. ${installedProgramRemoval(programs)}</span></div>`;
 }
 
 async function confirmTrash(paths) {
@@ -35233,12 +35239,24 @@ async function loadVideoCandidates() {
     host.querySelectorAll('.vid-ck').forEach(ck => { ck.checked = true; });
     update();
   });
-  $('vidEncodeBtn').addEventListener('click', () => confirmEncode(
-    [...host.querySelectorAll('.vid-ck:checked')].map(ck => videoCandidates[+ck.dataset.i])));
+  // Which of the videos are parts of an installed program, asked before the
+  // sheet opens so its warning is there when it is read (review F1.4).
+  $('vidEncodeBtn').addEventListener('click', async () => {
+    const chosen = [...host.querySelectorAll('.vid-ck:checked')].map(ck => videoCandidates[+ck.dataset.i]);
+    if (!chosen.length) return;
+    const parts = await installedProgramParts(chosen.map(c => c.path));
+    confirmEncode(chosen, parts);
+  });
   update();
 }
 
-function confirmEncode(chosen) {
+/**
+ * The sheet before a re-encode of `chosen`. `parts`: which of them are parts
+ * of an installed program (installedProgramParts, null when the server could
+ * not be asked): replacing one breaks its app — on a Mac its signature too —
+ * so the sheet says so before OK (review F1.4).
+ */
+function confirmEncode(chosen, parts) {
   if (!chosen.length) return;
   const saving = chosen.reduce((s, c) => s + c.estimatedSaving, 0);
   $('confirmTitle').innerHTML = icon('video', 18) + 'Re-encode and replace?';
@@ -35249,7 +35267,8 @@ function confirmEncode(chosen) {
     `Re-encode <b>${chosen.length}</b> video ${one ? 'file' : 'files'} to HEVC: roughly <b>${formatBytes(saving)}</b> smaller once you empty the Trash, where ${one ? 'the original goes' : 'the originals go'}.<br>` +
     `<span style="color:var(--text-3)"><b>This is lossy</b> — the picture is compressed again and a little quality is lost permanently. ` +
     `Each new file is checked (it opens, and it runs the full length) <b>before</b> the original is moved to the Trash. ` +
-    `If a check fails, that file is left exactly as it is. This can take a long time.</span>`;
+    `If a check fails, that file is left exactly as it is. This can take a long time.</span>` +
+    installedProgramWarningHtml(parts, chosen.length, (n) => `Re-encoding ${n === 1 ? 'it' : 'them'}`);
   setConfirmButton('Re-encode', 'video');
   onConfirmTrash = () => startEncode(chosen.map(c => c.path));
   $('confirmModal').classList.add('open');

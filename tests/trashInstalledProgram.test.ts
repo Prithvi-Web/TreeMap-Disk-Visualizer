@@ -187,14 +187,78 @@ test('the cart\'s sheet says it too, from the dry-run manifest the server made �
   assert.doesNotMatch(plain, /installed|part of/, `control: an ordinary cart reads as it did: ${plain}`);
 });
 
-test('every Trash sheet a person can reach says it: the shared sheet and the cart\'s, and no other sheet moves files to the Trash (F01)', () => {
+/** The warning's own functions, out of the built page, over the stubs every sheet here shares. */
+const WARNING = ['installedProgramWarningHtml', 'installedProgramWords', 'installedProgramRemoval'];
+const sheetDeps = (els: Record<string, { innerHTML: string; classList?: unknown }>): Record<string, unknown> => ({
+  $: (id: string) => (els[id] ||= { innerHTML: '', classList: { add: () => {} } }),
+  icon: () => '', escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n} B`, formatCount: String,
+});
+const textOf = (html: string) => html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ');
+
+/** The page's confirmOffloadPlan over stubs: the sheet an offload opens for the dry run's `plan`. */
+async function offloadSheet(plan: Record<string, unknown>, paths: string[]): Promise<string> {
+  const els: Record<string, { innerHTML: string }> = {};
+  const deps: Record<string, unknown> = {
+    ...sheetDeps(els), state: { scanId: 'scan-1' }, runOffloadJob: async () => assert.fail('nothing runs before OK'),
+    api: async (url: string, opts: { body: string }) => {
+      assert.equal(url, '/api/offload');
+      assert.equal(JSON.parse(opts.body).dryRun, true, 'the sheet is drawn from the dry run');
+      return plan;
+    },
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const confirm = new Function(...keys, `'use strict'; let onConfirmTrash = null; ${[...WARNING, 'confirmOffloadPlan'].map(declOf).join('\n')}\nreturn confirmOffloadPlan;`)(
+    ...keys.map((k) => deps[k])) as (paths: string[], dest: string, destName: string, notes: string, isCurrent: () => boolean) => Promise<void>;
+  await confirm(paths, '/Volumes/Backup/apps', 'apps', '', () => true);
+  return textOf(els.confirmText.innerHTML);
+}
+
+test('Offload — copy, verify, then move the originals to the Trash — says it too, from its dry run: the app, and that it will stop working (review F1.4)', async () => {
+  const plan = { dryRun: true, fileCount: 2, bytesTotal: 200, dest: '/Volumes/Backup/apps', wouldTrashAfterVerify: [WHATSAPP_EXE, MOVIE], copies: [], copiesTruncated: false };
+  const said = await offloadSheet({ ...plan, installedProgramParts: [{ path: WHATSAPP_EXE, installedProgram: WHATSAPP }] }, [WHATSAPP_EXE, MOVIE]);
+  assert.match(said, /only then moved to the Trash here/, `control: the offload's own sheet: ${said}`);
+  assert.match(said, /1 of these is part of the app WhatsApp\. Moving it to the Trash will stop WhatsApp from working\. To remove WhatsApp, move the whole app to the Trash instead\./, said);
+  const plain = await offloadSheet(plan, [WHATSAPP_EXE, MOVIE]);
+  assert.doesNotMatch(plain, /installed|part of/, `control: a plan with no part of a program reads as it did: ${plain}`);
+});
+
+/** The page's confirmEncode over stubs, for `chosen` videos and the server's answer about them (`parts`). */
+function encodeSheet(chosen: Array<{ path: string; estimatedSaving: number }>, parts: unknown[] | null): string {
+  const els: Record<string, { innerHTML: string }> = {};
+  const deps: Record<string, unknown> = { ...sheetDeps(els), setConfirmButton: () => {}, startEncode: () => assert.fail('nothing runs before OK') };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const confirm = new Function(...keys, `'use strict'; let onConfirmTrash = null; ${[...WARNING, 'confirmEncode'].map(declOf).join('\n')}\nreturn confirmEncode;`)(
+    ...keys.map((k) => deps[k])) as (chosen: unknown[], parts: unknown[] | null) => void;
+  confirm(chosen, parts);
+  return textOf(els.confirmText.innerHTML);
+}
+
+test('Shrink Video\'s "Re-encode and replace?" says it too: a video inside an app is part of it, and replacing it will stop the app working (review F1.4)', () => {
+  const intro = '/Applications/Google Chrome.app/Contents/Resources/intro.mov';
+  const said = encodeSheet([{ path: intro, estimatedSaving: 100 }], [{ path: intro, installedProgram: CHROME }]);
+  assert.match(said, /This is lossy/, `control: the re-encode's own sheet: ${said}`);
+  assert.match(said, /It is part of the app Google Chrome\. Re-encoding it will stop Google Chrome from working\./, said);
+  assert.match(encodeSheet([{ path: intro, estimatedSaving: 100 }], null), /TreeMap couldn’t check whether this is part of an installed app\./, 'and admits it when it could not ask');
+  assert.doesNotMatch(encodeSheet([{ path: MOVIE, estimatedSaving: 100 }], []), /installed|part of/, 'control: an ordinary video reads as it did');
+  // The button asks the server's one detector before the sheet opens, never after.
+  const handler = INDEX.slice(INDEX.indexOf("$('vidEncodeBtn').addEventListener('click'"), INDEX.indexOf('function confirmEncode('));
+  assert.match(handler, /installedProgramParts\([\s\S]*confirmEncode\(/, 'the Re-encode button asks which videos are parts of an installed program, then opens the sheet with the answer');
+});
+
+test('every sheet a person can reach that moves files to the Trash says it: the shared sheet, the cart\'s, Offload\'s and Re-encode\'s (F01; review F1.4)', () => {
   // The openers of the shared sheet whose OK is "Move to Trash" (confirmFooter
   // pins every opener): confirmTrash serves Largest Files, right-click, Grid
   // and ⌘⌫, the Treemap's keyboard, Duplicates, Similar images, Clean Up and
-  // the Libraries view; the cart has its own; reofferBlockedTrash re-offers
-  // what a sheet already warned about; shader caches are a game's, never an app's.
+  // the Libraries view; the cart has its own; Offload trashes the originals
+  // once their copies verify, and a re-encode trashes the original it
+  // replaces; reofferBlockedTrash re-offers what a sheet already warned
+  // about; shader caches are a game's, never an app's.
   assert.match(declOf('confirmTrash'), /installedProgramWarningHtml\(/, 'the shared sheet says it');
   assert.match(declOf('cartManifestHtml'), /installedProgramWarningHtml\(/, 'the cart\'s sheet says it');
+  assert.match(declOf('confirmOffloadPlan'), /installedProgramWarningHtml\(/, 'Offload\'s sheet says it');
+  assert.match(declOf('confirmEncode'), /installedProgramWarningHtml\(/, 'Re-encode\'s sheet says it');
   const callers = [...INDEX.matchAll(/\bconfirmTrash\(/g)].length;
   assert.ok(callers >= 10, `every view's Move to Trash goes through the shared sheet (${callers} calls)`);
 });

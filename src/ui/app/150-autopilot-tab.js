@@ -699,8 +699,10 @@ function installedProgramRemoval(programs) {
  * What a Trash sheet says when some of the `count` items it moves are parts of
  * an installed program: '' when none is, and a plain admission when the
  * server could not be asked (`parts` null) — silence would read as "none is".
+ * `doing(n)` says what the sheet does to them: a move to the Trash, unless
+ * the sheet is a re-encode's, which replaces them (review F1.4).
  */
-function installedProgramWarningHtml(parts, count) {
+function installedProgramWarningHtml(parts, count, doing) {
   if (parts === null) {
     return `<div class="app-part-warn">${icon('alert', 14)}<span>TreeMap couldn’t check whether ${count === 1 ? 'this is' : 'any of these is'} part of an installed app.</span></div>`;
   }
@@ -717,7 +719,7 @@ function installedProgramWarningHtml(parts, count) {
     : only && only.kind === 'program' ? 'will stop that program from working'
       : `can stop ${only ? 'programs that use it' : 'those programs'} from working`;
   return `<div class="app-part-warn">${icon('alert', 14)}<span><b>${who} of ${where}.</b> ` +
-    `Moving ${n === 1 ? 'it' : 'them'} to the Trash ${breaks}. ${installedProgramRemoval(programs)}</span></div>`;
+    `${doing ? doing(n) : `Moving ${n === 1 ? 'it' : 'them'} to the Trash`} ${breaks}. ${installedProgramRemoval(programs)}</span></div>`;
 }
 
 async function confirmTrash(paths) {

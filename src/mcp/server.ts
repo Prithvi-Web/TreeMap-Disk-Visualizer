@@ -32,7 +32,7 @@ import { assertToolAvailable } from '../services/storageMode';
 import { assertSameBoundary, drivesSentence } from '../services/boundaryReport';
 import { MCP_TOOL_NAMES } from './toolNames';
 import { APP_VERSION } from '../utils/appVersion';
-import { withInstalledProgram } from '../services/installedPrograms';
+import { installedProgramParts, withInstalledProgram } from '../services/installedPrograms';
 
 /**
  * TreeMap MCP server — the agent-facing face of the disk visualizer.
@@ -809,6 +809,8 @@ export function buildMcpServer(): McpServer {
         })();
         await appendAudit({ action: 'offload.start', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: prepared.bytesTotal, dryRun, outcome: 'ok' });
         if (dryRun) {
+          // An original that is a part of an installed program is named, as over HTTP (review F1.4).
+          const parts = installedProgramParts(prepared.topPaths);
           return ok({
             dryRun: true,
             fileCount: prepared.plan.length,
@@ -817,6 +819,7 @@ export function buildMcpServer(): McpServer {
             wouldTrashAfterVerify: prepared.topPaths,
             copies: prepared.plan.slice(0, 100).map((c) => ({ src: c.src, dest: c.dest, size: c.size })),
             copiesTruncated: prepared.plan.length > 100,
+            ...(parts.length > 0 ? { installedProgramParts: parts } : {}),
             note: 'Dry run — nothing was copied, verified or trashed.',
           });
         }

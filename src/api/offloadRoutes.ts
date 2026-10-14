@@ -21,6 +21,7 @@ import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
 import { FileNode, OffloadEntry, OffloadJob, OffloadStreamEvent, ScanResult } from '../models/types';
 import { storageModeGate } from '../middleware/storageModeGate';
+import { installedProgramParts } from '../services/installedPrograms';
 
 /**
  * offloadRoutes — copy → verify → trash jobs and the Offloaded index.
@@ -90,6 +91,10 @@ offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoo
 
     if (dryRun) {
       await appendAudit({ action: 'offload.start', source: 'http', tokenId: tokenIdFor('http'), paths: body.paths, bytes: prepared.bytesTotal, dryRun: true, outcome: 'ok' });
+      // An original that is a part of an installed program, which trashing it
+      // once its copy verifies would stop working, is named (review F1.4); an
+      // ordinary plan reads as it always did.
+      const parts = installedProgramParts(prepared.topPaths);
       res.json({
         dryRun: true,
         fileCount: prepared.plan.length,
@@ -98,6 +103,7 @@ offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoo
         wouldTrashAfterVerify: prepared.topPaths,
         copies: prepared.plan.slice(0, 100).map((c) => ({ src: c.src, dest: c.dest, size: c.size })),
         copiesTruncated: prepared.plan.length > 100,
+        ...(parts.length > 0 ? { installedProgramParts: parts } : {}),
       });
       return;
     }

@@ -812,6 +812,10 @@ const schemas: Json = {
       wouldTrashAfterVerify: arr(str(), 'The originals that would go to the Trash after every copy verifies'),
       copies: arr(obj({ src: str(), dest: str(), size: int() }, ['src', 'dest', 'size']), 'First 100 planned copies'),
       copiesTruncated: bool(),
+      installedProgramParts: arr(
+        obj({ path: str(), installedProgram: ref('InstalledProgram') }, ['path', 'installedProgram']),
+        'Present only when one of wouldTrashAfterVerify is a part of an installed program: it goes to the Trash once its copy verifies, which stops that program working here — say so to the person before acting',
+      ),
     },
     ['dryRun', 'fileCount', 'bytesTotal', 'dest', 'wouldTrashAfterVerify', 'copies', 'copiesTruncated'],
     'The exact plan a real offload would execute — nothing has been touched',
