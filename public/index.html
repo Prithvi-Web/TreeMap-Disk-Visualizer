@@ -36066,6 +36066,10 @@ function updateCleanSummary() {
   $('cleanConfirmBtn').disabled = !paths.length;
   $('cleanConfirmBtn').innerHTML = icon('trash', 14) +
     (paths.length ? `Move ${paths.length} to ${escapeHtml(where)}` : `Move to ${escapeHtml(where)}`);
+  // Shrink Video's action is its own Re-encode, and Cloud-safe stages into
+  // the cart: under either the shared footer offers no Move to Trash, not
+  // even a disabled one (fifth browser pass F10).
+  $('cleanConfirmBtn').hidden = cleanPane === 'video' || cleanPane === 'cloud';
   if (cleanPane === 'smart') renderCleanFunnel(bytes);
 }
 

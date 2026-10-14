@@ -518,7 +518,8 @@ function cleanPanes() {
     ${['setCleanPane', 'activeCleanSelection', 'updateCleanSummary', 'confirmCleanTrash'].map(declOf).join('\n')}
     return { show: setCleanPane, click: confirmCleanTrash };`)(...keys.map((k) => deps[k]));
   const footer = () => ({ summary: els.cleanSummary.textContent, disabled: els.cleanConfirmBtn.disabled, label: els.cleanConfirmBtn.innerHTML });
-  return { page, footer, confirmed };
+  const hidden = () => els.cleanConfirmBtn.hidden;
+  return { page, footer, hidden, confirmed };
 }
 
 test('the Clean Up footer\'s Move to Trash belongs to the pane on screen: Shrink Video and Cloud-safe offer nothing ticked on Smart Suggestions (review F2.6 of QA third pass D03)', async () => {
@@ -543,6 +544,22 @@ test('the Clean Up footer\'s Move to Trash belongs to the pane on screen: Shrink
   assert.match(h.footer().summary, /^1 item/, 'the tick was kept, only not offered elsewhere');
   await h.page.click();
   assert.deepEqual(h.confirmed, [['/r/node_modules']], 'and on its own pane the click asks about it');
+});
+
+test('the footer\'s Move to Trash is not shown under a tab whose action is not a move to the Trash - Shrink Video re-encodes, Cloud-safe stages into the cart (fifth browser pass F10)', () => {
+  // QA: the Shrink Video tab showed a disabled "Move to Trash" in the shared
+  // footer, under a pane whose own action is "Re-encode".
+  const h = cleanPanes();
+  for (const pane of ['rules', 'smart', 'empty']) {
+    h.page.show(pane);
+    assert.equal(h.hidden(), false, `control: the ${pane} pane's action is a move to the Trash, so its footer offers it`);
+  }
+  for (const pane of ['video', 'cloud']) {
+    h.page.show(pane);
+    assert.equal(h.hidden(), true, `the ${pane} pane's footer offers no Move to Trash, enabled or not`);
+  }
+  h.page.show('smart');
+  assert.equal(h.hidden(), false, 'and back on a Trash pane it is offered again');
 });
 
 /* ═══════ 5. A move to the Trash frees nothing yet, and says so (D54) ═══════ */
