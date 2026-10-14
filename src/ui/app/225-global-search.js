@@ -234,6 +234,21 @@ $('gsearch').addEventListener('focus', (e) => {
   if (!(e.relatedTarget && $('gsearchWrap').contains(e.relatedTarget))) gsearch.cameFrom = e.relatedTarget || null;
   if (gsearch.hits.length) gsearchOpen();
 });
+// A result is a button Tab reaches from the box: Escape there leaves the search
+// the way Escape in the box does. Only the box listened, so the key fell
+// through to the page's own Escape — the map climbed a folder, the cart folded
+// — with the results still open (review F2.7 of QA third pass D10).
+$('gsearchResults').addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  e.preventDefault(); e.stopPropagation(); gsearchLeave();
+});
+// Tab out of the search — from the box or a result to anything outside it —
+// closes the results, as a click elsewhere does. A move between the box and
+// its results keeps them; focus going to no element on the page (another
+// window) leaves them as they were.
+$('gsearchWrap').addEventListener('focusout', (e) => {
+  if (e.relatedTarget && !$('gsearchWrap').contains(e.relatedTarget)) gsearchClose();
+});
 document.addEventListener('click', (e) => {
   if (gsearch.open && !$('gsearchWrap').contains(e.target)) gsearchClose();
 });

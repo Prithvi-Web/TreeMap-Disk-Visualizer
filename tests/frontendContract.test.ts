@@ -1230,10 +1230,18 @@ function gsearchHarness(opts: { viewControl: boolean }) {
   };
   const els: Record<string, El> = {};
   for (const id of ['gsearch', 'gsearchResults', 'gsearchWrap', 'sideNav', 'pathInput', 'tmSearch']) els[id] = mk(id);
-  els.gsearchWrap.kids.push(els.gsearch, els.gsearchResults);
+  /** Who holds whom, for an event to bubble through as a browser's does. */
+  const parents = new Map<El, El>();
+  const adopt = (parent: El, child: El) => { parent.kids.push(child); parents.set(child, parent); };
+  adopt(els.gsearchWrap, els.gsearch);
+  adopt(els.gsearchWrap, els.gsearchResults);
   // One result, a <button class="gsearch-hit"> in the panel: Tab from the box reaches it.
   const hit = mk('gsearchHit0');
-  els.gsearchResults.kids.push(hit);
+  adopt(els.gsearchResults, hit);
+  // The document's own listeners, and in them the page-wide keydown handler's (240-keyboard-shortcuts):
+  // what it saw is what the map, the Grid and the cart would have acted on.
+  const pageKeys: string[] = [];
+  const docListeners: Record<string, Array<(e: unknown) => void>> = { keydown: [(e) => { pageKeys.push((e as { key: string }).key); }] };
   doc.body = mk('body');
   const elsewhere = mk('dashRescan'); // a control on the page, outside the search
   const viewControl = mk('viewFirstControl');
@@ -1244,7 +1252,7 @@ function gsearchHarness(opts: { viewControl: boolean }) {
     $: (id: string) => els[id] ?? assert.fail(`the search touched #${id}`),
     document: {
       get activeElement() { return doc.active; },
-      addEventListener: () => {},
+      addEventListener: (t: string, f: (e: unknown) => void) => { (docListeners[t] ||= []).push(f); },
       querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : assert.fail(`unexpected query ${sel}`)),
     },
     activeViewControl: () => (opts.viewControl ? viewControl : null),
@@ -1266,7 +1274,16 @@ function gsearchHarness(opts: { viewControl: boolean }) {
     for (const f of els.gsearch.listeners.keydown || []) f(ev);
     return ev;
   };
-  return { els, doc, elsewhere, viewControl, tab, hit, focusBox, escape };
+  type Fired = { type: string; target: El; prevented: boolean; stopped: boolean; preventDefault(): void; stopPropagation(): void } & Record<string, unknown>;
+  /** An event fired at `target`, bubbling through its parents and then the document unless one stops it. */
+  const fire = (target: El, type: string, init: Record<string, unknown>): Fired => {
+    const ev: Fired = { ...init, type, target, prevented: false, stopped: false,
+      preventDefault() { ev.prevented = true; }, stopPropagation() { ev.stopped = true; } };
+    for (let at: El | undefined = target; at && !ev.stopped; at = parents.get(at)) for (const f of at.listeners[type] || []) f(ev);
+    if (!ev.stopped) for (const f of docListeners[type] || []) f(ev);
+    return ev;
+  };
+  return { els, doc, elsewhere, viewControl, tab, hit, focusBox, escape, fire, pageKeys };
 }
 
 test('Escape in the sidebar search gives focus back to where it came from — never to <body> (QA third pass D10)', () => {
@@ -1330,6 +1347,37 @@ test('Escape in the sidebar search: a control disabled since is not where focus 
   r.focusBox(r.hit);
   r.escape();
   assert.equal(r.doc.active, r.elsewhere, 'focus is back on the control the box was entered from');
+});
+
+test('Escape on a sidebar search result leaves the search as Escape in the box does, and Tab out of the search closes its results (review F2.7 of QA third pass D10)', () => {
+  // Type a query, Tab to the first result, Escape: only the box listened for
+  // Escape, so the key fell through to the page's own Escape — the treemap
+  // climbed a folder, the Grid dropped its selection, the cart folded — while
+  // the results stayed open with focus on the result.
+  const h = gsearchHarness({ viewControl: true });
+  h.focusBox(h.elsewhere);
+  h.els.gsearchResults.hidden = false; // results showing
+  h.hit.focus(); // Tab: the first result
+  const ev = h.fire(h.hit, 'keydown', { key: 'Escape' });
+  assert.equal(h.els.gsearchResults.hidden, true, 'the results close');
+  assert.equal(h.doc.active, h.elsewhere, 'focus goes back to where the box was entered from');
+  assert.deepEqual({ stopped: ev.stopped, pageSaw: h.pageKeys }, { stopped: true, pageSaw: [] },
+    'and the key is the search\'s alone: the page-wide Escape never sees it — the map does not climb, the cart does not fold');
+
+  // Tab on, past the last result, out of the search: the panel closes, as a click elsewhere closes it.
+  const t = gsearchHarness({ viewControl: true });
+  t.focusBox(t.elsewhere);
+  t.els.gsearchResults.hidden = false;
+  t.fire(t.els.gsearch, 'focusout', { relatedTarget: t.hit }); // Tab: box → result
+  assert.equal(t.els.gsearchResults.hidden, false, 'a move inside the search keeps the results open');
+  t.hit.focus();
+  t.fire(t.hit, 'focusout', { relatedTarget: t.els.gsearch }); // Shift+Tab: result → box
+  assert.equal(t.els.gsearchResults.hidden, false, 'and so does the move back');
+  t.fire(t.hit, 'focusout', { relatedTarget: t.viewControl }); // Tab: out of the search
+  assert.equal(t.els.gsearchResults.hidden, true, 'focus leaving the search closes the results');
+  t.els.gsearchResults.hidden = false;
+  t.fire(t.els.gsearch, 'focusout', { relatedTarget: null }); // the window losing focus: nothing took it on the page
+  assert.equal(t.els.gsearchResults.hidden, false, 'focus going nowhere on the page — another window — leaves them as they were');
 });
 
 test('the keyboard shortcut works even when the sidebar is collapsed to the rail', () => {
