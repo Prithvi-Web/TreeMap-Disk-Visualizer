@@ -764,15 +764,23 @@ function renderSecurity() {
   host.querySelectorAll('[data-sec-more]').forEach(b => b.addEventListener('click', () => loadMoreSecurity()));
 }
 
+/** The report a "Show more" page is on its way for: a second press meanwhile asks nothing (review F1.11). */
+let securityMoreFor = null;
+
 /**
  * The next page of findings, appended (E09: 500 of 801 were shown and the
  * other 301 could not be reached). A newer scan or a newer page owns the
  * panel by the time this lands, so this one is dropped. Focus moves to the
- * first finding it brought in, never to the page.
+ * first finding it brought in, never to the page. While the page is on its
+ * way the button is disabled and busy, and a second press asks nothing:
+ * every request re-walks the whole scan on the server.
  */
 async function loadMoreSecurity() {
   const report = state.security.report;
-  if (!report) return;
+  if (!report || securityMoreFor === report) return;
+  securityMoreFor = report;
+  const button = $('securityBody').querySelector('[data-sec-more]');
+  if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
   const scanId = state.scanId;
   const from = report.findings.length;
   try {
@@ -783,6 +791,10 @@ async function loadMoreSecurity() {
     $('securityBody').querySelector(`[data-sec-reveal="${from}"]`)?.focus();
   } catch (e) {
     toast('Could not list more findings: ' + e.message, 'error');
+  } finally {
+    if (securityMoreFor === report) securityMoreFor = null;
+    // A page that landed drew a new button; one that failed, or was dropped, hands this one back.
+    if (button) { button.disabled = false; button.removeAttribute('aria-busy'); }
   }
 }
 

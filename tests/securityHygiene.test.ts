@@ -862,3 +862,28 @@ test('the paging is declared where an agent reads: the OpenAPI document and AGEN
   const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
   assert.match(agents, /`\?offset=` \(the page's `offset` plus its length\) lists the next 500,\s+so every finding is reachable/, 'AGENTS.md says how to reach every finding');
 });
+
+test('"Show more" asks once while its page is on the way: a second press is ignored and the button says it is busy, and a page that fails gives the button back (E09, review F1.11)', async () => {
+  const asked: string[] = [];
+  let answer: (fail: boolean) => void = () => {};
+  const panel = securityPanel((url) => new Promise((resolve, reject) => {
+    asked.push(url);
+    answer = (fail) => (fail ? reject(new Error('the server went away')) : resolve(findingsPage(panel.all, url)));
+  }));
+  panel.render();
+  const first = panel.clicks.more();
+  const second = panel.clicks.more();
+  assert.deepEqual(asked, ['/api/security/findings?scanId=s1&offset=500'], 'one request for a double press — each one re-walks the whole scan');
+  assert.equal(panel.more.disabled, true, 'the button is disabled while the page is on the way');
+  assert.equal(panel.more.attrs['aria-busy'], 'true', 'and says it is busy');
+  answer(true);
+  await Promise.all([first, second]);
+  assert.deepEqual(panel.toasts, ['Could not list more findings: the server went away'], 'a failure is said once');
+  assert.equal(panel.more.disabled, false, 'and the button is given back');
+  assert.equal(panel.more.attrs['aria-busy'], undefined, 'no longer busy');
+  const retry = panel.clicks.more();
+  assert.equal(asked.length, 2, 'so a press after it asks again');
+  answer(false);
+  await retry;
+  assert.equal(panel.host.innerHTML.split('sec-item').length - 1, 801, 'and every finding is listed, once');
+});
