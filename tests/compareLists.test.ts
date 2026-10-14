@@ -263,11 +263,13 @@ test('the comparison\'s heading names its two moments apart when they share a mi
 
 /**
  * The split view of two History snapshots, from the page's own initCmpSplit
- * and cmpSplitDraw over a stubbed /api/snapshots/tree that holds a tree at
- * every moment asked for: its footer's captions and its divider's spoken
- * position, as they read once it has drawn.
+ * and cmpSplitDraw over a stubbed /api/snapshots/tree: its footer's captions
+ * and its divider's spoken position, as they read once it has drawn. The
+ * stub answers as closestSnapshot does — with the stored tree nearest the
+ * moment asked for, out of `stored` — or, with none given, holds a tree at
+ * every moment asked for.
  */
-async function splitView(whenA: number, whenB: number): Promise<{ caption: string; spoken: string }> {
+async function splitView(whenA: number, whenB: number, stored?: number[]): Promise<{ caption: string; spoken: string }> {
   const foot = { innerHTML: '' };
   const range = {
     value: '50', attrs: {} as Record<string, string>,
@@ -280,7 +282,11 @@ async function splitView(whenA: number, whenB: number): Promise<{ caption: strin
   };
   const deps: Record<string, unknown> = {
     $: (id: string) => els[id] ?? assert.fail(`the split view touched #${id}`),
-    api: async (url: string) => ({ snapshot: { takenAt: Number(/[?&]at=(\d+)/.exec(url)![1]) }, nodes: [] }),
+    api: async (url: string) => {
+      const at = Number(/[?&]at=(\d+)/.exec(url)![1]);
+      const nearest = stored ? stored.reduce((best, t) => (Math.abs(t - at) < Math.abs(best - at) ? t : best)) : at;
+      return { snapshot: { takenAt: nearest }, nodes: [] };
+    },
     formatWhen: MINUTE_CLOCK.minute, formatWhenSeconds: MINUTE_CLOCK.second,
     window: { devicePixelRatio: 1 }, cssVar: () => '', sizeColor: () => '',
   };
@@ -307,6 +313,26 @@ test('the split view\'s captions and its divider\'s spoken position name two mom
   const apart = await splitView(T, T + 3_600_000);
   assert.equal(apart.caption, `◀ ${m(T)} ${m(T + 3_600_000)} ▶`, 'two minutes: as before');
   assert.equal(apart.spoken, `50 percent — left of the divider: ${m(T)}, right: ${m(T + 3_600_000)}`);
+});
+
+test('the split view names the two stored trees it draws, the older on the left — not the moments picked, and not in the order they were picked (review F2.4 of QA third pass: RD7, H11)', async () => {
+  // The server answers each pick with the nearest STORED tree, so what the
+  // canvas shows can be another moment than the one picked (H11): the
+  // footer and the divider speak for the canvas. And left of the divider is
+  // promised to be the older, whichever order the pair was picked in (RD7).
+  // A stub that echoed the pick, called oldest-first, could tell neither
+  // from the picks themselves.
+  const s = (t: number) => `s${Math.floor(t / 1000)}`;
+  const stored = [T + 2_000, T + 50_000];
+  const [early, late] = [T + 12_000, T + 40_000]; // each nearest its own stored tree
+  const shown = {
+    caption: `◀ ${s(stored[0])} ${s(stored[1])} ▶`,
+    spoken: `50 percent — left of the divider: ${s(stored[0])}, right: ${s(stored[1])}`,
+  };
+  assert.deepEqual(await splitView(early, late, stored), shown,
+    'the captions and the divider name the stored trees the canvas shows, not the picks');
+  assert.deepEqual(await splitView(late, early, stored), shown,
+    'picked newest-first, the older is still on the left, and the divider says them in that order');
 });
 
 /** The source of named function declarations, for the heading helper. */
