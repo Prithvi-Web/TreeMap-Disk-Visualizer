@@ -230,11 +230,30 @@ test('a name found by its fold counts only on the volume\'s own word that both n
   type Lstat = (p: fs.PathLike, options?: { bigint?: boolean; throwIfNoEntry?: boolean }) => unknown;
   const host = fs as unknown as { lstatSync: Lstat };
   const real = host.lstatSync;
+  /**
+   * Where a path asked about is — its folder as the volume answers it, its own name as asked — so the
+   * stand-in answers for `file` and `sibling` however the product spells them. It asks by its own
+   * place for them (the folder's native realpath), which is not always this file's text: on GitHub's
+   * Windows runners the temp folder is `C:\Users\RUNNER~1\…`, an 8.3 short name `fs.realpathSync`
+   * keeps and the native realpath spells long, so a stand-in keyed on the text never answered there
+   * and the real volume did (CI run 38519159263).
+   */
+  const placeOf = (p: fs.PathLike): string => {
+    const text = String(p);
+    try {
+      return path.join(fs.realpathSync.native(path.dirname(text)), path.basename(text));
+    } catch {
+      return text;
+    }
+  };
+  const fileAt = placeOf(file);
+  const siblingAt = placeOf(sibling);
   const sizes: Record<string, number | null> = {};
   try {
     for (const [what, [first, second]] of Object.entries(answers)) {
       host.lstatSync = (p, options) => {
-        const answer = p === file ? first : p === sibling ? second : null;
+        const at = placeOf(p);
+        const answer = at === fileAt ? first : at === siblingAt ? second : null;
         if (answer === null || options?.bigint !== true) return real(p, options);
         if (answer === 'throws') throw Object.assign(new Error(`EIO: i/o error, lstat '${String(p)}'`), { code: 'EIO' });
         if (answer === 'gone') {
