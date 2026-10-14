@@ -768,42 +768,58 @@ test('GET /api/security/findings takes an offset, and a bad one reads as the sta
   }
 });
 
-test('the Security panel says how many findings it has not shown, and "Show more" brings in the next page until every one is listed (E09)', async () => {
+/** One page of the 801 findings the panel tests list, as GET /api/security/findings answers it from `offset`. */
+function findingsPage(all: Array<Record<string, unknown>>, url: string, scanId = 's1'): Record<string, unknown> {
+  const offset = Number(new URLSearchParams(url.slice(url.indexOf('?') + 1)).get('offset') ?? 0);
+  const findings = all.slice(offset, offset + 500);
+  return { scanId, findings, counts: { high: 0, medium: 0, low: 801 }, total: 801, truncated: offset + findings.length < 801, offset, patternCount: 9 };
+}
+
+/**
+ * The page's own renderSecurity and loadMoreSecurity over a scan with 801 findings, the first 500
+ * shown. `api` answers every request the panel makes; `paints` counts each time the list is drawn.
+ */
+function securityPanel(api: (url: string) => Promise<unknown>) {
   const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
   const finding = (i: number) => ({ severity: 'low', name: `Deck-${i}.key`, label: 'Key', path: `/h/Deck-${i}.key`, reason: 'r', why: 'w', size: 1 });
   const all = Array.from({ length: 801 }, (_, i) => finding(i));
-  const asked: string[] = [];
   const clicks: Record<string, () => unknown> = {};
-  let focused = '';
+  const out = { focused: '', paints: 0 };
+  const more = { disabled: false, attrs: {} as Record<string, string>, setAttribute(k: string, v: string) { this.attrs[k] = v; }, removeAttribute(k: string) { delete this.attrs[k]; } };
+  let html = '';
   const host = {
-    innerHTML: '',
-    querySelectorAll: (sel: string) => (sel === '[data-sec-more]' && host.innerHTML.includes('data-sec-more')
+    get innerHTML() { return html; },
+    set innerHTML(v: string) { html = v; out.paints++; },
+    querySelectorAll: (sel: string) => (sel === '[data-sec-more]' && html.includes('data-sec-more')
       ? [{ addEventListener: (_t: string, f: () => unknown) => { clicks.more = f; } }] : [] as unknown[]),
     querySelector: (sel: string) => {
+      if (sel === '[data-sec-more]') return html.includes('data-sec-more') ? more : null;
       const m = /data-sec-reveal="(\d+)"/.exec(sel);
-      return m ? { focus: () => { focused = m[1]; } } : null;
+      return m ? { focus: () => { out.focused = m[1]; } } : null;
     },
   };
   const info = { textContent: '', innerHTML: '' };
-  const state = { scanId: 's1', security: { report: { findings: all.slice(0, 500), counts: { high: 0, medium: 0, low: 801 }, total: 801, truncated: true, offset: 0, patternCount: 9 } as Record<string, unknown> } };
+  const state = { scanId: 's1' as string, security: { report: { findings: all.slice(0, 500), counts: { high: 0, medium: 0, low: 801 }, total: 801, truncated: true, offset: 0, patternCount: 9 } as Record<string, unknown> } };
+  const toasts: string[] = [];
   const stubs: Record<string, unknown> = {
     $: (id: string) => (id === 'securityBody' ? host : info), state,
     escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${String(n)} B`, formatCount: (n: number) => n.toLocaleString('en-US'),
     icon: () => '', baseName: (p: string) => path.basename(p),
-    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } },
-    SEVERITY_LABEL: { low: 'Minor' }, openInOS: () => {}, confirmRelocateSecret: () => {}, toast: (m: string) => assert.fail(`the page reported: ${m}`),
-    api: async (url: string) => {
-      asked.push(url);
-      const offset = Number(new URLSearchParams(url.slice(url.indexOf('?') + 1)).get('offset') ?? 0);
-      const findings = all.slice(offset, offset + 500);
-      return { scanId: 's1', findings, counts: { high: 0, medium: 0, low: 801 }, total: 801, truncated: offset + findings.length < 801, offset, patternCount: 9 };
-    },
+    FxNum: { rollHtml: (el: { innerHTML: string }, h: string) => { el.innerHTML = h; } },
+    SEVERITY_LABEL: { low: 'Minor' }, openInOS: () => {}, confirmRelocateSecret: () => {}, toast: (m: string) => { toasts.push(m); }, api,
   };
   const keys = Object.keys(stubs);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const render = new Function(...keys, `${fn}; return renderSecurity;`)(...keys.map((k) => stubs[k])) as () => void;
-  render();
+  return { all, render, clicks, out, host, info, state, more, toasts };
+}
+
+test('the Security panel says how many findings it has not shown, and "Show more" brings in the next page until every one is listed (E09)', async () => {
+  const asked: string[] = [];
+  const panel = securityPanel(async (url) => { asked.push(url); return findingsPage(panel.all, url); });
+  const { host, info, clicks, out } = panel;
+  panel.render();
   assert.match(info.innerHTML, /the 500 most serious shown — 301 more below/, 'the headline says how many are not shown');
   assert.match(host.innerHTML, /data-sec-more[^>]*>[^<]*Show more<\/button>/, 'and a button reaches them');
   assert.match(host.innerHTML, /500 of 801 shown/, 'saying how far the list goes');
@@ -812,7 +828,29 @@ test('the Security panel says how many findings it has not shown, and "Show more
   assert.equal(host.innerHTML.split('sec-item').length - 1, 801, 'every finding is listed');
   assert.doesNotMatch(host.innerHTML, /data-sec-more/, 'with nothing left to show, no button');
   assert.doesNotMatch(info.innerHTML, /more below/, 'and the headline no longer says some are hidden');
-  assert.equal(focused, '500', 'focus moves to the first finding the click brought in, not to the page');
+  assert.equal(out.focused, '500', 'focus moves to the first finding the click brought in, not to the page');
+  assert.deepEqual(panel.toasts, [], 'the page reported nothing');
+});
+
+test('a page of findings that lands after a new scan, or after the panel was filled again, is dropped — never appended to findings it does not belong to (E09, review F1.8)', async () => {
+  for (const change of ['a new scan', 'the panel filled again'] as const) {
+    let answer: (v: unknown) => void = () => {};
+    const panel = securityPanel((url) => new Promise((resolve) => { answer = () => resolve(findingsPage(panel.all, url)); }));
+    panel.render();
+    const pressed = panel.clicks.more();
+    const paintsBefore = panel.out.paints;
+    const fresh = { findings: panel.all.slice(0, 3), counts: { high: 0, medium: 0, low: 3 }, total: 3, truncated: false, offset: 0, patternCount: 9 };
+    if (change === 'a new scan') panel.state.scanId = 's2';
+    else panel.state.security.report = fresh;
+    const owner = panel.state.security.report;
+    answer(undefined);
+    await pressed;
+    assert.equal(panel.state.security.report, owner, `${change}: the report is the one that owns the panel now`);
+    assert.equal((owner.findings as unknown[]).length, change === 'a new scan' ? 500 : 3, `${change}: and nothing was appended to it`);
+    assert.equal(panel.out.paints, paintsBefore, `${change}: the list was not drawn again`);
+    assert.equal(panel.out.focused, '', `${change}: and focus did not move`);
+    assert.deepEqual(panel.toasts, [], `${change}: nothing was reported`);
+  }
 });
 
 test('the paging is declared where an agent reads: the OpenAPI document and AGENTS.md (E09)', async () => {
