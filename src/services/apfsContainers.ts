@@ -57,22 +57,26 @@ export async function liveApfsContainers(platform: NodeJS.Platform = process.pla
 }
 
 /**
- * The `paths` that draw on the same APFS container as `anchor` (the root, for "this computer's own
- * disk"). A path whose device is no known APFS volume, or an anchor whose container is not known,
- * shares space with nothing this can name.
+ * The `paths` that draw on the same space as one of `anchors` — the folders an offload's files are in,
+ * or the root for "this computer's own disk" (review F1.5, F2.1): on the same device as one (another
+ * folder of that drive), or a volume of the same APFS container. A path or anchor whose device cannot
+ * be read shares space with nothing this can name; a device no APFS container is known for shares it
+ * only with itself.
  */
 export async function sameSpaceAs(
-  anchor: string,
+  anchors: readonly string[],
   paths: readonly string[],
   containers: ReadonlyMap<bigint, string>,
   deviceOf: DeviceOf,
 ): Promise<Set<string>> {
-  const anchorDevice = await deviceOf(anchor);
-  const container = anchorDevice === null ? undefined : containers.get(anchorDevice);
-  if (container === undefined) return new Set();
+  const anchorDevices = (await Promise.all(anchors.map((a) => deviceOf(a)))).filter((d): d is bigint => d !== null);
+  const anchorContainers = new Set(anchorDevices.map((d) => containers.get(d)).filter((c): c is string => c !== undefined));
   const devices = await Promise.all(paths.map((p) => deviceOf(p)));
   return new Set(paths.filter((_, i) => {
     const device = devices[i];
-    return device !== null && containers.get(device) === container;
+    if (device === null) return false;
+    if (anchorDevices.includes(device)) return true;
+    const container = containers.get(device);
+    return container !== undefined && anchorContainers.has(container);
   }));
 }

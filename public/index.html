@@ -24458,6 +24458,33 @@ const OFFLOAD_PHASE_LABEL = {
 let activeJob = null;
 
 /**
+ * The connected drives that are another drive for `paths`, judged by the
+ * server from the files' own folders, never from this computer's own disk
+ * alone (review F2.1): a volume sharing an APFS container with the drive the
+ * files are on is left out, and this computer's own sibling volumes (a
+ * /Volumes/Dev) are offered for files that live elsewhere. The plain list only
+ * says which connected drives the files are on, by path; the drives are then
+ * asked for again from those drives — and from `rest`, the folder the other
+ * files are in, when some lie on none. `onADrive`: every one of `paths` is on
+ * a connected drive, so this computer's own disk is another drive for them.
+ * Throws as `api` does.
+ */
+async function offloadDrives(paths, rest) {
+  const plain = await api('/api/volumes');
+  const on = (p, v) => p === v.path || tmIsInside(p, v.path);
+  const holding = (plain.volumes || []).filter((v) => paths.some((p) => on(p, v)));
+  const onADrive = holding.length > 0 && paths.every((p) => holding.some((v) => on(p, v)));
+  const anchors = holding.map((v) => v.path).concat(onADrive ? [] : [rest]);
+  const judged = await api('/api/volumes?' + anchors.map((a) => 'from=' + encodeURIComponent(a)).join('&'));
+  return { volumes: judged.volumes || [], reason: judged.reason || plain.reason, onADrive };
+}
+
+/** The drives the dock offers, and a drop re-verifies against: another drive for the scanned folder (review F2.1). */
+function dockDrives() {
+  return state.root ? offloadDrives([state.root.path], state.root.path) : api('/api/volumes');
+}
+
+/**
  * Entry point for every "Offload…" action: pick a folder on another drive, then
  * the same dry-run manifest and shared confirm the drive dock uses — a pick
  * never moves anything bare (fourth browser pass, E01). The picker opens on a
@@ -24470,22 +24497,23 @@ async function startOffloadFlow(paths) {
   if (paths[0].startsWith('cloud://')) { toast('Offload moves local files to another drive — it doesn’t apply to cloud scans', 'error'); return; }
   hideCtxMenu();
   let drives = [];
+  // Files on a connected drive have this computer's own disk as another
+  // drive: the picker's usual start and shortcuts are then the obvious choice.
+  let onADrive = false;
   // The list is a statement that no other drive is connected only when the
   // server read it: on a platform where it cannot list drives it answers an
   // empty list WITH a reason, and a failed call says nothing at all (review F1.2).
   let listed = true;
   try {
-    const answer = await api('/api/volumes');
-    drives = answer.volumes || [];
+    const answer = await offloadDrives(paths, state.root.path);
+    drives = answer.volumes;
+    onADrive = answer.onADrive;
     if (answer.reason) listed = false;
   } catch {
     listed = false;
   }
   // A drive the selection itself is on is no destination for it.
   const others = drives.filter((v) => !paths.some((p) => p === v.path || tmIsInside(p, v.path)));
-  // Files on a connected drive have this computer's own disk as another
-  // drive: the picker's usual start and shortcuts are then the obvious choice.
-  const onADrive = others.length < drives.length;
   const why = 'an offload to the drive these files are on frees nothing, so TreeMap refuses it.';
   // With no list to go by, which drive a folder is on is unknown: the usual
   // shortcuts stay, and the line says so rather than "none is connected".
@@ -24592,7 +24620,7 @@ let dockSeq = 0;
 async function refreshDock() {
   const seq = ++dockSeq;
   try {
-    const data = await api('/api/volumes');
+    const data = await dockDrives();
     if (seq !== dockSeq) return; // superseded
     dockVolumes = data.volumes || [];
   } catch {
@@ -24662,7 +24690,9 @@ async function dockDrop(volPath) {
   const seq = ++offloadPlanSeq;
   try {
     // 1 — the drive must still be there: drives disappear mid-drag (§8.3).
-    const fresh = await api('/api/volumes');
+    // Asked as the dock asked it, so a tile it shows is found unless its
+    // drive went (review F2.1).
+    const fresh = await dockDrives();
     if (seq !== offloadPlanSeq) return; // a later plan owns the dialog now
     const vol = (fresh.volumes || []).find((v) => v.path === volPath);
     if (!vol) {

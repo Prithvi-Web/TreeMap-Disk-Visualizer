@@ -282,6 +282,14 @@ test('the refusal is declared where an agent reads: the OpenAPI document\'s 400 
   assert.match(String((doc.paths['/api/volumes'] as unknown as { get: { summary: string } }).get.summary), /another APFS volume in the root\u2019s container\) is no other drive and is not listed/,
     'the volume list says such a volume is not listed');
   assert.match(agents, /another APFS volume in the root's container\) is no other drive and is\s+not listed/, 'in AGENTS.md too');
+  const volumes = (doc.paths['/api/volumes'] as unknown as { get: { summary: string; parameters?: Array<{ name: string; in: string; description?: string }>; responses: Record<string, { description?: string }> } }).get;
+  const from = (volumes.parameters ?? []).find((p) => p.name === 'from' && p.in === 'query');
+  assert.ok(from, 'GET /api/volumes declares its from parameter (review F2.1)');
+  assert.match(String(from!.description), /folder the offload\u2019s files are in[^.]*repeatable[^.]*at most 32/, 'saying what it names and how many');
+  assert.match(volumes.summary, /With from, the folders an offload\u2019s files are in are judged instead/, 'the summary says the list is judged against them');
+  assert.match(String(volumes.responses['400']?.description), /PATH_INVALID[^.]*TOO_MANY_PATHS/, 'and its refusals are declared');
+  assert.match(agents, /`\?from=<folder>`[^.]*judge against the folders your files are in/, 'AGENTS.md tells an agent to name its files\' folders');
+  assert.match(agents, /the offload's dry\s+run is the authority/, 'and that the dry run, not the list, decides');
   const mcp = fs.readFileSync(path.join(__dirname, '..', 'src', 'mcp', 'server.ts'), 'utf8');
   assert.match(mcp.slice(mcp.indexOf("'offload',"), mcp.indexOf("'offload',") + 3000), /same drive/, 'the MCP offload tool tells an agent before it asks');
 });

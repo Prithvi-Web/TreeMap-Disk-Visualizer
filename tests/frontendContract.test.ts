@@ -504,9 +504,13 @@ test('the offload dock never runs a bare move — re-verify, manifest, confirm, 
   const start = code.indexOf('async function dockDrop');
   assert.notEqual(start, -1, 'dockDrop exists in the script');
   const body = code.slice(start, code.indexOf("$('cartTab').setAttribute('draggable'", start));
-  const reverify = body.indexOf('/api/volumes');
+  // The re-verify asks the server's drive list as the dock asked it (review F2.1): dockDrives.
+  const reverify = body.indexOf('dockDrives()');
   const door = body.indexOf('confirmOffloadPlan(');
   assert.ok(reverify !== -1 && door !== -1 && reverify < door, 'the drive is re-verified, then the shared door is taken');
+  const drivesAt = code.indexOf('async function offloadDrives(');
+  assert.notEqual(drivesAt, -1, 'the drive list the dock and the picker share exists');
+  assert.match(code.slice(drivesAt, code.indexOf('\n}\n', drivesAt)), /api\('\/api\/volumes'\)/, 'and asks the server, fresh');
   assert.doesNotMatch(body, /runOffloadJob\(/, 'the drop never reaches the pipeline itself');
   const doorAt = code.indexOf('async function confirmOffloadPlan(');
   assert.notEqual(doorAt, -1, 'the shared door exists');

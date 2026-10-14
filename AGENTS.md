@@ -113,7 +113,12 @@ OpenAPI 3 spec).
      drive whose stats cannot be read is listed with nulls and a reason. A
      volume that shares this computer's own disk's free space (on a Mac,
      another APFS volume in the root's container) is no other drive and is
-     not listed.
+     not listed. Pass `?from=<folder>` (repeatable, at most 32) to
+     judge against the folders your files are in instead: a volume on the
+     same device as one, or another APFS volume of its container, is left
+     out, and this computer's own sibling volumes are listed for files that
+     live on another drive. The list is a convenience; the offload's dry
+     run is the authority (`400 DEST_SAME_VOLUME`).
    - `GET /api/scan/{scanId}/calendar` — bytes and file counts per local day
      (from the scan's own mtimes, exact). `?channel=created` adds a
      creation-day channel from per-file stats behind a cap; days past the cap

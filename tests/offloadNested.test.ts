@@ -156,6 +156,9 @@ test('dropping the cart on a drive sends only its outermost items, to the dry ru
     'state', 'api', '$', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'resetOpenHandleWarning', 'refreshDock', 'runOffloadJob', 'activeJob',
     `let onConfirmTrash = null; let offloadPlanSeq = 0;
      ${pageFunction('dockDrop')}
+     ${pageFunction('dockDrives')}
+     ${pageFunction('offloadDrives')}
+     ${pageFunction('tmIsInside')}
      ${pageFunction('confirmOffloadPlan')}
      ${pageFunction('outermostPaths')}
      ${pageFunction('tmParentPath')}

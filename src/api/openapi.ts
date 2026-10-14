@@ -2103,10 +2103,16 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     method: 'get',
     path: '/api/volumes',
     summary:
-      'Attached external drives with free/total bytes — destinations for the offload dock, sorted by name; a drive whose stats cannot be read is listed with nulls and a reason, never hidden. A volume that shares this computer\u2019s own disk\u2019s free space (on a Mac, another APFS volume in the root\u2019s container) is no other drive and is not listed',
+      'Attached external drives with free/total bytes — destinations for the offload dock, sorted by name; a drive whose stats cannot be read is listed with nulls and a reason, never hidden. A volume that shares this computer\u2019s own disk\u2019s free space (on a Mac, another APFS volume in the root\u2019s container) is no other drive and is not listed. With from, the folders an offload\u2019s files are in are judged instead: a volume on the same device as one, or another APFS volume of its container, is not listed, and this computer\u2019s own sibling volumes are listed for files that live elsewhere. The offload\u2019s dry run (400 DEST_SAME_VOLUME) is the authority',
     tag: 'offload',
     destructive: false,
-    responses: { '200': jsonResponse('Volumes, sorted by name', obj({ volumes: arr(ref('VolumeInfo')) }, ['volumes'])) },
+    parameters: [
+      queryParam('from', 'A folder the offload\u2019s files are in, repeatable, at most 32: the drives listed are those that are another drive for every one. Name the drives a selection is on, not its files. Default: this computer\u2019s own disk (/)'),
+    ],
+    responses: {
+      '200': jsonResponse('Volumes, sorted by name', obj({ volumes: arr(ref('VolumeInfo')) }, ['volumes'])),
+      '400': errorResponse('PATH_INVALID or PATH_BLOCKED when a folder in from is refused by the path rules; TOO_MANY_PATHS past 32 folders'),
+    },
   },
   {
     method: 'post',

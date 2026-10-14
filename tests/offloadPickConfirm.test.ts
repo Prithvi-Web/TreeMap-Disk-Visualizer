@@ -37,7 +37,9 @@ interface Harness {
   picked: (paths: string[], dest: string) => Promise<void>;
   /** The page's dockDrop: the cart dropped on the drive at `volPath`. */
   drop: (volPath: string) => Promise<void>;
-  state: { cart: Set<string>; pathIndex: Set<string> };
+  state: { cart: Set<string>; pathIndex: Set<string>; root: { path: string } };
+  /** The folders each GET /api/volumes?from= judged against, in order (review F2.1). */
+  volumeAsks: string[][];
   opened: unknown[][];
   posts: Array<Record<string, unknown>>;
   offloaded: Array<[string[], string]>;
@@ -56,15 +58,18 @@ function planFor(body: { dest: string; paths: string[] }): Record<string, unknow
 /**
  * `refuse`: the dry run answers with this error instead of a plan. `volumesReply`: what GET /api/volumes
  * answers in place of `{ volumes: drives }` — it may throw, as a failed call does. `dryRunReply`: when
- * the dry run answers, and with what — a test that holds one back says so here.
+ * the dry run answers, and with what — a test that holds one back says so here. `volumesFrom`: what
+ * GET /api/volumes?from= answers for the folders named; by default `drives` without those folders.
  */
 function harness(drives: Drive[], refuse: string | null = null, volumesReply: (() => unknown) | null = null,
-  dryRunReply: ((body: { dest: string; paths: string[] }) => Promise<unknown>) | null = null): Harness {
+  dryRunReply: ((body: { dest: string; paths: string[] }) => Promise<unknown>) | null = null,
+  volumesFrom: ((anchors: string[]) => unknown) | null = null): Harness {
   const opened: unknown[][] = [];
   const posts: Array<Record<string, unknown>> = [];
   const offloaded: Array<[string[], string]> = [];
   const toasts: Array<[string, string | undefined]> = [];
   let refreshes = 0;
+  const volumeAsks: string[][] = [];
   const els: Record<string, { innerHTML: string; open: boolean; classList: { add: (c: string) => void } }> = {};
   const $ = (id: string) => (els[id] ??= { innerHTML: '', open: false, classList: { add: (c: string) => { if (c === 'open') els[id].open = true; } } });
   const state = { scanId: 's1', root: { path: '/Users/me' }, cart: new Set<string>(), pathIndex: new Set<string>() };
@@ -72,6 +77,11 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     state,
     api: async (url: string, opts?: { method?: string; body?: string }) => {
       if (url === '/api/volumes') return volumesReply ? volumesReply() : { volumes: drives };
+      if (url.startsWith('/api/volumes?')) {
+        const anchors = new URLSearchParams(url.slice(url.indexOf('?') + 1)).getAll('from');
+        volumeAsks.push(anchors);
+        return volumesFrom ? volumesFrom(anchors) : { volumes: drives.filter((v) => !anchors.includes(v.path)) };
+      }
       if (url === '/api/offload') {
         const body = JSON.parse(opts?.body ?? '{}');
         posts.push(body);
@@ -88,7 +98,8 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     runOffloadJob: async (paths: string[], dest: string) => { offloaded.push([paths, dest]); },
     activeJob: null,
   };
-  const names = ['startOffloadFlow', 'offloadPicked', 'dockDrop', 'confirmOffloadPlan', 'tmIsInside', 'lastPathSegment', 'outermostPaths', 'tmParentPath'];
+  const names = ['startOffloadFlow', 'offloadPicked', 'dockDrop', 'confirmOffloadPlan', 'tmIsInside', 'lastPathSegment', 'outermostPaths', 'tmParentPath',
+    ...['offloadDrives', 'dockDrives'].filter((name) => INDEX.includes(`function ${name}(`))];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `'use strict'; let onConfirmTrash = null; let offloadPlanSeq = 0;
@@ -96,7 +107,7 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     return { start: startOffloadFlow, picked: offloadPicked, drop: dockDrop, confirm: () => onConfirmTrash };`)(...keys.map((k) => deps[k])) as {
     start: Harness['start']; picked: Harness['picked']; drop: Harness['drop']; confirm: Harness['confirm'];
   };
-  return { ...page, state, opened, posts, offloaded, toasts, els, confirm: page.confirm, dockRefreshes: () => refreshes };
+  return { ...page, state, opened, posts, offloaded, toasts, els, confirm: page.confirm, dockRefreshes: () => refreshes, volumeAsks };
 }
 
 const BACKUP: Drive = { name: 'Backup', path: '/Volumes/Backup', freeBytes: 5e11 };
@@ -165,6 +176,78 @@ test('a selection on the only connected drive opens the picker on this computer\
   assert.equal(opts.chips, undefined, 'with the home folder\'s shortcuts: they are on another drive than the files');
   assert.match(opts.hint, /Pick a folder on another drive/, 'and it does not claim no other drive is connected');
   assert.doesNotMatch(opts.hint, /No other drive is connected/);
+});
+
+/* ─── Judged against the files, not this computer's disk (review F2.1) ───
+   Work and Archive are two volumes of one external APFS container; Dev is a volume of this computer's
+   own disk. GET /api/volumes, judged against this computer's disk, lists Archive and Work and leaves
+   Dev out — right for files on this disk, wrong for files on Work. */
+const ARCHIVE: Drive = { name: 'Archive', path: '/Volumes/Archive', freeBytes: 2e11 };
+const DEV: Drive = { name: 'Dev', path: '/Volumes/Dev', freeBytes: 3e11 };
+/** The server's answer for `from`: judged from Work alone, Dev is another drive and Archive shares Work's space. */
+const judgedFromWork = (anchors: string[]) => ({ volumes: anchors.length === 1 && anchors[0] === '/Volumes/Work' ? [DEV] : [] });
+
+test('files on an external drive open the picker on a drive the server will take: judged from that drive, not Archive — its container\'s other volume — but this computer\'s own sibling volume (review F2.1)', async () => {
+  const h = harness([ARCHIVE, WORK], null, null, null, judgedFromWork);
+  h.state.root = { path: '/Volumes/Work' };
+  await h.start(['/Volumes/Work/Projects/old']);
+  assert.deepEqual(h.volumeAsks, [['/Volumes/Work']], 'the drives are asked for again, judged from the drive the files are on');
+  const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips?: Drive[]; hint: string }];
+  assert.equal(start, '/Volumes/Dev', 'the picker opens on a drive an offload of these files can use');
+  assert.deepEqual(opts.chips?.map((c) => c.path), ['/Volumes/Dev'], 'and offers no other');
+  assert.match(opts.hint, /Pick a folder on another drive/, 'saying to pick a folder on it, never that no other drive is connected');
+});
+
+test('files on a disk no connected drive holds are judged from their own folder: a folder this computer\'s system disk holds is another drive for a separate /home (review F2.1)', async () => {
+  const MNT: Drive = { name: 'data', path: '/mnt/data', freeBytes: 4e11 };
+  // Judged against this computer's own disk, /mnt/data — a folder on it — is no other drive; judged from /home/me, it is.
+  const h = harness([], null, null, null, (anchors) => ({ volumes: anchors.length === 1 && anchors[0] === '/home/me' ? [MNT] : [] }));
+  h.state.root = { path: '/home/me' };
+  await h.start(['/home/me/videos/a.mkv']);
+  assert.deepEqual(h.volumeAsks, [['/home/me']], 'the drives are asked for from the folder the files are in');
+  const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips?: Drive[]; hint: string }];
+  assert.equal(start, '/mnt/data', 'and the picker opens on what is another drive for them');
+  assert.deepEqual(opts.chips?.map((c) => c.path), ['/mnt/data']);
+});
+
+test('files on an external drive and on this computer\'s disk are judged from both: no drive is another drive for all of them, so none is offered and no shortcut on this disk either (review F2.1)', async () => {
+  const h = harness([WORK], null, null, null, (anchors) => ({ volumes: anchors.length === 2 ? [] : [DEV] }));
+  h.state.root = { path: '/' };
+  await h.start(['/Users/me/a.mov', '/Volumes/Work/b.mov']);
+  assert.deepEqual(h.volumeAsks, [['/Volumes/Work', '/']], 'judged from Work and from the scanned folder the other files are in');
+  const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips?: Drive[]; hint: string }];
+  assert.equal(start, null, 'with no drive for all of them, the picker opens on none');
+  assert.deepEqual(opts.chips, [], 'no shortcut on this computer\'s disk: some of the files are on it');
+});
+
+test('the dock offers what an offload of the scanned folder can use, and a drop finds the drive its tile showed: both judged from the scanned folder (review F2.1)', async () => {
+  const h = harness([ARCHIVE, WORK], null, null, null, judgedFromWork);
+  h.state.root = { path: '/Volumes/Work' };
+  const cart = ['/Volumes/Work/Projects/old'];
+  for (const p of cart) { h.state.cart.add(p); h.state.pathIndex.add(p); }
+  await h.drop(DEV.path);
+  assert.deepEqual(h.volumeAsks, [['/Volumes/Work']], 'the drop re-verifies its drive as the dock listed it, from the scanned folder');
+  assert.deepEqual(h.toasts, [], 'the drive the dock showed is found — not "no longer connected"');
+  assert.deepEqual(h.posts.map((b) => b.dest), ['/Volumes/Dev'], 'and the dry run plans the offload to it');
+});
+
+test('the dock\'s tiles are judged from the scanned folder: for a scan on Work, Dev is a tile and Archive is not (review F2.1)', async () => {
+  const asks: string[] = [];
+  const names = ['refreshDock', 'tmIsInside', ...['offloadDrives', 'dockDrives'].filter((name) => INDEX.includes(`function ${name}(`))];
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const dock = new Function('state', 'api', 'renderDock', `'use strict'; let dockVolumes = []; let dockSeq = 0;
+    ${names.map(pageFunction).join('\n')}
+    return { refreshDock, tiles: () => dockVolumes };`)(
+    { root: { path: '/Volumes/Work' } },
+    async (url: string) => {
+      asks.push(url);
+      return url === '/api/volumes' ? { volumes: [ARCHIVE, WORK] } : judgedFromWork(new URLSearchParams(url.slice(url.indexOf('?') + 1)).getAll('from'));
+    },
+    () => {},
+  ) as { refreshDock: () => Promise<void>; tiles: () => Drive[] };
+  await dock.refreshDock();
+  assert.deepEqual(dock.tiles().map((v) => v.path), ['/Volumes/Dev'], 'the dock offers the drive an offload of this scan can use, and not Archive');
+  assert.deepEqual(asks, ['/api/volumes', `/api/volumes?from=${encodeURIComponent('/Volumes/Work')}`], 'judged again from Work, the drive the scanned folder is on');
 });
 
 test('a folder picked for an offload is never moved to bare: the pick asks the dry run, the manifest goes behind the shared confirm, and only Confirm offloads — the same paths, to the same folder (E01)', async () => {

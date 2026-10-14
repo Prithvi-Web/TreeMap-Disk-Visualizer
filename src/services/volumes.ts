@@ -28,21 +28,24 @@ interface VolumeProviders {
   list: () => ExternalVolume[];
   usage: (target: string) => Promise<{ total: number; free: number }>;
   /**
-   * Which of `paths` share this computer's own disk's space — another APFS volume in the root's
-   * container (review F1.5). Absent: none do.
+   * Which of `paths` share the space of one of `anchors` — the same device, or another APFS volume of
+   * its container (review F1.5, F2.1).
    */
-  bootSiblings?: (paths: readonly string[]) => Promise<ReadonlySet<string>>;
+  sameSpace: (anchors: readonly string[], paths: readonly string[]) => Promise<ReadonlySet<string>>;
 }
 
-/** Which of `paths` share the root's free space: volumes of its APFS container, read off this machine's mount table. */
-export async function volumesSharingBootSpace(paths: readonly string[]): Promise<Set<string>> {
-  return paths.length ? sameSpaceAs('/', paths, await liveApfsContainers(), statDevice) : new Set();
+/** Which of `paths` share the space of one of `anchors`, read off this machine's devices and mount table. */
+export async function volumesSharingSpace(anchors: readonly string[], paths: readonly string[]): Promise<Set<string>> {
+  return paths.length && anchors.length ? sameSpaceAs(anchors, paths, await liveApfsContainers(), statDevice) : new Set();
 }
+
+/** What a volume is judged against when no folder is named: this computer's own disk. */
+const THIS_COMPUTERS_DISK = ['/'];
 
 const realProviders: VolumeProviders = {
   list: () => listExternalVolumes(),
   usage: (target) => diskUsage(target),
-  bootSiblings: volumesSharingBootSpace,
+  sameSpace: volumesSharingSpace,
 };
 
 let providers: VolumeProviders = realProviders;
@@ -70,15 +73,18 @@ export function volumesUnavailableReason(platform: NodeJS.Platform = process.pla
 }
 
 /**
- * Every attached external volume, stats where readable, sorted by name. A volume that shares this
- * computer's own disk's free space — another APFS volume in the root's container, such as one a
- * person added at /Volumes/Dev — is no other drive (review F1.5): an offload onto it frees nothing,
- * and the server refuses one (DEST_SAME_VOLUME), so neither the dock nor the offload picker offers it.
+ * Every attached external volume that is another drive for the folders in `from`, stats where
+ * readable, sorted by name. A volume sharing one's space — on its device, or another APFS volume of its
+ * container — is no other drive for the files in it (review F1.5): an offload onto it frees nothing,
+ * and the server refuses one (DEST_SAME_VOLUME). Judged against the files' own folders, not this
+ * computer's disk alone (review F2.1): for files on an external drive, a volume sharing that drive's
+ * container is left out and this computer's own sibling volume — /Volumes/Dev — is another drive.
+ * With no folder named, against this computer's own disk.
  */
-export async function listVolumes(): Promise<VolumeInfo[]> {
+export async function listVolumes(from: readonly string[] = THIS_COMPUTERS_DISK): Promise<VolumeInfo[]> {
   const listed = providers.list();
-  const siblings = providers.bootSiblings ? await providers.bootSiblings(listed.map((v) => v.path)) : new Set<string>();
-  const found = listed.filter((v) => !siblings.has(v.path));
+  const sharing = await providers.sameSpace(from, listed.map((v) => v.path));
+  const found = listed.filter((v) => !sharing.has(v.path));
   const out = await Promise.all(
     found.map(async (v): Promise<VolumeInfo> => {
       try {

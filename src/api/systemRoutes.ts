@@ -54,15 +54,31 @@ systemRouter.get('/system', async (_req: Request, res: Response) => {
   res.json(info);
 });
 
+/** The most folders one GET /api/volumes judges against: the drives a selection is on, not its files. */
+const MAX_VOLUME_ANCHORS = 32;
+
+/** `?from=` as sanitized folders (repeatable), or undefined when none is named. */
+function volumeAnchors(raw: unknown): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const folders = Array.isArray(raw) ? raw : [raw];
+  if (folders.length > MAX_VOLUME_ANCHORS) {
+    throw new AppError(400, 'TOO_MANY_PATHS', `At most ${MAX_VOLUME_ANCHORS} folders in "from"`);
+  }
+  return folders.map((folder) => sanitizePath(folder)); // PATH_INVALID / PATH_BLOCKED -> the error handler's 400
+}
+
 /**
- * GET /api/volumes -> { volumes: [{ name, path, freeBytes, totalBytes }] }
+ * GET /api/volumes[?from=<folder>…] -> { volumes: [{ name, path, freeBytes, totalBytes }] }
  * Attached external drives for the offload dock (§8.3), sorted by name. A
  * drive whose capacity cannot be read still appears — nulls plus a reason —
- * so the dock shows the drive honestly rather than hiding it.
+ * so the dock shows the drive honestly rather than hiding it. Only drives
+ * that are another drive for the folders in `from` (the files' own, review
+ * F2.1) are listed; with none named, for this computer's own disk.
  */
-systemRouter.get('/volumes', async (_req: Request, res: Response) => {
+systemRouter.get('/volumes', async (req: Request, res: Response) => {
+  const from = volumeAnchors(req.query.from);
   const reason = volumesUnavailableReason();
-  res.json({ volumes: await listVolumes(), ...(reason ? { reason } : {}) });
+  res.json({ volumes: await listVolumes(from), ...(reason ? { reason } : {}) });
 });
 
 /** GET /api/trash/size -> { totalBytes, itemCount, paths, items } across all trash locations. */
