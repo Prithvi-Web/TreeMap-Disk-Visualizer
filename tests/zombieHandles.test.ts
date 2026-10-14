@@ -856,6 +856,32 @@ test('the restart sheet for a helper says unsaved work could be lost and that Tr
   assert.match(bare.text, /start it again yourself/);
 });
 
+test('a program TreeMap only quits is offered "Quit", never "Restart" — on its row, in the sheet\'s title and on its OK; only an app TreeMap reopens says Restart (fifth browser pass F04)', () => {
+  // QA: "Google Chrome Helper (Renderer)" › Restart opened "Restart Google
+  // Chrome Helper (Renderer)?" with OK "Restart it", over a body saying
+  // TreeMap does not reopen it — and the row button said "Restart" too.
+  const base = { pid: 9, bytes: 15_300_000, unknownSizeCount: 0, restartable: true, restartRefusal: null, handles: [] };
+  const helper = { ...base, processName: 'Google Chrome Helper (Renderer)', appBundle: null, partOf: CHROME };
+  const bare = { ...base, pid: 10, processName: 'node', appBundle: null, partOf: null };
+  const app = { ...base, pid: 11, processName: 'Google Chrome', appBundle: CHROME, partOf: null };
+
+  for (const [what, p] of [['a helper inside an app', helper], ['a program with no app', bare]] as const) {
+    const sheet = restartSheet(p);
+    assert.equal(sheet.title, `Quit ${p.processName}?`, `${what}: the sheet asks to quit it`);
+    assert.equal(sheet.ok, 'Quit it', `${what}: and its OK says so`);
+  }
+  const reopened = restartSheet(app);
+  assert.equal(reopened.title, 'Restart Google Chrome?', 'control: an app TreeMap reopens is restarted');
+  assert.equal(reopened.ok, 'Restart it');
+
+  const html = paintZombies({
+    processes: [helper, bare, app].map((p) => ({ ...p, handles: [{ path: `/tmp/${p.pid}`, bytes: 100, holders: 1 }] })),
+    totalBytes: 300, unknownSizeCount: 0, fileCount: 3, sharedFileCount: 0, scannedAt: 0,
+  });
+  const buttons = [...html.matchAll(/<button class="pill" data-zh-restart="(\d)"[^>]*>([^<]*)<\/button>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(buttons, [['0', 'Quit'], ['1', 'Quit'], ['2', 'Restart']], 'each row offers what TreeMap will do');
+});
+
 test('the OpenAPI document says which app a restart reopens and which it does not (E02)', async () => {
   const { buildOpenApiDocument } = await import('../src/api/openapi');
   const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/zombie-handles']);

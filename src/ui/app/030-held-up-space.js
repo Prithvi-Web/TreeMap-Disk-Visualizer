@@ -2,8 +2,11 @@
    A file deleted while a program still has it open keeps its blocks until
    that program lets go — which is how a disk fills up with nothing visible
    to account for it. No signal short of the process exiting frees the space,
-   so the row action is "restart it": a polite quit (never forced), reopened
-   automatically where that is genuinely supported (Mac apps, via `open`). */
+   so the row action is a polite quit (never forced). Only a Mac app TreeMap
+   can reopen (via `open`) is offered "Restart"; everything else — a helper
+   inside an app, a program with no app — is offered "Quit", on the row, in
+   the sheet's title and on its OK, because quitting is all TreeMap does to
+   it (fifth browser pass F04). */
 
 let zombiesLoading = false;
 /** The processes behind the rendered rows, so a click needs no data baked into HTML. */
@@ -92,8 +95,9 @@ function renderZombies(report) {
     // The server decides who may be restarted (QA D40): a program that is
     // part of the system, root's or another user's gets no button, and the
     // row says why instead.
+    // "Restart" only where TreeMap reopens it; anything else it only quits (F04).
     const action = p.restartable
-      ? `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ''}">Restart</button>`
+      ? `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ' — TreeMap does not reopen it'}">${p.appBundle ? 'Restart' : 'Quit'}</button>`
       : `<span class="zh-locked" title="TreeMap does not restart this program">${escapeHtml(p.restartRefusal || 'Not restartable')}</span>`;
     // The process id is a fact nobody needs to decide anything — the Restart
     // button already targets the process — so it lives in the row's title
@@ -174,7 +178,10 @@ function confirmZombieRestart(p) {
     }
     loadZombies();
   };
-  $('confirmTitle').innerHTML = icon('refresh', 18) + `Restart ${escapeHtml(p.processName)}?`;
+  // Restart only what TreeMap reopens (a Mac app); everything else it only
+  // quits, and the title and OK say so (fifth browser pass F04).
+  const reopens = Boolean(p.appBundle);
+  $('confirmTitle').innerHTML = icon(reopens ? 'refresh' : 'stop', 18) + `${reopens ? 'Restart' : 'Quit'} ${escapeHtml(p.processName)}?`;
   $('confirmText').innerHTML = p.appBundle
     ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit, then open it again. The space it is holding frees when it quits.` +
       `<br><span style="color:var(--text-3)">If it has unsaved work it may ask you to save first — nothing is ever force-quit.</span>`
@@ -188,7 +195,7 @@ function confirmZombieRestart(p) {
         win32: 'TreeMap does not reopen programs on Windows.',
         other: 'TreeMap does not reopen programs on this system.',
       })}</span>`;
-  $('confirmOk').innerHTML = icon('refresh', 15) + 'Restart it';
+  $('confirmOk').innerHTML = icon(reopens ? 'refresh' : 'stop', 15) + (reopens ? 'Restart it' : 'Quit it');
   $('confirmModal').classList.add('open');
 }
 
