@@ -154,6 +154,8 @@ function harness(opts: { realCard?: boolean; lapse?: boolean; facts?: boolean; r
     registerView: (v: { id: string; onScanChange: (scanId: string) => void; mount: () => void }) => { views[v.id] = v; },
     mountedView: mounted, refreshDock: noop,
     cityOnPointerDown: noop, cityOnPointerMove: noop, cityOnPointerUp: noop, cityOnPointerLeave: noop, cityOnWheel: noop, cityOnKey: noop, cityOnResize: noop,
+    // The card's fit to the window (fifth browser pass F06), held by layoutQa; a measure, nothing to load.
+    cityFitHeight: () => false,
     isSun: () => false, isCells: () => false, exitCartPreview: noop,
     // finishScan's completion toast is expected; any other is a loader reporting a failure.
     toast: (m: string) => { if (!/^Scan complete/.test(m)) throw new Error('the page reported: ' + m); },

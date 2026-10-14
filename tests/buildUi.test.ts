@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import vm from 'node:vm';
 
 /**
  * The single-file page is BUILT from src/ui/**.
@@ -284,4 +285,24 @@ test('the shipped page carries no control characters the HTML parser would rewri
   }
   assert.deepEqual(offenders, [],
     'write a separator as an escape (\\u0000) so the byte never reaches the parser');
+});
+
+test('every script the shipped page runs compiles as one classic script — a name declared twice at its top level would stop the whole page (fifth browser pass F06)', () => {
+  // The page is ~110 files concatenated into one script, so a top-level `const` in one part
+  // that another part already declares is an early SyntaxError: nothing in the page runs.
+  // F06 nearly shipped one — Disk City's card height reused CITY_MAX_H, the building-height
+  // band's name — and no test compiled the page as a whole; a behaviour test caught it by luck.
+  // Compiled here, never run (vm.Script). JSON data blocks are not scripts.
+  const html = readFileSync(path.join(repoRoot, manifest.output), 'utf8');
+  const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/g)]
+    .filter((m) => !/\btype="application\/(?:ld\+)?json"/.test(m[1]));
+  assert.ok(scripts.length >= 2 && scripts.some((m) => m[2].length > 1_000_000), `control: the page's scripts were found, the app among them (${scripts.length})`);
+  const failures: string[] = [];
+  for (const [i, m] of scripts.entries()) {
+    try { new vm.Script(m[2], { filename: `inline script ${i + 1}` }); } catch (e) { failures.push(`inline script ${i + 1}: ${(e as Error).message}`); }
+  }
+  assert.deepEqual(failures, [], 'every script compiles');
+  // Control: the check sees the error it is for.
+  const app = scripts.find((m) => m[2].length > 1_000_000)![2];
+  assert.throws(() => new vm.Script(`${app}\nconst CITY_MAX_H = 1100;`), /already been declared/, 'control: a second top-level declaration of a name does not compile');
 });

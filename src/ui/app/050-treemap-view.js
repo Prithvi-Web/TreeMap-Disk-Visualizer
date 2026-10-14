@@ -429,6 +429,12 @@ function reclaimCoverageNote() {
  * and the status line (QA D12). It is 96 px — two rows of labelled cells.
  * The map's card is a .glass card, and its border is height too: left out,
  * every window ran 2 px past its bottom (QA fourth pass D12, 702/700).
+ * So is every row under the footer that is on screen: the drive dock while a
+ * drive is connected — left out, its 61 px ran the page past the window,
+ * 961/900 and 761/700 (fifth browser pass F06) — the alternate renderers'
+ * note, and Disk City's list of buildings, which fits its card through here
+ * too (cityFitHeight). A disclosure counts as closed: opened, it is read
+ * below the fold, and the map does not shrink to make room for it.
  */
 function treemapCanvasHeight(wrap) {
   const MIN_H = 96; // the floor, for a window with no room left (above)
@@ -439,9 +445,14 @@ function treemapCanvasHeight(wrap) {
   const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
     + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
   const foot = wrap.parentElement && wrap.parentElement.querySelector('.tm-foot');
-  const below = foot
+  let below = foot
     ? foot.getBoundingClientRect().height + parseFloat(getComputedStyle(foot).marginTop)
     : 28;
+  for (let row = foot ? foot.nextElementSibling : null; row; row = row.nextElementSibling) {
+    if (!row.getClientRects().length) continue; // hidden: it takes no room
+    const shown = row.tagName === 'DETAILS' && row.open ? row.querySelector('summary') || row : row;
+    below += shown.getBoundingClientRect().height + (parseFloat(getComputedStyle(row).marginTop) || 0);
+  }
   const main = wrap.closest('main');
   const mainPadB = main ? parseFloat(getComputedStyle(main).paddingBottom) : 24;
   return Math.max(MIN_H, Math.floor(window.innerHeight - top - padY - below - mainPadB));
@@ -469,7 +480,9 @@ function tmRefitMap() {
   if (isCells()) { tmCellsSettle(); return; }
   drawView();
 }
-const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock'];
+// The drive dock and the alternate renderers' note come and go under the
+// footer: a drive connected or ejected, a note written after a draw (F06).
+const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock', '#tmDock', '#tmAltNote'];
 if (typeof ResizeObserver !== 'undefined') {
   const tmChromeRo = new ResizeObserver(() => tmRefitMap());
   for (const sel of TM_CHROME_ROWS) { const el = document.querySelector(sel); if (el) tmChromeRo.observe(el); }

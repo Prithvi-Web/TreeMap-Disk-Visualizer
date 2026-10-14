@@ -5,7 +5,9 @@
    immediately beside the Treemap it is meant to be the same map as. */
 /* A studio backdrop, not a panel. The city is lit from the upper right, so the
    light in the room comes from there too — a flat fill behind a lit object is
-   the single thing that most makes 3D read as a sticker. */
+   the single thing that most makes 3D read as a sticker. The height here is the
+   card's until the page lays it out: then cityFitHeight fits it to the window
+   as the map is fitted, the drive dock and the list counted (F06). */
 #cityWrap { position: relative; border-radius: var(--r-lg); overflow: hidden;
   border: 1px solid var(--hairline); height: clamp(360px, calc(100vh - 250px), 1100px);
   background:

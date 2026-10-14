@@ -682,7 +682,7 @@ function sheetPx(v: string | undefined, what: string): number {
  * padding while "Preview after" is up, which the page measures from its
  * banner (--tm-preview-pad), given here as `previewPad`.
  */
-function mapWithCart(H: number, top: number, footH: number, previewPad?: number) {
+function mapWithCart(H: number, top: number, footH: number, previewPad?: number, rows: RowBelow[] = []) {
   const pad = sheetPx(declsFor('#treemapWrap').get('padding'), "#treemapWrap's padding");
   const padTop = previewPad ?? pad;
   // The map's card is a .glass card, whose hairline border is height too (QA fourth pass D12: 702 px in a 700 px window).
@@ -690,20 +690,58 @@ function mapWithCart(H: number, top: number, footH: number, previewPad?: number)
   const border = sheetPx(declsFor('.glass').get('border'), "the card's border");
   const footGap = sheetPx(declsFor('.tm-foot').get('margin-top'), "the footer's top margin");
   const padB = sheetPx(declsFor('body:has(#cartDock.show) main').get('padding-bottom'), 'the room <main> keeps for the cart pill');
+  const below = rowsBelow(rows);
+  const foot = { getBoundingClientRect: () => ({ height: footH }), nextElementSibling: below.first };
   const wrap = {
     getBoundingClientRect: () => ({ top }),
-    parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: footH }) }) },
+    parentElement: { querySelector: () => foot },
     closest: () => ({}),
   };
   const height = runPageDecls<(w: unknown) => number>(['treemapCanvasHeight'], {
     window: { innerHeight: H },
     getComputedStyle: (el: unknown) => (el === wrap
       ? { paddingTop: `${padTop}px`, paddingBottom: `${pad}px`, borderTopWidth: `${border}px`, borderBottomWidth: `${border}px` }
-      : { marginTop: `${footGap}px`, paddingBottom: `${padB}px` }),
+      : below.styleOf(el) ?? { marginTop: `${footGap}px`, paddingBottom: `${padB}px` }),
   }, 'treemapCanvasHeight')(wrap);
   // Where the footer's last line (the hint) ends, where the room kept for the pill begins, and the page's whole height.
   const footEnd = top + border + padTop + height + pad + border + footGap + footH;
-  return { height, footEnd, pillRoom: H - padB, page: footEnd + padB };
+  return { height, footEnd, pillRoom: H - padB, page: footEnd + below.taken + padB };
+}
+
+/**
+ * A row of a view that sits under its footer — the drive dock, the alternate renderer's note, Disk
+ * City's list — as the page lays it out: `h` px tall when shown, nothing when `hidden`, with the top
+ * margin the stylesheet gives `sel`. A <details> counts by its summary while it is open (`openH`, the
+ * whole disclosure's height then).
+ */
+type RowBelow = { sel: string; h: number; shown: boolean; openH?: number };
+
+/** The stylesheet's top margin for `sel` (margin-top, or the first side of a margin shorthand), 0 when it has none. */
+function marginTopOf(sel: string): number {
+  const d = declsFor(sel);
+  const v = d.get('margin-top') ?? d.get('margin');
+  return v === undefined ? 0 : sheetPx(v, `${sel}'s top margin`);
+}
+
+/** `rows` chained as next siblings, with each one's computed style, and the room the shown ones take on the page. */
+function rowsBelow(rows: RowBelow[]) {
+  const styles = new Map<unknown, { marginTop: string }>();
+  let first: unknown = null;
+  let taken = 0;
+  for (const r of [...rows].reverse()) {
+    const summary = { getBoundingClientRect: () => ({ height: r.h }) };
+    const el = {
+      tagName: r.openH === undefined ? 'DIV' : 'DETAILS', open: r.openH !== undefined,
+      getClientRects: () => (r.shown ? [{}] : []),
+      getBoundingClientRect: () => ({ height: r.openH ?? r.h }),
+      querySelector: (q: string) => (q === 'summary' ? summary : null),
+      nextElementSibling: first,
+    };
+    styles.set(el, { marginTop: `${marginTopOf(r.sel)}px` });
+    first = el;
+    if (r.shown) taken += marginTopOf(r.sel) + r.h; // an open disclosure takes its summary's place here; the rest is read below the fold
+  }
+  return { first, taken, styleOf: (el: unknown) => styles.get(el) };
 }
 
 test('at the desktop window\'s minimum the map gives up height so its footer stays above the cart pill (B36 remainder)', () => {
@@ -785,6 +823,185 @@ test('in "Preview after" at the desktop window\'s minimum the page fits the wind
   const up = mapWithCart(H, top, footH, banner);
   assert.equal(up.height, 96, 'control: with the bar up the map is at its floor');
   assert.ok(up.page > H, `control: and the page still runs ${up.page - H} px past the window`);
+});
+
+/* ══════════════ F06 — the drive dock is counted when the map and Disk City are fitted ══════════════ */
+
+/** The drive dock with one drive, measured in the QA's windows (fifth browser pass F06): 961/900 and 761/700 against 900 and 700. */
+const DOCK_H = 61;
+/** The alternate renderer's note on one line: 11.5 px type at 1.5 line height (.tm-altnote). */
+const ALT_NOTE_H = 18;
+
+test('with a drive connected the drive dock under the map is counted when the map is fitted to the window — at 1440×900 and 1024×700, "Preview after" and the alternate renderers\' note included, and the cart pill never covers the hint (fifth browser pass F06)', () => {
+  // QA fifth pass F06: the Treemap was 961/900 with the dock and 900/900 without; 1024×700 (and
+  // Preview after) 761/700 against 700/700; the 61 px are the dock's. treemapCanvasHeight measured
+  // the footer and nothing under it.
+  const [tmView] = selectAll(markupTree(), '#view-treemap');
+  assert.ok(['tmDock', 'tmAltNote'].every((id) => tmView.children.some((c) => c.id === id)),
+    'control: the dock and the alternate renderers\' note are rows of the Treemap view');
+  const dock = (shown: boolean): RowBelow => ({ sel: '.drive-dock', h: DOCK_H, shown });
+  const note = (shown: boolean): RowBelow => ({ sel: '.tm-altnote', h: ALT_NOTE_H, shown });
+  const barBlock = 105 + sheetPx(declsFor('.tm-timebar').get('margin-bottom'), "the bar's bottom margin");
+  const cases: Array<[string, number, number, number, number | undefined]> = [
+    // label, window height, the card's top, footer height, preview pad (shots of F06 and of the D12 checks above)
+    ['1440×900', 900, 150, 17, undefined],
+    ['1024×700, the toolbar on two rows', 700, 250, 40, undefined],
+    ['1024×700, Reclaim colour', 700, 250, 76, undefined],
+    ['1024×700, preview pane, "Preview after", the time slider stepped aside', 700, 293 - barBlock, 69, 196],
+  ];
+  for (const [label, H, top, footH, previewPad] of cases) {
+    // "Preview after" previews the rectangle map only (enterCartPreview refuses the other three), so
+    // the alternate renderers' note is never up beside it.
+    const states: Array<[string, RowBelow[]]> = [['the dock', [dock(true), note(false)]]];
+    if (previewPad === undefined) {
+      states.push(['the dock and a Sunburst, Circles or Voronoi note', [dock(true), note(true)]], ['the note alone', [dock(false), note(true)]]);
+    }
+    for (const [what, rows] of states) {
+      const m = mapWithCart(H, top, footH, previewPad, rows);
+      assert.ok(m.page <= H, `${label}, ${what}: the page is ${m.page} px tall in the ${H} px window`);
+      assert.ok(m.footEnd <= m.pillRoom, `${label}, ${what}: the hint ends at y ${m.footEnd}; the room kept for the pill starts at y ${m.pillRoom}`);
+      assert.ok(m.height >= 96, `${label}, ${what}: and the map keeps its floor (${m.height} px)`);
+    }
+    // A row that is hidden takes no room: without a drive the map is as tall as it always was.
+    assert.equal(mapWithCart(H, top, footH, previewPad, [dock(false), note(false)]).height, mapWithCart(H, top, footH, previewPad).height,
+      `${label}: control — with the dock and the note hidden, the map is the height it was`);
+  }
+});
+
+test('the map is fitted again when the drive dock appears or goes, or the alternate renderers\' note does (fifth browser pass F06)', () => {
+  const rows = /const TM_CHROME_ROWS = \[([^\]]*)\];/.exec(INDEX);
+  const list = [...rows![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  for (const sel of ['#tmDock', '#tmAltNote']) assert.ok(list.includes(sel), `${sel} is watched (${list.join(', ')})`);
+  // The page's own tmRefitMap over a dock that a drive's arrival shows and its removal hides.
+  let shown = false;
+  const draws: string[] = [];
+  const dockEl = { getClientRects: () => (shown ? [{}] : []), getBoundingClientRect: () => ({ height: DOCK_H }), nextElementSibling: null };
+  const foot = { getBoundingClientRect: () => ({ height: 17 }), nextElementSibling: dockEl };
+  const wrap = { getBoundingClientRect: () => ({ top: 150 }), parentElement: { querySelector: () => foot }, closest: () => ({}) };
+  const tmCanvas = { style: { height: '' } };
+  const fns = runPageDecls<{ tmRefitMap(): void; treemapCanvasHeight(w: unknown): number }>(['treemapCanvasHeight', 'tmRefitMap'], {
+    $: (id: string) => (id === 'treemapWrap' ? wrap : null),
+    state: { view: 'treemap', treemap: { rootPath: '/c' } },
+    tmCanvas,
+    window: { innerHeight: 900 },
+    getComputedStyle: (el: unknown) => (el === wrap ? { paddingTop: '10px', paddingBottom: '10px' } : el === dockEl ? { marginTop: '0px' } : { marginTop: '12px', paddingBottom: '48px' }),
+    drawView: () => { draws.push('draw'); tmCanvas.style.height = fns.treemapCanvasHeight(wrap) + 'px'; },
+    isCells: () => false,
+  }, '{ tmRefitMap, treemapCanvasHeight }');
+  tmCanvas.style.height = fns.treemapCanvasHeight(wrap) + 'px'; // drawn with no drive
+  const without = tmCanvas.style.height;
+  shown = true; // a drive connected: renderDock shows the dock
+  fns.tmRefitMap();
+  assert.deepEqual(draws, ['draw'], 'the dock appearing redraws the map');
+  assert.equal(parseFloat(without) - parseFloat(tmCanvas.style.height), DOCK_H, 'shorter by the dock');
+  fns.tmRefitMap();
+  assert.deepEqual(draws, ['draw'], 'and only once');
+  shown = false; // the drive ejected
+  fns.tmRefitMap();
+  assert.deepEqual(draws, ['draw', 'draw'], 'the dock going gives the map its room back');
+  assert.equal(tmCanvas.style.height, without);
+});
+
+/**
+ * The page's cityFitHeight in a window `H` px tall, Disk City's card starting `top` px down, its
+ * footer `footH` px, the rows under it, while the cart holds something. Returns the height it gives
+ * the card (border-box, as the page's `* { box-sizing: border-box }` has it) and where the page ends.
+ */
+function cityWithRows(H: number, top: number, footH: number, rows: RowBelow[], view = 'city') {
+  const border = sheetPx(declsFor('#cityWrap').get('border'), "the city card's border");
+  const footGap = sheetPx(declsFor('.tm-foot').get('margin-top'), "the footer's top margin");
+  const padB = sheetPx(declsFor('body:has(#cartDock.show) main').get('padding-bottom'), 'the room <main> keeps for the cart pill');
+  const below = rowsBelow(rows);
+  const foot = { getBoundingClientRect: () => ({ height: footH }), nextElementSibling: below.first };
+  const wrap = {
+    style: { height: '' },
+    getBoundingClientRect: () => ({ top }),
+    parentElement: { querySelector: (q: string) => (q === '.tm-foot' ? foot : null) },
+    closest: () => ({}),
+  };
+  const invalidated: number[] = [];
+  const fns = runPageDecls<{ cityFitHeight(): boolean; cityRefit(): void }>(['treemapCanvasHeight', 'CITY_CARD_MAX_PX', 'cityFitHeight', 'cityRefit'], {
+    $: (id: string) => (id === 'cityWrap' ? wrap : null),
+    state: { view },
+    window: { innerHeight: H },
+    cityInvalidate: () => { invalidated.push(1); },
+    getComputedStyle: (el: unknown) => (el === wrap
+      ? { paddingTop: '0px', paddingBottom: '0px', borderTopWidth: `${border}px`, borderBottomWidth: `${border}px` }
+      : below.styleOf(el) ?? { marginTop: `${footGap}px`, paddingBottom: `${padB}px` }),
+  }, '{ cityFitHeight, cityRefit }');
+  fns.cityRefit();
+  const card = parseFloat(wrap.style.height);
+  const footEnd = top + card + footGap + footH;
+  return { card, styled: wrap.style.height, footEnd, pillRoom: H - padB, page: footEnd + below.taken + padB, redraws: () => invalidated.length, fns, wrap };
+}
+
+test('Disk City is fitted to the window as the map is — its footer, the drive dock, its list\'s summary and the pill\'s room counted — at 1440×900 and 1024×700 (fifth browser pass F06)', () => {
+  // QA fifth pass F06: Disk City at 1440×900 was 975/900 with the dock. Its height was the stylesheet's
+  // clamp(360px, 100vh - 250px, 1100px): a guess at the rows above and below, which the dock beat.
+  const [cityView] = selectAll(markupTree(), '#view-city');
+  assert.ok(['cityDock', 'cityTableWrap'].every((id) => cityView.children.some((c) => c.id === id)),
+    'control: the dock and the list are rows of the Disk City view');
+  const dock = (shown: boolean): RowBelow => ({ sel: '.drive-dock', h: DOCK_H, shown });
+  const list = (openH?: number): RowBelow => ({ sel: '.city-table', h: 29, shown: true, openH });
+  for (const [label, H, top, footH] of [['1440×900', 900, 150, 17], ['1024×700, the toolbar on two rows', 700, 220, 40]] as Array<[string, number, number, number]>) {
+    for (const [what, rows] of [['with the dock', [dock(true), list()]], ['without a drive', [dock(false), list()]]] as Array<[string, RowBelow[]]>) {
+      const c = cityWithRows(H, top, footH, rows);
+      assert.ok(c.page <= H, `${label}, ${what}: the page is ${c.page} px tall in the ${H} px window (a ${c.card} px city)`);
+      assert.ok(c.page >= H - 1, `${label}, ${what}: and the city takes the room there is (the page ends at ${c.page})`);
+      assert.ok(c.footEnd <= c.pillRoom, `${label}, ${what}: the hint ends at y ${c.footEnd}; the room kept for the pill starts at y ${c.pillRoom}`);
+      assert.equal(c.redraws(), 1, `${label}, ${what}: a city fitted to a new height is redrawn`);
+    }
+    // Opened, the list is read below the fold: the city does not shrink to make room for it.
+    assert.equal(cityWithRows(H, top, footH, [dock(true), list(4000)]).card, cityWithRows(H, top, footH, [dock(true), list()]).card,
+      `${label}: opening the list of buildings leaves the city its height`);
+  }
+  const tall = cityWithRows(2400, 150, 17, [dock(false), list()]);
+  assert.equal(tall.card, 1100, 'a very tall window keeps the stylesheet\'s 1100 px ceiling');
+  const again = cityWithRows(900, 150, 17, [dock(true), list()]);
+  again.fns.cityRefit();
+  assert.equal(again.redraws(), 1, 'a fit that changes nothing redraws nothing');
+  const hidden = cityWithRows(900, 0, 17, [dock(true), list()]);
+  assert.deepEqual([hidden.styled, hidden.redraws()], ['', 0], 'a city not laid out (a hidden view) keeps the stylesheet\'s height');
+  const elsewhere = cityWithRows(900, 150, 17, [dock(true), list()], 'treemap');
+  assert.deepEqual([elsewhere.styled, elsewhere.redraws()], ['', 0], 'nor is it fitted while another view is up');
+});
+
+test('Disk City is fitted again when the drive dock appears or goes, and on every visit and window resize (fifth browser pass F06)', () => {
+  const rows = /const CITY_CHROME_ROWS = \[([^\]]*)\];/.exec(INDEX);
+  assert.ok(rows, 'the rows around the city are listed');
+  const list = [...rows![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  for (const sel of ['#view-city .tm-toolbar', '#view-city .tm-foot', '#cityDock', '#cartDock']) {
+    assert.ok(list.includes(sel), `${sel} is watched (${list.join(', ')})`);
+  }
+  const wiring = INDEX.slice(rows!.index, rows!.index + 400);
+  assert.match(wiring, /new ResizeObserver\(\(\) => cityRefit\(\)\)/, 'a change of size refits the city');
+  assert.match(wiring, /for \(const sel of CITY_CHROME_ROWS\)[^}]*\.observe\(/, 'and every listed row is observed');
+  // The dock arriving: the page's cityRefit over a dock renderDock shows.
+  let shown = false;
+  const dockEl = { getClientRects: () => (shown ? [{}] : []), getBoundingClientRect: () => ({ height: DOCK_H }), nextElementSibling: null };
+  const foot = { getBoundingClientRect: () => ({ height: 17 }), nextElementSibling: dockEl };
+  const wrap = { style: { height: '' }, getBoundingClientRect: () => ({ top: 150 }), parentElement: { querySelector: () => foot }, closest: () => ({}) };
+  let redraws = 0;
+  const fns = runPageDecls<{ cityRefit(): void; cityOnResize(): void }>(['treemapCanvasHeight', 'CITY_CARD_MAX_PX', 'cityFitHeight', 'cityRefit', 'cityOnResize'], {
+    $: (id: string) => (id === 'cityWrap' ? wrap : null), state: { view: 'city' }, window: { innerHeight: 900 },
+    cityInvalidate: () => { redraws++; },
+    getComputedStyle: (el: unknown) => (el === wrap ? { paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '1px', borderBottomWidth: '1px' }
+      : el === dockEl ? { marginTop: '0px' } : { marginTop: '12px', paddingBottom: '76px' }),
+  }, '{ cityRefit, cityOnResize }');
+  fns.cityRefit();
+  const without = parseFloat(wrap.style.height);
+  shown = true;
+  fns.cityRefit();
+  assert.equal(without - parseFloat(wrap.style.height), DOCK_H, 'the dock appearing takes its height off the city');
+  assert.equal(redraws, 2, 'and the city is redrawn at it');
+  shown = false;
+  fns.cityOnResize();
+  assert.equal(parseFloat(wrap.style.height), without, 'a window resize fits it too: the dock gone, the room is back');
+  // A visit fits the city before it is first drawn.
+  const mount = INDEX.slice(INDEX.indexOf('  mount() {\n    refreshDock(); // §8.3 — the dock sits under this canvas too'));
+  const body = mount.slice(0, mount.indexOf('\n  },'));
+  assert.ok(body.includes('cityFitHeight();') && body.indexOf('cityFitHeight();') < body.indexOf('citySetHeight('),
+    'mount() fits the city before its first draw');
 });
 
 test('the sunburst fits the map the page leaves it, down to the map\'s floor — its disc is never cut by the top or bottom of a short map (review F1.3, F3.3)', () => {

@@ -1470,7 +1470,9 @@ body:has(#cartDock.show) #view-grid.active { height: calc(100vh - 96px); }
    immediately beside the Treemap it is meant to be the same map as. */
 /* A studio backdrop, not a panel. The city is lit from the upper right, so the
    light in the room comes from there too — a flat fill behind a lit object is
-   the single thing that most makes 3D read as a sticker. */
+   the single thing that most makes 3D read as a sticker. The height here is the
+   card's until the page lays it out: then cityFitHeight fits it to the window
+   as the map is fitted, the drive dock and the list counted (F06). */
 #cityWrap { position: relative; border-radius: var(--r-lg); overflow: hidden;
   border: 1px solid var(--hairline); height: clamp(360px, calc(100vh - 250px), 1100px);
   background:
@@ -11638,6 +11640,12 @@ function reclaimCoverageNote() {
  * and the status line (QA D12). It is 96 px — two rows of labelled cells.
  * The map's card is a .glass card, and its border is height too: left out,
  * every window ran 2 px past its bottom (QA fourth pass D12, 702/700).
+ * So is every row under the footer that is on screen: the drive dock while a
+ * drive is connected — left out, its 61 px ran the page past the window,
+ * 961/900 and 761/700 (fifth browser pass F06) — the alternate renderers'
+ * note, and Disk City's list of buildings, which fits its card through here
+ * too (cityFitHeight). A disclosure counts as closed: opened, it is read
+ * below the fold, and the map does not shrink to make room for it.
  */
 function treemapCanvasHeight(wrap) {
   const MIN_H = 96; // the floor, for a window with no room left (above)
@@ -11648,9 +11656,14 @@ function treemapCanvasHeight(wrap) {
   const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
     + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
   const foot = wrap.parentElement && wrap.parentElement.querySelector('.tm-foot');
-  const below = foot
+  let below = foot
     ? foot.getBoundingClientRect().height + parseFloat(getComputedStyle(foot).marginTop)
     : 28;
+  for (let row = foot ? foot.nextElementSibling : null; row; row = row.nextElementSibling) {
+    if (!row.getClientRects().length) continue; // hidden: it takes no room
+    const shown = row.tagName === 'DETAILS' && row.open ? row.querySelector('summary') || row : row;
+    below += shown.getBoundingClientRect().height + (parseFloat(getComputedStyle(row).marginTop) || 0);
+  }
   const main = wrap.closest('main');
   const mainPadB = main ? parseFloat(getComputedStyle(main).paddingBottom) : 24;
   return Math.max(MIN_H, Math.floor(window.innerHeight - top - padY - below - mainPadB));
@@ -11678,7 +11691,9 @@ function tmRefitMap() {
   if (isCells()) { tmCellsSettle(); return; }
   drawView();
 }
-const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock'];
+// The drive dock and the alternate renderers' note come and go under the
+// footer: a drive connected or ejected, a note written after a draw (F06).
+const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock', '#tmDock', '#tmAltNote'];
 if (typeof ResizeObserver !== 'undefined') {
   const tmChromeRo = new ResizeObserver(() => tmRefitMap());
   for (const sel of TM_CHROME_ROWS) { const el = document.querySelector(sel); if (el) tmChromeRo.observe(el); }
@@ -27917,7 +27932,48 @@ function cityOnKey(e) {
   else if (e.key === '-' || e.key === '_') { cityAnimateZoom((c.zoomTarget || c.zoom) / 1.25); e.preventDefault(); }
 }
 
-function cityOnResize() { cityInvalidate(); }
+/** The tallest Disk City's card is drawn, in px, as the stylesheet's clamp() had it. */
+const CITY_CARD_MAX_PX = 1100;
+
+/**
+ * Disk City's height, measured as the map's is (fifth browser pass F06): the
+ * window less what sits above the city and every row under it on screen —
+ * its footer, the drive dock while a drive is connected, the summary of its
+ * list of buildings — and the room <main> keeps for the cart pill
+ * (treemapCanvasHeight). It was the stylesheet's alone, clamp(360px, 100vh
+ * - 250px, 1100px): a guess at those rows, which the dock's 61 px pushed
+ * past the window's bottom (975/900). The stylesheet's height stands while
+ * the city is not laid out. True when the height changed.
+ */
+function cityFitHeight() {
+  const wrap = $('cityWrap');
+  if (!wrap || !(wrap.getBoundingClientRect().top > 0)) return false;
+  const cs = getComputedStyle(wrap);
+  const frame = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+    + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+  const height = `${Math.min(CITY_CARD_MAX_PX, treemapCanvasHeight(wrap) + frame)}px`; // border-box, as every box is here
+  if (wrap.style.height === height) return false;
+  wrap.style.height = height;
+  return true;
+}
+
+/** Fit the city again while it is on screen, and redraw it if its height moved. */
+function cityRefit() {
+  if (state.view !== 'city') return;
+  if (cityFitHeight()) cityInvalidate();
+}
+
+function cityOnResize() { cityFitHeight(); cityInvalidate(); }
+
+// The rows around the city that can change height after it is drawn: the
+// toolbar wrapping, the footer's legend wrapping, the drive dock appearing
+// or going as a drive is connected or ejected (F06), the room the cart pill
+// reserves at the bottom of <main>.
+const CITY_CHROME_ROWS = ['#view-city .tm-toolbar', '#view-city .tm-foot', '#cityDock', '#cartDock'];
+if (typeof ResizeObserver !== 'undefined') {
+  const cityChromeRo = new ResizeObserver(() => cityRefit());
+  for (const sel of CITY_CHROME_ROWS) { const el = document.querySelector(sel); if (el) cityChromeRo.observe(el); }
+}
 
 function citySetHeight(requested) {
   const mode = cityMode(requested, CITY_HEIGHT_LABEL, 'staleness');
@@ -27994,6 +28050,7 @@ registerView({
     canvas.addEventListener('wheel', cityOnWheel, { passive: false });
     canvas.addEventListener('keydown', cityOnKey);
     window.addEventListener('resize', cityOnResize);
+    cityFitHeight(); // before the first draw, which reads the card's height
     citySetHeight(state.city.height);
     citySetColour(state.city.colour);
     loadCity(state.treemap.rootPath);
