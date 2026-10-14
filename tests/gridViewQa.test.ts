@@ -1321,6 +1321,47 @@ test('a tile with keyboard focus keeps it when the Grid rebuilds the tiles aroun
   assert.ok(!h.els.gridInner.children.includes(FOCUS.active!), `no tile of the new folder takes focus (data-i ${FOCUS.active?.dataset.i})`);
 });
 
+/* ══════════════ review F2.4 — a tile is a button, wired to its own file ══════════════ */
+
+test('every tile is a button in the Tab order, and its own click, Enter and Space select that tile’s file — never a neighbour’s (review F2.4)', async () => {
+  // A tile's handlers are the only way a person selects a file in the Grid,
+  // and the tests drove onCellClick directly: a tile with no click handler,
+  // one wired to the next tile, no Enter/Space, or no tab stop passed them all.
+  const g = gridHarness({ raf: true });
+  evenPlant(g, 40);
+  sizeFromSheet(g, 1440, 900, false);
+  await g.renderGrid();
+  const tileEl = (i: number) => g.els.gridInner.children.find((c) => Number(c.dataset.i) === i)!;
+  assert.ok(g.els.gridInner.children.length >= 12, `control: a few rows of tiles are built (${g.els.gridInner.children.length})`);
+  for (const t of g.els.gridInner.children) {
+    assert.equal(t.tabIndex, 0, `tile ${t.dataset.i} is in the Tab order`);
+    assert.equal(t.attrs.role, 'button', `tile ${t.dataset.i} is a button to assistive tech`);
+  }
+  // The tile's own listeners, as the browser runs them. Each event is a fresh
+  // tile: every selection rebuilds the window's tiles.
+  const fire = (i: number, type: string, ev: Record<string, unknown>) => {
+    const fns = tileEl(i).listeners[type] || [];
+    assert.ok(fns.length > 0, `tile ${i} answers a ${type}`);
+    for (const f of fns) f(ev);
+  };
+  const pathOf = (i: number) => g.state.grid.layout[i].it.path;
+  const selected = () => [...g.state.grid.selection].sort();
+  let prevented = 0;
+  const key = (k: string, mods: Record<string, boolean> = {}) => ({ key: k, ...mods, preventDefault: () => { prevented++; } });
+
+  fire(5, 'click', {});
+  assert.deepEqual(selected(), [pathOf(5)], 'a click on tile 5 selects its file');
+  fire(9, 'keydown', key('Enter'));
+  assert.deepEqual(selected(), [pathOf(9)], 'Enter on tile 9 selects its file');
+  assert.equal(prevented, 1, 'and the key does nothing else');
+  fire(2, 'keydown', key(' ', { metaKey: true }));
+  assert.deepEqual(selected(), [pathOf(2), pathOf(9)].sort(), '⌘-Space on tile 2 adds its file');
+  assert.equal(prevented, 2, 'and Space does not scroll the Grid');
+  fire(3, 'keydown', key('a'));
+  assert.deepEqual(selected(), [pathOf(2), pathOf(9)].sort(), 'another key selects nothing');
+  assert.equal(prevented, 2, 'and is left to the page');
+});
+
 /* ══════════════ review F1.9 — the layout is measured with the scroller's own scrollbar in place ══════════════ */
 
 test('no tile overhangs the Grid when its scrollbar appears — on a first visit, or opening a folder taller than the window from one that fit (review F1.9)', async (t) => {
