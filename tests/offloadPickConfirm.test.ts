@@ -37,7 +37,7 @@ interface Harness {
   picked: (paths: string[], dest: string) => Promise<void>;
   /** The page's dockDrop: the cart dropped on the drive at `volPath`. */
   drop: (volPath: string) => Promise<void>;
-  state: { cart: Set<string>; pathIndex: Set<string>; root: { path: string } };
+  state: { cart: Set<string>; pathIndex: Set<string>; root: { path: string }; system?: { platform: string } };
   /** The folders each GET /api/volumes?from= judged against, in order (review F2.1). */
   volumeAsks: string[][];
   opened: unknown[][];
@@ -137,11 +137,52 @@ test('Offload… opens its picker on a connected drive, never on the disk the fi
 test('with no other drive connected, the picker says so and offers no folder on this disk as a shortcut (E01)', async () => {
   const h = harness([]);
   await h.start(['/Users/me/a.mov']);
-  const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips: Drive[]; hint: string }];
-  assert.equal(start, null, 'nothing to open on but where the picker starts');
+  const [, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips: Drive[]; hint: string }];
   assert.deepEqual(opts.chips, [], 'no Desktop / Documents / Downloads shortcuts — each is on this disk');
   assert.match(opts.hint, /No other drive is connected/);
   assert.match(opts.hint, /frees nothing/);
+});
+
+test('with no other drive connected, the picker opens where drives appear — never on the home folder, the files\' own drive — and an offload\'s pick holds the picker open until it answers (fifth browser pass F02)', async () => {
+  // QA fifth pass F02: with no external drive, Offload… opened on /Users/<user> — the drive the files are
+  // on, holding the selection — with "Offload to this folder" ready; pressing it was refused.
+  const startFor = async (platform: string | null, drives: Drive[] = [], paths = ['/Users/me/Mail/Mailbox 23.mbox']) => {
+    const h = harness(drives);
+    if (platform) h.state.system = { platform };
+    await h.start(paths);
+    return h.opened[0] as [string | null, unknown, string, string, { holdOpen?: boolean }];
+  };
+  assert.equal((await startFor('darwin'))[0], '/Volumes', 'macOS: where drives are mounted, which lists no folder of this disk');
+  assert.equal((await startFor('linux'))[0], '/mnt', 'Linux: the mount folder every distribution has');
+  assert.equal((await startFor(null))[0], null, 'an unknown system: where the picker always starts');
+  assert.equal((await startFor('darwin', [WORK]))[0], '/Volumes/Work', 'control: a connected drive is still where it opens');
+  assert.equal((await startFor('darwin', [WORK], ['/Volumes/Work/old']))[0], null, 'control: files on the only drive open on this computer\'s disk, another drive for them');
+  assert.equal((await startFor('darwin'))[4].holdOpen, true, 'an offload\'s pick answers before the picker goes');
+});
+
+test('a pick from the picker is answered before the picker goes: refused, it stays open with the reason said; planned, it closes just before the sheet opens; dismissed meanwhile, nothing opens and nothing is said (fifth browser pass F02)', async () => {
+  const refusal = '"me" is on the same drive as "Mailbox 23.mbox". An offload copies each file and then moves the original to the Trash, so on the same drive it frees nothing';
+  const paths = ['/Users/me/Mail/Mailbox 23.mbox'];
+  const run = async (refuse: string | null, stillOpen = true) => {
+    const h = harness([BACKUP], refuse);
+    const events: string[] = [];
+    const confirmModal = { innerHTML: '', open: false, classList: { add: (c: string) => { if (c === 'open') { events.push('sheet'); confirmModal.open = true; } } } };
+    (h.els as Record<string, unknown>).confirmModal = confirmModal;
+    await h.start(paths);
+    const pick = (h.opened[0] as [unknown, (dest: string, ctl: { leave(): void; current(): boolean }) => Promise<void>])[1];
+    await pick('/Volumes/Backup/Mail', { leave: () => { events.push('leave'); }, current: () => stillOpen });
+    return { h, events };
+  };
+  const refused = await run(refusal);
+  assert.deepEqual(refused.events, [], 'a refused folder leaves the picker open, and no sheet opens');
+  assert.deepEqual(refused.h.toasts, [[`Could not plan the offload: ${refusal}`, 'error']], 'the server\'s reason is said over the picker');
+  const planned = await run(null);
+  assert.deepEqual(planned.events, ['leave', 'sheet'], 'a plan that answers closes the picker, then opens its sheet');
+  const dismissed = await run(null, false);
+  assert.deepEqual(dismissed.events, [], 'a picker dismissed while its plan answered opens no sheet');
+  assert.equal(dismissed.h.confirm(), null, 'and leaves nothing waiting for a Confirm');
+  const dismissedRefused = await run(refusal, false);
+  assert.deepEqual(dismissedRefused.h.toasts, [], 'nor speaks of a refusal for a picker that is gone');
 });
 
 /** What GET /api/volumes answers on Windows, where drive discovery is not implemented (services/volumes.ts). */

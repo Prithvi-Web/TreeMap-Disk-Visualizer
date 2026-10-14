@@ -350,6 +350,9 @@ function renderCompare(r) {
 /* ───────────────────────────── Browse modal ───────────────────────────── */
 let browsePath = null;
 let browseOnPick = null; // when set, "Use this folder" hands the path to this instead of scanning
+// When set (a caller's `where.holdOpen`), the pick is answered before the
+// picker goes, and closes it itself — see the Use button (fifth browser pass F02).
+let browseHold = false;
 // Each listing asked for takes the next number, and only the newest one's
 // answer is shown: a sleeping NAS answers late (review F1.8). Closing the
 // picker retires every listing still on its way — see browseClosed.
@@ -442,9 +445,11 @@ function boxMeant(p) {
 const BROWSE_HINT = 'Type a path and press Enter, or open a folder below.';
 /** `where`: what a caller puts in place of the home folder's shortcuts and the
     line under the path — an offload offers connected drives, and says why a
-    folder on the files' own drive will not do (E01). */
+    folder on the files' own drive will not do (E01). `where.holdOpen`: the
+    pick is answered before the picker goes (F02, the Use button). */
 async function openBrowse(start, onPick = null, title = null, useLabel = null, where = null) {
   browseOnPick = onPick;
+  browseHold = !!(onPick && where && where.holdOpen);
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
   $('browseUseBtn').innerHTML = icon('check', 16) + escapeHtml(useLabel || (onPick ? 'Use this folder' : 'Scan this folder'));
   $('browseHint').textContent = where?.hint || BROWSE_HINT;
@@ -563,6 +568,29 @@ $('browseUseBtn').addEventListener('click', async () => {
     if (!opened) return;
   }
   const pick = browseOnPick;
+  // A held pick (where.holdOpen — an offload) is answered before the picker
+  // goes (fifth browser pass F02): its dry run can refuse the folder, and
+  // closed with the refusal, the picker sent the person back to Offload… to
+  // choose again. It stays open, on that folder, its button held while the
+  // pick answers and live again after; the pick closes it itself (`leave`)
+  // just before it opens what comes next. The pick is `current` until the
+  // picker closes or lists another folder: then its answer is for nothing.
+  if (pick && browseHold && browsePath) {
+    const mine = browseSeq;
+    const current = () => mine === browseSeq;
+    const hadFocus = document.activeElement === btn;
+    btn.disabled = true;
+    try {
+      await pick(browsePath, { leave: () => { if (current()) closeModal('browseModal'); }, current });
+    } finally {
+      if (current()) {
+        btn.disabled = false;
+        // Held, the button may have let focus fall to the page: it takes it back.
+        if (hadFocus && document.activeElement !== btn) btn.focus();
+      }
+    }
+    return;
+  }
   browseOnPick = null;
   closeModal('browseModal');
   if (!browsePath) return;

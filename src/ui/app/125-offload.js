@@ -47,7 +47,10 @@ function dockDrives() {
  * the same dry-run manifest and shared confirm the drive dock uses — a pick
  * never moves anything bare (fourth browser pass, E01). The picker opens on a
  * connected drive, never on the disk the files are on: an offload into the
- * drive they live on frees nothing, and the server refuses it.
+ * drive they live on frees nothing, and the server refuses it. With no other
+ * drive connected it opens where drives are mounted, not on the home folder —
+ * the files' own drive, holding them (fifth browser pass F02) — and a folder
+ * the dry run refuses leaves the picker open on it for another choice.
  */
 async function startOffloadFlow(paths) {
   if (!paths.length) return;
@@ -80,26 +83,49 @@ async function startOffloadFlow(paths) {
     : !listed
       ? `TreeMap can't list the drives on this computer — type the path of a folder on another drive or a network share: ${why}`
       : `No other drive is connected. Connect one, or type the path of a drive or network share: ${why}`;
+  // Where it opens. A connected drive, when there is one. Files on a drive
+  // have this computer's own disk as another drive: the usual start. With no
+  // drive listed, the folder drives are mounted in — /Volumes on macOS, whose
+  // own entry for this disk is a link the picker leaves out; /mnt on Linux,
+  // which every distribution has — never the home folder, which the picker
+  // starts on otherwise: the drive the files are on, holding them, with
+  // "Offload to this folder" ready on it (fifth browser pass F02). With no
+  // list to go by, where it always starts.
+  const platform = state.system && state.system.platform;
+  const mountFolder = platform === 'darwin' ? '/Volumes' : platform === 'linux' ? '/mnt' : null;
+  const start = others.length ? others[0].path : !onADrive && listed ? mountFolder : null;
   // The picker's button names the offload — copy, verify, then trash the
-  // originals — not a scan (final review F1.7).
-  openBrowse(others.length ? others[0].path : null, (dest) => offloadPicked(paths, dest), 'Offload to…', 'Offload to this folder', {
+  // originals — not a scan (final review F1.7). Its pick is answered before
+  // the picker goes (holdOpen): a refused folder leaves it open (F02).
+  openBrowse(start, (dest, picker) => offloadPicked(paths, dest, picker), 'Offload to…', 'Offload to this folder', {
     chips: others.length || (!onADrive && listed) ? others.map((v) => ({ path: v.path, name: v.name })) : undefined,
     hint,
+    holdOpen: true,
   });
 }
 
 /** Which plan owns the shared confirm: a later plan, from the dock or the picker, takes it over. */
 let offloadPlanSeq = 0;
 
-/** A folder picked for an offload: planned by the dry run and confirmed before anything moves (E01). */
-async function offloadPicked(paths, dest) {
+/**
+ * A folder picked for an offload: planned by the dry run and confirmed before
+ * anything moves (E01). `picker`, from the folder picker that is still open
+ * while the plan is asked (fifth browser pass F02): `leave()` closes it just
+ * before the sheet opens; a refusal leaves it open, on the folder refused,
+ * for another choice. A picker dismissed meanwhile (`current()` false) is
+ * answered with nothing — no sheet, no toast.
+ */
+async function offloadPicked(paths, dest, picker = null) {
   // The shared confirm is repainted from a clean slate (review RD3).
   resetOpenHandleWarning();
   if (activeJob) { toast('An offload is already running — let it finish first', 'error'); return; }
   const seq = ++offloadPlanSeq;
+  const pickerCurrent = () => !picker || picker.current();
   try {
-    await confirmOffloadPlan(paths, dest, lastPathSegment(dest), '', () => seq === offloadPlanSeq);
+    await confirmOffloadPlan(paths, dest, lastPathSegment(dest), '', () => seq === offloadPlanSeq && pickerCurrent(),
+      picker ? picker.leave : null);
   } catch (e) {
+    if (!pickerCurrent()) return;
     toast('Could not plan the offload: ' + e.message, 'error');
   }
 }
@@ -111,15 +137,17 @@ async function offloadPicked(paths, dest) {
  * run is where the server refuses — a folder on the files' own drive, too
  * little space, a link — so a refusal is thrown before any sheet opens.
  * `notes`: extra lines for the sheet; `isCurrent`: false once a later plan
- * owns the dialog.
+ * owns the dialog; `beforeSheet`: run once the plan is in, just before the
+ * sheet opens — the picker a pick came from closes there (F02).
  */
-async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent) {
+async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, beforeSheet = null) {
   const plan = await api('/api/offload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scanId: state.scanId, paths, dest, dryRun: true }),
   });
   if (!isCurrent()) return;
+  if (beforeSheet) beforeSheet();
   $('confirmTitle').innerHTML = icon('archive', 18) + `Offload to ${escapeHtml(destName)}?`;
   // What moves, named as every Trash sheet names it (fifth browser pass F03):
   // the item, or "N items" with the first names. The Grid's bar can name

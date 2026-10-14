@@ -54,6 +54,8 @@ type FakeEl = {
   id: string; value: string; textContent: string; innerHTML: string; disabled: boolean;
   title: string; scrollLeft: number; scrollTop: number; readonly scrollWidth: number;
   classList: { add(c: string): void; remove(c: string): void; toggle(c: string, on?: boolean): void };
+  /** The classes the page set — read to tell whether a sheet is open. */
+  cls: Set<string>;
   attrs: Record<string, string>;
   setAttribute(k: string, v: string): void; removeAttribute(k: string): void; getAttribute(k: string): string | null;
   listeners: Record<string, (e?: unknown) => unknown>;
@@ -70,7 +72,12 @@ function fakeEl(id: string): FakeEl {
     title: '', scrollLeft: 0, scrollTop: 0,
     // A laid-out text field's content is as wide as its text (7 px a character here).
     get scrollWidth() { return el.value.length * 7; },
-    classList: { add() {}, remove() {}, toggle() {} },
+    classList: {
+      add(c) { el.cls.add(c); },
+      remove(c) { el.cls.delete(c); },
+      toggle(c, on) { if (on ?? !el.cls.has(c)) el.cls.add(c); else el.cls.delete(c); },
+    },
+    cls: new Set<string>(),
     attrs: {},
     setAttribute(k, v) { el.attrs[k] = String(v); },
     removeAttribute(k) { delete el.attrs[k]; },
@@ -360,6 +367,66 @@ test('an offload\'s picker shows the drives its caller names and the line saying
   await open(null);
   assert.equal($('browseHint').textContent, plain, 'opened for a scan, the plain line is back');
   assert.doesNotMatch($('browseChips').innerHTML, /Backup/, 'and the drives are not left behind');
+});
+
+test('an offload\'s pick is answered before the picker goes: a folder the dry run refuses leaves the picker open on it, button live, for another choice — a plan that answers closes it as its sheet opens (fifth browser pass F02)', async () => {
+  // QA fifth pass F02: "Offload to this folder" on a folder the server refuses closed the picker with
+  // the toast — the person had to open Offload… again to choose another folder.
+  const doc: { activeElement: unknown } = { activeElement: null };
+  const { rt, $, use } = browseRuntime(typedListing, doc);
+  const open = rt.openBrowse as unknown as (start: string | null, onPick?: unknown, title?: string, label?: string, where?: unknown) => Promise<void>;
+  type Ctl = { leave(): void; current(): boolean };
+  // A held button can drop focus to the page, as a browser does with a disabled control.
+  const body = { a: 'the page' };
+  let refocused = 0;
+  $('browseUseBtn').focus = () => { refocused++; doc.activeElement = $('browseUseBtn'); };
+  const presses: Array<{ dest: string; ctl: Ctl; answer: () => void }> = [];
+  const pick = (dest: string, ctl: Ctl) => new Promise<void>((resolve) => { presses.push({ dest, ctl, answer: resolve }); });
+  const isOpen = () => $('browseModal').cls.has('open');
+  await open('/home/u', pick, 'Offload to…', 'Offload to this folder', { hint: 'Pick a folder on another drive.', holdOpen: true });
+  assert.ok(isOpen(), 'control: the picker is open');
+  doc.activeElement = $('browseUseBtn'); // pressed from the keyboard
+  const first = use();
+  await settle();
+  doc.activeElement = body; // the held button let focus go
+  assert.deepEqual(presses.map((x) => x.dest), ['/home/u'], 'the press hands the folder shown to the pick');
+  assert.ok(isOpen(), 'and the picker stays open while the pick answers');
+  assert.equal($('browseUseBtn').disabled, true, 'its button held, so one press plans once');
+  assert.equal(presses[0].ctl.current(), true, 'control: the pick is the picker\'s current one');
+  presses[0].answer(); // refused: the pick toasts and does not leave
+  await first;
+  assert.ok(isOpen(), 'refused, the picker is still open, on the folder it showed');
+  assert.equal(rt.path(), '/home/u', 'on that folder');
+  assert.equal($('browseUseBtn').disabled, false, 'with its button live again');
+  assert.deepEqual([refocused, doc.activeElement === $('browseUseBtn')], [1, true], 'and focus back on it, where the press was made');
+  // Another choice from the same picker: its pick is still the offload's.
+  $('browseCurrent').value = '/data';
+  const second = use();
+  await settle();
+  assert.deepEqual(presses.map((x) => x.dest), ['/home/u', '/data'], 'a second choice is picked by the same offload');
+  presses[1].ctl.leave(); // planned: the pick closes the picker as its sheet opens
+  assert.ok(!isOpen(), 'a pick that answers closes the picker');
+  assert.equal(presses[1].ctl.current(), false, 'and is no longer the picker\'s current pick');
+  presses[1].answer();
+  await second;
+  assert.equal($('browseUseBtn').disabled, false, 'the button is handed back with the closed picker');
+  // Escape while a pick answers: that pick is no longer current, and leaving cannot close a newer picker.
+  await open('/home/u', pick, 'Offload to…', 'Offload to this folder', { hint: 'x', holdOpen: true });
+  const third = use();
+  await settle();
+  rt.close();
+  assert.equal(presses[2].ctl.current(), false, 'a pick whose picker was dismissed is not current');
+  await open('/home/u', pick, 'Offload to…', 'Offload to this folder', { hint: 'x', holdOpen: true });
+  presses[2].ctl.leave();
+  assert.ok(isOpen(), 'and its leave() does not close the picker opened since');
+  presses[2].answer();
+  await third;
+  // A pick without holdOpen is unchanged: the picker closes as it picks.
+  const plain: string[] = [];
+  await open('/home/u', (p: string) => { plain.push(p); }, 'Folder this policy cleans');
+  await use();
+  assert.deepEqual(plain, ['/home/u'], 'control: a plain pick is made');
+  assert.ok(!isOpen(), 'and closes the picker at once, as before');
 });
 
 test('a folder named by ?path= keeps the whitespace at its end — the deep link is read as every path box is, never trimmed into its sibling (final review F1.8)', () => {

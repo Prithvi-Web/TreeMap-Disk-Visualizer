@@ -335,7 +335,7 @@ test('every place that opens the shared sheet is accounted for, with the OK labe
     [blockAt('function clearShaderCaches() {'), 1, 'Move to Trash'],
     [blockAt('async function cartTrashAll() {'), 1, 'Move to Trash'],
     [blockAt('function cartCommitSummary(result) {'), 1, 'Close'],
-    [blockAt('async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent) {'), 1, 'Copy, verify, then trash'],
+    [blockAt('async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, beforeSheet = null) {'), 1, 'Copy, verify, then trash'],
     [blockAt('function confirmZombieRestart(p) {'), 1, 'Restart it'],
     [blockAt('function confirmEncode(chosen) {'), 1, 'Re-encode'],
     [blockAt("$('emptyTrashBtn').addEventListener('click', () => {"), 1, 'Empty the Trash'],
