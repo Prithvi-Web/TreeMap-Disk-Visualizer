@@ -3286,7 +3286,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         {
           scanId: str('A completed scan (from POST /api/scan)'),
           paths: arr(str(), 'Absolute paths inside a scanned root. At most 2000 per request.'),
-          providers: arr(str(), 'Fact provider ids: size, lastUsed, recoverability, reclaimScore. Unknown ids are refused rather than ignored.'),
+          providers: arr(str(), 'Fact provider ids: size, subtreeCount, lastUsed, recoverability, reclaimScore, humanScale, onDisk. Unknown ids are refused rather than ignored.'),
         },
         ['scanId', 'paths', 'providers'],
       ),

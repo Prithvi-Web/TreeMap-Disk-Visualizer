@@ -35064,6 +35064,8 @@ $('browseUseBtn').addEventListener('click', async () => {
 
 /* ───────────────────────────── Clean Up modal ───────────────────────────── */
 let cleanMatches = [];   // Custom Rules pane — matched file nodes
+/** Custom Rules pane — path → bytes each matched file takes on its disk (the onDisk fact, F09); a file absent was not measured. */
+let cleanOnDisk = new Map();
 let emptyFolders = [];   // Empty Folders pane — { name, path }
 let smartGroups = [];    // Smart Suggestions pane — rule groups from the API
 /**
@@ -35121,7 +35123,7 @@ $('cleanupBtn').addEventListener('click', () => {
   $('cleanConfirmBtn').disabled = true;
   $('cleanProgress').classList.remove('on');
   $('cleanProgressFill').style.width = '0%';
-  cleanMatches = []; emptyFolders = []; smartGroups = [];
+  cleanMatches = []; emptyFolders = []; smartGroups = []; cleanOnDisk = new Map();
   cleanFunnelDrop(); // the standing funnel described the previous results
   setCleanRuleSource('simple'); // §4.5 — the pane opens where it always did
   setCleanPane('rules', true);
@@ -36042,8 +36044,13 @@ async function runCleanFind(fetcher) {
   const findLabel = findBtn.innerHTML;
   findBtn.disabled = true;
   let data;
+  let onDisk = new Map();
   try {
     data = await fetcher();
+    // What the matched files take on the disk (F09), asked while Find is
+    // still busy, so the summary under them never counts a sparse file at the
+    // size it claims. Never a failure of its own: unmeasured is "up to".
+    if (data && data.files) onDisk = await cleanOnDiskOf(data.files);
   } catch (e) {
     // Through `reportError`, never a bare red toast. `GET /api/cleanup/rules`
     // answers 202 {status:'running'} while a scan is still going, and `api()`
@@ -36061,6 +36068,7 @@ async function runCleanFind(fetcher) {
   }
   if (!data) return; // the source reported its own problem
   cleanMatches = data.files;
+  cleanOnDisk = onDisk;
   seedNodes(cleanMatches); // staged from here, so their sizes must resolve later
 
   const host = $('cleanResults');
@@ -36096,6 +36104,38 @@ async function runCleanFind(fetcher) {
   updateCleanSummary();
 }
 
+/** How many paths one onDisk question carries: the fact route's own limit. */
+const CLEAN_ON_DISK_CHUNK = 2000;
+
+/**
+ * What each of `files` takes on its disk now, path → bytes, from the server's
+ * onDisk fact (fifth browser pass F09). The scan counts the size a file
+ * claims; a sparse file, a compressed one or a cloud placeholder takes less,
+ * and only what it takes comes back. A file the fact could not measure is
+ * absent — unknown, never 0 — and where the fact cannot be asked at all (a
+ * system that reports no blocks, a failed request) the map is empty, and the
+ * summary says the claimed size as the most that can come back.
+ */
+async function cleanOnDiskOf(files) {
+  const out = new Map();
+  // A cloud account's files are on no disk here: nothing to measure.
+  if (!state.scanId || isCloudScan()) return out;
+  try {
+    for (let i = 0; i < files.length; i += CLEAN_ON_DISK_CHUNK) {
+      const res = await api('/api/facts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scanId: state.scanId, paths: files.slice(i, i + CLEAN_ON_DISK_CHUNK).map((f) => f.path), providers: ['onDisk'] }),
+      });
+      const fact = res && res.providers && res.providers.onDisk;
+      if (!fact || !fact.available) return new Map();
+      for (const [path, value] of Object.entries(fact.values || {})) out.set(path, value.bytes);
+    }
+  } catch {
+    return new Map();
+  }
+  return out;
+}
+
 /**
  * Selected paths + recoverable bytes for whichever pane is showing.
  *
@@ -36109,9 +36149,15 @@ function activeCleanSelection() {
   if (cleanPane === 'rules') {
     const files = [...document.querySelectorAll('#cleanResults .clean-ck')]
       .filter(ck => ck.checked).map(ck => cleanMatches[+ck.dataset.i]);
+    // What they take on the disk, when every one was measured (F09): only
+    // that comes back, so the footer says it and the completion toast counts
+    // it, path by path. `bytes` and `sizes` stay what the files claim.
+    const measured = files.length > 0 && files.every(f => cleanOnDisk.has(f.path));
     return {
       paths: files.map(f => f.path), bytes: files.reduce((s, f) => s + f.size, 0), noun: 'file',
       sizes: new Map(files.map(f => [f.path, f.size])),
+      onDisk: measured ? files.reduce((s, f) => s + cleanOnDisk.get(f.path), 0) : null,
+      onDiskSizes: measured ? new Map(files.map(f => [f.path, cleanOnDisk.get(f.path)])) : null,
     };
   }
   if (cleanPane === 'empty') {
@@ -36169,12 +36215,12 @@ function activeCleanSelection() {
  * the sheet's top sentence does (review F2.1 of QA third pass D06).
  */
 function updateCleanSummary() {
-  const { paths, bytes, noun } = activeCleanSelection();
+  const { paths, bytes, noun, onDisk } = activeCleanSelection();
   const cloud = isCloudScan() ? cloudProviderOfScan() : null;
   const where = cloud ? `${cloud.name}'s trash` : 'Trash';
   const size = !bytes ? ''
     : cloud ? ` · ${formatBytes(bytes)}, to ${where}`
-    : ` · up to ${formatBytes(bytes)}, freed when you empty the Trash`;
+    : cleanFreedSaid(bytes, onDisk, paths.length);
   $('cleanSummary').textContent = paths.length ? `${paths.length} ${noun}${paths.length > 1 ? 's' : ''}${size}` : '';
   $('cleanConfirmBtn').disabled = !paths.length;
   $('cleanConfirmBtn').innerHTML = icon('trash', 14) +
@@ -36184,6 +36230,22 @@ function updateCleanSummary() {
   // even a disabled one (fifth browser pass F10).
   $('cleanConfirmBtn').hidden = cleanPane === 'video' || cleanPane === 'cloud';
   if (cleanPane === 'smart') renderCleanFunnel(bytes);
+}
+
+/**
+ * What emptying the Trash would give back for a selection that claims
+ * `claimed` bytes, `onDisk` of them measured as taken on the disk (null when
+ * not every file was measured). Up to the claimed size, as a move to the
+ * Trash frees nothing before (D54) — and where the files take less than they
+ * claim, as a sparse file does, said from what they take (fifth browser pass
+ * F09): "2 files · up to 3.9 GB" for two files that take 0 B was untrue.
+ */
+function cleanFreedSaid(claimed, onDisk, count) {
+  if (onDisk === null || onDisk === undefined || onDisk >= claimed) return ` · up to ${formatBytes(claimed)}, freed when you empty the Trash`;
+  const one = count === 1;
+  const claims = `${one ? 'it claims' : 'they claim'} ${formatBytes(claimed)}`;
+  if (onDisk === 0) return ` · ${claims} but ${one ? 'takes' : 'take'} no space on the disk, so emptying the Trash frees none of it`;
+  return ` · up to ${formatBytes(onDisk)}, freed when you empty the Trash — ${claims} but ${one ? 'takes' : 'take'} only ${formatBytes(onDisk)} on the disk`;
 }
 
 /* The Smart pane's funnel: what the rules found → what is ticked → what
@@ -36251,7 +36313,9 @@ function renderCleanFunnel(freed) {
  * warning: `options.ignoreOpenHandles` is "Delete anyway".
  */
 async function runCleanTrash(selection, options) {
-  const { paths, sizes, onlyEmptyFolders, ignoreJunk } = selection;
+  const { paths, sizes, onDiskSizes, onlyEmptyFolders, ignoreJunk } = selection;
+  // What comes back is what the files take, where that was measured (F09).
+  const counted = onDiskSizes || sizes;
   const ignoreOpenHandles = Boolean(options && options.ignoreOpenHandles);
   if (!paths.length) return;
   const btn = $('cleanConfirmBtn');
@@ -36270,7 +36334,7 @@ async function runCleanTrash(selection, options) {
       ...(onlyEmptyFolders ? { onlyEmptyFolders: true, ignoreJunk: ignoreJunk !== false } : {}),
     });
     done += result.deleted.length;
-    for (const p of result.deleted) recovered += sizes.get(p) || 0;
+    for (const p of result.deleted) recovered += counted.get(p) || 0;
     for (const f of result.failed) {
       if (Object.prototype.hasOwnProperty.call(left, f.code)) { left[f.code]++; leftOut++; } else failed++;
     }

@@ -148,6 +148,7 @@ test('the selection reports a size per path, not just one total', async () => {
     document: { querySelectorAll: (sel: string) => rows[sel] || [] },
     cleanPane: 'rules',
     cleanMatches: [{ path: '/a', size: 100 }, { path: '/b', size: 200 }],
+    cleanOnDisk: new Map(), // nothing measured (fifth browser pass F09)
     emptyFolders: [], smartGroups: [], packageOrphans: [],
   });
   const sel = await fn();
@@ -518,7 +519,7 @@ function cleanPanes() {
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `let cleanPane = 'rules'; let onConfirmTrash = null;
-    ${['setCleanPane', 'activeCleanSelection', 'updateCleanSummary', 'confirmCleanTrash'].map(declOf).join('\n')}
+    ${['setCleanPane', 'activeCleanSelection', 'updateCleanSummary', 'cleanFreedSaid', 'confirmCleanTrash'].map(declOf).join('\n')}
     return { show: setCleanPane, click: confirmCleanTrash };`)(...keys.map((k) => deps[k]));
   const footer = () => ({ summary: els.cleanSummary.textContent, disabled: els.cleanConfirmBtn.disabled, label: els.cleanConfirmBtn.innerHTML });
   const hidden = () => els.cleanConfirmBtn.hidden;
@@ -589,6 +590,8 @@ async function cleanFooter(cloud?: { name: string; trashLabel: string }): Promis
     cloudProviderOfScan: () => cloud ?? assert.fail('a local scan has no provider'),
     cleanPane: 'rules',
     renderCleanFunnel: () => {},
+    // How the size is said (fifth browser pass F09), the page's own.
+    cleanFreedSaid: new Function('formatBytes', `${declOf('cleanFreedSaid')}\nreturn cleanFreedSaid;`)(() => '3.6 GB'),
   });
   await fn();
   return { line: els.cleanSummary.textContent, label: els.cleanConfirmBtn.innerHTML };
@@ -617,12 +620,126 @@ test('on a cloud account\'s scan the selection summary and its button name the p
   assert.equal(label, 'Move 2 to Google Drive\'s trash', 'the button says where it moves them, as the sheet it opens does');
 });
 
+/* ═══════ 5b. A sparse file frees only what it takes (fifth browser pass F09) ═══════ */
+
+/**
+ * QA: Custom Rules (older than 180 days, larger than 100 MB) found
+ * holiday-4k.mov and raw-footage.mkv, "2 files · up to 3.9 GB, freed when you
+ * empty the Trash" — and `stat -f '%z %b'` said "3200000000 0" and
+ * "700000000 0": sparse, taking nothing. The scan counts what a file claims;
+ * the onDisk fact says what it takes, and the footer counts that.
+ */
+
+/** The Custom Rules footer, from the page's own activeCleanSelection, updateCleanSummary and cleanFreedSaid, for ticked `files` and what the onDisk fact measured. */
+function rulesFooter(files: { path: string; size: number }[], onDisk: Record<string, number>) {
+  const { $ } = classDom();
+  const ticks = files.map((_, i) => ({ checked: true, dataset: { i: String(i) } }));
+  const deps: Record<string, unknown> = {
+    $, document: { querySelectorAll: (q: string) => (q === '#cleanResults .clean-ck' ? ticks : []) },
+    cleanMatches: files, cleanOnDisk: new Map(Object.entries(onDisk)), emptyFolders: [], packageOrphans: [], smartGroups: [],
+    isCloudScan: () => false, cloudProviderOfScan: () => assert.fail('a local scan has no provider'), escapeHtml: String,
+    icon: () => '', formatBytes: (n: number) => `${n} B`, renderCleanFunnel: () => {},
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(...keys, `let cleanPane = 'rules';
+    ${['activeCleanSelection', 'updateCleanSummary', 'cleanFreedSaid'].map(declOf).join('\n')}
+    return { summary: () => { updateCleanSummary(); return $('cleanSummary').textContent; }, selection: activeCleanSelection };`)(
+    ...keys.map((k) => deps[k])) as { summary: () => string; selection: () => { sizes: Map<string, number>; onDiskSizes: Map<string, number> | null } };
+}
+
+const HOLIDAY = { path: '/c/Videos/holiday-4k.mov', size: 3_200_000_000 };
+const RAW = { path: '/c/Videos/raw-footage.mkv', size: 700_000_000 };
+
+test('Custom Rules counts what the files take on the disk: two sparse files that claim 3.9 GB and take 0 B are said to free none of it (fifth browser pass F09)', () => {
+  const sparse = rulesFooter([HOLIDAY, RAW], { [HOLIDAY.path]: 0, [RAW.path]: 0 });
+  assert.equal(sparse.summary(), '2 files · they claim 3900000000 B but take no space on the disk, so emptying the Trash frees none of it');
+  assert.deepEqual([...sparse.selection().onDiskSizes!.values()], [0, 0], 'and what each takes is kept for the completion toast');
+  const one = rulesFooter([HOLIDAY], { [HOLIDAY.path]: 0 });
+  assert.equal(one.summary(), '1 file · it claims 3200000000 B but takes no space on the disk, so emptying the Trash frees none of it');
+  const part = rulesFooter([HOLIDAY, RAW], { [HOLIDAY.path]: 1_000_000_000, [RAW.path]: 0 });
+  assert.equal(part.summary(), '2 files · up to 1000000000 B, freed when you empty the Trash — they claim 3900000000 B but take only 1000000000 B on the disk');
+});
+
+test('Custom Rules reads as before where the files take what they claim, or where not every file was measured — the claimed size, as the most (fifth browser pass F09 controls)', () => {
+  const dense = rulesFooter([HOLIDAY, RAW], { [HOLIDAY.path]: 3_200_000_000, [RAW.path]: 700_004_096 });
+  assert.equal(dense.summary(), '2 files · up to 3900000000 B, freed when you empty the Trash');
+  const unmeasured = rulesFooter([HOLIDAY, RAW], { [HOLIDAY.path]: 0 });
+  assert.equal(unmeasured.summary(), '2 files · up to 3900000000 B, freed when you empty the Trash', 'one file unmeasured: unknown is never read as 0');
+  assert.equal(unmeasured.selection().onDiskSizes, null, 'and nothing is counted from what was not measured');
+});
+
+/** The page's runCleanFind and cleanOnDiskOf in one scope over stubs; `facts` answers POST /api/facts. */
+function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false) {
+  const asked: { paths: string[]; providers: string[]; scanId: string }[] = [];
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= { innerHTML: '', textContent: '', disabled: false, addEventListener() {}, querySelectorAll: () => [] });
+  const deps: Record<string, unknown> = {
+    $, state: { scanId: 'scan-1' }, isCloudScan: () => cloud, toast: () => {}, reportError: () => assert.fail('nothing failed'), seedNodes: () => {}, icon: () => '',
+    chipFor: () => '', formatDate: () => '', sizeInk: () => '', formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: String,
+    cartButtonHtml: () => '', refreshCartButtons: () => {}, updateCleanSummary: () => {},
+    api: async (url: string, opts: { body: string }) => {
+      assert.equal(url, '/api/facts');
+      const body = JSON.parse(opts.body);
+      asked.push(body);
+      return facts(body.paths);
+    },
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `let cleanMatches = [], cleanOnDisk = new Map();
+    ${declOf('runCleanFind')}
+    const CLEAN_ON_DISK_CHUNK = ${/const CLEAN_ON_DISK_CHUNK = (\d+);/.exec(INDEX)?.[1] ?? 'undefined'};
+    ${declOf('cleanOnDiskOf')}
+    return { find: runCleanFind, onDisk: () => cleanOnDisk, matches: () => cleanMatches };`)(...keys.map((k) => deps[k])) as {
+    find: (fetcher: () => Promise<unknown>) => Promise<void>; onDisk: () => Map<string, number>; matches: () => unknown[];
+  };
+  return { page, asked, els };
+}
+
+const FOUND = Array.from({ length: 2500 }, (_, i) => ({ path: `/c/f${i}.mov`, name: `f${i}.mov`, size: 1000, modifiedAt: 0 }));
+
+test('Find asks what the matched files take on the disk — the onDisk fact, in the fact route\'s chunks of 2,000 — before their summary is drawn (fifth browser pass F09)', async () => {
+  const h = findHarness(async (paths) => ({ providers: { onDisk: { available: true, values: Object.fromEntries(paths.map((p) => [p, { bytes: 0 }])) } } }));
+  await h.page.find(async () => ({ files: FOUND, matched: FOUND.length, truncated: false }));
+  assert.deepEqual(h.asked.map((a) => [a.paths.length, a.providers, a.scanId]), [[2000, ['onDisk'], 'scan-1'], [500, ['onDisk'], 'scan-1']]);
+  assert.equal(h.page.onDisk().size, 2500, 'every file\'s measure is kept for the summary');
+  assert.equal(h.page.onDisk().get('/c/f2499.mov'), 0);
+  assert.equal(h.page.matches().length, 2500, 'control: the list is the files found');
+});
+
+test('where the onDisk fact cannot answer — a system that reports no blocks, a failed request — Find still lists the files and nothing is counted as 0 (fifth browser pass F09)', async () => {
+  const unavailable = findHarness(async () => ({ providers: { onDisk: { available: false, reason: 'no blocks here', values: {} } } }));
+  await unavailable.page.find(async () => ({ files: FOUND.slice(0, 3), matched: 3, truncated: false }));
+  assert.equal(unavailable.page.onDisk().size, 0, 'unavailable: nothing measured');
+  assert.equal(unavailable.page.matches().length, 3, 'and the files are still listed');
+  const failing = findHarness(async () => { throw new Error('offline'); });
+  await failing.page.find(async () => ({ files: FOUND.slice(0, 3), matched: 3, truncated: false }));
+  assert.equal(failing.page.onDisk().size, 0, 'a failed request: nothing measured');
+  assert.equal(failing.page.matches().length, 3);
+  const cloud = findHarness(async () => assert.fail('a cloud account\'s files are not measured'), true);
+  await cloud.page.find(async () => ({ files: [{ path: 'cloud://drive/a.mov', name: 'a.mov', size: 1, modifiedAt: 0 }], matched: 1, truncated: false }));
+  assert.deepEqual(cloud.asked, [], 'a cloud account\'s files are on no disk here: nothing is asked');
+});
+
 test('the completion toast says where the files went, not that space came back', async () => {
   const { toasts } = await runConfirm({ paths: PATHS, sizes: SIZES }, { deleted: PATHS, failed: [] });
   const moved = toasts.find((t) => /Moved/.test(t.msg));
   assert.ok(moved, 'the move is reported');
   assert.doesNotMatch(moved!.msg, /recovered/i, moved!.msg);
   assert.match(moved!.msg, /empty the Trash/, moved!.msg);
+});
+
+test('the completion toast counts what the moved files took on the disk, where that was measured — never the size a sparse file claims (fifth browser pass F09)', async () => {
+  const measured = { paths: PATHS, sizes: SIZES, onDiskSizes: new Map([['/a', 0], ['/b', 0], ['/c', 4096]]) };
+  const { toasts } = await runConfirm(measured, { deleted: PATHS, failed: [] });
+  const moved = toasts.find((t) => /Moved/.test(t.msg));
+  assert.match(moved!.msg, /^Moved 3 items to Trash \(4096B\)/, `what they took, not the 700 B they claim: ${moved!.msg}`);
+  const sparse = { paths: PATHS, sizes: SIZES, onDiskSizes: new Map([['/a', 0], ['/b', 0], ['/c', 0]]) };
+  const none = (await runConfirm(sparse, { deleted: PATHS, failed: [] })).toasts.find((t) => /Moved/.test(t.msg));
+  assert.equal(none!.msg, 'Moved 3 items to Trash', 'files that took nothing promise no space at all');
+  const claimed = (await runConfirm({ paths: PATHS, sizes: SIZES }, { deleted: PATHS, failed: [] })).toasts.find((t) => /Moved/.test(t.msg));
+  assert.match(claimed!.msg, /\(700B\)/, 'control: unmeasured, the size they claim, as before');
 });
 
 test('Shrink Video reports a smaller file and an original in the Trash, not space recovered', async () => {

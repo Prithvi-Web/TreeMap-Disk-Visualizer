@@ -248,6 +248,9 @@ OpenAPI 3 spec).
      `tests/goldenResponses.test.ts` (for a tree within the first frame's
      node budget, step 1) — no field may be added to them.
      Providers: `size` (the scan's own byte count), `subtreeCount`,
+     `onDisk` (what a file takes on its disk now — its blocks × 512 — where a
+     sparse or compressed file or a cloud placeholder takes less than the size
+     it claims; files only, unavailable where the system reports no blocks),
      `lastUsed`, `recoverability`, `reclaimScore` and `humanScale`
      (v4 §9.3 — "≈ N photos like the ones here", averaged from the folder's
      own media, at least ten of a kind, directories only; a walk is capped

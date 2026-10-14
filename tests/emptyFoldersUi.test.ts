@@ -205,6 +205,7 @@ test('the Empty Folders selection asks for the check; the other panes do not', a
     $: (id: string) => ({ checked: id === 'emptyIgnoreJunk' ? junkRule : false }),
     cleanPane,
     cleanMatches: [{ path: '/r/f', size: 1 }],
+    cleanOnDisk: new Map(), // nothing measured (fifth browser pass F09)
     emptyFolders: [{ name: 'a', path: '/r/a' }],
     smartGroups: [], packageOrphans: [],
   })();

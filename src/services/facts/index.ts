@@ -5,6 +5,7 @@ import { recoverabilityProvider } from './recoverabilityProvider';
 import { reclaimScoreProvider } from './reclaimScoreProvider';
 import { subtreeCountProvider } from './subtreeCountProvider';
 import { humanScaleProvider } from './humanScaleProvider';
+import { onDiskProvider } from './onDiskProvider';
 
 /**
  * The fact layer's entry point (§4.1).
@@ -29,6 +30,7 @@ registerFactProvider(recoverabilityProvider);
 registerFactProvider(reclaimScoreProvider);
 registerFactProvider(subtreeCountProvider);
 registerFactProvider(humanScaleProvider);
+registerFactProvider(onDiskProvider);
 
 // Facts describe one scan's tree, so they die with it. Without this the
 // registry's own comment ("called when a scan is replaced") was aspirational:
@@ -57,3 +59,4 @@ export type { SizeFact } from './sizeProvider';
 export type { LastUsedFact } from './lastUsedProvider';
 export type { RecoverabilityFact } from '../recoverabilityTypes';
 export type { ReclaimScoreFactValue } from './reclaimScoreProvider';
+export type { OnDiskFact } from './onDiskProvider';

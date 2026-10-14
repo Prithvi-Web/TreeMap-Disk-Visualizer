@@ -433,6 +433,7 @@ export const PROVIDER_FEATURES: Readonly<Record<string, FeatureId>> = {
   reclaimScore: 'facts',
   subtreeCount: 'subtreeCount',
   humanScale: 'humanScale',
+  onDisk: 'facts',
 };
 
 /** The features a route entry can name. */
