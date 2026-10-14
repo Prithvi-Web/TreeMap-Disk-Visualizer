@@ -122,8 +122,8 @@ type Grid = {
       selection: Set<string>; anchor: number | null; rangeStart: number; rangeEnd: number };
   };
   els: Record<string, FakeEl>;
-  /** The document the page queries, for when the Grid is not the view on screen: see `screenOf`. */
-  screen: { body: FakeEl };
+  /** The document the page queries, and the sidebar tabs switchView marks selected: see `screenOf`. */
+  screen: { body: FakeEl; tabs: FakeEl[] };
   crumbsCb: { fn: ((p: string) => void) | null };
   timers: Map<number, () => void>;
   /** What the page around the Grid holds: whether the cart dock is up (the selection bar's state is its own element's). */
@@ -176,6 +176,8 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean 
     '/* ───────────────────────────── Apps view (Feature 18) ───────────────────────────── */');
   const els: Record<string, FakeEl> = {};
   const $ = (id: string) => (els[id] ||= fakeEl(id));
+  // The filter box is a text box, as the markup has it: a selector for the controls on screen finds it while the Grid is up.
+  els.gridSearch = fakeEl('gridSearch', 'input', { type: 'text' });
   FOCUS.active = null;
   // A browser keeps a scroller's scrollTop inside what it can scroll — its
   // content (#gridInner, and the scroller's own padding above and below it)
@@ -207,7 +209,7 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean 
   const crumbsCb: { fn: ((p: string) => void) | null } = { fn: null };
   const timers = new Map<number, () => void>();
   let tid = 0;
-  const screen: Grid['screen'] = { body: fakeEl('body', 'body') };
+  const screen: Grid['screen'] = { body: fakeEl('body', 'body'), tabs: [] };
   const document = {
     createElement: (tag = 'div') => fakeEl('', tag),
     createDocumentFragment: () => { const f = { children: [] as FakeEl[], appendChild(c: FakeEl) { f.children.push(c); } }; return f; },
@@ -263,7 +265,7 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean 
     // switchView's world beyond the Grid (D03): every view mounts nothing and is usable; the sections it
     // shows and hides are the `.view` elements of `screen` (screenOf).
     VIEW_BY_ID: new Map(['grid', 'dashboard', 'treemap', 'apps', 'city', 'autopilot'].map((id) => [id, { id, label: id, needsScan: true, mount() {} }])),
-    tabs: [], viewBlockedReason: () => null, hideCtxMenu: () => {}, fxEmptyCtaSync: () => {}, fxScanHeroSync: () => {},
+    tabs: screen.tabs, viewBlockedReason: () => null, hideCtxMenu: () => {}, fxEmptyCtaSync: () => {}, fxScanHeroSync: () => {},
     renderCapabilityNotice: () => {}, fxViewEnter: () => {}, toast: () => {},
   };
   if (opts.preview) {
@@ -795,44 +797,50 @@ test('Escape in the Grid clears the selection through the same door as Clear, so
 /**
  * The Grid with a tile selected and keyboard focus on the selection bar's
  * Clear, then `view` brought up through the page's own switchView, with
- * `controls` on screen in it (screenOf). The Grid goes display:none, so its
- * scroller has no height and no tile is on screen; the bar goes with it (D03).
+ * `controls` in it (screenOf). switchView hides the Grid, so its scroller
+ * has no height and no tile is on screen; the bar goes with it (D03).
  */
 async function selectionThenLeave(view: string, controls: FakeEl[]): Promise<{ g: Grid; tab: FakeEl }> {
   const g = gridHarness();
   await g.renderGrid();
   g.onCellClick({ metaKey: true }, 1);
   assert.ok(g.els.selectionBar.cls.has('visible'), 'control: the bar is up in the Grid');
-  const { tab } = screenOf(g, view, controls);
+  const { tab, gridView, section } = screenOf(g, view, controls);
   g.els.selClearBtn.focus(); // a keyboard user in the bar
   g.els.gridScroll.clientHeight = 0;
   g.switchView(view);
+  // The page's own toggles did it: the Grid is hidden now, and the view and its tab are up.
+  assert.ok(gridView.hidden && !gridView.cls.has('active') && !section.hidden && section.cls.has('active'), `control: switchView brought ${view} up`);
+  assert.equal(tab.attrs['aria-selected'], 'true', `control: and selected ${view}'s tab`);
   return { g, tab };
 }
 
 /**
- * The document behind `g`'s queries while `view` is up, as the page builds
- * it: the sidebar's tab bar with that view's tab selected, the Grid's own
- * section hidden (its filter box inside it), and the view's
- * `<section class="view active">` holding `controls` in document order.
- * `make` builds each element with its tag and attributes; anything that is
- * not a control — the section itself, a wrapper, a label — is in the tree
- * too, so a selector that matched it would find it.
+ * The document behind `g`'s queries as it stands when `view` is asked for
+ * — before switchView, as the page has it (review F1.5 of D03): the Grid is
+ * the view on screen, `<section class="view active">` with its filter box
+ * in it, and its sidebar tab is the selected one; `view`'s section is there,
+ * hidden, holding `controls` in document order. Only the page's own
+ * switchView turns that around, so a call made before its toggles finds the
+ * Grid's controls, as it would in the window. Anything that is not a
+ * control — the section itself, a wrapper, a label — is in the tree too, so
+ * a selector that matched it would find it.
  */
-function screenOf(g: Grid, view: string, controls: FakeEl[]): { tab: FakeEl; section: FakeEl } {
+function screenOf(g: Grid, view: string, controls: FakeEl[]): { tab: FakeEl; gridView: FakeEl; section: FakeEl } {
   const body = g.screen.body;
   const nav = fakeEl('', 'nav'); nav.cls.add('tabbar');
-  const gridTab = fakeEl('tabGrid', 'button', { 'aria-selected': 'false' });
-  const tab = fakeEl(`tab-${view}`, 'button', { 'aria-selected': 'true' });
+  const gridTab = fakeEl('tabGrid', 'button', { 'aria-selected': 'true' }); gridTab.dataset.view = 'grid';
+  const tab = fakeEl(`tab-${view}`, 'button', { 'aria-selected': 'false' }); tab.dataset.view = view;
   nav.appendChild(gridTab); nav.appendChild(tab);
-  const gridView = fakeEl('view-grid', 'section'); gridView.cls.add('view'); gridView.hidden = true;
-  gridView.appendChild(g.els.gridSearch); // the filter box: in the Grid, which is display:none now
-  const section = fakeEl(`view-${view}`, 'section'); section.cls.add('view'); section.cls.add('active');
+  g.screen.tabs.push(gridTab, tab); // the sidebar tabs switchView marks
+  const gridView = fakeEl('view-grid', 'section'); gridView.cls.add('view'); gridView.cls.add('active');
+  gridView.appendChild(g.els.gridSearch); // the filter box: in the Grid, on screen until switchView hides it
+  const section = fakeEl(`view-${view}`, 'section'); section.cls.add('view'); section.hidden = true;
   const wrap = fakeEl('', 'div'); // a toolbar row: not a control, and its controls are still in the view
   for (const c of controls) wrap.appendChild(c);
   section.appendChild(wrap);
   body.appendChild(nav); body.appendChild(gridView); body.appendChild(section);
-  return { tab, section };
+  return { tab, gridView, section };
 }
 
 test('the selection bar is the Grid’s: it leaves with the Grid, and comes back with it, its selection kept (D03)', async () => {
