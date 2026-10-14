@@ -747,13 +747,13 @@ test('the approval names the run, and its confirm says the folder, the match and
     set innerHTML(v: string) { texts[id] = v; }, get innerHTML() { return texts[id] ?? ''; }, classList: { add: () => undefined },
   });
   const make = new Function(
-    '$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'loadAutopilot', 'describeMatch',
+    '$', 'state', 'api', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'loadAutopilot', 'describeMatch', 'setConfirmButton',
     `let onConfirmTrash = null; ${pageSource('approveAutopilotRun')}; return { approve: approveAutopilotRun, confirm: () => onConfirmTrash };`,
   );
   const page = make(
     el, { autopilot: { policies: [POLICY_A, POLICY_B], runs: RUNS } },
     async (url: string, opts: { body: string }) => { posted.push({ url, body: JSON.parse(opts.body) }); return {}; },
-    () => undefined, () => '', (s: string) => s, (n: number) => `${n} B`, () => undefined, () => 'files ending .log/.txt',
+    () => undefined, () => '', (s: string) => s, (n: number) => `${n} B`, () => undefined, () => 'files ending .log/.txt', () => undefined,
   ) as { approve: (runId: string) => void; confirm: () => (() => Promise<void>) | null };
   page.approve('a-new');
   assert.match(texts.confirmText, /\/home\/me\/logs/, texts.confirmText);

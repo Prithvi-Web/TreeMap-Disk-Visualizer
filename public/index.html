@@ -8355,6 +8355,7 @@ $('emptyTrashBtn').addEventListener('click', () => {
     ? `Empty the system Trash?<br><span style="color:var(--text-3)">${escapeHtml(t.incompleteReason || 'TreeMap could not read the Trash, so it cannot say how much this frees.')} This cannot be undone.</span>`
     : `Permanently delete <b>${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}</b> (${formatBytes(t.totalBytes)})?` +
       `<br><span style="color:var(--text-3)">This empties the system Trash and cannot be undone.</span>`;
+  setConfirmButton('Empty the Trash');
   onConfirmTrash = emptyTrashAction;
   $('confirmModal').classList.add('open');
 });
@@ -8405,6 +8406,7 @@ $('snapPurgeBtn').addEventListener('click', () => {
   const n = state.snapshots && state.snapshots.snapshots ? state.snapshots.snapshots.length : 0;
   $('confirmTitle').innerHTML = icon('clock', 18) + 'Purge local snapshots?';
   $('confirmText').innerHTML = `Delete <b>${formatCount(n)} local snapshot${n === 1 ? '' : 's'}</b>?<br><span style="color:var(--text-3)">This frees the space they hold. Time Machine will create fresh ones on the next backup.</span>`;
+  setConfirmButton('Purge snapshots', 'clock');
   onConfirmTrash = purgeSnapshotsAction;
   $('confirmModal').classList.add('open');
 });
@@ -24958,6 +24960,7 @@ function forgetCapsuleEntry(id) {
     `<b>${escapeHtml(entry ? entry.name : 'This item')}</b> was already deleted from your disk — this only removes ` +
     `TreeMap’s spare copy${entry ? `, freeing ${formatBytes(entry.sizeBytes)}` : ''}.` +
     `<br><span style="color:var(--text-3)">It can’t be restored from here afterwards.</span>`;
+  setConfirmButton('Forget this copy');
   $('confirmModal').classList.add('open');
 }
 
@@ -27965,6 +27968,7 @@ function approveAutopilotRun(runId) {
     : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
       `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
     `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and a run can be undone from here until the Time Capsule removes its copies.</span>`;
+  setConfirmButton('Approve', 'check');
   $('confirmModal').classList.add('open');
 }
 
@@ -28611,8 +28615,14 @@ function baseName(p) {
   return parts[parts.length - 1] || p;
 }
 
-function setConfirmButton(label) {
-  $('confirmOk').innerHTML = icon('trash', 15) + escapeHtml(label);
+/**
+ * The shared dialog's OK, saying what pressing it does. "Move to Trash" is the
+ * label of a move to the Trash only: a sheet whose action is something else —
+ * a re-encode, emptying the Trash, a purge, a move, an approval — names that
+ * action here, with its own icon (review F3.2 of QA third pass).
+ */
+function setConfirmButton(label, iconName = 'trash') {
+  $('confirmOk').innerHTML = icon(iconName, 15) + escapeHtml(label);
 }
 
 /**
@@ -28621,7 +28631,7 @@ function setConfirmButton(label) {
  * "Done") hide Cancel and relabel OK "Close", and other dialogs relabel OK
  * too; closeModal runs this on every close of the dialog, so none of that
  * outlives the dialog that made it — a "Close" label must never sit on the
- * next dialog's delete (Empty the Trash does not relabel its button).
+ * next dialog's OK, whatever that dialog does.
  *
  * It also abandons the open-file check still out for the dialog that closed.
  * Answering after a Cancel, that check relabelled OK "Delete anyway" and armed
@@ -31970,6 +31980,7 @@ function confirmRelocateSecret(finding) {
       toast('Not moved: ' + e.message, 'error');
     }
   };
+  setConfirmButton('Move it', 'shield');
   $('confirmModal').classList.add('open');
 }
 
@@ -34480,6 +34491,7 @@ function confirmEncode(chosen) {
     `<span style="color:var(--text-3)"><b>This is lossy</b> — the picture is compressed again and a little quality is lost permanently. ` +
     `Each new file is checked (it opens, and it runs the full length) <b>before</b> the original is moved to the Trash. ` +
     `If a check fails, that file is left exactly as it is. This can take a long time.</span>`;
+  setConfirmButton('Re-encode', 'video');
   onConfirmTrash = () => startEncode(chosen.map(c => c.path));
   $('confirmModal').classList.add('open');
 }
@@ -34670,6 +34682,7 @@ document.addEventListener('click', (e) => {
   const name = repo.split(/[\\/]/).pop() || repo;
   $('confirmTitle').innerHTML = icon('gitBranch', 18) + 'Run git gc?';
   $('confirmText').innerHTML = `Run <b>git gc --aggressive</b> on <b>${escapeHtml(name)}</b>?<br><span style="color:var(--text-3)">Safe — it compacts the repo without changing any commits. Large repos can take a while.</span>`;
+  setConfirmButton('Run git gc', 'gitBranch');
   onConfirmTrash = () => runGitGcAction(repo);
   $('confirmModal').classList.add('open');
 });

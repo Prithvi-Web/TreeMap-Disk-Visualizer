@@ -242,3 +242,116 @@ test('an answer that arrives while the dialog is open still warns', async () => 
   await h.page.ok();
   assert.deepEqual(h.trashed, [{ paths: ['/r/a'], opts: { ignoreOpenHandles: true } }], '"Delete anyway" is what was sent');
 });
+
+/* ═══════ each sheet's OK says what that sheet does (review F3.2 of QA third pass) ═══════ */
+
+/**
+ * The OK button reads "Move to Trash", with the trash icon, until a dialog
+ * relabels it, and closeModal puts that back after every dialog. The sheets
+ * whose action is not a move to the Trash did not relabel it: "Re-encode and replace?"
+ * (a lossy HEVC re-encode), "Empty the Trash?" (a permanent delete — beside
+ * "This cannot be undone"), "Purge local snapshots?", "Forget this copy?",
+ * "Run git gc?", "Move it somewhere safer?" (a move that deletes nothing) and
+ * the Autopilot approval each offered a recoverable "Move to Trash".
+ */
+
+/** The block of a function or listener whose header is `anchor` (a `{` ends it), as page source. */
+function blockAt(anchor: string, from = 0): string {
+  const at = INDEX.indexOf(anchor, from);
+  assert.notEqual(at, -1, `"${anchor}" is in the built page`);
+  const open = at + anchor.length - 1;
+  assert.equal(INDEX[open], '{', `"${anchor}" ends at its block's {`);
+  return INDEX.slice(at, matchingBrace(open) + 1);
+}
+
+/** The git gc button's listener: a document-level click handler, found by what it looks for. */
+function gitGcListener(): string {
+  const anchor = "document.addEventListener('click', (e) => {";
+  return blockAt(anchor, INDEX.lastIndexOf(anchor, INDEX.indexOf("e.target.closest('[data-gc]')")));
+}
+
+/** Run one opener (`body` is its block) over stubs, and read the OK button it leaves. */
+function okLabelAfter(block: string, arg: unknown): { label: string; icon: string; opened: boolean } {
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= (() => {
+    const classes = new Set<string>();
+    return { innerHTML: '', textContent: '', hidden: false, disabled: false, style: {}, classes,
+      classList: { add: (c: string) => { classes.add(c); }, remove: (c: string) => { classes.delete(c); } } };
+  })());
+  // The button as every close leaves it (confirmFooterReset): the trash icon and "Move to Trash".
+  $('confirmOk').innerHTML = '[trash]Move to Trash';
+  const deps: Record<string, unknown> = {
+    $, icon: (name: string) => `[${name}]`, escapeHtml: (s: string) => s, formatBytes: (n: number) => `${n}B`, formatCount: String,
+    toast: () => {}, api: async () => ({}), closeModal: () => {}, rescan: () => {}, baseName: (p: string) => p,
+    describeMatch: () => 'files', loadAutopilot: () => {}, loadCapsule: () => {},
+    startEncode: () => {}, emptyTrashAction: () => {}, purgeSnapshotsAction: () => {}, runGitGcAction: () => {},
+    onConfirmTrash: null,
+    state: {
+      trash: { itemCount: 3, totalBytes: 300, complete: true },
+      snapshots: { snapshots: [{}, {}] },
+      capsule: { index: { entries: [{ id: 'c1', name: 'a.zip', sizeBytes: 10 }] } },
+      autopilot: { runs: [{ id: 'r1', policyId: 'p1', bytesMatched: 5 }], policies: [{ id: 'p1', name: 'Old downloads', path: '/d', match: {} }] },
+    },
+  };
+  const keys = Object.keys(deps);
+  const params = /^(?:async\s+)?function \w+\((\w*)\)/.exec(block)?.[1] ?? /\((\w*)\) => \{$/.exec(block.slice(0, block.indexOf('{') + 1))?.[1] ?? '';
+  const body = block.slice(block.indexOf('{') + 1, -1);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const run = new Function(...keys, `${declOf('setConfirmButton')}\nreturn function (${params}) {${body}\n};`)(...keys.map((k) => deps[k]));
+  run(arg);
+  const html: string = els.confirmOk.innerHTML;
+  return { label: html.replace(/^\[\w+\]/, ''), icon: /^\[(\w+)\]/.exec(html)?.[1] ?? '', opened: els.confirmModal?.classes.has('open') ?? false };
+}
+
+test('a sheet whose action is not a move to the Trash says on its OK button what it does — never "Move to Trash" (review F3.2 of QA third pass)', () => {
+  const gcClick = { target: { closest: (sel: string) => (sel === '[data-gc]' ? { getAttribute: () => '/repos/site' } : null) } };
+  const cases: Array<[string, string, unknown, string, string]> = [
+    // [what it is, its block, its argument, the OK label, the OK icon]
+    ['the re-encode sheet', blockAt('function confirmEncode(chosen) {'), [{ path: '/v/a.mov', estimatedSaving: 9 }], 'Re-encode', 'video'],
+    ['Empty the Trash', blockAt("$('emptyTrashBtn').addEventListener('click', () => {"), undefined, 'Empty the Trash', 'trash'],
+    ['Purge local snapshots', blockAt("$('snapPurgeBtn').addEventListener('click', () => {"), undefined, 'Purge snapshots', 'clock'],
+    ['Forget this copy', blockAt('function forgetCapsuleEntry(id) {'), 'c1', 'Forget this copy', 'trash'],
+    ['Run git gc', gitGcListener(), gcClick, 'Run git gc', 'gitBranch'],
+    ['Move it somewhere safer', blockAt('function confirmRelocateSecret(finding) {'), { name: 'id_rsa', path: '/h/Desktop/id_rsa', suggestedPath: '/h/.ssh' }, 'Move it', 'shield'],
+    ['the Autopilot approval', blockAt('function approveAutopilotRun(runId) {'), 'r1', 'Approve', 'check'],
+  ];
+  for (const [what, block, arg, label, icon] of cases) {
+    const ok = okLabelAfter(block, arg);
+    assert.ok(ok.opened, `control: ${what} opened the sheet`);
+    assert.doesNotMatch(ok.label, /Move to Trash/, `${what} is not a move to the Trash, so its OK must not read as one`);
+    assert.deepEqual({ label: ok.label, icon: ok.icon }, { label, icon }, `${what}'s OK names its own action`);
+  }
+});
+
+test('every place that opens the shared sheet is accounted for, with the OK label it shows (review F3.2 of QA third pass)', () => {
+  // A new opener that relabels nothing shows whatever the last close left —
+  // "Move to Trash". Listing every opener here makes adding one a decision
+  // about its button, not an accident of the default.
+  const OPEN = "$('confirmModal').classList.add('open')";
+  const openers: Array<[string, number, string]> = [
+    // [its block, how many times it opens the sheet, the OK label it shows]
+    [blockAt('async function confirmTrash(paths) {'), 2, 'Move to Trash'],
+    [blockAt('async function reofferBlockedTrash(paths, err) {'), 1, 'Move to Trash'],
+    [blockAt('function clearShaderCaches() {'), 1, 'Move to Trash'],
+    [blockAt('async function cartTrashAll() {'), 1, 'Move to Trash'],
+    [blockAt('function cartCommitSummary(result) {'), 1, 'Close'],
+    [blockAt('async function dockDrop(volPath) {'), 1, 'Copy, verify, then trash'],
+    [blockAt('function confirmZombieRestart(p) {'), 1, 'Restart it'],
+    [blockAt('function confirmEncode(chosen) {'), 1, 'Re-encode'],
+    [blockAt("$('emptyTrashBtn').addEventListener('click', () => {"), 1, 'Empty the Trash'],
+    [blockAt("$('snapPurgeBtn').addEventListener('click', () => {"), 1, 'Purge snapshots'],
+    [blockAt('function forgetCapsuleEntry(id) {'), 1, 'Forget this copy'],
+    [gitGcListener(), 1, 'Run git gc'],
+    [blockAt('function confirmRelocateSecret(finding) {'), 1, 'Move it'],
+    [blockAt('function approveAutopilotRun(runId) {'), 1, 'Approve'],
+  ];
+  const count = (text: string) => text.split(OPEN).length - 1;
+  for (const [block, opens, label] of openers) {
+    const header = block.slice(0, block.indexOf('{'));
+    assert.equal(count(block), opens, `${header} opens the sheet ${opens} time(s)`);
+    // The default is "Move to Trash" (resetOpenHandleWarning and every close set it); any other label is written by the opener.
+    if (label !== 'Move to Trash') assert.ok(block.includes(`'${label}'`), `${header} writes its own OK label, "${label}"`);
+  }
+  const listed = openers.reduce((n, [, opens]) => n + opens, 0);
+  assert.equal(count(INDEX), listed, `every opening of the sheet is one listed here (${count(INDEX)} in the page, ${listed} listed)`);
+});

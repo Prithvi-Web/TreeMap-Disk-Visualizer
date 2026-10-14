@@ -776,6 +776,7 @@ function confirmRelocateSecret(finding) {
       toast('Not moved: ' + e.message, 'error');
     }
   };
+  setConfirmButton('Move it', 'shield');
   $('confirmModal').classList.add('open');
 }
 

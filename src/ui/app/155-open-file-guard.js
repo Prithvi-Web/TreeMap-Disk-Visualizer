@@ -252,8 +252,14 @@ function baseName(p) {
   return parts[parts.length - 1] || p;
 }
 
-function setConfirmButton(label) {
-  $('confirmOk').innerHTML = icon('trash', 15) + escapeHtml(label);
+/**
+ * The shared dialog's OK, saying what pressing it does. "Move to Trash" is the
+ * label of a move to the Trash only: a sheet whose action is something else —
+ * a re-encode, emptying the Trash, a purge, a move, an approval — names that
+ * action here, with its own icon (review F3.2 of QA third pass).
+ */
+function setConfirmButton(label, iconName = 'trash') {
+  $('confirmOk').innerHTML = icon(iconName, 15) + escapeHtml(label);
 }
 
 /**
@@ -262,7 +268,7 @@ function setConfirmButton(label) {
  * "Done") hide Cancel and relabel OK "Close", and other dialogs relabel OK
  * too; closeModal runs this on every close of the dialog, so none of that
  * outlives the dialog that made it — a "Close" label must never sit on the
- * next dialog's delete (Empty the Trash does not relabel its button).
+ * next dialog's OK, whatever that dialog does.
  *
  * It also abandons the open-file check still out for the dialog that closed.
  * Answering after a Cancel, that check relabelled OK "Delete anyway" and armed

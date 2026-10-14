@@ -143,6 +143,7 @@ $('emptyTrashBtn').addEventListener('click', () => {
     ? `Empty the system Trash?<br><span style="color:var(--text-3)">${escapeHtml(t.incompleteReason || 'TreeMap could not read the Trash, so it cannot say how much this frees.')} This cannot be undone.</span>`
     : `Permanently delete <b>${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}</b> (${formatBytes(t.totalBytes)})?` +
       `<br><span style="color:var(--text-3)">This empties the system Trash and cannot be undone.</span>`;
+  setConfirmButton('Empty the Trash');
   onConfirmTrash = emptyTrashAction;
   $('confirmModal').classList.add('open');
 });
@@ -193,6 +194,7 @@ $('snapPurgeBtn').addEventListener('click', () => {
   const n = state.snapshots && state.snapshots.snapshots ? state.snapshots.snapshots.length : 0;
   $('confirmTitle').innerHTML = icon('clock', 18) + 'Purge local snapshots?';
   $('confirmText').innerHTML = `Delete <b>${formatCount(n)} local snapshot${n === 1 ? '' : 's'}</b>?<br><span style="color:var(--text-3)">This frees the space they hold. Time Machine will create fresh ones on the next backup.</span>`;
+  setConfirmButton('Purge snapshots', 'clock');
   onConfirmTrash = purgeSnapshotsAction;
   $('confirmModal').classList.add('open');
 });

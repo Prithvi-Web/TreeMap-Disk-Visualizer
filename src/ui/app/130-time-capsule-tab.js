@@ -269,6 +269,7 @@ function forgetCapsuleEntry(id) {
     `<b>${escapeHtml(entry ? entry.name : 'This item')}</b> was already deleted from your disk — this only removes ` +
     `TreeMap’s spare copy${entry ? `, freeing ${formatBytes(entry.sizeBytes)}` : ''}.` +
     `<br><span style="color:var(--text-3)">It can’t be restored from here afterwards.</span>`;
+  setConfirmButton('Forget this copy');
   $('confirmModal').classList.add('open');
 }
 

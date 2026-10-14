@@ -282,6 +282,7 @@ function approveAutopilotRun(runId) {
     : `<b>${escapeHtml(policy.name)}</b>'s next run will remove what it matches ${scope}, up to <b>${formatBytes(run.bytesMatched)}</b>, once. ` +
       `A later run that matches more than ${formatBytes(policy.requireConfirmationAbove || 0)} asks again.`) +
     `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and a run can be undone from here until the Time Capsule removes its copies.</span>`;
+  setConfirmButton('Approve', 'check');
   $('confirmModal').classList.add('open');
 }
 

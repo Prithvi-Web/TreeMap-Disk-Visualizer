@@ -51,7 +51,7 @@ const CHUNK = (() => {
 function guardSource(): string {
   const start = INDEX.indexOf('let openHandleSeq = 0;');
   assert.notEqual(start, -1, 'the open-file guard region starts at its sequence counter');
-  const end = INDEX.indexOf('function setConfirmButton(label)', start);
+  const end = INDEX.indexOf('function setConfirmButton(', start);
   assert.notEqual(end, -1, 'setConfirmButton closes the region');
   const src = INDEX.slice(start, end);
   assert.ok(src.includes('renderOpenHandleWarning'), 'the slice really contains the guard');

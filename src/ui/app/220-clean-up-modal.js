@@ -183,6 +183,7 @@ function confirmEncode(chosen) {
     `<span style="color:var(--text-3)"><b>This is lossy</b> — the picture is compressed again and a little quality is lost permanently. ` +
     `Each new file is checked (it opens, and it runs the full length) <b>before</b> the original is moved to the Trash. ` +
     `If a check fails, that file is left exactly as it is. This can take a long time.</span>`;
+  setConfirmButton('Re-encode', 'video');
   onConfirmTrash = () => startEncode(chosen.map(c => c.path));
   $('confirmModal').classList.add('open');
 }
@@ -373,6 +374,7 @@ document.addEventListener('click', (e) => {
   const name = repo.split(/[\\/]/).pop() || repo;
   $('confirmTitle').innerHTML = icon('gitBranch', 18) + 'Run git gc?';
   $('confirmText').innerHTML = `Run <b>git gc --aggressive</b> on <b>${escapeHtml(name)}</b>?<br><span style="color:var(--text-3)">Safe — it compacts the repo without changing any commits. Large repos can take a while.</span>`;
+  setConfirmButton('Run git gc', 'gitBranch');
   onConfirmTrash = () => runGitGcAction(repo);
   $('confirmModal').classList.add('open');
 });
