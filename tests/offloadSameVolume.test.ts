@@ -222,17 +222,20 @@ test('the container each APFS volume draws its space from is read off the mount 
   const mod = await import('../src/services/apfsContainers').catch(() => null) as ApfsModule | null;
   assert.ok(mod && typeof mod.apfsContainerByDevice === 'function', 'src/services/apfsContainers.ts reads the containers');
   const { parseBsdMount } = await import('../src/platform/atime');
+  // The root is given a device of its own (review F2.3): on a real Mac `/` and the Data volume can
+  // stat to one device, and then the Data volume alone would name the root's container — the root
+  // snapshot's own entry (disk3s1s1) would go unread and no test would see it.
   const devices = new Map<string, bigint>([
-    ['/', 30n], ['/System/Volumes/VM', 31n], ['/System/Volumes/Data', 30n], ['/Volumes/Dev Space', 37n],
+    ['/', 29n], ['/System/Volumes/VM', 31n], ['/System/Volumes/Data', 30n], ['/Volumes/Dev Space', 37n],
     ['/Volumes/Backup', 50n], ['/Volumes/Camera', 60n], ['/Volumes/Camera 2', 61n], ['/private/var/folders/x/X/4B95', 70n],
   ]);
   const byDevice = await mod!.apfsContainerByDevice(parseBsdMount(MAC_MOUNT), async (p) => devices.get(p) ?? null);
   assert.deepEqual([...byDevice.entries()].sort((a, b) => Number(a[0] - b[0])),
-    [[30n, 'disk3'], [31n, 'disk3'], [37n, 'disk3'], [50n, 'disk5']],
-    'every volume of the boot container is disk3, the external APFS drive disk5, and the exFAT partitions and the nullfs view are left to their devices');
+    [[29n, 'disk3'], [30n, 'disk3'], [31n, 'disk3'], [37n, 'disk3'], [50n, 'disk5']],
+    'every volume of the boot container is disk3 — the root snapshot disk3s1s1 on its own device too — the external APFS drive disk5, and the exFAT partitions and the nullfs view are left to their devices');
   devices.delete('/Volumes/Dev Space');
   const unread = await mod!.apfsContainerByDevice(parseBsdMount(MAC_MOUNT), async (p) => devices.get(p) ?? null);
-  assert.deepEqual([...unread.entries()].sort((a, b) => Number(a[0] - b[0])), [[30n, 'disk3'], [31n, 'disk3'], [50n, 'disk5']],
+  assert.deepEqual([...unread.entries()].sort((a, b) => Number(a[0] - b[0])), [[29n, 'disk3'], [30n, 'disk3'], [31n, 'disk3'], [50n, 'disk5']],
     'a mount point that cannot be read names no container, and the others still answer');
 });
 
