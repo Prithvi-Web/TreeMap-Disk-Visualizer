@@ -66,7 +66,7 @@ interface Scan { scanId: string; rootPath: string; finishedAt: number; totalSize
 interface Snap { id: string; rootPath: string; takenAt: number; totalSize: number }
 
 /** `clock`: the page's two date formatters, a minute's and a second's; by default each names the moment exactly. */
-function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: number) => string; second: (t: number) => string } = { minute: (t) => `t${t}`, second: (t) => `t${t}s` }) {
+function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: number) => string; second: (t: number) => string } = { minute: (t) => `t${t}`, second: (t) => `t${t}s` }, toasts: string[] | null = null) {
   const cmpA = fakeSelect();
   const cmpB = fakeSelect();
   const body = { innerHTML: 'PROMPT' };
@@ -97,12 +97,12 @@ function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: num
       return assert.fail(`unexpected request ${url}`);
     },
     formatWhen: clock.minute, formatWhenSeconds: clock.second, formatBytes: (n: number) => `${n} B`, escapeHtml: (s: unknown) => String(s),
-    toast: (m: string) => assert.fail(`the page reported: ${m}`), icon: () => '', REDUCED: true,
+    toast: (m: string) => (toasts ? toasts.push(m) : assert.fail(`the page reported: ${m}`)), icon: () => '', REDUCED: true,
     cmpCountsDrop: noop, fxHuntBeamSync: noop, coverageRules: () => null, cmpCoverage: () => null,
     renderCompare: (r: { whenA: number; whenB: number }) => { body.innerHTML = `RESULT t${r.whenA} → t${r.whenB}`; },
   };
   const names = ['lastPathSegment', 'loadCompareOptions', 'parseCmp', ...(/function cmpSyncResult\s*\(/.test(INDEX) ? ['cmpSyncResult'] : []),
-    'cmpOptionLabels'];
+    'cmpOptionLabels', ...(/function cmpPairRefusal\s*\(/.test(INDEX) ? ['cmpPairRefusal'] : [])];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `'use strict';\n${names.map(declOf).join('\n')}\n${runButtonSource()}\n` +
@@ -212,6 +212,48 @@ for (const [kind, make, other] of failureCases) {
     assert.match(h.body.innerHTML, /press Compare/, 'the picks-changed notice stays');
   });
 }
+
+/* ══════════════ the card never contradicts the Compare button (E07) ══════════════ */
+
+test('E07: after a comparison, picking a scan of another folder says on the card that the two cannot be compared — never "press Compare" beside the refusal', async () => {
+  const toasts: string[] = [];
+  const h = harness([scan('s1', '/c/corpus', 100), scan('s2', '/c/corpus', 200), scan('m1', '/c/corpus/Mail', 300)], [], undefined, toasts);
+  await h.load();
+  await h.click();
+  assert.equal(h.body.innerHTML, 'RESULT t100 → t200', 'control: corpus compared with itself');
+  h.cmpB.pick('scan:m1');
+  assert.match(h.body.innerHTML, /Both picks must cover the same folder/, 'the card says why these two cannot be compared');
+  assert.doesNotMatch(h.body.innerHTML, /press Compare/, 'and does not invite a press that will be refused');
+  await h.click();
+  assert.deepEqual(toasts, ['Both picks must cover the same folder'], 'the button refuses in the same words');
+  assert.match(h.body.innerHTML, /Both picks must cover the same folder/, 'and the card still agrees with it');
+});
+
+test('E07: every later change of the picks rewrites the card for the picks shown — the refusal for a pair that cannot be compared, the invitation for one that can', async () => {
+  const toasts: string[] = [];
+  const h = harness([scan('s1', '/c/corpus', 100), scan('s2', '/c/corpus', 200), scan('s3', '/c/corpus', 300), scan('m1', '/c/corpus/Mail', 400)],
+    [snap('h1', '/c/corpus', 50)], undefined, toasts);
+  await h.load();
+  await h.click(); // s2 → s3
+  h.cmpA.pick('scan:s1');
+  assert.match(h.body.innerHTML, /press Compare to compare these two/, 'control: a pair that can be compared is invited');
+  h.cmpB.pick('scan:m1');
+  assert.match(h.body.innerHTML, /Both picks must cover the same folder/, 'a second change, to another folder, is said too');
+  h.cmpB.pick('scan:s1');
+  assert.match(h.body.innerHTML, /Pick two different scans/, 'the same scan twice');
+  h.cmpB.pick('snap:h1');
+  assert.match(h.body.innerHTML, /Mixing a live scan with a history snapshot/, 'a scan and a snapshot');
+  h.cmpB.pick('scan:s2');
+  assert.match(h.body.innerHTML, /press Compare to compare these two/, 'and back to a pair that can be compared');
+  assert.deepEqual(toasts, [], 'nothing was pressed, nothing toasted');
+});
+
+test('E07: before anything is compared, changing the picks leaves the first prompt, which already says to pick two scans of one folder', async () => {
+  const h = harness([scan('s1', '/c/corpus', 100), scan('s2', '/c/corpus', 200), scan('m1', '/c/corpus/Mail', 300)]);
+  await h.load();
+  h.cmpB.pick('scan:m1');
+  assert.equal(h.body.innerHTML, 'PROMPT', 'the first prompt stands');
+});
 
 test('C08: the lists are wired to keep the result honest when a person changes them', () => {
   assert.match(INDEX, /\$\('cmpA'\)\.addEventListener\('change', cmpSyncResult\);/);

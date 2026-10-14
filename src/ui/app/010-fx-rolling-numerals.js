@@ -648,7 +648,7 @@ const state = {
   // (a note describes a folder, not a scan of it).
   notes: new Map(),
   trends: { roots: [], path: null, snapshots: [], forecastRate: null },
-  compare: { options: [], result: null },
+  compare: { options: [], result: null, notice: false }, // notice: the card speaks for the picks (E07)
   whatsNew: { seq: 0, dismissed: false },
   /** Platform capabilities from /api/platform/capabilities; null until loaded. */
   capabilities: null,

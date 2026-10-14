@@ -7139,7 +7139,7 @@ const state = {
   // (a note describes a folder, not a scan of it).
   notes: new Map(),
   trends: { roots: [], path: null, snapshots: [], forecastRate: null },
-  compare: { options: [], result: null },
+  compare: { options: [], result: null, notice: false }, // notice: the card speaks for the picks (E07)
   whatsNew: { seq: 0, dismissed: false },
   /** Platform capabilities from /api/platform/capabilities; null until loaded. */
   capabilities: null,
@@ -34163,11 +34163,32 @@ function cmpWhenPair(a, b) {
  */
 function cmpSyncResult() {
   const shown = state.compare.result;
-  if (!shown || (shown.a === $('cmpA').value && shown.b === $('cmpB').value)) return;
-  state.compare.result = null;
-  cmpCountsDrop();
-  fxHuntBeamSync('cmpBody', false);
-  $('cmpBody').innerHTML = '<div class="card glass"><div class="muted">The picks changed since the last comparison — press Compare to compare these two.</div></div>';
+  const a = $('cmpA').value, b = $('cmpB').value;
+  if (shown && shown.a === a && shown.b === b) return;
+  if (shown) {
+    state.compare.result = null;
+    cmpCountsDrop();
+    fxHuntBeamSync('cmpBody', false);
+  } else if (!state.compare.notice) {
+    return; // nothing compared yet: the first prompt already says to pick two scans of one folder
+  }
+  // From here the card speaks for the picks shown, every time they change: the
+  // reason Compare would refuse them, or the invitation to press it — never
+  // "press Compare" beside the refusal Compare then toasts (E07).
+  state.compare.notice = true;
+  const refusal = cmpPairRefusal(parseCmp(a), parseCmp(b));
+  $('cmpBody').innerHTML = `<div class="card glass"><div class="muted">${refusal
+    ? `${escapeHtml(refusal)} — these two cannot be compared.`
+    : 'The picks changed since the last comparison — press Compare to compare these two.'}</div></div>`;
+}
+
+/** Why Compare refuses two picks, in the words its toast and the card both say (E07); null when it compares them. */
+function cmpPairRefusal(a, b) {
+  if (!a || !b) return 'Pick two scans to compare';
+  if (a.rootPath !== b.rootPath) return 'Both picks must cover the same folder';
+  if (a.kind === b.kind && a.id === b.id) return 'Pick two different scans';
+  if (a.kind !== b.kind) return 'Mixing a live scan with a history snapshot isn’t supported — pick two of the same kind';
+  return null;
 }
 $('cmpA').addEventListener('change', cmpSyncResult);
 $('cmpB').addEventListener('change', cmpSyncResult);
@@ -34186,13 +34207,8 @@ function parseCmp(value) {
 
 $('cmpRunBtn').addEventListener('click', async () => {
   const a = parseCmp($('cmpA').value), b = parseCmp($('cmpB').value);
-  if (!a || !b) { toast('Pick two scans to compare', 'error'); return; }
-  if (a.rootPath !== b.rootPath) { toast('Both picks must cover the same folder', 'error'); return; }
-  if (a.kind === b.kind && a.id === b.id) { toast('Pick two different scans', 'error'); return; }
-  if (a.kind !== b.kind) {
-    toast('Mixing a live scan with a history snapshot isn’t supported — pick two of the same kind', 'error');
-    return;
-  }
+  const refusal = cmpPairRefusal(a, b);
+  if (refusal) { toast(refusal, 'error'); return; }
   const body = $('cmpBody');
   // The pair this comparison answers: a pick changed before it lands drops it (C08).
   const pair = { a: $('cmpA').value, b: $('cmpB').value };
