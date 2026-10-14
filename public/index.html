@@ -3107,6 +3107,11 @@ body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bo
 .whatsnew .delta-badge { background: var(--surface-1); }
 
 /* ── Settings modal ── */
+/* The footer's note and status line take the room beside the two buttons
+   and wrap there; the buttons keep their one line (design pass G12). */
+.settings-foot-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  font-size: 11.5px; line-height: 1.45; }
+.settings-foot-text #settingsStatus:empty { display: none; }
 .set-h { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); margin-bottom: 8px; }
 .set-h .ic { color: var(--text-3); }
@@ -5142,8 +5147,13 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
     </div>
     <div class="modal-foot">
-      <span class="muted" id="settingsStatus"></span>
-      <div style="flex:1"></div>
+      <!-- Two save models in one sheet (design pass G12): the four choices that
+           save the moment one is picked, and everything Save keeps. The note
+           says which is which, beside the buttons it explains. -->
+      <div class="settings-foot-text">
+        <span class="muted settings-save-note" id="settingsSaveNote">Theme, scanning budget, scan engine and drives are saved the moment you pick one. Save keeps your other edits on this sheet.</span>
+        <span class="muted" id="settingsStatus"></span>
+      </div>
       <!-- Not "Cancel" (QA D73): the budget, engine and drive choices save the
            moment they are picked, and closing cannot undo them. What closing
            drops is the edits Save would keep.

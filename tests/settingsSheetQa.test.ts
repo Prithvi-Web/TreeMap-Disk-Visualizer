@@ -304,6 +304,27 @@ test('the footer offers "Close without saving", not a Cancel that cannot undo th
   assert.match(foot, /id="settingsSaveBtn"/, 'Save is still there');
 });
 
+test('the footer says which choices are already saved and what Save keeps, naming exactly the choices that save on a pick (design pass G12)', () => {
+  // Theme, Scanning budget, Scan engine and Drives each say "Picking one saves
+  // it straight away", while the footer offered "Close without saving" and
+  // "Save" without saying which settings those two apply to.
+  const sheet = settingsSheet();
+  const instant = [...sheet.matchAll(/<div id="(\w+)" role="radiogroup"/g)]
+    .filter((m) => /Picking one saves it straight away/.test(plain(sheet.slice(sheet.lastIndexOf('<div class="set-h"', m.index!), m.index!))))
+    .map((m) => m[1]);
+  const named: Record<string, string> = { themeOptions: 'theme', engineBudgetOptions: 'scanning budget', scanEngineOptions: 'scan engine', scanBoundary: 'drives' };
+  assert.deepEqual(instant.sort(), Object.keys(named).sort(), 'the choices that save on a pick are the four the note names — a fifth must be named there too');
+  const foot = settingsFooter();
+  const note = /<span class="muted settings-save-note" id="settingsSaveNote">([^<]+)<\/span>/.exec(foot);
+  assert.ok(note, `the footer carries the note: ${foot}`);
+  assert.equal(note![1], 'Theme, scanning budget, scan engine and drives are saved the moment you pick one. Save keeps your other edits on this sheet.');
+  for (const words of Object.values(named)) assert.match(note![1].toLowerCase(), new RegExp(`\\b${words}\\b`), `the note names ${words}`);
+  assert.ok(foot.indexOf('id="settingsSaveNote"') < foot.indexOf('data-close="settingsModal"'), 'beside the two buttons it explains, before them');
+  assert.match(foot, /id="settingsStatus"/, 'the status line for a change made here stays');
+  const css = INDEX.slice(INDEX.indexOf('/* ── Settings modal ── */'));
+  assert.match(css, /\.settings-foot-text \{ flex: 1; min-width: 0; display: flex; flex-direction: column;/, 'the note takes the room beside the buttons and wraps there');
+});
+
 test('"Clear target" is an edit like the others: the live target and its meter stay until Save, so closing without saving drops it (review F1.10)', () => {
   // It used to hide the cart's target meter on the spot while the stored
   // target stayed — "Close without saving" then left the two disagreeing

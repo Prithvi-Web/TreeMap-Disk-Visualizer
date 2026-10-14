@@ -232,8 +232,13 @@
       </div>
     </div>
     <div class="modal-foot">
-      <span class="muted" id="settingsStatus"></span>
-      <div style="flex:1"></div>
+      <!-- Two save models in one sheet (design pass G12): the four choices that
+           save the moment one is picked, and everything Save keeps. The note
+           says which is which, beside the buttons it explains. -->
+      <div class="settings-foot-text">
+        <span class="muted settings-save-note" id="settingsSaveNote">Theme, scanning budget, scan engine and drives are saved the moment you pick one. Save keeps your other edits on this sheet.</span>
+        <span class="muted" id="settingsStatus"></span>
+      </div>
       <!-- Not "Cancel" (QA D73): the budget, engine and drive choices save the
            moment they are picked, and closing cannot undo them. What closing
            drops is the edits Save would keep.
