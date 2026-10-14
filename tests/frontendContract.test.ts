@@ -1217,7 +1217,8 @@ function gsearchHarness(opts: { viewControl: boolean }) {
       id, hidden: false, disabled: false, isConnected: true, attrs: {}, innerHTML: '', listeners: {}, kids: [],
       setAttribute: (k, v) => { el.attrs[k] = v; },
       addEventListener: (t, f) => { (el.listeners[t] ||= []).push(f); },
-      focus: () => { if (el.isConnected && !el.hidden) doc.active = el; },
+      // A browser's rule: a control removed from the page, hidden or disabled does not take focus.
+      focus: () => { if (el.isConnected && !el.hidden && !el.disabled) doc.active = el; },
       blur: () => { if (doc.active === el) doc.active = doc.body; },
       select: () => {},
       contains: (n) => n === el || el.kids.some((k) => k.contains(n)),
@@ -1230,6 +1231,9 @@ function gsearchHarness(opts: { viewControl: boolean }) {
   const els: Record<string, El> = {};
   for (const id of ['gsearch', 'gsearchResults', 'gsearchWrap', 'sideNav', 'pathInput', 'tmSearch']) els[id] = mk(id);
   els.gsearchWrap.kids.push(els.gsearch, els.gsearchResults);
+  // One result, a <button class="gsearch-hit"> in the panel: Tab from the box reaches it.
+  const hit = mk('gsearchHit0');
+  els.gsearchResults.kids.push(hit);
   doc.body = mk('body');
   const elsewhere = mk('dashRescan'); // a control on the page, outside the search
   const viewControl = mk('viewFirstControl');
@@ -1262,7 +1266,7 @@ function gsearchHarness(opts: { viewControl: boolean }) {
     for (const f of els.gsearch.listeners.keydown || []) f(ev);
     return ev;
   };
-  return { els, doc, elsewhere, viewControl, tab, focusBox, escape };
+  return { els, doc, elsewhere, viewControl, tab, hit, focusBox, escape };
 }
 
 test('Escape in the sidebar search gives focus back to where it came from — never to <body> (QA third pass D10)', () => {
@@ -1295,6 +1299,37 @@ test('Escape in the sidebar search gives focus back to where it came from — ne
   bare.focusBox(null);
   bare.escape();
   assert.equal(bare.doc.active, bare.tab, 'the selected sidebar tab');
+});
+
+test('Escape in the sidebar search: a control disabled since is not where focus goes, and a Shift+Tab back from a result keeps where the box was entered from (review F1.6 of QA third pass D10)', () => {
+  // A control disabled while the box was open — Rescan, as a scan starts —
+  // is still painted, but focus() on it does nothing: Escape would close the
+  // results and leave focus in the box.
+  const d = gsearchHarness({ viewControl: true });
+  d.focusBox(d.elsewhere);
+  d.elsewhere.disabled = true;
+  d.escape();
+  assert.equal(d.doc.active, d.viewControl, 'a disabled control is not where focus goes: the view on screen takes it');
+
+  // Tab from the box to a result, Shift+Tab back: the box is focused again,
+  // from inside the search. Summoned from nowhere, there is nothing to go
+  // back to — and the result it was just on is never where Escape sends
+  // focus (the search's own parts are not "where it came from").
+  const n = gsearchHarness({ viewControl: true });
+  n.focusBox(null);
+  n.hit.focus(); // Tab: the first result
+  n.focusBox(n.hit); // Shift+Tab: back into the box from the result
+  n.escape();
+  assert.equal(n.doc.active, n.viewControl, 'a result is never where Escape sends focus: the view on screen takes it');
+
+  // Entered from a control: where it was first entered from is still where
+  // Escape goes — not the result, and not the view's first control.
+  const r = gsearchHarness({ viewControl: true });
+  r.focusBox(r.elsewhere);
+  r.hit.focus();
+  r.focusBox(r.hit);
+  r.escape();
+  assert.equal(r.doc.active, r.elsewhere, 'focus is back on the control the box was entered from');
 });
 
 test('the keyboard shortcut works even when the sidebar is collapsed to the rail', () => {
