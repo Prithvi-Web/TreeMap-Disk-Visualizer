@@ -586,18 +586,36 @@ function tmSetEmpty(text) {
 
 /**
  * A leaf rectangle's paint: a cushion gradient — lighter at the top, darker at
- * the bottom — over the cell's colour, faded with depth so the map's dark
- * background shows through deeper tiles. One recipe for the map's leaf pass
- * and the hover magnifier, which painted the same tiles opaque and fully
- * saturated: bright green under the glass over an olive map (QA D39).
+ * the bottom — over the cell's colour, OPAQUE and at the colour's full
+ * strength at every depth. One recipe for the map's leaf pass and the hover
+ * magnifier, so the glass shows the colour the map shows (QA D39).
+ *
+ * Tiles used to be faded with depth, alpha 0.95 × max(0.55, 1 − 0.08·depth)
+ * over --tm-canvas-bg, so the map's ground showed through: the 9.1 GB tile at
+ * depth 4 reached the screen at C*ab 41 in light (pastel salmon) and 46 in
+ * dark (muddy maroon), where #FF453A itself is 84 (design pass G01). The
+ * owner's rule is that the colour must pop, as on a desktop treemap, so depth
+ * is told by the folder frames and the dark outlines instead (pass 2), and
+ * nothing behind the map can tint a tile. tests/mapColourPop.test.ts measures
+ * every ramp step at depths 1–8 over both themes' real ground.
+ *
+ * The cushion's light and shadow are a share of the tile's height up to
+ * TM_CUSHION_FULL_H: a short tile is a shallow cushion. Its label then spans
+ * most of the gradient, and at the full 16%/22% no ink reaches 4.5:1 across
+ * a short red tile from its light top to its dark bottom (G09).
  */
-function tmDepthFade(n) { return Math.max(0.55, 1 - n.depth * 0.08); }
-function tmLeafFill(ctx, base, depthFade, y, h) {
-  const top = mix(base, [255,255,255], 0.16);
-  const bot = mix(base, [0,0,0], 0.22);
+const TM_CUSHION_LIGHT = 0.16;   // the white mixed into the top edge
+const TM_CUSHION_SHADE = 0.22;   // the black mixed into the bottom edge
+const TM_CUSHION_FULL_H = 60;    // px: a tile this tall or taller gets the whole cushion
+function tmLeafStops(base, h) {
+  const amp = Math.max(0, Math.min(1, h / TM_CUSHION_FULL_H));
+  return [mix(base, [255, 255, 255], TM_CUSHION_LIGHT * amp), mix(base, [0, 0, 0], TM_CUSHION_SHADE * amp)];
+}
+function tmLeafFill(ctx, base, y, h) {
+  const [top, bot] = tmLeafStops(base, h);
   const g = ctx.createLinearGradient(0, y, 0, y + h);
-  g.addColorStop(0, `rgba(${top[0]},${top[1]},${top[2]},${0.95 * depthFade})`);
-  g.addColorStop(1, `rgba(${bot[0]},${bot[1]},${bot[2]},${0.95 * depthFade})`);
+  g.addColorStop(0, `rgb(${top[0]},${top[1]},${top[2]})`);
+  g.addColorStop(1, `rgb(${bot[0]},${bot[1]},${bot[2]})`);
   return g;
 }
 
@@ -683,7 +701,6 @@ function drawTreemap() {
     }
 
     const base = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n); // distinct gray-blue for the Trash cell
-    const depthFade = tmDepthFade(r.n);
 
     /* A3 — a cloud placeholder is drawn hollow, because it is not here.
        A solid block the size of a 4 GB video says "this is filling your disk",
@@ -691,7 +708,7 @@ function drawTreemap() {
        correct. The faint fill plus a dashed outline reads as an outline of
        something absent, and the cloud glyph in pass 5 names the reason. */
     if (r.n.cloudPlaceholder && r.w > 6 && r.h > 6) {
-      ctx.fillStyle = `rgba(${base[0]},${base[1]},${base[2]},${0.16 * depthFade})`;
+      ctx.fillStyle = `rgba(${base[0]},${base[1]},${base[2]},0.16)`;
       ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
       ctx.save();
       ctx.setLineDash([4, 3]);
@@ -702,7 +719,7 @@ function drawTreemap() {
       continue;
     }
 
-    ctx.fillStyle = tmLeafFill(ctx, base, depthFade, r.y, r.h);
+    ctx.fillStyle = tmLeafFill(ctx, base, r.y, r.h);
     ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
     if (r.w > 6 && r.h > 6) {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
@@ -714,12 +731,21 @@ function drawTreemap() {
       ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
     }
   }
-  // Pass 2: directory frames.
+  // Pass 2: directory frames. Every leaf is painted at full strength now, so
+  // nesting is read from the edges, as on a desktop treemap: each folder gets
+  // a dark outline — heavier at the top level — inside which a light rim
+  // catches the cushion's light (G01).
   for (const r of px) {
     if (!r.frame) continue;
-    ctx.strokeStyle = `rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05)})`;
-    ctx.lineWidth = r.n.depth <= 1 ? 1.5 : 1;
+    const top = r.n.depth <= 1;
+    ctx.strokeStyle = `rgba(0,0,0,${top ? 0.6 : 0.42})`;
+    ctx.lineWidth = top ? 1.5 : 1;
     ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    if (r.w > 4 && r.h > 4) {
+      ctx.strokeStyle = `rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05)})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3);
+    }
   }
   // Pass 2.5: diff wash over expanded directories (history diff mode only).
   // A folder's own growth/shrinkage must show even when its visible children

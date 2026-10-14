@@ -142,7 +142,7 @@ const GREEN = [48, 209, 88];
 function mapFill() {
   const rec = recordingCtx();
   const state = { treemap: { nodes: [TILE], hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
-  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmDepthFade', 'mix', 'containerListable'], {
+  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'mix', 'containerListable'], {
     $: () => ({ clientWidth: 120 }),
     treemapCanvasHeight: () => 100,
     window: { devicePixelRatio: 1 },
@@ -169,7 +169,7 @@ function mapFill() {
 function lensFill(pxRects: any[]) {
   const rec = recordingCtx();
   const paint = load<(ctx: unknown, w: number, h: number) => void>(
-    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmDepthFade'], {
+    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H'], {
       state: { lens: { held: true, pinned: false, at: { x: 25, y: 25 } }, treemap: { pxRects, cells: [] } },
       isCells: () => false,
       cssVar: () => '#0b0b0f',
@@ -183,13 +183,14 @@ function lensFill(pxRects: any[]) {
 }
 
 test('D39: the lens paints a tile with the same fill the map painted it with', () => {
-  // QA: bright green under the glass over an olive map. The map paints a
-  // depth-faded gradient over its dark background (a depth-4 tile is ~65%
-  // opaque); the lens painted the same tile opaque and fully saturated.
+  // QA: bright green under the glass over an olive map. The map painted a
+  // depth-faded gradient over its dark background (a depth-4 tile was ~65%
+  // opaque); the lens painted the same tile opaque and fully saturated. Both
+  // paint the one opaque cushion now (G01), and must keep agreeing.
   const { fill, px } = mapFill();
   assert.equal(px.length, 1, 'the map drew the tile');
   const glass = lensFill(px);
   assert.equal(typeof glass, 'object', `the lens fills with the map's gradient, not a flat colour (${String(glass)})`);
-  assert.deepEqual((glass as any).stops, (fill as any).stops, 'with the same colour stops — same hue, same depth fade');
+  assert.deepEqual((glass as any).stops, (fill as any).stops, 'with the same colour stops — same hue, same cushion');
   assert.deepEqual((glass as any).args, (fill as any).args, 'running over the tile\'s own height, as on the map');
 });
