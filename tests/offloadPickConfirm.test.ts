@@ -198,17 +198,30 @@ test('where TreeMap cannot list the drives — the server says why, or the call 
     ['the server cannot list drives on this platform', () => WINDOWS_VOLUMES],
     ['the drive list could not be fetched', () => { throw new Error('Network request failed'); }],
   ];
-  for (const [label, reply] of cases) {
-    const h = harness([], null, reply);
+  // On every system — one whose mount folder the picker would otherwise open on (F02) included: with no
+  // list to go by, /Volumes or /mnt is no better a guess than the usual start (review F1.3 of F02).
+  for (const platform of [null, 'darwin', 'linux', 'win32']) {
+    for (const [what, reply] of cases) {
+      const label = `${what}, ${platform ?? 'system not yet known'}`;
+      const h = harness([], null, reply);
+      if (platform) h.state.system = { platform };
+      await h.start(['/Users/me/a.mov']);
+      assert.equal(h.opened.length, 1, `${label}: control, the picker opened`);
+      const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips?: Drive[]; hint: string }];
+      assert.doesNotMatch(opts.hint, /No other drive is connected/, `${label}: a drive list nobody read is not "none connected"`);
+      assert.match(opts.hint, /can't list the drives/, `${label}: it says TreeMap cannot list them`);
+      assert.match(opts.hint, /type the path of a folder on another drive/, `${label}: and what to do instead`);
+      assert.match(opts.hint, /frees nothing/, `${label}: and why the files' own drive will not do`);
+      assert.equal(opts.chips, undefined, `${label}: the usual shortcuts stay — TreeMap cannot tell which drive they are on`);
+      assert.equal(start, null, `${label}: the picker starts where it always does`);
+    }
+  }
+  // Control: with the list read and nothing on it, the same systems open where drives are mounted.
+  for (const [platform, mount] of [['darwin', '/Volumes'], ['linux', '/mnt'], ['win32', null]] as const) {
+    const h = harness([]);
+    h.state.system = { platform };
     await h.start(['/Users/me/a.mov']);
-    assert.equal(h.opened.length, 1, `${label}: control, the picker opened`);
-    const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips?: Drive[]; hint: string }];
-    assert.doesNotMatch(opts.hint, /No other drive is connected/, `${label}: a drive list nobody read is not "none connected"`);
-    assert.match(opts.hint, /can't list the drives/, `${label}: it says TreeMap cannot list them`);
-    assert.match(opts.hint, /type the path of a folder on another drive/, `${label}: and what to do instead`);
-    assert.match(opts.hint, /frees nothing/, `${label}: and why the files' own drive will not do`);
-    assert.equal(opts.chips, undefined, `${label}: the usual shortcuts stay — TreeMap cannot tell which drive they are on`);
-    assert.equal(start, null, `${label}: the picker starts where it always does`);
+    assert.equal((h.opened[0] as [string | null])[0], mount, `control: ${platform}, the list read and empty, opens on ${mount ?? 'the usual start'}`);
   }
 });
 
