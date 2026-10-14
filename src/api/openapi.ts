@@ -1487,7 +1487,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Diff', ref('CompareResult')),
       '400': errorResponse('Scans cover different roots'),
-      '409': errorResponse('BOUNDARY_CHANGED — the two scans stopped at different drives mounted inside the folder (one under "Stay on this drive" left a drive out that the other did not, or one went into a drive the other did not find), so a diff would show a drive as files added or removed'),
+      '409': errorResponse('BOUNDARY_CHANGED — the scans counted different mounted drives; COVERAGE_INCOMPARABLE — either scan reported incomplete or unknown listing coverage, so the difference cannot prove file growth or shrinkage'),
     },
   },
   {
@@ -1876,7 +1876,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'history',
     destructive: false,
     parameters: [queryParam('path', 'Root to list snapshots for'), queryParam('all', "'true' for every snapshot, slim", bool())],
-    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}. A snapshot carries boundary — { rule: "stay", notEntered[] } or { rule: "cross", entered[] } — only when a drive was mounted inside its folder (Track U); history never compares across two different boundaries')) },
+    responses: { '200': jsonResponse('History', opaque('{roots[]} | {rootPath, snapshots[]} | {snapshots[]}. Snapshot coverage is complete, partial or unknown for reported listing errors; absent on legacy history means unknown. A snapshot carries boundary — { rule: "stay", notEntered[] } or { rule: "cross", entered[] } — only when a drive was mounted inside its folder (Track U); history never compares across different boundaries or incomplete/unknown coverage')) },
   },
   {
     method: 'get',
@@ -1890,7 +1890,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     ],
     responses: {
       '200': jsonResponse(
-        'Historical layout. prevTakenAt and every prevSize are absent (null) when no earlier snapshot exists, or when the one before stopped at different drives mounted inside the folder (Track U, U-24)',
+        'Historical layout. prevTakenAt and every prevSize are absent (null) when no earlier snapshot exists, the scans counted different mounted drives, or either snapshot has incomplete or unknown listing coverage',
         opaque('snapshot, prevTakenAt, root, scanRootPath, maxDepth, minSize, nodes[], tree'),
       ),
       '404': errorResponse('No snapshot trees recorded'),
@@ -1906,7 +1906,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Diff', opaque('SnapshotDiff: a, b, rootPath, totalDelta, entries[]')),
       '404': errorResponse('Unknown snapshot id'),
-      '409': errorResponse('BOUNDARY_CHANGED — the two snapshots stopped at different drives mounted inside the folder, so a diff would show a drive as files added or removed'),
+      '409': errorResponse('BOUNDARY_CHANGED — the snapshots counted different mounted drives; COVERAGE_INCOMPARABLE — either snapshot has incomplete or unknown listing coverage (including history recorded before coverage was persisted)'),
     },
   },
   {

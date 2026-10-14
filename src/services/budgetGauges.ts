@@ -34,6 +34,7 @@ export interface BudgetPoint {
   t: number;
   v: number;
   boundary?: SnapshotBoundary;
+  coverage?: Snapshot['coverage'];
 }
 
 export interface BudgetHistorySeries {
@@ -119,8 +120,8 @@ function boundaryWithin(boundary: SnapshotBoundary | undefined, folder: string):
   return entered.length > 0 ? { rule: 'cross', entered } : undefined;
 }
 
-function pointOf(t: number, v: number, boundary: SnapshotBoundary | undefined): BudgetPoint {
-  return boundary ? { t, v, boundary } : { t, v };
+function pointOf(t: number, v: number, boundary: SnapshotBoundary | undefined, coverage: Snapshot['coverage']): BudgetPoint {
+  return { t, v, coverage: coverage ?? 'unknown', ...(boundary ? { boundary } : {}) };
 }
 
 /**
@@ -132,7 +133,7 @@ function pointOf(t: number, v: number, boundary: SnapshotBoundary | undefined): 
 export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHistorySeries> {
   const own = await listSnapshots(budgetPath);
   if (own.length > 0) {
-    return { points: own.map((s) => pointOf(s.takenAt, s.totalSize, boundaryWithin(s.boundary, budgetPath))), source: 'own-scans' };
+    return { points: own.map((s) => pointOf(s.takenAt, s.totalSize, boundaryWithin(s.boundary, budgetPath), s.coverage)), source: 'own-scans' };
   }
 
   // No direct history — look for scanned roots the budget folder sits under
@@ -153,7 +154,7 @@ export async function budgetHistorySeries(budgetPath: string): Promise<BudgetHis
       const tree = trees[s.id];
       if (!tree) continue;
       const node = descend(tree, segments);
-      if (node) points.push(pointOf(s.takenAt, node.s, boundaryWithin(s.boundary, budgetPath)));
+      if (node) points.push(pointOf(s.takenAt, node.s, boundaryWithin(s.boundary, budgetPath), s.coverage));
     }
   }
   if (points.length === 0) return { points: [], source: 'none' };
@@ -199,6 +200,7 @@ export function computeBudgetProjection(
     fileCount: 0,
     dirCount: 0,
     topEntries: [],
+    coverage: p.coverage,
     ...(p.boundary ? { boundary: p.boundary } : {}),
   }));
   const f = computeForecast(snaps, budget.maxBytes - currentBytes, now);

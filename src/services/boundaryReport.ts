@@ -12,7 +12,7 @@ import {
 } from '../utils/mountBoundaries';
 import { storeOf } from './scanStore';
 import { storageModeOf } from './storageMode';
-import { boundaryKeyOf, scanBoundaryKey, snapshotBoundaryOf } from './snapshots';
+import { assertComparableCoverage, boundaryKeyOf, scanBoundaryKey, scanComparisonEvidence, snapshotBoundaryOf } from './snapshots';
 import { AppError } from '../middleware/errorHandler';
 import { rootLivesAt } from '../utils/pathSanitizer';
 
@@ -117,8 +117,8 @@ export function boundaryReport(scan: ScanResult): BoundaryReport {
  * alike, with the reason. `scanBoundaryKey` is the same key history uses.
  */
 export function assertSameBoundary(scanA: ScanResult, scanB: ScanResult): void {
-  if (scanBoundaryKey(scanA) === scanBoundaryKey(scanB)) return;
-  throw boundaryChanged('scans', scanA.rootPath, snapshotBoundaryOf(scanA), snapshotBoundaryOf(scanB));
+  if (scanBoundaryKey(scanA) !== scanBoundaryKey(scanB)) throw boundaryChanged('scans', scanA.rootPath, snapshotBoundaryOf(scanA), snapshotBoundaryOf(scanB));
+  assertComparableCoverage(scanComparisonEvidence(scanA), scanComparisonEvidence(scanB));
 }
 
 /**
@@ -127,8 +127,8 @@ export function assertSameBoundary(scanA: ScanResult, scanB: ScanResult): void {
  * "freed").
  */
 export function assertSameSnapshotBoundary(a: Snapshot, b: Snapshot): void {
-  if (boundaryKeyOf(a.boundary) === boundaryKeyOf(b.boundary)) return;
-  throw boundaryChanged('snapshots', a.rootPath, a.boundary, b.boundary);
+  if (boundaryKeyOf(a.boundary) !== boundaryKeyOf(b.boundary)) throw boundaryChanged('snapshots', a.rootPath, a.boundary, b.boundary);
+  assertComparableCoverage(a, b);
 }
 
 function boundaryChanged(what: string, rootPath: string, a: Snapshot['boundary'], b: Snapshot['boundary']): AppError {

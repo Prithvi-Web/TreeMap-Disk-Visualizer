@@ -108,10 +108,13 @@ export function computeForecast(
   };
 
   if (count < MIN_SNAPSHOTS || spanDays < MIN_SPAN_DAYS) {
+    const exclusion = snaps.some((s) => s.coverage !== 'complete')
+      ? 'had incomplete or unknown listing coverage, or stopped at different drives mounted inside this folder'
+      : 'stopped at different drives mounted inside this folder';
     return {
       ...base,
       status: 'insufficient',
-      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanDays < 0.05 ? 'less than an hour' : `${round2(spanDays)} day${spanDays === 1 ? '' : 's'}`}. Forecasting needs at least ${MIN_SNAPSHOTS} scans spanning ${MIN_SPAN_DAYS}+ days.${earlier > 0 ? ` ${earlier} earlier scan${earlier === 1 ? '' : 's'} stopped at different drives mounted inside this folder, so ${earlier === 1 ? 'it is' : 'they are'} not compared with these.` : ''}`,
+      reason: `Not enough history yet — ${count} scan${count === 1 ? '' : 's'} over ${spanDays < 0.05 ? 'less than an hour' : `${round2(spanDays)} day${spanDays === 1 ? '' : 's'}`}. Forecasting needs at least ${MIN_SNAPSHOTS} fully listed scans spanning ${MIN_SPAN_DAYS}+ days.${earlier > 0 ? ` ${earlier} earlier scan${earlier === 1 ? '' : 's'} ${exclusion}, so ${earlier === 1 ? 'it is' : 'they are'} not compared with these.` : ''}`,
     };
   }
 

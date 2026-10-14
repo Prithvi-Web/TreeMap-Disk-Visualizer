@@ -434,6 +434,7 @@ function snapshotFor(root: string, takenAt: number, totalSize: number, boundary?
     dirCount: 3,
     topEntries: [{ name: 'other', path: path.join(root, 'other'), size: totalSize, type: 'dir' }],
     hasTree: false,
+    coverage: 'complete',
     ...(boundary ? { boundary } : {}),
   };
 }
@@ -857,7 +858,7 @@ test('the boundary key: a crossing scan names the drives it went into, and a sna
   assert.equal(boundaryKeyOf(crossX), boundaryKeyOf({ rule: 'cross', entered: [x] }), 'the same drive twice');
   assert.equal(boundaryKeyOf({ rule: 'cross', entered: [] }), '', 'no drive went in: as a scan that met none');
   assert.equal(boundaryKeyOf({ rule: 'stay', notEntered: [x, y] }), `${x}\n${y}`, 'a stay key is as it was');
-  const snap = (takenAt: number, boundary?: Snapshot['boundary']): Snapshot => ({ id: String(takenAt), rootPath: '/r', takenAt, totalSize: takenAt, fileCount: 1, dirCount: 1, topEntries: [], ...(boundary ? { boundary } : {}) });
+  const snap = (takenAt: number, boundary?: Snapshot['boundary']): Snapshot => ({ id: String(takenAt), rootPath: '/r', takenAt, totalSize: takenAt, fileCount: 1, dirCount: 1, topEntries: [], coverage: 'complete', ...(boundary ? { boundary } : {}) });
   const ids = (list: Snapshot[]): string[] => list.map((s) => s.id);
   assert.deepEqual(ids(currentBaseline([snap(1), snap(2), snap(3)])), ['1', '2', '3'], 'history from before U-24 is one run, as it was');
   assert.deepEqual(ids(currentBaseline([snap(1), snap(2, crossX), snap(3, crossX)])), ['2', '3'], 'the forecast starts where the drive went in');

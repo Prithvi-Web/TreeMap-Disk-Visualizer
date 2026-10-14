@@ -6,7 +6,7 @@ import { appDataDir } from './storage';
 import { isEphemeral } from './portableMode';
 import { getAppAttribution } from './appAttribution';
 import { readAudit } from './audit';
-import { boundaryKeyOf, buildSnapshotTree, getSnapshotTreeAt, scanBoundaryKey } from './snapshots';
+import { buildSnapshotTree, getSnapshotTreeAt, scanComparisonEvidence, snapshotsComparable } from './snapshots';
 import { storeOf } from './scanStore';
 import { isInside } from '../utils/pathSanitizer';
 import { separatorOf } from '../utils/pathSeparator';
@@ -302,7 +302,7 @@ export async function recordScanJournal(scan: ScanResult, prev: Snapshot): Promi
   // The two scans stopped at different drives mounted inside the folder
   // (Track U, U-24): the difference is a drive, not something a process did,
   // and the journal names no culprit for it. The next scan is the baseline.
-  if (scanBoundaryKey(scan) !== boundaryKeyOf(prev.boundary)) return 0;
+  if (!snapshotsComparable(prev, scanComparisonEvidence(scan))) return 0;
   const store = storeOf(scan);
   const curr = buildSnapshotTree(store);
 

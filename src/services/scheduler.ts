@@ -3,7 +3,7 @@ import { GrowthNotification, ScanResult, ScheduleConfig, Snapshot } from '../mod
 import { startScan, getScan, scanRootPathOf } from './diskScanner';
 import { getSettings, patchSchedule } from './settings';
 import { runDuePolicies } from './autopilot';
-import { boundaryKeyOf, listSnapshots, scanBoundaryKey } from './snapshots';
+import { listSnapshots, scanComparisonEvidence, snapshotsComparable } from './snapshots';
 import { getForecast } from './forecast';
 import { recordScanJournal } from './journal';
 import { sanitizePath } from '../utils/pathSanitizer';
@@ -177,8 +177,7 @@ export function growthAlertFor(sched: ScheduleConfig, target: string, prev: Snap
   if (!done.store) return null;
   // Another folder's snapshot is no previous size of this one: a link the
   // scheduler resolved and the scan then followed elsewhere (QA D78).
-  if (prev.rootPath !== done.rootPath) return null;
-  if (scanBoundaryKey(done) !== boundaryKeyOf(prev.boundary)) return null;
+  if (!snapshotsComparable(prev, scanComparisonEvidence(done))) return null;
   const newSize = done.store.size(done.store.rootId);
   const delta = newSize - prev.totalSize;
   const pct = prev.totalSize > 0 ? (delta / prev.totalSize) * 100 : 0;

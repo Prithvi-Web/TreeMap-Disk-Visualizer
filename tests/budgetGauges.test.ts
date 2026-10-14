@@ -24,12 +24,12 @@ const GB = 1024 ** 3;
 const NOW = 1_800_000_000_000; // fixed "now" so every projection is deterministic
 
 /** A series point `daysAgo` days back from NOW at `v` bytes. */
-function pt(daysAgo: number, v: number): { t: number; v: number } {
-  return { t: NOW - daysAgo * DAY, v };
+function pt(daysAgo: number, v: number): { t: number; v: number; coverage: 'complete' } {
+  return { t: NOW - daysAgo * DAY, v, coverage: 'complete' };
 }
 
 function snap(rootPath: string, id: string, daysAgo: number, totalSize: number): Snapshot {
-  return { id, rootPath, takenAt: NOW - daysAgo * DAY, totalSize, fileCount: 1, dirCount: 1, topEntries: [] };
+  return { id, rootPath, takenAt: NOW - daysAgo * DAY, totalSize, fileCount: 1, dirCount: 1, topEntries: [], coverage: 'complete' };
 }
 
 /** Overwrite the isolated snapshot store with exactly these snapshots. */

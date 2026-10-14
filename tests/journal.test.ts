@@ -399,6 +399,7 @@ test('recordScanJournal turns a scan-vs-snapshot delta into an attributed entry'
   // journal must write is a removal it cannot attribute to any app.
   const prev: Snapshot = {
     id: 'prev-snapshot',
+    coverage: 'complete',
     rootPath: fixture,
     takenAt: Date.now() - 60_000,
     totalSize: currentTotal + 300 * MB,
@@ -432,6 +433,7 @@ test('a scan that changed nothing significant writes nothing', async () => {
   const size = store.size(store.rootId);
   const prev: Snapshot = {
     id: 'prev-still', rootPath: fixture, takenAt: Date.now() - 60_000,
+    coverage: 'complete',
     totalSize: size, fileCount: 1, dirCount: 1,
     topEntries: [{ name: 'small.txt', path: path.join(fixture, 'small.txt'), size, type: 'file' }],
   };

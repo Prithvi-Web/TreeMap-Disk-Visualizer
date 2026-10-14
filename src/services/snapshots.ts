@@ -7,6 +7,7 @@ import { isEphemeral } from './portableMode';
 import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
 import { mountOutcome } from '../utils/mountBoundaries';
 import { separatorOf } from '../utils/pathSeparator';
+import { AppError } from '../middleware/errorHandler';
 
 /**
  * Snapshots — lightweight scan history persisted to snapshots.json in the
@@ -267,7 +268,7 @@ export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
   if (!snapshot) return null;
   const before = withTrees.filter((s) => s.takenAt < snapshot.takenAt);
   const last = before.length ? before[before.length - 1] : null;
-  const prevSnap = last && boundaryKeyOf(last.boundary) === boundaryKeyOf(snapshot.boundary) ? last : null;
+  const prevSnap = last && snapshotsComparable(last, snapshot) ? last : null;
   return {
     snapshot,
     tree: trees[snapshot.id],
@@ -315,13 +316,41 @@ export function scanBoundaryKey(scan: ScanResult): string {
   return boundaryKeyOf(snapshotBoundaryOf(scan));
 }
 
+/** A settled scan can still report failed listings. This cannot detect errors an engine never reports. */
+export function scanCoverage(scan: ScanResult): NonNullable<Snapshot['coverage']> {
+  if ([scan.deniedDirs, scan.unreadableDirs, scan.deniedEntries, scan.unreadableEntries, scan.vanishedDirs].some((n) => (n ?? 0) > 0)) return 'partial';
+  if (scan.status !== 'complete') return 'unknown';
+  return 'complete';
+}
+
+type ComparisonEvidence = Pick<Snapshot, 'rootPath' | 'coverage' | 'boundary'>;
+
+/** Current scan evidence, in the same shape persisted history uses. */
+export function scanComparisonEvidence(scan: ScanResult): ComparisonEvidence {
+  return { rootPath: scan.rootPath, coverage: scanCoverage(scan), boundary: snapshotBoundaryOf(scan) };
+}
+
+/** Unknown or partial listings cannot prove files appeared, disappeared, grew or shrank. */
+export function snapshotsComparable(a: ComparisonEvidence, b: ComparisonEvidence): boolean {
+  return a.coverage === 'complete' && b.coverage === 'complete' && a.rootPath === b.rootPath &&
+    boundaryKeyOf(a.boundary) === boundaryKeyOf(b.boundary);
+}
+
+export function assertComparableCoverage(a: ComparisonEvidence, b: ComparisonEvidence): void {
+  if (a.coverage === 'complete' && b.coverage === 'complete') return;
+  throw new AppError(409, 'COVERAGE_INCOMPARABLE',
+    `These measurements have ${a.coverage ?? 'unknown'} and ${b.coverage ?? 'unknown'} listing coverage. ` +
+    'Incomplete or unknown coverage cannot prove file growth or shrinkage; compare two fully listed scans.');
+}
+
 /** The snapshots since the boundary last changed: the latest one's run of equal keys, oldest first. */
 export function currentBaseline(snaps: readonly Snapshot[]): Snapshot[] {
   const sorted = [...snaps].sort((a, b) => a.takenAt - b.takenAt);
   if (sorted.length === 0) return sorted;
-  const key = boundaryKeyOf(sorted[sorted.length - 1].boundary);
+  const latest = sorted[sorted.length - 1];
+  if (latest.coverage !== 'complete') return [];
   let start = sorted.length - 1;
-  while (start > 0 && boundaryKeyOf(sorted[start - 1].boundary) === key) start--;
+  while (start > 0 && snapshotsComparable(sorted[start - 1], latest)) start--;
   return sorted.slice(start);
 }
 
@@ -360,6 +389,7 @@ async function writeSnapshot(scan: ScanResult): Promise<Snapshot | null> {
     dirCount: scan.dirCount,
     topEntries,
     hasTree: true,
+    coverage: scanCoverage(scan),
   };
   const boundary = snapshotBoundaryOf(scan);
   if (boundary) snapshot.boundary = boundary;
@@ -446,6 +476,7 @@ export async function getSnapshot(id: string): Promise<Snapshot | undefined> {
 
 /** Size deltas between two snapshots (top-level entries matched by path). */
 export function diffSnapshots(a: Snapshot, b: Snapshot): SnapshotDiff {
+  assertComparableCoverage(a, b);
   const byPath = new Map<string, SnapshotDeltaEntry>();
   for (const e of a.topEntries) {
     byPath.set(e.path, { name: e.name, path: e.path, type: e.type, sizeA: e.size, sizeB: null, delta: -e.size });
