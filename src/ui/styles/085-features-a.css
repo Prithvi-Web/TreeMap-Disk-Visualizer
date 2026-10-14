@@ -123,7 +123,9 @@
 .dh-summary { font-size: 12.5px; line-height: 1.55; color: var(--text-2); margin-bottom: 10px; }
 .dh-kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 12px; align-items: baseline; }
 .dh-kv .k { color: var(--text-3); }
-.dh-unknown { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-3);
+/* --text-2, not --text-3: on its --surface-2 panel the tertiary ink was
+   4.497:1 in the dark theme (design pass G09). */
+.dh-unknown { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-2);
   padding: 9px 11px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); }
 .dh-foot { margin-top: 9px; font-size: 10.5px; color: var(--text-3); }
 /* ── C3: download provenance, in the preview pane ── */
@@ -158,8 +160,10 @@
 .sec-move-off { display: flex; align-items: center; gap: 5px; color: var(--text-3); }
 /* E09: every finding is reachable, the next page behind "Show more". */
 .sec-more { display: flex; align-items: center; gap: 10px; padding: 10px 2px 2px; font-size: 12px; }
+/* A "Minor" badge is --text-2 on its chip: --text-3 measured 4.28:1 light
+   and 3.85:1 dark there, for 10px text (design pass G09). */
 .sec-sev { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
-  padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
+  padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-2); }
 /* The .pkg-tag chip recipe: an opaque 8% mix over --bg-1, measured for AA. */
 .sev-high .sec-sev { background: color-mix(in srgb, var(--danger) 8%, var(--bg-1)); color: var(--danger); }
 .sev-medium .sec-sev { background: color-mix(in srgb, var(--warn) 8%, var(--bg-1)); color: var(--warn); }

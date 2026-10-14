@@ -164,23 +164,122 @@ test('--warn, --ok and --danger are text colours on a card in both themes — 4.
 
 /* ═══════════════ the primary button's hover ═══════════════ */
 
-test('the primary button deepens on hover in the light theme and keeps its label legible in both', () => {
+test('the primary button deepens on hover in the light theme, brightens in the dark, and fills from its own token', () => {
   const hover = ruleFor('.btn-primary:hover');
   const bg = prop(hover.body, 'background');
-  assert.ok(bg && /var\(--accent-hover\)\s*$/.test(bg), 'the hover fill ends in the theme token, not a hex');
+  assert.ok(bg && /var\(--accent-fill-hover\)\s*$/.test(bg), 'the hover fill ends in the theme token, not a hex');
   assert.doesNotMatch(bg!, /#[0-9a-f]{3,8}/i, 'no literal hue in the hover fill');
+  const rest = prop(ruleFor('.btn-primary').body, 'background');
+  assert.ok(rest && /var\(--accent-fill\)\s*$/.test(rest), 'the resting fill ends in the theme token');
   for (const [name, palette] of THEMES) {
-    assert.ok(palette['--accent-hover'], `${name} declares --accent-hover`);
-    const rest = contrast([255, 255, 255], rgb(palette['--accent']));
-    const lit = contrast([255, 255, 255], rgb(palette['--accent-hover']));
-    const floor = name === 'light' ? 4.5 : 3;
-    assert.ok(lit >= floor, `${name}: white on the hover fill measures ${fmt(lit)}:1 (floor ${floor}:1)`);
-    assert.ok(rest >= floor, `${name}: white on the resting fill measures ${fmt(rest)}:1 (floor ${floor}:1)`);
+    for (const t of ['--accent-fill', '--accent-fill-hover']) assert.ok(palette[t], `${name} declares ${t}`);
   }
-  assert.notEqual(LIGHT_ONLY['--accent-hover'], undefined, 'the light block re-tunes the hover, it does not inherit the dark one');
+  assert.notEqual(LIGHT_ONLY['--accent-fill-hover'], undefined, 'the light block re-tunes the hover, it does not inherit the dark one');
   // Light controls deepen under the pointer; dark ones brighten. Never the reverse.
-  assert.ok(luminance(rgb(LIGHT['--accent-hover'])) < luminance(rgb(LIGHT['--accent'])), 'light: hover is darker than rest');
-  assert.ok(luminance(rgb(DARK['--accent-hover'])) > luminance(rgb(DARK['--accent'])), 'dark: hover is brighter than rest');
+  assert.ok(luminance(rgb(LIGHT['--accent-fill-hover'])) < luminance(rgb(LIGHT['--accent-fill'])), 'light: hover is darker than rest');
+  assert.ok(luminance(rgb(DARK['--accent-fill-hover'])) > luminance(rgb(DARK['--accent-fill'])), 'dark: hover is brighter than rest');
+});
+
+/**
+ * `linear-gradient(<angle>, <stop>, …), var(--fill)` as [stops, fill]: each
+ * stop a colour with its position in percent — a missing first position is
+ * 0%, a missing last 100%, and missing middle ones are spread evenly, as CSS
+ * places them.
+ */
+function sheenOver(background: string): { stops: Array<{ at: number; colour: string }>; fill: string } {
+  const top = layers(background);
+  assert.equal(top.length, 2, `a sheen over one fill (${background})`);
+  const g = /^linear-gradient\((.*)\)$/.exec(top[0]);
+  assert.ok(g, `the sheen is a linear gradient (${top[0]})`);
+  const args = layers(g![1]).slice(1); // the angle first
+  const raw = args.map((a) => {
+    const m = /^(rgba?\([^)]*\))\s*(?:([\d.]+)%)?$/.exec(a.trim());
+    assert.ok(m, `a stop is a colour and an optional percentage (${a})`);
+    return { colour: m![1], at: m![2] === undefined ? null : +m![2] };
+  });
+  if (raw[0].at === null) raw[0].at = 0;
+  if (raw[raw.length - 1].at === null) raw[raw.length - 1].at = 100;
+  for (let i = 1; i < raw.length - 1; i++) {
+    if (raw[i].at !== null) continue;
+    let j = i; while (raw[j].at === null) j++;
+    const a = raw[i - 1].at!, b = raw[j].at!;
+    for (let k = i; k < j; k++) raw[k].at = a + ((b - a) * (k - i + 1)) / (j - i + 1);
+  }
+  return { stops: raw as Array<{ at: number; colour: string }>, fill: top[1] };
+}
+
+test('G09: the primary button\'s white label clears 4.5:1 WITH its sheen, resting and hovered, in both themes — and the blue stays vivid', () => {
+  // White on #0A84FF is 3.65:1 flat, and the sheen's white lifts the fill
+  // under the label further: QA measured 3.0–3.9:1 rendered in the dark
+  // theme. The label's band is where a 13px line sits, centred in a 30px
+  // button; every point of the sheen across it is measured.
+  const btn = ruleFor('.btn');
+  const h = parseFloat(prop(btn.body, 'min-height')!), fs = parseFloat(prop(btn.body, 'font-size')!);
+  const band = [(h - fs * 1.2) / 2 / h * 100, (h + fs * 1.2) / 2 / h * 100];
+  assert.ok(band[0] > 15 && band[1] < 85, `the label band is ${band.map(fmt).join('–')}% of the button`);
+  for (const sel of ['.btn-primary', '.btn-primary:hover']) {
+    const { stops, fill } = sheenOver(prop(ruleFor(sel).body, 'background')!);
+    for (const [name, palette] of THEMES) {
+      const base = paint(fill, palette, [0, 0, 0]);
+      let worst = Infinity, where = 0;
+      for (let at = band[0]; at <= band[1]; at += 0.5) {
+        const i = stops.findIndex((st) => st.at >= at);
+        const last = stops[stops.length - 1];
+        const [a, b] = i === -1 ? [last, last] : i === 0 ? [stops[0], stops[0]] : [stops[i - 1], stops[i]];
+        const t = b.at === a.at ? 0 : (at - a.at) / (b.at - a.at);
+        const under = mix(over(b.colour, base), t, over(a.colour, base));
+        const c = contrast([255, 255, 255], under);
+        if (c < worst) { worst = c; where = at; }
+      }
+      assert.ok(worst >= 4.5, `${name} ${sel}: the white label measures ${fmt(worst)}:1 at ${fmt(where)}% down the button (floor 4.5:1)`);
+      // Vivid, not greyed: CIE C*ab of the fill itself.
+      const chroma = labChroma(base);
+      assert.ok(chroma >= 60, `${name} ${sel}: the fill keeps its colour — C*ab ${chroma.toFixed(1)} (floor 60)`);
+    }
+  }
+});
+
+/** CIE C*ab under D65. */
+function labChroma([r8, g8, b8]: RGB): number {
+  const f = (c: number) => (c /= 255) <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  const r = f(r8), g = f(g8), b = f(b8);
+  const X = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047, Y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const Z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+  const k = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+  return Math.hypot(500 * (k(X) - k(Y)), 200 * (k(Y) - k(Z)));
+}
+
+/**
+ * The two grounds a `.card.glass` really shows: --glass-strong over the page,
+ * and that again under the card's own sheen at its brightest (the first stop
+ * of the .glass gradient, which the light theme re-declares). Text in the
+ * card has to read on both.
+ */
+function glassCardGrounds(name: string, palette: Record<string, string>): RGB[] {
+  const page = rgb(palette['--bg-1']);
+  const strong = over(palette['--glass-strong'], page);
+  const rule = name === 'light' ? ruleFor(':root[data-theme="light"] .glass') : ruleFor('.glass');
+  const sheen = /linear-gradient\(\s*[\d.]+deg\s*,\s*(rgba\([^)]*\))/.exec(prop(rule.body, 'background') ?? '');
+  assert.ok(sheen, `${name}: the glass card's sheen is found`);
+  return [strong, over(sheen![1], strong)];
+}
+
+test('G09: the Security "Minor" badge and the drive-health "unknown" line clear 4.5:1 on the ground they sit on, in both themes', () => {
+  for (const [name, palette] of THEMES) {
+    for (const card of glassCardGrounds(name, palette)) {
+      // A low finding's row (.sec-item, its own --surface-1 over the card),
+      // then the badge's chip over that.
+      const row = paint(prop(ruleFor('.sec-item').body, 'background')!, palette, card);
+      const sev = ruleFor('.sec-sev');
+      const chip = paint(prop(sev.body, 'background')!, palette, row);
+      const badge = contrast(paint(prop(sev.body, 'color')!, palette, chip), chip);
+      assert.ok(badge >= 4.5, `${name}: the "Minor" badge measures ${fmt(badge)}:1 on its chip (QA: 4.28 light, 3.85 dark)`);
+      const dh = ruleFor('.dh-unknown');
+      const panel = paint(prop(dh.body, 'background')!, palette, card);
+      const line = contrast(paint(prop(dh.body, 'color')!, palette, panel), panel);
+      assert.ok(line >= 4.5, `${name}: "Drive health reporting needs…" measures ${fmt(line)}:1 on its panel (QA: 4.497 dark)`);
+    }
+  }
 });
 
 /* ═══════════════ dark-only literals, gone ═══════════════ */

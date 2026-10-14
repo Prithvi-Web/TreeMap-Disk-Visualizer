@@ -40,6 +40,16 @@
      dark theme, so text gets a lighter cousin here and the real accent in
      light, where the fill is dark enough to be ink. */
   --accent-ink:    #4aa3ff;
+  /* The primary button's FILL, apart from --accent (design pass G09).
+     --accent is this theme's ink and ring blue, tuned to read ON dark
+     glass; under a white label it is 3.65:1, and the button's sheen lifts
+     the fill to 2.9:1 where the label begins. This deeper blue of the same
+     hue keeps the label at 4.5:1 or better under the sheen, and it is no
+     greyer: C*ab 73, where #0A84FF is 71. Hover brightens, as dark
+     controls do. tests/polishVisualTheme.test.ts measures the label across
+     the sheen in both themes. */
+  --accent-fill:        #0A60DA;
+  --accent-fill-hover:  #0A66E0;
   --ok:            #30D158;
   --warn:          #FFD60A;
   --danger:        #FF453A;
@@ -162,6 +172,9 @@
      5.5:1 (it happens to be the hover hue, which is fine — it is the same
      "deeper accent" in both roles). */
   --accent-ink:    #0060C4;
+  /* The button fill is the accent itself here, and deepens on hover. */
+  --accent-fill:        #0069D6;
+  --accent-fill-hover:  #0060C4;
 
   --bg-0:          #e9ecf2;
   --bg-1:          #f5f6fa;
@@ -589,14 +602,19 @@ input[type="submit"], input[type="button"], input[type="reset"] { cursor: var(--
 .btn:hover { background: linear-gradient(170deg, rgba(255,255,255,0.09), rgba(255,255,255,0) 55%), var(--surface-3);
   border-color: var(--hairline-2); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn-hover); }
 .btn:active { transform: scale(0.96); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn); }
+/* The sheen is a highlight along the top edge, spent by the time the label
+   begins (a 13px line centred in a 30px button starts 24% down): over the
+   label it once lifted the fill enough to leave white text at 2.9:1 in the
+   dark theme and 4.0:1 in the light one (design pass G09). The fill is
+   --accent-fill, not --accent — see 000-tokens.css. */
 .btn-primary {
-  background: linear-gradient(170deg, rgba(255,255,255,0.28), rgba(255,255,255,0.04) 52%), var(--accent);
+  background: linear-gradient(170deg, rgba(255,255,255,0.28), rgba(255,255,255,0.05) 24%, rgba(255,255,255,0.03) 52%), var(--accent-fill);
   border-color: rgba(255,255,255,0.22); color: #fff;
   box-shadow: 0 4px 18px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -6px 14px rgba(0,40,110,0.22);
 }
-/* --accent-hover, not a hex: the token brightens in dark and deepens in
-   light, so the white label stays legible under the pointer in both. */
-.btn-primary:hover { background: linear-gradient(170deg, rgba(255,255,255,0.34), rgba(255,255,255,0.06) 52%), var(--accent-hover);
+/* --accent-fill-hover, not a hex: the token brightens in dark and deepens
+   in light, so the white label stays legible under the pointer in both. */
+.btn-primary:hover { background: linear-gradient(170deg, rgba(255,255,255,0.34), rgba(255,255,255,0.07) 24%, rgba(255,255,255,0.04) 52%), var(--accent-fill-hover);
   box-shadow: 0 7px 28px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.4); }
 .btn-danger { background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 55%), var(--danger-soft);
   border-color: rgba(255,69,58,0.38); color: #ff6b61; }
@@ -2441,7 +2459,9 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .dh-summary { font-size: 12.5px; line-height: 1.55; color: var(--text-2); margin-bottom: 10px; }
 .dh-kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 12px; align-items: baseline; }
 .dh-kv .k { color: var(--text-3); }
-.dh-unknown { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-3);
+/* --text-2, not --text-3: on its --surface-2 panel the tertiary ink was
+   4.497:1 in the dark theme (design pass G09). */
+.dh-unknown { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-2);
   padding: 9px 11px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); }
 .dh-foot { margin-top: 9px; font-size: 10.5px; color: var(--text-3); }
 /* ── C3: download provenance, in the preview pane ── */
@@ -2476,8 +2496,10 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .sec-move-off { display: flex; align-items: center; gap: 5px; color: var(--text-3); }
 /* E09: every finding is reachable, the next page behind "Show more". */
 .sec-more { display: flex; align-items: center; gap: 10px; padding: 10px 2px 2px; font-size: 12px; }
+/* A "Minor" badge is --text-2 on its chip: --text-3 measured 4.28:1 light
+   and 3.85:1 dark there, for 10px text (design pass G09). */
 .sec-sev { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
-  padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
+  padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-2); }
 /* The .pkg-tag chip recipe: an opaque 8% mix over --bg-1, measured for AA. */
 .sev-high .sec-sev { background: color-mix(in srgb, var(--danger) 8%, var(--bg-1)); color: var(--danger); }
 .sev-medium .sec-sev { background: color-mix(in srgb, var(--warn) 8%, var(--bg-1)); color: var(--warn); }

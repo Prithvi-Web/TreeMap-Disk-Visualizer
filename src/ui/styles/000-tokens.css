@@ -11,6 +11,16 @@
      dark theme, so text gets a lighter cousin here and the real accent in
      light, where the fill is dark enough to be ink. */
   --accent-ink:    #4aa3ff;
+  /* The primary button's FILL, apart from --accent (design pass G09).
+     --accent is this theme's ink and ring blue, tuned to read ON dark
+     glass; under a white label it is 3.65:1, and the button's sheen lifts
+     the fill to 2.9:1 where the label begins. This deeper blue of the same
+     hue keeps the label at 4.5:1 or better under the sheen, and it is no
+     greyer: C*ab 73, where #0A84FF is 71. Hover brightens, as dark
+     controls do. tests/polishVisualTheme.test.ts measures the label across
+     the sheen in both themes. */
+  --accent-fill:        #0A60DA;
+  --accent-fill-hover:  #0A66E0;
   --ok:            #30D158;
   --warn:          #FFD60A;
   --danger:        #FF453A;
@@ -133,6 +143,9 @@
      5.5:1 (it happens to be the hover hue, which is fine — it is the same
      "deeper accent" in both roles). */
   --accent-ink:    #0060C4;
+  /* The button fill is the accent itself here, and deepens on hover. */
+  --accent-fill:        #0069D6;
+  --accent-fill-hover:  #0060C4;
 
   --bg-0:          #e9ecf2;
   --bg-1:          #f5f6fa;
