@@ -520,26 +520,49 @@ function filesUnder(dir: string, exts: readonly string[], out: string[] = []): s
   return out;
 }
 
-test('no source or contract document says a fast rescan reuses the listing of every folder whose time has not changed (CI3 review F2.1)', () => {
+/**
+ * A source's or document's text with every line break read as a space, together with the indent and
+ * the `//` or ` * ` that opens the next comment line: a phrase a sweep looks for may be broken across
+ * two lines of a comment (CI3 review F3.1: one of the walker's was).
+ */
+function joinedLines(text: string): string {
+  return text.replace(/[ \t]*\r?\n[ \t]*(?:\/\/+|\*(?!\/))?[ \t]*/g, ' ');
+}
+
+test('no source or contract document says a fast rescan reuses the listing of every folder whose time has not changed (CI3 review F2.1, F3.1)', () => {
   // Each of these said it once, in a sixth place after the first five were reworded: the walker's
   // engineReason sentence, the Fast rescan box, ScanResult.incremental's and ScanOptions.incremental's
-  // comments, the sparse-file line's note, and (63bf4f08) the four the agents read.
+  // comments, the sparse-file line's note, and (63bf4f08) the four the agents read. F3.1: two comments
+  // in the walker still said it after 11fa5eae, past this sweep — the one above fastRescanSkipped in
+  // words none of these matched, and processDirectory's broken across comment lines, saying a create,
+  // delete or rename always moves the folder's time, which CI run 38519159263 disproved. So the sweep
+  // reads each text with its line breaks joined, ignores case, and looks for that claim too.
   const OLD = [
-    /listings of folders that have not changed/,
-    /listings of unchanged folders/,
-    /reuse the last scan for unchanged folders/,
-    /reused the on-disk mtime cache/,
-    /skip unchanged subtrees/,
-    /folders? whose modified time has not changed/,
-    /says whether (?:saved )?listings were reused/,
-    /folders that had not changed were read from the last scan/,
+    /listings of folders that have not changed/i,
+    /listings of unchanged folders/i,
+    /reuse the last scan for unchanged folders/i,
+    /reused the on-disk mtime cache/i,
+    /skip unchanged subtrees/i,
+    /folders? whose modified time has not changed/i,
+    /says whether (?:saved )?listings were reused/i,
+    /folders that had not changed were read from the last scan/i,
+    /listings? of every (?:folder|directory) whose (?:modified )?m?time has not changed/i,
+    /(?:folder|directory) whose (?:own )?m?time is unchanged keeps its cached listing/i,
+    /would have (?:bumped|moved|changed) (?:the|its) (?:folder's |directory's )?m?time/i,
   ];
+  const stale = (text: string): string[] => OLD.filter((p) => p.test(joinedLines(text))).map((p) => p.source);
+  // What the sweep must see, as the walker said it until F3.1: each phrasing broken where it was.
+  for (const sample of [
+    "   * A fast (incremental) rescan is the built-in walker's: it reuses the\n   * listing of every folder whose time has not changed, from the tree the",
+    '  // Incremental: a directory whose own mtime is unchanged keeps its cached\n  // LISTING (its direct entries',
+    '  // LISTING (its direct entries — a create/delete/rename would have bumped\n  // the mtime), skipping the readdir',
+    ' * (its direct entries — a create/delete/rename would have bumped\n * the mtime), skipping the readdir',
+  ]) {
+    assert.notDeepEqual(stale(sample), [], `the sweep sees the old rule in: ${JSON.stringify(sample)}`);
+  }
   const files = [...filesUnder('src', ['.ts', '.js', '.html']), 'AGENTS.md', 'README.md', ...filesUnder(path.join('docs', 'engine'), ['.md'])];
   assert.ok(files.includes(path.join('src', 'services', 'diskScanner.ts')) && files.includes(path.join('src', 'ui', 'markup', '010-view-dashboard.html')), 'the sweep reads the scanner and the markup');
-  const said = files.flatMap((file) => {
-    const text = read(file);
-    return OLD.filter((p) => p.test(text)).map((p) => `${file}: ${p.source}`);
-  });
+  const said = files.flatMap((file) => stale(read(file)).map((source) => `${file}: ${source}`));
   assert.deepEqual(said, [], 'each states the rule a reused listing is held to, or says nothing of which listings are reused');
 });
 

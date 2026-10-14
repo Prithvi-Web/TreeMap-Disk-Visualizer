@@ -850,8 +850,11 @@ export async function startScan(given: string, opts: ScanOptions = {}): Promise<
 
   /*
    * A fast (incremental) rescan is the built-in walker's: it reuses the
-   * listing of every folder whose time has not changed, from the tree the
-   * last scan of this folder left in the mtime cache. Where the native engine
+   * listing the last scan of this folder left in the mtime cache for a folder
+   * only when the folder's time is unchanged and was more than
+   * SETTLED_LISTING_MS older than the start of that scan (`listingSettled`),
+   * since a change in the same tick of the clock can leave the time as it
+   * was (CI run 38519159263). Where the native engine
    * walks, a request for one is not used (QA D45, 5 Oct 2026): the native
    * engine lists a whole folder in one call per folder, about twenty times
    * faster on the QA Mac than the walker parses the cache and checks every
@@ -1500,10 +1503,15 @@ async function processDirectory(
   // stat (a dead mount answers no stat either).
   if (dirId !== store.rootId && bounds.stop.has(dirPath)) return;
 
-  // Incremental: a directory whose own mtime is unchanged keeps its cached
-  // LISTING (its direct entries — a create/delete/rename would have bumped
-  // the mtime), skipping the readdir and every per-file stat. Its
-  // subdirectories are still visited, one fresh lstat each: a dir's mtime
+  // Incremental: a directory keeps its cached LISTING (its direct entries),
+  // skipping the readdir and every per-file stat, only when its own mtime is
+  // unchanged and the cache vouches for that time (`reusableListing`): it was
+  // more than SETTLED_LISTING_MS older than the start of the scan that wrote
+  // the cache (`listingSettled`). An unchanged time alone proves nothing: a
+  // create, delete or rename in the same tick of the clock as the change
+  // before it can leave the time as it was (CI run 38519159263: a file
+  // deleted 80 ms after its folder was listed stayed in every fast rescan).
+  // Its subdirectories are still visited, one fresh lstat each: a dir's mtime
   // lives in its own inode and never propagates upward, so substituting whole
   // subtrees on an ancestor's mtime is what made fast rescans miss brand-new
   // files in deep, unchanged-ancestor folders. In-place file edits (same
