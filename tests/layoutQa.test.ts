@@ -1093,10 +1093,24 @@ const VOID_TAGS = new Set(['input', 'br', 'img', 'hr', 'meta', 'link', 'source',
 
 /** The page's <body> as a tree the fake selector walks — scripts and comments left out. */
 function markupTree(): SelectorNode {
-  const html = INDEX.slice(INDEX.indexOf('<body')).replace(/<script[\s\S]*?<\/script>/g, '').replace(/<!--[\s\S]*?-->/g, '');
+  return fragmentTree(INDEX.slice(INDEX.indexOf('<body')).replace(/<script[\s\S]*?<\/script>/g, ''));
+}
+
+/**
+ * Markup — the page's, or a fragment a page function wrote — as a tree the
+ * fake selector reads. `content`, when given, gets each element's children
+ * and text runs in order (see textOf).
+ */
+function fragmentTree(markup: string, content?: Map<SelectorNode, Array<SelectorNode | string>>): SelectorNode {
+  const html = markup.replace(/<!--[\s\S]*?-->/g, '');
   const root: SelectorNode = { tagName: 'root', id: '', cls: new Set(), attrs: {}, parent: null, children: [] };
   let cur = root;
+  const put = (el: SelectorNode, c: SelectorNode | string) => { if (content) content.set(el, [...(content.get(el) || []), c]); };
+  let last = 0;
   for (const m of html.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/g)) {
+    const text = html.slice(last, m.index);
+    last = m.index! + m[0].length;
+    if (text) put(cur, text);
     const tag = m[2].toLowerCase();
     if (m[1]) {
       let n: SelectorNode | null = cur;
@@ -1108,9 +1122,18 @@ function markupTree(): SelectorNode {
     for (const a of m[3].matchAll(/([\w:-]+)(?:="([^"]*)")?/g)) attrs[a[1]] = a[2] ?? '';
     const el: SelectorNode = { tagName: tag, id: attrs.id || '', cls: new Set((attrs.class || '').split(/\s+/).filter(Boolean)), attrs, parent: cur, children: [] };
     cur.children.push(el);
+    put(cur, el);
     if (!VOID_TAGS.has(tag)) cur = el;
   }
+  if (html.slice(last)) put(cur, html.slice(last));
   return root;
+}
+
+/** An element's text as a reader sees it: its runs and its children's, in order, entities decoded, white space collapsed. */
+function textOf(el: SelectorNode, content: Map<SelectorNode, Array<SelectorNode | string>>): string {
+  const raw = (content.get(el) || []).map((c) => (typeof c === 'string' ? c : textOf(c, content))).join('');
+  return raw.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ').trim();
 }
 
 /** Selectors the fake DOM reads: compounds joined by spaces, nothing more. */
@@ -1299,4 +1322,154 @@ test('the Highlight box shows a whole placeholder at every width — never one c
   const before = box.placeholder;
   page.fit();
   assert.equal(box.placeholder, before, 'a field that is not laid out keeps its placeholder');
+});
+
+/* ══════════════ E03 — a Smart Suggestion's description and remedy are drawn inside the Clean Up sheet ══════════════ */
+
+/** Every Smart Suggestion group the shipped rule packs can produce, on every OS, shaped as the server serves it (cleanupRules.ts). */
+function shippedSmartGroups(): Array<Record<string, unknown>> {
+  const dir = path.join(__dirname, '..', 'src', 'services', 'rulepacks');
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const pack of ['common', 'macos', 'windows', 'linux']) {
+    const rules = (JSON.parse(readFileSync(path.join(dir, `${pack}.json`), 'utf8')) as { rules: Array<Record<string, unknown>> }).rules;
+    for (const r of rules) {
+      if (r.kind === 'package-cache' || byId.has(`${pack}:${String(r.id)}`)) continue; // a shared cache is never a Smart group (§C6)
+      byId.set(`${pack}:${String(r.id)}`, {
+        id: r.id, title: r.title, description: r.description, category: r.category, confidence: r.confidence,
+        regenerateCmd: r.restoreCommand, why: 'Matched by name.', advisory: r.action === 'advice' ? true : undefined, adviceCommand: r.adviceCommand,
+        totalSize: 12_345_678_901,
+        items: [{ name: 'Render Files', path: '/Users/me/Movies/Vacation.fcpbundle/Day 1/Render Files', size: 12_345_678_901, type: 'dir', modifiedAt: 1 }],
+      });
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
+ * What every remedy in the shipped packs is, as the sheet must show it: the
+ * parts that are commands, in order — each in a code pill — and nothing else
+ * in one. A menu path or a sentence is text. A remedy not listed here fails
+ * the test until someone says what it is.
+ */
+const REMEDY_CODE: Record<string, string[]> = {
+  'npm install': ['npm install'],
+  'pip install -r requirements.txt': ['pip install -r requirements.txt'],
+  'automatic on next run': [],
+  'cargo build': ['cargo build'],
+  'mvn package': ['mvn package'],
+  'gradle build': ['gradle build'],
+  'pod install': ['pod install'],
+  'npm run build': ['npm run build'],
+  'Lightroom Classic ▸ Edit ▸ Catalog Settings ▸ File Handling ▸ Automatically Discard 1:1 Previews': [],
+  'Lightroom Classic ▸ Library ▸ Previews ▸ Build Smart Previews': [],
+  'Capture One ▸ Image ▸ Regenerate Previews': [],
+  'sudo apt-get clean   ·   sudo paccache -r   ·   sudo dnf clean all': ['sudo apt-get clean', 'sudo paccache -r', 'sudo dnf clean all'],
+  'sudo journalctl --vacuum-size=200M': ['sudo journalctl --vacuum-size=200M'],
+  'flatpak uninstall --unused   ·   sudo snap set system refresh.retain=2': ['flatpak uninstall --unused', 'sudo snap set system refresh.retain=2'],
+  'Xcode ▸ Window ▸ Organizer ▸ Archives': [],
+  'docker system prune -a --volumes': ['docker system prune -a --volumes'],
+  'Quit Photos first — it rebuilds these automatically the next time it opens': [],
+  'Re-rendered automatically when the project is next played or exported': [],
+  'Final Cut Pro ▸ File ▸ Delete Generated Library Files': [],
+  'Settings ▸ System ▸ Storage ▸ Temporary files': [],
+  'docker system prune -a --volumes, then wsl --shutdown': ['docker system prune -a --volumes', 'wsl --shutdown'],
+};
+
+/** The page's renderSmartGroups over `groups`: the markup it writes. */
+function smartGroupsHtml(groups: Array<Record<string, unknown>>): string {
+  const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
+  const esc = (v: unknown) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const names = ['confidenceWording', 'catalogNote', 'smartItemsOf', 'renderSmartGroups'];
+  // The remedy helpers the page may have, lifted with it when it does.
+  for (const helper of ['REMEDY_PROSE_WORDS', 'remedyIsCommand', 'remedyHtml']) {
+    if (INDEX.includes(`function ${helper}(`) || INDEX.includes(`const ${helper} = `)) names.unshift(helper);
+  }
+  const render = runPageDecls<(catalog: unknown) => void>(names, {
+    $: (id: string) => { assert.equal(id, 'smartResults'); return host; },
+    smartGroups: groups, smartSort: 'size', icon: () => '<svg class="ic"></svg>', escapeHtml: esc,
+    sizeInk: () => '#888', formatBytes: (n: number) => `${(n / 1e6).toFixed(1)} MB`, formatDate: () => 'Oct 2, 2026', chipFor: () => '<span class="chip"></span>',
+    reclaimBadge: () => '', scoreFor: () => null, cartButtonHtml: () => '<button class="icon-btn"></button>', refreshCartButtons() {}, updateCleanSummary() {},
+    byReclaimDesc: () => () => 0, ensureScores: async () => {}, toast() {}, RECLAIM_BATCH: 2000,
+  }, 'renderSmartGroups');
+  render(null);
+  return host.innerHTML;
+}
+
+test('a Smart Suggestion\'s description and its remedy are drawn inside the Clean Up sheet, wrapping as they need — never squeezed to nothing or run past its edge (QA fourth pass E03)', () => {
+  // QA fourth pass E03 (shots/041, 1440×900): "Final Cut / iMovie render
+  // files" — an advisory group, whose advice is the ONLY thing a person can
+  // do with it (AGENTS.md) — drew its header 1,201 px wide in a 586 px box:
+  // the advice ended at x 1,431 with the sheet's edge at 1,050, and the
+  // descriptions of four groups were squeezed to 0–27 px. Each remedy was a
+  // code pill that would not shrink or wrap, in the same row as the title.
+  // The sheet is 660 px at 1024 and 1440 alike, so a group's content box is
+  // 586 px at both (measured).
+  const BOX = 586;
+  const CHAR = { title: 8.2, text: 7.0, code: 6.7, label: 6.8 }; // px a character: 13.5 px bold, 12.5 px, 11 px mono, 12 px
+  const groups = shippedSmartGroups();
+  assert.ok(groups.length >= 20 && groups.some((g) => g.advisory), `control: ${groups.length} groups from the shipped packs, advisory ones among them`);
+  for (const g of groups) {
+    const content = new Map<SelectorNode, Array<SelectorNode | string>>();
+    const tree = fragmentTree(smartGroupsHtml([g]), content);
+    const [group] = selectAll(tree, '.smart-group');
+    const [row] = selectAll(tree, '.smart-group .rule-row');
+    const label = String(g.title);
+    assert.ok(group && row, `${label}: the group and its header row are drawn`);
+    // Where the description is drawn: a block of its own under the header, never an item squeezed beside the title.
+    const holders = (text: string) => selectAll(group, '*').filter((el) => textOf(el, content) === text.replace(/\s+/g, ' ').trim()
+      && !el.children.some((c) => textOf(c, content) === textOf(el, content)));
+    const [desc] = holders(String(g.description));
+    assert.ok(desc, `${label}: the description is drawn`);
+    const inRow = (el: SelectorNode) => { for (let p: SelectorNode | null = el; p; p = p.parent) if (p === row) return true; return false; };
+    assert.ok(!inRow(desc), `${label}: the description is not an item of the header row, where the title and the badge squeezed it to nothing`);
+    // Every remedy the group has: drawn whole, outside the header row, with commands — and only commands — in code.
+    const remedies = [g.adviceCommand, g.regenerateCmd].filter((r): r is string => typeof r === 'string');
+    for (const remedy of remedies) {
+      assert.ok(remedy in REMEDY_CODE, `${label}: "${remedy}" is a remedy this test knows — say what it is in REMEDY_CODE`);
+      const line = selectAll(group, '.smart-remedy').find((el) => textOf(el, content).endsWith(remedy.replace(/\s+/g, ' ').trim()));
+      assert.ok(line, `${label}: "${remedy}" is drawn whole on a remedy line`);
+      assert.ok(!inRow(line!), `${label}: its remedy is not an item of the header row`);
+      const codes = selectAll(line!, 'code').map((c) => textOf(c, content));
+      assert.deepEqual(codes, REMEDY_CODE[remedy], `${label}: in "${remedy}", the commands — and nothing else — are code`);
+      for (const el of [line!, ...selectAll(line!, '*')]) {
+        const css = sheetFor(tree, el);
+        assert.ok(!/^(nowrap|pre)$/.test(css.get('white-space') || ''), `${label}: <${el.tagName}.${[...el.cls].join('.')}> in the remedy line wraps (white-space: ${css.get('white-space')})`);
+        assert.notEqual(css.get('flex'), 'none', `${label}: and does not hold its width`);
+      }
+      // A single word wider than the box would still run past it: every word fits.
+      for (const word of remedy.split(/\s+/)) assert.ok(word.length * CHAR.code <= BOX, `${label}: "${word}" fits the ${BOX} px box`);
+    }
+    for (const el of [desc, ...selectAll(desc, '*')]) {
+      const css = sheetFor(tree, el);
+      assert.ok(!/^(nowrap|pre)$/.test(css.get('white-space') || ''), `${label}: the description wraps (white-space: ${css.get('white-space')})`);
+      assert.notEqual(css.get('text-overflow'), 'ellipsis', `${label}: and is not cut to an ellipsis`);
+    }
+    // The header row is one line that fits: the mark or the checkbox, the title, "Why?" and the size badge.
+    const items = row.children.map((el) => {
+      const text = textOf(el, content);
+      if (el.tagName === 'input') return 22; // 15 px and Chrome's 4 + 3 px margins
+      if (el.cls.has('adv-mark')) return 14;
+      if (el.cls.has('why-btn')) return 30;
+      if (el.cls.has('size-badge')) return text.length * 7.2 + 18;
+      return text.length * CHAR.title;
+    });
+    const used = items.reduce((s, w) => s + w, 0) + (items.length - 1) * 10;
+    assert.ok(used <= BOX, `${label}: the header row needs ${used.toFixed(0)} px of the ${BOX} (${row.children.map((c) => c.tagName + '.' + [...c.cls].join('.')).join(', ')})`);
+  }
+  // Every remedy in the packs was seen, so the table above is the packs' own.
+  const seen = new Set(groups.flatMap((g) => [g.adviceCommand, g.regenerateCmd]).filter(Boolean));
+  assert.deepEqual([...seen].sort(), Object.keys(REMEDY_CODE).sort(), 'every remedy in the shipped packs is in the table, and nothing else');
+});
+
+test('the remedy line and the description are coloured from the theme\'s tokens, so both themes draw them (QA fourth pass E03)', () => {
+  for (const sel of ['.smart-desc', '.smart-remedy', '.smart-remedy .rc-lbl', '.smart-menu']) {
+    const d = declsFor(sel);
+    assert.ok(d.size, `${sel} is styled`);
+    for (const prop of ['color', 'background', 'background-color', 'border-color']) {
+      const v = d.get(prop);
+      if (v !== undefined) assert.match(v, /^var\(--[\w-]+\)$/, `${sel} ${prop} is a theme token (${v})`);
+    }
+  }
+  // The code pill's literal violet has a light-theme counterpart.
+  assert.ok(RULES.some((r) => r.selectors.includes(':root[data-theme="light"] .regen-cmd') && /\bcolor:/.test(r.body)), 'the code pill is recoloured for the light theme');
 });

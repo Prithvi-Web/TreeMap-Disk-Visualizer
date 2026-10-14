@@ -9,12 +9,25 @@
 .smart-group .clean-list { background: var(--surface-1); }
 .smart-group.cat-regenerable { border-color: rgba(191,90,242,0.38); background: rgba(191,90,242,0.07); }
 .smart-group.cat-regenerable .clean-list { background: transparent; }
-.smart-desc { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  color: var(--text-2); font-size: 12.5px; }
-.regen-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; flex: none;
+/* The header row is the title, "Why?" and the size; the description and each
+   remedy are lines of their own under it, indented to the title, and wrap.
+   In the row, a remedy pill that would neither shrink nor wrap ran 800 px
+   past the sheet, and the descriptions beside it were squeezed to 0–27 px
+   (QA fourth pass E03). */
+.smart-group { --smart-indent: 32px; } /* the 15 px checkbox, its 4 + 3 px margins and the row's 10 px gap; 24 px beside an advisory group's mark (below) */
+.smart-group .smart-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.smart-desc { margin: 1px 0 0 var(--smart-indent); color: var(--text-2); font-size: 12.5px; line-height: 1.45;
+  overflow-wrap: anywhere; }
+.smart-remedy { margin: 5px 0 0 var(--smart-indent); color: var(--text-2); font-size: 12px; line-height: 1.7;
+  overflow-wrap: anywhere; }
+.smart-remedy .rc-lbl { color: var(--text-3); }
+/* A menu path is said, not typed: text, set apart by weight alone. */
+.smart-menu { color: var(--text-1); font-weight: 500; }
+/* A command in a pill that wraps where it must, its ends drawn on each line. */
+.regen-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
   color: #d6a8ff; background: rgba(191,90,242,0.16); border: 1px solid rgba(191,90,242,0.36);
-  border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
-.rc-lbl { color: var(--text-3); font-size: 11px; flex: none; margin-left: 1px; }
+  border-radius: 6px; padding: 1px 6px; overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 /* ── C8: "why is this suggested", and advisory groups ── */
 .why-btn { flex: none; color: var(--text-3); }
 .why-btn:hover, .why-btn.on { color: var(--accent); }
@@ -26,7 +39,7 @@
   padding: 1px 5px; border-radius: 4px; background: var(--surface-3); }
 .smart-catalog { color: var(--text-3); font-size: 11.5px; margin-left: 6px; }
 /* Advisory: shown for its size, never offered for deletion. */
-.smart-group.advisory { border-color: var(--warn-line); background: var(--warn-soft); }
+.smart-group.advisory { border-color: var(--warn-line); background: var(--warn-soft); --smart-indent: 24px; }
 .smart-group.advisory .adv-mark { flex: none; display: inline-flex; color: var(--warn); }
 .adv-spacer { flex: none; width: 17px; }
 /* ══ Phase 3 (v4 §3.3) — the Reclaim Score badge, breakdown and legend ══

@@ -568,6 +568,32 @@ function catalogNote(catalog) {
 }
 
 /**
+ * A rule's remedy — the command that puts a group back, or the supported way
+ * to reclaim an advisory one — as markup that says what it is (QA fourth pass
+ * E03). A command is code. A menu path ("Final Cut Pro ▸ File ▸ …") and a
+ * sentence ("Re-rendered automatically when …") are text: in a code pill they
+ * read as something to type. Alternatives joined by " · ", and steps joined by
+ * ", then ", are each judged on their own. A command starts the way a program
+ * name does — lower case, a digit or a path — and has no sentence in it: none
+ * of the small words prose cannot do without. tests/layoutQa.test.ts holds
+ * every remedy in the shipped packs to what it is.
+ */
+const REMEDY_PROSE_WORDS = new Set(['a', 'an', 'and', 'are', 'automatic', 'automatically', 'be', 'first', 'is', 'it', 'its', 'next', 'on', 'or', 'the', 'these', 'this', 'until', 'when', 'will']);
+function remedyIsCommand(part) {
+  if (!/^[a-z0-9./~_-]/.test(part) || /[▸—]/.test(part)) return false;
+  return !part.split(/\s+/).some((w) => REMEDY_PROSE_WORDS.has(w.toLowerCase().replace(/[.,;:]+$/, '')));
+}
+/** `pill` false: plain code, as the "Why?" panel sets it. */
+function remedyHtml(text, pill = true) {
+  return String(text).split(/(\s+·\s+|,\s+then\s+)/).map((part, i) => {
+    if (i % 2) return part.includes('·') ? ' · ' : ', then '; // the joiner
+    if (!part) return '';
+    if (remedyIsCommand(part)) return `<code${pill ? ' class="regen-cmd"' : ''}>${escapeHtml(part)}</code>`;
+    return part.includes('▸') ? `<span class="smart-menu">${escapeHtml(part)}</span>` : escapeHtml(part);
+  }).join('');
+}
+
+/**
  * Paint the Smart Suggestions groups.
  *
  * Extracted from `loadSmartSuggestions` so the Reclaim ordering can repaint
@@ -599,26 +625,34 @@ function renderSmartGroups(catalog) {
       // the file IS the data (a VM disk), or the OS owns it. It gets no
       // checkboxes at all, and names the supported way to reclaim it instead.
       const adv = !!g.advisory;
+      // The header row holds the title, "Why?" and the size; the description
+      // and each remedy take a line of their own below it and wrap. In the
+      // row, an advisory group's advice — the one thing a person can do with
+      // it — ran 800 px past the sheet, and the descriptions beside it were
+      // squeezed to nothing (QA fourth pass E03).
+      const remedies = [
+        adv && g.adviceCommand ? ['To reclaim', g.adviceCommand] : null,
+        g.regenerateCmd ? ['To put it back', g.regenerateCmd] : null,
+      ].filter(Boolean);
       return `
     <div class="smart-group cat-${g.category}${adv ? ' advisory' : ''}" data-cat="${g.category}">
       <div class="rule-row">
         ${adv
           ? `<span class="adv-mark" title="TreeMap will not offer to move this to the Trash" aria-label="Not safe to trash">${icon('alert', 14)}</span>`
           : `<input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">`}
-        <b>${escapeHtml(g.title)}</b>
-        <span class="smart-desc">${escapeHtml(g.description)}</span>
-        ${g.regenerateCmd ? `<code class="regen-cmd" title="Restore with: ${escapeHtml(g.regenerateCmd)}">${escapeHtml(g.regenerateCmd)}</code><span class="rc-lbl">to restore</span>` : ''}
-        ${adv && g.adviceCommand ? `<code class="regen-cmd" title="Reclaim with: ${escapeHtml(g.adviceCommand)}">${escapeHtml(g.adviceCommand)}</code><span class="rc-lbl">to reclaim</span>` : ''}
+        <b class="smart-title">${escapeHtml(g.title)}</b>
         <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
           title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
         <span class="size-badge num" style="color:${sizeInk(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
       </div>
+      <div class="smart-desc">${escapeHtml(g.description)}</div>
+      ${remedies.map(([what, text]) => `<div class="smart-remedy"><span class="rc-lbl">${what}:</span> ${remedyHtml(text)}</div>`).join('')}
       <div class="smart-why" id="smartWhy${gi}" hidden>
         <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
         <div class="smart-why-line"><b>Confidence:</b> ${escapeHtml(confidenceWording(g.confidence, adv))}</div>
         <div class="smart-why-line"><b>${adv ? 'What this is' : 'Why it is safe'}:</b> ${escapeHtml(g.description)}</div>
-        ${g.regenerateCmd ? `<div class="smart-why-line"><b>Put it back with:</b> <code>${escapeHtml(g.regenerateCmd)}</code></div>` : ''}
-        ${adv ? `<div class="smart-why-line"><b>Do not move this to the Trash.</b>${g.adviceCommand ? ` Reclaim it instead: <code>${escapeHtml(g.adviceCommand)}</code>` : ''}</div>` : ''}
+        ${g.regenerateCmd ? `<div class="smart-why-line"><b>To put it back:</b> ${remedyHtml(g.regenerateCmd, false)}</div>` : ''}
+        ${adv ? `<div class="smart-why-line"><b>Do not move this to the Trash.</b>${g.adviceCommand ? ` Reclaim it instead: ${remedyHtml(g.adviceCommand, false)}` : ''}</div>` : ''}
       </div>
       <div class="clean-list">` + smartItemsOf(g).map(({ it, i }) => `
         <div class="clean-item">
