@@ -1033,7 +1033,7 @@ test('a label in a toolbar that wraps travels with its control — "Sort", "Afte
   }
   const byId = new Map(selectAll(root, '[id]').map((el) => [el.id, el] as [string, SelectorNode]));
   const inside = (a: SelectorNode, b: SelectorNode) => { for (let p: SelectorNode | null = b; p; p = p.parent) if (p === a) return true; return false; };
-  const checked: string[] = [];
+  const checked: string[] = [], shrinks: string[] = [];
   for (const label of selectAll(root, 'label[for]')) {
     const id = label.attrs.for;
     const control = byId.get(id);
@@ -1049,8 +1049,34 @@ test('a label in a toolbar that wraps travels with its control — "Sort", "Afte
     assert.match(sheetFor(root, item).get('display') || '', /^(inline-)?flex$/, `${where}: the pair lays its label and control out in a row`);
     assert.equal(sheetFor(root, label).get('white-space'), 'nowrap', `${where}: the label keeps its words on one line beside the control`);
     checked.push(id);
+    // A pair in a strip narrower than its longest option (Compare's list of
+    // scans runs to 430 px; the toolbar beside the open pane at 1024 px is
+    // 402) gives up the CONTROL's width, never the label's (review F1.8).
+    // A flex item's automatic minimum is its content, the select's longest
+    // option, so the pair and its select each need min-width 0, and the pair
+    // is held to its row.
+    if (!item.cls.has('label-pair')) continue; // the treemap's Depth group never shrinks (flex: none) and holds two-digit options
+    const pair = sheetFor(root, item), sel = sheetFor(root, control!), lab = sheetFor(root, label);
+    assert.ok(flexShrink(pair) > 0, `${where}: the pair shrinks in a narrow row (flex: ${pair.get('flex') ?? 'unset'})`);
+    assert.equal(pair.get('min-width'), '0', `${where}: below its content's width — the select's longest option`);
+    assert.equal(pair.get('max-width'), '100%', `${where}: and is never wider than the row it sits on`);
+    assert.equal(sel.get('min-width'), '0', `${where}: inside it, the select gives up width below its longest option`);
+    assert.equal(flexShrink(lab), 0, `${where}: and the label none (flex: ${lab.get('flex') ?? 'unset'})`);
+    shrinks.push(id);
   }
   for (const id of ['gridSort', 'cmpA', 'cmpB', 'trendRoot', 'dupMinSize', 'ndThreshold', 'tmDepth']) {
     assert.ok(checked.includes(id), `#${id}'s label was found in its wrapping toolbar and checked (checked: ${checked.join(', ')})`);
   }
+  for (const id of ['gridSort', 'cmpA', 'cmpB', 'trendRoot', 'dupMinSize', 'ndThreshold']) {
+    assert.ok(shrinks.includes(id), `#${id} sits in a label pair that was held to giving up the select's width (held: ${shrinks.join(', ')})`);
+  }
 });
+
+/** The flex-shrink a rule set gives an item: `flex-shrink`, else the `flex` shorthand's (`none` 0, `auto` and unset 1, a lone number 1). */
+function flexShrink(d: Map<string, string>): number {
+  if (d.has('flex-shrink')) return Number(d.get('flex-shrink'));
+  const f = (d.get('flex') || '').trim();
+  if (f === 'none') return 0;
+  const parts = f.split(/\s+/);
+  return parts.length > 1 && /^\d/.test(parts[1]) ? Number(parts[1]) : 1;
+}
