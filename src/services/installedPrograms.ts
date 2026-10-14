@@ -43,7 +43,13 @@ export type InstalledProgramKind = 'app' | 'program' | 'package';
 export interface InstalledProgram {
   /** `app` a Mac app bundle; `program` a Windows program under Program Files; `package` Linux's /usr. */
   kind: InstalledProgramKind;
-  /** As a person names it — "Google Chrome" for …/Google Chrome.app, the program's folder under Program Files — or null for /usr, where only the package manager knows which package. */
+  /**
+   * A Mac app as a person names it — "Google Chrome" for …/Google Chrome.app;
+   * for a program under Program Files, the name of its folder there, which is
+   * often its maker's ("Google" for Chrome), never to be said as the
+   * program's name (review F1.11); null for /usr, where only the package
+   * manager knows which package.
+   */
   name: string | null;
   /** The whole program, spelled as the path spells it: the .app bundle, the program's folder, or /usr. */
   root: string;
@@ -59,10 +65,14 @@ export function withInstalledProgram<T extends { path: string }>(entry: T): T & 
   return program ? { ...entry, installedProgram: program } : entry;
 }
 
-/** The program as the server's sentences name it: the app “Google Chrome”, the program “Steam” in Program Files, or /usr's packages. */
+/**
+ * The program as the server's sentences name it: the app “Google Chrome”, a
+ * program installed in “C:\Program Files\Google” (by its folder: Settings ›
+ * Apps lists Google Chrome, not Google), or /usr's packages.
+ */
 export function programPhrase(p: InstalledProgram): string {
   if (p.kind === 'app') return `the app “${p.name}”`;
-  if (p.kind === 'program') return `the program “${p.name}” in Program Files`;
+  if (p.kind === 'program') return `a program installed in “${p.root}”`;
   return 'the software your package manager installed in /usr';
 }
 

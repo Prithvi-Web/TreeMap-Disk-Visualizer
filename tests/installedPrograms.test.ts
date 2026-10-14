@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { installedProgramOf } from '../src/services/installedPrograms';
+import { installedProgramOf, programPhrase } from '../src/services/installedPrograms';
 import { isApplicationOwned } from '../src/services/securityHygieneScanner';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -85,6 +85,13 @@ test('a folder merely named like an app is no app: a bundle\'s own folder must c
     { kind: 'app', name: 'Clocks', root: '/Applications/Clocks.app' }, 'an iPhone app installed on a Mac');
   assert.deepEqual(installedProgramOf('/Applications/Foo.app/contents/macos/foo', 'darwin'),
     { kind: 'app', name: 'Foo', root: '/Applications/Foo.app' }, 'spelled in another case, on a volume that folds it');
+});
+
+test('a program under Program Files is named by the folder it is installed in, never as if the folder were its name — the folder is often its maker\'s (review F1.11)', () => {
+  const chrome = installedProgramOf('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'win32');
+  assert.deepEqual(chrome, { kind: 'program', name: 'Google', root: 'C:\\Program Files\\Google' }, 'the vendor\'s folder, as the path has it');
+  assert.equal(programPhrase(chrome!), 'a program installed in “C:\\Program Files\\Google”', 'Autopilot\'s sentence names the folder, not a "program Google"');
+  assert.equal(programPhrase({ kind: 'app', name: 'Google Chrome', root: '/Applications/Google Chrome.app' }), 'the app “Google Chrome”', 'control: an app is named as a person names it');
 });
 
 test('what a program makes again on its own is no part of it: a Steam library\'s shader caches, which the Games view offers to clear (review F1.3)', () => {

@@ -674,10 +674,10 @@ async function installedProgramParts(paths) {
   return parts;
 }
 
-/** An installed program as the sheet names it. */
+/** An installed program as the sheet names it: a program under Program Files by the folder it is installed in, which is often its maker's (review F1.11). */
 function installedProgramWords(p) {
   if (p.kind === 'app') return `the app <b>${escapeHtml(p.name)}</b>`;
-  if (p.kind === 'program') return `the program <b>${escapeHtml(p.name)}</b> in Program Files`;
+  if (p.kind === 'program') return `a program installed in <b>${escapeHtml(p.root)}</b>`;
   return 'the software your package manager installed in /usr';
 }
 
@@ -685,7 +685,8 @@ function installedProgramWords(p) {
 function installedProgramRemoval(programs) {
   const only = programs.length === 1 ? programs[0] : null;
   if (only && only.kind === 'app') return `To remove <b>${escapeHtml(only.name)}</b>, move the whole app to the Trash instead.`;
-  if (only && only.kind === 'program') return `To remove <b>${escapeHtml(only.name)}</b>, uninstall it in Windows Settings › Apps instead.`;
+  // Settings › Apps lists the program by its own name, which the folder may not be: no entry is named.
+  if (only && only.kind === 'program') return 'To remove that program, uninstall it in Windows Settings › Apps instead.';
   const advice = {
     app: 'To remove an app, move the whole app to the Trash instead.',
     program: 'To remove a program, uninstall it in Windows Settings › Apps instead.',
@@ -712,9 +713,9 @@ function installedProgramWarningHtml(parts, count) {
     : `${formatCount(programs.length)} installed programs — ${programs.slice(0, 3).map(installedProgramWords).join(', ')}` +
       (programs.length > 3 ? ` and ${formatCount(programs.length - 3)} more` : '');
   const only = programs.length === 1 ? programs[0] : null;
-  const breaks = only && only.kind !== 'package'
-    ? `will stop <b>${escapeHtml(only.name)}</b> from working`
-    : `can stop ${only ? 'programs that use it' : 'those programs'} from working`;
+  const breaks = only && only.kind === 'app' ? `will stop <b>${escapeHtml(only.name)}</b> from working`
+    : only && only.kind === 'program' ? 'will stop that program from working'
+      : `can stop ${only ? 'programs that use it' : 'those programs'} from working`;
   return `<div class="app-part-warn">${icon('alert', 14)}<span><b>${who} of ${where}.</b> ` +
     `Moving ${n === 1 ? 'it' : 'them'} to the Trash ${breaks}. ${installedProgramRemoval(programs)}</span></div>`;
 }

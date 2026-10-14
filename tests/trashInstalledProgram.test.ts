@@ -150,7 +150,11 @@ test('a big selection is asked about in the route\'s own chunks of 2,000, and ev
 test('a Windows program and Linux\'s packages are named and advised for in their own words (F01)', async () => {
   const exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
   const win = await sheet(partsOf({ [exe]: { kind: 'program', name: 'Google', root: 'C:\\Program Files\\Google' } })).open([exe]);
-  assert.match(win.text, /It is part of the program Google in Program Files\. Moving it to the Trash will stop Google from working\. To remove Google, uninstall it in Windows Settings › Apps instead\./, win.text);
+  // The folder under Program Files is often its maker's (Google), not the
+  // program's (Google Chrome), and Settings › Apps lists no "Google": the
+  // sheet names the folder for what it is and no Apps entry (review F1.11).
+  assert.match(win.text, /It is part of a program installed in C:\\Program Files\\Google\. Moving it to the Trash will stop that program from working\. To remove that program, uninstall it in Windows Settings › Apps instead\./, win.text);
+  assert.doesNotMatch(win.text, /program Google|stop Google|remove Google/, `no program is named after its folder: ${win.text}`);
   const lib = '/usr/lib/x86_64-linux-gnu/libLLVM-17.so.1';
   const linux = await sheet(partsOf({ [lib]: { kind: 'package', name: null, root: '/usr' } })).open([lib]);
   assert.match(linux.text, /It is part of the software your package manager installed in \/usr\. Moving it to the Trash can stop programs that use it from working\. To remove software your package manager installed, uninstall its package with the package manager instead\./, linux.text);
