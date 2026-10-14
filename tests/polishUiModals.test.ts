@@ -1471,6 +1471,10 @@ const keyOf = (key: string, mods: Partial<Pick<KeyEv, 'shiftKey' | 'metaKey' | '
  * close — over the page's markup. Every element answers contextmenu events
  * as a browser dispatches them: at it, then up its parents. `showCtxMenu`
  * opens the page's menu for a node, as the page's does, with two entries.
+ * The keys arrive as a browser delivers them: `keydown()` and `keyup()` run
+ * whatever the page's own code registered on the document for that event
+ * (review F1.3), and the map's renderer is the page's isSun and isCells
+ * reading `state.treemap.mode` (review F1.6).
  */
 function keyMenuHarness() {
   const doc = makeDoc();
@@ -1507,10 +1511,14 @@ function keyMenuHarness() {
   const sheet: { up: FEl | null } = { up: null };
   const canvas = dom($('treemapCanvas'), { left: 280, top: 300, width: 700, height: 400 });
   for (let p: FEl | null = canvas; p; p = p.parent) p.hidden = false; // the Treemap view is on screen
-  const state = { view: 'treemap', treemap: { kbSel: null as unknown, pxRects: [] as unknown[], history: { active: false }, arcs: [], cells: [] } };
+  const state = { view: 'treemap', treemap: { mode: 'treemap', kbSel: null as unknown, pxRects: [] as unknown[], history: { active: false }, arcs: [] as unknown[], cells: [] as unknown[] } };
   const tmPreview = { on: false };
-  const document = { get activeElement() { return doc.activeElement; }, body: doc.body };
-  type Page = { ctxMenuFromKey(e: KeyEv): void; ctxMenuKeyUp(e: KeyEv): void; hideCtxMenu(): FEl | null; ctxMenuFocusOpener(el: FEl | null): void;
+  const onDocument = new Map<string, Array<(e: KeyEv) => void>>();
+  const document = {
+    get activeElement() { return doc.activeElement; }, body: doc.body,
+    addEventListener: (type: string, fn: (e: KeyEv) => void) => { onDocument.set(type, [...(onDocument.get(type) || []), fn]); },
+  };
+  type Page = { hideCtxMenu(): FEl | null; ctxMenuFocusOpener(el: FEl | null): void;
     ctxMenuShow(menu: FEl, o: { label: string; html: string; x: number; y: number }): void };
   const decl = (anchor: string) => { const at = INDEX.indexOf(anchor); assert.notEqual(at, -1, `"${anchor}" is in the page`); return INDEX.slice(at, INDEX.indexOf(';', at) + 1); };
   let page: Page;
@@ -1521,19 +1529,23 @@ function keyMenuHarness() {
     for (const act of ['open', 'copy']) append(menu, mk('button', '', [], { 'data-act': act }));
   };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  page = new Function('document', '$', 'window', 'MouseEvent', 'topModal', 'tmCanvas', 'state', 'tmPreview', 'isSun', 'isCells', 'showCtxMenu', 'openTrashModal',
+  page = new Function('document', '$', 'window', 'MouseEvent', 'topModal', 'tmCanvas', 'state', 'tmPreview', 'showCtxMenu', 'openTrashModal',
     `'use strict';
-     ${decl('let ctxMenuOpener = ')} ${decl('let ctxMenuReturn = ')} ${decl('const CTX_MENU_EDGE = ')} ${decl('let ctxMenuKeyOpened = ')}
-     ${['ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuIsOpen', 'ctxMenuKeyOpens', 'ctxMenuFromKey', 'ctxMenuKeyUp', 'kbCellPoint', 'tmCanvasKeyMenu']
+     ${decl('let ctxMenuOpener = ')} ${decl('let ctxMenuReturn = ')} ${decl('const CTX_MENU_EDGE = ')}
+     ${['ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuIsOpen', 'kbCellPoint', 'tmCanvasKeyMenu', 'isSun', 'isCells']
        .map((n) => braced(`function ${n}(`)).join('\n')}
-     return { ctxMenuFromKey, ctxMenuKeyUp, hideCtxMenu, ctxMenuFocusOpener, ctxMenuShow };`,
-  )(document, $, { innerWidth: 1440, innerHeight: 900 }, FakeMouseEvent, () => sheet.up, canvas, state, tmPreview, () => false, () => false, showCtxMenu,
+     ${slice('/* ── The menu from the keyboard (QA fourth pass E05) ──', 'async function openInOS(')}
+     return { hideCtxMenu, ctxMenuFocusOpener, ctxMenuShow };`,
+  )(document, $, { innerWidth: 1440, innerHeight: 900 }, FakeMouseEvent, () => sheet.up, canvas, state, tmPreview, showCtxMenu,
     () => { trashSheets.push(1); }) as Page;
+  /** A key pressed or released, delivered to the listeners the page registered on the document for it. */
+  const keydown = (e: KeyEv) => { for (const fn of onDocument.get('keydown') || []) fn(e); };
+  const keyup = (e: KeyEv) => { for (const fn of onDocument.get('keyup') || []) fn(e); };
   const main = doc.querySelector('main')!;
   /** A contextmenu listener on `el` that opens `node`'s menu where the event says, as each view's own does. */
   const onMenu = (el: FEl, node: { path: string }) => listeners.set(el, [...(listeners.get(el) || []),
     (e: unknown) => { const ev = e as { preventDefault(): void; clientX: number; clientY: number }; ev.preventDefault(); showCtxMenu(ev.clientX, ev.clientY, node); }]);
-  return { doc, $, mk, main, dom, listeners, page, shown, trashSheets, sheet, canvas, state, tmPreview, menu, showCtxMenu, onMenu };
+  return { doc, $, mk, main, dom, listeners, page, keydown, keyup, shown, trashSheets, sheet, canvas, state, tmPreview, menu, showCtxMenu, onMenu };
 }
 
 test('the ContextMenu key and Shift+F10 open the focused item\'s right-click menu, at the item, with focus on its first entry — and Escape gives focus back (QA fourth pass E05)', () => {
@@ -1549,7 +1561,7 @@ test('the ContextMenu key and Shift+F10 open the focused item\'s right-click men
   for (const [name, ev] of [['ContextMenu', keyOf('ContextMenu')], ['Shift+F10', keyOf('F10', { shiftKey: true })]] as const) {
     tile.focus();
     assert.equal(h.doc.activeElement, tile, `control (${name}): the tile has focus`);
-    h.page.ctxMenuFromKey(ev);
+    h.keydown(ev);
     const last = h.shown[h.shown.length - 1];
     assert.equal(last?.node, tileNode, `${name} on a Grid tile opens that tile's menu`);
     assert.ok(last.x >= 420 && last.x <= 570 && last.y >= 260 && last.y <= 410, `${name}: at the tile (${last.x}, ${last.y})`);
@@ -1561,12 +1573,12 @@ test('the ContextMenu key and Shift+F10 open the focused item\'s right-click men
   }
   // The ContextMenu key's release opens the platform's own menu on some systems: not after it opened the page's.
   tile.focus();
-  h.page.ctxMenuFromKey(keyOf('ContextMenu'));
+  h.keydown(keyOf('ContextMenu'));
   const up = keyOf('ContextMenu');
-  h.page.ctxMenuKeyUp(up);
+  h.keyup(up);
   assert.equal(up.defaultPrevented, true, 'the ContextMenu key\'s release after it opened the menu is the page\'s too');
   const again = keyOf('ContextMenu');
-  h.page.ctxMenuKeyUp(again);
+  h.keyup(again);
   assert.equal(again.defaultPrevented, false, 'and only that one');
   h.page.hideCtxMenu();
 
@@ -1577,7 +1589,7 @@ test('the ContextMenu key and Shift+F10 open the focused item\'s right-click men
   const reveal = h.dom(append(row, h.mk('button', '', ['icon-btn'])), { left: 860, top: 507, width: 30, height: 30 });
   reveal.focus();
   assert.equal(h.doc.activeElement, reveal, 'control: the row\'s reveal button has focus');
-  h.page.ctxMenuFromKey(keyOf('F10', { shiftKey: true }));
+  h.keydown(keyOf('F10', { shiftKey: true }));
   assert.equal(h.shown[h.shown.length - 1].node, fileNode, 'Shift+F10 on a button inside a Largest Files row opens the row\'s menu');
   assert.equal(h.doc.activeElement, h.menu.children[0], 'with focus on its first entry');
   h.page.ctxMenuFocusOpener(h.page.hideCtxMenu());
@@ -1589,7 +1601,7 @@ test('the ContextMenu key and Shift+F10 open the focused item\'s right-click men
   h.state.treemap.pxRects = [{ n: { path: '/Users/me/Other' }, x: 0, y: 0, w: 40, h: 40 }, { n: cell, x: 400, y: 20, w: 260, h: 180 }];
   h.canvas.focus();
   assert.equal(h.doc.activeElement, h.canvas, 'control: the map has focus');
-  h.page.ctxMenuFromKey(keyOf('ContextMenu'));
+  h.keydown(keyOf('ContextMenu'));
   const onMap = h.shown[h.shown.length - 1];
   assert.equal(onMap.node, cell, 'on the map, the menu is the selected cell\'s');
   assert.ok(onMap.x >= 280 + 400 && onMap.x <= 280 + 660 && onMap.y >= 300 + 20 && onMap.y <= 300 + 200, `at that cell (${onMap.x}, ${onMap.y})`);
@@ -1605,7 +1617,7 @@ test('the ContextMenu key and Shift+F10 open the focused item\'s right-click men
   ] as const) {
     set();
     const e = keyOf('ContextMenu');
-    h.page.ctxMenuFromKey(e);
+    h.keydown(e);
     assert.equal(h.shown.length, count, `${why}: no menu`);
     assert.equal(e.defaultPrevented, false, `${why}: the key is the platform's`);
     unset();
@@ -1613,11 +1625,77 @@ test('the ContextMenu key and Shift+F10 open the focused item\'s right-click men
   // The selected cell is the Trash: a right-click opens the Trash sheet, and so does the key.
   h.state.treemap.kbSel = { ...cell, isTrash: true };
   h.state.treemap.pxRects = [{ n: h.state.treemap.kbSel, x: 400, y: 20, w: 260, h: 180 }];
-  h.page.ctxMenuFromKey(keyOf('F10', { shiftKey: true }));
+  h.keydown(keyOf('F10', { shiftKey: true }));
   assert.deepEqual(h.trashSheets, [1], 'the Trash cell opens the Trash sheet, as its right-click does');
   // And the keyboard shortcuts sheet says so.
   assert.match(slice('id="shortcutsModal"', '</div>\n</div>'), /<kbd>Shift<\/kbd><kbd>F10<\/kbd><\/div><div>Open the focused item&rsquo;s menu, as a right-click does \(or the Menu key\)<\/div>/,
     'the Keyboard shortcuts sheet names the keys');
+});
+
+test('on the Sunburst, Circles and Voronoi too, the menu key opens the selected cell\'s menu inside that cell — at its arc or its own centre (review F1.6 of QA fourth pass E05)', () => {
+  // Review F1.6: kbCellPoint places the keyboard's card and, since E05, its
+  // menu, with one branch per renderer — and only the rectangles' was run.
+  const h = keyMenuHarness();
+  const CANVAS = { left: 280, top: 300 }; // the harness's canvas rect
+  const big = { path: '/r/big', name: 'big', type: 'dir', size: 90 };
+  const small = { path: '/r/small', name: 'small', type: 'dir', size: 10 };
+  const root = { path: '/r', name: 'r', type: 'dir', size: 100, children: [big, small] };
+  /** The ContextMenu key on the map with `node` selected: where its menu opened, focus then given back to the map. */
+  const menuAt = (node: typeof big, why: string) => {
+    h.state.treemap.kbSel = node;
+    h.canvas.focus();
+    const before = h.shown.length;
+    h.keydown(keyOf('ContextMenu'));
+    assert.equal(h.shown.length, before + 1, `${why}: the key opened a menu`);
+    const at = h.shown[h.shown.length - 1];
+    assert.equal(at.node, node, `${why}: the selected cell's`);
+    h.page.ctxMenuFocusOpener(h.page.hideCtxMenu());
+    assert.equal(h.doc.activeElement, h.canvas, `${why}: and Escape gives focus back to the map`);
+    return { x: at.x - CANVAS.left, y: at.y - CANVAS.top };
+  };
+
+  // The Sunburst, its arcs as the page lays them out. "small" is a narrow arc off every diagonal, so a point read with x and y swapped falls outside it.
+  type Arc = { n: unknown; a0: number; a1: number; cx: number; cy: number; rInner: number; rOuter: number };
+  const arcs = (new Function('state', `'use strict'; ${braced('function layoutSunburstArcs(')} return layoutSunburstArcs;`)(
+    { treemap: { hideCloud: false } }) as (r: unknown, g: unknown) => Arc[])(root, { cx: 350, cy: 200, rings: 3, innerR0: 40, ringT: 50 });
+  assert.equal(arcs.length, 2, 'control: the page laid out an arc for each folder');
+  Object.assign(h.state.treemap, { mode: 'sunburst', arcs, cells: [], pxRects: [] });
+  for (const node of [small, big]) {
+    const arc = arcs.find((a) => a.n === node)!;
+    const p = menuAt(node, `Sunburst, ${node.name}`);
+    const r = Math.hypot(p.x - arc.cx, p.y - arc.cy);
+    const turn = 2 * Math.PI;
+    const into = (((Math.atan2(p.y - arc.cy, p.x - arc.cx) - arc.a0) % turn) + turn) % turn;
+    assert.ok(r >= arc.rInner && r <= arc.rOuter && into <= arc.a1 - arc.a0,
+      `Sunburst, ${node.name}: the menu opens on its arc (${p.x.toFixed(0)}, ${p.y.toFixed(0)}: radius ${r.toFixed(0)} of ${arc.rInner}–${arc.rOuter}, ${into.toFixed(2)} rad into a ${(arc.a1 - arc.a0).toFixed(2)} rad arc)`);
+  }
+
+  // Circles: each cell a circle around its centre.
+  const circles = [{ n: big, kind: 'circle', cx: 140, cy: 250, r: 110 }, { n: small, kind: 'circle', cx: 560, cy: 90, r: 40 }];
+  Object.assign(h.state.treemap, { mode: 'circles', arcs: [], cells: circles });
+  for (const cell of circles) {
+    const p = menuAt(cell.n, `Circles, ${cell.n.name}`);
+    assert.ok(Math.hypot(p.x - cell.cx, p.y - cell.cy) <= cell.r, `Circles, ${cell.n.name}: the menu opens inside its circle (${p.x.toFixed(0)}, ${p.y.toFixed(0)})`);
+  }
+
+  // Voronoi: each cell a polygon, its centre the page's own centroid of it.
+  const polyCentroid = new Function(`'use strict'; ${braced('function polyCentroid(')} return polyCentroid;`)() as (poly: Array<{ x: number; y: number }>) => { x: number; y: number };
+  const polys = [
+    { n: big, poly: [{ x: 10, y: 10 }, { x: 400, y: 10 }, { x: 380, y: 390 }, { x: 10, y: 390 }] },
+    { n: small, poly: [{ x: 460, y: 30 }, { x: 640, y: 50 }, { x: 620, y: 170 }, { x: 470, y: 150 }] },
+  ].map((c) => { const m = polyCentroid(c.poly); return { ...c, kind: 'poly', cx: m.x, cy: m.y }; });
+  const inside = (pt: { x: number; y: number }, poly: Array<{ x: number; y: number }>) => {
+    let odd = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      if ((poly[i].y > pt.y) !== (poly[j].y > pt.y) && pt.x < ((poly[j].x - poly[i].x) * (pt.y - poly[i].y)) / (poly[j].y - poly[i].y) + poly[i].x) odd = !odd;
+    }
+    return odd;
+  };
+  Object.assign(h.state.treemap, { mode: 'voronoi', cells: polys });
+  for (const cell of polys) {
+    const p = menuAt(cell.n, `Voronoi, ${cell.n.name}`);
+    assert.ok(inside(p, cell.poly), `Voronoi, ${cell.n.name}: the menu opens inside its cell (${p.x.toFixed(0)}, ${p.y.toFixed(0)})`);
+  }
 });
 
 test('the menu keys open nothing where nothing would — a field\'s own menu, a sheet over the page, an item with no menu, another key (QA fourth pass E05)', () => {
@@ -1642,7 +1720,7 @@ test('the menu keys open nothing where nothing would — a field\'s own menu, a 
   ];
   for (const [why, arrange] of cases) {
     const e = arrange();
-    h.page.ctxMenuFromKey(e);
+    h.keydown(e);
     assert.equal(h.shown.length, 0, `${why}: no menu`);
     assert.equal(e.defaultPrevented, false, `${why}: the key is left to the platform`);
   }
