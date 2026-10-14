@@ -573,7 +573,7 @@ $('browseUseBtn').addEventListener('click', async () => {
   // closed with the refusal, the picker sent the person back to Offload… to
   // choose again. It stays open, on that folder, its button held while the
   // pick answers and live again after; the pick closes it itself (`leave`)
-  // just before it opens what comes next. The pick is `current` until the
+  // as it opens what comes next, just after it. The pick is `current` until the
   // picker closes or lists another folder: then its answer is for nothing.
   if (pick && browseHold && browsePath) {
     const mine = browseSeq;

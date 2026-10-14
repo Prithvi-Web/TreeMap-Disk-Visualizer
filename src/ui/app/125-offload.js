@@ -110,8 +110,8 @@ let offloadPlanSeq = 0;
 /**
  * A folder picked for an offload: planned by the dry run and confirmed before
  * anything moves (E01). `picker`, from the folder picker that is still open
- * while the plan is asked (fifth browser pass F02): `leave()` closes it just
- * before the sheet opens; a refusal leaves it open, on the folder refused,
+ * while the plan is asked (fifth browser pass F02): `leave()` closes it as the
+ * sheet opens, just after it; a refusal leaves it open, on the folder refused,
  * for another choice. A picker dismissed meanwhile (`current()` false) is
  * answered with nothing — no sheet, no toast.
  */
@@ -137,17 +137,16 @@ async function offloadPicked(paths, dest, picker = null) {
  * run is where the server refuses — a folder on the files' own drive, too
  * little space, a link — so a refusal is thrown before any sheet opens.
  * `notes`: extra lines for the sheet; `isCurrent`: false once a later plan
- * owns the dialog; `beforeSheet`: run once the plan is in, just before the
- * sheet opens — the picker a pick came from closes there (F02).
+ * owns the dialog; `withSheet`: run as the sheet opens, just after it — the
+ * picker a pick came from closes there (F02).
  */
-async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, beforeSheet = null) {
+async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, withSheet = null) {
   const plan = await api('/api/offload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scanId: state.scanId, paths, dest, dryRun: true }),
   });
   if (!isCurrent()) return;
-  if (beforeSheet) beforeSheet();
   $('confirmTitle').innerHTML = icon('archive', 18) + `Offload to ${escapeHtml(destName)}?`;
   // What moves, named as every Trash sheet names it (fifth browser pass F03):
   // the item, or "N items" with the first names. The Grid's bar can name
@@ -165,6 +164,12 @@ async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent, befor
     `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;
   $('confirmOk').innerHTML = icon('archive', 15) + 'Copy, verify, then trash';
   $('confirmModal').classList.add('open');
+  // The picker closes after the sheet opened, in the same task: the focus net
+  // (235) then meets the sheet first, and moves where its Cancel returns from
+  // the picker's own button to whatever opened the picker. Closed first, the
+  // page was already inert under the sheet when the picker gave focus back,
+  // and Cancel or Escape left focus on <body> (review F1.7 of F02).
+  if (withSheet) withSheet();
   // Only Confirm reaches the pipeline, through the same door as every other offload.
   onConfirmTrash = async () => { await runOffloadJob(paths, dest); };
 }

@@ -1467,6 +1467,51 @@ test('"Empty the Trash" confirmed empties it and closes both sheets, giving focu
   }
 });
 
+/* ══════════════ F02 review F1.7 — the Offload sheet a picked folder opened gives focus back to what opened the picker ══════════════ */
+
+test('Cancel or Escape on the Offload sheet a picked folder opened gives focus back to the control that opened the picker — never <body> (review F1.7 of fifth browser pass F02)', async () => {
+  // Review F1.7: since F02 the picker stays open while its pick is planned, and the plan closes it
+  // (the pick's leave()) and opens the Offload sheet in one task — one batch for the net. Closing the
+  // picker could not hand focus back (the sheet already held the page inert), and the sheet took the
+  // picker's own button, hidden by then, as where to return: Cancel left focus on <body>.
+  for (const [order, focusDropsFirst] of NET_ORDERS) {
+    for (const way of ['Cancel', 'Escape']) {
+      const { doc, api, flush } = observedPage({ focusDropsFirst });
+      const $ = (id: string) => doc.getElementById(id)!;
+      const plan = async () => ({ dryRun: true, fileCount: 2, bytesTotal: 3_000_000_000 });
+      const page = new Function('$', 'document', 'state', 'api', 'icon', 'escapeHtml', 'formatBytes', 'formatCount', 'confirmFooterReset', 'browseClosed',
+        `'use strict';
+         let onConfirmTrash = null;
+         ${braced('function lastPathSegment(')}
+         ${braced('function closeModal(')}
+         ${braced('async function confirmOffloadPlan(')}
+         return { closeModal, confirmOffloadPlan };`,
+      )($, doc, { scanId: 's1' }, plan, () => '', String, (n: number) => `${n} B`, String, () => {}, () => {}) as {
+        closeModal: (id: string) => void;
+        confirmOffloadPlan: (paths: string[], dest: string, name: string, notes: string, isCurrent: () => boolean, withSheet: () => void) => Promise<void>;
+      };
+      const at = `${way} (${order})`;
+      const opener = $('selOffloadBtn'); // the Grid selection bar's "Offload…"
+      opener.focus();
+      assert.equal(doc.activeElement, opener, `control (${at}): "Offload…" has focus`);
+      $('browseModal').classList.add('open'); flush(); // startOffloadFlow opens the picker
+      const use = $('browseUseBtn');
+      use.focus(); // Tab to "Offload to this folder", and Enter
+      assert.equal(doc.activeElement, use, `control (${at}): the picker's button has focus`);
+      use.disabled = true; // held while its pick is planned
+      // The plan answers: the page's own confirmOffloadPlan, the pick's leave() closing the picker.
+      await page.confirmOffloadPlan(['/Users/me/Mail/Mailbox 23.mbox'], '/Volumes/Backup', 'Backup', '', () => true, () => page.closeModal('browseModal'));
+      flush();
+      assert.ok($('confirmModal').classList.contains('open') && !$('browseModal').classList.contains('open'), `control (${at}): the sheet is up, the picker gone`);
+      assert.ok($('confirmModal').contains(doc.activeElement), `${at}: focus is in the sheet`);
+      page.closeModal(way === 'Cancel' ? 'confirmModal' : api.topModal()!.id); // [data-close], or the page's Escape on the top sheet
+      flush();
+      assert.ok(doc.activeElement === opener,
+        `${at}: focus is back on "Offload…", which opened the picker (it is on <${doc.activeElement?.tag} id=${doc.activeElement?.id}>)`);
+    }
+  }
+});
+
 /* ══════════════ QA fourth pass E05 — the right-click menu from the keyboard, and the breakdown it opens gives focus back ══════════════ */
 
 /** The right-click menu's entry listener out of the built page, as a press of entry `act` runs it, its menu opened with focus on `back`. */

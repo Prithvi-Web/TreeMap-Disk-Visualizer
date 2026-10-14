@@ -160,7 +160,7 @@ test('with no other drive connected, the picker opens where drives appear — ne
   assert.equal((await startFor('darwin'))[4].holdOpen, true, 'an offload\'s pick answers before the picker goes');
 });
 
-test('a pick from the picker is answered before the picker goes: refused, it stays open with the reason said; planned, it closes just before the sheet opens; dismissed meanwhile, nothing opens and nothing is said (fifth browser pass F02)', async () => {
+test('a pick from the picker is answered before the picker goes: refused, it stays open with the reason said; planned, it closes as the sheet opens, the sheet first; dismissed meanwhile, nothing opens and nothing is said (fifth browser pass F02)', async () => {
   const refusal = '"me" is on the same drive as "Mailbox 23.mbox". An offload copies each file and then moves the original to the Trash, so on the same drive it frees nothing';
   const paths = ['/Users/me/Mail/Mailbox 23.mbox'];
   const run = async (refuse: string | null, stillOpen = true) => {
@@ -177,7 +177,9 @@ test('a pick from the picker is answered before the picker goes: refused, it sta
   assert.deepEqual(refused.events, [], 'a refused folder leaves the picker open, and no sheet opens');
   assert.deepEqual(refused.h.toasts, [[`Could not plan the offload: ${refusal}`, 'error']], 'the server\'s reason is said over the picker');
   const planned = await run(null);
-  assert.deepEqual(planned.events, ['leave', 'sheet'], 'a plan that answers closes the picker, then opens its sheet');
+  // The sheet first, then the picker, in one task: the focus net then hands the sheet's Cancel back to
+  // whatever opened the picker, never <body> (review F1.7 of F02, pinned in polishUiModals).
+  assert.deepEqual(planned.events, ['sheet', 'leave'], 'a plan that answers opens its sheet, then closes the picker');
   const dismissed = await run(null, false);
   assert.deepEqual(dismissed.events, [], 'a picker dismissed while its plan answered opens no sheet');
   assert.equal(dismissed.h.confirm(), null, 'and leaves nothing waiting for a Confirm');
