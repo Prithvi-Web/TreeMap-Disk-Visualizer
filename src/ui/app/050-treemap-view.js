@@ -427,6 +427,8 @@ function reclaimCoverageNote() {
  * toolbar on four rows, the time-lapse bar on three, the banner's 127 px and
  * a two-line hint. The page grew to 787 px and the pill covered the legend
  * and the status line (QA D12). It is 96 px — two rows of labelled cells.
+ * The map's card is a .glass card, and its border is height too: left out,
+ * every window ran 2 px past its bottom (QA fourth pass D12, 702/700).
  */
 function treemapCanvasHeight(wrap) {
   const MIN_H = 96; // the floor, for a window with no room left (above)
@@ -434,7 +436,8 @@ function treemapCanvasHeight(wrap) {
   // Called before the view is laid out (hidden tab): fall back to the floor.
   if (!(top > 0)) return 420;
   const cs = getComputedStyle(wrap);
-  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+    + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
   const foot = wrap.parentElement && wrap.parentElement.querySelector('.tm-foot');
   const below = foot
     ? foot.getBoundingClientRect().height + parseFloat(getComputedStyle(foot).marginTop)

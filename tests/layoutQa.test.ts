@@ -681,6 +681,9 @@ function sheetPx(v: string | undefined, what: string): number {
 function mapWithCart(H: number, top: number, footH: number, previewPad?: number) {
   const pad = sheetPx(declsFor('#treemapWrap').get('padding'), "#treemapWrap's padding");
   const padTop = previewPad ?? pad;
+  // The map's card is a .glass card, whose hairline border is height too (QA fourth pass D12: 702 px in a 700 px window).
+  assert.match(INDEX, /<div class="glass" id="treemapWrap">/, 'control: the map sits in a .glass card');
+  const border = sheetPx(declsFor('.glass').get('border'), "the card's border");
   const footGap = sheetPx(declsFor('.tm-foot').get('margin-top'), "the footer's top margin");
   const padB = sheetPx(declsFor('body:has(#cartDock.show) main').get('padding-bottom'), 'the room <main> keeps for the cart pill');
   const wrap = {
@@ -691,11 +694,12 @@ function mapWithCart(H: number, top: number, footH: number, previewPad?: number)
   const height = runPageDecls<(w: unknown) => number>(['treemapCanvasHeight'], {
     window: { innerHeight: H },
     getComputedStyle: (el: unknown) => (el === wrap
-      ? { paddingTop: `${padTop}px`, paddingBottom: `${pad}px` }
+      ? { paddingTop: `${padTop}px`, paddingBottom: `${pad}px`, borderTopWidth: `${border}px`, borderBottomWidth: `${border}px` }
       : { marginTop: `${footGap}px`, paddingBottom: `${padB}px` }),
   }, 'treemapCanvasHeight')(wrap);
-  // Where the footer's last line (the hint) ends, and where the room kept for the pill begins.
-  return { height, footEnd: top + padTop + height + pad + footGap + footH, pillRoom: H - padB };
+  // Where the footer's last line (the hint) ends, where the room kept for the pill begins, and the page's whole height.
+  const footEnd = top + border + padTop + height + pad + border + footGap + footH;
+  return { height, footEnd, pillRoom: H - padB, page: footEnd + padB };
 }
 
 test('at the desktop window\'s minimum the map gives up height so its footer stays above the cart pill (B36 remainder)', () => {
@@ -733,6 +737,50 @@ test('at the desktop window\'s minimum the map gives up height so its footer sta
   // two rows of labelled cells — and the desktop window's minimum fits.
   const tiny = mapWithCart(480, 250, 76);
   assert.ok(tiny.height >= 96, `a window with no room left still draws a ${tiny.height} px map`);
+});
+
+test('in "Preview after" at the desktop window\'s minimum the page fits the window and the cart pill covers nothing — the time-lapse bar steps aside while the map previews (QA fourth pass D12)', () => {
+  // QA fourth pass D12 (shots/052): 1024×700, the preview pane open (a 402 px
+  // map), two scans (the time-lapse bar), "Preview after" on, the cart
+  // collapsed. The toolbar on four rows and the bar on three (105 px and its
+  // margin) start the map's card at y 293, the banner on nine lines pads it
+  // by 196 (176 and its insets), and the hint takes two lines (a 69 px
+  // footer). The map sat at its 96 px floor and the page was 753 px tall:
+  // unscrolled, the pill covered the status line and the hint's ⌥/⌘ line.
+  // And every state of this window ran 2 px long (702/700): the card's own
+  // border was never taken off the map.
+  const H = 700, top = 293, banner = 176 + 2 * 10, footH = 69, bar = 105;
+  // The bar is not the preview's: the preview is of the live map, and a
+  // scrub would draw history under a banner about the cart.
+  const root = markupTree();
+  const [view] = selectAll(root, '#view-treemap');
+  assert.ok(view.children.some((c) => c.id === 'tmTimebar') && view.children.some((c) => c.id === 'treemapWrap'),
+    'control: the bar and the map\'s card are both children of the Treemap view');
+  const hides = RULES.filter((r) => r.selectors.some((sel) => /^#view-treemap:has\(> ?#treemapWrap\.previewing\) > ?#tmTimebar$/.test(sel)));
+  const hidden = hides.some((r) => /(^|;)\s*display:\s*none\s*(;|$)/.test(r.body));
+  // The page marks the card .previewing exactly while the preview is up.
+  const marks: boolean[] = [];
+  const sync = runPageDecls<() => void>(['TM_PREVIEW_BANNER_INSET', 'syncCartPreviewChrome'], {
+    $: (id: string) => ({
+      cartPreview: { setAttribute() {}, classList: { toggle() {} } },
+      treemapWrap: { classList: { toggle: (c: string, on: boolean) => { if (c === 'previewing') marks.push(on); } }, style: { removeProperty() {} } },
+      tmPreviewBanner: { hidden: true }, tmPreviewText: { innerHTML: '' },
+    } as Record<string, unknown>)[id] ?? null,
+    tmPreview: { on: true, freedBytes: 3.2e9, outsideView: 0 }, formatBytes: String, formatCount: String, escapeHtml: String,
+    cartSpaceSaid: () => '', tmPreviewPadSync() {}, tmPreviewWatch() {},
+  }, 'syncCartPreviewChrome');
+  sync();
+  assert.deepEqual(marks, [true], 'control: the card is marked .previewing while the preview is up');
+  const barBlock = bar + sheetPx(declsFor('.tm-timebar').get('margin-bottom'), "the bar's bottom margin");
+  const m = mapWithCart(H, hidden ? top - barBlock : top, footH, banner);
+  assert.ok(hidden, 'the stylesheet takes the time-lapse bar away while the map\'s card is .previewing');
+  assert.ok(m.footEnd <= m.pillRoom, `the hint ends at y ${m.footEnd} under a ${m.height} px map; the room kept for the pill starts at y ${m.pillRoom}`);
+  assert.ok(m.page <= H, `the page is ${m.page} px tall in the ${H} px window`);
+  assert.ok(m.height > 96, `and the map is above its floor (${m.height} px)`);
+  // Control: with the bar up, nothing the map can give makes this window fit.
+  const up = mapWithCart(H, top, footH, banner);
+  assert.equal(up.height, 96, 'control: with the bar up the map is at its floor');
+  assert.ok(up.page > H, `control: and the page still runs ${up.page - H} px past the window`);
 });
 
 test('the sunburst fits the map the page leaves it, down to the map\'s floor — its disc is never cut by the top or bottom of a short map (review F1.3, F3.3)', () => {

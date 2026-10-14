@@ -285,3 +285,11 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 /* Padded below the banner (QA D64): the JS measures it into --tm-preview-pad. */
 #treemapWrap.previewing { outline: 2px dashed var(--warn); outline-offset: -2px;
   padding-top: var(--tm-preview-pad, 64px); }
+/* The time-lapse bar steps aside while the map previews. The preview is of
+   the live map — it will not start on a scrubbed one, and a scrub drew
+   history under a banner about the cart — and at the desktop window's
+   minimum, beside the open preview pane, the bar's three rows left the map
+   96 px under a nine-line banner and the page 753 px in a 700 px window,
+   the pill over the status line and the hint (QA fourth pass D12). The
+   row observer (TM_CHROME_ROWS) refits the map as it goes and comes back. */
+#view-treemap:has(> #treemapWrap.previewing) > #tmTimebar { display: none; }
