@@ -47,9 +47,13 @@ const realProviders: VolumeProviders = {
 
 let providers: VolumeProviders = realProviders;
 
-/** Test-only: swap discovery/stat for fakes so refusals can be driven. */
-export function setVolumeProviders(next: VolumeProviders | null): void {
-  providers = next ?? realProviders;
+/**
+ * Test-only: swap discovery/stat for fakes so refusals can be driven. A provider left out keeps the
+ * real one (review F2.2), so a test that stands in for the drive listing alone still runs the real
+ * same-space judgement — the wiring GET /api/volumes depends on is then under test, not a stub.
+ */
+export function setVolumeProviders(next: Partial<VolumeProviders> | null): void {
+  providers = next ? { ...realProviders, ...next } : realProviders;
 }
 
 /**

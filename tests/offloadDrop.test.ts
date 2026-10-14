@@ -118,6 +118,23 @@ test('on this Mac, the VM volume and the temp folder share the root\'s space and
     'VM and the Data volume are the root\'s container; devfs is no APFS volume');
 });
 
+test('on this Mac, GET /api/volumes itself leaves out the VM volume and the temp folder — the real wiring judges them, with only the drive listing stood in (review F2.2)', { skip: (process.platform !== 'darwin' || !fs.existsSync('/System/Volumes/VM')) && 'needs macOS\'s VM volume' }, async () => {
+  // Only `list` is stood in: everything else is what GET /api/volumes really runs. A provider set that
+  // replaced the real one wholesale would hide a broken wiring of the same-space judgement behind a stub.
+  const tmp = fs.realpathSync(os.tmpdir());
+  setVolumeProviders({ list: () => [{ name: 'VM', path: '/System/Volumes/VM' }, { name: 'Temp', path: tmp }] });
+  const s = await listen();
+  try {
+    const r = await get(s.port, '/api/volumes');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.volumes.map((v: { path: string }) => v.path), [],
+      'both share this computer\'s own disk\'s space, so neither is offered as another drive');
+  } finally {
+    setVolumeProviders(null);
+    await s.close();
+  }
+});
+
 test('a volume whose stats cannot be read is listed with nulls and a reason, never hidden', async () => {
   setVolumeProviders({
     list: () => [
