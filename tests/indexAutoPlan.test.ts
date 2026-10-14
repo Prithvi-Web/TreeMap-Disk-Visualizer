@@ -564,6 +564,16 @@ test('the search panel lists a path once, and says results may be out of date on
   assert.deepEqual(twice.rows, ['/c/Mail/Mailbox 03.mbox 1600 B'], 'one row for the path — the live index\'s, though the stale one\'s came first');
   assert.deepEqual(twice.hits, ['/c/Mail/Mailbox 03.mbox'], 'and one hit behind the keyboard\'s rows');
   assert.equal(twice.stale, false, 'the hit shown is from the live index: nothing shown is out of date');
+  // Review F1.4 of F08: whichever comes first — the live index's hit is kept over a stale one's after it,
+  // the first of two live hits stands, and the kept hit holds the place the path first came.
+  const liveFirst = panelFor({ hits: [box('/c', 1600), box('/c/Mail', 1700)], total: 2, staleRoots: ['/c/Mail'] });
+  assert.deepEqual([liveFirst.rows, liveFirst.stale], [['/c/Mail/Mailbox 03.mbox 1600 B'], false],
+    'the live index\'s row when it came first, and nothing shown is out of date');
+  const bothLive = panelFor({ hits: [box('/c', 1600), box('/c/Mail', 1700)], total: 2, staleRoots: [] });
+  assert.deepEqual(bothLive.rows, ['/c/Mail/Mailbox 03.mbox 1600 B'], 'two live hits for one path: the first stands');
+  const placed = panelFor({ hits: [box('/c/Mail', 1700), holiday, box('/c', 1600)], total: 3, staleRoots: ['/c/Mail'] });
+  assert.deepEqual(placed.hits, ['/c/Mail/Mailbox 03.mbox', '/c/holiday.mov'], 'the live row takes the place the path first came — the server\'s size order');
+  assert.deepEqual(placed.rows, ['/c/Mail/Mailbox 03.mbox 1600 B', '/c/holiday.mov 9 B'], 'and is drawn there, its folder first');
   const live = panelFor({ hits: [holiday], total: 1, staleRoots: ['/c/Mail'] });
   assert.deepEqual([live.rows.length, live.stale], [1, false], '"holiday", from the live index while another is stale: no note');
   const stale = panelFor({ hits: [box('/c/Mail', 1700), holiday], total: 2, staleRoots: ['/c/Mail'] });
