@@ -71,6 +71,29 @@ test('the app itself, and anything outside an app, is no part of one', () => {
   assert.deepEqual(installedProgramOf('/Volumes/Ext/Old.APP/Contents/Info.plist', 'darwin'), { kind: 'app', name: 'Old', root: '/Volumes/Ext/Old.APP' }, 'in any case');
 });
 
+test('a folder merely named like an app is no app: a bundle\'s own folder must come next in the path — Contents, or an iPhone app\'s Wrapper (review F1.3)', () => {
+  for (const p of [
+    '/Users/me/code/acme.app/node_modules/x/index.js', // a project named after its .app domain
+    '/Users/me/code/mysite.web.app/src/main.ts',
+    '/Users/me/code/acme.app/Contents.md', // a file named Contents.md is no bundle's folder
+  ]) {
+    assert.equal(installedProgramOf(p, 'darwin'), null, p);
+  }
+  assert.deepEqual(installedProgramOf('/Users/me/code/acme.app/build/Foo.app/Contents/MacOS/Foo', 'darwin'),
+    { kind: 'app', name: 'Foo', root: '/Users/me/code/acme.app/build/Foo.app' }, 'an app built inside such a project is an app');
+  assert.deepEqual(installedProgramOf('/Applications/Clocks.app/Wrapper/Clocks.app/Clocks', 'darwin'),
+    { kind: 'app', name: 'Clocks', root: '/Applications/Clocks.app' }, 'an iPhone app installed on a Mac');
+  assert.deepEqual(installedProgramOf('/Applications/Foo.app/contents/macos/foo', 'darwin'),
+    { kind: 'app', name: 'Foo', root: '/Applications/Foo.app' }, 'spelled in another case, on a volume that folds it');
+});
+
+test('what a program makes again on its own is no part of it: a Steam library\'s shader caches, which the Games view offers to clear (review F1.3)', () => {
+  assert.equal(installedProgramOf('C:\\Program Files (x86)\\Steam\\steamapps\\shadercache\\730', 'win32'), null, 'a game\'s shader cache, as the Games view offers it');
+  assert.equal(installedProgramOf('C:\\Program Files (x86)\\Steam\\steamapps\\shadercache\\730\\fozpipelinesv6\\steamapprun_pipeline_cache.foz', 'win32'), null, 'and a file in it');
+  assert.deepEqual(installedProgramOf('C:\\Program Files (x86)\\Steam\\steamapps\\common\\Game\\game.exe', 'win32'),
+    { kind: 'program', name: 'Steam', root: 'C:\\Program Files (x86)\\Steam' }, 'control: a game installed there is still part of what is installed');
+});
+
 test('on Windows a file inside a program\'s own folder under Program Files is a part of that program', () => {
   assert.deepEqual(
     installedProgramOf('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'win32'),
@@ -98,7 +121,8 @@ test('on Windows a file inside a program\'s own folder under Program Files is a 
 test('on Linux a file under /usr is the package manager\'s, but /usr/local is where a person installs things', () => {
   assert.deepEqual(installedProgramOf('/usr/lib/x86_64-linux-gnu/libLLVM-17.so.1', 'linux'), { kind: 'package', name: null, root: '/usr' });
   assert.deepEqual(installedProgramOf('/usr/share/code/code', 'linux'), { kind: 'package', name: null, root: '/usr' });
-  for (const p of ['/usr/local/bin/tool', '/usr/local', '/usr', '/home/me/usr/x', '/opt/x/y']) {
+  // /usr/src holds source code, a project's (Docker's /usr/src/app) as often as a package's: nothing there runs (review F1.3).
+  for (const p of ['/usr/local/bin/tool', '/usr/local', '/usr', '/home/me/usr/x', '/opt/x/y', '/usr/src/app/node_modules/x/index.js']) {
     assert.equal(installedProgramOf(p, 'linux'), null, p);
   }
   assert.equal(installedProgramOf('/usr/lib/libz.dylib', 'darwin'), null, 'on a Mac /usr is the sealed system, not a package manager\'s');
@@ -199,6 +223,26 @@ test('the dry-run manifests say which paths are parts of an installed program: D
     await client.close();
   }
   assert.ok(fs.existsSync(exe) && fs.existsSync(loose), 'dry runs move nothing');
+});
+
+test('a path reached through a link in its folders is judged where it really is: a folder linked into an app is that app\'s, for the Trash sheet and the dry run alike (review F1.5)', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, async () => {
+  const dir = fs.realpathSync(fileTempDir('tm-installed-link-'));
+  const contents = path.join(dir, 'apps', 'Foo.app', 'Contents');
+  fs.mkdirSync(path.join(contents, 'Resources'), { recursive: true });
+  fs.writeFileSync(path.join(contents, 'Resources', 'big.bin'), Buffer.alloc(2000, 1));
+  fs.symlinkSync(contents, path.join(dir, 'L'), 'dir');
+  const folder = path.join(dir, 'L', 'Resources'); // spelled through the link: no ".app" in it
+  const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: folder });
+  assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+  const spelled = path.join(folder, 'big.bin');
+  assert.equal(installedProgramOf(spelled), null, 'control: its spelling names no app');
+  const foo = { kind: 'app', name: 'Foo', root: path.join(dir, 'apps', 'Foo.app') };
+  const r = await call('POST', '/api/files/installed-programs', { paths: [spelled] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body, { parts: [{ path: spelled, installedProgram: foo }] }, 'the route names the app, where it really is');
+  const del = await call('DELETE', '/api/files', { paths: [spelled], dryRun: true });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.deepEqual(del.body.wouldTrash[0].installedProgram, foo, 'and so does the dry run');
 });
 
 test('the published spec declares the route and the manifests\' installedProgram field (F01)', () => {

@@ -19,7 +19,7 @@ import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../s
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { checkOpenHandles } from '../services/openHandleGuard';
 import { emptyCheckSession, isNotEmptyCode, NOT_EMPTY_CODES, type NotEmptyCode } from '../services/emptyFolderCheck';
-import { installedProgramOf, withInstalledProgram } from '../services/installedPrograms';
+import { installedProgramAt, withInstalledProgram } from '../services/installedPrograms';
 
 export const fileRouter = Router();
 
@@ -56,7 +56,7 @@ export const MAX_INSTALLED_PROGRAM_PATHS = 2000;
 fileRouter.post('/files/installed-programs', guardBodyPathsMax(MAX_INSTALLED_PROGRAM_PATHS), requireInsideScanRoot, (req: Request, res: Response) => {
   const { paths } = req.body as { paths: string[] };
   const parts = paths.flatMap((p) => {
-    const installedProgram = installedProgramOf(p);
+    const installedProgram = installedProgramAt(p);
     return installedProgram ? [{ path: p, installedProgram }] : [];
   });
   res.json({ parts });

@@ -29,10 +29,10 @@ import {
 } from './timeCapsule';
 import fs from 'fs';
 import nodePath from 'path';
-import { isSpillPath, PathRejectedError, safetyRecordCandidateTest, sanitizePath, spillCandidateTest, takesSafetyRecord } from '../utils/pathSanitizer';
+import { isSpillPath, livesAt, PathRejectedError, safetyRecordCandidateTest, sanitizePath, spillCandidateTest, takesSafetyRecord } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
 import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
-import { installedProgramOf, programPhrase, type InstalledProgram } from './installedPrograms';
+import { installedProgramAt, installedProgramOf, programPhrase, type InstalledProgram } from './installedPrograms';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertFeatureAvailable } from './storageMode';
@@ -634,7 +634,7 @@ async function resolveCandidates(
   // pass F01): Chrome's framework or an app's own executable is a large file,
   // and trashing it breaks the app while nobody is watching. Named once per
   // program with a count, as notes are below, never once per file.
-  const { kept: outsidePrograms, leftAlone: programSkipped } = leaveInstalledProgramsAlone(matched);
+  const { kept: outsidePrograms, leftAlone: programSkipped } = leaveInstalledProgramsAlone(matched, policy.path);
   // FAILS CLOSED: suppressedNoteRoots throws NOTES_UNREADABLE on a corrupt
   // notes.json, and the throw is deliberately not caught here — runPolicy
   // records a failed run and simulate surfaces the error, so an unreadable
@@ -680,13 +680,18 @@ interface HeldBack {
 /**
  * The candidates that are no part of an installed program, and one skip entry
  * per program the rest are inside (fifth browser pass F01) — by the shared
- * detector the Trash sheets and the Security panel ask.
+ * detector the Trash sheets and the Security panel ask. Candidates are spelled
+ * from the policy's `folder`; where a link in the folders above it leads
+ * somewhere else — into an app, say — each is judged where it really is too
+ * (review F1.5). No walk follows a link below the folder, so only a folder
+ * reached through one pays for that.
  */
-function leaveInstalledProgramsAlone(candidates: readonly Candidate[]): { kept: Candidate[]; leftAlone: { path: string; reason: string }[] } {
+function leaveInstalledProgramsAlone(candidates: readonly Candidate[], folder: string): { kept: Candidate[]; leftAlone: { path: string; reason: string }[] } {
+  const throughLink = livesAt(folder) !== folder;
   const kept: Candidate[] = [];
   const perProgram = new Map<string, { program: InstalledProgram; n: number }>();
   for (const c of candidates) {
-    const program = installedProgramOf(c.path);
+    const program = throughLink ? installedProgramAt(c.path) : installedProgramOf(c.path);
     if (program === null) {
       kept.push(c);
       continue;

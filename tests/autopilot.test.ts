@@ -579,6 +579,25 @@ test('a run that left everything it matched alone, as parts of an installed prog
   }
 });
 
+test('a policy whose folder is reached through a link into an app never selects the app\'s files: each is judged where it really is (review F1.5)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
+  const dir = await mkTmp();
+  try {
+    const contents = path.join(dir, 'apps', 'Foo.app', 'Contents');
+    await writeFile(path.join(contents, 'Resources', 'big.bin'), 2 * MB);
+    fs.symlinkSync(contents, path.join(dir, 'L'), 'dir');
+    // A real folder, a link in the folders above it: such a policy saves.
+    const [policy] = await savePolicies([{ id: 'via-parent-link', name: 'Big files', path: path.join(dir, 'L', 'Resources'), match: { kind: 'custom', minBytes: MB }, dryRunFirst: false, enabled: true }]);
+    const sim = await simulatePolicy(policy);
+    assert.deepEqual(sim.items.map((i) => i.path), [], 'nothing inside Foo.app is selected');
+    const left = sim.skipped.filter((s) => /inside the app “Foo”/.test(s.reason));
+    assert.equal(left.length, 1, `the app is named in skipped, once: ${JSON.stringify(sim.skipped)}`);
+    assert.equal(left[0].path, path.join(fs.realpathSync(dir), 'apps', 'Foo.app'), 'where it really is');
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a policy whose folder is a link acts on nothing through it: the scan takes the link as the one file it is, as before (QA D78 — a scan of a link elsewhere follows it)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
   // A person's scan of a link is of the folder it points to (D78). An unattended
   // policy is not: every check made of its folder — never a whole drive, notes,

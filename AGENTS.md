@@ -484,9 +484,13 @@ OpenAPI 3 spec).
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
    - **A part of an installed program breaks it.** A file inside a Mac app
-     (`…/Google Chrome.app/Contents/…`), inside a program's own folder under
-     `X:\Program Files`, or on Linux under `/usr` (not `/usr/local`) is part of
-     that program, and moving it to the Trash stops the program working. The
+     (`…/Google Chrome.app/Contents/…`, or an iPhone app's `…/Wrapper/…`; a
+     folder merely named `*.app` is not one), inside a program's own folder
+     under `X:\Program Files`, or on Linux under `/usr` (not `/usr/local` or
+     `/usr/src`) is part of that program — judged where the path really is too,
+     a link in its folders followed — and moving it to the Trash stops the
+     program working. A Steam library's shader caches regenerate, so they are
+     not. The
      dry-run manifests of `DELETE /api/files`, `trash_paths` and
      `POST /api/cart/commit` mark each such entry with
      `installedProgram: { kind, name, root }`, and
