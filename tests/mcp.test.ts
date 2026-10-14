@@ -18,6 +18,8 @@ import { peekScan } from '../src/services/diskScanner';
 import { CommandStopped, setTrashStepForTests } from '../src/services/cleaner';
 import { formatBytes } from '../src/utils/formatBytes';
 import { waitFor } from './fixtures/waitFor';
+import { destinationsOnAnotherDrive, withRealDrives } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * The MCP server, exercised over a real client↔server handshake (in-memory
@@ -411,6 +413,21 @@ test('offload dryRun plans a folder and a file inside it once, and names the fol
     const s = r.structuredContent!;
     assert.equal(s.fileCount, 1, 'mid.bin once');
     assert.deepEqual(s.wouldTrashAfterVerify, [sub]);
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
+
+test('offload into the drive the files are on is refused with DEST_SAME_VOLUME, a dry run and a real run alike, and nothing moves (fourth browser pass, E01)', async () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mcp-dest-'));
+  try {
+    for (const dryRun of [true, false]) {
+      const r = await withRealDrives(() => call('offload', { scanId, paths: [bigPath], dest, dryRun }));
+      assert.equal(r.isError, true, `dryRun ${dryRun}: ${JSON.stringify(r.content)}`);
+      assert.match(r.content![0].text, /^Error \(DEST_SAME_VOLUME\): .*same drive.*frees nothing/, `dryRun ${dryRun}: refused, saying why`);
+      assert.equal(fs.readdirSync(dest).length, 0, `dryRun ${dryRun}: nothing copied`);
+      assert.ok(fs.existsSync(bigPath), `dryRun ${dryRun}: the original stays`);
+    }
   } finally {
     fs.rmSync(dest, { recursive: true, force: true });
   }

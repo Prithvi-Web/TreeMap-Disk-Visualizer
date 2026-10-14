@@ -25,6 +25,8 @@ import { foldName, isAppDataPath, isSpillFolderName } from '../src/utils/pathSan
 import { platform } from '../src/platform';
 import type { ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * Follow-up FG1, item 1: TreeMap's own app-data folder is never where a request writes, moves or

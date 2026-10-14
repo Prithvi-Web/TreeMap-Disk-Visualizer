@@ -18,6 +18,8 @@ import { fleetRuntime } from '../src/services/fleet/fleetRuntime';
 import { defaultConfig } from '../src/services/fleet/fleetSync';
 import { listSnapshots } from '../src/services/snapshots';
 import { waitFor } from './fixtures/waitFor';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * A dry run changes nothing persistent (browser re-check C12).

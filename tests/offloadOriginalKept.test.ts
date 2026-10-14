@@ -14,6 +14,8 @@ import { platform } from '../src/platform';
 import type { OffloadEntry, OffloadJob, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * The offload record says which originals went to the Trash (final review F3.2). Every verified copy is

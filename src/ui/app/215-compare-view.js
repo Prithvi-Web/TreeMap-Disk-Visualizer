@@ -422,14 +422,21 @@ function boxMeant(p) {
     says "Scan this folder" only when it scans: static, it read so for an
     offload — which trashes the originals — and for the Autopilot folder,
     which only fills a box (final review F1.7). */
-async function openBrowse(start, onPick = null, title = null, useLabel = null) {
+/** The picker's line under the path, when its caller names none. */
+const BROWSE_HINT = 'Type a path and press Enter, or open a folder below.';
+/** `where`: what a caller puts in place of the home folder's shortcuts and the
+    line under the path — an offload offers connected drives, and says why a
+    folder on the files' own drive will not do (E01). */
+async function openBrowse(start, onPick = null, title = null, useLabel = null, where = null) {
   browseOnPick = onPick;
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
   $('browseUseBtn').innerHTML = icon('check', 16) + escapeHtml(useLabel || (onPick ? 'Use this folder' : 'Scan this folder'));
+  $('browseHint').textContent = where?.hint || BROWSE_HINT;
   $('browseModal').classList.add('open');
   const chips = $('browseChips');
-  chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
-    `<button class="pill" data-p="${escapeHtml(d)}">${icon('folder', 12)}${escapeHtml(d.split(/[\\/]/).pop() || d)}</button>`).join('');
+  const shortcuts = where?.chips ?? (state.system?.commonDirs ?? []).map((d) => ({ path: d, name: d.split(/[\\/]/).pop() || d }));
+  chips.innerHTML = shortcuts.map(d =>
+    `<button class="pill" data-p="${escapeHtml(d.path)}">${icon(where?.chips ? 'disc' : 'folder', 12)}${escapeHtml(d.name)}</button>`).join('');
   chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
   // A start from a path box is a typed path: one that names no folder offers
   // the folder it probably meant (meantFolder).

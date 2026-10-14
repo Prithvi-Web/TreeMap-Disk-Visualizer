@@ -19,6 +19,8 @@ import { abandonedCallsUnsettled, setHardLinkForTests, setStallTimerForTests } f
 import type { OffloadEntry, OffloadJob } from '../src/models/types';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * FG3g M3 (the FG3f review's O1). An offload restore loaded offload-manifest.json when it started,

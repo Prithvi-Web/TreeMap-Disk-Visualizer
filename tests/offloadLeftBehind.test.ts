@@ -15,6 +15,8 @@ import type { OffloadJob } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
 import { isRestoreCopyFor, restorePartialsIn } from './fixtures/restoreCopy';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * FG3f #7 (introduced with FG3d #1's CopyLeftBehind). An offload that stopped part-way — cancelled,

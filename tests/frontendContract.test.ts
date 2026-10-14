@@ -497,17 +497,25 @@ test('the offload dock never runs a bare move — re-verify, manifest, confirm, 
      removal aborts), dry-run for the exact manifest, put that manifest
      behind the shared confirm, and only then hand the same paths to the
      same runOffloadJob every other offload uses. This pins the order
-     structurally so a refactor cannot quietly skip a step. */
+     structurally so a refactor cannot quietly skip a step. Steps two to
+     four are the one door every offload shares, confirmOffloadPlan (E01):
+     the drop re-verifies its drive and then goes through it. */
   const code = appCode();
   const start = code.indexOf('async function dockDrop');
   assert.notEqual(start, -1, 'dockDrop exists in the script');
-  const body = code.slice(start, start + 4000);
+  const body = code.slice(start, code.indexOf("$('cartTab').setAttribute('draggable'", start));
   const reverify = body.indexOf('/api/volumes');
-  const dry = body.indexOf('dryRun');
-  const confirm = body.indexOf('confirmModal');
-  const run = body.indexOf('runOffloadJob');
-  assert.ok(reverify !== -1 && dry !== -1 && confirm !== -1 && run !== -1, 'all four steps are present');
-  assert.ok(reverify < dry && dry < confirm && confirm < run, 'and in the only safe order');
+  const door = body.indexOf('confirmOffloadPlan(');
+  assert.ok(reverify !== -1 && door !== -1 && reverify < door, 'the drive is re-verified, then the shared door is taken');
+  assert.doesNotMatch(body, /runOffloadJob\(/, 'the drop never reaches the pipeline itself');
+  const doorAt = code.indexOf('async function confirmOffloadPlan(');
+  assert.notEqual(doorAt, -1, 'the shared door exists');
+  const shared = code.slice(doorAt, code.indexOf('\n}\n', doorAt));
+  const dry = shared.indexOf('dryRun: true');
+  const confirm = shared.indexOf('confirmModal');
+  const run = shared.indexOf('runOffloadJob');
+  assert.ok(dry !== -1 && confirm !== -1 && run !== -1, 'all three of its steps are present');
+  assert.ok(dry < confirm && confirm < run, 'and in the only safe order');
   // QA D1: the manifest is built from cart entries that exist in THIS scan —
   // one stale path (already offloaded, or from an older scan) must not 404
   // the dryRun and brick every later drop.

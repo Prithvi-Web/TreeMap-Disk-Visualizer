@@ -10,15 +10,79 @@ const OFFLOAD_PHASE_LABEL = {
 /** The job the shared progress modal is currently showing, with its cancel URL. */
 let activeJob = null;
 
-/** Entry point for every "Offload…" action: pick a destination, then run. */
-function startOffloadFlow(paths) {
+/**
+ * Entry point for every "Offload…" action: pick a folder on another drive, then
+ * the same dry-run manifest and shared confirm the drive dock uses — a pick
+ * never moves anything bare (fourth browser pass, E01). The picker opens on a
+ * connected drive, never on the disk the files are on: an offload into the
+ * drive they live on frees nothing, and the server refuses it.
+ */
+async function startOffloadFlow(paths) {
   if (!paths.length) return;
   if (!state.scanId || !state.root) { toast('Run a scan first', 'error'); return; }
   if (paths[0].startsWith('cloud://')) { toast('Offload moves local files to another drive — it doesn’t apply to cloud scans', 'error'); return; }
   hideCtxMenu();
+  let drives = [];
+  try {
+    drives = (await api('/api/volumes')).volumes || [];
+  } catch {
+    drives = []; // no answer: no drive is offered, and the line below says none is connected
+  }
+  // A drive the selection itself is on is no destination for it.
+  const others = drives.filter((v) => !paths.some((p) => p === v.path || tmIsInside(p, v.path)));
+  const why = 'an offload to the drive these files are on frees nothing, so TreeMap refuses it.';
   // The picker's button names the offload — copy, verify, then trash the
   // originals — not a scan (final review F1.7).
-  openBrowse(null, (dest) => runOffloadJob(paths, dest), 'Offload to…', 'Offload to this folder');
+  openBrowse(others.length ? others[0].path : null, (dest) => offloadPicked(paths, dest), 'Offload to…', 'Offload to this folder', {
+    chips: others.map((v) => ({ path: v.path, name: v.name })),
+    hint: others.length
+      ? `Pick a folder on another drive: ${why}`
+      : `No other drive is connected. Connect one, or type the path of a drive or network share: ${why}`,
+  });
+}
+
+/** Which plan owns the shared confirm: a later plan, from the dock or the picker, takes it over. */
+let offloadPlanSeq = 0;
+
+/** A folder picked for an offload: planned by the dry run and confirmed before anything moves (E01). */
+async function offloadPicked(paths, dest) {
+  // The shared confirm is repainted from a clean slate (review RD3).
+  resetOpenHandleWarning();
+  if (activeJob) { toast('An offload is already running — let it finish first', 'error'); return; }
+  const seq = ++offloadPlanSeq;
+  try {
+    await confirmOffloadPlan(paths, dest, lastPathSegment(dest), '', () => seq === offloadPlanSeq);
+  } catch (e) {
+    toast('Could not plan the offload: ' + e.message, 'error');
+  }
+}
+
+/**
+ * The one door every offload goes through before anything moves (E01): the
+ * exact manifest from the pipeline's own dry run, behind the shared confirm,
+ * and only Confirm hands the same paths and folder to runOffloadJob. The dry
+ * run is where the server refuses — a folder on the files' own drive, too
+ * little space, a link — so a refusal is thrown before any sheet opens.
+ * `notes`: extra lines for the sheet; `isCurrent`: false once a later plan
+ * owns the dialog.
+ */
+async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent) {
+  const plan = await api('/api/offload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scanId: state.scanId, paths, dest, dryRun: true }),
+  });
+  if (!isCurrent()) return;
+  $('confirmTitle').innerHTML = icon('archive', 18) + `Offload to ${escapeHtml(destName)}?`;
+  $('confirmText').innerHTML =
+    `<b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
+    `<b>${escapeHtml(dest)}</b>, verified by reading every byte back from the destination, and only then moved to the Trash here.` +
+    notes +
+    `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;
+  $('confirmOk').innerHTML = icon('archive', 15) + 'Copy, verify, then trash';
+  $('confirmModal').classList.add('open');
+  // Only Confirm reaches the pipeline, through the same door as every other offload.
+  onConfirmTrash = async () => { await runOffloadJob(paths, dest); };
 }
 
 async function runOffloadJob(paths, dest) {
@@ -58,10 +122,11 @@ async function runOffloadJob(paths, dest) {
    are one gesture). A drop NEVER moves anything bare: the drive is
    re-verified (drives disappear mid-drag), the exact manifest comes from the
    pipeline's own dryRun, it sits behind the shared confirm, and Confirm
-   hands the same paths to the same runOffloadJob every offload uses. */
+   hands the same paths to the same runOffloadJob every offload uses — the
+   one door, confirmOffloadPlan, that a folder picked for an offload goes
+   through too (E01). */
 let dockVolumes = [];
 let dockSeq = 0;
-let dockDropSeq = 0;
 
 async function refreshDock() {
   const seq = ++dockSeq;
@@ -133,37 +198,23 @@ async function dockDrop(volPath) {
     toast('Nothing in the cart is part of this scan — rescan the folder, or clear the stale entries in Review', 'error');
     return;
   }
-  const seq = ++dockDropSeq;
+  const seq = ++offloadPlanSeq;
   try {
     // 1 — the drive must still be there: drives disappear mid-drag (§8.3).
     const fresh = await api('/api/volumes');
-    if (seq !== dockDropSeq) return; // a later drop owns the dialog now
+    if (seq !== offloadPlanSeq) return; // a later plan owns the dialog now
     const vol = (fresh.volumes || []).find((v) => v.path === volPath);
     if (!vol) {
       toast('That drive is no longer connected — nothing was copied', 'error');
       refreshDock();
       return;
     }
-    // 2 — the exact manifest from the pipeline's own dryRun; nothing acted on.
-    const plan = await api('/api/offload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scanId: state.scanId, paths, dest: vol.path, dryRun: true }),
-    });
-    if (seq !== dockDropSeq) return;
-    // 3 — the manifest behind the shared confirm…
-    $('confirmTitle').innerHTML = icon('archive', 18) + `Offload to ${escapeHtml(vol.name)}?`;
-    $('confirmText').innerHTML =
-      `<b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
-      `<b>${escapeHtml(vol.path)}</b>, verified by reading every byte back from the destination, and only then moved to the Trash here.` +
+    // 2 — the exact manifest from the pipeline's own dryRun, behind the shared
+    // confirm; only Confirm reaches runOffloadJob (confirmOffloadPlan).
+    const notes =
       (vol.freeBytes != null ? `<br><span style="color:var(--text-3)">${formatBytes(vol.freeBytes)} free on ${escapeHtml(vol.name)}.</span>` : '') +
-      (staleCount ? `<br><span style="color:var(--text-3)">${staleCount} cart entr${staleCount === 1 ? 'y is' : 'ies are'} not in this scan and will be skipped.</span>` : '') +
-      `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;
-    $('confirmOk').innerHTML = icon('archive', 15) + 'Copy, verify, then trash';
-    $('confirmModal').classList.add('open');
-    // 4 — …and only Confirm reaches the pipeline, through the same door as
-    // every other offload.
-    onConfirmTrash = async () => { await runOffloadJob(paths, vol.path); };
+      (staleCount ? `<br><span style="color:var(--text-3)">${staleCount} cart entr${staleCount === 1 ? 'y is' : 'ies are'} not in this scan and will be skipped.</span>` : '');
+    await confirmOffloadPlan(paths, vol.path, vol.name, notes, () => seq === offloadPlanSeq);
   } catch (e) {
     toast('Could not plan the offload: ' + e.message, 'error');
   }
@@ -331,8 +382,8 @@ $('offloadCancelBtn').addEventListener('click', () => {
   if (!activeJob) { closeModal('offloadModal'); return; }
   api(activeJob.cancelUrl, { method: 'POST' }).catch(() => {});
 });
-$('selOffloadBtn').addEventListener('click', () => startOffloadFlow([...state.grid.selection]));
-$('dupOffloadBtn').addEventListener('click', () => startOffloadFlow([...state.dup.selection]));
+$('selOffloadBtn').addEventListener('click', () => { void startOffloadFlow([...state.grid.selection]); });
+$('dupOffloadBtn').addEventListener('click', () => { void startOffloadFlow([...state.dup.selection]); });
 
 /* ── Offloaded tab ── */
 async function loadOffloadIndex() {

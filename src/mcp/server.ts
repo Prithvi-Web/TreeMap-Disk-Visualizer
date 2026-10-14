@@ -758,11 +758,12 @@ export function buildMcpServer(): McpServer {
         'originals to the OS Trash. Any failure rolls back and leaves local data untouched. DESTRUCTIVE unless ' +
         'dryRun: true, which returns the exact copy plan (files, bytes, destinations) without touching anything ' +
         '— always dry-run first. Sources must live inside a completed scan; pass jobId instead to keep waiting ' +
-        'on a started job.',
+        'on a started job. A destination on the same drive as a source is refused (DEST_SAME_VOLUME): there an ' +
+        'offload frees nothing.',
       inputSchema: {
         scanId: z.string().min(1).optional().describe('The completed scan the source paths belong to'),
         paths: z.array(z.string().min(1)).max(MAX_PATHS).optional().describe('Files/folders to offload (inside the scanned root)'),
-        dest: z.string().min(1).optional().describe('Existing destination folder (e.g. an external drive)'),
+        dest: z.string().min(1).optional().describe('Existing destination folder on another drive (e.g. an external drive)'),
         dryRun: z.boolean().default(false).describe('true = report the exact plan, act on nothing'),
         jobId: z.string().min(1).optional().describe('A running offload job to keep waiting on instead of starting one'),
         waitMs: waitMsSchema,

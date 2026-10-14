@@ -19,6 +19,8 @@ import { setLaunchStepForTests, setTrashStepForTests } from '../src/services/cle
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import type { OffloadJob } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * Follow-up FG3, items 1, 4 and 6. An offload keeps a copy of its record on the destination drive,

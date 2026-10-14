@@ -18,6 +18,8 @@ import { runScheduled } from '../src/services/scheduler';
 import { getSettings, updateSettings } from '../src/services/settings';
 import { pending } from '../src/utils/backgroundWrites';
 import { waitFor } from './fixtures/waitFor';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * The agent-safety rails: dryRun acts on nothing (proven against the real

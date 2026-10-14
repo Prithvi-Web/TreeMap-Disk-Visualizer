@@ -14,6 +14,8 @@ import { setTrashStepForTests } from '../src/services/cleaner';
 import { updateSettings } from '../src/services/settings';
 import { AppError } from '../src/middleware/errorHandler';
 import type { ScanResult } from '../src/models/types';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * An offload copies, verifies, then trashes the selection — so a destination inside a selected

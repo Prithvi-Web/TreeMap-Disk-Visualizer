@@ -326,10 +326,11 @@ test('the picker\'s one button says what it does where it was opened — "Scan t
   // The real "Offload…" entry: its pick copies, verifies and trashes the originals.
   const opened: unknown[][] = [];
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const flow = new Function('state', 'toast', 'hideCtxMenu', 'openBrowse', 'runOffloadJob',
-    `'use strict'; ${braced('function startOffloadFlow(')} return startOffloadFlow;`,
-  )({ scanId: 's1', root: { path: '/home/u' } }, () => {}, () => {}, (...a: unknown[]) => { opened.push(a); }, () => {}) as (paths: string[]) => void;
-  flow(['/home/u/a.mov']);
+  const flow = new Function('state', 'toast', 'hideCtxMenu', 'openBrowse', 'api', 'tmIsInside', 'offloadPicked',
+    `'use strict'; ${braced('async function startOffloadFlow(')} return startOffloadFlow;`,
+  )({ scanId: 's1', root: { path: '/home/u' } }, () => {}, () => {}, (...a: unknown[]) => { opened.push(a); },
+    async () => ({ volumes: [] }), () => false, () => {}) as (paths: string[]) => Promise<void>;
+  await flow(['/home/u/a.mov']);
   assert.equal(opened.length, 1, 'control: Offload… opens the picker');
   assert.equal(opened[0][3], 'Offload to this folder', 'and its button names the offload, not a scan');
 
@@ -340,6 +341,20 @@ test('the picker\'s one button says what it does where it was opened — "Scan t
   assert.equal(boxLabel(), 'Use this folder', 'from the policy editor it reads "Use this folder"');
   await boxes.click('browseBtn');
   assert.equal(boxLabel(), 'Scan this folder', 'from the Scan card, "Scan this folder"');
+});
+
+test('an offload\'s picker shows the drives its caller names and the line saying why, and the next picker is the plain one again (fourth browser pass, E01)', async () => {
+  const { rt, $ } = browseRuntime(typedListing);
+  const open = rt.openBrowse as unknown as (start: string | null, onPick?: unknown, title?: string, label?: string, where?: unknown) => Promise<void>;
+  const plain = 'Type a path and press Enter, or open a folder below.';
+  assert.match(INDEX, new RegExp(`<div class="muted" id="browseHint"[^>]*>${plain}</div>`), 'control: the markup draws the plain line, by an id the picker can set');
+  await open('/home/u', () => {}, 'Offload to…', 'Offload to this folder',
+    { chips: [{ path: '/Volumes/Backup', name: 'Backup' }], hint: 'Pick a folder on another drive: it frees nothing here.' });
+  assert.equal($('browseHint').textContent, 'Pick a folder on another drive: it frees nothing here.', 'the caller\'s line');
+  assert.match($('browseChips').innerHTML, /data-p="\/Volumes\/Backup">[^<]*Backup<\/button>/, 'the caller\'s shortcuts');
+  await open(null);
+  assert.equal($('browseHint').textContent, plain, 'opened for a scan, the plain line is back');
+  assert.doesNotMatch($('browseChips').innerHTML, /Backup/, 'and the drives are not left behind');
 });
 
 test('a folder named by ?path= keeps the whitespace at its end — the deep link is read as every path box is, never trimmed into its sibling (final review F1.8)', () => {

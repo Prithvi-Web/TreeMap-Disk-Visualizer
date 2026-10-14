@@ -17,6 +17,8 @@ import { withOpenFileCheck } from './fixtures/openFileCheck';
 import { setCopyFaultForTests, setHardLinkForTests } from '../src/utils/copyVerify';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 import { isRestoreCopyFor } from './fixtures/restoreCopy';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * FG3g L4 (the crash-leftover sweep). A restore writes each file beside its name under

@@ -479,7 +479,11 @@ OpenAPI 3 spec).
      (`400 LINK_IN_SELECTION`), since a copy would follow it; a destination
      inside the selection, or a selection inside the destination, is refused
      by where each really is (`DEST_INSIDE_SOURCE`, `SOURCE_INSIDE_DEST`),
-     however either is spelled. A selected
+     however either is spelled. A destination on the same drive as a
+     selected item is refused too, dry run included (`400 DEST_SAME_VOLUME`,
+     judged by the device each really is on): there the copies take as much
+     space again and the originals keep theirs in the Trash, so it frees
+     nothing. A selected
      folder is trashed whole, so one holding anything the scan did not list
      (a "Don't scan" match, a folder it could not read, a drive it did not
      enter, a file made since) is refused before anything is copied, dry run

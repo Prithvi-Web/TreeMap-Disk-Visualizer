@@ -15,6 +15,8 @@ import { AppError } from '../src/middleware/errorHandler';
 import type { OffloadJob, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * An offload copies what the scan listed, then trashes each selected item whole (the final review,

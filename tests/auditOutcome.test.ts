@@ -23,6 +23,8 @@ import { getOffloadIndex, getOffloadJob, prepareOffload, setAfterManifestLoadFor
 import type { AuditEntry, FileNode } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * The audit log says what a destructive request did (the final review, F1.13). Emptying the Trash,

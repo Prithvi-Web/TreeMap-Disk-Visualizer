@@ -589,6 +589,48 @@ function destInsideSource(): AppError {
   return new AppError(400, 'DEST_INSIDE_SOURCE', 'The destination is inside a folder being offloaded');
 }
 
+/** Which end of an offload a device is asked about. */
+export type OffloadEnd = 'source' | 'destination';
+
+/** The device `p` really lives on (st_dev, every link followed), or null when it cannot be read. */
+function realDeviceOf(p: string): Promise<bigint | null> {
+  return fsp.stat(p, { bigint: true }).then((st) => st.dev, () => null);
+}
+
+/**
+ * Test-only: answer the device each end lives on. Every folder a test can make is on the runner's one
+ * drive, so a test that means an offload to ANOTHER drive says so here; the same-drive refusal itself
+ * is driven against the real disk. The suite's ForTests idiom: returns the function that removes it.
+ */
+let deviceOfForTests: ((p: string, end: OffloadEnd) => Promise<bigint | null>) | null = null;
+export function setOffloadDeviceForTests(fn: ((p: string, end: OffloadEnd) => Promise<bigint | null>) | null): () => void {
+  deviceOfForTests = fn;
+  return () => { deviceOfForTests = null; };
+}
+
+/**
+ * Refuses an offload into the drive the selection already lives on (fourth browser pass, E01). Every
+ * copy would land on that drive and every original go to that drive's Trash, so it frees nothing: the
+ * space is used twice until the Trash is emptied. Judged by the device each end really is on, so a
+ * link or another spelling of a folder cannot disguise it. A device that cannot be read is not called
+ * the same: a source that cannot be read fails its own copy before anything is trashed.
+ */
+async function assertAnotherDrive(topPaths: readonly string[], destDir: string): Promise<void> {
+  const deviceOf = deviceOfForTests ?? realDeviceOf;
+  const destDevice = await deviceOf(destDir, 'destination');
+  if (destDevice === null) return;
+  for (const source of topPaths) {
+    if ((await deviceOf(source, 'source')) !== destDevice) continue;
+    throw new AppError(
+      400,
+      'DEST_SAME_VOLUME',
+      `"${path.basename(destDir) || destDir}" is on the same drive as "${path.basename(source) || source}". An offload copies each file ` +
+        'and then moves the original to the Trash, so on the same drive it frees nothing — the copies take as much space again, ' +
+        'and the originals keep theirs in the Trash. Pick a folder on another drive. Nothing was copied or deleted.',
+    );
+  }
+}
+
 /** The exact manifest an offload would execute — what dryRun reports. */
 export interface PreparedOffload {
   plan: PlannedCopy[];
@@ -731,6 +773,9 @@ export async function prepareOffload(
   if (!destStat || !destStat.isDirectory()) {
     throw new AppError(400, 'DEST_NOT_A_FOLDER', 'The destination must be an existing folder');
   }
+  // On the drive the selection is on, an offload frees nothing (E01) — asked before anything is
+  // planned, so a dry run refuses it as surely as a real run.
+  await assertAnotherDrive(topPaths, destDir);
 
   // What's already on the drive, so a repeat offload renames around it instead
   // of failing every copy with EEXIST.

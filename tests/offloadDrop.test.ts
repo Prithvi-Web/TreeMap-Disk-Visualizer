@@ -10,6 +10,8 @@ import { waitFor } from './fixtures/waitFor';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { setVolumeProviders } from '../src/services/volumes';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * Volumes for the offload dock (§8.3): GET /api/volumes lists attached

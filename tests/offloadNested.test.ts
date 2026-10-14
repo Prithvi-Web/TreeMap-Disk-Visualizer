@@ -17,6 +17,8 @@ import type { OffloadJob, ScanResult } from '../src/models/types';
 import { INDEX } from './fixtures/liftFrontend';
 import { waitFor } from './fixtures/waitFor';
 import { withOpenFileCheck } from './fixtures/openFileCheck';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * A folder and an item inside it, both selected, are one set of files (the final review, F1.8): the
@@ -152,8 +154,9 @@ test('dropping the cart on a drive sends only its outermost items, to the dry ru
   const el = (): Record<string, unknown> => ({ innerHTML: '', classList: { add: () => undefined } });
   const make = new Function(
     'state', 'api', '$', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'resetOpenHandleWarning', 'refreshDock', 'runOffloadJob', 'activeJob',
-    `let onConfirmTrash = null; let dockDropSeq = 0;
+    `let onConfirmTrash = null; let offloadPlanSeq = 0;
      ${pageFunction('dockDrop')}
+     ${pageFunction('confirmOffloadPlan')}
      ${pageFunction('outermostPaths')}
      ${pageFunction('tmParentPath')}
      return { dockDrop, confirm: () => onConfirmTrash };`,

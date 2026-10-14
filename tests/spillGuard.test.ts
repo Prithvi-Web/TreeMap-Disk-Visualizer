@@ -33,6 +33,8 @@ import { isSpillPath, SAFETY_RECORD_NAMES } from '../src/utils/pathSanitizer';
 import { SPILL_DIR } from '../src/services/spillSweep';
 import type { FileNode, ScanResult } from '../src/models/types';
 import { waitFor } from './fixtures/waitFor';
+import { destinationsOnAnotherDrive } from './fixtures/offloadDrive';
+destinationsOnAnotherDrive(); // every destination here stands for another drive (E01)
 
 /**
  * Phase 4 T17a (plan §S.5.3): `<appData>/scan-spill` holds the working files of very large
