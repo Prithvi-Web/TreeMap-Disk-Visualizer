@@ -33915,7 +33915,7 @@ $('cmpRunBtn').addEventListener('click', async () => {
    sliders' pattern. Everything lives on elements this render created, so
    there is nothing for unmount to take back; the one static listener
    (resize) checks the canvas is still on screen before it draws. */
-let cmpSplit = null; // { a, b, whenA, whenB } — percent-node layouts
+let cmpSplit = null; // { a, b, whenA, whenB, said } — percent-node layouts, and the two moments as they are named
 let cmpSplitSeq = 0;
 
 async function initCmpSplit(rootPath, whenA, whenB) {
@@ -33937,12 +33937,15 @@ async function initCmpSplit(rootPath, whenA, whenB) {
       if (card) card.hidden = true;
       return;
     }
-    cmpSplit = { a: la.nodes, b: lb.nodes, whenA: la.snapshot.takenAt, whenB: lb.snapshot.takenAt };
+    // Named as the heading names them: to the second when they share a
+    // minute, so the two sides never read alike (review F1.3 of QA third pass).
+    const whenA = la.snapshot.takenAt, whenB = lb.snapshot.takenAt;
+    cmpSplit = { a: la.nodes, b: lb.nodes, whenA, whenB, said: cmpWhenPair(whenA, whenB) };
     // The footer speaks for what the canvas actually shows — the nearest
     // STORED trees, which can differ from the picked times (review H11).
     const foot = $('cmpSplitFoot');
     if (foot) foot.innerHTML =
-      `<span>◀ ${formatWhen(cmpSplit.whenA)}</span><span>${formatWhen(cmpSplit.whenB)} ▶</span>`;
+      `<span>◀ ${cmpSplit.said[0]}</span><span>${cmpSplit.said[1]} ▶</span>`;
     const range = $('cmpSplitRange');
     range.addEventListener('input', () => cmpSplitDraw());
     cmpSplitDraw();
@@ -33959,7 +33962,7 @@ function cmpSplitDraw() {
   const range = $('cmpSplitRange');
   const pct = Number(range.value);
   range.setAttribute('aria-valuetext',
-    `${pct} percent — left of the divider: ${formatWhen(cmpSplit.whenA)}, right: ${formatWhen(cmpSplit.whenB)}`);
+    `${pct} percent — left of the divider: ${cmpSplit.said[0]}, right: ${cmpSplit.said[1]}`);
   const cw = canvas.clientWidth, ch = canvas.clientHeight;
   const dpr = window.devicePixelRatio || 1;
   if (canvas.width !== Math.round(cw * dpr)) canvas.width = Math.round(cw * dpr);

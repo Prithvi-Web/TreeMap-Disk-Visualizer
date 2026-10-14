@@ -53,9 +53,18 @@ test('dates come from one formatter: no bare toLocaleString() on a Date anywhere
   assert.doesNotMatch(s, /:\d\d:\d\d/, 'no seconds');
   assert.doesNotMatch(s, /2026/, 'no year — the same string the time slider prints');
   assert.equal(formatWhen(Date.UTC(2026, 8, 1, 22, 31, 45)), s, 'memoised: the same input is the same string');
-  // Every compare-view surface goes through it.
-  const compare = slice('/* ───────────────────────────── Compare view', '/* ───────────────────────────── Browse modal');
-  assert.ok((compare.match(/formatWhen\(/g) || []).length >= 4, 'option labels, the split footer, the slider valuetext and the result heading');
+  // Every compare-view surface goes through it, each by name: the option
+  // labels, and the two moments a comparison is between — cmpWhenPair, which
+  // is formatWhen, or its twin to the second when they share a minute (QA
+  // third pass) — for the result heading, the split footer and the slider's
+  // valuetext (review F1.3). A count of formatWhen( calls stood in for this.
+  assert.match(braced('function cmpOptionLabels('), /formatWhen\(o\.when\)/, 'the option labels');
+  assert.match(braced('function cmpWhenPair('), /\[formatWhen\(a\), formatWhen\(b\)\]/, 'the pair of moments is formatWhen\'s');
+  assert.match(braced('function renderCompare('), /cmpWhenPair\(r\.whenA, r\.whenB\)/, 'the result heading');
+  const split = braced('async function initCmpSplit(');
+  assert.match(split, /said: cmpWhenPair\(whenA, whenB\)/, 'the split view names its moments through the pair');
+  assert.match(split, /foot\.innerHTML =\s*`<span>◀ \$\{cmpSplit\.said\[0\]\}<\/span><span>\$\{cmpSplit\.said\[1\]\} ▶<\/span>`/, 'the split footer');
+  assert.match(braced('function cmpSplitDraw('), /'aria-valuetext',\s*`\$\{pct\} percent — left of the divider: \$\{cmpSplit\.said\[0\]\}, right: \$\{cmpSplit\.said\[1\]\}`/, 'the slider valuetext');
   assert.match(braced('function updateTimeLabel('), /formatWhen\(/, 'the time slider label');
   assert.match(fn, /WHEN_FMT\.format/, 'formatWhen is the memo over the one formatter');
 });

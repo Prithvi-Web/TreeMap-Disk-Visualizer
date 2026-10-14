@@ -261,6 +261,54 @@ test('the comparison\'s heading names its two moments apart when they share a mi
   assert.match(declOf('renderCompare'), /cmpWhenPair\(r\.whenA, r\.whenB\)/, 'the heading says them through it');
 });
 
+/**
+ * The split view of two History snapshots, from the page's own initCmpSplit
+ * and cmpSplitDraw over a stubbed /api/snapshots/tree that holds a tree at
+ * every moment asked for: its footer's captions and its divider's spoken
+ * position, as they read once it has drawn.
+ */
+async function splitView(whenA: number, whenB: number): Promise<{ caption: string; spoken: string }> {
+  const foot = { innerHTML: '' };
+  const range = {
+    value: '50', attrs: {} as Record<string, string>,
+    setAttribute(k: string, v: string) { range.attrs[k] = v; }, addEventListener() {},
+  };
+  const ctx = { setTransform() {}, fillRect() {}, strokeRect() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, fillStyle: '', strokeStyle: '' };
+  const els: Record<string, unknown> = {
+    cmpSplitNote: { textContent: '' }, cmpSplitCard: { hidden: false }, cmpSplitFoot: foot, cmpSplitRange: range,
+    cmpSplitCanvas: { clientWidth: 200, clientHeight: 100, width: 0, height: 0, getContext: () => ctx },
+  };
+  const deps: Record<string, unknown> = {
+    $: (id: string) => els[id] ?? assert.fail(`the split view touched #${id}`),
+    api: async (url: string) => ({ snapshot: { takenAt: Number(/[?&]at=(\d+)/.exec(url)![1]) }, nodes: [] }),
+    formatWhen: MINUTE_CLOCK.minute, formatWhenSeconds: MINUTE_CLOCK.second,
+    window: { devicePixelRatio: 1 }, cssVar: () => '', sizeColor: () => '',
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const init = new Function(...keys, `let cmpSplit = null; let cmpSplitSeq = 0;
+    ${lift(['cmpWhenPair', 'initCmpSplit', 'cmpSplitDraw'])}
+    return initCmpSplit;`)(...keys.map((k) => deps[k])) as (root: string, a: number, b: number) => Promise<void>;
+  await init('/c/corpus', whenA, whenB);
+  return { caption: foot.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), spoken: range.attrs['aria-valuetext'] ?? '' };
+}
+
+test('the split view\'s captions and its divider\'s spoken position name two moments in one minute apart, as the heading does (review F1.3 of QA third pass)', async () => {
+  // Two History snapshots 28 s apart: the heading read "3:30:12 PM → 3:30:40
+  // PM", but the picture's captions both read "◀ 3:30 PM" / "3:30 PM ▶" and
+  // the divider told a screen reader "left of the divider: 3:30 PM, right:
+  // 3:30 PM" — nothing said which side was which moment.
+  const a = T + 12_000, b = T + 40_000;
+  const s = (t: number) => `s${Math.floor(t / 1000)}`, m = (t: number) => `m${Math.floor(t / 60_000)}`;
+  const same = await splitView(a, b);
+  assert.equal(same.caption, `◀ ${s(a)} ${s(b)} ▶`, 'one minute: the captions to the second');
+  assert.equal(same.spoken, `50 percent — left of the divider: ${s(a)}, right: ${s(b)}`, 'and what the divider says');
+  // Control: an hour apart, the minute tells them apart, as before.
+  const apart = await splitView(T, T + 3_600_000);
+  assert.equal(apart.caption, `◀ ${m(T)} ${m(T + 3_600_000)} ▶`, 'two minutes: as before');
+  assert.equal(apart.spoken, `50 percent — left of the divider: ${m(T)}, right: ${m(T + 3_600_000)}`);
+});
+
 /** The source of named function declarations, for the heading helper. */
 function lift(names: string[]): string {
   return names.map((n) => {
