@@ -2864,6 +2864,18 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
    below 900px with nine of them. */
 .tm-querybar { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-bottom: 10px;
   min-height: 44px; border-radius: var(--r-md); flex-wrap: wrap; }
+/* Design pass G19: the bar floats over the foot of the map — where a
+   squarified map keeps its smallest tiles — instead of standing as a row
+   above it, which pushed the map down ~56 px as the first keystroke landed.
+   Opaque, like the preview banner, so its message never sits on a tile's
+   colour; width as the preview banner's, for the same reason (QA B30). */
+#treemapWrap > .tm-querybar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  z-index: 6; margin: 0; width: max-content; max-width: calc(100% - 36px);
+  background: var(--bg-1); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-2); }
+#treemapWrap > .tm-querybar .tm-queryerr { margin-left: 0; max-width: 64ch; text-align: left; }
+/* Left of the open cart, as the preview banner stands (090-features-b.css). */
+body.cart-open #treemapWrap > .tm-querybar { left: 18px; transform: none;
+  max-width: max(240px, calc(100% - 402px)); }
 .tm-saved { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .saved-chip { display: inline-flex; align-items: center; gap: 2px; }
 .saved-chip .pill { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -4148,15 +4160,6 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
       </div>
     </div>
-    <div class="tm-querybar glass" id="tmQueryBar" hidden>
-      <div class="tm-saved" id="tmSavedViews"></div>
-      <button class="pill" id="tmSaveView" title="Save this query as a view you can click again">Save view</button>
-      <!-- v4 §4.2 — query results are a list of reclaimable paths like any
-           other, so they get a way into the cart. Staging only: nothing is
-           deleted here, and the count is stated before anything moves. -->
-      <button class="pill" id="tmStageMatches" hidden title="Add every file this query matched to the cleanup cart">Stage matches</button>
-      <div class="tm-queryerr" id="tmQueryErr" role="status" aria-live="polite" hidden></div>
-    </div>
     <div class="tm-timebar glass" id="tmTimebar" hidden>
       <span data-icon="clock" data-size="14"></span>
       <!-- v4 §7.1 — transport. Bindings are static top-level like the
@@ -4209,6 +4212,19 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="fx-orb-well fx-canvas-orb" id="tmScanOrb"></div>
       <div class="fx-orb-well fx-canvas-orb" id="tmShapeOrb"></div>
       <div id="liveFeed" hidden aria-label="Live disk activity — top writers"></div>
+      <!-- The match bar (design pass G19): a layer over the foot of the map,
+           not a row above it. As a row it appeared the moment a query had
+           something to say and pushed the map down ~56 px under the eyes of
+           whoever was typing; here it can never move the canvas. -->
+      <div class="tm-querybar" id="tmQueryBar" hidden>
+        <div class="tm-saved" id="tmSavedViews"></div>
+        <button class="pill" id="tmSaveView" title="Save this query as a view you can click again">Save view</button>
+        <!-- v4 §4.2 — query results are a list of reclaimable paths like any
+             other, so they get a way into the cart. Staging only: nothing is
+             deleted here, and the count is stated before anything moves. -->
+        <button class="pill" id="tmStageMatches" hidden title="Add every file this query matched to the cleanup cart">Stage matches</button>
+        <div class="tm-queryerr" id="tmQueryErr" role="status" aria-live="polite" hidden></div>
+      </div>
     </div>
     <div class="tm-foot">
       <div id="tmLegend" class="tm-legend"></div>
