@@ -63,7 +63,8 @@ function planFor(body: { dest: string; paths: string[] }): Record<string, unknow
  */
 function harness(drives: Drive[], refuse: string | null = null, volumesReply: (() => unknown) | null = null,
   dryRunReply: ((body: { dest: string; paths: string[] }) => Promise<unknown>) | null = null,
-  volumesFrom: ((anchors: string[]) => unknown) | null = null): Harness {
+  volumesFrom: ((anchors: string[]) => unknown) | null = null,
+  escape: (s: unknown) => string = (s) => String(s)): Harness {
   const opened: unknown[][] = [];
   const posts: Array<Record<string, unknown>> = [];
   const offloaded: Array<[string[], string]> = [];
@@ -93,7 +94,7 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     },
     $, toast: (m: string, kind?: string) => { toasts.push([m, kind]); },
     hideCtxMenu: () => {}, openBrowse: (...a: unknown[]) => { opened.push(a); },
-    icon: () => '', escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n / 1e9} GB`, formatCount: String,
+    icon: () => '', escapeHtml: escape, formatBytes: (n: number) => `${n / 1e9} GB`, formatCount: String,
     resetOpenHandleWarning: () => {}, refreshDock: () => { refreshes++; },
     runOffloadJob: async (paths: string[], dest: string) => { offloaded.push([paths, dest]); },
     activeJob: null,
@@ -281,6 +282,38 @@ test('a folder picked for an offload is never moved to bare: the pick asks the d
   assert.match(h.els.confirmOk.innerHTML, /Copy, verify, then trash/, 'its OK names the action');
   await h.confirm()?.();
   assert.deepEqual(h.offloaded, [[paths, '/Volumes/Backup/Mail archive']], 'Confirm hands the same paths and folder to runOffloadJob');
+});
+
+test('the offload sheet names what it offloads, as every Trash sheet does — the item, or "N items" with the first names — from the picker and the dock alike (fifth browser pass F03)', async () => {
+  // QA fifth pass F03: with Mailbox 23 selected in the Grid ("1 item selected — 1.7 MB"), a right-click
+  // on Mailbox 03 › Offload… opened "Offload to TMQA5? 500 files · 1.6 MB will be copied…" — no name,
+  // while the bar beside it named another item. Which of the two was about to move was a guess.
+  const sheetFor = async (paths: string[], how: 'pick' | 'drop') => {
+    const h = harness([BACKUP]);
+    if (how === 'pick') {
+      await h.start(paths);
+      await (h.opened[0] as [unknown, (dest: string) => Promise<void>])[1]('/Volumes/Backup/Mail archive');
+    } else {
+      for (const p of paths) { h.state.cart.add(p); h.state.pathIndex.add(p); }
+      await h.drop(BACKUP.path);
+    }
+    assert.equal(h.els.confirmModal?.open, true, `control (${how}): the sheet opened`);
+    assert.deepEqual(h.posts.map((b) => b.paths), [paths], `control (${how}): the dry run planned exactly these items`);
+    return h.els.confirmText.innerHTML;
+  };
+  for (const how of ['pick', 'drop'] as const) {
+    const one = await sheetFor(['/Users/me/Mail/Mailbox 03.mbox'], how);
+    assert.match(one, /^Offload <b>Mailbox 03\.mbox<\/b>: <b>2<\/b> files · <b>3 GB<\/b> will be copied to /, `${how}: one item is named, ahead of what the dry run counted in it`);
+    const two = await sheetFor(['/Users/me/Mail/Mailbox 03.mbox', '/Users/me/Movies/old.mov'], how);
+    assert.match(two, /^Offload <b>2 items<\/b> \(Mailbox 03\.mbox, old\.mov\): <b>2<\/b> files/, `${how}: several are counted and their names given`);
+    const many = await sheetFor(['a.mov', 'b.mov', 'c.mov', 'd.mov', 'e.mov'].map((n) => `/Users/me/Movies/${n}`), how);
+    assert.match(many, /^Offload <b>5 items<\/b> \(a\.mov, b\.mov, c\.mov and 2 more\): /, `${how}: the first three names, then how many more`);
+  }
+  // A name is the file's own, so it is text: escaped like every other name on the sheet.
+  const tagged = harness([BACKUP], null, null, null, null, (v) => String(v).replace(/</g, '&lt;'));
+  await tagged.start(['/Users/me/<img src=x>.mov']);
+  await (tagged.opened[0] as [unknown, (dest: string) => Promise<void>])[1]('/Volumes/Backup');
+  assert.match(tagged.els.confirmText.innerHTML, /^Offload <b>&lt;img src=x>\.mov<\/b>: /, 'a name is escaped before it is drawn');
 });
 
 test('a plan the server refuses — a folder on the files\' own drive — is said, and no sheet opens (E01)', async () => {

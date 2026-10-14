@@ -24588,8 +24588,17 @@ async function confirmOffloadPlan(paths, dest, destName, notes, isCurrent) {
   });
   if (!isCurrent()) return;
   $('confirmTitle').innerHTML = icon('archive', 18) + `Offload to ${escapeHtml(destName)}?`;
+  // What moves, named as every Trash sheet names it (fifth browser pass F03):
+  // the item, or "N items" with the first names. The Grid's bar can name
+  // another item than the one right-clicked, so the sheet must say which.
+  const NAMES_SHOWN = 3; // then "and N more"
+  const names = paths.slice(0, NAMES_SHOWN).map((p) => escapeHtml(lastPathSegment(p)));
+  const more = paths.length - names.length;
+  const what = paths.length === 1
+    ? `<b>${names[0]}</b>`
+    : `<b>${formatCount(paths.length)} items</b> (${names.join(', ')}${more > 0 ? ` and ${formatCount(more)} more` : ''})`;
   $('confirmText').innerHTML =
-    `<b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
+    `Offload ${what}: <b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
     `<b>${escapeHtml(dest)}</b>, verified by reading every byte back from the destination, and only then moved to the Trash here.` +
     notes +
     `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;

@@ -153,13 +153,14 @@ test('dropping the cart on a drive sends only its outermost items, to the dry ru
   const offloaded: string[][] = [];
   const el = (): Record<string, unknown> => ({ innerHTML: '', classList: { add: () => undefined } });
   const make = new Function(
-    'state', 'api', '$', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'resetOpenHandleWarning', 'refreshDock', 'runOffloadJob', 'activeJob',
+    'state', 'api', '$', 'toast', 'icon', 'escapeHtml', 'formatBytes', 'resetOpenHandleWarning', 'refreshDock', 'runOffloadJob', 'activeJob', 'formatCount',
     `let onConfirmTrash = null; let offloadPlanSeq = 0;
      ${pageFunction('dockDrop')}
      ${pageFunction('dockDrives')}
      ${pageFunction('offloadDrives')}
      ${pageFunction('tmIsInside')}
      ${pageFunction('confirmOffloadPlan')}
+     ${pageFunction('lastPathSegment')}
      ${pageFunction('outermostPaths')}
      ${pageFunction('tmParentPath')}
      return { dockDrop, confirm: () => onConfirmTrash };`,
@@ -173,7 +174,7 @@ test('dropping the cart on a drive sends only its outermost items, to the dry ru
     },
     el, () => undefined, () => '', (s: string) => s, (n: number) => String(n), () => undefined, () => undefined,
     async (paths: string[]) => { offloaded.push(paths); },
-    null,
+    null, String,
   ) as { dockDrop: (vol: string) => Promise<void>; confirm: () => (() => Promise<void>) | null };
   await page.dockDrop('/Volumes/X');
   assert.deepEqual(sent, [['/r/proj', '/r/other.bin']], 'the dry run plans the folder, not the folder and what is in it');
