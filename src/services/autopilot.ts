@@ -32,6 +32,7 @@ import nodePath from 'path';
 import { isSpillPath, PathRejectedError, safetyRecordCandidateTest, sanitizePath, spillCandidateTest, takesSafetyRecord } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
 import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
+import { installedProgramOf, programPhrase, type InstalledProgram } from './installedPrograms';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { assertFeatureAvailable } from './storageMode';
@@ -629,19 +630,24 @@ async function resolveCandidates(
     matched.splice(matched.indexOf(c), 1);
     spillSkipped.push({ path: c.path, reason: "Left alone — TreeMap's agent policy and its audit log, and the folders and links TreeMap reaches them through, are never removed or moved, by Autopilot or any other way through TreeMap." });
   }
+  // Never a part of an installed program, whatever the match (fifth browser
+  // pass F01): Chrome's framework or an app's own executable is a large file,
+  // and trashing it breaks the app while nobody is watching. Named once per
+  // program with a count, as notes are below, never once per file.
+  const { kept: outsidePrograms, leftAlone: programSkipped } = leaveInstalledProgramsAlone(matched);
   // FAILS CLOSED: suppressedNoteRoots throws NOTES_UNREADABLE on a corrupt
   // notes.json, and the throw is deliberately not caught here — runPolicy
   // records a failed run and simulate surfaces the error, so an unreadable
   // pause list stops the deleter instead of silently unpausing it.
   const noted = await suppressedNoteRoots();
-  if (noted.length === 0) return { candidates: matched, leftAlone: [...byRule, ...spillSkipped] };
+  if (noted.length === 0) return { candidates: outsidePrograms, leftAlone: [...byRule, ...spillSkipped, ...programSkipped] };
   const prepared = prepareSuppressed(noted, policy.path); // candidates are spelled from the policy's folder (F1.13)
   const candidates: Candidate[] = [];
   // Collapsed to ONE entry per note root with a count (review round 1,
   // finding 6): a 2,000-item match over a noted folder must not write 2,000
   // skip rows into autopilot.json on every run, 200 runs deep.
   const perRoot = new Map<string, number>();
-  for (const c of matched) {
+  for (const c of outsidePrograms) {
     // Both directions: a candidate under a note is paused, and a candidate
     // that CONTAINS a note is refused too — deleting it would delete the
     // very thing the note protects (finding 1).
@@ -656,7 +662,32 @@ async function resolveCandidates(
     path: root,
     reason: `Left alone — your note on ${root} pauses automatic cleanup around it (${n} matched item${n === 1 ? '' : 's'}).`,
   }));
-  return { candidates, leftAlone: [...byRule, ...spillSkipped, ...noteSkipped] };
+  return { candidates, leftAlone: [...byRule, ...spillSkipped, ...programSkipped, ...noteSkipped] };
+}
+
+/**
+ * The candidates that are no part of an installed program, and one skip entry
+ * per program the rest are inside (fifth browser pass F01) — by the shared
+ * detector the Trash sheets and the Security panel ask.
+ */
+function leaveInstalledProgramsAlone(candidates: readonly Candidate[]): { kept: Candidate[]; leftAlone: { path: string; reason: string }[] } {
+  const kept: Candidate[] = [];
+  const perProgram = new Map<string, { program: InstalledProgram; n: number }>();
+  for (const c of candidates) {
+    const program = installedProgramOf(c.path);
+    if (program === null) {
+      kept.push(c);
+      continue;
+    }
+    const seen = perProgram.get(program.root);
+    perProgram.set(program.root, { program, n: (seen?.n ?? 0) + 1 });
+  }
+  const leftAlone = [...perProgram.values()].map(({ program, n }) => ({
+    path: program.root,
+    reason: `Left alone — ${n} matched item${n === 1 ? '' : 's'} inside ${programPhrase(program)}, which would stop working without ${n === 1 ? 'it' : 'them'}. ` +
+      'Autopilot never trashes a part of an installed program; to remove one, uninstall the whole program.',
+  }));
+  return { kept, leftAlone };
 }
 
 /** The full check of a candidate that may be in the spill folder: `isSpillPath`, or a test's stand-in. */

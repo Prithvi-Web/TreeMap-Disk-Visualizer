@@ -391,6 +391,9 @@ function cleanUpHarness(opts: { cloud?: boolean } = {}) {
     cloudTrashPaths: async (paths: string[]) => { cloudCalls.push([...paths]); },
     checkOpenHandlesFor: async (paths: string[]) => { preflights.push([...paths]); },
     resetOpenHandleWarning: () => {},
+    // confirmTrash asks which paths are parts of an installed program (fifth browser pass F01): none here.
+    installedProgramParts: async () => [],
+    installedProgramWarningHtml: () => '',
     ensureNodes: async () => {},
     nodeFor: () => ({ name: 'x', size: 100 }),
     cloudProviderOfScan: () => ({ name: 'Drive', trashLabel: 'its trash' }),

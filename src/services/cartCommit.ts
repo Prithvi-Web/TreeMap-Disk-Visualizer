@@ -13,6 +13,7 @@ import {
 } from './timeCapsule';
 import type { TimeCapsuleEntry } from '../models/types';
 import type { TimeCapsuleJob } from '../models/types';
+import { withInstalledProgram, type InstalledProgram } from './installedPrograms';
 
 /**
  * The cleanup cart's commit (v4 §4.4).
@@ -74,6 +75,8 @@ export function normalizeRunId(raw: unknown): string | undefined {
 
 export interface CartManifestItem {
   path: string;
+  /** Present when the item is a part of an installed program — it would stop working (fifth browser pass F01). */
+  installedProgram?: InstalledProgram;
   /** Bytes the capsule would have to hold. `null` when the item is unreadable. */
   bytes: number | null;
   /** Will this be deleted? False items are named with a reason. */
@@ -158,7 +161,7 @@ export async function planCartCommit(
   const plan = await planProtection(paths, carryOver ? { carryOver } : {});
   const openHandles = await checkOpenHandles(paths);
 
-  const items: CartManifestItem[] = plan.items.map((item) => ({
+  const items: CartManifestItem[] = plan.items.map((item) => withInstalledProgram({
     path: item.path,
     // The walked total when we have one; otherwise the scan's own figure, and
     // null when neither knows — never a zero standing in for "unknown".

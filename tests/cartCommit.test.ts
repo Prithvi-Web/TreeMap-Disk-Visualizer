@@ -817,9 +817,11 @@ test('the manifest is shown before the confirm, including what would be left beh
  */
 function runManifest(plan: any, missing = 0): string {
   const src = slice('function cartManifestHtml', 'async function cartExecuteCommit');
+  // The installed-program warning it adds (fifth browser pass F01), lifted from the page too.
+  const warning = slice('function installedProgramWords', 'async function confirmTrash');
   const make = new Function(
     'formatCount', 'formatBytes', 'escapeHtml', 'icon', 'baseName',
-    `${src}; return cartManifestHtml;`,
+    `${warning}\n${src}; return cartManifestHtml;`,
   );
   return make(
     (n: number) => String(n),

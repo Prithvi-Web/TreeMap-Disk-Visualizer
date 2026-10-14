@@ -5,6 +5,7 @@ import { moveToTrash, openPath, openTerminal } from '../services/cleaner';
 import {
   guardBodyPath,
   guardBodyPaths,
+  guardBodyPathsMax,
   guardQueryPath,
   requireInsideScanRoot,
   insideAnyScanRoot,
@@ -18,6 +19,7 @@ import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../s
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { checkOpenHandles } from '../services/openHandleGuard';
 import { emptyCheckSession, isNotEmptyCode, NOT_EMPTY_CODES, type NotEmptyCode } from '../services/emptyFolderCheck';
+import { installedProgramOf, withInstalledProgram } from '../services/installedPrograms';
 
 export const fileRouter = Router();
 
@@ -34,6 +36,30 @@ export const fileRouter = Router();
 fileRouter.post('/files/open-handles', guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
   const { paths } = req.body as { paths: string[] };
   res.json(await checkOpenHandles(paths));
+});
+
+/** How many paths one installed-programs question may carry: it reads only the paths, so a whole screenful of a big selection goes in one. */
+export const MAX_INSTALLED_PROGRAM_PATHS = 2000;
+
+/**
+ * POST /api/files/installed-programs  { paths: string[] }
+ * Which of these paths is a part of an installed program — a file inside a Mac
+ * app, a program's own folder under Program Files, Linux's /usr (fifth browser
+ * pass F01)? -> { parts: [{ path, installedProgram: { kind, name, root } }] },
+ * only the paths that are; a path that is no part of one is not listed.
+ *
+ * Read-only preflight for the Trash sheet, so "it is part of Google Chrome,
+ * which will stop working" is said before the person confirms, not found out
+ * afterwards. It reads the paths alone — nothing on the disk — through the one
+ * detector the dry-run manifests, Autopilot and the Security panel ask.
+ */
+fileRouter.post('/files/installed-programs', guardBodyPathsMax(MAX_INSTALLED_PROGRAM_PATHS), requireInsideScanRoot, (req: Request, res: Response) => {
+  const { paths } = req.body as { paths: string[] };
+  const parts = paths.flatMap((p) => {
+    const installedProgram = installedProgramOf(p);
+    return installedProgram ? [{ path: p, installedProgram }] : [];
+  });
+  res.json({ parts });
 });
 
 /** One request's outcome in the audit trail, split by what decided it (U-4b L4). */
@@ -139,7 +165,8 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
     const openHandles = await checkOpenHandles(paths);
     if (onlyEmptyFolders !== true) {
       await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: true, outcome: 'ok' });
-      res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes, openHandles });
+      // Each part of an installed program says which (F01): the manifest is what an agent shows a person.
+      res.json({ dryRun: true, wouldTrash: sized.map(withInstalledProgram), totalKnownBytes, openHandles });
       return;
     }
     // The real run's own look, path by path, so the manifest is what it would do — in one
@@ -152,7 +179,7 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
     }
     await auditTrash({ paths, sizeOf, dryRun: true, refused: notEmpty, failed: 0 });
     const left = new Set(notEmpty.map((n) => n.path));
-    const wouldTrash = sized.filter((s) => !left.has(s.path));
+    const wouldTrash = sized.filter((s) => !left.has(s.path)).map(withInstalledProgram);
     res.json({ dryRun: true, wouldTrash, totalKnownBytes: wouldTrash.reduce((sum, s) => sum + (s.bytes ?? 0), 0), openHandles, notEmpty });
     return;
   }

@@ -419,6 +419,9 @@ function cartManifestHtml(plan, missingFromScan) {
   let html = going.length
     ? `Move <b>${formatCount(going.length)} item${going.length === 1 ? '' : 's'}</b> (${escapeHtml(formatBytes(plan.bytesWouldFree))}) to the Trash?`
     : `<b>Nothing can be moved to the Trash right now.</b>`;
+  // What the dry run found to be parts of an installed program, among what
+  // will move (fifth browser pass F01): said as every Trash sheet says it.
+  html += installedProgramWarningHtml(going.filter((i) => i.installedProgram), going.length);
 
   const capsuleOff = !!(plan.capsule && plan.capsule.available === false);
   if (capsuleOff) {

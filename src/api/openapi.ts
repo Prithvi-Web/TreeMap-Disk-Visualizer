@@ -569,6 +569,15 @@ const schemas: Json = {
     },
     ['path', 'pid', 'processName'],
   ),
+  InstalledProgram: obj(
+    {
+      kind: { type: 'string', enum: ['app', 'program', 'package'], description: 'app: a Mac app bundle; program: a Windows program\u2019s own folder under Program Files; package: Linux\u2019s /usr outside /usr/local' },
+      name: nullable(str('As a person names it — "Google Chrome" for …/Google Chrome.app, the program\u2019s folder under Program Files; null for /usr, where only the package manager knows which package')),
+      root: str('The whole program, as the path spells it: the .app bundle, the program\u2019s folder, or /usr'),
+    },
+    ['kind', 'name', 'root'],
+    'The installed program a path is a part of, strictly inside it — moving that path to the Trash would stop the program working; removing the program means uninstalling all of it (a Mac app: the whole .app)',
+  ),
   OpenHandleReport: obj(
     {
       conflicts: arr(ref('OpenHandleConflict')),
@@ -779,7 +788,11 @@ const schemas: Json = {
   TrashDryRunManifest: obj(
     {
       dryRun: bool('Always true'),
-      wouldTrash: arr(obj({ path: str(), bytes: nullable(int('null when no scan knows this path')) }, ['path', 'bytes'])),
+      wouldTrash: arr(obj({
+        path: str(),
+        bytes: nullable(int('null when no scan knows this path')),
+        installedProgram: { ...ref('InstalledProgram'), description: 'Present only when the path is a part of an installed program (a file inside a Mac app, a program under Program Files, Linux\u2019s /usr): trashing it would stop that program working — say so to the person before acting' },
+      }, ['path', 'bytes'])),
       totalKnownBytes: int(),
       openHandles: opaque("B2's preflight, always sent: what a program is holding open right now in these paths — a real run refuses 409 OPEN_HANDLE_CONFLICT on any of them unless ignoreOpenHandles: true"),
       notEmpty: arr(
@@ -2056,6 +2069,22 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'post',
+    path: '/api/files/installed-programs',
+    summary: 'Which of these paths is a part of an installed program (a file inside a Mac app, a program under Program Files, Linux\u2019s /usr)? Read-only pre-flight for a delete: it reads the paths alone, nothing on the disk',
+    tag: 'files',
+    destructive: false,
+    requestBody: jsonBody(obj({ paths: arr(str(), 'At most 2000, each inside a scanned root') }, ['paths'])),
+    responses: {
+      '200': jsonResponse('Only the paths that are parts of an installed program; a path that is no part of one is not listed', obj(
+        { parts: arr(obj({ path: str(), installedProgram: ref('InstalledProgram') }, ['path', 'installedProgram'])) },
+        ['parts'],
+      )),
+      '400': errorResponse('TOO_MANY_PATHS — more than 2000 paths'),
+      '403': errorResponse('A path is outside every scanned root'),
+    },
+  },
+  {
+    method: 'post',
     path: '/api/files/open-handles',
     summary: 'Which of these paths (or files inside them) is a program holding open? Read-only pre-flight for a delete',
     tag: 'files',
@@ -3198,7 +3227,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           {
             dryRun: bool(),
             runId: str('Only on a real run. The id POST /api/cart/undo takes'),
-            items: arr(opaque('{ path, bytes, willDelete, code?, reason? } — dry run only')),
+            items: arr(opaque('{ path, bytes, willDelete, code?, reason?, installedProgram? } — dry run only. installedProgram (an InstalledProgram) is present only when the item is a part of an installed program, which trashing it would stop working')),
             bytesWouldFree: int('Dry run only'),
             bytesSkipped: int('Dry run only: bytes that would be left behind, unprotectable'),
             evicts: arr(opaque('{ id, name, originalPath, bytes } — older capsule copies that would be dropped to make room')),

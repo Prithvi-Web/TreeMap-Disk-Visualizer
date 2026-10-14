@@ -5,6 +5,7 @@ import { Flag, ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { appDataPathRefusal, insideAnyScanRoot, safetyRecordRefusal, spillPathRefusal } from '../middleware/pathGuard';
 import { isInside } from '../utils/pathSanitizer';
+import { installedProgramOf } from './installedPrograms';
 
 /**
  * securityHygieneScanner — secrets in the wrong place (§C5).
@@ -322,11 +323,17 @@ function isOsOwned(filePath: string): boolean {
   return OS_OWNED_ROOTS.some((root) => root.every((s, i) => dirs[i] === s));
 }
 
-/** True when the file lives inside an installed program's own files. */
+/**
+ * True when the file lives inside an installed program's own files. A part of
+ * an installed program — a Mac app, a program under Program Files — is the
+ * shared detector's answer, the same one the Trash sheets and Autopilot ask
+ * (fifth browser pass F01); the places below are the panel's own wider net
+ * (a program's data, its packages, its other bundles).
+ */
 export function isApplicationOwned(filePath: string): boolean {
+  if (installedProgramOf(filePath) !== null) return true;
   const dirs = segments(path.dirname(filePath));
-  // A macOS bundle is a directory whose name ends in `.app`.
-  if (dirs.some((d) => d.endsWith('.app') || APP_OWNED_SEGMENTS.has(d) || BUNDLE_DIR.test(d))) return true;
+  if (dirs.some((d) => APP_OWNED_SEGMENTS.has(d) || BUNDLE_DIR.test(d))) return true;
   return APP_OWNED_RUNS.some((want) => hasRun(dirs, want));
 }
 

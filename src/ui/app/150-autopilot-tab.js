@@ -641,6 +641,84 @@ function outermostPaths(paths) {
     return true;
   });
 }
+
+/* ── A part of an installed program (fifth browser pass F01) ──────────────────
+   "Move to Trash" on Chrome's framework, WhatsApp's own executable or an
+   app.asar is two clicks from breaking that app. Every Trash sheet says so
+   before anyone confirms: which program, that it will stop working, and how
+   to remove it whole. The answer is the server's one detector's — the one
+   its dry-run manifests, Autopilot and the Security panel ask — never a
+   second copy here. */
+
+/** How many paths one installed-programs question carries: the route's own limit. */
+const INSTALLED_PROGRAM_CHUNK = 2000;
+
+/**
+ * Which of `paths` are parts of an installed program, from
+ * POST /api/files/installed-programs: [{ path, installedProgram }], or null
+ * when the server could not be asked — which the sheet then admits.
+ */
+async function installedProgramParts(paths) {
+  const parts = [];
+  try {
+    for (let i = 0; i < paths.length; i += INSTALLED_PROGRAM_CHUNK) {
+      const answer = await api('/api/files/installed-programs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: paths.slice(i, i + INSTALLED_PROGRAM_CHUNK) }),
+      });
+      parts.push(...(answer.parts || []));
+    }
+  } catch {
+    return null;
+  }
+  return parts;
+}
+
+/** An installed program as the sheet names it. */
+function installedProgramWords(p) {
+  if (p.kind === 'app') return `the app <b>${escapeHtml(p.name)}</b>`;
+  if (p.kind === 'program') return `the program <b>${escapeHtml(p.name)}</b> in Program Files`;
+  return 'the software your package manager installed in /usr';
+}
+
+/** How to remove these programs whole, never a part at a time. */
+function installedProgramRemoval(programs) {
+  const only = programs.length === 1 ? programs[0] : null;
+  if (only && only.kind === 'app') return `To remove <b>${escapeHtml(only.name)}</b>, move the whole app to the Trash instead.`;
+  if (only && only.kind === 'program') return `To remove <b>${escapeHtml(only.name)}</b>, uninstall it in Windows Settings › Apps instead.`;
+  const advice = {
+    app: 'To remove an app, move the whole app to the Trash instead.',
+    program: 'To remove a program, uninstall it in Windows Settings › Apps instead.',
+    package: 'To remove software your package manager installed, uninstall its package with the package manager instead.',
+  };
+  return [...new Set(programs.map((p) => p.kind))].map((kind) => advice[kind]).join(' ');
+}
+
+/**
+ * What a Trash sheet says when some of the `count` items it moves are parts of
+ * an installed program: '' when none is, and a plain admission when the
+ * server could not be asked (`parts` null) — silence would read as "none is".
+ */
+function installedProgramWarningHtml(parts, count) {
+  if (parts === null) {
+    return `<div class="app-part-warn">${icon('alert', 14)}<span>TreeMap couldn’t check whether ${count === 1 ? 'this is' : 'any of these is'} part of an installed app.</span></div>`;
+  }
+  if (!parts.length) return '';
+  const programs = [...new Map(parts.map((p) => [p.installedProgram.root, p.installedProgram])).values()];
+  const n = parts.length;
+  const who = count === 1 ? 'It is part' : `${formatCount(n)} of these ${n === 1 ? 'is part' : 'are parts'}`;
+  const where = programs.length === 1
+    ? installedProgramWords(programs[0])
+    : `${formatCount(programs.length)} installed programs — ${programs.slice(0, 3).map(installedProgramWords).join(', ')}` +
+      (programs.length > 3 ? ` and ${formatCount(programs.length - 3)} more` : '');
+  const only = programs.length === 1 ? programs[0] : null;
+  const breaks = only && only.kind !== 'package'
+    ? `will stop <b>${escapeHtml(only.name)}</b> from working`
+    : `can stop ${only ? 'programs that use it' : 'those programs'} from working`;
+  return `<div class="app-part-warn">${icon('alert', 14)}<span><b>${who} of ${where}.</b> ` +
+    `Moving ${n === 1 ? 'it' : 'them'} to the Trash ${breaks}. ${installedProgramRemoval(programs)}</span></div>`;
+}
+
 async function confirmTrash(paths) {
   if (!paths.length) return;
   onConfirmTrash = null;
@@ -650,8 +728,15 @@ async function confirmTrash(paths) {
   // sitting there for an unrelated set of files.
   resetOpenHandleWarning();
   // These sizes are what the user is told they're freeing, so they must be
-  // real: a pruned-away node read as 0 would understate the total.
-  await ensureNodes(paths);
+  // real: a pruned-away node read as 0 would understate the total. Beside
+  // them, which paths are parts of an installed program (F01): asked BEFORE
+  // the sheet opens, so the warning is there when it is read — never painted
+  // in after OK could already have been pressed. The answer reads the paths
+  // alone, nothing on the disk, so it costs the sheet no more than its sizes;
+  // the slow open-file check still fills in behind the open sheet. A cloud
+  // account's files are on no computer's disk: nothing to ask.
+  const local = !paths[0].startsWith('cloud://');
+  const [, parts] = await Promise.all([ensureNodes(paths), local ? installedProgramParts(paths) : []]);
   const total = outermostPaths(paths).reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
   const first = nodeFor(paths[0]);
   // Cloud scans: deletes go to the provider's own trash, never the local one.
@@ -671,6 +756,7 @@ async function confirmTrash(paths) {
   $('confirmText').innerHTML = paths.length === 1
     ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can put it back from the Trash until the Trash is emptied.</span>`
     : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can put them back from the Trash until the Trash is emptied.</span>`;
+  $('confirmText').innerHTML += installedProgramWarningHtml(parts, paths.length);
   $('confirmModal').classList.add('open');
   void checkOpenHandlesFor(paths);
 }

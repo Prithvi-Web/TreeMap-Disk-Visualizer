@@ -32,6 +32,7 @@ import { assertToolAvailable } from '../services/storageMode';
 import { assertSameBoundary, drivesSentence } from '../services/boundaryReport';
 import { MCP_TOOL_NAMES } from './toolNames';
 import { APP_VERSION } from '../utils/appVersion';
+import { withInstalledProgram } from '../services/installedPrograms';
 
 /**
  * TreeMap MCP server — the agent-facing face of the disk visualizer.
@@ -877,7 +878,8 @@ export function buildMcpServer(): McpServer {
           await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: true, outcome: 'ok' });
           return ok({
             dryRun: true,
-            wouldTrash: sized,
+            // Each part of an installed program says which (fifth browser pass F01).
+            wouldTrash: sized.map(withInstalledProgram),
             totalKnownBytes: knownTotal,
             totalKnownFormatted: formatBytes(knownTotal),
             openHandles: openHandles.conflicts.length

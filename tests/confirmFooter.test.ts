@@ -77,6 +77,8 @@ function harness(plan: { items: { path: string; willDelete: boolean; reason?: st
     // closeModal's other per-sheet teardown, untouched here
     clearInterval: () => {}, cloudConnectPoll: 0, fxOrbHide: () => {}, cleanFunnelDrop: () => {},
     FxBeam: { attach: () => {} }, activeJob: null, askSettle: () => {},
+    // confirmTrash asks which paths are parts of an installed program (fifth browser pass F01): none here.
+    api: async (url: string) => (url === '/api/files/installed-programs' ? { parts: [] } : assert.fail(`unexpected request ${url}`)),
   };
   const helpers = ['confirmFooterReset'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
   const keys = Object.keys(deps);
@@ -88,6 +90,8 @@ function harness(plan: { items: { path: string; willDelete: boolean; reason?: st
     ${declOf('resetOpenHandleWarning')}
     ${declOf('tmParentPath')}
     ${declOf('outermostPaths')}
+    ${constOf('INSTALLED_PROGRAM_CHUNK')}
+    ${['installedProgramParts', 'installedProgramWords', 'installedProgramRemoval', 'installedProgramWarningHtml'].map(declOf).join('\n')}
     ${declOf('confirmTrash')}
     ${declOf('cartTrashAll')}
     ${declOf('cartCommitSummary')}
@@ -179,7 +183,9 @@ function lateAnswerHarness() {
   const trashed: { paths: string[]; opts: Record<string, unknown> }[] = [];
   const deps: Record<string, unknown> = {
     $,
-    api: () => new Promise((resolve) => { answer = resolve; }),
+    // The open-file answer waits for the test to give it; confirmTrash's installed-programs
+    // question (fifth browser pass F01) is answered at once: no part of any program.
+    api: (url: string) => (url === '/api/files/installed-programs' ? Promise.resolve({ parts: [] }) : new Promise((resolve) => { answer = resolve; })),
     trashPaths: async (paths: string[], opts: Record<string, unknown>) => { trashed.push({ paths: [...paths], opts }); return { deleted: [], failed: [] }; },
     ensureNodes: async () => {},
     nodeFor: () => ({ name: 'a', size: 1 }),
@@ -198,7 +204,9 @@ function lateAnswerHarness() {
     ${constOf('TRASH_CHUNK')}
     ${constOf('OPEN_HANDLE_PREFLIGHT_CHUNKS')}
     ${['setConfirmButton', 'confirmFooterReset', 'baseName', 'renderOpenHandleWarning', 'checkOpenHandlesFor',
-      'resetOpenHandleWarning', 'tmParentPath', 'outermostPaths', 'confirmTrash', 'closeModal'].map(declOf).join('\n')}
+      'resetOpenHandleWarning', 'tmParentPath', 'outermostPaths', 'installedProgramParts', 'installedProgramWords',
+      'installedProgramRemoval', 'installedProgramWarningHtml', 'confirmTrash', 'closeModal'].map(declOf).join('\n')}
+    ${constOf('INSTALLED_PROGRAM_CHUNK')}
     return {
       confirmTrash, closeModal, override: () => confirmIgnoreOpenHandles,
       ok: async () => {${okBody()}},

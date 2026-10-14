@@ -1,0 +1,214 @@
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-installedPrograms-data-');
+process.env.TREEMAP_NO_GDU = '1';
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { installedProgramOf } from '../src/services/installedPrograms';
+import { isApplicationOwned } from '../src/services/securityHygieneScanner';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { setTrashStepForTests } from '../src/services/cleaner';
+import { buildMcpServer } from '../src/mcp/server';
+import { buildOpenApiDocument } from '../src/api/openapi';
+
+// Nothing here moves a file: every request is a dry run or a read. The Trash
+// step is replaced by a recorder all the same, and must stay unused.
+const trashed: string[] = [];
+setTrashStepForTests(async (p) => { trashed.push(p); });
+after(() => {
+  setTrashStepForTests(null);
+  assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+});
+
+/**
+ * Fifth browser pass F01: "Move to Trash" on a file INSIDE an installed app —
+ * Chrome's framework, WhatsApp.app/Contents/MacOS/WhatsApp, an app.asar —
+ * showed the generic sheet with no word that it breaks the app. One detector
+ * answers "which installed program is this a part of?", for the Trash sheets,
+ * the dry-run manifests, Autopilot and the Security panel's "belongs to an
+ * installed program" rule alike.
+ */
+
+test('a file inside a Mac app is a part of that app, named as a person names it, with the whole app as its root', () => {
+  // QA's six rows of Largest Files on /Applications.
+  const cases: Array<[string, string, string]> = [
+    ['/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/120.0.6099.71/Google Chrome Framework', 'Google Chrome', '/Applications/Google Chrome.app'],
+    ['/Applications/WhatsApp.app/Contents/MacOS/WhatsApp', 'WhatsApp', '/Applications/WhatsApp.app'],
+    ['/Applications/Wispr Flow.app/Contents/Resources/app.asar', 'Wispr Flow', '/Applications/Wispr Flow.app'],
+    ['/Applications/Claude.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework', 'Claude', '/Applications/Claude.app'],
+    ['/Users/me/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Frameworks/libcef.dylib', 'IntelliJ IDEA', '/Users/me/Applications/IntelliJ IDEA.app'],
+  ];
+  for (const [file, name, root] of cases) {
+    assert.deepEqual(installedProgramOf(file, 'darwin'), { kind: 'app', name, root }, file);
+  }
+});
+
+test('an app inside an app is part of the outer one: removing it means removing the outer app', () => {
+  assert.deepEqual(
+    installedProgramOf('/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator', 'darwin'),
+    { kind: 'app', name: 'Xcode', root: '/Applications/Xcode.app' },
+  );
+});
+
+test('the app itself, and anything outside an app, is no part of one', () => {
+  for (const p of [
+    '/Applications/Google Chrome.app', // trashing the whole app is how a Mac uninstalls it
+    '/Applications/Google Chrome.app/', // however it is spelled
+    '/Users/me/Downloads/holiday-4k.mov',
+    '/Users/me/code/site.application/index.html', // ".application" is not ".app"
+    '/Users/me/code/.app/settings.json', // a folder named only ".app" is no app bundle
+    '/Users/me/Library/Application Support/Google/Chrome/Default/Cache/data_1', // an app's data, not the app
+  ]) {
+    assert.equal(installedProgramOf(p, 'darwin'), null, p);
+  }
+  assert.deepEqual(installedProgramOf('/Volumes/Ext/Old.APP/Contents/Info.plist', 'darwin'), { kind: 'app', name: 'Old', root: '/Volumes/Ext/Old.APP' }, 'in any case');
+});
+
+test('on Windows a file inside a program\'s own folder under Program Files is a part of that program', () => {
+  assert.deepEqual(
+    installedProgramOf('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'win32'),
+    { kind: 'program', name: 'Google', root: 'C:\\Program Files\\Google' },
+  );
+  assert.deepEqual(
+    installedProgramOf('D:\\Program Files (x86)\\Steam\\steam.exe', 'win32'),
+    { kind: 'program', name: 'Steam', root: 'D:\\Program Files (x86)\\Steam' },
+  );
+  assert.deepEqual(
+    installedProgramOf('c:\\PROGRAM FILES\\Mozilla Firefox\\firefox.exe', 'win32'),
+    { kind: 'program', name: 'Mozilla Firefox', root: 'c:\\PROGRAM FILES\\Mozilla Firefox' },
+    'Windows folds case',
+  );
+  for (const p of [
+    'C:\\Program Files\\desktop.ini', // in Program Files, but in no program's folder
+    'C:\\Program Files\\Google', // the program's folder itself
+    'D:\\Backup\\Program Files\\Google\\x.dll', // a copy somewhere else is no installed program
+    'C:\\Users\\me\\Downloads\\setup.exe',
+  ]) {
+    assert.equal(installedProgramOf(p, 'win32'), null, p);
+  }
+});
+
+test('on Linux a file under /usr is the package manager\'s, but /usr/local is where a person installs things', () => {
+  assert.deepEqual(installedProgramOf('/usr/lib/x86_64-linux-gnu/libLLVM-17.so.1', 'linux'), { kind: 'package', name: null, root: '/usr' });
+  assert.deepEqual(installedProgramOf('/usr/share/code/code', 'linux'), { kind: 'package', name: null, root: '/usr' });
+  for (const p of ['/usr/local/bin/tool', '/usr/local', '/usr', '/home/me/usr/x', '/opt/x/y']) {
+    assert.equal(installedProgramOf(p, 'linux'), null, p);
+  }
+  assert.equal(installedProgramOf('/usr/lib/libz.dylib', 'darwin'), null, 'on a Mac /usr is the sealed system, not a package manager\'s');
+});
+
+test('the Security panel\'s "belongs to an installed program" rule is this one detector, not a second copy', () => {
+  // Every part of a program the detector finds is one the Security panel calls program-owned.
+  for (const p of [
+    '/Applications/Google Chrome.app/Contents/Resources/cacert.pem',
+    'C:\\Program Files\\Google\\Chrome\\Application\\certs\\roots.pem',
+  ]) {
+    assert.ok(installedProgramOf(p, process.platform), `control: ${p} is part of a program`);
+    assert.equal(isApplicationOwned(p), true, p);
+  }
+  // And the panel asks the detector rather than spotting ".app" itself.
+  const scanner = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'securityHygieneScanner.ts'), 'utf8');
+  assert.match(scanner, /installedProgramOf\(/, 'the Security panel asks the shared detector');
+  assert.doesNotMatch(scanner, /endsWith\('\.app'\)/, 'and keeps no ".app" test of its own');
+});
+
+/* ══════════════════ The server says it before anything moves (F01) ══════════════════ */
+
+/** One JSON request to a fresh app on an ephemeral port. */
+async function call(method: string, url: string, body: unknown): Promise<{ status: number; body: Record<string, any> }> {
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const port = (server.address() as { port: number }).port;
+    const payload = JSON.stringify(body);
+    return await new Promise((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port, path: url, method, headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf ? JSON.parse(buf) : {} }));
+      });
+      r.on('error', reject);
+      r.end(payload);
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+/** A scanned folder holding an app — its executable and its app.asar — and a loose file beside it. */
+async function scannedFolderWithAnApp(): Promise<{ dir: string; app: string; exe: string; asar: string; loose: string }> {
+  const dir = fs.realpathSync(fileTempDir('tm-installed-programs-'));
+  const app = path.join(dir, 'Fake.app');
+  const exe = path.join(app, 'Contents', 'MacOS', 'Fake');
+  const asar = path.join(app, 'Contents', 'Resources', 'app.asar');
+  const loose = path.join(dir, 'loose.bin');
+  for (const [file, size] of [[exe, 3000], [asar, 2000], [loose, 1000]] as const) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, Buffer.alloc(size, 1));
+  }
+  const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: dir });
+  assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+  return { dir, app, exe, asar, loose };
+}
+
+test('POST /api/files/installed-programs names the installed program each path is a part of, for the Trash sheet to say before anything moves — and nothing for a path that is no part of one (F01)', async () => {
+  const { app, exe, asar, loose } = await scannedFolderWithAnApp();
+  const r = await call('POST', '/api/files/installed-programs', { paths: [exe, loose, asar, app] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const fake = { kind: 'app', name: 'Fake', root: app };
+  assert.deepEqual(r.body, { parts: [{ path: exe, installedProgram: fake }, { path: asar, installedProgram: fake }] },
+    'the executable and the app.asar are parts of Fake; the loose file and the whole app are not');
+  const outside = await call('POST', '/api/files/installed-programs', { paths: ['/definitely/not/scanned/Thing.app/Contents/x'] });
+  assert.equal(outside.status, 403, 'a path outside every scanned root is refused, as the open-file check refuses it');
+});
+
+test('the dry-run manifests say which paths are parts of an installed program: DELETE /api/files and the cart over HTTP, trash_paths over MCP (F01)', async () => {
+  const { app, exe, loose } = await scannedFolderWithAnApp();
+  const fake = { kind: 'app', name: 'Fake', root: app };
+
+  const del = await call('DELETE', '/api/files', { paths: [exe, loose], dryRun: true });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.deepEqual(del.body.wouldTrash, [{ path: exe, bytes: 3000, installedProgram: fake }, { path: loose, bytes: 1000 }], 'DELETE /api/files');
+
+  const cart = await call('POST', '/api/cart/commit', { paths: [exe, loose], dryRun: true });
+  assert.equal(cart.status, 200, JSON.stringify(cart.body));
+  const byPath = new Map((cart.body.items as Array<Record<string, unknown>>).map((i) => [i.path, i]));
+  assert.deepEqual(byPath.get(exe)?.installedProgram, fake, 'the cart\'s manifest names the app');
+  assert.equal(byPath.get(loose)?.installedProgram, undefined, 'and nothing for the loose file');
+
+  const mcp = buildMcpServer();
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'treemap-installed-programs-test', version: '0.0.0' });
+  await Promise.all([mcp.connect(serverSide), client.connect(clientSide)]);
+  try {
+    const reply = (await client.callTool({ name: 'trash_paths', arguments: { paths: [exe, loose], dryRun: true } })) as { isError?: boolean; structuredContent?: Record<string, any> };
+    assert.ok(!reply.isError, JSON.stringify(reply));
+    const [first, second] = reply.structuredContent!.wouldTrash as Array<Record<string, unknown>>;
+    assert.deepEqual([first.path, first.installedProgram], [exe, fake], 'trash_paths names the app');
+    assert.deepEqual([second.path, 'installedProgram' in second], [loose, false], 'and nothing for the loose file');
+  } finally {
+    await client.close();
+  }
+  assert.ok(fs.existsSync(exe) && fs.existsSync(loose), 'dry runs move nothing');
+});
+
+test('the published spec declares the route and the manifests\' installedProgram field (F01)', () => {
+  const doc = buildOpenApiDocument() as Record<string, any>;
+  const route = doc.paths['/api/files/installed-programs']?.post;
+  assert.ok(route, 'POST /api/files/installed-programs is in the document');
+  assert.doesNotMatch(String(route.description ?? ''), /DESTRUCTIVE/, 'and is not destructive: it reads nothing but the paths it is sent');
+  const said = JSON.stringify(route.responses['200']);
+  assert.match(said, /parts/, 'its answer is declared');
+  const item = doc.components.schemas.TrashDryRunManifest.properties.wouldTrash.items;
+  assert.ok(item.properties.installedProgram, 'DELETE /api/files\'s dry run declares installedProgram on each entry');
+  assert.match(JSON.stringify(doc.paths['/api/cart/commit'].post.responses), /installedProgram/, 'and so does the cart\'s');
+});

@@ -263,6 +263,7 @@ export const ROUTE_FEATURES: Readonly<Record<string, RouteEntry>> = {
   'GET /api/file-types': 'fileTypes',
   // fileRoutes
   'POST /api/files/open-handles': 'noStore',
+  'POST /api/files/installed-programs': 'noStore',
   'DELETE /api/files': 'knownSizeOf',
   'POST /api/files/open': 'noStore',
   'POST /api/files/terminal': 'noStore',

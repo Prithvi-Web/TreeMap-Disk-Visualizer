@@ -531,6 +531,33 @@ test('a brand-new policy simulates and deletes nothing, however it is configured
   }
 });
 
+/* ══════════════════ Never a part of an installed app (fifth browser pass F01) ══════════════════ */
+
+test('an unattended run never selects a file inside an installed app, whatever its match — the app is listed in skipped once, with how many it left and why (fifth browser pass F01)', async () => {
+  // QA: Largest Files on /Applications was six app internals (Chrome's
+  // framework, WhatsApp's own executable, an app.asar). A size rule over a
+  // folder of apps would trash them while nobody is watching.
+  const dir = await mkTmp();
+  try {
+    await writeFile(path.join(dir, 'Fake.app', 'Contents', 'MacOS', 'Fake'), 2 * MB);
+    await writeFile(path.join(dir, 'Fake.app', 'Contents', 'Resources', 'app.asar'), 2 * MB);
+    await writeFile(path.join(dir, 'loose.bin'), 2 * MB);
+    for (const match of [{ kind: 'custom' as const, minBytes: MB }, { kind: 'query' as const, q: 'size>1mb' }]) {
+      const [policy] = await savePolicies([{ id: `apps-${match.kind}`, name: 'Big files', path: dir, match, dryRunFirst: false, enabled: true }]);
+      const sim = await simulatePolicy(policy);
+      assert.deepEqual(sim.items.map((i) => path.basename(i.path)), ['loose.bin'], `${match.kind}: control: the loose file is selected, and nothing inside the app`);
+      const left = sim.skipped.filter((s) => s.path.includes('Fake.app'));
+      assert.equal(left.length, 1, `${match.kind}: the app is named once, not once per file: ${JSON.stringify(sim.skipped)}`);
+      assert.equal(path.basename(left[0].path), 'Fake.app', `${match.kind}: by the whole app`);
+      assert.match(left[0].reason, /2 matched items inside the app “Fake”/, `${match.kind}: with how many it left, and in which app`);
+      assert.match(left[0].reason, /which would stop working without them/, `${match.kind}: and why`);
+    }
+  } finally {
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a policy whose folder is a link acts on nothing through it: the scan takes the link as the one file it is, as before (QA D78 — a scan of a link elsewhere follows it)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
   // A person's scan of a link is of the folder it points to (D78). An unattended
   // policy is not: every check made of its folder — never a whole drive, notes,

@@ -86,6 +86,10 @@
 #confirmOpenHandles ul { margin: 7px 0 0; padding-left: 26px; color: var(--text-2); }
 #confirmOpenHandles li { margin-top: 2px; }
 #confirmOpenHandles .oh-file { color: var(--text-3); }
+/* ── A part of an installed program, in a Trash sheet (fifth browser pass F01) ── */
+.app-part-warn { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: var(--r-sm);
+  background: var(--warn-soft); border: 1px solid var(--warn-line); font-size: 12.5px; line-height: 1.5; color: var(--text-1); }
+.app-part-warn .ic { color: var(--warn); flex: none; margin-top: 2px; }
 
 /* ── Time Capsule (B3) ── */
 /* v4 §7.2 — the calendar heatmap. Levels are opacity steps of one hue so the

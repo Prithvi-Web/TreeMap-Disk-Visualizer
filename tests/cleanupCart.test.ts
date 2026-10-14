@@ -704,7 +704,9 @@ function sheetSays(capsule: { available: boolean; reason?: string }, moving: Nod
   };
   const keys = ['formatCount', 'formatBytes', 'escapeHtml', 'icon', 'baseName', 'state'];
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  return new Function(...keys, `${[...LIFT_SPACE, 'cartManifestHtml'].map(fnSource).join('\n')}\nreturn cartManifestHtml;`)(
+  // The installed-program warning cartManifestHtml adds (fifth browser pass F01) is the page's own too.
+  const warning = ['installedProgramWarningHtml', 'installedProgramWords', 'installedProgramRemoval'];
+  return new Function(...keys, `${[...LIFT_SPACE, ...warning, 'cartManifestHtml'].map(fnSource).join('\n')}\nreturn cartManifestHtml;`)(
     String, (n: number) => `${n} B`, (s: unknown) => String(s), () => '', (p: string) => path.basename(p), { cart: new Set() },
   )(plan, 0) as string;
 }

@@ -1114,6 +1114,7 @@ function probes(): Probe[] {
     { key: 'DELETE /api/notes query.path', send: (al) => request('DELETE', `/api/notes?path=${enc(al(T))}`) },
     { key: 'DELETE /api/files body.paths', send: (al) => request('DELETE', '/api/files', { paths: [al(a)], dryRun: true }) },
     { key: 'POST /api/files/open-handles body.paths', send: (al) => request('POST', '/api/files/open-handles', { paths: [al(a)] }) },
+    { key: 'POST /api/files/installed-programs body.paths', send: (al) => request('POST', '/api/files/installed-programs', { paths: [al(a)] }) },
     { key: 'POST /api/files/open body.path', send: (al) => request('POST', '/api/files/open', { path: al(a) }) },
     { key: 'POST /api/files/terminal body.path', send: (al) => request('POST', '/api/files/terminal', { path: al(T) }) },
     { key: 'GET /api/files/preview query.path', send: (al) => request('GET', `/api/files/preview?path=${enc(al(a))}`) },

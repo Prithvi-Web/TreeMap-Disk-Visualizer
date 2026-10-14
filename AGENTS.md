@@ -480,6 +480,18 @@ OpenAPI 3 spec).
      no blocks. The index progress stream keeps
      itself alive with an SSE comment; only the scan stream repeats its frame.
 3. **Confirm with the user, then act.**
+   - **A part of an installed program breaks it.** A file inside a Mac app
+     (`…/Google Chrome.app/Contents/…`), inside a program's own folder under
+     `X:\Program Files`, or on Linux under `/usr` (not `/usr/local`) is part of
+     that program, and moving it to the Trash stops the program working. The
+     dry-run manifests of `DELETE /api/files`, `trash_paths` and
+     `POST /api/cart/commit` mark each such entry with
+     `installedProgram: { kind, name, root }`, and
+     `POST /api/files/installed-programs { paths }` (read-only, at most 2000
+     paths, reading nothing on the disk) answers the same for any paths. Say
+     so before acting; a program is removed whole (`root`), never a part at a
+     time. Autopilot never selects one: its run names the program in
+     `skipped`, once, with how many matched items it left.
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
      Trash** — recoverable until the Trash is emptied, never a hard delete. With `onlyEmptyFolders: true`
      each path is looked at again right before its own Trash step, and one
