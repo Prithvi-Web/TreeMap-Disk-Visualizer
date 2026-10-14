@@ -516,7 +516,12 @@ test('C10: a real scan the gdu setting asked for, kept off gdu by a rule (a "don
 
 test('C10: a scan too short to measure a speed by states no speed — one file is not "1,000/s"', () => {
   const one = runEngineRow({ engine: 'native', durationMs: 1, scanned: 1, ioThreads: 8 });
-  assert.equal(one.engineText.textContent, 'Native engine — scanned 1 item in 0.0 s', `no rate: ${one.engineText.textContent}`);
+  // Under a tenth of a second is said so, never "0.0 s" (QA fourth pass E14a).
+  assert.equal(one.engineText.textContent, 'Native engine — scanned 1 item in under 0.1 s', `no rate: ${one.engineText.textContent}`);
+  for (const [ms, said] of [[2, 'under 0.1 s'], [49, 'under 0.1 s'], [50, '0.1 s'], [940, '0.9 s']] as const) {
+    const row = runEngineRow({ engine: 'native', durationMs: ms, scanned: 12000, ioThreads: 8 });
+    assert.equal(row.engineText.textContent, `Native engine — scanned 12,000 items in ${said}`, `${ms} ms: ${row.engineText.textContent}`);
+  }
   const quick = runEngineRow({ engine: 'native', durationMs: 400, scanned: 2400, ioThreads: 8 });
   assert.doesNotMatch(quick.engineText.textContent, /\/s/, 'under a second the rate is mostly the scan\'s setup');
   const real = runEngineRow({ engine: 'native', durationMs: 1000, scanned: 2400, ioThreads: 8 });

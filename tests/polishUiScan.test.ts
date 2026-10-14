@@ -677,6 +677,18 @@ test('the status line states the scan\'s one duration, in the engine row\'s form
   assert.match(h.els.scanStatus.innerHTML, /in 0\.9 s — /, 'without the server\'s, the page\'s own, in the same format');
 });
 
+test('a scan quicker than a tenth of a second is said to take "under 0.1 s" — never "in 0.0 s" (QA fourth pass E14a)', async () => {
+  // QA fourth pass E14a: a fast rescan said "Scanned 12,000 files in 0.0 s".
+  const h = finishScanHarness();
+  const cases: Array<[number, string]> = [[1, 'under 0.1 s'], [3, 'under 0.1 s'], [49, 'under 0.1 s'], [50, '0.1 s'], [940, '0.9 s'], [12_345, '12.3 s']];
+  for (const [ms, said] of cases) {
+    await h.finishScan({ path: '/Users/x/corpus', size: 8800 }, 900, { fileCount: 12000, scanned: 12040, durationMs: ms, engine: 'native' });
+    const line = h.els.scanStatus.innerHTML;
+    assert.ok(line.includes(`Scanned <b>12000</b> files in ${said} — `), `${ms} ms reads "in ${said}": ${line}`);
+    assert.doesNotMatch(line, /\b0\.0 s/, `${ms} ms: no "0.0 s"`);
+  }
+});
+
 test('a refused scan is never toasted as a clean success, and the tour refuses the "clean" card', async () => {
   const { finishScan, els, toasts } = finishScanHarness();
   const noop = () => {};

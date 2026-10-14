@@ -45,6 +45,11 @@
    at ordinary widths. flex-shrink 0, or a floor is not one. */
 .tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; text-align: right;
   min-width: 25ch; flex: 0 0 auto; }
+/* The speed, Loop and Diff wrap as one item: at 1024 px every item but
+   "Diff" fit row one, and it sat on a row of its own (QA fourth pass E14c).
+   On one line, never squeezed; ~282 px, so it fits the 376 px bar beside
+   the open preview pane. */
+.tm-timebar .tm-lapse-opts { display: flex; align-items: center; gap: 10px; flex: none; }
 
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;

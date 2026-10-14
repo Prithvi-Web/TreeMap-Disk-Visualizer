@@ -424,13 +424,17 @@ function cartManifestHtml(plan, missingFromScan) {
   if (capsuleOff) {
     html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
   } else if (going.length) {
-    // One item is "it", not "each one" of a "batch" (D08).
+    // One item is "it", not "each one" of a "batch" (D08). The copy is named
+    // once, here, with the space it takes (D07): the space sentence below
+    // used to name it again — "The Time Capsule also keeps a copy …" right
+    // after "It is copied into the Time Capsule" (QA fourth pass E14b).
     html += going.length === 1
-      ? `<div class="cart-mf-note">It is copied into the <b>Time Capsule</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy.</div>`
-      : `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies.</div>`;
+      ? `<div class="cart-mf-note">It is copied into the <b>Time Capsule</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy, which takes up space until then.</div>`
+      : `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies, which take up space until then.</div>`;
   }
-  // The sheet the person decides on says what the summary will after it (D07).
-  if (going.length) html += `<div class="cart-mf-note">${cartSpaceSaid(!capsuleOff)}</div>`;
+  // The sheet the person decides on says what the summary will after it (D07);
+  // its copy and the space that takes are said in the note above.
+  if (going.length) html += `<div class="cart-mf-note">${cartSpaceSaid(false)}</div>`;
   if (staying.length) {
     html += `<div class="cart-mf-left"><b>${formatCount(staying.length)} will be left in place</b>` +
       (plan.bytesSkipped ? ` (${escapeHtml(formatBytes(plan.bytesSkipped))})` : '') +

@@ -2793,6 +2793,11 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
    at ordinary widths. flex-shrink 0, or a floor is not one. */
 .tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; text-align: right;
   min-width: 25ch; flex: 0 0 auto; }
+/* The speed, Loop and Diff wrap as one item: at 1024 px every item but
+   "Diff" fit row one, and it sat on a row of its own (QA fourth pass E14c).
+   On one line, never squeezed; ~282 px, so it fits the 376 px bar beside
+   the open preview pane. */
+.tm-timebar .tm-lapse-opts { display: flex; align-items: center; gap: 10px; flex: none; }
 
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
@@ -3968,7 +3973,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="tb-group tb-find">
         <div class="field" id="tmSearchWrap">
           <span data-icon="search"></span>
-          <input type="text" id="tmSearch" placeholder="Highlight… (try size&gt;1gb)" aria-label="Highlight matching files in the treemap"
+          <!-- The short placeholder fits the field at its floor; the page
+               swaps in the longest of TM_SEARCH_PLACEHOLDERS that fits once
+               the field is laid out (QA fourth pass E14c). -->
+          <input type="text" id="tmSearch" placeholder="Highlight…" aria-label="Highlight matching files in the treemap"
                  role="combobox" aria-expanded="false" aria-controls="tmQueryHints" aria-autocomplete="list"
                  autocomplete="off" spellcheck="false">
           <!-- FX wiring: same overlay-strip trick as #gsearch — the field
@@ -4033,6 +4041,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </button>
       <input type="range" id="tmTimeSlider" min="0" max="0" step="1" value="0" aria-label="Scrub through this folder's scan history">
       <span class="tm-timelabel num" id="tmTimeLabel">Live</span>
+      <!-- One item of the bar, so a wrap moves the speed, Loop and Diff to
+           the next row together: as items of their own, "Diff" alone wrapped
+           at the desktop window's minimum width (QA fourth pass E14c). -->
+      <div class="tm-lapse-opts">
       <div class="seg seg-fit" id="tmLapseSpeed" role="tablist" aria-label="Time-lapse playback speed">
         <button role="tab" type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
         <button role="tab" type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
@@ -4041,6 +4053,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
       <button class="pill" id="tmLapseLoop" aria-pressed="false" title="Start again from the oldest snapshot when playback reaches the end">Loop</button>
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
+      </div>
     </div>
     <div class="glass" id="treemapWrap">
       <!-- The note over a map with nothing to draw. A folder whose every file
@@ -9814,12 +9827,15 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // the page's wall time — which also counts the request, the stream and the
   // frame — only when it did not.
   const tookMs = stats && stats.durationMs > 0 ? stats.durationMs : durationMs;
+  // Under a twentieth of a second rounds to "0.0 s", which reads as no time
+  // at all: it is "under 0.1 s" (QA fourth pass E14a), as the engine row says.
+  const took = (tookMs / 1000).toFixed(1) === '0.0' ? 'under 0.1 s' : `${(tookMs / 1000).toFixed(1)} s`;
   $('scanStatus').classList.remove('error');
   $('scanStatus').innerHTML = icon('checkCircle', 14) + (reopenedAt
     ? `<span class="num">Reopened the scan from ${escapeHtml(formatClock(reopenedAt))} — ` +
       `${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord}, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
     : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord} `}` +
-      `in ${(tookMs / 1000).toFixed(1)} s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
+      `in ${took} — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
   const said = reopenedAt ? 'Reopened the last scan — ' : state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ';
   $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} ${filesWord}, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
@@ -10013,7 +10029,10 @@ function renderDiskNotes() {
       // speed: one file in a millisecond read "1,000/s" (C10).
       const RATE_MIN_MS = 1000;
       const rate = s.durationMs >= RATE_MIN_MS ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
-      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} ${s.scanned === 1 ? 'item' : 'items'} in ${(s.durationMs / 1000).toFixed(1)} s` +
+      // "0.0 s" reads as no time at all: under a twentieth of a second is
+      // "under 0.1 s" (QA fourth pass E14a), as the status line says.
+      const took = (s.durationMs / 1000).toFixed(1) === '0.0' ? 'under 0.1 s' : `${(s.durationMs / 1000).toFixed(1)} s`;
+      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} ${s.scanned === 1 ? 'item' : 'items'} in ${took}` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
       // the fallback reason when something faster could not run.
@@ -22841,6 +22860,26 @@ function tmMoveHint(delta) {
   $('tmSearch').setAttribute('aria-activedescendant', options[tmHintSel].id);
 }
 
+/* The highlight box's placeholder, longest first: the longest that fits the
+   field is the one shown. The field is a cqw clamp, 187 px at 1024 px and
+   140 px beside the open preview pane, and one placeholder for every width
+   was cut mid-word there — "Highlight… (try size>1g", read as "1gl" (QA
+   fourth pass E14c). The markup ships the last, which fits the floor. */
+const TM_SEARCH_PLACEHOLDERS = ['Highlight… (try size>1gb)', 'Highlight… (size>1gb)', 'Highlight…'];
+let tmSearchMeasure = null; // a 2D context, for the field's own font
+function tmSearchPlaceholderFit() {
+  const box = $('tmSearch');
+  const cs = getComputedStyle(box);
+  const room = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  if (!(room > 0)) return; // not laid out (a hidden view): nothing to fit
+  if (!tmSearchMeasure) tmSearchMeasure = document.createElement('canvas').getContext('2d');
+  tmSearchMeasure.font = cs.font;
+  const fits = TM_SEARCH_PLACEHOLDERS.find((p) => tmSearchMeasure.measureText(p).width <= room)
+    || TM_SEARCH_PLACEHOLDERS[TM_SEARCH_PLACEHOLDERS.length - 1];
+  if (box.placeholder !== fits) box.placeholder = fits;
+}
+if (typeof ResizeObserver !== 'undefined') new ResizeObserver(tmSearchPlaceholderFit).observe($('tmSearch'));
+
 // One delegate on the panel, so a re-render cannot leave listeners behind.
 $('tmQueryHints').addEventListener('mousedown', (e) => {
   const hint = e.target.closest('.tm-hint');
@@ -30169,13 +30208,17 @@ function cartManifestHtml(plan, missingFromScan) {
   if (capsuleOff) {
     html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
   } else if (going.length) {
-    // One item is "it", not "each one" of a "batch" (D08).
+    // One item is "it", not "each one" of a "batch" (D08). The copy is named
+    // once, here, with the space it takes (D07): the space sentence below
+    // used to name it again — "The Time Capsule also keeps a copy …" right
+    // after "It is copied into the Time Capsule" (QA fourth pass E14b).
     html += going.length === 1
-      ? `<div class="cart-mf-note">It is copied into the <b>Time Capsule</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy.</div>`
-      : `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies.</div>`;
+      ? `<div class="cart-mf-note">It is copied into the <b>Time Capsule</b> and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy, which takes up space until then.</div>`
+      : `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies, which take up space until then.</div>`;
   }
-  // The sheet the person decides on says what the summary will after it (D07).
-  if (going.length) html += `<div class="cart-mf-note">${cartSpaceSaid(!capsuleOff)}</div>`;
+  // The sheet the person decides on says what the summary will after it (D07);
+  // its copy and the space that takes are said in the note above.
+  if (going.length) html += `<div class="cart-mf-note">${cartSpaceSaid(false)}</div>`;
   if (staying.length) {
     html += `<div class="cart-mf-left"><b>${formatCount(staying.length)} will be left in place</b>` +
       (plan.bytesSkipped ? ` (${escapeHtml(formatBytes(plan.bytesSkipped))})` : '') +

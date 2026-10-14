@@ -754,12 +754,15 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // the page's wall time — which also counts the request, the stream and the
   // frame — only when it did not.
   const tookMs = stats && stats.durationMs > 0 ? stats.durationMs : durationMs;
+  // Under a twentieth of a second rounds to "0.0 s", which reads as no time
+  // at all: it is "under 0.1 s" (QA fourth pass E14a), as the engine row says.
+  const took = (tookMs / 1000).toFixed(1) === '0.0' ? 'under 0.1 s' : `${(tookMs / 1000).toFixed(1)} s`;
   $('scanStatus').classList.remove('error');
   $('scanStatus').innerHTML = icon('checkCircle', 14) + (reopenedAt
     ? `<span class="num">Reopened the scan from ${escapeHtml(formatClock(reopenedAt))} — ` +
       `${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord}, `}${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`
     : `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> ${filesWord} `}` +
-      `in ${(tookMs / 1000).toFixed(1)} s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
+      `in ${took} — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`);
   const said = reopenedAt ? 'Reopened the last scan — ' : state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ';
   $('scanAnnounce').textContent = said + (files === null ? '' : `${formatCount(files)} ${filesWord}, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
@@ -953,7 +956,10 @@ function renderDiskNotes() {
       // speed: one file in a millisecond read "1,000/s" (C10).
       const RATE_MIN_MS = 1000;
       const rate = s.durationMs >= RATE_MIN_MS ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
-      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} ${s.scanned === 1 ? 'item' : 'items'} in ${(s.durationMs / 1000).toFixed(1)} s` +
+      // "0.0 s" reads as no time at all: under a twentieth of a second is
+      // "under 0.1 s" (QA fourth pass E14a), as the status line says.
+      const took = (s.durationMs / 1000).toFixed(1) === '0.0' ? 'under 0.1 s' : `${(s.durationMs / 1000).toFixed(1)} s`;
+      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} ${s.scanned === 1 ? 'item' : 'items'} in ${took}` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
       // the fallback reason when something faster could not run.

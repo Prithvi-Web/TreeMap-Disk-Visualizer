@@ -19,7 +19,10 @@
       <div class="tb-group tb-find">
         <div class="field" id="tmSearchWrap">
           <span data-icon="search"></span>
-          <input type="text" id="tmSearch" placeholder="Highlight… (try size&gt;1gb)" aria-label="Highlight matching files in the treemap"
+          <!-- The short placeholder fits the field at its floor; the page
+               swaps in the longest of TM_SEARCH_PLACEHOLDERS that fits once
+               the field is laid out (QA fourth pass E14c). -->
+          <input type="text" id="tmSearch" placeholder="Highlight…" aria-label="Highlight matching files in the treemap"
                  role="combobox" aria-expanded="false" aria-controls="tmQueryHints" aria-autocomplete="list"
                  autocomplete="off" spellcheck="false">
           <!-- FX wiring: same overlay-strip trick as #gsearch — the field
@@ -84,6 +87,10 @@
       </button>
       <input type="range" id="tmTimeSlider" min="0" max="0" step="1" value="0" aria-label="Scrub through this folder's scan history">
       <span class="tm-timelabel num" id="tmTimeLabel">Live</span>
+      <!-- One item of the bar, so a wrap moves the speed, Loop and Diff to
+           the next row together: as items of their own, "Diff" alone wrapped
+           at the desktop window's minimum width (QA fourth pass E14c). -->
+      <div class="tm-lapse-opts">
       <div class="seg seg-fit" id="tmLapseSpeed" role="tablist" aria-label="Time-lapse playback speed">
         <button role="tab" type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
         <button role="tab" type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
@@ -92,6 +99,7 @@
       </div>
       <button class="pill" id="tmLapseLoop" aria-pressed="false" title="Start again from the oldest snapshot when playback reaches the end">Loop</button>
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
+      </div>
     </div>
     <div class="glass" id="treemapWrap">
       <!-- The note over a map with nothing to draw. A folder whose every file

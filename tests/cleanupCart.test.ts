@@ -754,7 +754,27 @@ test('before the commit the cart says what the summary says: space comes back on
   for (const [where, html] of Object.entries(surfaces)) {
     const text = plainText(html);
     assert.ok(text.includes(SPACE_LATER), `${where} says the space comes back only when the Trash is emptied: ${text}`);
-    assert.ok(text.includes(CAPSULE_SPACE), `${where} says the Time Capsule's copy takes up space until it is removed: ${text}`);
+    // The sheet names its copy once, in the sentence that says it is made,
+    // and says there that it takes up space (QA fourth pass E14b, below).
+    if (where === 'the confirm sheet') assert.match(text, SHEET_COPY_SPACE, `${where} says the Time Capsule's copy takes up space until it is removed: ${text}`);
+    else assert.ok(text.includes(CAPSULE_SPACE), `${where} says the Time Capsule's copy takes up space until it is removed: ${text}`);
+  }
+});
+
+/** The confirm sheet's one sentence about its copy ends by saying the copy takes up space until the capsule removes it. */
+const SHEET_COPY_SPACE = /until the Time Capsule removes the cop(?:y, which takes|ies, which take) up space until then\./;
+
+test('the cart\'s confirm sheet names the Time Capsule\'s copy once — never "copied into the Time Capsule" and then "also keeps a copy" (QA fourth pass E14b)', () => {
+  // QA fourth pass E14b: "It is copied into the Time Capsule … The Time
+  // Capsule also keeps a copy so you can undo this, and that copy takes up
+  // space until the Time Capsule removes it." One copy, introduced twice.
+  for (const moving of [[MOV], [MOV, DMG]]) {
+    const text = plainText(sheetSays({ available: true }, moving));
+    const said = `${moving.length} item(s): ${text}`;
+    const introduced = text.match(/copied into the Time Capsule|keeps? a copy|Time Capsule also/g) || [];
+    assert.equal(introduced.length, 1, `the copy is introduced once (${introduced.join(' | ')}) — ${said}`);
+    assert.match(text, SHEET_COPY_SPACE, `and that sentence says the copy takes up space until it is removed — ${said}`);
+    assert.ok(text.includes(SPACE_LATER), `the space still comes back only when the Trash is emptied — ${said}`);
   }
 });
 
@@ -769,6 +789,7 @@ test('where no Time Capsule copy is kept, no surface says one is — a portable 
     const text = plainText(html);
     assert.ok(text.includes(SPACE_LATER), `${where} still says the space comes back only when the Trash is emptied: ${text}`);
     assert.ok(!text.includes(CAPSULE_SPACE), `${where} claims no copy that is not kept: ${text}`);
+    assert.doesNotMatch(text, SHEET_COPY_SPACE, `${where} claims no copy that is not kept: ${text}`);
   }
 });
 
@@ -802,10 +823,10 @@ test('a one-item run is spoken of as one: "Puts it back where it was", never "al
 
 test('the rest of the cart\'s one-item sentences agree in number: the sheet, a refused move, an open file, the undo (QA third pass D08)', async () => {
   const sheet = plainText(sheetSays({ available: true }));
-  assert.match(sheet, /It is copied into the Time Capsule and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy\./, sheet);
+  assert.match(sheet, /It is copied into the Time Capsule and checked before anything is deleted, so it can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copy, which takes up space until then\./, sheet);
   assert.doesNotMatch(sheet, /Each one|whole batch/, sheet);
   const sheetTwo = plainText(sheetSays({ available: true }, [MOV, DMG]));
-  assert.match(sheetTwo, /Each one is copied into the Time Capsule .* so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies\./, sheetTwo);
+  assert.match(sheetTwo, /Each one is copied into the Time Capsule .* so the whole batch can be undone in one click — even after you empty the Trash, until the Time Capsule removes the copies, which take up space until then\./, sheetTwo);
   const open = plainText(sheetSays({ available: true }, [MOV], [MOV.path]));
   assert.match(open, /It is open in another program right now, which will stop the move\./, open);
   const openTwo = plainText(sheetSays({ available: true }, [MOV, DMG], [MOV.path]));

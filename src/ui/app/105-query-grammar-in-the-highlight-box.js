@@ -584,6 +584,26 @@ function tmMoveHint(delta) {
   $('tmSearch').setAttribute('aria-activedescendant', options[tmHintSel].id);
 }
 
+/* The highlight box's placeholder, longest first: the longest that fits the
+   field is the one shown. The field is a cqw clamp, 187 px at 1024 px and
+   140 px beside the open preview pane, and one placeholder for every width
+   was cut mid-word there — "Highlight… (try size>1g", read as "1gl" (QA
+   fourth pass E14c). The markup ships the last, which fits the floor. */
+const TM_SEARCH_PLACEHOLDERS = ['Highlight… (try size>1gb)', 'Highlight… (size>1gb)', 'Highlight…'];
+let tmSearchMeasure = null; // a 2D context, for the field's own font
+function tmSearchPlaceholderFit() {
+  const box = $('tmSearch');
+  const cs = getComputedStyle(box);
+  const room = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  if (!(room > 0)) return; // not laid out (a hidden view): nothing to fit
+  if (!tmSearchMeasure) tmSearchMeasure = document.createElement('canvas').getContext('2d');
+  tmSearchMeasure.font = cs.font;
+  const fits = TM_SEARCH_PLACEHOLDERS.find((p) => tmSearchMeasure.measureText(p).width <= room)
+    || TM_SEARCH_PLACEHOLDERS[TM_SEARCH_PLACEHOLDERS.length - 1];
+  if (box.placeholder !== fits) box.placeholder = fits;
+}
+if (typeof ResizeObserver !== 'undefined') new ResizeObserver(tmSearchPlaceholderFit).observe($('tmSearch'));
+
 // One delegate on the panel, so a re-render cannot leave listeners behind.
 $('tmQueryHints').addEventListener('mousedown', (e) => {
   const hint = e.target.closest('.tm-hint');

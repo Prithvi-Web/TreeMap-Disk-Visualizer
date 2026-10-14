@@ -1142,3 +1142,113 @@ function flexShrink(d: Map<string, string>): number {
   const parts = f.split(/\s+/);
   return parts.length > 1 && /^\d/.test(parts[1]) ? Number(parts[1]) : 1;
 }
+
+/* ══════════════ E14c — at 1024 px nothing in the treemap's chrome is left alone or cut mid-word ══════════════ */
+
+test('the time-lapse bar wraps its playback options as one — "Diff" never starts a row alone, at any width (QA fourth pass E14c)', () => {
+  // QA fourth pass E14c (shots/L1024-treemap): at 1024 px the bar's content
+  // box is 696 px. Measured there: the clock 14, Play 28, the scrubber's
+  // 140 px floor, the label's 25ch floor 195, the speed seg 164, Loop 52 and
+  // Diff 46, 10 px apart. Everything but Diff fit row one (699 > 696), so
+  // "Diff" sat on a second row of its own.
+  const MEASURED: Record<string, number> = { clock: 14, tmLapsePlay: 28, tmTimeSlider: 140, tmTimeLabel: 195, tmLapseSpeed: 164, tmLapseLoop: 52, tmDiffToggle: 46 };
+  const root = markupTree();
+  const [bar] = selectAll(root, '#tmTimebar');
+  assert.ok(bar, '#tmTimebar is in the page');
+  const barCss = sheetFor(root, bar);
+  assert.equal(barCss.get('flex-wrap'), 'wrap', 'control: the bar wraps when it is tight');
+  const colGap = (d: Map<string, string>) => { const g = (d.get('gap') || '0px').trim().split(/\s+/); return sheetPx(g[g.length - 1], 'a column gap'); };
+  const gap = colGap(barCss);
+  /** The measured controls an element is or holds, in order. */
+  const controls = (el: SelectorNode): string[] => {
+    if (el.attrs['data-icon'] === 'clock') return ['clock'];
+    if (el.id in MEASURED) return [el.id];
+    return el.children.flatMap(controls);
+  };
+  // The bar's flex items: a control, or an element that lays several out in a row that never wraps.
+  const items = bar.children.map((el) => {
+    const held = controls(el);
+    if (held.length <= 1) return { held, w: held.length ? MEASURED[held[0]] : 0 };
+    const css = sheetFor(root, el);
+    assert.match(css.get('display') || '', /^(inline-)?flex$/, `the item holding ${held.join(', ')} lays them out in a row`);
+    assert.notEqual(css.get('flex-wrap'), 'wrap', `and keeps them on one line (${held.join(', ')})`);
+    assert.equal(flexShrink(css), 0, `and never squeezes them (${held.join(', ')})`);
+    return { held, w: held.reduce((s, id) => s + MEASURED[id], 0) + (held.length - 1) * colGap(css) };
+  }).filter((it) => it.held.length);
+  assert.deepEqual(items.flatMap((it) => it.held), Object.keys(MEASURED), 'control: every measured control is in the bar, in order');
+  /** The rows a wrapping flex line breaks the items into, in a content box `room` px wide. */
+  const rows = (its: Array<{ held: string[]; w: number }>, room: number) => {
+    const out: Array<{ held: string[]; w: number }> = [];
+    for (const it of its) {
+      const last = out[out.length - 1];
+      if (last && last.w + gap + it.w <= room) { last.held.push(...it.held); last.w += gap + it.w; } else out.push({ held: [...it.held], w: it.w });
+    }
+    return out;
+  };
+  // Control: the QA's own geometry, its items each on their own, puts Diff alone on row two.
+  const asShipped = rows(Object.entries(MEASURED).map(([id, w]) => ({ held: [id], w })), 696);
+  assert.deepEqual(asShipped.map((r) => r.held), [['clock', 'tmLapsePlay', 'tmTimeSlider', 'tmTimeLabel', 'tmLapseSpeed', 'tmLapseLoop'], ['tmDiffToggle']],
+    'control: with every control an item of its own, the measured bar leaves "Diff" alone on its own row');
+  // The bar spans the map's column: 402 px beside the open pane in the 1024 px window, up to a wide one.
+  const pad = sheetPx((barCss.get('padding') || '').split(/\s+/)[1], "the bar's side padding");
+  let checked = 0;
+  for (let column = 402; column <= 1700; column++) {
+    const room = column - 2 * pad - 2; // its padding, and the glass card's 1 px border a side
+    for (const row of rows(items, room)) {
+      assert.ok(row.w <= room, `${column} px column: a row of ${row.held.join(', ')} is ${row.w} px in ${room}`);
+      if (row.held.includes('tmDiffToggle')) {
+        assert.ok(row.held.includes('tmLapseLoop') && row.held.includes('tmLapseSpeed'),
+          `${column} px column: "Diff" shares its row with Loop and the speed (${row.held.join(', ')})`);
+      }
+    }
+    checked++;
+  }
+  assert.equal(checked, 1299, 'every column width from 402 px was checked');
+});
+
+test('the Highlight box shows a whole placeholder at every width — never one cut mid-word to "(try size>1g" (QA fourth pass E14c)', () => {
+  // QA fourth pass E14c: at 1024 px the field is 187 px and its text room
+  // 141 px; "Highlight… (try size>1gb)" needs ~165 at 13 px (6.6 px a
+  // character, as B01 measured), so it read "Highlight… (try size>1g", which
+  // looks like "1gl". Beside the open preview pane the field is at its 140 px
+  // floor, 94 px of room.
+  const PER_CHAR = 6.6;
+  const root = markupTree();
+  const [input] = selectAll(root, '#tmSearch');
+  assert.ok(input, '#tmSearch is in the page');
+  const css = sheetFor(root, input);
+  const width = css.get('width')!;
+  const padL = sheetPx(css.get('padding-left'), "the field's left padding (its icon)");
+  const padR = sheetPx((css.get('padding') || '').split(/\s+/)[1], "the field's right padding");
+  const border = sheetPx(css.get('border'), "the field's border");
+  const markupPh = (input.attrs.placeholder || '').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+  const roomAt = (toolbar: number) => cssPx(width, toolbar) - 2 * border - padL - padR;
+  // Before any measurement — the first paint, a hidden view — the markup's own placeholder shows.
+  assert.ok(markupPh.length * PER_CHAR <= roomAt(402), `the markup's "${markupPh}" fits the narrowest field's ${roomAt(402).toFixed(0)} px`);
+  const box = { clientWidth: 0, placeholder: markupPh };
+  const page = runPageDecls<{ fit: () => void; forms: string[] }>(['TM_SEARCH_PLACEHOLDERS', 'tmSearchMeasure', 'tmSearchPlaceholderFit'], {
+    $: (id: string) => { assert.equal(id, 'tmSearch'); return box; },
+    getComputedStyle: () => ({ paddingLeft: `${padL}px`, paddingRight: `${padR}px`, font: '500 13px system-ui' }),
+    document: { createElement: (tag: string) => { assert.equal(tag, 'canvas'); return { getContext: () => ({ font: '', measureText: (s: string) => ({ width: s.length * PER_CHAR }) }) }; } },
+  }, '{ fit: tmSearchPlaceholderFit, forms: TM_SEARCH_PLACEHOLDERS }');
+  assert.ok(page.forms.includes(markupPh), 'and is one of the forms the page picks from');
+  let checked = 0;
+  for (let toolbar = 402; toolbar <= 1700; toolbar++) {
+    const room = roomAt(toolbar);
+    box.clientWidth = room + padL + padR;
+    page.fit();
+    assert.ok(page.forms.includes(box.placeholder), `${toolbar} px toolbar: "${box.placeholder}" is a whole placeholder`);
+    assert.ok(box.placeholder.length * PER_CHAR <= room, `${toolbar} px toolbar: "${box.placeholder}" (${(box.placeholder.length * PER_CHAR).toFixed(0)} px) fits its ${room.toFixed(0)} px`);
+    const longer = page.forms.slice(0, page.forms.indexOf(box.placeholder));
+    for (const f of longer) assert.ok(f.length * PER_CHAR > room, `${toolbar} px toolbar: the longer "${f}" would have fitted, and "${box.placeholder}" was shown`);
+    checked++;
+  }
+  assert.equal(checked, 1299, 'every toolbar width from 402 px was checked');
+  box.clientWidth = cssPx(width, 720) - 2 * border;
+  page.fit();
+  assert.match(box.placeholder, /size>1gb/, `at the QA's 1024 px window (a 720 px toolbar) the example still shows: "${box.placeholder}"`);
+  box.clientWidth = 0; // a hidden view: nothing to measure, so nothing changes
+  const before = box.placeholder;
+  page.fit();
+  assert.equal(box.placeholder, before, 'a field that is not laid out keeps its placeholder');
+});
