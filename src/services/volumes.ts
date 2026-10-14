@@ -1,5 +1,6 @@
 import { listExternalVolumes, ExternalVolume } from './portableMode';
 import { diskUsage } from './diskUsage';
+import { liveApfsContainers, sameSpaceAs, statDevice } from './apfsContainers';
 
 /**
  * volumes — attached external drives for the offload dock (§8.3).
@@ -26,11 +27,22 @@ export interface VolumeInfo {
 interface VolumeProviders {
   list: () => ExternalVolume[];
   usage: (target: string) => Promise<{ total: number; free: number }>;
+  /**
+   * Which of `paths` share this computer's own disk's space — another APFS volume in the root's
+   * container (review F1.5). Absent: none do.
+   */
+  bootSiblings?: (paths: readonly string[]) => Promise<ReadonlySet<string>>;
+}
+
+/** Which of `paths` share the root's free space: volumes of its APFS container, read off this machine's mount table. */
+export async function volumesSharingBootSpace(paths: readonly string[]): Promise<Set<string>> {
+  return paths.length ? sameSpaceAs('/', paths, await liveApfsContainers(), statDevice) : new Set();
 }
 
 const realProviders: VolumeProviders = {
   list: () => listExternalVolumes(),
   usage: (target) => diskUsage(target),
+  bootSiblings: volumesSharingBootSpace,
 };
 
 let providers: VolumeProviders = realProviders;
@@ -53,9 +65,16 @@ export function volumesUnavailableReason(platform: NodeJS.Platform = process.pla
   return null;
 }
 
-/** Every attached external volume, stats where readable, sorted by name. */
+/**
+ * Every attached external volume, stats where readable, sorted by name. A volume that shares this
+ * computer's own disk's free space — another APFS volume in the root's container, such as one a
+ * person added at /Volumes/Dev — is no other drive (review F1.5): an offload onto it frees nothing,
+ * and the server refuses one (DEST_SAME_VOLUME), so neither the dock nor the offload picker offers it.
+ */
 export async function listVolumes(): Promise<VolumeInfo[]> {
-  const found = providers.list();
+  const listed = providers.list();
+  const siblings = providers.bootSiblings ? await providers.bootSiblings(listed.map((v) => v.path)) : new Set<string>();
+  const found = listed.filter((v) => !siblings.has(v.path));
   const out = await Promise.all(
     found.map(async (v): Promise<VolumeInfo> => {
       try {

@@ -23,6 +23,7 @@ import { assertNotAppDataPath, assertNotSpillPath } from '../middleware/pathGuar
 import { AsyncMutex } from '../utils/asyncMutex';
 import { recordRestorePartial, restorePlacementHooks, whileRestoring } from './restoreLeftovers';
 import { JUNK_FILES } from './emptyFolderCheck';
+import { liveApfsContainers } from './apfsContainers';
 
 /**
  * Offload — the third option next to "keep" and "trash" (Phase 7).
@@ -609,18 +610,40 @@ export function setOffloadDeviceForTests(fn: ((p: string, end: OffloadEnd) => Pr
 }
 
 /**
+ * Test-only: answer the APFS container each device draws its space from (review F1.5) — a test cannot
+ * add a volume to the runner's container. The real answer is the mount table's (apfsContainers.ts).
+ * Returns the function that removes it.
+ */
+let containersForTests: (() => Promise<ReadonlyMap<bigint, string>>) | null = null;
+export function setOffloadContainersForTests(fn: (() => Promise<ReadonlyMap<bigint, string>>) | null): () => void {
+  containersForTests = fn;
+  return () => { containersForTests = null; };
+}
+
+/**
  * Refuses an offload into the drive the selection already lives on (fourth browser pass, E01). Every
  * copy would land on that drive and every original go to that drive's Trash, so it frees nothing: the
  * space is used twice until the Trash is emptied. Judged by the device each end really is on, so a
- * link or another spelling of a folder cannot disguise it. A device that cannot be read is not called
- * the same: a source that cannot be read fails its own copy before anything is trashed.
+ * link or another spelling of a folder cannot disguise it — and on a Mac by the APFS container each
+ * device is a volume of, because the volumes of one container are separate devices sharing one pool
+ * of free space (review F1.5); the container is read only when the devices differ. A device that
+ * cannot be read is not called the same: a source that cannot be read fails its own copy before
+ * anything is trashed. Nor is a container that cannot be read: the devices then decide alone.
  */
 async function assertAnotherDrive(topPaths: readonly string[], destDir: string): Promise<void> {
   const deviceOf = deviceOfForTests ?? realDeviceOf;
   const destDevice = await deviceOf(destDir, 'destination');
   if (destDevice === null) return;
+  let containers: ReadonlyMap<bigint, string> | null = null;
+  const sameSpace = async (device: bigint): Promise<boolean> => {
+    if (device === destDevice) return true;
+    containers ??= await (containersForTests ?? (() => liveApfsContainers()))();
+    const container = containers.get(device);
+    return container !== undefined && container === containers.get(destDevice);
+  };
   for (const source of topPaths) {
-    if ((await deviceOf(source, 'source')) !== destDevice) continue;
+    const sourceDevice = await deviceOf(source, 'source');
+    if (sourceDevice === null || !(await sameSpace(sourceDevice))) continue;
     throw new AppError(
       400,
       'DEST_SAME_VOLUME',

@@ -2103,7 +2103,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     method: 'get',
     path: '/api/volumes',
     summary:
-      'Attached external drives with free/total bytes — destinations for the offload dock, sorted by name; a drive whose stats cannot be read is listed with nulls and a reason, never hidden',
+      'Attached external drives with free/total bytes — destinations for the offload dock, sorted by name; a drive whose stats cannot be read is listed with nulls and a reason, never hidden. A volume that shares this computer\u2019s own disk\u2019s free space (on a Mac, another APFS volume in the root\u2019s container) is no other drive and is not listed',
     tag: 'offload',
     destructive: false,
     responses: { '200': jsonResponse('Volumes, sorted by name', obj({ volumes: arr(ref('VolumeInfo')) }, ['volumes'])) },
@@ -2129,7 +2129,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Dry-run manifest (dryRun: true only)', ref('OffloadDryRunManifest')),
       '202': jsonResponse('Job started (progress via SSE)', obj({ jobId: str() }, ['jobId'])),
-      '400': errorResponse('Bad destination / too many files / not enough space (DEST_FULL), or DEST_SPACE_UNKNOWN when the destination\u2019s free space could not be read at all — the drive may be disconnected or busy, and no offload was started. DEST_INSIDE_SOURCE / SOURCE_INSIDE_DEST when the destination lies in the selection or the selection in the destination, judged where each really is; DEST_SAME_VOLUME when the destination is on the same drive as a selected item, judged by the device each really is on — there the copies take as much space again and the originals keep theirs in the Trash, so it would free nothing: refused before anything is copied, a dry run too; LINK_IN_SELECTION when a selected path is or holds a link, which a copy would follow'),
+      '400': errorResponse('Bad destination / too many files / not enough space (DEST_FULL), or DEST_SPACE_UNKNOWN when the destination\u2019s free space could not be read at all — the drive may be disconnected or busy, and no offload was started. DEST_INSIDE_SOURCE / SOURCE_INSIDE_DEST when the destination lies in the selection or the selection in the destination, judged where each really is; DEST_SAME_VOLUME when the destination is on the same drive as a selected item, judged by the device each really is on and, on a Mac, by the APFS container whose volumes share one pool of free space — there the copies take as much space again and the originals keep theirs in the Trash, so it would free nothing: refused before anything is copied, a dry run too; LINK_IN_SELECTION when a selected path is or holds a link, which a copy would follow'),
       '403': errorResponse('Sources outside every scanned root, or refused by agent-policy.json; SAFETY_RECORD for the agent policy or the audit log, a folder that holds them (app-data, a folder above it), or a folder or link TreeMap reaches them through, which no request removes or moves'),
       '409': errorResponse('OPEN_HANDLE_CONFLICT — a program holds one of the sources open; or OFFLOAD_NOT_FULLY_LISTED — a selected folder holds something the scan did not list (a "Don\'t scan" match, a folder it could not read, a drive it did not enter, something made since), which the trash step would take with no copy: refused before anything is copied, a dry run too, naming the first such entry'),
     },

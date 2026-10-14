@@ -110,7 +110,10 @@ OpenAPI 3 spec).
      smallest), and counts any past that in `unnamed` with the reason in
      words. A refused folder's size is unknowable, so none is given.
    - `GET /api/volumes` — attached external drives with free/total bytes; a
-     drive whose stats cannot be read is listed with nulls and a reason.
+     drive whose stats cannot be read is listed with nulls and a reason. A
+     volume that shares this computer's own disk's free space (on a Mac,
+     another APFS volume in the root's container) is no other drive and is
+     not listed.
    - `GET /api/scan/{scanId}/calendar` — bytes and file counts per local day
      (from the scan's own mtimes, exact). `?channel=created` adds a
      creation-day channel from per-file stats behind a cap; days past the cap
@@ -489,9 +492,10 @@ OpenAPI 3 spec).
      by where each really is (`DEST_INSIDE_SOURCE`, `SOURCE_INSIDE_DEST`),
      however either is spelled. A destination on the same drive as a
      selected item is refused too, dry run included (`400 DEST_SAME_VOLUME`,
-     judged by the device each really is on): there the copies take as much
-     space again and the originals keep theirs in the Trash, so it frees
-     nothing. A selected
+     judged by the device each really is on, and on a Mac by the APFS
+     container, whose volumes are separate devices sharing one pool of free
+     space): there the copies take as much space again and the originals
+     keep theirs in the Trash, so it frees nothing. A selected
      folder is trashed whole, so one holding anything the scan did not list
      (a "Don't scan" match, a folder it could not read, a drive it did not
      enter, a file made since) is refused before anything is copied, dry run

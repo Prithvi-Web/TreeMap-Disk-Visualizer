@@ -75,6 +75,49 @@ test('GET /api/volumes reports each attached drive with name, path, free and tot
   }
 });
 
+test('a volume that shares this computer\'s own disk\'s space — another APFS volume in its container — is not listed as another drive, so neither the dock nor the offload picker offers it (review F1.5)', async () => {
+  const asked: string[][] = [];
+  setVolumeProviders({
+    list: () => [
+      { name: 'Backup', path: '/Volumes/Backup' },
+      { name: 'Dev Space', path: '/Volumes/Dev Space' },
+    ],
+    usage: async () => ({ total: 1_000_000, free: 400_000 }),
+    bootSiblings: async (paths: readonly string[]) => { asked.push([...paths]); return new Set(['/Volumes/Dev Space']); },
+  } as Parameters<typeof setVolumeProviders>[0]);
+  const s = await listen();
+  try {
+    const r = await get(s.port, '/api/volumes');
+    assert.equal(r.status, 200);
+    assert.deepEqual(asked, [['/Volumes/Backup', '/Volumes/Dev Space']], 'every listed volume is asked about, once');
+    assert.deepEqual(r.body.volumes.map((v: { path: string }) => v.path), ['/Volumes/Backup'], 'the volume on this computer\'s own disk is left out');
+  } finally {
+    setVolumeProviders(null);
+    await s.close();
+  }
+});
+
+test('which volumes share this computer\'s own disk\'s space: those whose device is a volume of the root\'s APFS container — not another container, not a device no APFS volume is on (review F1.5)', async () => {
+  const mod = await import('../src/services/apfsContainers').catch(() => null) as
+    { sameSpaceAs?: (anchor: string, paths: readonly string[], containers: ReadonlyMap<bigint, string>, deviceOf: (p: string) => Promise<bigint | null>) => Promise<Set<string>> } | null;
+  assert.equal(typeof mod?.sameSpaceAs, 'function', 'apfsContainers.ts answers it');
+  const devices = new Map<string, bigint>([['/', 30n], ['/Volumes/Dev Space', 37n], ['/Volumes/Backup', 50n], ['/Volumes/Camera', 60n]]);
+  const containers = new Map<bigint, string>([[30n, 'disk3'], [37n, 'disk3'], [50n, 'disk5']]);
+  const deviceOf = async (p: string) => devices.get(p) ?? null;
+  const paths = ['/Volumes/Dev Space', '/Volumes/Backup', '/Volumes/Camera', '/Volumes/Gone'];
+  assert.deepEqual([...await mod!.sameSpaceAs!('/', paths, containers, deviceOf)], ['/Volumes/Dev Space']);
+  assert.deepEqual([...await mod!.sameSpaceAs!('/', paths, new Map([[37n, 'disk3'], [50n, 'disk5']]), deviceOf)], [],
+    'a root whose container is not known shares space with nothing it can name');
+});
+
+test('on this Mac, the VM volume and the temp folder share the root\'s space and the device file system does not — read off the real mount table (review F1.5)', { skip: (process.platform !== 'darwin' || !fs.existsSync('/System/Volumes/VM')) && 'needs macOS\'s VM volume' }, async () => {
+  const { volumesSharingBootSpace } = await import('../src/services/volumes') as { volumesSharingBootSpace?: (paths: readonly string[]) => Promise<Set<string>> };
+  assert.equal(typeof volumesSharingBootSpace, 'function', 'volumes.ts answers it');
+  const tmp = fs.realpathSync(os.tmpdir());
+  assert.deepEqual([...await volumesSharingBootSpace!(['/System/Volumes/VM', tmp, '/dev'])], ['/System/Volumes/VM', tmp],
+    'VM and the Data volume are the root\'s container; devfs is no APFS volume');
+});
+
 test('a volume whose stats cannot be read is listed with nulls and a reason, never hidden', async () => {
   setVolumeProviders({
     list: () => [

@@ -198,12 +198,87 @@ test('every selected item is judged, whichever comes first: one item on the dest
   }
 });
 
+/* ─────── Sibling APFS volumes share one pool of free space (review F1.5) ─────── */
+
+/** A Mac's `mount`, in its own format: one APFS container (disk3) with several volumes, an external APFS drive, an exFAT one, a nullfs view. */
+const MAC_MOUNT = [
+  '/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)',
+  'devfs on /dev (devfs, local, nobrowse)',
+  '/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)',
+  '/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)',
+  '/dev/disk3s7 on /Volumes/Dev Space (apfs, local, journaled)',
+  '/dev/disk5s1 on /Volumes/Backup (apfs, local, nodev, nosuid, journaled, noowners)',
+  '/dev/disk6s1 on /Volumes/Camera (exfat, local, nodev, nosuid, noowners)',
+  '/dev/disk6s2 on /Volumes/Camera 2 (exfat, local, nodev, nosuid, noowners)',
+  '/Applications/Clocks.app/Wrapper on /private/var/folders/x/X/4B95 (nullfs, local, nodev, nosuid, read-only, nobrowse)',
+  '',
+].join('\n');
+
+type ApfsModule = {
+  apfsContainerByDevice: (entries: unknown[], deviceOf: (p: string) => Promise<bigint | null>) => Promise<Map<bigint, string>>;
+};
+
+test('the container each APFS volume draws its space from is read off the mount table: disk3s5, disk3s6, disk3s7 and the root snapshot disk3s1s1 are all disk3; another drive\'s volume is its own container; a volume of another file system, a view, or a mount point that cannot be read is left to its device (review F1.5)', async () => {
+  const mod = await import('../src/services/apfsContainers').catch(() => null) as ApfsModule | null;
+  assert.ok(mod && typeof mod.apfsContainerByDevice === 'function', 'src/services/apfsContainers.ts reads the containers');
+  const { parseBsdMount } = await import('../src/platform/atime');
+  const devices = new Map<string, bigint>([
+    ['/', 30n], ['/System/Volumes/VM', 31n], ['/System/Volumes/Data', 30n], ['/Volumes/Dev Space', 37n],
+    ['/Volumes/Backup', 50n], ['/Volumes/Camera', 60n], ['/Volumes/Camera 2', 61n], ['/private/var/folders/x/X/4B95', 70n],
+  ]);
+  const byDevice = await mod!.apfsContainerByDevice(parseBsdMount(MAC_MOUNT), async (p) => devices.get(p) ?? null);
+  assert.deepEqual([...byDevice.entries()].sort((a, b) => Number(a[0] - b[0])),
+    [[30n, 'disk3'], [31n, 'disk3'], [37n, 'disk3'], [50n, 'disk5']],
+    'every volume of the boot container is disk3, the external APFS drive disk5, and the exFAT partitions and the nullfs view are left to their devices');
+  devices.delete('/Volumes/Dev Space');
+  const unread = await mod!.apfsContainerByDevice(parseBsdMount(MAC_MOUNT), async (p) => devices.get(p) ?? null);
+  assert.deepEqual([...unread.entries()].sort((a, b) => Number(a[0] - b[0])), [[30n, 'disk3'], [31n, 'disk3'], [50n, 'disk5']],
+    'a mount point that cannot be read names no container, and the others still answer');
+});
+
+test('a destination on another volume of the same APFS container is the same drive: the volumes are separate devices with one pool of free space, so DEST_SAME_VOLUME refuses it — two partitions of one disk do not share space and are not refused (review F1.5)', async () => {
+  const setContainers = (offload as unknown as { setOffloadContainersForTests?: (fn: (() => Promise<Map<bigint, string>>) | null) => () => void }).setOffloadContainersForTests;
+  assert.equal(typeof setContainers, 'function', 'offload.ts exposes setOffloadContainersForTests');
+  const { proj, dest, scan } = project('container');
+  const devices = { source: 1n, destination: 2n };
+  let containers = new Map<bigint, string>([[1n, 'disk3'], [2n, 'disk3']]);
+  const restoreDevices = setDevice!(async (_p, end) => devices[end]);
+  const restoreContainers = setContainers!(async () => containers);
+  try {
+    await assert.rejects(withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest)),
+      (e: unknown) => e instanceof AppError && e.code === 'DEST_SAME_VOLUME' && /same drive/.test(e.message),
+      'two volumes of one container: refused');
+    containers = new Map([[1n, 'disk3'], [2n, 'disk5']]);
+    assert.equal((await withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest))).plan.length, 1, 'control: another container is another drive');
+    containers = new Map();
+    assert.equal((await withOpenFileCheck('clear', () => prepareOffload(scan, [proj], dest))).plan.length, 1, 'a container that cannot be read leaves the devices to decide');
+  } finally {
+    restoreContainers();
+    restoreDevices();
+  }
+});
+
+test('on this Mac, a folder on the VM volume and one in the temp folder are separate devices on one APFS container — an offload between them is refused, by the real mount table and the real disk (review F1.5)', { skip: (process.platform !== 'darwin' || !fs.existsSync('/System/Volumes/VM')) && 'needs macOS\'s VM volume' }, async () => {
+  const { proj, scan } = project('vm');
+  const vm = '/System/Volumes/VM';
+  assert.notEqual(fs.statSync(vm, { bigint: true }).dev, fs.statSync(proj, { bigint: true }).dev, 'control: two devices');
+  await assert.rejects(withOpenFileCheck('clear', () => prepareOffload(scan, [proj], vm)),
+    (e: unknown) => e instanceof AppError && e.code === 'DEST_SAME_VOLUME',
+    'they share one pool of free space, so the offload would free nothing: refused before anything is planned');
+});
+
 test('the refusal is declared where an agent reads: the OpenAPI document\'s 400 for POST /api/offload, AGENTS.md, and the MCP offload tool (E01)', async () => {
   const { buildOpenApiDocument } = await import('../src/api/openapi');
   const doc = buildOpenApiDocument() as { paths: Record<string, Record<string, { responses: Record<string, { description?: string }> }>> };
   assert.match(String(doc.paths['/api/offload'].post.responses['400'].description), /DEST_SAME_VOLUME[^;]*same drive/, 'the document names the code and says what it means');
   const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
   assert.match(agents, /`400 DEST_SAME_VOLUME`/, 'AGENTS.md names the code');
+  assert.match(String(doc.paths['/api/offload'].post.responses['400'].description), /DEST_SAME_VOLUME[^;]*APFS container whose volumes share one pool of free space/,
+    'and says a sibling APFS volume is the same drive (review F1.5)');
+  assert.match(agents, /`400 DEST_SAME_VOLUME`,\s+judged by the device each really is on, and on a Mac by the APFS\s+container/, 'as AGENTS.md does');
+  assert.match(String((doc.paths['/api/volumes'] as unknown as { get: { summary: string } }).get.summary), /another APFS volume in the root\u2019s container\) is no other drive and is not listed/,
+    'the volume list says such a volume is not listed');
+  assert.match(agents, /another APFS volume in the root's container\) is no other drive and is\s+not listed/, 'in AGENTS.md too');
   const mcp = fs.readFileSync(path.join(__dirname, '..', 'src', 'mcp', 'server.ts'), 'utf8');
   assert.match(mcp.slice(mcp.indexOf("'offload',"), mcp.indexOf("'offload',") + 3000), /same drive/, 'the MCP offload tool tells an agent before it asks');
 });
