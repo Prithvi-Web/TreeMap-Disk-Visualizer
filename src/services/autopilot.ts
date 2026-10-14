@@ -602,7 +602,7 @@ function waitForScan(scanId: string): Promise<void> {
 async function resolveCandidates(
   policy: AutopilotPolicy,
   scan: { record: boolean },
-): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
+): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[]; heldBack: HeldBack }> {
   assertSavedPolicyPath(policy.path);
   // A policy over app-data would otherwise select what a crash left in the
   // spill folder (and on Windows a running scan's files, which have names).
@@ -640,7 +640,8 @@ async function resolveCandidates(
   // records a failed run and simulate surfaces the error, so an unreadable
   // pause list stops the deleter instead of silently unpausing it.
   const noted = await suppressedNoteRoots();
-  if (noted.length === 0) return { candidates: outsidePrograms, leftAlone: [...byRule, ...spillSkipped, ...programSkipped] };
+  const inPrograms = matched.length - outsidePrograms.length;
+  if (noted.length === 0) return { candidates: outsidePrograms, leftAlone: [...byRule, ...spillSkipped, ...programSkipped], heldBack: { byNotes: 0, inPrograms } };
   const prepared = prepareSuppressed(noted, policy.path); // candidates are spelled from the policy's folder (F1.13)
   const candidates: Candidate[] = [];
   // Collapsed to ONE entry per note root with a count (review round 1,
@@ -662,7 +663,18 @@ async function resolveCandidates(
     path: root,
     reason: `Left alone — your note on ${root} pauses automatic cleanup around it (${n} matched item${n === 1 ? '' : 's'}).`,
   }));
-  return { candidates, leftAlone: [...byRule, ...spillSkipped, ...programSkipped, ...noteSkipped] };
+  return { candidates, leftAlone: [...byRule, ...spillSkipped, ...programSkipped, ...noteSkipped], heldBack: { byNotes: outsidePrograms.length - candidates.length, inPrograms } };
+}
+
+/**
+ * How many matched items resolveCandidates held back, and why: paused by a
+ * note, or a part of an installed program. Counted where they are left alone,
+ * so a run that selects nothing says which — never read back from the skip
+ * entries' sentences (review F1.2).
+ */
+interface HeldBack {
+  byNotes: number;
+  inPrograms: number;
 }
 
 /**
@@ -950,6 +962,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   }
 
   let candidates: Candidate[];
+  let heldBack: HeldBack = { byNotes: 0, inPrograms: 0 };
   try {
     // agent-policy.json is the user's own "never touch these" list. It was
     // written for the API surface, but an unattended deleter is exactly what
@@ -961,6 +974,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     // keeps it as any scan does.
     const resolvedRun = await resolveCandidates(policy, { record: !(opts.dryRun || policy.dryRunFirst || !policy.approvedAt) });
     candidates = resolvedRun.candidates;
+    heldBack = resolvedRun.heldBack;
     // Noted-folder and spill-folder skips land in the run record for the same
     // reason the agent-policy ones below do: visible, never quietly dropped.
     run.skipped.push(...resolvedRun.leftAlone);
@@ -1038,11 +1052,14 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   if (selected.length === 0) {
     // "Nothing matched" would be false when things DID match and were paused
     // by notes — the difference matters to someone wondering why their rule
-    // went quiet (review round 1, finding 6).
+    // went quiet (review round 1, finding 6) — or were parts of an installed
+    // program, which Autopilot never trashes (review F1.2).
+    const why = [heldBack.byNotes > 0 ? 'paused by your notes' : null, heldBack.inPrograms > 0 ? 'part of an installed program' : null]
+      .filter((w): w is string => w !== null);
     run.blockedReason = candidates.length > 0
       ? 'Everything it matched is larger than the remaining allowance, so nothing was deleted.'
-      : run.skipped.some((s) => s.reason.includes('pauses automatic cleanup'))
-        ? 'Everything that matched is paused by your notes — nothing was deleted.'
+      : why.length > 0
+        ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
         : 'Nothing matched this time.';
     return record();
   }

@@ -28379,7 +28379,7 @@ function renderAutopilotRuns(runs) {
       </div>
       <div class="bp-items">
         ${r.blockedReason ? `<div class="ap-reason">${escapeHtml(r.blockedReason)}</div>` : ''}
-        ${items || '<div class="muted" style="padding:4px 10px;">Nothing matched.</div>'}
+        ${items || (r.skipped.length ? '' : '<div class="muted" style="padding:4px 10px;">Nothing matched.</div>') /* what it left alone matched (review F1.2) */}
         ${more}${skipped}
         <div class="ap-run-actions">
           ${approvable.has(r.id) ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.id)}"><span data-icon="check"></span>Approve this run</button>`

@@ -23,7 +23,8 @@ import {
   MAX_NOTES,
 } from '../src/services/notes';
 import { collectCleanupSuggestions } from '../src/services/cleanupRules';
-import { savePolicies, simulatePolicy } from '../src/services/autopilot';
+import { approvePolicyForTests, listPolicies, runPolicy, savePolicies, simulatePolicy } from '../src/services/autopilot';
+import { setTrashStepForTests } from '../src/services/cleaner';
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
 import { createApp } from '../src/server';
 import { peekScan } from '../src/services/diskScanner';
@@ -360,6 +361,33 @@ test('Autopilot skips a noted folder for custom matches too', async () => {
     assert.ok(noteSkips[0].path.endsWith('archive'), 'anchored on the noted folder');
     assert.match(noteSkips[0].reason, /1 matched item/);
   } finally {
+    await savePolicies([]);
+    await clearNotes();
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});
+
+test('a run that left everything it matched alone says why — paused by a note, a part of an installed program, or both — never "Nothing matched this time." (review F1.2)', async () => {
+  await clearNotes();
+  const fx = await mkTmp();
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  try {
+    await writeBin(path.join(fx, 'archive', 'big.bin'), 200_000);
+    await setNote(path.join(fx, 'archive'), 'do not touch');
+    const run = async (id: string): Promise<string | undefined> => {
+      await savePolicies([{ id, name: 'p', path: fx, match: { kind: 'custom', minBytes: 1 }, dryRunFirst: false, enabled: true }]);
+      await approvePolicyForTests(id);
+      const result = await runPolicy((await listPolicies())[0]);
+      assert.deepEqual(result.items, [], `${id}: control: nothing is selected`);
+      return result.blockedReason;
+    };
+    assert.equal(await run('noted-only'), 'Everything that matched is paused by your notes — nothing was deleted.', 'paused by a note');
+    await writeBin(path.join(fx, 'Fake.app', 'Contents', 'MacOS', 'Fake'), 200_000);
+    assert.equal(await run('noted-and-app'), 'Everything that matched is paused by your notes or part of an installed program — nothing was deleted.', 'both');
+    assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+  } finally {
+    setTrashStepForTests(null);
     await savePolicies([]);
     await clearNotes();
     await fsp.rm(fx, { recursive: true, force: true });

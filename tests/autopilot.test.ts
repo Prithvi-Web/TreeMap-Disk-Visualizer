@@ -558,6 +558,27 @@ test('an unattended run never selects a file inside an installed app, whatever i
   }
 });
 
+test('a run that left everything it matched alone, as parts of an installed program, says so — never "Nothing matched this time." beside its own list of what it left (review F1.2)', async () => {
+  const dir = await mkTmp();
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  try {
+    await writeFile(path.join(dir, 'Fake.app', 'Contents', 'MacOS', 'Fake'), 2 * MB);
+    await writeFile(path.join(dir, 'Fake.app', 'Contents', 'Resources', 'app.asar'), 2 * MB);
+    const [policy] = await savePolicies([{ id: 'apps-only', name: 'Big files', path: dir, match: { kind: 'custom', minBytes: MB }, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(policy.id);
+    const run = await runPolicy((await listPolicies())[0]);
+    assert.deepEqual(run.items, [], 'control: nothing inside the app is selected');
+    assert.ok(run.skipped.some((s) => /2 matched items inside the app “Fake”/.test(s.reason)), `control: the app is named in skipped: ${JSON.stringify(run.skipped)}`);
+    assert.equal(run.blockedReason, 'Everything that matched is part of an installed program — nothing was deleted.', 'it says why nothing was deleted');
+    assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+  } finally {
+    setTrashStepForTests(null);
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a policy whose folder is a link acts on nothing through it: the scan takes the link as the one file it is, as before (QA D78 — a scan of a link elsewhere follows it)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
   // A person's scan of a link is of the folder it points to (D78). An unattended
   // policy is not: every check made of its folder — never a whole drive, notes,

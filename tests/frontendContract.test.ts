@@ -1927,6 +1927,15 @@ test('a run whose items were not confirmed as trashed offers its undo, and does 
   assert.doesNotMatch(autopilotRunRow({ ...base, unverified: ['/x/late.bin'], undoneAt: 1 }), /data-ap-undo/, 'nor does one already undone');
 });
 
+test('a run that selected nothing because it left everything alone does not also say "Nothing matched." above what it left (review F1.2)', () => {
+  const base = { id: 'run-2', policyId: 'p', policyName: 'p', at: 0, mode: 'live', status: 'completed', items: [], bytesMatched: 0, bytesDeleted: 0 };
+  const left = autopilotRunRow({ ...base, blockedReason: 'Everything that matched is part of an installed program — nothing was deleted.',
+    skipped: [{ path: '/x/Fake.app', reason: 'Left alone — 2 matched items inside the app “Fake”, which would stop working without them.' }] });
+  assert.match(left, /Left alone — 2 matched items/, 'control: what it left is shown');
+  assert.doesNotMatch(left, /Nothing matched\./, 'and nothing contradicts it');
+  assert.match(autopilotRunRow({ ...base, skipped: [] }), /Nothing matched\./, 'control: a run that matched nothing says so');
+});
+
 test('an Autopilot undo that passed over an unconfirmed item says so, rather than that everything is back (FG3c #3)', async () => {
   const code = appCode();
   const src = code.slice(code.indexOf('function undoAutopilotRun'), code.indexOf('function deletePolicy'));
