@@ -5,6 +5,10 @@ import { parse } from '../src/services/query/parse';
 import { unanswerableFields } from '../src/services/query/execute';
 import { NL_PHRASES, NL_STOPWORDS, translateNlQuery } from '../src/services/query/nlIntent';
 import type { NlMatch } from '../src/services/query/nlIntent';
+import FILE_KINDS from '../src/ui/markup/137-file-kinds.json';
+
+/** The plain-words video term: the app's one type table's video kind (E11). */
+const VIDEOS = `ext:${FILE_KINDS.video.join(',')}`;
 
 /**
  * Phase 9.6 — the deterministic natural-language intent table (v4 §9.6).
@@ -75,7 +79,7 @@ test('the spec sentence: big videos I have not opened in a year', () => {
   const r = okT('big videos I have not opened in a year');
   const terms = termsOf(r.q);
   assert.ok(terms.includes('size>1gb'), `size term missing from "${r.q}"`);
-  assert.ok(terms.includes('ext:mp4,mov,mkv,avi,webm'), `video ext term missing from "${r.q}"`);
+  assert.ok(terms.includes(VIDEOS), `video ext term missing from "${r.q}"`);
   assert.ok(terms.includes('used>1y'), `used term missing from "${r.q}"`);
   assert.equal(terms.length, 3, `nothing else belongs in "${r.q}"`);
   assert.equal(r.matched.length, 3, 'three phrases matched');
@@ -185,7 +189,7 @@ test('numeric sizes in plain words become decimal size terms (QA D32)', () => {
     ['under 1,000 KB', 'size<1000kb'],
     ['below 300 bytes', 'size<300b'],
     ['at most 20 MiB', 'size<=20mib'],
-    ['videos over 2 GB not opened in over a year', 'ext:mp4,mov,mkv,avi,webm size>2gb used>1y'],
+    ['videos over 2 GB not opened in over a year', `${VIDEOS} size>2gb used>1y`],
   ];
   for (const [text, q] of cases) {
     const r = okT(text);
@@ -234,7 +238,7 @@ test('words the table does not know surface in unmatched', () => {
   // not, so the user can see the gap before running the query.
   const r = okT('huge videos from my vacation');
   assert.ok(termsOf(r.q).includes('size>1gb'), r.q);
-  assert.ok(termsOf(r.q).includes('ext:mp4,mov,mkv,avi,webm'), r.q);
+  assert.ok(termsOf(r.q).includes(VIDEOS), r.q);
   // "my" is a stopword; "from" and "vacation" are genuinely not understood.
   assert.deepEqual(r.unmatched, ['from', 'vacation']);
 });
@@ -251,7 +255,7 @@ test('same input, same output — twice, on both branches', () => {
 
 test('a repeated phrase emits its term once', () => {
   const r = okT('videos videos');
-  const occurrences = termsOf(r.q).filter((t) => t === 'ext:mp4,mov,mkv,avi,webm').length;
+  const occurrences = termsOf(r.q).filter((t) => t === VIDEOS).length;
   assert.equal(occurrences, 1, `the ext term must appear exactly once in "${r.q}"`);
   // Both words were consumed and both are reported — the second one annotated,
   // so the UI can show why it added nothing.
@@ -269,7 +273,7 @@ test('"in documents" is the folder, bare "documents" is the extension set', () =
   assertParses(folder.q, 'in documents');
 
   const exts = okT('documents');
-  assert.equal(exts.q, 'ext:pdf,doc,docx,txt,md');
+  assert.equal(exts.q, `ext:${[...FILE_KINDS.pdf, ...FILE_KINDS.doc].join(',')}`);
   assertParses(exts.q, 'bare documents');
 });
 

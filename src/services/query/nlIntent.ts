@@ -2,7 +2,7 @@
  * Phase 9.6 — the deterministic half of natural-language querying (v4 §9.6).
  *
  * A small, fixed table of English phrasings mapped onto the Phase 2 grammar:
- * "big videos I have not opened in a year" → `size>1gb ext:mp4,mov,mkv,avi,webm
+ * "big videos I have not opened in a year" → `size>1gb ext:mp4,mov,avi,mkv,webm,m4v,wmv,flv
  * used>1y`. The translation is shown to the user before anything runs, always,
  * and the user can edit it — which is why every piece of this module is built
  * to be explainable: each match reports the exact words it consumed, the term
@@ -10,7 +10,8 @@
  * dropped) a note saying why.
  *
  * The HTTP route is deliberately NOT here. This module is a pure function
- * with no imports, no network, no clock and no randomness: the same input
+ * with no network, no clock and no randomness, importing nothing but data —
+ * the app's one type table (fourth browser pass, E11): the same input
  * always produces the same output, so it can run on every keystroke and be
  * tested exhaustively. (A briefly-shipped optional Ollama passthrough was
  * removed at the owner's request — the table IS the feature.)
@@ -22,8 +23,8 @@
  * no translation: the user asked in English precisely because they do not know
  * the grammar, so a broken query is one they cannot diagnose. The invariant is
  * enforced by tests/nlQuery.test.ts, which drives every table entry through
- * the real parser; keeping the module import-free means the invariant lives in
- * one place rather than being re-checked (and re-trusted) at runtime.
+ * the real parser; keeping the module free of code imports means the invariant
+ * lives in one place rather than being re-checked (and re-trusted) at runtime.
  *
  * ── The ordering rule ──
  *
@@ -55,6 +56,8 @@
  * of nothing but `type:` ("files", or "files" beside words the table does
  * not know) is no filter at all: it lists every file.
  */
+
+import FILE_KINDS from '../../ui/markup/137-file-kinds.json';
 
 /* --------------------------------- types --------------------------------- */
 
@@ -178,6 +181,16 @@ const NEVER_OPENED_UNANSWERABLE =
 
 /** Sentences that translate to queries TreeMap answers — the refusals' teaching examples. */
 const TRY_INSTEAD = 'Try something like "big videos I have not opened in a year" or "old installers in my downloads".';
+
+/**
+ * The term for one or more of the app's file kinds, read from its one type table (fourth browser
+ * pass, E11): src/ui/markup/137-file-kinds.json, which the page builds its icons and colours from.
+ * "videos" was mp4, mov, mkv, avi and webm here while a video tile was also m4v, wmv and flv, so the
+ * corpus's .m4v clips never matched; every kind this table names now has exactly the page's list.
+ */
+function kindTerm(...kinds: (keyof typeof FILE_KINDS)[]): string {
+  return `ext:${kinds.flatMap((kind) => FILE_KINDS[kind]).join(',')}`;
+}
 
 /* -------------------------------- the table -------------------------------- */
 
@@ -400,31 +413,31 @@ export const NL_PHRASES: readonly NlPhrase[] = [
   },
   {
     pattern: /\b(?:videos?|movies?|films?)\b/i,
-    term: 'ext:mp4,mov,mkv,avi,webm',
+    term: kindTerm('video'),
     label: 'videos / movies / films',
     example: 'videos',
   },
   {
     pattern: /\b(?:photos?|pictures?|pics?|images?)\b/i,
-    term: 'ext:jpg,jpeg,png,heic,gif,webp',
+    term: kindTerm('image'),
     label: 'photos / pictures / images',
     example: 'photos',
   },
   {
     pattern: /\b(?:music|songs?|audio)\b/i,
-    term: 'ext:mp3,m4a,flac,wav,aac',
+    term: kindTerm('audio'),
     label: 'music / songs / audio',
     example: 'music',
   },
   {
     pattern: /\bpdfs?\b/i,
-    term: 'ext:pdf',
+    term: kindTerm('pdf'),
     label: 'pdfs',
     example: 'pdfs',
   },
   {
     pattern: /\b(?:documents?|docs?)\b/i,
-    term: 'ext:pdf,doc,docx,txt,md',
+    term: kindTerm('pdf', 'doc'),
     label: 'documents / docs',
     example: 'documents',
   },

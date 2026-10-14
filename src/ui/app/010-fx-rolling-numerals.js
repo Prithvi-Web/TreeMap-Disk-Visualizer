@@ -277,14 +277,14 @@ const KIND = {
   file:    { icon: 'file',    tint: '#8E8E93' },
 };
 const EXT_KIND = {};
-[['png jpg jpeg gif webp heic svg bmp tiff raw ico','image'],
- ['mp4 mov avi mkv webm m4v wmv flv','video'],
- ['mp3 wav aac flac m4a ogg aiff','audio'],
- ['zip tar gz bz2 7z rar xz tgz','archive'],
- ['js ts jsx tsx py rb go rs c cpp h java swift kt css html json yml yaml sh md','code'],
- ['pdf','pdf'], ['doc docx txt rtf pages xls xlsx numbers ppt pptx key csv','doc'],
- ['app exe msi bin','app'], ['dmg iso img','disk'], ['ttf otf woff woff2','font'],
-].forEach(([exts, kind]) => exts.split(' ').forEach(e => EXT_KIND[e] = kind));
+/** Every extension of the app's one type table under its kind (fourth browser
+    pass, E11): the table is src/ui/markup/137-file-kinds.json, shipped above
+    as #fileKindTable, and the server's plain-words table reads the same file —
+    so "videos" means exactly what a video tile does. */
+function fillExtKinds(table) {
+  for (const [kind, exts] of Object.entries(table)) for (const e of exts) EXT_KIND[e] = kind;
+}
+fillExtKinds(JSON.parse(document.getElementById('fileKindTable').textContent));
 function kindFor(node) {
   if (node.type === 'dir') return KIND.dir;
   return KIND[EXT_KIND[node.extension] || 'file'];

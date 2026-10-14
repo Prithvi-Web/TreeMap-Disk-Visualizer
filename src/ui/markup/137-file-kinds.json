@@ -1,0 +1,12 @@
+{
+  "image": ["png", "jpg", "jpeg", "gif", "webp", "heic", "svg", "bmp", "tiff", "raw", "ico"],
+  "video": ["mp4", "mov", "avi", "mkv", "webm", "m4v", "wmv", "flv"],
+  "audio": ["mp3", "wav", "aac", "flac", "m4a", "ogg", "aiff"],
+  "archive": ["zip", "tar", "gz", "bz2", "7z", "rar", "xz", "tgz"],
+  "code": ["js", "ts", "jsx", "tsx", "py", "rb", "go", "rs", "c", "cpp", "h", "java", "swift", "kt", "css", "html", "json", "yml", "yaml", "sh", "md"],
+  "pdf": ["pdf"],
+  "doc": ["doc", "docx", "txt", "rtf", "pages", "xls", "xlsx", "numbers", "ppt", "pptx", "key", "csv"],
+  "app": ["app", "exe", "msi", "bin"],
+  "disk": ["dmg", "iso", "img"],
+  "font": ["ttf", "otf", "woff", "woff2"]
+}
