@@ -1048,6 +1048,29 @@ test('a tile clicked at the foot of the Grid is brought clear of the selection b
   assert.ok(at.bottom <= pill, `the ⌘-clicked tile ends at y ${at.bottom}; the pill starts at ${pill.toFixed(1)}`);
   assert.ok(at.bottom >= pill - 20, `and the Grid moved no further than that (the tile ends at y ${at.bottom})`);
 
+  // The first case again, deep in a scrolled Grid (review F2.2): the bar is
+  // already up, so the plain click scrolls nothing, and the pane it opens
+  // narrows the page. The re-flow knows the tile as the one just clicked by
+  // where the click left it in the Grid's window — its place in the list
+  // less the scroll, which at the top of a Grid is no different from its
+  // place in the list.
+  const s = gridHarness();
+  evenPlant(s, 400);
+  sizeFromSheet(s, W, H, true);
+  await s.renderGrid();
+  s.onCellClick({ metaKey: true }, 0); // a selection is already up: the bar stands, the pill above it
+  s.els.gridScroll.scrollTop = 20 * 268; // row 20 at the top: row 22 is at the foot
+  const deep = 22 * 4;
+  const scrolled = s.els.gridScroll.scrollTop;
+  assert.ok(scrolled > 0, `control: the Grid is scrolled (${scrolled} px)`);
+  assert.ok(tileInWindow(s, deep).bottom > pill && tileInWindow(s, deep).top < pill, `control: tile ${deep} straddles where the pill stands (y ${tileInWindow(s, deep).top}–${tileInWindow(s, deep).bottom})`);
+  s.onCellClick({}, deep); // a plain click on a file: it is selected and the pane opens…
+  assert.equal(s.els.gridScroll.scrollTop, scrolled, 'control: with the bar already up, the click itself scrolls nothing');
+  s.els.gridScroll.clientWidth -= 330; // …narrowing the page…
+  await s.renderGrid(); // …and the Grid re-flows into it
+  at = tileInWindow(s, deep);
+  assert.ok(at.bottom <= pill, `scrolled ${scrolled} px down a long folder, the clicked tile ends at y ${at.bottom}; the pill starts at ${pill.toFixed(1)}`);
+
   // A click made while the bar was already up scrolls nothing: the tile was
   // where the pointer found it, beside the bars.
   const q = gridHarness();
