@@ -72,6 +72,12 @@ export interface FactProvider<T> {
    * lack.
    */
   readonly capabilityKey: string | null;
+  /**
+   * True for a fact of the disk as it is now rather than of the scan's tree
+   * (`onDisk`): never served from the cache, nor kept in it — a file written
+   * since the last answer must not read as what it took then.
+   */
+  readonly live?: boolean;
   /** Compute facts for a batch of absolute paths within one scan. */
   compute(scanId: string, paths: string[], signal: AbortSignal): Promise<FactBatch<T>>;
 }

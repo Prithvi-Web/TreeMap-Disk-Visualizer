@@ -277,7 +277,8 @@ async function runProvider(
 
   for (const [p, value] of batch.values) {
     values[p] = value;
-    cache.set(keyFor(scanId, provider.id, p), { at: now, value });
+    // A live fact (the disk now) is never kept, so it is never served from here.
+    if (!provider.live) cache.set(keyFor(scanId, provider.id, p), { at: now, value });
   }
   sweep(now);
 

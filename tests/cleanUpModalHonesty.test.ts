@@ -662,9 +662,14 @@ test('Custom Rules counts what the files take on the disk: two sparse files that
   assert.equal(part.summary(), '2 files · up to 1000000000 B, freed when you empty the Trash — they claim 3900000000 B but take only 1000000000 B on the disk');
 });
 
-test('Custom Rules reads as before where the files take what they claim, or where not every file was measured — the claimed size, as the most (fifth browser pass F09 controls)', () => {
+test('Custom Rules says what the files take where every one was measured — even where that is more than they claim — and the claimed size, as the most, where not every file was (fifth browser pass F09; review F1.6)', () => {
   const dense = rulesFooter([HOLIDAY, RAW], { [HOLIDAY.path]: 3_200_000_000, [RAW.path]: 700_004_096 });
-  assert.equal(dense.summary(), '2 files · up to 3900000000 B, freed when you empty the Trash');
+  assert.equal(dense.summary(), '2 files · up to 3900004096 B, freed when you empty the Trash', 'what they take, a block over what they claim');
+  // Three small files claim 100 B each and take a 4096-byte block each: the
+  // footer said "up to 300 B" and the completion toast then counted 12288 B.
+  const small = ['/c/a.log', '/c/b.log', '/c/c.log'].map((p) => ({ path: p, size: 100 }));
+  const blocks = rulesFooter(small, Object.fromEntries(small.map((f) => [f.path, 4096])));
+  assert.equal(blocks.summary(), '3 files · up to 12288 B, freed when you empty the Trash', 'never "up to" less than the toast will count');
   const unmeasured = rulesFooter([HOLIDAY, RAW], { [HOLIDAY.path]: 0 });
   assert.equal(unmeasured.summary(), '2 files · up to 3900000000 B, freed when you empty the Trash', 'one file unmeasured: unknown is never read as 0');
   assert.equal(unmeasured.selection().onDiskSizes, null, 'and nothing is counted from what was not measured');
@@ -773,7 +778,7 @@ test('the completion toast counts what the moved files took on the disk, where t
   const none = (await runConfirm(sparse, { deleted: PATHS, failed: [] })).toasts.find((t) => /Moved/.test(t.msg));
   assert.equal(none!.msg, 'Moved 3 items to Trash', 'files that took nothing promise no space at all');
   const claimed = (await runConfirm({ paths: PATHS, sizes: SIZES }, { deleted: PATHS, failed: [] })).toasts.find((t) => /Moved/.test(t.msg));
-  assert.match(claimed!.msg, /\(700B\)/, 'control: unmeasured, the size they claim, as before');
+  assert.match(claimed!.msg, /^Moved 3 items to Trash \(up to 700B\)/, `unmeasured, the size they claim — "up to", as the footer said (review F1.6): ${claimed!.msg}`);
 });
 
 test('Shrink Video reports a smaller file and an original in the Trash, not space recovered', async () => {

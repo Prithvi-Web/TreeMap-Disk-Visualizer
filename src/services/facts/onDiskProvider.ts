@@ -80,6 +80,8 @@ export const onDiskProvider: FactProvider<OnDiskFact> = {
   id: 'onDisk',
   label: 'What a file takes on the disk',
   capabilityKey: null,
+  // What a file takes now: read from the disk each time, never from the cache (review F1.6).
+  live: true,
 
   async compute(scanId: string, paths: string[], signal: AbortSignal): Promise<FactBatch<OnDiskFact>> {
     if (!platform().blocksAreMeaningful) return unavailableBatch(ON_DISK_UNAVAILABLE, paths.length);

@@ -1176,13 +1176,17 @@ function updateCleanSummary() {
 /**
  * What emptying the Trash would give back for a selection that claims
  * `claimed` bytes, `onDisk` of them measured as taken on the disk (null when
- * not every file was measured). Up to the claimed size, as a move to the
- * Trash frees nothing before (D54) — and where the files take less than they
- * claim, as a sparse file does, said from what they take (fifth browser pass
- * F09): "2 files · up to 3.9 GB" for two files that take 0 B was untrue.
+ * not every file was measured). Up to that much, as a move to the Trash frees
+ * nothing before (D54): what the files take where every one was measured — the
+ * completion toast counts the same — and the size they claim where not. Where
+ * they take less than they claim, as a sparse file does, it says so (fifth
+ * browser pass F09): "2 files · up to 3.9 GB" for two files that take 0 B was
+ * untrue. Where they take more (small files fill whole blocks), "up to" the
+ * claimed size was less than the toast then counted (review F1.6).
  */
 function cleanFreedSaid(claimed, onDisk, count) {
-  if (onDisk === null || onDisk === undefined || onDisk >= claimed) return ` · up to ${formatBytes(claimed)}, freed when you empty the Trash`;
+  if (onDisk === null || onDisk === undefined) return ` · up to ${formatBytes(claimed)}, freed when you empty the Trash`;
+  if (onDisk >= claimed) return ` · up to ${formatBytes(onDisk)}, freed when you empty the Trash`;
   const one = count === 1;
   const claims = `${one ? 'it claims' : 'they claim'} ${formatBytes(claimed)}`;
   if (onDisk === 0) return ` · ${claims} but ${one ? 'takes' : 'take'} no space on the disk, so emptying the Trash frees none of it`;
@@ -1285,7 +1289,9 @@ async function runCleanTrash(selection, options) {
     btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
   }
   closeModal('cleanModal');
-  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` (${formatBytes(recovered)}) — the space comes back when you empty the Trash` : ''}`);
+  // Measured, what the moved files took; not measured, the size they claim,
+  // which is the most that comes back — "up to", as the footer said (review F1.6).
+  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` (${onDiskSizes ? '' : 'up to '}${formatBytes(recovered)}) — the space comes back when you empty the Trash` : ''}`);
   if (failed) toast(`${failed} could not be trashed`, 'error');
   const stays = (many) => `left where ${many ? 'they are' : 'it is'}`;
   const leftSaid = {

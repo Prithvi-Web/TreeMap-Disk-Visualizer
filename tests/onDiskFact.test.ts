@@ -78,6 +78,25 @@ test('the onDisk fact says what each file takes on its disk — a sparse file fa
   assert.deepEqual(fact.stats, { requested: 4, computed: 2, skipped: 1, failed: 1 }, 'and the counts say which is which');
 });
 
+test('what a file takes is read from the disk each time it is asked — never an answer kept from before the file changed (review F1.6)', { skip: !platform().blocksAreMeaningful && 'this system reports no blocks' }, async () => {
+  // A second Find in the scan's 30 minutes was served the first one's
+  // measure: a file written in full since read as the 0 B it once took.
+  const dir = fs.realpathSync(fileTempDir('tm-ondisk-live-'));
+  const file = path.join(dir, 'clip.mov');
+  const fd = fs.openSync(file, 'w');
+  fs.ftruncateSync(fd, DENSE); // claims 100 kB, takes nothing yet
+  fs.closeSync(fd);
+  const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: dir });
+  assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+  const ask = async () => (await call('POST', '/api/facts', { scanId: scanned.body.scanId, paths: [file], providers: ['onDisk'] })).body.providers.onDisk;
+  const before = await ask();
+  assert.ok(before.values[file].bytes < DENSE, `control: it took less than it claims (${before.values[file].bytes})`);
+  fs.writeFileSync(file, Buffer.alloc(DENSE, 7)); // written in full since
+  const after = await ask();
+  assert.equal(after.values[file].bytes, fs.statSync(file).blocks * 512, 'what it takes now, not what it took when first asked');
+  assert.ok(after.values[file].bytes >= DENSE, 'control: now it takes what it claims');
+});
+
 test('a file whose drive stops answering is not waited on: its look has a deadline and is counted failed — never 0 — the rest of the request is not asked, and nothing more is asked until that look comes back (review F1.1)', { skip: !platform().blocksAreMeaningful && 'this system reports no blocks' }, async () => {
   // A NAS that went to sleep after the scan: Node's lstat of a file on it can
   // block for minutes or never settle. Clean Up's Find waited on this fact,
