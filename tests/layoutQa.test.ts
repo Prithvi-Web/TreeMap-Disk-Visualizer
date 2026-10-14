@@ -760,6 +760,48 @@ test('the sunburst fits the map the page leaves it, down to the map\'s floor —
   }
 });
 
+test('a sunburst drawn while its view is hidden draws harmlessly off-screen — it never throws over the view on screen (review F2.1)', () => {
+  // A sunburst load can land after the user has switched to another view: a
+  // pruned folder's subtree is fetched, the user moves on, and the load draws
+  // anyway. #treemapWrap is then 0 px wide (tmSizeCanvas: -20) and the map
+  // 420 px (treemapCanvasHeight's fallback for a view not laid out). The fit
+  // for short maps (review F1.3) gave that a radius of -14, a canvas's arc()
+  // throws on a negative radius, and "Treemap failed: … The radius provided
+  // (-14) is negative" came up over the other view.
+  const hiddenH = runPageDecls<(wrap: unknown) => number>(['treemapCanvasHeight'], {
+    window: { innerHeight: 900 },
+    getComputedStyle: () => assert.fail('a map that is not laid out is not measured'),
+  }, 'treemapCanvasHeight')({ getBoundingClientRect: () => ({ top: 0 }) });
+  assert.equal(hiddenH, 420, 'control: a hidden map is 420 px tall, treemapCanvasHeight\'s fallback');
+  const file = (dir: string, name: string, size: number) => ({ name, path: `${dir}/${name}`, size, type: 'file' });
+  const a = { name: 'Movies', path: '/r/Movies', size: 60, type: 'dir', children: [file('/r/Movies', 'a.mov', 40), file('/r/Movies', 'b.mov', 20)] };
+  const root = { name: 'r', path: '/r', size: 100, type: 'dir', children: [a, file('/r', 'c.zip', 40)] };
+  for (const cssW of [0 - 20, 0]) {
+    const label = cssW < 0 ? 'its view hidden (a 0 px wrap)' : 'a wrap no wider than its padding';
+    const radii: number[] = [];
+    // A 2D context that refuses a negative radius, as a canvas does.
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (t, k: string) => (k in t ? t[k] : k === 'arc'
+        ? (_x: number, _y: number, r: number) => { radii.push(r); if (r < 0) throw new RangeError(`IndexSizeError: The radius provided (${r}) is negative.`); }
+        : () => {}),
+      set: (t, k: string, v) => { t[k] = v; return true; },
+    });
+    const state = { root, pathIndex: new Map([[root.path, root]]),
+      treemap: { maxDepth: 7, hideCloud: false, rootPath: '/r', history: { active: false }, arcs: [] as unknown[], sun: null as null | { outerR: number; innerR0: number } } };
+    const draw = runPageDecls<() => void>(
+      ['sunRingCount', 'sunburstGeometry', 'sunburstRoot', 'layoutSunburstArcs', 'SUN_LABEL_MIN_CHARS', 'sunFitLabel', 'sectorPath', 'renderSunburstFrame', 'drawSunburst'], {
+        state, tmBufCtx: ctx, tmSizeCanvas: () => ({ cssW, cssH: hiddenH, dpr: 2 }),
+        cssVar: () => '#000', cellRgb: () => [10, 20, 30], mix: (c: number[]) => c, Canvas2D: { fitText: (_c: unknown, t: string) => t },
+        formatBytes: String, formatCount: String, formatWhen: String, $: () => null, presentSunburst() {}, renderTmLegend() {},
+      }, 'drawSunburst');
+    assert.doesNotThrow(draw, `${label}: the sunburst draws`);
+    assert.ok(radii.length > 0, `control (${label}): the draw reached the canvas`);
+    const sun = state.treemap.sun!;
+    assert.ok(sun.outerR > 0 && sun.innerR0 > 0 && Math.min(...radii) > 0,
+      `${label}: every ring has a positive radius — outer ${sun.outerR}, centre ${sun.innerR0}, smallest drawn ${Math.min(...radii)}`);
+  }
+});
+
 /**
  * A Voronoi (or Circles) map with the page's own refit and its own window
  * resize handler, on a clock that only moves when the test moves it. A solve

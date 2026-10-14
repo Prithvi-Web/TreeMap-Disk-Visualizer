@@ -45,12 +45,16 @@ function sunburstRoot() {
  * as 96 px (treemapCanvasHeight, QA D12), and a 120 px disc on it lost its
  * outer ring at 12 and 6 o'clock (review F1.3). There it takes the map's
  * height less 4 px a side, room for the 2 px outline round a hovered arc.
+ * A map with no room for any disc is not laid out — its view hidden, the
+ * wrap 0 px wide — and keeps the old 60 px, drawn harmlessly off-screen: a
+ * load that lands after the user switched views still draws, and a canvas's
+ * arc() throws on the negative radius the fit gives there (review F2.1).
  */
 function sunburstGeometry() {
   const { cssW, cssH, dpr } = tmSizeCanvas();
   const rings = sunRingCount();
   const half = Math.min(cssW, cssH) / 2;
-  const outerR = Math.max(Math.min(60, half - 4), half - 18);
+  const outerR = half > 4 ? Math.max(Math.min(60, half - 4), half - 18) : 60;
   const innerR0 = outerR / (rings + 1);
   return { cssW, cssH, dpr, cx: cssW / 2, cy: cssH / 2, rings, outerR, innerR0, ringT: (outerR - innerR0) / rings };
 }
