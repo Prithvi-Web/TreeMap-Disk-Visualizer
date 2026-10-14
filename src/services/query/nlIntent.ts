@@ -186,7 +186,8 @@ const TRY_INSTEAD = 'Try something like "big videos I have not opened in a year"
  * The term for one or more of the app's file kinds, read from its one type table (fourth browser
  * pass, E11): src/ui/markup/137-file-kinds.json, which the page builds its icons and colours from.
  * "videos" was mp4, mov, mkv, avi and webm here while a video tile was also m4v, wmv and flv, so the
- * corpus's .m4v clips never matched; every kind this table names now has exactly the page's list.
+ * corpus's .m4v clips never matched; every kind this table names now has exactly the page's list —
+ * videos, photos, music, pdfs, documents, archives and disk images (installers are not a kind there).
  */
 function kindTerm(...kinds: (keyof typeof FILE_KINDS)[]): string {
   return `ext:${kinds.flatMap((kind) => FILE_KINDS[kind]).join(',')}`;
@@ -374,7 +375,7 @@ export const NL_PHRASES: readonly NlPhrase[] = [
   {
     // Above the photo entry, or the "images" half would be claimed as photos.
     pattern: /\bdisk\s+images?\b/i,
-    term: 'ext:dmg,iso',
+    term: kindTerm('disk'),
     label: 'disk images',
     example: 'disk images',
   },
@@ -384,11 +385,13 @@ export const NL_PHRASES: readonly NlPhrase[] = [
     // Inside the alternation the longer spelling comes first, because JS
     // alternation is leftmost-first and "zips?" would otherwise split it.
     pattern: /\b(?:archives?|zip\s+files?|zips?|compressed\s+files?)\b/i,
-    term: 'ext:zip,tar,gz,7z,rar',
+    term: kindTerm('archive'),
     label: 'archives / zips / zip files',
     example: 'zip files',
   },
   {
+    // The one ext list of its own: installers are not a kind of the type table (dmg is a disk image,
+    // exe and msi apps, and pkg and deb are not in it at all).
     pattern: /\b(?:installers?|setup\s+files?)\b/i,
     term: 'ext:dmg,pkg,msi,exe,deb',
     label: 'installers / setup files',

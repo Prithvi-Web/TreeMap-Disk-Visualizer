@@ -8,7 +8,7 @@ isolatedDataDir('treemap-fileKindsOneTable-data-');
 
 import { INDEX, lift } from './fixtures/liftFrontend';
 import { parse } from '../src/services/query/parse';
-import { translateNlQuery } from '../src/services/query/nlIntent';
+import { NL_PHRASES, translateNlQuery } from '../src/services/query/nlIntent';
 
 /**
  * "Ask in plain words" turned "videos bigger than 1 GB" into ext:mp4,mov,mkv,avi,webm while the app's
@@ -60,4 +60,37 @@ test('every kind the plain-words table names is the app\'s own: videos, photos, 
   const nl = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'query', 'nlIntent.ts'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, ' '); // its code, not the examples its comments give
   assert.doesNotMatch(nl, /ext:mp4|ext:jpg|ext:mp3|ext:pdf,doc/, 'the plain-words table keeps no list of its own for a kind the type table has');
+});
+
+test('archives and disk images read the one type table too, and no plain-words entry but installers keeps a list of its own (E11, review F1.1)', () => {
+  const kinds = table();
+  const q = (text: string): string => {
+    const r = translateNlQuery(text);
+    assert.ok(r.ok, `"${text}" translates`);
+    return r.ok ? r.q : '';
+  };
+  const ext = (...names: string[]): string => `ext:${names.flatMap((k) => kinds[k]).join(',')}`;
+  for (const text of ['archives', 'zip files', 'zips', 'compressed files']) {
+    assert.equal(q(text), ext('archive'), `"${text}" is the table's archive kind`);
+  }
+  for (const e of ['bz2', 'xz', 'tgz']) assert.ok(q('archives').split(/[:,]/).includes(e), `.${e} is among the archives`);
+  assert.equal(q('disk images'), ext('disk'), 'disk images are its disk kind');
+  assert.ok(q('disk images').split(/[:,]/).includes('img'), '.img is among the disk images');
+  for (const text of ['archives', 'disk images']) assert.ok(parse(q(text)).ok, `"${text}" still parses`);
+
+  // Every ext: term the table emits, but installers' (a mix of kinds plus pkg and deb, which the type
+  // table does not name), is exactly the union of the table's kinds it touches — so no literal list
+  // can come back for any kind, including one added to the plain-words table later.
+  const kindOf = new Map(Object.entries(kinds).flatMap(([kind, exts]) => exts.map((e) => [e, kind] as const)));
+  const checked: string[] = [];
+  for (const entry of NL_PHRASES) {
+    if (typeof entry.term !== 'string' || !entry.term.startsWith('ext:')) continue;
+    if (/^installers\b/.test(entry.label)) continue;
+    const exts = entry.term.slice('ext:'.length).split(',');
+    const named = [...new Set(exts.map((e) => kindOf.get(e)))];
+    assert.ok(named.every((k) => k !== undefined), `${entry.label}: every extension is one the type table names`);
+    assert.equal(entry.term, ext(...(named as string[])), `${entry.label}: exactly the table's ${named.join(' and ')}, every one`);
+    checked.push(entry.label);
+  }
+  assert.equal(checked.length, 7, `videos, photos, music, pdfs, documents, archives and disk images were each checked: ${checked.join('; ')}`);
 });

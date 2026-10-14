@@ -147,7 +147,7 @@ test('old zips', () => {
   const r = okT('old zips');
   const terms = termsOf(r.q);
   assert.ok(terms.includes('modified>1y'), r.q);
-  assert.ok(terms.includes('ext:zip,tar,gz,7z,rar'), r.q);
+  assert.ok(terms.includes(`ext:${FILE_KINDS.archive.join(',')}`), r.q);
   // The "old" mapping is an approximation and says so, so the UI can explain.
   const oldMatch = r.matched.find((m) => m.term === 'modified>1y');
   assert.ok(oldMatch && oldMatch.note && /not modified/.test(oldMatch.note), '"old" carries its explanatory note');
@@ -298,12 +298,12 @@ test('"zip files" is one phrase — it does not leak a stray type:file', () => {
   // word "files" before the bare "files" entry can, because an ext term
   // already implies files.
   const r = okT('zip files');
-  assert.deepEqual(termsOf(r.q), ['ext:zip,tar,gz,7z,rar']);
+  assert.deepEqual(termsOf(r.q), [`ext:${FILE_KINDS.archive.join(',')}`]);
 });
 
 test('"disk images" wins over the photo reading of "images"', () => {
   const r = okT('disk images');
-  assert.equal(r.q, 'ext:dmg,iso');
+  assert.equal(r.q, `ext:${FILE_KINDS.disk.join(',')}`);
   assertParses(r.q, 'disk images');
 });
 
