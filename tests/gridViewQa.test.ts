@@ -1107,3 +1107,63 @@ test('a folder opened, Up, a crumb, a filter or a sort shows the new list from i
   await g.renderGrid();
   assert.ok(sc.scrollTop > 0, `and re-flowed into a narrower column it is not sent to the top (scrollTop ${sc.scrollTop})`);
 });
+
+/* ══════════════ review F1.2 — a re-flow brings only the tile just clicked clear of the bars ══════════════ */
+
+test('a re-flow with no click behind it never scrolls the Grid: an anchor left after Clear, or one the user scrolled to the foot, stays put (review F1.2)', async (t) => {
+  // renderGrid brought ANY in-view anchor clear of the bars. The anchor
+  // outlives Clear and every re-flow of the same list, and "in view" is any
+  // of it, so a tile the user left 40 px showing at the foot was scrolled up
+  // by most of its height on a window resize, a sidebar fold, the pane
+  // opening or closing — with nothing clicked.
+  const W = 1440, H = 900, k = 21 * 4; // a tile on row 21, mid-window once scrolled to row 20
+  for (const clear of [true, false]) {
+    for (const cart of [false, true]) {
+      for (const narrower of [false, true]) {
+        const label = `${clear ? 'after Clear' : 'the bar still up'}${cart ? ', cart up' : ''}, ${narrower ? 'a narrowing re-flow' : 'a re-flow at the same width'}`;
+        await t.test(label, async () => {
+          const g = gridHarness();
+          evenPlant(g, 400);
+          sizeFromSheet(g, W, H, cart);
+          await g.renderGrid();
+          const sc = g.els.gridScroll;
+          sc.scrollTop = 20 * 268;
+          g.onCellClick({}, k); // a plain click: selected, the anchor, the bar up
+          assert.equal(g.state.grid.anchor, k, 'control: the click set the anchor');
+          assert.equal(sc.scrollTop, 20 * 268, 'control: a tile mid-window is not scrolled by its click');
+          if (clear) g.els.selClearBtn.listeners.click![0]({});
+          assert.equal(g.els.selectionBar.cls.has('visible'), !clear, `control: the bar is ${clear ? 'down' : 'up'}`);
+          // The user scrolls on, until 40 px of the tile show at the foot.
+          const padTop = scrollerPads({ cart, bar: !clear }).top;
+          sc.scrollTop = padTop + g.state.grid.layout[k].y - sc.clientHeight + 40;
+          const shows = sc.clientHeight - (padTop + g.state.grid.layout[k].y - sc.scrollTop);
+          assert.equal(shows, 40, 'control: 40 px of the anchor show at the foot of the Grid');
+          const was = g.state.grid.layout[k].y - sc.scrollTop, yWas = g.state.grid.layout[k].y;
+          if (narrower) sc.clientWidth -= 330; // the pane opening on another view's file, the sidebar unfolding
+          await g.renderGrid();
+          if (narrower) assert.ok(g.state.grid.layout[k].y > yWas, `control: fewer to a row, the anchor moved down the Grid (${yWas} → ${g.state.grid.layout[k].y})`);
+          assert.equal(g.state.grid.layout[k].y - sc.scrollTop, was, `${label}: the anchor stays where the user left it, not pulled up`);
+        });
+      }
+    }
+  }
+
+  // Clicked and not scrolled since, but the bars are down: nothing to clear
+  // it of. A tile clicked beside the bars, 15 px above the Grid's foot, then
+  // Clear, then a re-flow.
+  await t.test('clicked beside the bars, then Clear', async () => {
+    const g = gridHarness();
+    evenPlant(g, 400);
+    sizeFromSheet(g, W, H, false);
+    await g.renderGrid();
+    const sc = g.els.gridScroll;
+    g.onCellClick({ metaKey: true }, 0); // the bar goes up for tile 0, far above
+    sc.scrollTop = 10 + g.state.grid.layout[k].y + 256 - (sc.clientHeight - 15);
+    const at = sc.scrollTop;
+    g.onCellClick({}, k); // the bar was up: the tile is where the pointer found it
+    assert.equal(sc.scrollTop, at, 'control: a click with the bar already up scrolls nothing');
+    g.els.selClearBtn.listeners.click![0]({});
+    await g.renderGrid();
+    assert.equal(sc.scrollTop, at, 'with the bars down, a re-flow does not move the tile just clicked');
+  });
+});

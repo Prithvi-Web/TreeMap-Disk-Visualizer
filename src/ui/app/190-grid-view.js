@@ -108,6 +108,21 @@ function gridScrollClear(i) {
   const over = tileTop + c.side + GAP - (gridScroll.clientHeight - padBottom);
   if (over > 0) gridScroll.scrollTop += over;
 }
+/* The tile a click left selected, and where that left it in the Grid's
+   window. The re-flow that click brings on — the preview pane it opened
+   narrowing the page — can move it under the bars (fewer to a row, and the
+   pill stands mid-window), and the click's own scroll may have been cut
+   short by a Grid too short to scroll that far before the pane narrowed it.
+   So the next re-flow brings that tile clear of the bars: that tile only,
+   only while the bars are up, and only if nothing has scrolled it since
+   (review F1.2). An anchor the user scrolled to the foot themselves, or one left
+   after Clear, stays where they put it, and a resize does not jump the
+   Grid. */
+let gridClicked = null;
+function gridNoteClicked(i) {
+  const c = state.grid.layout[i];
+  gridClicked = c && state.grid.selection.has(c.it.path) ? { path: c.it.path, offset: c.y - gridScroll.scrollTop } : null;
+}
 
 /* The list the layout was last drawn from: its folder, filter and order. The
    same list drawn again — a re-flow into a new width, a rescan, the view
@@ -155,12 +170,16 @@ async function renderGrid() {
   const sameList = shown === gridShown;
   gridShown = shown;
   const keep = gridScrollAnchor();
+  const clicked = gridClicked;
+  gridClicked = null;
   layoutGrid(items);
   gridInner.style.height = state.grid.totalH + 'px';
   if (!sameList) gridScroll.scrollTop = 0;
   else {
     gridScrollKeep(keep);
-    if (keep && keep.i === state.grid.anchor) gridScrollClear(keep.i);
+    const justClicked = clicked && keep && keep.i === state.grid.anchor && keep.path === clicked.path &&
+      Math.abs(keep.offset - clicked.offset) < 1 && state.grid.selection.size > 0;
+    if (justClicked) gridScrollClear(keep.i);
   }
   state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
@@ -262,6 +281,7 @@ function onCellClick(e, i) {
   }
   updateSelectionBar();
   if (!barWasUp && sel.has(it.path)) gridScrollClear(i);
+  gridNoteClicked(i);
   renderGridWindow(true);
 }
 
