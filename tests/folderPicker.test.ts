@@ -323,14 +323,19 @@ test('the picker\'s one button says what it does where it was opened — "Scan t
   await rt.openBrowse(null, () => {}, 'Offload to…', 'Offload to this folder');
   assert.equal(label(), 'Offload to this folder', 'a caller may name its own action');
 
-  // The real "Offload…" entry: its pick copies, verifies and trashes the originals.
+  // The real "Offload…" entry: its pick copies, verifies and trashes the originals. Its drive list is
+  // offloadDrives', lifted with it (review F3.3): left out, the call threw, the flow's own catch read
+  // that as "can't list the drives", and the api stand-in was never asked.
   const opened: unknown[][] = [];
+  const asked: string[] = [];
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const flow = new Function('state', 'toast', 'hideCtxMenu', 'openBrowse', 'api', 'tmIsInside', 'offloadPicked',
-    `'use strict'; ${braced('async function startOffloadFlow(')} return startOffloadFlow;`,
+    `'use strict'; ${braced('async function offloadDrives(')}\n${braced('async function startOffloadFlow(')} return startOffloadFlow;`,
   )({ scanId: 's1', root: { path: '/home/u' } }, () => {}, () => {}, (...a: unknown[]) => { opened.push(a); },
-    async () => ({ volumes: [] }), () => false, () => {}) as (paths: string[]) => Promise<void>;
+    async (url: string) => { asked.push(url); return { volumes: [] }; }, () => false, () => {}) as (paths: string[]) => Promise<void>;
   await flow(['/home/u/a.mov']);
+  assert.deepEqual(asked, ['/api/volumes', '/api/volumes?from=%2Fhome%2Fu'], 'control: the flow ran — its drives were asked for, then judged from the scanned folder');
+  assert.match((opened[0]?.[4] as { hint?: string } | undefined)?.hint ?? '', /No other drive is connected/, 'control: and the picker says what that list said, not that the drives could not be listed');
   assert.equal(opened.length, 1, 'control: Offload… opens the picker');
   assert.equal(opened[0][3], 'Offload to this folder', 'and its button names the offload, not a scan');
 
