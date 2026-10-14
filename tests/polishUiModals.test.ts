@@ -1229,3 +1229,129 @@ test('⌘R is always claimed — during a first scan it must not reload the page
   assert.ok(gate === -1 || prevent < gate, 'unconditionally — before any check on state.root');
   assert.match(branch, /state\.scanning/, 'a running scan is named rather than silently ignored');
 });
+
+/* ══════════════ QA fourth pass E04 — cancelling "Empty the Trash?" goes back to the Trash sheet ══════════════ */
+
+/**
+ * The page over its own markup with the focus net observing class flips as
+ * a browser delivers them: each flip on a backdrop is a record, and a batch
+ * is handed to the net's own observer callback at `flush()` — the microtask
+ * checkpoint — after the browser has dropped focus off anything that
+ * stopped painting. Focus moves report themselves (focusin), so the net's
+ * trail and its pull into the top sheet both run.
+ */
+function observedPage() {
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const focusin: Array<(e: { target: FEl }) => void> = [];
+  (doc as unknown as { addEventListener: (type: string, fn: (e: { target: FEl }) => void) => void }).addEventListener =
+    (type, fn) => { if (type === 'focusin') focusin.push(fn); };
+  let at: FEl | null = doc.activeElement;
+  Object.defineProperty(doc, 'activeElement', {
+    get: () => at,
+    set: (el: FEl | null) => { const moved = el !== at; at = el; if (moved && el && el !== doc.body) for (const fn of focusin) fn({ target: el }); },
+  });
+  const records: Array<{ target: FEl; oldValue: string }> = [];
+  let deliver: ((batch: unknown[]) => void) | null = null;
+  class Observer {
+    constructor(cb: (batch: unknown[]) => void) { deliver = cb; }
+    observe(el: FEl) {
+      for (const verb of ['add', 'remove', 'toggle'] as const) {
+        const plain = el.classList[verb].bind(el.classList) as (c: string, on?: boolean) => unknown;
+        (el.classList as unknown as Record<string, unknown>)[verb] = (c: string, on?: boolean) => {
+          const oldValue = [...el.cls].join(' ');
+          const out = plain(c, on);
+          if ([...el.cls].join(' ') !== oldValue) { records.push({ target: el, oldValue }); el.shown = el.cls.has('open'); }
+          return out;
+        };
+      }
+    }
+    disconnect() {}
+  }
+  const src = slice('/* ── Focus discipline for every dialog ── */', '/* ── end focus discipline ── */');
+  const api = new Function('document', '$', 'MutationObserver', 'toastsRetire', 'getComputedStyle',
+    `'use strict'; ${src}
+     return { topModal, noteFocus };`,
+  )(doc, (id: string) => doc.getElementById(id), Observer, () => {}, (el: FEl) => ({ visibility: computedVisibility(el) })) as { topModal: () => FEl | null };
+  assert.ok(deliver, 'the net observes the backdrops');
+  const flush = () => {
+    if (at && at !== doc.body && !at.getClientRects().length) at = doc.body; // it stopped painting
+    const batch = records.splice(0);
+    if (batch.length) deliver!(batch);
+  };
+  return { doc, api, flush };
+}
+
+/** The Trash sheet, its Empty button, the shared confirmation and closeModal — the page's own — on `observedPage`. */
+function trashSheetHarness() {
+  const { doc, api, flush } = observedPage();
+  const $ = (id: string) => doc.getElementById(id)!;
+  const listeners = new Map<string, Array<() => unknown>>();
+  for (const id of ['emptyTrashBtn', 'confirmOk']) $(id).addEventListener = ((type: string, fn: () => unknown) => {
+    assert.equal(type, 'click'); listeners.set(id, [...(listeners.get(id) || []), fn]);
+  }) as FEl['addEventListener'];
+  const calls: string[] = [];
+  const state = { trash: { itemCount: 3, totalBytes: 3_200_000_000, complete: true, items: [{ name: 'a.mov', size: 1 }, { name: 'b.mov', size: 2 }, { name: 'c.dmg', size: 3 }] } };
+  const page = new Function('$', 'document', 'state', 'formatBytes', 'formatCount', 'escapeHtml', 'icon', 'chipFor', 'toast', 'api', 'loadTrash', 'topModal',
+    `'use strict';
+     let onConfirmTrash = null; let openHandleSeq = 0; let confirmIgnoreOpenHandles = false; let confirmPaths = [];
+     ${braced('function openTrashModal(')}
+     ${braced('function closeModal(')}
+     ${braced('function confirmFooterReset(')}
+     ${braced('function setConfirmButton(')}
+     ${braced('async function emptyTrashAction(')}
+     ${slice("$('emptyTrashBtn').addEventListener('click', () => {", 'async function emptyTrashAction(')}
+     ${slice("$('confirmOk').addEventListener('click', async () => {", '/**\n * The API sanitizes')}
+     return { openTrashModal, closeModal };`,
+  )($, doc, state, (n: number) => `${n} B`, String, (s: unknown) => String(s), () => '', () => '', (m: string) => calls.push(`toast ${m}`),
+    async (url: string) => { calls.push(`api ${url}`); return { emptied: true, freedBytes: 3_200_000_000 }; }, () => calls.push('loadTrash'), api.topModal,
+  ) as { openTrashModal: () => void; closeModal: (id: string) => void };
+  const press = async (id: string) => { for (const fn of listeners.get(id) || []) await fn(); flush(); };
+  // The Dashboard's Trash row, on screen.
+  const fact = $('trashFact');
+  for (let p: FEl | null = fact; p; p = p.parent) p.hidden = false;
+  return { doc, $, api, flush, press, calls, fact, ...page };
+}
+
+test('cancelling "Empty the Trash?" — Cancel or Escape — goes back to the Trash sheet, with focus on "Empty Trash…" (QA fourth pass E04)', async () => {
+  // QA fourth pass E04: keyboard only, Dashboard › Trash › Empty Trash… ›
+  // Escape (or Cancel): the confirmation went, and so had the Trash sheet —
+  // the Empty button closed it before asking — and focus fell to <body>.
+  const h = trashSheetHarness();
+  h.fact.focus();
+  h.openTrashModal(); h.flush(); // Enter on the Trash row
+  const trash = h.$('trashModal'), confirm = h.$('confirmModal'), empty = h.$('emptyTrashBtn');
+  assert.ok(trash.classList.contains('open') && trash.contains(h.doc.activeElement), 'control: the Trash sheet is open and holds focus');
+  assert.equal(empty.disabled, false, 'control: there is something to empty');
+  for (const way of ['Cancel', 'Escape']) {
+    empty.focus(); // Tab to it
+    await h.press('emptyTrashBtn'); // and Enter
+    assert.ok(confirm.classList.contains('open'), `${way}: "Empty the Trash?" is asked`);
+    assert.equal(h.api.topModal(), confirm, `${way}: over the Trash sheet`);
+    assert.equal(h.doc.activeElement, h.$('confirmCancel'), `${way}: the question opens on Cancel`);
+    assert.ok(trash.classList.contains('open'), `${way}: the Trash sheet stays open under the question`);
+    if (way === 'Cancel') h.closeModal('confirmModal'); // [data-close] runs closeModal
+    else h.closeModal(h.api.topModal()!.id); // the page's Escape closes the top sheet through closeModal
+    h.flush();
+    assert.equal(confirm.classList.contains('open'), false, `${way}: the question is gone`);
+    assert.ok(trash.classList.contains('open'), `${way}: the Trash sheet is back`);
+    assert.equal(trash.inert, false, `${way}: and live`);
+    assert.equal(h.doc.activeElement, empty, `${way}: focus is on "Empty Trash…", never <body> (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+  }
+  assert.deepEqual(h.calls, [], 'nothing was emptied');
+});
+
+test('"Empty the Trash" confirmed empties it and closes both sheets, giving focus back to the Trash row (QA fourth pass E04)', async () => {
+  const h = trashSheetHarness();
+  h.fact.focus();
+  h.openTrashModal(); h.flush();
+  const trash = h.$('trashModal'), confirm = h.$('confirmModal');
+  h.$('emptyTrashBtn').focus();
+  await h.press('emptyTrashBtn');
+  assert.ok(confirm.classList.contains('open') && trash.classList.contains('open'), 'control: asked, over the Trash sheet');
+  await h.press('confirmOk');
+  assert.ok(h.calls.includes('api /api/trash/empty'), `the Trash was emptied: ${h.calls.join(', ')}`);
+  assert.equal(confirm.classList.contains('open'), false, 'the question closed');
+  assert.equal(trash.classList.contains('open'), false, 'and the Trash sheet, whose list is gone with the Trash');
+  assert.equal(h.doc.activeElement, h.fact, `focus is back on the Trash row the sheet was opened from (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+});

@@ -131,11 +131,14 @@ async function refreshDiskFacts() {
 }
 subscribe(TOPIC.scan, (scanId) => { if (scanId) return refreshDiskFacts(); });
 
-/* Empty Trash — irreversible, so it goes through the standard confirm modal. */
+/* Empty Trash — irreversible, so it goes through the standard confirm modal,
+   asked OVER the Trash sheet: a "no" goes back to the sheet, focus on
+   "Empty Trash…". The sheet used to close before asking, so Cancel or Escape
+   left neither, and focus on <body> (QA fourth pass E04). A "yes" closes it
+   (emptyTrashAction): its list is what was just emptied. */
 $('emptyTrashBtn').addEventListener('click', () => {
   const t = state.trash;
   if (!t || (!t.itemCount && t.complete !== false)) return;
-  closeModal('trashModal');
   $('confirmTitle').innerHTML = icon('trash', 18) + 'Empty the Trash?';
   $('confirmText').innerHTML = t.complete === false
     // Never quote a figure as the amount being permanently deleted when the
@@ -148,6 +151,9 @@ $('emptyTrashBtn').addEventListener('click', () => {
   $('confirmModal').classList.add('open');
 });
 async function emptyTrashAction() {
+  // With the question, in one batch: focus goes back to where the Trash
+  // sheet was opened from (E04).
+  closeModal('trashModal');
   toast('Emptying Trash…');
   try {
     const r = await api('/api/trash/empty', {
