@@ -330,7 +330,8 @@ function showCtxMenu(x, y, node) {
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>` });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
-    ctxMenuFocusOpener(hideCtxMenu()); // before the act: a sheet it opens gives focus back here
+    const back = hideCtxMenu();
+    ctxMenuFocusOpener(back); // before the act: a sheet it opens gives focus back here
     if (act === 'open') openInOS(ctxTarget.path, true);
     if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
@@ -339,8 +340,10 @@ function showCtxMenu(x, y, node) {
     // §3.2: every score in the UI is one click from its components. The
     // treemap has a tooltip rather than a clickable row, so the right-click
     // menu is where a cell's breakdown opens. The path is captured now
-    // because ctxTarget is reassigned by the next right-click.
-    if (act === 'score') { const p = ctxTarget.path; ensureScores([p]).then(() => openReclaimWhy(p, null, { x, y })); }
+    // because ctxTarget is reassigned by the next right-click. The panel opens
+    // at the pointer, and gives focus back to what the menu was opened from
+    // (a Grid tile has no score badge to find again — QA fourth pass E05).
+    if (act === 'score') { const p = ctxTarget.path; ensureScores([p]).then(() => openReclaimWhy(p, null, { x, y }, back)); }
     if (act === 'offload') startOffloadFlow([ctxTarget.path]);
     if (act === 'budget') openBudgetDialog(ctxTarget);
     if (act === 'budget-remove') removeBudget(ctxTarget.path);
@@ -467,6 +470,52 @@ function ctxMenuOnScroll(e) {
 }
 document.addEventListener('click', (e) => { if (!$('ctxMenu').contains(e.target)) hideCtxMenu(); });
 document.addEventListener('scroll', ctxMenuOnScroll, true);
+
+/* ── The menu from the keyboard (QA fourth pass E05) ──
+   The ContextMenu key, or Shift+F10, on the focused item opens the menu a
+   right-click on it would. Every list's rows and the Grid's tiles carry
+   their own contextmenu listener, so the key is delivered as one, at the
+   item, and bubbles: a control inside a row (Largest Files' buttons) opens
+   its row's menu. Focus goes to the menu's first entry, and Escape, Tab and
+   every entry give it back (ctxMenuReturn). The map's canvas is one element
+   for every cell, and its listener hit-tests a point the keyboard has none
+   of: there the menu is the keyboard's selected cell's (tmCanvasKeyMenu).
+   A text field keeps the platform's own menu, a sheet holds the keyboard,
+   and a key that opened nothing is left to the platform. */
+/** Whether the ContextMenu key's keydown opened the menu: its keyup opens the platform's own on some systems. */
+let ctxMenuKeyOpened = false;
+function ctxMenuKeyOpens(e) {
+  return e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey);
+}
+function ctxMenuFromKey(e) {
+  if (!ctxMenuKeyOpens(e) || topModal()) return;
+  const el = document.activeElement;
+  if (!el || el === document.body || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || $('ctxMenu').contains(el)) return;
+  let opened;
+  if (el === tmCanvas) opened = tmCanvasKeyMenu();
+  else {
+    // At the item, a little in from its top-left corner, where the menu reads as its own.
+    const r = el.getBoundingClientRect();
+    opened = !el.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, button: 2,
+      clientX: r.left + Math.min(r.width / 2, 24), clientY: r.top + Math.min(r.height / 2, 24),
+    }));
+  }
+  if (!opened) return; // nothing here has a menu: the platform's key
+  e.preventDefault();
+  ctxMenuKeyOpened = e.key === 'ContextMenu';
+  // A crumb's menu is its budget sheet, which takes focus itself.
+  if (!ctxMenuIsOpen()) return;
+  const first = [...$('ctxMenu').querySelectorAll('button')].find((b) => !b.disabled);
+  if (first) first.focus({ preventScroll: true });
+}
+function ctxMenuKeyUp(e) {
+  if (e.key !== 'ContextMenu' || !ctxMenuKeyOpened) return;
+  ctxMenuKeyOpened = false;
+  e.preventDefault();
+}
+document.addEventListener('keydown', ctxMenuFromKey);
+document.addEventListener('keyup', ctxMenuKeyUp);
 
 async function openInOS(path, reveal) {
   try {

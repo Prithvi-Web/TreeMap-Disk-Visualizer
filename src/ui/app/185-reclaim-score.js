@@ -354,9 +354,11 @@ function rcRadarDrop() {
  *
  * Anchored to the element that opened it where there is one, and to a point
  * otherwise — the treemap's cells are canvas pixels, not elements, so the
- * right-click menu passes the coordinates it was opened at.
+ * right-click menu passes the coordinates it was opened at, and `returnTo`:
+ * what had focus when the menu opened, which focus goes back to on close —
+ * a Grid tile has no score badge to be found again by (QA fourth pass E05).
  */
-function openReclaimWhy(path, anchorEl, point) {
+function openReclaimWhy(path, anchorEl, point, returnTo = null) {
   const fact = scoreFor(path);
   const pop = $('rcPopover');
   if (!fact) {
@@ -367,7 +369,7 @@ function openReclaimWhy(path, anchorEl, point) {
     return;
   }
   rcPopoverPath = path;
-  rcPopoverOpener = anchorEl || null;
+  rcPopoverOpener = anchorEl || returnTo || null;
   rcPopoverOver = topModal();
   // Everything scrolls inside .rc-pop-scroll, never the panel, whose opaque
   // fill and ring would scroll away with the rows (POL item 3). The close
@@ -448,6 +450,10 @@ function rcFocusBack(opener, path) {
   // identical one. Holding the reference silently dropped focus to <body>.
   // The path is stable across those repaints, so the badge is re-found.
   if (opener && document.contains(opener)) { opener.focus(); return; }
+  // A Grid tile the menu was opened from, rebuilt since: the tile now
+  // standing for that file takes it (QA fourth pass E05).
+  const standIn = opener ? gridFocusStandIn(opener) : null;
+  if (standIn) { standIn.focus(); return; }
   if (!path) return;
   const escaped = window.CSS && CSS.escape ? CSS.escape(path) : path.replace(/["\\]/g, '\\$&');
   const replacement = document.querySelector(`[data-rc-why="${escaped}"]`);

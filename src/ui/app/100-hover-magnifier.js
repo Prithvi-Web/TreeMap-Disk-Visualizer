@@ -252,28 +252,42 @@ function kbSiblings() {
   if (!root || !root.children) return [];
   return [...root.children].filter((c) => c.size > 0).sort((a, b) => b.size - a.size);
 }
-function kbShowTip(node) {
+/** Where the keyboard's selected cell sits on screen — the point its card, and its menu, open at — or null when it is not drawn. */
+function kbCellPoint(node) {
   const rect = tmCanvas.getBoundingClientRect();
-  let cx, cy;
   if (isSun()) {
     const arc = state.treemap.arcs.find((a) => a.n.path === node.path);
-    if (!arc) { hideTooltip(); return; }
+    if (!arc) return null;
     const mid = (arc.a0 + arc.a1) / 2, rMid = (arc.rInner + arc.rOuter) / 2;
-    cx = rect.left + arc.cx + Math.cos(mid) * rMid;
-    cy = rect.top + arc.cy + Math.sin(mid) * rMid;
-  } else if (isCells()) {
-    const cell = state.treemap.cells.find((c) => c.n.path === node.path);
-    if (!cell) { hideTooltip(); return; }
-    cx = rect.left + cell.cx;
-    cy = rect.top + cell.cy;
-  } else {
-    const pr = state.treemap.pxRects.find((p) => p.n.path === node.path);
-    if (!pr) { hideTooltip(); return; }
-    cx = rect.left + pr.x + pr.w / 2;
-    cy = rect.top + pr.y + Math.min(pr.h / 2, 38);
+    return { x: rect.left + arc.cx + Math.cos(mid) * rMid, y: rect.top + arc.cy + Math.sin(mid) * rMid };
   }
+  if (isCells()) {
+    const cell = state.treemap.cells.find((c) => c.n.path === node.path);
+    return cell ? { x: rect.left + cell.cx, y: rect.top + cell.cy } : null;
+  }
+  const pr = state.treemap.pxRects.find((p) => p.n.path === node.path);
+  return pr ? { x: rect.left + pr.x + pr.w / 2, y: rect.top + pr.y + Math.min(pr.h / 2, 38) } : null;
+}
+function kbShowTip(node) {
+  const p = kbCellPoint(node);
+  if (!p) { hideTooltip(); return; }
   const pct = state.treemap.rootSize > 0 ? (node.size / state.treemap.rootSize) * 100 : 0;
-  showTooltip(cx, cy, node, pct);
+  showTooltip(p.x, p.y, node, pct);
+}
+/**
+ * The ContextMenu key or Shift+F10 on the map (QA fourth pass E05): the menu
+ * of the cell the keyboard selected (j/k), at that cell — what a right-click
+ * on it opens, refused where a right-click is (a map of history, a preview)
+ * and the Trash sheet for the Trash's cell. Answers whether anything opened.
+ */
+function tmCanvasKeyMenu() {
+  const n = state.treemap.kbSel;
+  if (!n || state.treemap.history.active || tmPreview.on) return false;
+  const p = kbCellPoint(n);
+  if (!p) return false;
+  if (n.isTrash) { openTrashModal(); return true; }
+  showCtxMenu(p.x, p.y, n);
+  return true;
 }
 /**
  * The keyboard selection's card belongs to the map (QA D63).

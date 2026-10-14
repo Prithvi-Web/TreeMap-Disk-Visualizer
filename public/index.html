@@ -5152,6 +5152,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div><kbd data-key="mod">⌘</kbd><kbd>B</kbd></div><div>Collapse or expand the navigation</div>
         <div><kbd>/</kbd></div><div>Search everything indexed (in Treemap and Grid, <kbd>/</kbd> focuses that view's own filter instead)</div>
         <div><kbd data-key="mod">⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
+        <div><kbd>Shift</kbd><kbd>F10</kbd></div><div>Open the focused item&rsquo;s menu, as a right-click does (or the Menu key)</div>
         <div><kbd>?</kbd></div><div>Show this help</div>
       </div>
     </div>
@@ -22199,28 +22200,42 @@ function kbSiblings() {
   if (!root || !root.children) return [];
   return [...root.children].filter((c) => c.size > 0).sort((a, b) => b.size - a.size);
 }
-function kbShowTip(node) {
+/** Where the keyboard's selected cell sits on screen — the point its card, and its menu, open at — or null when it is not drawn. */
+function kbCellPoint(node) {
   const rect = tmCanvas.getBoundingClientRect();
-  let cx, cy;
   if (isSun()) {
     const arc = state.treemap.arcs.find((a) => a.n.path === node.path);
-    if (!arc) { hideTooltip(); return; }
+    if (!arc) return null;
     const mid = (arc.a0 + arc.a1) / 2, rMid = (arc.rInner + arc.rOuter) / 2;
-    cx = rect.left + arc.cx + Math.cos(mid) * rMid;
-    cy = rect.top + arc.cy + Math.sin(mid) * rMid;
-  } else if (isCells()) {
-    const cell = state.treemap.cells.find((c) => c.n.path === node.path);
-    if (!cell) { hideTooltip(); return; }
-    cx = rect.left + cell.cx;
-    cy = rect.top + cell.cy;
-  } else {
-    const pr = state.treemap.pxRects.find((p) => p.n.path === node.path);
-    if (!pr) { hideTooltip(); return; }
-    cx = rect.left + pr.x + pr.w / 2;
-    cy = rect.top + pr.y + Math.min(pr.h / 2, 38);
+    return { x: rect.left + arc.cx + Math.cos(mid) * rMid, y: rect.top + arc.cy + Math.sin(mid) * rMid };
   }
+  if (isCells()) {
+    const cell = state.treemap.cells.find((c) => c.n.path === node.path);
+    return cell ? { x: rect.left + cell.cx, y: rect.top + cell.cy } : null;
+  }
+  const pr = state.treemap.pxRects.find((p) => p.n.path === node.path);
+  return pr ? { x: rect.left + pr.x + pr.w / 2, y: rect.top + pr.y + Math.min(pr.h / 2, 38) } : null;
+}
+function kbShowTip(node) {
+  const p = kbCellPoint(node);
+  if (!p) { hideTooltip(); return; }
   const pct = state.treemap.rootSize > 0 ? (node.size / state.treemap.rootSize) * 100 : 0;
-  showTooltip(cx, cy, node, pct);
+  showTooltip(p.x, p.y, node, pct);
+}
+/**
+ * The ContextMenu key or Shift+F10 on the map (QA fourth pass E05): the menu
+ * of the cell the keyboard selected (j/k), at that cell — what a right-click
+ * on it opens, refused where a right-click is (a map of history, a preview)
+ * and the Trash sheet for the Trash's cell. Answers whether anything opened.
+ */
+function tmCanvasKeyMenu() {
+  const n = state.treemap.kbSel;
+  if (!n || state.treemap.history.active || tmPreview.on) return false;
+  const p = kbCellPoint(n);
+  if (!p) return false;
+  if (n.isTrash) { openTrashModal(); return true; }
+  showCtxMenu(p.x, p.y, n);
+  return true;
 }
 /**
  * The keyboard selection's card belongs to the map (QA D63).
@@ -24023,7 +24038,8 @@ function showCtxMenu(x, y, node) {
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>` });
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
-    ctxMenuFocusOpener(hideCtxMenu()); // before the act: a sheet it opens gives focus back here
+    const back = hideCtxMenu();
+    ctxMenuFocusOpener(back); // before the act: a sheet it opens gives focus back here
     if (act === 'open') openInOS(ctxTarget.path, true);
     if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
@@ -24032,8 +24048,10 @@ function showCtxMenu(x, y, node) {
     // §3.2: every score in the UI is one click from its components. The
     // treemap has a tooltip rather than a clickable row, so the right-click
     // menu is where a cell's breakdown opens. The path is captured now
-    // because ctxTarget is reassigned by the next right-click.
-    if (act === 'score') { const p = ctxTarget.path; ensureScores([p]).then(() => openReclaimWhy(p, null, { x, y })); }
+    // because ctxTarget is reassigned by the next right-click. The panel opens
+    // at the pointer, and gives focus back to what the menu was opened from
+    // (a Grid tile has no score badge to find again — QA fourth pass E05).
+    if (act === 'score') { const p = ctxTarget.path; ensureScores([p]).then(() => openReclaimWhy(p, null, { x, y }, back)); }
     if (act === 'offload') startOffloadFlow([ctxTarget.path]);
     if (act === 'budget') openBudgetDialog(ctxTarget);
     if (act === 'budget-remove') removeBudget(ctxTarget.path);
@@ -24160,6 +24178,52 @@ function ctxMenuOnScroll(e) {
 }
 document.addEventListener('click', (e) => { if (!$('ctxMenu').contains(e.target)) hideCtxMenu(); });
 document.addEventListener('scroll', ctxMenuOnScroll, true);
+
+/* ── The menu from the keyboard (QA fourth pass E05) ──
+   The ContextMenu key, or Shift+F10, on the focused item opens the menu a
+   right-click on it would. Every list's rows and the Grid's tiles carry
+   their own contextmenu listener, so the key is delivered as one, at the
+   item, and bubbles: a control inside a row (Largest Files' buttons) opens
+   its row's menu. Focus goes to the menu's first entry, and Escape, Tab and
+   every entry give it back (ctxMenuReturn). The map's canvas is one element
+   for every cell, and its listener hit-tests a point the keyboard has none
+   of: there the menu is the keyboard's selected cell's (tmCanvasKeyMenu).
+   A text field keeps the platform's own menu, a sheet holds the keyboard,
+   and a key that opened nothing is left to the platform. */
+/** Whether the ContextMenu key's keydown opened the menu: its keyup opens the platform's own on some systems. */
+let ctxMenuKeyOpened = false;
+function ctxMenuKeyOpens(e) {
+  return e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey);
+}
+function ctxMenuFromKey(e) {
+  if (!ctxMenuKeyOpens(e) || topModal()) return;
+  const el = document.activeElement;
+  if (!el || el === document.body || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || $('ctxMenu').contains(el)) return;
+  let opened;
+  if (el === tmCanvas) opened = tmCanvasKeyMenu();
+  else {
+    // At the item, a little in from its top-left corner, where the menu reads as its own.
+    const r = el.getBoundingClientRect();
+    opened = !el.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, button: 2,
+      clientX: r.left + Math.min(r.width / 2, 24), clientY: r.top + Math.min(r.height / 2, 24),
+    }));
+  }
+  if (!opened) return; // nothing here has a menu: the platform's key
+  e.preventDefault();
+  ctxMenuKeyOpened = e.key === 'ContextMenu';
+  // A crumb's menu is its budget sheet, which takes focus itself.
+  if (!ctxMenuIsOpen()) return;
+  const first = [...$('ctxMenu').querySelectorAll('button')].find((b) => !b.disabled);
+  if (first) first.focus({ preventScroll: true });
+}
+function ctxMenuKeyUp(e) {
+  if (e.key !== 'ContextMenu' || !ctxMenuKeyOpened) return;
+  ctxMenuKeyOpened = false;
+  e.preventDefault();
+}
+document.addEventListener('keydown', ctxMenuFromKey);
+document.addEventListener('keyup', ctxMenuKeyUp);
 
 async function openInOS(path, reveal) {
   try {
@@ -31123,9 +31187,11 @@ function rcRadarDrop() {
  *
  * Anchored to the element that opened it where there is one, and to a point
  * otherwise — the treemap's cells are canvas pixels, not elements, so the
- * right-click menu passes the coordinates it was opened at.
+ * right-click menu passes the coordinates it was opened at, and `returnTo`:
+ * what had focus when the menu opened, which focus goes back to on close —
+ * a Grid tile has no score badge to be found again by (QA fourth pass E05).
  */
-function openReclaimWhy(path, anchorEl, point) {
+function openReclaimWhy(path, anchorEl, point, returnTo = null) {
   const fact = scoreFor(path);
   const pop = $('rcPopover');
   if (!fact) {
@@ -31136,7 +31202,7 @@ function openReclaimWhy(path, anchorEl, point) {
     return;
   }
   rcPopoverPath = path;
-  rcPopoverOpener = anchorEl || null;
+  rcPopoverOpener = anchorEl || returnTo || null;
   rcPopoverOver = topModal();
   // Everything scrolls inside .rc-pop-scroll, never the panel, whose opaque
   // fill and ring would scroll away with the rows (POL item 3). The close
@@ -31217,6 +31283,10 @@ function rcFocusBack(opener, path) {
   // identical one. Holding the reference silently dropped focus to <body>.
   // The path is stable across those repaints, so the badge is re-found.
   if (opener && document.contains(opener)) { opener.focus(); return; }
+  // A Grid tile the menu was opened from, rebuilt since: the tile now
+  // standing for that file takes it (QA fourth pass E05).
+  const standIn = opener ? gridFocusStandIn(opener) : null;
+  if (standIn) { standIn.focus(); return; }
   if (!path) return;
   const escaped = window.CSS && CSS.escape ? CSS.escape(path) : path.replace(/["\\]/g, '\\$&');
   const replacement = document.querySelector(`[data-rc-why="${escaped}"]`);

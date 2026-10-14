@@ -793,7 +793,7 @@ test('a sheet that opens in the same batch as another closes still takes focus f
  * and the panel's innerHTML is modelled: cleared, its close button is gone,
  * and focus on it falls to <body>.
  */
-function breakdownHarness() {
+function breakdownHarness(standIn: (el: FEl) => FEl | null = () => null) {
   const doc = makeDoc();
   pageFromMarkup(doc);
   const focusin: Array<(e: { target: FEl }) => void> = [];
@@ -826,13 +826,13 @@ function breakdownHarness() {
   };
   const fact = { score: 82, confidence: 'high', components: [], missing: [] };
   const panel = new Function('document', '$', 'window', 'CSS', 'scoreFor', 'scoreKnown', 'toast', 'escapeHtml', 'reclaimColor', 'reclaimInk', 'icon',
-    'reclaimWhyHtml', 'reclaimRadarAxes', 'RC_AXIS_ORDER', 'FxCharts', 'ctxTarget', 'topModal', 'inModalOverlay', 'modalFocusInto',
+    'reclaimWhyHtml', 'reclaimRadarAxes', 'RC_AXIS_ORDER', 'FxCharts', 'ctxTarget', 'topModal', 'inModalOverlay', 'modalFocusInto', 'gridFocusStandIn',
     `'use strict'; ${slice('/* ── the popover ── */', '/* ── sorting ──')}\nreturn { openReclaimWhy, closeReclaimWhy };`,
   )(document, (id: string) => doc.getElementById(id), { innerWidth: 1280, innerHeight: 800 }, { escape: (s: string) => s },
     // reclaimInk is the badge's readable ink (B21): a colour, stood in for as reclaimColor is.
     () => fact, () => true, () => {}, (s: string) => s, () => '#3a3', () => '#3a3', () => '', () => '', () => [], [], { radar: () => ({ destroy() {} }) }, null,
-    api.topModal, api.inModalOverlay, api.modalFocusInto,
-  ) as { openReclaimWhy: (path: string, anchor: FEl) => void; closeReclaimWhy: () => void };
+    api.topModal, api.inModalOverlay, api.modalFocusInto, standIn,
+  ) as { openReclaimWhy: (path: string, anchor: FEl | null, point?: unknown, returnTo?: FEl | null) => void; closeReclaimWhy: () => void };
   const branch = slice('const openModal = topModal();', '// Focus goes back to whatever opened the menu');
   const sheetEscape = new Function('topModal', 'closeModal', 'cmdkClose', `'use strict'; return () => { ${branch} };`)(
     api.topModal, (id: string) => setOpen(api, doc.getElementById(id)!, false), () => {},
@@ -1354,4 +1354,279 @@ test('"Empty the Trash" confirmed empties it and closes both sheets, giving focu
   assert.equal(confirm.classList.contains('open'), false, 'the question closed');
   assert.equal(trash.classList.contains('open'), false, 'and the Trash sheet, whose list is gone with the Trash');
   assert.equal(h.doc.activeElement, h.fact, `focus is back on the Trash row the sheet was opened from (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+});
+
+/* ══════════════ QA fourth pass E05 — the right-click menu from the keyboard, and the breakdown it opens gives focus back ══════════════ */
+
+/** The right-click menu's entry listener out of the built page, as a press of entry `act` runs it, its menu opened with focus on `back`. */
+function menuEntry(act: string, deps: { path: string; back: FEl | null; openReclaimWhy: (...a: never[]) => void }): () => void {
+  const head = "menu.querySelectorAll('button').forEach(b => b.addEventListener('click', ";
+  const at = INDEX.indexOf(`${head}() => {\n    const act = b.dataset.act;`);
+  assert.notEqual(at, -1, 'the right-click menu\'s entry listener is in the page');
+  const start = at + head.length;
+  let depth = 0, end = -1;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const noop = () => {};
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('b', 'ctxTarget', 'x', 'y', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ensureScores', 'openReclaimWhy',
+    'openInOS', 'openPreview', 'copyPath', 'openTerminal', 'cartToggle', 'startOffloadFlow', 'openBudgetDialog', 'removeBudget', 'openNoteDialog', 'confirmTrash',
+    `'use strict'; return (${INDEX.slice(start, end)});`)(
+    { dataset: { act } }, { path: deps.path }, 300, 200, () => deps.back, (el: FEl | null) => { if (el) el.focus(); }, async () => {}, deps.openReclaimWhy,
+    noop, noop, noop, noop, noop, noop, noop, noop, noop, noop) as () => void;
+}
+
+test('"Why this reclaim score?" from a Grid tile\'s menu gives focus back to that tile on Escape — or to the tile now standing for its file (QA fourth pass E05)', async () => {
+  // QA fourth pass E05: the tile had focus, its right-click menu's "Why this
+  // reclaim score?" opened the breakdown, and Escape left focus on <body>.
+  // The menu opens it at the pointer, with no anchor, and a Grid tile has no
+  // [data-rc-why] badge for the breakdown to find again.
+  const path = '/Users/me/Mail/Mailbox 23.mbox';
+  let rebuilt: FEl | null = null;
+  let tile: FEl | null = null;
+  const h = breakdownHarness((el) => (el === tile ? rebuilt : null)); // the page's gridFocusStandIn: the tile now standing for that file
+  const grid = append(h.doc.querySelector('main')!, mkOf(h.doc)('div', 'gridInner'));
+  tile = append(grid, mkOf(h.doc)('div', '', ['gcell'], { role: 'button', tabindex: '0' }));
+  for (const round of ['the tile', 'the rebuilt tile']) {
+    tile.focus();
+    assert.equal(h.doc.activeElement, tile, `control (${round}): the tile has focus as its menu opens`);
+    menuEntry('score', { path, back: tile, openReclaimWhy: h.openReclaimWhy as (...a: never[]) => void })();
+    for (let i = 0; i < 5; i++) await Promise.resolve(); // the score is in hand: the panel opens at the next checkpoint
+    assert.equal(h.pop.hidden, false, `${round}: the breakdown opened`);
+    assert.equal(h.doc.activeElement, h.doc.getElementById('rcPopClose'), `${round}: and holds focus`);
+    if (round === 'the rebuilt tile') {
+      // The Grid rebuilds its tiles while the breakdown is up: the one the menu came from is gone.
+      grid.children.splice(grid.children.indexOf(tile), 1);
+      tile.parent = null; tile.isConnected = false;
+      rebuilt = append(grid, mkOf(h.doc)('div', '', ['gcell'], { role: 'button', tabindex: '0' }));
+    }
+    h.escape();
+    assert.equal(h.pop.hidden, true, `${round}: Escape closed it`);
+    const want: FEl | null = round === 'the tile' ? tile : rebuilt;
+    assert.equal(h.doc.activeElement, want, `${round}: focus is on ${round}, not <body> (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+  }
+});
+
+type KeyEv = { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean; defaultPrevented: boolean; preventDefault(): void };
+const keyOf = (key: string, mods: Partial<Pick<KeyEv, 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>> = {}): KeyEv => {
+  const e: KeyEv = { key, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, ...mods, defaultPrevented: false, preventDefault() { e.defaultPrevented = true; } };
+  return e;
+};
+
+/**
+ * The keyboard's way into the right-click menu, out of the built page — its
+ * key listeners, the map's selected-cell menu and the menu's own show and
+ * close — over the page's markup. Every element answers contextmenu events
+ * as a browser dispatches them: at it, then up its parents. `showCtxMenu`
+ * opens the page's menu for a node, as the page's does, with two entries.
+ */
+function keyMenuHarness() {
+  const doc = makeDoc();
+  pageFromMarkup(doc);
+  const mk = mkOf(doc);
+  const $ = (id: string) => doc.getElementById(id)!;
+  const listeners = new Map<FEl, Array<(e: unknown) => void>>();
+  const rects = new Map<FEl, { left: number; top: number; width: number; height: number }>();
+  const dom = (el: FEl, rect = { left: 300, top: 200, width: 160, height: 160 }) => {
+    rects.set(el, rect);
+    Object.assign(el, {
+      tagName: el.tag.toUpperCase(), // as a browser names an element
+      addEventListener: (type: string, fn: (e: unknown) => void) => { if (type === 'contextmenu') listeners.set(el, [...(listeners.get(el) || []), fn]); },
+      getBoundingClientRect: () => { const r = rects.get(el)!; return { ...r, right: r.left + r.width, bottom: r.top + r.height }; },
+      dispatchEvent: (ev: { type: string; bubbles: boolean; defaultPrevented: boolean; target?: FEl }) => {
+        ev.target = el;
+        for (let n: FEl | null = el; n; n = ev.bubbles ? n.parent : null) for (const fn of (ev.type === 'contextmenu' && listeners.get(n)) || []) fn(ev);
+        return !ev.defaultPrevented;
+      },
+    });
+    return el;
+  };
+  class FakeMouseEvent {
+    type: string; clientX: number; clientY: number; cancelable: boolean; bubbles: boolean; defaultPrevented = false;
+    constructor(type: string, init: { clientX: number; clientY: number; cancelable?: boolean; bubbles?: boolean }) {
+      this.type = type; this.clientX = init.clientX; this.clientY = init.clientY; this.cancelable = !!init.cancelable; this.bubbles = !!init.bubbles;
+    }
+    preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+  }
+  const menu = $('ctxMenu');
+  menu.style.display = 'none';
+  const shown: Array<{ x: number; y: number; node: { path: string } }> = [];
+  const trashSheets: number[] = [];
+  const sheet: { up: FEl | null } = { up: null };
+  const canvas = dom($('treemapCanvas'), { left: 280, top: 300, width: 700, height: 400 });
+  for (let p: FEl | null = canvas; p; p = p.parent) p.hidden = false; // the Treemap view is on screen
+  const state = { view: 'treemap', treemap: { kbSel: null as unknown, pxRects: [] as unknown[], history: { active: false }, arcs: [], cells: [] } };
+  const tmPreview = { on: false };
+  const document = { get activeElement() { return doc.activeElement; }, body: doc.body };
+  type Page = { ctxMenuFromKey(e: KeyEv): void; ctxMenuKeyUp(e: KeyEv): void; hideCtxMenu(): FEl | null; ctxMenuFocusOpener(el: FEl | null): void;
+    ctxMenuShow(menu: FEl, o: { label: string; html: string; x: number; y: number }): void };
+  const decl = (anchor: string) => { const at = INDEX.indexOf(anchor); assert.notEqual(at, -1, `"${anchor}" is in the page`); return INDEX.slice(at, INDEX.indexOf(';', at) + 1); };
+  let page: Page;
+  const showCtxMenu = (x: number, y: number, node: { path: string }) => {
+    shown.push({ x, y, node });
+    page.ctxMenuShow(menu, { label: `Actions for ${node.path}`, html: '', x, y });
+    menu.children.splice(0);
+    for (const act of ['open', 'copy']) append(menu, mk('button', '', [], { 'data-act': act }));
+  };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  page = new Function('document', '$', 'window', 'MouseEvent', 'topModal', 'tmCanvas', 'state', 'tmPreview', 'isSun', 'isCells', 'showCtxMenu', 'openTrashModal',
+    `'use strict';
+     ${decl('let ctxMenuOpener = ')} ${decl('let ctxMenuReturn = ')} ${decl('const CTX_MENU_EDGE = ')} ${decl('let ctxMenuKeyOpened = ')}
+     ${['ctxMenuShow', 'hideCtxMenu', 'ctxMenuFocusOpener', 'ctxMenuIsOpen', 'ctxMenuKeyOpens', 'ctxMenuFromKey', 'ctxMenuKeyUp', 'kbCellPoint', 'tmCanvasKeyMenu']
+       .map((n) => braced(`function ${n}(`)).join('\n')}
+     return { ctxMenuFromKey, ctxMenuKeyUp, hideCtxMenu, ctxMenuFocusOpener, ctxMenuShow };`,
+  )(document, $, { innerWidth: 1440, innerHeight: 900 }, FakeMouseEvent, () => sheet.up, canvas, state, tmPreview, () => false, () => false, showCtxMenu,
+    () => { trashSheets.push(1); }) as Page;
+  const main = doc.querySelector('main')!;
+  /** A contextmenu listener on `el` that opens `node`'s menu where the event says, as each view's own does. */
+  const onMenu = (el: FEl, node: { path: string }) => listeners.set(el, [...(listeners.get(el) || []),
+    (e: unknown) => { const ev = e as { preventDefault(): void; clientX: number; clientY: number }; ev.preventDefault(); showCtxMenu(ev.clientX, ev.clientY, node); }]);
+  return { doc, $, mk, main, dom, listeners, page, shown, trashSheets, sheet, canvas, state, tmPreview, menu, showCtxMenu, onMenu };
+}
+
+test('the ContextMenu key and Shift+F10 open the focused item\'s right-click menu, at the item, with focus on its first entry — and Escape gives focus back (QA fourth pass E05)', () => {
+  // QA fourth pass E05: there was no keyboard way to the right-click menu at
+  // all — no ContextMenu key, no Shift+F10 — in any view that has one.
+  const h = keyMenuHarness();
+  // A Grid tile: a focusable item with a contextmenu listener of its own, as gridCell puts one on every tile.
+  assert.match(braced('function gridCell('), /cell\.tabIndex = 0;[\s\S]*cell\.addEventListener\('contextmenu', \(e\) => \{ e\.preventDefault\(\); showCtxMenu\(e\.clientX, e\.clientY, it\); \}\);/,
+    'control: a Grid tile is a Tab stop that opens the menu for its file on contextmenu');
+  const tileNode = { path: '/Users/me/Mail/Mailbox 23.mbox' };
+  const tile = h.dom(append(h.main, h.mk('div', '', ['gcell'], { role: 'button', tabindex: '0' })), { left: 420, top: 260, width: 150, height: 150 });
+  h.onMenu(tile, tileNode);
+  for (const [name, ev] of [['ContextMenu', keyOf('ContextMenu')], ['Shift+F10', keyOf('F10', { shiftKey: true })]] as const) {
+    tile.focus();
+    assert.equal(h.doc.activeElement, tile, `control (${name}): the tile has focus`);
+    h.page.ctxMenuFromKey(ev);
+    const last = h.shown[h.shown.length - 1];
+    assert.equal(last?.node, tileNode, `${name} on a Grid tile opens that tile's menu`);
+    assert.ok(last.x >= 420 && last.x <= 570 && last.y >= 260 && last.y <= 410, `${name}: at the tile (${last.x}, ${last.y})`);
+    assert.equal(h.menu.style.display, 'block', `${name}: the menu shows`);
+    assert.equal(h.doc.activeElement, h.menu.children[0], `${name}: focus is on its first entry`);
+    assert.equal(ev.defaultPrevented, true, `${name}: and the key is the page's, not the platform's`);
+    h.page.ctxMenuFocusOpener(h.page.hideCtxMenu()); // Escape, as the page's keydown handler closes the menu
+    assert.equal(h.doc.activeElement, tile, `${name}: Escape gives focus back to the tile`);
+  }
+  // The ContextMenu key's release opens the platform's own menu on some systems: not after it opened the page's.
+  tile.focus();
+  h.page.ctxMenuFromKey(keyOf('ContextMenu'));
+  const up = keyOf('ContextMenu');
+  h.page.ctxMenuKeyUp(up);
+  assert.equal(up.defaultPrevented, true, 'the ContextMenu key\'s release after it opened the menu is the page\'s too');
+  const again = keyOf('ContextMenu');
+  h.page.ctxMenuKeyUp(again);
+  assert.equal(again.defaultPrevented, false, 'and only that one');
+  h.page.hideCtxMenu();
+
+  // A row that is not itself a Tab stop opens from a control inside it — Largest Files' cart and reveal buttons — as a right-click on the button would.
+  const fileNode = { path: '/Users/me/Videos/holiday-4k.mov' };
+  const row = h.dom(append(h.main, h.mk('div', '', ['bigfile'])), { left: 300, top: 500, width: 600, height: 44 });
+  h.onMenu(row, fileNode);
+  const reveal = h.dom(append(row, h.mk('button', '', ['icon-btn'])), { left: 860, top: 507, width: 30, height: 30 });
+  reveal.focus();
+  assert.equal(h.doc.activeElement, reveal, 'control: the row\'s reveal button has focus');
+  h.page.ctxMenuFromKey(keyOf('F10', { shiftKey: true }));
+  assert.equal(h.shown[h.shown.length - 1].node, fileNode, 'Shift+F10 on a button inside a Largest Files row opens the row\'s menu');
+  assert.equal(h.doc.activeElement, h.menu.children[0], 'with focus on its first entry');
+  h.page.ctxMenuFocusOpener(h.page.hideCtxMenu());
+  assert.equal(h.doc.activeElement, reveal, 'and Escape gives focus back to the button');
+
+  // The map: one canvas for every cell. The menu is for the cell the keyboard selected (j/k), at that cell.
+  const cell = { path: '/Users/me/Archives', name: 'Archives', type: 'dir' };
+  h.state.treemap.kbSel = cell;
+  h.state.treemap.pxRects = [{ n: { path: '/Users/me/Other' }, x: 0, y: 0, w: 40, h: 40 }, { n: cell, x: 400, y: 20, w: 260, h: 180 }];
+  h.canvas.focus();
+  assert.equal(h.doc.activeElement, h.canvas, 'control: the map has focus');
+  h.page.ctxMenuFromKey(keyOf('ContextMenu'));
+  const onMap = h.shown[h.shown.length - 1];
+  assert.equal(onMap.node, cell, 'on the map, the menu is the selected cell\'s');
+  assert.ok(onMap.x >= 280 + 400 && onMap.x <= 280 + 660 && onMap.y >= 300 + 20 && onMap.y <= 300 + 200, `at that cell (${onMap.x}, ${onMap.y})`);
+  assert.equal(h.doc.activeElement, h.menu.children[0], 'with focus on its first entry');
+  h.page.ctxMenuFocusOpener(h.page.hideCtxMenu());
+  assert.equal(h.doc.activeElement, h.canvas, 'and Escape gives focus back to the map');
+  // Where a right-click on the map opens nothing, neither does the key — and the key is left alone.
+  const count = h.shown.length;
+  for (const [why, set, unset] of [
+    ['no cell is selected', () => { h.state.treemap.kbSel = null; }, () => { h.state.treemap.kbSel = cell; }],
+    ['the map shows history', () => { h.state.treemap.history.active = true; }, () => { h.state.treemap.history.active = false; }],
+    ['the map is a preview', () => { h.tmPreview.on = true; }, () => { h.tmPreview.on = false; }],
+  ] as const) {
+    set();
+    const e = keyOf('ContextMenu');
+    h.page.ctxMenuFromKey(e);
+    assert.equal(h.shown.length, count, `${why}: no menu`);
+    assert.equal(e.defaultPrevented, false, `${why}: the key is the platform's`);
+    unset();
+  }
+  // The selected cell is the Trash: a right-click opens the Trash sheet, and so does the key.
+  h.state.treemap.kbSel = { ...cell, isTrash: true };
+  h.state.treemap.pxRects = [{ n: h.state.treemap.kbSel, x: 400, y: 20, w: 260, h: 180 }];
+  h.page.ctxMenuFromKey(keyOf('F10', { shiftKey: true }));
+  assert.deepEqual(h.trashSheets, [1], 'the Trash cell opens the Trash sheet, as its right-click does');
+  // And the keyboard shortcuts sheet says so.
+  assert.match(slice('id="shortcutsModal"', '</div>\n</div>'), /<kbd>Shift<\/kbd><kbd>F10<\/kbd><\/div><div>Open the focused item&rsquo;s menu, as a right-click does \(or the Menu key\)<\/div>/,
+    'the Keyboard shortcuts sheet names the keys');
+});
+
+test('the menu keys open nothing where nothing would — a field\'s own menu, a sheet over the page, an item with no menu, another key (QA fourth pass E05)', () => {
+  const h = keyMenuHarness();
+  const node = { path: '/r/a' };
+  const tile = h.dom(append(h.main, h.mk('div', '', ['gcell'], { role: 'button', tabindex: '0' })));
+  h.onMenu(tile, node);
+  const cases: Array<[string, () => KeyEv]> = [
+    ['F10 alone', () => { tile.focus(); return keyOf('F10'); }],
+    ['Ctrl+Shift+F10', () => { tile.focus(); return keyOf('F10', { shiftKey: true, ctrlKey: true }); }],
+    ['Shift+F9', () => { tile.focus(); return keyOf('F9', { shiftKey: true }); }],
+    ['a sheet over the page', () => { tile.focus(); h.sheet.up = h.$('settingsModal'); return keyOf('ContextMenu'); }],
+    // Inside an item that has a menu, so the key would otherwise reach that item's listener.
+    ['a text field (its own Cut, Copy, Paste), even inside an item with a menu', () => {
+      h.sheet.up = null;
+      const box = h.dom(append(tile, h.mk('input', 'box', [], { type: 'text' })));
+      box.focus();
+      assert.equal(h.doc.activeElement, box, 'control: the field has focus');
+      return keyOf('ContextMenu');
+    }],
+    ['an item with no menu (the sidebar\'s Scan button)', () => { const b = h.dom(h.$('scanBtn')); b.focus(); return keyOf('F10', { shiftKey: true }); }],
+  ];
+  for (const [why, arrange] of cases) {
+    const e = arrange();
+    h.page.ctxMenuFromKey(e);
+    assert.equal(h.shown.length, 0, `${why}: no menu`);
+    assert.equal(e.defaultPrevented, false, `${why}: the key is left to the platform`);
+  }
+});
+
+test('every right-click menu in the page has a keyboard way in: its item is a Tab stop, holds one, or is the map\'s selected cell (QA fourth pass E05)', () => {
+  // The keys reach a contextmenu listener through the focused element and
+  // its parents, so a listener on something no focus can reach would have
+  // no keyboard way in. Each registration is named here with what makes it
+  // reachable; a new one fails until it is.
+  const code = INDEX.slice(INDEX.indexOf('<script>'));
+  const found = [...code.matchAll(/(\w+)\.addEventListener\('contextmenu'/g)].map((m) => {
+    const before = code.slice(0, m.index);
+    const fn = /(?:^|\n)(?:async )?function (\w+)\(/g;
+    let name = '(top level)';
+    for (const f of before.matchAll(fn)) name = f[1];
+    // A registration after the enclosing function's closing brace is top-level: the canvas's is.
+    return `${name}: ${m[1]}`;
+  });
+  const reachable: Record<string, RegExp> = {
+    'crumbsPaint: b': /<button data-p=/, // a crumb is a button (its menu is the folder's budget)
+    'renderBigFiles: row': /cartButtonHtml\(f\.path, f\.name, 14\)[\s\S]*<button class="icon-btn" data-reveal=/, // holds the cart and reveal buttons
+    'renderBigFolders: row': /<div class="bigfile" data-jump="[^"]*"[^>]*role="button" tabindex="0"/,
+    'renderApps: row': /<div class="bp-item" role="button" tabindex="0" data-jump=/,
+    'gridCell: cell': /cell\.tabIndex = 0;/,
+  };
+  const canvasAt = code.indexOf("tmCanvas.addEventListener('contextmenu'");
+  assert.notEqual(canvasAt, -1, 'the map\'s canvas has its right-click menu');
+  assert.match(INDEX, /<canvas id="treemapCanvas" tabindex="0"/, 'and the canvas is a Tab stop, whose key opens the selected cell\'s menu (tmCanvasKeyMenu)');
+  for (const where of found) {
+    if (where.endsWith(': tmCanvas')) continue;
+    assert.ok(where in reachable, `${where}: a right-click menu with no keyboard way named — say what makes it reachable`);
+    const fnName = where.split(':')[0];
+    assert.match(braced(`function ${fnName}(`), reachable[where], `${where}: reachable from the keyboard`);
+  }
+  assert.equal(found.length, Object.keys(reachable).length + 1, `every registration is accounted for: ${found.join(' | ')}`);
 });
