@@ -523,7 +523,7 @@ test('the stale-results note in search promises a rescan only where one refreshe
     const run = new Function('$', 'gsearch', 'escapeHtml', 'gsearchOpen', 'formatCount', 'indexAutoMaxEntries', 'chipFor', 'formatBytes',
       `'use strict'; ${braced('function renderGsearch(')} return renderGsearch;`)(
       $, { hits: [], selected: -1 }, escapeHtml, () => {}, formatCount, limit, () => '', (n: number) => `${n} B`) as (r: unknown) => void;
-    const hit = { name: 'a.zip', path: '/x/a.zip', parentPath: '/x', size: 1, type: 'file' };
+    const hit = { name: 'a.zip', path: '/x/a.zip', parentPath: '/x', size: 1, type: 'file', rootPath: '/' };
     run({ query: 'zip', hits: [hit], total: 1, countCapped: false, truncated: false, roots: ['/'], staleRoots: ['/'] });
     const notes = [...els.gsearchResults.innerHTML.matchAll(/<div class="gsearch-note">([^<]*)<\/div>/g)].map((m) => m[1]);
     assert.equal(notes.length, 1, 'one note under the hits: the stale one');
@@ -535,6 +535,41 @@ test('the stale-results note in search promises a rescan only where one refreshe
   assert.match(noteOf(M), /Some results come from an index that may be out of date\. Scanning a folder again refreshes its index, unless it holds more than TreeMap indexes on its own \(up to 1,000,000 items\)\./);
   assert.match(noteOf(null), /unless it holds more than TreeMap indexes on its own\./, 'before the server has said, no number is invented');
   assert.doesNotMatch(noteOf(null), /\d/);
+});
+
+test('the search panel lists a path once, and says results may be out of date only when a hit it shows came from a stale index (fifth browser pass F08)', () => {
+  // QA fifth pass F08: with corpus, corpus/Mail and corpus/Deep indexed, "Mailbox 03" showed two
+  // identical rows; and "Some results come from an index that may be out of date" showed for "holiday",
+  // whose only hit came from the live corpus index — it showed whenever any searched index was stale.
+  const panelFor = (result: Record<string, unknown>) => {
+    const { $, els } = makeDom();
+    const panel = $('gsearchResults') as El & { querySelectorAll?: () => never[] };
+    panel.querySelectorAll = () => [];
+    const gsearch = { hits: [] as unknown[], selected: -1 };
+    const run = new Function('$', 'gsearch', 'escapeHtml', 'gsearchOpen', 'formatCount', 'indexAutoMaxEntries', 'chipFor', 'formatBytes',
+      `'use strict'; ${braced('function renderGsearch(')} return renderGsearch;`)(
+      $, gsearch, escapeHtml, () => {}, formatCount, M, () => '', (n: number) => `${n} B`) as (r: unknown) => void;
+    run({ query: 'q', countCapped: false, truncated: false, roots: ['/c', '/c/Mail'], ...result });
+    const html = els.gsearchResults.innerHTML;
+    return {
+      rows: [...html.matchAll(/data-path="([^"]*)"><span class="nm">[^<]*<\/span><span class="sz">([^<]*)<\/span>/g)].map((m) => `${m[1]} ${m[2]}`),
+      stale: /may be out of date/.test(html),
+      hits: (gsearch.hits as Array<{ path: string }>).map((h) => h.path),
+    };
+  };
+  const box = (rootPath: string, size: number) => ({ name: 'Mailbox 03.mbox', path: '/c/Mail/Mailbox 03.mbox', parentPath: '/c/Mail', size, type: 'dir', rootPath });
+  const holiday = { name: 'holiday.mov', path: '/c/holiday.mov', parentPath: '/c', size: 9, type: 'file', rootPath: '/c' };
+  // The server answers each path once; the panel holds to it too, keeping the live index's row.
+  const twice = panelFor({ hits: [box('/c/Mail', 1700), box('/c', 1600)], total: 2, staleRoots: ['/c/Mail'] });
+  assert.deepEqual(twice.rows, ['/c/Mail/Mailbox 03.mbox 1600 B'], 'one row for the path — the live index\'s, though the stale one\'s came first');
+  assert.deepEqual(twice.hits, ['/c/Mail/Mailbox 03.mbox'], 'and one hit behind the keyboard\'s rows');
+  assert.equal(twice.stale, false, 'the hit shown is from the live index: nothing shown is out of date');
+  const live = panelFor({ hits: [holiday], total: 1, staleRoots: ['/c/Mail'] });
+  assert.deepEqual([live.rows.length, live.stale], [1, false], '"holiday", from the live index while another is stale: no note');
+  const stale = panelFor({ hits: [box('/c/Mail', 1700), holiday], total: 2, staleRoots: ['/c/Mail'] });
+  assert.equal(stale.stale, true, 'a hit shown from the stale index: the note');
+  const none = panelFor({ hits: [holiday], total: 1, staleRoots: [] });
+  assert.equal(none.stale, false, 'control: no stale index, no note');
 });
 
 /* ══════════════════ the server: the limit, the cap and the request ══════════════════ */

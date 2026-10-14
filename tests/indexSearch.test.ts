@@ -254,6 +254,117 @@ test('searching with nothing indexed answers empty, not an error', async () => {
   assert.deepEqual(result.roots, []);
 });
 
+/* ══════════════════════ Nested indexed folders (fifth browser pass F08) ══════════════════════ */
+
+/**
+ * A folder and two folders inside it, each indexed — what scanning each of them leaves: every entry
+ * under Mail or Deep is in two indexes, the rest in one. QA fifth pass F08: "Mailbox 03" showed two
+ * identical rows (one from the outer index, one from Mail's) and /api/search counted it twice.
+ */
+async function nestedCorpus(): Promise<{ dir: string; mail: string; deep: string; roots: string[] }> {
+  const dir = await mkTmp();
+  const mail = path.join(dir, 'Mail');
+  const deep = path.join(dir, 'Deep');
+  await fsp.mkdir(path.join(mail, 'Mailbox 03.mbox'), { recursive: true });
+  await fsp.mkdir(path.join(mail, 'Mailbox 04.mbox'), { recursive: true });
+  await fsp.mkdir(path.join(deep, 'level1'), { recursive: true });
+  await fsp.writeFile(path.join(dir, 'holiday.mp4'), Buffer.alloc(9000));
+  await fsp.writeFile(path.join(mail, 'Mailbox 03.mbox', 'Info.plist'), Buffer.alloc(2000));
+  await fsp.writeFile(path.join(mail, 'Mailbox 04.mbox', 'Info.plist'), Buffer.alloc(1500));
+  await fsp.writeFile(path.join(deep, 'level1', 'level100.txt'), Buffer.alloc(500));
+  const roots = [dir, mail, deep];
+  for (const root of roots) await buildIndex(root, { live: false });
+  return { dir, mail, deep, roots };
+}
+const setRootState = (root: string, state: 'ready' | 'stale') => {
+  openIndex().prepare('UPDATE roots SET state = ? WHERE path = ?').run(state, root);
+};
+/** Each hit as path ← the root that answered for it. */
+const answered = (q: string, opts = {}) => searchIndex(q, opts).hits.map((h) => `${h.path} ← ${h.rootPath}`);
+
+test('a path two indexed folders hold is one row, and counted once — an index of a folder inside another index is not searched twice (fifth browser pass F08)', async () => {
+  const { dir, mail, deep, roots } = await nestedCorpus();
+  try {
+    const box3 = path.join(mail, 'Mailbox 03.mbox');
+    const plists = [path.join(box3, 'Info.plist'), path.join(mail, 'Mailbox 04.mbox', 'Info.plist')];
+    const cases: Array<[string, Record<string, unknown>, string[]]> = [
+      ['Mailbox 03', {}, [box3]],
+      ['level100', {}, [path.join(deep, 'level1', 'level100.txt')]],
+      ['*.plist', {}, plists], // the extension seek
+      ['Info', {}, plists], // the name scan
+      ['Info', { scope: mail }, plists], // scoped to the inner folder
+      ['Info', { scope: dir }, plists], // scoped to the outer one
+      ['holiday', {}, [path.join(dir, 'holiday.mp4')]], // in one index only
+    ];
+    for (const [q, opts, want] of cases) {
+      const result = searchIndex(q, opts);
+      const label = `"${q}"${Object.keys(opts).length ? ' ' + JSON.stringify(opts) : ''}`;
+      assert.deepEqual(result.hits.map((h) => h.path), want, `${label}: one row per path`);
+      assert.equal(result.total, want.length, `${label}: counted once each`);
+      assert.deepEqual([...result.roots].sort(), [...roots].sort(), `${label}: control — all three indexes were searched`);
+    }
+    // Both live: the outer index answers, and the inner one is left out by its id — the search walks no subtree.
+    assert.deepEqual(answered('Mailbox 03'), [`${box3} ← ${dir}`], 'with both indexes live, the outer one answers');
+    // A full page counts with its own query: that count is of paths too, and the next page is the other path.
+    const first = searchIndex('Info', { limit: 1 });
+    const second = searchIndex('Info', { limit: 1, offset: 1 });
+    assert.deepEqual([first.total, first.truncated, second.total], [2, true, 2], 'a page of one: two matches, more to come');
+    assert.deepEqual([...first.hits, ...second.hits].map((h) => h.path), plists, 'and the two pages hold the two paths, once each');
+  } finally {
+    for (const root of roots) deleteIndex(root);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a path a live index and a stale one both hold is answered by the live one — whichever is the inner folder (fifth browser pass F08)', async () => {
+  const { dir, mail, deep, roots } = await nestedCorpus();
+  try {
+    const box3 = path.join(mail, 'Mailbox 03.mbox');
+    setRootState(mail, 'stale'); // the outer index is live, the inner one stale
+    assert.deepEqual(answered('Mailbox 03'), [`${box3} ← ${dir}`], 'the outer, live index answers for the stale inner folder');
+    assert.deepEqual(searchIndex('Mailbox 03').staleRoots, [mail], 'control: Mail\'s index is stale and still searched');
+    setRootState(mail, 'ready');
+    setRootState(dir, 'stale'); // the inner indexes are live, the outer one stale
+    assert.deepEqual(answered('Mailbox 03'), [`${box3} ← ${mail}`], 'the inner, live index answers for its own folder');
+    assert.deepEqual(answered('*.plist'), [
+      `${path.join(box3, 'Info.plist')} ← ${mail}`, `${path.join(mail, 'Mailbox 04.mbox', 'Info.plist')} ← ${mail}`,
+    ], 'every path in it, by the extension seek too');
+    assert.deepEqual(answered('level100'), [`${path.join(deep, 'level1', 'level100.txt')} ← ${deep}`], 'and the other inner folder for its own');
+    assert.deepEqual(answered('holiday'), [`${path.join(dir, 'holiday.mp4')} ← ${dir}`], 'a path only the stale index holds is still found, from it');
+    setRootState(mail, 'stale'); // both stale: still one row
+    assert.equal(searchIndex('Mailbox 03').hits.length, 1, 'two stale indexes holding a path answer it once');
+  } finally {
+    for (const root of roots) deleteIndex(root);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an inner folder the outer index never listed is still searched from its own index — the outer one does not answer for what it never saw (fifth browser pass F08)', async () => {
+  const dir = await mkTmp();
+  const later = path.join(dir, 'Later'); // made after the outer index was built: it holds no row for it
+  const filled = path.join(dir, 'Filled'); // empty when the outer index was built: it holds the folder, nothing in it
+  const hollow = path.join(dir, 'Hollow'); // empty in both indexes
+  try {
+    await fsp.mkdir(filled);
+    await fsp.mkdir(hollow);
+    await fsp.writeFile(path.join(dir, 'top.bin'), Buffer.alloc(100));
+    await buildIndex(dir, { live: false });
+    await fsp.mkdir(later);
+    await fsp.writeFile(path.join(later, 'late-file.bin'), Buffer.alloc(300));
+    await fsp.writeFile(path.join(filled, 'late-fill.bin'), Buffer.alloc(200));
+    await buildIndex(later, { live: false });
+    await buildIndex(filled, { live: false });
+    await buildIndex(hollow, { live: false });
+    assert.deepEqual(answered('late-file'), [`${path.join(later, 'late-file.bin')} ← ${later}`], 'a folder the outer index has no row for');
+    assert.deepEqual(answered('late-fill'), [`${path.join(filled, 'late-fill.bin')} ← ${filled}`], 'a folder the outer index holds empty');
+    assert.deepEqual(answered('Filled'), [`${filled} ← ${filled}`], 'and the folder itself is one row, from the index that listed what is in it');
+    assert.deepEqual(answered('Hollow'), [`${hollow} ← ${dir}`], 'a folder empty in both is one row, from the live outer index, as any folder both listed');
+  } finally {
+    for (const root of [dir, later, filled, hollow]) deleteIndex(root);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 /* ══════════════════════ The acceptance criterion ══════════════════════ */
 
 test('500,000 files: an extension query seeks its index, a substring query scans once, and filters add no scan', async (t) => {

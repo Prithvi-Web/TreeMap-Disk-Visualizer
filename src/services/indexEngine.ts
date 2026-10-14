@@ -2551,6 +2551,48 @@ const SEARCH_MAX_LIMIT = 500;
 const SEARCH_COUNT_CAP = 5_000;
 
 /**
+ * The rows a search leaves out so that a path is one row however many indexed
+ * folders hold it (fifth browser pass F08). Scanning a folder and then a
+ * folder inside it indexes both, and every entry of the inner folder is then
+ * in two indexes: "Mailbox 03" was two identical rows, and counted twice.
+ *
+ * For each pair of searched roots where `inner` lies inside `outer`, one of
+ * them answers for the inner folder:
+ * - the outer index, when it is not less live than the inner one (a stale
+ *   index never answers over a ready one) and it listed that folder —
+ *   `inner` is then left out whole, by its root id, which costs the search
+ *   nothing;
+ * - otherwise the inner index: the outer index's rows at and under the
+ *   inner folder are left out (`subtrees`, node ids whose closure the
+ *   search excludes — the one case that walks a subtree).
+ * An outer index that holds the folder with nothing in it while the inner
+ * index holds something did not list it (the folder was filled after, or a
+ * drive was mounted there): it does not answer for what it never saw. An
+ * outer index with no row at the inner folder holds none of its paths, and
+ * nothing is left out.
+ */
+function nestedRootExclusions(roots: readonly IndexedRoot[]): { roots: Set<number>; subtrees: number[] } {
+  const handle = openIndex();
+  const topOf = handle.prepare('SELECT id FROM nodes WHERE root_id = ? AND parent_id IS NULL');
+  const hasChild = handle.prepare('SELECT 1 FROM nodes WHERE parent_id = ? LIMIT 1');
+  const liveness = (r: IndexedRoot): number => (r.state === 'ready' ? 0 : 1);
+  const out = { roots: new Set<number>(), subtrees: [] as number[] };
+  for (const outer of roots) {
+    const prefix = outer.path.endsWith(path.sep) ? outer.path : outer.path + path.sep;
+    for (const inner of roots) {
+      if (inner.id === outer.id || !inner.path.startsWith(prefix)) continue;
+      const held = findNodeIdByPath(outer.id, outer.path, inner.path);
+      if (held === null) continue;
+      const top = topOf.get(inner.id) as { id: number } | undefined;
+      const listed = hasChild.get(held) !== undefined || top === undefined || hasChild.get(top.id) === undefined;
+      if (liveness(outer) <= liveness(inner) && listed) out.roots.add(inner.id);
+      else out.subtrees.push(held);
+    }
+  }
+  return out;
+}
+
+/**
  * Search the index (A4).
  *
  * Uses the exact query language of the treemap's highlight box (see
@@ -2607,11 +2649,30 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
   // SQLite's choice of index: without it the list of ids drives a walk of
   // `idx_nodes_size` root by root instead of the plans tests/indexSearch.test.ts
   // pins (the extension seek, the one scan of the nodes).
+  //
+  // And one row per path where one indexed folder lies inside another (F08):
+  // nestedRootExclusions names the roots and subtrees that leave their paths
+  // to another index. With no folder inside another, nothing changes.
+  const nested = nestedRootExclusions(roots);
+  const searched = roots.filter((r) => !nested.roots.has(r.id));
   const where: string[] = [
     'n.root_id NOT IN (SELECT id FROM roots WHERE path >= ? AND path < ?)',
-    `+n.root_id IN (${roots.map(() => '?').join(', ')})`,
+    `+n.root_id IN (${searched.map(() => '?').join(', ')})`,
   ];
-  const params: (string | number)[] = [ASIDE_PREFIX, ASIDE_PREFIX_END, ...roots.map((r) => r.id)];
+  const params: (string | number)[] = [ASIDE_PREFIX, ASIDE_PREFIX_END, ...searched.map((r) => r.id)];
+  if (nested.subtrees.length > 0) {
+    where.push(
+      `n.id NOT IN (
+         WITH RECURSIVE gone(id) AS (
+           SELECT id FROM nodes WHERE id IN (${nested.subtrees.map(() => '?').join(',')})
+           UNION ALL
+           SELECT c.id FROM nodes c JOIN gone ON c.parent_id = gone.id
+         )
+         SELECT id FROM gone
+       )`,
+    );
+    params.push(...nested.subtrees);
+  }
 
   if (parsed.kind === 'extension') {
     where.push('n.ext = ?', 'n.is_dir = 0');
@@ -2645,7 +2706,7 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
     const scope = opts.scope;
     const scopePrefix = scope.endsWith(path.sep) ? scope : scope + path.sep;
     const scopeIds: number[] = [];
-    for (const r of roots) {
+    for (const r of searched) {
       const id =
         r.path === scope || r.path.startsWith(scopePrefix)
           ? findNodeIdByPath(r.id, r.path, r.path) // the whole root lies inside the scope

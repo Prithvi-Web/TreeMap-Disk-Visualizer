@@ -36157,7 +36157,18 @@ function gsearchOpen() {
 /** Render the panel: grouped by folder, largest first within each group. */
 function renderGsearch(result) {
   const panel = $('gsearchResults');
-  gsearch.hits = result.hits || [];
+  // One row per path (fifth browser pass F08). A folder and a folder inside
+  // it can both be indexed; the server answers each path once, from a live
+  // index where a stale one holds it too, and the panel holds to that as
+  // well: a live index's hit wins over a stale one's, at the place the path
+  // first came.
+  const staleRoots = new Set(result.staleRoots || []);
+  const byPath = new Map();
+  for (const hit of result.hits || []) {
+    const had = byPath.get(hit.path);
+    if (!had || (staleRoots.has(had.rootPath) && !staleRoots.has(hit.rootPath))) byPath.set(hit.path, hit);
+  }
+  gsearch.hits = [...byPath.values()];
   gsearch.selected = -1;
 
   if (!gsearch.hits.length) {
@@ -36216,7 +36227,10 @@ function renderGsearch(result) {
   // to the limit (plan U-1), so a stale whole-disk index stays as it was, and
   // "scan again to refresh it" would be a promise a scan does not keep
   // (Track U review of U-1, finding 7).
-  if (result.staleRoots && result.staleRoots.length) {
+  // Said where it is true: a hit shown came from a stale index — not whenever
+  // any index searched is stale, while every hit shown came from a live one
+  // (fifth browser pass F08).
+  if (gsearch.hits.some((hit) => staleRoots.has(hit.rootPath))) {
     const limit = typeof indexAutoMaxEntries === 'number' ? ` (up to ${formatCount(indexAutoMaxEntries)} items)` : '';
     html += `<div class="gsearch-note">Some results come from an index that may be out of date. Scanning a folder again refreshes its index, unless it holds more than TreeMap indexes on its own${limit}.</div>`;
   }
