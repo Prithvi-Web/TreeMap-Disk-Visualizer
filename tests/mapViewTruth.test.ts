@@ -608,8 +608,11 @@ const keyEv = (key: string, target: unknown = fakeDoc.active): KeyEv => {
   return ev;
 };
 
-/** `view` and `selection` put the page in another view — the Grid shares the trail and its "…" menu (QA-6b review F2.6). */
-function crumbsHarness(opts: { view?: string; selection?: string[] } = {}) {
+/**
+ * `view` and `selection` put the page in another view — the Grid shares the trail and its "…" menu (QA-6b review F2.6).
+ * `kbSel` is the Treemap's keyboard selection, the cell its keys act on.
+ */
+function crumbsHarness(opts: { view?: string; selection?: string[]; kbSel?: Record<string, unknown> } = {}) {
   const picked: string[] = [];
   const focusAtPick: unknown[] = [];
   const observers: Array<{ cb: () => void; el: unknown }> = [];
@@ -645,7 +648,7 @@ function crumbsHarness(opts: { view?: string; selection?: string[] } = {}) {
         root: { path: '/System', name: 'System' }, view: opts.view ?? 'treemap', lasso: { on: false },
         grid: { selection: new Set(opts.selection ?? []) },
         system: { platform: 'darwin' },
-        treemap: { rootPath: DEEP, history: { active: false, snaps: [] }, kbSel: null },
+        treemap: { rootPath: DEEP, history: { active: false, snaps: [] }, kbSel: opts.kbSel ?? null },
       },
       // The Export menu's own world: a map is drawn, the PNG and SVG entries are offered.
       drawnCells: () => [{}],
@@ -1220,6 +1223,66 @@ test('D03: ⌘⌫ waits while the "…" menu is open, as plain Delete does — n
   h.keydown(keyEv('Escape'));
   h.keydown(modKeyEv('Backspace'));
   assert.deepEqual(h.acts, ['trash'], 'control: with the menu closed, ⌘⌫ is the Grid\'s again');
+});
+
+/** A row of the Keyboard shortcuts sheet: the section it is under, its keys (a modifier as "mod") and what it says they do. */
+type SheetRow = { section: string; keys: string[]; says: string };
+/** The Keyboard shortcuts sheet as the built page draws it, row by row. */
+function shortcutSheetRows(): SheetRow[] {
+  const at = INDEX.indexOf('id="shortcutsModal"');
+  assert.notEqual(at, -1, 'the Keyboard shortcuts sheet is in the page');
+  const end = INDEX.indexOf('<!-- ═══', at);
+  assert.notEqual(end, -1, 'and it ends before the next block of markup');
+  const rows: SheetRow[] = [];
+  let section = '';
+  for (const line of INDEX.slice(at, end).split('\n')) {
+    const sec = /<div class="kbd-sec">([^<]*)<\/div>/.exec(line);
+    if (sec) { section = unesc(sec[1]); continue; }
+    const row = /^\s*<div>((?:<kbd[^>]*>[^<]*<\/kbd>)+)<\/div><div>(.*)<\/div>\s*$/.exec(line);
+    if (!row) continue;
+    const keys = [...row[1].matchAll(/<kbd(?: data-key="(\w+)")?>([^<]*)<\/kbd>/g)].map((k) => k[1] ?? unesc(k[2]));
+    rows.push({ section, keys, says: unesc(row[2].replace(/<[^>]+>/g, '')) });
+  }
+  assert.ok(rows.length >= 15, `the sheet's rows were read (${rows.length})`);
+  return rows;
+}
+
+test('the shortcuts sheet says where each Trash key works, and the page\'s keydown handler agrees row by row (review F1.1 of D03)', () => {
+  // D03 made ⌘⌫ the Grid's alone, and the sheet still listed it under
+  // "Anywhere" as "Move the selection to Trash" — a promise the Dashboard,
+  // the Treemap, Duplicates and Autopilot no longer keep — while the Grid's
+  // own section did not name it at all.
+  const VIEWS = ['dashboard', 'treemap', 'grid', 'autopilot', 'duplicates'];
+  const sectionViews: Record<string, string[]> = { 'Treemap & Sunburst': ['treemap'], Grid: ['grid'], Anywhere: VIEWS };
+  /** The key event a row's keys name: a modifier chord, or each key alone. */
+  const KEY: Record<string, string> = { '⌫': 'Backspace', Del: 'Delete' };
+  const eventsOf = (keys: string[]): Array<{ name: string; ev: () => KeyEv }> => (keys[0] === 'mod'
+    ? [{ name: `⌘${keys[1]}`, ev: () => modKeyEv(KEY[keys[1]] ?? keys[1]) }]
+    : keys.map((k) => ({ name: k, ev: () => keyEv(KEY[k] ?? k) })));
+  /** The views in which `ev` opens a Trash sheet, with a Grid selection and a Treemap cell both selected. */
+  const actsIn = (ev: () => KeyEv) => VIEWS.filter((view) => {
+    const h = crumbsHarness({ view, selection: ['/System/a.mov'], kbSel: { path: '/System/b.mov', name: 'b.mov', type: 'file' } });
+    h.keydown(ev());
+    return h.acts.includes('trash');
+  });
+  const trashRows = shortcutSheetRows().filter((r) => /\bTrash\b/.test(r.says));
+  for (const r of trashRows) {
+    assert.ok(r.section in sectionViews, `"${r.section}" is a section this test knows the views of`);
+    for (const { name, ev } of eventsOf(r.keys)) {
+      const where = actsIn(ev);
+      // The sheet's promise: wherever its section says, the key does what the row says.
+      for (const view of sectionViews[r.section]) {
+        assert.ok(where.includes(view), `${r.section} › ${name} "${r.says}": the key does nothing in ${view} (it acts in: ${where.join(', ') || 'no view'})`);
+      }
+      // And the other way: wherever the key trashes, a row under a section covering that view says so.
+      for (const view of where) {
+        assert.ok(trashRows.some((o) => sectionViews[o.section]?.includes(view) && eventsOf(o.keys).some((e) => e.name === name)),
+          `${name} trashes in ${view}, and no row of the sheet says so there`);
+      }
+    }
+  }
+  // The Grid's ⌘⌫ is on the sheet at all: a row that left it out would pass the loop above by naming nothing.
+  assert.ok(trashRows.some((r) => r.keys.join(' ') === 'mod ⌫'), `the sheet names ⌘⌫, which trashes the Grid's selection: ${trashRows.map((r) => `${r.section} › ${r.keys.join('')}`).join('; ')}`);
 });
 
 test('MEDIUM-1: Tab closes the menu wherever focus is — still on Export, or on the map a right-click left it on (QA-6b review F1.1)', () => {
