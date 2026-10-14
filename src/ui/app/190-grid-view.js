@@ -198,6 +198,23 @@ async function renderGrid() {
   }
 }
 
+/* A tile with keyboard focus keeps it when the window is rebuilt (review
+   F1.5). Every rebuild replaces the tiles, and a focused tile replaced fell
+   to <body>: since the Grid really scrolls (QA D01), a tile tabbed to in the
+   margin below the foot is scrolled into view by the browser, that scroll
+   moves the window, and Tab never got past the first screenful. The same
+   file's new tile takes the focus, without scrolling; scrolled out of the
+   window, it is still built — first or last, so the next Tab reaches the
+   tiles on screen. A different list (another folder, filter or order) has
+   no tile of that file at that place, and takes nothing. */
+const gridCellItem = new WeakMap();
+function gridFocusedIndex(layout) {
+  const el = document.activeElement;
+  const it = el && gridInner.contains(el) ? gridCellItem.get(el) : undefined;
+  const i = it ? Number(el.dataset.i) : -1;
+  return layout[i] && layout[i].it.path === it.path ? i : -1;
+}
+
 function renderGridWindow(force = false) {
   const top = gridScroll.scrollTop - 200;
   const bottom = gridScroll.scrollTop + gridScroll.clientHeight + 200;
@@ -211,37 +228,52 @@ function renderGridWindow(force = false) {
   if (!force && start === state.grid.rangeStart && end === state.grid.rangeEnd) return;
   state.grid.rangeStart = start; state.grid.rangeEnd = end;
 
+  const focused = gridFocusedIndex(layout);
+  const order = [];
+  if (focused !== -1 && focused < start) order.push(focused);
+  for (let i = start; i <= end; i++) order.push(i);
+  if (focused > end) order.push(focused);
   const frag = document.createDocumentFragment();
-  for (let i = start; i <= end; i++) {
-    const { it, x, y, side } = layout[i];
-    const k = kindFor(it);
-    const cell = document.createElement('div');
-    cell.className = 'gcell' + (side < GRID_COMPACT_BELOW ? ' compact' : '') + (state.grid.selection.has(it.path) ? ' selected' : '');
-    cell.tabIndex = 0;
-    cell.dataset.i = i;
-    cell.setAttribute('role', 'button');
-    cell.setAttribute('aria-label', `${it.name}, ${formatBytes(it.size)}${it.type === 'dir' ? ', folder' : ''}`);
-    cell.style.cssText = `left:${x}px;top:${y}px;width:${side}px;height:${side}px;`;
-    cell.innerHTML = `
-      <span class="sel-mark">${icon('check', 11)}</span>
-      ${it.type === 'dir' && it.children && side >= GRID_BADGE_MIN ? `<span class="badge num">${formatCount(it.children.length)}</span>` : ''}
-      <span style="color:${k.tint};display:inline-flex;">${icon(k.icon, gridIconPx(side))}</span>
-      <span class="nm">${escapeHtml(it.name)}</span>
-      <span class="sz num">${formatBytes(it.size)}</span>`;
-    cell.addEventListener('click', (e) => onCellClick(e, i));
-    cell.addEventListener('dblclick', () => { if (it.type === 'file') openInOS(it.path, false); });
-    cell.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, it); });
-    cell.addEventListener('mouseenter', () => {
-      const r = cell.getBoundingClientRect();
-      showTooltip(r.right, r.top, it);
-    });
-    cell.addEventListener('mouseleave', hideTooltip);
-    cell.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCellClick(e, i); }
-    });
+  let refocus = null;
+  for (const i of order) {
+    const cell = gridCell(i);
+    if (i === focused) refocus = cell;
     frag.appendChild(cell);
   }
   gridInner.replaceChildren(frag);
+  if (refocus) refocus.focus({ preventScroll: true });
+}
+
+/** Tile `i` of the layout, built with its handlers. */
+function gridCell(i) {
+  const { it, x, y, side } = state.grid.layout[i];
+  const k = kindFor(it);
+  const cell = document.createElement('div');
+  gridCellItem.set(cell, it);
+  cell.className = 'gcell' + (side < GRID_COMPACT_BELOW ? ' compact' : '') + (state.grid.selection.has(it.path) ? ' selected' : '');
+  cell.tabIndex = 0;
+  cell.dataset.i = i;
+  cell.setAttribute('role', 'button');
+  cell.setAttribute('aria-label', `${it.name}, ${formatBytes(it.size)}${it.type === 'dir' ? ', folder' : ''}`);
+  cell.style.cssText = `left:${x}px;top:${y}px;width:${side}px;height:${side}px;`;
+  cell.innerHTML = `
+    <span class="sel-mark">${icon('check', 11)}</span>
+    ${it.type === 'dir' && it.children && side >= GRID_BADGE_MIN ? `<span class="badge num">${formatCount(it.children.length)}</span>` : ''}
+    <span style="color:${k.tint};display:inline-flex;">${icon(k.icon, gridIconPx(side))}</span>
+    <span class="nm">${escapeHtml(it.name)}</span>
+    <span class="sz num">${formatBytes(it.size)}</span>`;
+  cell.addEventListener('click', (e) => onCellClick(e, i));
+  cell.addEventListener('dblclick', () => { if (it.type === 'file') openInOS(it.path, false); });
+  cell.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, it); });
+  cell.addEventListener('mouseenter', () => {
+    const r = cell.getBoundingClientRect();
+    showTooltip(r.right, r.top, it);
+  });
+  cell.addEventListener('mouseleave', hideTooltip);
+  cell.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCellClick(e, i); }
+  });
+  return cell;
 }
 let gridRaf = 0;
 gridScroll.addEventListener('scroll', () => {

@@ -95,7 +95,12 @@ function fakeEl(id = '', tagName = 'div', attrs: Record<string, string> = {}): F
     setAttribute: (k, v) => { el.attrs[k] = v; },
     addEventListener: (t, f) => { (el.listeners[t] ||= []).push(f); },
     appendChild: (c) => { el.children.push(c); c.parent = el; },
-    replaceChildren: (f) => { el.children = [...f.children]; for (const c of el.children) c.parent = el; },
+    // A focused child taken out goes with its focus, as a browser's focus fixup
+    // has it (review F1.5): document.activeElement is then <body>, here nothing.
+    replaceChildren: (f) => {
+      if (el.children.includes(FOCUS.active as FakeEl) && !f.children.includes(FOCUS.active as FakeEl)) FOCUS.active = null;
+      el.children = [...f.children]; for (const c of el.children) c.parent = el;
+    },
     // Only the tile lookups the Grid makes for focus; anything else finds nothing, as before.
     querySelector: (sel) => {
       const m = /^\.gcell(?:\[data-i="(\d+)"\])?$/.exec(sel || '');
@@ -691,7 +696,10 @@ test('Escape in the Grid clears the selection through the same door as Clear, so
   tile.focus();
   h.escapeInGrid!();
   assert.equal(h.state.grid.selection.size, 0, 'the selection is cleared');
-  assert.equal(FOCUS.active, tile, 'focus on a tile stays on that tile');
+  // The Grid rebuilds its tiles as the bar goes down: the same tile's new
+  // element holds the focus (review F1.5).
+  assert.ok(FOCUS.active && h.els.gridInner.children.includes(FOCUS.active), 'focus on a tile stays on a tile in the Grid');
+  assert.equal(String(FOCUS.active!.dataset.i), String(tile.dataset.i), 'that tile');
 });
 
 /** The Grid with a selection made, then another view brought up: the bar stays (⌘⌫ works from any view), the Grid is display:none. */
@@ -1166,4 +1174,65 @@ test('a re-flow with no click behind it never scrolls the Grid: an anchor left a
     await g.renderGrid();
     assert.equal(sc.scrollTop, at, 'with the bars down, a re-flow does not move the tile just clicked');
   });
+});
+
+/* ══════════════ review F1.5 — a focused tile keeps focus across a windowed rebuild ══════════════ */
+
+test('a tile with keyboard focus keeps it when the Grid rebuilds the tiles around it — Tab into the margin, a wheel scroll, a re-flow, a click (review F1.5)', async () => {
+  // Since the Grid really scrolls (D01), a scroll that moves its window
+  // rebuilds every tile with replaceChildren. A tile tabbed to in the margin
+  // below the foot is scrolled into view by the browser, the rebuild detached
+  // it, and focus fell to <body>: Tab could not get past the first screenful.
+  const g = gridHarness({ raf: true });
+  evenPlant(g, 400);
+  sizeFromSheet(g, 1440, 900, false);
+  await g.renderGrid();
+  const sc = g.els.gridScroll;
+  const tile = (i: number) => g.els.gridInner.children.find((c) => Number(c.dataset.i) === i);
+  const scroll = (to: number) => { sc.scrollTop = to; for (const f of sc.listeners.scroll || []) f({}); };
+  const focusedOn = (i: number, what: string) => {
+    const el = FOCUS.active;
+    assert.ok(el && g.els.gridInner.children.includes(el), `${what}: focus is on a tile in the Grid (it is on ${el ? `${el.tagName}.${el.className} data-i ${el.dataset.i}` : 'nothing'}, detached or elsewhere)`);
+    assert.equal(Number(el!.dataset.i), i, `${what}: the same tile, ${i}`);
+    assert.deepEqual(FOCUS.opts, { preventScroll: true }, `${what}: and moving it scrolled nothing`);
+  };
+
+  // Tab reaches tile 15, built in the margin below the foot; the browser
+  // scrolls it into view, which moves the Grid's window.
+  const last = Math.max(...g.els.gridInner.children.map((c) => Number(c.dataset.i)));
+  assert.equal(last, 15, 'control: tiles 0–15 are built at the top, the last row in the margin below the foot');
+  tile(15)!.focus();
+  scroll(10 + g.state.grid.layout[15].y + 256 - sc.clientHeight);
+  assert.ok(g.state.grid.rangeEnd >= 19, `control: the scroll moved the Grid's window down a row, for the next Tab (to tile ${g.state.grid.rangeEnd}), so its tiles were rebuilt`);
+  focusedOn(15, 'tabbed into the margin and scrolled into view');
+
+  // A wheel scroll that takes the focused tile far out of the window: it
+  // stays built, first in the Grid so the next Tab reaches the tiles on screen.
+  scroll(50 * 268);
+  assert.ok(g.state.grid.rangeStart > 15, `control: the window is far below tile 15 (from ${g.state.grid.rangeStart})`);
+  focusedOn(15, 'scrolled far away by the wheel');
+  assert.equal(Number(g.els.gridInner.children[0].dataset.i), 15, 'it is the Grid\'s first tile');
+  assert.equal(Number(g.els.gridInner.children[1].dataset.i), g.state.grid.rangeStart, 'and the tiles in the window follow it');
+
+  // A re-flow of the same list, and a ⌘-click on the focused tile.
+  scroll(0);
+  focusedOn(15, 'scrolled back');
+  sc.clientWidth -= 330;
+  await g.renderGrid();
+  focusedOn(15, 'the Grid re-flowed into a narrower column');
+  g.onCellClick({ metaKey: true }, 15);
+  focusedOn(15, 'a ⌘-click (or ⌘-Space) on it');
+
+  // A folder opened from the keyboard is another list: no tile of it takes
+  // the focus that was on the folder's tile.
+  const h = gridHarness({ raf: true });
+  deepPlant(h, 3, 400);
+  sizeFromSheet(h, 1440, 900, false);
+  await h.renderGrid();
+  const folder = h.state.grid.layout.findIndex((c) => c.it.path === '/r/A');
+  h.els.gridInner.children.find((c) => Number(c.dataset.i) === folder)!.focus();
+  h.onCellClick({}, folder);
+  await h.settle();
+  assert.equal(h.state.grid.path, '/r/A', 'control: the folder opened');
+  assert.ok(!h.els.gridInner.children.includes(FOCUS.active!), `no tile of the new folder takes focus (data-i ${FOCUS.active?.dataset.i})`);
 });
