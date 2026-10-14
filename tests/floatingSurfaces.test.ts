@@ -561,24 +561,42 @@ test('the Grid fills <main> exactly with the cart up as well as without — the 
 
 /* ══════════════ D02 — the Grid's last row clears the stacked bars ══════════════ */
 
+/** <main>'s bottom padding in a page state: where the Grid's scroller ends, above the window's bottom. */
+function mainPadBottom(st: PageState): number {
+  const main = cascade('main', st);
+  return main.has('padding-bottom') ? px(main.get('padding-bottom')) : sides4(main.get('padding')!)[2];
+}
+
+/** A length the Grid's scroller declares, in px — its var()s read from the page's custom properties and the scroller's own. */
+function scrollerLen(st: PageState, sc: Map<string, string>, v: string): number {
+  return evalLen(v, scope(st, sc), 1440, MIN_H);
+}
+
 /** The Grid's scroller: how far above the window's bottom its last row ends when scrolled to the end. */
 function gridFootClearance(st: PageState): number {
-  const main = cascade('main', st);
-  const mainPadB = main.has('padding-bottom') ? px(main.get('padding-bottom')) : sides4(main.get('padding')!)[2];
   const sc = cascade('#gridScroll', st);
-  const padB = sc.has('padding-bottom') ? px(sc.get('padding-bottom')) : sides4(sc.get('padding')!)[2];
+  const padB = sc.has('padding-bottom') ? scrollerLen(st, sc, sc.get('padding-bottom')!) : sides4(sc.get('padding')!)[2];
   // layoutGrid leaves its GAP below the last row: #gridInner is that much taller than the rows.
   const gap = Number((/^const GAP = (\d+), MIN_SQ = /m.exec(INDEX) || [])[1]);
   assert.ok(gap > 0, 'the Grid\'s GAP is in the built page');
-  return mainPadB + padB + gap;
+  return mainPadBottom(st) + padB + gap;
 }
 
-test('scrolled to its end, the Grid\'s last row clears the selection bar and the cart pill stacked over it, at every window size (D02)', () => {
-  // QA: with something staged and a tile selected, the pill steps up to
-  // 124 px above the selection bar — ~170 px of stacked bars over the
-  // bottom of the Grid — while the Grid kept 10 px of padding: at 1440×900
-  // the selected last-row tile sat under the pill with nothing to scroll,
-  // and at 1024×768 scrolled to the end it was still under the dock.
+/**
+ * Where keyboard focus leaves a tile in the Grid: its bottom edge, in px above
+ * the window's bottom. A tile Tab reaches only partly in view is scrolled to
+ * the nearest edge of the scroller's window less its scroll-padding there
+ * (Chromium's focus scroll: a partly visible element goes to the closest edge
+ * of the snapport) — with none, the scroller's very edge.
+ */
+function gridFocusLine(st: PageState): number {
+  const sc = cascade('#gridScroll', st);
+  const spb = sc.get('scroll-padding-bottom');
+  return mainPadBottom(st) + (spb === undefined ? 0 : scrollerLen(st, sc, spb));
+}
+
+/** Every window size and page state with a bar over the Grid's foot, and how high those bars reach above the window's bottom. */
+function eachGridFootState(fn: (s: { W: number; st: PageState; label: string; bar: boolean; covered: number }) => void): number {
   const pillH = pillHeight();
   let checked = 0;
   for (const W of [MIN_W, 1180, 1320, 1440, 1920]) {
@@ -594,18 +612,46 @@ test('scrolled to its end, the Grid\'s last row clears the selection bar and the
             let covered = 0;
             if (bar) { const b = barBox(W, MIN_H, st); covered = Math.max(covered, b.bottom + b.height); }
             if (cart) covered = Math.max(covered, px(cascade('#cartDock', st).get('bottom')) + pillH);
-            const clear = gridFootClearance(st);
-            assert.ok(clear >= covered + 8,
-              `${label}: the last row ends ${clear}px above the window's bottom; the bars over it reach ${covered.toFixed(0)}px`);
+            fn({ W, st, label, bar, covered });
             checked++;
           }
         }
       }
     }
   }
+  return checked;
+}
+
+test('scrolled to its end, the Grid\'s last row clears the selection bar and the cart pill stacked over it, at every window size (D02)', () => {
+  // QA: with something staged and a tile selected, the pill steps up to
+  // 124 px above the selection bar — ~170 px of stacked bars over the
+  // bottom of the Grid — while the Grid kept 10 px of padding: at 1440×900
+  // the selected last-row tile sat under the pill with nothing to scroll,
+  // and at 1024×768 scrolled to the end it was still under the dock.
+  const checked = eachGridFootState(({ st, label, covered }) => {
+    const clear = gridFootClearance(st);
+    assert.ok(clear >= covered + 8,
+      `${label}: the last row ends ${clear}px above the window's bottom; the bars over it reach ${covered.toFixed(0)}px`);
+  });
   assert.equal(checked, 60, 'every size and state was checked');
   // Nothing up, nothing kept: the Grid's own padding is all there is.
   assert.equal(gridFootClearance({ active: ['#view-grid.active'] }), 48 + 10 + 12, 'with no bar and no cart the Grid keeps only its own padding');
+});
+
+test('a tile Tab brings into view stops clear of the selection bar and the cart pill — on the line a scroll to the end and a click bring it to (review F2.5)', () => {
+  // D02 keeps room at the Grid's foot while the bar is up, and a scroll to
+  // the end and a click (gridScrollClear) both stop a tile above it. Focus
+  // did not: the next row Tab reaches is usually only partly in view, and
+  // the browser scrolls it to the scroller's very edge — its bottom, and its
+  // focus ring, under the bar (and the pill) for a run of Tabs (WCAG 2.2
+  // 2.4.11, Focus Not Obscured).
+  const checked = eachGridFootState(({ st, label, bar, covered }) => {
+    const focus = gridFocusLine(st);
+    assert.ok(focus >= covered + 8,
+      `${label}: a tile Tab brings into view ends ${focus}px above the window's bottom; the bars over it reach ${covered.toFixed(0)}px`);
+    if (bar) assert.equal(focus, gridFootClearance(st), `${label}: on the line a scroll to the end and a click bring a tile to`);
+  });
+  assert.equal(checked, 60, 'every size and state was checked');
 });
 
 /* ══════════════ C04 — the preview pane narrows the page, it never covers it ══════════════ */

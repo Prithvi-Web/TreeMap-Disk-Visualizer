@@ -820,12 +820,20 @@ function gridDecls(selector: string, page: { cart: boolean; bar?: boolean }): Ma
     ...(page.bar && page.cart ? declsOf(`body:has(#selectionBar.visible):has(#cartDock.show) ${selector}`) : [])]);
 }
 
+/** A declared value with its var(--x)s read from the same rule set — the Grid's scroller sets its own (--grid-foot, review F2.5). */
+function withVars(v: string | undefined, d: Map<string, string>): string | undefined {
+  return v?.replace(/var\((--[\w-]+)\)/g, (_m, name: string) => {
+    assert.ok(d.has(name), `${name} is set on the element that reads it`);
+    return d.get(name)!;
+  });
+}
+
 /** The Grid scroller's top and bottom padding, in px, as the sheet computes them for that page. */
 function scrollerPads(page: { cart: boolean; bar: boolean }): { top: number; bottom: number } {
   const sc = gridDecls('#gridScroll', page);
   return {
     top: padSide(sc.get('padding'), 0, 'the scroller\'s top padding'),
-    bottom: sc.has('padding-bottom') ? px(sc.get('padding-bottom'), 'the scroller\'s bottom padding') : padSide(sc.get('padding'), 2, 'the scroller\'s bottom padding'),
+    bottom: sc.has('padding-bottom') ? px(withVars(sc.get('padding-bottom'), sc), 'the scroller\'s bottom padding') : padSide(sc.get('padding'), 2, 'the scroller\'s bottom padding'),
   };
 }
 

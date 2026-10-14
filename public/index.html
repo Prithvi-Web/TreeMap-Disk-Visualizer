@@ -1340,9 +1340,15 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    bars. The last row ends <main>'s bottom padding + this + layoutGrid's 12 px
    GAP above the window's bottom: 48 + 64 + 12 = 124 px, the line the pill
    and the toasts step up to over the bar's tallest form; with the cart up,
-   76 + 88 + 12 = 176 px, 10 px over the pill that stands on that line. */
-body:has(#selectionBar.visible) #gridScroll { padding-bottom: 64px; }
-body:has(#selectionBar.visible):has(#cartDock.show) #gridScroll { padding-bottom: 88px; }
+   76 + 88 + 12 = 176 px, 10 px over the pill that stands on that line.
+   Keyboard focus stops on the same line (review F2.5): the row Tab reaches
+   is usually only partly in view, and the browser scrolls it to the
+   scroller's very edge, under the bars, unless scroll-padding says where
+   that edge is - this room and the GAP, as a click's scroll
+   (gridScrollClear) has it. One value, --grid-foot, so the two cannot part. */
+body:has(#selectionBar.visible) #gridScroll { --grid-foot: 64px;
+  padding-bottom: var(--grid-foot); scroll-padding-bottom: calc(var(--grid-foot) + 12px); }
+body:has(#selectionBar.visible):has(#cartDock.show) #gridScroll { --grid-foot: 88px; }
 
 /* ── Cleanup cart (Feature 2) ── */
 /* `max-width: 92vw` is a guard against the VIEWPORT only, and it is correct
