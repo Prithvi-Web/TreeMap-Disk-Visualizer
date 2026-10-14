@@ -8236,6 +8236,11 @@ function wireZombieActions() {
   }));
 }
 
+/** An app's name as a person reads it: "Google Chrome" for /Applications/Google Chrome.app. */
+function zhAppName(bundle) {
+  return lastPathSegment(bundle).replace(/\.app$/, '');
+}
+
 /**
  * The restart confirmation. §B5 requires the unsaved-work warning to be
  * explicit, and it differs honestly by what happens next: a Mac app is
@@ -8244,11 +8249,6 @@ function wireZombieActions() {
  * running, reopens nothing (fourth browser pass, E02); anything else must be
  * started again by hand.
  */
-/** An app's name as a person reads it: "Google Chrome" for /Applications/Google Chrome.app. */
-function zhAppName(bundle) {
-  return lastPathSegment(bundle).replace(/\.app$/, '');
-}
-
 function confirmZombieRestart(p) {
   resetOpenHandleWarning(); // clear any leftover B2 panel from a delete dialog
   onConfirmTrash = async () => {

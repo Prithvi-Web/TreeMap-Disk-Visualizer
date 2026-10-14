@@ -862,3 +862,19 @@ test('the OpenAPI document says which app a restart reopens and which it does no
   assert.match(said, /appBundle \(the macOS app this process is[^)]*the only one a restart reopens\)/, 'appBundle is the app itself');
   assert.match(said, /partOf \(the macOS app a helper[^)]*a restart does not reopen it\)/, 'partOf is the app a helper runs inside');
 });
+
+test('the report reads each app\'s Info.plist once, however many of its programs hold space (E02)', async () => {
+  const exes = new Map<number, string>([
+    [4001, `${CHROME}/Contents/MacOS/Google Chrome`],
+    [4002, `${CHROME}/Contents/MacOS/Google Chrome`], // a second instance
+    [4003, '/Applications/Fake.app/Contents/MacOS/Fake'],
+  ]);
+  const asked: string[] = [];
+  const deps: ReportDeps = {
+    handles: heldBy([...exes.keys()]), run: fakePs(exes).run, os: 'darwin', uid: OUR_UID,
+    bundleExecutable: async (bundle) => { asked.push(bundle); return path.basename(bundle, '.app'); },
+  };
+  const report = await zombieReport(deps);
+  assert.deepEqual(report.processes.map((p) => p.appBundle).sort(), ['/Applications/Fake.app', CHROME, CHROME], 'control: each is its app');
+  assert.deepEqual(asked.sort(), ['/Applications/Fake.app', CHROME], 'one read per app');
+});

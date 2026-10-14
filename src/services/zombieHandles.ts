@@ -382,10 +382,21 @@ export async function zombieReport(deps: ZombieReportDeps = {}): Promise<ZombieR
       facts = new Map(await Promise.all(pids.map(async (pid) => [pid, await read(pid)] as const)));
     }
   }
-  const mainOf = deps.bundleExecutable ?? ((bundle: string) => readBundleExecutable(bundle, deps.run));
-  for (const proc of grouped.processes) {
+  // Each app's Info.plist is read once, and every app's at the same time: a report
+  // that waited on one plutil after another would bring back the stall U-5 removed.
+  const read = deps.bundleExecutable ?? ((bundle: string) => readBundleExecutable(bundle, deps.run));
+  const mains = new Map<string, Promise<string | null>>();
+  const mainOf = (bundle: string): Promise<string | null> => {
+    let main = mains.get(bundle);
+    if (main === undefined) { main = read(bundle); mains.set(bundle, main); }
+    return main;
+  };
+  const roles = os === 'darwin'
+    ? await Promise.all(grouped.processes.map((proc) => confirmedRoleOf(facts.get(proc.pid)?.executable ?? null, mainOf)))
+    : [];
+  for (const [i, proc] of grouped.processes.entries()) {
     const known = facts.get(proc.pid) ?? { executable: null, uid: null };
-    if (os === 'darwin') Object.assign(proc, await confirmedRoleOf(known.executable, mainOf));
+    if (os === 'darwin') Object.assign(proc, roles[i]);
     const refusal = restartRefusal(known, os, ourUid);
     proc.restartable = refusal === null;
     proc.restartRefusal = refusal?.reason ?? null;
