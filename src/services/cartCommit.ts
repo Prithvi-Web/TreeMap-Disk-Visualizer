@@ -20,7 +20,8 @@ import type { TimeCapsuleJob } from '../models/types';
  * The cart has always trashed its contents directly. §4.4 routes it through
  * the **Time Capsule** instead, which changes one thing that matters: the
  * whole batch becomes a single undoable run, so "Undo this run" puts every
- * file back at its original path even after the Trash has been emptied.
+ * file back at its original path even after the Trash has been emptied, until
+ * the Time Capsule removes its copies (its retention, or its size cap).
  *
  * ── What that costs, stated plainly ──
  *
@@ -122,7 +123,8 @@ export interface CartCommitResult {
   capsuleUnavailable?: string;
   /**
    * Discarding the copies of what the Trash refused did not finish. Everything
-   * in `trashed` was trashed, and undo with `runId` puts it back.
+   * in `trashed` was trashed, and undo with `runId` puts it back until the Time
+   * Capsule removes its copies.
    */
   cleanupError?: string;
 }

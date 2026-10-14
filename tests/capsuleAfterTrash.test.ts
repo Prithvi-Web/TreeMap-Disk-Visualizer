@@ -167,6 +167,14 @@ test('without a failure, the copy of the refused item is discarded and nothing i
 
 const STEPS: DiscardStep[] = ['load', 'drop', 'save'];
 
+/**
+ * The way back that sentence offers, with its end (review F2.2 of QA third pass D06). It said "can
+ * be put back" and stopped, in the cart commit's answer and in an Autopilot run's record, which the
+ * run history shows for as long as the record exists — long after the Trash is emptied and the
+ * capsule's retention or its size cap has let the copies go.
+ */
+const BOUNDED_WAY_BACK = /Everything listed as trashed was trashed, and can be put back until the Time Capsule removes its copies \(after 30 days by default, or sooner to stay under its size cap\)\.$/;
+
 for (const step of STEPS) {
   test(`a failure at the ${step} step after the trash step: the cart commit answers with what it trashed and its run id, and its undo puts exactly that back`, async () => {
     const { gone, held } = threeFiles(`cart-${step}`);
@@ -176,6 +184,7 @@ for (const step of STEPS) {
     assert.ok(result.bytesFreed > 0, 'and their bytes');
     assert.deepEqual(result.failedToTrash.map((f) => f.path), [held]);
     assert.match(result.cleanupError ?? '', /did not finish/, 'with a sentence saying what did not finish');
+    assert.match(result.cleanupError ?? '', BOUNDED_WAY_BACK, 'and the way back it offers says when it ends');
     assert.ok(logged.some((line) => line.includes(`a failure injected at the ${step} step`)), `the detail is in the server log (${logged.join(' | ')})`);
     for (const p of gone) assert.ok(!fs.existsSync(p), `${p} is in the Trash`);
     assert.ok(fs.existsSync(held), 'the one the Trash refused is where it was');
@@ -195,6 +204,7 @@ for (const step of STEPS) {
       assert.deepEqual(sorted(run.items.map((i) => i.path)), sorted(gone), 'its items are what it trashed');
       assert.ok(run.bytesDeleted > 0, 'and their bytes');
       assert.match(run.blockedReason ?? '', /did not finish/, 'with the sentence');
+      assert.match(run.blockedReason ?? '', BOUNDED_WAY_BACK, 'whose way back says when it ends, on the record the run history shows');
       assert.ok(run.skipped.some((s) => s.path === held), 'the one the Trash refused is named as left alone');
       for (const p of gone) assert.ok(!fs.existsSync(p));
 

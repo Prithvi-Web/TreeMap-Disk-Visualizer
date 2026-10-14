@@ -1068,8 +1068,9 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
         ? `Nothing was moved to the Trash: ${result.failedToTrash[0].reason}`
         : 'Nothing could be safely protected, so nothing was deleted.';
   }
-  // After the trash step: the items above were trashed and can be undone, but
-  // the copies of what the Trash refused were not all discarded (FG1).
+  // After the trash step: the items above were trashed and can be undone until
+  // the Time Capsule removes their copies, but the copies of what the Trash
+  // refused were not all discarded (FG1).
   if (result.cleanupError) run.blockedReason = run.blockedReason ? `${run.blockedReason} ${result.cleanupError}` : result.cleanupError;
   return record();
 }

@@ -841,12 +841,20 @@ test('no sentence on any page promises a way back "any time", and every promise 
   }
 });
 
-/** What the server and the docs tell an agent or a reader about deletes, as [file, text]. */
-function agentTexts(): Array<[string, string]> {
+/** What the server and the docs tell an agent or a reader about deletes, as [file, text] — and `more` files besides. */
+function agentTexts(more: string[] = []): Array<[string, string]> {
   const root = path.join(__dirname, '..');
-  return ['src/mcp/server.ts', 'src/api/metaRoutes.ts', 'src/api/openapi.ts', 'src/services/cloud/providers.ts', 'README.md', 'AGENTS.md', 'SECURITY.md']
+  return ['src/mcp/server.ts', 'src/api/metaRoutes.ts', 'src/api/openapi.ts', 'src/services/cloud/providers.ts', 'README.md', 'AGENTS.md', 'SECURITY.md', ...more]
     .map((file) => [file, readFileSync(path.join(root, file), 'utf8')]);
 }
+
+/**
+ * The services whose sentences reach a person or an agent as a result, not as
+ * docs: the cart commit's answer (cleanupError, a skipped item's reason) and
+ * an Autopilot run's record, which the run history shows for as long as the
+ * record exists (review F2.2, F2.5 of QA third pass D06).
+ */
+const RESULT_SOURCES = ['src/services/timeCapsule.ts', 'src/services/cartCommit.ts', 'src/services/autopilot.ts'];
 
 test('what the server and the docs tell an agent about the Trash says when the way back ends (QA third pass D06)', () => {
   let seen = 0;
@@ -860,14 +868,17 @@ test('what the server and the docs tell an agent about the Trash says when the w
   assert.ok(seen >= 6, `the sweep found the server's and the docs' own "recoverable" (${seen})`);
 });
 
-test('no sentence in the docs or in what an agent is told offers a way back with no end — "any time", "can be put back", "even after the Trash is emptied" each say until when (review F1.2, F1.8 of QA third pass D06)', () => {
+test('no sentence in the docs, in what an agent is told or in a result the server writes offers a way back with no end — "any time", "can be put back", "puts it back", "even after the Trash is emptied" each say until when (review F1.2, F1.8, F2.2, F2.5 of QA third pass D06)', () => {
   // The sweep above reads only the word "recoverable", so README's "undo
   // from Finder/Explorer any time", SECURITY's "can be put back" and "a run
   // can be undone even after the Trash is emptied", AGENTS' cart undo "even
   // after the Trash has been emptied" and trash_paths' own "can be restored
   // from there" each promised a way back with no end. The Trash's ends when
   // it is emptied; a Time Capsule copy's when its retention (30 days by
-  // default) or its size cap lets the copy go.
+  // default) or its size cap lets the copy go. And it read only the docs:
+  // the cart commit's cleanupError, which an Autopilot run's record keeps,
+  // said "Everything listed as trashed was trashed, and can be put back.",
+  // and the OpenAPI text for it "undo with runId puts it back" (F2.2, F2.5).
   /** A doc's paragraphs, list items and table rows with their hard wraps undone, or a source file's lines — each split into sentences. */
   const sentencesOf = (file: string, text: string): string[] => text
     .split(file.endsWith('.md') ? /\n\s*\n|\n(?=\s*(?:[-*|]|\d+\.)\s)/ : /\n/)
@@ -877,8 +888,8 @@ test('no sentence in the docs or in what an agent is told offers a way back with
   const WAY_BACK = /\brecoverabl|\brestor(?:e|ed)\b|\bundo(?:ne)?\b|\bput\b[^.;]*\bback\b|\bcan be recovered\b/i;
   /** Whether, after the phrase at `m` and before its clause ends, the sentence says when that way back ends. */
   const endsLater = (s: string, m: RegExpExecArray) => /^[^;.]*?\b(?:until|while|as long as)\b/i.test(s.slice(m.index + m[0].length));
-  const seen = { wayBack: 0, pastEmptied: 0, canBe: 0 };
-  for (const [file, text] of agentTexts()) {
+  const seen = { wayBack: 0, pastEmptied: 0, canBe: 0, putsBack: 0 };
+  for (const [file, text] of agentTexts(RESULT_SOURCES)) {
     for (const s of sentencesOf(file, text)) {
       if (WAY_BACK.test(s)) {
         seen.wayBack++;
@@ -895,8 +906,16 @@ test('no sentence in the docs or in what an agent is told offers a way back with
         seen.canBe++;
         assert.ok(endsLater(s, can), `${file}: "${can[0]}" with no end — "${s}"`);
       }
+      // An undo that "puts it back" with nothing after it is a promise that it still can — or one
+      // that says until when. One qualified by a condition ("only if its place is empty by then",
+      // "once", "there") says how an undo works, not whether one still can, and is not this rule's.
+      const puts = /\bputs (?:it|them|everything) back(?=\s*(?:[.;'"`)]|$|\b(?:until|while|as long as)\b))|\bputs back (?:exactly what|everything)\b/i.exec(s);
+      if (puts) {
+        seen.putsBack++;
+        assert.ok(endsLater(s, puts), `${file}: "${puts[0]}" with no end — "${s}"`);
+      }
     }
   }
   // Each rule read the sentences it is about: a split that merged or lost them would pass by seeing nothing.
-  assert.ok(seen.wayBack >= 100 && seen.pastEmptied >= 4 && seen.canBe >= 6, `the sweep read the docs' ways back: ${JSON.stringify(seen)}`);
+  assert.ok(seen.wayBack >= 100 && seen.pastEmptied >= 5 && seen.canBe >= 8 && seen.putsBack >= 3, `the sweep read the docs' ways back: ${JSON.stringify(seen)}`);
 });

@@ -575,7 +575,8 @@ OpenAPI 3 spec).
      paths per commit. Nothing after the trash step can fail the request:
      should discarding the capsule copies of items the Trash refused not
      finish, the response still carries `trashed` and `runId`, adds a
-     `cleanupError` sentence, and the undo puts back exactly what was trashed.
+     `cleanupError` sentence, and the undo puts back exactly what was trashed,
+     until the Time Capsule removes its copies.
      A path inside another path of the same commit gets no copy of its own:
      the item holding it is copied and trashed whole, the inner path is listed
      in `trashed` with it — once the disk no longer shows it — and counted

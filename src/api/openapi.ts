@@ -3204,7 +3204,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             failedToTrash: arr(opaque("{ path, reason } — protected, then refused by the Trash, and still in place, untouched; the copies were dropped")),
             unverified: arr(opaque('{ path, reason } — present when the Trash reported failing and the disk could not confirm either way (a look that failed, nothing known at the path before the trash step, or a trash command stopped before it answered): the copies were KEPT, and undo puts each back only if its place is empty by then. Also an item inside another one, when that one is unverified, or went to the Trash while the item\'s own place could not be looked at: the copy of the item holding it holds it')),
             capsuleUnavailable: str('Set when the capsule cannot run at all. Nothing was deleted'),
-            cleanupError: str('Real run only: discarding the copies of what the Trash refused did not finish. Everything in trashed was trashed, and undo with runId puts it back'),
+            cleanupError: str('Real run only: discarding the copies of what the Trash refused did not finish. Everything in trashed was trashed, and undo with runId puts it back until the Time Capsule removes its copies (after 30 days by default, or sooner to stay under its size cap)'),
           },
           ['dryRun'],
         ),

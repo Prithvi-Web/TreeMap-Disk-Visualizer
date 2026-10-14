@@ -1629,7 +1629,8 @@ async function protectAndTrashInFlight(
       const items = `${formatCount(notDeleted.length)} item${notDeleted.length === 1 ? '' : 's'}`;
       cleanupError =
         `Discarding the Time Capsule copies of the ${items} the Trash refused did not finish (${problem}), so the Time Capsule may still list them. ` +
-        'Everything listed as trashed was trashed, and can be put back.';
+        'Everything listed as trashed was trashed, and can be put back until the Time Capsule removes its copies ' +
+        '(after 30 days by default, or sooner to stay under its size cap).';
     }
   }
 
