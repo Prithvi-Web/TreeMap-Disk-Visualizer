@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pack": "macos",
-  "updated": "2026-10-05",
+  "updated": "2026-10-14",
   "rules": [
     {
       "id": "browser-caches",
@@ -179,7 +179,7 @@
       "id": "media-photos-derivatives",
       "kind": "location",
       "title": "Photos thumbnails & previews",
-      "description": "Regenerated thumbnails and preview renders inside the system Photos library — never your photos. Photos rebuilds them on next open; expect a slow first launch while it does. Quit Photos before touching anything inside its library. Not offered for deletion from here: the Media Libraries view makes the gated offer after checking the owning app is not holding the library.",
+      "description": "Regenerated thumbnails and preview renders inside the system Photos library — never your photos. Photos rebuilds them on next open; expect a slow first launch while it does. Quit Photos before touching anything inside its library. Not offered for deletion from here: the Media Libraries card in the Libraries view makes the gated offer after checking the owning app is not holding the library.",
       "category": "regenerable",
       "confidence": "high",
       "action": "advice",
@@ -192,7 +192,7 @@
       "id": "media-fcp-render-files",
       "kind": "project-directory",
       "title": "Final Cut / iMovie render files",
-      "description": "Rendered and transcoded media inside a Final Cut Pro or iMovie library event. Re-created on demand — playback stutters until each clip re-renders. Original media is never touched. Not offered for deletion from here: the Media Libraries view makes the gated offer after checking the owning app is not holding the library.",
+      "description": "Rendered and transcoded media inside a Final Cut Pro or iMovie library event. Re-created on demand — playback stutters until each clip re-renders. Original media is never touched. Not offered for deletion from here: the Media Libraries card in the Libraries view makes the gated offer after checking the owning app is not holding the library.",
       "category": "regenerable",
       "confidence": "high",
       "action": "advice",

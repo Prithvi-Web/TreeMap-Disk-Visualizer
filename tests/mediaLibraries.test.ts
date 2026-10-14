@@ -444,8 +444,18 @@ test('the media rulepack entries defer to this surface — the two must tell one
     return (raw.rules ?? []).filter((r: { id?: string }) => (r.id ?? '').startsWith('media-'));
   });
   assert.ok(packs.length >= 4, 'the media entries exist');
+  // By the names the page shows (fifth browser pass F12b): Smart Suggestions
+  // sent people to "the Media Libraries view", but the sidebar calls the view
+  // "Libraries" and Media Libraries is a card inside it — a view nobody could
+  // find. Both names are read from the shipped page, not restated here.
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const view = /data-view="games"[^>]*>(?:<span data-icon="[\w-]+"><\/span>)?<span class="side-label">([^<]+)<\/span>/.exec(page)?.[1];
+  const card = /<section class="view" id="view-games"[\s\S]*?<h2><span data-icon="image"><\/span>([^<]+)<\/h2>/.exec(page)?.[1];
+  assert.ok(view && card, `control: the sidebar's name for the view (${view}) and the card's heading (${card}) are in the page`);
   for (const r of packs) {
-    assert.match(r.description, /Media Libraries view/, `${r.id} points at the gated offer`);
+    assert.ok(r.description.includes(`the ${card} card in the ${view} view`),
+      `${r.id} points at the gated offer by the names on screen — "the ${card} card in the ${view} view": ${r.description}`);
+    assert.doesNotMatch(r.description, new RegExp(`the ${card} view`), `${r.id} never names a view the sidebar does not have`);
     assert.equal(r.action, 'advice', `${r.id} never lets Clean Up trash into a live bundle`);
   }
 });

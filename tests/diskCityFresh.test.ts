@@ -793,7 +793,10 @@ test('C03: Disk City waiting on a new folder says it is loading, with no size an
   assert.deepEqual(chromeOf(h), LOADING, 'a redraw says the same');
   await settle();
   assert.match(chromeOf(h).lod, /^showing 3 of 4 items of 4000 B or more — zoom in for more/, 'control: B\'s own line once it lands');
-  assert.equal(chromeOf(h).status, '30000 B', 'control: and B\'s own size');
+  // Labelled as the total it is (fifth browser pass F12a): a bare "9.5 GB"
+  // right after the Color gradient read as the gradient's top value. The
+  // Treemap says "… · 9.5 GB total"; so does the city.
+  assert.equal(chromeOf(h).status, '30000 B total', 'and B\'s own size, said to be its total — not a bare figure beside the colour key (F12a)');
 });
 
 test('C03: a fetch for the new folder that fails says so, and no redraw turns it into "showing all 0" under the last scan\'s size', async () => {
@@ -811,7 +814,7 @@ test('C03: a fetch for the new folder that fails says so, and no redraw turns it
   h.server.down = null;
   await h.loadCity('/B'); // the next entry
   assert.match(chromeOf(h).lod, /^showing 3 of 4/, 'a load that lands says what it drew, and nothing of the failure');
-  assert.equal(chromeOf(h).status, '30000 B');
+  assert.equal(chromeOf(h).status, '30000 B total');
 });
 
 test('C03: Disk City already up when a scan of another folder lands says it is loading until the new folder lands — not the last city\'s line', async () => {
@@ -822,7 +825,7 @@ test('C03: Disk City already up when a scan of another folder lands says it is l
   h.state.view = 'city';
   h.mounted.id = 'city';
   await h.loadCity('/A');
-  assert.equal(chromeOf(h).status, '4400000000 B', 'control: A is drawn, at its size');
+  assert.equal(chromeOf(h).status, '4400000000 B total', 'control: A is drawn, at its size');
   h.state.scanId = 's2';
   void h.finishScan({ path: '/B', size: 2 }, 50, { fileCount: 4, dirCount: 1 });
   h.views.city.onScanChange('s2'); // the city that is up reloads
@@ -880,7 +883,7 @@ test('C03: the size and the floor beside the city are those of the nodes it was 
   h.state.view = 'city';
   h.views.city.mount(); // on the nodes the Treemap fetched: built at once, with no request
   const shared = chromeOf(h);
-  assert.deepEqual(shared, { lod: 'showing 3 of 4 items of 4000 B or more — zoom in for more · 3 with no count yet, drawn flat', status: '777000 B' },
+  assert.deepEqual(shared, { lod: 'showing 3 of 4 items of 4000 B or more — zoom in for more · 3 with no count yet, drawn flat', status: '777000 B total' },
     'the floor and the size the Treemap\'s fetch recorded with its nodes');
   // A Treemap fetch of another folder, asked before the person switched
   // views, lands after the city was built: the map moves on, the city does not.

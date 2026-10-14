@@ -1468,8 +1468,11 @@ function renderCityChrome() {
       (ramp ? `<i style="background:${ramp}"></i>` : '') + `</span>` + typeKey;
   }
 
+  // Said as the total it is, as the Treemap's line says it (fifth browser
+  // pass F12a): a bare "9.5 GB" right after the Color gradient read as the
+  // gradient's top value.
   const status = $('cityStatus');
-  if (status) status.textContent = from && from.size ? formatBytes(from.size) : '';
+  if (status) status.textContent = from && from.size ? `${formatBytes(from.size)} total` : '';
 }
 
 /**
