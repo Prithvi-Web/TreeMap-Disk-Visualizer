@@ -2550,46 +2550,151 @@ const SEARCH_MAX_LIMIT = 500;
  */
 const SEARCH_COUNT_CAP = 5_000;
 
+/** An index that holds a searched root's folder: the folder's own, or one of a folder around it with a row there. */
+interface FolderHolder {
+  root: IndexedRoot;
+  /** The node at the folder, in `root`'s index. */
+  node: number;
+  /** Whether `root` listed what is in the folder (nestedRootExclusions). */
+  listed: boolean;
+}
+
+/** What a search leaves out so that a path is one row (nestedRootExclusions). */
+interface NestedExclusions {
+  /** Roots left out whole, by id: every path they hold is answered by another root. */
+  roots: Set<number>;
+  /** A `n.id NOT IN (…)` term and its parameters, or null when nothing else is left out. */
+  clause: string | null;
+  params: number[];
+}
+
+/** Ready with its watcher attached: holds its folder as it is now ("current", as /api/index/status reads it). */
+const currentRoot = (r: IndexedRoot): boolean => r.state === 'ready' && r.live;
+/** A holder that answers for its folder alone: current, and it listed the folder. */
+const answersAlone = (h: FolderHolder): boolean => currentRoot(h.root) && h.listed;
+
 /**
- * The rows a search leaves out so that a path is one row however many indexed
- * folders hold it (fifth browser pass F08). Scanning a folder and then a
- * folder inside it indexes both, and every entry of the inner folder is then
- * in two indexes: "Mailbox 03" was two identical rows, and counted twice.
- *
- * For each pair of searched roots where `inner` lies inside `outer`, one of
- * them answers for the inner folder:
- * - the outer index, when it is not less live than the inner one (a stale
- *   index never answers over a ready one) and it listed that folder —
- *   `inner` is then left out whole, by its root id, which costs the search
- *   nothing;
- * - otherwise the inner index: the outer index's rows at and under the
- *   inner folder are left out (`subtrees`, node ids whose closure the
- *   search excludes — the one case that walks a subtree).
- * An outer index that holds the folder with nothing in it while the inner
- * index holds something did not list it (the folder was filled after, or a
- * drive was mounted there): it does not answer for what it never saw. An
- * outer index with no row at the inner folder holds none of its paths, and
- * nothing is left out.
+ * The indexes that hold `folder`'s folder, its own first (`top`, the root's
+ * node). An outer index that holds the folder with nothing in it while the
+ * folder's own index holds something did not list it (the folder was filled
+ * after, or a drive was mounted there); one with no row there holds none of
+ * its paths and is not a holder.
  */
-function nestedRootExclusions(roots: readonly IndexedRoot[]): { roots: Set<number>; subtrees: number[] } {
-  const handle = openIndex();
-  const topOf = handle.prepare('SELECT id FROM nodes WHERE root_id = ? AND parent_id IS NULL');
-  const hasChild = handle.prepare('SELECT 1 FROM nodes WHERE parent_id = ? LIMIT 1');
-  const liveness = (r: IndexedRoot): number => (r.state === 'ready' ? 0 : 1);
-  const out = { roots: new Set<number>(), subtrees: [] as number[] };
+function folderHolders(folder: IndexedRoot, top: number, roots: readonly IndexedRoot[], hasChild: (node: number) => boolean): FolderHolder[] {
+  const holders: FolderHolder[] = [{ root: folder, node: top, listed: true }];
+  const filled = hasChild(top);
   for (const outer of roots) {
     const prefix = outer.path.endsWith(path.sep) ? outer.path : outer.path + path.sep;
-    for (const inner of roots) {
-      if (inner.id === outer.id || !inner.path.startsWith(prefix)) continue;
-      const held = findNodeIdByPath(outer.id, outer.path, inner.path);
-      if (held === null) continue;
-      const top = topOf.get(inner.id) as { id: number } | undefined;
-      const listed = hasChild.get(held) !== undefined || top === undefined || hasChild.get(top.id) === undefined;
-      if (liveness(outer) <= liveness(inner) && listed) out.roots.add(inner.id);
-      else out.subtrees.push(held);
-    }
+    if (outer.id === folder.id || !folder.path.startsWith(prefix)) continue;
+    const node = findNodeIdByPath(outer.id, outer.path, folder.path);
+    if (node !== null) holders.push({ root: outer, node, listed: !filled || hasChild(node) });
   }
-  return out;
+  return holders;
+}
+
+/**
+ * The order a folder's holders answer in: one that answers alone first, the
+ * outer of two (left out by its id, the inner one costs the search nothing);
+ * otherwise the newest build first, the outer of two built together.
+ */
+function answeringOrder(holders: readonly FolderHolder[]): FolderHolder[] {
+  return [...holders].sort((x, y) =>
+    Number(answersAlone(y)) - Number(answersAlone(x))
+    || (answersAlone(x) ? 0 : (y.root.builtAt ?? 0) - (x.root.builtAt ?? 0))
+    || x.root.path.length - y.root.path.length);
+}
+
+/**
+ * The rows a search leaves out so that a path is one row however many indexed
+ * folders hold it (fifth browser pass F08), and no path any of them holds is
+ * lost (review F1.2). Scanning a folder and then a folder inside it indexes
+ * both, and every entry of the inner folder is then in two indexes: "Mailbox
+ * 03" was two identical rows, and counted twice.
+ *
+ * Each searched root's folder is a region: its paths, less those of a
+ * searched folder further in. Every holder of the folder (folderHolders)
+ * holds the region, and one row per path is kept among them:
+ * - A holder that answers alone — current, and it listed the folder — holds
+ *   it as it is on disk: the others' rows there are left out (`gone`).
+ * - Otherwise none is known to hold every path there: a stale index, or a
+ *   ready one nothing watches, misses what changed since its build — and
+ *   every root is stale after a restart. Each path is kept from the first
+ *   holder, newest build first, that holds it: a later holder's row is left
+ *   out where an earlier one holds the same path (`dup`, walked in step down
+ *   both trees by name), so a path only one index holds is still found.
+ *   Before review F1.2 a tie gave the folder to the outer index whole, and a
+ *   file only the inner index held was not found at all.
+ * Rows are left out down to the next region's folder (`edge`), which is
+ * decided on its own: so with A holding B holding C, C's paths are never left
+ * to an index that is itself left out. A root none of whose regions it
+ * answers for is left out by its id.
+ */
+function nestedRootExclusions(roots: readonly IndexedRoot[]): NestedExclusions {
+  const handle = openIndex();
+  const topOf = handle.prepare('SELECT id FROM nodes WHERE root_id = ? AND parent_id IS NULL');
+  const childOf = handle.prepare('SELECT 1 FROM nodes WHERE parent_id = ? LIMIT 1');
+  const hasChild = (node: number): boolean => childOf.get(node) !== undefined;
+  const regionNodes = new Map<number, number[]>(); // root id → its node at each region it holds
+  const tops = new Map<number, number>();
+  for (const r of roots) {
+    const row = topOf.get(r.id) as { id: number } | undefined;
+    if (row) { tops.set(r.id, row.id); regionNodes.set(r.id, [row.id]); }
+  }
+  const edge: number[] = [];
+  const gone = new Set<number>();
+  const dup: Array<[number, number]> = [];
+  for (const folder of roots) {
+    const top = tops.get(folder.id);
+    if (top === undefined) continue;
+    const holders = folderHolders(folder, top, roots.filter((r) => tops.has(r.id)), hasChild);
+    if (holders.length < 2) continue;
+    for (const h of holders.slice(1)) { edge.push(h.node); regionNodes.get(h.root.id)!.push(h.node); }
+    const order = answeringOrder(holders);
+    if (answersAlone(order[0])) for (const h of order.slice(1)) gone.add(h.node);
+    else for (let i = 1; i < order.length; i++) for (let j = 0; j < i; j++) dup.push([order[i].node, order[j].node]);
+  }
+  const left = new Set<number>();
+  for (const [id, nodes] of regionNodes) {
+    if (!nodes.every((n) => gone.has(n))) continue;
+    left.add(id);
+    for (const n of nodes) gone.delete(n); // left out by its id: nothing of it to walk
+  }
+  return { roots: left, ...exclusionClause([...gone], dup, edge) };
+}
+
+/**
+ * The `n.id NOT IN (…)` term for nestedRootExclusions: every node at and under
+ * a `gone` node, and every node of a `dup` pair's first tree whose path its
+ * second tree holds too, each walked down to (not into) an `edge` node.
+ */
+function exclusionClause(gone: number[], dup: Array<[number, number]>, edge: number[]): { clause: string | null; params: number[] } {
+  if (gone.length === 0 && dup.length === 0) return { clause: null, params: [] };
+  const ctes: string[] = [];
+  const picks: string[] = [];
+  const params: number[] = [];
+  const stop = edge.length > 0 ? ' WHERE c.id NOT IN (SELECT id FROM edge)' : '';
+  if (edge.length > 0) {
+    ctes.push(`edge(id) AS (VALUES ${edge.map(() => '(?)').join(', ')})`);
+    params.push(...edge);
+  }
+  if (gone.length > 0) {
+    ctes.push(`gone(id) AS (
+      SELECT id FROM nodes WHERE id IN (${gone.map(() => '?').join(', ')})
+      UNION ALL
+      SELECT c.id FROM nodes c JOIN gone ON c.parent_id = gone.id${stop})`);
+    params.push(...gone);
+    picks.push('SELECT id FROM gone');
+  }
+  if (dup.length > 0) {
+    ctes.push(`seed(id, twin) AS (VALUES ${dup.map(() => '(?, ?)').join(', ')})`);
+    params.push(...dup.flat());
+    ctes.push(`dup(id, twin) AS (
+      SELECT id, twin FROM seed
+      UNION ALL
+      SELECT c.id, t.id FROM dup JOIN nodes c ON c.parent_id = dup.id JOIN nodes t ON t.parent_id = dup.twin AND t.name = c.name${stop})`);
+    picks.push('SELECT id FROM dup');
+  }
+  return { clause: `n.id NOT IN (WITH RECURSIVE ${ctes.join(',\n')} ${picks.join(' UNION ALL ')})`, params };
 }
 
 /**
@@ -2650,9 +2755,10 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
   // `idx_nodes_size` root by root instead of the plans tests/indexSearch.test.ts
   // pins (the extension seek, the one scan of the nodes).
   //
-  // And one row per path where one indexed folder lies inside another (F08):
-  // nestedRootExclusions names the roots and subtrees that leave their paths
-  // to another index. With no folder inside another, nothing changes.
+  // And one row per path where one indexed folder lies inside another (F08),
+  // none lost (review F1.2): nestedRootExclusions names the roots left out
+  // whole and the rows the others leave to another index. With no folder
+  // inside another, nothing changes.
   const nested = nestedRootExclusions(roots);
   const searched = roots.filter((r) => !nested.roots.has(r.id));
   const where: string[] = [
@@ -2660,18 +2766,9 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
     `+n.root_id IN (${searched.map(() => '?').join(', ')})`,
   ];
   const params: (string | number)[] = [ASIDE_PREFIX, ASIDE_PREFIX_END, ...searched.map((r) => r.id)];
-  if (nested.subtrees.length > 0) {
-    where.push(
-      `n.id NOT IN (
-         WITH RECURSIVE gone(id) AS (
-           SELECT id FROM nodes WHERE id IN (${nested.subtrees.map(() => '?').join(',')})
-           UNION ALL
-           SELECT c.id FROM nodes c JOIN gone ON c.parent_id = gone.id
-         )
-         SELECT id FROM gone
-       )`,
-    );
-    params.push(...nested.subtrees);
+  if (nested.clause) {
+    where.push(nested.clause);
+    params.push(...nested.params);
   }
 
   if (parsed.kind === 'extension') {

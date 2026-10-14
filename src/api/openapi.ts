@@ -2599,7 +2599,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse(
         'Matches, largest first',
-        opaque('hits[], total, countCapped, truncated, tookMs, roots[], staleRoots[]. Only ready and stale roots are searched: a root still being built, or one whose build failed, gives no hit and is not counted. A path two searched roots hold (one folder indexed inside another) is one hit, counted once, from a ready root over a stale one; its rootPath names the root that answered'),
+        opaque('hits[], total, countCapped, truncated, tookMs, roots[], staleRoots[]. Only ready and stale roots are searched: a root still being built, or one whose build failed, gives no hit and is not counted. A path two searched roots hold (one folder indexed inside another) is one hit, counted once: from a root that is ready and watched where one listed that folder, otherwise from the root built most recently that holds the path, so a path only one of them holds is still found; its rootPath names the root that answered'),
       ),
     },
   },
