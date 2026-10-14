@@ -1757,9 +1757,17 @@ body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 3
    resting edge, and the banner takes the map less the 34 px of it the dock
    still overlaps and a 14 px gap each side (62 px). The pane's head and its
    close button stay clear above the dock; collapsing the cart puts the pill
-   back left of the pane. tests/layoutQa.test.ts checks the two apart at
+   back left of the pane. That width is the expanded sidebar's: the rail
+   (64 + 12, a user's pin) leaves room for both from 1068 px, and there the
+   dock stays beside the pane rather than covering the preview, its path
+   and "Show the full address" (review F1.6). tests/layoutQa.test.ts checks
+   the two apart, and the dock off the pane wherever both fit beside it, at
    every width from the desktop window's minimum up, in both sidebar states. */
 @media (max-width: 1235px) {
+  body.preview-open.cart-open:has(#sideNav:not(.collapsed)) #cartDock { right: 22px; max-width: 92vw; }
+  body.preview-open.cart-open:has(#sideNav:not(.collapsed)) .tm-preview-banner { max-width: max(240px, calc(100% - 62px)); }
+}
+@media (max-width: 1067px) {
   body.preview-open.cart-open #cartDock { right: 22px; max-width: 92vw; }
   body.preview-open.cart-open .tm-preview-banner { max-width: max(240px, calc(100% - 62px)); }
 }

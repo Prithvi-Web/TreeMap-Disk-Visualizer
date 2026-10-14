@@ -554,18 +554,28 @@ test('with the cart open beside the open preview pane, the cart dock covers neit
   const root = declsFor(':root');
   const paneW = sheetPx(declsFor('#previewPane').get('width'), 'the pane width');
   const mainPad = sheetPx((declsFor('main').get('padding') || '').split(/\s+/)[1], "<main>'s side padding");
-  let checked = 0;
-  for (const W of [1024, 1100, 1180, 1235, 1236, 1280, 1320, 1440, 1920]) {
+  // A rule may name the sidebar's state, the rail being a user's pin (review
+  // F1.6): `X` and `X` qualified for this state both apply, the qualified
+  // one winning by specificity.
+  const stated = (base: string, rail: boolean) => base.replace(/^(body\S*)/, `$1:has(#sideNav${rail ? '.collapsed' : ':not(.collapsed)'})`);
+  const forState = (selectors: string[], W: number, rail: boolean) =>
+    new Map([...selectors.flatMap((sel) => [...declsAt(sel, W)]), ...selectors.filter((sel) => sel.startsWith('body')).flatMap((sel) => [...declsAt(stated(sel, rail), W)])]);
+  const vw = (v: string, W: number) => v.replace(/(\d+(?:\.\d+)?)vw/g, (_m, n: string) => `${(Number(n) / 100) * W}px`);
+  let checked = 0, beside = 0;
+  for (const W of [1024, 1067, 1068, 1100, 1180, 1235, 1236, 1280, 1320, 1440, 1920]) {
     for (const rail of [false, true]) {
       const side = sheetPx(root.get(rail ? '--side-w-rail' : '--side-w'), 'the sidebar width') + 12;
       const map = W - side - paneW - 2 * mainPad;
       const label = `${W} px, sidebar ${rail ? 'rail' : 'open'} (a ${map} px map)`;
       // The dock: its resting rule, the pane's shift, and any rule for the cart open beside the pane.
-      const dock = new Map([...declsAt('#cartDock', W), ...declsAt('body.preview-open #cartDock', W), ...declsAt('body.preview-open.cart-open #cartDock', W)]);
-      const dockW = Math.min(cssPx(dock.get('width')!, W), cssPx(dock.get('max-width')!.replace(/(\d+(?:\.\d+)?)vw/g, (_m, n: string) => `${(Number(n) / 100) * W}px`), W));
-      const dockLeft = W - cssPx(dock.get('right')!, W) - dockW;
+      const dockAt = (sels: string[]) => {
+        const dock = forState(sels, W, rail);
+        const w = Math.min(cssPx(dock.get('width')!, W), cssPx(vw(dock.get('max-width')!, W), W));
+        return { left: W - cssPx(dock.get('right')!, W) - w, w };
+      };
+      const { left: dockLeft, w: dockW } = dockAt(['#cartDock', 'body.preview-open #cartDock', 'body.preview-open.cart-open #cartDock']);
       // The banner, in the map's wrap at the column's left edge.
-      const d = new Map([...declsAt('.tm-preview-banner', W), ...declsAt('body.cart-open .tm-preview-banner', W), ...declsAt('body.preview-open.cart-open .tm-preview-banner', W)]);
+      const d = forState(['.tm-preview-banner', 'body.cart-open .tm-preview-banner', 'body.preview-open.cart-open .tm-preview-banner'], W, rail);
       const pct = (v: string) => cssPx(v.replace(/(\d+(?:\.\d+)?)%/g, (_m, n: string) => `${(Number(n) / 100) * map}px`), map);
       const bannerLeft = side + mainPad + pct(d.get('left')!);
       const bannerW = pct(d.get('max-width')!);
@@ -576,10 +586,20 @@ test('with the cart open beside the open preview pane, the cart dock covers neit
       // moved out of the way, it wrapped to ten lines and pushed the map down.
       assert.ok(bannerW >= dockLeft - bannerLeft - 28,
         `${label}: the banner may run ${bannerW.toFixed(0)} px of the ${(dockLeft - bannerLeft).toFixed(0)} px left of the open cart`);
+      // Where the banner's 240 px and the dock both fit left of the pane, the
+      // open dock stays there: over the pane it covers the preview itself,
+      // its path and "Show the full address" (review F1.6 — the rail).
+      const rest = dockAt(['#cartDock', 'body.preview-open #cartDock']);
+      if (bannerLeft + 240 <= rest.left) {
+        beside++;
+        assert.ok(dockLeft + dockW <= W - paneW,
+          `${label}: the banner and the dock fit beside the pane, yet the open cart runs to x ${(dockLeft + dockW).toFixed(0)} over the pane from x ${W - paneW}`);
+      }
       checked++;
     }
   }
-  assert.equal(checked, 18, 'every size and sidebar state was checked');
+  assert.equal(checked, 22, 'every size and sidebar state was checked');
+  assert.ok(beside >= 8, `control: in ${beside} of them the banner and the dock fit beside the pane`);
 });
 
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
