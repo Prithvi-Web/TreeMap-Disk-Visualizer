@@ -1446,13 +1446,26 @@ test('a Smart Suggestion\'s description and its remedy are drawn inside the Clea
     assert.ok(!inRow(desc), `${label}: the description is not an item of the header row, where the title and the badge squeezed it to nothing`);
     // Every remedy the group has: drawn whole, outside the header row, with commands — and only commands — in code.
     const remedies = [g.adviceCommand, g.regenerateCmd].filter((r): r is string => typeof r === 'string');
+    const plain = (t: string) => t.replace(/\s+/g, ' ').trim();
     for (const remedy of remedies) {
       assert.ok(remedy in REMEDY_CODE, `${label}: "${remedy}" is a remedy this test knows — say what it is in REMEDY_CODE`);
-      const line = selectAll(group, '.smart-remedy').find((el) => textOf(el, content).endsWith(remedy.replace(/\s+/g, ' ').trim()));
+      // Said for what it is (review F1.5): an advisory group's advice is the
+      // way to reclaim it — its only remedy (AGENTS.md) — and a restore
+      // command is how a removed group comes back.
+      const what = remedy === g.regenerateCmd ? 'To put it back:' : 'To reclaim:';
+      const line = selectAll(group, '.smart-remedy').find((el) => textOf(el, content).endsWith(plain(remedy)));
       assert.ok(line, `${label}: "${remedy}" is drawn whole on a remedy line`);
+      assert.equal(textOf(line!, content), `${what} ${plain(remedy)}`, `${label}: the line says what "${remedy}" is for, and nothing else`);
+      assert.deepEqual(selectAll(line!, '.rc-lbl').map((el) => textOf(el, content)), [what], `${label}: "${what}" is the line's label`);
       assert.ok(!inRow(line!), `${label}: its remedy is not an item of the header row`);
       const codes = selectAll(line!, 'code').map((c) => textOf(c, content));
       assert.deepEqual(codes, REMEDY_CODE[remedy], `${label}: in "${remedy}", the commands — and nothing else — are code`);
+      // The "Why?" panel says it the same way: the commands, and nothing else, in code.
+      const whyText = remedy === g.regenerateCmd ? `To put it back: ${plain(remedy)}` : `Do not move this to the Trash. Reclaim it instead: ${plain(remedy)}`;
+      const whyLine = selectAll(group, '.smart-why .smart-why-line').find((el) => textOf(el, content) === whyText);
+      assert.ok(whyLine, `${label}: the "Why?" panel reads "${whyText}"`);
+      assert.deepEqual(selectAll(whyLine!, 'code').map((c) => textOf(c, content)), REMEDY_CODE[remedy],
+        `${label}: in the "Why?" panel's "${remedy}", the commands — and nothing else — are code`);
       for (const el of [line!, ...selectAll(line!, '*')]) {
         const css = sheetFor(tree, el);
         assert.ok(!/^(nowrap|pre)$/.test(css.get('white-space') || ''), `${label}: <${el.tagName}.${[...el.cls].join('.')}> in the remedy line wraps (white-space: ${css.get('white-space')})`);
