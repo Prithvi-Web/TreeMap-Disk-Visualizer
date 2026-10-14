@@ -4559,7 +4559,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <button role="tab" aria-selected="false" data-pane="video"><span data-icon="video"></span>Shrink Video</button>
         <button role="tab" aria-selected="false" data-pane="cloud" id="cleanTabCloud" hidden><span data-icon="cloud"></span>Cloud-safe</button>
       </div>
-      <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Time Capsule, so it can be put back only until the Trash is emptied. Shrink Video’s re-encode loses a little quality for good, and the original then goes to the Trash too.</div>
+      <!-- Where what Clean Up removes goes: the system Trash, or a cloud account's own trash.
+           Written by the Clean Up button for the scan the sheet opens on (cleanUpWhereItGoes). -->
+      <div class="muted" id="cleanWhereNote" style="margin-bottom:6px;"></div>
       <div id="cleanPaneRules" class="pane-fade">
         <!-- v4 §4.5 — the ladder: a saved view is a Clean Up rule, and a Clean
              Up rule is an Autopilot policy. One matching engine throughout. -->
@@ -34319,8 +34321,27 @@ function smartItemsOf(g) {
 }
 let cleanPane = 'rules';
 
+/**
+ * Where what Clean Up removes goes, said for the scan the sheet opens on
+ * (QA third pass D06; review F1.4). A local scan's go to the system Trash
+ * through DELETE /api/files, which keeps no Time Capsule copy, so they come
+ * back only until the Trash is emptied; Shrink Video's original follows a
+ * lossy re-encode there. A cloud account's go to that provider's own trash
+ * (confirmTrash, cloudTrashPaths), which the provider empties after the time
+ * it keeps deleted files — and the system Trash never sees them.
+ */
+function cleanUpWhereItGoes() {
+  if (isCloudScan()) {
+    return `Nothing is removed until you confirm. What Clean Up removes goes to ${cloudProviderOfScan().trashLabel} and is not copied to the Time Capsule, `
+      + 'so it can be put back only until that trash is emptied — by you, or by the provider after the time it keeps deleted files.';
+  }
+  return 'Nothing is removed until you confirm. What Clean Up removes goes to the system Trash and is not copied to the Time Capsule, '
+    + 'so it can be put back only until the Trash is emptied. Shrink Video’s re-encode loses a little quality for good, and the original then goes to the Trash too.';
+}
+
 $('cleanupBtn').addEventListener('click', () => {
   if (!state.root) { toast('Run a scan first', 'error'); return; }
+  $('cleanWhereNote').textContent = cleanUpWhereItGoes();
   $('cleanResults').innerHTML = '';
   $('smartResults').innerHTML = '';
   $('browserProfiles').innerHTML = '';

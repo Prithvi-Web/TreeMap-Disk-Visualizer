@@ -639,16 +639,47 @@ function recoverySentences(text: string): string[] {
     .filter((s) => /\brecoverabl|\brestor(e|ed)\b|\bundo(ne)?\b|\bput (it|them|everything) back\b/i.test(s));
 }
 
+/**
+ * Open the Clean Up sheet with the page's own Clean Up button handler, over
+ * stubs, on a local scan or on a cloud account's (`cloud`: its provider), and
+ * read the sentence above its panes as a browser shows it: the markup's own
+ * text, unless the handler writes the element. `dom` reuses the page of an
+ * earlier open — the sheet is opened again on another scan.
+ */
+function openCleanUp(opts: { cloud?: { name: string; trashLabel: string } } = {}, dom = classDom()): { said: string; dom: ReturnType<typeof classDom> } {
+  const handlerAt = INDEX.indexOf("$('cleanupBtn').addEventListener('click', () => {");
+  assert.notEqual(handlerAt, -1, 'the Clean Up button is wired');
+  const open = INDEX.indexOf('{', handlerAt + "$('cleanupBtn').addEventListener('click', ()".length);
+  const body = INDEX.slice(open + 1, matchingBrace(open));
+  // The sentence: the muted line above the first pane, and the id the handler would write it by.
+  const paneAt = INDEX.indexOf('<div id="cleanPaneRules"');
+  assert.notEqual(paneAt, -1, 'the Clean Up sheet is in the page');
+  const noteAt = INDEX.lastIndexOf('<div class="muted"', paneAt);
+  const id = /\bid="([^"]+)"/.exec(INDEX.slice(noteAt, INDEX.indexOf('>', noteAt)))?.[1];
+  const markupText = INDEX.slice(noteAt, INDEX.indexOf('</div>', noteAt)).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  if (id && !dom.els[id]) dom.$(id).textContent = markupText;
+  const deps: Record<string, unknown> = {
+    $: dom.$, state: { root: { path: opts.cloud ? 'cloud://drive' : '/r', name: 'r' } }, toast: () => assert.fail('the sheet opened on a scan'),
+    cleanMatches: [], emptyFolders: [], smartGroups: [],
+    cleanFunnelDrop: () => {}, setCleanRuleSource: () => {}, setCleanPane: () => {}, renderCloudSafe: () => {},
+    isCloudScan: () => Boolean(opts.cloud), cloudProviderOfScan: () => opts.cloud ?? assert.fail('a local scan has no provider'),
+  };
+  // The page's own helpers the handler calls, where the page has them.
+  const helpers = ['cleanUpWhereItGoes'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX)).map(declOf).join('\n');
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(...keys, `${helpers}\n${body}`)(...keys.map((k) => deps[k]));
+  assert.ok(dom.$('cleanModal').classes.has('open'), 'control: the sheet opened');
+  return { said: id ? dom.els[id].textContent : markupText, dom };
+}
+
 test('the Clean Up sheet says where its removals go: the Trash, until it is emptied, with no Time Capsule copy; and Shrink Video is lossy (QA third pass D06)', () => {
   // QA third pass D06: "Nothing is removed until you confirm — and everything
   // goes to the system Trash, recoverable any time." Clean Up's moves are
   // DELETE /api/files, which keeps no Time Capsule copy (Settings and the
   // Time Capsule view both say so): once the Trash is emptied, nothing comes
   // back. And Shrink Video's original goes to the Trash after a lossy encode.
-  const at = INDEX.indexOf('<div id="cleanPaneRules"');
-  assert.notEqual(at, -1, 'the Clean Up sheet is in the page');
-  const open = INDEX.lastIndexOf('<div class="muted"', at);
-  const said = INDEX.slice(open, INDEX.indexOf('</div>', open)).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  const { said } = openCleanUp();
   assert.doesNotMatch(said, /any ?time/i, `no "recoverable any time": ${said}`);
   assert.match(said, /Nothing is removed until you confirm/, said);
   assert.match(said, /system Trash/, said);
@@ -658,6 +689,26 @@ test('the Clean Up sheet says where its removals go: the Trash, until it is empt
   assert.match(said, /quality/, `the re-encode loses quality for good: ${said}`);
   // What the sentence says of Clean Up is what Clean Up does: its moves are trashPaths, never the cart commit.
   assert.match(declOf('runCleanTrash'), /await trashPaths\(chunk,/, 'Clean Up moves through trashPaths');
+});
+
+test('on a cloud account\'s scan the Clean Up sheet says its removals go to that provider\'s trash, not the system Trash — and says so again for whichever scan it opens on (review F1.4 of QA third pass D06)', () => {
+  // confirmTrash sends a cloud scan's Clean Up deletes to the provider's own
+  // trash (cloudTrashPaths), which the provider empties after the time it
+  // keeps deleted files; the sheet's one sentence said "the system Trash".
+  const drive = { name: 'Google Drive', trashLabel: 'Google Drive trash' };
+  const { said, dom } = openCleanUp({ cloud: drive });
+  assert.doesNotMatch(said, /system Trash/, `a cloud scan's removals never reach the system Trash: ${said}`);
+  assert.match(said, /Nothing is removed until you confirm/, said);
+  assert.match(said, /goes to Google Drive trash\b/, `it names where they do go: ${said}`);
+  assert.match(said, /not copied to the Time Capsule/, said);
+  assert.match(said, /until that trash is emptied — by you, or by the provider after the time it keeps deleted files/, `and when that way back ends: ${said}`);
+  assert.doesNotMatch(said, /any ?time|Shrink Video/i, `nothing a cloud scan cannot do: ${said}`);
+  // The same page, a local scan next: the sheet says the local thing again.
+  const local = openCleanUp({}, dom).said;
+  assert.match(local, /goes to the system Trash/, `opened again on a local scan: ${local}`);
+  assert.doesNotMatch(local, /Google Drive/, local);
+  // And the cloud thing once more, from the local one.
+  assert.match(openCleanUp({ cloud: drive }, dom).said, /goes to Google Drive trash\b/, 'and back');
 });
 
 test('no sentence on any page promises a way back "any time", and every promise past an emptied Trash says when it ends (QA third pass D06)', () => {
