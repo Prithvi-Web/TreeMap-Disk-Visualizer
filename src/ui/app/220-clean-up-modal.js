@@ -155,8 +155,10 @@ async function loadVideoCandidates() {
     const chosen = [...host.querySelectorAll('.vid-ck:checked')].map(ck => videoCandidates[+ck.dataset.i]);
     const saving = chosen.reduce((s, c) => s + c.estimatedSaving, 0);
     $('vidEncodeBtn').disabled = !chosen.length;
+    // Smaller once the Trash is emptied, as the sheet after it says: the
+    // original waits there beside the new file until then (review F3.1).
     $('vidSummary').textContent = chosen.length
-      ? `${chosen.length} selected — around ${formatBytes(saving)} back, if the estimates hold`
+      ? `${chosen.length} selected — around ${formatBytes(saving)} smaller once you empty the Trash, if the estimates hold`
       : '';
   };
   host.querySelectorAll('.vid-ck').forEach(ck => ck.addEventListener('change', update));

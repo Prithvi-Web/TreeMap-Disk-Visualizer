@@ -669,6 +669,65 @@ test('the sheets that ask before a re-encode or a shader-cache clear say the spa
   assert.match(cleared, /space comes back when you empty the Trash/, `and when the space arrives: "${cleared}"`);
 });
 
+/**
+ * The Shrink Video pane over real candidates, ticked as a person ticks them:
+ * the page's own loadVideoCandidates draws the list and wires its boxes, and
+ * `line` reads the sentence beside Re-encode.
+ */
+async function videoPaneTicking(candidates: Array<{ name: string; path: string; size: number; estimatedBytes: number; estimatedSaving: number; reason: string }>) {
+  type Box = { checked: boolean; dataset: { i: string }; changed: Array<() => void>; addEventListener(t: string, f: () => void): void };
+  const boxes: Box[] = candidates.map((_, i) => ({
+    checked: false, dataset: { i: String(i) }, changed: [] as Array<() => void>,
+    addEventListener(t, f) { if (t === 'change') this.changed.push(f); },
+  }));
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= {
+    innerHTML: '', textContent: '', disabled: false, hidden: false, style: {}, clicked: [] as Array<() => void>,
+    // The list's boxes live in the pane's body; nothing else here is asked for any.
+    querySelectorAll: (sel: string) => (id !== 'videoBody' ? [] : sel === '.vid-ck:checked' ? boxes.filter((b) => b.checked) : sel === '.vid-ck' ? boxes : []),
+    addEventListener(t: string, f: () => void) { if (t === 'click') this.clicked.push(f); },
+  });
+  await runnable(bodyOf('async function loadVideoCandidates() {'), {
+    $, state: { scanId: 's1' },
+    api: async () => ({ available: true, candidates, shortlisted: candidates.length, unreadable: 0 }),
+    skeletonRows: () => '', icon: () => '', escapeHtml: (s: string) => s, chipFor: () => '',
+    formatBytes: (n: number) => `${n / 1e9} GB`, formatCount: String, sizeColor: () => '', sizeInk: () => '',
+    videoCandidates: [], confirmEncode: () => {},
+  })();
+  return {
+    tick(i: number) { boxes[i].checked = true; boxes[i].changed.forEach((f) => f()); },
+    selectAll() { els.vidSelectAll.clicked.forEach((f: () => void) => f()); },
+    line: (): string => els.vidSummary.textContent,
+  };
+}
+
+test('the Shrink Video pane\'s selection line says the space comes once the Trash is emptied, as the sheet after it does (review F3.1 of QA third pass D06)', async () => {
+  // "1 selected — around 4.2 GB back, if the estimates hold": the encoder
+  // writes the new file beside the original and moves the original to the
+  // Trash (compressionAdvisor's encodeOne), so disk use rises by the new
+  // file's size until the Trash is emptied. The confirm sheet one click
+  // later says so (F2.3); the line beside the button still said "back".
+  const video = (name: string, saving: number) => ({ name, path: `/v/${name}`, size: 9e9, estimatedBytes: 9e9 - saving, estimatedSaving: saving, reason: 'H264 video' });
+  const pane = await videoPaneTicking([video('a.mov', 4_200_000_000), video('b.mov', 1_000_000_000)]);
+  assert.equal(pane.line(), '', 'control: nothing ticked, nothing said');
+  pane.tick(0);
+  const one = pane.line();
+  assert.doesNotMatch(one, /\bback\b|\bfree/i, `no space comes back before the Trash is emptied: "${one}"`);
+  assert.match(one, /^1 selected — around 4\.2 GB smaller once you empty the Trash, if the estimates hold$/, `the saving, and when it arrives: "${one}"`);
+  pane.selectAll();
+  const both = pane.line();
+  assert.match(both, /^2 selected — around 5\.2 GB smaller once you empty the Trash/, `every ticked video counts: "${both}"`);
+
+  // And the sheet the button opens says the same thing of the same saving.
+  const sheet = makeDom();
+  runnable(bodyOf('function confirmEncode(chosen) {'), {
+    $: sheet.$, icon: () => '', formatBytes: (n: number) => `${n / 1e9} GB`, startEncode: () => {}, onConfirmTrash: null,
+  }, 'chosen')([video('a.mov', 4_200_000_000), video('b.mov', 1_000_000_000)]);
+  const asked = sheetText(sheet.els);
+  const when = /5\.2 GB smaller once you empty the Trash/;
+  assert.ok(when.test(both) && when.test(asked), `the pane and the sheet agree: "${both}" / "${asked}"`);
+});
+
 /* ═══════ 6. Shrink Video: "could not be read" is not "already efficient" (D56) ═══════ */
 
 /**
