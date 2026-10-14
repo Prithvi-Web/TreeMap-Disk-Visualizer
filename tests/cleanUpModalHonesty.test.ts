@@ -655,6 +655,17 @@ test('the sheets that ask before a re-encode or a shader-cache clear say the spa
   assert.doesNotMatch(asked, /\bfree(ing|s|d)?\b/i, `nothing is freed by a move to the Trash: "${asked}"`);
   assert.match(asked, /roughly 4\.2 GB smaller once you empty the Trash/, `the saving, and when it arrives: "${asked}"`);
   assert.match(asked, /This is lossy/, 'control: the sheet is the re-encode\'s');
+  assert.match(asked, /^Re-encode 1 video file to HEVC: .* where the original goes\./, `one video is spoken of as one: "${asked}"`);
+  // Two videos: the plural half of the same sentence (review F3.3 of QA third pass D08).
+  const pair = makeDom();
+  runnable(bodyOf('function confirmEncode(chosen) {'), {
+    $: pair.$, icon: () => '', formatBytes: (n: number) => `${n / 1e9} GB`,
+    startEncode: () => {}, onConfirmTrash: null,
+  }, 'chosen')([{ path: '/v/a.mov', estimatedSaving: 4_200_000_000 }, { path: '/v/b.mov', estimatedSaving: 1_000_000_000 }]);
+  const askedTwo = sheetText(pair.els);
+  assert.doesNotMatch(askedTwo, /\bfree(ing|s|d)?\b/i, `nothing is freed by a move to the Trash: "${askedTwo}"`);
+  assert.match(askedTwo, /^Re-encode 2 video files to HEVC: roughly 5\.2 GB smaller once you empty the Trash, where the originals go\./,
+    `two videos are spoken of as two, and the saving is both of theirs: "${askedTwo}"`);
 
   const shaders = makeDom();
   const component = (p: string, bytes: number) => ({ kind: 'shaderCache', path: p, bytes });
