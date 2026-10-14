@@ -320,13 +320,13 @@ function renderTmLegend() {
     ];
     host.innerHTML = '<div class="tm-legend-bands">' + bands.map((b) =>
       `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
-    ).join('') + '</div>';
+    ).join('') + '</div>' + tmMarksKey();
     return;
   }
   if (state.treemap.colorMode === 'age') {
     host.innerHTML = '<div class="tm-legend-bands">' + AGE_BANDS.map((b) =>
       `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
-    ).join('') + '</div>';
+    ).join('') + '</div>' + tmMarksKey();
   } else if (state.treemap.colorMode === 'reclaim') {
     // §3.3 asks for "a legend and a one-line explanation of what the colours
     // mean". The unscored swatch earns its place: it is not the bottom of the
@@ -340,10 +340,51 @@ function renderTmLegend() {
     host.innerHTML = '<div class="tm-legend-bands">' + bands.map((b) =>
       `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
     ).join('') + '</div>' +
-      `<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.${reclaimCoverageNote()}</span>`;
+      `<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.${reclaimCoverageNote()}</span>` +
+      tmMarksKey();
   } else {
-    host.innerHTML = `<span>1 MB</span><div class="legend-grad" style="background:${sizeRampCss()}"></div><span>10 GB+</span>`;
+    host.innerHTML = `<span>1 MB</span><div class="legend-grad" style="background:${sizeRampCss()}"></div><span>10 GB+</span>` + tmMarksKey();
   }
+}
+
+/**
+ * The map's markings, in the key (design pass G27) — only those the last
+ * paint of the rectangle map actually drew (drawTreemap records them in
+ * state.treemap.marks as it draws each one), so the key never explains a
+ * mark that is not on screen, and the other layouts, which draw none of
+ * them, never inherit one.
+ *
+ * Named for what each mark means in drawTreemap: pass 7's dashed indigo
+ * border is any container the server can list (containerListable — not a
+ * .dmg, not an entry inside one), so it is named by the kinds drawn, an
+ * archive, a disk image (an .iso, Docker's data) or a Photos library; pass
+ * 1's hatched block with a dashed amber edge is what the cart preview shows
+ * staged for the Trash; its hollow dashed tile, a cloud placeholder whose
+ * bytes are not on this disk; pass 6's branch glyph, a folder that holds a
+ * .git folder of its own.
+ */
+const TM_OPEN_NOUNS = { zip: 'archive', tgz: 'archive', tar: 'archive', iso: 'disk image', docker: 'disk image', photos: 'Photos library' };
+function tmMarksKey() {
+  const m = isRectMap() && state.treemap.marks;
+  if (!m) return '';
+  const items = [];
+  if (m.open && m.open.size) {
+    const nouns = [...new Set([...m.open].map((k) => TM_OPEN_NOUNS[k] || 'container'))];
+    items.push(`<span class="mk" title="Click it to look inside — TreeMap lists what it holds"><i class="mk-sw mk-open"></i>${escapeHtml(nouns.join(' or '))} you can open</span>`);
+  }
+  if (m.staged) {
+    items.push('<span class="mk" title="In the cleanup cart — nothing is deleted until you move it to the Trash"><i class="mk-sw mk-staged"></i>staged for the Trash</span>');
+  }
+  if (m.cloud) {
+    items.push('<span class="mk" title="A cloud file that is not downloaded: drawn at its size in the cloud, it takes almost no space here"><i class="mk-sw mk-cloud"></i>in the cloud, not on this disk</span>');
+  }
+  if (m.git) {
+    items.push('<span class="mk" title="A folder holding a .git folder of its own">' +
+      '<svg class="mk-git" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="3" cy="9.5" r="1.8" fill="currentColor"/>' +
+      '<circle cx="9" cy="2.5" r="1.8" fill="currentColor"/><path d="M3 8.5V4.5Q3 2.5 6.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' +
+      'git repository</span>');
+  }
+  return items.length ? `<div class="tm-marks">${items.join('')}</div>` : '';
 }
 
 /**
@@ -687,6 +728,10 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded });
   }
   state.treemap.pxRects = px;
+  // What this paint marks, for the key (G27): each pass below records the
+  // marking it draws as it draws it.
+  const marks = { open: new Set(), staged: false, cloud: false, git: false };
+  state.treemap.marks = marks;
 
   // A map with nothing to draw must say so — a blank panel reads as a broken
   // app, not as a small folder. loadTreemap already dropped the 4 KB floor
@@ -712,6 +757,7 @@ function drawTreemap() {
        which is exactly the false statement the preview exists to avoid. Same
        reasoning as A3's hollow cloud placeholders, and the same visual family. */
     if (r.n.freed) {
+      marks.staged = true;
       ctx.fillStyle = cssVar('--tm-canvas-bg');
       ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
       const hatch = tmHatchPattern(ctx);
@@ -741,6 +787,7 @@ function drawTreemap() {
        correct. The faint fill plus a dashed outline reads as an outline of
        something absent, and the cloud glyph in pass 5 names the reason. */
     if (r.n.cloudPlaceholder && r.w > 6 && r.h > 6) {
+      marks.cloud = true;
       ctx.fillStyle = `rgba(${base[0]},${base[1]},${base[2]},0.16)`;
       ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
       ctx.save();
@@ -872,6 +919,7 @@ function drawTreemap() {
   // Pass 6: git-repository markers (small branch glyph).
   for (const r of px) {
     if (!r.n.gitRepo || r.w < 70 || r.h < 40) continue;
+    marks.git = true;
     const gx = r.x + r.w - 17, gy = r.y + 11;
     ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.arc(gx, gy + 5, 2.1, 0, Math.PI * 2); ctx.fill();
@@ -883,6 +931,7 @@ function drawTreemap() {
   // indigo border and a small box glyph. Virtual entries inside stay plain.
   for (const r of px) {
     if (!containerListable(r.n) || r.n.virtual) continue;
+    marks.open.add(r.n.container);
     ctx.strokeStyle = 'rgba(94,92,230,0.9)';
     ctx.setLineDash([5, 3]);
     ctx.lineWidth = 1.5;
