@@ -1,16 +1,29 @@
   <!-- ═══════════ Empty state ═══════════ -->
   <section id="emptyState">
-    <svg class="mark" width="92" height="92" viewBox="0 0 26 26" aria-hidden="true">
-      <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
-      <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
-      <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
-    </svg>
-    <h1>See what's eating your disk</h1>
-    <p>TreeMap draws every file as a rectangle: the bigger the rectangle, the more space it takes. Click through to whatever is filling the disk, then clear it out — everything goes to the Trash, never deleted outright.</p>
-    <div class="feature-row">
-      <span class="feature"><span data-icon="zap"></span>Reads a whole drive in minutes</span>
-      <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
-      <span class="feature"><span data-icon="eyeOff"></span>No tracking, fully local</span>
+    <!-- Two parts, one shown (renderEmptyState). The Dashboard's empty state is
+         the welcome. Every other view that needs a scan says which view it is
+         and what it will show (design pass G02): before, clicking Grid, Apps or
+         Security put up this same welcome with no title of its own, and looked
+         like nothing had happened. One action serves them all. -->
+    <div class="empty-hero" id="emptyHero">
+      <svg class="mark" width="92" height="92" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
+        <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
+        <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
+      </svg>
+      <p class="empty-kicker">Dashboard</p>
+      <h1>See what's eating your disk</h1>
+      <p>TreeMap draws every file as a rectangle: the bigger the rectangle, the more space it takes. Click through to whatever is filling the disk, then clear it out — everything goes to the Trash, never deleted outright.</p>
+      <div class="feature-row">
+        <span class="feature"><span data-icon="zap"></span>Reads a whole drive in minutes</span>
+        <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
+        <span class="feature"><span data-icon="eyeOff"></span>No tracking, fully local</span>
+      </div>
+    </div>
+    <div class="empty-for-view" id="emptyForView" hidden>
+      <span class="empty-view-icon" id="emptyViewIcon" aria-hidden="true"></span>
+      <h1 id="emptyViewTitle"></h1>
+      <p id="emptyViewLead"></p>
     </div>
     <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
       <span data-icon="folder"></span>Choose a folder to get started

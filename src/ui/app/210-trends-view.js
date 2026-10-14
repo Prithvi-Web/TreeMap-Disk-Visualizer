@@ -4,14 +4,20 @@ async function loadTrends() {
     const { roots } = await api('/api/snapshots');
     state.trends.roots = roots;
     const sel = $('trendRoot');
-    if (!roots.length) {
+    // No history at all: what Trends will show and the action that starts it,
+    // in place of an empty chart, an empty list and a folder box with nothing
+    // in it (design pass G02).
+    const none = !roots.length;
+    $('trendEmpty').hidden = !none;
+    $('trendToolbar').hidden = none;
+    $('trendGrid').hidden = none;
+    if (none) {
       sel.innerHTML = '<option>No history yet</option>';
       sel.disabled = true;
       $('trendInfo').textContent = '';
       state.trends.snapshots = [];
       drawTrendChart();
       drawTrendNet();
-      $('trendDeltas').innerHTML = '<div class="muted">Finish a scan and history starts building automatically — every scan saves a snapshot.</div>';
       return;
     }
     sel.disabled = false;
@@ -100,6 +106,7 @@ $('trendRoot').addEventListener('change', (e) => {
   e.target.title = e.target.value;
   loadTrendData().catch(err => toast(err.message, 'error'));
 });
+$('trendEmptyBrowse').addEventListener('click', () => openBrowse(null));
 
 /**
  * The dashed forecast tail, or null.

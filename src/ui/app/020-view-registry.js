@@ -286,6 +286,38 @@ function viewBlockedReason(view) {
   return cap.reason || 'This feature is not available on this computer.';
 }
 
+/**
+ * What each view that needs a scan will show once a folder is scanned, in one
+ * sentence (design pass G02). Before a scan every one of them put up the
+ * Dashboard's welcome with no title of its own, so clicking Grid looked like
+ * nothing had happened. Keyed by view id, here rather than on each view,
+ * because the views are registered in files of their own; a view missing
+ * from this table still gets its own title and a sentence that claims nothing.
+ */
+const EMPTY_VIEW_LEADS = {
+  treemap: 'Once a folder is scanned, every file and folder in it appears here as a rectangle — the bigger the rectangle, the more space it takes.',
+  city: 'Once a folder is scanned, its map appears here as a city seen from a corner, where you choose what a building’s height and color mean.',
+  grid: 'Once a folder is scanned, its files and folders appear here as tiles you can sort, filter and open.',
+  apps: 'Once a folder is scanned, this shows how much of it each application owns — the app itself, its caches, its data and its logs.',
+  games: 'Once a folder is scanned, this shows what its game, photo and video libraries hold, and which parts their apps can rebuild if you remove them.',
+  security: 'Once a folder is scanned, this lists keys, credentials and wallets sitting outside the folders they belong in — found by name and place, without opening any file.',
+  missing: 'Once a folder is scanned, this accounts for everything its disk counts as used — what the scan found, and what no scan can see, such as snapshots.',
+  duplicates: 'Once a folder is scanned, this finds files in it with identical contents, and pictures that look nearly the same.',
+};
+const EMPTY_VIEW_LEAD_DEFAULT = 'Once a folder is scanned, this view fills in.';
+
+/** The empty state, for the view it stands in for (G02): the welcome on the
+    Dashboard, the view's own name, icon and sentence everywhere else. */
+function renderEmptyState(view) {
+  const hero = view.id === 'dashboard';
+  $('emptyHero').hidden = !hero;
+  $('emptyForView').hidden = hero;
+  if (hero) return;
+  $('emptyViewIcon').innerHTML = icon(view.icon, 30);
+  $('emptyViewTitle').textContent = view.label;
+  $('emptyViewLead').textContent = EMPTY_VIEW_LEADS[view.id] || EMPTY_VIEW_LEAD_DEFAULT;
+}
+
 function switchView(name) {
   const view = VIEW_BY_ID.get(name);
   if (!view) return;
@@ -320,6 +352,7 @@ function switchView(name) {
   // back with it (QA third pass D03). After the toggles, so focus that was in
   // the bar finds the view now on screen.
   selectionBarFollowView();
+  if (empty) renderEmptyState(view);
   $('emptyState').style.display = empty ? 'flex' : 'none';
   // FX: the zero-state CTA halo lives and dies with the welcome screen, and
   // the scan hero follows the active view — both are functions of the state

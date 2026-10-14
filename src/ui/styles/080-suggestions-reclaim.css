@@ -127,6 +127,25 @@
 #cmdkList .cmdk-row[aria-selected="true"] { background: var(--accent); color: #fff; }
 #cmdkList .cmdk-row[aria-selected="true"] .hint { color: rgba(255,255,255,0.75); }
 .cmdk-foot { font-size: 11px; margin: 8px 4px 2px; }
+/* ── Design pass G02: every view's empty state says which view it is ──
+   The two parts of #emptyState lay out as its own children, so its flex gap
+   spaces them as it always spaced the welcome; [hidden] still removes one. */
+#emptyState .empty-hero,
+#emptyState .empty-for-view { display: contents; }
+#emptyState .empty-kicker { margin: 4px 0 -10px; font-size: 11px; font-weight: 600; letter-spacing: 0.9px;
+  text-transform: uppercase; color: var(--text-2); }
+#emptyState .empty-view-icon { width: 72px; height: 72px; border-radius: 20px; display: inline-flex;
+  align-items: center; justify-content: center; color: var(--accent);
+  background: var(--surface-1); border: 1px solid var(--hairline); box-shadow: 0 16px 50px var(--accent-glow); }
+/* Trends and History with nothing to show: an explanation and the action. */
+.trend-empty { max-width: 560px; }
+.trend-empty p, .cal-empty p { margin: 2px 0 14px; line-height: 1.55; }
+/* A search box over nothing has nothing to search: each list writes its
+   summary line exactly when it holds something (renderOffloadIndex,
+   renderCapsule), so the box shows from then on. */
+#view-offloaded:has(#offloadInfo:empty) #offloadSearchRow,
+#view-capsule:has(#capsuleInfo:empty) #capsuleSearchRow { display: none; }
+/* ── end G02 ── */
 /* ── v4 §9.2: the first-run coach card ── */
 #tourOverlay { position: fixed; inset: 0; z-index: 96; pointer-events: none; }
 #tourOverlay[hidden] { display: none; }

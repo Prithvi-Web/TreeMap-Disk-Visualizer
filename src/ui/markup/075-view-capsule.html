@@ -7,7 +7,9 @@
         <div class="cap-gauge-wrap"><canvas id="capsuleGaugeCanvas" aria-label="Time Capsule space used against its cap" role="img"></canvas></div>
         <div class="muted num" id="capsuleGaugeText"></div>
       </div>
-      <div class="rule-row" style="margin-bottom:10px;">
+      <!-- Hidden while the summary line above is empty, i.e. while there is
+           nothing to search (design pass G02, the rule in 080). -->
+      <div class="rule-row" id="capsuleSearchRow" style="margin-bottom:10px;">
         <div class="field" style="flex:1;max-width:420px;">
           <span data-icon="search"></span>
           <input type="text" id="capsuleSearch" placeholder="Search by name or original path…" aria-label="Search protected items" autocomplete="off">

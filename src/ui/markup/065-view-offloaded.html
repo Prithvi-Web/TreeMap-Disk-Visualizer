@@ -3,7 +3,9 @@
     <div class="card glass">
       <h2><span data-icon="archive"></span>Offloaded Files</h2>
       <div class="apps-info muted" id="offloadInfo"></div>
-      <div class="rule-row" style="margin-bottom:10px;">
+      <!-- Hidden while the summary line above is empty, i.e. while there is
+           nothing to search (design pass G02, the rule in 080). -->
+      <div class="rule-row" id="offloadSearchRow" style="margin-bottom:10px;">
         <div class="field" style="flex:1;max-width:420px;">
           <span data-icon="search"></span>
           <input type="text" id="offloadSearch" placeholder="Search by name or original path…" aria-label="Search offloaded files" autocomplete="off">

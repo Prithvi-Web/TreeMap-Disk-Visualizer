@@ -1,13 +1,20 @@
   <!-- ═══════════ Trends ═══════════ -->
   <section class="view" id="view-trends" role="tabpanel" aria-label="Trends" hidden>
-    <div class="trends-toolbar">
+    <!-- No history at all (design pass G02): what Trends will show, and the
+         action that starts it — not a 230 px empty chart over "No data yet.". -->
+    <div class="card glass trend-empty" id="trendEmpty" hidden>
+      <h2><span data-icon="trendUp"></span>No history yet</h2>
+      <p class="muted">Trends draws how a folder’s size changes from one scan to the next. Scan a folder to start its history.</p>
+      <button class="btn btn-primary" id="trendEmptyBrowse"><span data-icon="folder"></span>Choose a folder</button>
+    </div>
+    <div class="trends-toolbar" id="trendToolbar">
       <span class="label-pair">
         <label for="trendRoot">Folder</label>
         <select id="trendRoot" aria-label="Folder to show history for"></select>
       </span>
       <span class="muted" id="trendInfo"></span>
     </div>
-    <div class="trends-grid">
+    <div class="trends-grid" id="trendGrid">
       <div class="card glass">
         <h2><span data-icon="trendUp"></span>Total Size Over Time</h2>
         <div class="trend-chart-wrap"><canvas id="trendChart" height="300" aria-label="Folder size history chart" role="img"></canvas></div>

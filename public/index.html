@@ -2239,6 +2239,25 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 #cmdkList .cmdk-row[aria-selected="true"] { background: var(--accent); color: #fff; }
 #cmdkList .cmdk-row[aria-selected="true"] .hint { color: rgba(255,255,255,0.75); }
 .cmdk-foot { font-size: 11px; margin: 8px 4px 2px; }
+/* ── Design pass G02: every view's empty state says which view it is ──
+   The two parts of #emptyState lay out as its own children, so its flex gap
+   spaces them as it always spaced the welcome; [hidden] still removes one. */
+#emptyState .empty-hero,
+#emptyState .empty-for-view { display: contents; }
+#emptyState .empty-kicker { margin: 4px 0 -10px; font-size: 11px; font-weight: 600; letter-spacing: 0.9px;
+  text-transform: uppercase; color: var(--text-2); }
+#emptyState .empty-view-icon { width: 72px; height: 72px; border-radius: 20px; display: inline-flex;
+  align-items: center; justify-content: center; color: var(--accent);
+  background: var(--surface-1); border: 1px solid var(--hairline); box-shadow: 0 16px 50px var(--accent-glow); }
+/* Trends and History with nothing to show: an explanation and the action. */
+.trend-empty { max-width: 560px; }
+.trend-empty p, .cal-empty p { margin: 2px 0 14px; line-height: 1.55; }
+/* A search box over nothing has nothing to search: each list writes its
+   summary line exactly when it holds something (renderOffloadIndex,
+   renderCapsule), so the box shows from then on. */
+#view-offloaded:has(#offloadInfo:empty) #offloadSearchRow,
+#view-capsule:has(#capsuleInfo:empty) #capsuleSearchRow { display: none; }
+/* ── end G02 ── */
 /* ── v4 §9.2: the first-run coach card ── */
 #tourOverlay { position: fixed; inset: 0; z-index: 96; pointer-events: none; }
 #tourOverlay[hidden] { display: none; }
@@ -3725,17 +3744,30 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 <main>
   <!-- ═══════════ Empty state ═══════════ -->
   <section id="emptyState">
-    <svg class="mark" width="92" height="92" viewBox="0 0 26 26" aria-hidden="true">
-      <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
-      <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
-      <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
-    </svg>
-    <h1>See what's eating your disk</h1>
-    <p>TreeMap draws every file as a rectangle: the bigger the rectangle, the more space it takes. Click through to whatever is filling the disk, then clear it out — everything goes to the Trash, never deleted outright.</p>
-    <div class="feature-row">
-      <span class="feature"><span data-icon="zap"></span>Reads a whole drive in minutes</span>
-      <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
-      <span class="feature"><span data-icon="eyeOff"></span>No tracking, fully local</span>
+    <!-- Two parts, one shown (renderEmptyState). The Dashboard's empty state is
+         the welcome. Every other view that needs a scan says which view it is
+         and what it will show (design pass G02): before, clicking Grid, Apps or
+         Security put up this same welcome with no title of its own, and looked
+         like nothing had happened. One action serves them all. -->
+    <div class="empty-hero" id="emptyHero">
+      <svg class="mark" width="92" height="92" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
+        <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
+        <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
+      </svg>
+      <p class="empty-kicker">Dashboard</p>
+      <h1>See what's eating your disk</h1>
+      <p>TreeMap draws every file as a rectangle: the bigger the rectangle, the more space it takes. Click through to whatever is filling the disk, then clear it out — everything goes to the Trash, never deleted outright.</p>
+      <div class="feature-row">
+        <span class="feature"><span data-icon="zap"></span>Reads a whole drive in minutes</span>
+        <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
+        <span class="feature"><span data-icon="eyeOff"></span>No tracking, fully local</span>
+      </div>
+    </div>
+    <div class="empty-for-view" id="emptyForView" hidden>
+      <span class="empty-view-icon" id="emptyViewIcon" aria-hidden="true"></span>
+      <h1 id="emptyViewTitle"></h1>
+      <p id="emptyViewLead"></p>
     </div>
     <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
       <span data-icon="folder"></span>Choose a folder to get started
@@ -4323,14 +4355,21 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 
   <!-- ═══════════ Trends ═══════════ -->
   <section class="view" id="view-trends" role="tabpanel" aria-label="Trends" hidden>
-    <div class="trends-toolbar">
+    <!-- No history at all (design pass G02): what Trends will show, and the
+         action that starts it — not a 230 px empty chart over "No data yet.". -->
+    <div class="card glass trend-empty" id="trendEmpty" hidden>
+      <h2><span data-icon="trendUp"></span>No history yet</h2>
+      <p class="muted">Trends draws how a folder’s size changes from one scan to the next. Scan a folder to start its history.</p>
+      <button class="btn btn-primary" id="trendEmptyBrowse"><span data-icon="folder"></span>Choose a folder</button>
+    </div>
+    <div class="trends-toolbar" id="trendToolbar">
       <span class="label-pair">
         <label for="trendRoot">Folder</label>
         <select id="trendRoot" aria-label="Folder to show history for"></select>
       </span>
       <span class="muted" id="trendInfo"></span>
     </div>
-    <div class="trends-grid">
+    <div class="trends-grid" id="trendGrid">
       <div class="card glass">
         <h2><span data-icon="trendUp"></span>Total Size Over Time</h2>
         <div class="trend-chart-wrap"><canvas id="trendChart" height="300" aria-label="Folder size history chart" role="img"></canvas></div>
@@ -4357,7 +4396,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <div class="card glass">
       <h2><span data-icon="archive"></span>Offloaded Files</h2>
       <div class="apps-info muted" id="offloadInfo"></div>
-      <div class="rule-row" style="margin-bottom:10px;">
+      <!-- Hidden while the summary line above is empty, i.e. while there is
+           nothing to search (design pass G02, the rule in 080). -->
+      <div class="rule-row" id="offloadSearchRow" style="margin-bottom:10px;">
         <div class="field" style="flex:1;max-width:420px;">
           <span data-icon="search"></span>
           <input type="text" id="offloadSearch" placeholder="Search by name or original path…" aria-label="Search offloaded files" autocomplete="off">
@@ -4381,14 +4422,16 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <div id="histPanelCalendar" class="pane-fade">
     <div class="card glass">
       <h2><span data-icon="calendar"></span>Calendar</h2>
-      <div class="rule-row" style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+      <!-- Shown once there is a scan to count (loadCalendar): "Click a day…"
+           over no days pointed at nothing (design pass G02). -->
+      <div class="rule-row" id="calControls" hidden style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
         <div class="seg" id="calChannelSeg" role="tablist" aria-label="Calendar channel">
           <button role="tab" type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
           <button role="tab" type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
         </div>
         <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
       </div>
-      <div id="calBody"><div class="muted">Run a scan first.</div></div>
+      <div id="calBody"></div>
       <div class="cal-legend muted num" id="calLegend" hidden>
         <span>less</span><span class="cal-cell" data-lv="1"></span><span class="cal-cell" data-lv="2"></span><span class="cal-cell" data-lv="3"></span><span class="cal-cell" data-lv="4"></span><span>more</span>
         <span id="calMax" style="margin-left:10px;"></span>
@@ -4431,7 +4474,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div class="cap-gauge-wrap"><canvas id="capsuleGaugeCanvas" aria-label="Time Capsule space used against its cap" role="img"></canvas></div>
         <div class="muted num" id="capsuleGaugeText"></div>
       </div>
-      <div class="rule-row" style="margin-bottom:10px;">
+      <!-- Hidden while the summary line above is empty, i.e. while there is
+           nothing to search (design pass G02, the rule in 080). -->
+      <div class="rule-row" id="capsuleSearchRow" style="margin-bottom:10px;">
         <div class="field" style="flex:1;max-width:420px;">
           <span data-icon="search"></span>
           <input type="text" id="capsuleSearch" placeholder="Search by name or original path…" aria-label="Search protected items" autocomplete="off">
@@ -7717,6 +7762,38 @@ function viewBlockedReason(view) {
   return cap.reason || 'This feature is not available on this computer.';
 }
 
+/**
+ * What each view that needs a scan will show once a folder is scanned, in one
+ * sentence (design pass G02). Before a scan every one of them put up the
+ * Dashboard's welcome with no title of its own, so clicking Grid looked like
+ * nothing had happened. Keyed by view id, here rather than on each view,
+ * because the views are registered in files of their own; a view missing
+ * from this table still gets its own title and a sentence that claims nothing.
+ */
+const EMPTY_VIEW_LEADS = {
+  treemap: 'Once a folder is scanned, every file and folder in it appears here as a rectangle — the bigger the rectangle, the more space it takes.',
+  city: 'Once a folder is scanned, its map appears here as a city seen from a corner, where you choose what a building’s height and color mean.',
+  grid: 'Once a folder is scanned, its files and folders appear here as tiles you can sort, filter and open.',
+  apps: 'Once a folder is scanned, this shows how much of it each application owns — the app itself, its caches, its data and its logs.',
+  games: 'Once a folder is scanned, this shows what its game, photo and video libraries hold, and which parts their apps can rebuild if you remove them.',
+  security: 'Once a folder is scanned, this lists keys, credentials and wallets sitting outside the folders they belong in — found by name and place, without opening any file.',
+  missing: 'Once a folder is scanned, this accounts for everything its disk counts as used — what the scan found, and what no scan can see, such as snapshots.',
+  duplicates: 'Once a folder is scanned, this finds files in it with identical contents, and pictures that look nearly the same.',
+};
+const EMPTY_VIEW_LEAD_DEFAULT = 'Once a folder is scanned, this view fills in.';
+
+/** The empty state, for the view it stands in for (G02): the welcome on the
+    Dashboard, the view's own name, icon and sentence everywhere else. */
+function renderEmptyState(view) {
+  const hero = view.id === 'dashboard';
+  $('emptyHero').hidden = !hero;
+  $('emptyForView').hidden = hero;
+  if (hero) return;
+  $('emptyViewIcon').innerHTML = icon(view.icon, 30);
+  $('emptyViewTitle').textContent = view.label;
+  $('emptyViewLead').textContent = EMPTY_VIEW_LEADS[view.id] || EMPTY_VIEW_LEAD_DEFAULT;
+}
+
 function switchView(name) {
   const view = VIEW_BY_ID.get(name);
   if (!view) return;
@@ -7751,6 +7828,7 @@ function switchView(name) {
   // back with it (QA third pass D03). After the toggles, so focus that was in
   // the bar finds the view now on screen.
   selectionBarFollowView();
+  if (empty) renderEmptyState(view);
   $('emptyState').style.display = empty ? 'flex' : 'none';
   // FX: the zero-state CTA halo lives and dies with the welcome screen, and
   // the scan hero follows the active view — both are functions of the state
@@ -25430,9 +25508,14 @@ function calQuarterOf(iso) {
 
 async function loadCalendar() {
   const body = $('calBody');
+  // Nothing to count: what the calendar will show and the action that fills
+  // it, without "Click a day…" and a channel switch over no days (G02).
+  $('calControls').hidden = !state.scanId;
   if (!state.scanId) {
     calData = null;
-    body.innerHTML = '<div class="muted">Run a scan first.</div>';
+    body.innerHTML = '<div class="cal-empty"><p class="muted">Once a folder is scanned, the calendar shows its files by the day they last changed, one square per day.</p>' +
+      `<button class="btn btn-primary" data-cal-browse>${icon('folder', 15)}Choose a folder</button></div>`;
+    body.querySelector('[data-cal-browse]').addEventListener('click', () => openBrowse(null));
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
     return;
   }
@@ -34037,14 +34120,20 @@ async function loadTrends() {
     const { roots } = await api('/api/snapshots');
     state.trends.roots = roots;
     const sel = $('trendRoot');
-    if (!roots.length) {
+    // No history at all: what Trends will show and the action that starts it,
+    // in place of an empty chart, an empty list and a folder box with nothing
+    // in it (design pass G02).
+    const none = !roots.length;
+    $('trendEmpty').hidden = !none;
+    $('trendToolbar').hidden = none;
+    $('trendGrid').hidden = none;
+    if (none) {
       sel.innerHTML = '<option>No history yet</option>';
       sel.disabled = true;
       $('trendInfo').textContent = '';
       state.trends.snapshots = [];
       drawTrendChart();
       drawTrendNet();
-      $('trendDeltas').innerHTML = '<div class="muted">Finish a scan and history starts building automatically — every scan saves a snapshot.</div>';
       return;
     }
     sel.disabled = false;
@@ -34133,6 +34222,7 @@ $('trendRoot').addEventListener('change', (e) => {
   e.target.title = e.target.value;
   loadTrendData().catch(err => toast(err.message, 'error'));
 });
+$('trendEmptyBrowse').addEventListener('click', () => openBrowse(null));
 
 /**
  * The dashed forecast tail, or null.

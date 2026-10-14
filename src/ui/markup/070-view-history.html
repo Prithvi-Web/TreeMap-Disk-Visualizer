@@ -8,14 +8,16 @@
     <div id="histPanelCalendar" class="pane-fade">
     <div class="card glass">
       <h2><span data-icon="calendar"></span>Calendar</h2>
-      <div class="rule-row" style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+      <!-- Shown once there is a scan to count (loadCalendar): "Click a day…"
+           over no days pointed at nothing (design pass G02). -->
+      <div class="rule-row" id="calControls" hidden style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
         <div class="seg" id="calChannelSeg" role="tablist" aria-label="Calendar channel">
           <button role="tab" type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
           <button role="tab" type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
         </div>
         <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
       </div>
-      <div id="calBody"><div class="muted">Run a scan first.</div></div>
+      <div id="calBody"></div>
       <div class="cal-legend muted num" id="calLegend" hidden>
         <span>less</span><span class="cal-cell" data-lv="1"></span><span class="cal-cell" data-lv="2"></span><span class="cal-cell" data-lv="3"></span><span class="cal-cell" data-lv="4"></span><span>more</span>
         <span id="calMax" style="margin-left:10px;"></span>

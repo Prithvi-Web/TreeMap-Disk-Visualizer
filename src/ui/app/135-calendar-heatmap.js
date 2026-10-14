@@ -33,9 +33,14 @@ function calQuarterOf(iso) {
 
 async function loadCalendar() {
   const body = $('calBody');
+  // Nothing to count: what the calendar will show and the action that fills
+  // it, without "Click a day…" and a channel switch over no days (G02).
+  $('calControls').hidden = !state.scanId;
   if (!state.scanId) {
     calData = null;
-    body.innerHTML = '<div class="muted">Run a scan first.</div>';
+    body.innerHTML = '<div class="cal-empty"><p class="muted">Once a folder is scanned, the calendar shows its files by the day they last changed, one square per day.</p>' +
+      `<button class="btn btn-primary" data-cal-browse>${icon('folder', 15)}Choose a folder</button></div>`;
+    body.querySelector('[data-cal-browse]').addEventListener('click', () => openBrowse(null));
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
     return;
   }
