@@ -407,6 +407,22 @@ function reclaimCoverageNote() {
 }
 
 /**
+ * Where `el`'s top edge is with <main> scrolled to its top, or null while it
+ * is not laid out (a hidden view has no box). <main> is the page's one
+ * scroller (025-layout.css) and nothing resets it on a view switch: read from
+ * the window as it stood, a view entered under a scrolled Dashboard measured
+ * its card that much higher and was fitted that much too tall — Disk City at
+ * 975/900 again — and a card scrolled above the window was not fitted at all
+ * (review F1.8 of fifth browser pass F06).
+ */
+function tmUnscrolledTop(el) {
+  const box = el.getBoundingClientRect();
+  if (!(box.top > 0) && !(box.height > 0)) return null;
+  const main = el.closest('main');
+  return box.top + ((main && main.scrollTop) || 0);
+}
+
+/**
  * Height for the treemap/sunburst canvas, measured rather than guessed.
  *
  * This used to be `innerHeight - 300`, a reserve big enough for the toolbar,
@@ -438,9 +454,9 @@ function reclaimCoverageNote() {
  */
 function treemapCanvasHeight(wrap) {
   const MIN_H = 96; // the floor, for a window with no room left (above)
-  const top = wrap.getBoundingClientRect().top;
+  const top = tmUnscrolledTop(wrap);
   // Called before the view is laid out (hidden tab): fall back to the floor.
-  if (!(top > 0)) return 420;
+  if (top === null) return 420;
   const cs = getComputedStyle(wrap);
   const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
     + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);

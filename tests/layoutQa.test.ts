@@ -617,7 +617,7 @@ function refitWorld(opts: { view?: string; drawnAt: string; above: number; footH
     parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: opts.footH ?? 17 }) }) },
     closest: () => ({}),
   };
-  const fns = runPageDecls<{ tmRefitMap(): void }>(['treemapCanvasHeight', 'tmRefitMap'], {
+  const fns = runPageDecls<{ tmRefitMap(): void }>(['tmUnscrolledTop', 'treemapCanvasHeight', 'tmRefitMap'], {
     $: (id: string) => (id === 'treemapWrap' ? wrap : null),
     state: { view: opts.view ?? 'treemap', treemap: { rootPath: '/c' } },
     tmCanvas: { style: { height: opts.drawnAt } },
@@ -697,7 +697,7 @@ function mapWithCart(H: number, top: number, footH: number, previewPad?: number,
     parentElement: { querySelector: () => foot },
     closest: () => ({}),
   };
-  const height = runPageDecls<(w: unknown) => number>(['treemapCanvasHeight'], {
+  const height = runPageDecls<(w: unknown) => number>(['tmUnscrolledTop', 'treemapCanvasHeight'], {
     window: { innerHeight: H },
     getComputedStyle: (el: unknown) => (el === wrap
       ? { paddingTop: `${padTop}px`, paddingBottom: `${pad}px`, borderTopWidth: `${border}px`, borderBottomWidth: `${border}px` }
@@ -879,7 +879,7 @@ test('the map is fitted again when the drive dock appears or goes (fifth browser
   const foot = { getBoundingClientRect: () => ({ height: 17 }), nextElementSibling: dockEl };
   const wrap = { getBoundingClientRect: () => ({ top: 150 }), parentElement: { querySelector: () => foot }, closest: () => ({}) };
   const tmCanvas = { style: { height: '' } };
-  const fns = runPageDecls<{ tmRefitMap(): void; treemapCanvasHeight(w: unknown): number }>(['treemapCanvasHeight', 'tmRefitMap'], {
+  const fns = runPageDecls<{ tmRefitMap(): void; treemapCanvasHeight(w: unknown): number }>(['tmUnscrolledTop', 'treemapCanvasHeight', 'tmRefitMap'], {
     $: (id: string) => (id === 'treemapWrap' ? wrap : null),
     state: { view: 'treemap', treemap: { rootPath: '/c' } },
     tmCanvas,
@@ -946,7 +946,7 @@ function altNoteWorld(finalNote: (cssH: number) => string, slices = 3) {
   const fns = runPageDecls<{
     drawView(): void; tmRefitMap(): void; treemapCanvasHeight(el: unknown): number; rows: string[]; altRefineCancel(): void; renderAltNote(): void;
   }>([
-    'isSun', 'isCells', 'drawView', 'treemapCanvasHeight', 'TM_CHROME_ROWS', 'tmRefitMap', 'tmResizeDeb', 'tmCellsSettle', 'tmSizeCanvas',
+    'isSun', 'isCells', 'drawView', 'tmUnscrolledTop', 'treemapCanvasHeight', 'TM_CHROME_ROWS', 'tmRefitMap', 'tmResizeDeb', 'tmCellsSettle', 'tmSizeCanvas',
     'renderAltNote', 'altRefineSeq', 'altRefiningNote', 'altRefineCancel', 'altRefineSchedule', 'buildCells', 'drawCells', ...optional,
   ], {
     $: (id: string) => (id === 'treemapWrap' ? wrap : id === 'tmAltNote' ? note : null),
@@ -1065,7 +1065,7 @@ test('the rectangle map writes its note before it measures, so one draw fits it 
   const wrap = { clientWidth: 1220, getBoundingClientRect: () => ({ top: 150 }), parentElement: { querySelector: () => foot }, closest: () => ({}) };
   const tmCanvas = { style: { height: '', width: '' }, width: 0, height: 0 };
   const capNote = 'The map holds at most 20,000 items, and this folder reached that: 3.1 GB has no rectangle here — drill in, or open the Grid view, to see the rest.';
-  const fns = runPageDecls<{ drawTreemap(): void; treemapCanvasHeight(el: unknown): number }>(['treemapCanvasHeight', 'renderAltNote', 'drawTreemap'], {
+  const fns = runPageDecls<{ drawTreemap(): void; treemapCanvasHeight(el: unknown): number }>(['tmUnscrolledTop', 'treemapCanvasHeight', 'renderAltNote', 'drawTreemap'], {
     $: (id: string) => (id === 'treemapWrap' ? wrap : id === 'tmAltNote' ? note : null),
     state: { treemap: { nodes: [], hideCloud: false, rootSize: 0, altNote: '' } },
     tmCanvas, tmBuffer: { width: 0, height: 0 }, tmBufCtx: new Proxy({}, { get: () => () => {}, set: () => true }),
@@ -1098,7 +1098,7 @@ function cityWithRows(H: number, top: number, footH: number, rows: RowBelow[], v
     closest: () => ({}),
   };
   const invalidated: number[] = [];
-  const fns = runPageDecls<{ cityFitHeight(): boolean; cityRefit(): void }>(['treemapCanvasHeight', 'CITY_CARD_MAX_PX', 'cityFitHeight', 'cityRefit'], {
+  const fns = runPageDecls<{ cityFitHeight(): boolean; cityRefit(): void }>(['tmUnscrolledTop', 'treemapCanvasHeight', 'CITY_CARD_MAX_PX', 'cityFitHeight', 'cityRefit'], {
     $: (id: string) => (id === 'cityWrap' ? wrap : null),
     state: { view },
     window: { innerHeight: H },
@@ -1160,7 +1160,7 @@ test('Disk City is fitted again when the drive dock appears or goes, and on ever
   const foot = { getBoundingClientRect: () => ({ height: 17 }), nextElementSibling: dockEl };
   const wrap = { style: { height: '' }, getBoundingClientRect: () => ({ top: 150 }), parentElement: { querySelector: () => foot }, closest: () => ({}) };
   let redraws = 0;
-  const fns = runPageDecls<{ cityRefit(): void; cityOnResize(): void }>(['treemapCanvasHeight', 'CITY_CARD_MAX_PX', 'cityFitHeight', 'cityRefit', 'cityOnResize'], {
+  const fns = runPageDecls<{ cityRefit(): void; cityOnResize(): void }>(['tmUnscrolledTop', 'treemapCanvasHeight', 'CITY_CARD_MAX_PX', 'cityFitHeight', 'cityRefit', 'cityOnResize'], {
     $: (id: string) => (id === 'cityWrap' ? wrap : null), state: { view: 'city' }, window: { innerHeight: 900 },
     cityInvalidate: () => { redraws++; },
     getComputedStyle: (el: unknown) => (el === wrap ? { paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '1px', borderBottomWidth: '1px' }
@@ -1180,6 +1180,49 @@ test('Disk City is fitted again when the drive dock appears or goes, and on ever
   const body = mount.slice(0, mount.indexOf('\n  },'));
   assert.ok(body.includes('cityFitHeight();') && body.indexOf('cityFitHeight();') < body.indexOf('citySetHeight('),
     'mount() fits the city before its first draw');
+});
+
+test('a map or Disk City fitted while <main> is scrolled is fitted as it is unscrolled — a view entered under a scrolled Dashboard, or refitted with its list read below the fold, still fits the window (review F1.8 of fifth browser pass F06)', () => {
+  // Review F1.8: <main> is the page's one scroller and nothing resets it on a view switch. The fit read
+  // the card's top from the window: under a Dashboard scrolled down, Disk City's first fit (the page
+  // 75 px past the window, clamping the scroll to 75) came out 75 px too tall and kept the page at
+  // 975/900 — and a card scrolled above the window was not fitted at all.
+  /** A card whose box starts `rectTop` px down the window and is `box` px tall (0: not laid out), <main> scrolled `scrollTop`. */
+  const card = (rectTop: number, scrollTop: number, box = 500) => {
+    const foot = { getBoundingClientRect: () => ({ height: 17 }), nextElementSibling: null };
+    const main = { scrollTop };
+    return {
+      style: { height: '' },
+      getBoundingClientRect: () => ({ top: rectTop, height: box }),
+      parentElement: { querySelector: (q: string) => (q === '.tm-foot' ? foot : null) },
+      closest: (q: string) => (q === 'main' ? main : null),
+    };
+  };
+  const style = (wrap: unknown) => (el: unknown) => (el === wrap
+    ? { paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '1px', borderBottomWidth: '1px' }
+    : { marginTop: '12px', paddingBottom: '76px' });
+  const mapHeight = (rectTop: number, scrollTop: number, box?: number) => {
+    const wrap = card(rectTop, scrollTop, box);
+    return runPageDecls<(w: unknown) => number>(['tmUnscrolledTop', 'treemapCanvasHeight'], { window: { innerHeight: 900 }, getComputedStyle: style(wrap) }, 'treemapCanvasHeight')(wrap);
+  };
+  const cityHeight = (rectTop: number, scrollTop: number, box?: number) => {
+    const wrap = card(rectTop, scrollTop, box);
+    runPageDecls<() => boolean>(['tmUnscrolledTop', 'treemapCanvasHeight', 'CITY_CARD_MAX_PX', 'cityFitHeight'], {
+      $: (id: string) => (id === 'cityWrap' ? wrap : null), window: { innerHeight: 900 }, getComputedStyle: style(wrap),
+    }, 'cityFitHeight')();
+    return wrap.style.height;
+  };
+  const map = mapHeight(150, 0);
+  const city = cityHeight(150, 0);
+  assert.ok(map > 96 && city !== '', `control: unscrolled, the map is ${map} px and the city ${city}`);
+  for (const s of [75, 150, 400]) {
+    // Scrolled s px, the card's box starts s px higher in the window (above it, past 150).
+    assert.equal(mapHeight(150 - s, s), map, `<main> scrolled ${s} px: the map is the height it is unscrolled`);
+    assert.equal(cityHeight(150 - s, s), city, `<main> scrolled ${s} px: Disk City is the height it is unscrolled`);
+  }
+  // A view not laid out has no box: it keeps its fallback whatever <main>'s scroll, never a fit from the scroll alone.
+  assert.equal(mapHeight(0, 300, 0), 420, 'a hidden map keeps its fallback height');
+  assert.equal(cityHeight(0, 300, 0), '', 'a hidden city keeps the stylesheet\'s height');
 });
 
 test('the sunburst fits the map the page leaves it, down to the map\'s floor — its disc is never cut by the top or bottom of a short map (review F1.3, F3.3)', () => {
@@ -1229,7 +1272,7 @@ test('a sunburst drawn while its view is hidden draws harmlessly off-screen — 
   // for short maps (review F1.3) gave that a radius of -14, a canvas's arc()
   // throws on a negative radius, and "Treemap failed: … The radius provided
   // (-14) is negative" came up over the other view.
-  const hiddenH = runPageDecls<(wrap: unknown) => number>(['treemapCanvasHeight'], {
+  const hiddenH = runPageDecls<(wrap: unknown) => number>(['tmUnscrolledTop', 'treemapCanvasHeight'], {
     window: { innerHeight: 900 },
     getComputedStyle: () => assert.fail('a map that is not laid out is not measured'),
   }, 'treemapCanvasHeight')({ getBoundingClientRect: () => ({ top: 0 }) });
@@ -1303,7 +1346,7 @@ function cellsWorld(opts: { colorMode?: string; above?: number } = {}) {
   type Fns = { treemapCanvasHeight(el: unknown): number; tmRefitMap(): void };
   let fns: Fns;
   const drawCells = () => { w.solves++; w.events.push('solve'); tmCanvas.style.height = fns.treemapCanvasHeight(wrap) + 'px'; };
-  fns = runPageDecls<Fns>(['isCells', 'isSun', 'drawView', 'treemapCanvasHeight', 'tmRefitMap'], {
+  fns = runPageDecls<Fns>(['isCells', 'isSun', 'drawView', 'tmUnscrolledTop', 'treemapCanvasHeight', 'tmRefitMap'], {
     $: (id: string) => (id === 'treemapWrap' ? wrap : null),
     state, tmCanvas,
     window: { get innerHeight() { return w.innerHeight; }, addEventListener: (t: string, f: () => void) => { if (t === 'resize') resizeHandlers.push(f); } },

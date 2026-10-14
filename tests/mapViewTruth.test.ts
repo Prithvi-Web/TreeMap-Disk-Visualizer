@@ -2312,7 +2312,7 @@ test('D64: the map the preview draws is shorter by the banner\'s pad, re-measure
   const nodes = [{ path: '/r/x' }];
   const state = { view: 'treemap', cart: { size: 1 }, treemap: { history: { active: false }, nodes, hover: null, kbSel: null } };
   const out = load<{ enter: () => void; exit: () => void; heightOf: (w: unknown) => number }>(
-    ['enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'cartSpaceSaid', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'tmPreviewWatch', 'treemapCanvasHeight'], {
+    ['enterCartPreview', 'exitCartPreview', 'syncCartPreviewChrome', 'cartSpaceSaid', 'TM_PREVIEW_BANNER_INSET', 'tmPreviewPadSync', 'tmPreviewWatch', 'tmUnscrolledTop', 'treemapCanvasHeight'], {
       $: (id: string) => els[id], state, tmPreview: { on: false },
       isSun: () => false, isCells: () => false, isRectMap: () => true,
       toast: (m: string) => { throw new Error('refused: ' + m); },
@@ -2343,7 +2343,7 @@ test('D64: the previewing wrap takes that padding, and the map\'s height gives i
     'the wrap is padded by the measure while previewing');
   // treemapCanvasHeight subtracts the wrap's own top padding, so the padded
   // map still fits the window above its footer.
-  const height = (padTop: string) => load<(w: unknown) => number>(['treemapCanvasHeight'], {
+  const height = (padTop: string) => load<(w: unknown) => number>(['tmUnscrolledTop', 'treemapCanvasHeight'], {
     getComputedStyle: (el: { pad?: string }) => (el.pad
       ? { paddingTop: el.pad, paddingBottom: '10px' }
       : { marginTop: '12px', paddingBottom: '24px' }),

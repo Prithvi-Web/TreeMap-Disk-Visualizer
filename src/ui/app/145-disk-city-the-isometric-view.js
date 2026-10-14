@@ -1936,7 +1936,9 @@ const CITY_CARD_MAX_PX = 1100;
  */
 function cityFitHeight() {
   const wrap = $('cityWrap');
-  if (!wrap || !(wrap.getBoundingClientRect().top > 0)) return false;
+  // Not laid out (a hidden view): the stylesheet's height stands. Laid out, it
+  // is fitted wherever <main> is scrolled (tmUnscrolledTop, review F1.8).
+  if (!wrap || tmUnscrolledTop(wrap) === null) return false;
   const cs = getComputedStyle(wrap);
   const frame = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
     + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
