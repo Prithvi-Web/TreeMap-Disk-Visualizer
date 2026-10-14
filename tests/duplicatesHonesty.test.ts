@@ -316,14 +316,17 @@ test('near-duplicates: the reason is shown as text, never as markup', () => {
 
 /* ══════════════ Auto-select says why it cannot act (fourth browser pass, E13) ══════════════ */
 
-/** The page's own updateNdToolbar over `near`: Auto-select's state and the reason it gives. */
-function ndToolbar(near: Record<string, unknown>): { disabled: boolean; title: string } {
+/**
+ * The page's own updateNdToolbar over `near`: Auto-select's state and the reason it gives. `scanId`:
+ * the scan the page holds — null after an instant open from the index, or a Stop with nothing settled.
+ */
+function ndToolbar(near: Record<string, unknown>, scanId: string | null = 's1'): { disabled: boolean; title: string } {
   const els: Record<string, { disabled: boolean; title: string; innerHTML: string }> = {};
   const $ = (id: string) => (els[id] ??= { disabled: false, title: '', innerHTML: '' });
   const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function('$', 'state', 'nodeFor', 'icon', 'formatBytes', `${helper}\n${source('updateNdToolbar')}\nupdateNdToolbar();`)(
-    $, { near: { selection: new Set(), clusters: [], ...near } }, () => null, () => '', (n: number) => `${n} B`,
+    $, { scanId, near: { selection: new Set(), clusters: [], ...near } }, () => null, () => '', (n: number) => `${n} B`,
   );
   return { disabled: els.ndAutoBtn?.disabled ?? false, title: els.ndAutoBtn?.title ?? '' };
 }
@@ -353,4 +356,50 @@ test('the failed search updates the toolbar too, so Auto-select never keeps the 
   const load = source('loadNearDupes');
   const failed = load.slice(load.indexOf("state.near.status = 'error';"));
   assert.match(failed.slice(0, 400), /updateNdToolbar\(\)/, 'the error branch refreshes the toolbar');
+});
+
+/** The page's own Auto-select click handler, run once over `state`; what it selected and said. */
+function ndAutoClick(state: { scanId: string | null; near: Record<string, unknown> }): { selected: string[]; toasts: string[] } {
+  const at = INDEX.indexOf("$('ndAutoBtn').addEventListener('click', () => {");
+  assert.notEqual(at, -1, 'the Auto-select handler is in the page');
+  let depth = 0;
+  let end = -1;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = INDEX.indexOf(';', i) + 1; break; }
+  }
+  const toasts: string[] = [];
+  let handler: () => void = () => assert.fail('no handler was bound');
+  const el = { addEventListener: (_: string, fn: () => void) => { handler = fn; }, querySelectorAll: () => [], disabled: false, title: '', innerHTML: '' };
+  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('$', 'state', 'nodeFor', 'icon', 'formatBytes', 'toast', `${helper}\n${source('updateNdToolbar')}\n${INDEX.slice(at, end)}`)(
+    () => el, state, () => null, () => '', (n: number) => `${n} B`, (m: string) => { toasts.push(m); },
+  );
+  handler();
+  return { selected: [...(state.near.selection as Set<string>)], toasts };
+}
+
+test('Auto-select never says it is still looking when nothing is, and with no completed scan it says so — and selects nothing, even over groups an earlier scan left (E13, review F1.4, F1.10)', () => {
+  const idle = ndToolbar({ status: 'idle', clusters: [] });
+  assert.equal(idle.disabled, true, 'before any search there is nothing to select');
+  assert.doesNotMatch(idle.title, /still looking/i, 'and nothing is looking');
+  assert.match(idle.title, /No search for similar images has run yet/, 'it says no search has run');
+
+  const noScanIdle = ndToolbar({ status: 'idle', clusters: [] }, null);
+  assert.equal(noScanIdle.disabled, true, 'with no completed scan there is nothing to select');
+  assert.match(noScanIdle.title, /Needs a completed scan/, 'and it says what the card beside it says');
+  assert.doesNotMatch(noScanIdle.title, /still looking/i);
+
+  const staleGroups = { status: 'complete', available: true, compared: 40, clusters: [{ files: [{ path: '/old/a.jpg' }, { path: '/old/b.jpg' }] }] };
+  const stale = ndToolbar(staleGroups, null);
+  assert.equal(stale.disabled, true, 'groups an earlier scan left are not offered under "Needs a completed scan"');
+  assert.match(stale.title, /Needs a completed scan/);
+  assert.equal(ndToolbar(staleGroups).disabled, false, 'control: with the scan they came from, the same groups are offered');
+
+  const clicked = ndAutoClick({ scanId: null, near: { ...staleGroups, selection: new Set<string>() } });
+  assert.deepEqual(clicked.selected, [], 'a click with no completed scan selects nothing');
+  assert.deepEqual(clicked.toasts, [], 'and no toast claims a selection');
+  const control = ndAutoClick({ scanId: 's1', near: { ...staleGroups, selection: new Set<string>() } });
+  assert.deepEqual(control.selected, ['/old/b.jpg'], 'control: with the scan, the click selects every copy but the newest');
 });

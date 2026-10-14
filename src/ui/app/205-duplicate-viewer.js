@@ -334,14 +334,21 @@ function updateNdToolbar() {
   // Auto-select acts only on groups; with none it is disabled and says why
   // (fourth browser pass, E13: it stayed enabled, and silent, when no image
   // had been compared at all).
-  const why = ndAutoSelectBlocked(state.near);
+  const why = ndAutoSelectBlocked(state.near, state.scanId);
   $('ndAutoBtn').disabled = why !== null;
   $('ndAutoBtn').title = why ?? 'In every group, select all copies except the newest one';
 }
 
-/** Why Auto-select has nothing to select, or null when there are groups to act on. */
-function ndAutoSelectBlocked(n) {
+/**
+ * Why Auto-select has nothing to select, or null when there are groups to act
+ * on. With no completed scan the pane says "Needs a completed scan", and groups
+ * an earlier scan left in `n` are not this folder's to act on (review F1.10);
+ * "still looking" is said only while a search runs (review F1.4).
+ */
+function ndAutoSelectBlocked(n, scanId) {
+  if (!scanId) return 'Needs a completed scan — there is nothing to select.';
   if (n.status === 'error') return 'The search for similar images failed, so there is nothing to select.';
+  if (n.status === 'idle') return 'No search for similar images has run yet — there is nothing to select.';
   if (n.status !== 'complete') return 'Still looking for similar images — there is nothing to select yet.';
   if (!n.available) return n.reason || 'Near-duplicate image detection is unavailable on this system.';
   if (n.clusters.length) return null;
@@ -351,7 +358,7 @@ function ndAutoSelectBlocked(n) {
 }
 
 $('ndAutoBtn').addEventListener('click', () => {
-  if (state.near.status !== 'complete' || !state.near.clusters.length) return;
+  if (ndAutoSelectBlocked(state.near, state.scanId) !== null) return; // the toolbar's own reason, never a stale group
   state.near.selection.clear();
   state.near.clusters.forEach(c => c.files.slice(1).forEach(f => state.near.selection.add(f.path)));
   $('ndBody').querySelectorAll('.nd-ck').forEach(ck => {
