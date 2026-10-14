@@ -295,6 +295,17 @@ test('purgeable is unavailable with a reason on every platform, and never reads 
   }
 });
 
+test('purgeable claims nothing about this machine it did not measure: its size is unknown here, so it is "on many Macs" one of the largest things in Unaccounted, never "on this machine" (fifth browser pass F07)', () => {
+  // QA: "On this machine it is one of the largest things sitting inside
+  // Unaccounted", on a line whose value is unknown and whose reason says it
+  // "cannot be measured here" — fixed text, shown on every Mac.
+  const line = purgeableLine('darwin');
+  assert.equal(line.bytes, null, 'control: purgeable is not measured here');
+  assert.doesNotMatch(line.detail, /this machine|this Mac\b/i, `no claim about this machine's purgeable space: "${line.detail}"`);
+  assert.match(line.detail, /On many Macs it is one of the largest things/, 'the size claim is about Macs in general');
+  assert.match(line.detail, /counted inside Unaccounted/, 'and the line says where its unmeasured bytes are on this one');
+});
+
 test('the Missing GB page names its source in plain words and labels the scanned folder as one (QA D41)', () => {
   const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const start = index.indexOf('const MG_SEG = {');

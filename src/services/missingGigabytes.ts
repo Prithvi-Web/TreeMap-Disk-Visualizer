@@ -626,7 +626,9 @@ export function purgeableLine(plat: NodeJS.Platform): StatementLine {
     reason,
     detail:
       plat === 'darwin'
-        ? 'Space macOS counts as used but will free automatically when the disk fills — caches, downloaded content and old snapshots. On this machine it is one of the largest things sitting inside Unaccounted.'
+        // Not "on this machine": its size is unknown here, so the line can
+        // claim nothing about it on this Mac (fifth browser pass F07).
+        ? 'Space macOS counts as used but will free automatically when the disk fills — caches, downloaded content and old snapshots. It cannot be measured here, so whatever it holds is counted inside Unaccounted. On many Macs it is one of the largest things there.'
         : 'Space the operating system counts as used but would free automatically under pressure.',
     count: null,
     notes: [],
