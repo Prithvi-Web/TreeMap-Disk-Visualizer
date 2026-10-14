@@ -157,13 +157,18 @@ test('on this Mac, GET /api/volumes itself leaves out the VM volume and the temp
 
 test('GET /api/volumes?from= judges every volume against the folders the files are in, not this computer\'s own disk: a volume sharing space with one is left out, and this computer\'s own sibling volume is another drive for files that live elsewhere (review F2.1)', async () => {
   const asked: string[][] = [];
+  // A folder named in ?from= reaches the judgement as the path sanitizer spells it, which is Node's own
+  // path.resolve: "/Volumes/Work" on macOS and Linux, "D:\Volumes\Work" on the Windows runner (review
+  // F3.1). The stand-in and the expectations are keyed on that spelling, never on a POSIX literal. With
+  // no folder named, the judgement is against the route's own "/", which nothing resolves.
+  const typed = (p: string) => path.resolve(p);
   setVolumeProviders({
     list: () => [{ name: 'Archive', path: '/Volumes/Archive' }, { name: 'Dev', path: '/Volumes/Dev' }, { name: 'Work', path: '/Volumes/Work' }],
     usage: async () => ({ total: 1_000_000, free: 400_000 }),
     // Work and Archive are two volumes of one external container; Dev is a volume of this computer's own disk.
     sameSpace: async (anchors: readonly string[]) => {
       asked.push([...anchors]);
-      return new Set(anchors.flatMap((a) => (a.startsWith('/Volumes/Work') ? ['/Volumes/Work', '/Volumes/Archive'] : a === '/' || a.startsWith('/Users') ? ['/Volumes/Dev'] : [])));
+      return new Set(anchors.flatMap((a) => (a.startsWith(typed('/Volumes/Work')) ? ['/Volumes/Work', '/Volumes/Archive'] : a === '/' || a.startsWith(typed('/Users')) ? ['/Volumes/Dev'] : [])));
     },
   });
   const s = await listen();
@@ -176,10 +181,10 @@ test('GET /api/volumes?from= judges every volume against the folders the files a
     assert.deepEqual(await paths('/api/volumes'), ['/Volumes/Archive', '/Volumes/Work'], 'control: judged against this computer\'s own disk, its own sibling volume is left out');
     assert.deepEqual(await paths(`/api/volumes?from=${encodeURIComponent('/Volumes/Work/Projects/../Projects')}`), ['/Volumes/Dev'],
       'files on Work: Work and the volume sharing its container are left out, and this computer\'s own sibling volume is offered');
-    assert.deepEqual(asked[1], ['/Volumes/Work/Projects'], 'the folder named is what is judged, as the path sanitizer spells it');
+    assert.deepEqual(asked[1], [typed('/Volumes/Work/Projects')], 'the folder named is what is judged, as the path sanitizer spells it');
     assert.deepEqual(await paths(`/api/volumes?from=${encodeURIComponent('/Volumes/Work')}&from=${encodeURIComponent('/Users/me')}`), [],
       'files on Work and on this computer\'s disk: no volume is another drive for all of them');
-    assert.deepEqual(asked[2], ['/Volumes/Work', '/Users/me'], 'every folder named is judged, in order');
+    assert.deepEqual(asked[2], [typed('/Volumes/Work'), typed('/Users/me')], 'every folder named is judged, in order');
   } finally {
     setVolumeProviders(null);
     await s.close();
