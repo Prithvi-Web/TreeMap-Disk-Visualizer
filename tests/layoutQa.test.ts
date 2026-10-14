@@ -1297,17 +1297,39 @@ test('the Highlight box shows a whole placeholder at every width — never one c
   // Before any measurement — the first paint, a hidden view — the markup's own placeholder shows.
   assert.ok(markupPh.length * PER_CHAR <= roomAt(402), `the markup's "${markupPh}" fits the narrowest field's ${roomAt(402).toFixed(0)} px`);
   const box = { clientWidth: 0, placeholder: markupPh };
-  const page = runPageDecls<{ fit: () => void; forms: string[] }>(['TM_SEARCH_PLACEHOLDERS', 'tmSearchMeasure', 'tmSearchPlaceholderFit'], {
-    $: (id: string) => { assert.equal(id, 'tmSearch'); return box; },
-    getComputedStyle: () => ({ paddingLeft: `${padL}px`, paddingRight: `${padR}px`, font: '500 13px system-ui' }),
-    document: { createElement: (tag: string) => { assert.equal(tag, 'canvas'); return { getContext: () => ({ font: '', measureText: (s: string) => ({ width: s.length * PER_CHAR }) }) }; } },
-  }, '{ fit: tmSearchPlaceholderFit, forms: TM_SEARCH_PLACEHOLDERS }');
+  // The fit runs when the field is resized, as the page's own wiring after
+  // it asks, and measures in the font set on its canvas: a canvas starts at
+  // 10 px sans-serif, ~25% narrower than the field's 13 px, so a measure
+  // left in it picks "(try size>1gb)" where it is cut (review F1.4).
+  const fitAt = INDEX.indexOf('function tmSearchPlaceholderFit(');
+  const wiring = pageBetween('function tmSearchPlaceholderFit(', '// One delegate on the panel').slice(INDEX.indexOf('\n}\n', fitAt) + 3 - fitAt);
+  const observed: Array<{ cb: (entries: unknown[]) => void; el: unknown }> = [];
+  class FakeResizeObserver {
+    cb: (entries: unknown[]) => void;
+    constructor(cb: (entries: unknown[]) => void) { this.cb = cb; }
+    observe(el: unknown) { observed.push({ cb: this.cb, el }); }
+  }
+  const FIELD_FONT = '500 13px system-ui';
+  const ctx = {
+    font: '10px sans-serif', // a canvas's own
+    measureText: (s: string) => ({ width: s.length * PER_CHAR * (Number(/([\d.]+)px/.exec(ctx.font)![1]) / 13) }),
+  };
+  const page = runPageDecls<{ forms: string[] }>(['TM_SEARCH_PLACEHOLDERS', 'tmSearchMeasure', 'tmSearchPlaceholderFit'], {
+    $: (id: string) => (id === 'tmSearch' ? box : { id }),
+    getComputedStyle: () => ({ paddingLeft: `${padL}px`, paddingRight: `${padR}px`, font: FIELD_FONT }),
+    document: { createElement: (tag: string) => { assert.equal(tag, 'canvas'); return { getContext: () => ctx }; } },
+    ResizeObserver: FakeResizeObserver,
+  }, '{ forms: TM_SEARCH_PLACEHOLDERS }', wiring);
   assert.ok(page.forms.includes(markupPh), 'and is one of the forms the page picks from');
+  assert.equal(observed.filter((o) => o.el === box).length, 1, 'the page watches the Highlight box for resizes');
+  /** The field resized: what the page's observer is handed. */
+  const resize = () => { for (const o of observed) if (o.el === box) o.cb([{ target: box }]); };
   let checked = 0;
   for (let toolbar = 402; toolbar <= 1700; toolbar++) {
     const room = roomAt(toolbar);
     box.clientWidth = room + padL + padR;
-    page.fit();
+    resize();
+    assert.equal(ctx.font, FIELD_FONT, `${toolbar} px toolbar: measured in the field's own font`);
     assert.ok(page.forms.includes(box.placeholder), `${toolbar} px toolbar: "${box.placeholder}" is a whole placeholder`);
     assert.ok(box.placeholder.length * PER_CHAR <= room, `${toolbar} px toolbar: "${box.placeholder}" (${(box.placeholder.length * PER_CHAR).toFixed(0)} px) fits its ${room.toFixed(0)} px`);
     const longer = page.forms.slice(0, page.forms.indexOf(box.placeholder));
@@ -1316,11 +1338,11 @@ test('the Highlight box shows a whole placeholder at every width — never one c
   }
   assert.equal(checked, 1299, 'every toolbar width from 402 px was checked');
   box.clientWidth = cssPx(width, 720) - 2 * border;
-  page.fit();
+  resize();
   assert.match(box.placeholder, /size>1gb/, `at the QA's 1024 px window (a 720 px toolbar) the example still shows: "${box.placeholder}"`);
   box.clientWidth = 0; // a hidden view: nothing to measure, so nothing changes
   const before = box.placeholder;
-  page.fit();
+  resize();
   assert.equal(box.placeholder, before, 'a field that is not laid out keeps its placeholder');
 });
 
