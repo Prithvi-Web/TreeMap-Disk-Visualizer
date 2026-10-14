@@ -5,6 +5,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-offloadPickConfirm-data-');
 
 import { INDEX } from './fixtures/liftFrontend';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * "Offload…" from the Grid's selection bar, the right-click menu and the duplicates bar (fourth browser
@@ -34,6 +35,9 @@ interface Drive { name: string; path: string; freeBytes?: number | null }
 interface Harness {
   start: (paths: string[]) => Promise<void>;
   picked: (paths: string[], dest: string) => Promise<void>;
+  /** The page's dockDrop: the cart dropped on the drive at `volPath`. */
+  drop: (volPath: string) => Promise<void>;
+  state: { cart: Set<string>; pathIndex: Set<string> };
   opened: unknown[][];
   posts: Array<Record<string, unknown>>;
   offloaded: Array<[string[], string]>;
@@ -42,19 +46,27 @@ interface Harness {
   confirm: () => (() => Promise<void>) | null;
 }
 
+/** The plan the dry run answers for `body`. */
+function planFor(body: { dest: string; paths: string[] }): Record<string, unknown> {
+  return { dryRun: true, fileCount: 2, bytesTotal: 3_000_000_000, dest: body.dest, wouldTrashAfterVerify: body.paths };
+}
+
 /**
  * `refuse`: the dry run answers with this error instead of a plan. `volumesReply`: what GET /api/volumes
- * answers in place of `{ volumes: drives }` — it may throw, as a failed call does.
+ * answers in place of `{ volumes: drives }` — it may throw, as a failed call does. `dryRunReply`: when
+ * the dry run answers, and with what — a test that holds one back says so here.
  */
-function harness(drives: Drive[], refuse: string | null = null, volumesReply: (() => unknown) | null = null): Harness {
+function harness(drives: Drive[], refuse: string | null = null, volumesReply: (() => unknown) | null = null,
+  dryRunReply: ((body: { dest: string; paths: string[] }) => Promise<unknown>) | null = null): Harness {
   const opened: unknown[][] = [];
   const posts: Array<Record<string, unknown>> = [];
   const offloaded: Array<[string[], string]> = [];
   const toasts: Array<[string, string | undefined]> = [];
   const els: Record<string, { innerHTML: string; open: boolean; classList: { add: (c: string) => void } }> = {};
   const $ = (id: string) => (els[id] ??= { innerHTML: '', open: false, classList: { add: (c: string) => { if (c === 'open') els[id].open = true; } } });
+  const state = { scanId: 's1', root: { path: '/Users/me' }, cart: new Set<string>(), pathIndex: new Set<string>() };
   const deps: Record<string, unknown> = {
-    state: { scanId: 's1', root: { path: '/Users/me' }, cart: new Set<string>(), pathIndex: new Set<string>() },
+    state,
     api: async (url: string, opts?: { method?: string; body?: string }) => {
       if (url === '/api/volumes') return volumesReply ? volumesReply() : { volumes: drives };
       if (url === '/api/offload') {
@@ -62,7 +74,7 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
         posts.push(body);
         if (body.dryRun !== true) return assert.fail('the page POSTed a real offload outside runOffloadJob');
         if (refuse) throw new Error(refuse);
-        return { dryRun: true, fileCount: 2, bytesTotal: 3_000_000_000, dest: body.dest, wouldTrashAfterVerify: body.paths };
+        return dryRunReply ? dryRunReply(body) : planFor(body);
       }
       return assert.fail(`unexpected request ${url}`);
     },
@@ -73,15 +85,15 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     runOffloadJob: async (paths: string[], dest: string) => { offloaded.push([paths, dest]); },
     activeJob: null,
   };
-  const names = ['startOffloadFlow', 'offloadPicked', 'confirmOffloadPlan', 'tmIsInside', 'lastPathSegment'];
+  const names = ['startOffloadFlow', 'offloadPicked', 'dockDrop', 'confirmOffloadPlan', 'tmIsInside', 'lastPathSegment', 'outermostPaths', 'tmParentPath'];
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, `'use strict'; let onConfirmTrash = null; let offloadPlanSeq = 0;
     ${names.map(pageFunction).join('\n')}
-    return { start: startOffloadFlow, picked: offloadPicked, confirm: () => onConfirmTrash };`)(...keys.map((k) => deps[k])) as {
-    start: Harness['start']; picked: Harness['picked']; confirm: Harness['confirm'];
+    return { start: startOffloadFlow, picked: offloadPicked, drop: dockDrop, confirm: () => onConfirmTrash };`)(...keys.map((k) => deps[k])) as {
+    start: Harness['start']; picked: Harness['picked']; drop: Harness['drop']; confirm: Harness['confirm'];
   };
-  return { ...page, opened, posts, offloaded, toasts, els, confirm: page.confirm };
+  return { ...page, state, opened, posts, offloaded, toasts, els, confirm: page.confirm };
 }
 
 const BACKUP: Drive = { name: 'Backup', path: '/Volumes/Backup', freeBytes: 5e11 };
@@ -180,6 +192,35 @@ test('a plan the server refuses — a folder on the files\' own drive — is sai
   assert.notEqual(h.els.confirmModal?.open, true, 'no confirm opened');
   assert.equal(h.confirm(), null, 'nothing waits for a Confirm');
   assert.deepEqual(h.offloaded, [], 'nothing was offloaded');
+});
+
+test('a later plan owns the shared confirm: an earlier pick\'s or drop\'s dry run that lands last never repaints the sheet or takes over Confirm — picker and dock alike (E01, review F1.9)', async () => {
+  const cart = ['/Users/me/Movies/old.mov'];
+  const pick = { kind: 'pick', dest: '/Volumes/Work/Archive' } as const;
+  const drop = { kind: 'drop', dest: '/Volumes/Backup' } as const;
+  for (const [earlier, later] of [[pick, { kind: 'pick', dest: '/Volumes/Backup/Movies' } as const], [pick, drop], [drop, pick]]) {
+    const label = `${earlier.kind} then ${later.kind}`;
+    const held: Array<{ dest: string; land: () => void }> = [];
+    const h = harness([WORK, BACKUP], null, null, (body) => new Promise((resolve) => { held.push({ dest: body.dest, land: () => resolve(planFor(body)) }); }));
+    for (const p of cart) { h.state.cart.add(p); h.state.pathIndex.add(p); }
+    const begin = (plan: typeof earlier | typeof later) => (plan.kind === 'pick' ? h.picked(cart, plan.dest) : h.drop(plan.dest));
+    const first = begin(earlier);
+    await waitFor(() => held.length === 1, `${label}: the earlier plan's dry run is asked`);
+    const second = begin(later);
+    await waitFor(() => held.length === 2, `${label}: the later plan's dry run is asked`);
+    assert.deepEqual(held.map((x) => x.dest), [earlier.dest, later.dest], `${label}: control, both dry runs are out`);
+    held[1].land();
+    await second;
+    assert.equal(h.els.confirmModal?.open, true, `${label}: control, the later plan's sheet opened`);
+    const sheet = h.els.confirmText.innerHTML;
+    held[0].land();
+    await first;
+    assert.equal(h.els.confirmText.innerHTML, sheet, `${label}: the earlier plan, landing last, did not repaint the sheet`);
+    assert.match(h.els.confirmText.innerHTML, new RegExp(`will be copied to <b>${later.dest.replace(/\//g, '\\/')}</b>`), `${label}: it still shows the later plan`);
+    await h.confirm()?.();
+    assert.deepEqual(h.offloaded, [[cart, later.dest]], `${label}: and Confirm offloads to the later plan's folder, never the earlier one's`);
+    assert.deepEqual(h.toasts, [], `${label}: nothing was reported`);
+  }
 });
 
 test('no door moves anything bare: runOffloadJob is called in one place — the shared confirm\'s Confirm — and every other POST to /api/offload is a dry run (E01)', () => {
