@@ -145,7 +145,10 @@ OpenAPI 3 spec).
      stutter on next launch. Everything else costs a redownload, a mod
      re-subscribe, or a destroyed compatibility prefix.
    - `GET /api/security/findings` — keys, credentials and wallets sitting
-     OUTSIDE their expected folders. Names, paths and the scan's own sizes
+     OUTSIDE their expected folders, 500 at a time, most serious first:
+     `total` and `counts` cover every finding, `truncated` says more remain,
+     and `?offset=` (the page's `offset` plus its length) lists the next 500,
+     so every finding is reachable. Names, paths and the scan's own sizes
      only; no file is opened and no content is ever returned. **Never delete
      these.** The only remediation offered is `POST /api/security/relocate`,
      which moves one file by rename (both ends must be inside a scanned root,

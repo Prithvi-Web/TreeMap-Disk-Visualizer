@@ -344,7 +344,8 @@ insightRouter.get('/media', storageModeGate, async (req: Request, res: Response)
 });
 
 /**
- * GET /api/security/findings?scanId= — secrets sitting outside their home.
+ * GET /api/security/findings?scanId=&offset= — secrets sitting outside their home, 500 at a time
+ * from `offset` (E09).
  *
  * Names and locations only: no file is opened and no content is ever read or
  * returned. Findings are local to this machine and are deliberately excluded
@@ -353,7 +354,8 @@ insightRouter.get('/media', storageModeGate, async (req: Request, res: Response)
 insightRouter.get('/security/findings', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignore = await getIgnoreMatchers('suggest');
-  const report = collectSecurityFindings(storeOf(scan), ignore);
+  // `offset` pages past the first 500, most serious first (E09); anything but a whole number reads as the start.
+  const report = collectSecurityFindings(storeOf(scan), ignore, undefined, undefined, clampInt(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER));
   // A suggested move is offered only where POST /security/relocate would make it (E10): each one
   // carries the refusal it would meet, or null. A policy file that cannot be read refuses every move,
   // as the route would, and never takes the findings down with it.

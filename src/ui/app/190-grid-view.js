@@ -727,13 +727,16 @@ function renderSecurity() {
   // The server counts every finding and lists the most serious ones (QA D77),
   // so the headline and the counts describe the disk, not the list.
   const total = report.total ?? findings.length;
+  // Every finding is reachable (E09): the server lists them 500 at a time,
+  // most serious first, and "Show more" asks for the next page.
+  const unshown = Math.max(0, total - findings.length);
   // Keyed by scan, like the apps line: a repaint of the same scan rolls the
   // counts (a relocation re-checks), a new scan snaps.
   FxNum.rollHtml($('securityInfo'),
     `<b>${formatCount(total)}</b> ${total === 1 ? 'file' : 'files'} sitting outside the folder ${total === 1 ? 'it belongs' : 'they belong'} in` +
     (high ? ` — <b>${formatCount(high)} serious</b>` : '') + (medium ? `, ${formatCount(medium)} worth fixing` : '') +
     `. <span class="sec-note">Matched on name and location only; no file was opened and nothing leaves this computer.</span>` +
-    (report.truncated ? ` <span class="num">(the ${formatCount(findings.length)} most serious shown)</span>` : ''), state.scanId);
+    (unshown ? ` <span class="num">(the ${formatCount(findings.length)} most serious shown — ${formatCount(unshown)} more below)</span>` : ''), state.scanId);
 
   host.innerHTML = '<div class="sec-list">' + findings.map((f, i) => `
     <div class="sec-item sev-${escapeHtml(f.severity)}">
@@ -750,12 +753,37 @@ function renderSecurity() {
       <button class="pill" data-sec-reveal="${i}">${icon('external', 13)} Show me</button>
       ${f.suggestedPath && !f.relocateRefusal // offered only where the server will move it (E10)
         ? `<button class="pill" data-sec-move="${i}">${icon('shield', 13)} Move to ${escapeHtml(baseName(f.suggestedPath))}</button>` : ''}
-    </div>`).join('') + '</div>';
+    </div>`).join('') + '</div>' +
+    (unshown ? `<div class="sec-more"><button class="pill" data-sec-more>${icon('plus', 13)} Show more</button>` +
+      ` <span class="muted num">${formatCount(findings.length)} of ${formatCount(total)} shown, most serious first</span></div>` : '');
 
   host.querySelectorAll('[data-sec-reveal]').forEach(b =>
     b.addEventListener('click', () => openInOS(findings[+b.dataset.secReveal].path, true)));
   host.querySelectorAll('[data-sec-move]').forEach(b =>
     b.addEventListener('click', () => confirmRelocateSecret(findings[+b.dataset.secMove])));
+  host.querySelectorAll('[data-sec-more]').forEach(b => b.addEventListener('click', () => loadMoreSecurity()));
+}
+
+/**
+ * The next page of findings, appended (E09: 500 of 801 were shown and the
+ * other 301 could not be reached). A newer scan or a newer page owns the
+ * panel by the time this lands, so this one is dropped. Focus moves to the
+ * first finding it brought in, never to the page.
+ */
+async function loadMoreSecurity() {
+  const report = state.security.report;
+  if (!report) return;
+  const scanId = state.scanId;
+  const from = report.findings.length;
+  try {
+    const page = await api(`/api/security/findings?scanId=${scanId}&offset=${from}`);
+    if (state.scanId !== scanId || state.security.report !== report) return;
+    state.security.report = { ...report, findings: [...report.findings, ...page.findings], counts: page.counts, total: page.total, truncated: page.truncated };
+    renderSecurity();
+    $('securityBody').querySelector(`[data-sec-reveal="${from}"]`)?.focus();
+  } catch (e) {
+    toast('Could not list more findings: ' + e.message, 'error');
+  }
 }
 
 /** Confirm and run a single move. Never a delete; an occupied destination aborts. */

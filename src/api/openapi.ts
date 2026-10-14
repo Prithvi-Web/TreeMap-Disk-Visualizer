@@ -1728,7 +1728,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Secrets (keys, .env, wallets, cloud credentials) found OUTSIDE their expected locations — names and paths only, never contents',
     tag: 'insights',
     destructive: false,
-    parameters: [scanIdQuery],
+    parameters: [scanIdQuery, queryParam('offset', 'Where the page starts in the whole list, most serious first: 0 (the default) for the first 500, 500 for the next, and so on — every finding is reachable. Anything but a whole number reads as 0', int())],
     responses: {
       '200': jsonResponse(
         'Findings, most serious first',
@@ -1739,7 +1739,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             findings: arr(opaque('patternId, label, why, severity, path, name, size, modifiedAt, reason, suggestedPath, relocateRefusal (beside a suggestedPath: why POST /api/security/relocate would refuse that move — the folder outside every scanned folder, the agent policy, something already there — or null when it would make it), exposed, appOwned')),
             counts: opaque('high, medium and low finding counts, over every finding (not only the listed ones)'),
             total: int('How many findings there are in all; more than findings.length once the cap bites'),
-            truncated: bool('true when there are more than 500 findings: the 500 most serious are listed'),
+            truncated: bool('true while findings remain after this page: ask again with offset = offset + findings.length'),
+            offset: int('Where this page starts in the whole list'),
           },
           ['scanId', 'findings', 'counts'],
         ),

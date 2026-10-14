@@ -659,3 +659,107 @@ test('relocateRefusal is declared where an agent reads: the OpenAPI document and
   const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
   assert.match(agents, /`relocateRefusal`[\s\S]{0,200}offer the move only on `null`/, 'AGENTS.md says to offer the move only when it is null');
 });
+
+/* ─────────────── Every finding reachable (fourth browser pass, E09) ─────────────── */
+
+test('every finding is reachable: the page after the first 500 starts where it ended, in the same order, and says whether more remain (E09)', () => {
+  const docs = Array.from({ length: 601 }, (_, i) => file(`Deck-${i}.key`, path.join(HOME, 'Documents', `d${i % 7}`), 1200));
+  const real = ['id_rsa', 'id_ed25519', 'server.pem', 'wallet.dat'].map((n) => file(n, path.join(HOME, 'Misc'), 40));
+  const tree = treeWith(HOME, [...docs, ...real]);
+  const page = (offset?: number) => (collectSecurityFindings as unknown as (...a: unknown[]) => ReturnType<typeof collectSecurityFindings> & { offset?: number })(
+    tree, [], HOME, undefined, offset);
+  const first = page();
+  const rest = page(500);
+  assert.equal(first.total, 605, 'control: 605 findings');
+  assert.deepEqual([first.findings.length, first.truncated, first.offset], [500, true, 0], 'the first page: the 500 most serious, more to come');
+  assert.deepEqual([rest.findings.length, rest.truncated, rest.offset], [105, false, 500], 'the next page: the other 105, and nothing after it');
+  assert.deepEqual(rest.counts, first.counts, 'every page counts every finding');
+  const all = [...first.findings, ...rest.findings].map((f) => f.path);
+  assert.equal(new Set(all).size, 605, 'every finding appears once across the pages');
+  const whole = page(0).findings.concat(page(500).findings);
+  assert.deepEqual(whole.map((f) => f.path), all, 'in one order, the same every time');
+  assert.equal(page(605).findings.length, 0, 'past the end: no findings');
+  assert.deepEqual([page(-4).findings.length, page(-4).offset], [500, 0], 'a negative offset is the start');
+  assert.deepEqual([page(Number.NaN).findings.length, page(Number.NaN).offset], [500, 0], 'and so is one that is no number');
+});
+
+test('GET /api/security/findings takes an offset, and a bad one reads as the start (E09)', async () => {
+  const dir = fs.realpathSync(fileTempDir('treemap-securityHygiene-e09-'));
+  for (const n of ['id_rsa', 'id_ed25519', 'wallet.dat']) fs.writeFileSync(path.join(dir, n), 'x');
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const started = await call(port, 'POST', '/api/scan', { path: dir });
+    await waitFor(() => peekScan(started.body.scanId)?.status !== 'running', 'the scan');
+    const at = async (q: string) => (await call(port, 'GET', `/api/security/findings?scanId=${started.body.scanId}${q}`)).body;
+    const whole = await at('');
+    assert.equal(whole.total, 3, 'control: three findings');
+    const tail = await at('&offset=1');
+    assert.deepEqual(tail.findings.map((f: { path: string }) => f.path), whole.findings.slice(1).map((f: { path: string }) => f.path), 'offset=1: the list from its second finding');
+    assert.equal(tail.offset, 1);
+    assert.equal(tail.total, 3, 'and the total is still every finding');
+    assert.deepEqual((await at('&offset=-4')).findings.length, 3, 'a negative offset reads as the start');
+    assert.deepEqual((await at('&offset=abc')).findings.length, 3, 'so does one that is not a number');
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
+test('the Security panel says how many findings it has not shown, and "Show more" brings in the next page until every one is listed (E09)', async () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
+  const finding = (i: number) => ({ severity: 'low', name: `Deck-${i}.key`, label: 'Key', path: `/h/Deck-${i}.key`, reason: 'r', why: 'w', size: 1 });
+  const all = Array.from({ length: 801 }, (_, i) => finding(i));
+  const asked: string[] = [];
+  const clicks: Record<string, () => unknown> = {};
+  let focused = '';
+  const host = {
+    innerHTML: '',
+    querySelectorAll: (sel: string) => (sel === '[data-sec-more]' && host.innerHTML.includes('data-sec-more')
+      ? [{ addEventListener: (_t: string, f: () => unknown) => { clicks.more = f; } }] : [] as unknown[]),
+    querySelector: (sel: string) => {
+      const m = /data-sec-reveal="(\d+)"/.exec(sel);
+      return m ? { focus: () => { focused = m[1]; } } : null;
+    },
+  };
+  const info = { textContent: '', innerHTML: '' };
+  const state = { scanId: 's1', security: { report: { findings: all.slice(0, 500), counts: { high: 0, medium: 0, low: 801 }, total: 801, truncated: true, offset: 0, patternCount: 9 } as Record<string, unknown> } };
+  const stubs: Record<string, unknown> = {
+    $: (id: string) => (id === 'securityBody' ? host : info), state,
+    escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${String(n)} B`, formatCount: (n: number) => n.toLocaleString('en-US'),
+    icon: () => '', baseName: (p: string) => path.basename(p),
+    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } },
+    SEVERITY_LABEL: { low: 'Minor' }, openInOS: () => {}, confirmRelocateSecret: () => {}, toast: (m: string) => assert.fail(`the page reported: ${m}`),
+    api: async (url: string) => {
+      asked.push(url);
+      const offset = Number(new URLSearchParams(url.slice(url.indexOf('?') + 1)).get('offset') ?? 0);
+      const findings = all.slice(offset, offset + 500);
+      return { scanId: 's1', findings, counts: { high: 0, medium: 0, low: 801 }, total: 801, truncated: offset + findings.length < 801, offset, patternCount: 9 };
+    },
+  };
+  const keys = Object.keys(stubs);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const render = new Function(...keys, `${fn}; return renderSecurity;`)(...keys.map((k) => stubs[k])) as () => void;
+  render();
+  assert.match(info.innerHTML, /the 500 most serious shown — 301 more below/, 'the headline says how many are not shown');
+  assert.match(host.innerHTML, /data-sec-more[^>]*>[^<]*Show more<\/button>/, 'and a button reaches them');
+  assert.match(host.innerHTML, /500 of 801 shown/, 'saying how far the list goes');
+  await clicks.more();
+  assert.deepEqual(asked, ['/api/security/findings?scanId=s1&offset=500'], 'the next page is asked for, from where the list ends');
+  assert.equal(host.innerHTML.split('sec-item').length - 1, 801, 'every finding is listed');
+  assert.doesNotMatch(host.innerHTML, /data-sec-more/, 'with nothing left to show, no button');
+  assert.doesNotMatch(info.innerHTML, /more below/, 'and the headline no longer says some are hidden');
+  assert.equal(focused, '500', 'focus moves to the first finding the click brought in, not to the page');
+});
+
+test('the paging is declared where an agent reads: the OpenAPI document and AGENTS.md (E09)', async () => {
+  const { buildOpenApiDocument } = await import('../src/api/openapi');
+  const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/security/findings']);
+  assert.match(said, /"name":"offset"/, 'the offset parameter is declared');
+  assert.match(said, /every finding is reachable/, 'saying what it is for');
+  assert.match(said, /ask again with offset = offset \+ findings.length/, 'and truncated says how to go on');
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  assert.match(agents, /`\?offset=` \(the page's `offset` plus its length\) lists the next 500,\s+so every finding is reachable/, 'AGENTS.md says how to reach every finding');
+});

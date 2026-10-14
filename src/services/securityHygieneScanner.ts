@@ -244,14 +244,16 @@ export interface SecurityFinding {
 }
 
 export interface SecurityReport {
-  /** The most serious findings first, at most MAX_FINDINGS of them. */
+  /** The most serious findings first, at most MAX_FINDINGS of them, from `offset` on. */
   findings: SecurityFinding[];
   /** Counted over EVERY finding, not only the ones in `findings`. */
   counts: { high: number; medium: number; low: number };
   /** How many findings there are in all; more than `findings.length` once the cap bites. */
   total: number;
-  /** True once the cap below has bitten, so the UI can say the list is partial. */
+  /** True while findings remain after this page, so the UI can say the list is partial and ask for the next. */
   truncated: boolean;
+  /** Where this page starts in the whole ordered list (fourth browser pass, E09: every finding is reachable). */
+  offset: number;
 }
 
 const MAX_FINDINGS = 500;
@@ -381,12 +383,17 @@ export function linkedFileSize(filePath: string): number | null {
  * cut to MAX_FINDINGS. Cutting in walk order (QA D77) let 500 Keynote decks
  * walked first push the real keys out of the list, and the counts then
  * described the cut list rather than the disk.
+ *
+ * `offset` pages through the rest (fourth browser pass, E09: 500 of 801 were
+ * shown and the other 301 could not be reached): the same order every time,
+ * so the page from `offset` starts where the one before it ended.
  */
 export function collectSecurityFindings(
   source: TreeSource,
   ignore: CompiledIgnore[],
   homeDir: string = os.homedir(),
   sizeOfLinkedName: (filePath: string) => number | null = linkedFileSize,
+  offset = 0,
 ): SecurityReport {
   const store = asStore(source);
   const findings: SecurityFinding[] = [];
@@ -465,15 +472,17 @@ export function collectSecurityFindings(
   const rank: Record<SecuritySeverity, number> = { high: 0, medium: 1, low: 2 };
   findings.sort((a, b) => rank[a.severity] - rank[b.severity] || Number(b.exposed) - Number(a.exposed) || b.modifiedAt - a.modifiedAt);
 
+  const from = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
   return {
-    findings: findings.slice(0, MAX_FINDINGS),
+    findings: findings.slice(from, from + MAX_FINDINGS),
     counts: {
       high: findings.filter((f) => f.severity === 'high').length,
       medium: findings.filter((f) => f.severity === 'medium').length,
       low: findings.filter((f) => f.severity === 'low').length,
     },
     total: findings.length,
-    truncated: findings.length > MAX_FINDINGS,
+    truncated: findings.length > from + MAX_FINDINGS,
+    offset: from,
   };
 }
 

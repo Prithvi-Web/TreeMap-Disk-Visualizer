@@ -154,6 +154,10 @@
 .sec-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sec-kind { flex: none; font-size: 11px; font-weight: 500; color: var(--text-3); }
 .sec-why { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+/* E10: where a suggested move would be refused, the reason stands in for the button. */
+.sec-move-off { display: flex; align-items: center; gap: 5px; color: var(--text-3); }
+/* E09: every finding is reachable, the next page behind "Show more". */
+.sec-more { display: flex; align-items: center; gap: 10px; padding: 10px 2px 2px; font-size: 12px; }
 .sec-sev { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
   padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
 /* The .pkg-tag chip recipe: an opaque 8% mix over --bg-1, measured for AA. */
