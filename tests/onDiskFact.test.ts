@@ -10,8 +10,9 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { ON_DISK_UNAVAILABLE } from '../src/services/facts/onDiskProvider';
+import { ON_DISK_UNAVAILABLE, onDiskProvider, setOnDiskForTests } from '../src/services/facts/onDiskProvider';
 import { platform } from '../src/platform';
+import { waitFor, withinHangGuard } from './fixtures/waitFor';
 
 /**
  * Fifth browser pass F09: Clean Up › Custom Rules said "2 files · up to 3.9 GB,
@@ -75,6 +76,65 @@ test('the onDisk fact says what each file takes on its disk — a sparse file fa
   assert.equal(fact.values[folder], undefined, 'a folder has no answer here — never 0');
   assert.equal(fact.values[gone], undefined, 'nor a file gone since the scan');
   assert.deepEqual(fact.stats, { requested: 4, computed: 2, skipped: 1, failed: 1 }, 'and the counts say which is which');
+});
+
+test('a file whose drive stops answering is not waited on: its look has a deadline and is counted failed — never 0 — the rest of the request is not asked, and nothing more is asked until that look comes back (review F1.1)', { skip: !platform().blocksAreMeaningful && 'this system reports no blocks' }, async () => {
+  // A NAS that went to sleep after the scan: Node's lstat of a file on it can
+  // block for minutes or never settle. Clean Up's Find waited on this fact,
+  // and every request held one more thread of the I/O pool. Here that file's
+  // look never settles until the test lets it, and the deadline passes when
+  // the test says so (count, don't time).
+  const dir = fs.realpathSync(fileTempDir('tm-ondisk-stall-'));
+  const stuck = path.join(dir, 'on-the-nas.mov');
+  const beside = path.join(dir, 'beside.mov');
+  fs.writeFileSync(stuck, Buffer.alloc(DENSE, 7));
+  fs.writeFileSync(beside, Buffer.alloc(DENSE, 7));
+  const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: dir });
+  assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+  const scanId = scanned.body.scanId as string;
+
+  const looked: string[] = [];
+  const deadlines: Array<() => void> = [];
+  let answer: (() => void) | null = null;
+  setOnDiskForTests({
+    lstat: (p) => {
+      looked.push(p);
+      if (p !== stuck) return fs.promises.lstat(p);
+      return new Promise((resolve, reject) => { answer = () => { fs.promises.lstat(p).then(resolve, reject); }; });
+    },
+    deadline: () => {
+      let pass = (): void => {};
+      const late = new Promise<void>((resolve) => { pass = resolve; });
+      deadlines.push(pass);
+      return { late, cancel: () => {} };
+    },
+  });
+  try {
+    const signal = new AbortController().signal;
+    const first = onDiskProvider.compute(scanId, [stuck, beside], signal);
+    await waitFor(() => deadlines.length === 1, 'the stalled look to be given its deadline');
+    deadlines[0](); // its deadline passes
+    const stalled = await withinHangGuard(first, 'the request to answer once the deadline passed');
+    assert.equal(stalled.available, true);
+    assert.equal(stalled.values.has(stuck), false, 'the stalled file has no answer — never a 0');
+    assert.deepEqual(stalled.stats, { requested: 2, computed: 0, skipped: 1, failed: 1 }, 'it failed, and the file after it was not asked');
+    assert.deepEqual(looked, [stuck], 'nothing more was looked at in that request');
+
+    // While that look is still out, a new request asks nothing: no second thread of the pool.
+    const meanwhile = await onDiskProvider.compute(scanId, [beside], signal);
+    assert.equal(meanwhile.available, false, 'unknown while the drive is silent');
+    assert.match(meanwhile.reason ?? '', /did not answer/, `and it says why: ${meanwhile.reason}`);
+    assert.deepEqual(looked, [stuck], 'and nothing was looked at');
+
+    // Once the look comes back, files are measured again.
+    answer!();
+    await waitFor(async () => (await onDiskProvider.compute(scanId, [beside], signal)).available, 'files to be measured once the drive answers');
+    const again = await onDiskProvider.compute(scanId, [beside], signal);
+    assert.ok((again.values.get(beside)?.bytes ?? 0) >= DENSE, 'control: a file that answers is measured');
+  } finally {
+    setOnDiskForTests(null);
+    if (answer) (answer as () => void)();
+  }
 });
 
 test('where files report no blocks the onDisk fact is unavailable, saying why — never a zero (F09)', { skip: platform().blocksAreMeaningful && 'this system reports blocks' }, async () => {

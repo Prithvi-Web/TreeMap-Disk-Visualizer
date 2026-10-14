@@ -36044,13 +36044,8 @@ async function runCleanFind(fetcher) {
   const findLabel = findBtn.innerHTML;
   findBtn.disabled = true;
   let data;
-  let onDisk = new Map();
   try {
     data = await fetcher();
-    // What the matched files take on the disk (F09), asked while Find is
-    // still busy, so the summary under them never counts a sparse file at the
-    // size it claims. Never a failure of its own: unmeasured is "up to".
-    if (data && data.files) onDisk = await cleanOnDiskOf(data.files);
   } catch (e) {
     // Through `reportError`, never a bare red toast. `GET /api/cleanup/rules`
     // answers 202 {status:'running'} while a scan is still going, and `api()`
@@ -36068,7 +36063,7 @@ async function runCleanFind(fetcher) {
   }
   if (!data) return; // the source reported its own problem
   cleanMatches = data.files;
-  cleanOnDisk = onDisk;
+  cleanOnDisk = new Map();
   seedNodes(cleanMatches); // staged from here, so their sizes must resolve later
 
   const host = $('cleanResults');
@@ -36101,6 +36096,16 @@ async function runCleanFind(fetcher) {
     updateCleanSummary();
   });
   host.querySelectorAll('.clean-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+  updateCleanSummary();
+  // Then what the matched files take on the disk (F09), and the summary again
+  // from it: until it lands the footer says the claimed size, "up to". Never
+  // waited on before the list or Find — a drive that stopped answering since
+  // the scan must hold neither (review F1.12) — and a late answer is dropped
+  // once a later Find owns the list.
+  const asked = cleanMatches;
+  const onDisk = await cleanOnDiskOf(asked);
+  if (cleanMatches !== asked) return;
+  cleanOnDisk = onDisk;
   updateCleanSummary();
 }
 

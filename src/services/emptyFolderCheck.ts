@@ -186,7 +186,8 @@ export interface EmptyCheckDeps {
   maxEntries: number;
 }
 
-function realDeadline(ms: number): { late: Promise<void>; cancel: () => void } {
+/** A call's deadline on the real clock: `late` settles after `ms` (the timer never holds the process open); `cancel` stops it. Also the onDisk fact's. */
+export function realDeadline(ms: number): { late: Promise<void>; cancel: () => void } {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, ms);

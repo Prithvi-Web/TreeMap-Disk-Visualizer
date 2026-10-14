@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * Clean Up modal — what the modal is allowed to claim.
@@ -674,10 +675,13 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
   const asked: { paths: string[]; providers: string[]; scanId: string }[] = [];
   const els: Record<string, any> = {};
   const $ = (id: string) => (els[id] ||= { innerHTML: '', textContent: '', disabled: false, addEventListener() {}, querySelectorAll: () => [] });
+  /** What the footer was drawn from, each time it was drawn: how many files were measured then. */
+  const summaries: number[] = [];
+  let measuredNow = (): number => 0;
   const deps: Record<string, unknown> = {
     $, state: { scanId: 'scan-1' }, isCloudScan: () => cloud, toast: () => {}, reportError: () => assert.fail('nothing failed'), seedNodes: () => {}, icon: () => '',
     chipFor: () => '', formatDate: () => '', sizeInk: () => '', formatBytes: (n: number) => `${n} B`, formatCount: String, escapeHtml: String,
-    cartButtonHtml: () => '', refreshCartButtons: () => {}, updateCleanSummary: () => {},
+    cartButtonHtml: () => '', refreshCartButtons: () => {}, updateCleanSummary: () => { summaries.push(measuredNow()); },
     api: async (url: string, opts: { body: string }) => {
       assert.equal(url, '/api/facts');
       const body = JSON.parse(opts.body);
@@ -694,18 +698,48 @@ function findHarness(facts: (paths: string[]) => Promise<unknown>, cloud = false
     return { find: runCleanFind, onDisk: () => cleanOnDisk, matches: () => cleanMatches };`)(...keys.map((k) => deps[k])) as {
     find: (fetcher: () => Promise<unknown>) => Promise<void>; onDisk: () => Map<string, number>; matches: () => unknown[];
   };
-  return { page, asked, els };
+  measuredNow = () => page.onDisk().size;
+  return { page, asked, els, summaries };
 }
 
 const FOUND = Array.from({ length: 2500 }, (_, i) => ({ path: `/c/f${i}.mov`, name: `f${i}.mov`, size: 1000, modifiedAt: 0 }));
 
-test('Find asks what the matched files take on the disk — the onDisk fact, in the fact route\'s chunks of 2,000 — before their summary is drawn (fifth browser pass F09)', async () => {
+test('Find asks what the matched files take on the disk — the onDisk fact, in the fact route\'s chunks of 2,000 — and draws their summary again from it (fifth browser pass F09)', async () => {
   const h = findHarness(async (paths) => ({ providers: { onDisk: { available: true, values: Object.fromEntries(paths.map((p) => [p, { bytes: 0 }])) } } }));
   await h.page.find(async () => ({ files: FOUND, matched: FOUND.length, truncated: false }));
   assert.deepEqual(h.asked.map((a) => [a.paths.length, a.providers, a.scanId]), [[2000, ['onDisk'], 'scan-1'], [500, ['onDisk'], 'scan-1']]);
   assert.equal(h.page.onDisk().size, 2500, 'every file\'s measure is kept for the summary');
   assert.equal(h.page.onDisk().get('/c/f2499.mov'), 0);
   assert.equal(h.page.matches().length, 2500, 'control: the list is the files found');
+  assert.equal(h.summaries.at(-1), 2500, `the footer is drawn last from what the files take: ${JSON.stringify(h.summaries)}`);
+});
+
+test('Find lists the matched files and is ready again before what they take on the disk is known — a facts request that never answers holds neither, and the footer says "up to" meanwhile (review F1.12)', async () => {
+  // A share asleep after the scan: the onDisk question may never be answered.
+  // Find waited on it before re-enabling itself or drawing anything.
+  const h = findHarness(() => new Promise(() => {}));
+  void h.page.find(async () => ({ files: FOUND.slice(0, 3), matched: 3, truncated: false }));
+  await waitFor(() => h.asked.length === 1, 'Find to ask what the files take on the disk');
+  assert.equal(h.els.cleanFindBtn.disabled, false, 'Find is ready again');
+  assert.match(h.els.cleanResults.innerHTML, /f0\.mov[\s\S]*f2\.mov/, 'the files are listed');
+  assert.deepEqual(h.summaries, [0], 'and the footer is drawn, from nothing measured: the claimed size, "up to"');
+});
+
+test('a Find\'s late answer about what its files take never lands on a later Find\'s list (review F1.12)', async () => {
+  const answers: Array<(values: Record<string, { bytes: number }>) => void> = [];
+  const h = findHarness(() => new Promise((resolve) => { answers.push((values) => resolve({ providers: { onDisk: { available: true, values } } })); }));
+  // Every answer here is a settled promise, so one turn of the event loop lets it land.
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+  void h.page.find(async () => ({ files: FOUND.slice(0, 2), matched: 2, truncated: false }));
+  await waitFor(() => answers.length === 1, 'the first Find to ask');
+  void h.page.find(async () => ({ files: FOUND.slice(5, 6), matched: 1, truncated: false }));
+  await waitFor(() => answers.length === 2, 'the second Find to ask');
+  answers[1]({ '/c/f5.mov': { bytes: 4096 } });
+  await turn();
+  assert.deepEqual([...h.page.onDisk()], [['/c/f5.mov', 4096]], 'control: the second Find\'s files are measured');
+  answers[0]({ '/c/f0.mov': { bytes: 0 }, '/c/f1.mov': { bytes: 0 } });
+  await turn();
+  assert.deepEqual([...h.page.onDisk()], [['/c/f5.mov', 4096]], 'what is measured is the list on screen');
 });
 
 test('where the onDisk fact cannot answer — a system that reports no blocks, a failed request — Find still lists the files and nothing is counted as 0 (fifth browser pass F09)', async () => {
