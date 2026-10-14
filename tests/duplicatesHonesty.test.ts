@@ -176,7 +176,9 @@ test('a cloud scan does not inherit the previous local scan’s trash line', () 
   const mount = INDEX.slice(start, INDEX.indexOf("id: 'trends'", start));
   const cloud = mount.slice(mount.indexOf('if (isCloudScan())'), mount.indexOf('state.dupMode'));
   assert.match(cloud, /dupTrashOutcome = null/, 'the measured line belongs to the scan that produced it');
-  assert.match(cloud, /renderDupNote\(\)/, 'and the panel is repainted so it actually goes');
+  // The panel is repainted through the toolbar, which renders the note first (review F3.4).
+  assert.match(cloud, /renderDupNote\(\)|updateDupToolbar\(\)/, 'and the panel is repainted so it actually goes');
+  assert.match(source('updateDupToolbar'), /^function updateDupToolbar\(\) \{\s*renderDupNote\(\);/, 'the toolbar repaint renders the note');
 });
 
 /* ── the near-duplicate view: images not compared ── */
@@ -454,4 +456,133 @@ test('with no completed scan, images an earlier scan left selected cannot be mov
   assert.deepEqual(press.trashed, [], 'a press with no completed scan sends nothing to the Trash');
   const control = ndNoScan({ scanId: 's1', near: fromFolderA() }, 'trashClick');
   assert.deepEqual(control.trashed, [['/A/b.jpg', '/A/c.jpg', '/A/d.jpg']], 'control: with the scan, the press asks to trash the selection');
+});
+
+/* ══════════════ A cloud scan lands on the Duplicates view (review F3.4) ══════════════ */
+
+/** A `$('<id>').addEventListener('click', …);` statement of the page, by brace matching. */
+function clickListener(id: string): string {
+  const at = INDEX.indexOf(`$('${id}').addEventListener('click', `);
+  assert.notEqual(at, -1, `the ${id} handler is in the page`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, INDEX.indexOf(';', i) + 1);
+  }
+  return assert.fail(`the ${id} handler never closes`);
+}
+
+/** The Duplicates view's own mount(), from the view registry, as a declaration named dupMount. */
+function duplicatesMount(): string {
+  const view = INDEX.indexOf("id: 'duplicates', label: 'Duplicates'");
+  assert.notEqual(view, -1, 'the Duplicates view is in the registry');
+  const open = INDEX.indexOf('{', INDEX.indexOf('mount() {', view));
+  let depth = 0;
+  for (let i = open; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return `function dupMount() ${INDEX.slice(open, i + 1)}`;
+  }
+  return assert.fail('the Duplicates view\'s mount() never closes');
+}
+
+interface DupViewState {
+  scanId: string | null;
+  root: { path: string };
+  dupMode: string;
+  cloud: { providers: Array<{ id: string; name: string }> };
+  dup: Record<string, unknown>;
+  near: Record<string, unknown>;
+}
+
+/**
+ * The page's own Duplicates view over `state`: both panes' toolbars painted as a local scan leaves them,
+ * then `land` (what finishScan does for the next scan) and the view's own mount(), as switchView runs
+ * it. What both toolbars show after it, what Similar images still holds selected, and what a press of
+ * its Move to Trash or its Auto-select does.
+ */
+function cloudScanLands(state: DupViewState, land: (s: DupViewState) => void) {
+  type El = { disabled: boolean; title: string; innerHTML: string; textContent: string; hidden: boolean;
+    addEventListener: (type: string, fn: () => void) => void; querySelectorAll: () => unknown[] };
+  const els: Record<string, El> = {};
+  const handlers: Record<string, () => void> = {};
+  const $ = (id: string) => (els[id] ??= { disabled: false, title: '', innerHTML: '', textContent: '', hidden: false,
+    addEventListener: (_: string, fn: () => void) => { handlers[id] = fn; }, querySelectorAll: () => [] });
+  const trashed: string[][] = [];
+  const toasts: string[] = [];
+  const loaded: string[] = [];
+  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function('$', 'state', 'nodeFor', 'icon', 'formatBytes', 'escapeHtml', 'toast', 'confirmTrash', 'renderDupNote',
+    'loadNearDupes', 'loadDuplicates', 'cartHas', 'dupFunnelDrop', 'FxCharts',
+    `let dupTrashOutcome = 'Moved 2 copies to the Trash.'; let dupFunnelHandle = null;
+     ${source('isCloudScan')}\n${source('cloudProviderOfScan')}\n${helper}\n${source('updateNdToolbar')}
+     ${source('ndNeedsScan')}\n${source('dupNeedsScan')}\n${source('updateDupToolbar')}\n${duplicatesMount()}
+     ${clickListener('ndAutoBtn')}\n${clickListener('ndTrashBtn')}
+     return { dupMount, updateNdToolbar, updateDupToolbar };`)(
+    $, state, () => ({ size: 1000 }), () => '', (n: number) => `${n} B`, (s: unknown) => String(s), (m: string) => { toasts.push(m); },
+    (paths: string[]) => { if (paths.length) trashed.push(paths); }, () => {},
+    () => { loaded.push('near'); }, () => { loaded.push('exact'); }, () => false, () => {}, { funnel: () => ({ update: () => {} }) },
+  ) as { dupMount: () => void; updateNdToolbar: () => void; updateDupToolbar: () => void };
+  page.updateNdToolbar();
+  page.updateDupToolbar();
+  const before = { ndTrash: $('ndTrashBtn').innerHTML, dupTrash: $('dupTrashBtn').innerHTML, ndAuto: $('ndAutoBtn').disabled };
+  land(state);
+  page.dupMount();
+  const after = {
+    ndSummary: $('ndSummary').textContent,
+    ndTrash: { disabled: $('ndTrashBtn').disabled, label: $('ndTrashBtn').innerHTML },
+    ndAuto: { disabled: $('ndAutoBtn').disabled, title: $('ndAutoBtn').title },
+    dupTrash: { disabled: $('dupTrashBtn').disabled, label: $('dupTrashBtn').innerHTML },
+    dupOffload: $('dupOffloadBtn').disabled,
+    selected: [...(state.near.selection as Set<string>)],
+  };
+  const press = (id: 'ndTrashBtn' | 'ndAutoBtn') => {
+    handlers[id]();
+    return { trashed, toasts, selected: [...(state.near.selection as Set<string>)] };
+  };
+  return { before, after, press, loaded };
+}
+
+const PICS = '/Users/me/Pictures';
+/** A local scan with one image ticked in Similar images and one copy in exact duplicates. */
+const localDupScan = (): DupViewState => ({
+  scanId: 'A', root: { path: PICS }, dupMode: 'near', cloud: { providers: [{ id: 'gdrive', name: 'Google Drive' }] },
+  dup: { status: 'complete', groups: [], totalReclaimable: 2000, selection: new Set([`${PICS}/copy.jpg`]) },
+  near: { loadedFor: 'A:10', status: 'complete', available: true, compared: 40, pollTimer: 0,
+    clusters: [{ files: [{ path: `${PICS}/a.jpg` }, { path: `${PICS}/b.jpg` }] }], selection: new Set([`${PICS}/b.jpg`]) },
+});
+/** What finishScan does for a cloud scan: its root and id, and a fresh exact-duplicates state. */
+const cloudLands = (s: DupViewState) => {
+  s.scanId = 'C1';
+  s.root = { path: 'cloud://gdrive' };
+  s.dup = { status: 'idle', groups: [], totalReclaimable: 0, selection: new Set() };
+};
+
+test('a cloud scan landing on the Duplicates view lets go of what the local scan before it left: neither pane offers Move to Trash under "Not available for cloud scans", and Auto-select is disabled saying why (review F3.4)', () => {
+  const { before, after } = cloudScanLands(localDupScan(), cloudLands);
+  assert.match(before.ndTrash, /Move 1 to Trash \(1000 B\)/, 'control: on the local scan, Similar images offers the image ticked');
+  assert.match(before.dupTrash, /Move 1 to Trash \(1000 B\)/, 'control: and so do exact duplicates');
+  assert.equal(before.ndAuto, false, 'control: and Auto-select acts on its groups');
+  assert.equal(after.ndSummary, 'Not available for cloud scans.', 'control: the cloud branch of mount() ran');
+
+  assert.deepEqual(after.selected, [], 'Similar images lets go of the local scan\'s selection: it is not this account\'s');
+  assert.equal(after.ndTrash.disabled, true, 'its Move to Trash is disabled under the notice');
+  assert.doesNotMatch(after.ndTrash.label, /Move 1 to Trash/, 'and no longer counts the local image');
+  assert.equal(after.ndAuto.disabled, true, 'Auto-select is disabled: there is nothing of this scan to select');
+  assert.match(after.ndAuto.title, /cloud scans never download any/, 'and it says why, as the notice does');
+  assert.equal(after.dupTrash.disabled, true, 'the exact-duplicates pane\'s Move to Trash is repainted disabled too');
+  assert.doesNotMatch(after.dupTrash.label, /Move 1 to Trash/, 'and no longer counts the local copy');
+  assert.equal(after.dupOffload, true, 'and so is its Offload');
+
+  // control: a local scan landing instead still loads the pane the view shows, and the cloud reset is the cloud branch's alone.
+  const local = cloudScanLands(localDupScan(), (s) => { s.scanId = 'B'; });
+  assert.deepEqual(local.loaded, ['near'], 'control: a local scan\'s mount() loads Similar images');
+});
+
+test('after a cloud scan lands on the Duplicates view, a press of Similar images\' Move to Trash or Auto-select acts on nothing the local scan before it left (review F3.4)', () => {
+  const trashPress = cloudScanLands(localDupScan(), cloudLands).press('ndTrashBtn');
+  assert.deepEqual(trashPress.trashed, [], 'a press of Similar images\' Move to Trash sends no path to the Trash');
+  const autoPress = cloudScanLands(localDupScan(), cloudLands).press('ndAutoBtn');
+  assert.deepEqual(autoPress.selected, [], 'a press of Auto-select selects nothing of the local scan');
+  assert.deepEqual(autoPress.toasts, [], 'and no toast claims a selection');
 });

@@ -176,12 +176,27 @@ const VIEWS = [
         $('ndBody').innerHTML = msg;
         $('dupSummary').textContent = 'Not available for cloud scans.';
         $('ndSummary').textContent = 'Not available for cloud scans.';
-        // This branch paints nothing else and never reaches updateDupToolbar,
-        // and unmount() has not run — switchView only unmounts when the view
+        // unmount() has not run — switchView only unmounts when the view
         // actually changes. Without this the previous local scan's measured
         // trash line stands under "Not available for cloud scans."
         dupTrashOutcome = null;
-        renderDupNote();
+        // Nor may either pane offer what the scan before left (review F3.4).
+        // state.near outlives a scan (finishScan replaces only state.dup): its
+        // groups and selection are a local folder's, not this account's. The
+        // pane's answer for this scan is settled — unavailable, as the server
+        // answers a search it cannot run — so Auto-select says why it has
+        // nothing to select. Both toolbars are then repainted from what they
+        // hold, so neither offers Move to Trash under the notice
+        // (updateDupToolbar repaints the trash line too).
+        clearTimeout(state.near.pollTimer);
+        state.near = {
+          loadedFor: null, status: 'complete', available: false,
+          reason: 'Finding similar images reads the pictures themselves, and cloud scans never download any.',
+          clusters: [], clusterCount: 0, totalReclaimable: 0, truncated: false,
+          selection: new Set(), pollTimer: 0, renderedClusters: 0, shownPerCluster: {},
+        };
+        updateNdToolbar();
+        updateDupToolbar();
         return;
       }
       if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
