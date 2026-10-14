@@ -882,6 +882,26 @@ test('a program TreeMap only quits is offered "Quit", never "Restart" — on its
   assert.deepEqual(buttons, [['0', 'Quit'], ['1', 'Quit'], ['2', 'Restart']], 'each row offers what TreeMap will do');
 });
 
+test('each held-up space row button is named with its process, as Largest Files names every control — never two buttons called just "Quit" or "Restart" (fifth browser pass F11a)', () => {
+  const base = { bytes: 100, unknownSizeCount: 0, restartable: true, restartRefusal: null, handles: [{ path: '/tmp/x', bytes: 100, holders: 1 }] };
+  const html = paintZombies({
+    processes: [
+      { ...base, pid: 1, processName: 'Google Chrome Helper (Renderer)', appBundle: null, partOf: CHROME },
+      { ...base, pid: 2, processName: 'Google Chrome Helper (Renderer)', appBundle: null, partOf: CHROME },
+      { ...base, pid: 3, processName: 'Google Chrome', appBundle: CHROME, partOf: null },
+      { ...base, pid: 4, processName: 'chronod', appBundle: null, partOf: null, restartable: false, restartRefusal: 'Part of macOS' },
+    ],
+    totalBytes: 400, unknownSizeCount: 0, fileCount: 4, sharedFileCount: 0, scannedAt: 0,
+  });
+  const named = [...html.matchAll(/<button class="pill" data-zh-restart="(\d)"[^>]*aria-label="([^"]*)"/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(named, [
+    ['0', 'Quit Google Chrome Helper (Renderer)'],
+    ['1', 'Quit Google Chrome Helper (Renderer)'],
+    ['2', 'Restart Google Chrome'],
+  ], 'each button says what it does to which program');
+  assert.equal([...html.matchAll(/data-zh-restart=/g)].length, 3, 'control: a program TreeMap does not quit has no button to name');
+});
+
 test('the OpenAPI document says which app a restart reopens and which it does not (E02)', async () => {
   const { buildOpenApiDocument } = await import('../src/api/openapi');
   const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/zombie-handles']);

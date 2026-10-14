@@ -8208,8 +8208,11 @@ function renderZombies(report) {
     // part of the system, root's or another user's gets no button, and the
     // row says why instead.
     // "Restart" only where TreeMap reopens it; anything else it only quits (F04).
+    // Named with its process, as Largest Files names every control: a list
+    // of buttons all called "Quit" says nothing about which is which (F11a).
+    const verb = p.appBundle ? 'Restart' : 'Quit';
     const action = p.restartable
-      ? `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ' — TreeMap does not reopen it'}">${p.appBundle ? 'Restart' : 'Quit'}</button>`
+      ? `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ' — TreeMap does not reopen it'}" aria-label="${verb} ${escapeHtml(p.processName)}">${verb}</button>`
       : `<span class="zh-locked" title="TreeMap does not restart this program">${escapeHtml(p.restartRefusal || 'Not restartable')}</span>`;
     // The process id is a fact nobody needs to decide anything — the Restart
     // button already targets the process — so it lives in the row's title
