@@ -30,6 +30,10 @@ function dupNeedsScan() {
 }
 
 function ndNeedsScan() {
+  // Images an earlier scan left selected are not shown here, and not this
+  // folder's: the pane lets go of them rather than keep a Trash button armed
+  // over a card that shows none (review F2.5). state.near outlives a scan.
+  state.near.selection.clear();
   $('ndSummary').textContent = 'Needs a completed scan.';
   $('ndBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding similar images reads the pictures themselves, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
   updateNdToolbar();

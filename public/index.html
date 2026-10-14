@@ -32734,6 +32734,10 @@ function dupNeedsScan() {
 }
 
 function ndNeedsScan() {
+  // Images an earlier scan left selected are not shown here, and not this
+  // folder's: the pane lets go of them rather than keep a Trash button armed
+  // over a card that shows none (review F2.5). state.near outlives a scan.
+  state.near.selection.clear();
   $('ndSummary').textContent = 'Needs a completed scan.';
   $('ndBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding similar images reads the pictures themselves, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
   updateNdToolbar();
@@ -33629,7 +33633,9 @@ function renderNearDupes() {
 })();
 
 function updateNdToolbar() {
-  const count = state.near.selection.size;
+  // With no completed scan the pane shows no image, so nothing selected is
+  // offered to the Trash, whatever an earlier scan left behind (review F2.5).
+  const count = state.scanId ? state.near.selection.size : 0;
   let total = 0;
   for (const p of state.near.selection) total += nodeFor(p)?.size ?? 0;
   $('ndTrashBtn').disabled = !count;
@@ -33672,6 +33678,7 @@ $('ndAutoBtn').addEventListener('click', () => {
   toast(`Selected ${state.near.selection.size} extra ${state.near.selection.size === 1 ? 'copy' : 'copies'} — the newest image in each group is kept`);
 });
 $('ndTrashBtn').addEventListener('click', () => {
+  if (!state.scanId) return; // the toolbar's own rule: no completed scan, nothing of this folder's selected (review F2.5)
   for (const c of state.near.clusters) {
     if (c.files.every(f => state.near.selection.has(f.path))) {
       toast(`Every image in a group is selected — keep at least one`, 'error');

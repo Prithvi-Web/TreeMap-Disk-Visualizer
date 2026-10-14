@@ -516,6 +516,7 @@ test('a tree with no scan behind it does not leave the Duplicates panes claiming
       icon: () => '',
       updateDupToolbar: () => {},
       updateNdToolbar: () => {},
+      state: { near: { selection: new Set<string>() } }, // the near pane lets go of an earlier scan's picks (review F2.5)
     };
     const names = Object.keys(env);
     // eslint-disable-next-line @typescript-eslint/no-implied-eval

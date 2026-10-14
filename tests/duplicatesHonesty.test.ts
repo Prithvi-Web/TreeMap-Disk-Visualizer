@@ -403,3 +403,55 @@ test('Auto-select never says it is still looking when nothing is, and with no co
   const control = ndAutoClick({ scanId: 's1', near: { ...staleGroups, selection: new Set<string>() } });
   assert.deepEqual(control.selected, ['/old/b.jpg'], 'control: with the scan, the click selects every copy but the newest');
 });
+
+/**
+ * The page's own ndNeedsScan, updateNdToolbar and Trash handler over `state` (review F2.5): what the
+ * Trash button shows, what is left selected, and what a press would send to the Trash.
+ */
+function ndNoScan(state: { scanId: string | null; near: Record<string, unknown> }, run: 'needsScan' | 'toolbar' | 'trashClick'): { disabled: boolean; label: string; selected: string[]; trashed: string[][] } {
+  const els: Record<string, { disabled: boolean; title: string; innerHTML: string; textContent: string }> = {};
+  const $ = (id: string) => (els[id] ??= { disabled: false, title: '', innerHTML: '', textContent: '' });
+  const at = INDEX.indexOf("$('ndTrashBtn').addEventListener('click', () => {");
+  assert.notEqual(at, -1, 'the Trash handler is in the page');
+  let depth = 0;
+  let end = -1;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = INDEX.indexOf(';', i) + 1; break; }
+  }
+  const trashed: string[][] = [];
+  let handler: () => void = () => assert.fail('no handler was bound');
+  const bindable = (id: string) => (id === 'ndTrashBtn'
+    ? { addEventListener: (_: string, fn: () => void) => { handler = fn; } }
+    : assert.fail(`the Trash handler is bound to #${id}`));
+  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('$', '$bind', 'state', 'nodeFor', 'icon', 'formatBytes', 'toast', 'confirmTrash', 'run',
+    `${helper}\n${source('updateNdToolbar')}\n${source('ndNeedsScan')}\n{ const $ = $bind; ${INDEX.slice(at, end)} }\n`
+    + `if (run === 'needsScan') ndNeedsScan(); else if (run === 'toolbar') updateNdToolbar();`)(
+    $, bindable, state, () => ({ size: 1000 }), () => '', (n: number) => `${n} B`, () => {}, (paths: string[]) => { trashed.push(paths); }, run,
+  );
+  if (run === 'trashClick') handler();
+  return { disabled: els.ndTrashBtn?.disabled ?? false, label: els.ndTrashBtn?.innerHTML ?? '', selected: [...(state.near.selection as Set<string>)], trashed };
+}
+
+test('with no completed scan, images an earlier scan left selected cannot be moved to the Trash: the pane lets go of them, the button is disabled, and a press sends nothing (review F2.5)', () => {
+  const fromFolderA = () => ({ status: 'complete', available: true, compared: 40, clusters: [{ files: [{ path: '/A/a.jpg' }, { path: '/A/b.jpg' }, { path: '/A/c.jpg' }, { path: '/A/d.jpg' }] }],
+    selection: new Set(['/A/b.jpg', '/A/c.jpg', '/A/d.jpg']) });
+
+  const pane = ndNoScan({ scanId: null, near: fromFolderA() }, 'needsScan');
+  assert.deepEqual(pane.selected, [], '"Needs a completed scan" lets go of what an earlier scan left selected');
+  assert.equal(pane.disabled, true, 'and its Trash button is disabled, never offering to trash images the pane no longer shows');
+
+  const toolbar = ndNoScan({ scanId: null, near: fromFolderA() }, 'toolbar');
+  assert.equal(toolbar.disabled, true, 'the toolbar itself offers no Trash without a completed scan, whatever is still selected');
+  assert.doesNotMatch(toolbar.label, /Move 3 to Trash/, 'nor counts them');
+  const withScan = ndNoScan({ scanId: 's1', near: fromFolderA() }, 'toolbar');
+  assert.equal(withScan.disabled, false, 'control: with the scan they came from, the Trash button acts');
+  assert.match(withScan.label, /Move 3 to Trash \(3000 B\)/, 'control: and counts them');
+
+  const press = ndNoScan({ scanId: null, near: fromFolderA() }, 'trashClick');
+  assert.deepEqual(press.trashed, [], 'a press with no completed scan sends nothing to the Trash');
+  const control = ndNoScan({ scanId: 's1', near: fromFolderA() }, 'trashClick');
+  assert.deepEqual(control.trashed, [['/A/b.jpg', '/A/c.jpg', '/A/d.jpg']], 'control: with the scan, the press asks to trash the selection');
+});
