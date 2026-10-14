@@ -819,8 +819,12 @@ function breakdownHarness(standIn: (el: FEl) => FEl | null = () => null) {
     },
   });
   const keydown: Array<(e: unknown) => void> = [];
+  const clicks: Array<(e: unknown) => void> = [];
   const document = {
-    addEventListener: (type: string, fn: (e: unknown) => void, capture?: boolean) => { if (type === 'keydown' && capture === true) keydown.push(fn); },
+    addEventListener: (type: string, fn: (e: unknown) => void, capture?: boolean) => {
+      if (type === 'keydown' && capture === true) keydown.push(fn);
+      if (type === 'click' && !capture) clicks.push(fn);
+    },
     contains: (n: FEl) => doc.root.contains(n),
     querySelector: (sel: string) => doc.querySelector(sel),
     get activeElement() { return doc.activeElement; },
@@ -849,7 +853,12 @@ function breakdownHarness(standIn: (el: FEl) => FEl | null = () => null) {
   const badgeIn = (parent: FEl, path: string) => Object.assign(append(parent, mk('button', '', ['rc-badge'], { 'data-rc-why': path })),
     { getBoundingClientRect: () => ({ left: 40, top: 300, bottom: 318 }) });
   assert.equal(keydown.length, 1, 'the breakdown listens for Escape on the document, in the capture phase');
-  return { doc, api, pop, escape, badgeIn, ...panel };
+  assert.equal(clicks.length, 1, 'and for clicks on the document, as they bubble');
+  /** A click's bubble to the document — its mousedown has already put focus where it goes: the page's own listener. */
+  const click = (target: FEl) => {
+    for (const fn of clicks) fn({ target, preventDefault: () => {}, stopPropagation: () => {} });
+  };
+  return { doc, api, pop, escape, click, badgeIn, ...panel };
 }
 
 /* Review F3.1: Escape goes to the layer the keyboard is in, latest first.
@@ -1460,7 +1469,50 @@ test('"Why this reclaim score?" from a menu opened by a right-click on a Largest
   }
 });
 
-type KeyEv = { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean; defaultPrevented: boolean; preventDefault(): void };
+test('a click that puts focus in a field closes the breakdown and leaves focus in the field — never pulled back to the map, the tile or the badge it came from; a click on blank page still gives it back (review F2.1 of QA fourth pass E05)', async () => {
+  // Review F2.1: Treemap › right-click a cell › "Why this reclaim score?" ›
+  // click into the Highlight box to type. The mousedown put focus in the
+  // field; the click, bubbling to the document, closed the breakdown — which
+  // gave focus back to the map it came from, so the typing went to the map's
+  // keys (j/k move the selection, c/p/n act on it). From a Grid tile,
+  // Backspace in its filter box climbed a folder and Delete asked to trash
+  // the selection.
+  const path = '/Users/me/Movies/render-final.mov';
+  type H = ReturnType<typeof breakdownHarness>;
+  const cases: Array<{ from: string; field: string; opener: (h: H) => FEl; viaMenu: boolean }> = [
+    { from: 'the map', field: 'tmSearch', opener: (h) => h.doc.getElementById('treemapCanvas')!, viaMenu: true },
+    { from: 'a Grid tile', field: 'gridSearch', viaMenu: true,
+      opener: (h) => append(h.doc.getElementById('gridInner')!, mkOf(h.doc)('div', '', ['gcell'], { role: 'button', tabindex: '0' })) },
+    { from: 'a Largest Files score badge', field: 'pathInput', opener: (h) => h.badgeIn(h.doc.getElementById('bigFiles')!, path), viaMenu: false },
+  ];
+  for (const c of cases) {
+    for (const lands of ['in a field', 'on blank page'] as const) {
+      const h = breakdownHarness();
+      const opener = c.opener(h);
+      const field = h.doc.getElementById(c.field)!;
+      for (const el of [opener, field]) for (let p: FEl | null = el; p; p = p.parent) p.hidden = false; // their views, on screen
+      opener.focus();
+      assert.equal(h.doc.activeElement, opener, `control (${c.from}, ${lands}): the opener has focus`);
+      if (c.viaMenu) {
+        menuEntry('score', { path, back: opener, openReclaimWhy: h.openReclaimWhy as (...a: never[]) => void })();
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      } else h.openReclaimWhy(path, opener);
+      assert.equal(h.pop.hidden, false, `control (${c.from}, ${lands}): the breakdown opened`);
+      assert.equal(h.doc.activeElement, h.doc.getElementById('rcPopClose'), `control (${c.from}, ${lands}): and holds focus`);
+      // The mousedown: a field takes focus; blank page takes none, and focus leaves the panel's button for <body>.
+      if (lands === 'in a field') field.focus(); else h.doc.activeElement = h.doc.body;
+      assert.equal(h.doc.activeElement, lands === 'in a field' ? field : h.doc.body, `control (${c.from}, ${lands}): the mousedown placed focus`);
+      h.click(lands === 'in a field' ? field : h.doc.querySelector('main')!);
+      assert.equal(h.pop.hidden, true, `${c.from}, ${lands}: the click outside closed the breakdown`);
+      const want = lands === 'in a field' ? field : opener;
+      assert.ok(h.doc.activeElement === want,
+        `${c.from}, a click ${lands}: focus is on ${lands === 'in a field' ? `#${c.field}, where the click put it` : 'the opener, not <body>'} ` +
+        `(it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+    }
+  }
+});
+
+type KeyEv ={ key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean; defaultPrevented: boolean; preventDefault(): void };
 const keyOf = (key: string, mods: Partial<Pick<KeyEv, 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>> = {}): KeyEv => {
   const e: KeyEv = { key, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, ...mods, defaultPrevented: false, preventDefault() { e.defaultPrevented = true; } };
   return e;

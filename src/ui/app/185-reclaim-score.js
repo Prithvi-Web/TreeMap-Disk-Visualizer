@@ -427,12 +427,19 @@ function closeReclaimWhy() {
   if (pop.hidden) return;
   const path = rcPopoverPath;
   const opener = rcPopoverOpener;
+  const active = document.activeElement;
+  const fromPanel = !active || active === document.body || pop.contains(active); // read before the wipe takes the panel's button
   rcRadarDrop(); // before the innerHTML wipe takes its canvas out from under it
   pop.hidden = true;
   pop.innerHTML = '';
   rcPopoverPath = null;
   rcPopoverOpener = null;
-  rcFocusBack(opener, path);
+  // Focus goes back only when it was in the panel (Escape, the close button)
+  // or nowhere (a click on blank page). A click that put it in a field — the
+  // Highlight box beside the map the breakdown came from — leaves it there:
+  // pulled back to the map or a Grid tile, the typing that click was for went
+  // to their keys (review F2.1 of QA fourth pass E05). closePreview's rule.
+  if (fromPanel) rcFocusBack(opener, path);
   // A sheet opened after the breakdown made the page behind it inert, and an
   // inert opener refuses focus, which then drops to <body> under the sheet:
   // the sheet takes it instead (review F3.1).
