@@ -35318,6 +35318,11 @@ function activeCleanSelection() {
       onlyEmptyFolders: true, ignoreJunk: $('emptyIgnoreJunk').checked,
     };
   }
+  // Shrink Video and Cloud-safe have no tick-box selection of their own (their
+  // buttons are their own), and the Smart pane behind them is only hidden, its
+  // ticks still in the page: read here, the footer offered — and trashed — rows
+  // the pane on screen does not show (review F2.6 of QA third pass D03).
+  if (cleanPane !== 'smart') return { paths: [], bytes: 0, noun: 'item', sizes: new Map() };
   // The Smart pane has three sources that can name the SAME path — an orphaned
   // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
   // by path so selecting it in both places counts its bytes once.

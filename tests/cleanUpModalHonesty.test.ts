@@ -486,6 +486,65 @@ test('a cloud scan keeps the dialog\'s own cloud delete: its files go to the pro
   assert.deepEqual(h.cloudCalls, [['cloud://drive/a', 'cloud://drive/b']]);
 });
 
+/**
+ * The Clean Up sheet's tabs, from the page's own setCleanPane, the footer's
+ * summary and button (activeCleanSelection, updateCleanSummary) and its click
+ * (confirmCleanTrash), in one scope over stubs: a Smart Suggestions row is
+ * ticked — 5 GB of node_modules — and the Smart pane, when another tab shows,
+ * is only hidden, its ticks still in the page.
+ */
+function cleanPanes() {
+  const { els, $ } = classDom();
+  const tabs = ['rules', 'smart', 'empty', 'video', 'cloud'].map((pane) => ({ dataset: { pane }, setAttribute() {} }));
+  Object.assign($('cleanSeg'), { querySelectorAll: () => tabs });
+  const rows: Record<string, unknown[]> = {
+    '#smartResults .smart-ck': [{ checked: true, dataset: { g: '0', i: '0' } }],
+    '#packageOrphans .pkg-ck': [], '#browserProfiles .bp-ck': [],
+  };
+  const confirmed: string[][] = [];
+  const deps: Record<string, unknown> = {
+    $, document: { querySelectorAll: (q: string) => rows[q] || [] },
+    cleanMatches: [], emptyFolders: [], packageOrphans: [], videoCandidates: [{ path: '/r/v.mov' }],
+    smartGroups: [{ items: [{ path: '/r/node_modules', size: 5_000_000_000 }] }],
+    loadEmptyFolders: () => {}, loadSmartSuggestions: () => {}, loadVideoCandidates: () => {}, renderCleanFunnel: () => {},
+    isCloudScan: () => false, cloudProviderOfScan: () => assert.fail('a local scan has no provider'), escapeHtml: String,
+    icon: () => '', formatBytes: (n: number) => `${n} B`,
+    confirmTrash: async (paths: string[]) => { confirmed.push([...paths]); },
+    runCleanTrash: async () => assert.fail('nothing was confirmed'),
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `let cleanPane = 'rules'; let onConfirmTrash = null;
+    ${['setCleanPane', 'activeCleanSelection', 'updateCleanSummary', 'confirmCleanTrash'].map(declOf).join('\n')}
+    return { show: setCleanPane, click: confirmCleanTrash };`)(...keys.map((k) => deps[k]));
+  const footer = () => ({ summary: els.cleanSummary.textContent, disabled: els.cleanConfirmBtn.disabled, label: els.cleanConfirmBtn.innerHTML });
+  return { page, footer, confirmed };
+}
+
+test('the Clean Up footer\'s Move to Trash belongs to the pane on screen: Shrink Video and Cloud-safe offer nothing ticked on Smart Suggestions (review F2.6 of QA third pass D03)', async () => {
+  // Smart Suggestions, a row ticked, then the Shrink Video tab: the footer
+  // read "1 item · up to 5 GB, freed when you empty the Trash" beside an
+  // enabled "Move 1 to Trash", and its click opened the Trash sheet for a
+  // row the pane on screen does not show — D03's flaw inside the sheet.
+  const h = cleanPanes();
+  h.page.show('smart');
+  assert.match(h.footer().summary, /^1 item · up to 5000000000 B/, 'control: the tick is real, and the Smart pane offers it');
+  assert.equal(h.footer().disabled, false);
+  assert.match(h.footer().label, /Move 1 to Trash/);
+  for (const pane of ['video', 'cloud']) {
+    h.page.show(pane);
+    assert.deepEqual(h.footer(), { summary: '', disabled: true, label: 'Move to Trash' },
+      `the ${pane} pane shows no tick-box selection, so the footer offers none`);
+    await h.page.click();
+    assert.deepEqual(h.confirmed, [], `and a click there opens no Trash sheet for the Smart pane's hidden rows (${pane})`);
+  }
+  // Back on Smart Suggestions, the tick it kept is offered again.
+  h.page.show('smart');
+  assert.match(h.footer().summary, /^1 item/, 'the tick was kept, only not offered elsewhere');
+  await h.page.click();
+  assert.deepEqual(h.confirmed, [['/r/node_modules']], 'and on its own pane the click asks about it');
+});
+
 /* ═══════ 5. A move to the Trash frees nothing yet, and says so (D54) ═══════ */
 
 /**
