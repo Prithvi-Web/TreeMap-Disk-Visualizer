@@ -313,3 +313,44 @@ test('near-duplicates: the reason is shown as text, never as markup', () => {
   assert.ok(r.body.includes('&lt;img src=x onerror=alert(1)&gt; were not compared'), `escaped: ${r.body}`);
   assert.ok(!r.body.includes('<img'), 'no element is made from it');
 });
+
+/* ══════════════ Auto-select says why it cannot act (fourth browser pass, E13) ══════════════ */
+
+/** The page's own updateNdToolbar over `near`: Auto-select's state and the reason it gives. */
+function ndToolbar(near: Record<string, unknown>): { disabled: boolean; title: string } {
+  const els: Record<string, { disabled: boolean; title: string; innerHTML: string }> = {};
+  const $ = (id: string) => (els[id] ??= { disabled: false, title: '', innerHTML: '' });
+  const helper = INDEX.includes('function ndAutoSelectBlocked(') ? source('ndAutoSelectBlocked') : '';
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('$', 'state', 'nodeFor', 'icon', 'formatBytes', `${helper}\n${source('updateNdToolbar')}\nupdateNdToolbar();`)(
+    $, { near: { selection: new Set(), clusters: [], ...near } }, () => null, () => '', (n: number) => `${n} B`,
+  );
+  return { disabled: els.ndAutoBtn?.disabled ?? false, title: els.ndAutoBtn?.title ?? '' };
+}
+
+test('Auto-select is disabled, saying why, whenever there is nothing for it to select — no image compared above all (E13)', () => {
+  const noneCompared = ndToolbar({ status: 'complete', available: true, compared: 0, clusters: [] });
+  assert.equal(noneCompared.disabled, true, 'no image was compared: nothing to select');
+  assert.match(noneCompared.title, /No images were compared/, 'and it says so');
+  const noGroups = ndToolbar({ status: 'complete', available: true, compared: 40, clusters: [] });
+  assert.equal(noGroups.disabled, true, 'images compared, no similar ones: nothing to select');
+  assert.match(noGroups.title, /No similar images were found/);
+  const unavailable = ndToolbar({ status: 'complete', available: false, reason: 'Image decoding is not available here.', clusters: [] });
+  assert.equal(unavailable.disabled, true);
+  assert.match(unavailable.title, /Image decoding is not available here/, 'an unavailable search gives its own reason');
+  const running = ndToolbar({ status: 'loading', clusters: [] });
+  assert.equal(running.disabled, true, 'while the search runs there is nothing to select yet');
+  assert.match(running.title, /still looking/i);
+  const failed = ndToolbar({ status: 'error', clusters: [] });
+  assert.equal(failed.disabled, true);
+  assert.match(failed.title, /failed/);
+  const groups = ndToolbar({ status: 'complete', available: true, compared: 40, clusters: [{ files: [] }] });
+  assert.equal(groups.disabled, false, 'control: with groups, Auto-select acts');
+  assert.match(groups.title, /select all copies except the newest one/, 'and its title says what it does');
+});
+
+test('the failed search updates the toolbar too, so Auto-select never keeps the running reason (E13)', () => {
+  const load = source('loadNearDupes');
+  const failed = load.slice(load.indexOf("state.near.status = 'error';"));
+  assert.match(failed.slice(0, 400), /updateNdToolbar\(\)/, 'the error branch refreshes the toolbar');
+});

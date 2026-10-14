@@ -457,6 +457,7 @@ async function loadNearDupes(force = false) {
       state.near.status = 'error';
       $('ndSummary').textContent = '';
       $('ndBody').innerHTML = `<div class="card glass"><div class="muted">Image scan failed: ${escapeHtml(e.message)}</div></div>`;
+      updateNdToolbar(); // Auto-select says the search failed, not that it is still looking (E13)
     }
   };
   poll();

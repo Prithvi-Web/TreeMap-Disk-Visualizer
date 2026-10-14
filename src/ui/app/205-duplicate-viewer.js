@@ -331,6 +331,23 @@ function updateNdToolbar() {
   for (const p of state.near.selection) total += nodeFor(p)?.size ?? 0;
   $('ndTrashBtn').disabled = !count;
   $('ndTrashBtn').innerHTML = icon('trash', 14) + (count ? `Move ${count} to Trash (${formatBytes(total)})` : 'Move to Trash');
+  // Auto-select acts only on groups; with none it is disabled and says why
+  // (fourth browser pass, E13: it stayed enabled, and silent, when no image
+  // had been compared at all).
+  const why = ndAutoSelectBlocked(state.near);
+  $('ndAutoBtn').disabled = why !== null;
+  $('ndAutoBtn').title = why ?? 'In every group, select all copies except the newest one';
+}
+
+/** Why Auto-select has nothing to select, or null when there are groups to act on. */
+function ndAutoSelectBlocked(n) {
+  if (n.status === 'error') return 'The search for similar images failed, so there is nothing to select.';
+  if (n.status !== 'complete') return 'Still looking for similar images — there is nothing to select yet.';
+  if (!n.available) return n.reason || 'Near-duplicate image detection is unavailable on this system.';
+  if (n.clusters.length) return null;
+  return !(Number(n.compared) > 0)
+    ? 'No images were compared, so there is nothing to select.'
+    : 'No similar images were found, so there is nothing to select.';
 }
 
 $('ndAutoBtn').addEventListener('click', () => {
