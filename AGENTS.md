@@ -150,7 +150,10 @@ OpenAPI 3 spec).
      these.** The only remediation offered is `POST /api/security/relocate`,
      which moves one file by rename (both ends must be inside a scanned root,
      an occupied destination aborts, nothing is ever removed), and only an SSH
-     key carries a `suggestedPath` (`~/.ssh`). A `.key` file is listed as
+     key carries a `suggestedPath` (`~/.ssh`). Beside it, `relocateRefusal`
+     says why that move would be refused — `~/.ssh` outside every scanned
+     folder, the agent policy, something already there — or is `null` when
+     the route would make it: offer the move only on `null`. A `.key` file is listed as
      minor with no move, because on a Mac it is usually a Keynote document;
      files inside program bundles, frameworks and the operating system's own
      folders are `appOwned`, minor, and never offered a move. `counts` and

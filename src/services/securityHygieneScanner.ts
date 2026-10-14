@@ -228,6 +228,12 @@ export interface SecurityFinding {
   reason: string;
   /** Absolute path this kind of file belongs in, when there is an obvious one. */
   suggestedPath?: string;
+  /**
+   * Set by GET /api/security/findings beside a `suggestedPath` (fourth browser pass, E10): why
+   * POST /api/security/relocate would refuse that move — the folder is outside every scan, the agent
+   * policy, something already there — or null when it would make it. The move is offered only on null.
+   */
+  relocateRefusal?: string | null;
   /** True when the file sits in a folder that is shared or cloud-synced. */
   exposed: boolean;
   /**

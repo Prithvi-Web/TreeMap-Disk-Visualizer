@@ -1736,7 +1736,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
           {
             scanId: str(),
             patternCount: int('How many patterns the catalog checks'),
-            findings: arr(opaque('patternId, label, why, severity, path, name, size, modifiedAt, reason, suggestedPath, exposed, appOwned')),
+            findings: arr(opaque('patternId, label, why, severity, path, name, size, modifiedAt, reason, suggestedPath, relocateRefusal (beside a suggestedPath: why POST /api/security/relocate would refuse that move — the folder outside every scanned folder, the agent policy, something already there — or null when it would make it), exposed, appOwned')),
             counts: opaque('high, medium and low finding counts, over every finding (not only the listed ones)'),
             total: int('How many findings there are in all; more than findings.length once the cap bites'),
             truncated: bool('true when there are more than 500 findings: the 500 most serious are listed'),

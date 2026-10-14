@@ -17,8 +17,13 @@ import {
 import { compileIgnoreList } from '../src/utils/glob';
 import { FileNode } from '../src/models/types';
 import { storeOf } from '../src/services/scanStore';
-import { startScan } from '../src/services/diskScanner';
+import { startScan, peekScan } from '../src/services/diskScanner';
 import { waitFor } from './fixtures/waitFor';
+import http from 'node:http';
+import { fileTempDir } from './fixtures/dataDir';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { appDataDir } from '../src/services/storage';
 
 /**
  * Scans `dir`, as a relocation always follows a scan of the folder: `relocateSecret` checks
@@ -531,4 +536,126 @@ test('the move can only ever be a rename — it never removes anything', () => {
   assert.match(src, /rename\(from, to\)/, 'the move is a rename');
   assert.match(src, /EXDEV/, 'and the cross-device case is handled explicitly');
   assert.match(src, /different disk/, 'with a refusal a person can act on');
+});
+
+/* ─────────────── Offer only the move the server will make (fourth browser pass, E10) ─────────────── */
+
+function call(port: number, method: string, url: string, body?: unknown): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const r = http.request({ host: '127.0.0.1', port, path: url, method, headers: payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {} }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => { buf += c; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) }));
+    });
+    r.on('error', reject);
+    r.end(payload);
+  });
+}
+
+test('a finding is offered "Move it" only where the server will move it: a scan that does not cover ~/.ssh says what is needed instead, and the server agrees (E10)', async () => {
+  // A stand-in home folder: ~/corpus/id_rsa belongs in ~/.ssh.
+  const standInHome = fs.realpathSync(fileTempDir('treemap-securityHygiene-e10-home-'));
+  const corpus = path.join(standInHome, 'corpus');
+  fs.mkdirSync(corpus);
+  const key = path.join(corpus, 'id_rsa');
+  fs.writeFileSync(key, 'not a real key');
+  const ssh = path.join(standInHome, '.ssh');
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const priorHome = process.env.HOME;
+  try {
+    process.env.HOME = standInHome; // the findings' "~" is this folder, read when the findings are asked for
+    const scanOf = async (dir: string): Promise<string> => {
+      const started = await call(port, 'POST', '/api/scan', { path: dir });
+      assert.equal(started.status, 202, JSON.stringify(started.body));
+      await waitFor(() => peekScan(started.body.scanId)?.status !== 'running', `the scan of ${dir}`);
+      return started.body.scanId as string;
+    };
+    const findingOf = async (scanId: string) => {
+      const r = await call(port, 'GET', `/api/security/findings?scanId=${scanId}`);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const f = r.body.findings.find((x: { path: string }) => x.path === key);
+      assert.ok(f, 'control: the key is a finding');
+      assert.equal(f.suggestedPath, ssh, 'control: it belongs in ~/.ssh');
+      return f as { relocateRefusal?: string | null };
+    };
+
+    const corpusScan = await scanOf(corpus);
+    const outside = await findingOf(corpusScan);
+    assert.equal(typeof outside.relocateRefusal, 'string', 'a scan of ~/corpus alone does not cover ~/.ssh: the finding says the move would be refused');
+    assert.match(outside.relocateRefusal!, /only into a folder it has scanned/, 'it says why');
+    assert.ok(outside.relocateRefusal!.includes(ssh), 'naming the folder the move needs');
+    assert.match(outside.relocateRefusal!, /your home folder/, 'and what to scan');
+    const refused = await call(port, 'POST', '/api/security/relocate', { path: key, to: path.join(ssh, 'id_rsa'), confirm: true });
+    assert.equal(refused.body.code, 'OUTSIDE_SCAN_ROOT', 'control: the server does refuse that move');
+    assert.ok(fs.existsSync(key), 'and nothing moved');
+
+    fs.mkdirSync(ssh);
+    fs.writeFileSync(path.join(ssh, 'id_rsa'), 'already here');
+    const homeScan = await scanOf(standInHome);
+    const occupied = await findingOf(homeScan);
+    assert.match(String(occupied.relocateRefusal), /already/, 'with something already at ~/.ssh/id_rsa the move would be cancelled, and the finding says so first');
+    fs.renameSync(path.join(ssh, 'id_rsa'), path.join(standInHome, 'moved-aside'));
+
+    // The agent policy is the route's too: a protected ~/.ssh is said first, and an unreadable policy
+    // file refuses the move without taking the findings down with it.
+    const policyFile = path.join(appDataDir(), 'agent-policy.json');
+    fs.writeFileSync(policyFile, JSON.stringify({ protectedPaths: [ssh] }));
+    assert.match(String((await findingOf(homeScan)).relocateRefusal), /protected path/, 'a move the agent policy forbids is not offered');
+    fs.writeFileSync(policyFile, '{ not json');
+    assert.match(String((await findingOf(homeScan)).relocateRefusal), /could not be read/, 'nor one an unreadable policy file would refuse — and the findings still answer');
+    fs.rmSync(policyFile);
+    for (const kept of fs.readdirSync(appDataDir()).filter((n) => n.startsWith('agent-policy.json.corrupt'))) fs.rmSync(path.join(appDataDir(), kept));
+
+    const inside = await findingOf(homeScan);
+    assert.equal(inside.relocateRefusal, null, 'once ~/.ssh is free and inside a scanned folder the move is offered');
+    const moved = await call(port, 'POST', '/api/security/relocate', { path: key, to: path.join(ssh, 'id_rsa'), confirm: true });
+    assert.equal(moved.status, 200, `and the server makes it: ${JSON.stringify(moved.body)}`);
+  } finally {
+    process.env.HOME = priorHome;
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
+test('the Security panel offers "Move it" only to a finding the server will move, and shows the reason in its place (E10)', () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
+  const host = { innerHTML: '', querySelectorAll: () => [] as unknown[] };
+  const info = { textContent: '', innerHTML: '' };
+  const finding = (name: string, relocateRefusal: string | null) => ({
+    severity: 'high', name, label: 'SSH private key', path: `/h/corpus/${name}`, reason: 'r', why: 'w', size: 40, suggestedPath: '/h/.ssh', relocateRefusal,
+  });
+  const stubs: Record<string, unknown> = {
+    $: (id: string) => (id === 'securityBody' ? host : info),
+    state: { scanId: 's', security: { report: {
+      findings: [finding('id_rsa', 'TreeMap moves a file only into a folder it has scanned, and /h/.ssh is outside every scanned folder.'), finding('id_ed25519', null)],
+      counts: { high: 2, medium: 0, low: 0 }, total: 2, patternCount: 9,
+    } } },
+    escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${String(n)} B`, formatCount: (n: number) => String(n),
+    icon: () => '', baseName: (p: string) => path.basename(p),
+    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } },
+    SEVERITY_LABEL: { high: 'Serious' }, openInOS: () => {}, confirmRelocateSecret: () => {},
+  };
+  const keys = Object.keys(stubs);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const render = new Function(...keys, `${fn}; return renderSecurity;`)(...keys.map((k) => stubs[k])) as () => void;
+  render();
+  const rows = host.innerHTML.split('sec-item').slice(1);
+  assert.equal(rows.length, 2);
+  assert.doesNotMatch(rows[0], /data-sec-move/, 'a move the server would refuse is not offered');
+  assert.match(rows[0], /only into a folder it has scanned, and \/h\/\.ssh is outside every scanned folder/, 'the row says what is needed instead');
+  assert.match(rows[1], /data-sec-move="1"/, 'control: a move the server will make is offered');
+  assert.doesNotMatch(rows[1], /outside every scanned folder/);
+});
+
+test('relocateRefusal is declared where an agent reads: the OpenAPI document and AGENTS.md (E10)', async () => {
+  const { buildOpenApiDocument } = await import('../src/api/openapi');
+  const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/security/findings']);
+  assert.match(said, /relocateRefusal \(beside a suggestedPath: why POST \/api\/security\/relocate would refuse that move/, 'the document names the field and what it means');
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  assert.match(agents, /`relocateRefusal`[\s\S]{0,200}offer the move only on `null`/, 'AGENTS.md says to offer the move only when it is null');
 });

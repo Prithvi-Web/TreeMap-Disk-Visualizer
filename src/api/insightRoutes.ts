@@ -33,7 +33,7 @@ import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
 import { scanGameLibraries } from '../services/gameLibraryScanner';
 import { scanMediaLibraries, guardMediaReport } from '../services/mediaLibraryScanner';
-import { collectSecurityFindings, relocateSecret, SECURITY_PATTERNS } from '../services/securityHygieneScanner';
+import { collectSecurityFindings, relocateSecret, relocationTargetFor, SECURITY_PATTERNS } from '../services/securityHygieneScanner';
 import { readProvenance } from '../services/provenanceTracker';
 import { getDriveHealth } from '../services/driveHealthMonitor';
 import { estimateCost, isCurrency, PROVIDER_PRICING, PRICING_AS_OF } from '../services/costIntelligence';
@@ -51,7 +51,9 @@ import { getIgnoreMatchers } from '../services/settings';
 import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
 import { appendAudit, tokenIdFor } from '../services/audit';
-import { CompareResult, FileNode, ScanResult } from '../models/types';
+import { AgentPolicy, CompareResult, FileNode, ScanResult } from '../models/types';
+import { promises as fsp } from 'fs';
+import path from 'path';
 import { storageModeGate } from '../middleware/storageModeGate';
 import { assertSameBoundary, assertSameSnapshotBoundary } from '../services/boundaryReport';
 
@@ -351,8 +353,56 @@ insightRouter.get('/media', storageModeGate, async (req: Request, res: Response)
 insightRouter.get('/security/findings', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignore = await getIgnoreMatchers('suggest');
-  res.json({ scanId: scan.scanId, patternCount: SECURITY_PATTERNS.length, ...collectSecurityFindings(storeOf(scan), ignore) });
+  const report = collectSecurityFindings(storeOf(scan), ignore);
+  // A suggested move is offered only where POST /security/relocate would make it (E10): each one
+  // carries the refusal it would meet, or null. A policy file that cannot be read refuses every move,
+  // as the route would, and never takes the findings down with it.
+  const policy = await getPolicy().catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))));
+  const findings = await Promise.all(report.findings.map(async (f) => {
+    const to = relocationTargetFor(f);
+    return to === null || f.suggestedPath === undefined ? f : { ...f, relocateRefusal: await relocationRefusal(f.path, f.suggestedPath, to, policy) };
+  }));
+  res.json({ scanId: scan.scanId, patternCount: SECURITY_PATTERNS.length, ...report, findings });
 });
+
+/**
+ * The destination rules a relocation is held to, in the route's order: never into TreeMap's own
+ * spill folder (§S.5.3) or anywhere in app-data, whose files TreeMap trusts (FG1), and only into a
+ * folder a scan covers — writing a file into a folder the user never scanned is exactly the surprise
+ * the scanned-root rule exists to prevent. Throws the route's own refusal.
+ */
+function assertRelocationDestination(dest: string): void {
+  assertNotSpillPath(dest);
+  assertNotAppDataPath(dest);
+  if (!insideAnyScanRoot(dest)) {
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'The destination is outside every scanned folder — scan it first');
+  }
+}
+
+/**
+ * Why the move a finding suggests would be refused, said before anyone confirms it (fourth browser
+ * pass, E10: "Move to .ssh" was offered and confirmed, then refused OUTSIDE_SCAN_ROOT), or null when
+ * the route would make it: its destination rules, the agent policy, and a destination already taken —
+ * the move is then cancelled, never a clobber.
+ */
+async function relocationRefusal(from: string, folder: string, to: string, policy: AgentPolicy | Error): Promise<string | null> {
+  try {
+    assertRelocationDestination(to); // in the route's order: these rules first, then the policy
+    if (policy instanceof Error) throw policy;
+    assertPathsAllowed(policy, [from, to]);
+  } catch (err) {
+    if (err instanceof AppError && err.code === 'OUTSIDE_SCAN_ROOT') {
+      return `TreeMap moves a file only into a folder it has scanned, and ${folder} is outside every scanned folder — ` +
+        `scan your home folder, which holds ${path.basename(folder)}, and the move is offered here.`;
+    }
+    return err instanceof Error ? err.message : String(err);
+  }
+  const there = await fsp.lstat(to).then(() => 'taken', (err: NodeJS.ErrnoException) => (err.code === 'ENOENT' ? null : err.code ?? 'unreadable'));
+  if (there === null) return null;
+  return there === 'taken'
+    ? `Something is already at ${to}, so the move would be cancelled rather than overwrite it — move that aside first.`
+    : `TreeMap could not look at ${to} (${there}), so the move would be refused.`;
+}
 
 /**
  * POST /api/security/relocate { path, to, confirm:true }
@@ -370,13 +420,7 @@ insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsi
     throw new AppError(400, 'DEST_REQUIRED', 'A "to" destination path is required');
   }
   const dest = sanitizePath(to);
-  assertNotSpillPath(dest); // nothing is ever written into TreeMap's own spill folder (§S.5.3)
-  assertNotAppDataPath(dest); // nor anywhere in app-data, whose files TreeMap trusts (FG1)
-  // Both ends, not just the source: writing a file into a folder the user never
-  // scanned is exactly the surprise the scanned-root rule exists to prevent.
-  if (!insideAnyScanRoot(dest)) {
-    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'The destination is outside every scanned folder — scan it first');
-  }
+  assertRelocationDestination(dest); // the rules the findings judge each suggested move by (E10)
   const policy = await getPolicy();
   try {
     assertPathsAllowed(policy, [from, dest]);
