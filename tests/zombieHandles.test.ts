@@ -15,6 +15,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import {
   groupZombies, appBundleOf, zombieReport, restartProcess, executablePathsOf, PS_PIDS_PER_CALL, restartRefusal, RESTART_REFUSES,
 } from '../src/services/zombieHandles';
+import * as zombieHandles from '../src/services/zombieHandles';
 import { AppError } from '../src/middleware/errorHandler';
 import { runText, CommandFailedError } from '../src/platform/exec';
 import { createApp } from '../src/server';
@@ -119,12 +120,38 @@ test('the .app bundle test matches path segments, not substrings', () => {
   );
   assert.equal(
     appBundleOf('/Applications/Google Chrome.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper'),
-    '/Applications/Google Chrome.app',
-    'the outermost bundle wins — `open` on an inner helper bundle would not reopen the app',
+    null,
+    'a helper inside an app is not that app — `open` on the running app reopens nothing (fourth browser pass, E02)',
   );
   assert.equal(appBundleOf('/usr/local/bin/node'), null, 'a plain binary is not a bundle');
+  assert.equal(appBundleOf('/opt/my.apple/bin/tool'), null, 'nor is a folder whose name merely contains ".app"');
   assert.equal(appBundleOf(null), null);
   assert.equal(appBundleOf('.app/x'), null, 'a path that starts at the marker has no bundle name');
+});
+
+/** The fourth browser pass's own processes (E02), as macOS's ps names them. */
+const CHROME = '/Applications/Google Chrome.app';
+const RENDERER = `${CHROME}/Contents/Frameworks/Google Chrome Framework.framework/Versions/141.0.7390.55/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)`;
+const INSIDE_AN_APP: Array<[string, string, string]> = [
+  [RENDERER, CHROME, 'a helper app inside a framework inside the app'],
+  ['/Applications/Google Drive.app/Contents/PlugIns/DFSFileProviderExtension.appex/Contents/MacOS/DFSFileProviderExtension', '/Applications/Google Drive.app', 'an app extension'],
+  ['/Applications/WhatsApp.app/Contents/PlugIns/ServiceExtension.appex/Contents/MacOS/ServiceExtension', '/Applications/WhatsApp.app', 'another extension'],
+  ['/Applications/Slack.app/Contents/XPCServices/SlackXPC.xpc/Contents/MacOS/SlackXPC', '/Applications/Slack.app', 'an XPC service'],
+  ['/Applications/Dropbox.app/Contents/Library/LoginItems/DropboxHelper.app/Contents/MacOS/DropboxHelper', '/Applications/Dropbox.app', 'a login item'],
+  [`${CHROME}/Contents/Frameworks/Google Chrome Framework.framework/Versions/141.0.7390.55/Helpers/chrome_crashpad_handler`, CHROME, 'a bare tool kept in the app\'s bundle'],
+  ['/Users/me/Applications/Tool.app/Contents/Resources/bin/tool', '/Users/me/Applications/Tool.app', 'a tool in the app\'s resources'],
+];
+
+test('a process inside an app — a helper, an extension, an XPC service, a login item, a tool in its bundle — is part of that app, never the app it would reopen (E02)', () => {
+  const roleOf = (zombieHandles as unknown as { bundleRoleOf?: (e: string | null) => { appBundle: string | null; partOf: string | null } }).bundleRoleOf;
+  assert.equal(typeof roleOf, 'function', 'zombieHandles exposes bundleRoleOf');
+  for (const [exe, host, what] of INSIDE_AN_APP) {
+    assert.deepEqual(roleOf!(exe), { appBundle: null, partOf: host }, `${what} runs inside ${host}`);
+  }
+  assert.deepEqual(roleOf!(`${CHROME}/Contents/MacOS/Google Chrome`), { appBundle: CHROME, partOf: null }, 'the app\'s own executable is the app');
+  assert.deepEqual(roleOf!('/usr/local/bin/node'), { appBundle: null, partOf: null }, 'a plain binary is neither');
+  assert.deepEqual(roleOf!('/opt/my.apple/bin/tool'), { appBundle: null, partOf: null }, 'nor is a program in a folder whose name merely contains ".app"');
+  assert.deepEqual(roleOf!(null), { appBundle: null, partOf: null });
 });
 
 /* ══════════════════ Track U U-5 — one `ps` for every held-space process ══════════════════ */
@@ -146,6 +173,8 @@ function fakePs(paths: ReadonlyMap<number, string>, uids: ReadonlyMap<number, nu
   const calls: Call[] = [];
   const run = async (cmd: string, args: string[]): Promise<string> => {
     const call = { cmd, args };
+    // An app's Info.plist, as plutil reads it: here every app's own executable is named after the app.
+    if (cmd === 'plutil') return `${path.basename(path.dirname(path.dirname(args[args.length - 1])), '.app')}\n`;
     calls.push(call);
     return pidsAskedIn(call)
       .filter((pid) => paths.has(pid))
@@ -518,6 +547,122 @@ test('restarting a process that already quit reports the space as already free',
   assert.match(result.message, /already quit/);
 });
 
+/* ══════════════════ A helper is not its app (fourth browser pass, E02) ══════════════════ */
+
+type Role = { appBundle: string | null; partOf: string | null };
+type ReportDeps = Parameters<typeof zombieReport>[0] & { bundleExecutable?: (bundle: string) => Promise<string | null> };
+type Env = NonNullable<Parameters<typeof restartProcess>[4]> & { bundleExecutable?: (bundle: string) => Promise<string | null> };
+
+test('the report says which app a helper runs inside, and calls a process the app only when the app\'s Info.plist names its executable (E02)', async () => {
+  const exes = new Map<number, string>([
+    [3001, RENDERER],
+    [3002, `${CHROME}/Contents/MacOS/Google Chrome`],
+    [3003, '/Applications/Fake.app/Contents/MacOS/crash_reporter'],
+    [3004, '/Applications/Odd.app/Contents/MacOS/Odd'],
+    [3005, '/usr/local/bin/node'],
+  ]);
+  const mains: Record<string, string | null> = { [CHROME]: 'Google Chrome', '/Applications/Fake.app': 'Fake', '/Applications/Odd.app': null };
+  const asked: string[] = [];
+  const deps: ReportDeps = {
+    handles: heldBy([...exes.keys()]), run: fakePs(exes).run, os: 'darwin', uid: OUR_UID,
+    bundleExecutable: async (bundle) => { asked.push(bundle); return mains[bundle] ?? null; },
+  };
+  const report = await zombieReport(deps);
+  const role = (pid: number): Role => {
+    const p = report.processes.find((x) => x.pid === pid) as unknown as Role;
+    return { appBundle: p.appBundle, partOf: p.partOf };
+  };
+  assert.deepEqual(role(3001), { appBundle: null, partOf: CHROME }, 'the renderer runs inside Google Chrome — it is not Google Chrome');
+  assert.deepEqual(role(3002), { appBundle: CHROME, partOf: null }, 'Google Chrome\'s own executable is the app');
+  assert.deepEqual(role(3003), { appBundle: null, partOf: '/Applications/Fake.app' }, 'a second program in Contents/MacOS is part of the app, not the app');
+  assert.deepEqual(role(3004), { appBundle: null, partOf: null }, 'an app whose Info.plist cannot be read is promised nothing');
+  assert.deepEqual(role(3005), { appBundle: null, partOf: null }, 'a plain binary is neither');
+  assert.deepEqual(asked.sort(), ['/Applications/Fake.app', CHROME, '/Applications/Odd.app'], 'the Info.plist is read only for a program in an app\'s Contents/MacOS');
+});
+
+test('an app\'s Info.plist is read for the executable it names, XML or binary, and one that cannot be read names none (E02)', { skip: process.platform !== 'darwin' && 'plutil is macOS\'s' }, async () => {
+  const read = (zombieHandles as unknown as { readBundleExecutable?: (bundle: string) => Promise<string | null> }).readBundleExecutable;
+  assert.equal(typeof read, 'function', 'zombieHandles exposes readBundleExecutable');
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-e02-'));
+  try {
+    const bundle = path.join(dir, 'My Tool.app');
+    await fsp.mkdir(path.join(bundle, 'Contents'), { recursive: true });
+    const plist = path.join(bundle, 'Contents', 'Info.plist');
+    await fsp.writeFile(plist, '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+      '<plist version="1.0"><dict><key>CFBundleName</key><string>My Tool</string><key>CFBundleExecutable</key><string>My Tool Main</string></dict></plist>\n');
+    assert.equal(await read!(bundle), 'My Tool Main', 'an XML Info.plist, a name with spaces read whole');
+    await runText('plutil', ['-convert', 'binary1', plist]);
+    assert.equal(await read!(bundle), 'My Tool Main', 'a binary one too');
+    assert.equal(await read!(path.join(dir, 'Missing.app')), null, 'no Info.plist, no name');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** A child that quits on SIGTERM, standing for the program ps is told it is. */
+async function willingChild(): Promise<ChildProcess> {
+  const child = spawn(process.execPath, ['-e', 'console.log("up");setInterval(()=>{},1000);'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  await withinHangGuard(new Promise<void>((resolve, reject) => {
+    child.stdout!.once('data', () => resolve());
+    child.once('exit', () => reject(new Error('the child exited early')));
+  }), 'the child starting');
+  return child;
+}
+
+/**
+ * Restarts a real child that ps is told runs `exe`. Every command goes through the stand-in, so an
+ * `open` is recorded, never run: nothing on this Mac is launched.
+ */
+async function restartAs(exe: string, mains: Record<string, string | null>): Promise<{ result: Awaited<ReturnType<typeof restartProcess>>; opened: string[][] }> {
+  assert.equal(fs.existsSync(exe.slice(0, exe.indexOf('.app/') + 4)), false, `the app ${exe} stands for exists nowhere on this disk`);
+  const child = await willingChild();
+  const opened: string[][] = [];
+  const ps = fakePs(new Map([[child.pid!, exe]]));
+  const run = async (cmd: string, args: string[]): Promise<string> => {
+    if (cmd === 'open') { opened.push(args); return ''; }
+    return ps.run(cmd, args);
+  };
+  const env: Env = { os: 'darwin', uid: OUR_UID, bundleExecutable: async (bundle) => mains[bundle] ?? null };
+  try {
+    const result = await restartProcess(child.pid!, path.basename(exe), undefined, run, env);
+    await exited(child);
+    return { result, opened };
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+}
+
+/**
+ * The restart tests' apps are made up and exist nowhere on disk: should a change ever reach the real
+ * `open` again, it fails on a missing app instead of bringing one of this Mac's to the front.
+ */
+const TEST_BROWSER = '/Applications/TreeMap Test Browser (no such app).app';
+const TEST_RENDERER = `${TEST_BROWSER}/Contents/Frameworks/Test Browser Framework.framework/Versions/1/Helpers/Test Browser Helper (Renderer).app/Contents/MacOS/Test Browser Helper (Renderer)`;
+
+test('restarting a helper never says it was reopened: it is asked to quit, nothing is opened, and the result names the app it runs inside (E02)', { skip: !IS_UNIX }, async () => {
+  assert.equal(fs.existsSync(TEST_BROWSER), false, 'control: the made-up app is nowhere on this disk');
+  const { result, opened } = await restartAs(TEST_RENDERER, { [TEST_BROWSER]: 'TreeMap Test Browser (no such app)' });
+  assert.equal(result.terminated, true, 'control: the helper quit');
+  assert.deepEqual(opened, [], 'the browser is not "opened" — it is running, and opening it reopens nothing');
+  assert.equal(result.relaunched, false);
+  assert.doesNotMatch(result.message, /reopened\./, 'never "quit and was reopened"');
+  assert.match(result.message, /runs inside TreeMap Test Browser \(no such app\)/, 'it names the app it belongs to');
+  assert.match(result.message, /did not reopen it/, 'and says plainly that TreeMap did not reopen it');
+
+  const second = await restartAs('/Applications/TreeMap Fake (no such app).app/Contents/MacOS/crash_reporter', { '/Applications/TreeMap Fake (no such app).app': 'TreeMap Fake (no such app)' });
+  assert.deepEqual(second.opened, [], 'a second program in Contents/MacOS is not reopened by opening its app');
+  assert.match(second.result.message, /runs inside TreeMap Fake \(no such app\)/);
+});
+
+test('restarting an app\'s own executable opens that app again through the same runner, and says so (E02)', { skip: !IS_UNIX }, async () => {
+  const app = '/Applications/TreeMap Fake App (no such app).app';
+  assert.equal(fs.existsSync(app), false, 'control: the made-up app is nowhere on this disk');
+  const { result, opened } = await restartAs(`${app}/Contents/MacOS/TreeMap Fake App (no such app)`, { [app]: 'TreeMap Fake App (no such app)' });
+  assert.deepEqual(opened, [[app]], 'the app is opened again — through the runner, so a test launches nothing');
+  assert.equal(result.relaunched, true);
+  assert.match(result.message, /quit and was reopened/);
+});
+
 /* ══════════════════ The endpoints ══════════════════ */
 
 async function listen() {
@@ -673,4 +818,47 @@ test('the restart refusals are stated in one sentence the Missing GB page quotes
   for (const kind of [/part of the operating system/, /system administrator/, /another user/, /TreeMap itself/, /its own parent/]) {
     assert.match(RESTART_REFUSES, kind, `the sentence names every refusal restartProcess makes (${String(kind)})`);
   }
+});
+
+/* ══════════════════ The restart sheet says what will happen (E02) ══════════════════ */
+
+/** The page's own confirmZombieRestart for `p`: the sheet's title, text and OK. */
+function restartSheet(p: Record<string, unknown>): { title: string; text: string; ok: string } {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  // From the app-name helper the sheet uses, through the sheet itself.
+  const start = index.indexOf('function zhAppName(');
+  const end = index.indexOf("$('zombieRefresh')", start);
+  assert.ok(start > 0 && end > start && index.slice(start, end).includes('function confirmZombieRestart('), 'confirmZombieRestart is in the built page');
+  const els: Record<string, { innerHTML: string; classList: { add: () => void } }> = {};
+  const $ = (id: string) => (els[id] ??= { innerHTML: '', classList: { add: () => undefined } });
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const open = new Function('$', 'icon', 'escapeHtml', 'resetOpenHandleWarning', 'platformWord', 'lastPathSegment', 'api', 'toast', 'loadZombies',
+    `let onConfirmTrash = null; ${index.slice(start, end)}; return confirmZombieRestart;`)(
+    $, () => '', (s: unknown) => String(s), () => undefined, (w: Record<string, string>) => w.darwin,
+    (q: string) => q.split('/').filter(Boolean).pop() ?? q, async () => ({}), () => undefined, () => undefined,
+  ) as (p: unknown) => void;
+  open(p);
+  return { title: els.confirmTitle.innerHTML, text: els.confirmText.innerHTML, ok: els.confirmOk.innerHTML };
+}
+
+test('the restart sheet for a helper says unsaved work could be lost and that TreeMap will not reopen it — never a save prompt and a reopen (E02)', () => {
+  const base = { pid: 9, bytes: 15_300_000, unknownSizeCount: 0, restartable: true, restartRefusal: null, handles: [] };
+  const helper = restartSheet({ ...base, processName: 'Google Chrome Helper (Renderer)', appBundle: null, partOf: CHROME });
+  assert.match(helper.text, /that work could be lost/, 'a helper never asks to save: its work can be lost');
+  assert.match(helper.text, /runs inside <b>Google Chrome<\/b>/, 'it names the app it runs inside');
+  assert.match(helper.text, /TreeMap does not reopen it/, 'and that TreeMap will not reopen it');
+  assert.doesNotMatch(helper.text, /open it again|ask you to save/, 'no reopen and no save prompt is promised');
+
+  const app = restartSheet({ ...base, processName: 'Google Chrome', appBundle: CHROME, partOf: null });
+  assert.match(app.text, /then open it again/, 'control: the app itself is reopened');
+  const bare = restartSheet({ ...base, processName: 'node', appBundle: null, partOf: null });
+  assert.match(bare.text, /that work could be lost/, 'control: a bare program keeps its own wording');
+  assert.match(bare.text, /start it again yourself/);
+});
+
+test('the OpenAPI document says which app a restart reopens and which it does not (E02)', async () => {
+  const { buildOpenApiDocument } = await import('../src/api/openapi');
+  const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/zombie-handles']);
+  assert.match(said, /appBundle \(the macOS app this process is[^)]*the only one a restart reopens\)/, 'appBundle is the app itself');
+  assert.match(said, /partOf \(the macOS app a helper[^)]*a restart does not reopen it\)/, 'partOf is the app a helper runs inside');
 });

@@ -8215,8 +8215,16 @@ function wireZombieActions() {
 /**
  * The restart confirmation. §B5 requires the unsaved-work warning to be
  * explicit, and it differs honestly by what happens next: a Mac app is
- * reopened automatically; anything else must be started again by hand.
+ * reopened automatically; a helper or extension inside an app (Chrome's
+ * renderer) is not — it never asks to save, and opening its app, still
+ * running, reopens nothing (fourth browser pass, E02); anything else must be
+ * started again by hand.
  */
+/** An app's name as a person reads it: "Google Chrome" for /Applications/Google Chrome.app. */
+function zhAppName(bundle) {
+  return lastPathSegment(bundle).replace(/\.app$/, '');
+}
+
 function confirmZombieRestart(p) {
   resetOpenHandleWarning(); // clear any leftover B2 panel from a delete dialog
   onConfirmTrash = async () => {
@@ -8236,6 +8244,10 @@ function confirmZombieRestart(p) {
   $('confirmText').innerHTML = p.appBundle
     ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit, then open it again. The space it is holding frees when it quits.` +
       `<br><span style="color:var(--text-3)">If it has unsaved work it may ask you to save first — nothing is ever force-quit.</span>`
+    : p.partOf
+    ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit. <b>If it has unsaved work, that work could be lost.</b>` +
+      `<br><span style="color:var(--text-3)">It runs inside <b>${escapeHtml(zhAppName(p.partOf))}</b>, and TreeMap does not reopen it — ` +
+      `if ${escapeHtml(zhAppName(p.partOf))} does not start it again by itself, quit and reopen ${escapeHtml(zhAppName(p.partOf))} yourself.</span>`
     : `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit. <b>If it has unsaved work, that work could be lost.</b>` +
       `<br><span style="color:var(--text-3)">You’ll need to start it again yourself — ${platformWord({
         darwin: 'TreeMap can only reopen Mac apps automatically.',

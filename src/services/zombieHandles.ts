@@ -1,4 +1,5 @@
 import { promises as fsp } from 'fs';
+import path from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import { platform } from '../platform';
 import { runText, RunOptions } from '../platform/exec';
@@ -32,12 +33,21 @@ export interface ZombieProcess {
   pid: number;
   processName: string;
   /**
-   * The macOS .app bundle the process runs from, when it does — the case
-   * where "restart" can genuinely mean quit-and-reopen. Null anywhere else,
-   * and the UI must then warn that the program has to be started again by
-   * hand.
+   * The macOS .app bundle this process IS — its Info.plist names this
+   * executable — the one case where "restart" can genuinely mean
+   * quit-and-reopen. Null anywhere else, and the UI must then warn that the
+   * program has to be started again by hand.
    */
   appBundle: string | null;
+  /**
+   * The macOS app this process runs INSIDE without being it (fourth browser
+   * pass, E02): a helper such as Chrome's renderer, an extension, an XPC
+   * service, a login item, a tool kept in the app's bundle. TreeMap does not
+   * reopen it — opening the app, still running, reopens nothing — so the UI
+   * names the app and says so. Null when the process is the app itself or
+   * belongs to no app.
+   */
+  partOf: string | null;
   /**
    * Whether TreeMap will ask this process to quit (QA D40). False for a
    * program that is part of the operating system, one run by root or another
@@ -212,18 +222,72 @@ function currentUid(): number | null {
   return typeof process.getuid === 'function' ? process.getuid() : null;
 }
 
+/** What a macOS executable is to an app: the app it IS, or the app it runs INSIDE. */
+export interface BundleRole {
+  /** The .app this executable is the program of — `<X>.app/Contents/MacOS/<name>`, X inside no other bundle. */
+  appBundle: string | null;
+  /** The outermost .app this executable runs inside without being its program. */
+  partOf: string | null;
+}
+
 /**
- * The .app bundle containing `executable`, when there is one.
- *
- * "Contains" is a path-segment test, not a substring one: matching a bare
- * `.app` substring would mistake `/opt/my.apple/bin` for a bundle.
+ * What `executable` is, by its path alone (fourth browser pass, E02): the app
+ * it IS — its program sits in `<X>.app/Contents/MacOS/`, X inside no other
+ * bundle — or the app it runs INSIDE: a helper app (Chrome's renderer), an
+ * extension (.appex), an XPC service, a login item, a tool kept anywhere else
+ * in the app's bundle. Only the first is reopened by `open`: on the outer app,
+ * still running, `open` reopens nothing, and on a helper's own bundle it would
+ * start the helper alone. Taking the first ".app/" in the path called Chrome's
+ * renderer "Google Chrome.app", and the restart then said it "quit and was
+ * reopened". Path segments, never substrings: `/opt/my.apple/bin` is no bundle.
  */
+export function bundleRoleOf(executable: string | null): BundleRole {
+  if (!executable) return { appBundle: null, partOf: null };
+  const parts = executable.split('/');
+  const outer = parts.findIndex((name) => name.length > '.app'.length && name.endsWith('.app'));
+  if (outer === -1) return { appBundle: null, partOf: null };
+  const bundle = parts.slice(0, outer + 1).join('/');
+  const isItsProgram = parts.length === outer + 4 && parts[outer + 1] === 'Contents' && parts[outer + 2] === 'MacOS';
+  return isItsProgram ? { appBundle: bundle, partOf: null } : { appBundle: null, partOf: bundle };
+}
+
+/** The .app bundle `executable` is the program of, by its path; null for a helper inside an app (E02) and anything else. */
 export function appBundleOf(executable: string | null): string | null {
-  if (!executable) return null;
-  const marker = '.app/';
-  const at = executable.indexOf(marker);
-  if (at <= 0) return null;
-  return executable.slice(0, at + marker.length - 1);
+  return bundleRoleOf(executable).appBundle;
+}
+
+/**
+ * The executable an app's Info.plist names (CFBundleExecutable), or null when
+ * it cannot be read. plutil reads XML and binary property lists alike.
+ */
+export async function readBundleExecutable(bundle: string, run: CommandRunner = runText): Promise<string | null> {
+  try {
+    const out = await run('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', path.join(bundle, 'Contents', 'Info.plist')], { timeoutMs: 5_000 });
+    const name = out.replace(/\r?\n$/, '');
+    return name.length > 0 ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What `executable` is to an app, confirmed (E02): a program in an app's
+ * Contents/MacOS is that app only when the app's Info.plist names it — a
+ * second program kept there (a crash reporter, an updater) runs inside the
+ * app, and opening the app would not bring it back. An app whose Info.plist
+ * cannot be read is promised nothing either way.
+ */
+async function confirmedRoleOf(executable: string | null, mainOf: (bundle: string) => Promise<string | null>): Promise<BundleRole> {
+  const role = bundleRoleOf(executable);
+  if (role.appBundle === null || executable === null) return role;
+  const main = await mainOf(role.appBundle);
+  if (main === null) return { appBundle: null, partOf: null };
+  return main === path.basename(executable) ? role : { appBundle: null, partOf: role.appBundle };
+}
+
+/** An app's name as a person reads it: "Google Chrome" for /Applications/Google Chrome.app. */
+function appNameOf(bundle: string): string {
+  return path.basename(bundle).replace(/\.app$/, '');
 }
 
 /**
@@ -260,7 +324,7 @@ export function groupZombies(
     let proc = byPid.get(h.pid);
     if (!proc) {
       proc = {
-        pid: h.pid, processName: h.processName, appBundle: null, restartable: false, restartRefusal: null,
+        pid: h.pid, processName: h.processName, appBundle: null, partOf: null, restartable: false, restartRefusal: null,
         bytes: 0, unknownSizeCount: 0, handles: [],
       };
       byPid.set(h.pid, proc);
@@ -295,6 +359,8 @@ export interface ZombieReportDeps {
   uid?: number | null;
   /** Linux: a process's executable and owner, read from /proc. */
   procFacts?: (pid: number) => Promise<ProcessFacts>;
+  /** macOS: the executable an app's Info.plist names (E02). */
+  bundleExecutable?: (bundle: string) => Promise<string | null>;
 }
 
 /** The per-process rollup of the platform's raw descriptor list. */
@@ -316,9 +382,10 @@ export async function zombieReport(deps: ZombieReportDeps = {}): Promise<ZombieR
       facts = new Map(await Promise.all(pids.map(async (pid) => [pid, await read(pid)] as const)));
     }
   }
+  const mainOf = deps.bundleExecutable ?? ((bundle: string) => readBundleExecutable(bundle, deps.run));
   for (const proc of grouped.processes) {
     const known = facts.get(proc.pid) ?? { executable: null, uid: null };
-    if (os === 'darwin') proc.appBundle = appBundleOf(known.executable);
+    if (os === 'darwin') Object.assign(proc, await confirmedRoleOf(known.executable, mainOf));
     const refusal = restartRefusal(known, os, ourUid);
     proc.restartable = refusal === null;
     proc.restartRefusal = refusal?.reason ?? null;
@@ -358,6 +425,8 @@ export interface RestartEnv {
   uid?: number | null;
   /** Linux: a process's executable and owner, read from /proc. */
   procFacts?: (pid: number) => Promise<ProcessFacts>;
+  /** macOS: the executable an app's Info.plist names (E02). */
+  bundleExecutable?: (bundle: string) => Promise<string | null>;
 }
 
 /**
@@ -381,8 +450,11 @@ export interface RestartEnv {
  *    reported as still running; force-killing would be exactly the unsaved-
  *    work loss the confirmation warned about, done silently.
  *
- * Relaunch happens only for a macOS .app bundle, via `open`, after the exit
- * is confirmed — `open` on a still-running app would merely focus it.
+ * Relaunch happens only for the macOS app the process IS (its Info.plist
+ * names the executable), via `open` through `run`, after the exit is
+ * confirmed — `open` on a still-running app would merely focus it. A helper
+ * or extension inside an app is never "reopened": the result names the app
+ * it runs inside and says TreeMap did not reopen it (E02).
  *
  * `waitMs` exists for tests, which prove the still-running path with a child
  * that traps SIGTERM and should not cost five real seconds doing it; `run`
@@ -451,7 +523,10 @@ export async function restartProcess(
 
   if (!alive(pid)) return alreadyQuit;
 
-  const bundle = os === 'darwin' ? appBundleOf(executable) : null;
+  const role = os === 'darwin'
+    ? await confirmedRoleOf(executable, env.bundleExecutable ?? ((b) => readBundleExecutable(b, run)))
+    : { appBundle: null, partOf: null };
+  const bundle = role.appBundle;
 
   try {
     process.kill(pid, 'SIGTERM');
@@ -475,7 +550,7 @@ export async function restartProcess(
 
   if (bundle) {
     try {
-      await runText('open', [bundle], { timeoutMs: 10_000 });
+      await run('open', [bundle], { timeoutMs: 10_000 });
       return {
         pid,
         processName: expectedName,
@@ -492,6 +567,18 @@ export async function restartProcess(
         message: `“${expectedName}” quit and its held space is free, but it could not be reopened automatically — start it again yourself.`,
       };
     }
+  }
+
+  if (role.partOf) {
+    const host = appNameOf(role.partOf);
+    return {
+      pid,
+      processName: expectedName,
+      terminated: true,
+      relaunched: false,
+      message: `“${expectedName}” quit and the space it was holding is free. It runs inside ${host}, and TreeMap did not reopen it — ` +
+        `if ${host} does not start it again by itself, quit and reopen ${host}.`,
+    };
   }
 
   return {
