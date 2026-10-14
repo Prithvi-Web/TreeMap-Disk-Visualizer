@@ -314,6 +314,24 @@ test('F05: with no record at all, Compare offers nothing to press', async () => 
   assert.equal(h.runBtn.disabled, true);
 });
 
+test('F05: the one-record line is about the default picks — once a person picks two scans of another folder it goes, beside the Compare they can press (review F1.13)', async () => {
+  // corpus has one record (a scan and its own snapshot); Mail has two scans.
+  const h = harness([scan('s1', '/c/corpus', 100), scan('m1', '/c/Mail', 300), scan('m2', '/c/Mail', 400)], [snap('h1', '/c/corpus', 100)]);
+  await h.load();
+  assert.match(h.info.textContent, /^Only one record of this folder so far/, 'control: the line says so for the default picks');
+  h.cmpA.pick('scan:m1');
+  h.cmpB.pick('scan:m2');
+  assert.equal(h.runBtn.disabled, false, 'control: the picks can be compared');
+  assert.equal(h.info.textContent, '', 'and no line says there is only one record');
+});
+
+test('F05: while Compare is held back, its reason is announced and is the button\'s own description — a disabled button is skipped by the keyboard (review F1.13)', () => {
+  const info = /<[^>]*\bid="cmpInfo"[^>]*>/.exec(INDEX)?.[0] ?? '';
+  const button = /<button[^>]*\bid="cmpRunBtn"[^>]*>/.exec(INDEX)?.[0] ?? '';
+  assert.match(info, /\brole="status"/, `the line is a status region, so a screen reader hears it when it is written: ${info}`);
+  assert.match(button, /\baria-describedby="cmpInfo"/, `and Compare is described by it: ${button}`);
+});
+
 test('C08: the lists are wired to keep the result honest when a person changes them', () => {
   assert.match(INDEX, /\$\('cmpA'\)\.addEventListener\('change', cmpSyncResult\);/);
   assert.match(INDEX, /\$\('cmpB'\)\.addEventListener\('change', cmpSyncResult\);/);

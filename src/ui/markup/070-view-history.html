@@ -42,8 +42,8 @@
         <label for="cmpB">After</label>
         <select id="cmpB" aria-label="Newer scan or snapshot"></select>
       </span>
-      <button class="btn btn-primary" id="cmpRunBtn"><span data-icon="diff"></span>Compare</button>
-      <span class="muted" id="cmpInfo"></span>
+      <button class="btn btn-primary" id="cmpRunBtn" aria-describedby="cmpInfo"><span data-icon="diff"></span>Compare</button>
+      <span class="muted" id="cmpInfo" role="status"></span>
     </div>
     <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
   </div>

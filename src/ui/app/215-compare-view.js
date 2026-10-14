@@ -50,27 +50,27 @@ async function loadCompareOptions() {
     const scans = list.filter((o) => o.kind === 'scan');
     const snaps = list.filter((o) => o.kind === 'snap');
     const pool = scans.length >= 2 ? scans : snaps.length >= 2 ? snaps : null;
-    let nothingToCompare = false;
+    let heldBack = '';
     if (shown && parseCmp(shown.a) && parseCmp(shown.b)) {
       $('cmpA').value = shown.a;
       $('cmpB').value = shown.b;
-      $('cmpInfo').textContent = '';
     } else if (pool) {
       $('cmpB').value = `${pool[0].kind}:${pool[0].id}`;
       $('cmpA').value = `${pool[1].kind}:${pool[1].id}`;
-      $('cmpInfo').textContent = '';
     } else {
       const only = `${list[0].kind}:${list[0].id}`;
       $('cmpA').value = only;
       $('cmpB').value = only;
       // Moments, not entries: a scan and its own snapshot share one.
-      $('cmpInfo').textContent = new Set(list.map((o) => o.when)).size < 2
+      heldBack = new Set(list.map((o) => o.when)).size < 2
         ? 'Only one record of this folder so far — scan it again to have something to compare.'
         : 'A live scan and a history snapshot can’t be compared, and there are no two of one kind yet — scan this folder again to have two scans to compare.';
-      nothingToCompare = true;
     }
     cmpSyncResult();
-    $('cmpRunBtn').disabled = nothingToCompare;
+    // After the sync, which clears the line for picks a person makes: this
+    // one is about the default picks, and holds Compare back with them.
+    $('cmpInfo').textContent = heldBack;
+    $('cmpRunBtn').disabled = Boolean(heldBack);
   } catch (e) {
     toast('Could not load scans: ' + e.message, 'error');
   }
@@ -116,8 +116,11 @@ function cmpWhenPair(a, b) {
  */
 function cmpSyncResult() {
   // A pick a person makes is theirs to press; Compare then says why it refuses
-  // one it cannot compare (F05: only loadCompareOptions holds it back).
+  // one it cannot compare (F05: only loadCompareOptions holds it back). The
+  // line that says why it was held back was about the default picks, so it
+  // goes with them (review F1.13).
   $('cmpRunBtn').disabled = false;
+  $('cmpInfo').textContent = '';
   const shown = state.compare.result;
   const a = $('cmpA').value, b = $('cmpB').value;
   if (shown && shown.a === a && shown.b === b) return;
