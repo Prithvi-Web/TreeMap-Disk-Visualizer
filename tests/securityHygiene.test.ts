@@ -638,6 +638,48 @@ test('a finding is offered "Move it" only where the server will move it: a scan 
   }
 });
 
+test('a finding that is a link, not the file, is not offered "Move it" — the server moves only a real file — and one gone since the scan says it cannot be looked at (E10, review F1.3)', { skip: HOME_FROM_ENV }, async () => {
+  const home = fs.realpathSync(fileTempDir('treemap-securityHygiene-e10-link-'));
+  fs.mkdirSync(path.join(home, 'real'));
+  fs.writeFileSync(path.join(home, 'real', 'keyfile'), 'not a real key');
+  fs.mkdirSync(path.join(home, 'dl'));
+  const link = path.join(home, 'dl', 'id_rsa');
+  fs.symlinkSync(path.join(home, 'real', 'keyfile'), link);
+  const gone = path.join(home, 'dl', 'id_ed25519');
+  fs.writeFileSync(gone, 'not a real key either');
+  const ssh = path.join(home, '.ssh');
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    await withHome(home, async () => {
+      const started = await call(port, 'POST', '/api/scan', { path: home });
+      assert.equal(started.status, 202, JSON.stringify(started.body));
+      await waitFor(() => peekScan(started.body.scanId)?.status !== 'running', 'the scan of the stand-in home');
+      fs.rmSync(gone); // gone between the scan and the findings
+      const r = await call(port, 'GET', `/api/security/findings?scanId=${started.body.scanId}`);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const of = (p: string) => r.body.findings.find((x: { path: string }) => x.path === p) as { suggestedPath?: string; relocateRefusal?: string | null } | undefined;
+      const linked = of(link);
+      assert.ok(linked, 'control: the link is a finding');
+      assert.equal(linked.suggestedPath, ssh, 'control: it is told it belongs in ~/.ssh, which is free and inside the scanned folder');
+      assert.equal(typeof linked.relocateRefusal, 'string', 'a link is not offered the move');
+      assert.match(linked.relocateRefusal!, /a link, not the file itself/, 'it says why');
+      const refused = await call(port, 'POST', '/api/security/relocate', { path: link, to: path.join(ssh, 'id_rsa'), confirm: true });
+      assert.equal(refused.body.code, 'RELOCATE_FAILED', `control: the server does refuse that move: ${JSON.stringify(refused.body)}`);
+      assert.ok(fs.lstatSync(link).isSymbolicLink(), 'and nothing moved');
+
+      const missing = of(gone);
+      assert.ok(missing, 'control: the file gone since the scan is still a finding of it');
+      assert.match(String(missing.relocateRefusal), /could not look at/, 'its move is not offered: the server would find nothing to move');
+      assert.ok(String(missing.relocateRefusal).includes(gone), 'naming the file');
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
 test('the Security panel offers "Move it" only to a finding the server will move, and shows the reason in its place (E10)', () => {
   const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const fn = index.slice(index.indexOf('function renderSecurity'), index.indexOf('function confirmRelocateSecret'));
@@ -675,6 +717,8 @@ test('relocateRefusal is declared where an agent reads: the OpenAPI document and
   assert.match(said, /relocateRefusal \(beside a suggestedPath: why POST \/api\/security\/relocate would refuse that move/, 'the document names the field and what it means');
   const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
   assert.match(agents, /`relocateRefusal`[\s\S]{0,200}offer the move only on `null`/, 'AGENTS.md says to offer the move only when it is null');
+  assert.match(said, /a link rather than the file or is gone since the scan/, 'the document names a link or a vanished file among the refusals (review F1.3)');
+  assert.match(agents, /a finding that is a link rather than\s+the file \(only a real file is moved\) or is gone since the scan/, 'and so does AGENTS.md');
 });
 
 /* ─────────────── Every finding reachable (fourth browser pass, E09) ─────────────── */

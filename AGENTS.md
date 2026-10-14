@@ -154,9 +154,11 @@ OpenAPI 3 spec).
      which moves one file by rename (both ends must be inside a scanned root,
      an occupied destination aborts, nothing is ever removed), and only an SSH
      key carries a `suggestedPath` (`~/.ssh`). Beside it, `relocateRefusal`
-     says why that move would be refused — `~/.ssh` outside every scanned
-     folder, the agent policy, something already there — or is `null` when
-     the route would make it: offer the move only on `null`. A `.key` file is listed as
+     says why that move would be refused, or is `null` when the route would
+     make it: offer the move only on `null`. It names `~/.ssh` outside every
+     scanned folder, the agent policy, a finding that is a link rather than
+     the file (only a real file is moved) or is gone since the scan, and
+     something already there. A `.key` file is listed as
      minor with no move, because on a Mac it is usually a Keynote document;
      files inside program bundles, frameworks and the operating system's own
      folders are `appOwned`, minor, and never offered a move. `counts` and

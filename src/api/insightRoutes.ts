@@ -384,8 +384,10 @@ function assertRelocationDestination(dest: string): void {
 /**
  * Why the move a finding suggests would be refused, said before anyone confirms it (fourth browser
  * pass, E10: "Move to .ssh" was offered and confirmed, then refused OUTSIDE_SCAN_ROOT), or null when
- * the route would make it: its destination rules, the agent policy, and a destination already taken —
- * the move is then cancelled, never a clobber.
+ * the route would make it: its destination rules, the agent policy, a source that is not a real file
+ * (relocateSecret moves only a regular file — a link named id_rsa is a finding too; review F1.3) or
+ * is gone, and a destination already taken — the move is then cancelled, never a clobber. A move
+ * across disks (EXDEV) cannot be known before it is tried.
  */
 async function relocationRefusal(from: string, folder: string, to: string, policy: AgentPolicy | Error): Promise<string | null> {
   try {
@@ -398,6 +400,13 @@ async function relocationRefusal(from: string, folder: string, to: string, polic
         `scan your home folder, which holds ${path.basename(folder)}, and the move is offered here.`;
     }
     return err instanceof Error ? err.message : String(err);
+  }
+  const source = await fsp.lstat(from).then((st) => st, (err: NodeJS.ErrnoException) => err.code ?? 'unreadable');
+  if (typeof source === 'string') return `TreeMap could not look at ${from} (${source}), so the move would be refused.`;
+  if (!source.isFile()) {
+    return source.isSymbolicLink()
+      ? 'This is a link, not the file itself — TreeMap moves only a real file, so the move would be refused.'
+      : 'This is not a regular file — TreeMap moves only a real file, so the move would be refused.';
   }
   const there = await fsp.lstat(to).then(() => 'taken', (err: NodeJS.ErrnoException) => (err.code === 'ENOENT' ? null : err.code ?? 'unreadable'));
   if (there === null) return null;
