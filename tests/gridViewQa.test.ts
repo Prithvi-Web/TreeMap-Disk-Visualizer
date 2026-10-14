@@ -1376,7 +1376,7 @@ test('a tile with keyboard focus keeps it when the Grid rebuilds the tiles aroun
 
 /* ══════════════ review F2.4 — a tile is a button, wired to its own file ══════════════ */
 
-test('every tile is a button in the Tab order, and its own click, Enter and Space select that tile’s file — never a neighbour’s (review F2.4)', async () => {
+test('every tile is a button in the Tab order, and its own click, Enter and Space select that tile’s file — never a neighbour’s — with the Shift, ⌘ or Ctrl the click carries (review F2.4, F3.2)', async () => {
   // A tile's handlers are the only way a person selects a file in the Grid,
   // and the tests drove onCellClick directly: a tile with no click handler,
   // one wired to the next tile, no Enter/Space, or no tab stop passed them all.
@@ -1413,6 +1413,16 @@ test('every tile is a button in the Tab order, and its own click, Enter and Spac
   fire(3, 'keydown', key('a'));
   assert.deepEqual(selected(), [pathOf(2), pathOf(9)].sort(), 'another key selects nothing');
   assert.equal(prevented, 2, 'and is left to the page');
+
+  // A click's modifiers reach the selection through the tile's own listener
+  // (review F3.2): one that called onCellClick without its event made every
+  // shift-click and ⌘-click a plain click, and passed all of the above.
+  fire(5, 'click', { shiftKey: true });
+  assert.deepEqual(selected(), [2, 3, 4, 5].map(pathOf).sort(), 'a shift-click on tile 5 selects tiles 2 to 5, from the anchor ⌘-Space left on 2');
+  fire(9, 'click', { metaKey: true });
+  assert.deepEqual(selected(), [2, 3, 4, 5, 9].map(pathOf).sort(), 'a ⌘-click on tile 9 adds its file');
+  fire(3, 'click', { ctrlKey: true });
+  assert.deepEqual(selected(), [2, 4, 5, 9].map(pathOf).sort(), 'a Ctrl-click on tile 3 takes its file out');
 });
 
 /* ══════════════ review F2.6 — the preview pane gives focus back to the Grid tile it was opened from ══════════════ */
