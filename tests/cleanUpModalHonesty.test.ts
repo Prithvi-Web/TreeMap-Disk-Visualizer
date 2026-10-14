@@ -938,7 +938,7 @@ test('what the server and the docs tell an agent about the Trash says when the w
   assert.ok(seen >= 6, `the sweep found the server's and the docs' own "recoverable" (${seen})`);
 });
 
-test('no sentence in the docs, in what an agent is told or in a result the server writes offers a way back with no end — "any time", "can be put back", "puts it back", "even after the Trash is emptied" each say until when (review F1.2, F1.8, F2.2, F2.5 of QA third pass D06)', () => {
+test('no sentence in the docs, in what an agent is told or in a result the server writes offers a way back with no end — "any time", "can be put back", "puts it back", "even after the Trash is emptied" each say until when (review F1.2, F1.8, F2.2, F2.5, F3.4 of QA third pass D06)', () => {
   // The sweep above reads only the word "recoverable", so README's "undo
   // from Finder/Explorer any time", SECURITY's "can be put back" and "a run
   // can be undone even after the Trash is emptied", AGENTS' cart undo "even
@@ -958,6 +958,41 @@ test('no sentence in the docs, in what an agent is told or in a result the serve
   const WAY_BACK = /\brecoverabl|\brestor(?:e|ed)\b|\bundo(?:ne)?\b|\bput\b[^.;]*\bback\b|\bcan be recovered\b/i;
   /** Whether, after the phrase at `m` and before its clause ends, the sentence says when that way back ends. */
   const endsLater = (s: string, m: RegExpExecArray) => /^[^;.]*?\b(?:until|while|as long as)\b/i.test(s.slice(m.index + m[0].length));
+  /**
+   * Every "puts … back" in `s` that offers a way back — "puts it back", "puts every file back",
+   * "puts back what was trashed" — and whether it is bounded. Every one is examined (review F3.4:
+   * the rule read four trailing shapes and passed every other), and passes only by saying until
+   * when, or by being one of three shapes that offer no way back, each named here: a condition on
+   * the item's place ("only if its place is empty by then", "once", "there") says how an undo
+   * works, not whether one still can; "before it puts any back" says the order of a restore's
+   * steps; and a "puts back" with no object ("what an undo puts back", "copies an undo puts back
+   * now") names the copies rather than promising them. Keyboard focus is no deleted item.
+   */
+  const putsBackIn = (s: string): Array<{ phrase: string; bounded: boolean }> => {
+    const offers: Array<{ phrase: string; bounded: boolean }> = [];
+    for (const m of s.matchAll(/\bputs((?: (?!back\b)[\w’'`-]+){0,3}) back\b/gi)) {
+      const what = m[1].trim();
+      const before = s.slice(0, m.index);
+      const after = s.slice(m.index! + m[0].length);
+      if (/^focus$/i.test(what)) continue;
+      if (!what && /^\s*(?:$|[,.;:)\]]|(?:now|is|are)\b)/i.test(after)) continue;
+      const bounded = /^[^;.]*?\b(?:until|while|as long as)\b/i.test(after)
+        || /^[^;.]*?\b(?:only if|once|there)\b/i.test(after)
+        || /\bbefore (?:it|an undo|a restore|the undo|the restore) $/i.test(before);
+      offers.push({ phrase: m[0], bounded });
+    }
+    return offers;
+  };
+  // The rule itself, on the shapes the review found it blind to: each is a way back with no end.
+  for (const s of ['Undo puts it back, whenever you ask.', 'Undo puts it back from the Time Capsule.', 'Undo puts it back where it was.',
+    'The undo puts back what was trashed.', 'A run is undone with a click and puts back every file it trashed.', 'Undo puts every file back.']) {
+    assert.deepEqual(putsBackIn(s).map((o) => o.bounded), [false], `the rule reads "${s}" as a way back with no end`);
+  }
+  // And the shapes that say until when, or how, are let through.
+  for (const s of ['Undo puts it back until the Time Capsule removes its copies.', 'An undo puts it back only if its place is empty by then.',
+    'An undo puts each back once its place is empty.', 'An undo puts it back, and looks for it, there.']) {
+    assert.deepEqual(putsBackIn(s).map((o) => o.bounded), [true], `the rule lets "${s}" through`);
+  }
   const seen = { wayBack: 0, pastEmptied: 0, canBe: 0, putsBack: 0 };
   for (const [file, text] of agentTexts(RESULT_SOURCES)) {
     for (const s of sentencesOf(file, text)) {
@@ -976,16 +1011,12 @@ test('no sentence in the docs, in what an agent is told or in a result the serve
         seen.canBe++;
         assert.ok(endsLater(s, can), `${file}: "${can[0]}" with no end — "${s}"`);
       }
-      // An undo that "puts it back" with nothing after it is a promise that it still can — or one
-      // that says until when. One qualified by a condition ("only if its place is empty by then",
-      // "once", "there") says how an undo works, not whether one still can, and is not this rule's.
-      const puts = /\bputs (?:it|them|everything) back(?=\s*(?:[.;'"`)]|$|\b(?:until|while|as long as)\b))|\bputs back (?:exactly what|everything)\b/i.exec(s);
-      if (puts) {
+      for (const offer of putsBackIn(s)) {
         seen.putsBack++;
-        assert.ok(endsLater(s, puts), `${file}: "${puts[0]}" with no end — "${s}"`);
+        assert.ok(offer.bounded, `${file}: "${offer.phrase}" with no end — "${s}"`);
       }
     }
   }
   // Each rule read the sentences it is about: a split that merged or lost them would pass by seeing nothing.
-  assert.ok(seen.wayBack >= 100 && seen.pastEmptied >= 5 && seen.canBe >= 8 && seen.putsBack >= 3, `the sweep read the docs' ways back: ${JSON.stringify(seen)}`);
+  assert.ok(seen.wayBack >= 100 && seen.pastEmptied >= 5 && seen.canBe >= 8 && seen.putsBack >= 19, `the sweep read the docs' ways back: ${JSON.stringify(seen)}`);
 });

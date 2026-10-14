@@ -64,8 +64,9 @@ import { AsyncMutex } from '../utils/asyncMutex';
  *    policy pointed at the wrong folder cannot empty it overnight.
  *  - **Cooldown** keeps a policy from running again immediately, and doubles as
  *    the schedule — one knob instead of two that can disagree.
- *  - **Undo** puts a whole run back from the Time Capsule, which is why every
- *    run stamps its own id onto the capsule entries it creates.
+ *  - **Undo** puts a whole run back from the Time Capsule, while it holds the
+ *    run's copies — which is why every run stamps its own id onto the capsule
+ *    entries it creates.
  *
  * Every one of these refuses *loudly*: a run that did not delete still writes a
  * run record saying what it would have done and why it stopped.

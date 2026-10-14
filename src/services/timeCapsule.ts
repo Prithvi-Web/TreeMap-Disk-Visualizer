@@ -128,8 +128,8 @@ interface ManifestMember {
   /** Symlinks only: whether what it pointed at was a folder, when that could be seen (FG3f #9). */
   targetIsDir?: boolean;
   /**
-   * Modification and access time, so a restore puts back the file that was
-   * taken rather than a copy of it made today.
+   * Modification and access time, so what a restore puts back is the file
+   * that was taken rather than a copy of it made today.
    *
    * Optional because manifests written before this existed do not carry it,
    * and a restore of one of those must still work — it simply leaves the

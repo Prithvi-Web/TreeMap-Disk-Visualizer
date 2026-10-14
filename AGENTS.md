@@ -580,8 +580,9 @@ OpenAPI 3 spec).
      A path inside another path of the same commit gets no copy of its own:
      the item holding it is copied and trashed whole, the inner path is listed
      in `trashed` with it — once the disk no longer shows it — and counted
-     once, and one undo puts both back (or, when the item holding it is not
-     confirmed moved, it is in `unverified` with it; when that item is not
+     once, and one undo puts both back while the Time Capsule holds that copy
+     (or, when the item holding it is not confirmed moved, it is in
+     `unverified` with it; when that item is not
      deleted, it is in `skipped`, saying so; when the Trash reports taking that
      item but the disk still shows the inner path in its place, the inner path
      is in `skipped` with code `NOT_DELETED`, and when its place cannot be
