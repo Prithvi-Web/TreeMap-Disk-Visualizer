@@ -288,3 +288,74 @@ test('Compare says the total did not change when it did not — not "Total grew 
   const shrank = head(-3_000_000, []);
   assert.match(shrank.line, /^Total shrank by\s*<b class="cmp-total" style="color:var\(--ok\)">3000000 B<\/b>$/, `shrink: ${shrank.line}`);
 });
+
+/* ── QA fourth pass E08: Trends tells its folders apart, and two scans of one day by their times ── */
+
+test('Trends’ Folder list leads each folder with its own name — corpus and corpus/Mail no longer read alike (QA fourth pass E08)', async () => {
+  // QA fourth pass E08 (shots/066): the 430 px select showed each folder's
+  // full path from the left, so corpus and corpus/Mail both read
+  // "/Users/<user>/.claude/projects/-Users-…-Desktop" — C08 fixed the same
+  // thing in Compare by leading with the folder's name.
+  const DEEP = '/Users/me/.claude/projects/-Users-me-Desktop-Claude-Code/treemap-work/qa/corpus';
+  const listed = async (rootPaths: string[]) => {
+    const sel = { innerHTML: '', disabled: false, title: '' };
+    const run = load<() => Promise<void>>(['escapeHtml', 'loadTrends'], {
+      ...base(browserWith([])),
+      state: { root: null, trends: { path: null, roots: [], snapshots: [] } },
+      api: async (url: string) => { assert.equal(url, '/api/snapshots'); return { roots: rootPaths.map((rootPath, i) => ({ rootPath, count: i + 2 })) }; },
+      $: (id: string) => (id === 'trendRoot' ? sel : { textContent: '', innerHTML: '' }),
+      loadTrendData: async () => {}, drawTrendChart: () => {}, drawTrendNet: () => {}, toast: (m: string) => assert.fail(m),
+    }, 'loadTrends');
+    await run();
+    const options = [...sel.innerHTML.matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)]
+      .map((m) => ({ value: m[1], text: m[2].replace(/&amp;/g, '&').replace(/&#39;/g, "'") }));
+    assert.equal(options.length, rootPaths.length, `one option per folder: ${sel.innerHTML}`);
+    return { options, sel };
+  };
+  const { options, sel } = await listed([DEEP, `${DEEP}/Mail`]);
+  assert.deepEqual(options.map((o) => o.text.split(' · ')[0]), ['corpus', 'Mail'], `each option leads with its folder's name: ${options.map((o) => o.text).join(' | ')}`);
+  assert.deepEqual(options.map((o) => o.text.split(' · ')[1]), ['2 snapshots', '3 snapshots'], 'then how many snapshots it has');
+  for (const o of options) assert.ok(o.text.endsWith(o.value), `and the whole path last, for the open list: ${o.text}`);
+  // A closed select shows the start of the option: the two must differ there.
+  assert.notEqual(options[0].text.slice(0, 12), options[1].text.slice(0, 12), 'the two read differently from their first characters');
+  assert.equal(sel.title, DEEP, 'the closed list names the whole path of the folder it shows on hover');
+  // Two folders of one name lead with as much of their paths as tells them apart.
+  const twins = (await listed(['/Volumes/A/Mail', '/Users/me/Mail', '/Users/me/Documents'])).options.map((o) => o.text.split(' · ')[0]);
+  assert.deepEqual(twins, ['A/Mail', 'me/Mail', 'Documents'], `twins: ${twins.join(' | ')}`);
+  // A drive's root has no name of its own beyond itself.
+  assert.deepEqual((await listed(['/'])).options.map((o) => o.text.split(' · ')[0]), ['/'], 'the root of a drive is named as it is');
+});
+
+test('Trends’ "Since previous scan" names two scans of one day by their times, to the second in one minute (QA fourth pass E08)', async () => {
+  // QA fourth pass E08: "Oct 13, 2026 → Oct 13, 2026".
+  const FORMATS = ['UI_LOCALE', 'HOUR_CYCLE', 'CLOCK_HOUR', 'DATE_FMT', 'dateMemo', 'formatDate', 'WHEN_FMT', 'whenMemo', 'formatWhen',
+    'WHEN_SEC_FMT', 'formatWhenSeconds', 'cmpWhenPair'];
+  const fmt = load<{ formatDate: (t: number) => string; formatWhen: (t: number) => string; formatWhenSeconds: (t: number) => string }>(
+    FORMATS, base(browserWith([])), '{ formatDate, formatWhen, formatWhenSeconds }');
+  const headFor = async (a: number, b: number) => {
+    const host = { innerHTML: '' };
+    const render = load<() => Promise<void>>([...FORMATS, 'renderTrendDeltas', 'deltaRow'], {
+      ...base(browserWith([])),
+      state: { system: SYSTEM, trends: { snapshots: [{ id: 'a', rootPath: '/c', takenAt: a }, { id: 'b', rootPath: '/c', takenAt: b }], path: '/c' } },
+      $: () => host,
+      api: async () => ({ totalDelta: 5_000_000, entries: [] }),
+      formatBytes: (n: number) => `${n} B`, chipFor: () => '',
+      FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } }, fxBarsIn: () => {},
+    }, 'renderTrendDeltas', "const escapeHtml = (s) => String(s);");
+    await render();
+    const m = /^<div class="muted"[^>]*>([^<]*?) — total/.exec(host.innerHTML);
+    assert.ok(m, `the head names the two scans: ${host.innerHTML}`);
+    return m![1];
+  };
+  const at = (d: number, h: number, mi: number, s: number) => new Date(2026, 9, d, h, mi, s).getTime();
+  // One day, minutes apart: the times say which is which.
+  const day = await headFor(at(13, 19, 25, 28), at(13, 19, 26, 2));
+  assert.equal(day, `${fmt.formatWhen(at(13, 19, 25, 28))} → ${fmt.formatWhen(at(13, 19, 26, 2))}`, `one day: ${day}`);
+  assert.notEqual(fmt.formatWhen(at(13, 19, 25, 28)), fmt.formatWhen(at(13, 19, 26, 2)), 'control: the two read differently');
+  // One minute: to the second.
+  const minute = await headFor(at(13, 19, 26, 2), at(13, 19, 26, 10));
+  assert.equal(minute, `${fmt.formatWhenSeconds(at(13, 19, 26, 2))} → ${fmt.formatWhenSeconds(at(13, 19, 26, 10))}`, `one minute: ${minute}`);
+  // Different days keep their dates, as before.
+  const days = await headFor(at(2, 9, 0, 0), at(13, 19, 26, 2));
+  assert.equal(days, `${fmt.formatDate(at(2, 9, 0, 0))} → ${fmt.formatDate(at(13, 19, 26, 2))}`, `two days: ${days}`);
+});

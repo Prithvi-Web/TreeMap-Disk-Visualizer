@@ -33415,8 +33415,23 @@ async function loadTrends() {
     const preferred = (state.root && has(state.root.path) && state.root.path) ||
                       (state.trends.path && has(state.trends.path) && state.trends.path) ||
                       roots[0].rootPath;
+    // Led by the folder's name, its whole path last (QA fourth pass E08, as
+    // C08 did for Compare): a closed list shows the start of one option, and
+    // a full path from the left read the same for corpus and corpus/Mail.
+    // A name another folder here shares takes as many folders above it as
+    // tell the two apart ("A/Mail", "me/Mail").
+    const segsOf = (p) => String(p).split(/[\\/]/).filter(Boolean);
+    const tail = (segs, n, p) => segs.slice(-n).join(String(p).includes('/') ? '/' : '\\');
+    const nameOf = (p) => {
+      const segs = segsOf(p);
+      if (!segs.length) return p; // a drive's root is named as it is
+      let n = 1;
+      while (n < segs.length && roots.some((r) => r.rootPath !== p && tail(segsOf(r.rootPath), n, r.rootPath) === tail(segs, n, p))) n++;
+      return tail(segs, n, p);
+    };
     sel.innerHTML = roots.map(r =>
-      `<option value="${escapeHtml(r.rootPath)}"${r.rootPath === preferred ? ' selected' : ''}>${escapeHtml(r.rootPath)} · ${r.count} snapshot${r.count > 1 ? 's' : ''}</option>`).join('');
+      `<option value="${escapeHtml(r.rootPath)}"${r.rootPath === preferred ? ' selected' : ''}>${escapeHtml(nameOf(r.rootPath))} · ${r.count} snapshot${r.count > 1 ? 's' : ''} · ${escapeHtml(r.rootPath)}</option>`).join('');
+    sel.title = preferred; // the whole path of the folder the closed list shows
     state.trends.path = preferred;
     await loadTrendData();
   } catch (e) { toast('Could not load history: ' + e.message, 'error'); }
@@ -33478,6 +33493,7 @@ async function labelTrendForecast(path, seq) {
 }
 $('trendRoot').addEventListener('change', (e) => {
   state.trends.path = e.target.value;
+  e.target.title = e.target.value;
   loadTrendData().catch(err => toast(err.message, 'error'));
 });
 
@@ -33616,7 +33632,12 @@ async function renderTrendDeltas() {
     const total = diff.totalDelta === 0 ? 'total did not change'
       : `total ${up ? 'grew' : 'shrank'} by
       <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b>`;
-    const head = `<div class="muted" style="margin-bottom:10px;" >${formatDate(a.takenAt)} → ${formatDate(b.takenAt)} — ${total}` +
+    // Two scans of one day are told apart by their times, and of one minute
+    // to the second, as Compare names them: "Oct 13, 2026 → Oct 13, 2026"
+    // said nothing about which was which (QA fourth pass E08).
+    const days = [formatDate(a.takenAt), formatDate(b.takenAt)];
+    const [from, to] = days[0] === days[1] ? cmpWhenPair(a.takenAt, b.takenAt) : days;
+    const head = `<div class="muted" style="margin-bottom:10px;" >${from} → ${to} — ${total}` +
       (rules ? ' — your “Don’t scan” rules changed between these two, so part of this is what was scanned, not what is on disk' : '') +
       `</div>`;
     if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
