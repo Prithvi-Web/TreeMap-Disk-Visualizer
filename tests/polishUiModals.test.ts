@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 
 /**
  * Polish round — keyboard and dialogs (a11y-keyboard-1, -2, -4, -6, -7, -8).
@@ -1730,16 +1731,40 @@ test('every right-click menu in the page has a keyboard way in: its item is a Ta
   // The keys reach a contextmenu listener through the focused element and
   // its parents, so a listener on something no focus can reach would have
   // no keyboard way in. Each registration is named here with what makes it
-  // reachable; a new one fails until it is.
-  const code = INDEX.slice(INDEX.indexOf('<script>'));
-  const found = [...code.matchAll(/(\w+)\.addEventListener\('contextmenu'/g)].map((m) => {
-    const before = code.slice(0, m.index);
-    const fn = /(?:^|\n)(?:async )?function (\w+)\(/g;
-    let name = '(top level)';
-    for (const f of before.matchAll(fn)) name = f[1];
-    // A registration after the enclosing function's closing brace is top-level: the canvas's is.
-    return `${name}: ${m[1]}`;
-  });
+  // reachable; a new one fails until it is. The page's scripts are parsed,
+  // not pattern-matched, so a registration is found however it is written —
+  // on any receiver ($('appsBody'), this.row), in either quotes — and every
+  // other mention of the event is accounted for: an `oncontextmenu` handler
+  // or attribute, or the event's name kept in a constant, is a menu this
+  // sweep cannot name, and fails (review F1.7).
+  const markup = INDEX.replace(/<script>[\s\S]*?<\/script>/g, '');
+  assert.doesNotMatch(markup, /\soncontextmenu\s*=/i, 'no element in the markup carries an oncontextmenu attribute');
+  const scripts = [...INDEX.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.ok(scripts.length >= 2, 'control: the theme script and the app\'s');
+  const found: string[] = [];
+  const unplaced: string[] = [];
+  for (const code of scripts) {
+    const sf = ts.createSourceFile('page.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const fnOf = (n: ts.Node) => { for (let p = n.parent; p; p = p.parent) if (ts.isFunctionDeclaration(p) && p.name) return p.name.text; return '(top level)'; };
+    const line = (n: ts.Node) => `${fnOf(n)}, line ${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}: ${n.parent.getText(sf).slice(0, 80)}`;
+    const visit = (n: ts.Node) => {
+      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) {
+        const call = n.parent;
+        if (n.text === 'contextmenu' && ts.isCallExpression(call) && call.arguments[0] === n
+          && ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === 'addEventListener') {
+          found.push(`${fnOf(n)}: ${call.expression.expression.getText(sf)}`);
+        } else if (n.text === 'contextmenu' && ts.isNewExpression(call) && call.arguments?.[0] === n && call.expression.getText(sf) === 'MouseEvent'
+          && fnOf(n) === 'ctxMenuFromKey') {
+          // The menu keys' own delivery of the event, at the focused item (ctxMenuFromKey).
+        } else if (n.text === 'contextmenu' || /\boncontextmenu\b/i.test(n.text)) unplaced.push(line(n));
+      }
+      if ((ts.isPropertyAccessExpression(n) || ts.isIdentifier(n)) && /^oncontextmenu$/i.test(ts.isPropertyAccessExpression(n) ? n.name.text : n.text)
+        && !ts.isPropertyAccessExpression(n.parent)) unplaced.push(line(n));
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  assert.deepEqual(unplaced, [], 'every mention of the contextmenu event in the page is a registration this sweep names, or the menu keys\' own delivery');
   const reachable: Record<string, RegExp> = {
     'crumbsPaint: b': /<button data-p=/, // a crumb is a button (its menu is the folder's budget)
     'renderBigFiles: row': /cartButtonHtml\(f\.path, f\.name, 14\)[\s\S]*<button class="icon-btn" data-reveal=/, // holds the cart and reveal buttons
@@ -1747,11 +1772,10 @@ test('every right-click menu in the page has a keyboard way in: its item is a Ta
     'renderApps: row': /<div class="bp-item" role="button" tabindex="0" data-jump=/,
     'gridCell: cell': /cell\.tabIndex = 0;/,
   };
-  const canvasAt = code.indexOf("tmCanvas.addEventListener('contextmenu'");
-  assert.notEqual(canvasAt, -1, 'the map\'s canvas has its right-click menu');
+  assert.ok(found.includes('(top level): tmCanvas'), `the map's canvas has its right-click menu: ${found.join(' | ')}`);
   assert.match(INDEX, /<canvas id="treemapCanvas" tabindex="0"/, 'and the canvas is a Tab stop, whose key opens the selected cell\'s menu (tmCanvasKeyMenu)');
   for (const where of found) {
-    if (where.endsWith(': tmCanvas')) continue;
+    if (where === '(top level): tmCanvas') continue;
     assert.ok(where in reachable, `${where}: a right-click menu with no keyboard way named — say what makes it reachable`);
     const fnName = where.split(':')[0];
     assert.match(braced(`function ${fnName}(`), reachable[where], `${where}: reachable from the keyboard`);
