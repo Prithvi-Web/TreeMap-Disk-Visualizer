@@ -11,6 +11,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { startScan } from '../src/services/diskScanner';
 import { updateSettings } from '../src/services/settings';
 import { knownSizeOf } from '../src/services/policy';
+import { canonicalDirOf } from '../src/utils/pathSanitizer';
 import type { ScanResult } from '../src/models/types';
 
 /**
@@ -214,6 +215,9 @@ test('a name found by its fold counts only on the volume\'s own word that both n
   const file = path.join(APART, 'y1'); // made after the scan, beside Ｙ1, whose name folds the same
   const sibling = path.join(APART, 'Ｙ1');
   fs.writeFileSync(file, Buffer.alloc(13, 1));
+  // The policy asks at the native parent spelling (Windows temp roots can use an 8.3 alias).
+  const canonicalFile = canonicalDirOf(file);
+  const canonicalSibling = canonicalDirOf(sibling);
   /**
    * What the stand-in answers when the identity of `file`, then of `sibling`, is asked (bigint, links
    * not followed). 'gone' is what the volume says of a name nothing is at any more — a scanned sibling
@@ -234,7 +238,7 @@ test('a name found by its fold counts only on the volume\'s own word that both n
   try {
     for (const [what, [first, second]] of Object.entries(answers)) {
       host.lstatSync = (p, options) => {
-        const answer = p === file ? first : p === sibling ? second : null;
+        const answer = p === canonicalFile ? first : p === canonicalSibling ? second : null;
         if (answer === null || options?.bigint !== true) return real(p, options);
         if (answer === 'throws') throw Object.assign(new Error(`EIO: i/o error, lstat '${String(p)}'`), { code: 'EIO' });
         if (answer === 'gone') {
