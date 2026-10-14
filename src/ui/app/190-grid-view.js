@@ -381,6 +381,18 @@ function gridTileOnScreen(prefer) {
   for (let i = state.grid.rangeStart; i <= state.grid.rangeEnd; i++) if (inView(i) && drawn(i)) return drawn(i);
   return null;
 }
+/* The tile standing for one a rebuild took away, for the focus that was on
+   it (review F2.6): the preview pane gives focus back to where it came from,
+   and the Enter that opens it from a tile redraws every tile, so the one it
+   remembered is gone by the close and focus fell to <body>. The same file's
+   tile takes it if it is on screen, else the first tile that is — never one
+   scrolled away (B13). Null for anything that was not a Grid tile. */
+function gridFocusStandIn(el) {
+  const it = gridCellItem.get(el);
+  if (!it) return null;
+  const i = state.grid.layout.findIndex((c) => c.it.path === it.path);
+  return gridTileOnScreen(i === -1 ? null : i);
+}
 $('selClearBtn').addEventListener('click', gridClearSelection);
 $('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.selection]));
 

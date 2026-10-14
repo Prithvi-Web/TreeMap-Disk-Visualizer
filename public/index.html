@@ -30590,7 +30590,13 @@ function closePreview() {
   setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
   // Only when the pane still holds focus: a close that came from elsewhere
   // (a scan landing, a view switch) must not yank the caret across the app.
-  if (pvPrevFocus && document.contains(pvPrevFocus) && pane.contains(document.activeElement)) pvPrevFocus.focus({ preventScroll: true });
+  // A Grid tile it came from has been rebuilt by then — the Enter that
+  // opened the pane redraws every tile — and the tile now standing for that
+  // file takes it (gridFocusStandIn, review F2.6).
+  if (pvPrevFocus && pane.contains(document.activeElement)) {
+    const back = document.contains(pvPrevFocus) ? pvPrevFocus : gridFocusStandIn(pvPrevFocus);
+    if (back) back.focus({ preventScroll: true });
+  }
   pvPrevFocus = null;
 }
 function previewIsOpen() { const p = $('previewPane'); return p && !p.hidden && p.classList.contains('open'); }
@@ -31490,6 +31496,18 @@ function gridTileOnScreen(prefer) {
   if (prefer !== null && inView(prefer) && drawn(prefer)) return drawn(prefer);
   for (let i = state.grid.rangeStart; i <= state.grid.rangeEnd; i++) if (inView(i) && drawn(i)) return drawn(i);
   return null;
+}
+/* The tile standing for one a rebuild took away, for the focus that was on
+   it (review F2.6): the preview pane gives focus back to where it came from,
+   and the Enter that opens it from a tile redraws every tile, so the one it
+   remembered is gone by the close and focus fell to <body>. The same file's
+   tile takes it if it is on screen, else the first tile that is — never one
+   scrolled away (B13). Null for anything that was not a Grid tile. */
+function gridFocusStandIn(el) {
+  const it = gridCellItem.get(el);
+  if (!it) return null;
+  const i = state.grid.layout.findIndex((c) => c.it.path === it.path);
+  return gridTileOnScreen(i === -1 ? null : i);
 }
 $('selClearBtn').addEventListener('click', gridClearSelection);
 $('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.selection]));

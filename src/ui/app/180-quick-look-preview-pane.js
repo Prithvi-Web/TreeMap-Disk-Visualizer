@@ -173,7 +173,13 @@ function closePreview() {
   setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
   // Only when the pane still holds focus: a close that came from elsewhere
   // (a scan landing, a view switch) must not yank the caret across the app.
-  if (pvPrevFocus && document.contains(pvPrevFocus) && pane.contains(document.activeElement)) pvPrevFocus.focus({ preventScroll: true });
+  // A Grid tile it came from has been rebuilt by then — the Enter that
+  // opened the pane redraws every tile — and the tile now standing for that
+  // file takes it (gridFocusStandIn, review F2.6).
+  if (pvPrevFocus && pane.contains(document.activeElement)) {
+    const back = document.contains(pvPrevFocus) ? pvPrevFocus : gridFocusStandIn(pvPrevFocus);
+    if (back) back.focus({ preventScroll: true });
+  }
   pvPrevFocus = null;
 }
 function previewIsOpen() { const p = $('previewPane'); return p && !p.hidden && p.classList.contains('open'); }

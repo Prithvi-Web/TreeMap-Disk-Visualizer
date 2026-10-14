@@ -132,8 +132,23 @@ type Grid = {
   gridItems(): Node[]; updateSelectionBar(): void;
   /** The Escape key's Grid branch, out of the page's keydown handler (gridHarness({ escape: true })). */
   escapeInGrid?(): void;
+  /** The page's own preview pane, in place of the stub (gridHarness({ preview: true })): Escape and Close both call closePreview. */
+  closePreview?(): void;
   settle(): Promise<void>;
 };
+
+/** A top-level `let`/`const` of the built page, up to its first semicolon. */
+function pageDecl(anchor: string): string {
+  const at = INDEX.indexOf(anchor);
+  assert.notEqual(at, -1, `"${anchor}" is in the built page`);
+  return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
+}
+
+/** The quick-look preview pane, as the page has it: what opens it, closes it and remembers where focus came from. */
+function previewPaneSrc(): string {
+  return [pageDecl('const PV_IMG_EXT = '), pageDecl('let pvReqId = '), pageDecl('let pvPrevFocus = '),
+    ...['previewExt', 'previewReflow', 'openPreview', 'closePreview', 'previewIsOpen'].map((n) => braced(`function ${n}(`))].join('\n');
+}
 
 /** The Grid branch of the page keydown handler's Escape chain, as the page has it. */
 function escapeGridBranch(): string {
@@ -152,7 +167,7 @@ function escapeGridBranch(): string {
 
 const file = (dir: string, name: string, size: number): Node => ({ name, path: `${dir}/${name}`, size, type: 'file', modifiedAt: 1 });
 
-function gridHarness(opts: { escape?: boolean; raf?: boolean } = {}): Grid {
+function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean } = {}): Grid {
   const src = slice('/* ───────────────────────────── Grid view ───────────────────────────── */',
     '/* ───────────────────────────── Apps view (Feature 18) ───────────────────────────── */');
   const els: Record<string, FakeEl> = {};
@@ -197,10 +212,30 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean } = {}): Grid {
     // stub that matched on ".view.active" alone held whatever the selector said.
     querySelectorAll: (sel: string) => selectAll(screen.body, sel),
     querySelector: (sel: string) => selectAll(screen.body, sel)[0] ?? null,
+    // The preview pane reads the page's body class and whether an element is
+    // still in the document: one a rebuild took out of its parent is not.
+    ...(opts.preview ? {
+      body: screen.body,
+      contains: (n: FakeEl | null) => {
+        for (let p = n; p; p = p.parent) {
+          if (p === screen.body || Object.values(els).includes(p)) return true;
+          if (!p.parent || !p.parent.children.includes(p)) return false;
+        }
+        return false;
+      },
+    } : {}),
   };
+  // The window's resize signal reaches the Grid's own listener: the preview
+  // pane replays it when it narrows or widens the page (QA C04).
+  const winListeners: Record<string, ((e: unknown) => void)[]> = {};
+  const win = {
+    addEventListener: (t: string, f: (e: unknown) => void) => { (winListeners[t] ||= []).push(f); },
+    dispatchEvent: (e: { type: string }) => { for (const f of winListeners[e.type] || []) f(e); return true; },
+  };
+  if (opts.preview) { $('previewPane').hidden = true; $('previewPane').appendChild($('pvClose')); }
   const pending: Promise<unknown>[] = [];
   const deps: Record<string, unknown> = {
-    $, state, document, window: { addEventListener: () => {} },
+    $, state, document, window: win,
     getComputedStyle: (el: FakeEl) => {
       assert.equal(el, scroller, 'the Grid asks the computed style of its scroller only');
       return { paddingTop: `${pads().top}px`, paddingBottom: `${pads().bottom}px` };
@@ -222,14 +257,22 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean } = {}): Grid {
     nodeFor: (p: string) => pathIndex.get(p), isCloudScan: () => false, confirmTrash: () => {},
     openInOS: () => {}, showCtxMenu: () => {}, showTooltip: () => {}, hideTooltip: () => {}, openPreview: () => {},
   };
+  if (opts.preview) {
+    delete deps.openPreview;
+    Object.assign(deps, {
+      toast: () => {}, chipFor: () => '', formatDate: String, loadProvenance: () => {}, api: () => new Promise(() => {}),
+      Image: class {}, highlightCode: String, renderPreviewMeta: () => {},
+    });
+  }
   const names = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const escape = opts.escape ? `function escapeInGrid() { ${escapeGridBranch()} }` : 'const escapeInGrid = undefined;';
   const api = new Function(...names, `'use strict'; ${src}
     ${braced('function activeViewControl(')}
     ${escape}
-    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid };`)(...names.map((n) => deps[n])) as
-    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid'>;
+    ${opts.preview ? previewPaneSrc() : 'const closePreview = undefined;'}
+    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid, closePreview };`)(...names.map((n) => deps[n])) as
+    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid' | 'closePreview'>;
   // renderGrid is async; navigation calls it without awaiting.
   const wrapped = {
     ...api,
@@ -1368,6 +1411,58 @@ test('every tile is a button in the Tab order, and its own click, Enter and Spac
   fire(3, 'keydown', key('a'));
   assert.deepEqual(selected(), [pathOf(2), pathOf(9)].sort(), 'another key selects nothing');
   assert.equal(prevented, 2, 'and is left to the page');
+});
+
+/* ══════════════ review F2.6 — the preview pane gives focus back to the Grid tile it was opened from ══════════════ */
+
+test('closing the preview pane opened from a Grid tile with Enter gives focus back to that file’s tile, though the tile was rebuilt under it (review F2.6)', async (t) => {
+  // The pane remembers the element focus came from and gives it back on
+  // close. The Enter that opens it from a tile selects the tile too, and
+  // that redraws every tile (and the pane's re-flow redraws them again), so
+  // what it remembered was detached by the close and focus fell to <body>:
+  // the next Tab started at the top of the page, far from the place in a
+  // 25,000-tile Grid.
+  const open = async (k: number) => {
+    const g = gridHarness({ raf: true, preview: true });
+    evenPlant(g, 400);
+    sizeFromSheet(g, 1440, 900, false);
+    await g.renderGrid();
+    const tile = g.els.gridInner.children.find((c) => Number(c.dataset.i) === k)!;
+    tile.focus(); // Tab reached it
+    tile.listeners.keydown![0]({ key: 'Enter', preventDefault: () => {} });
+    await g.settle();
+    assert.equal(FOCUS.active, g.els.pvClose, 'control: the pane took the focus, on its Close button');
+    assert.ok(!g.els.gridInner.children.includes(tile), 'control: the tile it was opened from was rebuilt — a new tile stands for the file');
+    return g;
+  };
+  const focusedTile = (g: Grid) => {
+    const el = FOCUS.active;
+    assert.ok(el && g.els.gridInner.children.includes(el), `focus is on a tile in the Grid (it is on ${el ? `${el.id || el.tagName} data-i ${el.dataset.i}` : 'nothing'})`);
+    assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'and moving it scrolled nothing');
+    return Number(el!.dataset.i);
+  };
+
+  await t.test('the file’s tile is on screen: it takes the focus', async () => {
+    const g = await open(6);
+    g.closePreview!(); // Escape, or Close
+    assert.equal(focusedTile(g), 6, 'the same file’s tile, 6');
+    await g.settle(); // the re-flow the page's widening brings
+    assert.equal(focusedTile(g), 6, 'and it keeps the focus through the re-flow the close brings');
+  });
+
+  // Scrolled away while the pane was open: never a tile off screen (B13) —
+  // the first one on screen, where the next Tab carries on.
+  await t.test('the file’s tile was scrolled away: the first tile on screen takes it', async () => {
+    const g = await open(6);
+    const sc = g.els.gridScroll;
+    sc.scrollTop = 50 * 268; for (const f of sc.listeners.scroll || []) f({});
+    assert.ok(!g.els.gridInner.children.some((c) => Number(c.dataset.i) === 6), 'control: tile 6 is no longer built');
+    g.closePreview!();
+    const first = g.state.grid.layout.findIndex((c) => c.y + c.side > sc.scrollTop);
+    assert.equal(focusedTile(g), first, `the first tile on screen, ${first}`);
+    await g.settle();
+    assert.equal(focusedTile(g), first, 'and it keeps the focus through the re-flow the close brings');
+  });
 });
 
 /* ══════════════ review F1.9 — the layout is measured with the scroller's own scrollbar in place ══════════════ */
