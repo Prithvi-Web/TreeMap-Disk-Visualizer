@@ -868,10 +868,10 @@ test('with a drive connected the drive dock under the map is counted when the ma
   }
 });
 
-test('the map is fitted again when the drive dock appears or goes, or the alternate renderers\' note does (fifth browser pass F06)', () => {
+test('the map is fitted again when the drive dock appears or goes (fifth browser pass F06)', () => {
   const rows = /const TM_CHROME_ROWS = \[([^\]]*)\];/.exec(INDEX);
   const list = [...rows![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  for (const sel of ['#tmDock', '#tmAltNote']) assert.ok(list.includes(sel), `${sel} is watched (${list.join(', ')})`);
+  assert.ok(list.includes('#tmDock'), `#tmDock is watched (${list.join(', ')})`);
   // The page's own tmRefitMap over a dock that a drive's arrival shows and its removal hides.
   let shown = false;
   const draws: string[] = [];
@@ -900,6 +900,184 @@ test('the map is fitted again when the drive dock appears or goes, or the altern
   fns.tmRefitMap();
   assert.deepEqual(draws, ['draw', 'draw'], 'the dock going gives the map its room back');
   assert.equal(tmCanvas.style.height, without);
+});
+
+/* ══════════════ F06 review F1.1 — the alternate renderers' note settles once, and never feeds the layout back ══════════════ */
+
+/** The alternate renderers' note: a line is 11.5 px type at 1.5 (.tm-altnote), and this many characters fill one in the map's width. */
+const NOTE_LINE_H = 17.25;
+const NOTE_LINE_CHARS = 100;
+
+/**
+ * A Circles or Voronoi map drawn by the page's own drawView, drawCells, buildCells, refinement loop,
+ * tmSizeCanvas, treemapCanvasHeight, tmRefitMap and tmCellsSettle, under the drive-less footer and the
+ * note the layout writes (#tmAltNote: as many lines as its text needs, nothing while hidden). The
+ * solver takes `slices` slices — "still laying out" until its last — and settles on `finalNote(cssH)`
+ * for the height it was given. A ResizeObserver watches the rows the page's TM_CHROME_ROWS names that
+ * are here (the note), and calls tmRefitMap at the end of a frame in which one changed height, as the
+ * browser does. `frames(n)`: n frames of 16 ms — timers due, then the animation frames asked for
+ * before it, then the observer. `solves`: full layouts begun (a slice resumed is not one).
+ */
+function altNoteWorld(finalNote: (cssH: number) => string, slices = 3) {
+  const w = { now: 0, solves: 0 };
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  let tid = 0;
+  let animation: Array<() => void> = [];
+  const note = {
+    id: 'tmAltNote', tagName: 'DIV', hidden: true, textContent: '', nextElementSibling: null,
+    getClientRects() { return note.hidden ? [] : [{}]; },
+    getBoundingClientRect: () => ({ height: note.hidden ? 0 : Math.ceil(note.textContent.length / NOTE_LINE_CHARS) * NOTE_LINE_H }),
+  };
+  const foot = { getBoundingClientRect: () => ({ height: 17 }), nextElementSibling: note };
+  const wrap = { clientWidth: 1220, getBoundingClientRect: () => ({ top: 150 }), parentElement: { querySelector: () => foot }, closest: () => ({}) };
+  const tmCanvas = { style: { height: '', width: '' }, width: 0, height: 0 };
+  const solve = (_root: unknown, geo: { cssH: number }, resume?: { slice: number }) => {
+    const slice = resume ? resume.slice : 0;
+    if (!resume) w.solves++;
+    const done = slice === slices - 1;
+    return { cells: [], done, resume: { slice: slice + 1 }, note: done ? finalNote(geo.cssH) : '' };
+  };
+  const ctx = new Proxy({}, { get: () => () => {}, set: () => true });
+  const state = {
+    view: 'treemap',
+    treemap: { rootPath: '/c', mode: 'voronoi', colorMode: 'size', cells: [], altNote: '', altMs: 0, altRaf: 0, altZoomRaf: 0, altZoom: null },
+  };
+  const optional = ['altNoteRefitDue', 'altNoteRefitting', 'altNoteSettled'].filter((name) => INDEX.includes(`let ${name} = `) || INDEX.includes(`function ${name}(`));
+  const fns = runPageDecls<{
+    drawView(): void; tmRefitMap(): void; treemapCanvasHeight(el: unknown): number; rows: string[]; altRefineCancel(): void; renderAltNote(): void;
+  }>([
+    'isSun', 'isCells', 'drawView', 'treemapCanvasHeight', 'TM_CHROME_ROWS', 'tmRefitMap', 'tmResizeDeb', 'tmCellsSettle', 'tmSizeCanvas',
+    'renderAltNote', 'altRefineSeq', 'altRefiningNote', 'altRefineCancel', 'altRefineSchedule', 'buildCells', 'drawCells', ...optional,
+  ], {
+    $: (id: string) => (id === 'treemapWrap' ? wrap : id === 'tmAltNote' ? note : null),
+    state, tmCanvas, tmBuffer: { width: 0, height: 0 }, tmBufCtx: ctx,
+    window: { innerHeight: 900, devicePixelRatio: 1 },
+    document: { hidden: false },
+    getComputedStyle: (el: unknown) => (el === wrap ? { paddingTop: '10px', paddingBottom: '10px' }
+      : el === note ? { marginTop: '6px' } : { marginTop: '12px', paddingBottom: '48px' }),
+    setTimeout: (fn: () => void, ms: number) => { timers.set(++tid, { at: w.now + ms, fn }); return tid; },
+    clearTimeout: (id: number) => { timers.delete(id); },
+    requestAnimationFrame: (fn: () => void) => { animation.push(fn); return animation.length; },
+    cancelAnimationFrame: () => {},
+    performance: { now: () => w.now },
+    sunburstRoot: () => ({ path: '/c' }), layoutVoronoi: solve, layoutCirclePack: solve,
+    formatCount: String, cssVar: () => '#000',
+    fxShapeSync() {}, repaintCells() {}, drawPackedCircle() {}, drawVoronoiCell() {}, altDrawLabels() {},
+    renderSearchOverlay() {}, renderCellsStatus() {}, presentCells() {}, renderTmLegend() {}, fetchScoresForTreemap() {},
+    drawTreemap() {}, drawSunburst() {},
+  }, '{ drawView, tmRefitMap, treemapCanvasHeight, rows: TM_CHROME_ROWS, altRefineCancel, renderAltNote }');
+  const observed = fns.rows.includes('#tmAltNote') ? [note] : [];
+  const seen = new Map(observed.map((el) => [el, el.getBoundingClientRect().height]));
+  const frames = (n: number) => {
+    for (let i = 0; i < n; i++) {
+      w.now += 16;
+      for (;;) {
+        const due = [...timers].filter(([, t]) => t.at <= w.now).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        due[1].fn();
+      }
+      const asked = animation;
+      animation = [];
+      for (const fn of asked) fn();
+      let moved = false;
+      for (const el of observed) {
+        const h = el.getBoundingClientRect().height;
+        if (h !== seen.get(el)) { seen.set(el, h); moved = true; }
+      }
+      if (moved) fns.tmRefitMap();
+    }
+  };
+  /** The map is the height the window leaves it under the note now on screen. */
+  const fitted = () => tmCanvas.style.height === `${fns.treemapCanvasHeight(wrap)}px`;
+  /** What setTreemapView does on a renderer switch, before it draws: the refinement and its note let go. */
+  const switchTo = (mode: string) => {
+    state.treemap.mode = mode;
+    fns.altRefineCancel();
+    state.treemap.altNote = '';
+    fns.renderAltNote();
+  };
+  return { w, note, frames, fitted, switchTo, drawView: fns.drawView };
+}
+
+test('a Circles or Voronoi layout that settles on a note of another height is fitted to it with one more solve, and never re-solves for ever (review F1.1 of fifth browser pass F06)', () => {
+  // Review F1.1: F06 counted the note in the map's height and watched it. A layout over several
+  // slices writes "still laying out" (one line), then its own last word — nothing, or two lines in a
+  // narrow window — and each change of height re-solved the whole layout, which wrote "still laying
+  // out" again: 61 full Voronoi solves in 9.6 s, the map's height jumping by the note's each time.
+  const twoLines = 'x'.repeat(170);
+  const oneLine = 'x'.repeat(60);
+  const cases: Array<[string, (cssH: number) => string, number, number]> = [
+    // label, the note the layout settles on, slices, the solves it takes to fit
+    ['a layout that leaves nothing out (its note goes)', () => '', 3, 1],
+    ['a note that wraps to two lines', () => twoLines, 3, 2],
+    ['a one-line note, where none was before', () => oneLine, 3, 2],
+    ['a layout finished in its first slice, with a two-line note', () => twoLines, 1, 2],
+  ];
+  for (const [label, finalNote, slices, solves] of cases) {
+    const m = altNoteWorld(finalNote, slices);
+    m.drawView();
+    m.frames(600); // 9.6 s with the view up
+    assert.equal(m.w.solves, solves, `${label}: ${m.w.solves} full solves in 9.6 s`);
+    assert.ok(m.fitted(), `${label}: and the map is fitted to the note it settled on`);
+    assert.equal(m.note.hidden, finalNote(0) === '', `${label}: control — the note shown is the layout's last word`);
+  }
+  // A drill-in to a map whose note differs from the one on screen: its draw, and one solve to fit.
+  let next = twoLines;
+  const drill = altNoteWorld(() => next);
+  drill.drawView(); drill.frames(600);
+  assert.ok(drill.fitted() && drill.w.solves === 2, 'control: the first map settled under its two-line note');
+  next = '';
+  drill.drawView(); drill.frames(600);
+  assert.equal(drill.w.solves - 2, 2, 'a drill-in to a map with no note: its draw and one refit');
+  assert.ok(drill.fitted(), 'and the map is fitted to the note gone');
+  // A refit owed to a layout the person switched away from is not spent on the next layout.
+  const sw = altNoteWorld(() => twoLines);
+  sw.drawView();
+  sw.frames(3); // the layout settles on its two-line note, and its refit waits out its 160 ms
+  sw.switchTo('treemap'); // the Treemap, before the refit runs
+  sw.frames(20);
+  sw.switchTo('voronoi'); // and back
+  sw.drawView();
+  sw.frames(600);
+  assert.ok(sw.fitted(), 'switched away and back, the new layout is fitted to its own note');
+});
+
+test('a note whose height follows the map\'s own height stands after the one refit — the layout is never solved back and forth (review F1.1 of fifth browser pass F06)', () => {
+  // A note can depend on the height it was solved for: more is too small to draw in a shorter map. One
+  // that is three lines in the taller map and nothing in the shorter one would move the map between
+  // the two for ever if every settled note were fitted to.
+  const flip = altNoteWorld((cssH) => (cssH > 600 ? 'x'.repeat(250) : ''));
+  flip.drawView();
+  flip.frames(600);
+  assert.equal(flip.w.solves, 2, `the refit's own note stands: ${flip.w.solves} full solves in 9.6 s`);
+});
+
+test('the rectangle map writes its note before it measures, so one draw fits it (review F1.1 of fifth browser pass F06)', () => {
+  // The note is no longer watched (the alternate renderers' answer fed back into their layout), so a
+  // draw measured under the note it is about to write would leave the page that much past the window.
+  const note = {
+    tagName: 'DIV', hidden: true, textContent: '', nextElementSibling: null,
+    getClientRects() { return note.hidden ? [] : [{}]; },
+    getBoundingClientRect: () => ({ height: note.hidden ? 0 : Math.ceil(note.textContent.length / NOTE_LINE_CHARS) * NOTE_LINE_H }),
+  };
+  const foot = { getBoundingClientRect: () => ({ height: 17 }), nextElementSibling: note };
+  const wrap = { clientWidth: 1220, getBoundingClientRect: () => ({ top: 150 }), parentElement: { querySelector: () => foot }, closest: () => ({}) };
+  const tmCanvas = { style: { height: '', width: '' }, width: 0, height: 0 };
+  const capNote = 'The map holds at most 20,000 items, and this folder reached that: 3.1 GB has no rectangle here — drill in, or open the Grid view, to see the rest.';
+  const fns = runPageDecls<{ drawTreemap(): void; treemapCanvasHeight(el: unknown): number }>(['treemapCanvasHeight', 'renderAltNote', 'drawTreemap'], {
+    $: (id: string) => (id === 'treemapWrap' ? wrap : id === 'tmAltNote' ? note : null),
+    state: { treemap: { nodes: [], hideCloud: false, rootSize: 0, altNote: '' } },
+    tmCanvas, tmBuffer: { width: 0, height: 0 }, tmBufCtx: new Proxy({}, { get: () => () => {}, set: () => true }),
+    window: { innerHeight: 900, devicePixelRatio: 1 },
+    getComputedStyle: (el: unknown) => (el === wrap ? { paddingTop: '10px', paddingBottom: '10px' }
+      : el === note ? { marginTop: '6px' } : { marginTop: '12px', paddingBottom: '48px' }),
+    cssVar: () => '#000', tmNodeCapNote: () => capNote, formatBytes: (n: number) => `${n} B`,
+    tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+  }, '{ drawTreemap, treemapCanvasHeight }');
+  fns.drawTreemap();
+  assert.equal(note.hidden, false, 'control: the map at the cap says so under it');
+  assert.equal(tmCanvas.style.height, `${fns.treemapCanvasHeight(wrap)}px`, 'and the map is fitted under that note by the draw that wrote it');
 });
 
 /**
@@ -1272,6 +1450,8 @@ function refineWorld(colorMode: string, slices: number[]) {
       performance: { now: () => 0 },
       requestAnimationFrame: (f: () => void) => frames.push(f), cancelAnimationFrame: () => {},
       fxShapeSync() {}, repaintCells() {}, renderAltNote() {}, drawTreemap() {}, drawSunburst() {},
+      // The note's refit (review F1.1 of F06) is altNoteWorld's to test.
+      altNoteRefitDue: false, altNoteSettled() {},
       renderTmLegend: () => { legends++; },
       formatCount: String, reclaimAskableNode: () => true, TM_SCORE_CAP: 6000,
       ensureScores: (paths: string[]) => { asked.push([...paths]); return Promise.resolve(); },

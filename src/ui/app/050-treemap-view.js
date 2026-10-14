@@ -480,9 +480,11 @@ function tmRefitMap() {
   if (isCells()) { tmCellsSettle(); return; }
   drawView();
 }
-// The drive dock and the alternate renderers' note come and go under the
-// footer: a drive connected or ejected, a note written after a draw (F06).
-const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock', '#tmDock', '#tmAltNote'];
+// The drive dock comes and goes under the footer as a drive is connected or
+// ejected (F06). The alternate renderers' note is counted but not watched:
+// it is their layout's own answer, and watched it fed every answer back into
+// the layout — altNoteSettled fits the map to it instead (review F1.1).
+const TM_CHROME_ROWS = ['#view-treemap .tm-toolbar', '#tmQueryBar', '#tmTimebar', '#view-treemap .tm-foot', '#cartDock', '#tmDock'];
 if (typeof ResizeObserver !== 'undefined') {
   const tmChromeRo = new ResizeObserver(() => tmRefitMap());
   for (const sel of TM_CHROME_ROWS) { const el = document.querySelector(sel); if (el) tmChromeRo.observe(el); }
@@ -584,6 +586,12 @@ function tmLeafFill(ctx, base, depthFade, y, h) {
 }
 
 function drawTreemap() {
+  // QA D58 — the server stops a map at 20,000 nodes and its response cannot
+  // say so (§12 golden lock), so the note under the map does. Written before
+  // the map is measured: it is a row under the footer, which the map's height
+  // counts, and it depends on the nodes alone (review F1.1 of F06).
+  state.treemap.altNote = tmNodeCapNote();
+  renderAltNote();
   const wrap = $('treemapWrap');
   const cssW = wrap.clientWidth - 20;
   const cssH = treemapCanvasHeight(wrap);
@@ -612,10 +620,6 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded });
   }
   state.treemap.pxRects = px;
-  // QA D58 — the server stops a map at 20,000 nodes and its response cannot
-  // say so (§12 golden lock), so the note under the map does.
-  state.treemap.altNote = tmNodeCapNote();
-  renderAltNote();
 
   // A map with nothing to draw must say so — a blank panel reads as a broken
   // app, not as a small folder. loadTreemap already dropped the 4 KB floor

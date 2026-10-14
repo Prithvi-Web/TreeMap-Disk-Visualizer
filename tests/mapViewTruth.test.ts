@@ -2063,7 +2063,10 @@ test('D58: every rectangle-map paint refreshes the note under the map', () => {
   const start = INDEX.indexOf('function drawTreemap() {');
   const body = INDEX.slice(start, INDEX.indexOf('\n}', start));
   const at = body.indexOf('state.treemap.altNote = tmNodeCapNote();');
-  assert.ok(at > body.indexOf('state.treemap.pxRects = px;'), 'drawTreemap writes the note once it knows what it drew');
+  assert.notEqual(at, -1, 'drawTreemap writes the note (from the nodes alone)');
+  // Review F1.1 of fifth browser pass F06: the note is a row under the footer that the map's height
+  // counts, and it is no longer watched — written after the measuring, it ran the page past the window.
+  assert.ok(at < body.indexOf('treemapCanvasHeight(wrap)'), 'before it measures the map, whose height counts the note');
   assert.ok(at < body.indexOf('if (!px.length)'), 'before the empty-map return, so a stale note never outlives its map');
   assert.match(body.slice(at, at + 200), /renderAltNote\(\);/, 'and shows it');
 });

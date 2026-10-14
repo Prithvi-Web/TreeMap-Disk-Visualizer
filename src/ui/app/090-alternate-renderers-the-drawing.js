@@ -456,6 +456,32 @@ function altRefineCancel() {
   // FX: every door out of the refinement loop — the next buildCells, a
   // renderer switch, the view's unmount — also takes the shaping orb with it.
   fxShapeSync(false);
+  // And a refit owed to the note of the layout being left: the next layout
+  // settles on a note of its own.
+  altNoteRefitDue = false;
+}
+
+/* The note under Circles and Voronoi is the layout's own last word — what it
+   left out, whether its areas are approximate — so it is written after the
+   canvas was measured, and the map's height counts it (treemapCanvasHeight,
+   F06). Once a layout settles, the map is fitted to the note it settled on:
+   when the height the map should have under that note is not the one it was
+   drawn at, the layout is solved once more, through tmCellsSettle. That
+   solve's own note stands, whatever its height — a note can depend on the
+   height it was solved for (more is too small to draw in a shorter map), and
+   fitted to every time, it could move the map back and forth for ever. The
+   note is not watched for this (TM_CHROME_ROWS): watched, "still laying out"
+   and the settled note each moved the height in turn, and every move
+   re-solved the layout, which wrote "still laying out" again — a full
+   Voronoi solve every 160 ms while the view was up (review F1.1 of F06). */
+let altNoteRefitDue = false; // tmCellsSettle's next solve fits the map to a settled note
+let altNoteRefitting = false; // the layout on screen is that solve
+
+function altNoteSettled() {
+  if (altNoteRefitting || state.view !== 'treemap') return;
+  if (tmCanvas.style.height === treemapCanvasHeight($('treemapWrap')) + 'px') return;
+  altNoteRefitDue = true;
+  tmCellsSettle();
 }
 
 function altRefineSchedule(root, geo, resume) {
@@ -473,6 +499,7 @@ function altRefineSchedule(root, geo, resume) {
     repaintCells();
     renderAltNote();
     if (!out.done) altRefineSchedule(root, geo, out.resume);
+    else altNoteSettled(); // the map fitted to the note the layout settled on
     fxShapeSync(!out.done); // FX: the chip settles the moment the queue does
     // drawView asked for Reclaim scores while only the first slice was drawn;
     // the shapes the later slices added stayed unscored grey (B26 review
@@ -603,6 +630,9 @@ function paintCells() {
 }
 
 function drawCells() {
+  // Whether this solve is the one refit owed to a settled note (altNoteSettled).
+  altNoteRefitting = altNoteRefitDue;
+  altNoteRefitDue = false;
   const geo = tmSizeCanvas();
   const ctx = tmBufCtx;
   buildCells(geo);
@@ -633,6 +663,8 @@ function drawCells() {
   presentCells();
   renderTmLegend();
   renderAltNote();
+  // A layout finished in this one slice has settled on its note already.
+  if (!state.treemap.altRaf) altNoteSettled();
 }
 
 /**
