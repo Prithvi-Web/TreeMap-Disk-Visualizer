@@ -166,6 +166,21 @@
 .tour-card .tour-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .tour-card .tour-step { color: var(--text-3); font-size: 10.5px; margin-bottom: 5px;
   text-transform: uppercase; letter-spacing: 0.4px; }
+/* The step's name and "Skip the tour" share the header line (design pass
+   G03): in the row of actions Skip wrapped alone onto a second line. A quiet
+   text button, with the 24 px target WCAG 2.5.8 asks for. */
+.tour-card .tour-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
+.tour-card .tour-head .tour-step { margin-bottom: 0; }
+.tour-card .tour-skip { appearance: none; background: none; border: 0; margin: -4px -6px; padding: 4px 6px; min-height: 24px;
+  font: inherit; font-size: 11.5px; color: var(--text-2); border-radius: var(--r-sm); cursor: var(--cur-hand); white-space: nowrap; }
+.tour-card .tour-skip:hover { color: var(--text-1); text-decoration: underline; }
+.tour-card .tour-skip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A quick win's items: name, folder and size, one line each (G04). */
+.tour-card .tour-items { display: block; margin-top: 8px; }
+.tour-card .tour-item { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12px; line-height: 1.6; }
+.tour-card .tour-item b { color: var(--text-1); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tour-card .tour-item .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tour-card .tour-item .num { margin-left: auto; padding-left: 8px; white-space: nowrap; }
 #rcPopover .rc-pop-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; font-size: 13px; }
 #rcPopover .rc-pop-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #rcPopover .rc-why { margin: 0; background: transparent; border: 0; padding: 0; }

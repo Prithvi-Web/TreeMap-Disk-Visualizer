@@ -24,7 +24,12 @@ function tourMaybeStart(done) {
 async function tourFinish(message) {
   if (!tour.active) return;
   tour.active = false;
+  // Finish, Skip and Escape all take the card away, and focus on its button
+  // would fall to <body> with it (design pass G11). Focus that was elsewhere
+  // is left where it is.
+  const held = $('tourOverlay').contains(document.activeElement);
   $('tourOverlay').hidden = true;
+  if (held) { const to = tourLanding(); if (to) to.focus({ preventScroll: true }); }
   if (message) toast(message);
   try {
     await api('/api/settings', {
@@ -34,56 +39,59 @@ async function tourFinish(message) {
   } catch { /* a failed write means the tour offers itself again next launch — honest */ }
 }
 
+/** Where focus goes when the card closes holding it (G11): the welcome's own
+    "Choose a folder" while it is up, the map the card was describing, else the
+    view's first control, else the view's own tab — never <body>. */
+function tourLanding() {
+  const shown = (el) => !!el && !el.disabled && el.getClientRects().length > 0;
+  const cta = $('emptyBrowseBtn');
+  if (shown(cta)) return cta;
+  const map = $('treemapCanvas');
+  if (state.view === 'treemap' && shown(map)) return map;
+  return activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+}
+
 function tourRender() {
   if (!tour.active) return;
   const host = $('tourCard');
   $('tourOverlay').hidden = false;
-  const skipBtn = `<button class="btn" data-tour-skip>Skip the tour</button>`;
+  // "Skip the tour" lives in the card's header, apart from the step's own
+  // actions: in the row it wrapped alone onto a second line, and sat beside
+  // "Skip this one" (design pass G03). The closing steps offer only Finish.
+  const head = (label, skippable = true) => `<div class="tour-head"><span class="tour-step">${label}</span>` +
+    (skippable ? '<button class="tour-skip" data-tour-skip>Skip the tour</button>' : '') + '</div>';
   if (tour.step === 'welcome') {
+    // The welcome behind the card already says what TreeMap does and holds the
+    // one primary action, "Choose a folder to get started" (G03): this card
+    // repeated its words and put a second blue button beside it, focused, so
+    // Enter scanned the home folder. It now offers the home folder as the
+    // alternative it is, and nothing the welcome already offers.
     const home = state.system && state.system.homeDir;
     host.innerHTML = `
-      <div class="tour-step">Welcome · step 1 of 4</div>
-      <h4>${icon('treemap', 16)}See where your disk went</h4>
-      <p>TreeMap draws every file and folder as a map — the bigger the rectangle, the more space it takes. Start by scanning a folder${home ? ', or just use your home folder' : ' (type a path in the box up top)'}.</p>
-      <div class="tour-row">
-        ${home ? `<button class="btn btn-primary" data-tour-home>Scan my home folder</button>` : ''}
-        <button class="btn" data-tour-pick>I’ll pick my own</button>
-        ${skipBtn}
-      </div>`;
+      ${head('Welcome · step 1 of 4')}
+      <h4>${icon('treemap', 16)}Start with one folder</h4>
+      <p>Pick a folder to look at first — scanning only reads it; nothing is moved or deleted.${home ? ' Your home folder is a good place to start.' : ''}</p>
+      ${home ? '<div class="tour-row"><button class="btn" data-tour-home>Scan my home folder</button></div>' : ''}`;
     if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { startScan(home); });
-    host.querySelector('[data-tour-pick]').addEventListener('click', () => {
-      // Before any scan the top path box is not on screen, and focusing a
-      // hidden input does nothing at all, silently (summonGlobalSearch
-      // documents the same trap). The zero-state's own affordance is the
-      // folder browser — hand the user exactly the control they can see.
-      const pi = $('pathInput');
-      if (pi.offsetParent === null) { openBrowse(null); return; }
-      pi.focus();
-      pi.select();
-    });
   } else if (tour.step === 'scanning') {
     // The click registered — say so. The old card kept offering "Scan my
     // home folder" for the whole scan, and a second press earned a red
     // "already running" toast within the first ten seconds.
     const name = state.root ? state.root.name : ($('pathInput').value.trim() || 'this folder');
     host.innerHTML = `
-      <div class="tour-step">Welcome · step 1 of 4</div>
+      ${head('Welcome · step 1 of 4')}
       <h4>${icon('loader', 16)}Reading your files…</h4>
-      <p>TreeMap is measuring every file and folder in ${escapeHtml(name)}. The map appears the moment it finishes — a big folder can take a minute.</p>
-      <div class="tour-row">${skipBtn}</div>`;
+      <p>TreeMap is measuring every file and folder in ${escapeHtml(name)}. The map appears the moment it finishes — a big folder can take a minute.</p>`;
   } else if (tour.step === 'map') {
     host.innerHTML = `
-      <div class="tour-step">The map · step 2 of 4</div>
+      ${head('The map · step 2 of 4')}
       <h4>${icon('treemap', 16)}This is your disk as a map</h4>
       <p>Every rectangle is a file or folder; bigger means more space. Click a folder to open it, one level at a time; press <kbd>Esc</kbd> to climb back up a level, and hover anything for the details.</p>
-      <div class="tour-row">
-        <button class="btn btn-primary" data-tour-wins>Show me what I could free</button>
-        ${skipBtn}
-      </div>`;
+      <div class="tour-row"><button class="btn btn-primary" data-tour-wins>Show me what I could free</button></div>`;
     host.querySelector('[data-tour-wins]').addEventListener('click', () => { void tourLoadWins(); });
   } else if (tour.step === 'clean') {
     host.innerHTML = `
-      <div class="tour-step">All done</div>
+      ${head('All done', false)}
       <h4>${icon('checkCircle', 16)}This folder looks clean</h4>
       <p>TreeMap has nothing safe to suggest here — no caches, no rebuildable folders, no obvious junk. That is a good result, and the honest end of the tour.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
@@ -92,7 +100,7 @@ function tourRender() {
     // Not "clean" — "couldn't check". A blank good-news card over an error
     // would be exactly the confident wrongness this app exists to avoid.
     host.innerHTML = `
-      <div class="tour-step">One thing unchecked</div>
+      ${head('One thing unchecked', false)}
       <h4>${icon('alert', 16)}Couldn&rsquo;t check for quick wins</h4>
       <p>${escapeHtml(tour.unknownReason || 'Suggestions are not available right now.')} The Clean Up view will have more to say once it can look.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
@@ -101,13 +109,12 @@ function tourRender() {
     const g = tour.wins[tour.winIx];
     const already = g.items.every((it) => state.cart.has(it.path));
     host.innerHTML = `
-      <div class="tour-step">Quick win ${tour.winIx + 1} of ${tour.wins.length} · step 3 of 4</div>
+      ${head(`Quick win ${tour.winIx + 1} of ${tour.wins.length} · step 3 of 4`)}
       <h4>${icon('sparkles', 16)}${escapeHtml(g.title)} — ${formatBytes(g.totalSize)}</h4>
       <p>${tourWinLine(g)}</p>
       <div class="tour-row">
         <button class="btn btn-primary" data-tour-add ${already ? 'disabled' : ''}>${already ? 'Already in the cart' : 'Add to cart'}</button>
         <button class="btn" data-tour-next>Skip this one</button>
-        ${skipBtn}
       </div>`;
     host.querySelector('[data-tour-add]').addEventListener('click', () => {
       // The one place the tour touches the cart — inside the user's click.
@@ -117,11 +124,13 @@ function tourRender() {
     host.querySelector('[data-tour-next]').addEventListener('click', tourAdvanceWin);
   } else if (tour.step === 'cart') {
     host.innerHTML = `
-      <div class="tour-step">The cart · step 4 of 4</div>
+      ${head('The cart · step 4 of 4', false)}
       <h4>${icon('cart', 16)}Staged — deleted only when you say so</h4>
       <p>${tour.staged > 0
-        ? `Everything you added is waiting in the cleanup cart at the bottom. Nothing has been deleted.`
-        : `You added nothing — also fine. The cart at the bottom is where anything you stage waits.`}
+        ? `Everything you added is waiting in the cleanup cart at the bottom right. Nothing has been deleted.`
+        // The cart is drawn only once it holds something, so with nothing
+        // staged there is no cart at the bottom to point at (G04).
+        : `You added nothing — also fine. Anything you add later waits in a cleanup cart that appears at the bottom right once it holds something.`}
         Committing the cart runs a preview first, protects files in the Time Capsule, and a run can be undone in one click until the Time Capsule removes its copies.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete — the map is yours'); });
@@ -131,18 +140,44 @@ function tourRender() {
   // The card takes focus so keyboard users land on its primary action — but
   // never out of a text field. A scan completing repaints this card, and
   // yanking the caret from someone mid-word is how a coach becomes a pest.
+  // On the welcome step the one primary on screen is the welcome's own
+  // "Choose a folder" while it is up (G03); otherwise the card's first
+  // action. Skip, which sits apart in the header, only when the card has
+  // nothing else — the scanning step, painted over the "Scan my home folder"
+  // that held focus, which would otherwise fall to <body> (G11).
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-  const primary = host.querySelector('.btn-primary') || host.querySelector('button');
+  const cta = tour.step === 'welcome' ? $('emptyBrowseBtn') : null;
+  const primary = (cta && cta.getClientRects().length > 0 ? cta : null) ||
+    host.querySelector('.btn-primary') || host.querySelector('.tour-row button') || host.querySelector('[data-tour-skip]');
   if (primary && !typing) primary.focus();
 }
 
-/** A quick win's sentence: the rule's description ended as a sentence, then
-    what matched (QA D06: the descriptions carry no full stop, so the card read
-    "…fetched crates A folder named target…"). */
+/** How many of a quick win's items its card names; the rest are counted. */
+const TOUR_WIN_ITEMS = 3;
+
+/** A quick win's words: the rule's own description, ended as a sentence (QA
+    D06: the descriptions carry no full stop), then what it found — each item's
+    name, the folder it is in and its size (design pass G04). The rule's matcher
+    wording ("A folder named .next; or a folder named dist sitting next to
+    package.json, next.config.*…") is for the Clean Up view, not the tour. The
+    server lists at most 200 items a rule while its total counts every match,
+    so the rest are counted only when the listed sizes add up to that total. */
 function tourWinLine(g) {
   const desc = String(g.description || '').trim();
   const sentence = desc && !/[.!?…]$/.test(desc) ? desc + '.' : desc;
-  return `${escapeHtml(sentence)}${g.why ? ` <span class="muted">${escapeHtml(g.why)}</span>` : ''}`;
+  const items = Array.isArray(g.items) ? g.items : [];
+  if (!items.length) return escapeHtml(sentence);
+  const rows = items.slice(0, TOUR_WIN_ITEMS).map((it) => {
+    const parts = String(it.path || '').split(/[\\/]/).filter(Boolean);
+    const folder = parts.length > 1 ? parts[parts.length - 2] : '';
+    return `<span class="tour-item"><b>${escapeHtml(it.name)}</b>` +
+      (folder ? ` <span class="muted">in ${escapeHtml(folder)}</span>` : '') +
+      ` <span class="num">${formatBytes(it.size)}</span></span>`;
+  });
+  const rest = items.length - rows.length;
+  const listedAll = items.reduce((sum, it) => sum + (Number(it.size) || 0), 0) >= g.totalSize;
+  if (rest > 0) rows.push(`<span class="tour-item muted">${listedAll ? `and ${formatCount(rest)} more` : 'and more'}</span>`);
+  return `${escapeHtml(sentence)}<span class="tour-items">${rows.join('')}</span>`;
 }
 
 function tourAdvanceWin() {

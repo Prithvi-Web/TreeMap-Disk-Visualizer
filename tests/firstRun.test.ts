@@ -9,6 +9,7 @@ isolatedDataDir('treemap-firstrun-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { getSettings, updateSettings } from '../src/services/settings';
+import { lift as liftPage } from './fixtures/liftFrontend';
 
 /**
  * v4 §9.2 — the guided first run.
@@ -88,16 +89,15 @@ test('the tour only appears for a first run, and rides the boot settings read', 
   assert.match(boot, /tourMaybeStart\(s\.tourDone/, 'the boot settings fetch decides — no second request');
 });
 
-test('the welcome card never focuses a hidden input — found by driving the zero-state', () => {
-  // Before any scan the top path box is offscreen; focus() on it is a silent
-  // no-op and the tour's "pick my own" button would do nothing. The handler
-  // must fall back to the zero-state's own folder browser.
-  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const pick = html.indexOf("querySelector('[data-tour-pick]')");
-  assert.notEqual(pick, -1, 'the pick-my-own handler exists');
-  const handler = html.slice(pick, pick + 700);
-  assert.match(handler, /offsetParent === null/, 'visibility is checked, not assumed');
-  assert.match(handler, /openBrowse\(null\)/, 'the hidden case opens the folder browser instead');
+test('the welcome card never focuses a hidden input — found by driving the zero-state; it now hands the folder browser to the welcome\'s own button (G03)', () => {
+  // Before any scan the top path box is offscreen; focus() on it was a silent
+  // no-op, so "I'll pick my own" fell back to the folder browser — the same
+  // browser the welcome's own "Choose a folder to get started" opens. The card
+  // no longer offers that second way to it (design pass G03), so it has no
+  // path box to focus at all.
+  const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
+  assert.doesNotMatch(render, /data-tour-pick/, 'no "I\'ll pick my own"');
+  assert.doesNotMatch(render, /pi\.focus\(\)|\$\('pathInput'\)\.focus\(/, 'and nothing in the card focuses the path box');
 });
 
 test('one Escape never closes a dialog AND skips the tour', () => {
@@ -118,7 +118,7 @@ test('one Escape never closes a dialog AND skips the tour', () => {
 
 test('the tour card never steals focus from a text field', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const at = html.indexOf('const primary = host.querySelector');
+  const at = html.indexOf('const primary = (cta');
   const around = html.slice(at - 500, at + 300);
   assert.match(around, /INPUT\|TEXTAREA\|SELECT/, 'the active element is checked');
   assert.match(around, /!typing\) primary\.focus\(\)/, 'focus only moves when nobody is typing');
@@ -167,17 +167,16 @@ test('the palette closes through its own door from every path — focus restore 
 
 /* ══════════════════════ QA D06 — the quick-win card reads as sentences ══════════════════════ */
 
-test('a quick win\'s description ends as a sentence before why it matched — "…fetched crates A folder named…" ran together (QA D06)', async () => {
-  const { lift } = await import('./fixtures/liftFrontend');
-  const line = lift<(g: { description?: string; why?: string }) => string>(['escapeHtml', 'tourWinLine'], 'tourWinLine');
+test('a quick win\'s description ends as a sentence — "…fetched crates A folder named…" ran together (QA D06) — and the matcher\'s wording is not shown (G04)', () => {
+  const line = liftPage<(g: { description?: string; why?: string }) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
   const text = (html: string) => html.replace(/<[^>]+>/g, '');
   assert.equal(text(line({ description: 'Cargo build output and fetched crates', why: 'A folder named target sitting next to Cargo.toml.' })),
-    'Cargo build output and fetched crates. A folder named target sitting next to Cargo.toml.');
-  assert.equal(text(line({ description: 'Ends already.', why: 'Why.' })), 'Ends already. Why.', 'no doubled full stop');
-  assert.equal(text(line({ description: 'Ends with a question?', why: 'Why.' })), 'Ends with a question? Why.');
-  assert.equal(text(line({ description: 'Alone' })), 'Alone.', 'no why, still a sentence');
-  assert.equal(text(line({ description: '', why: 'Only why.' })).trim(), 'Only why.', 'an empty description adds no stray full stop');
-  assert.match(line({ description: 'a <b>', why: '<i>' }), /a &lt;b&gt;\. <span class="muted">&lt;i&gt;<\/span>/, 'both halves are escaped, the why styled apart');
+    'Cargo build output and fetched crates.', 'the rule\'s description as a sentence; its matcher wording is the Clean Up view\'s, not the tour\'s (G04)');
+  assert.equal(text(line({ description: 'Ends already.', why: 'Why.' })), 'Ends already.', 'no doubled full stop');
+  assert.equal(text(line({ description: 'Ends with a question?', why: 'Why.' })), 'Ends with a question?');
+  assert.equal(text(line({ description: 'Alone' })), 'Alone.', 'still a sentence');
+  assert.equal(text(line({ description: '', why: 'Only why.' })).trim(), '', 'an empty description adds no stray full stop');
+  assert.match(line({ description: 'a <b>', why: '<i>' }), /^a &lt;b&gt;\.$/, 'escaped, and the why is not on the card');
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('function tourAdvanceWin'));
   assert.match(render, /<p>\$\{tourWinLine\(g\)\}<\/p>/, 'the card renders through it');
 });
@@ -186,4 +185,147 @@ test('every quick-win card offers the same "Skip this one" — the last no longe
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('function tourAdvanceWin'));
   assert.match(render, /<button class="btn" data-tour-next>Skip this one<\/button>/, 'one wording on every card');
   assert.doesNotMatch(render, /Not this one/);
+});
+
+/* ══════════════ Design pass G03 / G04 / G11 — the first five minutes ══════════════ */
+
+type TEl = {
+  innerHTML: string; value: string; hidden: boolean; disabled: boolean; focused: number; rects: number;
+  listeners: Record<string, Array<() => void>>; addEventListener: (n: string, fn: () => void) => void;
+  querySelector: (sel: string) => TEl | null; getClientRects: () => unknown[]; focus: () => void; contains: (n: unknown) => boolean;
+};
+function tel(rects = 1): TEl {
+  const e: TEl = {
+    innerHTML: '', value: '', hidden: false, disabled: false, focused: 0, rects, listeners: {},
+    addEventListener: (n, fn) => { (e.listeners[n] ??= []).push(fn); },
+    querySelector: () => null,
+    getClientRects: () => Array.from({ length: e.rects }),
+    focus: () => { e.focused++; },
+    contains: () => false,
+  };
+  return e;
+}
+
+/** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
+function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; staged?: number; win?: Record<string, unknown> } = {}) {
+  const els: Record<string, TEl> = {};
+  const $ = (id: string) => (els[id] ??= tel());
+  const host = $('tourCard');
+  const found: Record<string, TEl> = {};
+  host.querySelector = (sel) => {
+    const h = host.innerHTML;
+    if (sel === '.btn-primary') return /class="btn btn-primary"/.test(h) ? (found.primary ??= tel()) : null;
+    if (sel === '.tour-row button') {
+      const row = h.indexOf('<div class="tour-row">');
+      return row !== -1 && h.indexOf('<button', row) !== -1 ? (found.rowFirst ??= tel()) : null;
+    }
+    const attr = /^\[([\w-]+)\]$/.exec(sel);
+    if (attr) return h.includes(attr[1]) ? (found[attr[1]] ??= tel()) : null;
+    if (sel === 'button') return h.includes('<button') ? (found.firstButton ??= tel()) : null;
+    return null;
+  };
+  $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
+  const winLine = liftPage<(g: unknown) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
+  const tour = { active: true, step, wins: opts.win ? [opts.win] : [], winIx: 0, staged: opts.staged ?? 0, unknownReason: '' };
+  const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
+  const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
+    'tourAdvanceWin', 'tourWinLine', 'document', `'use strict'; ${render} return tourRender;`)(
+    $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart: new Set(), root: null }, () => '', (s: string) => s,
+    (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, () => 0, () => {}, winLine, { activeElement: null }) as () => void;
+  fn();
+  return { html: host.innerHTML, text: host.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), found, $ };
+}
+
+test('the welcome card offers one alternative, not a second primary action beside the welcome\'s own (G03)', () => {
+  const card = tourCard('welcome', { heroUp: true });
+  assert.doesNotMatch(card.html, /btn-primary/, 'one primary on screen: the welcome\'s "Choose a folder to get started"');
+  assert.match(card.html, /<button class="btn" data-tour-home>Scan my home folder<\/button>/, 'the home folder is offered as the alternative it is');
+  assert.doesNotMatch(card.html, /data-tour-pick|I’ll pick my own/, 'and no second way to the same folder browser the welcome\'s own button opens');
+  assert.doesNotMatch(card.text, /bigger the rectangle|draws every file/, 'the card does not repeat the welcome\'s own words');
+  assert.match(card.text, /Pick a folder to look at first — scanning only reads it; nothing is moved or deleted\. Your home folder is a good place to start\./, card.text);
+  assert.equal(card.$('emptyBrowseBtn').focused, 1, 'Enter goes to the one primary: the welcome\'s own button takes focus');
+  assert.equal(card.found['data-tour-home']?.focused ?? 0, 0, 'not the home-folder scan');
+
+  const elsewhere = tourCard('welcome', { heroUp: false });
+  assert.equal(elsewhere.found.rowFirst?.focused ?? 0, 1, 'with no welcome on screen the card\'s own action takes focus');
+  assert.equal(elsewhere.found['data-tour-skip']?.focused ?? 0, 0, 'never Skip');
+
+  const noHome = tourCard('welcome', { home: null, heroUp: true });
+  assert.doesNotMatch(noHome.html, /<div class="tour-row">/, 'no home folder known: no empty row of actions');
+  assert.match(noHome.text, /Pick a folder to look at first — scanning only reads it; nothing is moved or deleted\.$/, noHome.text);
+});
+
+test('"Skip the tour" sits in the card\'s header on every step, never alone on a second row of buttons (G03)', () => {
+  const win = { title: 'Rust build target', description: 'Cargo build output and fetched crates', totalSize: 78_800_000,
+    items: [{ name: 'target', path: '/c/rusty/target', size: 78_800_000 }] };
+  for (const [step, opts] of [['welcome', { heroUp: true }], ['scanning', {}], ['map', {}], ['win', { win }]] as const) {
+    const card = tourCard(step, opts);
+    const head = /<div class="tour-head"><span class="tour-step">[^<]+<\/span><button class="tour-skip" data-tour-skip>Skip the tour<\/button><\/div>/.exec(card.html);
+    assert.ok(head, `${step}: Skip is in the header: ${card.html}`);
+    const row = card.html.slice(card.html.indexOf('<div class="tour-row">'));
+    assert.ok(card.html.indexOf('<div class="tour-row">') === -1 || !row.includes('data-tour-skip'), `${step}: and not in the row of actions`);
+    assert.equal((card.html.match(/data-tour-skip/g) || []).length, 1, `${step}: once`);
+  }
+  const css = INDEX.slice(INDEX.indexOf('/* ── v4 §9.2: the first-run coach card ── */'), INDEX.indexOf('#rcPopover .rc-pop-head'));
+  assert.match(css, /\.tour-card \.tour-head \{ display: flex; align-items: center; justify-content: space-between;/, 'the header lays the step and Skip out on one line');
+  assert.match(css, /\.tour-card \.tour-skip \{[^}]*min-height: 24px;/, 'Skip keeps a 24 px target');
+});
+
+test('a quick win says what it found — the rule\'s plain words, each item\'s name and size — never the matcher\'s wording (G04)', () => {
+  const line = liftPage<(g: unknown) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
+  const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const why = 'A folder named .next; or a folder named dist sitting next to package.json, next.config.*';
+  const one = line({ description: 'Framework build output — rebuilt by the next build', why, totalSize: 12_300_000,
+    items: [{ name: '.next', path: '/c/webapp/.next', size: 12_300_000 }] });
+  assert.doesNotMatch(one, /folder named|sitting next to|next\.config/, `no matcher wording: ${one}`);
+  assert.equal(text(one), 'Framework build output — rebuilt by the next build. .next in webapp 12.3 MB');
+  const four = line({ description: 'Python bytecode cache', why, totalSize: 4_000,
+    items: [1, 2, 3, 4].map((i) => ({ name: '__pycache__', path: `/c/p${i}/__pycache__`, size: 1_000 })) });
+  assert.equal(text(four), 'Python bytecode cache. __pycache__ in p1 1.0 KB __pycache__ in p2 1.0 KB __pycache__ in p3 1.0 KB and 1 more',
+    'three named, the rest counted');
+  const capped = line({ description: 'Node modules', totalSize: 9_000, items: [1, 2, 3, 4].map((i) => ({ name: 'node_modules', path: `/c/p${i}/node_modules`, size: 1_000 })) });
+  assert.match(text(capped), /and more$/, 'a list the server cut short is not given a count it does not have');
+  assert.match(line({ description: 'a <b>', totalSize: 1, items: [{ name: '<i>', path: '/<u>/<i>', size: 1 }] }), /a &lt;b&gt;\.[\s\S]*<b>&lt;i&gt;<\/b> <span class="muted">in &lt;u&gt;<\/span>/, 'everything escaped');
+  const card = tourCard('win', { win: { title: 'Web framework build', description: 'Framework build output', why, totalSize: 12_300_000,
+    items: [{ name: '.next', path: '/c/webapp/.next', size: 12_300_000 }] } });
+  assert.match(card.html, /<h4>[^<]*Web framework build — 12300000 B<\/h4>/, 'the card is headed by the rule\'s own plain title');
+  assert.doesNotMatch(card.html, /folder named/, 'and the matcher wording is nowhere on it');
+});
+
+test('the last step does not point at a cart that is not on screen (G04)', () => {
+  const none = tourCard('cart', { staged: 0 });
+  assert.doesNotMatch(none.text, /The cart at the bottom is where/, 'nothing staged: the cart is not drawn, so it is not pointed at');
+  assert.match(none.text, /You added nothing — also fine\. Anything you add later waits in a cleanup cart that appears at the bottom right once it holds something\./, none.text);
+  const some = tourCard('cart', { staged: 2 });
+  assert.match(some.text, /Everything you added is waiting in the cleanup cart at the bottom right\. Nothing has been deleted\./, some.text);
+});
+
+test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s primary action, the map, or the view (G11)', async () => {
+  const finish = INDEX.slice(INDEX.indexOf('async function tourFinish'), INDEX.indexOf('function tourRender'));
+  const run = async (opts: { heroUp?: boolean; view?: string; mapUp?: boolean; inCard?: boolean }) => {
+    const els: Record<string, TEl> = {};
+    const $ = (id: string) => (els[id] ??= tel(0));
+    $('tourOverlay').contains = () => opts.inCard !== false;
+    $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
+    $('treemapCanvas').rects = opts.mapUp ? 1 : 0;
+    const control = tel(); const tab = tel();
+    const fn = new Function('$', 'tour', 'state', 'api', 'toast', 'document', 'activeViewControl', `'use strict'; ${finish} return tourFinish;`)(
+      $, { active: true }, { view: opts.view ?? 'treemap' }, async () => ({}), () => {},
+      { activeElement: {}, querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : null) }, () => control) as (m: string) => Promise<void>;
+    await fn('Tour complete');
+    return { hero: $('emptyBrowseBtn').focused, map: $('treemapCanvas').focused, control: control.focused, tab: tab.focused, hidden: $('tourOverlay').hidden };
+  };
+  const onMap = await run({ view: 'treemap', mapUp: true });
+  assert.equal(onMap.hidden, true, 'the card goes');
+  assert.equal(onMap.map, 1, 'on the map, focus goes to the map, which the card was just describing');
+  const welcome = await run({ heroUp: true, view: 'dashboard' });
+  assert.equal(welcome.hero, 1, 'skipped from the welcome: the welcome\'s own "Choose a folder"');
+  const other = await run({ view: 'apps' });
+  assert.equal(other.control, 1, 'elsewhere, the view\'s first control');
+  const away = await run({ view: 'treemap', mapUp: true, inCard: false });
+  assert.deepEqual([away.map, away.hero, away.control, away.tab], [0, 0, 0, 0], 'focus that was not in the card is left where it is');
+  // "Scan my home folder" repaints the card as the scanning step, which has no
+  // row of actions: focus on the button that is gone lands on the control left.
+  const scanning = tourCard('scanning');
+  assert.equal(scanning.found['data-tour-skip']?.focused, 1, 'the scanning card\'s one control, Skip, takes focus');
 });
