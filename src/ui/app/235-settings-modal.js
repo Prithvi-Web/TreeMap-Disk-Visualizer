@@ -918,8 +918,14 @@ function modalClosed(el) {
   // sheet stopped painting, is still nominally inside it, or is on an offer
   // the sheet made (#toasts is exempt from inert) — and that offer goes with
   // the sheet (toastsRetire), its choice being for a sheet that is gone
-  // (final review F2.2, F2.3).
-  const drifted = !active || active === document.body || el.contains(active) || $('toasts').contains(active);
+  // (final review F2.2, F2.3). Nominally on anything that stopped painting
+  // counts, this sheet or not: two sheets closed in one batch ("Empty the
+  // Trash" closes the question and the Trash sheet under it) find focus still
+  // on the question's button as the second close runs — a browser drops it to
+  // <body> at a later rendering step, not before this observer's microtask
+  // (review F1.2 of QA fourth pass E04).
+  const drifted = !active || active === document.body || el.contains(active)
+    || !active.getClientRects().length || $('toasts').contains(active);
   toastsRetire(el.id);
   if (drifted && prev && prev.focus && prev.isConnected !== false) prev.focus({ preventScroll: true });
 }

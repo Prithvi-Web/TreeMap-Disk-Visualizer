@@ -1237,11 +1237,14 @@ test('⌘R is always claimed — during a first scan it must not reload the page
  * The page over its own markup with the focus net observing class flips as
  * a browser delivers them: each flip on a backdrop is a record, and a batch
  * is handed to the net's own observer callback at `flush()` — the microtask
- * checkpoint — after the browser has dropped focus off anything that
- * stopped painting. Focus moves report themselves (focusin), so the net's
- * trail and its pull into the top sheet both run.
+ * checkpoint. Focus on something that stopped painting falls to <body>:
+ * before the batch when `focusDropsFirst`, and otherwise after it, the net
+ * finding focus still nominally on the closed sheet's button — a browser
+ * clears it at a later rendering step, not before the observer's microtask
+ * (review F1.2 of QA fourth pass E04). Focus moves report themselves
+ * (focusin), so the net's trail and its pull into the top sheet both run.
  */
-function observedPage() {
+function observedPage({ focusDropsFirst = true } = {}) {
   const doc = makeDoc();
   pageFromMarkup(doc);
   const focusin: Array<(e: { target: FEl }) => void> = [];
@@ -1275,17 +1278,22 @@ function observedPage() {
      return { topModal, noteFocus };`,
   )(doc, (id: string) => doc.getElementById(id), Observer, () => {}, (el: FEl) => ({ visibility: computedVisibility(el) })) as { topModal: () => FEl | null };
   assert.ok(deliver, 'the net observes the backdrops');
+  const dropUnpainted = () => { if (at && at !== doc.body && !at.getClientRects().length) at = doc.body; }; // it stopped painting
   const flush = () => {
-    if (at && at !== doc.body && !at.getClientRects().length) at = doc.body; // it stopped painting
+    if (focusDropsFirst) dropUnpainted();
     const batch = records.splice(0);
     if (batch.length) deliver!(batch);
+    dropUnpainted();
   };
   return { doc, api, flush };
 }
 
+/** The two orders a browser may take: focus off a sheet that stopped painting before the net's batch runs, or after it. */
+const NET_ORDERS = [['focus dropped to <body> first', true], ['focus still on the closed sheet', false]] as const;
+
 /** The Trash sheet, its Empty button, the shared confirmation and closeModal — the page's own — on `observedPage`. */
-function trashSheetHarness() {
-  const { doc, api, flush } = observedPage();
+function trashSheetHarness(net: { focusDropsFirst?: boolean } = {}) {
+  const { doc, api, flush } = observedPage(net);
   const $ = (id: string) => doc.getElementById(id)!;
   const listeners = new Map<string, Array<() => unknown>>();
   for (const id of ['emptyTrashBtn', 'confirmOk']) $(id).addEventListener = ((type: string, fn: () => unknown) => {
@@ -1318,43 +1326,52 @@ test('cancelling "Empty the Trash?" — Cancel or Escape — goes back to the Tr
   // QA fourth pass E04: keyboard only, Dashboard › Trash › Empty Trash… ›
   // Escape (or Cancel): the confirmation went, and so had the Trash sheet —
   // the Empty button closed it before asking — and focus fell to <body>.
-  const h = trashSheetHarness();
-  h.fact.focus();
-  h.openTrashModal(); h.flush(); // Enter on the Trash row
-  const trash = h.$('trashModal'), confirm = h.$('confirmModal'), empty = h.$('emptyTrashBtn');
-  assert.ok(trash.classList.contains('open') && trash.contains(h.doc.activeElement), 'control: the Trash sheet is open and holds focus');
-  assert.equal(empty.disabled, false, 'control: there is something to empty');
-  for (const way of ['Cancel', 'Escape']) {
-    empty.focus(); // Tab to it
-    await h.press('emptyTrashBtn'); // and Enter
-    assert.ok(confirm.classList.contains('open'), `${way}: "Empty the Trash?" is asked`);
-    assert.equal(h.api.topModal(), confirm, `${way}: over the Trash sheet`);
-    assert.equal(h.doc.activeElement, h.$('confirmCancel'), `${way}: the question opens on Cancel`);
-    assert.ok(trash.classList.contains('open'), `${way}: the Trash sheet stays open under the question`);
-    if (way === 'Cancel') h.closeModal('confirmModal'); // [data-close] runs closeModal
-    else h.closeModal(h.api.topModal()!.id); // the page's Escape closes the top sheet through closeModal
-    h.flush();
-    assert.equal(confirm.classList.contains('open'), false, `${way}: the question is gone`);
-    assert.ok(trash.classList.contains('open'), `${way}: the Trash sheet is back`);
-    assert.equal(trash.inert, false, `${way}: and live`);
-    assert.equal(h.doc.activeElement, empty, `${way}: focus is on "Empty Trash…", never <body> (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+  for (const [order, focusDropsFirst] of NET_ORDERS) {
+    const h = trashSheetHarness({ focusDropsFirst });
+    h.fact.focus();
+    h.openTrashModal(); h.flush(); // Enter on the Trash row
+    const trash = h.$('trashModal'), confirm = h.$('confirmModal'), empty = h.$('emptyTrashBtn');
+    assert.ok(trash.classList.contains('open') && trash.contains(h.doc.activeElement), `control (${order}): the Trash sheet is open and holds focus`);
+    assert.equal(empty.disabled, false, 'control: there is something to empty');
+    for (const way of ['Cancel', 'Escape']) {
+      empty.focus(); // Tab to it
+      await h.press('emptyTrashBtn'); // and Enter
+      assert.ok(confirm.classList.contains('open'), `${way} (${order}): "Empty the Trash?" is asked`);
+      assert.equal(h.api.topModal(), confirm, `${way} (${order}): over the Trash sheet`);
+      assert.equal(h.doc.activeElement, h.$('confirmCancel'), `${way} (${order}): the question opens on Cancel`);
+      assert.ok(trash.classList.contains('open'), `${way} (${order}): the Trash sheet stays open under the question`);
+      if (way === 'Cancel') h.closeModal('confirmModal'); // [data-close] runs closeModal
+      else h.closeModal(h.api.topModal()!.id); // the page's Escape closes the top sheet through closeModal
+      h.flush();
+      assert.equal(confirm.classList.contains('open'), false, `${way} (${order}): the question is gone`);
+      assert.ok(trash.classList.contains('open'), `${way} (${order}): the Trash sheet is back`);
+      assert.equal(trash.inert, false, `${way} (${order}): and live`);
+      assert.ok(h.doc.activeElement === empty, `${way} (${order}): focus is on "Empty Trash…", never <body> (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+    }
+    assert.deepEqual(h.calls, [], 'nothing was emptied');
   }
-  assert.deepEqual(h.calls, [], 'nothing was emptied');
 });
 
 test('"Empty the Trash" confirmed empties it and closes both sheets, giving focus back to the Trash row (QA fourth pass E04)', async () => {
-  const h = trashSheetHarness();
-  h.fact.focus();
-  h.openTrashModal(); h.flush();
-  const trash = h.$('trashModal'), confirm = h.$('confirmModal');
-  h.$('emptyTrashBtn').focus();
-  await h.press('emptyTrashBtn');
-  assert.ok(confirm.classList.contains('open') && trash.classList.contains('open'), 'control: asked, over the Trash sheet');
-  await h.press('confirmOk');
-  assert.ok(h.calls.includes('api /api/trash/empty'), `the Trash was emptied: ${h.calls.join(', ')}`);
-  assert.equal(confirm.classList.contains('open'), false, 'the question closed');
-  assert.equal(trash.classList.contains('open'), false, 'and the Trash sheet, whose list is gone with the Trash');
-  assert.equal(h.doc.activeElement, h.fact, `focus is back on the Trash row the sheet was opened from (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+  // Both sheets close in one observer batch, the question first. Whether the
+  // browser has dropped focus off the question's button to <body> by then is
+  // its own business (review F1.2): the Trash row takes it either way.
+  for (const [order, focusDropsFirst] of NET_ORDERS) {
+    const h = trashSheetHarness({ focusDropsFirst });
+    h.fact.focus();
+    h.openTrashModal(); h.flush();
+    const trash = h.$('trashModal'), confirm = h.$('confirmModal');
+    h.$('emptyTrashBtn').focus();
+    await h.press('emptyTrashBtn');
+    assert.ok(confirm.classList.contains('open') && trash.classList.contains('open'), `control (${order}): asked, over the Trash sheet`);
+    h.$('confirmOk').focus(); // Tab to "Empty the Trash"
+    assert.equal(h.doc.activeElement, h.$('confirmOk'), `control (${order}): the question's button has focus`);
+    await h.press('confirmOk'); // and Enter
+    assert.ok(h.calls.includes('api /api/trash/empty'), `${order}: the Trash was emptied: ${h.calls.join(', ')}`);
+    assert.equal(confirm.classList.contains('open'), false, `${order}: the question closed`);
+    assert.equal(trash.classList.contains('open'), false, `${order}: and the Trash sheet, whose list is gone with the Trash`);
+    assert.ok(h.doc.activeElement === h.fact, `${order}: focus is back on the Trash row the sheet was opened from (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+  }
 });
 
 /* ══════════════ QA fourth pass E05 — the right-click menu from the keyboard, and the breakdown it opens gives focus back ══════════════ */
