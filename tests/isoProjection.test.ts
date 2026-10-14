@@ -698,3 +698,27 @@ test('B12: the legend shows the Type key only in Type mode, and works it out onc
   render();
   assert.doesNotMatch(els.cityLegend.innerHTML, /class="sw"/, 'the reclaim colour keeps its ramp, with no type swatches');
 });
+
+test('the legend says what a footprint is: the size each file claims, as Settings says — never "size on disk", which a file with no blocks on disk would contradict (fourth browser pass, E06)', () => {
+  const start = INDEX.indexOf('function renderCityChrome(');
+  let depth = 0, end = start;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  const capAt = INDEX.indexOf('const TM_SERVER_NODE_CAP = ');
+  const nodeCap = INDEX.slice(capAt, INDEX.indexOf(';', capAt) + 1);
+  const els: Record<string, { innerHTML: string; textContent: string; hidden: boolean }> = {};
+  const $ = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', hidden: true });
+  const state = { city: { colour: 'reclaim', height: 'staleness', blocks: [blk('/r/A', 'dir', 1)], drawn: 1, total: 1 }, treemap: { rootSize: 1 } };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const render = new Function('$', 'state', 'formatCount', 'formatBytes', 'escapeHtml', 'CITY_HEIGHT_LABEL', 'CITY_COLOUR_LABEL',
+    'C_RC_LOW', 'C_AMBER', 'C_TEAL', 'ageRgb', 'cityTypeKey', `'use strict'; ${nodeCap}\n${INDEX.slice(start, end)} return renderCityChrome;`)(
+    $, state, String, String, (x: string) => x, CITY_HEIGHT_LABEL, CITY_COLOUR_LABEL, [1, 2, 3], [4, 5, 6], [7, 8, 9], () => [0, 0, 0], () => ({ shown: [], more: 0 }),
+  ) as () => void;
+  render();
+  assert.match(els.cityLegend.innerHTML, /<b>Footprint<\/b> = the size each file claims/, 'a footprint is the size each file claims');
+  assert.doesNotMatch(els.cityLegend.innerHTML, /size on disk/, 'not the space it takes up on disk');
+  assert.match(INDEX, /TreeMap's map and totals count the size each file claims\./, 'control: Settings says the map counts the size each file claims');
+});
+

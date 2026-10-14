@@ -1458,8 +1458,11 @@ function renderCityChrome() {
         c.typeKey.shown.map((e) => `<span class="ab"><i class="sw" style="background:${e.tint}"></i>${escapeHtml(e.label)}</span>`).join('') +
         (c.typeKey.more ? `<span class="ab">+${formatCount(c.typeKey.more)} more</span>` : '') + `</span>`;
     }
+    // The size each file claims, as Settings says the map counts it — not the
+    // space it takes up on disk: a 3.2 GB clone with no blocks of its own
+    // stands as the city's largest roof (fourth browser pass, E06).
     legend.innerHTML =
-      `<span class="tml-item"><b>Footprint</b> = size on disk</span>` +
+      `<span class="tml-item"><b>Footprint</b> = the size each file claims</span>` +
       `<span class="tml-item"><b>Height</b> = ${escapeHtml(heightLabel)}</span>` +
       `<span class="tml-item city-ramp"><b>Color</b> = ${escapeHtml(colourLabel)}` +
       (ramp ? `<i style="background:${ramp}"></i>` : '') + `</span>` + typeKey;
