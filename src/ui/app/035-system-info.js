@@ -72,7 +72,13 @@ async function loadTrash() {
         : 'View Trash contents';
       el.hidden = false;
     } else {
+      // The row goes once the Trash is empty — just after "Empty the Trash"
+      // gave it focus back (E04). Focus on it would fall to <body> with it:
+      // the view's first control takes it, as when the cart or the selection
+      // bar goes holding focus (QA B13; review F2.2 of QA fourth pass E04).
+      const held = el.contains(document.activeElement);
       el.hidden = true;
+      if (held) { const to = activeViewControl(); if (to) to.focus({ preventScroll: true }); }
     }
   } catch { /* trash sizing is best-effort */ }
 }

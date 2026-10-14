@@ -447,17 +447,26 @@ test('the file-types ring accounts for the whole scan, not just its eight bigges
 
 /* ══════════════ B02 — a Trash TreeMap could not read is not "at least 0 B" ══════════════ */
 
-type FactEl = { hidden: boolean; textContent: string; title: string; dataset: Record<string, unknown>; style: Record<string, string> };
-const factEl = (): FactEl => ({ hidden: true, textContent: '', title: '', dataset: {}, style: {} });
+type FactEl = { hidden: boolean; textContent: string; title: string; dataset: Record<string, unknown>; style: Record<string, string>; contains: (n: unknown) => boolean };
+const factEl = (): FactEl => ({ hidden: true, textContent: '', title: '', dataset: {}, style: {}, contains: () => false });
 
-async function loadTrashWith(answer: unknown) {
+/**
+ * loadTrash out of the built page over `answer`. The row starts as the markup
+ * ships it — hidden — or, with `shown`, as an earlier read that found
+ * something left it, so that taking it away is something the read does. Its
+ * best-effort `catch` swallows any throw, so the page's `document` and
+ * `activeViewControl` are stood in for (no focus here: polishUiModals has
+ * where focus goes when the row goes holding it, review F2.2 of E04).
+ */
+async function loadTrashWith(answer: unknown, { shown = false } = {}) {
   const src = slice('async function loadTrash', 'function openTrashModal');
   const els: Record<string, FactEl> = {};
   const $ = (id: string) => (els[id] ??= factEl());
   $('trashFact').title = 'View Trash contents'; // as the markup ships it
+  $('trashFact').hidden = !shown;
   const countUp = (el: FactEl, n: number, fmt: (v: number) => string) => { el.dataset.v = n; el.textContent = fmt(n); };
-  const run = new Function('api', 'state', '$', 'countUp', 'formatBytes', 'formatCount', `'use strict'; ${src} return loadTrash;`)(
-    async () => answer, {}, $, countUp, (n: number) => `${n} B`, String,
+  const run = new Function('api', 'state', '$', 'countUp', 'formatBytes', 'formatCount', 'document', 'activeViewControl', `'use strict'; ${src} return loadTrash;`)(
+    async () => answer, {}, $, countUp, (n: number) => `${n} B`, String, { activeElement: null }, () => null,
   ) as () => Promise<void>;
   await run();
   return els;
@@ -490,8 +499,8 @@ test('a Trash TreeMap could not read says so and why — never "at least 0 B" (B
   const whole = await loadTrashWith({ totalBytes: 2000, itemCount: 4, complete: true });
   assert.equal(whole.sysTrash.textContent, '2000 B · 4');
   assert.equal(whole.trashFact.title, 'View Trash contents', 'a Trash read in full keeps the plain title');
-  const empty = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: true });
-  assert.equal(empty.trashFact.hidden, true, 'an empty Trash read in full has no row, as before');
+  const empty = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: true }, { shown: true });
+  assert.equal(empty.trashFact.hidden, true, 'an empty Trash read in full has no row, as before — the row a read that found something left is taken away');
 });
 
 type SheetEl = { textContent: string; innerHTML: string; disabled: boolean; cls: Set<string>; classList: { add: (c: string) => void } };

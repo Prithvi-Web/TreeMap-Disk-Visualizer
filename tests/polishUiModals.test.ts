@@ -1301,8 +1301,18 @@ function observedPage({ focusDropsFirst = true } = {}) {
 /** The two orders a browser may take: focus off a sheet that stopped painting before the net's batch runs, or after it. */
 const NET_ORDERS = [['focus dropped to <body> first', true], ['focus still on the closed sheet', false]] as const;
 
-/** The Trash sheet, its Empty button, the shared confirmation and closeModal — the page's own — on `observedPage`. */
-function trashSheetHarness(net: { focusDropsFirst?: boolean } = {}) {
+/** What /api/trash/size answers once "Empty the Trash" has run: emptied, or with a part the platform refused left behind. */
+const TRASH_EMPTIED = { totalBytes: 0, itemCount: 0, complete: true, items: [] };
+const TRASH_PART_LEFT = { totalBytes: 2_000_000, itemCount: 1, complete: true, items: [{ name: 'locked.dmg', size: 2_000_000 }] };
+
+/**
+ * The Trash sheet, its Empty button, the shared confirmation and closeModal —
+ * the page's own — on `observedPage`, the Dashboard on screen. The empty's
+ * `loadTrash()` is the page's own too, held until `settleLoads()`: in the app
+ * its answer comes two network round trips after the net has run (review
+ * F2.2 of QA fourth pass E04), and `after` is what it answers.
+ */
+function trashSheetHarness(net: { focusDropsFirst?: boolean; after?: unknown } = {}) {
   const { doc, api, flush } = observedPage(net);
   const $ = (id: string) => doc.getElementById(id)!;
   const listeners = new Map<string, Array<() => unknown>>();
@@ -1311,6 +1321,20 @@ function trashSheetHarness(net: { focusDropsFirst?: boolean } = {}) {
   }) as FEl['addEventListener'];
   const calls: string[] = [];
   const state = { trash: { itemCount: 3, totalBytes: 3_200_000_000, complete: true, items: [{ name: 'a.mov', size: 1 }, { name: 'b.mov', size: 2 }, { name: 'c.dmg', size: 3 }] } };
+  const apiStub = async (url: string) => {
+    calls.push(`api ${url}`);
+    return url === '/api/trash/size' ? (net.after ?? TRASH_EMPTIED) : { emptied: true, freedBytes: 3_200_000_000 };
+  };
+  const countUp = (el: FEl, n: number, fmt: (v: number) => string) => { el.dataset.v = String(n); el.textContent = fmt(n); };
+  const loadTrash = new Function('$', 'document', 'state', 'api', 'countUp', 'formatBytes', 'formatCount',
+    `'use strict';
+     ${braced('function activeViewControl(')}
+     ${braced('async function loadTrash(')}
+     return loadTrash;`,
+  )($, doc, state, apiStub, countUp, (n: number) => `${n} B`, String) as () => Promise<void>;
+  const loads: Array<() => Promise<void>> = [];
+  /** The empty's loadTrash, answered: the Dashboard's Trash row repainted, then the net and the browser's focus fix-up. */
+  const settleLoads = async () => { for (const load of loads.splice(0)) await load(); flush(); };
   const page = new Function('$', 'document', 'state', 'formatBytes', 'formatCount', 'escapeHtml', 'icon', 'chipFor', 'toast', 'api', 'loadTrash', 'topModal',
     `'use strict';
      let onConfirmTrash = null; let openHandleSeq = 0; let confirmIgnoreOpenHandles = false; let confirmPaths = [];
@@ -1323,13 +1347,14 @@ function trashSheetHarness(net: { focusDropsFirst?: boolean } = {}) {
      ${slice("$('confirmOk').addEventListener('click', async () => {", '/**\n * The API sanitizes')}
      return { openTrashModal, closeModal };`,
   )($, doc, state, (n: number) => `${n} B`, String, (s: unknown) => String(s), () => '', () => '', (m: string) => calls.push(`toast ${m}`),
-    async (url: string) => { calls.push(`api ${url}`); return { emptied: true, freedBytes: 3_200_000_000 }; }, () => calls.push('loadTrash'), api.topModal,
+    apiStub, () => { calls.push('loadTrash'); loads.push(loadTrash); }, api.topModal,
   ) as { openTrashModal: () => void; closeModal: (id: string) => void };
   const press = async (id: string) => { for (const fn of listeners.get(id) || []) await fn(); flush(); };
-  // The Dashboard's Trash row, on screen.
+  // The Dashboard's Trash row, on screen, in the view that is up.
   const fact = $('trashFact');
   for (let p: FEl | null = fact; p; p = p.parent) p.hidden = false;
-  return { doc, $, api, flush, press, calls, fact, ...page };
+  $('view-dashboard').cls.add('active');
+  return { doc, $, api, flush, press, settleLoads, calls, fact, ...page };
 }
 
 test('cancelling "Empty the Trash?" — Cancel or Escape — goes back to the Trash sheet, with focus on "Empty Trash…" (QA fourth pass E04)', async () => {
@@ -1362,25 +1387,55 @@ test('cancelling "Empty the Trash?" — Cancel or Escape — goes back to the Tr
   }
 });
 
-test('"Empty the Trash" confirmed empties it and closes both sheets, giving focus back to the Trash row (QA fourth pass E04)', async () => {
+test('"Empty the Trash" confirmed empties it and closes both sheets, giving focus back to the Trash row — and when the emptied Trash takes that row away, to the Dashboard\'s first control on screen, never <body> (QA fourth pass E04, review F2.2)', async () => {
   // Both sheets close in one observer batch, the question first. Whether the
   // browser has dropped focus off the question's button to <body> by then is
   // its own business (review F1.2): the Trash row takes it either way.
+  //
+  // Review F2.2: that was true only until the empty finished. Its loadTrash
+  // reads the Trash again, finds it empty and hides the row — the row that
+  // holds focus — and focus fell to <body>. A row the empty leaves standing
+  // keeps focus, and focus the person has already moved on is left alone.
+  const cases = [
+    ['emptied', TRASH_EMPTIED, false],
+    ['a part left behind', TRASH_PART_LEFT, false],
+    ['emptied, focus moved on before the new size lands', TRASH_EMPTIED, true],
+  ] as const;
   for (const [order, focusDropsFirst] of NET_ORDERS) {
-    const h = trashSheetHarness({ focusDropsFirst });
-    h.fact.focus();
-    h.openTrashModal(); h.flush();
-    const trash = h.$('trashModal'), confirm = h.$('confirmModal');
-    h.$('emptyTrashBtn').focus();
-    await h.press('emptyTrashBtn');
-    assert.ok(confirm.classList.contains('open') && trash.classList.contains('open'), `control (${order}): asked, over the Trash sheet`);
-    h.$('confirmOk').focus(); // Tab to "Empty the Trash"
-    assert.equal(h.doc.activeElement, h.$('confirmOk'), `control (${order}): the question's button has focus`);
-    await h.press('confirmOk'); // and Enter
-    assert.ok(h.calls.includes('api /api/trash/empty'), `${order}: the Trash was emptied: ${h.calls.join(', ')}`);
-    assert.equal(confirm.classList.contains('open'), false, `${order}: the question closed`);
-    assert.equal(trash.classList.contains('open'), false, `${order}: and the Trash sheet, whose list is gone with the Trash`);
-    assert.ok(h.doc.activeElement === h.fact, `${order}: focus is back on the Trash row the sheet was opened from (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+    for (const [what, after, movedOn] of cases) {
+      const h = trashSheetHarness({ focusDropsFirst, after });
+      const at = `${what}, ${order}`;
+      h.fact.focus();
+      h.openTrashModal(); h.flush();
+      const trash = h.$('trashModal'), confirm = h.$('confirmModal');
+      h.$('emptyTrashBtn').focus();
+      await h.press('emptyTrashBtn');
+      assert.ok(confirm.classList.contains('open') && trash.classList.contains('open'), `control (${at}): asked, over the Trash sheet`);
+      h.$('confirmOk').focus(); // Tab to "Empty the Trash"
+      assert.equal(h.doc.activeElement, h.$('confirmOk'), `control (${at}): the question's button has focus`);
+      await h.press('confirmOk'); // and Enter
+      assert.ok(h.calls.includes('api /api/trash/empty'), `${at}: the Trash was emptied: ${h.calls.join(', ')}`);
+      assert.equal(confirm.classList.contains('open'), false, `${at}: the question closed`);
+      assert.equal(trash.classList.contains('open'), false, `${at}: and the Trash sheet, whose list is gone with the Trash`);
+      assert.ok(h.doc.activeElement === h.fact, `${at}: focus is back on the Trash row the sheet was opened from (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+      assert.ok(h.calls.includes('loadTrash'), `control (${at}): the empty reads the Trash again for the Dashboard's row`);
+
+      const elsewhere = h.$('scanBtn');
+      if (movedOn) { elsewhere.focus(); assert.equal(h.doc.activeElement, elsewhere, `control (${at}): Tab moved focus on`); }
+      await h.settleLoads();
+      const now = h.doc.activeElement;
+      const named = `<${now?.tag} id=${now?.id}>`;
+      if (after === TRASH_PART_LEFT) {
+        assert.equal(h.fact.hidden, false, `control (${at}): the row stays, saying what is left`);
+        assert.ok(now === h.fact, `${at}: focus stays on the Trash row (it is on ${named})`);
+        continue;
+      }
+      assert.equal(h.fact.hidden, true, `control (${at}): an empty Trash read in full has no row`);
+      if (movedOn) { assert.ok(now === elsewhere, `${at}: focus is left where the person put it (it is on ${named})`); continue; }
+      assert.ok(now && now !== h.doc.body && now !== h.fact, `${at}: focus is not on <body>, nor on the row that went (it is on ${named})`);
+      assert.ok(h.$('view-dashboard').contains(now) && now.getClientRects().length > 0 && now.tabIndex >= 0 && !now.disabled,
+        `${at}: it is on a Tab stop of the Dashboard, on screen (it is on ${named})`);
+    }
   }
 });
 
