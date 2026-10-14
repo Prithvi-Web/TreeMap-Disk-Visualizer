@@ -556,22 +556,45 @@ test('the Clean Up footer\'s Move to Trash belongs to the pane on screen: Shrink
  * emptied. The completion toast and Shrink Video's report made the same claim.
  */
 
-test('the selection summary promises nothing the Trash has not done yet', async () => {
+/** The footer under a two-file, 3.6 GB selection, from the page's own updateCleanSummary — on a local scan, or on a cloud account's (`cloud`: its provider). */
+async function cleanFooter(cloud?: { name: string; trashLabel: string }): Promise<{ line: string; label: string }> {
   const { els, $ } = makeDom();
   const fn = runnable(bodyOf('function updateCleanSummary() {'), {
     $,
-    activeCleanSelection: () => ({ paths: ['/a', '/b'], bytes: 3_600_000_000, noun: 'file' }),
+    activeCleanSelection: () => ({ paths: cloud ? ['cloud://gdrive/a', 'cloud://gdrive/b'] : ['/a', '/b'], bytes: 3_600_000_000, noun: 'file' }),
     formatBytes: () => '3.6 GB',
     icon: () => '',
+    escapeHtml: String,
+    isCloudScan: () => Boolean(cloud),
+    cloudProviderOfScan: () => cloud ?? assert.fail('a local scan has no provider'),
     cleanPane: 'rules',
     renderCleanFunnel: () => {},
   });
   await fn();
-  const line = els.cleanSummary.textContent;
+  return { line: els.cleanSummary.textContent, label: els.cleanConfirmBtn.innerHTML };
+}
+
+test('the selection summary promises nothing the Trash has not done yet', async () => {
+  const { line, label } = await cleanFooter();
   assert.doesNotMatch(line, /recovered/i, `nothing is recovered by a move to the Trash: "${line}"`);
   assert.match(line, /2 files/);
   assert.match(line, /up to 3\.6 GB/, 'the reported size is the most it can free');
   assert.match(line, /empty the Trash/, 'and only when the Trash is emptied');
+  assert.equal(label, 'Move 2 to Trash');
+});
+
+test('on a cloud account\'s scan the selection summary and its button name the provider\'s trash, and promise no space from emptying the system Trash (review F2.1 of QA third pass D06)', async () => {
+  // F1.4 made the sheet's top sentence say "goes to Google Drive trash"; the
+  // footer under it still read "3 files · up to 2.1 GB, freed when you empty
+  // the Trash" beside "Move 3 to Trash". A cloud scan's removals go to the
+  // provider's own trash (confirmTrash, cloudTrashPaths): emptying the system
+  // Trash frees nothing of them, and whether the provider counts its trash
+  // against the account's space is the provider's rule (Dropbox does not).
+  const { line, label } = await cleanFooter({ name: 'Google Drive', trashLabel: 'Google Drive trash' });
+  assert.match(line, /^2 files · 3\.6 GB/, `the selection and its size: "${line}"`);
+  assert.doesNotMatch(line, /\bTrash\b|freed|free\b/, `no system Trash, and no space promised: "${line}"`);
+  assert.match(line, /Google Drive's trash$/, `where they go: "${line}"`);
+  assert.equal(label, 'Move 2 to Google Drive\'s trash', 'the button says where it moves them, as the sheet it opens does');
 });
 
 test('the completion toast says where the files went, not that space came back', async () => {

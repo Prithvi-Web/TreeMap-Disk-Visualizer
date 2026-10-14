@@ -1056,15 +1056,24 @@ function activeCleanSelection() {
  * What a selection frees is said as what a move to the Trash does (D54): it
  * frees nothing until the Trash is emptied, and then at most the size the
  * files report — a sparse or shared file frees less.
+ *
+ * A cloud account's removals go to the provider's own trash (confirmTrash,
+ * cloudTrashPaths), which the system Trash never sees, and whether the
+ * provider counts its trash against the account's space is its own rule
+ * (Dropbox does not): the line says where they go and promises no space, as
+ * the sheet's top sentence does (review F2.1 of QA third pass D06).
  */
 function updateCleanSummary() {
   const { paths, bytes, noun } = activeCleanSelection();
-  $('cleanSummary').textContent = paths.length
-    ? `${paths.length} ${noun}${paths.length > 1 ? 's' : ''}${bytes ? ` · up to ${formatBytes(bytes)}, freed when you empty the Trash` : ''}`
-    : '';
+  const cloud = isCloudScan() ? cloudProviderOfScan() : null;
+  const where = cloud ? `${cloud.name}'s trash` : 'Trash';
+  const size = !bytes ? ''
+    : cloud ? ` · ${formatBytes(bytes)}, to ${where}`
+    : ` · up to ${formatBytes(bytes)}, freed when you empty the Trash`;
+  $('cleanSummary').textContent = paths.length ? `${paths.length} ${noun}${paths.length > 1 ? 's' : ''}${size}` : '';
   $('cleanConfirmBtn').disabled = !paths.length;
   $('cleanConfirmBtn').innerHTML = icon('trash', 14) +
-    (paths.length ? `Move ${paths.length} to Trash` : 'Move to Trash');
+    (paths.length ? `Move ${paths.length} to ${escapeHtml(where)}` : `Move to ${escapeHtml(where)}`);
   if (cleanPane === 'smart') renderCleanFunnel(bytes);
 }
 
