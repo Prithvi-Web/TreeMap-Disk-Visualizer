@@ -44,6 +44,8 @@ interface Harness {
   toasts: Array<[string, string | undefined]>;
   els: Record<string, { innerHTML: string; open: boolean }>;
   confirm: () => (() => Promise<void>) | null;
+  /** How many times the page asked the dock to refresh. */
+  dockRefreshes: () => number;
 }
 
 /** The plan the dry run answers for `body`. */
@@ -62,6 +64,7 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
   const posts: Array<Record<string, unknown>> = [];
   const offloaded: Array<[string[], string]> = [];
   const toasts: Array<[string, string | undefined]> = [];
+  let refreshes = 0;
   const els: Record<string, { innerHTML: string; open: boolean; classList: { add: (c: string) => void } }> = {};
   const $ = (id: string) => (els[id] ??= { innerHTML: '', open: false, classList: { add: (c: string) => { if (c === 'open') els[id].open = true; } } });
   const state = { scanId: 's1', root: { path: '/Users/me' }, cart: new Set<string>(), pathIndex: new Set<string>() };
@@ -81,7 +84,7 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     $, toast: (m: string, kind?: string) => { toasts.push([m, kind]); },
     hideCtxMenu: () => {}, openBrowse: (...a: unknown[]) => { opened.push(a); },
     icon: () => '', escapeHtml: (s: unknown) => String(s), formatBytes: (n: number) => `${n / 1e9} GB`, formatCount: String,
-    resetOpenHandleWarning: () => {}, refreshDock: () => {},
+    resetOpenHandleWarning: () => {}, refreshDock: () => { refreshes++; },
     runOffloadJob: async (paths: string[], dest: string) => { offloaded.push([paths, dest]); },
     activeJob: null,
   };
@@ -93,7 +96,7 @@ function harness(drives: Drive[], refuse: string | null = null, volumesReply: ((
     return { start: startOffloadFlow, picked: offloadPicked, drop: dockDrop, confirm: () => onConfirmTrash };`)(...keys.map((k) => deps[k])) as {
     start: Harness['start']; picked: Harness['picked']; drop: Harness['drop']; confirm: Harness['confirm'];
   };
-  return { ...page, state, opened, posts, offloaded, toasts, els, confirm: page.confirm };
+  return { ...page, state, opened, posts, offloaded, toasts, els, confirm: page.confirm, dockRefreshes: () => refreshes };
 }
 
 const BACKUP: Drive = { name: 'Backup', path: '/Volumes/Backup', freeBytes: 5e11 };
@@ -221,6 +224,40 @@ test('a later plan owns the shared confirm: an earlier pick\'s or drop\'s dry ru
     assert.deepEqual(h.offloaded, [[cart, later.dest]], `${label}: and Confirm offloads to the later plan's folder, never the earlier one's`);
     assert.deepEqual(h.toasts, [], `${label}: nothing was reported`);
   }
+});
+
+/**
+ * A drop on `BACKUP` whose drive list is held back, a pick for another folder made meanwhile, and then
+ * the drop's list landing last — naming the drive (`driveThere`) or not (review F2.4). The pick's dry
+ * run answers at once.
+ */
+async function dropOutlivedByAPick(driveThere: boolean): Promise<{ h: Harness; sheet: string }> {
+  const cart = ['/Users/me/Movies/old.mov'];
+  const dest = '/Volumes/Work/Archive';
+  const held: Array<() => void> = [];
+  const h = harness([WORK, BACKUP], null, () => new Promise((resolve) => { held.push(() => resolve({ volumes: driveThere ? [WORK, BACKUP] : [WORK] })); }));
+  for (const p of cart) { h.state.cart.add(p); h.state.pathIndex.add(p); }
+  const drop = h.drop(BACKUP.path);
+  await waitFor(() => held.length === 1, 'the drop asks whether its drive is still there');
+  await h.picked(cart, dest);
+  assert.equal(h.els.confirmModal?.open, true, 'control: the pick\'s sheet opened');
+  assert.equal(h.posts.length, 1, 'control: the pick\'s dry run, and only that, was asked');
+  const sheet = h.els.confirmText.innerHTML;
+  held[0]();
+  await drop;
+  return { h, sheet };
+}
+
+test('a drop still waiting on its drive list when a later pick takes the sheet never plans: no repaint, and no dry run of its own (E01, review F2.4)', async () => {
+  const { h, sheet } = await dropOutlivedByAPick(true);
+  assert.equal(h.els.confirmText.innerHTML, sheet, 'the drop, its drive still there, did not repaint the pick\'s sheet');
+  assert.equal(h.posts.length, 1, 'nor ask a dry run of its own');
+});
+
+test('a drop still waiting on its drive list when a later pick takes the sheet never speaks: its drive gone, no dock refresh and no toast over the pick\'s sheet (E01, review F2.4)', async () => {
+  const { h } = await dropOutlivedByAPick(false);
+  assert.equal(h.dockRefreshes(), 0, 'the stale drop did not refresh the dock');
+  assert.deepEqual(h.toasts, [], 'nor say its drive is no longer connected');
 });
 
 test('no door moves anything bare: runOffloadJob is called in one place — the shared confirm\'s Confirm — and every other POST to /api/offload is a dry run (E01)', () => {
