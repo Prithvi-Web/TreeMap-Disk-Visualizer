@@ -649,12 +649,18 @@ input[type="text"], input[type="number"], select {
               box-shadow var(--dur-2) var(--ease);
   min-height: 30px;
 }
-:root[data-theme="light"] input[type="text"], :root[data-theme="light"] input[type="number"], :root[data-theme="light"] select {
+:root[data-theme="light"] input[type="text"], :root[data-theme="light"] input[type="number"] {
   background: linear-gradient(180deg, rgba(10,15,30,0.04), rgba(10,15,30,0) 40%), rgba(255,255,255,0.6);
 }
+/* A select's arrow is its background-image (the `select` rule below), so
+   nothing that reaches a select may use the `background` shorthand, which
+   resets the image: the light theme's did, and every select there lost its
+   arrow (design pass G08); so did focus, in both themes. Colour only. */
+:root[data-theme="light"] select { background-color: rgba(255,255,255,0.6); }
 input:hover, select:hover { border-color: var(--hairline-2); }
-input:focus, select:focus { border-color: var(--accent); outline: none; background: var(--surface-2);
+input:focus, select:focus { border-color: var(--accent); outline: none; background-color: var(--surface-2);
   box-shadow: inset 0 1.5px 3px rgba(0,0,0,0.1), 0 0 0 3.5px var(--accent-soft), 0 0 18px var(--accent-soft); }
+input:focus { background-image: none; }
 input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: var(--cur-hand); }
 select { cursor: var(--cur-hand); appearance: none; -webkit-appearance: none; padding-right: 28px;
   background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
@@ -3045,6 +3051,10 @@ body:has(.modal-backdrop.open):has(#selectionBar.visible) #toasts { top: 8px; bo
 .dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: var(--cur-hand); user-select: none;
   transition: background var(--dur-1) var(--ease); }
 .dup-head:hover { background: var(--surface-1); }
+/* The app's ring sits 2px OUTSIDE its element, and .dup-group clips what
+   spills out of it, so a focused header showed no ring at all (design pass
+   G10): drawn inside the header here, following the group's corners. */
+.dup-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: var(--r-md); }
 .dup-head .meta { flex: 1; min-width: 0; }
 .dup-head .nm { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dup-head .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }

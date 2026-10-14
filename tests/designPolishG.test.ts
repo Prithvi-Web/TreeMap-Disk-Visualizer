@@ -163,3 +163,78 @@ test('G19: while the cart is open it stands left of the cart, as the preview ban
   assert.match(prop(r.body, 'left') ?? '', /^\d+px$/);
   assert.match(prop(r.body, 'max-width') ?? '', /402px/, 'the same allowance the preview banner keeps for the dock');
 });
+
+/* ══════════════ G08 — every <select> keeps its arrow, in both themes, at rest, hovered and focused ══════════════ */
+
+/** CSS specificity of one compound-selector chain, as [ids, classes|attrs|pseudo-classes, elements]. */
+function specificity(sel: string): [number, number, number] {
+  const s = sel.replace(/::[a-z-]+/g, ' ');
+  const ids = (s.match(/#[\w-]+/g) ?? []).length;
+  const cls = (s.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+(\([^)]*\))?/g) ?? []).length;
+  const els = (s.replace(/\[[^\]]*\]|\([^)]*\)/g, '').match(/(^|[\s>+~])[a-z][\w-]*/gi) ?? []).length;
+  return [ids, cls, els];
+}
+const cmp = (a: [number, number, number], b: [number, number, number]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+/**
+ * The background-image a `select` ends up with, in `theme`, in `state`
+ * ('' | ':hover' | ':focus'): every rule whose selector names a select in
+ * that state (bare, or under the theme's root), its `background` shorthand
+ * counted as setting the image to its own gradients (or none), the winner by
+ * specificity and then by source order.
+ */
+function selectImage(theme: 'dark' | 'light', state: '' | ':hover' | ':focus'): string {
+  const applies = (p: string) => {
+    const bare = p.replace(/^:root\[data-theme="light"\]\s+/, '');
+    if (bare !== p && theme !== 'light') return false;
+    return bare === 'select' || (state !== '' && bare === `select${state}`);
+  };
+  let best: { spec: [number, number, number]; order: number; image: string } | null = null;
+  for (const [order, r] of RULES.entries()) {
+    for (const p of parts(r)) {
+      if (!applies(p)) continue;
+      for (const m of r.body.matchAll(/(?:^|;)\s*(background(?:-image)?)\s*:\s*([^;]+)/g)) {
+        const image = m[1] === 'background-image' ? m[2].trim()
+          : (m[2].match(/(?:linear|radial|conic)-gradient\((?:[^()]|\([^()]*\))*\)/g) ?? ['none']).join(', ');
+        const spec = specificity(p);
+        if (!best || cmp(spec, best.spec) > 0 || (cmp(spec, best.spec) === 0 && order >= best.order)) best = { spec, order, image };
+      }
+    }
+  }
+  assert.ok(best, `some rule paints a ${theme} select${state}`);
+  return best!.image;
+}
+
+test('G08: a select shows its arrow in both themes — resting, hovered and focused', () => {
+  // `:root[data-theme="light"] select { background: … }` re-set the whole
+  // background after `select {}` had drawn its arrow into background-image,
+  // so every select in the light theme lost it.
+  const arrow = selectImage('dark', '');
+  assert.match(arrow, /^linear-gradient\(45deg,.*\),\s*linear-gradient\(135deg,/, `the dark select draws its two-stroke arrow (${arrow})`);
+  for (const theme of ['dark', 'light'] as const) {
+    for (const state of ['', ':hover', ':focus'] as const) {
+      assert.equal(selectImage(theme, state), arrow, `${theme} select${state} keeps the arrow`);
+    }
+  }
+});
+
+/* ══════════════ G10 — a focused Duplicates group header shows its focus ring ══════════════ */
+
+test('G10: a focused Duplicates group header draws its ring inside itself, where the group\'s overflow cannot clip it', () => {
+  // The app's ring is 2px at a 2px offset — outside the element — and the
+  // header's card (.dup-group) has overflow: hidden, so the ring was cut off
+  // entirely (shots/110b).
+  assert.equal(cascaded('.dup-group', 'overflow'), 'hidden', 'the group clips what spills out of it');
+  const r = ruleFor('.dup-head:focus-visible');
+  const outline = prop(r.body, 'outline') ?? '';
+  const width = parseFloat(/([\d.]+)px/.exec(outline)?.[1] ?? '0');
+  assert.ok(width >= 2, `a 2px ring (${outline})`);
+  assert.match(outline, /var\(--accent\)/, 'in the app\'s ring colour');
+  const offset = parseFloat(prop(r.body, 'outline-offset') ?? '0');
+  assert.ok(offset <= -width, `drawn inside the header (outline-offset ${offset}px against a ${width}px ring)`);
+  for (const [name, palette] of THEMES) {
+    const ground = card(palette);
+    const c = contrast(paint('var(--accent)', palette, ground), ground);
+    assert.ok(c >= 3, `${name}: the ring measures ${fmt(c)}:1 against the card (a UI component needs 3:1)`);
+  }
+});

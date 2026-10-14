@@ -36,6 +36,10 @@
 .dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: var(--cur-hand); user-select: none;
   transition: background var(--dur-1) var(--ease); }
 .dup-head:hover { background: var(--surface-1); }
+/* The app's ring sits 2px OUTSIDE its element, and .dup-group clips what
+   spills out of it, so a focused header showed no ring at all (design pass
+   G10): drawn inside the header here, following the group's corners. */
+.dup-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: var(--r-md); }
 .dup-head .meta { flex: 1; min-width: 0; }
 .dup-head .nm { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dup-head .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
