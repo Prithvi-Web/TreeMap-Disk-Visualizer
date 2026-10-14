@@ -24477,12 +24477,15 @@ async function startOffloadFlow(paths) {
   }
   // A drive the selection itself is on is no destination for it.
   const others = drives.filter((v) => !paths.some((p) => p === v.path || tmIsInside(p, v.path)));
+  // Files on a connected drive have this computer's own disk as another
+  // drive: the picker's usual start and shortcuts are then the obvious choice.
+  const onADrive = others.length < drives.length;
   const why = 'an offload to the drive these files are on frees nothing, so TreeMap refuses it.';
   // The picker's button names the offload — copy, verify, then trash the
   // originals — not a scan (final review F1.7).
   openBrowse(others.length ? others[0].path : null, (dest) => offloadPicked(paths, dest), 'Offload to…', 'Offload to this folder', {
-    chips: others.map((v) => ({ path: v.path, name: v.name })),
-    hint: others.length
+    chips: others.length || !onADrive ? others.map((v) => ({ path: v.path, name: v.name })) : undefined,
+    hint: others.length || onADrive
       ? `Pick a folder on another drive: ${why}`
       : `No other drive is connected. Connect one, or type the path of a drive or network share: ${why}`,
   });

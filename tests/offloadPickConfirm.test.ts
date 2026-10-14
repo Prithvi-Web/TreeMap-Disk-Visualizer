@@ -114,6 +114,16 @@ test('with no other drive connected, the picker says so and offers no folder on 
   assert.match(opts.hint, /frees nothing/);
 });
 
+test('a selection on the only connected drive opens the picker on this computer\'s own disk — another drive for it — with its usual shortcuts (E01)', async () => {
+  const h = harness([WORK]);
+  await h.start(['/Volumes/Work/Projects/old']);
+  const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips?: Drive[]; hint: string }];
+  assert.equal(start, null, 'the picker starts where it always does, on this computer\'s disk');
+  assert.equal(opts.chips, undefined, 'with the home folder\'s shortcuts: they are on another drive than the files');
+  assert.match(opts.hint, /Pick a folder on another drive/, 'and it does not claim no other drive is connected');
+  assert.doesNotMatch(opts.hint, /No other drive is connected/);
+});
+
 test('a folder picked for an offload is never moved to bare: the pick asks the dry run, the manifest goes behind the shared confirm, and only Confirm offloads — the same paths, to the same folder (E01)', async () => {
   const h = harness([BACKUP]);
   const paths = ['/Users/me/Mail/Mailbox 23.mbox', '/Users/me/Mail/Mailbox 24.mbox'];
