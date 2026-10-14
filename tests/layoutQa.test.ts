@@ -714,6 +714,32 @@ test('at the desktop window\'s minimum the map gives up height so its footer sta
   assert.ok(tiny.height >= 96, `a window with no room left still draws a ${tiny.height} px map`);
 });
 
+test('the sunburst fits the map the page leaves it, down to the map\'s floor — its disc is never cut by the top or bottom of a short map (review F1.3)', () => {
+  // D12 lowered the map's floor from 200 px to 96, under the sunburst's own
+  // minimum: its outer radius never went below 60 px (a 120 px disc), so a
+  // map 96–119 px tall drew a disc taller than itself and lost the outer
+  // ring at 12 and 6 o'clock — 3.5 px a side in the D12 state, 12 at the floor.
+  const floor = mapWithCart(480, 250, 76).height;
+  const d12 = mapWithCart(700, 293, 69, 127).height;
+  assert.ok(floor < 120 && d12 < 120, `control: the map can be shorter than a 120 px disc (floor ${floor}, the D12 state ${d12})`);
+  const geometry = (cssW: number, cssH: number) => runPageDecls<() => { cx: number; cy: number; outerR: number }>(['sunRingCount', 'sunburstGeometry'], {
+    state: { treemap: { maxDepth: 7 } },
+    tmSizeCanvas: () => ({ cssW, cssH, dpr: 1 }),
+  }, 'sunburstGeometry')();
+  for (const cssW of [402, 1100]) {
+    for (const cssH of [floor, d12, 100, 119, 120, 127, 128, 140, 156, 200, 360, 600]) {
+      const g = geometry(cssW, cssH);
+      const half = Math.min(cssW, cssH) / 2;
+      const label = `a ${cssW}×${cssH} map`;
+      // The disc and the 2 px outline drawn round a hovered or keyboard-picked arc.
+      assert.ok(g.cy - g.outerR - 1 >= 0 && g.cy + g.outerR + 1 <= cssH && g.cx - g.outerR - 1 >= 0 && g.cx + g.outerR + 1 <= cssW,
+        `${label}: the sunburst spans y ${(g.cy - g.outerR).toFixed(1)}–${(g.cy + g.outerR).toFixed(1)}, x ${(g.cx - g.outerR).toFixed(1)}–${(g.cx + g.outerR).toFixed(1)}, and its outline a pixel more`);
+      if (half - 18 >= 60) assert.equal(g.outerR, half - 18, `${label}: a map with room draws the disc it always did`);
+      else assert.ok(g.outerR >= Math.min(60, half - 6), `${label}: a short map's disc takes its height but a few pixels (radius ${g.outerR}, the map's half ${half})`);
+    }
+  }
+});
+
 /**
  * A Voronoi (or Circles) map with the page's own refit and its own window
  * resize handler, on a clock that only moves when the test moves it. A solve

@@ -19473,11 +19473,19 @@ function sunburstRoot() {
   return state.pathIndex.get(state.treemap.rootPath) || state.root;
 }
 
-/** Size the canvas + buffer for the sunburst; returns the shared geometry. */
+/**
+ * Size the canvas + buffer for the sunburst; returns the shared geometry.
+ * The disc keeps 18 px of the map round it, and a 60 px radius where a short
+ * map has less — but never more than the map holds: the map can be as short
+ * as 96 px (treemapCanvasHeight, QA D12), and a 120 px disc on it lost its
+ * outer ring at 12 and 6 o'clock (review F1.3). There it takes the map's
+ * height less 4 px a side, room for the 2 px outline round a hovered arc.
+ */
 function sunburstGeometry() {
   const { cssW, cssH, dpr } = tmSizeCanvas();
   const rings = sunRingCount();
-  const outerR = Math.max(60, Math.min(cssW, cssH) / 2 - 18);
+  const half = Math.min(cssW, cssH) / 2;
+  const outerR = Math.max(Math.min(60, half - 4), half - 18);
   const innerR0 = outerR / (rings + 1);
   return { cssW, cssH, dpr, cx: cssW / 2, cy: cssH / 2, rings, outerR, innerR0, ringT: (outerR - innerR0) / rings };
 }
