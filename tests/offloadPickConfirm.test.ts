@@ -42,8 +42,11 @@ interface Harness {
   confirm: () => (() => Promise<void>) | null;
 }
 
-/** `refuse`: the dry run answers with this error instead of a plan. */
-function harness(drives: Drive[], refuse: string | null = null): Harness {
+/**
+ * `refuse`: the dry run answers with this error instead of a plan. `volumesReply`: what GET /api/volumes
+ * answers in place of `{ volumes: drives }` — it may throw, as a failed call does.
+ */
+function harness(drives: Drive[], refuse: string | null = null, volumesReply: (() => unknown) | null = null): Harness {
   const opened: unknown[][] = [];
   const posts: Array<Record<string, unknown>> = [];
   const offloaded: Array<[string[], string]> = [];
@@ -53,7 +56,7 @@ function harness(drives: Drive[], refuse: string | null = null): Harness {
   const deps: Record<string, unknown> = {
     state: { scanId: 's1', root: { path: '/Users/me' }, cart: new Set<string>(), pathIndex: new Set<string>() },
     api: async (url: string, opts?: { method?: string; body?: string }) => {
-      if (url === '/api/volumes') return { volumes: drives };
+      if (url === '/api/volumes') return volumesReply ? volumesReply() : { volumes: drives };
       if (url === '/api/offload') {
         const body = JSON.parse(opts?.body ?? '{}');
         posts.push(body);
@@ -112,6 +115,31 @@ test('with no other drive connected, the picker says so and offers no folder on 
   assert.deepEqual(opts.chips, [], 'no Desktop / Documents / Downloads shortcuts — each is on this disk');
   assert.match(opts.hint, /No other drive is connected/);
   assert.match(opts.hint, /frees nothing/);
+});
+
+/** What GET /api/volumes answers on Windows, where drive discovery is not implemented (services/volumes.ts). */
+const WINDOWS_VOLUMES = {
+  volumes: [],
+  reason: 'Windows drive discovery is not implemented yet, so no drives are listed on this platform — not a statement that none are attached.',
+};
+
+test('where TreeMap cannot list the drives — the server says why, or the call fails — the picker never says no other drive is connected, and keeps its usual shortcuts (E01, review F1.2)', async () => {
+  const cases: Array<[string, () => unknown]> = [
+    ['the server cannot list drives on this platform', () => WINDOWS_VOLUMES],
+    ['the drive list could not be fetched', () => { throw new Error('Network request failed'); }],
+  ];
+  for (const [label, reply] of cases) {
+    const h = harness([], null, reply);
+    await h.start(['/Users/me/a.mov']);
+    assert.equal(h.opened.length, 1, `${label}: control, the picker opened`);
+    const [start, , , , opts] = h.opened[0] as [string | null, unknown, string, string, { chips?: Drive[]; hint: string }];
+    assert.doesNotMatch(opts.hint, /No other drive is connected/, `${label}: a drive list nobody read is not "none connected"`);
+    assert.match(opts.hint, /can't list the drives/, `${label}: it says TreeMap cannot list them`);
+    assert.match(opts.hint, /type the path of a folder on another drive/, `${label}: and what to do instead`);
+    assert.match(opts.hint, /frees nothing/, `${label}: and why the files' own drive will not do`);
+    assert.equal(opts.chips, undefined, `${label}: the usual shortcuts stay — TreeMap cannot tell which drive they are on`);
+    assert.equal(start, null, `${label}: the picker starts where it always does`);
+  }
 });
 
 test('a selection on the only connected drive opens the picker on this computer\'s own disk — another drive for it — with its usual shortcuts (E01)', async () => {

@@ -24470,10 +24470,16 @@ async function startOffloadFlow(paths) {
   if (paths[0].startsWith('cloud://')) { toast('Offload moves local files to another drive — it doesn’t apply to cloud scans', 'error'); return; }
   hideCtxMenu();
   let drives = [];
+  // The list is a statement that no other drive is connected only when the
+  // server read it: on a platform where it cannot list drives it answers an
+  // empty list WITH a reason, and a failed call says nothing at all (review F1.2).
+  let listed = true;
   try {
-    drives = (await api('/api/volumes')).volumes || [];
+    const answer = await api('/api/volumes');
+    drives = answer.volumes || [];
+    if (answer.reason) listed = false;
   } catch {
-    drives = []; // no answer: no drive is offered, and the line below says none is connected
+    listed = false;
   }
   // A drive the selection itself is on is no destination for it.
   const others = drives.filter((v) => !paths.some((p) => p === v.path || tmIsInside(p, v.path)));
@@ -24481,13 +24487,18 @@ async function startOffloadFlow(paths) {
   // drive: the picker's usual start and shortcuts are then the obvious choice.
   const onADrive = others.length < drives.length;
   const why = 'an offload to the drive these files are on frees nothing, so TreeMap refuses it.';
+  // With no list to go by, which drive a folder is on is unknown: the usual
+  // shortcuts stay, and the line says so rather than "none is connected".
+  const hint = others.length || onADrive
+    ? `Pick a folder on another drive: ${why}`
+    : !listed
+      ? `TreeMap can't list the drives on this computer — type the path of a folder on another drive or a network share: ${why}`
+      : `No other drive is connected. Connect one, or type the path of a drive or network share: ${why}`;
   // The picker's button names the offload — copy, verify, then trash the
   // originals — not a scan (final review F1.7).
   openBrowse(others.length ? others[0].path : null, (dest) => offloadPicked(paths, dest), 'Offload to…', 'Offload to this folder', {
-    chips: others.length || !onADrive ? others.map((v) => ({ path: v.path, name: v.name })) : undefined,
-    hint: others.length || onADrive
-      ? `Pick a folder on another drive: ${why}`
-      : `No other drive is connected. Connect one, or type the path of a drive or network share: ${why}`,
+    chips: others.length || (!onADrive && listed) ? others.map((v) => ({ path: v.path, name: v.name })) : undefined,
+    hint,
   });
 }
 
