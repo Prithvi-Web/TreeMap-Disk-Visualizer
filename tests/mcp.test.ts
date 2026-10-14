@@ -341,10 +341,13 @@ test('trash_paths says what really happened: "moved to the Trash" only for what 
     const notes = {
       'nothing moved': await noteOf([gone, refused]),
       'some moved': await noteOf([moves, gone]),
+      'all moved': await noteOf([write('note-all-1.txt', 'a'), write('note-all-2.txt', 'b')]),
     };
     assert.match(notes['nothing moved'], /^Nothing was moved to the Trash/);
     assert.doesNotMatch(notes['nothing moved'], /were moved to the OS Trash/);
-    assert.match(notes['some moved'], /^1 item was moved to the OS Trash and can be restored from there; 1 was not/);
+    // The way back from the Trash ends when it is emptied (review F1.8 of QA third pass D06): the agent repeats this note to a person.
+    assert.match(notes['some moved'], /^1 item was moved to the OS Trash and can be restored from there until the Trash is emptied; 1 was not/);
+    assert.equal(notes['all moved'], '2 items were moved to the OS Trash and can be restored from there until the Trash is emptied.');
   } finally {
     setTrashStepForTests(null);
     fs.rmSync(standIn, { recursive: true, force: true });
@@ -375,7 +378,7 @@ test('trash_paths never says an item was not moved when the Trash may still move
     assert.deepEqual([allLate.stopped, mixed.stopped], [2, 1], 'the stand-in stopped the items it was meant to');
     assert.doesNotMatch(allLate.note, /Nothing was moved|were not moved|was not moved/);
     assert.match(allLate.note, /^Nothing was confirmed moved to the Trash; 2 items were not confirmed — the Trash did not answer in time and may still finish moving them./);
-    assert.match(mixed.note, /^1 item was moved to the OS Trash and can be restored from there; 1 item was not confirmed — the Trash did not answer in time and may still finish moving it; 1 was not moved./);
+    assert.match(mixed.note, /^1 item was moved to the OS Trash and can be restored from there until the Trash is emptied; 1 item was not confirmed — the Trash did not answer in time and may still finish moving it; 1 was not moved./);
   } finally {
     setTrashStepForTests(null);
     fs.rmSync(standIn, { recursive: true, force: true });

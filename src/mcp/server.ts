@@ -158,7 +158,9 @@ function requireCompleteScanMcp(scanId: string): ScanResult {
  * reclaimedBytes 0 told an agent a delete had happened that had not (the final review, F1.25). An
  * item whose Trash step did not answer in time (`stopped`) is neither: the Trash may still finish
  * moving it, so it is "not confirmed", never "not moved" — an agent told it was not moved could
- * report no delete, or retry one the Trash then completes (the final review, F2.6).
+ * report no delete, or retry one the Trash then completes (the final review, F2.6). The way back
+ * ends when the Trash is emptied — trash_paths keeps no Time Capsule copy — and an agent repeats
+ * this note to a person, so it says so (review F1.8 of QA third pass D06).
  */
 function trashNote(moved: number, failed: readonly { stopped?: boolean }[]): string {
   const unanswered = failed.filter((item) => item.stopped === true).length;
@@ -166,7 +168,7 @@ function trashNote(moved: number, failed: readonly { stopped?: boolean }[]): str
   if (moved === 0 && unanswered === 0) return notMoved === 0 ? 'Nothing was moved to the Trash.' : 'Nothing was moved to the Trash — `failed` says why for each item.';
   const was = (n: number): string => (n === 1 ? 'was' : 'were');
   const clauses = [
-    moved > 0 ? `${moved} item${moved === 1 ? ' was' : 's were'} moved to the OS Trash and can be restored from there` : 'Nothing was confirmed moved to the Trash',
+    moved > 0 ? `${moved} item${moved === 1 ? ' was' : 's were'} moved to the OS Trash and can be restored from there until the Trash is emptied` : 'Nothing was confirmed moved to the Trash',
     ...(unanswered > 0
       ? [`${unanswered} item${unanswered === 1 ? '' : 's'} ${was(unanswered)} not confirmed — the Trash did not answer in time and may still finish moving ${unanswered === 1 ? 'it' : 'them'}`]
       : []),
