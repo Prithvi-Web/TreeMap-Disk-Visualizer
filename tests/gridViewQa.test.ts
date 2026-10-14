@@ -1279,6 +1279,34 @@ test('a tile with keyboard focus keeps it when the Grid rebuilds the tiles aroun
   g.onCellClick({ metaKey: true }, 15);
   focusedOn(15, 'a ⌘-click (or ⌘-Space) on it');
 
+  // The window's own first and last tiles (review F2.3). A focused tile in
+  // the window is built by the window, once, and keeps the focus: queued
+  // ahead of the window as well, Tab onto the first tile then Space — the
+  // commonest keyboard flow — built it twice, two tiles stacked and two tab
+  // stops for one file.
+  const b = gridHarness({ raf: true });
+  evenPlant(b, 400);
+  sizeFromSheet(b, 1440, 900, false);
+  await b.renderGrid();
+  const bsc = b.els.gridScroll;
+  const edges: [string, number, 'rangeStart' | 'rangeEnd'][] = [
+    ['the first tile, at the top of the Grid', 0, 'rangeStart'],
+    ['the window\'s first tile, scrolled down', 20 * 268, 'rangeStart'],
+    ['the window\'s last tile', 20 * 268, 'rangeEnd'],
+  ];
+  for (const [what, to, edge] of edges) {
+    bsc.scrollTop = to; for (const f of bsc.listeners.scroll || []) f({});
+    const i = b.state.grid[edge];
+    if (to > 0 && edge === 'rangeStart') assert.ok(i > 0, `control: scrolled, the window starts further down (tile ${i})`);
+    b.els.gridInner.children.find((c) => Number(c.dataset.i) === i)!.focus();
+    b.onCellClick({ metaKey: true }, i); // Space on it: the Grid rebuilds its tiles
+    const built = b.els.gridInner.children.map((c) => Number(c.dataset.i));
+    assert.equal(new Set(built).size, built.length, `${what} (${i}) focused, then a rebuild: each tile is built once (built ${built.slice(0, 5).join(', ')} … ${built.slice(-3).join(', ')})`);
+    assert.equal(built.filter((n) => n === i).length, 1, `${what}: tile ${i} among them, once`);
+    const el = FOCUS.active;
+    assert.ok(el && b.els.gridInner.children.includes(el) && Number(el.dataset.i) === i, `${what}: focus stays on tile ${i} (it is on ${el ? `data-i ${el.dataset.i}` : 'nothing'})`);
+  }
+
   // A folder opened from the keyboard is another list: no tile of it takes
   // the focus that was on the folder's tile.
   const h = gridHarness({ raf: true });
