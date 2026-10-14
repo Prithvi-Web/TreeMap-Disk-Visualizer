@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
+import { ageFolders } from './fixtures/folderTimes';
 isolatedDataDir('treemap-fastRescanEngine-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -50,12 +51,13 @@ after(async () => {
   await settled();
 });
 
-/** root/{a.bin, sub/b.bin}. */
+/** root/{a.bin, sub/b.bin}, its folder times settled so a fast rescan may take their cached listings. */
 function tree(): string {
   const root = fs.realpathSync(fileTempDir('treemap-fastRescanEngine-'));
   fs.mkdirSync(path.join(root, 'sub'));
   fs.writeFileSync(path.join(root, 'a.bin'), 'a'.repeat(100));
   fs.writeFileSync(path.join(root, 'sub', 'b.bin'), 'b'.repeat(200));
+  ageFolders(root);
   return root;
 }
 

@@ -7,6 +7,7 @@ import type * as NativeCore from '../native/index';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
+import { ageFolders } from './fixtures/folderTimes';
 isolatedDataDir('treemap-scanBoundaryEngines-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -392,6 +393,7 @@ test('incremental: stay, then cross with the mount unchanged — the drive is wa
 test('incremental: a listing cached before the drive was mounted is not reused inside it — the walk checks every folder it is handed', async (t) => {
   if (NO_TABLE) return t.skip(NO_TABLE);
   const f = tree();
+  ageFolders(f.root); // settled, so the rescan may take the cached listings
   useTable([]);
   const first = await scanWith(f.root, 'stay', 'walker');
   assert.notEqual(storeOf(first).findByPath(f.inside), -1, 'before the mount, mnt is an ordinary folder');

@@ -31,6 +31,7 @@ import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { canLock } from './fixtures/nativeEdge';
 import { skipOrFailOnCi } from './fixtures/ciSkip';
 import { waitFor } from './fixtures/waitFor';
+import { ageFolders } from './fixtures/folderTimes';
 import { settled } from '../src/utils/backgroundWrites';
 
 /**
@@ -654,6 +655,7 @@ test('walker: a "don\'t scan" pattern that left entries out of a folder keeps it
 
 test('walker, fast rescan: a folder the cached listing names but the disk no longer has is never offered', async (t) => {
   const root = onDisk('cached-vanished', ['holder/gone/', 'holder/keep.txt', 'plain/']);
+  ageFolders(root); // settled, so the rescan may take the cached listings
   const holder = path.join(root, 'holder');
   const first = await scanWith('walker', root);
   if (!ran(t, first, 'walker')) return;
@@ -704,6 +706,7 @@ const flagged = (scan: ScanResult, p: string): boolean => {
 
 test('walker, fast rescan: a folder the walk was refused is still not listed, though its parent\'s listing came from the cache', { skip: !canLock && 'a folder cannot be made unlistable here (Windows, or running as root)' }, async (t) => {
   const root = onDisk('cached-refused', ['locked/secret.bin', 'plain/']);
+  ageFolders(root); // settled, so the rescan may take the cached listings
   const locked = path.join(root, 'locked');
   fs.chmodSync(locked, 0o000);
   try {
@@ -745,6 +748,7 @@ test('walker, fast rescan: an empty listing in the cache is listed again, whiche
 
 test('walker, fast rescan: a folder a "don\'t scan" pattern left entries out of is still not listed', async (t) => {
   const root = onDisk('cached-ignored', ['proj/node_modules/x.js', 'proj/src/', 'plain/']);
+  ageFolders(root); // settled, so the rescan may take the cached listings
   await updateSettings({ ignore: [{ pattern: 'node_modules', scope: 'scan' }] });
   try {
     const first = await scanWith('auto', root);
@@ -759,6 +763,7 @@ test('walker, fast rescan: a folder a "don\'t scan" pattern left entries out of 
     assert.equal(answer.withheld, 0, 'proj is never a candidate: it holds node_modules');
     // The root's own listing is the other way a cached listing is taken (looked up, not revalidated).
     const top = onDisk('cached-ignored-root', ['node_modules/x.js', 'proj/node_modules/x.js', 'proj/src/', 'keep/a/']);
+    ageFolders(top);
     const firstTop = await scanWith('auto', top);
     if (!ran(t, firstTop, 'walker')) return;
     await settled();

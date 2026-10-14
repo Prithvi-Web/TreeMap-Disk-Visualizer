@@ -11,11 +11,12 @@ import crypto from 'node:crypto';
 import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-inc-test-');
 
-import { startScan, getScan, mtimesMatch } from '../src/services/diskScanner';
+import { startScan, getScan, mtimesMatch, listingSettled, SETTLED_LISTING_MS } from '../src/services/diskScanner';
 import { updateSettings } from '../src/services/settings';
 import { FileNode, ScanResult } from '../src/models/types';
 import { settled, pending } from '../src/utils/backgroundWrites';
 import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
+import { ageFolders } from './fixtures/folderTimes';
 
 /**
  * Fast (incremental) rescan correctness. The original substitution reused an
@@ -28,7 +29,14 @@ import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
  *  - deep creates and deletes are seen (the bug),
  *  - unchanged listings are still reused (the speed),
  *  - in-place file edits stay unseen (the documented trade-off),
- *  - second-precision caches written by gdu scans still match (the tolerance).
+ *  - second-precision caches written by gdu scans still match (the tolerance),
+ *  - a listing read moments after its folder last changed is never reused: a
+ *    change in the same tick of the clock keeps the time the cache holds
+ *    (git's racily clean entries; CI run 38519159263).
+ *
+ * Every tree is made with its folder times an hour old (`ageFolders`), so the
+ * cache vouches for its listings; the tests of the racy rule set the one
+ * folder time they are about.
  */
 
 /** diskScanner's cacheFileName under "Stay on this drive": format 2 since U-4c L2. */
@@ -99,7 +107,7 @@ async function scanOnce(root: string, incremental: boolean): Promise<ScanResult>
   }
 }
 
-/** root/a/b/c with one file at each level. */
+/** root/a/b/c with one file at each level, every folder's time an hour old. */
 async function makeTree(tag: string): Promise<string> {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), `treemap-${tag}-`));
   await fsp.mkdir(path.join(root, 'a', 'b', 'c'), { recursive: true });
@@ -107,6 +115,7 @@ async function makeTree(tag: string): Promise<string> {
   await fsp.writeFile(path.join(root, 'a', 'in-a.txt'), 'level a\n');
   await fsp.writeFile(path.join(root, 'a', 'b', 'keep.txt'), 'level b\n');
   await fsp.writeFile(path.join(root, 'a', 'b', 'c', 'deep.txt'), 'level c\n');
+  ageFolders(root);
   return root;
 }
 
@@ -125,6 +134,63 @@ test('mtimesMatch: exact ms, and second-tolerance only for second-aligned cache 
   assert.equal(mtimesMatch(1_784_659_466_000, 1_784_659_466_860), true); // gdu cache, same second
   assert.equal(mtimesMatch(1_784_659_466_000, 1_784_659_467_001), false); // gdu cache, next second
   assert.equal(mtimesMatch(1_784_659_466_500, 1_784_659_466_900), false); // ms cache never gets tolerance
+});
+
+test('the cache vouches for a folder\'s listing only when the folder last changed strictly before its scan began, by SETTLED_LISTING_MS — a margin wider than a whole-second time and FAT\'s two-second one together', () => {
+  const start = 1_784_659_466_860;
+  const at = (t: number): boolean => listingSettled(t, start);
+  assert.deepEqual(
+    {
+      'an hour before': at(start - 3_600_000),
+      'just past the margin': at(start - SETTLED_LISTING_MS - 1),
+      'on the margin': at(start - SETTLED_LISTING_MS),
+      'a millisecond before the start': at(start - 1),
+      'at the start': at(start),
+      'after it (a time ahead of the clock)': at(start + 1_000),
+      'no time at all': at(Number.NaN),
+    },
+    {
+      'an hour before': true,
+      'just past the margin': true,
+      'on the margin': false,
+      'a millisecond before the start': false,
+      'at the start': false,
+      'after it (a time ahead of the clock)': false,
+      'no time at all': false,
+    },
+  );
+  // mtimesMatch lets a whole-second cache time stand for the second after it, and FAT keeps a time to
+  // two seconds: a change that keeps the cached time lands within both of the time before it.
+  assert.ok(SETTLED_LISTING_MS > 1_000 + 2_000, `the margin (${SETTLED_LISTING_MS} ms) covers them`);
+});
+
+test('the cache marks as not to be reused exactly the folders whose time is not settled by the moment their scan BEGAN — one changed while it ran included — and never a file', async () => {
+  const { saveMtimeCache } = await import('../src/services/diskScanner');
+  const { PackedScanStore } = await import('../src/services/scanStore');
+  // Never created on disk: the tree lives in the store alone.
+  const rootPath = path.join(os.tmpdir(), 'treemap-cache-settled');
+  const START = 1_784_659_466_860;
+  const HOUR = 3_600_000;
+  const store = new PackedScanStore(rootPath, path.sep, { name: path.basename(rootPath), isDir: true, size: 0, modifiedAt: START - HOUR, isHidden: false });
+  const add = (name: string, isDir: boolean, modifiedAt: number): number =>
+    store.addNode(store.rootId, { name, isDir, size: 0, modifiedAt, isHidden: false, ...(isDir ? {} : { extension: 'bin' }) });
+  add('an hour before', true, START - HOUR);
+  add('a moment before', true, START - 1);
+  add('while it ran', true, START + 1_000); // after the scan began, well before it ended
+  add('a file changed while it ran.bin', false, START + 1_000);
+  store.finalize();
+  store.sumSizes();
+  await saveMtimeCache({ rootPath, scanned: 5, startedAt: START, finishedAt: START + 10_000, store } as unknown as ScanResult);
+  type Cached = FileNode & { unlisted?: true };
+  const cached = JSON.parse(await fsp.readFile(cacheFileFor(rootPath), 'utf8')) as Cached;
+  const marked = Object.fromEntries([cached, ...(cached.children ?? [])].map((n: Cached) => [n === cached ? '(the root)' : n.name, n.unlisted === true]));
+  assert.deepEqual(marked, {
+    '(the root)': false,
+    'an hour before': false,
+    'a moment before': true,
+    'while it ran': true,
+    'a file changed while it ran.bin': false,
+  });
 });
 
 test('a brand-new file deep in an unchanged-ancestor chain IS found by a fast rescan', async () => {
@@ -167,6 +233,43 @@ test('a deep deletion is seen too', async () => {
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
   }
+});
+
+test('a deletion that leaves its folder the time the cache holds is seen when the scan listed that folder moments after it last changed — a change in the same tick of the clock (CI run 38519159263: a whole second, as 1 in 1,000 times fall)', async () => {
+  // The cached time of c, and the time the delete leaves it — set, not waited for. Each first time is
+  // ahead of the clock, so it is never older than the scan's start however soon the scan starts.
+  const ahead = (Math.floor(Date.now() / 1000) + 60) * 1000;
+  const cases: Record<string, [cached: number, afterDelete: number]> = {
+    // gdu and FAT keep whole seconds, and mtimesMatch lets a whole-second cached time stand for the
+    // second after it — which a scan reads too, for 1 time in 1,000 (the CI run's 1791957605000).
+    'a whole second, then a later moment of that second': [ahead, ahead + 500],
+    // A kernel that stamps times from a coarse clock gives two changes a few ms apart one time.
+    'the very millisecond': [ahead + 321, ahead + 321],
+  };
+  const seen: Record<string, { 'deep.txt listed': boolean; 'folders listed afresh': number | undefined }> = {};
+  const expected: typeof seen = {};
+  for (const [what, [cached, afterDelete]] of Object.entries(cases)) {
+    const root = await makeTree('same-tick');
+    const c = path.join(root, 'a', 'b', 'c');
+    try {
+      fs.utimesSync(c, new Date(cached), new Date(cached));
+      const first = await scanOnce(root, false);
+      assert.equal(first.status, 'complete');
+      assert.equal(findNode(first.root!, 'c')!.modifiedAt, cached, 'the scan read the time set');
+      await waitForCache(root);
+      await fsp.rm(path.join(c, 'deep.txt'));
+      fs.utimesSync(c, new Date(afterDelete), new Date(afterDelete));
+
+      const second = await scanOnce(root, true);
+      assert.equal(second.incremental, true, 'the cache was read');
+      seen[what] = { 'deep.txt listed': findNode(second.root!, 'deep.txt') !== undefined, 'folders listed afresh': second.walkedDirs };
+      // root, a and b changed an hour ago: their listings are reused, and only c is read again.
+      expected[what] = { 'deep.txt listed': false, 'folders listed afresh': 1 };
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  }
+  assert.deepEqual(seen, expected);
 });
 
 test('in-place edits stay unseen — the documented trade-off that makes fast rescan opt-in', async () => {
@@ -308,7 +411,7 @@ test('a tree that changes while its cache is being written is written again, who
   victim = v;
   assert.notEqual(victim, -1);
   armed = true;
-  await saveMtimeCache({ rootPath, scanned: 3002, store } as unknown as ScanResult);
+  await saveMtimeCache({ rootPath, scanned: 3002, startedAt: Date.now(), store } as unknown as ScanResult);
   assert.equal(armed, false, 'the change was scheduled');
   assert.equal(store.size(victim), 12_345, 'and it landed');
   const written = await fsp.readFile(cacheFileFor(rootPath), 'utf8');
@@ -333,7 +436,7 @@ test('a tree that never stops changing keeps the previous cache, and says why', 
   const warn = console.warn;
   console.warn = (...args: unknown[]) => { warnings.push(args.join(' ')); };
   try {
-    await saveMtimeCache({ rootPath, scanned: 3002, store } as unknown as ScanResult);
+    await saveMtimeCache({ rootPath, scanned: 3002, startedAt: Date.now(), store } as unknown as ScanResult);
   } finally {
     console.warn = warn;
   }

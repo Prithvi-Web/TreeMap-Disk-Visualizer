@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
+import { ageFolders } from './fixtures/folderTimes';
 const DATA_DIR = isolatedDataDir('treemap-scanRootLink-data-');
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
@@ -180,6 +181,7 @@ test('a link to a folder TreeMap may not look into fails as a scan of that folde
 
 test('the drives mounted inside are found under the folder’s own path, and a fast rescan of the link reuses the cache its last scan wrote', { skip: NO_LINKS }, async () => {
   const f = linkTree();
+  ageFolders(f.real); // settled, so the rescan may take the cached listings
   const sub = path.join(f.real, 'sub');
   // Windows keeps no mount table (a drive mounted in a folder is a reparse point there, and the boundary
   // list is read by POSIX paths): there only the fast rescan's half is asked.

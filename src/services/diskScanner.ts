@@ -1178,6 +1178,32 @@ export function mtimesMatch(cachedMs: number, freshMs: number): boolean {
 }
 
 /**
+ * How much older than its scan's start a folder's time must be for the fast-rescan cache to vouch for
+ * the listing that scan read (`listingSettled`). It must cover the widest time a later change can
+ * share with the change before it: a whole second, which `mtimesMatch` lets a whole-second cached time
+ * stand for, on top of FAT's two-second times — and a kernel that stamps times from a coarse clock, a
+ * tick late. Five seconds holds all three with room; a folder changed within them is listed again by
+ * the next fast rescan, which costs that one folder's listing.
+ */
+export const SETTLED_LISTING_MS = 5_000;
+
+/**
+ * Whether the fast-rescan cache may vouch for a folder's listing: the folder's time, as the scan that
+ * listed it read it, is strictly older than that scan's start by SETTLED_LISTING_MS. git's racily
+ * clean entries, for folders (CI run 38519159263): a folder changed again after the scan listed it,
+ * within the same tick of the clock as the change before, keeps the time the cache holds — a whole
+ * second where gdu wrote the cache or a FAT volume keeps the time, and where a time read to the
+ * millisecond happens to fall on one (1 in 1,000), the second `mtimesMatch` allows. Reused, that
+ * listing hid the change for good: a file deleted 80 ms after its folder was listed stayed in every
+ * fast rescan until the folder changed again. Such a change can only follow a time this close to the
+ * scan's start, so a folder whose time is not that much older (or is unknown, or ahead of the clock)
+ * is listed again; one that changed long before is reused as ever.
+ */
+export function listingSettled(folderModifiedAt: number, scanStartedAt: number): boolean {
+  return folderModifiedAt < scanStartedAt - SETTLED_LISTING_MS;
+}
+
+/**
  * One directory awaiting its listing. The walk works on store ids; the path
  * rides along so nothing is reconstructed, and `cached` carries the fast-
  * rescan candidate whose listing may substitute for a fresh readdir.
@@ -1225,14 +1251,20 @@ function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, d
   }
 }
 
-/** A folder as the fast-rescan cache holds it: `unlisted` where the scan that wrote it did not list it in full (U-4b L3). */
+/**
+ * A folder as the fast-rescan cache holds it: `unlisted` where the scan that wrote it did not list it
+ * in full (U-4b L3), or listed it too soon after it last changed for its time to vouch for the
+ * listing (`listingSettled`).
+ */
 type CachedNode = FileNode & { unlisted?: true };
 
 /**
  * The listing a fast rescan may take from the cache for this folder, or null
  * to read it from disk (Track U, U-4b L3). Never one the scan that wrote the
  * cache marked not listed in full — a refusal, a "don't scan" pattern, a
- * failed stat: reused, it would lose `Flag.Unlisted` and read as complete. And
+ * failed stat: reused, it would lose `Flag.Unlisted` and read as complete —
+ * nor one it marked as read moments after the folder last changed, which a
+ * change in the same tick could have left behind unseen (`listingSettled`). And
  * never an empty one, whatever wrote it: gdu and the native engine's per-entry
  * refusals leave a folder they could not read as an empty listing with no
  * mark, and listing a folder that really is empty again costs one call.
@@ -1253,6 +1285,10 @@ const MTIME_CACHE_ATTEMPTS = 3;
  * that changes while it is written (a delete, a watcher) is written again from
  * the start, up to MTIME_CACHE_ATTEMPTS times; the file only ever changes by
  * a rename of a whole document. Exported for the tests of that retry.
+ *
+ * Every folder whose time is not settled by the scan's start (`listingSettled`)
+ * is written marked, as one not listed in full is: the next fast rescan lists
+ * it again rather than trust a time a same-tick change would have kept.
  */
 export async function saveMtimeCache(scan: ScanResult): Promise<void> {
   // The cap bounds the file (48 MB at 200k entries) and the rescan that parses it.
@@ -1276,8 +1312,9 @@ export async function saveMtimeCache(scan: ScanResult): Promise<void> {
       }
       return;
     }
+    const settled = (modifiedAt: number): boolean => listingSettled(modifiedAt, scan.startedAt);
     for (let attempt = 0; attempt < MTIME_CACHE_ATTEMPTS; attempt++) {
-      if (await writeFileChunked(name, (write) => streamTreeJson(store, store.rootId, write, { markUnlisted: true }))) return;
+      if (await writeFileChunked(name, (write) => streamTreeJson(store, store.rootId, write, { markUnlisted: true, settled }))) return;
     }
     console.warn(`[treemap] mtime cache not saved: the tree changed while it was being written, ${MTIME_CACHE_ATTEMPTS} times`);
   } catch (err) {

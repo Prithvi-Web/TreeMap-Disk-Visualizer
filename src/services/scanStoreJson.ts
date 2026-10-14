@@ -41,23 +41,28 @@ interface Frame {
  * every folder the scan did not list in full (`Flag.Unlisted`), after its own
  * keys and before `children`: the walker reuses no such listing, so a folder
  * it was refused, or one a "don't scan" pattern left entries out of, is read
- * again rather than believed whole. Without it the bytes are the prune's.
+ * again rather than believed whole. With `settled` as well, so is every folder
+ * whose time it answers false for: one the scan listed moments after it last
+ * changed, whose time cannot vouch for the listing (diskScanner's
+ * `listingSettled`). Without it the bytes are the prune's.
  */
 export async function streamTreeJson(
   store: ScanStore,
   id: number,
   write: (chunk: string) => Promise<void>,
-  opts: { chunkChars?: number; markUnlisted?: boolean } = {},
+  opts: { chunkChars?: number; markUnlisted?: boolean; settled?: (modifiedAt: number) => boolean } = {},
 ): Promise<boolean> {
   const chunkChars = Math.max(1, opts.chunkChars ?? TREE_JSON_CHUNK_CHARS);
   const mark = opts.markUnlisted === true;
+  const settled = opts.settled;
   const version = store.version;
   const stack: Frame[] = [];
   let buf = '';
   const emit = (nodeId: number, knownPath?: string): void => {
     const node = materializeBare(store, nodeId, knownPath);
     const plain = JSON.stringify(node);
-    const json = mark && store.isDir(nodeId) && store.flag(nodeId, Flag.Unlisted) ? `${plain.slice(0, -1)},"unlisted":true}` : plain;
+    const unlisted = mark && store.isDir(nodeId) && (store.flag(nodeId, Flag.Unlisted) || (settled !== undefined && !settled(node.modifiedAt)));
+    const json = unlisted ? `${plain.slice(0, -1)},"unlisted":true}` : plain;
     if (isExpandableId(store, nodeId)) {
       buf += `${json.slice(0, -1)},"children":[`;
       stack.push({ kids: store.childIds(nodeId), next: 0, path: node.path });
