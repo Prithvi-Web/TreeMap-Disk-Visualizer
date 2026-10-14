@@ -326,24 +326,33 @@ test('a later plan owns the shared confirm: an earlier pick\'s or drop\'s dry ru
 });
 
 /**
- * A drop on `BACKUP` whose drive list is held back, a pick for another folder made meanwhile, and then
- * the drop's list landing last — naming the drive (`driveThere`) or not (review F2.4). The pick's dry
- * run answers at once.
+ * A drop on `BACKUP` whose drive list is held back, a pick for another folder made meanwhile (unless
+ * `pickMeanwhile` is false), and then the drop's list landing last — naming the drive (`driveThere`)
+ * or not (review F2.4). The pick's dry run answers at once. The drop re-verifies its drive as the dock
+ * lists it: the plain list, then the drives judged from the scanned folder (review F2.1), and it reads
+ * the second — so a drive that went is gone from both answers (review F3.2: modelled in the first
+ * alone, the page never saw it go).
  */
-async function dropOutlivedByAPick(driveThere: boolean): Promise<{ h: Harness; sheet: string }> {
+async function dropOutlivedByAPick(driveThere: boolean, pickMeanwhile = true): Promise<{ h: Harness; sheet: string | null }> {
   const cart = ['/Users/me/Movies/old.mov'];
   const dest = '/Volumes/Work/Archive';
   const held: Array<() => void> = [];
-  const h = harness([WORK, BACKUP], null, () => new Promise((resolve) => { held.push(() => resolve({ volumes: driveThere ? [WORK, BACKUP] : [WORK] })); }));
+  const connected = driveThere ? [WORK, BACKUP] : [WORK];
+  const h = harness([WORK, BACKUP], null, () => new Promise((resolve) => { held.push(() => resolve({ volumes: connected })); }), null,
+    (anchors) => ({ volumes: connected.filter((v) => !anchors.includes(v.path)) }));
   for (const p of cart) { h.state.cart.add(p); h.state.pathIndex.add(p); }
   const drop = h.drop(BACKUP.path);
   await waitFor(() => held.length === 1, 'the drop asks whether its drive is still there');
-  await h.picked(cart, dest);
-  assert.equal(h.els.confirmModal?.open, true, 'control: the pick\'s sheet opened');
-  assert.equal(h.posts.length, 1, 'control: the pick\'s dry run, and only that, was asked');
-  const sheet = h.els.confirmText.innerHTML;
+  let sheet: string | null = null;
+  if (pickMeanwhile) {
+    await h.picked(cart, dest);
+    assert.equal(h.els.confirmModal?.open, true, 'control: the pick\'s sheet opened');
+    assert.equal(h.posts.length, 1, 'control: the pick\'s dry run, and only that, was asked');
+    sheet = h.els.confirmText.innerHTML;
+  }
   held[0]();
   await drop;
+  assert.deepEqual(h.volumeAsks, [[h.state.root.path]], 'control: the drop re-verified its drive from the scanned folder, the answer it reads');
   return { h, sheet };
 }
 
@@ -353,7 +362,12 @@ test('a drop still waiting on its drive list when a later pick takes the sheet n
   assert.equal(h.posts.length, 1, 'nor ask a dry run of its own');
 });
 
-test('a drop still waiting on its drive list when a later pick takes the sheet never speaks: its drive gone, no dock refresh and no toast over the pick\'s sheet (E01, review F2.4)', async () => {
+test('a drop still waiting on its drive list when a later pick takes the sheet never speaks: its drive gone, no dock refresh and no toast over the pick\'s sheet (E01, review F2.4, F3.2)', async () => {
+  const alone = await dropOutlivedByAPick(false, false);
+  assert.deepEqual(alone.h.toasts, [['That drive is no longer connected — nothing was copied', 'error']],
+    'control: with no later pick, the drop whose drive went says so');
+  assert.equal(alone.h.dockRefreshes(), 1, 'control: and refreshes the dock once');
+  assert.equal(alone.h.posts.length, 0, 'control: and plans nothing');
   const { h } = await dropOutlivedByAPick(false);
   assert.equal(h.dockRefreshes(), 0, 'the stale drop did not refresh the dock');
   assert.deepEqual(h.toasts, [], 'nor say its drive is no longer connected');
