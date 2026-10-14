@@ -1276,7 +1276,14 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    keeps a clicked tile in place read a scrollTop that never moved. Held to
    the window, the Grid is its own scroller. */
 #view-grid.active { display: flex; flex-direction: column; height: calc(100vh - 68px); }
-#gridScroll { position: relative; flex: 1; min-height: 420px; overflow-y: auto; padding: 10px; }
+/* scrollbar-gutter: the Grid keeps its scrollbar's room whether it shows or
+   not (review F1.9). layoutGrid measures the scroller's width before the
+   tiles' height makes it overflow, so on a first visit, or opening a folder
+   taller than the window from one that fit, the page's 11 px scrollbar
+   (015-primitives.css) arrived after the measure and a row ending in its
+   last 11 px overhung the content: a sideways scrollbar, a clipped tile.
+   main keeps its gutter the same way. */
+#gridScroll { position: relative; flex: 1; min-height: 420px; overflow-y: auto; scrollbar-gutter: stable; padding: 10px; }
 #gridInner { position: relative; }
 .gcell { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 5px; padding: 8px; cursor: var(--cur-hand); user-select: none;

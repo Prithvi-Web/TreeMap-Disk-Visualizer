@@ -863,7 +863,13 @@ function gridToolbarH(): number {
 function sizeFromSheet(g: Grid, W: number, H: number, cart: boolean): void {
   const sc = g.els.gridScroll;
   g.page.cart = cart;
-  sc.clientWidth = W - 244 - 48; // the expanded sidebar and its margin, then <main>'s side padding
+  // The scroller's box: the expanded sidebar and its margin, then <main>'s
+  // side padding. Its clientWidth is that less the page's scrollbar while it
+  // shows one (review F1.9) — always, with a stable gutter; else only once
+  // its content overflows it.
+  let boxW = W - 244 - 48;
+  const barW = () => (scrollerShowsBar(g, cart) ? px(declsOf('::-webkit-scrollbar').get('width'), "the page's scrollbar width") : 0);
+  Object.defineProperty(sc, 'clientWidth', { configurable: true, get: () => boxW - barW(), set: (v: number) => { boxW = v + barW(); } });
   Object.defineProperty(sc, 'clientHeight', {
     configurable: true,
     get: () => sheetScrollerH(W, H, { cart, bar: g.els.selectionBar.cls.has('visible') }, parseFloat(g.els.gridInner.style.height) || 0),
@@ -871,6 +877,15 @@ function sizeFromSheet(g: Grid, W: number, H: number, cart: boolean): void {
   if (!/^(auto|scroll)$/.test(gridDecls('#gridScroll', { cart }).get('overflow-y') || '')) {
     Object.defineProperty(sc, 'scrollTop', { configurable: true, get: () => 0, set: () => {} });
   }
+}
+
+/** Whether the Grid's scroller shows its scrollbar: a stable gutter always does; else an auto scroller whose content overflows it. */
+function scrollerShowsBar(g: Grid, cart: boolean): boolean {
+  const sc = gridDecls('#gridScroll', { cart });
+  if (/^stable\b/.test(sc.get('scrollbar-gutter') || '')) return true;
+  if (!/^(auto|scroll)$/.test(sc.get('overflow-y') || '')) return false;
+  const pads = scrollerPads({ cart, bar: g.els.selectionBar.cls.has('visible') });
+  return (parseFloat(g.els.gridInner.style.height) || 0) + pads.top + pads.bottom > g.els.gridScroll.clientHeight;
 }
 
 /** A folder of `n` files of one size, so every tile is the largest (256 px) and the rows are regular. */
@@ -1235,4 +1250,64 @@ test('a tile with keyboard focus keeps it when the Grid rebuilds the tiles aroun
   await h.settle();
   assert.equal(h.state.grid.path, '/r/A', 'control: the folder opened');
   assert.ok(!h.els.gridInner.children.includes(FOCUS.active!), `no tile of the new folder takes focus (data-i ${FOCUS.active?.dataset.i})`);
+});
+
+/* ══════════════ review F1.9 — the layout is measured with the scroller's own scrollbar in place ══════════════ */
+
+test('no tile overhangs the Grid when its scrollbar appears — on a first visit, or opening a folder taller than the window from one that fit (review F1.9)', async (t) => {
+  // layoutGrid measures the scroller's width, and only then does renderGrid
+  // give #gridInner its height. Since the Grid scrolls itself (D01), that
+  // height is what makes it overflow, and the page's 11 px scrollbar then
+  // takes its width from the tiles already laid out: a row that ended in the
+  // last 11 px overhung the content box — a sideways scrollbar, a clipped tile.
+  const big = 1e9, mid = big * 0.2296; // a 256 px tile and a 156 px one
+  const plant = (g: Grid) => {
+    const kids: Node[] = [];
+    for (let i = 0; i < 3; i++) kids.push(file('/r/B', `big${i}.raw`, big));
+    for (let i = 0; i < 42; i++) kids.push(file('/r/B', `mid${String(i).padStart(2, '0')}.raw`, mid));
+    const b: Node = { name: 'B', path: '/r/B', size: 3 * big + 42 * mid, type: 'dir', children: kids };
+    g.state.root!.children = [b, file('/r', 'small.txt', 10)];
+    for (const k of [b, ...kids]) g.state.pathIndex.set(k.path, k);
+  };
+  const W = 1440, H = 900;
+  const pad = (side: number, g: Grid) => padSide(gridDecls('#gridScroll', { cart: g.page.cart }).get('padding'), side, "the scroller's side padding");
+  const noOverhang = (g: Grid, what: string) => {
+    const content = g.els.gridScroll.clientWidth - pad(1, g) - pad(3, g);
+    for (const c of g.state.grid.layout) {
+      assert.ok(c.x + c.side <= content, `${what}: ${c.it.name} ends at x ${c.x + c.side}; the Grid's content is ${content} px wide`);
+    }
+  };
+  // The largest tiles fill the top row to the last pixel of the width a
+  // scroller without its bar has — 256 × 3 + 156 × 2 and four gaps.
+  const control = gridHarness();
+  plant(control);
+  control.state.grid.path = '/r/B';
+  control.els.gridScroll.clientWidth = W - 244 - 48; // a scroller with no bar
+  await control.renderGrid();
+  const row0 = control.state.grid.layout.filter((c) => c.y === 0);
+  assert.equal(Math.max(...row0.map((c) => c.x + c.side)), W - 244 - 48 - 20, 'control: without a scrollbar, the top row ends at the last pixel of the content');
+
+  // First visit to the folder: nothing laid out yet, so no bar at measure time.
+  await t.test('a first visit', async () => {
+    const first = gridHarness();
+    plant(first);
+    first.state.grid.path = '/r/B';
+    sizeFromSheet(first, W, H, false);
+    await first.renderGrid();
+    assert.ok(scrollerShowsBar(first, false), 'control: the folder is taller than the Grid, so its scrollbar shows');
+    noOverhang(first, 'a first visit');
+  });
+
+  // From a folder that fits into one that does not.
+  await t.test('a folder taller than the window, opened from one that fit', async () => {
+    const nav = gridHarness();
+    plant(nav);
+    sizeFromSheet(nav, W, H, false);
+    await nav.renderGrid();
+    assert.equal(nav.state.grid.layout.length, 2, 'control: /r holds two tiles and fits the Grid');
+    nav.onCellClick({}, nav.state.grid.layout.findIndex((c) => c.it.path === '/r/B'));
+    await nav.settle();
+    assert.equal(nav.state.grid.path, '/r/B', 'control: the folder opened');
+    noOverhang(nav, 'a folder taller than the window opened from one that fit');
+  });
 });
