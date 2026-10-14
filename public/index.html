@@ -12041,6 +12041,39 @@ function tmLeafFill(ctx, base, y, h) {
   return g;
 }
 
+/**
+ * The ink for one line of a tile's label (design pass G09): black or white,
+ * whichever keeps the higher WCAG contrast against the cushion under the
+ * WHOLE line — its top and its bottom, since the cushion darkens downward.
+ * A fixed black ink measured 2.55–3.91:1 on the darker and saturated tiles.
+ * `r.fillRgb` is the colour pass 1 painted the tile's cushion from; a tile
+ * without one (a hollow cloud placeholder) shows the map's own ground, and
+ * takes the page's ink for it. tests/mapColourPop.test.ts measures every
+ * ramp step at depths 1–6 in both themes.
+ */
+const TM_LABEL_LEADING = 1.2;    // a line of text's height, as a share of its font size
+const TM_SIZE_INK_ALPHA = 0.9;   // the size line, a step quieter than the name
+function tmLuminance(c) {
+  const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+}
+function tmContrast(a, b) {
+  const la = tmLuminance(a), lb = tmLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+function tmLabelInk(r, y, fontPx, alpha) {
+  if (!r.fillRgb) return cssVar(alpha < 1 ? '--text-2' : '--text-1');
+  const [top, bot] = tmLeafStops(r.fillRgb, r.h);
+  const under = (yy) => {
+    const f = Math.max(0, Math.min(1, (yy - r.y) / r.h));
+    return top.map((v, i) => v + (bot[i] - v) * f);
+  };
+  const ends = [under(y), under(y + fontPx * TM_LABEL_LEADING)];
+  const worst = (ink) => Math.min(...ends.map((c) => tmContrast(ink.map((v, i) => alpha * v + (1 - alpha) * c[i]), c)));
+  const ink = worst([0, 0, 0]) >= worst([255, 255, 255]) ? '0,0,0' : '255,255,255';
+  return `rgba(${ink},${alpha})`;
+}
+
 function drawTreemap() {
   // QA D58 — the server stops a map at 20,000 nodes and its response cannot
   // say so (§12 golden lock), so the note under the map does. Written before
@@ -12143,6 +12176,7 @@ function drawTreemap() {
 
     ctx.fillStyle = tmLeafFill(ctx, base, r.y, r.h);
     ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+    r.fillRgb = base; // what pass 4 picks its label ink against (G09)
     if (r.w > 6 && r.h > 6) {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
       ctx.lineWidth = 1;
@@ -12233,12 +12267,12 @@ function drawTreemap() {
     }
     const label = r.n.name;
     ctx.font = '500 11px -apple-system, sans-serif';
-    ctx.fillStyle = 'rgba(0,0,0,0.78)';
+    ctx.fillStyle = tmLabelInk(r, ty, 11, 1);
     const maxChars = Math.floor((r.w - 10) / 6.2);
     const text = label.length > maxChars ? label.slice(0, Math.max(1, maxChars - 1)) + '…' : label;
     ctx.fillText(text, r.x + 5, ty, r.w - 10);
     if (r.y + r.h - ty > 26) {
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillStyle = tmLabelInk(r, ty + 13, 10, TM_SIZE_INK_ALPHA);
       ctx.font = '10px -apple-system, sans-serif';
       ctx.fillText(formatBytes(r.n.size), r.x + 5, ty + 13, r.w - 10);
     }

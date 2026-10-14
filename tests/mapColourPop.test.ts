@@ -191,8 +191,8 @@ type Tile = { name: string; path: string; size: number; type: string; depth: num
 
 const MAP_W = 1000, MAP_H = 1000;
 
-/** Paint `tiles` with the real drawTreemap; hand back what it recorded. */
-function paint(tiles: Tile[]) {
+/** Paint `tiles` with the real drawTreemap — coloured by the size ramp unless `colour` says otherwise. */
+function paint(tiles: Tile[], colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size)) {
   const rec = recordingCtx();
   const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as any[], colorMode: 'size', mode: 'treemap', query: '' } };
   const draw = load<() => void>(['drawTreemap'], {
@@ -206,7 +206,7 @@ function paint(tiles: Tile[]) {
     state,
     tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {},
     renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
-    cellRgb: (n: Tile) => ramp.sizeRgb(n.size),
+    cellRgb: colour,
     tmHatchPattern: () => null,
     tmPreview: { on: false },
     roundRect() {},
@@ -314,3 +314,152 @@ test('G01: the cushion still shades every tile — lighter at the top, darker at
   }
 });
 
+/* ══════════════ G09 — a tile's name and size reach 4.5:1 on the tile they are written on ══════════════ */
+
+/** px of a canvas font string ("500 11px …"). */
+const fontPx = (font: string) => Number(/(\d+(?:\.\d+)?)px/.exec(font)![1]);
+/** The vertical room a line of text takes: its font size at a normal 1.2 leading. */
+const LEADING = 1.2;
+
+const LABEL_DEPTHS = [1, 2, 3, 4, 5, 6];
+/** Tall enough for both lines, short enough that one line spans most of the cushion, and between. */
+const LABEL_HEIGHTS = [15, 18, 22, 27, 31, 36, 44, 60, 90, 200];
+
+type Labelled = { depth: number; t: number; h: number; tile: Tile; fill: Grad; texts: Text[] };
+const LABELLED: Labelled[] = (() => {
+  const out: Array<Omit<Labelled, 'fill' | 'texts'>> = [];
+  let i = 0;
+  for (const depth of LABEL_DEPTHS) for (const s of STEPS) for (const h of LABEL_HEIGHTS) {
+    // One tile per 100 px column, 210 px rows: each tile has room for its labels and touches no other.
+    const col = i % 10, row = Math.floor(i / 10);
+    const x = col * 100, y = row * 210;
+    out.push({ depth, t: s.t, h, tile: { name: `file-${i}.mov`, path: `/r/file-${i}.mov`, size: s.bytes, type: 'file', depth, expanded: false,
+      x: (x / MAP_W) * 100, y: (y / MAP_H) * 100, w: (96 / MAP_W) * 100, h: (h / MAP_H) * 100 } });
+    i++;
+  }
+  const rec = paint(out.map((o) => o.tile));
+  const fills = leafFills(rec, out.length);
+  return out.map((o, k) => {
+    const x = (o.tile.x / 100) * MAP_W, y = (o.tile.y / 100) * MAP_H;
+    return { ...o, fill: fills[k], texts: rec.texts.filter((tx) => tx.x >= x && tx.x < x + 96 && tx.y >= y && tx.y < y + 210) };
+  });
+})();
+
+/** The worst contrast `text` has against the cushion under it, from its top to its bottom on the tile. */
+function worstContrast(l: Labelled, text: Text, ground: RGB): number {
+  const y0 = (l.tile.y / 100) * MAP_H, h = l.h;
+  const ink = rgba(String(text.fillStyle));
+  let worst = Infinity;
+  for (const yy of [text.y, Math.min(y0 + h, text.y + fontPx(text.font) * LEADING)]) {
+    const under = at(l.fill, Math.max(0, Math.min(1, (yy - y0) / h)), ground);
+    worst = Math.min(worst, contrast(over(ink, under), under));
+  }
+  return worst;
+}
+
+test('G09: every tile is labelled where it has room — a name, and a size where two lines fit', () => {
+  for (const l of LABELLED) {
+    assert.ok(l.texts.length >= 1, `depth ${l.depth}, ramp ${l.t}, ${l.h} px: the tile carries its name`);
+    if (l.h >= 36) assert.equal(l.texts.length, 2, `depth ${l.depth}, ramp ${l.t}, ${l.h} px: and its size (${l.texts.map((x) => x.text).join(' | ')})`);
+  }
+});
+
+test('G09: a tile\'s name and its size line both reach 4.5:1 against the tile, at every ramp step and depth, in both themes', () => {
+  for (const [theme, ground] of THEMES) {
+    for (const l of LABELLED) {
+      for (const [k, text] of l.texts.entries()) {
+        const c = worstContrast(l, text, ground);
+        assert.ok(c >= 4.5,
+          `${theme}, depth ${l.depth}, ramp ${l.t}, a ${l.h} px tile: its ${k === 0 ? 'name' : 'size'} line "${text.text}" in ${String(text.fillStyle)} measures ${fmt(c)}:1 (floor 4.5:1)`);
+      }
+    }
+  }
+});
+
+test('G09: the ink is chosen from the tile — dark on a light tile, light on a dark one', () => {
+  // One fixed ink cannot clear 4.5:1 on both: the Reclaim mode's "not
+  // scored" grey (#3A4048) is a dark tile, the size ramp's amber a light one.
+  const rec = recordingCtx();
+  const grey = { name: 'keep.bin', path: '/r/keep.bin', size: 5e9, type: 'file', depth: 1, expanded: false, x: 0, y: 0, w: 10, h: 10 };
+  const amber = { ...grey, name: 'amber.bin', path: '/r/amber.bin', x: 20 };
+  const draw = load<() => void>(['drawTreemap'], {
+    $: () => ({ clientWidth: MAP_W + 20 }), treemapCanvasHeight: () => MAP_H, window: { devicePixelRatio: 1 },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: rec.ctx,
+    cssVar: () => 'rgba(0,0,0,0.3)',
+    state: { treemap: { nodes: [grey, amber], hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] } },
+    tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+    cellRgb: (n: Tile) => (n === grey ? [0x3a, 0x40, 0x48] : [255, 214, 10]),
+    tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`,
+  }, 'drawTreemap', (d) => d());
+  rec.texts.length = 0;
+  draw();
+  const inkOf = (name: string) => luminance(rgba(String(rec.texts.find((x) => x.text === name)!.fillStyle)).slice(0, 3) as RGB);
+  assert.ok(inkOf('keep.bin') > 0.5, 'a light ink on the dark grey tile');
+  assert.ok(inkOf('amber.bin') < 0.1, 'a dark ink on the amber tile');
+});
+
+test('G09: of black and white, a line takes the ink that is clearer over the whole line, its darker bottom included', () => {
+  // On a mid grey the cushion's light top can favour black by a hair while
+  // the shaded bottom of the same line favours white by a mile: judged at
+  // its top alone, the line would be written in the ink it can barely be
+  // read in at its foot.
+  const greys: RGB[] = [];
+  for (let v = 70; v <= 190; v += 3) greys.push([v, v, v + 6]);
+  const tiles: Tile[] = [];
+  const colourOf = new Map<string, RGB>();
+  for (const g of greys) for (const h of [15, 20, 26, 34, 50, 90]) {
+    const i = tiles.length, x = (i % 10) * 100, y = Math.floor(i / 10) * 210;
+    const t: Tile = { name: `g${i}.dat`, path: `/r/g${i}.dat`, size: 1e9, type: 'file', depth: 2, expanded: false,
+      x: (x / MAP_W) * 100, y: (y / MAP_H) * 100, w: 9.6, h: (h / MAP_H) * 100 };
+    tiles.push(t);
+    colourOf.set(t.path, g);
+  }
+  const rec = paint(tiles, (n) => colourOf.get(n.path)!);
+  const fills = leafFills(rec, tiles.length);
+  let judged = 0;
+  for (const [k, t] of tiles.entries()) {
+    const x = (t.x / 100) * MAP_W, y0 = (t.y / 100) * MAP_H, h = (t.h / 100) * MAP_H;
+    for (const text of rec.texts.filter((tx) => tx.x >= x && tx.x < x + 96 && tx.y >= y0 && tx.y < y0 + 210)) {
+      const alpha = rgba(String(text.fillStyle))[3];
+      const ends = [text.y, Math.min(y0 + h, text.y + fontPx(text.font) * LEADING)]
+        .map((yy) => at(fills[k], Math.max(0, Math.min(1, (yy - y0) / h)), [0, 0, 0]));
+      const worstFor = (ink: RGB) => Math.min(...ends.map((c) => contrast(over([...ink, alpha] as RGBA, c), c)));
+      const chosen = rgba(String(text.fillStyle)).slice(0, 3) as RGB;
+      const other: RGB = luminance(chosen) > 0.5 ? [0, 0, 0] : [255, 255, 255];
+      assert.ok(worstFor(chosen) >= worstFor(other) - 1e-9,
+        `grey ${colourOf.get(t.path)}, ${h} px, "${text.text}": ${String(text.fillStyle)} is ${fmt(worstFor(chosen))}:1 at its worst, the other ink ${fmt(worstFor(other))}:1`);
+      judged++;
+    }
+  }
+  assert.ok(judged > 300, `the sweep judged ${judged} lines`);
+});
+
+test('G09: a hollow cloud placeholder is labelled in the page\'s own ink, readable over the map\'s ground in both themes', () => {
+  // A placeholder is drawn hollow — a 16% wash of its colour over the
+  // map's ground — so its label sits on the ground, which is near-black in
+  // dark: the old fixed black ink was all but invisible there.
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const ground = canvasGround(palette);
+    const rec = recordingCtx();
+    const cloud = { name: 'movie.mov', path: '/r/movie.mov', size: 4e9, type: 'file', depth: 1, expanded: false, cloudPlaceholder: true, x: 0, y: 0, w: 20, h: 20 };
+    const draw = load<() => void>(['drawTreemap'], {
+      $: () => ({ clientWidth: MAP_W + 20 }), treemapCanvasHeight: () => MAP_H, window: { devicePixelRatio: 1 },
+      tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: 0, height: 0 }, tmBufCtx: rec.ctx,
+      cssVar: (name: string) => palette[name] ?? '',
+      state: { treemap: { nodes: [cloud], hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] } },
+      tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+      cellRgb: () => ramp.sizeRgb(4e9),
+      tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {}, formatBytes: (n: number) => `${n} B`,
+    }, 'drawTreemap', (d) => d());
+    rec.fills.length = 0; rec.texts.length = 0;
+    draw();
+    const wash = rec.fills[1];
+    assert.equal(typeof wash, 'string', 'the placeholder is a flat wash, not a cushion');
+    const under = over(rgba(String(wash)), ground);
+    assert.equal(rec.texts.length, 2, 'it carries its name and size');
+    for (const text of rec.texts) {
+      const c = contrast(over(rgba(String(text.fillStyle)), under), under);
+      assert.ok(c >= 4.5, `${theme}: "${text.text}" in ${String(text.fillStyle)} measures ${fmt(c)}:1 on the hollow tile (floor 4.5:1)`);
+    }
+  }
+});
