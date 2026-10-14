@@ -322,9 +322,11 @@ export function buildMcpServer(): McpServer {
           .boolean()
           .default(false)
           .describe(
-            'Ask for a fast rescan. Only the built-in walker does one: it reuses the last scan\'s listings of folders whose ' +
-              'modified time has not changed, and may miss an edit inside a file. Where the native engine walks the folder the ' +
-              'request is not used (that walk is faster and exact). The result\'s incremental says whether listings were reused.',
+            'Ask for a fast rescan. Only the built-in walker does one: it reuses the last scan\'s listing of a folder only when ' +
+              'the folder\'s modified time is unchanged and was more than 5 seconds older than the start of that scan (a folder ' +
+              'changed in the 5 seconds before that scan, or while it ran, is listed afresh), and may miss an edit inside a file. ' +
+              'Where the native engine walks the folder the request is not used (that walk is faster and exact). The result\'s ' +
+              'incremental says whether the last scan\'s saved listings were read, not whether any was reused.',
           ),
         waitMs: waitMsSchema,
       },

@@ -43,10 +43,16 @@ OpenAPI 3 spec).
    the whole app. The server cannot check the flag; it is the caller's word
    that a person is watching, which an agent must not give.
    `incremental: true` asks for a fast rescan, which only the built-in walker
-   does (it reuses the last scan's listings of unchanged folders): where the
-   native engine walks the folder the request is not used, and `engineReason`
-   says so. The answer's `incremental` says whether saved listings were
-   reused.
+   does; where the native engine walks the folder the request is not used,
+   and `engineReason` says so. The walker reads the cache the last scan of
+   the folder saved: it reuses the last scan's listing of a folder only when
+   the folder's modified time is unchanged and was more than 5 seconds older
+   than the start of that scan — a folder changed in the 5 seconds before
+   that scan, or while it ran, is listed afresh, because a change in the same
+   tick of the clock can leave its time as it was. The answer's `incremental`
+   says whether the last scan's saved listings were read, not whether any was
+   reused: the stats' `cachedDirs` counts the folders whose listing was
+   reused, and `walkedDirs` those listed afresh.
    A path that is a link to a folder (macOS's `/tmp`, `/var`, `/etc`, a
    project folder kept elsewhere) is scanned as the folder it points to: the
    scan's `rootPath` is that folder's own path, every path in the tree is

@@ -441,7 +441,46 @@ test('AGENTS.md says what a fast-rescan request does as startScan does it (revie
   const text = agents();
   assert.match(text, /`incremental: true` asks for a fast rescan, which only the built-in walker does/, 'the walker\'s');
   assert.match(text, /where the native engine walks the folder the request is not used, and `engineReason` says so/, 'not used where the native engine walks');
-  assert.match(text, /The answer's `incremental` says whether saved listings were reused/, 'the answer says what happened');
+});
+
+/** The fast-rescan rule as diskScanner keeps it, each part read from the line that decides it: the margin in seconds. */
+function settledListingSeconds(): number {
+  const scanner = read('src', 'services', 'diskScanner.ts');
+  const margin = /\nexport const SETTLED_LISTING_MS = ([\d_]+);\n/.exec(scanner);
+  assert.ok(margin, 'SETTLED_LISTING_MS is found in diskScanner.ts');
+  assert.match(scanner, /export function listingSettled\(folderModifiedAt: number, scanStartedAt: number\): boolean \{\n\s*return folderModifiedAt < scanStartedAt - SETTLED_LISTING_MS;\n\}/, 'settled: more than the margin older than the scan\'s start');
+  assert.match(scanner, /const settled = \(modifiedAt: number\): boolean => listingSettled\(modifiedAt, scan\.startedAt\);/, 'judged by the start of the scan that listed the folder');
+  assert.match(scanner, /streamTreeJson\(store, store\.rootId, write, \{ markUnlisted: true, settled \}\)/, 'every folder not settled is written marked');
+  assert.match(scanner, /function reusableListing\(cached: FileNode\): FileNode\[\] \| null \{\n\s*if \(\(cached as CachedNode\)\.unlisted === true\) return null;/, 'and no fast rescan reuses a marked one');
+  assert.match(scanner, /if \(listing && mtimesMatch\(cachedMtime, Math\.round\(st\.mtimeMs\)\)\) \{\n\s*reuseCachedListing\(/, 'a revalidated folder\'s listing is reused only when its time matches');
+  assert.match(scanner, /if \(cached && listing && mtimesMatch\(cached\.modifiedAt, store\.modifiedAt\(dirId\)\)\) \{\n\s*reuseCachedListing\(/, 'as is one its parent stat\'ed');
+  assert.match(between(scanner, 'function reuseCachedListing(', '\n}\n'), /\n\s*scan\.cachedDirs = \(scan\.cachedDirs \?\? 0\) \+ 1;\n/, 'cachedDirs counts each listing reused');
+  return Number(margin[1].replace(/_/g, '')) / 1000;
+}
+
+test('AGENTS.md says a fast rescan reuses only a listing its folder\'s time can vouch for, and that the answer\'s incremental is whether the cache was read, not whether any listing was reused (CI3 review F1.1)', () => {
+  // After CI run 38519159263 the cache vouches for a listing only when its folder's time is settled
+  // by the start of the scan that listed it; every folder changed in the margin before that scan, or
+  // while it ran, is listed afresh. So a fast rescan run moments after a scan of a tree that had just
+  // changed reads the cache (incremental: true) and reuses nothing (cachedDirs: 0).
+  const seconds = settledListingSeconds();
+  const text = agents();
+  const rule = `it reuses the last scan's listing of a folder only when the folder's modified time is unchanged and was more than ${seconds} seconds older than the start of that scan`;
+  assert.ok(text.includes(rule), `AGENTS.md states the rule as the code keeps it: "${rule}"`);
+  assert.ok(text.includes(`a folder changed in the ${seconds} seconds before that scan, or while it ran, is listed afresh`), 'and what it lists afresh');
+  assert.match(text, /The answer's `incremental` says whether the last scan's saved listings were read, not whether any was reused: the stats' `cachedDirs` counts the folders whose listing was reused, and `walkedDirs` those listed afresh/, 'what incremental and cachedDirs each say');
+  assert.doesNotMatch(text, /says whether saved listings were reused/, 'not the old claim');
+  assert.doesNotMatch(text, /listings of unchanged folders/, 'nor reuse of every unchanged folder');
+});
+
+test('CURRENT-STATE §3.5 keys the fast-rescan cache on the folder\'s time and its settling, as diskScanner does (CI3 review F1.1)', () => {
+  const seconds = settledListingSeconds();
+  const state = read('docs', 'engine', 'CURRENT-STATE.md');
+  const key = lineStarting(state, '* Key: ');
+  assert.ok(key.includes(`and the cache vouches for that time only when it was more than ${seconds} seconds older than the start of the scan that wrote the cache (\`listingSettled\`, \`SETTLED_LISTING_MS\``),`the Key line names the settled rule: ${key}`);
+  const reuse = lineStarting(state, '* Reuse rule: ');
+  assert.ok(reuse.includes(`a directory whose mtime matches, and whose cached listing was settled, has its **direct listing** substituted from the cache`), `the Reuse rule line needs both: ${reuse}`);
+  assert.ok(reuse.includes('a folder whose time was not settled is written to the cache marked `unlisted`, as one not listed in full is, and the next fast rescan lists it afresh'), 'and says what happens to the rest');
 });
 
 test('AGENTS.md describes the mountedInside line as mountedInsideLine builds it (review F1.6)', () => {

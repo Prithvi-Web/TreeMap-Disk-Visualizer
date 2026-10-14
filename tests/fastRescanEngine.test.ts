@@ -12,7 +12,7 @@ isolatedDataDir('treemap-fastRescanEngine-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { getScan, setMftWalkForTests, startScan } from '../src/services/diskScanner';
+import { getScan, setMftWalkForTests, SETTLED_LISTING_MS, startScan } from '../src/services/diskScanner';
 import { nativeScanModule, resetNativeForTests, setNativeLoadOverrideForTests } from '../src/services/scan/native';
 import { resetEngineBudgetForTests, setNativeLoadOptionsForTests } from '../src/services/engineBudget';
 import { storeOf } from '../src/services/scanStore';
@@ -227,10 +227,8 @@ function incrementalDescription(schema: unknown): string {
   return found[0];
 }
 
-test('POST /api/scan and MCP scan_path say a fast-rescan request is the walker\'s, and not used where the native engine walks (D45)', async () => {
-  // The request body's description and the MCP tool's both promised "Reuse
-  // the on-disk mtime cache" whatever engine ran; since D45 a native walk
-  // does not read the cache, and an agent asking for speed got none.
+/** The `incremental` description an agent reads in POST /api/scan's request body and in MCP scan_path's input. */
+async function agentDescriptions(): Promise<Array<readonly [where: string, text: string]>> {
   const scanRoute = ENDPOINTS.find((e) => e.method === 'post' && e.path === '/api/scan');
   assert.ok(scanRoute, 'POST /api/scan is described');
   const mcp = buildMcpServer();
@@ -240,13 +238,57 @@ test('POST /api/scan and MCP scan_path say a fast-rescan request is the walker\'
   try {
     const tool = (await client.listTools()).tools.find((x) => x.name === 'scan_path');
     assert.ok(tool, 'scan_path is listed');
-    for (const [where, text] of [['POST /api/scan', incrementalDescription(scanRoute.requestBody)], ['scan_path', incrementalDescription(tool.inputSchema)]] as const) {
-      assert.match(text, /only the built-in walker/i, `${where}: the fast rescan is the walker's`);
-      assert.match(text, /native engine walks[^.]*not used/i, `${where}: a native walk does not use it`);
-      assert.match(text, /incremental says whether/i, `${where}: the answer's incremental says what happened`);
-      assert.doesNotMatch(text, /^Reuse the on-disk mtime cache/, `${where}: not a promise every engine keeps`);
-    }
+    return [
+      ['POST /api/scan', incrementalDescription(scanRoute.requestBody)],
+      ['scan_path', incrementalDescription(tool.inputSchema)],
+    ];
   } finally {
     await client.close();
   }
+}
+
+test('POST /api/scan and MCP scan_path say a fast-rescan request is the walker\'s, and not used where the native engine walks (D45)', async () => {
+  // The request body's description and the MCP tool's both promised "Reuse
+  // the on-disk mtime cache" whatever engine ran; since D45 a native walk
+  // does not read the cache, and an agent asking for speed got none.
+  for (const [where, text] of await agentDescriptions()) {
+    assert.match(text, /only the built-in walker/i, `${where}: the fast rescan is the walker's`);
+    assert.match(text, /native engine walks[^.]*not used/i, `${where}: a native walk does not use it`);
+    assert.match(text, /incremental says whether/i, `${where}: the answer's incremental says what happened`);
+    assert.doesNotMatch(text, /^Reuse the on-disk mtime cache/, `${where}: not a promise every engine keeps`);
+  }
+});
+
+test('POST /api/scan and MCP scan_path say a listing is reused only when its folder\'s time was settled before the last scan began, and that incremental is whether the saved listings were read, not whether any was reused (CI3 review F1.1)', async () => {
+  // Both said a fast rescan reuses the listing of every folder whose time has not changed, and that
+  // incremental says whether listings were reused. Since CI run 38519159263 a folder changed in the
+  // margin before the scan that listed it, or while it ran, is listed afresh whatever its time says,
+  // so a fast rescan moments after a scan of a tree that had just changed reuses nothing (the test below).
+  const seconds = SETTLED_LISTING_MS / 1000;
+  const rule = `only when the folder's modified time is unchanged and was more than ${seconds} seconds older than the start of that scan`;
+  const said = await agentDescriptions();
+  for (const [where, text] of said) {
+    assert.ok(text.includes(rule), `${where} states the rule as the code keeps it ("${rule}"): ${text}`);
+    assert.ok(text.includes(`a folder changed in the ${seconds} seconds before that scan, or while it ran, is listed afresh`), `${where}: and what it lists afresh`);
+    assert.match(text, /incremental says whether the last scan's saved listings were read, not whether any was reused/, `${where}: what incremental says`);
+    assert.doesNotMatch(text, /says whether (?:saved )?listings were reused/, `${where}: not the old claim`);
+    assert.doesNotMatch(text, /folders? whose modified time has not changed/, `${where}: nor reuse of every unchanged folder`);
+  }
+  const http = said.find(([where]) => where === 'POST /api/scan')![1];
+  assert.match(http, /cachedDirs counts the folders whose listing was reused, and walkedDirs those listed afresh/, 'the HTTP answer\'s counts, which the stats carry');
+});
+
+test('a fast rescan right after a scan of folders that had just changed reads the cache and reuses no listing: incremental is true, cachedDirs 0, every folder listed afresh (CI3 review F1.1)', async () => {
+  const root = tree();
+  // Folder times ahead of the clock: never settled by a scan's start, however soon it starts.
+  const ahead = new Date(Date.now() + 60_000);
+  for (const dir of [root, path.join(root, 'sub')]) fs.utimesSync(dir, ahead, ahead);
+  await scanOf(root, 'walker');
+  const again = await scanOf(root, 'walker', { incremental: true });
+  assert.ok(isWalker(again), again.engine);
+  assert.deepEqual(
+    { incremental: again.incremental, cachedDirs: again.cachedDirs, walkedDirs: again.walkedDirs },
+    { incremental: true, cachedDirs: 0, walkedDirs: 2 },
+    'the cache was read, and no listing in it reused: both folders were listed afresh',
+  );
 });
