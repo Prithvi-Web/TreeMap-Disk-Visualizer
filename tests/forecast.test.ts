@@ -21,6 +21,7 @@ function snap(daysAgo: number, totalSize: number, tops: { name: string; size: nu
     fileCount: 1,
     dirCount: 1,
     topEntries: tops.map((t) => ({ name: t.name, path: `/r/${t.name}`, size: t.size, type: 'dir' as const })),
+    coverage: 'complete',
   };
 }
 

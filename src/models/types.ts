@@ -663,6 +663,8 @@ export interface Snapshot {
   topEntries: SnapshotTopEntry[];
   /** True when a deeper tree was stored for the time-slider treemap. */
   hasTree?: boolean;
+  /** Reported listing coverage at scan time. Absent on old history means unknown. */
+  coverage?: 'complete' | 'partial' | 'unknown';
   /**
    * Present only when a drive was mounted inside the scanned folder (Track U,
    * U-24): under `stay` the drives the scan did not enter, under `cross` the

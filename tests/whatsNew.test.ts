@@ -25,6 +25,7 @@ function snap(over: Partial<Snapshot>): Snapshot {
     fileCount: 0,
     dirCount: 0,
     topEntries: [],
+    coverage: 'complete',
     ...over,
   };
 }
