@@ -829,6 +829,15 @@ function scrollerPads(page: { cart: boolean; bar: boolean }): { top: number; bot
   };
 }
 
+/** The flex-grow a rule set gives an item: `flex-grow`, else the `flex` shorthand's first number (`none` and the initial value are 0, `auto` is 1). */
+function flexGrow(d: Map<string, string>): number {
+  if (d.has('flex-grow')) return Number(d.get('flex-grow'));
+  const f = (d.get('flex') || 'initial').trim();
+  if (f === 'auto') return 1;
+  const n = Number(f.split(/\s+/)[0]);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
  * The Grid's scroller as the stylesheet lays it out in a window H px tall.
  * #view-grid.active is a flex column inside <main>; its toolbar is one row of
@@ -837,10 +846,19 @@ function scrollerPads(page: { cart: boolean; bar: boolean }): { top: number; bot
  * min-height — is as tall as what it holds, so its scroller then grows to its
  * tiles plus its padding instead of scrolling them: what QA measured, a
  * scroller 1,123,657 px tall with nothing to scroll (D01).
+ * The view hands its height to the scroller only as a flex column the
+ * scroller grows in; as a block (`.view.active`) the scroller is as tall as
+ * its tiles whatever height the view has. That layout is not modelled, so it
+ * is refused here rather than answered as if it were a column (review F1.7).
+ * A toolbar on two rows only shortens the scroller, which no claim made with
+ * this depends on.
  */
 function sheetScrollerH(W: number, H: number, page: { cart: boolean; bar: boolean }, innerH: number): number {
   const view = gridDecls('#view-grid.active', page);
   const scroller = gridDecls('#gridScroll', page);
+  assert.match(view.get('display') || '', /^(inline-)?flex$/, `the Grid view lays its toolbar and scroller out as flex items (display: ${view.get('display') ?? 'unset, so .view.active\'s block'})`);
+  assert.equal(view.get('flex-direction'), 'column', 'in a column, so its height is shared down the page');
+  assert.ok(flexGrow(scroller) > 0, `and the scroller grows into what the toolbar leaves (flex: ${scroller.get('flex') ?? 'unset'})`);
   const pads = scrollerPads(page);
   const content = gridToolbarH() + innerH + pads.top + pads.bottom;
   let viewH = view.has('height') ? sheetLen(view.get('height')!, W, H) : Math.max(view.has('min-height') ? sheetLen(view.get('min-height')!, W, H) : 0, content);
