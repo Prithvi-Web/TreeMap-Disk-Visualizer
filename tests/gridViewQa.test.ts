@@ -134,6 +134,8 @@ type Grid = {
   escapeInGrid?(): void;
   /** The page's own preview pane, in place of the stub (gridHarness({ preview: true })): Escape and Close both call closePreview. */
   closePreview?(): void;
+  /** And what opens it, for a pane opened from somewhere other than a tile (gridHarness({ preview: true })). */
+  openPreview?(node: Node): void;
   settle(): Promise<void>;
 };
 
@@ -271,8 +273,8 @@ function gridHarness(opts: { escape?: boolean; raf?: boolean; preview?: boolean 
     ${braced('function activeViewControl(')}
     ${escape}
     ${opts.preview ? previewPaneSrc() : 'const closePreview = undefined;'}
-    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid, closePreview };`)(...names.map((n) => deps[n])) as
-    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid' | 'closePreview'>;
+    return { renderGrid, onCellClick, gridUp, gridItems, updateSelectionBar, escapeInGrid, closePreview, openPreview };`)(...names.map((n) => deps[n])) as
+    Pick<Grid, 'renderGrid' | 'onCellClick' | 'gridUp' | 'gridItems' | 'updateSelectionBar' | 'escapeInGrid' | 'closePreview' | 'openPreview'>;
   // renderGrid is async; navigation calls it without awaiting.
   const wrapped = {
     ...api,
@@ -1462,6 +1464,53 @@ test('closing the preview pane opened from a Grid tile with Enter gives focus ba
     assert.equal(focusedTile(g), first, `the first tile on screen, ${first}`);
     await g.settle();
     assert.equal(focusedTile(g), first, 'and it keeps the focus through the re-flow the close brings');
+  });
+
+  // The stand-in is for a Grid tile only, and there may be none to give
+  // (review F3.1). The pane also opens from a row of another list — its
+  // context menu's Quick Look gives the row the focus first — and that list
+  // can redraw while the pane is open; a filter can leave the Grid with no
+  // tile at all. Either way the close has nothing to give the focus to, and
+  // must neither throw nor hand it to a tile that does not stand for it.
+  const fromRow = async () => {
+    const g = gridHarness({ raf: true, preview: true });
+    evenPlant(g, 400);
+    sizeFromSheet(g, 1440, 900, false);
+    await g.renderGrid();
+    const list = (g.els.largestList = fakeEl('largestList')); // on the page, as $() keeps it
+    const row = fakeEl('', 'div');
+    list.appendChild(row);
+    row.focus();
+    g.openPreview!(g.state.grid.layout[6].it);
+    await g.settle();
+    assert.equal(FOCUS.active, g.els.pvClose, 'control: the pane took the focus, on its Close button');
+    return { g, list, row };
+  };
+
+  await t.test('it came from a row of another list, still on the page: the row gets it back', async () => {
+    const { g, row } = await fromRow();
+    FOCUS.opts = undefined;
+    g.closePreview!();
+    assert.equal(FOCUS.active, row, `the row it came from (focus is on ${FOCUS.active ? `${FOCUS.active.id || FOCUS.active.tagName} data-i ${FOCUS.active.dataset.i}` : 'nothing'})`);
+    assert.deepEqual(FOCUS.opts, { preventScroll: true }, 'and moving it scrolled nothing');
+  });
+
+  await t.test('it came from a row its list redrew while the pane was open: no tile stands for it, and the close moves the focus nowhere', async () => {
+    const { g, list } = await fromRow();
+    list.replaceChildren({ children: [fakeEl('', 'div')] }); // the list redrawn under the pane
+    assert.doesNotThrow(() => g.closePreview!(), 'closing the pane');
+    assert.equal(FOCUS.active, g.els.pvClose,
+      `no tile takes the focus: the row was not a Grid tile (focus is on ${FOCUS.active ? `${FOCUS.active.id || FOCUS.active.tagName} data-i ${FOCUS.active.dataset.i}` : 'nothing'})`);
+  });
+
+  await t.test('it came from a tile, and a filter then left the Grid no tile: the close moves the focus nowhere', async () => {
+    const g = await open(6);
+    g.els.gridSearch.focus();
+    await typeFilter(g, 'no-such-file');
+    assert.equal(g.state.grid.layout.length, 0, 'control: the filter matches nothing, so the Grid has no tile');
+    g.els.pvClose.focus(); // back into the pane, with Tab or a click on Close
+    assert.doesNotThrow(() => g.closePreview!(), 'closing the pane');
+    assert.equal(FOCUS.active, g.els.pvClose, 'the focus is not moved: no tile stands for the file');
   });
 });
 
