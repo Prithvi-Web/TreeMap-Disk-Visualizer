@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 const DATA = isolatedDataDir('treemap-coverage-data-');
 
 import { startScan, getScan } from '../src/services/diskScanner';
@@ -21,8 +22,7 @@ import type { ScanResult, Snapshot } from '../src/models/types';
 async function scanned(root: string): Promise<ScanResult> {
   await updateSettings({ engine: 'walker' });
   const scan = await startScan(root);
-  const limit = Date.now() + 10_000;
-  while (scan.status === 'running' && Date.now() < limit) await new Promise((r) => setTimeout(r, 10));
+  await waitFor(() => scan.status !== 'running', 'the listing-coverage scan settling');
   assert.equal(scan.status, 'complete', scan.error);
   await settled();
   return getScan(scan.scanId)!;
