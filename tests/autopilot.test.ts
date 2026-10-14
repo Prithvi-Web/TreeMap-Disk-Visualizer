@@ -533,7 +533,7 @@ test('a brand-new policy simulates and deletes nothing, however it is configured
 
 /* ══════════════════ Never a part of an installed app (fifth browser pass F01) ══════════════════ */
 
-test('an unattended run never selects a file inside an installed app, whatever its match — the app is listed in skipped once, with how many it left and why (fifth browser pass F01)', async () => {
+test('an unattended run never selects a file inside an installed app, whatever its match — a size rule, a query or a rule pack\'s suggestion — the app is listed in skipped once, with how many it left and why (fifth browser pass F01; review F1.8)', async () => {
   // QA: Largest Files on /Applications was six app internals (Chrome's
   // framework, WhatsApp's own executable, an app.asar). A size rule over a
   // folder of apps would trash them while nobody is watching.
@@ -552,6 +552,17 @@ test('an unattended run never selects a file inside an installed app, whatever i
       assert.match(left[0].reason, /2 matched items inside the app “Fake”/, `${match.kind}: with how many it left, and in which app`);
       assert.match(left[0].reason, /which would stop working without them/, `${match.kind}: and why`);
     }
+    // The third kind, a rule pack's suggestion, selects folders — an Electron
+    // app's own node_modules among them, the likeliest part of an app such a
+    // rule matches (review F1.8).
+    await writeFile(path.join(dir, 'Fake.app', 'Contents', 'Resources', 'app', 'node_modules', 'dep', 'index.js'), 4096);
+    await writeFile(path.join(dir, 'proj', 'node_modules', 'dep', 'index.js'), 4096);
+    const [suggestion] = await savePolicies([{ id: 'apps-suggestion', name: 'Build folders', path: dir, match: { kind: 'suggestion', groupIds: ['regen-node-modules'] }, dryRunFirst: false, enabled: true }]);
+    const sim = await simulatePolicy(suggestion);
+    assert.deepEqual(sim.items.map((i) => path.relative(dir, i.path)), [path.join('proj', 'node_modules')], 'suggestion: control: the project\'s node_modules is selected, and nothing inside the app');
+    const left = sim.skipped.filter((s) => s.path.includes('Fake.app'));
+    assert.equal(left.length, 1, `suggestion: the app is named once: ${JSON.stringify(sim.skipped)}`);
+    assert.match(left[0].reason, /1 matched item inside the app “Fake”/, 'suggestion: the app\'s own node_modules is left alone, and counted');
   } finally {
     await savePolicies([]);
     await fsp.rm(dir, { recursive: true, force: true });

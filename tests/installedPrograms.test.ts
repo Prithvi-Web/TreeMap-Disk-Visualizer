@@ -267,6 +267,24 @@ test('a path reached through a link in its folders is judged where it really is:
   assert.deepEqual(del.body.wouldTrash[0].installedProgram, foo, 'and so does the dry run');
 });
 
+test('DELETE /api/files\'s dry run with onlyEmptyFolders says it too: an empty folder inside an app is a part of it (review F1.9)', async () => {
+  const dir = fs.realpathSync(fileTempDir('tm-installed-empty-'));
+  const app = path.join(dir, 'Fake.app');
+  const empty = path.join(app, 'Contents', 'Resources', 'empty');
+  const plain = path.join(dir, 'plain-empty');
+  fs.mkdirSync(empty, { recursive: true });
+  fs.mkdirSync(plain);
+  fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), 'x');
+  const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: dir });
+  assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+  const r = await call('DELETE', '/api/files', { paths: [empty, plain], dryRun: true, onlyEmptyFolders: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.wouldTrash.map((w: { path: string }) => w.path), [empty, plain], 'control: both are empty folders the real run would trash');
+  assert.deepEqual(r.body.wouldTrash[0].installedProgram, { kind: 'app', name: 'Fake', root: app }, 'the empty folder inside the app is named as a part of it');
+  assert.equal('installedProgram' in r.body.wouldTrash[1], false, 'and nothing for the folder outside it');
+  assert.ok(fs.existsSync(empty) && fs.existsSync(plain), 'a dry run moves nothing');
+});
+
 test('the offload dry runs say which originals they would trash are parts of an installed program: POST /api/offload and the MCP offload tool (review F1.4)', async () => {
   const { app, exe, loose, scanId } = await scannedFolderWithAnApp();
   const dest = fs.realpathSync(fileTempDir('tm-installed-offload-dest-'));
