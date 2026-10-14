@@ -72,10 +72,12 @@ function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: num
   const body = { innerHTML: 'PROMPT' };
   const info = { textContent: '' };
   const button: { click?: () => Promise<void> } = {};
+  // The Compare button as a browser keeps one: its listener, and whether it is disabled.
+  const runBtn = { disabled: false, addEventListener: (_t: string, fn: () => Promise<void>) => { button.click = fn; } };
   const compared: string[] = [];
   const els: Record<string, unknown> = {
     cmpA, cmpB, cmpBody: body, cmpInfo: info,
-    cmpRunBtn: { addEventListener: (_t: string, fn: () => Promise<void>) => { button.click = fn; } },
+    cmpRunBtn: runBtn,
   };
   // `fail`: every comparison the server is asked for fails with this message.
   const server = { scans: [...scans], snapshots: [...snapshots], fail: null as string | null };
@@ -111,7 +113,7 @@ function harness(scans: Scan[], snapshots: Snap[] = [], clock: { minute: (t: num
   };
   // As the page wires them (the last test pins that wiring).
   if (page.sync) { cmpA.addEventListener('change', page.sync); cmpB.addEventListener('change', page.sync); }
-  return { ...page, cmpA, cmpB, body, server, compared, click: () => button.click!() };
+  return { ...page, cmpA, cmpB, body, info, runBtn, server, compared, click: () => button.click!() };
 }
 
 const scan = (scanId: string, rootPath: string, finishedAt: number, totalSize = 1000): Scan => ({ scanId, rootPath, finishedAt, totalSize });
@@ -253,6 +255,63 @@ test('E07: before anything is compared, changing the picks leaves the first prom
   await h.load();
   h.cmpB.pick('scan:m1');
   assert.equal(h.body.innerHTML, 'PROMPT', 'the first prompt stands');
+});
+
+/* ══════════════ one record is one record (F05) ══════════════ */
+
+test('F05: after a folder\'s first scan, the scan and the snapshot it saved are one record — Compare says "Only one record of this folder so far", picks it on both sides, and offers no press it would refuse', async () => {
+  // QA, fresh data, corpus/Mail scanned once: Before "Mail · History · 2:32
+  // PM", After "Mail · Scan (full diff) · 2:32 PM" — the same scan twice —
+  // and Compare toasted "Mixing a live scan with a history snapshot isn't
+  // supported"; the one-record line never showed (scan + snapshot counted 2).
+  const toasts: string[] = [];
+  const h = harness([scan('s1', '/c/corpus', 100)], [snap('h1', '/c/corpus', 100)], undefined, toasts);
+  await h.load();
+  assert.match(h.info.textContent, /^Only one record of this folder so far/, `the line says so: "${h.info.textContent}"`);
+  assert.deepEqual([h.cmpA.value, h.cmpB.value], ['scan:s1', 'scan:s1'], 'the one record is picked on both sides — never the scan beside its own snapshot');
+  assert.equal(h.runBtn.disabled, true, 'and Compare waits for a second record instead of refusing a press');
+  assert.equal(h.body.innerHTML, 'PROMPT', 'the card is the first prompt, with no refusal under it');
+
+  // A person picks for themselves: Compare is theirs to press, and says why it refuses.
+  h.cmpA.pick('snap:h1');
+  assert.equal(h.runBtn.disabled, false, 'a pick a person makes can be pressed');
+  await h.click();
+  assert.deepEqual(toasts, ['Mixing a live scan with a history snapshot isn’t supported — pick two of the same kind'], 'in the words the card would use');
+
+  // The second scan lands: the two scans are the pair, and Compare is offered.
+  h.server.scans.push(scan('s2', '/c/corpus', 200));
+  h.server.snapshots.push(snap('h2', '/c/corpus', 200));
+  h.cmpA.pick('scan:s1'); // back to the default picks
+  await h.load();
+  assert.deepEqual([h.cmpA.value, h.cmpB.value], ['scan:s1', 'scan:s2'], 'control: the two scans, older → newer');
+  assert.equal(h.info.textContent, '', 'the one-record line is gone');
+  assert.equal(h.runBtn.disabled, false, 'and Compare is offered');
+  await h.click();
+  assert.equal(h.body.innerHTML, 'RESULT t100 → t200', 'and compares them');
+});
+
+test('F05: a live scan and a history snapshot of two moments are never the default pair either — the line says why there is nothing to compare', async () => {
+  // The scan's own snapshot was not saved, and an older one is on record: two
+  // moments, but no two of one kind.
+  const h = harness([scan('s2', '/c/corpus', 200)], [snap('h1', '/c/corpus', 100)]);
+  await h.load();
+  assert.deepEqual([h.cmpA.value, h.cmpB.value], ['scan:s2', 'scan:s2'], 'the newest record on both sides, never the mixed pair');
+  assert.doesNotMatch(h.info.textContent, /Only one record/, 'there are two records, so the line does not say one');
+  assert.match(h.info.textContent, /live scan and a history snapshot can’t be compared/, `it says why: "${h.info.textContent}"`);
+  assert.equal(h.runBtn.disabled, true);
+});
+
+test('F05: the one record is picked on both sides even when another folder\'s scan heads the lists — never a pair across two folders', async () => {
+  const h = harness([scan('m1', '/c/Mail', 300), scan('s1', '/c/corpus', 100)], [snap('h1', '/c/corpus', 100)]);
+  await h.load();
+  assert.deepEqual([h.cmpA.value, h.cmpB.value], ['scan:s1', 'scan:s1'], 'the scanned folder\'s one record, both sides');
+  assert.match(h.info.textContent, /^Only one record of this folder so far/);
+});
+
+test('F05: with no record at all, Compare offers nothing to press', async () => {
+  const h = harness([], []);
+  await h.load();
+  assert.equal(h.runBtn.disabled, true);
 });
 
 test('C08: the lists are wired to keep the result honest when a person changes them', () => {

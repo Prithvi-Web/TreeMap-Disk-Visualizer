@@ -17,6 +17,7 @@ async function loadCompareOptions() {
       $('cmpA').innerHTML = $('cmpB').innerHTML = '<option>No scans yet</option>';
       $('cmpA').disabled = $('cmpB').disabled = true;
       cmpSyncResult();
+      $('cmpRunBtn').disabled = true; // nothing to compare, so nothing to press (F05)
       return;
     }
     $('cmpA').disabled = $('cmpB').disabled = false;
@@ -39,21 +40,37 @@ async function loadCompareOptions() {
     // first) root, older → newer. "Newest two overall" always paired the
     // newest scan with the snapshot that scan itself saved — same timestamp,
     // mixed kinds, and the exact pair the Run button refuses (QA D2).
+    // With no two of one kind there is no default pair at all: a scan and
+    // the snapshot it saved are one record of one moment, so after a
+    // folder's first scan the line says there is only one, that record is
+    // picked on both sides, and Compare waits for a pick a person makes
+    // rather than refusing a press on a pair it chose itself (F05).
     const rootKey = state.root && byRoot.has(state.root.path) ? state.root.path : [...byRoot.keys()][0];
     const list = byRoot.get(rootKey).sort((x, y) => y.when - x.when);
     const scans = list.filter((o) => o.kind === 'scan');
     const snaps = list.filter((o) => o.kind === 'snap');
-    const pool = scans.length >= 2 ? scans : snaps.length >= 2 ? snaps : list;
+    const pool = scans.length >= 2 ? scans : snaps.length >= 2 ? snaps : null;
+    let nothingToCompare = false;
     if (shown && parseCmp(shown.a) && parseCmp(shown.b)) {
       $('cmpA').value = shown.a;
       $('cmpB').value = shown.b;
       $('cmpInfo').textContent = '';
-    } else {
+    } else if (pool) {
       $('cmpB').value = `${pool[0].kind}:${pool[0].id}`;
-      if (pool.length > 1) $('cmpA').value = `${pool[1].kind}:${pool[1].id}`;
-      $('cmpInfo').textContent = pool.length < 2 ? 'Only one record of this folder so far — scan it again to have something to compare.' : '';
+      $('cmpA').value = `${pool[1].kind}:${pool[1].id}`;
+      $('cmpInfo').textContent = '';
+    } else {
+      const only = `${list[0].kind}:${list[0].id}`;
+      $('cmpA').value = only;
+      $('cmpB').value = only;
+      // Moments, not entries: a scan and its own snapshot share one.
+      $('cmpInfo').textContent = new Set(list.map((o) => o.when)).size < 2
+        ? 'Only one record of this folder so far — scan it again to have something to compare.'
+        : 'A live scan and a history snapshot can’t be compared, and there are no two of one kind yet — scan this folder again to have two scans to compare.';
+      nothingToCompare = true;
     }
     cmpSyncResult();
+    $('cmpRunBtn').disabled = nothingToCompare;
   } catch (e) {
     toast('Could not load scans: ' + e.message, 'error');
   }
@@ -98,6 +115,9 @@ function cmpWhenPair(a, b) {
  * about. Picking the old pair again brings nothing back: Compare does.
  */
 function cmpSyncResult() {
+  // A pick a person makes is theirs to press; Compare then says why it refuses
+  // one it cannot compare (F05: only loadCompareOptions holds it back).
+  $('cmpRunBtn').disabled = false;
   const shown = state.compare.result;
   const a = $('cmpA').value, b = $('cmpB').value;
   if (shown && shown.a === a && shown.b === b) return;
