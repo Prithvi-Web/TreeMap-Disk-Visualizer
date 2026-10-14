@@ -421,6 +421,23 @@ test('an offload\'s pick is answered before the picker goes: a folder the dry ru
   assert.ok(isOpen(), 'and its leave() does not close the picker opened since');
   presses[2].answer();
   await third;
+  // Another folder listed while a pick answers — a drive's chip, a row, "..": that pick is retired too,
+  // its answer being for a folder the picker no longer shows (review F1.6 of F02). Its plan answering
+  // opens no sheet over the folder now shown, and leaves the picker there, its button live.
+  const fourth = use();
+  await settle();
+  assert.equal(presses[3].ctl.current(), true, 'control: a pick is current while its folder is shown');
+  assert.equal($('browseUseBtn').disabled, true, 'control: its button held');
+  assert.equal(await rt.browseTo('/data'), true, 'control: another folder is listed');
+  assert.equal(presses[3].ctl.current(), false, 'a pick whose picker has listed another folder is not current');
+  assert.ok(isOpen(), 'the picker stays open');
+  assert.deepEqual([rt.path(), $('browseUseBtn').disabled], ['/data', false], 'on the folder now listed, its button live for a choice there');
+  presses[3].ctl.leave();
+  assert.ok(isOpen(), 'and the old pick\'s leave() does not close the picker on the folder listed since');
+  presses[3].answer();
+  await fourth;
+  assert.deepEqual([rt.path(), $('browseUseBtn').disabled], ['/data', false], 'its answer leaves the picker on /data with its button live');
+  rt.close();
   // A pick without holdOpen is unchanged: the picker closes as it picks.
   const plain: string[] = [];
   await open('/home/u', (p: string) => { plain.push(p); }, 'Folder this policy cleans');
