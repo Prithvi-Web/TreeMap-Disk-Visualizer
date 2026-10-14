@@ -676,18 +676,16 @@ test('no sentence on any page promises a way back "any time", and every promise 
   }
 });
 
-test('what the server and the docs tell an agent about the Trash says when the way back ends (QA third pass D06)', () => {
+/** What the server and the docs tell an agent or a reader about deletes, as [file, text]. */
+function agentTexts(): Array<[string, string]> {
   const root = path.join(__dirname, '..');
-  const sources: Array<[string, string]> = [
-    ['src/mcp/server.ts', readFileSync(path.join(root, 'src/mcp/server.ts'), 'utf8')],
-    ['src/api/metaRoutes.ts', readFileSync(path.join(root, 'src/api/metaRoutes.ts'), 'utf8')],
-    ['src/api/openapi.ts', readFileSync(path.join(root, 'src/api/openapi.ts'), 'utf8')],
-    ['src/services/cloud/providers.ts', readFileSync(path.join(root, 'src/services/cloud/providers.ts'), 'utf8')],
-    ['README.md', readFileSync(path.join(root, 'README.md'), 'utf8')],
-    ['AGENTS.md', readFileSync(path.join(root, 'AGENTS.md'), 'utf8')],
-  ];
+  return ['src/mcp/server.ts', 'src/api/metaRoutes.ts', 'src/api/openapi.ts', 'src/services/cloud/providers.ts', 'README.md', 'AGENTS.md', 'SECURITY.md']
+    .map((file) => [file, readFileSync(path.join(root, file), 'utf8')]);
+}
+
+test('what the server and the docs tell an agent about the Trash says when the way back ends (QA third pass D06)', () => {
   let seen = 0;
-  for (const [file, text] of sources) {
+  for (const [file, text] of agentTexts()) {
     for (const m of text.matchAll(/[^.\n]*\brecoverable(?!ity)[^\n]*/gi)) {
       seen++;
       // Bounded ("until", "while") or hedged ("often": snapshots may still hold a file the Trash has let go).
@@ -695,4 +693,45 @@ test('what the server and the docs tell an agent about the Trash says when the w
     }
   }
   assert.ok(seen >= 6, `the sweep found the server's and the docs' own "recoverable" (${seen})`);
+});
+
+test('no sentence in the docs or in what an agent is told offers a way back with no end — "any time", "can be put back", "even after the Trash is emptied" each say until when (review F1.2, F1.8 of QA third pass D06)', () => {
+  // The sweep above reads only the word "recoverable", so README's "undo
+  // from Finder/Explorer any time", SECURITY's "can be put back" and "a run
+  // can be undone even after the Trash is emptied", AGENTS' cart undo "even
+  // after the Trash has been emptied" and trash_paths' own "can be restored
+  // from there" each promised a way back with no end. The Trash's ends when
+  // it is emptied; a Time Capsule copy's when its retention (30 days by
+  // default) or its size cap lets the copy go.
+  /** A doc's paragraphs, list items and table rows with their hard wraps undone, or a source file's lines — each split into sentences. */
+  const sentencesOf = (file: string, text: string): string[] => text
+    .split(file.endsWith('.md') ? /\n\s*\n|\n(?=\s*(?:[-*|]|\d+\.)\s)/ : /\n/)
+    .map((block) => block.replace(/\s+/g, ' '))
+    .flatMap((block) => block.split(/(?<=[.!?])\s+/))
+    .map((s) => s.trim()).filter(Boolean);
+  const WAY_BACK = /\brecoverabl|\brestor(?:e|ed)\b|\bundo(?:ne)?\b|\bput\b[^.;]*\bback\b|\bcan be recovered\b/i;
+  /** Whether, after the phrase at `m` and before its clause ends, the sentence says when that way back ends. */
+  const endsLater = (s: string, m: RegExpExecArray) => /^[^;.]*?\b(?:until|while|as long as)\b/i.test(s.slice(m.index + m[0].length));
+  const seen = { wayBack: 0, pastEmptied: 0, canBe: 0 };
+  for (const [file, text] of agentTexts()) {
+    for (const s of sentencesOf(file, text)) {
+      if (WAY_BACK.test(s)) {
+        seen.wayBack++;
+        assert.doesNotMatch(s, /\bany ?time\b|\bforever\b/i, `${file}: a way back with no end — "${s}"`);
+      }
+      const past = /even after (?:you (?:have )?)?(?:emptied|empty(?:ing)?) the Trash|even after the Trash (?:is|has been) emptied|emptying the Trash doesn['’]t lose/i.exec(s);
+      if (past) {
+        seen.pastEmptied++;
+        assert.ok(endsLater(s, past), `${file}: "${past[0]}" — until when? "${s}"`);
+      }
+      const can = /\b(?:can|could) be (?:put back|restored|undone|recovered)\b/i.exec(s);
+      // "No copy it holds can be put back now" offers nothing: the phrase it is the predicate of says no.
+      if (can && !/\b(?:no|not|never|nothing|none)\b/i.test(s.slice(0, can.index).split(/[;—:,]/).pop()!)) {
+        seen.canBe++;
+        assert.ok(endsLater(s, can), `${file}: "${can[0]}" with no end — "${s}"`);
+      }
+    }
+  }
+  // Each rule read the sentences it is about: a split that merged or lost them would pass by seeing nothing.
+  assert.ok(seen.wayBack >= 100 && seen.pastEmptied >= 4 && seen.canBe >= 6, `the sweep read the docs' ways back: ${JSON.stringify(seen)}`);
 });

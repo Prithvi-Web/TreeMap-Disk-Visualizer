@@ -506,8 +506,10 @@ OpenAPI 3 spec).
      `POST /api/cart/undo` restores in full — original paths, byte for byte,
      with their permissions and the dates they were last modified and opened
      (not their creation dates, which nothing sets back), even after the Trash
-     has been emptied; a date or permission that could not be set back finishes
-     the restore with a warning naming it. Each file is written beside its
+     has been emptied, until the Time Capsule removes the copies (after 30 days
+     by default, or sooner to stay under its size cap); a date or permission
+     that could not be set back finishes the restore with a warning naming
+     it. Each file is written beside its
      name (`.treemap-restore-…`) and put there only once it verifies; one a
      quit or a kill left is removed at the next start — only names TreeMap
      recorded, only while each is still the file it made, and never one
