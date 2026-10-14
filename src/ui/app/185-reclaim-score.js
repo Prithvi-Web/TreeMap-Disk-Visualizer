@@ -449,7 +449,12 @@ function rcFocusBack(opener, path) {
   // closes the button that opened it has usually been replaced by an
   // identical one. Holding the reference silently dropped focus to <body>.
   // The path is stable across those repaints, so the badge is re-found.
-  if (opener && document.contains(opener)) { opener.focus(); return; }
+  //
+  // <body> is where focus was, never where it came from: a right-click on a
+  // row that is no Tab stop leaves it there, and the menu hands that on.
+  // Taken for the opener, it was "focused" — a no-op — and the row's badge
+  // was never looked for (review F1.1 of QA fourth pass E05).
+  if (opener && opener !== document.body && document.contains(opener)) { opener.focus(); return; }
   // A Grid tile the menu was opened from, rebuilt since: the tile now
   // standing for that file takes it (QA fourth pass E05).
   const standIn = opener ? gridFocusStandIn(opener) : null;

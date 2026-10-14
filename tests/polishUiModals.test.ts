@@ -823,6 +823,7 @@ function breakdownHarness(standIn: (el: FEl) => FEl | null = () => null) {
     contains: (n: FEl) => doc.root.contains(n),
     querySelector: (sel: string) => doc.querySelector(sel),
     get activeElement() { return doc.activeElement; },
+    body: doc.body,
   };
   const fact = { score: 82, confidence: 'high', components: [], missing: [] };
   const panel = new Function('document', '$', 'window', 'CSS', 'scoreFor', 'scoreKnown', 'toast', 'escapeHtml', 'reclaimColor', 'reclaimInk', 'icon',
@@ -1406,6 +1407,38 @@ test('"Why this reclaim score?" from a Grid tile\'s menu gives focus back to tha
     assert.equal(h.pop.hidden, true, `${round}: Escape closed it`);
     const want: FEl | null = round === 'the tile' ? tile : rebuilt;
     assert.equal(h.doc.activeElement, want, `${round}: focus is on ${round}, not <body> (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+  }
+});
+
+test('"Why this reclaim score?" from a menu opened by a right-click on a Largest Files row gives focus to the row\'s score badge on Escape — <body> is not where focus came from (review F1.1 of QA fourth pass E05)', async () => {
+  // Review F1.1: Dashboard › Largest Files sorted by Reclaim, a right-click
+  // on the blank part of a row. A row is no Tab stop, so the mousedown left
+  // focus on <body>, and the menu remembers that as where focus came from
+  // (hideCtxMenu answers it). The breakdown took <body> for its opener,
+  // "gave focus back" to it — a no-op — and never looked for the row's score
+  // badge, which it did before E05 handed it the menu's answer.
+  const path = '/Users/me/Videos/holiday-4k.mov';
+  const h = breakdownHarness();
+  const list = append(h.doc.querySelector('main')!, mkOf(h.doc)('div', 'bigFiles'));
+  for (const round of ['the badge', 'the badge the scores repainted']) {
+    const row = append(list, mkOf(h.doc)('div', '', ['bigfile'])); // no tabindex, no role: not focusable
+    const badge = h.badgeIn(row, path);
+    h.doc.activeElement = h.doc.body; // the right-click's mousedown on the row's blank space
+    menuEntry('score', { path, back: h.doc.body, openReclaimWhy: h.openReclaimWhy as (...a: never[]) => void })();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(h.pop.hidden, false, `${round}: the breakdown opened`);
+    assert.equal(h.doc.activeElement, h.doc.getElementById('rcPopClose'), `${round}: and holds focus`);
+    let want = badge;
+    if (round === 'the badge the scores repainted') {
+      // The list is rebuilt by innerHTML when the scores land: the badge is a new one.
+      list.children.splice(list.children.indexOf(row), 1);
+      row.parent = null; row.isConnected = false;
+      want = h.badgeIn(append(list, mkOf(h.doc)('div', '', ['bigfile'])), path);
+    }
+    h.escape();
+    assert.equal(h.pop.hidden, true, `${round}: Escape closed it`);
+    assert.ok(h.doc.activeElement === want, `${round}: focus is on the row's score badge, not <body> (it is on <${h.doc.activeElement?.tag} id=${h.doc.activeElement?.id}>)`);
+    list.children.splice(0).forEach((c) => { c.parent = null; c.isConnected = false; });
   }
 });
 
