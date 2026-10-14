@@ -850,11 +850,23 @@ test('with a drive connected the drive dock under the map is counted when the ma
     ['1024×700, preview pane, "Preview after", the time slider stepped aside', 700, 293 - barBlock, 69, 196],
   ];
   for (const [label, H, top, footH, previewPad] of cases) {
-    // "Preview after" previews the rectangle map only (enterCartPreview refuses the other three), so
-    // the alternate renderers' note is never up beside it.
+    // "Preview after" previews the rectangle map only (enterCartPreview refuses the other three), but
+    // the rectangle map writes the same note row: the 20,000-item cap's (QA D58), which a preview keeps
+    // (review F1.5 of F06). That state is the floor case, below.
     const states: Array<[string, RowBelow[]]> = [['the dock', [dock(true), note(false)]]];
     if (previewPad === undefined) {
-      states.push(['the dock and a Sunburst, Circles or Voronoi note', [dock(true), note(true)]], ['the note alone', [dock(false), note(true)]]);
+      states.push(['the dock and a note under the map', [dock(true), note(true)]], ['the note alone', [dock(false), note(true)]]);
+    }
+    if (previewPad !== undefined) {
+      // D12's floor case: with the preview pane, "Preview after" and a drive, the map is already at its
+      // 96 px floor (two rows of labelled cells), so a capped map's note is the one row the page cannot
+      // make room for. The hint stays where it was, above the room kept for the pill; the page runs past
+      // the window by that row alone, read by scrolling.
+      const capped = mapWithCart(H, top, footH, previewPad, [dock(true), note(true)]);
+      const noteRoom = marginTopOf('.tm-altnote') + ALT_NOTE_H;
+      assert.ok(capped.footEnd <= capped.pillRoom, `${label}, the dock and the cap's note: the hint ends at y ${capped.footEnd}; the room kept for the pill starts at y ${capped.pillRoom}`);
+      assert.ok(capped.page <= H + noteRoom, `${label}, the dock and the cap's note: the page (${capped.page} px) runs past the ${H} px window by the note's ${noteRoom} px at most`);
+      assert.equal(capped.height, 96, `${label}, the dock and the cap's note: the map is at its floor`);
     }
     for (const [what, rows] of states) {
       const m = mapWithCart(H, top, footH, previewPad, rows);
