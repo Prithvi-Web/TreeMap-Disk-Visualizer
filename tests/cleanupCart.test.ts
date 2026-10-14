@@ -295,6 +295,105 @@ test('every cart toggle in the app is written by the one helper, so none can be 
   }
 });
 
+/* ══════════════════════ E12 — the cart pill is named by what it shows ══════════════════════ */
+
+/** One element of the page's static markup: its tag, attributes and children (text as strings). */
+type MarkupEl = { tag: string; attrs: Record<string, string>; children: Array<MarkupEl | string> };
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+
+/** The page's <body> markup, before its script, as a tree. */
+function markupTree(): MarkupEl {
+  const at = INDEX.indexOf('<body');
+  const html = INDEX.slice(at, INDEX.indexOf('<script>', at)).replace(/<!--[\s\S]*?-->/g, '');
+  const root: MarkupEl = { tag: '#root', attrs: {}, children: [] };
+  const stack = [root];
+  for (const m of html.matchAll(/<(\/?)([a-zA-Z][\w-]*)((?:\s+[\w:-]+(?:="[^"]*")?)*)\s*(\/?)>|([^<]+)/g)) {
+    const top = stack[stack.length - 1];
+    if (m[5] !== undefined) { top.children.push(m[5]); continue; }
+    const tag = m[2].toLowerCase();
+    if (m[1]) {
+      const i = stack.map((e) => e.tag).lastIndexOf(tag);
+      assert.ok(i > 0, `</${tag}> closes an open element`);
+      stack.length = i;
+      continue;
+    }
+    const attrs: Record<string, string> = {};
+    for (const a of m[3].matchAll(/([\w:-]+)(?:="([^"]*)")?/g)) attrs[a[1]] = (a[2] ?? '').replace(/&amp;/g, '&');
+    const el: MarkupEl = { tag, attrs, children: [] };
+    top.children.push(el);
+    if (!VOID_TAGS.has(tag) && !m[4]) stack.push(el);
+  }
+  return root;
+}
+
+function* markupWalk(el: MarkupEl): Generator<MarkupEl> {
+  for (const c of el.children) if (typeof c !== 'string') { yield c; yield* markupWalk(c); }
+}
+
+/** Text an element reads out or shows: `spoken` keeps visually hidden (.sr-only) text, `shown` drops it; neither has aria-hidden text. */
+function markupText(el: MarkupEl, mode: 'spoken' | 'shown'): string {
+  if (el.attrs['aria-hidden'] === 'true' || el.attrs.hidden !== undefined) return '';
+  if (mode === 'shown' && /(^|\s)sr-only(\s|$)/.test(el.attrs.class || '')) return '';
+  return el.children.map((c) => (typeof c === 'string' ? c.replace(/&[a-z]+;|&#\d+;/g, ' ') : ` ${markupText(c, mode)} `)).join('');
+}
+
+/** The words of a text, in order: what a voice command has to say, punctuation and case aside. */
+const wordsOf = (s: string): string[] => s.toLowerCase().match(/[\p{L}\p{N}]+(?:\.\p{N}+)?/gu) ?? [];
+
+/** A control's accessible name as a browser computes it here: aria-label, else its content (hidden text included, aria-hidden text not). */
+function accessibleName(el: MarkupEl): string {
+  return (el.attrs['aria-label'] || '').trim() || markupText(el, 'spoken');
+}
+
+/** Whether `inner`'s words run, in order and together, inside `outer`'s. */
+function containsWords(outer: string[], inner: string[]): boolean {
+  if (!inner.length) return true;
+  for (let i = 0; i + inner.length <= outer.length; i++) if (inner.every((w, k) => outer[i + k] === w)) return true;
+  return false;
+}
+
+test('the cart pill\'s accessible name contains the words it shows — a voice user saying "Review" reaches it (QA fourth pass E12, WCAG 2.5.3)', () => {
+  // QA fourth pass E12: the pill shows "1 · 3.2 GB Review" and was named
+  // "Open cleanup cart" — no word of what is on screen.
+  const tab = [...markupWalk(markupTree())].find((e) => e.attrs.id === 'cartTab');
+  assert.ok(tab, '#cartTab is in the page');
+  assert.equal(tab!.attrs.role, 'button', 'control: the pill is a button');
+  // renderCart writes the count and the total into their spans; the words around them are the markup's.
+  const filled = (count: string, total: string): MarkupEl => {
+    const copy = (e: MarkupEl): MarkupEl => ({ ...e, children: e.children.map((c) => (typeof c === 'string' ? c : copy(c))) });
+    const t = copy(tab!);
+    for (const e of markupWalk(t)) {
+      if (e.attrs.id === 'cartTabCount') e.children = [count];
+      if (e.attrs.id === 'cartTabTotal') e.children = [total];
+    }
+    return t;
+  };
+  for (const [count, total] of [['0', '0 B'], ['1', '3.2 GB'], ['12', '480.5 MB+']]) {
+    const t = filled(count, total);
+    const shown = wordsOf(markupText(t, 'shown'));
+    assert.deepEqual(shown.slice(-1), ['review'], `control: the pill shows "Review" (${shown.join(' ')})`);
+    const name = accessibleName(t);
+    assert.ok(containsWords(wordsOf(name), shown), `named "${name.replace(/\s+/g, ' ').trim()}", it contains what it shows: "${shown.join(' ')}"`);
+    assert.match(name, /cleanup cart/i, 'and still says what it is');
+  }
+});
+
+test('no control in the page is named without the words it shows (WCAG 2.5.3, QA fourth pass E12)', () => {
+  const CONTROL = /^(button|link|menuitem|tab|checkbox|switch|option)$/;
+  let checked = 0;
+  for (const el of markupWalk(markupTree())) {
+    const control = el.tag === 'button' || (el.tag === 'a' && 'href' in el.attrs) || CONTROL.test(el.attrs.role || '');
+    if (!control) continue;
+    const shown = wordsOf(markupText(el, 'shown'));
+    if (!shown.length) continue; // an icon-only control: its label is all it has
+    checked++;
+    const name = accessibleName(el);
+    assert.ok(containsWords(wordsOf(name), shown),
+      `${el.tag}#${el.attrs.id || '?'} shows "${shown.join(' ')}" and is named "${name.replace(/\s+/g, ' ').trim()}"`);
+  }
+  assert.ok(checked >= 40, `control: ${checked} labelled controls in the markup were checked`);
+});
+
 /* ══════════════════════ the cart list is paged, and says so ══════════════════════ */
 
 test('the cart draws a page of rows, not the whole cart', () => {

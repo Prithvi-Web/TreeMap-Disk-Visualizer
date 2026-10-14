@@ -20,12 +20,16 @@
       <button class="btn btn-danger" id="cartTrash"><span data-icon="trash" data-size="14"></span>Move all to Trash</button>
     </div>
   </div>
-  <div id="cartTab" role="button" tabindex="0" aria-label="Open cleanup cart">
+  <!-- Named by its own words (QA fourth pass E12, WCAG 2.5.3): "1 · 3.2 GB
+       Review cleanup cart". An aria-label of "Open cleanup cart" held none
+       of what the pill shows, so a voice user saying "Review" reached
+       nothing; the hidden words only say what is being reviewed. -->
+  <div id="cartTab" role="button" tabindex="0">
     <span data-icon="cart" data-size="17"></span>
     <span class="c-count" id="cartTabCount">0</span>
     <span class="c-sep">·</span>
     <span class="c-total num" id="cartTabTotal">0 B</span>
-    <span class="c-cta" id="cartTabCta">Review</span>
+    <span class="c-cta" id="cartTabCta">Review<span class="sr-only"> cleanup cart</span></span>
     <!-- FX wiring: the staged-count pulse rides this overlay strip. #cartTab
          is a Liquid Glass host, so beaming it directly would replace the
          lens layers that ARE its glass for the pulse's whole life. -->
