@@ -734,7 +734,7 @@ test('at the desktop window\'s minimum the map gives up height so its footer sta
   assert.ok(tiny.height >= 96, `a window with no room left still draws a ${tiny.height} px map`);
 });
 
-test('the sunburst fits the map the page leaves it, down to the map\'s floor — its disc is never cut by the top or bottom of a short map (review F1.3)', () => {
+test('the sunburst fits the map the page leaves it, down to the map\'s floor — its disc is never cut by the top or bottom of a short map (review F1.3, F3.3)', () => {
   // D12 lowered the map's floor from 200 px to 96, under the sunburst's own
   // minimum: its outer radius never went below 60 px (a 120 px disc), so a
   // map 96–119 px tall drew a disc taller than itself and lost the outer
@@ -746,21 +746,34 @@ test('the sunburst fits the map the page leaves it, down to the map\'s floor —
     state: { treemap: { maxDepth: 7 } },
     tmSizeCanvas: () => ({ cssW, cssH, dpr: 1 }),
   }, 'sunburstGeometry')();
+  const fits = (cssW: number, cssH: number) => {
+    const g = geometry(cssW, cssH);
+    const label = `a ${cssW}×${cssH} map`;
+    // The disc and the 2 px outline drawn round a hovered or keyboard-picked arc.
+    assert.ok(g.cy - g.outerR - 1 >= 0 && g.cy + g.outerR + 1 <= cssH && g.cx - g.outerR - 1 >= 0 && g.cx + g.outerR + 1 <= cssW,
+      `${label}: the sunburst spans y ${(g.cy - g.outerR).toFixed(1)}–${(g.cy + g.outerR).toFixed(1)}, x ${(g.cx - g.outerR).toFixed(1)}–${(g.cx + g.outerR).toFixed(1)}, and its outline a pixel more`);
+    return { g, label, half: Math.min(cssW, cssH) / 2 };
+  };
   for (const cssW of [402, 1100]) {
     for (const cssH of [floor, d12, 100, 119, 120, 127, 128, 140, 156, 200, 360, 600]) {
-      const g = geometry(cssW, cssH);
-      const half = Math.min(cssW, cssH) / 2;
-      const label = `a ${cssW}×${cssH} map`;
-      // The disc and the 2 px outline drawn round a hovered or keyboard-picked arc.
-      assert.ok(g.cy - g.outerR - 1 >= 0 && g.cy + g.outerR + 1 <= cssH && g.cx - g.outerR - 1 >= 0 && g.cx + g.outerR + 1 <= cssW,
-        `${label}: the sunburst spans y ${(g.cy - g.outerR).toFixed(1)}–${(g.cy + g.outerR).toFixed(1)}, x ${(g.cx - g.outerR).toFixed(1)}–${(g.cx + g.outerR).toFixed(1)}, and its outline a pixel more`);
+      const { g, label, half } = fits(cssW, cssH);
       if (half - 18 >= 60) assert.equal(g.outerR, half - 18, `${label}: a map with room draws the disc it always did`);
       else assert.ok(g.outerR >= Math.min(60, half - 6), `${label}: a short map's disc takes its height but a few pixels (radius ${g.outerR}, the map's half ${half})`);
     }
   }
+  // Every map with room for a disc keeps the fit, not only those down to the
+  // floor (review F3.3): each short side from 10 px — half 5, the first past
+  // the 4 px a map needs before it draws one — to 94, either way round, takes
+  // its half less 4 px. Shorter maps keep 60 px (the F2.1 test below).
+  for (let side = 10; side <= 94; side++) {
+    for (const [cssW, cssH] of [[1100, side], [side, 600]]) {
+      const { g, label, half } = fits(cssW, cssH);
+      assert.equal(g.outerR, half - 4, `${label}: a map whose short side is under the floor takes its half less 4 px (radius ${g.outerR}, the map's half ${half})`);
+    }
+  }
 });
 
-test('a sunburst drawn while its view is hidden draws harmlessly off-screen — it never throws over the view on screen (review F2.1)', () => {
+test('a sunburst drawn while its view is hidden draws harmlessly off-screen — it never throws over the view on screen, and a map too small for a disc keeps a positive one (review F2.1, F3.3)', () => {
   // A sunburst load can land after the user has switched to another view: a
   // pruned folder's subtree is fetched, the user moves on, and the load draws
   // anyway. #treemapWrap is then 0 px wide (tmSizeCanvas: -20) and the map
@@ -776,8 +789,11 @@ test('a sunburst drawn while its view is hidden draws harmlessly off-screen — 
   const file = (dir: string, name: string, size: number) => ({ name, path: `${dir}/${name}`, size, type: 'file' });
   const a = { name: 'Movies', path: '/r/Movies', size: 60, type: 'dir', children: [file('/r/Movies', 'a.mov', 40), file('/r/Movies', 'b.mov', 20)] };
   const root = { name: 'r', path: '/r', size: 100, type: 'dir', children: [a, file('/r', 'c.zip', 40)] };
-  for (const cssW of [0 - 20, 0]) {
-    const label = cssW < 0 ? 'its view hidden (a 0 px wrap)' : 'a wrap no wider than its padding';
+  // And either side of where the page stops drawing one (review F3.3): a map
+  // whose half is 4 px or less (4 and 8 px wide) keeps the old 60 px; one a
+  // half-pixel wider (9 px) takes the fit, a radius small but positive.
+  for (const cssW of [0 - 20, 0, 4, 8, 9]) {
+    const label = cssW < 0 ? 'its view hidden (a 0 px wrap)' : cssW === 0 ? 'a wrap no wider than its padding' : `a map ${cssW} px wide`;
     const radii: number[] = [];
     // A 2D context that refuses a negative radius, as a canvas does.
     const ctx = new Proxy({} as Record<string, unknown>, {
@@ -799,6 +815,9 @@ test('a sunburst drawn while its view is hidden draws harmlessly off-screen — 
     const sun = state.treemap.sun!;
     assert.ok(sun.outerR > 0 && sun.innerR0 > 0 && Math.min(...radii) > 0,
       `${label}: every ring has a positive radius — outer ${sun.outerR}, centre ${sun.innerR0}, smallest drawn ${Math.min(...radii)}`);
+    const half: number = Math.min(cssW, hiddenH) / 2;
+    if (half <= 4) assert.equal(sun.outerR, 60, `${label}: a map with no room for a disc keeps the old 60 px radius (its half ${half})`);
+    else assert.equal(sun.outerR, half - 4, `${label}: a map with room for any disc takes the fit, its half less 4 px (its half ${half})`);
   }
 });
 
