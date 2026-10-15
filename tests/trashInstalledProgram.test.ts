@@ -5,6 +5,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-trashInstalledProgram-data-');
 
 import { INDEX } from './fixtures/liftFrontend';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * Fifth browser pass F01 (MEDIUM, safety). Scan /Applications; Largest Files'
@@ -242,9 +243,80 @@ test('Shrink Video\'s "Re-encode and replace?" says it too: a video inside an ap
   assert.match(said, /It is part of the app Google Chrome\. Re-encoding it will stop Google Chrome from working\./, said);
   assert.match(encodeSheet([{ path: intro, estimatedSaving: 100 }], null), /TreeMap couldn’t check whether this is part of an installed app\./, 'and admits it when it could not ask');
   assert.doesNotMatch(encodeSheet([{ path: MOVIE, estimatedSaving: 100 }], []), /installed|part of/, 'control: an ordinary video reads as it did');
-  // The button asks the server's one detector before the sheet opens, never after.
-  const handler = INDEX.slice(INDEX.indexOf("$('vidEncodeBtn').addEventListener('click'"), INDEX.indexOf('function confirmEncode('));
-  assert.match(handler, /installedProgramParts\([\s\S]*confirmEncode\(/, 'the Re-encode button asks which videos are parts of an installed program, then opens the sheet with the answer');
+});
+
+/**
+ * The Shrink Video pane as a person uses it: the page's own loadVideoCandidates
+ * draws two videos and wires Re-encode, and its own installedProgramParts asks
+ * the server — here `answer`, standing for POST /api/files/installed-programs.
+ * confirmEncode records what the sheet was opened with.
+ */
+async function reencodePane(answer: (paths: string[]) => Promise<{ parts: unknown[] }>) {
+  const intro = '/Applications/Google Chrome.app/Contents/Resources/intro.mov';
+  const candidates = [intro, MOVIE].map((p) => ({ name: p.split('/').pop(), path: p, size: 9e9, estimatedBytes: 4e9, estimatedSaving: 5e9, reason: 'H264 video' }));
+  type Box = { checked: boolean; dataset: { i: string }; addEventListener(): void };
+  const boxes: Box[] = candidates.map((_, i) => ({ checked: false, dataset: { i: String(i) }, addEventListener() {} }));
+  const els: Record<string, any> = {};
+  const $ = (id: string) => (els[id] ||= {
+    innerHTML: '', textContent: '', disabled: false, clicked: [] as Array<() => Promise<void>>,
+    querySelectorAll: (sel: string) => (id !== 'videoBody' ? [] : sel === '.vid-ck:checked' ? boxes.filter((b) => b.checked) : sel === '.vid-ck' ? boxes : []),
+    addEventListener(t: string, f: () => Promise<void>) { if (t === 'click') this.clicked.push(f); },
+  });
+  const asked: string[][] = [];
+  const opened: Array<{ chosen: Array<{ path: string }>; parts: unknown }> = [];
+  const deps: Record<string, unknown> = {
+    $, state: { scanId: 's1' },
+    api: async (url: string, opts?: { body: string }) => {
+      if (url.startsWith('/api/compression/candidates')) return { available: true, candidates, shortlisted: candidates.length, unreadable: 0 };
+      assert.equal(url, '/api/files/installed-programs', 'Re-encode asks the server\'s one detector');
+      const paths = JSON.parse(opts!.body).paths as string[];
+      asked.push(paths);
+      return answer(paths);
+    },
+    skeletonRows: () => '', icon: () => '', escapeHtml: (x: unknown) => String(x), chipFor: () => '',
+    formatBytes: (n: number) => `${n} B`, formatCount: String, sizeInk: () => '', sizeColor: () => '',
+    confirmEncode: (chosen: Array<{ path: string }>, parts: unknown) => { opened.push({ chosen, parts }); },
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const load = new Function(...keys, `let videoCandidates = []; const INSTALLED_PROGRAM_CHUNK = ${/const INSTALLED_PROGRAM_CHUNK = (\d+);/.exec(INDEX)?.[1] ?? 'undefined'};
+    ${['installedProgramParts', 'loadVideoCandidates'].map(declOf).join('\n')}
+    return loadVideoCandidates;`)(...keys.map((k) => deps[k])) as () => Promise<void>;
+  await load();
+  assert.equal(els.vidEncodeBtn.clicked.length, 1, 'control: Re-encode has its click');
+  return {
+    intro, asked, opened,
+    tick(i: number) { boxes[i].checked = true; },
+    click: (): Promise<void> => els.vidEncodeBtn.clicked[0](),
+  };
+}
+
+test('Re-encode asks which of the ticked videos are parts of an installed program, waits for the answer, and opens its sheet with it — with null where the server could not be asked (review round 2, F2.6)', async () => {
+  // Pinned only by the order of two names in the source, three breakages
+  // passed: no `await` (the sheet got a promise, read as "nothing to warn
+  // about", and the F1.4 warning was gone), the answer left out, or the two
+  // arguments swapped.
+  let release = (): void => {};
+  const pane = await reencodePane((paths) => new Promise((resolve) => {
+    release = () => resolve({ parts: paths.filter((p) => p.includes('.app/')).map((p) => ({ path: p, installedProgram: CHROME })) });
+  }));
+  pane.tick(0);
+  pane.tick(1);
+  const clicked = pane.click();
+  await waitFor(() => pane.asked.length === 1, 'Re-encode to ask about the ticked videos');
+  assert.deepEqual(pane.asked, [[pane.intro, MOVIE]], 'it asks about exactly the ticked videos');
+  assert.equal(pane.opened.length, 0, 'and opens no sheet before the answer is in');
+  release();
+  await clicked;
+  assert.equal(pane.opened.length, 1, 'one sheet');
+  assert.deepEqual(pane.opened[0].chosen.map((c) => c.path), [pane.intro, MOVIE], 'for the ticked videos');
+  assert.deepEqual(pane.opened[0].parts, [{ path: pane.intro, installedProgram: CHROME }], 'with the answer, so the sheet says it before OK');
+
+  const offline = await reencodePane(async () => { throw new Error('offline'); });
+  offline.tick(1);
+  await offline.click();
+  assert.deepEqual(offline.opened.map((o) => [o.chosen.map((c) => c.path), o.parts]), [[[MOVIE], null]],
+    'where the server could not be asked, the sheet is opened with null, and says it could not check');
 });
 
 test('every sheet a person can reach that moves files to the Trash says it: the shared sheet, the cart\'s, Offload\'s and Re-encode\'s (F01; review F1.4)', () => {
