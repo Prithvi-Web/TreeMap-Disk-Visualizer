@@ -68,7 +68,12 @@ function page(): { body: El; info: El; asks: Ask[]; view: View; state: { scanId:
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const render = new Function(...keys, `'use strict'; ${INDEX.slice(start, end)}\nreturn (d) => { missingData = d; renderMissing(); };`)(
+  // The reference paint is a fresh statement's (not being updated), and leaves
+  // the page's own state as it found it: it shares nothing mutable with the
+  // page under test, so a flag the page fails to clear shows (review F1.6).
+  const render = new Function(...keys, `'use strict'; ${INDEX.slice(start, end)}\n` +
+    'return (d) => { const data = missingData, updating = missingUpdating; missingData = d; missingUpdating = false; ' +
+    'try { renderMissing(); } finally { missingData = data; missingUpdating = updating; } };')(
     ...keys.map((k) => deps[k]),
   ) as (d: unknown) => void;
   assert.ok(view, 'the view registered itself');
@@ -125,6 +130,7 @@ test('G06: a second visit paints the last statement at once, says it is updating
 
   const fresh = statement('s1', 610);
   await p.asks[1].answer(fresh);
+  assert.doesNotMatch(p.body.innerHTML, /Updating…/, 'the swapped-in statement is not marked as updating: it is the newest');
   assert.equal(p.body.innerHTML, p.render(fresh), 'the new statement replaces the old one whole: exactly its own paint, nothing of the old');
   assert.ok(!p.body.classList.contains('fx-chart-loading'), 'the veil is lifted');
 });
@@ -165,6 +171,7 @@ test('G06: an older answer that lands after a newer one is never shown, nor kept
   await p.asks[1].answer(newer);
   assert.equal(usedShown(p.body), 700);
   await p.asks[0].answer(statement('s1', 650)); // the first ask, slower
+  assert.doesNotMatch(p.body.innerHTML, /Updating…/, 'the swapped-in statement is not marked as updating: it is the newest');
   assert.equal(p.body.innerHTML, p.render(newer), 'the older answer did not replace the newer one, nor mix into it');
   p.view.unmount();
   p.view.mount();
@@ -191,6 +198,7 @@ test('G06: a scan never shows another scan\'s statement — not while its own is
   assert.equal(usedShown(p.body), null, 'the last scan\'s late answer is not painted over the new scan');
   const s2 = statement('s2', 300);
   await p.asks[2].answer(s2);
+  assert.doesNotMatch(p.body.innerHTML, /Updating…/, 'the swapped-in statement is not marked as updating: it is the newest');
   assert.equal(p.body.innerHTML, p.render(s2), 'the new scan shows its own statement, whole');
 
   p.state.scanId = 's1';
@@ -224,12 +232,31 @@ test('G06: the page keeps a few scans\' statements, not every scan\'s', async ()
     p.view.onScanChange();
     await p.asks[i].answer(statement(id, 100 + i));
   }
-  p.state.scanId = 'e';
-  p.view.onScanChange();
-  assert.equal(usedShown(p.body), 104, 'the latest scan\'s statement is kept');
+  // Four kept, newest to oldest (review F1.9): each opens on its own statement at once.
+  for (const [id, used] of [['e', 104], ['d', 103], ['c', 102], ['b', 101]] as const) {
+    p.state.scanId = id;
+    p.view.onScanChange();
+    assert.equal(usedShown(p.body), used, `scan ${id}'s statement is kept`);
+  }
   p.state.scanId = 'a';
   p.view.onScanChange();
   assert.equal(usedShown(p.body), null, 'the oldest of five has been let go');
+});
+
+test('G06 review F1.9: the scans kept are the four most recently answered — a scan answered again is kept over one answered once since', async () => {
+  const p = page();
+  const answer = async (id: string, used: number): Promise<void> => {
+    p.state.scanId = id;
+    p.view.onScanChange();
+    await p.asks[p.asks.length - 1].answer(statement(id, used));
+  };
+  for (const [i, id] of ['a', 'b', 'c', 'd'].entries()) await answer(id, 100 + i);
+  await answer('a', 110); // a is answered again: now the most recent of the four
+  await answer('e', 104); // a fifth: the least recently answered goes, which is b
+  const kept = (id: string): number | null => { p.state.scanId = id; p.view.onScanChange(); return usedShown(p.body); };
+  assert.equal(kept('a'), 110, 'a, answered again, is kept — with its newest statement');
+  assert.equal(kept('b'), null, 'b, answered least recently, is the one let go');
+  assert.deepEqual(['c', 'd', 'e'].map(kept), [102, 103, 104], 'the rest are kept');
 });
 
 test('G06: an answer that lands after the view was left is kept for the next visit, not painted into the view that was left', async () => {
@@ -259,6 +286,7 @@ test('G06: an older ask that fails after a newer one answered does not take the 
   const newer = statement('s1', 700);
   await p.asks[1].answer(newer);
   await p.asks[0].fail('an old failure');
+  assert.doesNotMatch(p.body.innerHTML, /Updating…/, 'the swapped-in statement is not marked as updating: it is the newest');
   assert.equal(p.body.innerHTML, p.render(newer), 'the newer statement stands');
   p.view.unmount();
   p.view.mount();
