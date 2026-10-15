@@ -312,9 +312,26 @@ test('Re-encode asks which of the ticked videos are parts of an installed progra
   assert.deepEqual(pane.opened[0].chosen.map((c) => c.path), [pane.intro, MOVIE], 'for the ticked videos');
   assert.deepEqual(pane.opened[0].parts, [{ path: pane.intro, installedProgram: CHROME }], 'with the answer, so the sheet says it before OK');
 
+  // Ticked a strict part of the list, the question is about those videos
+  // alone: asked about every candidate, the sheet would say a video nobody is
+  // re-encoding is part of Chrome (review round 3, F3.3).
+  const answering = async (paths: string[]) => ({ parts: paths.filter((p) => p.includes('.app/')).map((p) => ({ path: p, installedProgram: CHROME })) });
+  const ordinary = await reencodePane(answering);
+  ordinary.tick(1);
+  await ordinary.click();
+  assert.deepEqual(ordinary.asked, [[MOVIE]], 'ticked alone, the ordinary video is all it asks about');
+  assert.deepEqual(ordinary.opened.map((o) => [o.chosen.map((c) => c.path), o.parts]), [[[MOVIE], []]],
+    'and its sheet names no installed program, though an unticked video is part of Chrome');
+  const inChrome = await reencodePane(answering);
+  inChrome.tick(0);
+  await inChrome.click();
+  assert.deepEqual(inChrome.asked, [[inChrome.intro]], 'ticked alone, Chrome\'s video is all it asks about');
+  assert.deepEqual(inChrome.opened.map((o) => o.parts), [[{ path: inChrome.intro, installedProgram: CHROME }]], 'and its sheet names Chrome');
+
   const offline = await reencodePane(async () => { throw new Error('offline'); });
   offline.tick(1);
   await offline.click();
+  assert.deepEqual(offline.asked, [[MOVIE]], 'offline too, it asked about the ticked video alone');
   assert.deepEqual(offline.opened.map((o) => [o.chosen.map((c) => c.path), o.parts]), [[[MOVIE], null]],
     'where the server could not be asked, the sheet is opened with null, and says it could not check');
 });
