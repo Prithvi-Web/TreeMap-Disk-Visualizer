@@ -244,8 +244,8 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   const found: Record<string, TEl> = {};
   // Each paint makes new buttons, as the page's innerHTML does: a button of
   // the last paint keeps its listeners, and is no longer the card's.
-  let painted = '';
-  Object.defineProperty(host, 'innerHTML', { get: () => painted, set: (v: string) => { painted = v; for (const k of Object.keys(found)) delete found[k]; } });
+  let painted = ''; let paints = 0;
+  Object.defineProperty(host, 'innerHTML', { get: () => painted, set: (v: string) => { painted = v; paints++; for (const k of Object.keys(found)) delete found[k]; } });
   host.querySelector = cardFinder(host, found);
   $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
   const winLine = liftPage<(g: unknown) => string>(WIN_LINE, 'tourWinLine');
@@ -258,14 +258,15 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   // The page's own step to the next win, so Add and Skip move the card on as they do there (review F2.7).
   const advance = pageFn('function tourAdvanceWin(');
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
-    'tourWinLine', 'document', `'use strict'; ${render} ${advance} return tourRender;`)(
+    'tourWinLine', 'document', `'use strict'; ${render} ${advance} return { tourRender, tourCartChanged: typeof tourCartChanged === 'function' ? tourCartChanged : () => {} };`)(
     $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart, root: null }, () => '', (s: string) => s,
-    (n: number) => `${n} B`, () => {}, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: null }) as (takeFocus?: boolean) => void;
-  fn(opts.takeFocus);
+    (n: number) => `${n} B`, () => {}, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: null },
+  ) as { tourRender: (takeFocus?: boolean) => void; tourCartChanged: () => void };
+  fn.tourRender(opts.takeFocus);
   const textOf = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  /** The card as it is painted now, after any click. */
-  const now = () => ({ html: host.innerHTML, text: textOf(host.innerHTML) });
-  return { html: host.innerHTML, text: textOf(host.innerHTML), found, $, tour, cart, browsed, now };
+  /** The card as it is painted now, after any click, and how many times it has been painted. */
+  const now = () => ({ html: host.innerHTML, text: textOf(host.innerHTML), paints });
+  return { html: host.innerHTML, text: textOf(host.innerHTML), found, $, tour, cart, browsed, now, cartChanged: fn.tourCartChanged };
 }
 
 test('the welcome card offers one alternative, not a second primary action beside the welcome\'s own (G03)', () => {
@@ -458,6 +459,53 @@ test('Add and Skip on a quick win move to the next, and the last step reads ever
   assert.equal(skipped.tour.step, 'cart', 'skipping the last win reaches the cart step too');
   assert.deepEqual(skipped.tour.added, [], 'with nothing added');
   assert.match(skipped.now().text, /You added nothing — also fine\./, skipped.now().text);
+});
+
+test('the cart step follows the cart: taken out, cleared or committed while its card is up, the sentence changes with it (review F2.3)', async () => {
+  // The card is not modal: the cart's Clear, its remove buttons and a commit
+  // all work beside it. It read the cart once, at paint, and went on saying
+  // "Everything you added is waiting in the cleanup cart at the bottom right"
+  // over a cart that was no longer drawn.
+  const card = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a', '/c/b'] });
+  assert.match(card.text, /Everything you added is waiting in the cleanup cart at the bottom right\./, `control: ${card.text}`);
+  card.cart.delete('/c/b');
+  card.cartChanged();
+  assert.match(card.now().text, /Some of what you added has since left the cart\./, `one taken out: ${card.now().text}`);
+  card.cart.clear();
+  card.cartChanged();
+  assert.match(card.now().text, /Everything you added has since left the cart\./, `cleared or committed: ${card.now().text}`);
+  assert.doesNotMatch(card.now().text, /is waiting/, 'and nothing is said to be waiting');
+  // Focus stays where the person is — on the cart's own buttons — unless it was on the card's Finish, which the repaint replaces.
+  assert.equal(card.found['data-tour-done']?.focused ?? 0, 0, 'the repaint takes no focus the card did not hold');
+  card.$('tourCard').contains = () => true;
+  card.cartChanged();
+  assert.equal(card.found['data-tour-done']?.focused ?? 0, 1, 'focus that was on Finish goes to the new Finish, not to <body>');
+  // Other steps do not read the cart's contents into their words, and are left as painted.
+  const map = tourCard('map');
+  map.cartChanged();
+  assert.equal(map.now().paints, 1, 'a change of cart does not repaint the map step');
+  const over = tourCard('cart', { added: ['/c/a'], cart: ['/c/a'] });
+  over.tour.active = false;
+  over.cartChanged();
+  assert.equal(over.now().paints, 1, 'nor a tour that is over');
+
+  // renderCart, the one render every change of the cart goes through, tells the tour — once the dock shows or hides.
+  const renderSrc = pageFn('async function renderCart(');
+  const calls: string[] = [];
+  const dock = { shown: false, classList: { toggle: (c: string, on: boolean) => { if (c === 'show') dock.shown = on; } } };
+  const inert: unknown = new Proxy(function inert() { /* stand-in */ }, {
+    get: (_t, k) => (k === Symbol.toPrimitive ? () => 0 : k === 'then' ? undefined : inert), set: () => true, apply: () => inert });
+  const state = { cart: new Set(['/c/a']) };
+  const given: Record<string, unknown> = {
+    state, $: (id: string) => (id === 'cartDock' ? dock : inert), ensureNodes: async () => {},
+    tourCartChanged: () => { calls.push(`tour told, dock ${dock.shown ? 'shown' : 'hidden'}`); },
+  };
+  const scope = new Proxy(given, { has: (_t, k) => typeof k === 'string' && k !== 'renderCart', get: (t, k) => (k === Symbol.unscopables ? undefined : k in t ? t[k as string] : inert), set: (t, k, v) => { t[k as string] = v; return true; } });
+  const renderCart = new Function('scope', `with (scope) { ${renderSrc}\nreturn renderCart; }`)(scope) as () => Promise<void>;
+  await renderCart();
+  state.cart.clear();
+  await renderCart();
+  assert.deepEqual(calls, ['tour told, dock shown', 'tour told, dock hidden'], 'each render tells the tour once, after the dock shows or hides');
 });
 
 test('a first run, with nothing scanned, opens on the welcome card; a scanned session on the map (review F2.8)', () => {

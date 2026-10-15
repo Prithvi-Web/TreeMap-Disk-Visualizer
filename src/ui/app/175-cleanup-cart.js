@@ -226,6 +226,7 @@ async function renderCart() {
   const n = state.cart.size;
   fxCartPulseSync(n); // FX: one ~2s pulse when the staged count rises
   dock.classList.toggle('show', n > 0);
+  if (typeof tourCartChanged === 'function') tourCartChanged(); // the tour's last step reads the cart (review F2.3)
   if (n === 0) cartDockToggle(false); // an empty cart closes the drawer, and the body class with it
   const total = cartTotalBytes();
   // A staged item the scan on screen does not hold has no size here: it is

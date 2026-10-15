@@ -201,6 +201,16 @@ function tourFollowView() {
   tourRender($('tourCard').contains(document.activeElement));
 }
 
+/** The cart changed — renderCart tells the tour (review F2.3). The last
+    step's sentence reads the cart, and the card stays up while the cart is
+    used beside it — Clear, a removed item, a commit — so that step is
+    repainted, taking focus only when the card held it (tourRender itself
+    paints nothing once the tour is over). */
+function tourCartChanged() {
+  if (tour.step !== 'cart') return;
+  tourRender($('tourCard').contains(document.activeElement));
+}
+
 /** How many of a quick win's items its card names; the rest are counted. */
 const TOUR_WIN_ITEMS = 3;
 
