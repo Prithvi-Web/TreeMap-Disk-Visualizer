@@ -477,7 +477,10 @@ test('a Trash TreeMap could not read says so and why — never "at least 0 B" (B
   const unread = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: false, incompleteReason: reason });
   assert.equal(unread.trashFact.hidden, false, 'the row stays: hiding it would say the Trash is empty');
   assert.doesNotMatch(unread.sysTrash.textContent, /at least 0/, 'a floor of nothing is not a fact');
-  assert.match(unread.sysTrash.textContent, /Couldn’t read/, 'it says the Trash could not be read');
+  // Where a size belongs, a size or "Unknown"; why, under the label (design pass G13).
+  assert.equal(unread.sysTrash.textContent, 'Unknown', 'nothing could be sized: the size is unknown');
+  assert.equal(unread.sysTrashSub.hidden, false, 'and the row says why under its label');
+  assert.equal(unread.sysTrashSub.textContent, 'Couldn’t read all of it', 'it says the Trash could not be read');
   assert.equal(unread.trashFact.title, reason, 'and the reason the server gave is on the row');
   assert.equal(Number(unread.sysTrash.dataset.v), 0, 'the roll restarts from nothing when a size comes');
 
@@ -488,16 +491,20 @@ test('a Trash TreeMap could not read says so and why — never "at least 0 B" (B
   // The row says what is true of both.
   const partEmpty = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: false, incompleteReason: 'Part of the Trash could not be read (EACCES).' });
   for (const [what, row] of [['nothing read', unread], ['part read, found empty', partEmpty]] as const) {
-    assert.equal(row.sysTrash.textContent, 'Couldn’t read all of it', `${what}: a sentence true either way — not "none of it could be read"`);
+    assert.equal(row.sysTrash.textContent, 'Unknown', `${what}: no size is known`);
+    assert.equal(row.sysTrashSub.textContent, 'Couldn’t read all of it', `${what}: a sentence true either way — not "none of it could be read"`);
   }
   assert.equal(partEmpty.trashFact.title, 'Part of the Trash could not be read (EACCES).', 'and the server\'s own sentence says which');
 
   const partial = await loadTrashWith({ totalBytes: 5000, itemCount: 3, complete: false, incompleteReason: reason });
   assert.equal(partial.sysTrash.textContent, 'at least 5000 B · 3', 'a real floor is still a floor');
+  assert.equal(partial.sysTrashSub.hidden, false, 'with why it is only a floor under the label');
+  assert.equal(partial.sysTrashSub.textContent, 'Couldn’t read all of it');
   assert.equal(partial.trashFact.title, reason, 'with the reason it is only a floor');
 
   const whole = await loadTrashWith({ totalBytes: 2000, itemCount: 4, complete: true });
   assert.equal(whole.sysTrash.textContent, '2000 B · 4');
+  assert.equal(whole.sysTrashSub.hidden, true, 'a Trash read in full has nothing to explain');
   assert.equal(whole.trashFact.title, 'View Trash contents', 'a Trash read in full keeps the plain title');
   const empty = await loadTrashWith({ totalBytes: 0, itemCount: 0, complete: true }, { shown: true });
   assert.equal(empty.trashFact.hidden, true, 'an empty Trash read in full has no row, as before — the row a read that found something left is taken away');
@@ -588,12 +595,18 @@ test('the Trash row and the sheet it opens agree on every answer, a full and emp
     const row = await loadTrashWith(answer);
     const sheet = openTrashWith(answer);
     const rowText = row.trashFact.hidden ? '(no row)' : row.sysTrash.textContent; // an empty Trash read in full has no row
-    const rowUnread = rowText === 'Couldn’t read all of it';
+    const rowUnread = rowText === 'Unknown';
     const headerUnread = sheet.trashModalMeta.textContent === '· couldn’t read all of it';
     assert.equal(headerUnread, rowUnread,
       `${totalBytes} B, ${itemCount} items, complete ${complete}: the header says "couldn’t read all of it" exactly when the row does ` +
       `(row "${rowText}", header "${sheet.trashModalMeta.textContent}")`);
   }
+});
+
+test('the Trash row has a line under its label for why a size is unknown or only a floor, shown only then (design pass G13)', () => {
+  assert.match(INDEX, /<div class="fact fact-trash" id="trashFact" hidden role="button" tabindex="0" title="View Trash contents"><span>Trash<small class="fact-sub" id="sysTrashSub" hidden><\/small><\/span><b id="sysTrash" class="num">–<\/b><\/div>/,
+    'the line ships empty and hidden');
+  assert.match(INDEX, /\.fact-trash \.fact-sub \{ display: block;/, 'and sits under the label, not beside it');
 });
 
 /* ══════════════ B18 — the System card follows the disk, not the page load ══════════════ */

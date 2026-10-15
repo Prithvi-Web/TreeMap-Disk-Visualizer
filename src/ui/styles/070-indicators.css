@@ -85,6 +85,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 /* ── Trash awareness (Feature 8) ── */
 .fact-trash { cursor: var(--cur-hand); }
 .fact-trash:hover b { color: var(--accent); }
+/* Why the size is unknown or only a floor, under the label (design pass G13). */
+.fact-trash .fact-sub { display: block; font-size: 11px; line-height: 1.35; color: var(--text-2); margin-top: 1px; }
 #trashModalMeta { color: var(--text-2); font-weight: 500; font-size: 13px; }
 .trash-list { max-height: 56vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
 .trash-item { display: flex; align-items: center; gap: 10px; padding: 9px 13px; font-size: 12.5px; border-bottom: 1px solid var(--hairline); }

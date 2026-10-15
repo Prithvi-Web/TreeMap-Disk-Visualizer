@@ -129,7 +129,7 @@ function renderDuplicates() {
           <div class="sub num" title="Content fingerprint ${escapeHtml(g.hash.slice(0, 12))}…">${g.count} identical copies × ${formatBytes(g.size)}</div>
         </div>
         <div class="bar-track dup-mini"><div class="fx-bar-fill" data-w="${Math.max(4, (g.reclaimable / maxRec) * 100).toFixed(1)}" style="${fxBarStyle(gi)}"></div></div>
-        <span class="reclaim num">+${formatBytes(g.reclaimable)} reclaimable</span>
+        <span class="reclaim num">${formatBytes(g.reclaimable)} reclaimable</span>
         <button class="pill" data-dupe-view="${gi}" title="Side by side — thumbnails, dates, dimensions, and which copy to keep">Compare</button>
       </div>
       <div class="dup-files"></div>
@@ -527,7 +527,7 @@ function ndClusterHtml(c, ci, shown) {
         ${icon('image', 15)}
         <span class="nd-count">${formatCount(c.count)} similar images</span>
         ${c.count > shown ? `<span class="nd-shown num">showing ${formatCount(shown)}</span>` : ''}
-        <span class="reclaim num">+${formatBytes(c.reclaimableBytes)} reclaimable</span>
+        <span class="reclaim num">${formatBytes(c.reclaimableBytes)} reclaimable</span>
         <button class="pill" data-nd-view="${ci}" title="Side by side with the differing regions highlighted">Compare</button>
       </div>
       <div class="nd-strip">${files.map(ndItemHtml).join('')}${ndMoreItemHtml(ci, shown, c.count)}</div>

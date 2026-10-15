@@ -1205,7 +1205,7 @@ test('a stale index badge gives the server\'s reason, escaped, and keeps the old
   assert.doesNotMatch(unwatched.text, /left over/, 'but only a stale root\'s reason is its reason');
   const live = badge({ state: 'ready', live: true });
   assert.equal(live.stale, false);
-  assert.match(live.text, /Index live — always current/);
+  assert.match(live.text, /<span>Up to date — updates itself as files change<\/span>/, 'in plain words, not "Index live — always current" (design pass G13)');
 });
 
 /* ══════════════ BQA-1 — the scan flow, as a person drives it ══════════════ */
@@ -1480,7 +1480,7 @@ test('the engine row names an index read in words, not the internal id "index" (
     `'use strict'; ${src} return renderDiskNotes;`)(
     $, state, (n: number) => n.toLocaleString('en-US'), (n: number) => `${n} B`, () => '', () => '', () => {}) as () => void;
   run();
-  assert.match(els.engineText.textContent, /^Saved index — read 106,664 items in 0\.3 s/, 'the row says what happened: the saved index was read');
+  assert.match(els.engineText.textContent, /^Saved index — read 106,664 items \(files and folders\) in 0\.3 s/, 'the row says what happened: the saved index was read');
   assert.doesNotMatch(els.engineText.textContent, /^index/, 'never the lower-case engine id');
 });
 

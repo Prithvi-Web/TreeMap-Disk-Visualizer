@@ -345,9 +345,15 @@ test('the engine row names the native engine, sets the reason as its title, and 
   const run = runEngineRow;
   const native = run({ engine: 'native', durationMs: 2000, scanned: 1234, ioThreads: 8, engineReason: 'the native engine was chosen: this build has it', fallbackReason: null, fastPath: 'bulk', budget: { preset: 'auto', effective: 'balanced', source: 'native' } });
   assert.equal(native.engineRow.hidden, false);
-  assert.match(native.engineText.textContent, /^Native engine — scanned 1,234 items in 2\.0 s · 617\/s · budget: Balanced$/);
+  // What was read, in plain words: items, said to be files and folders, so the
+  // line does not read as a second, larger file count beside "Scanned 101,034
+  // files" (design pass G13). The speed, the budget and how the engine works
+  // are details, a disclosure away.
+  assert.equal(native.engineText.textContent, 'Native engine — scanned 1,234 items (files and folders) in 2.0 s');
   assert.equal(native.engineText.title, 'the native engine was chosen: this build has it');
-  assert.match(native.engineHint.textContent, /one call/i, 'the hint says what makes it fast');
+  assert.equal(native.engineHint.textContent, '', 'no engine talk on the line itself');
+  assert.equal(native.engineMore.hidden, false, 'the details are there to open');
+  assert.match(native.engineMoreText.textContent, /^617 items a second · scanning budget: Balanced\. .*one call/i, 'the speed, the budget, and what makes it fast');
   const fallen = run({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 4, engineReason: 'the built-in walker ran', fallbackReason: 'no native module for this platform' });
   assert.equal(fallen.engineText.title, 'the built-in walker ran — no native module for this platform');
   const older = run({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 8 });
@@ -385,14 +391,21 @@ test('the engine row names each engine as Settings names it, and each hint is tr
   assert.doesNotMatch(gdu, /same counts/, 'gdu does not count a folder it was refused');
   assert.match(gdu, /^A bundled gdu process per top-level folder — faster than the built-in walker, but a folder it may not open shows as empty instead of being counted\.$/);
 
-  const mft = runEngineRow(stats('ntfs-mft')).engineHint.textContent;
-  assert.doesNotMatch(mft, /I\/O threads/, 'an NTFS turbo scan does not take the walker\'s hint');
-  assert.match(mft, /^Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself\.$/);
+  // How an engine works is a detail (G13): in the disclosure, not on the line.
+  const mftRow = runEngineRow(stats('ntfs-mft'));
+  assert.equal(mftRow.engineHint.textContent, '', 'NTFS turbo\'s workings are a detail');
+  const mft = mftRow.engineMoreText.textContent;
+  assert.doesNotMatch(mft, /I\/O threads|reads up to/, 'an NTFS turbo scan does not take the walker\'s hint');
+  assert.match(mft, /^617 items a second\. Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself\.$/);
 
-  assert.equal(runEngineRow(stats('cloud')).engineHint.textContent, '', 'a cloud listing reads no disk, so no claim about reading it');
-  assert.equal(runEngineRow(stats('turbo-walker')).engineHint.textContent, 'It reads up to 8 files and folders at once, which keeps the disk busy.', 'the walker keeps its own hint');
-  assert.equal(runEngineRow(stats('walker', 16)).engineHint.textContent, 'It reads up to 16 files and folders at once, which keeps the disk busy.');
-  assert.equal(runEngineRow(stats('walker', 4)).engineHint.textContent, '', 'and says nothing at the default pool');
+  const cloud = runEngineRow(stats('cloud'));
+  assert.equal(cloud.engineHint.textContent, '', 'a cloud listing reads no disk, so no claim about reading it');
+  assert.equal(cloud.engineMoreText.textContent, '617 items a second.', 'nor in its details');
+  const turbo = runEngineRow(stats('turbo-walker'));
+  assert.equal(turbo.engineHint.textContent, '', 'the walker\'s pool is a detail');
+  assert.equal(turbo.engineMoreText.textContent, '617 items a second. It reads up to 8 files and folders at once, which keeps the disk busy.', 'the walker keeps its own hint, in its details');
+  assert.equal(runEngineRow(stats('walker', 16)).engineMoreText.textContent, '617 items a second. It reads up to 16 files and folders at once, which keeps the disk busy.');
+  assert.equal(runEngineRow(stats('walker', 4)).engineMoreText.textContent, '617 items a second.', 'and says nothing of it at the default pool');
 });
 
 test('C10: the walker\'s line says why it ran, in plain words, on the line itself — not only on hover', () => {
@@ -402,7 +415,8 @@ test('C10: the walker\'s line says why it ran, in plain words, on the line itsel
   const walker = (over: Record<string, unknown>) => runEngineRow({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 16, fallbackReason: null, ...over });
   const rule = walker({ engineReason: 'the built-in walker ran: the scan has 1 "don\'t scan" pattern, and only the built-in walker can skip what a pattern names; CPU seconds are not measured per scan by this engine' });
   assert.equal(rule.engineHint.textContent,
-    'Used because the scan has 1 "don\'t scan" pattern, and only the built-in walker can skip what a pattern names. It reads up to 16 files and folders at once, which keeps the disk busy.');
+    'Used because the scan has 1 "don\'t scan" pattern, and only the built-in walker can skip what a pattern names.');
+  assert.match(rule.engineMoreText.textContent, /It reads up to 16 files and folders at once, which keeps the disk busy\.$/, 'how it reads is a detail (G13)');
   // A root given as a link is told first (D78); the reason after it is the same.
   const linked = walker({ ioThreads: 4, engineReason: '/tmp is a link to /private/tmp; the built-in walker ran: the root is a single file, which the built-in walker records without a listing; CPU seconds are not measured per scan by this engine' });
   assert.equal(linked.engineHint.textContent, 'Used because the root is a single file, which the built-in walker records without a listing.');
@@ -413,7 +427,9 @@ test('C10: the walker\'s line says why it ran, in plain words, on the line itsel
   for (const row of [rule, linked, fell]) {
     assert.doesNotMatch(row.engineHint.textContent + row.engineText.textContent, /Node|glob|I\/O|saturat|thread/i, 'no developer words on the line');
   }
-  assert.equal(walker({}).engineHint.textContent, 'It reads up to 16 files and folders at once, which keeps the disk busy.', 'an older stats shape gives no reason, and none is invented');
+  const older = walker({});
+  assert.equal(older.engineHint.textContent, '', 'an older stats shape gives no reason, and none is invented');
+  assert.match(older.engineMoreText.textContent, /It reads up to 16 files and folders at once, which keeps the disk busy\.$/);
 });
 
 test('C10: when the Scan engine setting asked for gdu and a rule kept it off, the line names the rule — nothing failed', () => {
@@ -484,6 +500,8 @@ test('C10: the engine line\'s disclosure is a real one in the page — a summary
   assert.ok(row, 'the engine row is in the page');
   assert.match(row[1], /<details class="engine-why" id="engineWhy" hidden><summary>Why the faster engine could not run<\/summary><span class="muted" id="engineWhyText"><\/span><\/details>/,
     'a details element, hidden until something failed, opened by its summary');
+  assert.match(row[1], /<span class="muted" id="engineHint"><\/span><details class="engine-why" id="engineMore" hidden><summary>Engine details<\/summary><span class="muted" id="engineMoreText"><\/span><\/details>/,
+    'and the engine\'s own details in one beside it (design pass G13)');
 });
 
 test('C10: a real scan the gdu setting asked for, kept off gdu by a rule (a "don\'t scan" pattern here), puts that rule on the line', async () => {
@@ -520,12 +538,13 @@ test('C10: a scan too short to measure a speed by states no speed — one file i
   assert.equal(one.engineText.textContent, 'Native engine — scanned 1 item in under 0.1 s', `no rate: ${one.engineText.textContent}`);
   for (const [ms, said] of [[2, 'under 0.1 s'], [49, 'under 0.1 s'], [50, '0.1 s'], [940, '0.9 s']] as const) {
     const row = runEngineRow({ engine: 'native', durationMs: ms, scanned: 12000, ioThreads: 8 });
-    assert.equal(row.engineText.textContent, `Native engine — scanned 12,000 items in ${said}`, `${ms} ms: ${row.engineText.textContent}`);
+    assert.equal(row.engineText.textContent, `Native engine — scanned 12,000 items (files and folders) in ${said}`, `${ms} ms: ${row.engineText.textContent}`);
   }
   const quick = runEngineRow({ engine: 'native', durationMs: 400, scanned: 2400, ioThreads: 8 });
-  assert.doesNotMatch(quick.engineText.textContent, /\/s/, 'under a second the rate is mostly the scan\'s setup');
+  assert.doesNotMatch(quick.engineText.textContent + quick.engineMoreText.textContent, /\/s|a second/, 'under a second the rate is mostly the scan\'s setup');
   const real = runEngineRow({ engine: 'native', durationMs: 1000, scanned: 2400, ioThreads: 8 });
-  assert.match(real.engineText.textContent, / · 2,400\/s$/, 'from a second up it is the engine\'s speed');
+  assert.match(real.engineMoreText.textContent, /^2,400 items a second\. /, 'from a second up it is the engine\'s speed, in its details (G13)');
+  assert.doesNotMatch(real.engineText.textContent, /\/s|a second/, 'and not on the line');
 });
 
 test('the Ignore list says that a pattern that skips folders sends every scan to the built-in walker', () => {

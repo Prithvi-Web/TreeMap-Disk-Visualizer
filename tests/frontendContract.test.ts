@@ -899,7 +899,8 @@ test('the index badge distinguishes live from stale, in plain language', () => {
   const fn = code.slice(code.indexOf('function renderIndexBadge'), code.indexOf('async function indexStatusFor'));
   assert.match(fn, /state !== 'ready'/, 'staleness comes from the server, not a guess');
   assert.match(fn, /out of date/i, 'the stale case says so in words a person can act on');
-  assert.match(fn, /always current/i, 'the live case says so too');
+  assert.match(fn, /Up to date — updates itself as files change/, 'the live case says so too, in plain words (design pass G13)');
+  assert.doesNotMatch(fn, /Index live/, 'not "Index live — always current"');
 });
 
 test('a stale index is still shown, never blanked', () => {

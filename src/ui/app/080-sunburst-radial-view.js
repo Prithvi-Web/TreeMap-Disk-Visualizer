@@ -107,6 +107,14 @@ function sunFitLabel(ctx, text, maxW) {
   return fitted;
 }
 
+/** The footer under the sunburst, in words a person can check against the
+    picture (design pass G13): it read "52 segments · 4 rings". Each segment is
+    a file or folder, and the rings are the levels drawn — up to the Depth
+    setting, so a shallower folder fills fewer of them. */
+function sunStatusLine(drawn, levels, bytes) {
+  return `${formatCount(drawn)} ${drawn === 1 ? 'file or folder' : 'files and folders'} shown, up to ${levels} level${levels === 1 ? '' : 's'} deep · ${formatBytes(bytes)} total`;
+}
+
 /** Draw one full sunburst frame from prepared arcs (live draw and time-slider animation). */
 function renderSunburstFrame(root, arcs, geo) {
   const ctx = tmBufCtx;
@@ -170,7 +178,7 @@ function renderSunburstFrame(root, arcs, geo) {
   if (st) {
     st.textContent = state.treemap.history.active
       ? `Viewing ${formatWhen(state.treemap.history.viewingAt)} · ${formatBytes(root.size)} — drag the slider to Live to interact`
-      : `${formatCount(arcs.length)} segments · ${geo.rings} rings · ${formatBytes(root.size)} total`;
+      : sunStatusLine(arcs.length, geo.rings, root.size);
   }
 
   presentSunburst();

@@ -63,10 +63,15 @@ async function loadTrash() {
       // were read and found empty (review F1.5). It says what is true either
       // way, and the server's sentence — on the row and in the sheet it
       // opens — says which.
+      // Where a size belongs, a size: the floor when one was measured, or
+      // "Unknown" when nothing was; why goes under the label, not in the size's
+      // place (design pass G13).
       if (t.complete === false && !(t.totalBytes > 0)) {
         $('sysTrash').dataset.v = 0;
-        $('sysTrash').textContent = 'Couldn’t read all of it';
+        $('sysTrash').textContent = 'Unknown';
       } else countUp($('sysTrash'), t.totalBytes, (v) => prefix + formatBytes(v) + suffix);
+      $('sysTrashSub').textContent = t.complete === false ? 'Couldn’t read all of it' : '';
+      $('sysTrashSub').hidden = t.complete !== false;
       el.title = t.complete === false
         ? (t.incompleteReason || 'Part of the Trash could not be read, so TreeMap cannot say what is in it.')
         : 'View Trash contents';

@@ -320,18 +320,18 @@ test('a budget kept without the native governor says it is approximate, in plain
 
 const engineBudgetNote = lift<(s: unknown) => string>(['budgetPresetLabel', 'engineBudgetNote'], 'engineBudgetNote');
 
-test('the Dashboard note renders "· budget: Balanced" for { budget: { effective: "balanced" } } and nothing without it', () => {
-  assert.equal(engineBudgetNote({ budget: { effective: 'balanced' } }), ' · budget: Balanced');
-  assert.equal(engineBudgetNote({ budget: { preset: 'auto', effective: 'eco', source: 'native' } }), ' · budget: Eco', 'the EFFECTIVE preset, not the setting');
+test('the Dashboard note renders "scanning budget: Balanced" for { budget: { effective: "balanced" } } and nothing without it', () => {
+  assert.equal(engineBudgetNote({ budget: { effective: 'balanced' } }), 'scanning budget: Balanced', 'named as Settings names it (design pass G13)');
+  assert.equal(engineBudgetNote({ budget: { preset: 'auto', effective: 'eco', source: 'native' } }), 'scanning budget: Eco', 'the EFFECTIVE preset, not the setting');
   assert.equal(engineBudgetNote({}), '', 'stats from a build without the field say nothing');
   assert.equal(engineBudgetNote({ budget: null }), '');
   assert.equal(engineBudgetNote(null), '');
   assert.equal(engineBudgetNote({ budget: { effective: '' } }), '', 'an empty preset is not a budget');
 });
 
-test('the engine row prints the note after the engine name and rate', () => {
+test('the engine row\'s details print the budget after the speed, off the line itself (design pass G13)', () => {
   const src = slice('function renderDiskNotes()', 'async function renderCloudSafe');
-  assert.match(src, /\$\('engineText'\)\.textContent = [^;]*engineBudgetNote\(s\)/, 'the note is part of the engine sentence');
+  assert.match(src, /const pace = \[[^\]]*engineBudgetNote\(s\)\]/, 'the note is part of the details\' first sentence');
   const formatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
   type El = { hidden: boolean; textContent: string; innerHTML: string; dataset: Record<string, unknown>; classList: { add(): void; remove(): void; toggle(): void }; setAttribute(): void; closest(): null; querySelectorAll(): never[] };
   const run = (scanStats: Record<string, unknown>) => {
@@ -346,7 +346,8 @@ test('the engine row prints the note after the engine name and rate', () => {
   };
   const withBudget = run({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 8, budget: { preset: 'auto', effective: 'balanced', source: 'native' } });
   assert.equal(withBudget.engineRow.hidden, false);
-  assert.match(withBudget.engineText.textContent, /Built-in walker — scanned 1,234 items in 2\.0 s · 617\/s · budget: Balanced$/);
+  assert.equal(withBudget.engineText.textContent, 'Built-in walker — scanned 1,234 items (files and folders) in 2.0 s');
+  assert.match(withBudget.engineMoreText.textContent, /^617 items a second · scanning budget: Balanced\. /);
   const without = run({ engine: 'walker', durationMs: 2000, scanned: 1234, ioThreads: 8 });
-  assert.doesNotMatch(without.engineText.textContent, /budget/, 'an older stats shape adds nothing');
+  assert.doesNotMatch(without.engineText.textContent + without.engineMoreText.textContent, /budget/, 'an older stats shape adds nothing');
 });

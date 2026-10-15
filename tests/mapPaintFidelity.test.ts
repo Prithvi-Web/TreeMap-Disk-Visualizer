@@ -81,7 +81,7 @@ function paintSunburst(ringT: number) {
   const arcs = [arc(LONG, -Math.PI / 2, 0.6), arc('Docs', 0.6, 2.2), arc('ab', 2.2, 4.7)];
   const status = { textContent: '' };
   const render = load<(root: unknown, arcs: unknown[], geo: unknown) => void>(
-    ['renderSunburstFrame', 'sunFitLabel', 'SUN_LABEL_MIN_CHARS', 'Canvas2D'], {
+    ['renderSunburstFrame', 'sunFitLabel', 'sunStatusLine', 'SUN_LABEL_MIN_CHARS', 'Canvas2D'], {
       tmBufCtx: rec.ctx,
       cssVar: () => '#000',
       cellRgb: () => [10, 132, 255],

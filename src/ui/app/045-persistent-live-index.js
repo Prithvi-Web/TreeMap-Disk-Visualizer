@@ -46,7 +46,7 @@ function renderIndexBadge(info) {
         : info.root.state === 'ready'
           ? 'Index may be out of date — it isn’t being watched for changes.' + refresh
           : 'Index may be out of date — it wasn’t watching while TreeMap was closed.' + refresh)
-      : 'Index live — always current') +
+      : 'Up to date — updates itself as files change') +
     '</span>';
   el.title = stale
     ? 'TreeMap keeps a saved index of this folder so it opens instantly. It may have missed a change at some point, so something may be different now.'
@@ -959,8 +959,12 @@ function renderDiskNotes() {
       // "0.0 s" reads as no time at all: under a twentieth of a second is
       // "under 0.1 s" (QA fourth pass E14a), as the status line says.
       const took = (s.durationMs / 1000).toFixed(1) === '0.0' ? 'under 0.1 s' : `${(s.durationMs / 1000).toFixed(1)} s`;
-      $('engineText').textContent = `${label} — ${verb} ${formatCount(s.scanned)} ${s.scanned === 1 ? 'item' : 'items'} in ${took}` +
-        (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
+      // Items, said to be files and folders: the count is every entry read,
+      // folders included, and "106,664 items" beside "Scanned 101,034 files"
+      // read as two file counts that disagree (design pass G13). The speed and
+      // the budget are details, in the disclosure under the line.
+      const items = s.scanned === 1 ? '1 item' : `${formatCount(s.scanned)} items (files and folders)`;
+      $('engineText').textContent = `${label} — ${verb} ${items} in ${took}`;
       // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
       // the fallback reason when something faster could not run.
       $('engineText').title = engineReasonTitle(s);
@@ -993,13 +997,21 @@ function renderDiskNotes() {
       $('engineWhy').hidden = !failed;
       $('engineWhyText').textContent = failed ? fallback : '';
       const reads = walker && s.ioThreads > 4 ? `It reads up to ${s.ioThreads} files and folders at once, which keeps the disk busy.` : '';
-      $('engineHint').textContent = s.engine === 'native'
+      // On the line: only what changes what the numbers mean — gdu's empty
+      // folders — or why a slower engine ran. How an engine works, how fast it
+      // went and the budget it ran under are its details (G13).
+      $('engineHint').textContent = s.engine === 'gdu-turbo'
+        ? 'A bundled gdu process per top-level folder — faster than the built-in walker, but a folder it may not open shows as empty instead of being counted.'
+        : why;
+      const pace = [rate ? `${formatCount(rate)} items a second` : '', engineBudgetNote(s)].filter(Boolean).join(' · ');
+      const how = s.engine === 'native'
         ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'
-        : s.engine === 'gdu-turbo'
-          ? 'A bundled gdu process per top-level folder — faster than the built-in walker, but a folder it may not open shows as empty instead of being counted.'
-          : s.engine === 'ntfs-mft'
-            ? "Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself."
-            : [why, reads].filter(Boolean).join(' ');
+        : s.engine === 'ntfs-mft'
+          ? "Read from the drive's file table by an elevated, read-only helper, then checked against what TreeMap can open itself."
+          : reads;
+      const detail = [pace ? pace.charAt(0).toUpperCase() + pace.slice(1) + '.' : '', how].filter(Boolean).join(' ');
+      $('engineMoreText').textContent = detail;
+      $('engineMore').hidden = !detail;
       en.hidden = false;
     } else en.hidden = true;
   }
@@ -1020,7 +1032,7 @@ function budgetPresetLabel(preset) {
 }
 function engineBudgetNote(s) {
   const effective = s && s.budget ? s.budget.effective : '';
-  return effective ? ` · budget: ${budgetPresetLabel(effective)}` : '';
+  return effective ? `scanning budget: ${budgetPresetLabel(effective)}` : '';
 }
 /* Phase 3 — the hover title of the engine row: why this engine ran, and what
    fell back when something faster could not run. Stats from a build without
