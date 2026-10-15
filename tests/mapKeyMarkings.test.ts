@@ -29,6 +29,15 @@ function declSource(name: string): string {
     const m = new RegExp(`\\n(?:const|let) [^;\\n]*\\b${name} = `).exec(INDEX);
     assert.ok(m, `${name} is declared in the built page`);
     const at = m!.index + 1;
+    const value = m!.index + m![0].length;
+    if (INDEX[value] === '[') {
+      // An array literal may hold a ';' in a string ('&lt; 30 days'): match its brackets.
+      let d = 0;
+      for (let i = value; i < INDEX.length; i++) {
+        if (INDEX[i] === '[') d++;
+        else if (INDEX[i] === ']' && --d === 0) return INDEX.slice(at, i + 1) + ';';
+      }
+    }
     return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
   }
   let depth = 0;
@@ -51,6 +60,9 @@ function load<T>(names: string[], deps: Record<string, unknown>, returns: string
       run(fn);
       return fn;
     } catch (e) {
+      // A constant used before it is declared (one pulled in later) moves ahead of the rest.
+      const early = /Cannot access '(\w+)' before initialization/.exec(String((e as Error).message))?.[1];
+      if (early && pulled.includes(early) && pulled[0] !== early) { pulled.splice(pulled.indexOf(early), 1); pulled.unshift(early); continue; }
       const missing = /(\w+) is not defined/.exec(String((e as Error).message))?.[1];
       if (!missing || pulled.includes(missing)) throw e;
       pulled.push(missing);
@@ -80,11 +92,11 @@ function node(over: Partial<Node> = {}): Node {
 }
 
 /** Paint `nodes` as the rectangle map and render the key; the key's HTML. */
-function keyFor(nodes: Node[], opts: { mode?: string; preview?: boolean; hideCloud?: boolean } = {}): string {
+function keyFor(nodes: Node[], opts: { mode?: string; preview?: boolean; hideCloud?: boolean; colorMode?: string; diff?: boolean } = {}): string {
   const host = { innerHTML: '' };
   const state = {
-    treemap: { nodes, hideCloud: !!opts.hideCloud, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as unknown[],
-      colorMode: 'size', mode: opts.mode ?? 'treemap', query: '' },
+    treemap: { nodes, hideCloud: !!opts.hideCloud, rootSize: 1e12, history: { active: !!opts.diff, diff: !!opts.diff }, pxRects: [] as unknown[],
+      colorMode: opts.colorMode ?? 'size', mode: opts.mode ?? 'treemap', query: '' },
   };
   load<{ drawTreemap: () => void }>(['drawTreemap', 'renderTmLegend'], {
     $: (id: string) => (id === 'tmLegend' ? host : { clientWidth: 1020 }),
@@ -102,6 +114,7 @@ function keyFor(nodes: Node[], opts: { mode?: string; preview?: boolean; hideClo
     tmPreview: { on: !!opts.preview },
     roundRect() {},
     formatBytes: (n: number) => `${n} B`,
+    reclaimCoverageNote: () => '',
   }, '{ drawTreemap }', (fns) => { host.innerHTML = ''; fns.drawTreemap(); });
   return host.innerHTML;
 }
@@ -167,4 +180,29 @@ test('G27: the markings belong to the rectangle map — another layout\'s key do
   // draw none of these marks; the last rectangle map's must not linger there.
   const nodes = [node({ ...BIG, container: 'zip' })];
   assert.deepEqual(named(keyFor(nodes, { mode: 'sunburst' })), []);
+});
+
+test('G27: the markings are named under every colouring — Size, Age, Reclaim and the History diff — each beside its own key', () => {
+  // renderTmLegend has a branch per colouring, and each must append the
+  // markings row: a map coloured by Age, by Reclaim or by the diff draws the
+  // same dashed borders and glyphs (review F1.10).
+  const all = () => [
+    node({ ...BIG, container: 'zip' }),
+    node({ ...BIG, x: 35, freed: true }),
+    node({ ...BIG, x: 70, cloudPlaceholder: true }),
+    node({ ...BIG, y: 40, type: 'dir', expanded: true, gitRepo: true }),
+  ];
+  const colourings: Array<[string, { colorMode?: string; diff?: boolean }, RegExp]> = [
+    ['Size', { colorMode: 'size' }, /legend-grad/],
+    ['Age', { colorMode: 'age' }, /days/],
+    ['Reclaim', { colorMode: 'reclaim' }, /not scored/],
+    ['the History diff', { diff: true }, /grew[\s\S]*shrank[\s\S]*unchanged/],
+  ];
+  for (const [name, opts, ownKey] of colourings) {
+    const html = keyFor(all(), { ...opts, preview: true });
+    assert.match(html, ownKey, `${name}: its own key is drawn`);
+    assert.deepEqual(named(html), ['archive you can open', 'staged for the Trash', 'in the cloud, not on this disk', 'git repository'],
+      `${name}: every marking on the map is named`);
+    assert.deepEqual(named(keyFor([node(BIG), node({ ...BIG, x: 40 })], opts)), [], `${name}: and none when the map draws none`);
+  }
 });
