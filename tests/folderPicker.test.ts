@@ -114,14 +114,23 @@ function fakeStorage(init: Record<string, string> = {}, broken = false) {
 }
 
 /** A whole-drive button as a browser holds it: its path, and the span its name is in (null where the page drew none). */
-type DriveButton = { dataset: { p: string }; attrP: string; lead: string; nm: { textContent: string } | null; rest: string; querySelector(sel: string): { textContent: string } | null };
-type DriveRow = FakeEl & { writes: number; buttons: DriveButton[] };
+type DriveButton = {
+  dataset: { p: string }; attrP: string; lead: string; nm: { textContent: string } | null; rest: string;
+  querySelector(sel: string): { textContent: string } | null;
+  /** Taken out of the row. */
+  remove(): void;
+  /** New buttons from `html` put in the row just before this one ('beforebegin'). */
+  insertAdjacentHTML(where: string, html: string): void;
+};
+type DriveRow = FakeEl & { writes: number; buttons: DriveButton[]; insertAdjacentHTML(where: string, html: string): void };
 
 /**
  * #browseDrives holding the buttons its HTML makes, as a browser does: each
  * innerHTML write makes new buttons (counted in `writes`; a focused one is
  * gone, and a click under way loses its button), a button's name span can be
- * rewritten in place, and the row's HTML is read back from its buttons.
+ * rewritten in place, a button can be taken out, new ones can be put in
+ * before a button or at the row's end — every other button standing — and
+ * the row's HTML is read back from its buttons.
  */
 function driveRowEl(): DriveRow {
   const row = fakeEl('browseDrives') as DriveRow;
@@ -129,20 +138,35 @@ function driveRowEl(): DriveRow {
   let label = '';
   row.writes = 0;
   row.buttons = [];
+  const made = (html: string): DriveButton[] => [...html.matchAll(/<button[^>]*data-p="([^"]*)"[^>]*>([\s\S]*?)<\/button>/g)].map((m) => {
+    const named = /^([\s\S]*?)<span class="browse-drive-nm">([^<]*)<\/span>([\s\S]*)$/.exec(m[2]);
+    const nm = named ? { textContent: decode(named[2]) } : null;
+    const b: DriveButton = {
+      dataset: { p: decode(m[1]) }, attrP: m[1], lead: named ? named[1] : m[2], nm, rest: named ? named[3] : '',
+      querySelector: (sel: string) => (sel === '.browse-drive-nm' ? nm : null),
+      remove() { const i = row.buttons.indexOf(b); if (i !== -1) row.buttons.splice(i, 1); },
+      insertAdjacentHTML(where: string, more: string) {
+        assert.equal(where, 'beforebegin', 'a button takes new ones before it');
+        const i = row.buttons.indexOf(b);
+        assert.notEqual(i, -1, 'new buttons go before a button still in the row');
+        row.buttons.splice(i, 0, ...made(more));
+      },
+    };
+    return b;
+  });
   Object.defineProperty(row, 'innerHTML', {
     get: () => label + row.buttons.map((b) =>
       `<button class="pill browse-drive" data-p="${b.attrP}">${b.lead}${b.nm ? `<span class="browse-drive-nm">${b.nm.textContent}</span>` : ''}${b.rest}</button>`).join(''),
     set: (html: string) => {
       row.writes++;
       label = /^<span class="browse-drives-lbl">[^<]*<\/span>/.exec(html)?.[0] ?? '';
-      row.buttons = [...html.matchAll(/<button[^>]*data-p="([^"]*)"[^>]*>([\s\S]*?)<\/button>/g)].map((m) => {
-        const named = /^([\s\S]*?)<span class="browse-drive-nm">([^<]*)<\/span>([\s\S]*)$/.exec(m[2]);
-        const nm = named ? { textContent: decode(named[2]) } : null;
-        return { dataset: { p: decode(m[1]) }, attrP: m[1], lead: named ? named[1] : m[2], nm, rest: named ? named[3] : '',
-          querySelector: (sel: string) => (sel === '.browse-drive-nm' ? nm : null) };
-      });
+      row.buttons = made(html);
     },
   });
+  row.insertAdjacentHTML = (where: string, html: string) => {
+    assert.equal(where, 'beforeend', 'the row takes new buttons at its end');
+    row.buttons.push(...made(html));
+  };
   row.querySelectorAll = ((sel: string) => (sel === '.browse-drive' ? [...row.buttons] : [])) as unknown as FakeEl['querySelectorAll'];
   return row;
 }
@@ -196,7 +220,7 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: 
      function icon() { return ''; }
      ${INDEX.slice(start, end)}
      ${closeModal}
-     return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal') };`,
+     return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal'), drawDrives: browseDrawDrives };`,
   )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }, (n: number) => n.toLocaleString('en-US'), doc,
     topologyAnswer, storage, world) as {
     openBrowse: (start: string | null, onPick?: ((p: string) => void) | null, title?: string | null, useLabel?: string | null, where?: unknown) => Promise<void>;
@@ -204,6 +228,8 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: 
     path: () => string | null;
     /** The picker dismissed — Escape, the ✕ or the scrim. */
     close: () => void;
+    /** The page's browseDrawDrives: the whole-drive row drawn for these drives. */
+    drawDrives: (drives: Array<{ path: string; name: string }>) => void;
   };
   /** The folder names the list shows, top to bottom (the ".." row aside). */
   const rows = () => [...$('browseList').innerHTML.matchAll(/aria-label="Open ([^"]+)"/g)].map((m) => m[1]);
@@ -557,21 +583,60 @@ test('on its first open the picker draws the whole drive at once, under the name
     'asked again, the same answer leaves the same button standing');
 });
 
-test('on Windows the home folder\'s own drive is drawn at once, and an answer naming other drives redraws the row with them — never a renamed button that still opens the drive that left (G26 review F2.4)', async () => {
+/*
+ * F2.4 kept a button only where the answer named the same drives as the row
+ * held. On a Windows machine with C: and D:, the C: drawn at once was
+ * replaced when the layout (Get-Volume, up to 30 s) answered with both: a
+ * keyboard user on it fell to <body>, and a click under way was lost (G26
+ * review F3.5). The row is reconciled by path: a drive still listed keeps its
+ * button, renamed in place; a drive that left loses its button; one that came
+ * gets a new one, in its place in the order.
+ */
+test('on Windows the home folder\'s own drive is drawn at once, and the layout\'s answer keeps that button — renamed in place — as drives come and go beside it, each new one in its place in the order and no button left opening a drive that left (G26 review F2.4, F3.5)', async () => {
   const g = gate();
-  let layout = { logicalVolumes: [{ id: 'C:', name: 'Windows', mountPoint: 'C:\\' }, { id: 'D:', name: 'D:', mountPoint: 'D:\\' }] };
+  const vol = (letter: string, name: string) => ({ id: `${letter}:`, name, mountPoint: `${letter}:\\` });
+  let layout = { logicalVolumes: [vol('C', 'Windows'), vol('D', 'D:')] };
   const t = browseRuntime(() => ({ path: 'C:\\Users\\u', parent: 'C:\\Users', dirs: [] }), undefined,
     { platform: 'win32', homeDir: 'C:\\Users\\u', topology: async () => { await g.opened; return layout; } });
   await t.rt.openBrowse(null);
   assert.deepEqual(t.drives(), [['C:', 'C:\\']], 'the home folder\'s drive, at once, by its letter');
+  const c = t.driveRow.buttons[0];
+  assert.equal(t.driveRow.writes, 1, 'control: the row was written once');
   g.open();
   await settle(); await settle();
   assert.deepEqual(t.drives(), [['Windows (C:)', 'C:\\'], ['D:', 'D:\\']], 'the layout\'s drives, once it answers');
+  assert.deepEqual([t.driveRow.writes, t.driveRow.buttons[0] === c], [1, true],
+    'C: keeps its button, renamed in place, with D: put in beside it — the row is not written again, so a choice focused or being clicked keeps its button');
   // D: unplugged and E: plugged in: as many drives as before, not the same ones.
-  layout = { logicalVolumes: [{ id: 'C:', name: 'Windows', mountPoint: 'C:\\' }, { id: 'E:', name: 'Backup', mountPoint: 'E:\\' }] };
+  const d = t.driveRow.buttons[1];
+  layout = { logicalVolumes: [vol('C', 'Windows'), vol('E', 'Backup')] };
   await t.rt.openBrowse(null);
   await settle(); await settle();
   assert.deepEqual(t.drives(), [['Windows (C:)', 'C:\\'], ['Backup (E:)', 'E:\\']], 'each choice opens the drive it names');
+  assert.deepEqual([t.driveRow.writes, t.driveRow.buttons[0] === c, t.driveRow.buttons.includes(d)], [1, true, false],
+    'C: keeps its button, and D:\'s is gone — never renamed to open E:');
+  // A card reader before C:, and D: back between C: and E:.
+  const e = t.driveRow.buttons[1];
+  layout = { logicalVolumes: [vol('E', 'Backup'), vol('B', 'Card'), vol('C', 'Windows'), vol('D', 'D:')] };
+  await t.rt.openBrowse(null);
+  await settle(); await settle();
+  assert.deepEqual(t.drives(), [['Card (B:)', 'B:\\'], ['Windows (C:)', 'C:\\'], ['D:', 'D:\\'], ['Backup (E:)', 'E:\\']], 'each new drive in its place in the letter order');
+  assert.deepEqual([t.driveRow.writes, t.driveRow.buttons[1] === c, t.driveRow.buttons[3] === e], [1, true, true], 'C: and E: keep their buttons');
+  assert.match(t.$('browseDrives').innerHTML, /^<span class="browse-drives-lbl">Whole drive<\/span>/, 'and the row is still said as the whole drive');
+});
+
+test('the whole-drive row is written again only where no button can stand — drives in another order than the buttons on screen, or none of them kept — and drawn empty and hidden for no drive (G26 review F3.5)', () => {
+  const t = browseRuntime(() => HOME, undefined, { platform: 'win32', homeDir: 'C:\\Users\\u' });
+  const drive = (letter: string) => ({ path: `${letter}:\\`, name: `${letter}:` });
+  const label = () => /^<span class="browse-drives-lbl">Whole drive<\/span>/.test(t.$('browseDrives').innerHTML);
+  t.rt.drawDrives([drive('C'), drive('D')]);
+  assert.deepEqual([t.drives(), label()], [[['C:', 'C:\\'], ['D:', 'D:\\']], true], 'control: drawn, under its label');
+  t.rt.drawDrives([drive('D'), drive('C')]);
+  assert.deepEqual([t.drives(), label()], [[['D:', 'D:\\'], ['C:', 'C:\\']], true], 'drawn in the order given, though both drives were on screen');
+  t.rt.drawDrives([drive('E')]);
+  assert.deepEqual([t.drives(), label()], [[['E:', 'E:\\']], true], 'none kept: the new drive alone, under the label');
+  t.rt.drawDrives([]);
+  assert.deepEqual([t.drives(), t.$('browseDrives').hidden, t.$('browseDrives').innerHTML], [[], true, ''], 'no drive: an empty row, hidden');
 });
 
 test('the whole drive is offered only where the picker scans — not for an Autopilot folder or an offload destination — and a late layout answer never draws it into those (G26)', async () => {

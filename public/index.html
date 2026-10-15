@@ -36013,17 +36013,33 @@ let browseDrivesSeen = null;
 function browseDrawDrives(drives) {
   const row = $('browseDrives');
   row.hidden = !drives.length;
-  // The drives on screen already, in order: only a name can differ, and it is
-  // written in place, so a choice focused or being clicked keeps its button
-  // (G26 review F2.4). Other drives redraw the row.
-  const shown = [...row.querySelectorAll('.browse-drive')];
-  const names = shown.map((b) => b.querySelector('.browse-drive-nm'));
-  if (drives.length && shown.length === drives.length && shown.every((b, i) => b.dataset.p === drives[i].path && names[i])) {
-    names.forEach((nm, i) => { if (nm.textContent !== drives[i].name) nm.textContent = drives[i].name; });
+  const button = (d) => `<button class="pill browse-drive" data-p="${escapeHtml(d.path)}" title="${escapeHtml(d.path)} — the whole drive">${icon('hardDrive', 13)}<span class="browse-drive-nm">${escapeHtml(d.name)}</span></button>`;
+  // The row is reconciled by path, so a choice focused or being clicked keeps
+  // its button while drives come and go beside it — on Windows the layout's
+  // answer adds D: to the C: drawn at once (G26 review F2.4, F3.5). A drive
+  // still listed keeps its button, renamed in place; one that left loses its
+  // button; one that came gets a new one, in its place in the order. The row
+  // is written whole only where no button can stand: none kept, or the kept
+  // ones in another order than the drives.
+  const want = new Set(drives.map((d) => d.path));
+  const kept = new Map();
+  for (const b of row.querySelectorAll('.browse-drive')) if (want.has(b.dataset.p)) kept.set(b.dataset.p, b);
+  const keptInOrder = drives.map((d) => d.path).filter((p) => kept.has(p));
+  if (!kept.size || keptInOrder.join('\n') !== [...kept.keys()].join('\n')) {
+    row.innerHTML = !drives.length ? '' : '<span class="browse-drives-lbl">Whole drive</span>' + drives.map(button).join('');
     return;
   }
-  row.innerHTML = !drives.length ? '' : '<span class="browse-drives-lbl">Whole drive</span>' + drives.map((d) =>
-    `<button class="pill browse-drive" data-p="${escapeHtml(d.path)}" title="${escapeHtml(d.path)} — the whole drive">${icon('hardDrive', 13)}<span class="browse-drive-nm">${escapeHtml(d.name)}</span></button>`).join('');
+  row.querySelectorAll('.browse-drive').forEach((b) => { if (kept.get(b.dataset.p) !== b) b.remove(); });
+  drives.forEach((d, i) => {
+    const b = kept.get(d.path);
+    if (b) {
+      b.querySelector('.browse-drive-nm').textContent = d.name;
+      return;
+    }
+    const next = drives.slice(i + 1).find((x) => kept.has(x.path));
+    if (next) kept.get(next.path).insertAdjacentHTML('beforebegin', button(d));
+    else row.insertAdjacentHTML('beforeend', button(d));
+  });
 }
 /** Offer the whole drive at the picker's top when it scans (`scans`). The
     names come from the disk layout the Dashboard reads (topologyAnswer); a
