@@ -267,6 +267,9 @@ function cityAgeDays(n) {
 
 /** Base colour for a building, as [r,g,b]. */
 function cityRgb(n, mode) {
+  // The Treemap's own ramp: the city opens in it (G16), so both views of one
+  // folder open in the same colours.
+  if (mode === 'size') return sizeRgb(n.size);
   if (mode === 'type') { const k = kindFor(n); return k && k.tint ? hexToRgb(k.tint) : [120, 128, 140]; }
   if (mode === 'age') return ageRgb(n.modifiedAt);
   const score = reclaim.scores.get(n.path);
@@ -575,9 +578,20 @@ function cityDepthT(b) {
   return 1 - Math.min(1, Math.max(0, (b.x + b.w / 2 + b.y + b.h / 2) / 200));
 }
 
+/**
+ * How far the furthest building's colour fades toward the backdrop.
+ *
+ * Enough to read as distance, not as fog — and no more, because mixing toward
+ * the backdrop is mixing toward grey: at 0.34 the furthest top-of-ramp roof
+ * fell to Lab C*ab 44 on the light backdrop, a pastel, where the owner's rule
+ * for the map is 60 or more (design pass G16). At 0.12 the worst roof, jitter
+ * and shading included, measures 62 (tests/diskCityColourDefault.test.ts).
+ */
+const CITY_AIR_MAX = 0.12;
+
 /** Fade a colour toward the panel's own background as it recedes. */
 function cityAirRgb(rgb, t, bg) {
-  const k = t * 0.34; // measured by eye: enough to read as distance, not as fog
+  const k = t * CITY_AIR_MAX;
   return [rgb[0] + (bg[0] - rgb[0]) * k, rgb[1] + (bg[1] - rgb[1]) * k, rgb[2] + (bg[2] - rgb[2]) * k];
 }
 
@@ -1442,8 +1456,11 @@ function renderCityChrome() {
     // absolute scale, and a legend that implied otherwise would be wrong.
     const heightLabel = CITY_HEIGHT_LABEL[c.height];
     const colourLabel = CITY_COLOUR_LABEL[c.colour];
-    // The colour key is the ramp itself, not a sentence about it.
-    const ramp = c.colour === 'reclaim'
+    // The colour key is the ramp itself, not a sentence about it. Size's is
+    // the Treemap's own key, sampled from the ramp the buildings are painted in.
+    const ramp = c.colour === 'size'
+      ? sizeRampCss()
+      : c.colour === 'reclaim'
       ? `linear-gradient(90deg, rgb(${C_RC_LOW.join(',')}), rgb(${C_AMBER.join(',')}), rgb(${C_TEAL.join(',')}))`
       : c.colour === 'age'
         ? `linear-gradient(90deg, rgb(${ageRgb(Date.now()).join(',')}), rgb(${ageRgb(Date.now() - 3 * 365 * 86400000).join(',')}))`
@@ -1981,10 +1998,31 @@ function citySetHeight(requested) {
   cityFetchFacts();
 }
 
-function citySetColour(requested) {
-  const mode = cityMode(requested, CITY_COLOUR_LABEL, 'reclaim');
+/**
+ * The Color the city opens in: a choice someone made, or Size (G16).
+ *
+ * Earlier builds wrote the mode they opened in to `tm-citycolour` on every
+ * visit, so a stored "reclaim" — their default — is no evidence that anyone
+ * chose it, while "type" and "age" are: only a click ever stored them. A
+ * choice is now stored only when it is made, under its own key. Reads
+ * storage alone, so the state literal can call it before the label maps
+ * exist; the setter sanitises what it returns.
+ */
+function cityColourStored() {
+  try {
+    const picked = localStorage.getItem('tm-citycolour-picked');
+    if (picked) return picked;
+    const legacy = localStorage.getItem('tm-citycolour');
+    if (legacy === 'type' || legacy === 'age') return legacy;
+  } catch { /* storage that refuses: no choice to honour */ }
+  return 'size';
+}
+
+/** `picked`: a person chose this mode, so it is stored; opening the view in a mode is not a choice. */
+function citySetColour(requested, picked = false) {
+  const mode = cityMode(requested, CITY_COLOUR_LABEL, 'size');
   state.city.colour = mode;
-  try { localStorage.setItem('tm-citycolour', mode); } catch { /* private mode */ }
+  if (picked) { try { localStorage.setItem('tm-citycolour-picked', mode); } catch { /* private mode */ } }
   for (const b of $('cityColorSeg').querySelectorAll('button')) {
     b.setAttribute('aria-selected', String(b.dataset.c === mode));
   }
@@ -2002,7 +2040,7 @@ $('cityHeightSeg').addEventListener('click', (e) => {
 });
 $('cityColorSeg').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-c]');
-  if (btn) citySetColour(btn.dataset.c);
+  if (btn) citySetColour(btn.dataset.c, true);
 });
 $('cityUpBtn').addEventListener('click', () => cityUp());
 $('cityReset').addEventListener('click', () => {

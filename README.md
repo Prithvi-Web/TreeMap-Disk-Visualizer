@@ -113,7 +113,7 @@ A squarified treemap of every file, sized by bytes and colored **teal → amber 
 <td colspan="2" valign="top">
 
 ### 🏙️ Disk City
-The Treemap's own tiling, seen from a corner — the *same* arrangement, not a similar one, so switching between them is legible rather than disorienting. A flat treemap encodes exactly one variable in area; this encodes three at once. **Footprint** is bytes, **height** is staleness (or file count, or nesting depth), **colour** is Reclaim score (or file kind, or age). *"The tall grey tower is a 40 GB thing you have not opened in two years"* reads instantly in a way a red rectangle never does.
+The Treemap's own tiling, seen from a corner — the *same* arrangement, not a similar one, so switching between them is legible rather than disorienting. A flat treemap encodes exactly one variable in area; this encodes three at once. **Footprint** is bytes, **height** is staleness (or file count, or nesting depth), **colour** is size, on the Treemap's own ramp (or Reclaim score, file kind, or age). *"The tall red tower is a 40 GB thing you have not opened in two years"* reads instantly in a way a red rectangle never does.
 
 <img src="demo/01-city-hero.jpg" width="100%" alt="Disk City: the treemap's tiling seen from a corner — footprint is bytes, height is staleness, colour is Reclaim score">
 

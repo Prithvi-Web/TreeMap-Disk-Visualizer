@@ -16,13 +16,19 @@
       </div>
       <div class="tb-row tb-row-controls">
         <div class="tb-group tb-appearance">
+          <!-- Each group says in words what it sets (G16): without them the
+               two rows of buttons were "Staleness Files Depth" and
+               "Reclaim Type Age" with nothing to say which was which. -->
+          <span class="tb-label" aria-hidden="true">Height</span>
           <div class="seg" id="cityHeightSeg" role="tablist" aria-label="What building height means">
             <button role="tab" type="button" data-h="staleness" aria-selected="true" title="Taller = longer since anything in it changed">Staleness</button>
             <button role="tab" type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
             <button role="tab" type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
           </div>
+          <span class="tb-label" aria-hidden="true">Color</span>
           <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building color means">
-            <button role="tab" type="button" data-c="reclaim" aria-selected="true" title="Color by how safe and worthwhile it is to reclaim">Reclaim</button>
+            <button role="tab" type="button" data-c="size" aria-selected="true" title="Color by size, on the Treemap's own scale">Size</button>
+            <button role="tab" type="button" data-c="reclaim" aria-selected="false" title="Color by how safe and worthwhile it is to reclaim">Reclaim</button>
             <button role="tab" type="button" data-c="type" aria-selected="false" title="Color by file kind">Type</button>
             <button role="tab" type="button" data-c="age" aria-selected="false" title="Color by how recently modified">Age</button>
           </div>

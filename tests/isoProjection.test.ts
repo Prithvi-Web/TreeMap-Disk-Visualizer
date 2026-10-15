@@ -593,7 +593,8 @@ test('both channel setters sanitise before they store', () => {
   // the next launch starts poisoned even after the fix.
   for (const [fn, map, fallback] of [
     ['citySetHeight', 'CITY_HEIGHT_LABEL', 'staleness'],
-    ['citySetColour', 'CITY_COLOUR_LABEL', 'reclaim'],
+    // Size since G16: the mode the city opens in when nothing was chosen.
+    ['citySetColour', 'CITY_COLOUR_LABEL', 'size'],
   ]) {
     const start = INDEX.indexOf(`function ${fn}(`);
     assert.notEqual(start, -1, `${fn} must exist`);

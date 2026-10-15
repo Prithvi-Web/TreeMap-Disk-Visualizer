@@ -310,6 +310,9 @@ const CITY_HEIGHT_LABEL = {
   depth: 'how deeply nested it is',
 };
 const CITY_COLOUR_LABEL = {
+  // The ends of the Treemap's ramp: everything up to 1 MB wears its first
+  // colour, everything from 10 GB its last.
+  size: 'its size, from 1 MB or less to 10 GB or more',
   reclaim: 'how safe and worthwhile it is to reclaim',
   type: 'what kind of item it is',
   age: 'how recently it changed',

@@ -617,7 +617,7 @@ const state = {
           zoomTarget: 1, zoomRaf: 0, morphRaf: 0, morphStart: 0, painted: 0,
           contentBounds: { x0: -87, x1: 87, y0: -26, y1: 50 },
           height: localStorage.getItem('tm-cityheight') || 'staleness',
-          colour: localStorage.getItem('tm-citycolour') || 'reclaim',
+          colour: cityColourStored(),
           counts: new Map(), countsAsked: new Set(), unresolved: 0, raf: 0, drag: null },
   // v4 §6.3 / §6.4 — a lasso in flight, and the magnifier. Both are pure
   // overlays over whatever the current renderer last drew: neither holds a
