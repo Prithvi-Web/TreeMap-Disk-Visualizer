@@ -653,21 +653,57 @@ function tmSetEmpty(text) {
  * worst, where they read alike), and on most tiles the whole cushion
  * already does: it is the colours near that crossing that need it — the
  * Reclaim "keep" grey, the diff's "unchanged", the Trash cell, and a red
- * tile whose label sits below its folder's tag, mid-cushion.
+ * tile whose label sits below its folder's tag, mid-cushion. `washes` are
+ * the History diff's washes laid over the tile after it is painted
+ * (tmDiffWashes): the label is read through them, so it is judged there.
  */
 const TM_CUSHION_LIGHT = 0.16;   // the white mixed into the top edge
 const TM_CUSHION_SHADE = 0.22;   // the black mixed into the bottom edge
 const TM_CUSHION_FULL_H = 60;    // px: a tile this tall or taller gets the whole cushion
 const TM_CUSHION_EASE = [1, 0.75, 0.5, 0.25, 0];  // the shares of its cushion a labelled tile tries, in turn
-function tmLeafStops(base, h, lines) {
+function tmLeafStops(base, h, lines, washes = []) {
   const full = Math.max(0, Math.min(1, h / TM_CUSHION_FULL_H));
   let stops = null;
   for (const share of TM_CUSHION_EASE) {
     const amp = full * share;
     stops = [mix(base, [255, 255, 255], TM_CUSHION_LIGHT * amp), mix(base, [0, 0, 0], TM_CUSHION_SHADE * amp)];
-    if (!lines || lines.every((l) => tmBestInk(stops, h, l.off, l.px, 1).contrast >= TM_LABEL_FLOOR)) break;
+    const seen = tmSeenThrough(stops, washes);
+    if (!lines || lines.every((l) => tmBestInk(seen, h, l.off, l.px, 1).contrast >= TM_LABEL_FLOOR)) break;
   }
   return stops;
+}
+
+/**
+ * Pass 2.5's washes, in the History diff only: each expanded folder that grew
+ * or shrank, as { r, rgb }, in the order the pass lays them. A wash is
+ * TM_DIFF_WASH of the folder's own diff colour over its whole frame, its
+ * leaves included — laid after pass 1 paints them and before pass 4 writes
+ * their labels — so a label is read on its cushion seen through every wash
+ * over its tile, and pass 1 eases the cushion and pass 4 picks the ink
+ * against that (review F2.1). Judged against the cushion alone, the grey
+ * "unchanged" leaf in the corner of a folder that grew took white at 4.64:1
+ * and showed 3.67:1 under the teal.
+ */
+const TM_DIFF_WASH = 0.3;
+function tmDiffWashes(px) {
+  if (!state.treemap.history.active || !state.treemap.history.diff) return [];
+  const washes = [];
+  for (const r of px) {
+    if (!r.frame) continue;
+    const rgb = diffRgb(r.n);
+    if (rgb !== C_DIFF_SAME) washes.push({ r, rgb });
+  }
+  return washes;
+}
+/** The colours of the washes laid over the tile `r`, in order: those whose folder's frame holds it. */
+function tmWashesOver(r, washes) {
+  return washes
+    .filter(({ r: f }) => r.x >= f.x - 0.5 && r.y >= f.y - 0.5 && r.x + r.w <= f.x + f.w + 0.5 && r.y + r.h <= f.y + f.h + 0.5)
+    .map((w) => w.rgb);
+}
+/** A cushion's stops as they reach the screen through `washes` (colours, in the order laid). */
+function tmSeenThrough(stops, washes) {
+  return washes.reduce((seen, rgb) => seen.map((c) => c.map((v, i) => v + (rgb[i] - v) * TM_DIFF_WASH)), stops);
 }
 function tmLeafFill(ctx, stops, y, h) {
   const [top, bot] = stops;
@@ -682,9 +718,11 @@ function tmLeafFill(ctx, stops, y, h) {
  * whichever keeps the higher WCAG contrast against the cushion under the
  * WHOLE line — its top and its bottom, since the cushion darkens downward.
  * A fixed black ink measured 2.55–3.91:1 on the darker and saturated tiles.
- * `r.stops` is the cushion pass 1 painted the tile with (tmLeafStops, eased
- * for this label where it had to be); a tile without one (a hollow cloud
- * placeholder) shows the map's own ground, and takes the page's ink for it.
+ * `r.seen` is the cushion pass 1 painted the tile with (r.stops, from
+ * tmLeafStops, eased for this label where it had to be) as the screen shows
+ * it, through any History diff wash over it (tmSeenThrough); a tile without
+ * one (a hollow cloud placeholder) shows the map's own ground, and takes the
+ * page's ink for it.
  * The size line is a step quieter, at TM_SIZE_INK_ALPHA, wherever that
  * still reads at 4.5:1; where it would not, it is written at full ink.
  * tests/mapColourPop.test.ts measures every colour the map paints, at the
@@ -714,9 +752,10 @@ function tmBestInk(stops, h, off, fontPx, alpha) {
   return black >= white ? { ink: '0,0,0', contrast: black } : { ink: '255,255,255', contrast: white };
 }
 function tmLabelInk(r, y, fontPx, alpha) {
-  if (!r.stops) return cssVar(alpha < 1 ? '--text-2' : '--text-1');
-  let best = tmBestInk(r.stops, r.h, y - r.y, fontPx, alpha);
-  if (best.contrast < TM_LABEL_FLOOR && alpha < 1) { alpha = 1; best = tmBestInk(r.stops, r.h, y - r.y, fontPx, 1); }
+  const under = r.seen;
+  if (!under) return cssVar(alpha < 1 ? '--text-2' : '--text-1');
+  let best = tmBestInk(under, r.h, y - r.y, fontPx, alpha);
+  if (best.contrast < TM_LABEL_FLOOR && alpha < 1) { alpha = 1; best = tmBestInk(under, r.h, y - r.y, fontPx, 1); }
   return `rgba(${best.ink},${alpha})`;
 }
 
@@ -813,6 +852,9 @@ function drawTreemap() {
   // a cushion under its label where it must, and pass 4 writes it there.
   const tagRects = tmFolderTags(ctx, px);
   for (const r of px) r.label = tmLabelLines(r, tagRects);
+  // The History diff's washes, which pass 2.5 lays over the leaves pass 1
+  // paints: a label is read through them (review F2.1).
+  const washes = tmDiffWashes(px);
 
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
@@ -865,10 +907,12 @@ function drawTreemap() {
       continue;
     }
 
-    r.stops = tmLeafStops(base, r.h, r.label.map((l) => ({ off: l.y - r.y, px: l.px })));
+    const washedBy = tmWashesOver(r, washes);
+    r.stops = tmLeafStops(base, r.h, r.label.map((l) => ({ off: l.y - r.y, px: l.px })), washedBy);
     ctx.fillStyle = tmLeafFill(ctx, r.stops, r.y, r.h);
     ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
-    r.fillRgb = base; // the colour itself; r.stops is the cushion pass 4 picks its label ink against (G09)
+    r.fillRgb = base; // the colour itself; r.stops is the cushion painted here
+    r.seen = tmSeenThrough(r.stops, washedBy); // and as pass 4 writes the label on it, through pass 2.5 (G09, F2.1)
     if (r.w > 6 && r.h > 6) {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
       ctx.lineWidth = 1;
@@ -898,14 +942,9 @@ function drawTreemap() {
   // Pass 2.5: diff wash over expanded directories (history diff mode only).
   // A folder's own growth/shrinkage must show even when its visible children
   // didn't change — e.g. it shrank because a child was deleted outright.
-  if (state.treemap.history.active && state.treemap.history.diff) {
-    for (const r of px) {
-      if (!r.frame) continue;
-      const c = diffRgb(r.n);
-      if (c === C_DIFF_SAME) continue;
-      ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.3)`;
-      ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
-    }
+  for (const { r, rgb: c } of washes) {
+    ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${TM_DIFF_WASH})`;
+    ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
   }
   // Pass 3: top-level directory name tags.
   ctx.textBaseline = 'middle';

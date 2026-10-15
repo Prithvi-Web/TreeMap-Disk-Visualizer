@@ -87,12 +87,20 @@ function withAlpha(style: unknown, globalAlpha: number): unknown {
 }
 
 type Stroke = { style: string; width: number; rect: number[] };
+/** One rectangle filled, or one text written, in the order the painter did it. */
+type Op = { kind: 'rect'; style: unknown; rect: number[] } | { kind: 'text'; text: Text };
 
-/** A 2D context that records every fill, every text and every stroked rectangle with the paint it was drawn in. */
+/**
+ * A 2D context that records every fill, every text and every stroked
+ * rectangle with the paint it was drawn in — and, in `ops`, every filled
+ * rectangle and text in drawing order, so what lies under a label can be
+ * replayed (canvasAt).
+ */
 function recordingCtx() {
   const fills: unknown[] = [];
   const texts: Text[] = [];
   const strokes: Stroke[] = [];
+  const ops: Op[] = [];
   const props: Record<string, unknown> = {
     font: '10px sans-serif',
     globalAlpha: 1,
@@ -110,13 +118,18 @@ function recordingCtx() {
         // A fill drawn under a globalAlpha below 1 shows its ground through
         // however opaque its own colours are, so the alpha travels with it.
         if (k === 'fill' || k === 'fillRect') fills.push(withAlpha(t.fillStyle, Number(t.globalAlpha)));
-        if (k === 'fillText') texts.push({ text: String(a[0]), x: Number(a[1]), y: Number(a[2]), fillStyle: withAlpha(t.fillStyle, Number(t.globalAlpha)), font: String(t.font) });
+        if (k === 'fillRect') ops.push({ kind: 'rect', style: withAlpha(t.fillStyle, Number(t.globalAlpha)), rect: a.map(Number) });
+        if (k === 'fillText') {
+          const text = { text: String(a[0]), x: Number(a[1]), y: Number(a[2]), fillStyle: withAlpha(t.fillStyle, Number(t.globalAlpha)), font: String(t.font) };
+          texts.push(text);
+          ops.push({ kind: 'text', text });
+        }
         if (k === 'strokeRect') strokes.push({ style: String(t.strokeStyle), width: Number(t.lineWidth), rect: a.map(Number) });
       };
     },
     set(t, k: string, v) { t[k] = v; return true; },
   });
-  return { ctx, fills, texts, strokes };
+  return { ctx, fills, texts, strokes, ops };
 }
 
 /* ─────────────────────────── the theme grounds ─────────────────────────── */
@@ -195,10 +208,13 @@ type Tile = { name: string; path: string; size: number; type: string; depth: num
 
 const MAP_W = 1000, MAP_H = 1000;
 
-/** Paint `tiles` with the real drawTreemap — coloured by the size ramp unless `colour` says otherwise. */
-function paint(tiles: Tile[], colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size)) {
+/**
+ * Paint `tiles` with the real drawTreemap — coloured by the size ramp unless
+ * `colour` says otherwise, on the live map unless `history` says otherwise.
+ */
+function paint(tiles: Tile[], colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.size), history = { active: false, diff: false }) {
   const rec = recordingCtx();
-  const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as any[], colorMode: 'size', mode: 'treemap', query: '' } };
+  const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history, pxRects: [] as any[], colorMode: 'size', mode: 'treemap', query: '' } };
   const draw = load<() => void>(['drawTreemap'], {
     $: () => ({ clientWidth: MAP_W + 20 }),
     treemapCanvasHeight: () => MAP_H,
@@ -220,6 +236,7 @@ function paint(tiles: Tile[], colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.s
   // what is measured is one clean paint.
   rec.fills.length = 0;
   rec.texts.length = 0;
+  rec.ops.length = 0;
   draw();
   return rec;
 }
@@ -595,6 +612,97 @@ test('G09: where the cushion gives way for a label, it eases — a Reclaim "keep
   }
 });
 
+/* ══════════════ G09 — the History diff: a label read through its folder's wash ══════════════ */
+
+/**
+ * What the canvas holds at (x, y) as op `upTo` is drawn: every rectangle
+ * filled over that point before it, replayed in order over `ground` — the
+ * leaf's cushion, then anything laid over it. `leaf` is the last cushion
+ * painted there and `washes` counts the flat fills laid over it since.
+ */
+function canvasAt(ops: Op[], upTo: number, x: number, y: number, ground: RGB): { rgb: RGB; leaf: number[] | null; washes: number } {
+  let rgb = ground, leaf: number[] | null = null, washes = 0;
+  for (const op of ops.slice(0, upTo)) {
+    if (op.kind !== 'rect') continue;
+    const [rx, ry, rw, rh] = op.rect;
+    if (x < rx || x >= rx + rw || y < ry || y >= ry + rh) continue;
+    if (op.style && typeof op.style === 'object') {
+      const g = op.style as Grad;
+      rgb = at(g, Math.max(0, Math.min(1, (y - g.args[1]) / (g.args[3] - g.args[1]))), rgb);
+      leaf = op.rect;
+      washes = 0;
+    } else if (typeof op.style === 'string' && /^(#|rgb)/i.test(op.style)) {
+      rgb = over(rgba(op.style), rgb);
+      washes++;
+    }
+  }
+  return { rgb, leaf, washes };
+}
+
+/** Each line `rec` wrote, with what the canvas held under its top and its foot as it was written. */
+function linesAsWritten(rec: ReturnType<typeof recordingCtx>, ground: RGB) {
+  const out: Array<{ text: Text; ends: RGB[]; washes: number }> = [];
+  for (const [i, op] of rec.ops.entries()) {
+    if (op.kind !== 'text' || fontPx(op.text.font) === 10.5) continue; // 10.5 px: a folder's name tag, on its own chip
+    const x = op.text.x + 1;
+    const top = canvasAt(rec.ops, i, x, op.text.y, ground);
+    assert.ok(top.leaf, `"${op.text.text}" is written on a tile`);
+    const footY = Math.min(top.leaf![1] + top.leaf![3] - 0.01, op.text.y + fontPx(op.text.font) * LEADING);
+    const foot = canvasAt(rec.ops, i, x, footY, ground);
+    out.push({ text: op.text, ends: [top.rgb, foot.rgb], washes: Math.min(top.washes, foot.washes) });
+  }
+  return out;
+}
+
+const DIFF_PAGE = load<{ diffRgb: (n: object) => RGB }>(['diffRgb'], {}, '{ diffRgb }', (c) => {
+  for (const prevSize of [5e9, 1e9, 2e10, null]) c.diffRgb({ size: 5e9, prevSize });
+});
+/** A node's earlier size for each History diff colour (diffRgb decides the colour from it). */
+const PREV: Record<string, (size: number) => number | null> = {
+  unchanged: (s) => s, grew: (s) => s / 4, shrank: (s) => s * 4, new: () => null,
+};
+
+test('G09: in the History diff, a label in a folder that grew, shrank or is new reaches 4.5:1 on its tile as the folder\'s wash leaves it — mid-folder, below the folder\'s tag, and under two washes', () => {
+  // Pass 2.5 lays a 30% wash of the folder's own diff colour over every
+  // expanded folder that changed, its leaves included, after pass 1 painted
+  // them and before pass 4 writes their labels — so a label is read on its
+  // cushion seen through that wash, not on the cushion alone. Chosen against
+  // the cushion alone, the unchanged grey leaf in the corner of a folder
+  // that grew took white at 4.64:1 and measured 3.67:1 under the teal wash
+  // (review F2.1). What is measured here is the canvas itself: every fill
+  // over the label's top and foot, replayed in the order it was drawn.
+  // Two washes of one colour too: under red › red the grey leaf below the
+  // tag reads at 4.5:1 only where its cushion eases for the washed colour.
+  const folderSets = [['grew'], ['shrank'], ['new'], ['unchanged'], ['grew', 'shrank'], ['shrank', 'grew'], ['shrank', 'shrank'], ['grew', 'grew']];
+  const heights = [15, 18, 22, 27, 31, 36, 40, 44, 48, 53, 56, 60, 65, 68, 71, 74, 77, 87, 110, 126, 170];
+  const nodes: Tile[] = [];
+  const slots: Array<{ what: string; x: number; y: number }> = [];
+  for (const folders of folderSets) for (const kind of Object.keys(PREV)) for (const corner of [true, false]) for (const h of heights) {
+    if (corner && h < 36) continue; // below the tag, a label needs 36 px of tile
+    const i = slots.length, x = (i % 10) * 100, y = Math.floor(i / 10) * 210;
+    const off = corner ? 2 : 30;  // in the folder's top-left corner, or clear of its tag
+    const fh = off + h + 4;
+    folders.forEach((f, d) => nodes.push({ name: `D${i}.${d}`, path: `/r/d${i}${'/in'.repeat(d)}`, size: 2e10, prevSize: PREV[f](2e10), type: 'dir', depth: d + 1, expanded: true,
+      x: ((x + d) / MAP_W) * 100, y: ((y + d) / MAP_H) * 100, w: ((100 - 2 * d) / MAP_W) * 100, h: ((fh - 2 * d) / MAP_H) * 100 } as Tile));
+    nodes.push({ name: `file-${i}.mov`, path: `/r/d${i}/file-${i}.mov`, size: 5e9, prevSize: PREV[kind](5e9), type: 'file', depth: folders.length + 1, expanded: false,
+      x: ((x + 2) / MAP_W) * 100, y: ((y + off) / MAP_H) * 100, w: (96 / MAP_W) * 100, h: (h / MAP_H) * 100 } as Tile);
+    slots.push({ what: `${folders.join(' › ')} folder, ${kind} leaf, ${corner ? 'below the tag' : 'mid-folder'}, ${h} px`, x: x + 2, y });
+  }
+  const rec = paint(nodes, (n) => DIFF_PAGE.diffRgb(n), { active: true, diff: true });
+  const whatAt = (t: Text) => slots.find((s) => Math.abs(t.x - (s.x + 5)) < 0.01 && t.y >= s.y && t.y < s.y + 210)!.what;
+  const washed = [0, 0, 0];
+  for (const [theme, ground] of THEMES) {
+    for (const line of linesAsWritten(rec, ground)) {
+      const ink = rgba(String(line.text.fillStyle));
+      const c = Math.min(...line.ends.map((under) => contrast(over(ink, under), under)));
+      assert.ok(c >= 4.5, `${theme}, ${whatAt(line.text)}: "${line.text.text}" in ${String(line.text.fillStyle)} measures ${fmt(c)}:1 on its tile under ${line.washes} wash(es) (floor 4.5:1)`);
+      washed[Math.min(2, line.washes)]++;
+    }
+  }
+  assert.ok(washed[1] > 400 && washed[2] > 200 && washed[0] > 100,
+    `labels were measured with no wash (${washed[0]}), one (${washed[1]}) and two (${washed[2]}) over them`);
+});
+
 /* ══════════════ G01/G09 — the SVG export is the map's own recipe ══════════════ */
 
 /**
@@ -605,8 +713,8 @@ test('G09: where the cushion gives way for a label, it eases — a Reclaim "keep
  * 2.87:1 (review F1.3, F1.9). The real exportTreemapSVG runs here over the
  * pxRects the real drawTreemap left, and its SVG is read back.
  */
-function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string) {
-  const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as any[],
+function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }) {
+  const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history, pxRects: [] as any[],
     colorMode: 'size', mode: 'treemap', query: '', rootName: 'r' } };
   const rec = recordingCtx();
   const common = {
@@ -621,6 +729,7 @@ function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string) {
   const draw = load<() => void>(['drawTreemap'], common, 'drawTreemap', (d) => d());
   rec.fills.length = 0;
   rec.texts.length = 0;
+  rec.ops.length = 0;
   draw();
   let svg = '';
   const exp = load<() => void>(['exportTreemapSVG'], {
@@ -711,6 +820,79 @@ test('G01: the SVG export frames each folder as the canvas does — a dark outli
   assert.ok(Number(top!['stroke-width']) > Number(inner!['stroke-width']), 'heavier at the top level');
   for (const [x, what] of [[1.5, 'top'], [21.5, 'inner']] as const) {
     assert.ok(frames.some((f) => /^rgba\(255,255,255,/.test(f.stroke) && Math.abs(Number(f.x) - x) < 0.06), `the ${what} folder has a light rim inside its outline`);
+  }
+});
+
+/**
+ * Each leaf label the SVG writes, with what the SVG has painted under its
+ * top and its foot by then: every rectangle before it, in document order,
+ * over `ground` — a gradient fill read from its <linearGradient>, a flat
+ * fill at its fill-opacity.
+ */
+function svgLines(svg: string, ground: RGB) {
+  const grads = new Map<string, { y1: number; y2: number; stops: RGB[] }>();
+  for (const m of svg.matchAll(/<linearGradient ([^>]*)>([\s\S]*?)<\/linearGradient>/g)) {
+    const a = attrs(m[1]);
+    grads.set(a.id, { y1: Number(a.y1), y2: Number(a.y2), stops: [...m[2].matchAll(/stop-color="([^"]*)"/g)].map((s) => rgba(s[1]).slice(0, 3) as RGB) });
+  }
+  const under = (upTo: number, x: number, y: number) => {
+    let rgb = ground, leaf: number[] | null = null;
+    for (const m of svg.slice(0, upTo).matchAll(/<rect ([^>]*?)\/?>/g)) {
+      const a = attrs(m[1]);
+      const box = ['x', 'y', 'width', 'height'].map((k) => Number(a[k] ?? 0));
+      if (a.fill === 'none' || x < box[0] || x >= box[0] + box[2] || y < box[1] || y >= box[1] + box[3]) continue;
+      const grad = /^url\(#([\w-]+)\)$/.exec(a.fill)?.[1];
+      if (grad) {
+        const g = grads.get(grad)!;
+        rgb = lerp(g.stops[0], g.stops[1], Math.max(0, Math.min(1, (y - g.y1) / (g.y2 - g.y1))));
+        leaf = box;
+      } else {
+        const [r, gr, b, al] = rgba(a.fill);
+        rgb = over([r, gr, b, al * Number(a['fill-opacity'] ?? 1)], rgb);
+      }
+    }
+    return { rgb, leaf };
+  };
+  const out: Array<{ text: string; fill: string; ends: RGB[] }> = [];
+  for (const m of svg.matchAll(/<text ([^>]*)>([^<]*)<\/text>/g)) {
+    const a = attrs(m[1]);
+    if (a['font-size'] === '10.5') continue; // a folder's name tag, on its own chip
+    const fpx = Number(a['font-size']), x = Number(a.x) + 1, top = Number(a.y) - fpx * 0.8;
+    const t = under(m.index!, x, top);
+    assert.ok(t.leaf, `"${m[2]}" is written on a leaf`);
+    const foot = under(m.index!, x, Math.min(t.leaf![1] + t.leaf![3] - 0.01, top + fpx * LEADING));
+    out.push({ text: m[2], fill: a.fill, ends: [t.rgb, foot.rgb] });
+  }
+  return out;
+}
+
+test('G09: the SVG export lays the History diff\'s wash over each folder that grew or shrank, as the canvas does, and its labels read 4.5:1 through it', () => {
+  // The canvas picks a label's ink against the cushion seen through its
+  // folder's wash (review F2.1); an export that left the wash out would
+  // write that ink on a tile it was not chosen for, and lose the diff.
+  const leaf = (name: string, x: number, y: number, h: number, kind: string): Tile => ({ name, path: `/r/${name}`, size: 5e9, prevSize: PREV[kind](5e9),
+    type: 'file', depth: 2, expanded: false, x, y, w: 9.6, h: h / 10 } as Tile);
+  const folder = (name: string, x: number, y: number, kind: string): Tile => ({ name, path: `/r/${name}`, size: 2e10, prevSize: PREV[kind](2e10),
+    type: 'dir', depth: 1, expanded: true, x, y, w: 40, h: 40 } as Tile);
+  const tiles = [
+    folder('Projects', 0, 0, 'grew'), leaf('keep.bin', 0.2, 0.2, 40, 'unchanged'), leaf('mid.bin', 0.2, 10, 68, 'unchanged'),
+    folder('Old', 50, 0, 'shrank'), leaf('grew.bin', 50.2, 0.2, 60, 'grew'), leaf('same.bin', 50.2, 10, 68, 'unchanged'),
+    folder('Same', 0, 50, 'unchanged'), leaf('here.bin', 0.2, 50.2, 60, 'unchanged'),
+  ];
+  const { svg, rec } = exportSvg(tiles, (n) => DIFF_PAGE.diffRgb(n), '#0e0e13', { active: true, diff: true });
+  const box = (r: number[]) => r.map((v) => v.toFixed(1)).join(' ');
+  const onCanvas = rec.ops.slice(1).filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string')
+    .map((op) => `${box(op.rect)} ${rgba(String(op.style)).join(',')}`);
+  assert.equal(onCanvas.length, 2, `the canvas washes the two folders that changed, and not the one that did not (${onCanvas.join(' | ')})`);
+  const inSvg = [...svg.matchAll(/<rect ([^>]*)\/>/g)].map((m) => attrs(m[1])).filter((a) => 'fill-opacity' in a)
+    .map((a) => `${box(['x', 'y', 'width', 'height'].map((k) => Number(a[k])))} ${[...rgba(a.fill).slice(0, 3), Number(a['fill-opacity'])].join(',')}`);
+  assert.deepEqual(inSvg, onCanvas, 'the SVG lays the same washes, over the same frames, in the same colours');
+  const lines = svgLines(svg, [14, 14, 19]);
+  assert.ok(lines.length >= 8, `the leaves' lines are written (${lines.length})`);
+  for (const l of lines) {
+    const ink = rgba(l.fill);
+    const c = Math.min(...l.ends.map((u) => contrast(over(ink, u), u)));
+    assert.ok(c >= 4.5, `"${l.text}" in ${l.fill}: ${fmt(c)}:1 on its tile in the SVG (floor 4.5:1)`);
   }
 });
 

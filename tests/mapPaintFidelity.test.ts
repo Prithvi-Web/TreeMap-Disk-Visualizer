@@ -142,7 +142,7 @@ const GREEN = [48, 209, 88];
 function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
   const rec = recordingCtx();
   const state = { treemap: { nodes: [tile], hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
-  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'mix', 'containerListable'], {
+  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmDiffWashes', 'tmWashesOver', 'tmSeenThrough', 'TM_DIFF_WASH', 'mix', 'containerListable'], {
     $: () => ({ clientWidth: 120 }),
     treemapCanvasHeight: () => 100,
     window: { devicePixelRatio: 1 },
@@ -169,7 +169,7 @@ function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
 function lensFill(pxRects: any[], colour: number[] = GREEN, at = { x: 25, y: 25 }) {
   const rec = recordingCtx();
   const paint = load<(ctx: unknown, w: number, h: number) => void>(
-    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA'], {
+    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'tmSeenThrough', 'TM_DIFF_WASH'], {
       state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [] } },
       isCells: () => false,
       cssVar: () => '#0b0b0f',

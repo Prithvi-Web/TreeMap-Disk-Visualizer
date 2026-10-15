@@ -1137,7 +1137,8 @@ function exportTreemapPNG() {
  * The map as an SVG, drawn with the canvas's own recipe (review F1.3, F1.9):
  * each leaf the cushion pass 1 painted it with (r.stops — opaque, in the
  * colour mode on screen, eased under its label where it had to be), each
- * folder pass 2's dark outline and light rim, and each label at the lines
+ * folder pass 2's dark outline and light rim, in the History diff pass
+ * 2.5's wash over each folder that changed, and each label at the lines
  * and in the ink pass 4 chose (r.label, tmLabelInk). It once redrew the map
  * with the recipe G01 and G09 retired — every leaf faded by depth over the
  * page, in the size ramp whatever the colour mode, its labels fixed black.
@@ -1185,6 +1186,14 @@ function exportTreemapSVG() {
         `fill="none" stroke="rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05).toFixed(2)})" stroke-width="1"/>`
       );
     }
+  }
+  // The History diff's wash over each folder that grew or shrank (pass 2.5):
+  // the diff itself, and what each label's ink was chosen through (F2.1).
+  for (const { r, rgb: c } of tmDiffWashes(state.treemap.pxRects)) {
+    parts.push(
+      `<rect x="${(r.x + 0.5).toFixed(1)}" y="${(r.y + 0.5).toFixed(1)}" width="${Math.max(1, r.w - 1).toFixed(1)}" height="${Math.max(1, r.h - 1).toFixed(1)}" ` +
+      `fill="${rgb(c)}" fill-opacity="${TM_DIFF_WASH}"/>`
+    );
   }
   // Labels — at the lines pass 4 wrote them, in the ink it chose. An SVG
   // text's y is its baseline, about 0.8 of the font size below its top.
