@@ -506,7 +506,7 @@ test('a scan started from a button its own chrome then hides moves focus on — 
   const $ = (id: string) => (id === 'emptyState' ? emptyState : inert);
   const given: Record<string, unknown> = {
     state: { scanGen: 0, whatsNew: { seq: 0 } }, $,
-    switchView: (name: string) => { order.push(`switch ${name} (empty state ${$('emptyState').style.display})`); },
+    switchView: (name: string) => { order.push(`switch ${name} (empty state ${emptyState.style.display})`); },
     withFocusKept: (change: () => void) => { order.push('kept: before'); change(); order.push('kept: after'); },
   };
   const scope = new Proxy(given, { has: (_t, k) => typeof k === 'string' && k !== 'beginScanChrome', get: (t, k) => (k === Symbol.unscopables ? undefined : k in t ? t[k as string] : inert), set: (t, k, v) => { t[k as string] = v; return true; } });
@@ -589,7 +589,8 @@ test('the closing steps — all clean, could not check, the cart — offer one b
   // A tour at its last card has nothing left to skip: Skip there would sit
   // beside Finish, two ways to the same end, and only the welcome-to-win
   // steps were ever rendered by a test.
-  for (const [step, opts] of [['clean', {}], ['unknown', {}], ['cart', { added: [] }], ['cart', { added: ['/c/a'], cart: ['/c/a'] }]] as const) {
+  const closing: Array<[string, Parameters<typeof tourCard>[1]]> = [['clean', {}], ['unknown', {}], ['cart', { added: [] }], ['cart', { added: ['/c/a'], cart: ['/c/a'] }]];
+  for (const [step, opts] of closing) {
     const card = tourCard(step, opts);
     const buttons = [...card.html.matchAll(/<button\b[^>]*>[^<]*<\/button>/g)].map((m) => m[0]);
     assert.deepEqual(buttons, ['<button class="btn btn-primary" data-tour-done>Finish</button>'], `${step}: Finish alone: ${card.html}`);
