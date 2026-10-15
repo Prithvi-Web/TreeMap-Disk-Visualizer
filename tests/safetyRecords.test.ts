@@ -20,7 +20,7 @@ import { createApp } from '../src/server';
 import { buildMcpServer } from '../src/mcp/server';
 import { startScan } from '../src/services/diskScanner';
 import { moveToTrash, setTrashStepForTests } from '../src/services/cleaner';
-import { normalizePolicy, setRecordCheckForTests, simulatePolicy } from '../src/services/autopilot';
+import { approvePolicyForTests, listPolicies, normalizePolicy, runPolicy, savePolicies, setRecordCheckForTests, simulatePolicy } from '../src/services/autopilot';
 import { protectAndTrash } from '../src/services/timeCapsule';
 import { relocateSecret } from '../src/services/securityHygieneScanner';
 import { POLICY_FILE } from '../src/services/policy';
@@ -264,5 +264,34 @@ test('Autopilot over a folder above app-data — the home folder, typed as it is
     setRecordCheckForTests(null);
     fs.rmSync(own, { force: true });
     fs.unlinkSync(via);
+  }
+});
+
+test('a run that left the audit log alone beside a part of an installed program never says everything it matched was part of an installed program — the safety records count among the reasons with no short name (review round 2, F2.3; BQF-1 test gap)', async () => {
+  // runPolicy names one reason for a run that selected nothing only when that
+  // reason covers everything it left alone. Its `otherwise` count has two
+  // sources: the spill folder's entry (pinned in spillGuard.test.ts) and the
+  // agent policy and its audit log, which resolveCandidates pushes onto the
+  // same list. A run here matches the audit log and a file inside an app: both
+  // are left alone, so neither reason alone may be said to cover what it left.
+  const apps = path.join(HOME, 'apps');
+  const inApp = path.join(apps, 'Fake.app', 'Contents', 'Resources', 'payload.jsonl');
+  fs.mkdirSync(path.dirname(inApp), { recursive: true });
+  fs.writeFileSync(inApp, '{"part":"of an app"}\n');
+  try {
+    const [policy] = await savePolicies([{ id: 'home-jsonl', name: 'jsonl files', path: HOME, match: { kind: 'custom', minBytes: 0, exts: ['jsonl'] }, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(policy.id);
+    const run = await runPolicy((await listPolicies())[0]);
+    assert.deepEqual(run.items, [], `control: nothing is selected (${run.status}: ${run.blockedReason})`);
+    assert.deepEqual(run.skipped.filter((s) => /agent policy and its audit log/.test(s.reason)).map((s) => s.path), [AUDIT],
+      `control: the audit log is left alone as a safety record: ${JSON.stringify(run.skipped)}`);
+    assert.ok(run.skipped.some((s) => s.path.startsWith(path.join(apps, 'Fake.app')) && /inside the app “Fake”/.test(s.reason)),
+      `control: and the app's file as a part of an installed program: ${JSON.stringify(run.skipped)}`);
+    assert.equal(run.skipped.length, 2, `control: nothing else was left alone: ${JSON.stringify(run.skipped)}`);
+    assert.equal(run.blockedReason, 'Everything that matched was left alone — nothing was deleted.',
+      'the audit log is a reason of its own, so "part of an installed program" does not cover everything');
+  } finally {
+    await savePolicies([]);
+    fs.rmSync(apps, { recursive: true, force: true });
   }
 });
