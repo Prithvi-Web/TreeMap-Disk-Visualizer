@@ -615,6 +615,9 @@ test('G22: the topology\'s threshold is the All Storage strip\'s — one number,
  * The Disk Topology card's whole module from the built page, run over stubs:
  * its topic subscriptions are captured so a test can fire them, and every
  * request it makes is counted. Returns the card's bars by disk title.
+ * `refresh(how)` clicks Refresh with the layout request answering as `how`
+ * says: the layout, an error, the server's "not available here" (409), or
+ * a layout with no disks in it.
  */
 function topologyCard(topo: unknown, homeDir: string) {
   // The module as the page carries it: its source file, found whole in the built page.
@@ -623,12 +626,19 @@ function topologyCard(topo: unknown, homeDir: string) {
   const body = { innerHTML: '', classList: { remove() {}, add() {} }, querySelector: (sel: string) => (sel === '.topo-disk' && body.innerHTML.includes('topo-disk') ? {} : null), querySelectorAll: () => [] };
   const handlers: Record<string, Array<() => void>> = {};
   const clicks: Record<string, () => void> = {};
-  const state: { system: { homeDir: string }; root: { path: string } | null; capabilities: null } = { system: { homeDir }, root: null, capabilities: null };
-  let asked = 0, draws = 0, failing = false;
+  type Capabilities = { volumeTopology: { available: boolean; reason?: string } } | null;
+  const state: { system: { homeDir: string }; root: { path: string } | null; capabilities: Capabilities } = { system: { homeDir }, root: null, capabilities: null };
+  type Answer = 'layout' | 'fail' | 'unavailable' | 'empty';
+  let asked = 0, draws = 0, answer: Answer = 'layout';
   const deps: Record<string, unknown> = {
     $: (id: string) => (id === 'topologyBody' ? body : { addEventListener: (_: string, fn: () => void) => { clicks[id] = fn; } }),
     state,
-    api: async () => { asked++; if (failing) throw new Error('diskutil did not answer'); return topo; },
+    api: async () => {
+      asked++;
+      if (answer === 'fail') throw new Error('diskutil did not answer');
+      if (answer === 'unavailable') throw Object.assign(new Error('Disk layout needs diskutil, which this Mac does not have.'), { capabilityUnavailable: true });
+      return answer === 'empty' ? { physicalDisks: [], logicalVolumes: [] } : topo;
+    },
     TOPIC: { capabilities: 'capabilities', scan: 'scan' },
     subscribe: (topic: string, fn: () => void) => { (handlers[topic] ??= []).push(fn); },
     emit() {}, reportError() {},
@@ -650,7 +660,7 @@ function topologyCard(topo: unknown, homeDir: string) {
     }
     return out;
   };
-  const refresh = async (fail: boolean) => { failing = fail; clicks.topologyRefresh(); await settle(); };
+  const refresh = async (how: Answer) => { answer = how; clicks.topologyRefresh(); await settle(); };
   return { state, fire, bars, refresh, asked: () => asked, draws: () => draws, html: () => body.innerHTML };
 }
 
@@ -678,11 +688,47 @@ test('G22: when the folder on screen moves to another disk, the topology redraws
     assert.equal(card.asked(), 1, 'all from the layout in hand: no new request');
     // A card showing that it could not read the layout is not drawn over
     // with the layout it read before.
-    await card.refresh(true);
+    await card.refresh('fail');
     assert.match(card.html(), /Couldn’t read the disk layout/, 'a failed refresh says so');
     card.state.root = { path: '/Volumes/Backup/Photos' };
     await card.fire('scan');
     assert.match(card.html(), /Couldn’t read the disk layout/, 'and a scan after it does not paint the old layout back');
+  })();
+});
+
+test('G22: a topology card saying the layout is not available here, or that no disk is visible, is not drawn over by a scan with the layout it showed before', () => {
+  // The card forgets the layout it drew wherever it stops showing one — on
+  // an error, when the layout is not available on this computer (from the
+  // capability answer, or the server's 409), and when the answer holds no
+  // disk. Only the error path ran under test, so dropping the reset from
+  // the other two left a scan that moves the folder on screen to another
+  // disk painting the old layout back over the card's answer (review F2.2).
+  return (async () => {
+    const cases = [
+      { how: 'not available (capability answer)', says: /Disk layout is not on this Mac/ },
+      { how: 'not available (409)', says: /Disk layout needs diskutil/ },
+      { how: 'no disks', says: /No disks are visible right now/ },
+    ];
+    for (const { how, says } of cases) {
+      const card = topologyCard(TOPO, '/Users/me');
+      await card.fire('capabilities');
+      card.state.root = { path: '/Volumes/Backup/Photos' };
+      await card.fire('scan');
+      assert.equal(card.bars()['Backup Drive'], true, `${how}: first the layout is drawn, the scanned drive red`);
+      if (how === 'not available (capability answer)') {
+        card.state.capabilities = { volumeTopology: { available: false, reason: 'Disk layout is not on this Mac.' } };
+        const asked = card.asked();
+        await card.refresh('layout');
+        assert.equal(card.asked(), asked, `${how}: the capability answer is believed without a doomed request`);
+      } else {
+        await card.refresh(how === 'no disks' ? 'empty' : 'unavailable');
+      }
+      assert.match(card.html(), says, `${how}: the card says so`);
+      card.state.root = { path: '/Users/me/Projects' };
+      await card.fire('scan');
+      assert.match(card.html(), says, `${how}: a scan that moves the folder on screen to another disk leaves it saying so`);
+      assert.ok(!card.html().includes('topo-disk'), `${how}: no disk of the old layout is painted back`);
+    }
   })();
 });
 
