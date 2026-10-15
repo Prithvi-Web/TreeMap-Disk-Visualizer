@@ -237,7 +237,7 @@ function cardFinder(host: TEl, found: Record<string, TEl>, make: () => TEl = () 
 }
 
 /** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
-function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; wins?: Array<Record<string, unknown>>; cart?: string[]; takeFocus?: boolean } = {}) {
+function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; wins?: Array<Record<string, unknown>>; cart?: string[]; takeFocus?: boolean; active?: unknown } = {}) {
   const els: Record<string, TEl> = {};
   const $ = (id: string) => (els[id] ??= tel());
   const host = $('tourCard');
@@ -262,7 +262,7 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
     'tourWinLine', 'document', `'use strict'; ${render} ${advance} return { tourRender, tourCartChanged: typeof tourCartChanged === 'function' ? tourCartChanged : () => {} };`)(
     $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart, root: null }, () => '', (s: string) => s,
-    (n: number) => `${n} B`, (folder: unknown) => { scans.push([folder, $('pathInput').value]); }, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: null },
+    (n: number) => `${n} B`, (folder: unknown) => { scans.push([folder, $('pathInput').value]); }, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: opts.active ?? null },
   ) as { tourRender: (takeFocus?: boolean) => void; tourCartChanged: () => void };
   fn.tourRender(opts.takeFocus);
   const textOf = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -883,4 +883,45 @@ test('the closing steps — all clean, could not check, the cart — offer one b
     assert.doesNotMatch(card.html, /data-tour-skip|Skip the tour/, `${step}: no Skip`);
     assert.equal(card.found['data-tour-done']?.focused ?? 0, 1, `${step}: and Finish takes focus`);
   }
+});
+
+/* ══════════════ Review F3.2 — a hidden field holds no caret ══════════════ */
+
+test('a text field the first scan\'s own change of view hid holds no caret: the map card takes focus, not <body> (review F3.2)', async () => {
+  // The tour moves the first scan from the Dashboard to the map it narrates
+  // (switchView('treemap') in its TOPIC.scan subscriber). With the Dashboard's
+  // path box focused, that hid the field — and a browser moves focus off a
+  // field that stops painting only at a later rendering step, to <body>. The
+  // card's "typing" guard read the hidden INPUT as a caret to protect and
+  // moved focus nowhere.
+  const at = INDEX.indexOf('subscribe(TOPIC.scan, () => {', INDEX.indexOf('function tourScanFailed('));
+  assert.notEqual(at, -1, 'the tour\'s scan subscriber is in the page');
+  let depth = 0; let end = -1;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length && end === -1; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) end = i + 1;
+  }
+  const subscriber = `${INDEX.slice(at, end)});`;
+  const run = async (hides: boolean) => {
+    const field: { tagName: string; rects: number; getClientRects: () => unknown[] } = { tagName: 'INPUT', rects: 1, getClientRects: () => Array.from({ length: field.rects }) };
+    const card = tourCard('scanning', { active: field });
+    const state = { root: { name: 'Users' }, view: 'dashboard' };
+    const views: string[] = [];
+    // switchView hides the Dashboard, and the path box with it — unless the field is elsewhere, still on screen.
+    const switchView = (v: string) => { views.push(v); state.view = v; if (hides) field.rects = 0; };
+    const landed: Array<() => void> = [];
+    new Function('subscribe', 'TOPIC', 'tour', 'state', 'switchView', 'tourRender', `'use strict'; ${subscriber}`)(
+      (_topic: string, fn: () => void) => { landed.push(fn); }, { scan: 'scan' }, card.tour, state, switchView, card.render);
+    assert.equal(landed.length, 1, 'the subscriber is registered');
+    landed[0]();
+    await new Promise((r) => setImmediate(r)); // the subscriber's microtask
+    return { card, views };
+  };
+  const hidden = await run(true);
+  assert.deepEqual([hidden.card.tour.step, hidden.views], ['map', ['treemap']], 'control: the first scan lands and the tour puts the map on screen');
+  assert.match(hidden.card.now().text, /This is your disk as a map/, 'control: the map card');
+  assert.equal(hidden.card.found['data-tour-wins']?.focused ?? 0, 1, 'the path box it hid holds no caret: "Show me what I could free" takes focus');
+  const kept = await run(false);
+  assert.match(kept.card.now().text, /This is your disk as a map/, 'control: the map card');
+  assert.equal(kept.card.found['data-tour-wins']?.focused ?? 0, 0, 'a field still on screen keeps its caret: the card takes no focus from it');
 });

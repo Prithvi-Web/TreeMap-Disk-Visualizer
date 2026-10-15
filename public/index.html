@@ -30438,7 +30438,11 @@ function tourRender(takeFocus = true) {
   // focus on the button it replaced would fall to <body>. Skip, which sits
   // apart in the header, only when the card has nothing else: the scanning
   // step, painted over the "Scan my home folder" that held focus (G11).
-  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  // A field that is not on screen holds no caret: the first scan's switch to
+  // the map hides the Dashboard's path box, and a browser moves focus off a
+  // hidden field only at a later rendering step — to <body> (review F3.2).
+  const active = document.activeElement;
+  const typing = !!active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '') && active.getClientRects().length > 0;
   const cta = tour.step === 'welcome' ? $('emptyBrowseBtn') : null;
   const primary = (cta && cta.getClientRects().length > 0 ? cta : null) || tourCardControl();
   if (primary && takeFocus && !typing) primary.focus();
