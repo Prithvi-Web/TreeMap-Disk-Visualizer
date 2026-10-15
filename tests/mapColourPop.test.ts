@@ -759,14 +759,14 @@ test('G09: in the History diff, a label in a folder that grew, shrank or is new 
  * 2.87:1 (review F1.3, F1.9). The real exportTreemapSVG runs here over the
  * pxRects the real drawTreemap left, and its SVG is read back.
  */
-function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }) {
+function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string, history = { active: false, diff: false }, palette?: Record<string, string>) {
   const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history, pxRects: [] as any[],
     colorMode: 'size', mode: 'treemap', query: '', rootName: 'r' } };
   const rec = recordingCtx();
   const common = {
     $: () => ({ clientWidth: MAP_W + 20 }), treemapCanvasHeight: () => MAP_H, window: { devicePixelRatio: 1 },
     tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: MAP_W, height: MAP_H }, tmBufCtx: rec.ctx,
-    cssVar: (name: string) => (name === '--bg-1' ? ground : 'rgba(0,0,0,0.3)'),
+    cssVar: (name: string) => (palette ? palette[name] ?? '' : name === '--bg-1' ? ground : 'rgba(0,0,0,0.3)'),
     state,
     tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
     cellRgb: colour, sizeRgb: () => [255, 0, 255], tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {},
@@ -873,7 +873,8 @@ test('G01: the SVG export frames each folder as the canvas does — a dark outli
  * Each leaf label the SVG writes, with what the SVG has painted under its
  * top and its foot by then: every rectangle before it, in document order,
  * over `ground` — a gradient fill read from its <linearGradient>, a flat
- * fill at its fill-opacity.
+ * fill at its fill-opacity. A leaf is a rectangle carrying its <title>;
+ * the background, the frames and the washes close themselves.
  */
 function svgLines(svg: string, ground: RGB) {
   const grads = new Map<string, { y1: number; y2: number; stops: RGB[] }>();
@@ -883,7 +884,7 @@ function svgLines(svg: string, ground: RGB) {
   }
   const under = (upTo: number, x: number, y: number) => {
     let rgb = ground, leaf: number[] | null = null;
-    for (const m of svg.slice(0, upTo).matchAll(/<rect ([^>]*?)\/?>/g)) {
+    for (const m of svg.slice(0, upTo).matchAll(/<rect ([^>]*?)(\/?)>/g)) {
       const a = attrs(m[1]);
       const box = ['x', 'y', 'width', 'height'].map((k) => Number(a[k] ?? 0));
       if (a.fill === 'none' || x < box[0] || x >= box[0] + box[2] || y < box[1] || y >= box[1] + box[3]) continue;
@@ -891,11 +892,11 @@ function svgLines(svg: string, ground: RGB) {
       if (grad) {
         const g = grads.get(grad)!;
         rgb = lerp(g.stops[0], g.stops[1], Math.max(0, Math.min(1, (y - g.y1) / (g.y2 - g.y1))));
-        leaf = box;
       } else {
         const [r, gr, b, al] = rgba(a.fill);
         rgb = over([r, gr, b, al * Number(a['fill-opacity'] ?? 1)], rgb);
       }
+      if (m[2] === '') leaf = box;
     }
     return { rgb, leaf };
   };
@@ -939,6 +940,50 @@ test('G09: the SVG export lays the History diff\'s wash over each folder that gr
     const ink = rgba(l.fill);
     const c = Math.min(...l.ends.map((u) => contrast(over(ink, u), u)));
     assert.ok(c >= 4.5, `"${l.text}" in ${l.fill}: ${fmt(c)}:1 on its tile in the SVG (floor 4.5:1)`);
+  }
+});
+
+test('G09/G27: the SVG export draws a cloud placeholder hollow and a staged block as an amber dashed outline, as the map does — neither as a cushion — and labels the hollow tile at 4.5:1', () => {
+  // Every SVG test exported plain leaves, so the export's two other leaf
+  // branches ran under no test: an opaque cloud, a solid one, an undashed
+  // one, or a staged block drawn as a cloud all left the suite green
+  // (review F2.3). Each is measured against what the canvas drew.
+  for (const [theme, palette] of [['dark', DARK], ['light', LIGHT]] as const) {
+    const cloud = { ...tile(0, 2, 4e9, 200), w: 9.6, cloudPlaceholder: true } as Tile;
+    const staged = { ...tile(1, 2, 3e9, 200), x: 12, w: 9.6, freed: true } as Tile;
+    const plain: Tile = { ...tile(2, 2, 2e9, 200), x: 24, w: 9.6 };
+    const { svg, rec } = exportSvg([cloud, staged, plain], () => [255, 72, 57], palette['--bg-1'], undefined, palette);
+    const leaves = new Map([...svg.matchAll(/<rect ([^>]*)><title>([^<]*?) — [^<]*<\/title><\/rect>/g)].map((m) => [m[2], attrs(m[1])]));
+    assert.equal(leaves.size, 3, `one titled rectangle per leaf (${[...leaves.keys()].join(', ')})`);
+    const box = (t: Tile) => [(t.x / 100) * MAP_W + 0.5, (t.y / 100) * MAP_H + 0.5, (t.w / 100) * MAP_W - 1, (t.h / 100) * MAP_H - 1];
+    const near = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) < 0.01);
+    const canvasFill = (t: Tile) => rec.ops.find((op) => op.kind === 'rect' && near(op.rect, box(t))) as Extract<Op, { kind: 'rect' }> | undefined;
+    const canvasStroke = (t: Tile) => rec.strokes.find((st) => near(st.rect.slice(0, 2), [box(t)[0] + 0.5, box(t)[1] + 0.5]));
+
+    const c = leaves.get(cloud.path)!;
+    assert.ok(!/^url\(/.test(c.fill), `${theme}: the cloud placeholder is not a cushion (fill ${c.fill})`);
+    const wash = String(canvasFill(cloud)?.style);
+    assert.ok(rgba(wash)[3] < 0.5, `${theme}: on the canvas it is a faint wash of its colour (${wash})`);
+    assert.deepEqual([...rgba(c.fill).slice(0, 3), Number(c['fill-opacity'])], rgba(wash),
+      `${theme}: and in the SVG the same faint wash (fill ${c.fill}, fill-opacity ${c['fill-opacity']})`);
+    assert.equal(c.stroke, canvasStroke(cloud)?.style, `${theme}: outlined in the canvas's stroke`);
+    assert.ok(c['stroke-dasharray'], `${theme}: dashed, as on the map`);
+
+    const s = leaves.get(staged.path)!;
+    assert.equal(s.fill, 'none', `${theme}: the staged block is an outline, not a fill — its space is not freed yet`);
+    assert.equal(s.stroke, palette['--warn'], `${theme}: in the theme's amber, --warn`);
+    assert.equal(s.stroke, canvasStroke(staged)?.style, `${theme}: as the canvas outlines it`);
+    assert.ok(s['stroke-dasharray'], `${theme}: dashed, as on the map`);
+
+    assert.match(leaves.get(plain.path)!.fill, /^url\(#/, `${theme}: a tile on this disk is still a cushion`);
+
+    const lines = svgLines(svg, rgba(palette['--bg-1']).slice(0, 3) as RGB).filter((l) => l.text === cloud.name || l.text === `${cloud.size} B`);
+    assert.equal(lines.length, 2, `${theme}: the hollow tile carries its name and size`);
+    for (const l of lines) {
+      const ink = rgba(l.fill);
+      const ratio = Math.min(...l.ends.map((u) => contrast(over(ink, u), u)));
+      assert.ok(ratio >= 4.5, `${theme}: "${l.text}" in ${l.fill} measures ${fmt(ratio)}:1 on the hollow tile over the page (floor 4.5:1)`);
+    }
   }
 });
 
