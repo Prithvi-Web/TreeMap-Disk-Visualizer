@@ -153,6 +153,22 @@ function counting(scan: ScanResult): { reads: { name: number; childPath: number;
   return { reads };
 }
 
+/**
+ * The paths a page of hits needs built (review F3.1): each hit's own, and
+ * each folder below the root on a hit's way down — counted once however many
+ * hits lie under it, and once when a hit is itself such a folder. Read from
+ * the hits' paths, so it shares nothing with the walk. A walk that builds
+ * any other folder's path (one with no hit under it) goes past it.
+ */
+function pathsNeeded(hits: QueryHit[], root: string): number {
+  const needed = new Set<string>();
+  for (const h of hits) {
+    needed.add(h.path);
+    for (let p = h.path.slice(0, h.path.lastIndexOf('/')); p.length > root.length; p = p.slice(0, p.lastIndexOf('/'))) needed.add(p);
+  }
+  return needed.size;
+}
+
 test('G07: a size query reads the names and paths of its hits, not of every node it walks past', async () => {
   const scan = scanOf(seededTree('/q/work', 0x51ce, 300));
   const store = scan.store as ScanStore;
@@ -160,13 +176,16 @@ test('G07: a size query reads the names and paths of its hits, not of every node
   const dirs = nodes.filter((n) => n.isDir).length;
   const { reads } = counting(scan);
   const out = await run(scan, 'size>500mb', { limit: 1000 });
-  assert.ok(out.total > 0 && out.total < 1000, `a selective query (${out.total} of ${nodes.length})`);
+  assert.ok(out.total > 0 && out.total < 1000 && out.hits.length === out.total, `a selective query, every hit on the page (${out.total} of ${nodes.length})`);
   assert.equal(out.examined, nodes.length);
   // Each hit's name for the page, and again inside the store as its path is
-  // built; each path built once from its folder's: at most every folder on a
-  // hit's way down, and the hit itself. Before, every node twice.
+  // built; each path built once from its folder's: every folder on a hit's
+  // way down, and the hit itself — no other folder's (review F3.1). Before,
+  // every node twice.
+  const needed = pathsNeeded(out.hits, '/q/work');
+  assert.ok(needed < out.total + dirs, `the hits need ${needed} paths of the ${out.total + dirs} a path for every folder would give`);
   assert.ok(reads.name <= 2 * out.total + dirs, `names read: ${reads.name} for ${out.total} hits among ${nodes.length} nodes`);
-  assert.ok(reads.childPath <= out.total + dirs, `paths built: ${reads.childPath} for ${out.total} hits in ${dirs} folders`);
+  assert.ok(reads.childPath <= needed, `paths built: ${reads.childPath} for ${out.total} hits needing ${needed} (${dirs} folders in all) — no folder's path built without a hit under it`);
   assert.equal(reads.path, 0, 'and no path rebuilt from the root');
 });
 
@@ -180,8 +199,13 @@ test('G07 review F2.3: many hits sharing folders build each folder\'s path once 
   // What building every hit's path down from the root, keeping nothing on
   // the way, would take: each folder below the root on its way, and itself.
   const rebuiltEachTime = out.hits.reduce((n, h) => n + h.path.split('/').length - '/q/many'.split('/').length, 0);
-  assert.ok(rebuiltEachTime > out.total + dirs, `the hits share folders: ${rebuiltEachTime} builds if none were kept, past the bound of ${out.total + dirs}`);
-  assert.ok(reads.childPath <= out.total + dirs, `paths built: ${reads.childPath} for ${out.total} hits in ${dirs} folders — each folder's once, however many hits lie under it`);
+  const needed = pathsNeeded(out.hits, '/q/many');
+  assert.ok(rebuiltEachTime > out.total + dirs, `the hits share folders: ${rebuiltEachTime} builds if none were kept, past even ${out.total + dirs}`);
+  assert.ok(needed < out.total + dirs, `and leave folders with no hit under them: they need ${needed} paths of the ${out.total + dirs} a path for every folder would give`);
+  // Each folder's once, however many hits lie under it — and only a folder
+  // with a hit under it (review F3.1): a walk that builds every folder's path
+  // as it passes is the per-node cost G07 removed.
+  assert.ok(reads.childPath <= needed, `paths built: ${reads.childPath} for ${out.total} hits needing ${needed} (${dirs} folders in all) — each folder's once, however many hits lie under it, and no folder's without one`);
   assert.equal(reads.path, 0, 'and no hit\'s path asked of the store whole, from the root');
 });
 
