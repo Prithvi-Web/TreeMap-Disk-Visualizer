@@ -12,6 +12,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { ON_DISK_DRIVE_SILENT, ON_DISK_UNAVAILABLE, onDiskProvider, setOnDiskForTests } from '../src/services/facts/onDiskProvider';
 import { platform } from '../src/platform';
+import { setMountTableReaderForTests } from '../src/services/emptyFolderCheck';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 
 /**
@@ -223,6 +224,77 @@ test('a drive that stops answering silences only itself: files on another drive 
   } finally {
     setOnDiskForTests(null);
     if (answer) (answer as () => void)();
+  }
+});
+
+test('which drive a file is on is the mount table\'s own answer: with no stand-in for it, a drive the table lists that stops answering silences only itself — and where the table cannot be read, or a drive cannot be told, every such file shares one silence (review round 3, F3.5)', { skip: !platform().blocksAreMeaningful && 'this system reports no blocks' }, async () => {
+  // The F2.2 test above names the drives itself (`driveOf`), so the provider's
+  // own wiring to the mount table (`driveOn`) was never run across two drives:
+  // a provider that named every file's drive alike passed it. Here the mount
+  // table lists `nas` as a mount of its own, and the provider asks it.
+  const root = fs.realpathSync(fileTempDir('tm-ondisk-mounts-'));
+  const nas = path.join(root, 'nas');
+  const ssd = path.join(root, 'ssd');
+  fs.mkdirSync(nas);
+  fs.mkdirSync(ssd);
+  const stuck = path.join(nas, 'holiday.mov');
+  const local = path.join(ssd, 'notes.bin');
+  for (const f of [stuck, local]) fs.writeFileSync(f, Buffer.alloc(DENSE, 7));
+  const scanned = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: root });
+  assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+  const scanId = scanned.body.scanId as string;
+
+  const answers: Array<() => void> = [];
+  const deadlines: Array<() => void> = [];
+  const stalling = {
+    lstat: (p: string) => (p !== stuck ? fs.promises.lstat(p)
+      : new Promise<fs.Stats>((resolve, reject) => { answers.push(() => { fs.promises.lstat(p).then(resolve, reject); }); })),
+    deadline: () => {
+      let pass = (): void => {};
+      const late = new Promise<void>((resolve) => { pass = resolve; });
+      deadlines.push(pass);
+      return { late, cancel: () => {} };
+    },
+  };
+  const signal = new AbortController().signal;
+  /** One request for the stalled file and the local one, its stalled look's deadline passed. */
+  const stallOnce = async (): Promise<Awaited<ReturnType<typeof onDiskProvider.compute>>> => {
+    const n = deadlines.length;
+    const asked = onDiskProvider.compute(scanId, [stuck, local], signal);
+    await waitFor(() => deadlines.length === n + 1, 'the stalled look to be given its deadline');
+    deadlines[n]();
+    return withinHangGuard(asked, 'the request to answer once the deadline passed');
+  };
+  /** The stalled look comes back, and the silence it left is lifted. */
+  const release = async (): Promise<void> => {
+    for (const a of answers.splice(0)) a();
+    await waitFor(async () => (await onDiskProvider.compute(scanId, [local], signal)).available, 'the silence to lift once the look comes back');
+  };
+  setOnDiskForTests(stalling); // the disk and the clock stood in for, never the drive
+  try {
+    setMountTableReaderForTests(async () => ({ source: 'mount', entries: [
+      { mountPoint: '/', filesystem: 'apfs', options: [] }, { mountPoint: nas, filesystem: 'smbfs', options: [] },
+    ], reason: null }));
+    const twoDrives = await stallOnce();
+    assert.equal(twoDrives.values.has(stuck), false, 'control: the stalled file has no answer — never a 0');
+    assert.ok((twoDrives.values.get(local)?.bytes ?? 0) >= DENSE, 'the file on the other drive, as the mount table tells them apart, is still measured');
+    await release();
+
+    // The table cannot be read: which drive is unknown, so one silence covers every file.
+    setMountTableReaderForTests(async () => { throw new Error('the mount table could not be read'); });
+    const unreadable = await stallOnce();
+    assert.deepEqual(unreadable.stats, { requested: 2, computed: 0, skipped: 1, failed: 1 }, 'with no table, the stalled look silences the file after it');
+    await release();
+
+    // A drive that cannot be told at all is one silence too, never a drive per file.
+    setOnDiskForTests({ ...stalling, driveOf: async () => { throw new Error('no drive for this path'); } });
+    const untold = await stallOnce();
+    assert.deepEqual(untold.stats, { requested: 2, computed: 0, skipped: 1, failed: 1 }, 'where the drive cannot be told, the stalled look silences the file after it');
+    await release();
+  } finally {
+    for (const a of answers.splice(0)) a();
+    setOnDiskForTests(null);
+    setMountTableReaderForTests(null);
   }
 });
 
