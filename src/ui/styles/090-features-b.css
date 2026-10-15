@@ -34,6 +34,13 @@
 .apps-scatter canvas { display: block; width: 100%; }
 .apps-scatter .as-h { font-size: 10.5px; font-weight: 600; letter-spacing: 0.6px;
   text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+/* Axis titles and what a dot is (design pass G24). */
+.apps-scatter .as-note { font-size: 11.5px; margin: -2px 0 6px; }
+.apps-scatter .as-plot { display: flex; align-items: center; gap: 2px; }
+.apps-scatter .as-y { writing-mode: vertical-rl; transform: rotate(180deg); flex: none;
+  font-size: 10.5px; color: var(--text-2); letter-spacing: 0.3px; }
+.apps-scatter .as-plot .as-wrap { flex: 1; min-width: 0; }
+.apps-scatter .as-x { text-align: center; font-size: 10.5px; color: var(--text-2); letter-spacing: 0.3px; margin-top: 2px; }
 #appsBody .bar { height: 100%; border-radius: 2px; }
 #appsBody .bp-item .cat { flex: none; width: 96px; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
 #appsBody .bp-item[data-jump] { cursor: var(--cur-hand); }

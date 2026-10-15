@@ -4,9 +4,18 @@
       <h2><span data-icon="box"></span>Storage by Application</h2>
       <div class="apps-info muted" id="appsInfo"></div>
       <div class="apps-scatter" id="appsScatter" hidden>
-        <div class="as-h">Size against file count — each dot an application</div>
-        <!-- Own wrapper: the chart kit anchors tooltips to the canvas parent. -->
-        <div class="as-wrap"><canvas id="appsScatterChart" height="200" aria-label="Scatter of application size against how many files each keeps" role="img"></canvas></div>
+        <div class="as-h">Size against number of files</div>
+        <!-- What a dot is, and the axes titled (design pass G24): the dots
+             were unlabelled and the log axis read "4.5 GB / 1.0 MB / 1.0 KB /
+             0 B" with no word for what it measured. The hover is the chart
+             kit's own tooltip: the app's name, its files, its size. -->
+        <div class="as-note muted">Each dot is one application — point at a dot to see its name, file count and size.</div>
+        <!-- The canvas keeps its own wrapper: the chart kit anchors tooltips to the canvas parent. -->
+        <div class="as-plot">
+          <span class="as-y">Size</span>
+          <div class="as-wrap"><canvas id="appsScatterChart" height="200" aria-label="Scatter of application size against how many files each keeps" role="img"></canvas></div>
+        </div>
+        <div class="as-x">Number of files</div>
       </div>
       <div id="appsBody"><div class="muted">Run a scan to see how much disk each application owns.</div></div>
     </div>

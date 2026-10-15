@@ -217,10 +217,14 @@ function clearShaderCaches() {
  */
 const APP_CART_CATEGORIES = new Set(['cache', 'logs']);
 
-/** Short per-category summary for an app's header row, e.g. "caches 1.2 GB · data 3.4 GB". */
+/** Short per-category summary for an app's header row, e.g. "caches 1.2 GB · data 3.4 GB".
+    One category is named alone — "app only" — because its size is the row's
+    total, which the badge already shows: every row printed it twice (design
+    pass G24). */
 function appCatSummary(app) {
-  return ['app', 'cache', 'data', 'logs']
-    .filter(c => app.bytesByCategory[c] > 0)
+  const parts = ['app', 'cache', 'data', 'logs'].filter(c => app.bytesByCategory[c] > 0);
+  if (parts.length === 1) return `${APP_CAT_LABEL[parts[0]].toLowerCase()} only`;
+  return parts
     .map(c => `${APP_CAT_LABEL[c].toLowerCase()} ${formatBytes(app.bytesByCategory[c])}`)
     .join(' · ');
 }
