@@ -934,7 +934,14 @@ function modalClosed(el) {
   const drifted = !active || active === document.body || el.contains(active)
     || !active.getClientRects().length || $('toasts').contains(active);
   toastsRetire(el.id);
-  if (drifted && prev && prev.focus && prev.isConnected !== false) prev.focus({ preventScroll: true });
+  if (!drifted || !prev || !prev.focus) return;
+  // The control that opened the sheet can be gone by now: the welcome card's
+  // "Choose a folder" is, as the scan its "Scan this folder" starts repaints
+  // the card in the same turn (review F2.1). Focus goes where it would had
+  // that control left the screen — the views' focusLanding — never <body>.
+  // Guarded: a page reader may lift this net without the views.
+  const back = prev.isConnected !== false ? prev : (typeof focusLanding === 'function' ? focusLanding() : null);
+  if (back) back.focus({ preventScroll: true });
 }
 function syncModalLayers(moveFocus = true) {
   const open = openModals();

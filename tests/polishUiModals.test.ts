@@ -189,7 +189,7 @@ type ModalApi = {
   FOCUS_TRAIL_MAX: number;
 };
 
-function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {}): ModalApi {
+function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {}, focusLanding?: () => FEl | null): ModalApi {
   const src = slice('/* ── Focus discipline for every dialog ── */', '/* ── end focus discipline ── */');
   const $ = (id: string) => doc.getElementById(id);
   // The net installs a MutationObserver so that adding `.open` at any of the
@@ -198,12 +198,14 @@ function loadModalNet(doc: FDoc, toastsRetire: (sheet: string) => void = () => {
   // observer only has to exist without throwing at eval time.
   class FakeObserver { observe() { /* the tests call the reactions themselves */ } disconnect() {} }
   // toastsRetire (the toast family's, in 015) is what a closing sheet asks to
-  // retire the offers made in it; a test that cares records the calls.
-  return new Function('document', '$', 'MutationObserver', 'toastsRetire', 'getComputedStyle',
+  // retire the offers made in it; a test that cares records the calls. The
+  // views' focusLanding (020) is where focus goes when the opener is gone;
+  // left out, the net runs as a page reader that lifts it alone.
+  return new Function('document', '$', 'MutationObserver', 'toastsRetire', 'getComputedStyle', 'focusLanding',
     `'use strict'; ${src}
      return { openModals, topModal, modalFocusTarget, modalFocusables, syncModalLayers, modalOpened, modalClosed, modalTrapTab, noteFocus,
        inModalOverlay, modalFocusInto, FOCUS_TRAIL_MAX };`,
-  )(doc, $, FakeObserver, toastsRetire, (el: FEl) => ({ visibility: computedVisibility(el) })) as ModalApi;
+  )(doc, $, FakeObserver, toastsRetire, (el: FEl) => ({ visibility: computedVisibility(el) }), focusLanding) as ModalApi;
 }
 
 /** Open or close a backdrop the way every caller does — by class — then run the net's reaction. */
@@ -250,6 +252,55 @@ test('closing a dialog gives focus back to where it came from and lifts inert', 
   assert.equal(doc.activeElement, p.pageBtn, 'focus returns to the control that opened the sheet');
   assert.equal(p.main.inert, false, 'inert is lifted with the last dialog');
   assert.equal(p.side.inert, false);
+});
+
+test('a sheet whose opener is gone by the time it closes hands focus to where it would have gone had that control left the screen — the tour card\'s Skip, inert until the sheet closed — never <body> (review F2.1)', () => {
+  // The welcome card's own "Choose a folder" opens the folder browser.
+  // "Scan this folder" closes the sheet and, in the same turn, starts the
+  // scan, which repaints the card as "Reading your files…": the button the
+  // sheet would hand focus back to is gone, and the card's own focus on its
+  // Skip was refused, the card being inert behind the sheet until the net
+  // ran. Focus fell to <body> for the whole scan.
+  const run = (openerGone: boolean) => {
+    const doc = makeDoc();
+    pageWith(doc);
+    const mk = mkOf(doc);
+    // The tour card is a body child, as the page's #tourOverlay is.
+    const overlay = append(doc.body, mk('div', 'tourOverlay', ['tour-overlay']));
+    const card = append(overlay, mk('div', 'tourCard', ['tour-card']));
+    const pick = append(card, mk('button', '', ['btn'], { 'data-tour-pick': '' }));
+    const browse = append(doc.body, mk('div', 'browseModal', ['modal-backdrop']));
+    const browseBody = append(append(browse, mk('div', '', ['modal'])), mk('div', '', ['modal-body']));
+    append(browseBody, mk('input', 'browseCurrent'));
+    browse.shown = false;
+    // The page's own focusLanding over this page: no welcome on screen, so the tour card's control.
+    const landing = new Function('$', 'document', 'tourCardControl', 'activeViewControl', `'use strict'; ${braced('function focusLanding(')} return focusLanding;`)(
+      (id: string) => doc.getElementById(id), doc, () => card.querySelector('[data-tour-skip]'), () => null) as () => FEl | null;
+    const asked: number[] = [];
+    const api = loadModalNet(doc, () => {}, () => { asked.push(1); return landing(); });
+    pick.focus(); api.noteFocus(pick);
+    setOpen(api, browse, true);
+    const inertBehind = overlay.inert;
+    // "Scan this folder": the sheet closes, and the scan's first repaint of the card follows in the same turn.
+    browse.classList.remove('open'); browse.shown = false;
+    let skip: FEl | null = null;
+    if (openerGone) {
+      card.children.splice(0).forEach((c) => { c.parent = null; c.isConnected = false; });
+      skip = append(card, mk('button', '', ['tour-skip'], { 'data-tour-skip': '' }));
+      skip.focus(); // tourRender's own focus, refused while the sheet's inert holds
+    }
+    const refused = !!skip && doc.activeElement !== skip;
+    api.modalClosed(browse); api.syncModalLayers();
+    return { doc, pick, skip, asked, inertBehind, refused, overlay };
+  };
+  const gone = run(true);
+  assert.equal(gone.inertBehind, true, 'control: the tour card is inert behind the sheet');
+  assert.equal(gone.refused, true, 'control: the repainted card\'s own focus is refused while the sheet is up');
+  assert.equal(gone.doc.activeElement, gone.skip, 'the opener is gone: focus goes to the scanning card\'s Skip, not <body>');
+  assert.equal(gone.overlay.inert, false, 'control: inert is lifted with the sheet');
+  const kept = run(false);
+  assert.equal(kept.doc.activeElement, kept.pick, 'control: an opener still in the page gets focus back');
+  assert.deepEqual(kept.asked, [], 'and the landing is not asked for');
 });
 
 test('a sheet that focuses itself as it opens still gives focus back to the control that opened it — the duplicate viewer\'s Compare button (QA third pass D05)', () => {
