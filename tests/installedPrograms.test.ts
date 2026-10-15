@@ -289,6 +289,7 @@ test('the offload dry runs say which originals they would trash are parts of an 
   const { app, exe, loose, scanId } = await scannedFolderWithAnApp();
   const dest = fs.realpathSync(fileTempDir('tm-installed-offload-dest-'));
   const fake = { kind: 'app', name: 'Fake', root: app };
+  const resources = path.join(app, 'Contents', 'Resources');
   await withOpenFileCheck('clear', async () => {
     const plan = await call('POST', '/api/offload', { scanId, paths: [exe, loose], dest, dryRun: true });
     assert.equal(plan.status, 200, JSON.stringify(plan.body));
@@ -296,6 +297,16 @@ test('the offload dry runs say which originals they would trash are parts of an 
     const plain = await call('POST', '/api/offload', { scanId, paths: [loose], dest, dryRun: true });
     assert.equal(plain.status, 200, JSON.stringify(plain.body));
     assert.equal('installedProgramParts' in plain.body, false, 'control: a plan with no part of a program reads as it did');
+    // The originals it would trash are the items chosen, never each file copied
+    // out of them (review round 2, F2.7): the whole app is no part of itself,
+    // and a folder inside it is named once, as itself.
+    const whole = await call('POST', '/api/offload', { scanId, paths: [app], dest, dryRun: true });
+    assert.equal(whole.status, 200, JSON.stringify(whole.body));
+    assert.equal(whole.body.fileCount, 2, 'control: the plan copies the app\'s two files');
+    assert.equal('installedProgramParts' in whole.body, false, `the whole app is no part of itself: ${JSON.stringify(whole.body.installedProgramParts)}`);
+    const inner = await call('POST', '/api/offload', { scanId, paths: [resources], dest, dryRun: true });
+    assert.equal(inner.status, 200, JSON.stringify(inner.body));
+    assert.deepEqual(inner.body.installedProgramParts, [{ path: resources, installedProgram: fake }], 'a folder inside the app is named once, as itself');
 
     const mcp = buildMcpServer();
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
@@ -305,6 +316,12 @@ test('the offload dry runs say which originals they would trash are parts of an 
       const reply = (await client.callTool({ name: 'offload', arguments: { scanId, paths: [exe, loose], dest, dryRun: true } })) as { isError?: boolean; structuredContent?: Record<string, any> };
       assert.ok(!reply.isError, JSON.stringify(reply));
       assert.deepEqual(reply.structuredContent!.installedProgramParts, [{ path: exe, installedProgram: fake }], 'the MCP offload tool names the app');
+      const whole = (await client.callTool({ name: 'offload', arguments: { scanId, paths: [app], dest, dryRun: true } })) as { isError?: boolean; structuredContent?: Record<string, any> };
+      assert.ok(!whole.isError, JSON.stringify(whole));
+      assert.equal('installedProgramParts' in whole.structuredContent!, false, `the MCP tool: the whole app is no part of itself: ${JSON.stringify(whole.structuredContent!.installedProgramParts)}`);
+      const inner = (await client.callTool({ name: 'offload', arguments: { scanId, paths: [resources], dest, dryRun: true } })) as { isError?: boolean; structuredContent?: Record<string, any> };
+      assert.ok(!inner.isError, JSON.stringify(inner));
+      assert.deepEqual(inner.structuredContent!.installedProgramParts, [{ path: resources, installedProgram: fake }], 'the MCP tool: a folder inside the app is named once, as itself');
     } finally {
       await client.close();
     }
