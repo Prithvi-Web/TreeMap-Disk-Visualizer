@@ -2559,13 +2559,24 @@ interface FolderHolder {
   listed: boolean;
 }
 
+/** A row a search matched, as much of it as deciding whether it is kept needs (nestedRootExclusions). */
+interface MatchedRow {
+  id: number;
+  parent_id: number | null;
+  name: string;
+}
+
 /** What a search leaves out so that a path is one row (nestedRootExclusions). */
 interface NestedExclusions {
   /** Roots left out whole, by id: every path they hold is answered by another root. */
   roots: Set<number>;
-  /** A `n.id NOT IN (…)` term and its parameters, or null when nothing else is left out. */
-  clause: string | null;
-  params: number[];
+  /**
+   * Whether a row the search matched is kept, or null when every row of the
+   * roots searched is. Asked of a row only once the SQL has matched it, so
+   * what it reads grows with the rows a search reads, never with a folder's
+   * size (review F2.1).
+   */
+  keeps: ((row: MatchedRow) => boolean) | null;
 }
 
 /** Ready with its watcher attached: holds its folder as it is now ("current", as /api/index/status reads it). */
@@ -2620,14 +2631,22 @@ function answeringOrder(holders: readonly FolderHolder[]): FolderHolder[] {
  *   ready one nothing watches, misses what changed since its build — and
  *   every root is stale after a restart. Each path is kept from the first
  *   holder, newest build first, that holds it: a later holder's row is left
- *   out where an earlier one holds the same path (`dup`, walked in step down
- *   both trees by name), so a path only one index holds is still found.
- *   Before review F1.2 a tie gave the folder to the outer index whole, and a
- *   file only the inner index held was not found at all.
+ *   out where an earlier one holds the same path (`twins`: the earlier
+ *   holders' nodes at the folder, followed down by name), so a path only one
+ *   index holds is still found. Before review F1.2 a tie gave the folder to
+ *   the outer index whole, and a file only the inner index held was not
+ *   found at all.
  * Rows are left out down to the next region's folder (`edge`), which is
  * decided on its own: so with A holding B holding C, C's paths are never left
  * to an index that is itself left out. A root none of whose regions it
  * answers for is left out by its id.
+ *
+ * A row is decided only once the search has matched it (regionKeeper). Review
+ * F1.2 left them out with a recursive walk of each region in SQL, which
+ * SQLite built whole before the first row of every search, whatever it
+ * matched: 0.5 s a search at 100,000 files in each of two nested stale
+ * indexes, about 5 s at the 1,000,000-entry cap, with the server blocked
+ * throughout (review F2.1).
  */
 function nestedRootExclusions(roots: readonly IndexedRoot[]): NestedExclusions {
   const handle = openIndex();
@@ -2640,61 +2659,117 @@ function nestedRootExclusions(roots: readonly IndexedRoot[]): NestedExclusions {
     const row = topOf.get(r.id) as { id: number } | undefined;
     if (row) { tops.set(r.id, row.id); regionNodes.set(r.id, [row.id]); }
   }
-  const edge: number[] = [];
+  const edge = new Set<number>();
   const gone = new Set<number>();
-  const dup: Array<[number, number]> = [];
+  const twins = new Map<number, number[]>(); // a later holder's node → the earlier holders' nodes at the same folder
   for (const folder of roots) {
     const top = tops.get(folder.id);
     if (top === undefined) continue;
     const holders = folderHolders(folder, top, roots.filter((r) => tops.has(r.id)), hasChild);
     if (holders.length < 2) continue;
-    for (const h of holders.slice(1)) { edge.push(h.node); regionNodes.get(h.root.id)!.push(h.node); }
+    for (const h of holders.slice(1)) { edge.add(h.node); regionNodes.get(h.root.id)!.push(h.node); }
     const order = answeringOrder(holders);
     if (answersAlone(order[0])) for (const h of order.slice(1)) gone.add(h.node);
-    else for (let i = 1; i < order.length; i++) for (let j = 0; j < i; j++) dup.push([order[i].node, order[j].node]);
+    else for (let i = 1; i < order.length; i++) twins.set(order[i].node, order.slice(0, i).map((h) => h.node));
   }
   const left = new Set<number>();
   for (const [id, nodes] of regionNodes) {
     if (!nodes.every((n) => gone.has(n))) continue;
     left.add(id);
-    for (const n of nodes) gone.delete(n); // left out by its id: nothing of it to walk
+    for (const n of nodes) gone.delete(n); // left out by its id: none of its rows is read
   }
-  return { roots: left, ...exclusionClause([...gone], dup, edge) };
+  if (gone.size === 0 && twins.size === 0) return { roots: left, keeps: null };
+  return { roots: left, keeps: regionKeeper(new Set([...tops.values(), ...edge]), gone, twins) };
 }
 
 /**
- * The `n.id NOT IN (…)` term for nestedRootExclusions: every node at and under
- * a `gone` node, and every node of a `dup` pair's first tree whose path its
- * second tree holds too, each walked down to (not into) an `edge` node.
+ * Whether a matched row is kept, for nestedRootExclusions: the region a row
+ * is in is the one of the nearest region folder at or above it (`bounds`,
+ * every root's top and every holder's node at another root's folder), and
+ * that folder's node says what the region keeps — all of it, none of it
+ * (`gone`), or what none of its `twins` holds by the same name. Followed
+ * down from the region's folder one level at a time, each folder's answer
+ * kept for the rest of the search: siblings share it, so a row costs a seek
+ * of its own name in each twin folder, and a folder the walk up meets the
+ * first time costs its row and a seek per twin.
  */
-function exclusionClause(gone: number[], dup: Array<[number, number]>, edge: number[]): { clause: string | null; params: number[] } {
-  if (gone.length === 0 && dup.length === 0) return { clause: null, params: [] };
-  const ctes: string[] = [];
-  const picks: string[] = [];
-  const params: number[] = [];
-  const stop = edge.length > 0 ? ' WHERE c.id NOT IN (SELECT id FROM edge)' : '';
-  if (edge.length > 0) {
-    ctes.push(`edge(id) AS (VALUES ${edge.map(() => '(?)').join(', ')})`);
-    params.push(...edge);
+function regionKeeper(bounds: Set<number>, gone: Set<number>, twins: Map<number, number[]>): (row: MatchedRow) => boolean {
+  const handle = openIndex();
+  const nodeRow = handle.prepare('SELECT parent_id, name FROM nodes WHERE id = ?');
+  const childByName = handle.prepare('SELECT id FROM nodes WHERE parent_id = ? AND name = ?');
+  // What a folder's children are: all kept (true), all left out (false), or kept where none of these
+  // nodes — the earlier holders' folders at the same path — has a child of the same name.
+  type Children = boolean | number[];
+  const under = new Map<number, Children>();
+  const ownAnswer = (node: number): Children => (gone.has(node) ? false : twins.get(node) ?? true);
+  const childrenOf = (folder: number): Children => {
+    const chain: Array<{ id: number; name: string }> = []; // the folders below the one decided, nearest first
+    let at = folder;
+    let answer = under.get(at);
+    while (answer === undefined) {
+      if (bounds.has(at)) {
+        answer = ownAnswer(at);
+        under.set(at, answer);
+        break;
+      }
+      const row = nodeRow.get(at) as { parent_id: number | null; name: string } | undefined;
+      if (!row || row.parent_id === null) {
+        answer = true; // no region folder above it: nothing to leave it to, so kept — never lost
+        under.set(at, answer);
+        break;
+      }
+      chain.push({ id: at, name: row.name });
+      at = row.parent_id;
+      answer = under.get(at);
+    }
+    for (let i = chain.length - 1; i >= 0; i--) {
+      if (Array.isArray(answer)) {
+        const held: number[] = [];
+        for (const twin of answer) {
+          const child = childByName.get(twin, chain[i].name) as { id: number } | undefined;
+          if (child) held.push(child.id);
+        }
+        answer = held.length > 0 ? held : true;
+      }
+      under.set(chain[i].id, answer);
+    }
+    return answer;
+  };
+  return (row) => {
+    // A region's own folder: left out where another holder's answers for it (gone, or an earlier holder's twin).
+    if (bounds.has(row.id)) return ownAnswer(row.id) === true;
+    if (row.parent_id === null) return true;
+    const answer = childrenOf(row.parent_id);
+    if (typeof answer === 'boolean') return answer;
+    return !answer.some((twin) => childByName.get(twin, row.name) !== undefined);
+  };
+}
+
+/**
+ * The page and the count of a search whose rows are kept one at a time
+ * (NestedExclusions.keeps): read in the page's order, each row asked once the
+ * SQL has matched it, and no further than the page and the capped count need.
+ * The answer LIMIT/OFFSET and the capped COUNT(*) give where every row is
+ * kept: a page that comes back short is the whole answer; a full one counts
+ * up to SEARCH_COUNT_CAP. Leaving the loop closes the statement.
+ */
+function keptPage<T extends MatchedRow>(
+  matches: Iterable<T>,
+  keeps: (row: T) => boolean,
+  limit: number,
+  offset: number,
+): { rows: T[]; total: number; countCapped: boolean } {
+  const rows: T[] = [];
+  const enough = Math.max(offset + limit, SEARCH_COUNT_CAP);
+  let kept = 0;
+  for (const row of matches) {
+    if (!keeps(row)) continue;
+    if (kept >= offset && rows.length < limit) rows.push(row);
+    kept++;
+    if (kept >= enough) break;
   }
-  if (gone.length > 0) {
-    ctes.push(`gone(id) AS (
-      SELECT id FROM nodes WHERE id IN (${gone.map(() => '?').join(', ')})
-      UNION ALL
-      SELECT c.id FROM nodes c JOIN gone ON c.parent_id = gone.id${stop})`);
-    params.push(...gone);
-    picks.push('SELECT id FROM gone');
-  }
-  if (dup.length > 0) {
-    ctes.push(`seed(id, twin) AS (VALUES ${dup.map(() => '(?, ?)').join(', ')})`);
-    params.push(...dup.flat());
-    ctes.push(`dup(id, twin) AS (
-      SELECT id, twin FROM seed
-      UNION ALL
-      SELECT c.id, t.id FROM dup JOIN nodes c ON c.parent_id = dup.id JOIN nodes t ON t.parent_id = dup.twin AND t.name = c.name${stop})`);
-    picks.push('SELECT id FROM dup');
-  }
-  return { clause: `n.id NOT IN (WITH RECURSIVE ${ctes.join(',\n')} ${picks.join(' UNION ALL ')})`, params };
+  if (rows.length < limit) return { rows, total: offset + rows.length, countCapped: false };
+  return { rows, total: Math.min(kept, SEARCH_COUNT_CAP), countCapped: kept >= SEARCH_COUNT_CAP };
 }
 
 /**
@@ -2757,8 +2832,9 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
   //
   // And one row per path where one indexed folder lies inside another (F08),
   // none lost (review F1.2): nestedRootExclusions names the roots left out
-  // whole and the rows the others leave to another index. With no folder
-  // inside another, nothing changes.
+  // whole, and decides each row the others may leave to another index once
+  // the SQL has matched it (review F2.1, below). With no folder inside
+  // another, nothing changes.
   const nested = nestedRootExclusions(roots);
   const searched = roots.filter((r) => !nested.roots.has(r.id));
   const where: string[] = [
@@ -2766,10 +2842,6 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
     `+n.root_id IN (${searched.map(() => '?').join(', ')})`,
   ];
   const params: (string | number)[] = [ASIDE_PREFIX, ASIDE_PREFIX_END, ...searched.map((r) => r.id)];
-  if (nested.clause) {
-    where.push(nested.clause);
-    params.push(...nested.params);
-  }
 
   if (parsed.kind === 'extension') {
     where.push('n.ext = ?', 'n.is_dir = 0');
@@ -2844,28 +2916,12 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
   // path for every candidate row. Ids are enumeration order, which is just as
   // deterministic and stable across pages — and for a size-descending search
   // for disk hogs, the order among exact-size ties carries no meaning.
-  const rows = handle
-    .prepare(
-      `SELECT n.id, n.name, n.ext, n.is_dir, n.size, n.mtime, r.path AS root_path
+  const select = `SELECT n.id, n.parent_id, n.name, n.ext, n.is_dir, n.size, n.mtime, r.path AS root_path
          FROM nodes n JOIN roots r ON r.id = n.root_id
         WHERE ${clause}
-        ORDER BY n.size DESC, n.id ASC
-        LIMIT ? OFFSET ?`,
-    )
-    .all(...params, limit, offset) as {
-    id: number;
-    name: string;
-    ext: string;
-    is_dir: number;
-    size: number;
-    mtime: number;
-    root_path: string;
-  }[];
-
-  // Results are capped at a page, so rebuilding each hit's path is a bounded
-  // ancestor walk — and hits are sibling-heavy, so the shared resolver cache
-  // makes most of it free.
-  const resolve = pathResolver();
+        ORDER BY n.size DESC, n.id ASC`;
+  type Row = MatchedRow & { ext: string; is_dir: number; size: number; mtime: number; root_path: string };
+  let rows: Row[];
 
   /* Counting matches, without paying for it twice.
    *
@@ -2880,17 +2936,32 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
    * says outright, so the UI shows "5,000+" rather than a wrong number. */
   let total: number;
   let countCapped = false;
-  if (rows.length < limit) {
-    total = offset + rows.length;
+  if (nested.keeps) {
+    // Rows another index may answer for are decided as they are read, in the
+    // page's order: the same page and capped count, and no more read than
+    // they need — the extension seek stops at its count, a name that matches
+    // nothing reads nothing (review F2.1).
+    ({ rows, total, countCapped } = keptPage(handle.prepare(select).iterate(...params) as Iterable<Row>, nested.keeps, limit, offset));
   } else {
-    const capped = (
-      handle
-        .prepare(`SELECT COUNT(*) c FROM (SELECT 1 FROM nodes n WHERE ${clause} LIMIT ?)`)
-        .get(...params, SEARCH_COUNT_CAP) as { c: number }
-    ).c;
-    total = capped;
-    countCapped = capped >= SEARCH_COUNT_CAP;
+    rows = handle.prepare(`${select}
+        LIMIT ? OFFSET ?`).all(...params, limit, offset) as Row[];
+    if (rows.length < limit) {
+      total = offset + rows.length;
+    } else {
+      const capped = (
+        handle
+          .prepare(`SELECT COUNT(*) c FROM (SELECT 1 FROM nodes n WHERE ${clause} LIMIT ?)`)
+          .get(...params, SEARCH_COUNT_CAP) as { c: number }
+      ).c;
+      total = capped;
+      countCapped = capped >= SEARCH_COUNT_CAP;
+    }
   }
+
+  // Results are capped at a page, so rebuilding each hit's path is a bounded
+  // ancestor walk — and hits are sibling-heavy, so the shared resolver cache
+  // makes most of it free.
+  const resolve = pathResolver();
 
   return {
     query: rawQuery,

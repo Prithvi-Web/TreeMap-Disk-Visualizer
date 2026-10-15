@@ -576,6 +576,172 @@ test('500,000 files: an extension query seeks its index, a substring query scans
   deleteIndex();
 });
 
+test('two nested indexes, neither current — as every root is after a restart: a search reads what it matches, never the inner folder whole (review F2.1 of fifth browser pass F08)', (t) => {
+  // Review F2.1: review F1.2 kept each path once by walking the inner folder in the index built
+  // earlier in step with the one built later — a recursive walk SQLite built in full before the
+  // first row, on every search, whatever the search matched: 0.5 s a search at 100,000 files an
+  // index and about 5 s at the 1,000,000-entry cap, the server blocked throughout. Rows are
+  // inserted directly, as above; the question is the work, and the plans and counts answer it.
+  deleteIndex();
+  const db = openIndex();
+  const DIRS = 200;
+  const FILES = 500; // 100,000 files in each index
+  const COUNT_CAP = 5_000; // SEARCH_COUNT_CAP: a full page counts this many matches at most
+  const rootAt = (p: string, builtAt: number) => {
+    db.prepare("INSERT INTO roots (path, state, mechanism, built_at) VALUES (?, 'stale', 'synthetic', ?)").run(p, builtAt);
+    const id = (db.prepare('SELECT id FROM roots WHERE path = ?').get(p) as { id: number }).id;
+    return { id, top: add(id, null, path.basename(p), true, 0) };
+  };
+  const insert = db.prepare('INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, mtime, flags) VALUES (?,?,?,?,?,?,1,0)');
+  const add = (root: number, parent: number | null, name: string, dir: boolean, size: number): number =>
+    Number(insert.run(root, parent, name, dir ? '' : extensionOf(name), dir ? 1 : 0, size).lastInsertRowid);
+  const outer = rootAt('/nest', 1_000_000);
+  const inner = rootAt('/nest/inner', 2_000_000); // built later: it answers for a path both hold
+  db.transaction(() => {
+    const outerAtInner = add(outer.id, outer.top, 'inner', true, 0);
+    for (let d = 0; d < DIRS; d++) {
+      const o = add(outer.id, outerAtInner, `dir${d}`, true, 0);
+      const i = add(inner.id, inner.top, `dir${d}`, true, 0);
+      for (let f = 0; f < FILES; f++) {
+        add(outer.id, o, `file${f}.dat`, false, d * FILES + f);
+        add(inner.id, i, `file${f}.dat`, false, d * FILES + f);
+      }
+    }
+    add(outer.id, outerAtInner, 'only-outer.bin', false, 7); // gone from the folder since the outer build
+    add(inner.id, inner.top, 'only-inner.bin', false, 7); // made after it
+  })();
+  assert.deepEqual(listRoots().map((r) => [r.path, r.state, r.live]), [['/nest', 'stale', false], ['/nest/inner', 'stale', false]],
+    'control: two nested indexes, neither current');
+
+  /** Searches `q`, counting every row any statement reads while it does, and keeping the hit query and its arguments. */
+  const work = (q: string, opts = {}) => {
+    const handle = db as unknown as { prepare: (sql: string) => unknown };
+    const original = handle.prepare;
+    let rows = 0;
+    let hit: { sql: string; args: unknown[] } | null = null;
+    handle.prepare = function (this: unknown, sql: string) {
+      const stmt = original.call(this, sql) as Record<string | symbol, unknown>;
+      const isHit = /ORDER BY n\.size DESC/.test(sql);
+      return new Proxy(stmt, {
+        get(target, key) {
+          const f = target[key];
+          if (typeof f !== 'function') return f;
+          if (key === 'get') return (...a: unknown[]) => { const row = f.apply(target, a); if (row !== undefined) rows++; return row; };
+          if (key === 'all') return (...a: unknown[]) => { if (isHit) hit = { sql, args: a }; const all = f.apply(target, a) as unknown[]; rows += all.length; return all; };
+          if (key === 'iterate') {
+            return function* (...a: unknown[]) {
+              if (isHit) hit = { sql, args: a };
+              for (const row of f.apply(target, a) as Iterable<unknown>) { rows++; yield row; }
+            };
+          }
+          return f.bind(target);
+        },
+      });
+    } as typeof handle.prepare;
+    try {
+      const result = searchIndex(q, opts);
+      assert.ok(hit, `control: "${q}" ran one hit query`);
+      return { result, rows, hit: hit as { sql: string; args: unknown[] } };
+    } finally {
+      handle.prepare = original;
+    }
+  };
+  const planOf = (hit: { sql: string; args: unknown[] }): string[] =>
+    (db.prepare(`EXPLAIN QUERY PLAN ${hit.sql}`).all(...hit.args) as { detail: string }[]).map((row) => row.detail);
+  const scans = (plan: string[]): string[] => plan.filter((step) => step.startsWith('SCAN'));
+
+  const ext = work('*.dat', { limit: 50 }); // the extension seek: 200,000 rows match, 100,000 paths
+  const name = work('file7.dat', { limit: 50 }); // the name scan: one file in each folder, in both indexes
+  const only = work('only-'); // a path only one index holds, in each
+  const none = work('zzz'); // nothing
+
+  // The answers: each path once, the one built later answering where both hold it.
+  assert.equal(new Set(ext.result.hits.map((h) => h.path)).size, 50, 'the extension seek: a page of 50 paths, each once');
+  assert.deepEqual([ext.result.hits[0].path, ext.result.hits[0].rootPath], [`/nest/inner/dir${DIRS - 1}/file${FILES - 1}.dat`, '/nest/inner'],
+    'the biggest first, from the index built later');
+  assert.deepEqual([ext.result.total, ext.result.countCapped], [COUNT_CAP, true], 'and counted to the cap');
+  assert.deepEqual([new Set(name.result.hits.map((h) => h.path)).size, name.result.total, name.result.countCapped], [50, DIRS, false],
+    'the name scan: a page of 50 paths, and the folders\' 200 counted once each');
+  assert.deepEqual(only.result.hits.map((h) => `${h.path} ← ${h.rootPath}`).sort(), ['/nest/inner/only-inner.bin ← /nest/inner', '/nest/inner/only-outer.bin ← /nest'],
+    'a path only one index holds is found, from it');
+  assert.equal(none.result.total, 0, 'control: "zzz" matches nothing');
+
+  // No walk is built before the first row: the plans are the ones a single index gets (above).
+  for (const [label, run] of [['the extension seek', ext], ['the name scan', name], ['a name nothing matches', none]] as const) {
+    const plan = planOf(run.hit);
+    assert.ok(!plan.some((step) => /RECURSIVE|MATERIALIZE/.test(step)), `${label}: the hit query walks no tree before its first row: ${plan.join(' | ')}`);
+  }
+  const extPlan = planOf(ext.hit);
+  assert.deepEqual(scans(extPlan), [], `the extension seek scans nothing: ${extPlan.join(' | ')}`);
+  assert.ok(!extPlan.some((step) => step.includes('TEMP B-TREE')), `it reads in size order, with nothing to sort: ${extPlan.join(' | ')}`);
+  const namePlan = planOf(name.hit);
+  assert.deepEqual(scans(namePlan), ['SCAN n'], `the name scan is one scan of the nodes: ${namePlan.join(' | ')}`);
+
+  // And what is read to keep each path once is a few rows for each row the search matches, never the
+  // folder: a search with two matches, or none, reads less than a row for each folder of the inner
+  // index; the name scan, a few for each of its 400 matches; the extension seek stops where its count does.
+  assert.ok(only.rows < DIRS && none.rows < DIRS,
+    `a search with two matches read ${only.rows} rows, one that matches nothing ${none.rows}: fewer than the inner index's ${DIRS} folders`);
+  assert.ok(name.rows <= 4 * 2 * DIRS, `the name scan read ${name.rows} rows for its ${2 * DIRS} matches`);
+  assert.ok(ext.rows <= 4 * COUNT_CAP, `the extension seek read ${ext.rows} rows for a page of 50 and a count to ${COUNT_CAP} (each index holds ${DIRS * FILES} files)`);
+
+  /** For the log only, as above: the fastest of three runs. */
+  const ms = (q: string, opts = {}): number => {
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const started = performance.now();
+      searchIndex(q, opts);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
+  };
+  t.diagnostic(`two nested stale indexes, ${DIRS * FILES} files each — extension ${ms('*.dat', { limit: 50 }).toFixed(2)}ms, ` +
+    `name ${ms('file7.dat', { limit: 50 }).toFixed(2)}ms, no match ${ms('zzz').toFixed(2)}ms; rows read ${ext.rows}, ${name.rows}, ${none.rows}`);
+
+  deleteIndex();
+});
+
+test('a current inner index beside a stale outer one: the outer one\'s rows there are left out without a walk of the folder either (review F2.1 of fifth browser pass F08)', async () => {
+  // The other half of review F2.1: where the inner index answers alone (current, as a rescan of it
+  // leaves it after a restart) the outer one's rows under it were left out by a walk of that whole
+  // folder in the outer index, built before the first row on every search, as the tie's was.
+  const { dir, mail, deep, roots } = await nestedCorpus(true);
+  try {
+    setRootState(dir, 'stale'); // the inner indexes are current, the outer one stale
+    const db = openIndex() as unknown as { prepare: (sql: string) => unknown };
+    const original = db.prepare;
+    const hits: Array<{ sql: string; args: unknown[] }> = [];
+    db.prepare = function (this: unknown, sql: string) {
+      const stmt = original.call(this, sql) as Record<string | symbol, unknown>;
+      if (!/ORDER BY n\.size DESC/.test(sql)) return stmt;
+      return new Proxy(stmt, {
+        get(target, key) {
+          const f = target[key];
+          if (typeof f !== 'function') return f;
+          if (key === 'all' || key === 'iterate') return (...a: unknown[]) => { hits.push({ sql, args: a }); return f.apply(target, a); };
+          return f.bind(target);
+        },
+      });
+    } as typeof db.prepare;
+    let found: string[];
+    try {
+      found = answered('Info');
+    } finally {
+      db.prepare = original;
+    }
+    assert.deepEqual(found, [path.join(mail, 'Mailbox 03.mbox', 'Info.plist'), path.join(mail, 'Mailbox 04.mbox', 'Info.plist')].map((p) => `${p} ← ${mail}`),
+      'control: the current inner index answers for its folder, each path once');
+    assert.equal(hits.length, 1, 'control: one hit query ran');
+    const plan = (openIndex().prepare(`EXPLAIN QUERY PLAN ${hits[0].sql}`).all(...hits[0].args) as { detail: string }[]).map((row) => row.detail);
+    assert.ok(!plan.some((step) => /RECURSIVE|MATERIALIZE/.test(step)), `the hit query walks no tree before its first row: ${plan.join(' | ')}`);
+    assert.deepEqual(plan.filter((step) => step.startsWith('SCAN')), ['SCAN n'], `the name scan is one scan of the nodes: ${plan.join(' | ')}`);
+    assert.deepEqual(answered('level100'), [`${path.join(deep, 'level1', 'level100.txt')} ← ${deep}`], 'and the other inner folder answers for its own');
+  } finally {
+    for (const root of roots) deleteIndex(root);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a very broad match reports a capped count rather than paying for an exact one', () => {
   // An uncapped COUNT(*) is a second full scan — 17ms over 500k rows, and
   // linear from there, so at 5M it would exceed the entire latency budget on
