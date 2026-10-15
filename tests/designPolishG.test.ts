@@ -87,6 +87,8 @@ function contrast(a: RGB, b: RGB): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 const fmt = (n: number) => n.toFixed(2);
+/** px of a `<n>px` length (0 for none or anything else). */
+const px = (v: string | null | undefined) => parseFloat(/(-?[\d.]+)px/.exec(v ?? '')?.[1] ?? '0');
 /** A colour expression over `ground`: var(), hex/rgb(a), color-mix(in srgb, A P%, B), transparent. */
 function paint(expr: string, palette: Record<string, string>, ground: RGB): RGB {
   const e = expr.trim();
@@ -420,6 +422,39 @@ test('G14: the dashboard writes the name and the size apart, and clears both', a
   const sets = [...INDEX.matchAll(/\$\('statLargest'\)\.textContent = largest \?/g)];
   assert.ok(sets.length >= 2, 'both painters write the name');
   for (const m of sets) assert.match(INDEX.slice(m.index!, m.index! + 200), /\$\('statLargestSize'\)\.textContent = largest \?/, 'and the size beside it');
+});
+
+test('G14: the size keeps the space before its " · " — a flex item drops leading white space unless it is told to keep it', () => {
+  // The writers set ' · 5.0 GB', but .sz is a flex item now, and a block's
+  // leading space collapses: the tile read "Google Chrome Framework· 5.0 GB"
+  // (review F1.5). textContent still held the space, so the test above
+  // could not see it.
+  const writes = [...INDEX.matchAll(/\$\('statLargestSize'\)\.textContent = largest \? ([^:]+):/g)].map((m) => m[1].trim());
+  assert.ok(writes.length >= 2, 'both painters write the size');
+  const leading = writes.every((w) => /^(['`])\s/.test(w));
+  const ws = cascaded('.stat-largest .sz', 'white-space') ?? cascaded('.stat-tile .v.small', 'white-space') ?? 'normal';
+  const kept = /^(pre|pre-wrap|break-spaces)$/.test(ws);
+  const spaced = px(cascaded('.stat-largest .sz', 'margin-left')) > 0 || px(cascaded('.stat-tile .v.stat-largest', 'gap')) > 0
+    || px(cascaded('.stat-tile .v.stat-largest', 'column-gap')) > 0;
+  assert.ok(leading ? kept || spaced : spaced,
+    `the size is set apart from the name (writers ${writes.join(' / ')}; .sz white-space ${ws}, margin-left ${cascaded('.stat-largest .sz', 'margin-left')}, gap ${cascaded('.stat-tile .v.stat-largest', 'gap')})`);
+});
+
+test('G14: Quick Stats\' columns give way to a long name — the grid item may shrink below its text, so the name ellipsizes inside the card', () => {
+  // `1fr` is minmax(auto, 1fr): a grid item's automatic minimum is its
+  // min-content width, here the whole nowrap name and size, so a long name
+  // widened its column past the card and never ellipsized (review F1.13).
+  // Either the tracks start at 0 in every layout or the item may shrink.
+  const tracks = RULES.filter((r) => parts(r).includes('.quick-stats') && prop(r.body, 'grid-template-columns') !== null)
+    .map((r) => prop(r.body, 'grid-template-columns')!);
+  assert.ok(tracks.length >= 2, `the two-column layout and the narrow one are read (${tracks.join(' | ')})`);
+  const tracksShrink = tracks.every((t) => t.split(/\s+(?![^(]*\))/).every((tr) => /^minmax\(0(px)?,/.test(tr)));
+  const itemShrinks = cascaded('.stat-tile', 'min-width') === '0' || /^(hidden|clip|auto|scroll)$/.test(cascaded('.stat-tile', 'overflow') ?? '');
+  assert.ok(tracksShrink || itemShrinks, `a column can be narrower than its tile's text (tracks ${tracks.join(' | ')}; .stat-tile min-width ${cascaded('.stat-tile', 'min-width')})`);
+  // and down the chain to the name: the text column, the line, the name.
+  assert.equal(cascaded('.stat-tile > div', 'min-width'), '0');
+  assert.equal(cascaded('.stat-tile .v.stat-largest', 'min-width'), '0');
+  assert.equal(prop(ruleFor('.stat-largest .nm').body, 'min-width'), '0');
 });
 
 /* ══════════════ G20 — an empty stage of a meter shows its track ══════════════ */

@@ -1051,7 +1051,12 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 @keyframes indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
 
 .quick-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
+/* min-width 0: a 1fr column is minmax(auto, 1fr), and a grid item's auto
+   minimum is its min-content width — the largest file's whole nowrap name
+   and size — so a long name widened its column past the card and never
+   ellipsized (review F1.13). As a grid item that may shrink, the tile keeps
+   to its column, in the two-column layout and the narrow one alike. */
+.stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; min-width: 0; }
 .stat-tile .chip { width: 36px; height: 36px; border-radius: 10px; }
 .stat-tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; }
 /* The text column may shrink, so its lines ellipsize at the tile's own edge
@@ -1062,7 +1067,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 /* The largest file is a name and a size: the name gives way, the size never. */
 .stat-tile .v.stat-largest { display: flex; min-width: 0; }
 .stat-largest .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.stat-largest .sz { flex: none; }
+/* white-space: pre — the size is written " · 5.0 GB", and as a flex item
+   its leading space collapsed: "Google Chrome Framework· 5.0 GB" (review
+   F1.5). pre keeps the space, and like nowrap never wraps. */
+.stat-largest .sz { flex: none; white-space: pre; }
 .stat-tile .k { font-size: 11px; color: var(--text-2); margin-top: 2px; }
 
 /* The canvas is a fixed width, so at narrow card widths the legend wraps
