@@ -786,7 +786,9 @@ function rowIndex() {
   };
   /** Writes `rel` into each of `holders`' indexes. */
   const hold = (holders: RowRoot[], rel: string, size?: number): void => { for (const r of holders) put(r, rel, size); };
-  return { db, base, abs, root, put, hold, roots };
+  /** Runs `fill` as one transaction: thousands of rows written one commit at a time took seconds. */
+  const batch = (fill: () => void): void => { db.transaction(fill)(); };
+  return { db, base, abs, root, put, hold, batch, roots };
 }
 
 test('two nested indexes, neither current: a path four or five folders below the inner folder is one hit, from the index built later that holds it — the walk down from the region\'s folder goes outermost folder first (review F3.3 of fifth browser pass F08)', () => {
@@ -940,9 +942,9 @@ test('two nested indexes, neither current: a page past the count cap, a short la
   const DIRS = 12;
   const FILES = 500; // 6,000 paths, each in both indexes
   const COUNT_CAP = 5_000; // SEARCH_COUNT_CAP
-  const fill = (ix: ReturnType<typeof rowIndex>, holders: RowRoot[]) => {
+  const fill = (ix: ReturnType<typeof rowIndex>, holders: RowRoot[]) => ix.batch(() => {
     for (let d = 0; d < DIRS; d++) for (let f = 0; f < FILES; f++) ix.hold(holders, `inner/dir${d}/file${f}.dat`, d * FILES + f + 1);
-  };
+  });
   const SEVENS = DIRS * Array.from({ length: FILES }, (_, f) => `file${f}.dat`).filter((name) => name.includes('file7')).length;
   const asks: Array<[string, number, number]> = [
     ['*.dat', 50, 0], // a full page: counted to the cap
@@ -978,6 +980,110 @@ test('two nested indexes, neither current: a page past the count cap, a short la
 
   asks.forEach(([q, limit, offset], i) => {
     assert.deepEqual(twice[i], once[i], `"${q}", ${limit} at ${offset}: two nested indexes give the page and count one index gives`);
+  });
+  deleteIndex();
+});
+
+test('two nested indexes, neither current: a broad name keeps a sorted top of what the page and count need, never a sort of every match — and reads on, from where it stopped, when the rows kept fall short (review F3.2 of fifth browser pass F08)', () => {
+  // Review F3.2: rows another index may answer for are decided as the search reads them, so the hit
+  // statement had no LIMIT, and SQLite sorted every match by size before handing over the first row:
+  // a broad first keystroke ("e") over a 500,000-file outer index and a 100-file inner one took about
+  // five times what the same search took without the inner index, and the server waited throughout.
+  // Bounded, SQLite keeps a top-N of LIMIT + OFFSET rows as it scans. A statement that comes back full
+  // without enough rows kept is followed by one that reads on from where it stopped.
+  const COUNT_CAP = 5_000; // SEARCH_COUNT_CAP
+  type Statement = { limit: number; offset: number; gave: number };
+  /** Searches, recording each statement that reads the nodes in size order: its LIMIT, its OFFSET and the rows it gave. */
+  const reading = (q: string, opts: { limit?: number; offset?: number } = {}) => {
+    const db = openIndex() as unknown as { prepare: (sql: string) => unknown };
+    const original = db.prepare;
+    const statements: Statement[] = [];
+    db.prepare = function (this: unknown, sql: string) {
+      const stmt = original.call(this, sql) as Record<string | symbol, unknown>;
+      if (!/ORDER BY n\.size DESC/.test(sql)) return stmt;
+      const bounded = /LIMIT \? OFFSET \?\s*$/.test(sql);
+      // A negative LIMIT is none, to SQLite.
+      const asked = (a: unknown[]): Statement => {
+        const limit = bounded ? Number(a.at(-2)) : -1;
+        return { limit: limit >= 0 ? limit : Infinity, offset: bounded ? Number(a.at(-1)) : 0, gave: 0 };
+      };
+      return new Proxy(stmt, {
+        get(target, key) {
+          const f = target[key];
+          if (typeof f !== 'function') return f;
+          if (key === 'all') {
+            return (...a: unknown[]) => {
+              const all = f.apply(target, a) as unknown[];
+              statements.push({ ...asked(a), gave: all.length });
+              return all;
+            };
+          }
+          if (key === 'iterate') {
+            return function* (...a: unknown[]) {
+              const s = asked(a);
+              statements.push(s);
+              for (const row of f.apply(target, a) as Iterable<unknown>) { s.gave++; yield row; }
+            };
+          }
+          return f.bind(target);
+        },
+      });
+    } as typeof db.prepare;
+    try {
+      const r = searchIndex(q, opts);
+      return { page: { hits: r.hits.map((h) => h.path), total: r.total, countCapped: r.countCapped }, statements };
+    } finally {
+      db.prepare = original;
+    }
+  };
+  const show = (list: Statement[]): string =>
+    list.map((x) => (Number.isFinite(x.limit) ? `LIMIT ${x.limit} OFFSET ${x.offset} gave ${x.gave}` : `no LIMIT, gave ${x.gave}`)).join('; ');
+  const matchedRows = (needle: string): number =>
+    (openIndex().prepare("SELECT COUNT(*) c FROM nodes WHERE name LIKE ?").get(`%${needle}%`) as { c: number }).c;
+
+  // A big outer index and a small inner one inside it, both stale: the common case after a restart.
+  const OUT_FILES = 30_000;
+  const IN_FILES = 100;
+  const fillBig = (ix: ReturnType<typeof rowIndex>, outerIx: RowRoot, innerIx: RowRoot | null) => ix.batch(() => {
+    for (let i = 0; i < OUT_FILES; i++) ix.put(outerIx, `out/dir${i % 60}/file${i}.dat`, 3 * i + 1);
+    for (let i = 0; i < IN_FILES; i++) ix.hold(innerIx ? [outerIx, innerIx] : [outerIx], `inner/file-in${i}.dat`, 3 * i + 2);
+  });
+  const big = rowIndex();
+  const bigOuter = big.root('', 1_000_000);
+  fillBig(big, bigOuter, big.root('inner', 2_000_000));
+  const broad = reading('file', { limit: 50 });
+  const rowsMatched = matchedRows('file');
+  const nestedPages = [broad.page, reading('file', { limit: 50, offset: 4_990 }).page, reading('*.dat', { limit: 50 }).page];
+  const alone = rowIndex();
+  fillBig(alone, alone.root('', 1_000_000), null);
+  const onePages = [reading('file', { limit: 50 }).page, reading('file', { limit: 50, offset: 4_990 }).page, reading('*.dat', { limit: 50 }).page];
+  assert.equal(rowsMatched, OUT_FILES + 2 * IN_FILES, 'control: "file" matches 30,200 rows in the two indexes');
+  assert.deepEqual(nestedPages, onePages, 'the pages and counts are the ones one index gives');
+  assert.ok(broad.statements.length >= 1 && broad.statements.every((s) => s.limit + s.offset <= 2 * COUNT_CAP),
+    `each statement keeps at most ${2 * COUNT_CAP} rows in order — twice what the page and the count need — of the ${rowsMatched} it matches: ${show(broad.statements)}`);
+  assert.equal(broad.statements.length, 1, 'with the inner index small, one statement reads enough');
+
+  // Three nested indexes holding the same 6,000 paths: a third of what is read is kept, so the first
+  // statement comes back full with too few, and the next reads on from where it stopped — every row once.
+  const fillSame = (ix: ReturnType<typeof rowIndex>, holders: RowRoot[]) => ix.batch(() => {
+    for (let i = 0; i < 6_000; i++) ix.hold(holders, `B/C/dir${i % 12}/file${i}.dat`, i + 1);
+  });
+  const three = rowIndex();
+  fillSame(three, [three.root('', 1_000), three.root('B', 2_000), three.root('B/C', 3_000)]);
+  const asks: Array<[string, { limit: number; offset: number }]> = [['*.dat', { limit: 50, offset: 0 }], ['file', { limit: 50, offset: 0 }], ['file', { limit: 500, offset: 5_900 }]];
+  const threeRuns = asks.map(([q, opts]) => reading(q, opts));
+  const one = rowIndex();
+  fillSame(one, [one.root('', 1_000)]);
+  const oneRuns = asks.map(([q, opts]) => reading(q, opts));
+  asks.forEach(([q, opts], i) => {
+    const label = `"${q}", ${opts.limit} at ${opts.offset}`;
+    assert.deepEqual(threeRuns[i].page, oneRuns[i].page, `${label}: three nested indexes give the page and count one index gives`);
+    const s = threeRuns[i].statements;
+    assert.ok(s.length >= 2, `${label}: the first statement came back full with too few rows kept, and another read on: ${show(s)}`);
+    assert.ok(s.slice(1).every((next, k) => next.offset === s[k].offset + s[k].gave && s[k].gave === s[k].limit),
+      `${label}: each reads on from where the one before stopped, which had given all it was asked for: ${show(s)}`);
+    assert.ok(s[0].offset === 0 && s[0].limit <= 2 * Math.max(opts.offset + opts.limit, COUNT_CAP), `${label}: the first keeps twice what the page and count need: ${show(s)}`);
+    assert.ok(s.slice(1).every((next, k) => next.limit > s[k].limit), `${label}: and each reads more than the one before, so a search that keeps little takes a few statements, not one per page: ${show(s)}`);
   });
   deleteIndex();
 });

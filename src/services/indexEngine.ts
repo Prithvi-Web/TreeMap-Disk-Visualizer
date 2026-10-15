@@ -2746,15 +2746,35 @@ function regionKeeper(bounds: Set<number>, gone: Set<number>, twins: Map<number,
 }
 
 /**
+ * How many rows the first statement of a search whose rows are kept one at
+ * a time reads, for each row the page and the capped count need: two
+ * indexes holding the same paths keep one row in two (keptPage).
+ */
+const KEPT_READ_SLACK = 2;
+/** How much more each further statement reads than the one before, when the rows kept fell short (keptPage). */
+const KEPT_READ_GROWTH = 4;
+
+/**
  * The page and the count of a search whose rows are kept one at a time
  * (NestedExclusions.keeps): read in the page's order, each row asked once the
  * SQL has matched it, and no further than the page and the capped count need.
  * The answer LIMIT/OFFSET and the capped COUNT(*) give where every row is
  * kept: a page that comes back short is the whole answer; a full one counts
  * up to SEARCH_COUNT_CAP. Leaving the loop closes the statement.
+ *
+ * `read(count, skip)` is the search's statement with LIMIT count OFFSET skip.
+ * Bounded, SQLite keeps a sorted top of count + skip rows as it scans instead
+ * of sorting every match before the first row: a name scan's cost had grown
+ * with everything it matched (review F3.2) — a first keystroke of "e" over a
+ * 500,000-file outer index and a 100-file inner one took about five times
+ * what it took without the inner index. The first statement reads
+ * KEPT_READ_SLACK times what the page and the count need; one that gives all
+ * it was asked for without enough rows kept is followed by one reading on
+ * from where it stopped, KEPT_READ_GROWTH times as many, so every row is
+ * read and decided once.
  */
 function keptPage<T extends MatchedRow>(
-  matches: Iterable<T>,
+  read: (count: number, skip: number) => Iterable<T>,
   keeps: (row: T) => boolean,
   limit: number,
   offset: number,
@@ -2762,11 +2782,18 @@ function keptPage<T extends MatchedRow>(
   const rows: T[] = [];
   const enough = Math.max(offset + limit, SEARCH_COUNT_CAP);
   let kept = 0;
-  for (const row of matches) {
-    if (!keeps(row)) continue;
-    if (kept >= offset && rows.length < limit) rows.push(row);
-    kept++;
-    if (kept >= enough) break;
+  let readSoFar = 0;
+  for (let count = enough * KEPT_READ_SLACK; ; count *= KEPT_READ_GROWTH) {
+    let gave = 0;
+    for (const row of read(count, readSoFar)) {
+      gave++;
+      if (!keeps(row)) continue;
+      if (kept >= offset && rows.length < limit) rows.push(row);
+      kept++;
+      if (kept >= enough) break;
+    }
+    readSoFar += gave;
+    if (kept >= enough || gave < count) break;
   }
   if (rows.length < limit) return { rows, total: offset + rows.length, countCapped: false };
   return { rows, total: Math.min(kept, SEARCH_COUNT_CAP), countCapped: kept >= SEARCH_COUNT_CAP };
@@ -2940,8 +2967,12 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
     // Rows another index may answer for are decided as they are read, in the
     // page's order: the same page and capped count, and no more read than
     // they need — the extension seek stops at its count, a name that matches
-    // nothing reads nothing (review F2.1).
-    ({ rows, total, countCapped } = keptPage(handle.prepare(select).iterate(...params) as Iterable<Row>, nested.keeps, limit, offset));
+    // nothing reads nothing (review F2.1), and a name scan sorts a bounded
+    // top of its matches, not all of them (review F3.2).
+    const bounded = handle.prepare(`${select}
+        LIMIT ? OFFSET ?`);
+    ({ rows, total, countCapped } = keptPage(
+      (count, skip) => bounded.iterate(...params, count, skip) as Iterable<Row>, nested.keeps, limit, offset));
   } else {
     rows = handle.prepare(`${select}
         LIMIT ? OFFSET ?`).all(...params, limit, offset) as Row[];
