@@ -3786,7 +3786,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </svg>
       <p class="empty-kicker">Dashboard</p>
       <h1>See what's eating your disk</h1>
-      <p>TreeMap draws every file as a rectangle: the bigger the rectangle, the more space it takes. Click through to whatever is filling the disk, then clear it out — everything goes to the Trash, never deleted outright.</p>
+      <p>TreeMap draws a folder as rectangles: the bigger the rectangle, the more space it takes. Click through to whatever is filling the disk, then clear it out — everything goes to the Trash, never deleted outright.</p>
       <div class="feature-row">
         <span class="feature"><span data-icon="zap"></span>Reads a whole drive in minutes</span>
         <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
@@ -7812,15 +7812,18 @@ function viewBlockedReason(view) {
  * nothing had happened. Keyed by view id, here rather than on each view,
  * because the views are registered in files of their own; a view missing
  * from this table still gets its own title and a sentence that claims nothing.
+ * Each claims only what its view does: the map leaves out what is too small
+ * to draw, and the statement keeps a line for what it cannot explain (review
+ * F2.4, F2.5).
  */
 const EMPTY_VIEW_LEADS = {
-  treemap: 'Once a folder is scanned, every file and folder in it appears here as a rectangle — the bigger the rectangle, the more space it takes.',
+  treemap: 'Once a folder is scanned, its biggest files and folders appear here as rectangles — the bigger the rectangle, the more space it takes.',
   city: 'Once a folder is scanned, its map appears here as a city seen from a corner, where you choose what a building’s height and color mean.',
   grid: 'Once a folder is scanned, its files and folders appear here as tiles you can sort, filter and open.',
   apps: 'Once a folder is scanned, this shows how much of it each application owns — the app itself, its caches, its data and its logs.',
   games: 'Once a folder is scanned, this shows what its game, photo and video libraries hold, and which parts their apps can rebuild if you remove them.',
   security: 'Once a folder is scanned, this lists keys, credentials and wallets sitting outside the folders they belong in — found by name and place, without opening any file.',
-  missing: 'Once a folder is scanned, this accounts for everything its disk counts as used — what the scan found, and what no scan can see, such as snapshots.',
+  missing: 'Once a folder is scanned, this sets out everything the disk it is on counts as used — what the scan found, what no scan can see, such as snapshots, and whatever is left unaccounted for.',
   duplicates: 'Once a folder is scanned, this finds files in it with identical contents, and pictures that look nearly the same.',
 };
 const EMPTY_VIEW_LEAD_DEFAULT = 'Once a folder is scanned, this view fills in.';

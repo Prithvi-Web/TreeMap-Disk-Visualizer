@@ -168,6 +168,28 @@ test('before any scan, every view that needs one opens on its own empty state: i
   assert.equal($('emptyForView').hidden, true, 'and Grid\'s title and sentence are not');
 });
 
+test('the Treemap and Missing GB sentences, and the welcome\'s, claim only what those views do: the map leaves out what is too small to draw, and the statement keeps a line for what it cannot explain (review F2.4, F2.5)', () => {
+  const { switchView, $ } = pageBeforeAnyScan();
+  // The map draws nothing under its 4 KB floor, caps its rectangles and opens
+  // one level at a time: "every file and folder in it appears here as a
+  // rectangle" was false for a folder of small files (review F2.4).
+  switchView('treemap');
+  const map = $('emptyViewLead').textContent;
+  assert.doesNotMatch(map, /every file/, `the map does not draw every file: "${map}"`);
+  assert.equal(map, 'Once a folder is scanned, its biggest files and folders appear here as rectangles — the bigger the rectangle, the more space it takes.');
+  // The statement always keeps an Unaccounted line, and a scan of one folder
+  // leaves most of the disk in it: "accounts for everything its disk counts
+  // as used" promised the opposite (review F2.5).
+  switchView('missing');
+  const missing = $('emptyViewLead').textContent;
+  assert.doesNotMatch(missing, /accounts for everything/, `the statement does not explain everything: "${missing}"`);
+  assert.equal(missing, 'Once a folder is scanned, this sets out everything the disk it is on counts as used — what the scan found, what no scan can see, such as snapshots, and whatever is left unaccounted for.');
+  // The Dashboard's welcome made the map's claim too.
+  const hero = slice('<div class="empty-hero" id="emptyHero">', '<div class="empty-for-view"');
+  assert.doesNotMatch(hero, /draws every file/, 'nor does the welcome say every file is drawn');
+  assert.match(hero, /<p>TreeMap draws a folder as rectangles: the bigger the rectangle, the more space it takes\./);
+});
+
 test('every change of view tells the welcome card, once the empty state is up or down, so it offers the folder browser exactly where the welcome does not (review F1.2)', () => {
   const { switchView, followed } = pageBeforeAnyScan();
   for (const s of SIDEBAR) switchView(s.id);
