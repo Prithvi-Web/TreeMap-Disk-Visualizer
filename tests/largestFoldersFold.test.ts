@@ -174,7 +174,7 @@ function renderCard(folders: Folder[]): { html: string } {
   }
   const deps: Record<string, unknown> = {
     $: () => host, state: { bigFolders: folders }, bigFolderRows,
-    escapeHtml: (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'),
+    escapeHtml: lift<(s: unknown) => string>(['escapeHtml'], 'escapeHtml'), // the page's own: what a name is escaped by is under test
     chipFor: () => '', formatCount: (n: number) => n.toLocaleString('en-US'), fxBarStyle: () => '', sizeInk: () => '#000',
     formatBytes: (n: number) => `${(n / 1e9).toFixed(1)} GB`, fxBarsIn() {},
   };
@@ -202,4 +202,21 @@ test('G15: a row that folded folders in names them, and its tooltip gives each o
   // The bars compare the rows shown: the first row is the full bar.
   assert.match(rows[0], /<span class="fx-li-pct num">100%<\/span>/);
   assert.doesNotMatch(html, /data-jump="\/Applications\/IntelliJ IDEA\.app\/Contents"/, 'Contents has no row of its own');
+  // Three or more, as a list (review F1.8): Chrome's whole five-folder chain.
+  const chrome = rows.find((r) => r.includes('data-jump="/Applications/Google Chrome.app"')) as string;
+  assert.ok(chrome.includes('Also covers Contents, Frameworks, Google Chrome Framework.framework, Versions and 130.0 inside it, which each hold nearly all of its size'),
+    'five folded folders, outermost first: commas, then "and" before the last');
+});
+
+test('G15 review F1.7: a folded folder\'s name and path are escaped in the note and its tooltip — a name is never markup', () => {
+  // A name a folder can really have (macOS and Linux allow every character but "/"), e.g. from an unpacked archive.
+  const hostile = `a&b"'<x><img src=1 onerror=alert(1)>`;
+  const { html } = renderCard([
+    { name: 'App.app', path: '/A/App.app', size: 1_000_000_000, fileCount: 2 },
+    { name: hostile, path: `/A/App.app/${hostile}`, size: 990_000_000, fileCount: 1 },
+  ]);
+  assert.doesNotMatch(html, /<img|<x>/, 'no element is made from the name');
+  const esc = 'a&amp;b&quot;&#39;&lt;x&gt;&lt;img src=1 onerror=alert(1)&gt;';
+  assert.ok(html.includes(`>Also covers ${esc} inside it, which holds nearly all of its size</div>`), 'the note names it, escaped once');
+  assert.ok(html.includes(`title="Inside it, not listed again:\n/A/App.app/${esc} — 1.0 GB"`), 'the tooltip gives its path, escaped once, inside the attribute');
 });
