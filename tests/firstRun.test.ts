@@ -482,7 +482,8 @@ test('the cart step follows the cart: taken out, cleared or committed while its 
   card.$('tourCard').contains = () => true;
   card.cartChanged();
   assert.equal(card.found['data-tour-done']?.focused ?? 0, 1, 'focus that was on Finish goes to the new Finish, not to <body>');
-  // Other steps do not read the cart's contents into their words, and are left as painted.
+  // The welcome, scanning and map steps do not read the cart, and are left as
+  // painted; a quick win reads it for its Add (review F3.1, the next test).
   const map = tourCard('map');
   map.cartChanged();
   assert.equal(map.now().paints, 1, 'a change of cart does not repaint the map step');
@@ -508,6 +509,47 @@ test('the cart step follows the cart: taken out, cleared or committed while its 
   state.cart.clear();
   await renderCart();
   assert.deepEqual(calls, ['tour told, dock shown', 'tour told, dock hidden'], 'each render tells the tour once, after the dock shows or hides');
+});
+
+test('a quick win follows the cart too: "Already in the cart" goes when its items leave the cart, and comes back when they are staged beside it (review F3.1)', () => {
+  // The cart outlives a session and the tour can be started again from
+  // Settings, so a win can be painted with every item already staged: a
+  // disabled "Already in the cart". The dock's Clear, or a row's own cart
+  // button, beside the card then left that sentence false and its one action
+  // disabled — only "Skip this one" led on.
+  const win = { title: 'Build output', description: 'Rebuildable build folders', totalSize: 10,
+    items: [{ name: 'dist', path: '/p/a/dist', size: 5 }, { name: 'dist', path: '/p/b/dist', size: 5 }] };
+  const add = (card: ReturnType<typeof tourCard>) => {
+    const m = /<button class="btn btn-primary" data-tour-add ?([^>]*)>([^<]*)</.exec(card.now().html);
+    return m ? [m[1].trim(), m[2]] : null;
+  };
+  const card = tourCard('win', { win, cart: ['/p/a/dist', '/p/b/dist'] });
+  assert.deepEqual(add(card), ['disabled', 'Already in the cart'], 'control: painted with both items staged');
+  card.cart.clear(); // the dock's Clear
+  card.cartChanged();
+  assert.deepEqual(add(card), ['', 'Add to cart'], `cleared beside the card, its Add is offered again: ${card.now().text}`);
+  assert.equal(card.found['data-tour-add']?.focused ?? 0, 0, 'the win card\'s repaint takes no focus the card did not hold');
+  card.cart.add('/p/a/dist');
+  card.cartChanged();
+  assert.deepEqual(add(card), ['', 'Add to cart'], 'one of two staged: there is still something to add');
+  card.cart.add('/p/b/dist'); // the last one, by a row's own cart button
+  card.cartChanged();
+  assert.deepEqual(add(card), ['disabled', 'Already in the cart'], 'both staged beside the card: nothing left to add');
+
+  // A change of cart that leaves what the card says as it is repaints nothing,
+  // so focus on the card stays on the control that held it.
+  const held = tourCard('win', { win });
+  held.$('tourCard').contains = () => true; // focus is on the card, on "Skip the tour" say
+  const before = held.now().paints;
+  held.cart.add('/elsewhere/node_modules');
+  held.cartChanged();
+  assert.equal(held.now().paints, before, 'an unrelated item staged: the card is not repainted');
+  // A change that does alter it, with focus on the card: the new card takes
+  // focus — the disabled "Already in the cart" cannot, so "Skip this one" does.
+  held.cart.add('/p/a/dist'); held.cart.add('/p/b/dist');
+  held.cartChanged();
+  assert.deepEqual(add(held), ['disabled', 'Already in the cart'], 'control: repainted');
+  assert.equal(held.found['data-tour-next']?.focused ?? 0, 1, 'focus held on the card goes to "Skip this one", not to <body>');
 });
 
 test('a first run, with nothing scanned, opens on the welcome card; a scanned session on the map (review F2.8)', () => {

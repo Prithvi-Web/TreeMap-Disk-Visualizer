@@ -127,7 +127,7 @@ function tourRender(takeFocus = true) {
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete'); });
   } else if (tour.step === 'win') {
     const g = tour.wins[tour.winIx];
-    const already = g.items.every((it) => state.cart.has(it.path));
+    const already = tourWinStaged(g);
     host.innerHTML = `
       ${head(`Quick win ${tour.winIx + 1} of ${tour.wins.length} · step 3 of 4`)}
       <h4>${icon('sparkles', 16)}${escapeHtml(g.title)} — ${formatBytes(g.totalSize)}</h4>
@@ -204,13 +204,25 @@ function tourFollowView() {
   tourRender($('tourCard').contains(document.activeElement));
 }
 
-/** The cart changed — renderCart tells the tour (review F2.3). The last
-    step's sentence reads the cart, and the card stays up while the cart is
-    used beside it — Clear, a removed item, a commit — so that step is
-    repainted, taking focus only when the card held it (tourRender itself
-    paints nothing once the tour is over). */
+/** Whether every item of a quick win is in the cart: its Add then has
+    nothing to add, and says "Already in the cart". */
+function tourWinStaged(g) {
+  return g.items.every((it) => state.cart.has(it.path));
+}
+
+/** The cart changed — renderCart tells the tour (review F2.3, F3.1). Two
+    steps read the cart: the last step's sentence, and a quick win's Add. The
+    card stays up while the cart is used beside it — Clear, a removed item, a
+    row's own cart button, a commit — so the step is repainted, taking focus
+    only when the card held it (tourRender itself paints nothing once the tour
+    is over). A quick win is repainted only when its Add has changed: a
+    repaint hands focus held on the card to its primary action, and one that
+    changes nothing would move focus off "Skip the tour" for no reason. */
 function tourCartChanged() {
-  if (tour.step !== 'cart') return;
+  if (tour.step === 'win') {
+    const offered = !!$('tourCard').querySelector('[data-tour-add]:not([disabled])');
+    if (offered !== tourWinStaged(tour.wins[tour.winIx])) return;
+  } else if (tour.step !== 'cart') return;
   tourRender($('tourCard').contains(document.activeElement));
 }
 
