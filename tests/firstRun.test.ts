@@ -237,26 +237,35 @@ function cardFinder(host: TEl, found: Record<string, TEl>, make: () => TEl = () 
 }
 
 /** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
-function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; cart?: string[]; takeFocus?: boolean } = {}) {
+function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; wins?: Array<Record<string, unknown>>; cart?: string[]; takeFocus?: boolean } = {}) {
   const els: Record<string, TEl> = {};
   const $ = (id: string) => (els[id] ??= tel());
   const host = $('tourCard');
   const found: Record<string, TEl> = {};
+  // Each paint makes new buttons, as the page's innerHTML does: a button of
+  // the last paint keeps its listeners, and is no longer the card's.
+  let painted = '';
+  Object.defineProperty(host, 'innerHTML', { get: () => painted, set: (v: string) => { painted = v; for (const k of Object.keys(found)) delete found[k]; } });
   host.querySelector = cardFinder(host, found);
   $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
   const winLine = liftPage<(g: unknown) => string>(WIN_LINE, 'tourWinLine');
-  const tour = { active: true, step, wins: opts.win ? [opts.win] : [], winIx: 0, added: opts.added ?? [], unknownReason: '' };
+  const tour = { active: true, step, wins: opts.wins ?? (opts.win ? [opts.win] : []), winIx: 0, added: opts.added ?? [], unknownReason: '' };
   const cart = new Set(opts.cart ?? []);
   // The page's cartAddMany as it behaves: what is not staged yet goes in.
   const cartAddMany = (paths: string[]) => paths.filter((p) => p && !cart.has(p) && cart.add(p)).length;
   const browsed: unknown[] = [];
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
+  // The page's own step to the next win, so Add and Skip move the card on as they do there (review F2.7).
+  const advance = pageFn('function tourAdvanceWin(');
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
-    'tourAdvanceWin', 'tourWinLine', 'document', `'use strict'; ${render} return tourRender;`)(
+    'tourWinLine', 'document', `'use strict'; ${render} ${advance} return tourRender;`)(
     $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart, root: null }, () => '', (s: string) => s,
-    (n: number) => `${n} B`, () => {}, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, () => {}, winLine, { activeElement: null }) as (takeFocus?: boolean) => void;
+    (n: number) => `${n} B`, () => {}, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: null }) as (takeFocus?: boolean) => void;
   fn(opts.takeFocus);
-  return { html: host.innerHTML, text: host.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), found, $, tour, cart, browsed };
+  const textOf = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  /** The card as it is painted now, after any click. */
+  const now = () => ({ html: host.innerHTML, text: textOf(host.innerHTML) });
+  return { html: host.innerHTML, text: textOf(host.innerHTML), found, $, tour, cart, browsed, now };
 }
 
 test('the welcome card offers one alternative, not a second primary action beside the welcome\'s own (G03)', () => {
@@ -413,6 +422,42 @@ test('the last step reads what this run added against the cart as it is now, and
   assert.deepEqual(tour.wins, [], 'no wins from the last run');
   assert.equal(tour.winIx, 0, 'and none counted');
   assert.equal(tour.unknownReason, '', 'and no reason left from the last run');
+});
+
+test('Add and Skip on a quick win move to the next, and the last step reads every add of the run against the cart (review F2.7)', () => {
+  // Overwriting the run's adds with the last win's, an Add that stays put,
+  // or a last advance that misses the cart step each passed every test: the
+  // one Add pressed in them started from nothing, on the only win.
+  const w1 = { title: 'Rust build target', description: 'Cargo build output', totalSize: 10,
+    items: [{ name: 'target', path: '/c/a1/target', size: 5 }, { name: 'target', path: '/c/a2/target', size: 5 }] };
+  const w2 = { title: 'Python bytecode', description: 'Python bytecode cache', totalSize: 4,
+    items: [{ name: '__pycache__', path: '/c/b1/__pycache__', size: 4 }] };
+  const press = (card: ReturnType<typeof tourCard>, key: string) => {
+    const button = card.found[key];
+    assert.ok(button?.listeners.click?.length, `${key} is on the card and wired`);
+    button.listeners.click.forEach((fn) => fn());
+  };
+  const card = tourCard('win', { wins: [w1, w2] });
+  assert.match(card.text, /Quick win 1 of 2/, 'control: the first win');
+  press(card, 'data-tour-add');
+  assert.deepEqual(card.tour.added, ['/c/a1/target', '/c/a2/target'], 'the first win\'s two paths are this run\'s');
+  assert.deepEqual([card.tour.step, card.tour.winIx], ['win', 1], 'Add moves on to the next win');
+  assert.match(card.now().text, /Quick win 2 of 2/, 'and paints its card');
+  card.cart.delete('/c/a2/target'); // taken out of the cart by hand
+  press(card, 'data-tour-add');
+  assert.deepEqual(card.tour.added, ['/c/a1/target', '/c/a2/target', '/c/b1/__pycache__'], 'the second win\'s path joins the first\'s, not in place of them');
+  assert.equal(card.tour.step, 'cart', 'after the last win, the cart step');
+  assert.match(card.now().text, /Some of what you added has since left the cart\./, `one of the run\'s adds left the cart: ${card.now().text}`);
+
+  // "Skip this one" moves on the same way, adding nothing.
+  const skipped = tourCard('win', { wins: [w1, w2] });
+  press(skipped, 'data-tour-next');
+  assert.deepEqual([skipped.tour.step, skipped.tour.winIx], ['win', 1], 'Skip this one moves on to the next win');
+  assert.match(skipped.now().text, /Quick win 2 of 2/, 'and paints its card');
+  press(skipped, 'data-tour-next');
+  assert.equal(skipped.tour.step, 'cart', 'skipping the last win reaches the cart step too');
+  assert.deepEqual(skipped.tour.added, [], 'with nothing added');
+  assert.match(skipped.now().text, /You added nothing — also fine\./, skipped.now().text);
 });
 
 test('a first run, with nothing scanned, opens on the welcome card; a scanned session on the map (review F2.8)', () => {
