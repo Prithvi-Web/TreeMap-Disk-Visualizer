@@ -22,35 +22,75 @@ const MG_SEG = {
 };
 
 let missingData = null;
-let missingLoading = false;
+
+/**
+ * The last statement each scan was given, for the next visit (design pass G06).
+ *
+ * Reading a statement takes the server most of a second (the disk layout and
+ * the held-space probe), and every visit showed skeleton rows for all of it.
+ * A visit now shows the scan's last statement at once, saying it is being
+ * updated, while it asks again; the answer replaces it whole. Only ever one
+ * statement is on screen, so its lines sum to its own used figure. Kept per
+ * scan, with the order it was asked in (`seq`), so an older answer landing
+ * late replaces nothing newer; a few scans' worth, not every scan's.
+ */
+const MISSING_CACHE_SCANS = 4;
+const missingCache = new Map();
+/** Bumped by every ask and by leaving the view: only the newest ask paints. */
+let missingSeq = 0;
+/** The receipt on screen is the scan's last statement, shown while it is asked again. */
+let missingUpdating = false;
+
+function mgRemember(scanId, statement, seq) {
+  const had = missingCache.get(scanId);
+  if (had && had.seq > seq) return; // a newer ask's answer is already kept
+  missingCache.delete(scanId); // re-inserted: the Map's order is how recently each scan was given one
+  missingCache.set(scanId, { seq, statement });
+  while (missingCache.size > MISSING_CACHE_SCANS) missingCache.delete(missingCache.keys().next().value);
+}
 
 /** Fetch the statement. A failure says so; it never leaves a stale receipt up. */
 async function loadMissing() {
   const body = $('missingBody');
-  if (!state.scanId) {
+  const scanId = state.scanId;
+  if (!scanId) {
+    missingSeq++;
     missingData = null;
     body.classList.remove('fx-chart-loading');
     body.innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
     $('missingInfo').textContent = '';
     return;
   }
-  if (missingLoading) return;
-  missingLoading = true;
-  // The same pending language as every other card: skeleton rows on a first
-  // load, the loading veil over a standing receipt on a refresh. Blanking a
-  // receipt the user is reading to say "wait" loses more than it says.
-  if (body.querySelector('.mg-receipt')) body.classList.add('fx-chart-loading');
-  else body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
+  const seq = ++missingSeq;
+  // The same pending language as every other card: skeleton rows when this
+  // scan has nothing to show yet, the loading veil over its own receipt while
+  // it is asked again. Never another scan's receipt, veiled or not.
+  const kept = missingCache.get(scanId);
+  if (kept) {
+    missingData = kept.statement;
+    missingUpdating = true;
+    renderMissing();
+    body.classList.add('fx-chart-loading');
+  } else if (missingData && missingData.scanId === scanId && body.querySelector('.mg-receipt')) {
+    body.classList.add('fx-chart-loading');
+  } else {
+    missingData = null;
+    body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
+  }
   try {
-    missingData = await api(`/api/missing-gigabytes?scanId=${encodeURIComponent(state.scanId)}`);
+    const statement = await api(`/api/missing-gigabytes?scanId=${encodeURIComponent(scanId)}`);
+    mgRemember(scanId, statement, seq); // its own scan's, whatever is on screen now
+    if (seq !== missingSeq || scanId !== state.scanId) return; // a newer ask, another scan, or the view left
+    missingData = statement;
+    missingUpdating = false;
     renderMissing();
   } catch (e) {
+    if (seq !== missingSeq || scanId !== state.scanId) return;
+    body.classList.remove('fx-chart-loading');
+    missingCache.delete(scanId);
     missingData = null;
     $('missingInfo').textContent = '';
-    body.classList.remove('fx-chart-loading');
     body.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
-  } finally {
-    missingLoading = false;
   }
 }
 
@@ -203,6 +243,8 @@ function renderMissing() {
       `<span class="mg-vol">${escapeHtml(d.volume.mountPoint === '/' ? 'This disk' : d.volume.mountPoint)}</span>` +
       // Labelled, so the scanned folder never reads as the disk's name (QA D41).
       `<span class="mg-mp">Scanned: ${escapeHtml(d.rootPath)}</span>` +
+      // The scan's last statement while it is asked again (loadMissing): said, so it is not read as now.
+      (missingUpdating ? `<span class="mg-mp" role="status">Updating…</span>` : '') +
       `<span class="mg-cap"><b>${escapeHtml(formatBytes(d.volume.usedBytes))}</b> used of ${escapeHtml(formatBytes(total))}</span>` +
     `</div>` +
     barHtml +
@@ -284,9 +326,11 @@ registerView({
   },
   mount() { loadMissing(); },
   unmount() {
-    // Nothing is left holding memory: the statement is small, but the receipt
-    // it paints is not, and the registry exists to stop exactly that
-    // accumulating across view switches.
+    // The receipt is taken down: the statements kept for the next visit are
+    // small (missingCache, a few scans'), but the receipt they paint is not,
+    // and the registry exists to stop exactly that accumulating across view
+    // switches. An answer still on its way is kept, and not painted here.
+    missingSeq++;
     missingData = null;
     $('missingBody').classList.remove('fx-chart-loading');
     $('missingBody').innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';

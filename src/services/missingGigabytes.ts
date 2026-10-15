@@ -350,6 +350,16 @@ export async function buildStatement(
   const rootPath = scan.rootPath;
   const plat = sources.platform;
 
+  // The held-space probe (lsof over every open file: 200-370 ms measured) and
+  // the disk layout (170-270 ms) read nothing of each other's, so the probe
+  // starts first and runs while the layout and the snapshots are read: the
+  // statement waits for the slower, not for their sum (design pass G06).
+  // Nothing is remembered between statements — each line says what the
+  // machine says now. Its failure is held here until its own line reads it,
+  // so one that lands while the layout is being read is never unhandled.
+  const held = (async () => sources.zombies())();
+  held.catch(() => { /* reported as the openHandles line's reason */ });
+
   const topology = await sources.topology();
   const resolved = await resolveScanVolume(topology.logicalVolumes, rootPath, sources.devOf);
   if (!resolved) {
@@ -444,7 +454,7 @@ export async function buildStatement(
 
   /* ── Space held by open handles ────────────────────────────────────────── */
 
-  lines.push(await openHandleLine(sources));
+  lines.push(await openHandleLine(held));
 
   /* ── Other volumes in the same container ──────────────────────────────── */
 
@@ -636,7 +646,8 @@ export function purgeableLine(plat: NodeJS.Platform): StatementLine {
   };
 }
 
-async function openHandleLine(sources: StatementSources): Promise<StatementLine> {
+/** `held`: the held-space probe, started by buildStatement before the layout was read. */
+async function openHandleLine(held: Promise<ZombieReport>): Promise<StatementLine> {
   const remedy: StatementRemedy = {
     action: 'review-open-handles',
     label: 'See what is holding it',
@@ -645,7 +656,7 @@ async function openHandleLine(sources: StatementSources): Promise<StatementLine>
       `TreeMap only asks a program to quit. It refuses ${RESTART_REFUSES}, and a program that declines is reported as still running rather than force-killed.`,
   };
   try {
-    const report = await sources.zombies();
+    const report = await held;
     if (report.processes.length === 0) {
       return {
         id: 'openHandles',
