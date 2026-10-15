@@ -28342,6 +28342,23 @@ function ruleAgeText(ms) {
   return parts.join(' ');
 }
 
+/**
+ * What a run or a Preview left alone: one line per reason, with how many items
+ * it covers — never only the first reason beside "(and N more left alone)",
+ * which hid every other reason from a run that left things alone for several
+ * (review round 3, F3.6). Past five reasons the rest are counted.
+ */
+function leftAloneHtml(skipped) {
+  const MAX_REASONS = 5;
+  const counts = new Map();
+  for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) || 0) + 1);
+  const shown = [...counts].slice(0, MAX_REASONS);
+  const rest = skipped.length - shown.reduce((n, [, c]) => n + c, 0);
+  return shown.map(([reason, n]) => `
+      <div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(reason)}${n > 1 ? ` (${formatCount(n)} items)` : ''}</span></div>`).join('') +
+    (rest > 0 ? `<div class="ap-skipped"><span>…and ${formatCount(rest)} more left alone</span></div>` : '');
+}
+
 function renderAutopilotRuns(runs) {
   const host = $('apRuns');
   const policies = state.autopilot.policies || [];
@@ -28369,8 +28386,7 @@ function renderAutopilotRuns(runs) {
         <b class="num">${formatBytes(i.bytes)}</b>
       </div>`).join('');
     const more = r.items.length > 8 ? `<div class="muted" style="font-size:11px;padding:2px 0 0 10px;">…and ${formatCount(r.items.length - 8)} more</div>` : '';
-    const skipped = r.skipped.length ? `
-      <div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(r.skipped[0].reason)}${r.skipped.length > 1 ? ` (and ${formatCount(r.skipped.length - 1)} more left alone)` : ''}</span></div>` : '';
+    const skipped = r.skipped.length ? leftAloneHtml(r.skipped) : '';
 
     return `
     <div class="bp-acc ap-run" data-run="${escapeHtml(r.id)}">
@@ -28688,9 +28704,10 @@ $('apPreviewBtn').addEventListener('click', async () => {
       `<div class="ap-preview-head num">${formatBytes(result.bytesWouldDelete)} across ${formatCount(result.items.length)} item${result.items.length === 1 ? '' : 's'}` +
       (result.capBytes !== null ? ` <span class="muted">(limit ${formatBytes(result.capBytes)})</span>` : '') + `</div>` +
       (result.wouldBlockReason ? `<div class="ap-reason">${escapeHtml(result.wouldBlockReason)}</div>` : '') +
-      (rows || `<div class="muted" style="padding:4px 0;">Nothing matches right now.</div>`) +
+      // What it left alone matched: "Nothing matches" only when nothing was left alone, as the run list says it (review round 3, F3.7).
+      (rows || `<div class="muted" style="padding:4px 0;">${result.skipped.length ? 'Everything that matches is left alone — nothing would be deleted.' : 'Nothing matches right now.'}</div>`) +
       (result.items.length > 12 ? `<div class="muted" style="font-size:11px;padding-left:10px;">…and ${formatCount(result.items.length - 12)} more</div>` : '') +
-      (result.skipped.length ? `<div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(result.skipped[0].reason)}</span></div>` : '');
+      (result.skipped.length ? leftAloneHtml(result.skipped) : '');
   } catch (e) {
     // A folder that names none, where the same path without the whitespace at
     // its end does: said in words, with that folder offered, as Save says it —

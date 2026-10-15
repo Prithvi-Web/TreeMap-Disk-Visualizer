@@ -108,8 +108,12 @@ test('a policy an earlier build saved with an advice-only group is not refused w
   }
 });
 
-/** What a run says when everything it matched was left alone, some of it for a reason with no short name of its own. */
-const LEFT_ALONE = 'Everything that matched was left alone, each for the reason listed with it — nothing was deleted.';
+/**
+ * What a run says when everything it matched was left alone, some of it for a reason with no short
+ * name of its own. It points at no list: the run's skipped entries carry the reasons, and a page may
+ * show only some of them (review round 3, F3.6).
+ */
+const LEFT_ALONE = 'Everything that matched was left alone — nothing was deleted.';
 
 test('a run that left an advice-only group\'s items alone beside parts of an installed program never says everything it matched was part of an installed program (review round 2, F2.3)', { skip: LIGHTROOM }, async () => {
   const dir = fs.realpathSync(fileTempDir('treemap-autopilotAdvisory-mixed-'));

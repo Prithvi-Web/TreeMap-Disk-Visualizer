@@ -1936,6 +1936,65 @@ test('a run that selected nothing because it left everything alone does not also
   assert.match(autopilotRunRow({ ...base, skipped: [] }), /Nothing matched\./, 'control: a run that matched nothing says so');
 });
 
+/** What a run card or a Preview SAYS, as a person reads it: its markup with the tags taken out. */
+const apText = (html: string): string => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+test('a run card shows every reason it left something alone, one line each with how many it covers — never only the first beside "(and N more left alone)" (review round 3, F3.6)', () => {
+  // A run that selected nothing for more than one reason says "Everything that
+  // matched was left alone"; the card showed skipped[0].reason and "(and 2 more
+  // left alone)", so the other reasons were nowhere on the page.
+  const ADVICE = 'Left alone — “Lightroom previews” is advice only: TreeMap never deletes it.';
+  const APP = 'Left alone — 2 matched items inside the app “Fake”, which would stop working without them.';
+  const LATER = "left for a later run — this run's limit of 1 MB was reached";
+  const base = { id: 'run-3', policyId: 'p', policyName: 'p', at: 0, mode: 'live', status: 'completed', items: [], bytesMatched: 0, bytesDeleted: 0,
+    blockedReason: 'Everything that matched was left alone — nothing was deleted.' };
+  const said = apText(autopilotRunRow({ ...base, skipped: [
+    { path: '/x/a.lrdata', reason: ADVICE }, { path: '/x/Fake.app', reason: APP }, { path: '/x/big1.bin', reason: LATER }, { path: '/x/big2.bin', reason: LATER },
+  ] }));
+  assert.ok(said.includes(ADVICE), `control: the first reason is shown: ${said}`);
+  assert.ok(said.includes(APP), `the second reason is shown too: ${said}`);
+  assert.ok(said.includes(`${LATER} (2 items)`), `and a reason given for two items once, with its count: ${said}`);
+  assert.doesNotMatch(said, /more left alone/, `nothing is left uncounted behind "more": ${said}`);
+  // Past five reasons the rest are counted, never dropped silently.
+  const many = Array.from({ length: 7 }, (_, i) => ({ path: `/x/p${i}`, reason: `"/x/p${i}" touches the protected path "/x" — remove it from agent-policy.json to allow this` }));
+  const capped = apText(autopilotRunRow({ ...base, skipped: many }));
+  assert.ok(many.slice(0, 5).every((s) => capped.includes(s.reason)), `five reasons are shown: ${capped}`);
+  assert.ok(!capped.includes(many[5].reason), `control: the sixth is not: ${capped}`);
+  assert.match(capped, /…and 2 more left alone/, `and the two past them are counted: ${capped}`);
+});
+
+/** The editor's Preview, evaluated: what it shows for a simulate answer `result`. */
+async function autopilotPreview(result: Record<string, unknown>): Promise<string> {
+  const handler = region("$('apPreviewBtn').addEventListener", 'let apSaveSeq');
+  const helper = region('function leftAloneHtml', 'function renderAutopilotRuns');
+  type El = { innerHTML: string; querySelector: () => null; addEventListener: (t: string, f: () => Promise<void>) => void; click?: () => Promise<void> };
+  const els: Record<string, El> = {};
+  const $ = (id: string): El => (els[id] ||= { innerHTML: '', querySelector: () => null, addEventListener(t, f) { if (t === 'click') this.click = f; } });
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(
+    '$', 'policyFromEditor', 'api', 'fxOrbShow', 'fxOrbHide', 'formatBytes', 'formatCount', 'escapeHtml', 'icon', 'meantFolder', 'noFolderNamed', 'offerMeant',
+    `let apSaveSeq = 0; ${helper} ${handler}`,
+  )($, () => ({ path: '/x' }), async () => result, () => {}, () => {}, (n: number) => `${n} B`, String, String, () => '',
+    async () => null, () => assert.fail('the folder is there'), () => assert.fail('nothing to offer'));
+  await els.apPreviewBtn.click!();
+  return apText(els.apPreview.innerHTML);
+}
+
+test('the editor\'s Preview never says "Nothing matches right now." above what it left alone, and shows every reason it left something alone (review round 3, F3.7, F3.6)', async () => {
+  // A policy whose folder holds only parts of an installed app: the Preview read
+  // "0 B across 0 items", "Nothing matches right now." and then that matched
+  // items were left alone — the second line false, since they matched.
+  const APP = 'Left alone — 2 matched items inside the app “Fake”, which would stop working without them.';
+  const NOTE = 'Left alone — your note on /x/archive pauses automatic cleanup around it (1 matched item).';
+  const answer = { items: [], bytesWouldDelete: 0, capBytes: null, skipped: [{ path: '/x/Fake.app', reason: APP }, { path: '/x/archive', reason: NOTE }] };
+  const left = await autopilotPreview(answer);
+  assert.ok(left.includes(APP), `control: what it left alone is shown: ${left}`);
+  assert.doesNotMatch(left, /Nothing matches right now/, `and nothing contradicts it: ${left}`);
+  assert.match(left, /Everything that matches is left alone — nothing would be deleted\./, `it says what happened instead: ${left}`);
+  assert.ok(left.includes(NOTE), `and every reason, not only the first: ${left}`);
+  assert.match(await autopilotPreview({ ...answer, skipped: [] }), /Nothing matches right now\./, 'control: a Preview that matched nothing says so');
+});
+
 test('an Autopilot undo that passed over an unconfirmed item says so, rather than that everything is back (FG3c #3)', async () => {
   const code = appCode();
   const src = code.slice(code.indexOf('function undoAutopilotRun'), code.indexOf('function deletePolicy'));

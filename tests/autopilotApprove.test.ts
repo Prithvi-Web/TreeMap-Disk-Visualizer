@@ -673,7 +673,7 @@ function renderedRuns(runs: unknown[], policies: unknown[]): string {
   const host = { innerHTML: '', querySelectorAll: () => [] };
   const render = new Function(
     '$', 'state', 'formatBytes', 'formatCount', 'escapeHtml', 'icon', 'formatDate', 'approveAutopilotRun', 'undoAutopilotRun',
-    `${pageSource('AP_STATUS_LABEL')} ${pageSource('approvableRunIds')} ${INDEX.includes('function unapprovableRunNote(') ? pageSource('unapprovableRunNote') : ''} ${pageSource('renderAutopilotRuns')}; return renderAutopilotRuns;`,
+    `${pageSource('AP_STATUS_LABEL')} ${pageSource('approvableRunIds')} ${INDEX.includes('function unapprovableRunNote(') ? pageSource('unapprovableRunNote') : ''} ${INDEX.includes('function leftAloneHtml(') ? pageSource('leftAloneHtml') : ''} ${pageSource('renderAutopilotRuns')}; return renderAutopilotRuns;`,
   )(() => host, { autopilot: { policies } }, String, String, (s: string) => s, () => '', String, () => undefined, () => undefined) as (runs: unknown[]) => void;
   render(runs);
   return host.innerHTML;

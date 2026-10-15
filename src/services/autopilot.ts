@@ -1070,6 +1070,8 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     // agent-policy.json, or left alone for any other reason in `skipped`. So it
     // is said only when nothing was left alone, and a reason is named only
     // when the named reasons cover everything that was (review round 2, F2.3, F2.4).
+    // Otherwise the sentence points at no list: the reasons are in `skipped`,
+    // and a page may show only some of them (review round 3, F3.6).
     const why = [
       heldBack.byNotes > 0 ? 'paused by your notes' : null,
       heldBack.inPrograms > 0 ? 'part of an installed program' : null,
@@ -1081,7 +1083,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
         ? 'Nothing matched this time.'
         : heldBack.otherwise === 0 && why.length > 0
           ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
-          : 'Everything that matched was left alone, each for the reason listed with it — nothing was deleted.';
+          : 'Everything that matched was left alone — nothing was deleted.';
     return record();
   }
 
