@@ -10,7 +10,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { ON_DISK_UNAVAILABLE, onDiskProvider, setOnDiskForTests } from '../src/services/facts/onDiskProvider';
+import { ON_DISK_DRIVE_SILENT, ON_DISK_UNAVAILABLE, onDiskProvider, setOnDiskForTests } from '../src/services/facts/onDiskProvider';
 import { platform } from '../src/platform';
 import { waitFor, withinHangGuard } from './fixtures/waitFor';
 
@@ -156,6 +156,76 @@ test('a file whose drive stops answering is not waited on: its look has a deadli
   }
 });
 
+test('a drive that stops answering silences only itself: files on another drive are still measured — later in the same request, and for another scan — while its own files wait until it answers (review F2.2)', { skip: !platform().blocksAreMeaningful && 'this system reports no blocks' }, async () => {
+  // A NAS share scanned beside ~/Downloads: one look at a file on the NAS that
+  // never settled made the fact unavailable for every scan and every drive,
+  // the internal disk's included, until that look came back. Which drive a
+  // path is on is the provider's own question (`driveOf`); here the folder
+  // `nas` stands for the share.
+  const root = fs.realpathSync(fileTempDir('tm-ondisk-drives-'));
+  const nas = path.join(root, 'nas');
+  const ssd = path.join(root, 'ssd');
+  fs.mkdirSync(nas);
+  fs.mkdirSync(ssd);
+  const stuck = path.join(nas, 'holiday.mov');
+  const nasToo = path.join(nas, 'raw.mov');
+  const local = path.join(ssd, 'notes.bin');
+  for (const f of [stuck, nasToo, local]) fs.writeFileSync(f, Buffer.alloc(DENSE, 7));
+  const both = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: root });
+  assert.equal(both.status, 200, JSON.stringify(both.body));
+  const ssdOnly = await call('POST', '/api/scan?wait=true&waitMs=55000', { path: ssd });
+  assert.equal(ssdOnly.status, 200, JSON.stringify(ssdOnly.body));
+
+  const looked: string[] = [];
+  const deadlines: Array<() => void> = [];
+  let answer: (() => void) | null = null;
+  setOnDiskForTests({
+    lstat: (p) => {
+      looked.push(p);
+      if (p !== stuck) return fs.promises.lstat(p);
+      return new Promise((resolve, reject) => { answer = () => { fs.promises.lstat(p).then(resolve, reject); }; });
+    },
+    deadline: () => {
+      let pass = (): void => {};
+      const late = new Promise<void>((resolve) => { pass = resolve; });
+      deadlines.push(pass);
+      return { late, cancel: () => {} };
+    },
+    // Names of this test's own, so no other test's silence is read as theirs.
+    driveOf: async (p) => (p.startsWith(nas + path.sep) ? 'the NAS' : 'the internal disk'),
+  });
+  try {
+    const signal = new AbortController().signal;
+    const first = onDiskProvider.compute(both.body.scanId, [stuck, local], signal);
+    await waitFor(() => deadlines.length === 1, 'the NAS file\'s look to be given its deadline');
+    deadlines[0](); // its deadline passes
+    const stalled = await withinHangGuard(first, 'the request to answer once the deadline passed');
+    assert.equal(stalled.values.has(stuck), false, 'control: the NAS file has no answer — never a 0');
+    assert.ok((stalled.values.get(local)?.bytes ?? 0) >= DENSE, 'the file on the other drive, later in the same request, is still measured');
+    assert.deepEqual(stalled.stats, { requested: 2, computed: 1, skipped: 0, failed: 1 });
+
+    // While the NAS look is still out: another scan, on the internal disk, is measured.
+    const other = await onDiskProvider.compute(ssdOnly.body.scanId, [local], signal);
+    assert.equal(other.available, true, `another scan's files on a drive that answers are measured: ${other.reason}`);
+    assert.ok((other.values.get(local)?.bytes ?? 0) >= DENSE);
+
+    // The NAS's own files are not asked until it answers: skipped, never a zero, beside a file that is measured.
+    const mixed = await onDiskProvider.compute(both.body.scanId, [nasToo, local], signal);
+    assert.equal(mixed.values.has(nasToo), false, 'a file on the silent drive has no answer');
+    assert.deepEqual(mixed.stats, { requested: 2, computed: 1, skipped: 1, failed: 0 }, 'it was not asked');
+    assert.ok(!looked.includes(nasToo), 'nothing on the silent drive was looked at');
+    const onlyNas = await onDiskProvider.compute(both.body.scanId, [nasToo], signal);
+    assert.equal(onlyNas.available, false, 'asked only about files on the silent drive, the fact is unknown for now');
+    assert.equal(onlyNas.reason, ON_DISK_DRIVE_SILENT, 'saying why');
+
+    answer!();
+    await waitFor(async () => (await onDiskProvider.compute(both.body.scanId, [nasToo], signal)).available, 'the NAS\'s files to be measured once it answers');
+  } finally {
+    setOnDiskForTests(null);
+    if (answer) (answer as () => void)();
+  }
+});
+
 test('where files report no blocks the onDisk fact is unavailable, saying why — never a zero (F09)', { skip: platform().blocksAreMeaningful && 'this system reports blocks' }, async () => {
   const dir = fs.realpathSync(fileTempDir('tm-ondisk-win-'));
   const file = path.join(dir, 'a.bin');
@@ -165,4 +235,14 @@ test('where files report no blocks the onDisk fact is unavailable, saying why �
   assert.equal(r.body.providers.onDisk.available, false);
   assert.equal(r.body.providers.onDisk.reason, ON_DISK_UNAVAILABLE);
   assert.deepEqual(r.body.providers.onDisk.values, {});
+});
+
+test('AGENTS.md says when the onDisk fact has no answer besides a system that reports no blocks: a file whose drive does not answer, and that drive\'s other files until it does — never every drive (review F2.2)', () => {
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  const at = agents.indexOf('`onDisk` (what a file takes on its disk now');
+  assert.notEqual(at, -1, 'the provider is in AGENTS.md');
+  const said = agents.slice(at, agents.indexOf('`lastUsed`', at)).replace(/\s+/g, ' ');
+  assert.match(said, /unavailable where the system reports no blocks/, `control: the system case: ${said}`);
+  assert.match(said, /drive does not answer within 2 s is failed/, `a file whose drive does not answer: ${said}`);
+  assert.match(said, /other drives' files are still measured/, `and only that drive is held: ${said}`);
 });
