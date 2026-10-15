@@ -361,6 +361,11 @@ function switchView(name) {
   fxEmptyCtaSync(empty);
   fxScanHeroSync();
   renderCapabilityNotice(view, blocked);
+  // The welcome card offers the folder browser exactly while the empty
+  // state's own button is off screen (review F1.2), so it hears of every
+  // change of view. Guarded like indexTree's renderCart: a page reader may
+  // lift this function without the tour.
+  if (typeof tourFollowView === 'function') tourFollowView();
 
   if (empty || blocked) { mountedView = view; return; }
 

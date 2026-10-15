@@ -58,7 +58,9 @@ function tourLanding() {
   return activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
 }
 
-function tourRender() {
+/** Paint the card for its step. `takeFocus` false repaints without moving
+    focus: a change of view must not pull it from the view just opened. */
+function tourRender(takeFocus = true) {
   if (!tour.active) return;
   const host = $('tourCard');
   $('tourOverlay').hidden = false;
@@ -72,13 +74,21 @@ function tourRender() {
     // one primary action, "Choose a folder to get started" (G03): this card
     // repeated its words and put a second blue button beside it, focused, so
     // Enter scanned the home folder. It now offers the home folder as the
-    // alternative it is, and nothing the welcome already offers.
+    // alternative it is, and nothing the welcome already offers. Where the
+    // welcome is not on screen — Offloaded, Time Capsule, Autopilot, Fleet —
+    // the card is the one prompt, so it offers the folder browser itself
+    // (review F1.2); a change of view repaints it (tourFollowView).
     const home = state.system && state.system.homeDir;
+    const heroBtn = $('emptyBrowseBtn');
+    const pick = !(heroBtn && heroBtn.getClientRects().length > 0);
+    const actions = (pick ? '<button class="btn" data-tour-pick>Choose a folder</button>' : '') +
+      (home ? '<button class="btn" data-tour-home>Scan my home folder</button>' : '');
     host.innerHTML = `
       ${head('Welcome · step 1 of 4')}
       <h4>${icon('treemap', 16)}Start with one folder</h4>
       <p>Pick a folder to look at first — scanning only reads it; nothing is moved or deleted.${home ? ' Your home folder is a good place to start.' : ''}</p>
-      ${home ? '<div class="tour-row"><button class="btn" data-tour-home>Scan my home folder</button></div>' : ''}`;
+      ${actions ? `<div class="tour-row">${actions}</div>` : ''}`;
+    if (pick) host.querySelector('[data-tour-pick]').addEventListener('click', () => { openBrowse(null); });
     if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { startScan(home); });
   } else if (tour.step === 'scanning') {
     // The click registered — say so. The old card kept offering "Scan my
@@ -167,7 +177,20 @@ function tourRender() {
   const primary = (cta && cta.getClientRects().length > 0 ? cta : null) ||
     host.querySelector('.btn-primary:not([disabled])') || host.querySelector('.tour-row button:not([disabled])') ||
     host.querySelector('[data-tour-skip]');
-  if (primary && !typing) primary.focus();
+  if (primary && takeFocus && !typing) primary.focus();
+}
+
+/** A change of view while the welcome card is up (review F1.2). The card
+    offers the folder browser exactly while the welcome's own "Choose a
+    folder" is off screen, so it is repainted when that changes — taking focus
+    only when it held it, so focus on the button it replaces is not dropped. */
+function tourFollowView() {
+  if (!tour.active || tour.step !== 'welcome') return;
+  const heroBtn = $('emptyBrowseBtn');
+  const heroUp = !!heroBtn && heroBtn.getClientRects().length > 0;
+  const offered = !!$('tourCard').querySelector('[data-tour-pick]');
+  if (offered === !heroUp) return;
+  tourRender($('tourCard').contains(document.activeElement));
 }
 
 /** How many of a quick win's items its card names; the rest are counted. */

@@ -89,14 +89,15 @@ test('the tour only appears for a first run, and rides the boot settings read', 
   assert.match(boot, /tourMaybeStart\(s\.tourDone/, 'the boot settings fetch decides — no second request');
 });
 
-test('the welcome card never focuses a hidden input — found by driving the zero-state; it now hands the folder browser to the welcome\'s own button (G03)', () => {
+test('the welcome card never focuses a hidden input — found by driving the zero-state; its "Choose a folder" opens the folder browser (G03, review F1.2)', () => {
   // Before any scan the top path box is offscreen; focus() on it was a silent
   // no-op, so "I'll pick my own" fell back to the folder browser — the same
   // browser the welcome's own "Choose a folder to get started" opens. The card
-  // no longer offers that second way to it (design pass G03), so it has no
-  // path box to focus at all.
+  // offers that browser only where the welcome is not on screen (design pass
+  // G03, review F1.2), and never a path box to focus.
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
-  assert.doesNotMatch(render, /data-tour-pick/, 'no "I\'ll pick my own"');
+  assert.doesNotMatch(render, /I’ll pick my own|I'll pick my own/, 'no "I\'ll pick my own"');
+  assert.match(render, /querySelector\('\[data-tour-pick\]'\)\.addEventListener\('click', \(\) => \{ openBrowse\(null\); \}\)/, 'the card\'s picker is the folder browser');
   assert.doesNotMatch(render, /pi\.focus\(\)|\$\('pathInput'\)\.focus\(/, 'and nothing in the card focuses the path box');
 });
 
@@ -207,7 +208,7 @@ function tel(rects = 1): TEl {
 }
 
 /** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
-function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; cart?: string[] } = {}) {
+function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; cart?: string[]; takeFocus?: boolean } = {}) {
   const els: Record<string, TEl> = {};
   const $ = (id: string) => (els[id] ??= tel());
   const host = $('tourCard');
@@ -239,13 +240,14 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   const cart = new Set(opts.cart ?? []);
   // The page's cartAddMany as it behaves: what is not staged yet goes in.
   const cartAddMany = (paths: string[]) => paths.filter((p) => p && !cart.has(p) && cart.add(p)).length;
+  const browsed: unknown[] = [];
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
     'tourAdvanceWin', 'tourWinLine', 'document', `'use strict'; ${render} return tourRender;`)(
     $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart, root: null }, () => '', (s: string) => s,
-    (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, cartAddMany, () => {}, winLine, { activeElement: null }) as () => void;
-  fn();
-  return { html: host.innerHTML, text: host.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), found, $, tour, cart };
+    (n: number) => `${n} B`, () => {}, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, () => {}, winLine, { activeElement: null }) as (takeFocus?: boolean) => void;
+  fn(opts.takeFocus);
+  return { html: host.innerHTML, text: host.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), found, $, tour, cart, browsed };
 }
 
 test('the welcome card offers one alternative, not a second primary action beside the welcome\'s own (G03)', () => {
@@ -259,12 +261,54 @@ test('the welcome card offers one alternative, not a second primary action besid
   assert.equal(card.found['data-tour-home']?.focused ?? 0, 0, 'not the home-folder scan');
 
   const elsewhere = tourCard('welcome', { heroUp: false });
-  assert.equal(elsewhere.found['data-tour-home']?.focused ?? 0, 1, 'with no welcome on screen the card\'s own action takes focus');
+  assert.equal(elsewhere.found['data-tour-pick']?.focused ?? 0, 1, 'with no welcome on screen the card\'s own "Choose a folder" takes focus (review F1.2)');
+  assert.equal(elsewhere.found['data-tour-home']?.focused ?? 0, 0, 'not the home-folder scan');
   assert.equal(elsewhere.found['data-tour-skip']?.focused ?? 0, 0, 'never Skip');
 
   const noHome = tourCard('welcome', { home: null, heroUp: true });
   assert.doesNotMatch(noHome.html, /<div class="tour-row">/, 'no home folder known: no empty row of actions');
   assert.match(noHome.text, /Pick a folder to look at first — scanning only reads it; nothing is moved or deleted\.$/, noHome.text);
+});
+
+test('where the welcome\'s own "Choose a folder" is not on screen, the welcome card offers it, and a change of view repaints the card without taking focus (review F1.2)', () => {
+  // Offloaded, Time Capsule, Autopilot and Fleet have no folder picker, and
+  // Settings › Show the welcome tour again can start the card on any of them:
+  // the card said "Pick a folder to look at first" with no way to do so.
+  const off = tourCard('welcome', { heroUp: false });
+  assert.match(off.html, /<div class="tour-row"><button class="btn" data-tour-pick>Choose a folder<\/button><button class="btn" data-tour-home>Scan my home folder<\/button><\/div>/,
+    `the card offers the folder browser itself, first, beside the home folder — neither one blue: ${off.html}`);
+  const pick = off.found['data-tour-pick'];
+  assert.ok(pick?.listeners.click?.length, 'the button is wired');
+  pick.listeners.click.forEach((fn) => fn());
+  assert.deepEqual(off.browsed, [null], 'and opens the folder browser');
+  const noHome = tourCard('welcome', { heroUp: false, home: null });
+  assert.match(noHome.html, /<div class="tour-row"><button class="btn" data-tour-pick>Choose a folder<\/button><\/div>/, 'with no home folder known, the card still has the one way to pick');
+  assert.equal(noHome.found['data-tour-pick']?.focused ?? 0, 1, 'and it takes focus, not Skip');
+  assert.doesNotMatch(tourCard('welcome', { heroUp: true }).html, /data-tour-pick/, 'with the welcome on screen, its own button is the one way');
+  const quiet = tourCard('welcome', { heroUp: false, takeFocus: false });
+  assert.equal(Object.values(quiet.found).reduce((n, b) => n + b.focused, 0) + quiet.$('emptyBrowseBtn').focused, 0, 'a repaint asked not to take focus takes none');
+
+  // tourFollowView: called by switchView, it repaints the welcome card when
+  // whether the welcome's button is on screen no longer matches the card.
+  const follow = INDEX.slice(INDEX.indexOf('function tourFollowView'), INDEX.indexOf('/** A quick win'));
+  const run = (o: { step?: string; active?: boolean; offered: boolean; heroUp: boolean; inCard?: boolean }) => {
+    const card = tel(); card.innerHTML = o.offered ? '<button class="btn" data-tour-pick>Choose a folder</button>' : '';
+    card.querySelector = (sel: string) => (sel === '[data-tour-pick]' && card.innerHTML.includes('data-tour-pick') ? tel() : null);
+    card.contains = () => o.inCard === true;
+    const hero = tel(o.heroUp ? 1 : 0);
+    const renders: unknown[] = [];
+    new Function('$', 'tour', 'tourRender', 'document', `'use strict'; ${follow} tourFollowView();`)(
+      (id: string) => (id === 'tourCard' ? card : id === 'emptyBrowseBtn' ? hero : tel()), { active: o.active ?? true, step: o.step ?? 'welcome' },
+      (takeFocus: unknown) => { renders.push(takeFocus); }, { activeElement: {} });
+    return renders;
+  };
+  assert.deepEqual(run({ offered: false, heroUp: false }), [false], 'the welcome went off screen: the card repaints, offering the picker, without taking focus from the view just opened');
+  assert.deepEqual(run({ offered: true, heroUp: true }), [false], 'it came back: the card repaints without its own');
+  assert.deepEqual(run({ offered: true, heroUp: true, inCard: true }), [true], 'focus that was on the card\'s button goes with the repaint, not to <body>');
+  assert.deepEqual(run({ offered: true, heroUp: false }), [], 'nothing changed: no repaint');
+  assert.deepEqual(run({ offered: false, heroUp: true }), [], 'nothing changed: no repaint');
+  assert.deepEqual(run({ offered: false, heroUp: false, step: 'map' }), [], 'only the welcome step offers the picker');
+  assert.deepEqual(run({ offered: false, heroUp: false, active: false }), [], 'and only while the tour is up');
 });
 
 test('"Skip the tour" sits in the card\'s header on every step, never alone on a second row of buttons (G03)', () => {

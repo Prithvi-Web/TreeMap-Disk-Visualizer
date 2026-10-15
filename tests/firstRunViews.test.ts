@@ -98,13 +98,16 @@ function pageBeforeAnyScan() {
   // viewBlockedReason, then what stands between it and switchView (the empty
   // state's copy and its renderer), then switchView itself.
   const src = slice('function viewBlockedReason(', '/**\n * The first enabled control on screen');
+  // What the welcome card was shown each time switchView told it the view
+  // changed (review F1.2): whether the empty state was up by then.
+  const followed: string[] = [];
   const switchView = new Function('$', 'state', 'VIEW_BY_ID', 'tabs', 'document', 'icon', 'hideTooltip', 'hideCtxMenu', 'selectionBarFollowView',
-    'fxEmptyCtaSync', 'fxScanHeroSync', 'renderCapabilityNotice', 'fxViewEnter', 'toast',
+    'fxEmptyCtaSync', 'fxScanHeroSync', 'renderCapabilityNotice', 'fxViewEnter', 'toast', 'tourFollowView',
     `'use strict'; let mountedView = null; ${src} return switchView;`)(
     $, state, viewById, tabs, { querySelectorAll: () => [] }, (name: string, size: number) => `<svg data-i="${name}" data-s="${size}"></svg>`,
-    () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => {},
+    () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => { followed.push($('emptyState').style.display); },
   ) as (id: string) => void;
-  return { switchView, $ };
+  return { switchView, $, followed };
 }
 
 test('control: the sidebar and the registrations this test reads are the page\'s own', () => {
@@ -144,6 +147,13 @@ test('before any scan, every view that needs one opens on its own empty state: i
     leads.add(lead);
   }
   assert.equal(leads.size, 8, 'eight views have a sentence of their own, the Dashboard the welcome');
+});
+
+test('every change of view tells the welcome card, once the empty state is up or down, so it offers the folder browser exactly where the welcome does not (review F1.2)', () => {
+  const { switchView, followed } = pageBeforeAnyScan();
+  for (const s of SIDEBAR) switchView(s.id);
+  assert.deepEqual(followed, SIDEBAR.map((s) => (REGISTERED.get(s.id)!.needsScan ? 'flex' : 'none')),
+    'one call per switch, each after the empty state was put up or taken down for that view');
 });
 
 test('the Dashboard\'s welcome names it, and every empty state has the same single action (G02)', () => {
