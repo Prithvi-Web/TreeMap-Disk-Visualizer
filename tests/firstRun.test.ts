@@ -415,6 +415,22 @@ test('the last step reads what this run added against the cart as it is now, and
   assert.equal(tour.unknownReason, '', 'and no reason left from the last run');
 });
 
+test('a first run, with nothing scanned, opens on the welcome card; a scanned session on the map (review F2.8)', () => {
+  // The branch a brand-new person takes: with no scan yet the tour begins at
+  // "Start with one folder", not at a map that is not there.
+  const start = INDEX.slice(INDEX.indexOf('function tourMaybeStart'), INDEX.indexOf('async function tourFinish'));
+  const run = (scanId: string | null, done: unknown = false, active = false) => {
+    const tour = { active, step: 'cart', wins: [], winIx: 0, added: [], unknownReason: '' };
+    let rendered = 0;
+    new Function('tour', 'state', 'tourRender', `'use strict'; ${start} tourMaybeStart(arguments[3]);`)(tour, { scanId }, () => { rendered++; }, done);
+    return { step: tour.step, rendered, active: tour.active };
+  };
+  assert.deepEqual(run(null), { step: 'welcome', rendered: 1, active: true }, 'nothing scanned: the welcome card, painted once');
+  assert.deepEqual(run('s1'), { step: 'map', rendered: 1, active: true }, 'control: a scanned session opens on the map');
+  assert.deepEqual(run(null, true), { step: 'cart', rendered: 0, active: false }, 'a tour already finished does not start');
+  assert.deepEqual(run(null, false, true), { step: 'cart', rendered: 0, active: true }, 'nor does one already running start over');
+});
+
 test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s primary action, the map, or the view (G11)', async () => {
   const finish = INDEX.slice(INDEX.indexOf('async function tourFinish'), INDEX.indexOf('function tourRender'));
   const run = async (opts: { heroUp?: boolean; view?: string; mapUp?: boolean; inCard?: boolean; noControl?: boolean }) => {
