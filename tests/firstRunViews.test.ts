@@ -67,10 +67,21 @@ function el(id = ''): El {
   return e;
 }
 
+/** Whether the page ships the element with this id hidden: its opening tag carries `hidden`. */
+function shipsHidden(id: string): boolean {
+  const tag = new RegExp(`<[a-z][\\w-]*\\b[^>]*\\bid="${id}"[^>]*>`).exec(INDEX);
+  return !!tag && /\shidden(?=[\s>=])/.test(tag[0]);
+}
+
+/**
+ * Stub elements by id, each starting as the page ships it — hidden or not —
+ * so an assertion that code shows something can fail (review F1.5, F1.6: a
+ * stub that started shown passed whether the code showed it or not).
+ */
 function makeDom() {
   const els: Record<string, El> = {};
   const $ = (id: string) => {
-    if (!els[id]) { els[id] = el(id); els[id].parentElement = el(id + '-parent'); }
+    if (!els[id]) { els[id] = el(id); els[id].hidden = shipsHidden(id); els[id].parentElement = el(id + '-parent'); }
     return els[id];
   };
   return { $, els };
@@ -147,6 +158,14 @@ test('before any scan, every view that needs one opens on its own empty state: i
     leads.add(lead);
   }
   assert.equal(leads.size, 8, 'eight views have a sentence of their own, the Dashboard the welcome');
+  // Back to the Dashboard from another view, still before any scan — the
+  // most natural first-five-minutes path (review F1.7): the welcome comes
+  // back, and the other view's title goes.
+  switchView('grid');
+  assert.equal($('emptyHero').hidden, true, 'control: Grid put its own empty state up');
+  switchView('dashboard');
+  assert.equal($('emptyHero').hidden, false, 'back on the Dashboard: the welcome is up again');
+  assert.equal($('emptyForView').hidden, true, 'and Grid\'s title and sentence are not');
 });
 
 test('every change of view tells the welcome card, once the empty state is up or down, so it offers the folder browser exactly where the welcome does not (review F1.2)', () => {
@@ -174,8 +193,8 @@ test('the Dashboard\'s welcome names it, and every empty state has the same sing
 
 /* ══════════════ Trends — an explanation and an action, not an empty chart ══════════════ */
 
-async function trendsWith(roots: Array<{ rootPath: string; count: number }>) {
-  const { $ } = makeDom();
+async function trendsWith(roots: Array<{ rootPath: string; count: number }>, dom = makeDom()) {
+  const { $ } = dom;
   const state: Record<string, unknown> = { root: null, trends: { roots: [], snapshots: [], path: null } };
   const browsed: unknown[] = [];
   const drawn: string[] = [];
@@ -186,7 +205,7 @@ async function trendsWith(roots: Array<{ rootPath: string; count: number }>) {
     () => drawn.push('chart'), () => drawn.push('net'), async () => { drawn.push('data'); }, (start: unknown) => browsed.push(start),
   ) as () => Promise<void>;
   await load();
-  return { $, browsed, drawn };
+  return { $, browsed, drawn, dom };
 }
 
 test('Trends with no history says what it will show and offers the action, instead of an empty 230 px chart (G02)', async () => {
@@ -206,12 +225,24 @@ test('Trends with no history says what it will show and offers the action, inste
   assert.equal(some.$('trendGrid').hidden, false, 'the charts');
   assert.equal(some.$('trendToolbar').hidden, false, 'and the folder list');
   assert.deepEqual(some.drawn, ['data'], 'and the history is drawn');
+
+  // The same elements, one load after another, as the page's are: the
+  // explanation shipped hidden must come up, and the charts it stood in for
+  // must come back (review F1.6).
+  const first = await trendsWith([]);
+  assert.equal(first.$('trendEmpty').hidden, false, 'control: no history, the explanation');
+  const later = await trendsWith([{ rootPath: '/c', count: 2 }], first.dom);
+  assert.equal(later.$('trendEmpty').hidden, true, 'history since: the explanation goes');
+  assert.equal(later.$('trendGrid').hidden, false, 'the charts come back');
+  assert.equal(later.$('trendToolbar').hidden, false, 'and so does the folder list');
+  const gone = await trendsWith([], later.dom);
+  assert.equal(gone.$('trendEmpty').hidden, false, 'and with none again, the explanation is back');
 });
 
 /* ══════════════ History — the calendar's empty state has an action ══════════════ */
 
-async function calendarWith(scanId: string | null) {
-  const { $ } = makeDom();
+async function calendarWith(scanId: string | null, dom = makeDom()) {
+  const { $ } = dom;
   const browsed: unknown[] = [];
   const src = slice('async function loadCalendar(', 'function renderCalendar(');
   const load = new Function('$', 'state', 'api', 'escapeHtml', 'icon', 'skeletonRows', 'renderCalendar', 'openBrowse', 'calChannel', 'calSeq', 'calData',
@@ -220,7 +251,7 @@ async function calendarWith(scanId: string | null) {
     (start: unknown) => browsed.push(start), 'modified', 0, null,
   ) as () => Promise<void>;
   await load();
-  return { $, browsed };
+  return { $, browsed, dom };
 }
 
 test('History\'s calendar before a scan says what it shows and offers the action — no "Click a day…" over nothing (G02)', async () => {
@@ -235,9 +266,14 @@ test('History\'s calendar before a scan says what it shows and offers the action
   btn.listeners.click.forEach((fn) => fn());
   assert.deepEqual(none.browsed, [null], 'which opens the folder browser');
 
+  // The page ships the row hidden, so a scan must show it (review F1.5):
+  // first on a page just opened, then on the same elements the no-scan
+  // calendar hid.
+  assert.match(slice('<div id="histPanelCalendar"', '<div id="histPanelJournal"'), /<div class="rule-row" id="calControls" hidden/, 'the row the code shows is the controls\' own, shipped hidden');
   const scanned = await calendarWith('s1');
-  assert.equal(scanned.$('calControls').hidden, false, 'a scan brings the controls back');
-  assert.match(slice('<div id="histPanelCalendar"', '<div id="histPanelJournal"'), /<div class="rule-row" id="calControls"/, 'the row the code hides is the controls\' own');
+  assert.equal(scanned.$('calControls').hidden, false, 'a scan brings the controls up');
+  const after = await calendarWith('s1', none.dom);
+  assert.equal(after.$('calControls').hidden, false, 'a scan brings the controls back');
 });
 
 /* ══════════════ Offloaded and Time Capsule — no search box over nothing ══════════════ */
