@@ -9,7 +9,11 @@ isolatedDataDir('treemap-firstrun-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { getSettings, updateSettings } from '../src/services/settings';
+import { ITEMS_PER_RULE } from '../src/services/cleanupRules';
 import { lift as liftPage } from './fixtures/liftFrontend';
+
+/** tourWinLine and what it reads, out of the built page. */
+const WIN_LINE = ['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'SUGGESTION_ITEMS_LISTED', 'tourWinLine'];
 
 /**
  * v4 §9.2 — the guided first run.
@@ -169,7 +173,7 @@ test('the palette closes through its own door from every path — focus restore 
 /* ══════════════════════ QA D06 — the quick-win card reads as sentences ══════════════════════ */
 
 test('a quick win\'s description ends as a sentence — "…fetched crates A folder named…" ran together (QA D06) — and the matcher\'s wording is not shown (G04)', () => {
-  const line = liftPage<(g: { description?: string; why?: string }) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
+  const line = liftPage<(g: { description?: string; why?: string }) => string>(WIN_LINE, 'tourWinLine');
   const text = (html: string) => html.replace(/<[^>]+>/g, '');
   assert.equal(text(line({ description: 'Cargo build output and fetched crates', why: 'A folder named target sitting next to Cargo.toml.' })),
     'Cargo build output and fetched crates.', 'the rule\'s description as a sentence; its matcher wording is the Clean Up view\'s, not the tour\'s (G04)');
@@ -235,7 +239,7 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
     return (found[key] ??= tel());
   };
   $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
-  const winLine = liftPage<(g: unknown) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
+  const winLine = liftPage<(g: unknown) => string>(WIN_LINE, 'tourWinLine');
   const tour = { active: true, step, wins: opts.win ? [opts.win] : [], winIx: 0, added: opts.added ?? [], unknownReason: '' };
   const cart = new Set(opts.cart ?? []);
   // The page's cartAddMany as it behaves: what is not staged yet goes in.
@@ -328,7 +332,7 @@ test('"Skip the tour" sits in the card\'s header on every step, never alone on a
 });
 
 test('a quick win says what it found — the rule\'s plain words, each item\'s name and size — never the matcher\'s wording (G04)', () => {
-  const line = liftPage<(g: unknown) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
+  const line = liftPage<(g: unknown) => string>(WIN_LINE, 'tourWinLine');
   const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const why = 'A folder named .next; or a folder named dist sitting next to package.json, next.config.*';
   const one = line({ description: 'Framework build output — rebuilt by the next build', why, totalSize: 12_300_000,
@@ -339,8 +343,17 @@ test('a quick win says what it found — the rule\'s plain words, each item\'s n
     items: [1, 2, 3, 4].map((i) => ({ name: '__pycache__', path: `/c/p${i}/__pycache__`, size: 1_000 })) });
   assert.equal(text(four), 'Python bytecode cache. __pycache__ in p1 1.0 KB __pycache__ in p2 1.0 KB __pycache__ in p3 1.0 KB and 1 more',
     'three named, the rest counted');
-  const capped = line({ description: 'Node modules', totalSize: 9_000, items: [1, 2, 3, 4].map((i) => ({ name: 'node_modules', path: `/c/p${i}/node_modules`, size: 1_000 })) });
-  assert.match(text(capped), /and more$/, 'a list the server cut short is not given a count it does not have');
+  const listed = (n: number, size: (i: number) => number, totalSize: number) => line({ description: 'OS junk', totalSize,
+    items: Array.from({ length: n }, (_, i) => ({ name: '.DS_Store', path: `/c/d${i}/.DS_Store`, size: size(i) })) });
+  assert.equal(liftPage<number>(['SUGGESTION_ITEMS_LISTED'], 'SUGGESTION_ITEMS_LISTED'), ITEMS_PER_RULE, 'the page counts on the server\'s own cap on a rule\'s list');
+  assert.match(text(listed(ITEMS_PER_RULE - 1, () => 1_000, (ITEMS_PER_RULE - 1) * 1_000)), new RegExp(`and ${ITEMS_PER_RULE - 4} more$`),
+    'a list shorter than the cap holds every match, so the rest are counted');
+  assert.match(text(listed(ITEMS_PER_RULE, () => 1_000, 900_000)), /\.DS_Store in d2 1\.0 KB and more$/, 'a list the server cut short is not given a count it does not have');
+  // A rule matching empty files (.DS_Store, Thumbs.db) can list as many
+  // bytes as its total while matches past the cap go unlisted (review F1.4).
+  const sumsUp = text(listed(ITEMS_PER_RULE, (i) => (i < 3 ? 6_000 : 0), 18_000));
+  assert.match(sumsUp, /and more$/, `a full list whose sizes add up to the total is not proof it holds every match: ${sumsUp.slice(-40)}`);
+  assert.doesNotMatch(sumsUp, /\d more$/, 'so no count is given');
   assert.match(line({ description: 'a <b>', totalSize: 1, items: [{ name: '<i>', path: '/<u>/<i>', size: 1 }] }), /a &lt;b&gt;\.[\s\S]*<b>&lt;i&gt;<\/b> <span class="muted">in &lt;u&gt;<\/span>/, 'everything escaped');
   const card = tourCard('win', { win: { title: 'Web framework build', description: 'Framework build output', why, totalSize: 12_300_000,
     items: [{ name: '.next', path: '/c/webapp/.next', size: 12_300_000 }] } });

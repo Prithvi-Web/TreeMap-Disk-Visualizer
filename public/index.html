@@ -30405,13 +30405,21 @@ function tourFollowView() {
 /** How many of a quick win's items its card names; the rest are counted. */
 const TOUR_WIN_ITEMS = 3;
 
+/** The most items the server lists for one rule (ITEMS_PER_RULE in
+    src/services/cleanupRules.ts; tests/firstRun.test.ts holds them equal).
+    A shorter list holds every match; one this long may have been cut, and
+    the group's total counts every match, listed or not. */
+const SUGGESTION_ITEMS_LISTED = 200;
+
 /** A quick win's words: the rule's own description, ended as a sentence (QA
     D06: the descriptions carry no full stop), then what it found — each item's
     name, the folder it is in and its size (design pass G04). The rule's matcher
     wording ("A folder named .next; or a folder named dist sitting next to
     package.json, next.config.*…") is for the Clean Up view, not the tour. The
-    server lists at most 200 items a rule while its total counts every match,
-    so the rest are counted only when the listed sizes add up to that total. */
+    server lists at most SUGGESTION_ITEMS_LISTED items a rule, so the rest are
+    counted only when the list is shorter than that. Listed sizes adding up to
+    the group's total prove nothing: a rule for .DS_Store and Thumbs.db
+    matches empty files, and those past the cap add nothing (review F1.4). */
 function tourWinLine(g) {
   const desc = String(g.description || '').trim();
   const sentence = desc && !/[.!?…]$/.test(desc) ? desc + '.' : desc;
@@ -30425,7 +30433,7 @@ function tourWinLine(g) {
       ` <span class="num">${formatBytes(it.size)}</span></span>`;
   });
   const rest = items.length - rows.length;
-  const listedAll = items.reduce((sum, it) => sum + (Number(it.size) || 0), 0) >= g.totalSize;
+  const listedAll = items.length < SUGGESTION_ITEMS_LISTED;
   if (rest > 0) rows.push(`<span class="tour-item muted">${listedAll ? `and ${formatCount(rest)} more` : 'and more'}</span>`);
   return `${escapeHtml(sentence)}<span class="tour-items">${rows.join('')}</span>`;
 }
