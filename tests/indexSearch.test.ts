@@ -931,6 +931,57 @@ test('a seeded oracle: three or four nested indexes over a deep tree, none curre
   deleteIndex();
 });
 
+test('two nested indexes, neither current: a page past the count cap, a short last page and a page past the end are the pages and counts one index gives (review F3.5 of fifth browser pass F08)', () => {
+  // Review F3.5: where rows are kept one at a time, the page and the capped count are worked out as the
+  // search reads (keptPage), not by LIMIT/OFFSET and a capped COUNT(*). Only offset 0, and one page of
+  // one at offset 1, were tested: reading only to the count cap past it, a short page counting only its
+  // rows, or a count left uncapped all passed. GET /api/search takes an offset up to 100,000. The same
+  // paths are searched in two nested indexes and in one, and every page must be the same.
+  const DIRS = 12;
+  const FILES = 500; // 6,000 paths, each in both indexes
+  const COUNT_CAP = 5_000; // SEARCH_COUNT_CAP
+  const fill = (ix: ReturnType<typeof rowIndex>, holders: RowRoot[]) => {
+    for (let d = 0; d < DIRS; d++) for (let f = 0; f < FILES; f++) ix.hold(holders, `inner/dir${d}/file${f}.dat`, d * FILES + f + 1);
+  };
+  const SEVENS = DIRS * Array.from({ length: FILES }, (_, f) => `file${f}.dat`).filter((name) => name.includes('file7')).length;
+  const asks: Array<[string, number, number]> = [
+    ['*.dat', 50, 0], // a full page: counted to the cap
+    ['*.dat', 100, 5_200], // a page past the cap
+    ['*.dat', 500, 5_900], // the last page, short, past the cap
+    ['*.dat', 100, 7_000], // past the end
+    ['file7', 50, 0],
+    ['file7', 50, SEVENS - 10], // a short last page
+    ['file7', 50, SEVENS + 40], // past the end
+  ];
+  const pages = () => asks.map(([q, limit, offset]) => {
+    const r = searchIndex(q, { limit, offset });
+    return { hits: r.hits.map((h) => h.path), total: r.total, countCapped: r.countCapped, truncated: r.truncated };
+  });
+
+  const nested = rowIndex();
+  const outer = nested.root('', 1_000_000);
+  const inner = nested.root('inner', 2_000_000);
+  fill(nested, [outer, inner]);
+  const twice = pages();
+  assert.ok(searchIndex('*.dat', { limit: 500 }).hits.every((h) => h.rootPath === inner.path), 'control: the index built later answers for every path');
+  const single = rowIndex();
+  fill(single, [single.root('', 1_000_000)]);
+  const once = pages();
+  assert.equal(SEVENS, 132, 'control: "file7" matches 132 paths');
+
+  // What one index gives, stated: the pages each arm of the reading must match.
+  const biggest = (n: number) => { const size = DIRS * FILES - n; return nested.abs(`inner/dir${Math.floor((size - 1) / FILES)}/file${(size - 1) % FILES}.dat`); };
+  assert.deepEqual(once.map((p) => [p.hits.length, p.total, p.countCapped]), [
+    [50, COUNT_CAP, true], [100, COUNT_CAP, true], [100, 6_000, false], [0, 7_000, false], [50, SEVENS, false], [10, SEVENS, false], [0, SEVENS + 40, false],
+  ], 'control: one index\'s pages and counts');
+  assert.equal(once[1].hits[0], biggest(5_200), 'control: the page at 5,200 starts at the 5,201st biggest');
+
+  asks.forEach(([q, limit, offset], i) => {
+    assert.deepEqual(twice[i], once[i], `"${q}", ${limit} at ${offset}: two nested indexes give the page and count one index gives`);
+  });
+  deleteIndex();
+});
+
 test('a very broad match reports a capped count rather than paying for an exact one', () => {
   // An uncapped COUNT(*) is a second full scan — 17ms over 500k rows, and
   // linear from there, so at 5M it would exceed the entire latency budget on
