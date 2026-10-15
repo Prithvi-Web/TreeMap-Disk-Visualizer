@@ -166,6 +166,64 @@ test('G19: while the cart is open it stands left of the cart, as the preview ban
   assert.match(prop(r.body, 'max-width') ?? '', /402px/, 'the same allowance the preview banner keeps for the dock');
 });
 
+/** One element on a path from the document root down: its tag, id, classes and attributes. */
+type PathEl = { tag: string; id?: string; classes?: string[]; attrs?: Record<string, string> };
+/**
+ * Whether one compound selector (`tag#id.class[attr="v"]:not(…)`) matches
+ * `el` at rest: `:root` matches the first element on the path; a pseudo-
+ * element, any other pseudo-class (a state such as :hover) and anything this
+ * reader cannot parse do not.
+ */
+function compoundMatches(compound: string, el: PathEl, isRoot: boolean): boolean {
+  const re = /(\*|[a-z][\w-]*)|#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]|:not\(([^()]*)\)|(::?)([\w-]+)(?:\([^()]*\))?/giy;
+  let at = 0;
+  for (let m = re.exec(compound); m; m = re.exec(compound)) {
+    at = re.lastIndex;
+    if (m[1] !== undefined) { if (m.index !== 0 || (m[1] !== '*' && m[1].toLowerCase() !== el.tag)) return false; }
+    else if (m[2] !== undefined) { if (el.id !== m[2]) return false; }
+    else if (m[3] !== undefined) { if (!el.classes?.includes(m[3])) return false; }
+    else if (m[4] !== undefined) { const v = el.attrs?.[m[4]]; if (v === undefined || (m[5] !== undefined && v !== m[5])) return false; }
+    else if (m[6] !== undefined) { if (compoundMatches(m[6].trim(), el, isRoot)) return false; }
+    else if (!(m[7] === ':' && m[8] === 'root' && isRoot)) return false;
+  }
+  return compound.length > 0 && at === compound.length;
+}
+/** Whether a selector (compounds joined by descendant or child combinators) matches the last element of `path`. */
+function selectorMatches(selector: string, path: PathEl[]): boolean {
+  const compounds: string[] = [], combs: string[] = [];
+  let pending = ' ';
+  for (const t of selector.trim().replace(/\s*([>+~])\s*/g, ' $1 ').split(/\s+/)) {
+    if (t === '>' || t === '+' || t === '~') { pending = t; continue; }
+    if (compounds.length) combs.push(pending);
+    compounds.push(t);
+    pending = ' ';
+  }
+  if (combs.some((c) => c !== ' ' && c !== '>')) return false; // sibling combinators: no siblings on a path
+  const match = (ci: number, ei: number): boolean => {
+    if (!compoundMatches(compounds[ci], path[ei], ei === 0)) return false;
+    if (ci === 0) return true;
+    if (combs[ci - 1] === '>') return ei > 0 && match(ci - 1, ei - 1);
+    for (let ej = ei - 1; ej >= 0; ej--) if (match(ci - 1, ej)) return true;
+    return false;
+  };
+  return compounds.length > 0 && match(compounds.length - 1, path.length - 1);
+}
+/** `name` as the cascade leaves it on the last element of `path` at rest: the matching declaration of highest specificity, the later on a tie. */
+function cascadeOn(path: PathEl[], name: string): string | null {
+  let best: { spec: [number, number, number]; order: number; value: string } | null = null;
+  for (const [order, r] of RULES.entries()) {
+    for (const p of parts(r)) {
+      if (!selectorMatches(p, path)) continue;
+      const value = prop(r.body, name);
+      if (value === null) continue;
+      const spec = specificity(p);
+      const d = best ? spec[0] - best.spec[0] || spec[1] - best.spec[1] || spec[2] - best.spec[2] : 1;
+      if (!best || d > 0 || (d === 0 && order >= best.order)) best = { spec, order, value };
+    }
+  }
+  return best?.value ?? null;
+}
+
 test('G19: with only saved views to show, the bar is its chips and nothing else — no card over the map, which takes the pointer around them', () => {
   // The bar is up whenever a saved view exists (B28), so with nothing typed
   // it stood as an opaque card over the foot of the map, and the tiles under
@@ -226,9 +284,28 @@ test('G19: with only saved views to show, the bar is its chips and nothing else 
     }, ground);
     const onRed = lay([255, 0, 0]), onBlue = lay([0, 0, 255]);
     assert.deepEqual(onRed.map(Math.round), onBlue.map(Math.round), `${name}: an idle chip is opaque — no tile shows through it (${bg.join(' | ')})`);
-    const ink = paint(prop(ruleFor('.pill').body, 'color')!, palette, onRed);
-    const c = contrast(ink, onRed);
-    assert.ok(c >= 4.5, `${name}: a chip's name measures ${fmt(c)}:1 on it`);
+    // Each half of a saved-view chip, as the cascade leaves it on its real
+    // ancestry: the name, and the × that deletes the view — a .pill too,
+    // which `.saved-chip .pill-x { opacity: 0.6 }` turned 40% see-through,
+    // its glyph 2.3–3.3:1 over a red, white or teal tile (review F2.5).
+    const halfOf = (half: 'name' | 'x'): PathEl[] => [
+      { tag: 'html', attrs: name === 'light' ? { lang: 'en', 'data-theme': 'light' } : { lang: 'en' } },
+      { tag: 'body' }, { tag: 'main' }, { tag: 'section', id: 'view-treemap', classes: ['view'] },
+      { tag: 'div', id: 'treemapWrap', classes: ['glass'] }, { tag: 'div', id: 'tmQueryBar', classes: ['tm-querybar', 'idle'] },
+      { tag: 'div', id: 'tmSavedViews', classes: ['tm-saved'] }, { tag: 'span', classes: ['saved-chip'] },
+      { tag: 'button', classes: half === 'x' ? ['pill', 'pill-x'] : ['pill'] },
+    ];
+    const reads: Record<string, number> = {};
+    for (const half of ['name', 'x'] as const) {
+      const el = halfOf(half);
+      const opacity = cascadeOn(el, 'opacity');
+      assert.ok(opacity === null || Number(opacity) === 1, `${name}: the chip's ${half} half is opaque at rest (opacity ${opacity}) — no tile shows through it`);
+      assert.equal(cascadeOn(el, 'background'), cascaded(chip, 'background'), `${name}: the ${half} half wears the idle chip's opaque body`);
+      const ink = paint(cascadeOn(el, 'color')!, palette, onRed);
+      reads[half] = contrast(ink, onRed);
+      assert.ok(reads[half] >= 4.5, `${name}: the chip's ${half === 'x' ? '× glyph' : 'name'} measures ${fmt(reads[half])}:1 on it`);
+    }
+    assert.ok(reads.x < reads.name, `${name}: the × is a step quieter than the name it deletes (${fmt(reads.x)}:1 against ${fmt(reads.name)}:1)`);
   }
 });
 

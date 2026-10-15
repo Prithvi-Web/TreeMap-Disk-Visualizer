@@ -2920,8 +2920,12 @@ body.cart-open #treemapWrap > .tm-querybar { left: 18px; transform: none;
 .tm-saved { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .saved-chip { display: inline-flex; align-items: center; gap: 2px; }
 .saved-chip .pill { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* The × is a step quieter than the view's name by its ink, not by opacity:
+   opacity 0.6 let 40% of the tile under an idle chip show through its body
+   and left the glyph at 2.3–3.3:1 (review F2.5). A quarter of the way from
+   --text-3 to --text-2 still reads at 4.5:1 on the chip in both themes. */
 .saved-chip .pill-x { border-top-left-radius: 0; border-bottom-left-radius: 0;
-  padding: 6px 9px; opacity: 0.6; font-size: 13px; line-height: 1; }
+  padding: 6px 9px; color: color-mix(in srgb, var(--text-2) 25%, var(--text-3)); font-size: 13px; line-height: 1; }
 .saved-chip .pill-x:hover { opacity: 1; color: var(--danger, #ff453a); border-color: var(--danger, #ff453a); }
 .tm-saved .pill .sw { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); flex: none; }
 .tm-queryerr { font-size: 11.5px; color: var(--danger, #ff453a); margin-left: auto; max-width: 60%;
