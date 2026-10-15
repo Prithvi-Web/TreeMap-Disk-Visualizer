@@ -253,10 +253,17 @@ test('Trends with no history says what it will show and offers the action, inste
   // must come back (review F1.6).
   const first = await trendsWith([]);
   assert.equal(first.$('trendEmpty').hidden, false, 'control: no history, the explanation');
+  // The folder list is the one element that carries state from one load to
+  // the next: disabled over nothing, it must be usable again once there is
+  // history (review F2.9).
+  assert.equal(first.$('trendRoot').disabled, true, 'with no history the folder list, holding nothing, is disabled');
+  assert.equal(first.$('trendRoot').innerHTML, '<option>No history yet</option>', 'and says why');
   const later = await trendsWith([{ rootPath: '/c', count: 2 }], first.dom);
   assert.equal(later.$('trendEmpty').hidden, true, 'history since: the explanation goes');
   assert.equal(later.$('trendGrid').hidden, false, 'the charts come back');
   assert.equal(later.$('trendToolbar').hidden, false, 'and so does the folder list');
+  assert.equal(later.$('trendRoot').disabled, false, 'which can be opened again, so a folder can be picked');
+  assert.equal(later.$('trendRoot').innerHTML, '<option value="/c" selected>c · 2 snapshots · /c</option>', 'and lists the folder with history');
   const gone = await trendsWith([], later.dom);
   assert.equal(gone.$('trendEmpty').hidden, false, 'and with none again, the explanation is back');
 });
