@@ -590,3 +590,122 @@ test('G09: where the cushion gives way for a label, it eases — a Reclaim "keep
     assert.ok(top > foot * 1.08, `${s.h} px: the cushion still runs light to dark (${top.toFixed(3)} → ${foot.toFixed(3)})`);
   }
 });
+
+/* ══════════════ G01/G09 — the SVG export is the map's own recipe ══════════════ */
+
+/**
+ * The PNG export copies the canvas, but the SVG export drew the map again
+ * with the retired recipe: each leaf at fill-opacity 0.95 × max(0.55,
+ * 1 − 0.08·depth) of sizeRgb over the page, its labels fixed black at
+ * 0.78/0.55 — a depth-4 9.1 GB tile came out the pastel/maroon wash at
+ * 2.87:1 (review F1.3, F1.9). The real exportTreemapSVG runs here over the
+ * pxRects the real drawTreemap left, and its SVG is read back.
+ */
+function exportSvg(tiles: Tile[], colour: (n: Tile) => RGB, ground: string) {
+  const state = { treemap: { nodes: tiles, hideCloud: false, rootSize: 1e12, history: { active: false, diff: false }, pxRects: [] as any[],
+    colorMode: 'size', mode: 'treemap', query: '', rootName: 'r' } };
+  const rec = recordingCtx();
+  const common = {
+    $: () => ({ clientWidth: MAP_W + 20 }), treemapCanvasHeight: () => MAP_H, window: { devicePixelRatio: 1 },
+    tmCanvas: { style: {}, width: 0, height: 0 }, tmBuffer: { width: MAP_W, height: MAP_H }, tmBufCtx: rec.ctx,
+    cssVar: (name: string) => (name === '--bg-1' ? ground : 'rgba(0,0,0,0.3)'),
+    state,
+    tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {}, renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
+    cellRgb: colour, sizeRgb: () => [255, 0, 255], tmHatchPattern: () => null, tmPreview: { on: false }, roundRect() {},
+    formatBytes: (n: number) => `${Math.round(n)} B`,
+  };
+  const draw = load<() => void>(['drawTreemap'], common, 'drawTreemap', (d) => d());
+  rec.fills.length = 0;
+  rec.texts.length = 0;
+  draw();
+  let svg = '';
+  const exp = load<() => void>(['exportTreemapSVG'], {
+    ...common,
+    Blob: class { constructor(parts: string[]) { svg = parts.join(''); } },
+    downloadBlob() {}, exportFileName: () => 'map.svg', toast() {},
+  }, 'exportTreemapSVG', (e) => e());
+  svg = '';
+  exp();
+  return { svg, rec, px: state.treemap.pxRects };
+}
+
+/** `name="value"` attributes of one tag. */
+const attrs = (tag: string) => Object.fromEntries([...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1], m[2]]));
+
+test('G01/G09: the SVG export paints each leaf as the canvas does — opaque, in the colour the map is showing, with the canvas\'s own cushion', () => {
+  // cellRgb paints this map; sizeRgb, which the old export used, would be magenta.
+  const tiles = [
+    { ...tile(0, 4, 9.1e9, 200), w: 9.6 },
+    { ...tile(1, 2, 5e8, 60), x: 12, w: 9.6 },
+    { ...tile(2, 6, 3e7, 120), x: 24, w: 9.6 },
+  ];
+  const colours: RGB[] = [[255, 72, 57], [90, 100, 114], [48, 209, 88]];
+  const { svg, rec } = exportSvg(tiles, (n) => colours[tiles.findIndex((t) => t.path === n.path)], '#0e0e13');
+  const canvas = leafFills(rec, tiles.length);
+  const leaves = [...svg.matchAll(/<rect [^>]*><title>[^<]*<\/title><\/rect>/g)].map((m) => attrs(m[0]));
+  assert.equal(leaves.length, tiles.length, 'one rectangle per leaf');
+  for (const [k, a] of leaves.entries()) {
+    assert.ok(!('fill-opacity' in a) || Number(a['fill-opacity']) === 1, `leaf ${k} is opaque (fill-opacity ${a['fill-opacity']})`);
+    const id = /^url\(#([\w-]+)\)$/.exec(a.fill ?? '')?.[1];
+    assert.ok(id, `leaf ${k} is filled with a gradient, as the canvas cushion is (fill ${a.fill})`);
+    const grad = new RegExp(`<linearGradient id="${id}"[^>]*>([\\s\\S]*?)</linearGradient>`).exec(svg);
+    assert.ok(grad, `its gradient #${id} is defined`);
+    const stops = [...grad![1].matchAll(/<stop [^>]*>/g)].map((m) => attrs(m[0])).map((s) => [Number(s.offset), s['stop-color']]);
+    assert.deepEqual(stops, canvas[k].stops, `leaf ${k}: the SVG's cushion is the canvas's (${JSON.stringify(stops)})`);
+    const g = attrs(/<linearGradient [^>]*>/.exec(grad![0])![0]);
+    assert.equal(g.gradientUnits, 'userSpaceOnUse', 'laid over the tile\'s own height, as on the canvas');
+    assert.equal(Number(g.y1), canvas[k].args[1]);
+    assert.equal(Number(g.y2), canvas[k].args[3]);
+  }
+});
+
+test('G09: the SVG export writes each label in the ink, and at the place, the canvas wrote it — 4.5:1 on the tile', () => {
+  // The last leaf sits in its folder's top-left corner, so its label is
+  // written below the folder's name tag.
+  const folder: Tile = { name: 'Folder', path: '/r/d', size: 1e10, type: 'dir', depth: 1, expanded: true, x: 40, y: 0, w: 10, h: 8 };
+  const leaves = [
+    { ...tile(0, 4, 9.1e9, 200), w: 9.6 },
+    { ...tile(1, 2, 5e8, 74), x: 12, w: 9.6 },
+    { ...tile(2, 3, 3e7, 40), x: 24, w: 9.6 },
+    { ...tile(3, 2, 2e9, 74), x: 40.2, y: 0.2, w: 9.6 },
+  ];
+  const tiles = [...leaves.slice(0, 3), folder, leaves[3]];
+  const colours: RGB[] = [[255, 72, 57], [90, 100, 114], [10, 30, 160], [255, 69, 58]];
+  const { svg, rec } = exportSvg(tiles, (n) => colours[leaves.findIndex((t) => t.path === n.path)] ?? [0, 0, 0], '#0e0e13');
+  const canvas = leafFills(rec, leaves.length);
+  const written = [...svg.matchAll(/<text ([^>]*)>([^<]*)<\/text>/g)].map((m) => ({ a: attrs(m[1]), text: m[2] }));
+  const shifted = rec.texts.find((tx) => tx.text === leaves[3].name);
+  assert.ok(shifted && shifted.y - 2 >= 20, `the cornered leaf is labelled below its folder's tag (${shifted && shifted.y} px down)`);
+  for (const [k, t] of leaves.entries()) {
+    const x = (t.x / 100) * MAP_W, y0 = (t.y / 100) * MAP_H, h = (t.h / 100) * MAP_H;
+    const onCanvas = rec.texts.filter((tx) => Math.abs(tx.x - (x + 5)) < 0.01);
+    const inSvg = written.filter((w) => Math.abs(Number(w.a.x) - (x + 5)) < 0.06);
+    assert.ok(onCanvas.length >= 1, `leaf ${k} is labelled on the canvas`);
+    assert.deepEqual(inSvg.map((w) => w.text), onCanvas.map((c) => c.text), `leaf ${k}: the SVG writes the canvas's lines`);
+    for (const [j, w] of inSvg.entries()) {
+      assert.equal(w.a.fill, String(onCanvas[j].fillStyle), `leaf ${k}, "${w.text}": in the canvas's ink`);
+      const top = Number(w.a.y) - Number(fontPx(onCanvas[j].font)) * 0.8;
+      assert.ok(Math.abs(top - onCanvas[j].y) <= 1.5, `leaf ${k}, "${w.text}": at the canvas's line (baseline ${w.a.y}, line top ${onCanvas[j].y})`);
+      const l = { depth: 0, t: 0, h, tile: { y: (y0 / MAP_H) * 100 } as Tile, fill: canvas[k], texts: [] };
+      const c = worstContrast(l, { ...onCanvas[j], fillStyle: w.a.fill }, [14, 14, 19]);
+      assert.ok(c >= 4.5, `leaf ${k}, "${w.text}" in ${w.a.fill}: ${fmt(c)}:1 on its tile (floor 4.5:1)`);
+    }
+  }
+});
+
+test('G01: the SVG export frames each folder as the canvas does — a dark outline, heavier at the top level, and a light rim inside it', () => {
+  const tiles: Tile[] = [
+    { name: 'Top', path: '/r/top', size: 1e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 50, h: 50 },
+    { name: 'Inner', path: '/r/top/in', size: 5e9, type: 'dir', depth: 3, expanded: true, x: 2, y: 5, w: 40, h: 40 },
+    { ...tile(0, 4, 1e9, 100), x: 4, y: 8, w: 10 },
+  ];
+  const { svg } = exportSvg(tiles, () => [255, 72, 57], '#0e0e13');
+  const frames = [...svg.matchAll(/<rect [^>]*fill="none"[^>]*\/>/g)].map((m) => attrs(m[0]));
+  const outline = (d: number) => frames.find((f) => /^rgba\(0,0,0,/.test(f.stroke) && Math.abs(Number(f.x) - (d === 1 ? 0.5 : 20.5)) < 0.06);
+  const top = outline(1), inner = outline(3);
+  assert.ok(top && inner, `each folder has a dark outline (${JSON.stringify(frames)})`);
+  assert.ok(Number(top!['stroke-width']) > Number(inner!['stroke-width']), 'heavier at the top level');
+  for (const [x, what] of [[1.5, 'top'], [21.5, 'inner']] as const) {
+    assert.ok(frames.some((f) => /^rgba\(255,255,255,/.test(f.stroke) && Math.abs(Number(f.x) - x) < 0.06), `the ${what} folder has a light rim inside its outline`);
+  }
+});

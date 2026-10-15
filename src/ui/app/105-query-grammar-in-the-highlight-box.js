@@ -1129,43 +1129,69 @@ function exportTreemapPNG() {
   }, 'image/png');
 }
 
+/**
+ * The map as an SVG, drawn with the canvas's own recipe (review F1.3, F1.9):
+ * each leaf the cushion pass 1 painted it with (r.stops — opaque, in the
+ * colour mode on screen, eased under its label where it had to be), each
+ * folder pass 2's dark outline and light rim, and each label at the lines
+ * and in the ink pass 4 chose (r.label, tmLabelInk). It once redrew the map
+ * with the recipe G01 and G09 retired — every leaf faded by depth over the
+ * page, in the size ramp whatever the colour mode, its labels fixed black.
+ */
 function exportTreemapSVG() {
   const dpr = window.devicePixelRatio || 1;
   const w = Math.round(tmBuffer.width / dpr);
   const h = Math.round(tmBuffer.height / dpr);
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const defs = [];
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="-apple-system, 'Segoe UI', Helvetica, sans-serif">`,
     `<rect width="${w}" height="${h}" fill="${cssVar('--bg-1') || '#0e0e13'}"/>`,
   ];
   // Leaf fills (with native tooltips via <title>).
-  for (const r of state.treemap.pxRects) {
+  for (const [i, r] of state.treemap.pxRects.entries()) {
     if (r.frame) continue;
-    const c = sizeRgb(r.n.size);
-    const fade = Math.max(0.55, 1 - r.n.depth * 0.08);
-    parts.push(
-      `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${Math.max(1, r.w - 1).toFixed(1)}" height="${Math.max(1, r.h - 1).toFixed(1)}" ` +
-      `fill="rgb(${c[0]},${c[1]},${c[2]})" fill-opacity="${(0.95 * fade).toFixed(2)}" stroke="rgba(0,0,0,0.35)" stroke-width="1">` +
-      `<title>${esc(r.n.path)} — ${esc(formatBytes(r.n.size))}</title></rect>`
-    );
+    const box = `x="${(r.x + 0.5).toFixed(1)}" y="${(r.y + 0.5).toFixed(1)}" width="${Math.max(1, r.w - 1).toFixed(1)}" height="${Math.max(1, r.h - 1).toFixed(1)}"`;
+    const title = `<title>${esc(r.n.path)} — ${esc(formatBytes(r.n.size))}</title>`;
+    if (r.stops) {
+      defs.push(`<linearGradient id="tm-c${i}" gradientUnits="userSpaceOnUse" x1="0" y1="${r.y}" x2="0" y2="${r.y + r.h}">` +
+        `<stop offset="0" stop-color="${rgb(r.stops[0])}"/><stop offset="1" stop-color="${rgb(r.stops[1])}"/></linearGradient>`);
+      parts.push(`<rect ${box} fill="url(#tm-c${i})" stroke="rgba(0,0,0,0.35)" stroke-width="1">${title}</rect>`);
+    } else if (r.n.freed) {
+      // Staged in the cart preview: an outline of what is not freed yet.
+      parts.push(`<rect ${box} fill="none" stroke="${cssVar('--warn') || '#FF9F0A'}" stroke-dasharray="4 3" stroke-width="1">${title}</rect>`);
+    } else {
+      // A cloud placeholder, hollow as on the map: its bytes are not here.
+      const c = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n);
+      parts.push(`<rect ${box} fill="${rgb(c)}" fill-opacity="0.16" stroke="rgba(${c[0]},${c[1]},${c[2]},0.85)" stroke-dasharray="4 3" stroke-width="1">${title}</rect>`);
+    }
   }
-  // Directory frames.
+  // Directory frames: a dark outline, heavier at the top level, and a light rim inside it.
   for (const r of state.treemap.pxRects) {
     if (!r.frame) continue;
-    const alpha = Math.max(0.12, 0.3 - r.n.depth * 0.05).toFixed(2);
+    const top = r.n.depth <= 1;
     parts.push(
-      `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${r.w.toFixed(1)}" height="${r.h.toFixed(1)}" ` +
-      `fill="none" stroke="rgba(255,255,255,${alpha})" stroke-width="${r.n.depth <= 1 ? 1.5 : 1}"/>`
+      `<rect x="${(r.x + 0.5).toFixed(1)}" y="${(r.y + 0.5).toFixed(1)}" width="${Math.max(0, r.w - 1).toFixed(1)}" height="${Math.max(0, r.h - 1).toFixed(1)}" ` +
+      `fill="none" stroke="rgba(0,0,0,${top ? 0.6 : 0.42})" stroke-width="${top ? 1.5 : 1}"/>`
     );
+    if (r.w > 4 && r.h > 4) {
+      parts.push(
+        `<rect x="${(r.x + 1.5).toFixed(1)}" y="${(r.y + 1.5).toFixed(1)}" width="${(r.w - 3).toFixed(1)}" height="${(r.h - 3).toFixed(1)}" ` +
+        `fill="none" stroke="rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05).toFixed(2)})" stroke-width="1"/>`
+      );
+    }
   }
-  // Labels — same visibility thresholds as the canvas renderer.
+  // Labels — at the lines pass 4 wrote them, in the ink it chose. An SVG
+  // text's y is its baseline, about 0.8 of the font size below its top.
   for (const r of state.treemap.pxRects) {
-    if (r.frame || r.w < 40 || r.h < 15) continue;
+    if (!r.label || !r.label.length) continue;
+    const [name, size] = r.label;
     const maxChars = Math.floor((r.w - 10) / 6.2);
     const label = r.n.name.length > maxChars ? r.n.name.slice(0, Math.max(1, maxChars - 1)) + '…' : r.n.name;
-    parts.push(`<text x="${(r.x + 5).toFixed(1)}" y="${(r.y + 13).toFixed(1)}" font-size="11" font-weight="500" fill="rgba(0,0,0,0.78)">${esc(label)}</text>`);
-    if (r.h > 30) {
-      parts.push(`<text x="${(r.x + 5).toFixed(1)}" y="${(r.y + 26).toFixed(1)}" font-size="10" fill="rgba(0,0,0,0.55)">${esc(formatBytes(r.n.size))}</text>`);
+    parts.push(`<text x="${(r.x + 5).toFixed(1)}" y="${(name.y + name.px * 0.8).toFixed(1)}" font-size="${name.px}" font-weight="500" fill="${tmLabelInk(r, name.y, name.px, name.alpha)}">${esc(label)}</text>`);
+    if (size) {
+      parts.push(`<text x="${(r.x + 5).toFixed(1)}" y="${(size.y + size.px * 0.8).toFixed(1)}" font-size="${size.px}" fill="${tmLabelInk(r, size.y, size.px, size.alpha)}">${esc(formatBytes(r.n.size))}</text>`);
     }
   }
   // Top-level directory name tags.
@@ -1177,6 +1203,7 @@ function exportTreemapSVG() {
     parts.push(`<rect x="${(r.x + 5).toFixed(1)}" y="${(r.y + 5).toFixed(1)}" width="${tagW.toFixed(1)}" height="18" rx="9" fill="rgba(0,0,0,0.5)"/>`);
     parts.push(`<text x="${(r.x + 12).toFixed(1)}" y="${(r.y + 18).toFixed(1)}" font-size="10.5" font-weight="600" fill="rgba(255,255,255,0.92)">${esc(label)}</text>`);
   }
+  if (defs.length) parts.splice(2, 0, `<defs>${defs.join('')}</defs>`);
   parts.push('</svg>');
   downloadBlob(new Blob([parts.join('\n')], { type: 'image/svg+xml' }), exportFileName('svg'));
   toast('Treemap saved as SVG');
