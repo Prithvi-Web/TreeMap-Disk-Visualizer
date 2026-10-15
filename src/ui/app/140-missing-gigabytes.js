@@ -29,7 +29,8 @@ let missingData = null;
  * Reading a statement takes the server most of a second (the disk layout and
  * the held-space probe), and every visit showed skeleton rows for all of it.
  * A visit now shows the scan's last statement at once, saying it is being
- * updated, while it asks again; the answer replaces it whole. Only ever one
+ * updated, while it asks again; the answer replaces it whole, and until then
+ * none of its controls can be focused or clicked (review F3.3). Only ever one
  * statement is on screen, so its lines sum to its own used figure. Kept per
  * scan, with the order it was asked in (`seq`), so an older answer landing
  * late replaces nothing newer; a few scans' worth, not every scan's.
@@ -76,14 +77,15 @@ async function loadMissing() {
   missingAsking = { scanId, seq };
   // The same pending language as every other card: skeleton rows when this
   // scan has nothing to show yet, the loading veil over its own receipt while
-  // it is asked again. Never another scan's receipt, veiled or not.
-  const kept = missingCache.get(scanId);
+  // it is asked again — the one kept, or the one standing when its scan's was
+  // let go for newer — painted as updating. Never another scan's receipt,
+  // veiled or not.
+  const kept = missingCache.get(scanId)?.statement
+    ?? (missingData && missingData.scanId === scanId && body.querySelector('.mg-receipt') ? missingData : null);
   if (kept) {
-    missingData = kept.statement;
+    missingData = kept;
     missingUpdating = true;
     renderMissing();
-    body.classList.add('fx-chart-loading');
-  } else if (missingData && missingData.scanId === scanId && body.querySelector('.mg-receipt')) {
     body.classList.add('fx-chart-loading');
   } else {
     missingData = null;
@@ -185,6 +187,14 @@ function renderMissing() {
      is negative, and the band should sit where free actually begins. Nothing
      is drawn when there is no reserve, which is every Mac and every PC — a
      zero-width band would be a claim about a disk that does not make it. */
+  /* While this is the scan's last statement being asked again, every control
+     on it is inert (review F3.3): the answer rewrites the receipt whole, so a
+     segment or remedy focused or clicked meanwhile would be taken from under
+     the person — focus dropped to <body>, its row's highlight gone. Nothing on
+     a statement about to be replaced can be used; "Updating…" in the head is
+     outside the inert parts, so it is still said. */
+  const inert = missingUpdating ? ' inert' : '';
+
   const reserved = d.volume.reservedBytes || 0;
   const reservedHtml = reserved > 0
     ? `<div class="mg-reserved" aria-hidden="true" style="right:${pct(d.volume.freeBytes).toFixed(3)}%;width:${pct(reserved).toFixed(3)}%" ` +
@@ -192,7 +202,7 @@ function renderMissing() {
     : '';
 
   const barHtml =
-    `<div class="mg-barwrap"><div class="mg-bar" role="group" aria-label="How this volume's space is used">` +
+    `<div class="mg-barwrap"${inert}><div class="mg-bar" role="group" aria-label="How this volume's space is used">` +
     segs.map(sgroup =>
       `<button type="button" class="mg-seg ${MG_SEG[sgroup.id].cls}" data-mg-seg="${sgroup.id}" ` +
       `style="width:${pct(sgroup.bytes).toFixed(3)}%" ` +
@@ -264,7 +274,7 @@ function renderMissing() {
       `<span class="mg-cap"><b>${escapeHtml(formatBytes(d.volume.usedBytes))}</b> used of ${escapeHtml(formatBytes(total))}</span>` +
     `</div>` +
     barHtml +
-    `<div class="mg-receipt">${rows}${totalHtml}</div>` +
+    `<div class="mg-receipt"${inert}>${rows}${totalHtml}</div>` +
     d.caveats.map(c => `<div class="mg-caveat">${escapeHtml(c)}</div>`).join('');
 }
 

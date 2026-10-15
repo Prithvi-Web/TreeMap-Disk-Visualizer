@@ -108,6 +108,34 @@ const usedShown = (body: El): number | null => {
   return m ? Number(m[1]) : null;
 };
 
+/** A statement with a remedy button on its residual line, beside its two bar segments. */
+function withRemedy(scanId: string, used: number): Record<string, unknown> {
+  const s = statement(scanId, used);
+  const lines = s.lines as Record<string, unknown>[];
+  return { ...s, lines: lines.map((l) => (l.id === 'unaccounted' ? { ...l, remedy: { action: 'scan-volume', label: 'Scan the whole volume', caveat: 'c' } } : l)) };
+}
+
+/**
+ * What a painted body lets a person use, read off its markup with a tag
+ * stack (every element the receipt writes is closed): each button that can
+ * take focus or a click — not `inert`, nor inside an element that is — by
+ * its segment or remedy key, and whether its role="status" text is outside
+ * any inert element, so it is still said (review F3.3).
+ */
+function usable(html: string): { controls: string[]; statusSaid: boolean } {
+  const stack: boolean[] = [];
+  const controls: string[] = [];
+  let statusSaid = false;
+  for (const [, close, tag, attrs] of html.matchAll(/<(\/?)([a-z]+)([^>]*)>/g)) {
+    if (close) { stack.pop(); continue; }
+    const inert = (stack[stack.length - 1] ?? false) || /\sinert(?=[\s=]|$)/.test(attrs);
+    if (tag === 'button' && !inert) controls.push(/data-mg-(?:seg|remedy)="([^"]*)"/.exec(attrs)?.[1] ?? attrs);
+    if (/role="status"/.test(attrs) && !inert) statusSaid = true;
+    stack.push(inert);
+  }
+  return { controls, statusSaid };
+}
+
 test('G06: a second visit paints the last statement at once, says it is updating, and swaps in the new one whole', async () => {
   const p = page();
   p.view.mount();
@@ -361,4 +389,44 @@ test('G06: an older ask that fails after a newer one answered does not take the 
   p.view.unmount();
   p.view.mount();
   assert.equal(usedShown(p.body), 700, 'and is still kept');
+});
+
+test('G06 review F3.3: the scan\'s last receipt, shown while it is asked again, lends no control to the hand — the answer replaces every one; "Updating…" is still said, and the answer\'s receipt can be used', async () => {
+  const p = page();
+  p.view.mount();
+  await p.asks[0].answer(withRemedy('s1', 600));
+  assert.deepEqual(usable(p.body.innerHTML).controls, ['scanned', 'unaccounted', 'scan-volume'], 'a fresh receipt: its two segments and its remedy can be used');
+
+  p.view.unmount();
+  p.view.mount();
+  assert.match(p.body.innerHTML, /Updating…/, 'the kept receipt is up, being updated');
+  // A segment focused or clicked now would be detached by the answer's
+  // rewrite: focus dropped to <body>, its row's highlight gone.
+  assert.deepEqual(usable(p.body.innerHTML).controls, [], 'no segment and no remedy can take focus or a click while the receipt is being replaced');
+  assert.ok(usable(p.body.innerHTML).statusSaid, 'its "Updating…" is outside the inert parts, so it is still said');
+
+  const same = withRemedy('s1', 600);
+  await p.asks[1].answer(same); // the same figures
+  assert.equal(p.body.innerHTML, p.render(same), 'the answer\'s receipt is exactly a fresh paint');
+  assert.deepEqual(usable(p.body.innerHTML).controls, ['scanned', 'unaccounted', 'scan-volume'], 'and can be used again');
+});
+
+test('G06 review F3.3: a standing receipt asked again with nothing kept for its scan (let go for four newer) is shown as updating, and lends no control either', async () => {
+  const p = page();
+  const others = ['a', 'b', 'c', 'd'];
+  for (const id of others) { p.state.scanId = id; p.view.onScanChange(); } // four scans asked; their answers are still out
+  p.state.scanId = 's1';
+  p.view.onScanChange();
+  await p.asks[4].answer(withRemedy('s1', 600));
+  assert.equal(usable(p.body.innerHTML).controls.length, 3, 's1\'s receipt stands, usable');
+  for (const [i, id] of others.entries()) await p.asks[i].answer(statement(id, 100 + i)); // landing late: kept, and s1's let go
+  p.view.mount(); // a re-entry of the view on screen: s1 is asked again
+  assert.equal(p.asks.length, 6, 's1 is asked again');
+  assert.equal(usedShown(p.body), 600, 'its own receipt stays up');
+  assert.match(p.body.innerHTML, /Updating…/, 'said to be updating, as a kept one is');
+  assert.ok(p.body.classList.contains('fx-chart-loading'), 'under the veil');
+  assert.deepEqual(usable(p.body.innerHTML).controls, [], 'and no control on it can be used until the answer replaces it');
+  const fresh = withRemedy('s1', 610);
+  await p.asks[5].answer(fresh);
+  assert.equal(p.body.innerHTML, p.render(fresh), 'the answer paints whole, usable');
 });
