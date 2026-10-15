@@ -372,12 +372,12 @@ test('an offload\'s picker shows the drives its caller names and the line saying
 test('an offload\'s pick is answered before the picker goes: a folder the dry run refuses leaves the picker open on it, button live, for another choice — a plan that answers closes it as its sheet opens (fifth browser pass F02)', async () => {
   // QA fifth pass F02: "Offload to this folder" on a folder the server refuses closed the picker with
   // the toast — the person had to open Offload… again to choose another folder.
-  const doc: { activeElement: unknown } = { activeElement: null };
+  // A held button can drop focus to the page, as a browser does with a disabled control.
+  const body = { a: 'the page' };
+  const doc: { activeElement: unknown; body: unknown } = { activeElement: null, body };
   const { rt, $, use } = browseRuntime(typedListing, doc);
   const open = rt.openBrowse as unknown as (start: string | null, onPick?: unknown, title?: string, label?: string, where?: unknown) => Promise<void>;
   type Ctl = { leave(): void; current(): boolean };
-  // A held button can drop focus to the page, as a browser does with a disabled control.
-  const body = { a: 'the page' };
   let refocused = 0;
   $('browseUseBtn').focus = () => { refocused++; doc.activeElement = $('browseUseBtn'); };
   const presses: Array<{ dest: string; ctl: Ctl; answer: () => void }> = [];
@@ -399,6 +399,27 @@ test('an offload\'s pick is answered before the picker goes: a folder the dry ru
   assert.equal(rt.path(), '/home/u', 'on that folder');
   assert.equal($('browseUseBtn').disabled, false, 'with its button live again');
   assert.deepEqual([refocused, doc.activeElement === $('browseUseBtn')], [1, true], 'and focus back on it, where the press was made');
+  // Focus moved on while the pick answered — to the path field, to type another folder: the refusal
+  // leaves it there, rather than pulling it back to the button mid-word (review F3.7 of F02).
+  const typing = use();
+  await settle();
+  doc.activeElement = $('browseCurrent'); // clicked into the path field, typing
+  $('browseCurrent').value = '/Volumes/Back';
+  presses[1].answer(); // refused
+  await typing;
+  assert.deepEqual([rt.path(), $('browseUseBtn').disabled], ['/home/u', false], 'control: refused, the picker is still on the folder, its button live');
+  assert.deepEqual([refocused, doc.activeElement === $('browseCurrent')], [1, true], 'focus stays in the path field the person moved to, not pulled back to the button');
+  presses.splice(1, 1); // that press is answered; the next is the second choice below
+  // Focus gone from everything while the pick answered (activeElement null): the button takes it back too.
+  $('browseCurrent').value = '/home/u';
+  doc.activeElement = $('browseUseBtn');
+  const unfocused = use();
+  await settle();
+  doc.activeElement = null;
+  presses[1].answer(); // refused
+  await unfocused;
+  presses.splice(1, 1);
+  assert.deepEqual([refocused, doc.activeElement === $('browseUseBtn')], [2, true], 'with nothing focused at all, focus goes back to the button too');
   // Another choice from the same picker: its pick is still the offload's.
   $('browseCurrent').value = '/data';
   const second = use();

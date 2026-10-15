@@ -585,8 +585,12 @@ $('browseUseBtn').addEventListener('click', async () => {
     } finally {
       if (current()) {
         btn.disabled = false;
-        // Held, the button may have let focus fall to the page: it takes it back.
-        if (hadFocus && document.activeElement !== btn) btn.focus();
+        // Held, the button may have let focus fall to the page: it takes it
+        // back — only from the page, never from a control the person moved
+        // to while the pick answered, such as the path field they are
+        // typing in (review F3.7).
+        const at = document.activeElement;
+        if (hadFocus && (!at || at === document.body)) btn.focus();
       }
     }
     return;
