@@ -86,10 +86,13 @@ function withAlpha(style: unknown, globalAlpha: number): unknown {
   return typeof style === 'string' && /^(#|rgb)/i.test(style) ? scale(style) : style;
 }
 
-/** A 2D context that records every fill and every text with the paint it was drawn in. */
+type Stroke = { style: string; width: number; rect: number[] };
+
+/** A 2D context that records every fill, every text and every stroked rectangle with the paint it was drawn in. */
 function recordingCtx() {
   const fills: unknown[] = [];
   const texts: Text[] = [];
+  const strokes: Stroke[] = [];
   const props: Record<string, unknown> = {
     font: '10px sans-serif',
     globalAlpha: 1,
@@ -108,11 +111,12 @@ function recordingCtx() {
         // however opaque its own colours are, so the alpha travels with it.
         if (k === 'fill' || k === 'fillRect') fills.push(withAlpha(t.fillStyle, Number(t.globalAlpha)));
         if (k === 'fillText') texts.push({ text: String(a[0]), x: Number(a[1]), y: Number(a[2]), fillStyle: withAlpha(t.fillStyle, Number(t.globalAlpha)), font: String(t.font) });
+        if (k === 'strokeRect') strokes.push({ style: String(t.strokeStyle), width: Number(t.lineWidth), rect: a.map(Number) });
       };
     },
     set(t, k: string, v) { t[k] = v; return true; },
   });
-  return { ctx, fills, texts };
+  return { ctx, fills, texts, strokes };
 }
 
 /* ─────────────────────────── the theme grounds ─────────────────────────── */
@@ -708,4 +712,45 @@ test('G01: the SVG export frames each folder as the canvas does — a dark outli
   for (const [x, what] of [[1.5, 'top'], [21.5, 'inner']] as const) {
     assert.ok(frames.some((f) => /^rgba\(255,255,255,/.test(f.stroke) && Math.abs(Number(f.x) - x) < 0.06), `the ${what} folder has a light rim inside its outline`);
   }
+});
+
+/* ══════════════ G01 — depth is told by the folder frames ══════════════ */
+
+test('G01: each folder is framed by a dark outline — heavier at the top level — with a light rim drawn inside it, and a folder too small for a rim gets none', () => {
+  // Every leaf is painted at full strength now (G01), so nesting is read
+  // from the edges, as on a desktop treemap. Nothing pinned the frames: the
+  // whole of pass 2 could go, or turn white, with every test still green
+  // (review F1.8).
+  const folders: Tile[] = [
+    { name: 'Top', path: '/r/top', size: 1e10, type: 'dir', depth: 1, expanded: true, x: 0, y: 0, w: 50, h: 50 },
+    { name: 'Mid', path: '/r/top/mid', size: 5e9, type: 'dir', depth: 2, expanded: true, x: 2, y: 5, w: 40, h: 40 },
+    { name: 'Deep', path: '/r/top/mid/deep', size: 2e9, type: 'dir', depth: 3, expanded: true, x: 4, y: 8, w: 30, h: 30 },
+    { name: 'Tiny', path: '/r/tiny', size: 1e6, type: 'dir', depth: 3, expanded: true, x: 60, y: 60, w: 0.4, h: 0.4 },
+  ];
+  const rec = paint(folders);
+  const alphaOf = (style: string) => rgba(style)[3];
+  const isDark = (style: string) => { const [r, g, b] = rgba(style); return r + g + b === 0; };
+  const isLight = (style: string) => { const [r, g, b] = rgba(style); return r === 255 && g === 255 && b === 255; };
+  const outlines: Stroke[] = [];
+  for (const f of folders) {
+    const x = (f.x / 100) * MAP_W, y = (f.y / 100) * MAP_H, w = (f.w / 100) * MAP_W, h = (f.h / 100) * MAP_H;
+    const near = (r: number[], want: number[]) => r.every((v, i) => Math.abs(v - want[i]) < 0.01);
+    const at = (want: number[]) => rec.strokes.findIndex((st) => near(st.rect, want));
+    const o = at([x + 0.5, y + 0.5, w - 1, h - 1]);
+    assert.notEqual(o, -1, `${f.name}: an outline on its edge`);
+    const outline = rec.strokes[o];
+    assert.ok(isDark(outline.style) && alphaOf(outline.style) >= 0.35, `${f.name}: the outline is dark (${outline.style})`);
+    outlines.push(outline);
+    const rim = at([x + 1.5, y + 1.5, w - 3, h - 3]);
+    if (w > 4 && h > 4) {
+      assert.notEqual(rim, -1, `${f.name}: a rim inside its outline`);
+      assert.ok(isLight(rec.strokes[rim].style), `${f.name}: the rim is light (${rec.strokes[rim].style})`);
+      assert.ok(rim > o, `${f.name}: the rim is drawn after the outline, so it lies on top of it`);
+    } else {
+      assert.equal(rim, -1, `${f.name}: ${fmt(w)} px is too small for a rim`);
+    }
+  }
+  const [top, mid, deep] = outlines;
+  assert.ok(top.width > mid.width && alphaOf(top.style) > alphaOf(mid.style), `the top level's outline is heavier (${top.width}px ${top.style} against ${mid.width}px ${mid.style})`);
+  assert.deepEqual([mid.width, mid.style], [deep.width, deep.style], 'below the top level every outline is alike');
 });
