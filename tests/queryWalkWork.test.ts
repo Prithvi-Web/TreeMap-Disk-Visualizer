@@ -170,6 +170,21 @@ test('G07: a size query reads the names and paths of its hits, not of every node
   assert.equal(reads.path, 0, 'and no path rebuilt from the root');
 });
 
+test('G07 review F2.3: many hits sharing folders build each folder\'s path once — a later hit\'s path is built from its folder\'s, kept from the hit before', async () => {
+  const scan = scanOf(seededTree('/q/many', 0x51ce, 300));
+  const nodes = everyNode(scan.store as ScanStore, true);
+  const dirs = nodes.filter((n) => n.isDir).length;
+  const { reads } = counting(scan);
+  const out = await run(scan, 'ext:txt', { limit: 1000 });
+  assert.ok(out.total > 100 && out.hits.length === out.total, `many hits, all on the page (${out.total})`);
+  // What building every hit's path down from the root, keeping nothing on
+  // the way, would take: each folder below the root on its way, and itself.
+  const rebuiltEachTime = out.hits.reduce((n, h) => n + h.path.split('/').length - '/q/many'.split('/').length, 0);
+  assert.ok(rebuiltEachTime > out.total + dirs, `the hits share folders: ${rebuiltEachTime} builds if none were kept, past the bound of ${out.total + dirs}`);
+  assert.ok(reads.childPath <= out.total + dirs, `paths built: ${reads.childPath} for ${out.total} hits in ${dirs} folders — each folder's once, however many hits lie under it`);
+  assert.equal(reads.path, 0, 'and no hit\'s path asked of the store whole, from the root');
+});
+
 test('G07: a name query decodes each name once, not once to build a path and again to judge it', async () => {
   const scan = scanOf(seededTree('/q/names', 0xbeef, 300));
   const nodes = everyNode(scan.store as ScanStore, true);
