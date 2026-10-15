@@ -9155,6 +9155,10 @@ async function stopScan() {
   // the Dashboard's Stop, which held focus if it was pressed from the keyboard
   // (review F2.6).
   withFocusKept(() => { switchView(state.view); });
+  // v4 §9.2 — the tour's "Reading your files…" card goes back to the welcome,
+  // with its buttons, now the welcome is on screen: nothing is being read
+  // (review F2.2).
+  tourScanFailed();
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
@@ -30348,7 +30352,10 @@ function tourRender(takeFocus = true) {
       <p>Pick a folder to look at first — scanning only reads it; nothing is moved or deleted.${home ? ' Your home folder is a good place to start.' : ''}</p>
       ${actions ? `<div class="tour-row">${actions}</div>` : ''}`;
     if (pick) host.querySelector('[data-tour-pick]').addEventListener('click', () => { openBrowse(null); });
-    if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { startScan(home); });
+    // The path box names the folder about to be read, as the folder browser's
+    // "Scan this folder" sets it: the scanning card names it from there, and
+    // an earlier pick that failed or was stopped is not it (review F2.2).
+    if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { $('pathInput').value = home; startScan(home); });
   } else if (tour.step === 'scanning') {
     // The click registered — say so. The old card kept offering "Scan my
     // home folder" for the whole scan, and a second press earned a red
@@ -30585,7 +30592,7 @@ async function tourLoadWins() {
 function tourScanStarted() {
   if (tour.active && tour.step === 'welcome') { tour.step = 'scanning'; tourRender(); }
 }
-/** The scan failed before it landed: the welcome card and its buttons come back. */
+/** The scan failed, or was stopped, before it landed: the welcome card and its buttons come back (review F2.2). */
 function tourScanFailed() {
   if (tour.active && tour.step === 'scanning') { tour.step = 'welcome'; tourRender(); }
 }

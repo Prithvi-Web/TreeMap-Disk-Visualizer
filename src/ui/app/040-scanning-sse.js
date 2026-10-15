@@ -159,6 +159,10 @@ async function stopScan() {
   // the Dashboard's Stop, which held focus if it was pressed from the keyboard
   // (review F2.6).
   withFocusKept(() => { switchView(state.view); });
+  // v4 §9.2 — the tour's "Reading your files…" card goes back to the welcome,
+  // with its buttons, now the welcome is on screen: nothing is being read
+  // (review F2.2).
+  tourScanFailed();
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).

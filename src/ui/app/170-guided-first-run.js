@@ -89,7 +89,10 @@ function tourRender(takeFocus = true) {
       <p>Pick a folder to look at first — scanning only reads it; nothing is moved or deleted.${home ? ' Your home folder is a good place to start.' : ''}</p>
       ${actions ? `<div class="tour-row">${actions}</div>` : ''}`;
     if (pick) host.querySelector('[data-tour-pick]').addEventListener('click', () => { openBrowse(null); });
-    if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { startScan(home); });
+    // The path box names the folder about to be read, as the folder browser's
+    // "Scan this folder" sets it: the scanning card names it from there, and
+    // an earlier pick that failed or was stopped is not it (review F2.2).
+    if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { $('pathInput').value = home; startScan(home); });
   } else if (tour.step === 'scanning') {
     // The click registered — say so. The old card kept offering "Scan my
     // home folder" for the whole scan, and a second press earned a red
@@ -326,7 +329,7 @@ async function tourLoadWins() {
 function tourScanStarted() {
   if (tour.active && tour.step === 'welcome') { tour.step = 'scanning'; tourRender(); }
 }
-/** The scan failed before it landed: the welcome card and its buttons come back. */
+/** The scan failed, or was stopped, before it landed: the welcome card and its buttons come back (review F2.2). */
 function tourScanFailed() {
   if (tour.active && tour.step === 'scanning') { tour.step = 'welcome'; tourRender(); }
 }

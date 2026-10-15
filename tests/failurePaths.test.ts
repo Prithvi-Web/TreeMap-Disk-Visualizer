@@ -276,6 +276,8 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
     switchView: () => { seen.scanIdAtSwitch = state.scanId; },
     // Stop's switchView runs inside it; where focus goes is tests/firstRun.test.ts's (review F2.6).
     withFocusKept: (change: () => void) => { change(); },
+    // Stop puts the tour's welcome card back; what that card does is tests/firstRun.test.ts's (review F2.2).
+    tourScanFailed: () => {},
     cancelScanById: cancel,
     // Stop means stop: folders dropped behind this one are waiting in the scan
     // queue, and starting the next of them would be the opposite of what the
@@ -386,7 +388,7 @@ function scanStartHarness(indexed: boolean) {
   const env: Record<string, unknown> = {
     state, $, api, log, performance, console,
     toast: noop, closeEventSource: noop, disableLive: noop, icon: () => '', REDUCED: true, escapeHtml: (s: string) => s,
-    fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, tourScanStarted: noop,
+    fxStateBeam: noop, fxOrbShow: noop, fxOrbHide: noop, fxScanHeroSync: noop, fxDonutLoadingSync: noop, tourScanStarted: noop, tourScanFailed: noop,
     // The chrome takes the last folder's ring down while the lists load (B05);
     // like the donut's loading state beside it, a picture, not a step.
     clearDonut: noop,

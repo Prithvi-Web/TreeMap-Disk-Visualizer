@@ -254,19 +254,21 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   // The page's cartAddMany as it behaves: what is not staged yet goes in.
   const cartAddMany = (paths: string[]) => paths.filter((p) => p && !cart.has(p) && cart.add(p)).length;
   const browsed: unknown[] = [];
+  /** Each scan the card started, with what the path box held as it started. */
+  const scans: Array<[unknown, string]> = [];
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
   // The page's own step to the next win, so Add and Skip move the card on as they do there (review F2.7).
   const advance = pageFn('function tourAdvanceWin(');
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
     'tourWinLine', 'document', `'use strict'; ${render} ${advance} return { tourRender, tourCartChanged: typeof tourCartChanged === 'function' ? tourCartChanged : () => {} };`)(
     $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart, root: null }, () => '', (s: string) => s,
-    (n: number) => `${n} B`, () => {}, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: null },
+    (n: number) => `${n} B`, (folder: unknown) => { scans.push([folder, $('pathInput').value]); }, (start: unknown) => { browsed.push(start); }, () => {}, () => {}, cartAddMany, winLine, { activeElement: null },
   ) as { tourRender: (takeFocus?: boolean) => void; tourCartChanged: () => void };
   fn.tourRender(opts.takeFocus);
   const textOf = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   /** The card as it is painted now, after any click, and how many times it has been painted. */
   const now = () => ({ html: host.innerHTML, text: textOf(host.innerHTML), paints });
-  return { html: host.innerHTML, text: textOf(host.innerHTML), found, $, tour, cart, browsed, now, cartChanged: fn.tourCartChanged };
+  return { html: host.innerHTML, text: textOf(host.innerHTML), found, $, tour, cart, browsed, scans, now, cartChanged: fn.tourCartChanged, render: fn.tourRender };
 }
 
 test('the welcome card offers one alternative, not a second primary action beside the welcome\'s own (G03)', () => {
@@ -664,7 +666,7 @@ test('a scan started from a button its own chrome then hides moves focus on — 
  * once a tree is. A control that stops painting drops focus to <body>, as a
  * browser's focus fixup does.
  */
-function scanEndPage(o: { root?: unknown; scanId?: string | null; focus: 'pathInput' | 'scanBtn' | 'welcome' | 'row' }) {
+function scanEndPage(o: { root?: unknown; scanId?: string | null; focus: 'pathInput' | 'scanBtn' | 'welcome' | 'row'; tour?: { active: boolean; step: string } }) {
   type Ctl = { name: string; rects: number; focused: number; disabled: boolean; getClientRects: () => unknown[]; focus: () => void };
   const doc: { active: Ctl | null; body: Ctl; readonly activeElement: Ctl; querySelector: (sel: string) => Ctl | null } = {
     active: null,
@@ -688,7 +690,10 @@ function scanEndPage(o: { root?: unknown; scanId?: string | null; focus: 'pathIn
   };
   const switched: string[] = [];
   const lifted = ['function withFocusKept(', ...(INDEX.includes('function focusLanding(') ? ['function focusLanding('] : []),
-    'function failScan(', 'async function stopScan(', 'async function finishScan('].map(pageFn).join('\n');
+    'function failScan(', 'async function stopScan(', 'async function finishScan(', 'function tourScanFailed('].map(pageFn).join('\n');
+  // The tour, and each paint of its card with whether the welcome was on screen by then.
+  const tour = o.tour ?? { active: false, step: 'map' };
+  const rendered: string[] = [];
   const inert: unknown = new Proxy(function inert() { /* stand-in */ }, {
     get: (_t, k) => (k === Symbol.toPrimitive ? () => 0 : k === 'then' ? undefined : inert), set: () => true, apply: () => inert });
   const given: Record<string, unknown> = {
@@ -704,15 +709,16 @@ function scanEndPage(o: { root?: unknown; scanId?: string | null; focus: 'pathIn
       ctl.row.rects = 0;
     },
     activeViewControl: () => [ctl.pathInput, ctl.scanBtn].find((c) => c.rects > 0) || null,
-    tourCardControl: () => null, tourScanFailed: () => {}, endScanChrome: () => { state.scanning = false; },
+    tourCardControl: () => null, endScanChrome: () => { state.scanning = false; },
+    tour, tourRender: () => { rendered.push(`${tour.step} (welcome ${ctl.welcome.rects ? 'up' : 'down'})`); },
   };
-  const own = new Set(['withFocusKept', 'focusLanding', 'failScan', 'stopScan', 'finishScan']);
+  const own = new Set(['withFocusKept', 'focusLanding', 'failScan', 'stopScan', 'finishScan', 'tourScanFailed']);
   const scope = new Proxy(given, { has: (_t, k) => typeof k === 'string' && !own.has(k), get: (t, k) => (k === Symbol.unscopables ? undefined : k in t ? t[k as string] : inert), set: (t, k, v) => { t[k as string] = v; return true; } });
   const fns = new Function('scope', `with (scope) { ${lifted}\nreturn { failScan, stopScan, finishScan }; }`)(scope) as {
     failScan: (m: string) => void; stopScan: () => Promise<void>; finishScan: (root: unknown, ms: number, stats: unknown) => Promise<void>;
   };
   const where = () => doc.activeElement.name;
-  return { ...fns, ctl, where, switched, state };
+  return { ...fns, ctl, where, switched, state, tour, rendered };
 }
 
 test('a scan that fails, is stopped, or paints from the index moves focus on when its repaint hides the control that held it — to the welcome\'s "Choose a folder", or the view — never <body> (review F2.6)', async () => {
@@ -745,6 +751,35 @@ test('a scan that fails, is stopped, or paints from the index moves focus on whe
   await kept.finishScan(tree, 5, { fileCount: 1, dirCount: 1 });
   assert.equal(kept.ctl.pathInput.focused, 0, 'focus on a control still on screen is not moved');
   assert.equal(kept.where(), 'pathInput');
+});
+
+test('Stop pressed while the tour\'s card says "Reading your files…" puts the welcome card back, with its buttons, once the welcome is on screen (review F2.2)', async () => {
+  // Only a failure put the card back: after Stop it went on saying TreeMap
+  // was measuring every file in the folder, over nothing running, with Skip
+  // the tour its one control — and a second folder picked then was never
+  // named, the card being past the welcome.
+  const page = scanEndPage({ focus: 'scanBtn', tour: { active: true, step: 'scanning' } });
+  await page.stopScan();
+  assert.deepEqual(page.switched, ['dashboard'], 'control: Stop puts the welcome back');
+  assert.equal(page.tour.step, 'welcome', 'the card leaves "Reading your files…": nothing is being read');
+  assert.deepEqual(page.rendered, ['welcome (welcome up)'], 'painted once, after the welcome is back on screen, so its focus goes to the welcome\'s own "Choose a folder"');
+  const later = scanEndPage({ focus: 'scanBtn', tour: { active: true, step: 'map' }, root: { name: 'x', path: '/x', size: 1 }, scanId: 's1' });
+  await later.stopScan();
+  assert.equal(later.tour.step, 'map', 'a rescan stopped later in the tour leaves the tour where it is');
+  assert.deepEqual(later.rendered, [], 'and does not repaint it');
+
+  // The scanning card names the folder from the path box, which the folder
+  // browser sets before its scan: "Scan my home folder" left it holding an
+  // earlier pick — one that failed or was stopped — and the card named that.
+  const card = tourCard('welcome', { heroUp: true });
+  card.$('pathInput').value = '/Volumes/Old pick';
+  const home = card.found['data-tour-home'];
+  assert.ok(home?.listeners.click?.length, 'control: "Scan my home folder" is on the card and wired');
+  home.listeners.click.forEach((fn) => fn());
+  assert.deepEqual(card.scans, [['/Users/x', '/Users/x']], 'the path box holds the home folder before its scan starts');
+  card.tour.step = 'scanning';
+  card.render(false);
+  assert.match(card.now().text, /TreeMap is measuring every file and folder in \/Users\/x\./, `the scanning card names the folder being read: ${card.now().text}`);
 });
 
 /* ══════════════ Review F1.12 — a failed first scan gives focus back to the welcome's button ══════════════ */
