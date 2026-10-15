@@ -2897,6 +2897,15 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   z-index: 6; margin: 0; width: max-content; max-width: calc(100% - 36px);
   background: var(--bg-1); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-2); }
 #treemapWrap > .tm-querybar .tm-queryerr { margin-left: 0; max-width: 64ch; text-align: left; }
+/* Idle — saved views only: nothing typed, nothing to say, nothing to stage
+   (review F1.15). The bar is up for its chips (B28), and as a card it hid
+   the foot of the map and took its pointer while nobody was querying; idle,
+   it is only its chips, each opaque so its name reads over any tile, and
+   the map shows and takes the pointer around them. */
+#treemapWrap > .tm-querybar.idle { background: none; border-color: transparent; box-shadow: none;
+  pointer-events: none; }
+#treemapWrap > .tm-querybar.idle .pill { pointer-events: auto; box-shadow: var(--shadow-2);
+  background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 60%), linear-gradient(var(--surface-1), var(--surface-1)), var(--bg-1); }
 /* Left of the open cart, as the preview banner stands (090-features-b.css). */
 body.cart-open #treemapWrap > .tm-querybar { left: 18px; transform: none;
   max-width: max(240px, calc(100% - 402px)); }
@@ -23150,8 +23159,12 @@ function tmSyncQueryBar() {
   // Save view saves the query in the box. With nothing typed there is nothing
   // to save, and the bar stays up for its saved chips: the button was offered
   // anyway and a press did nothing visible (B28).
+  const typed = Boolean(($('tmSearch').value || '').trim());
   const save = $('tmSaveView');
-  if (save) save.hidden = !($('tmSearch').value || '').trim();
+  if (save) save.hidden = !typed;
+  // Idle — saved chips and nothing else — the bar draws no card over the
+  // map and lets the pointer through around its chips (review F1.15).
+  bar.classList.toggle('idle', !typed && !hasMessage && !hasStage);
 }
 
 /**

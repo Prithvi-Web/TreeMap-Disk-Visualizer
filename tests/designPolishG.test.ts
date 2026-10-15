@@ -164,6 +164,72 @@ test('G19: while the cart is open it stands left of the cart, as the preview ban
   assert.match(prop(r.body, 'max-width') ?? '', /402px/, 'the same allowance the preview banner keeps for the dock');
 });
 
+test('G19: with only saved views to show, the bar is its chips and nothing else — no card over the map, which takes the pointer around them', () => {
+  // The bar is up whenever a saved view exists (B28), so with nothing typed
+  // it stood as an opaque card over the foot of the map, and the tiles under
+  // it could be neither seen nor hovered, clicked or lassoed (review F1.15).
+  // Idle, it now draws no card and passes the pointer through; only its
+  // chips take it, each opaque so its name reads over any tile. With a
+  // query typed, a message or a Stage button it is the card again.
+  type El = { hidden: boolean; value: string; childElementCount: number; classes: Set<string>; classList: { toggle: (c: string, on?: boolean) => void; contains: (c: string) => boolean } };
+  const els: Record<string, El> = {};
+  const $ = (id: string) => (els[id] ??= (() => {
+    const classes = new Set<string>();
+    return { hidden: false, value: '', childElementCount: 0, classes,
+      classList: { toggle: (c: string, on?: boolean) => { if (on ?? !classes.has(c)) classes.add(c); else classes.delete(c); }, contains: (c: string) => classes.has(c) } };
+  })());
+  const sync = new Function('$', 'state', `'use strict'; ${fnSource('tmSyncQueryBar')} return tmSyncQueryBar;`)($, { view: 'treemap' }) as () => void;
+  const idle = () => $('tmQueryBar').classes.has('idle');
+  $('tmSavedViews').childElementCount = 2;
+  $('tmQueryErr').hidden = true;
+  $('tmStageMatches').hidden = true;
+  $('tmSearch').value = '';
+  sync();
+  assert.equal($('tmQueryBar').hidden, false, 'the saved views keep the bar up (B28)');
+  assert.ok(idle(), 'and with nothing typed it is idle');
+  $('tmSearch').value = 'size>1gb';
+  sync();
+  assert.ok(!idle(), 'a query typed makes it the card again');
+  $('tmSearch').value = '';
+  $('tmQueryErr').hidden = false;
+  sync();
+  assert.ok(!idle(), 'so does a message');
+  $('tmQueryErr').hidden = true;
+  $('tmStageMatches').hidden = false;
+  sync();
+  assert.ok(!idle(), 'and a Stage button');
+
+  const bar = '#treemapWrap > .tm-querybar.idle';
+  assert.equal(cascaded(bar, 'pointer-events'), 'none', 'idle, the bar lets the pointer through to the map');
+  assert.match(cascaded(bar, 'background') ?? '', /^(none|transparent)$/, 'and paints no card');
+  assert.equal(cascaded(bar, 'box-shadow'), 'none', 'casts no shadow');
+  assert.equal(cascaded(bar, 'border-color'), 'transparent', 'and draws no edge');
+  const chip = `${bar} .pill`;
+  assert.equal(cascaded(chip, 'pointer-events'), 'auto', 'its chips still take the pointer');
+  const layersOf = (v: string) => {
+    const out: string[] = []; let depth = 0, cur = '';
+    for (const ch of v) { if (ch === '(') depth++; else if (ch === ')') depth--; if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch; }
+    return [...out, cur.trim()];
+  };
+  const bg = layersOf(cascaded(chip, 'background') ?? '');
+  for (const [name, palette] of THEMES) {
+    // Paint the layers bottom-up: a colour, then gradients over it (a flat
+    // linear-gradient(c, c) is c; a sheen is measured at its brightest stop).
+    const lay = (ground: RGB) => bg.slice().reverse().reduce((under, layer) => {
+      const flat = /^linear-gradient\((var\(--[a-z0-9-]+\)),\s*\1\)$/.exec(layer);
+      if (flat) return paint(flat[1], palette, under);
+      const sheen = /^linear-gradient\([^,]*deg,\s*(rgba\([^)]*\))/.exec(layer);
+      if (sheen) return paint(sheen[1], palette, under);
+      return paint(layer, palette, under);
+    }, ground);
+    const onRed = lay([255, 0, 0]), onBlue = lay([0, 0, 255]);
+    assert.deepEqual(onRed.map(Math.round), onBlue.map(Math.round), `${name}: an idle chip is opaque — no tile shows through it (${bg.join(' | ')})`);
+    const ink = paint(prop(ruleFor('.pill').body, 'color')!, palette, onRed);
+    const c = contrast(ink, onRed);
+    assert.ok(c >= 4.5, `${name}: a chip's name measures ${fmt(c)}:1 on it`);
+  }
+});
+
 /* ══════════════ G08 — every <select> keeps its arrow, in both themes, at rest, hovered and focused ══════════════ */
 
 /** CSS specificity of one compound-selector chain, as [ids, classes|attrs|pseudo-classes, elements]. */

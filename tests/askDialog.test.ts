@@ -265,8 +265,8 @@ test('a paired machine\'s scan folder is asked for in the page', async () => {
 test('Save view is not offered while the box is empty — it would save nothing (B28)', () => {
   // B28: with the box cleared, Save view stayed offered (enabled, same
   // tooltip) beside the saved chips, and pressing it did nothing visible.
-  const els: Record<string, { hidden: boolean; value: string; childElementCount: number; title: string; disabled: boolean }> = {};
-  const $ = (id: string) => (els[id] ??= { hidden: false, value: '', childElementCount: 0, title: '', disabled: false });
+  const els: Record<string, { hidden: boolean; value: string; childElementCount: number; title: string; disabled: boolean; classList: { toggle: () => void } }> = {};
+  const $ = (id: string) => (els[id] ??= { hidden: false, value: '', childElementCount: 0, title: '', disabled: false, classList: { toggle() {} } });
   $('tmSavedViews').childElementCount = 1; // a saved chip keeps the bar up
   $('tmQueryErr').hidden = true;
   $('tmStageMatches').hidden = true;

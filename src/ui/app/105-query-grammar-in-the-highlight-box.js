@@ -193,8 +193,12 @@ function tmSyncQueryBar() {
   // Save view saves the query in the box. With nothing typed there is nothing
   // to save, and the bar stays up for its saved chips: the button was offered
   // anyway and a press did nothing visible (B28).
+  const typed = Boolean(($('tmSearch').value || '').trim());
   const save = $('tmSaveView');
-  if (save) save.hidden = !($('tmSearch').value || '').trim();
+  if (save) save.hidden = !typed;
+  // Idle — saved chips and nothing else — the bar draws no card over the
+  // map and lets the pointer through around its chips (review F1.15).
+  bar.classList.toggle('idle', !typed && !hasMessage && !hasStage);
 }
 
 /**
