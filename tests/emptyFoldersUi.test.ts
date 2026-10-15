@@ -255,6 +255,7 @@ async function confirm(selection: Record<string, unknown>, result: TrashResult) 
     icon: () => '',
     REDUCED: true,
     rescan: () => {},
+    cleanTrashing: false, // the page's own flag: a run holds the footer's button (review F2.1)
   }, 'selection, options');
   await fn({ bytes: 0, noun: 'empty folder', sizes: new Map(), ...selection }, {});
   return { toasts, calls };

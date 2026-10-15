@@ -35076,6 +35076,13 @@ $('browseUseBtn').addEventListener('click', async () => {
 let cleanMatches = [];   // Custom Rules pane — matched file nodes
 /** Custom Rules pane — path → bytes each matched file takes on its disk (the onDisk fact, F09); a file absent was not measured. */
 let cleanOnDisk = new Map();
+/**
+ * True while runCleanTrash is moving a selection to the Trash: the footer's
+ * button is the run's, held and saying how far it has got, until it ends — a
+ * redraw meanwhile (Find's late answer about what the files take, a tick)
+ * never arms it again (review F2.1, F2.9).
+ */
+let cleanTrashing = false;
 let emptyFolders = [];   // Empty Folders pane — { name, path }
 let smartGroups = [];    // Smart Suggestions pane — rule groups from the API
 /**
@@ -36250,9 +36257,12 @@ function updateCleanSummary() {
     : cloud ? ` · ${formatBytes(bytes)}, to ${where}`
     : cleanFreedSaid(bytes, onDisk, paths.length);
   $('cleanSummary').textContent = paths.length ? `${paths.length} ${noun}${paths.length > 1 ? 's' : ''}${size}` : '';
-  $('cleanConfirmBtn').disabled = !paths.length;
-  $('cleanConfirmBtn').innerHTML = icon('trash', 14) +
-    (paths.length ? `Move ${paths.length} to ${escapeHtml(where)}` : `Move to ${escapeHtml(where)}`);
+  // While a delete runs the button is its own: held, saying how far it has got.
+  if (!cleanTrashing) {
+    $('cleanConfirmBtn').disabled = !paths.length;
+    $('cleanConfirmBtn').innerHTML = icon('trash', 14) +
+      (paths.length ? `Move ${paths.length} to ${escapeHtml(where)}` : `Move to ${escapeHtml(where)}`);
+  }
   // Shrink Video's action is its own Re-encode, and Cloud-safe stages into
   // the cart: under either the shared footer offers no Move to Trash, not
   // even a disabled one (fifth browser pass F10).
@@ -36358,22 +36368,28 @@ async function runCleanTrash(selection, options) {
   // they are on purpose, each reason said as itself (Track U, U-4; U-4b L4), never as a failure.
   const left = { FOLDER_NOT_EMPTY: 0, FOLDER_UNREADABLE: 0, FOLDER_NO_ANSWER: 0, FOLDER_NOT_CHECKED: 0, FOLDER_TOO_MANY_ENTRIES: 0, NOT_A_FOLDER: 0 };
   let leftOut = 0;
-  for (let i = 0; i < paths.length; i += 20) {
-    const chunk = paths.slice(i, i + 20);
-    const result = await trashPaths(chunk, {
-      silent: true,
-      ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}),
-      ...(onlyEmptyFolders ? { onlyEmptyFolders: true, ignoreJunk: ignoreJunk !== false } : {}),
-    });
-    done += result.deleted.length;
-    for (const p of result.deleted) recovered += counted.get(p) || 0;
-    for (const f of result.failed) {
-      if (Object.prototype.hasOwnProperty.call(left, f.code)) { left[f.code]++; leftOut++; } else failed++;
+  // The button is the run's until it ends: no redraw of the footer arms it again meanwhile (review F2.1, F2.9).
+  cleanTrashing = true;
+  try {
+    for (let i = 0; i < paths.length; i += 20) {
+      const chunk = paths.slice(i, i + 20);
+      const result = await trashPaths(chunk, {
+        silent: true,
+        ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}),
+        ...(onlyEmptyFolders ? { onlyEmptyFolders: true, ignoreJunk: ignoreJunk !== false } : {}),
+      });
+      done += result.deleted.length;
+      for (const p of result.deleted) recovered += counted.get(p) || 0;
+      for (const f of result.failed) {
+        if (Object.prototype.hasOwnProperty.call(left, f.code)) { left[f.code]++; leftOut++; } else failed++;
+      }
+      blocked += (result.blocked || []).length;
+      const settled = done + failed + leftOut + blocked;
+      $('cleanProgressFill').style.width = Math.round((settled / paths.length) * 100) + '%';
+      btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
     }
-    blocked += (result.blocked || []).length;
-    const settled = done + failed + leftOut + blocked;
-    $('cleanProgressFill').style.width = Math.round((settled / paths.length) * 100) + '%';
-    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
+  } finally {
+    cleanTrashing = false;
   }
   closeModal('cleanModal');
   // Measured, what the moved files took; not measured, the size they claim,
@@ -36416,6 +36432,8 @@ async function runCleanTrash(selection, options) {
  * trash, never to the local Trash route.
  */
 async function confirmCleanTrash() {
+  // Its files are already on their way to the Trash: no second sheet for them (review F2.1).
+  if (cleanTrashing) return;
   const selection = activeCleanSelection();
   if (!selection.paths.length) return;
   await confirmTrash(selection.paths);

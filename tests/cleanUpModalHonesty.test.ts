@@ -207,6 +207,7 @@ async function runConfirm(sel: { paths: string[]; sizes: Map<string, number> }, 
     icon: () => '',
     REDUCED: true,
     rescan: () => { rescans++; },
+    cleanTrashing: false, // the page's own flag: a run holds the footer's button (review F2.1)
   }, 'selection, options');
   await fn({ ...sel, bytes, noun: 'item' }, {});
   return { toasts, trashed, rescans, els, bytes };
@@ -413,6 +414,7 @@ function cleanUpHarness(opts: { cloud?: boolean } = {}) {
   const src = `
     let onConfirmTrash = null;
     let confirmPaths = [];
+    let cleanTrashing = false;
     ${declOf('tmParentPath')}
     ${declOf('outermostPaths')}
     ${declOf('confirmTrash')}
@@ -519,7 +521,7 @@ function cleanPanes() {
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const page = new Function(...keys, `let cleanPane = 'rules'; let onConfirmTrash = null;
+  const page = new Function(...keys, `let cleanPane = 'rules'; let onConfirmTrash = null; let cleanTrashing = false;
     ${['setCleanPane', 'activeCleanSelection', 'updateCleanSummary', 'cleanFreedSaid', 'confirmCleanTrash'].map(declOf).join('\n')}
     return { show: setCleanPane, click: confirmCleanTrash };`)(...keys.map((k) => deps[k]));
   const footer = () => ({ summary: els.cleanSummary.textContent, disabled: els.cleanConfirmBtn.disabled, label: els.cleanConfirmBtn.innerHTML });
@@ -590,6 +592,7 @@ async function cleanFooter(cloud?: { name: string; trashLabel: string }): Promis
     isCloudScan: () => Boolean(cloud),
     cloudProviderOfScan: () => cloud ?? assert.fail('a local scan has no provider'),
     cleanPane: 'rules',
+    cleanTrashing: false,
     renderCleanFunnel: () => {},
     // How the size is said (fifth browser pass F09), the page's own.
     cleanFreedSaid: new Function('formatBytes', `${declOf('cleanFreedSaid')}\nreturn cleanFreedSaid;`)(() => '3.6 GB'),
@@ -643,7 +646,7 @@ function rulesFooter(files: { path: string; size: number }[], onDisk: Record<str
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  return new Function(...keys, `let cleanPane = 'rules';
+  return new Function(...keys, `let cleanPane = 'rules'; let cleanTrashing = false;
     ${['activeCleanSelection', 'updateCleanSummary', 'cleanFreedSaid'].map(declOf).join('\n')}
     return { summary: () => { updateCleanSummary(); return $('cleanSummary').textContent; }, selection: activeCleanSelection };`)(
     ...keys.map((k) => deps[k])) as { summary: () => string; selection: () => { sizes: Map<string, number>; onDiskSizes: Map<string, number> | null } };
@@ -759,6 +762,64 @@ test('where the onDisk fact cannot answer — a system that reports no blocks, a
   const cloud = findHarness(async () => assert.fail('a cloud account\'s files are not measured'), true);
   await cloud.page.find(async () => ({ files: [{ path: 'cloud://drive/a.mov', name: 'a.mov', size: 1, modifiedAt: 0 }], matched: 1, truncated: false }));
   assert.deepEqual(cloud.asked, [], 'a cloud account\'s files are on no disk here: nothing is asked');
+});
+
+/**
+ * The footer and the delete behind it, in one scope as the page has them: the
+ * page's updateCleanSummary draws the footer from the ticked rows (stubbed:
+ * `n` files ticked), runCleanTrash moves them in chunks of 20, and
+ * confirmCleanTrash is the button's click. Each chunk's trashPaths waits until
+ * the test answers it.
+ */
+function footerDuringDelete(n: number) {
+  const { els, $ } = classDom();
+  const paths = Array.from({ length: n }, (_, i) => `/r/f${i}.mov`);
+  const selection = { paths, sizes: new Map(paths.map((p) => [p, 100])), bytes: 100 * n, noun: 'file', onDisk: null };
+  const answers: Array<() => void> = [];
+  const sheets: string[][] = [];
+  const deps: Record<string, unknown> = {
+    $, activeCleanSelection: () => selection, isCloudScan: () => false, cloudProviderOfScan: () => assert.fail('a local scan has no provider'),
+    escapeHtml: String, icon: () => '', formatBytes: (b: number) => `${b} B`, renderCleanFunnel: () => {},
+    trashPaths: (chunk: string[]) => new Promise((resolve) => { answers.push(() => resolve({ deleted: [...chunk], failed: [] })); }),
+    closeModal: () => {}, toast: () => {}, REDUCED: true, rescan: () => {},
+    confirmTrash: async (p: string[]) => { sheets.push([...p]); },
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const page = new Function(...keys, `let cleanPane = 'rules'; let onConfirmTrash = null; let cleanTrashing = false;
+    ${['updateCleanSummary', 'cleanFreedSaid', 'runCleanTrash', 'confirmCleanTrash'].map(declOf).join('\n')}
+    return { summary: updateCleanSummary, run: runCleanTrash, click: confirmCleanTrash };`)(...keys.map((k) => deps[k])) as {
+    summary: () => void; run: (sel: unknown, opts: unknown) => Promise<void>; click: () => Promise<void>;
+  };
+  const button = () => ({ disabled: els.cleanConfirmBtn.disabled, label: els.cleanConfirmBtn.innerHTML });
+  return { page, selection, answers, sheets, button };
+}
+
+test('while a delete runs, a redraw of the footer — Find\'s late answer about what the files take, or a tick — leaves Move to Trash held and saying how far it has got, and a click opens no second sheet (review F2.1, F2.9)', async () => {
+  // Find draws its list before what the files take on the disk is known
+  // (review F1.12), so on a slow drive that answer can land after Move to
+  // Trash and OK: runCleanFind then calls updateCleanSummary, which set the
+  // button enabled again as "Move 25 to Trash" mid-delete, and a second click
+  // opened a second sheet for files already on their way to the Trash.
+  const h = footerDuringDelete(25);
+  h.page.summary();
+  assert.deepEqual(h.button(), { disabled: false, label: 'Move 25 to Trash' }, 'control: the ticked files are offered');
+  const run = h.page.run(h.selection, {});
+  await waitFor(() => h.answers.length === 1, 'the first chunk to be sent');
+  assert.equal(h.button().disabled, true, 'control: the run holds the button');
+  h.answers[0]();
+  await waitFor(() => h.answers.length === 2, 'the second chunk to be sent');
+  assert.equal(h.button().label, 'Deleting… 20/25', 'control: the button says how far the run has got');
+  h.page.summary(); // what runCleanFind's late answer, and a tick, do
+  assert.deepEqual(h.button(), { disabled: true, label: 'Deleting… 20/25' }, 'the button stays held, saying how far the run has got');
+  await h.page.click();
+  assert.deepEqual(h.sheets, [], 'a click meanwhile opens no second sheet for files already on their way to the Trash');
+  h.answers[1]();
+  await run;
+  h.page.summary();
+  assert.deepEqual(h.button(), { disabled: false, label: 'Move 25 to Trash' }, 'once the run is over, the footer is drawn from the ticks again');
+  await h.page.click();
+  assert.equal(h.sheets.length, 1, 'and a click asks again');
 });
 
 test('the completion toast says where the files went, not that space came back', async () => {
