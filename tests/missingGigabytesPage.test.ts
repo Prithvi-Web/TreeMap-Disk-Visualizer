@@ -193,6 +193,29 @@ test('G06 review F2.2: an older scan\'s ask failing late never frees the newer s
   assert.equal(p.asks.length, 3, 'once s2\'s answer is in after s1\'s failure, entering again asks again');
 });
 
+// The same rule on ONE scan (review F3.2): the ask slot is released by the
+// ask that holds it — by its order (seq), not by its scan — so the first
+// visit's ask landing late never frees the second visit's. Leaving the tab
+// and coming back inside the second or so an ask takes is the common case.
+for (const leg of ['answer', 'failure'] as const) {
+  test(`G06 review F3.2: on one scan, the first visit's ask landing late (its ${leg}) never frees the second visit's slot — entering the view on screen again waits on the second ask`, async () => {
+    const p = page();
+    p.view.mount(); // visit 1 asks
+    p.view.unmount();
+    p.view.mount(); // visit 2 asks again, for the same scan
+    assert.equal(p.asks.length, 2, 'each visit asks');
+    if (leg === 'answer') await p.asks[0].answer(statement('s1', 600));
+    else await p.asks[0].fail('the first visit\'s ask failed');
+    p.view.mount(); // a re-entry of the view on screen (switchView(state.view)) while visit 2's ask is out
+    assert.equal(p.asks.length, 2, `visit 2's ask is still out: the first visit's late ${leg} did not free a second request for the same scan`);
+    const fresh = statement('s1', 610);
+    await p.asks[1].answer(fresh);
+    assert.equal(p.body.innerHTML, p.render(fresh), 'and visit 2\'s answer paints, whole');
+    p.view.mount();
+    assert.equal(p.asks.length, 3, 'once it is in, entering again asks again');
+  });
+}
+
 test('G06: an older answer that lands after a newer one is never shown, nor kept for the next visit', async () => {
   const p = page();
   p.view.mount();
