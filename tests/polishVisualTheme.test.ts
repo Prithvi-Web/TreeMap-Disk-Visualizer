@@ -388,13 +388,13 @@ test('each rescued ink clears AA on the ground it actually sits on, in both them
 
 /*
  * G05 listed the folders whose project is still here in a fold of their own
- * at full ink, but each one's "rebuildable" tag kept the neutral chip:
+ * at full ink, but each one's tag ("has project", G05 review F3.3) kept the neutral chip:
  * --text-3 on --surface-3, 10px bold, which measured 4.30:1 (dark) and
  * 4.34:1 (light) on the sheet (G05 review F1.7). --surface-3 is translucent,
  * so the chip is measured over the ground under it: the sheet's opaque
  * --bg-1 (075-modals.css), and a card, should the fold ever sit on one.
  */
-test('the "rebuildable" chip of a folder whose project is still here clears AA on the sheet it sits on, in both themes (G05 review F1.7)', () => {
+test('the "has project" chip of a folder whose project is still here clears AA on the sheet it sits on, in both themes (G05 review F1.7)', () => {
   const base = ruleFor('.pkg-tag');
   const own = RULES.find((x) => parts(x).includes('.pkg-tag.active'));
   // The cascade: the active chip's own declaration where it makes one, else the base chip's.

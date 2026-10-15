@@ -411,11 +411,15 @@ document.addEventListener('click', (e) => {
    G05: the two halves sit apart. Orphans and caches — what a person can act
    on here — lead the sheet in #packageOrphans. A folder whose project is
    still here (the server's `active`) is listed after Smart Suggestions, in a
-   fold of its own (#packageProjects), and is called what it is: its project
-   can build it again. "In use" is the open-file guard's word for a file a
-   program has open, and over these rows it read as "do not delete" beside a
-   suggestion offering the same folder. A sheet holding only such folders used
-   to open on "Package leftovers — no orphans; shared caches only — 0 B". */
+   fold of its own (#packageProjects), and is called what the server knows of
+   it: its project is still here. "In use" is the open-file guard's word for
+   a file a program has open, and over these rows it read as "do not delete"
+   beside a suggestion offering the same folder. A sheet holding only such
+   folders used to open on "Package leftovers — no orphans; shared caches only
+   — 0 B". Nor is such a folder called rebuildable: `active` is a folder name
+   a rule knows beside the project's manifest, and nothing reads what the
+   folder holds — a `.venv` of hand-installed packages beside a pyenv pin is
+   `active` too, and nothing there builds it again (G05 review F3.3). */
 const ECOSYSTEM_LABEL = {
   npm: 'npm', yarn: 'Yarn', pnpm: 'pnpm', python: 'Python', cargo: 'Rust / Cargo',
   maven: 'Maven', gradle: 'Gradle', cocoapods: 'CocoaPods', homebrew: 'Homebrew',
@@ -474,7 +478,7 @@ async function renderPackageOrphans() {
           ${selectable
             ? `<input type="checkbox" class="pkg-ck" data-i="${e._i}" aria-label="Select ${escapeHtml(e.path)}">`
             : e.advisory ? '<span class="adv-spacer" title="Not safe to trash"></span>' : ''}
-          <span class="pkg-tag ${e.kind}">${e.kind === 'orphan' ? 'orphaned' : e.kind === 'cache' ? 'cache' : 'rebuildable'}</span>
+          <span class="pkg-tag ${e.kind}">${e.kind === 'orphan' ? 'orphaned' : e.kind === 'cache' ? 'cache' : 'has project'}</span>
           <div class="meta">
             <div class="nm">${escapeHtml(e.name)} ${project}</div>
             <div class="pth" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</div>
@@ -503,18 +507,19 @@ async function renderPackageOrphans() {
     ].filter(Boolean).join(' · '))).join('') + `</div>`;
 
   const projectCount = projects.reduce((n, x) => n + x.entries.length, 0);
-  // The line says what is true of every folder in the fold, never that the
-  // command beside it puts it back: a virtualenv's (the rule pack's `pip
-  // install -r requirements.txt`) makes no `.venv`, and fails in a project
-  // with no requirements.txt (G05 review F1.1). The summary carries a
+  // The line says what is true of every folder in the fold: its project is
+  // still here. Never that the command beside it puts it back — a
+  // virtualenv's (the rule pack's `pip install -r requirements.txt`) makes no
+  // `.venv`, and fails in a project with no requirements.txt (G05 review
+  // F1.1) — nor that its project can build it again (F3.3). The summary carries a
   // tabindex so a sheet's Tab trap (modalFocusables) lists it: a bare
   // <summary> matches none of its selectors, and with nothing ticked the
   // fold could be opened only with a mouse (F1.6).
   if (projectsHost) {
     projectsHost.innerHTML = !projectCount ? '' : `<details class="pkg-projects">
     <summary class="rule-row" tabindex="0">${icon('chevronRight', 14, 'pkg-chev')}
-      <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Rebuildable project folders</b>
-      <span class="muted" style="flex:1;margin-left:8px;">${formatCount(projectCount)} folder${projectCount === 1 ? '' : 's'} whose project is still here — ${projectCount === 1 ? 'its' : 'each one’s'} project can build it again</span>
+      <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Folders whose project is still here</b>
+      <span class="muted" style="flex:1;margin-left:8px;">${formatCount(projectCount)} folder${projectCount === 1 ? '' : 's'}</span>
       <span class="size-badge num">${formatBytes(data.activeBytes)}</span>
     </summary>` + projects.map(x => ecoHtml(x,
       `${formatCount(x.entries.length)} folder${x.entries.length === 1 ? '' : 's'} · ${formatBytes(x.g.activeBytes)}`)).join('') + `

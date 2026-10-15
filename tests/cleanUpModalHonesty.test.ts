@@ -1397,7 +1397,7 @@ test('a folder whose project is still here is never called "in use" — the app\
   for (const r of rows) {
     const path = /class="pth" title="([^"]+)"/.exec(r)![1];
     const entry = CORPUS.ecosystems.flatMap((g) => g.entries).find((e) => e.path === path)!;
-    assert.match(r, /<span class="pkg-tag active">rebuildable<\/span>/, `${path}: its tag says it can be rebuilt`);
+    assert.match(r, /<span class="pkg-tag active">has project<\/span>/, `${path}: its tag says it has a project (G05 review F3.3)`);
     const why = /<div class="pkg-why">([\s\S]*?)<\/div>/.exec(r)?.[1] ?? '';
     assert.doesNotMatch(why, /to restore|puts? (it|them) back/, `${path}: its line never says a command puts it back: ${why}`);
     assert.equal(why, 'Its project is still here', `${path}: its line says its project is still here, and nothing it cannot vouch for`);
@@ -1495,8 +1495,8 @@ test('orphans and caches lead the sheet with their boxes, and a folder whose pro
  * virtualenv's is the rule pack's `pip install -r requirements.txt`, which
  * makes no `.venv` (it installs into whichever Python comes first on PATH)
  * and fails in a project with no requirements.txt (G05 review F1.1). So the
- * line says what is true of every folder in it — its project can build it
- * again — whichever of them name a command: all, some (F1.4) or none.
+ * line says what is true of every folder in it — its project is still here
+ * (F3.3, below) — whichever of them name a command: all, some (F1.4) or none.
  */
 test('the fold never says the command beside its folders puts them back — a virtualenv\'s does not — and says the same true thing whether all, some or none name a command (G05 review F1.1, F1.4)', async () => {
   const bare = { ...owned('npm', 'webapp', 'node_modules', 20_700_000, 'npm install'), command: undefined };
@@ -1519,10 +1519,39 @@ test('the fold never says the command beside its folders puts them back — a vi
     { all: false, some: false, none: false },
     `no fold line says a command puts its folders back: ${JSON.stringify(said)}`);
   assert.deepEqual(said, {
-    all: 'Rebuildable project folders 6 folders whose project is still here — each one’s project can build it again 117900000 B',
-    some: 'Rebuildable project folders 2 folders whose project is still here — each one’s project can build it again 29700000 B',
-    none: 'Rebuildable project folders 1 folder whose project is still here — its project can build it again 20700000 B',
+    all: 'Folders whose project is still here 6 folders 117900000 B',
+    some: 'Folders whose project is still here 2 folders 29700000 B',
+    none: 'Folders whose project is still here 1 folder 20700000 B',
   }, 'each says what is true of every folder in it');
+});
+
+/*
+ * The fold's line then said "each one's project can build it again", and each
+ * row's tag "rebuildable". The server's `active` is a folder name its rule
+ * knows beside its project's manifest (packageEcosystemScanner): nothing reads
+ * what the folder holds, or whether the project lists what is in it. A `.venv`
+ * holding hand-installed packages beside nothing but a pyenv pin
+ * (`.python-version`) is `active`, and so is a plain folder named `env` there;
+ * nothing in that project can build either again. The fold says what the
+ * server knows, in its line and in each row's tag: the project is still here
+ * (G05 review F3.3).
+ */
+test('the fold says only what the server knows — each folder\'s project is still here — and never that its project can build it again, in its line or in a row\'s tag (G05 review F3.3)', async () => {
+  // The two folders the review found classified `active` with nothing to build them from.
+  const pinned = owned('python', 'pinned', '.venv', 2_000_000, 'pip install -r requirements.txt');
+  const plain = owned('python', 'nodep', 'env', 1_000_000, 'pip install -r requirements.txt');
+  const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const [what, data, rows, line] of [
+    ['the QA corpus', CORPUS, 6, 'Folders whose project is still here 6 folders 117900000 B'],
+    ['a pinned virtualenv and a plain env folder', pkgReport([pkgGroup('python', [pinned, plain])]), 2, 'Folders whose project is still here 2 folders 3000000 B'],
+  ] as const) {
+    const { projects } = await renderPackages(data);
+    assert.equal(pkgRows(projects).length, rows, `${what}: control, every folder is in the fold`);
+    assert.equal(text(/<summary[\s\S]*?<\/summary>/.exec(projects)?.[0] ?? ''), line, `${what}: the fold's line says its project is still here, and no more`);
+    assert.deepEqual([...new Set([...projects.matchAll(/<span class="pkg-tag[^"]*">([^<]*)<\/span>/g)].map((m) => m[1]))], ['has project'],
+      `${what}: each row's tag says it has a project`);
+    assert.doesNotMatch(text(projects), /rebuil|build (it|them) again|can be built/i, `${what}: nothing in the fold says a project can build its folders again`);
+  }
 });
 
 /**
