@@ -300,6 +300,11 @@ async function tmRunGrammarQuery(q) {
   const ctl = new AbortController();
   tmQueryAbort = ctl;
   const scanAtRequest = state.scanId;
+  // An error under the box was said of the text before this one: it may name
+  // a field no longer typed, and a query that looks facts up can take seconds
+  // to answer. Taken down as this text is asked; said again if it fails too
+  // (review F1.3). The last highlights stay until the answer.
+  if ($('tmSearch').classList.contains('badq')) tmSetQueryMessage('', false);
   try {
     // One request: /api/query parses the query as it runs it, and answers a
     // parse error itself (below). Parsing first through /api/query/validate

@@ -78,10 +78,23 @@ const hits = (paths: string[]): Record<string, unknown> => ({
 
 /* ── Highlight ───────────────────────────────────────────────────────────── */
 
+/** A stub element: the fields and calls the box's message touches. */
+interface Elem { value: string; hidden: boolean; textContent: string; childElementCount: number; classList: { toggle(c: string, on?: boolean): void; contains(c: string): boolean }; setAttribute(k: string, v: string): void; getAttribute(k: string): string | null }
+function elem(): Elem {
+  const cls = new Set<string>();
+  const attrs: Record<string, string> = {};
+  return {
+    value: '', hidden: true, textContent: '', childElementCount: 0,
+    classList: { toggle: (c, on) => { if (on ?? !cls.has(c)) cls.add(c); else cls.delete(c); }, contains: (c) => cls.has(c) },
+    setAttribute: (k, v) => { attrs[k] = v; }, getAttribute: (k) => attrs[k] ?? null,
+  };
+}
+
 function highlight(answersAnyway = false) {
   const server = heldServer(answersAnyway);
   const said: Array<{ text: string; isError: boolean }> = [];
-  const box = { value: '' };
+  const els: Record<string, Elem> = {};
+  const $ = (id: string): Elem => (els[id] ||= elem());
   const state = {
     scanId: 's1' as string | null, root: { path: '/r' }, view: 'treemap',
     treemap: { query: '', queryMode: 'bare', matchedPaths: null as Set<string> | null, matchTotal: null as number | null, matches: 0, rootPath: '/r' },
@@ -89,8 +102,10 @@ function highlight(answersAnyway = false) {
   const noop = (): void => {};
   let painted = 0;
   const deps: Record<string, unknown> = {
-    state, api: server.api, $: (id: string) => (id === 'tmSearch' ? box : { hidden: true, value: '' }),
-    tmSetQueryMessage: (text: string, isError: boolean) => { said.push({ text, isError }); },
+    state, api: server.api, $,
+    // Every message the box is given, recorded, then shown by the page's own
+    // tmSetQueryMessage: the error text, its hidden flag, the box's invalid mark.
+    record: (text: string, isError: boolean) => { said.push({ text, isError }); }, tmSyncQueryBar: noop,
     tmSyncStageButton: noop, seedNodes: noop, tmStageable: () => null, formatCount: String, tmUndrawnMessage: () => '',
     isSun: () => false, isCells: () => false, renderSearchOverlay: () => { painted++; }, presentTreemap: noop, presentView: noop,
     presentSunburst: noop, presentCells: noop, renderCellsStatus: noop, clearTimeout, setTimeout,
@@ -101,10 +116,12 @@ function highlight(answersAnyway = false) {
   const keys = Object.keys(deps);
   const src = `'use strict'; let tmQueryDeb = 0; let tmQuerySeq = 0; let tmQueryAbort = null; let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null };\n` +
     `${consts.map(constOf).join('\n')}\n${names.map(declOf).join('\n')}\n` +
+    `${declOf('tmSetQueryMessage').replace(/^function tmSetQueryMessage\(/, 'function tmSetQueryMessageShipped(')}\n` +
+    'function tmSetQueryMessage(text, isError) { record(text, isError); tmSetQueryMessageShipped(text, isError); }\n' +
     'return { apply: tmApplyQuery, cancel: tmCancelQueries };';
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const page = new Function(...keys, src)(...keys.map((k) => deps[k])) as { apply: (q: string) => void; cancel: () => void };
-  return { ...page, ...server, state, said, painted: () => painted };
+  return { ...page, ...server, state, said, painted: () => painted, input: $('tmSearch'), err: $('tmQueryErr') };
 }
 
 test('G07: a grammar query is one request — the server parses it as it runs it, with no separate check first', async () => {
@@ -139,6 +156,26 @@ test('G07: a query that does not parse says where, as the parse-only check did, 
   await h.asks[2].fail(Object.assign(new Error('Scan is still running'), { code: 'SCAN_RUNNING', status: 409 }));
   assert.equal(h.state.treemap.matchTotal, null, 'a query that could not run has no total, and nothing to stage');
   assert.deepEqual(h.said[h.said.length - 1], { text: 'Scan is still running', isError: true });
+});
+
+test('G07 review F1.3: a run for new text takes the last text\'s parse error down at once — not when the new answer lands', async () => {
+  const h = highlight();
+  h.apply('size>1gb');
+  await h.asks[0].answer(hits(['/r/big']));
+  h.apply('size>');
+  await turns();
+  await h.asks[1].fail(Object.assign(new Error('A size needs a number after the operator.'), { code: 'QUERY_PARSE_ERROR', offset: 5, status: 400 }));
+  assert.ok(h.input.classList.contains('badq') && !h.err.hidden, 'control: the parse error is under the box, and the box is marked invalid');
+  h.apply('size>1mb'); // corrected; its answer may take seconds (a fact lookup)
+  await turns();
+  assert.equal(h.asks.length, 3);
+  assert.equal(h.err.hidden, true, 'while the corrected text is asked, the error about the old text is gone');
+  assert.equal(h.input.classList.contains('badq'), false, 'and the box is not marked invalid');
+  assert.equal(h.input.getAttribute('aria-invalid'), 'false', 'nor said to be to a screen reader');
+  const shown = (): string[] | null => (h.state.treemap.matchedPaths ? [...h.state.treemap.matchedPaths] : null);
+  assert.deepEqual(shown(), ['/r/big'], 'the last highlights stay up until the answer');
+  await h.asks[2].answer(hits(['/r/mid']));
+  assert.deepEqual(shown(), ['/r/mid']);
 });
 
 test('G07: a newer query aborts the one still out, and the older answer never paints', async () => {

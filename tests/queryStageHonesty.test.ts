@@ -71,7 +71,7 @@ async function queryThenStage(q: string, hits: Hit[], opts: { cart?: string[]; t
     treemap: { matchedPaths: null as Set<string> | null, queryMode: 'bare', matchTotal: null as number | null, matches: hits.length, rootPath: '/r' },
   };
   const deps: Record<string, unknown> = {
-    $: (id: string) => (id === 'tmStageMatches' ? button : { hidden: true, textContent: '', classList: { toggle() {} }, setAttribute() {} }),
+    $: (id: string) => (id === 'tmStageMatches' ? button : { hidden: true, textContent: '', classList: { toggle() {}, contains: () => false }, setAttribute() {} }),
     state,
     api: async () => ({ hits, total: opts.total ?? hits.length, truncated: Boolean(opts.truncated), degraded: [] }),
     seedNodes: () => {},
@@ -208,7 +208,7 @@ async function messageFor(answer: Record<string, unknown>): Promise<string> {
     treemap: { matchedPaths: null, queryMode: 'bare', matchTotal: null, matches: 3, rootPath: '/r' },
   };
   const deps: Record<string, unknown> = {
-    $: () => ({ hidden: true }),
+    $: () => ({ hidden: true, classList: { contains: () => false } }), // the box is not marked invalid: no error is up
     state,
     api: async () => answer,
     seedNodes: () => {}, renderSearchOverlay: () => {}, presentView: () => {},

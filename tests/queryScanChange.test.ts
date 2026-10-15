@@ -49,7 +49,8 @@ const turns = async (n = 6): Promise<void> => { for (let i = 0; i < n; i++) awai
 function harness() {
   const asked: Array<{ url: string; body: { scanId?: string; q?: string } }> = [];
   const said: string[] = [];
-  const box = { value: '' };
+  // Never marked invalid here: tmSetQueryMessage is the recording stub below (the run reads the mark, review F1.3).
+  const box = { value: '', classList: { contains: (_c: string) => false } };
   const state = {
     scanId: 's1' as string | null, root: { path: '/corpus' } as { path: string } | null, view: 'treemap',
     treemap: {
