@@ -506,7 +506,9 @@ OpenAPI 3 spec).
      (`403 OUTSIDE_SCAN_ROOT`, `SPILL_PATH`, `CLOUD_PATH`, `VIRTUAL_PATH`), as
      the open-file check does. It moves nothing; what it reads on the disk is
      where each path really is (the links in its folders). Say so before
-     acting; a program is removed whole (`root`), never a part at a
+     acting; a program is removed whole (`root`, as the path spells it —
+     or, where the path reaches it through a link, the program where it
+     really is, which the path need not begin with), never a part at a
      time. Autopilot never selects one: its run names the program in
      `skipped`, once, with how many matched items it left.
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS

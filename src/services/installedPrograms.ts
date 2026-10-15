@@ -51,7 +51,12 @@ export interface InstalledProgram {
    * manager knows which package.
    */
   name: string | null;
-  /** The whole program, spelled as the path spells it: the .app bundle, the program's folder, or /usr. */
+  /**
+   * The whole program — the .app bundle, the program's folder, or /usr — as
+   * the path spells it; where the path reaches the program through a link in
+   * its folders (`installedProgramAt`), the program where it really is, which
+   * the path need not begin with (review round 2, F2.5).
+   */
   root: string;
 }
 

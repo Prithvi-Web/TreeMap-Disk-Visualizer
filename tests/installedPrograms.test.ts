@@ -337,3 +337,18 @@ test('the published spec declares the route and the manifests\' installedProgram
   assert.match(JSON.stringify(doc.paths['/api/cart/commit'].post.responses), /installedProgram/, 'and so does the cart\'s');
   assert.ok(doc.components.schemas.OffloadDryRunManifest.properties.installedProgramParts, 'and the offload dry run\'s installedProgramParts (review F1.4)');
 });
+
+test('the published words for `root` say what it is for a path reached through a link: the program where it really is, which the path asked about need not begin with (review round 2, F2.5)', () => {
+  // installedProgramAt judges a path where it really is (review F1.5): for
+  // …/L/Resources/x.bin, L a link to …/Foo.app/Contents, `root` is the real
+  // …/Foo.app. The spec and AGENTS.md still said "as the path spells it".
+  const doc = buildOpenApiDocument() as Record<string, any>;
+  const root = String(doc.components.schemas.InstalledProgram.properties.root.description).replace(/\s+/g, ' ');
+  assert.match(root, /as the path spells it/, `control: the usual case: ${root}`);
+  assert.match(root, /through a link[^.]*where it really is/, `and the path through a link: ${root}`);
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8');
+  const at = agents.indexOf('**A part of an installed program breaks it.**');
+  assert.notEqual(at, -1, 'the bullet is in AGENTS.md');
+  const said = agents.slice(at, agents.indexOf('\n   - ', at)).replace(/\s+/g, ' ');
+  assert.match(said, /removed whole \(`root`[^)]*through a link[^)]*where it really is[^)]*\)/, `AGENTS.md says it where it names root: ${said}`);
+});

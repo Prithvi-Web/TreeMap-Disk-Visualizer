@@ -573,7 +573,7 @@ const schemas: Json = {
     {
       kind: { type: 'string', enum: ['app', 'program', 'package'], description: 'app: a Mac app bundle; program: a Windows program\u2019s own folder under Program Files; package: Linux\u2019s /usr outside /usr/local' },
       name: nullable(str('A Mac app as a person names it — "Google Chrome" for …/Google Chrome.app; for a program under Program Files, the name of its folder there, often its maker\u2019s ("Google" for Chrome) rather than the program\u2019s — say `root`, not this, as the program; null for /usr, where only the package manager knows which package')),
-      root: str('The whole program, as the path spells it: the .app bundle, the program\u2019s folder, or /usr'),
+      root: str('The whole program \u2014 the .app bundle, the program\u2019s folder, or /usr \u2014 as the path spells it; where the path reaches the program through a link in its folders, the program where it really is, which the path need not begin with'),
     },
     ['kind', 'name', 'root'],
     'The installed program a path is a part of, strictly inside it — moving that path to the Trash would stop the program working; removing the program means uninstalling all of it (a Mac app: the whole .app)',
