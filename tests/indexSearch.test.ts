@@ -746,6 +746,191 @@ test('a current inner index beside a stale outer one: the outer one\'s rows ther
   }
 });
 
+/* ══════════════ Nested indexes written row by row: deep folders, three holders (review F3.3, F3.4) ══════════════ */
+
+/**
+ * Indexes made of rows written directly — no files, no watcher — as the two tests above make theirs.
+ * Every root is stale or ready and unwatched, so none is current (as each is after a restart): a path
+ * two of them hold is one hit, from the one built later, the outer of two built together. A path is
+ * written '/'-separated below the base folder and spelled the platform's way (review F3.1).
+ */
+type RowRoot = { rel: string; path: string; id: number; builtAt: number; nodes: Map<string, { id: number; size: number }> };
+function rowIndex() {
+  deleteIndex();
+  const db = openIndex();
+  const base = path.resolve(path.sep, 'rows');
+  const abs = (rel: string): string => (rel === '' ? base : path.join(base, ...rel.split('/')));
+  const insert = db.prepare('INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, mtime, flags) VALUES (?,?,?,?,?,?,1,0)');
+  const roots: RowRoot[] = [];
+  const root = (rel: string, builtAt: number, state: 'stale' | 'ready' = 'stale'): RowRoot => {
+    const p = abs(rel);
+    db.prepare("INSERT INTO roots (path, state, mechanism, built_at) VALUES (?, ?, 'synthetic', ?)").run(p, state, builtAt);
+    const id = (db.prepare('SELECT id FROM roots WHERE path = ?').get(p) as { id: number }).id;
+    const top = Number(insert.run(id, null, path.basename(p), '', 1, 0).lastInsertRowid);
+    const r = { rel, path: p, id, builtAt, nodes: new Map([[rel, { id: top, size: 0 }]]) };
+    roots.push(r);
+    return r;
+  };
+  /** Writes `rel` into `r`'s index, with every folder between: a file when it has a size, else a folder. */
+  const put = (r: RowRoot, rel: string, size?: number): void => {
+    assert.ok(r.rel === '' || rel.startsWith(r.rel + '/'), `control: ${rel} is inside ${r.rel}`);
+    const parts = rel.split('/');
+    for (let i = r.rel === '' ? 1 : r.rel.split('/').length + 1; i <= parts.length; i++) {
+      const at = parts.slice(0, i).join('/');
+      if (r.nodes.has(at)) continue;
+      const file = i === parts.length && size !== undefined;
+      const name = parts[i - 1];
+      const id = Number(insert.run(r.id, r.nodes.get(parts.slice(0, i - 1).join('/'))!.id, name, file ? extensionOf(name) : '', file ? 0 : 1, file ? size : 0).lastInsertRowid);
+      r.nodes.set(at, { id, size: file ? size! : 0 });
+    }
+  };
+  /** Writes `rel` into each of `holders`' indexes. */
+  const hold = (holders: RowRoot[], rel: string, size?: number): void => { for (const r of holders) put(r, rel, size); };
+  return { db, base, abs, root, put, hold, roots };
+}
+
+test('two nested indexes, neither current: a path four or five folders below the inner folder is one hit, from the index built later that holds it — the walk down from the region\'s folder goes outermost folder first (review F3.3 of fifth browser pass F08)', () => {
+  // Review F3.3: the walk from a region's folder down to a row's folder looks each folder up by name in
+  // the other index, outermost first. Walked the other way it looks up the row's own folder under the
+  // region's folder, finds nothing, and keeps the row: every path both hold, deeper than one folder below
+  // the inner folder, came back twice. No test put a row more than one folder below a region's folder.
+  for (const [outerBuilt, innerBuilt] of [[1_000_000, 2_000_000], [2_000_000, 1_000_000]]) {
+    const ix = rowIndex();
+    const outer = ix.root('', outerBuilt);
+    const inner = ix.root('inner', innerBuilt);
+    const later = innerBuilt > outerBuilt ? inner : outer;
+    const world = later === inner ? 'the inner built later' : 'the outer built later';
+    // Each folder's name is its own, so a folder looked up under the wrong one is not found by chance.
+    const both: Array<[string, number]> = [['inner/lvl1/lvl2/lvl3/both3.dat', 901], ['inner/lvl1/lvl2/lvl3/lvl4/both4.dat', 902],
+      ['inner/lvl1/lvl2/lvl3/lvl4/lvl5/both5.dat', 903]];
+    const outerOnly: Array<[string, number]> = [['inner/lvl1/lvl2/lvl3/outer3.dat', 801], ['inner/lvl1/lvl2/lvl3/lvl4/outer4.dat', 802],
+      ['inner/lvl1/old2/old3/old4/gone5.dat', 803]]; // under folders only the outer index holds: gone since its build
+    const innerOnly: Array<[string, number]> = [['inner/lvl1/lvl2/lvl3/lvl4/inner4.dat', 701],
+      ['inner/new1/new2/new3/new4/new5.dat', 702]]; // the second under folders only it holds
+    for (const [rel, size] of both) ix.hold([outer, inner], rel, size);
+    for (const [rel, size] of outerOnly) ix.put(outer, rel, size);
+    for (const [rel, size] of innerOnly) ix.put(inner, rel, size);
+    const want = [
+      ...both.map(([rel, size]) => [size, `${ix.abs(rel)} ← ${later.path}`] as const),
+      ...outerOnly.map(([rel, size]) => [size, `${ix.abs(rel)} ← ${outer.path}`] as const),
+      ...innerOnly.map(([rel, size]) => [size, `${ix.abs(rel)} ← ${inner.path}`] as const),
+    ].sort((x, y) => y[0] - x[0]).map(([, line]) => line);
+    assert.deepEqual(answered('*.dat'), want, `${world}: every path once, from the index built later that holds it (the extension seek)`);
+    assert.deepEqual(answered('dat'), want, `${world}: the same by the name scan`);
+    assert.deepEqual(answered('both'), want.filter((line) => /both\d\.dat/.test(line)), `${world}: the paths both hold, once each`);
+    assert.deepEqual(searchIndex('*.dat').total, want.length, `${world}: counted once each`);
+    // The folders are paths too: one row each, from the index built later where both hold it.
+    assert.deepEqual(answered('lvl4'), [`${ix.abs('inner/lvl1/lvl2/lvl3/lvl4')} ← ${later.path}`], `${world}: a folder both hold, four folders down, is one row`);
+    assert.deepEqual(answered('old4'), [`${ix.abs('inner/lvl1/old2/old3/old4')} ← ${outer.path}`], `${world}: one only the outer index holds, from it`);
+    assert.deepEqual(answered('new4'), [`${ix.abs('inner/new1/new2/new3/new4')} ← ${inner.path}`], `${world}: and one only the inner index holds, from it`);
+  }
+  deleteIndex();
+});
+
+test('three nested indexes, none current: a path two older indexes hold and the newest does not is one hit, from the newer of the two — however the three were built (review F3.4 of fifth browser pass F08)', () => {
+  // Review F3.4: with three holders of a folder, a row of the oldest is left out where any earlier one —
+  // either of the other two — holds the same path. No test had a path the newest index lacked and two
+  // older ones held, so a rule that asked only the first holder found, or asked that all of them hold
+  // it, or let each older index defer to the other, passed: a path lost, or found twice.
+  const orders: Array<[string, [number, number, number]]> = [
+    ['C newest, then B, then A', [1_000, 2_000, 3_000]],
+    ['B newest, then A, then C', [2_000, 3_000, 1_000]],
+    ['A newest, then C, then B', [3_000, 1_000, 2_000]],
+  ];
+  for (const [what, [aBuilt, bBuilt, cBuilt]] of orders) {
+    const ix = rowIndex();
+    const a = ix.root('', aBuilt);
+    const b = ix.root('B', bBuilt);
+    const c = ix.root('B/C', cBuilt);
+    const newestOf = (holders: RowRoot[]) => [...holders].sort((x, y) => y.builtAt - x.builtAt)[0];
+    // In C's folder — the region all three hold — and folders below it, C holding the folders but not every file.
+    const cases: Array<[RowRoot[], string, number]> = [
+      [[a, b], 'B/C/ab.dat', 610], // two older indexes hold it, the newest does not
+      [[a, b, c], 'B/C/abc.dat', 620],
+      [[a, c], 'B/C/ac.dat', 630],
+      [[b, c], 'B/C/bc.dat', 640],
+      [[a], 'B/C/a-only.dat', 650],
+      [[a, b], 'B/C/sub/deeper/ab-deep.dat', 660], // C holds sub/deeper, not this file
+      [[a, c], 'B/C/sub/deeper/ac-deep.dat', 670],
+      [[a, b, c], 'B/C/sub/abc-sub.dat', 680],
+      [[a, b], 'B/b-region.dat', 690], // in B's own folder, which C does not hold
+    ];
+    ix.put(c, 'B/C/sub/deeper/c-own.dat', 600);
+    ix.put(a, 'B/C/sub/deeper/a-own.dat', 590);
+    for (const [holders, rel, size] of cases) ix.hold(holders, rel, size);
+    const want = [...cases, [[c], 'B/C/sub/deeper/c-own.dat', 600] as const, [[a], 'B/C/sub/deeper/a-own.dat', 590] as const]
+      .sort((x, y) => y[2] - x[2])
+      .map(([holders, rel]) => `${ix.abs(rel)} ← ${newestOf([...holders]).path}`);
+    assert.deepEqual(answered('*.dat'), want, `${what}: every path once, from the newest index that holds it (the extension seek)`);
+    assert.deepEqual(answered('dat'), want, `${what}: the same by the name scan`);
+    assert.equal(searchIndex('*.dat').total, want.length, `${what}: counted once each`);
+  }
+  deleteIndex();
+});
+
+test('a seeded oracle: three or four nested indexes over a deep tree, none current — each path once, from the newest build that holds it, the outer of two built together, paged and counted as one index is (review F3.3, F3.4 of fifth browser pass F08)', () => {
+  // The rule, stated without the engine: every path any index holds is one hit; it comes from the
+  // index with the latest build among those that hold it, the outer one on a tie; hits are in size
+  // order, then the order the rows were written; a page is a slice of that list, and a short page's
+  // total is its offset plus its rows. Trees up to seven folders deep, each index holding a random
+  // part of what lies inside its folder, sizes that tie and differ between indexes, builds that tie.
+  let seed = 0x5eed_f34;
+  const rnd = (): number => { seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0; return seed / 2 ** 32; };
+  const pick = <T,>(list: readonly T[]): T => list[Math.floor(rnd() * list.length)];
+  const FOLDERS = ['a', 'a/b', 'a/b/c', 'a/b/c/d', 'a/b/c/d/e', 'a/b/c/d/e/f', 'a/b/c/d/e/f/g', 'a/h', 'a/h/c', 'a/h/c/i', 'a/h/c/i/j', 'k', 'k/l', 'k/l/m'];
+  const FILES = ['f1.dat', 'f2.dat', 'g3.dat', 'q.bin'];
+  const parentOf = (rel: string): string => rel.split('/').slice(0, -1).join('/');
+  const inside = (rel: string, folder: string): boolean => folder === '' || rel === folder || rel.startsWith(folder + '/');
+  let checked = 0;
+  let chains = 0; // rounds with three indexes in a line, each inside the one before
+  let fours = 0;
+  for (let round = 0; round < 40; round++) {
+    const ix = rowIndex();
+    const nested = FOLDERS.filter(() => rnd() < 0.3).slice(0, 3);
+    if (nested.length < 2) nested.push(...['a/b', 'a/b/c/d'].filter((f) => !nested.includes(f)).slice(0, 2 - nested.length));
+    for (const rel of ['', ...nested]) ix.root(rel, pick([1_000, 2_000, 2_000, 3_000]), pick(['stale', 'ready'] as const));
+    if (nested.some((x) => nested.some((y) => y !== x && inside(y, x)))) chains++;
+    if (ix.roots.length === 4) fours++;
+    for (const r of ix.roots) {
+      const folders = [r.rel, ...FOLDERS.filter((f) => f !== r.rel && inside(f, r.rel))];
+      for (const folder of folders) {
+        if (folder !== r.rel && (!r.nodes.has(parentOf(folder)) || rnd() < 0.2)) continue;
+        if (folder !== r.rel) ix.put(r, folder);
+        for (const file of FILES) if (rnd() < 0.5) ix.put(r, folder === '' ? file : `${folder}/${file}`, pick([100, 200, 200, 300]) + (rnd() < 0.3 ? 1 : 0));
+        if (rnd() < 0.25) ix.put(r, `${folder === '' ? '' : folder + '/'}s1/s2${rnd() < 0.5 ? '/s3' : ''}/f1.dat`, 250);
+      }
+    }
+    // The oracle: for each path, the newest index holding it (the outer one on a tie).
+    const every = new Set<string>();
+    for (const r of ix.roots) for (const rel of r.nodes.keys()) every.add(rel);
+    const rows = [...every].map((rel) => {
+      const from = ix.roots.filter((r) => r.nodes.has(rel)).sort((x, y) => y.builtAt - x.builtAt || x.rel.length - y.rel.length)[0];
+      return { rel, from, ...from.nodes.get(rel)! };
+    }).sort((x, y) => y.size - x.size || x.id - y.id);
+    const label = `round ${round}: ${ix.roots.map((r) => `${r.rel || '.'}@${r.builtAt}`).join(' ')}`;
+    const queries: Array<[string, (rel: string) => boolean]> = [
+      ['*.dat', (rel) => rel.endsWith('.dat')],
+      ['f', (rel) => path.posix.basename(rel === '' ? 'rows' : rel).includes('f')],
+      ['s', (rel) => path.posix.basename(rel === '' ? 'rows' : rel).includes('s')],
+    ];
+    for (const [q, matched] of queries) {
+      const list = rows.filter((row) => matched(row.rel)).map((row) => `${ix.abs(row.rel)} ← ${row.from.path}`);
+      const whole = searchIndex(q, { limit: 500 });
+      assert.deepEqual(whole.hits.map((h) => `${h.path} ← ${h.rootPath}`), list, `${label}, "${q}": each path once, from the newest index holding it, in size order`);
+      assert.deepEqual([whole.total, whole.countCapped], [list.length, false], `${label}, "${q}": counted once each`);
+      for (let offset = 0; offset <= list.length + 7; offset += 7) {
+        const page = searchIndex(q, { limit: 7, offset });
+        const slice = list.slice(offset, offset + 7);
+        assert.deepEqual(page.hits.map((h) => `${h.path} ← ${h.rootPath}`), slice, `${label}, "${q}" at ${offset}: the page is that slice`);
+        assert.equal(page.total, slice.length < 7 ? offset + slice.length : list.length, `${label}, "${q}" at ${offset}: counted as one index counts`);
+      }
+      checked++;
+    }
+  }
+  assert.ok(chains >= 20 && fours >= 20 && checked === 120, `control: of 40 rounds, ${chains} had three indexes in a line and ${fours} had four; ${checked} queries checked`);
+  deleteIndex();
+});
+
 test('a very broad match reports a capped count rather than paying for an exact one', () => {
   // An uncapped COUNT(*) is a second full scan — 17ms over 500k rows, and
   // linear from there, so at 5M it would exceed the entire latency budget on
