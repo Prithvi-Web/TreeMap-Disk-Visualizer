@@ -284,6 +284,60 @@ test('G08: a select shows its arrow in both themes — resting, hovered and focu
   }
 });
 
+/**
+ * A text or number input's background, in `theme` and `state`, as the
+ * cascade leaves it: { image, color } from every rule whose selector names
+ * the input (by its type or as `input`, bare or under the theme's root) in
+ * that state, the `background` shorthand counting as setting both (its
+ * gradients, or none, and its final colour), the winner of each by
+ * specificity and then source order.
+ */
+function inputBackground(type: 'text' | 'number', theme: 'dark' | 'light', state: '' | ':focus'): { image: string; color: string } {
+  const names = [`input[type="${type}"]`, 'input'];
+  const applies = (p: string) => {
+    const bare = p.replace(/^:root\[data-theme="light"\]\s+/, '');
+    if (bare !== p && theme !== 'light') return false;
+    return names.includes(bare) || (state !== '' && names.map((n) => n + state).includes(bare));
+  };
+  type Win = { spec: [number, number, number]; order: number; value: string };
+  let image: Win | null = null, color: Win | null = null;
+  const take = (cur: Win | null, next: Win) => (!cur || cmp(next.spec, cur.spec) > 0 || (cmp(next.spec, cur.spec) === 0 && next.order >= cur.order) ? next : cur);
+  for (const [order, r] of RULES.entries()) {
+    for (const p of parts(r)) {
+      if (!applies(p)) continue;
+      const spec = specificity(p);
+      for (const m of r.body.matchAll(/(?:^|;)\s*(background(?:-image|-color)?)\s*:\s*([^;]+)/g)) {
+        const v = m[2].trim();
+        if (m[1] !== 'background-color') {
+          const img = m[1] === 'background-image' ? v : (v.match(/(?:linear|radial|conic)-gradient\((?:[^()]|\([^()]*\))*\)/g) ?? ['none']).join(', ');
+          image = take(image, { spec, order, value: img });
+        }
+        if (m[1] !== 'background-image') {
+          const col = m[1] === 'background-color' ? v : v.replace(/(?:linear|radial|conic)-gradient\((?:[^()]|\([^()]*\))*\)\s*,?/g, '').trim() || 'transparent';
+          color = take(color, { spec, order, value: col });
+        }
+      }
+    }
+  }
+  assert.ok(image && color, `some rule paints a ${theme} input[type="${type}"]${state}`);
+  return { image: image!.value, color: color!.value };
+}
+
+test('G08: a focused text or number input loses its resting shade for the focus colour, as it did when focus set the whole background (dark theme)', () => {
+  // G08 turned `input:focus, select:focus { background: … }` into
+  // background-color, so that a focused select keeps its arrow; inputs then
+  // needed `input:focus { background-image: none }` to drop their resting
+  // gradient as before — and nothing pinned it (review F1.12).
+  for (const type of ['text', 'number'] as const) {
+    const rest = inputBackground(type, 'dark', '');
+    assert.match(rest.image, /^linear-gradient\(/, `a resting ${type} input is shaded (${rest.image})`);
+    const focus = inputBackground(type, 'dark', ':focus');
+    assert.equal(focus.image, 'none', `a focused ${type} input drops the shade`);
+    assert.equal(focus.color, 'var(--surface-2)', `and takes the focus colour`);
+  }
+  assert.match(selectImage('dark', ':focus'), /^linear-gradient\(45deg,/, 'while a focused select keeps its arrow');
+});
+
 /* ══════════════ G10 — a focused Duplicates group header shows its focus ring ══════════════ */
 
 test('G10: a focused Duplicates group header draws its ring inside itself, where the group\'s overflow cannot clip it', () => {
