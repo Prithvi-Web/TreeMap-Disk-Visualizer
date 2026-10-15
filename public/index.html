@@ -23114,8 +23114,11 @@ $('tmUpBtn').addEventListener('click', treemapUp);
      against the same five lines it has always read.
    * **Anything naming a field goes to the server.** `POST /api/query` runs the
      one parser and the one evaluator. The browser never parses the grammar.
-   * **Live feedback is parse-only.** `POST /api/query/validate` on a 150 ms
-     debounce never touches a scan, so typing cannot start a tree walk.        */
+   * **One request per pause in typing.** After 90 ms the box asks
+     `POST /api/query`, which parses the query as it runs it and answers one
+     that does not parse with the span and the valid fields. The next
+     keystroke aborts that request, and the server's walk stops between its
+     slices, so typing never queues walks for text that is gone (G07).      */
 
 /**
  * Does this query use the grammar, or is it an ordinary filename search?
@@ -23186,6 +23189,20 @@ function tmUnknownFieldHint(q) {
 
 let tmQueryDeb = 0;
 let tmQuerySeq = 0;
+/**
+ * The grammar query still out, aborted by whatever supersedes it — a
+ * keystroke, a clear, a newer query, leaving the map — so its answer never
+ * paints and its walk stops on the server (design pass G07).
+ */
+let tmQueryAbort = null;
+/**
+ * How long the box waits after a keystroke before it asks (G07). A grammar
+ * query waited 150 ms; with the request before it aborted on every
+ * keystroke, a shorter wait costs the server nothing it keeps doing. A bare
+ * word is matched in the page and keeps its wait.
+ */
+const TM_GRAMMAR_DEBOUNCE_MS = 90;
+const TM_BARE_DEBOUNCE_MS = 120;
 
 /**
  * The last grammar query's hits, for "Stage matches" (v4 §4.2).
@@ -23271,11 +23288,18 @@ function tmClearHits() {
 /**
  * Invalidate every in-flight query response.
  *
- * Called on clear, on the bare-word path and on unmount. Without it a reply
- * that was already in the air lands afterwards and re-paints highlights, or
- * re-opens the message bar with a query the user ran two views ago.
+ * Called on every keystroke, on clear, on the bare-word path and on unmount.
+ * Without it a reply that was already in the air lands afterwards and
+ * re-paints highlights, or re-opens the message bar with a query the user ran
+ * two views ago. The request itself is aborted too, so the server stops
+ * walking for a text that is gone (G07).
  */
-function tmCancelQueries() { tmQuerySeq++; clearTimeout(tmQueryDeb); tmQueryDeb = 0; }
+function tmCancelQueries() {
+  tmQuerySeq++;
+  clearTimeout(tmQueryDeb);
+  tmQueryDeb = 0;
+  if (tmQueryAbort) { tmQueryAbort.abort(); tmQueryAbort = null; }
+}
 
 function tmSetQueryMessage(text, isError) {
   const box = $('tmQueryErr');
@@ -23377,11 +23401,19 @@ async function tmRunGrammarQuery(q) {
     return;
   }
   const seq = ++tmQuerySeq;
+  // The query this one replaces stops on the server too (G07).
+  if (tmQueryAbort) tmQueryAbort.abort();
+  const ctl = new AbortController();
+  tmQueryAbort = ctl;
   const scanAtRequest = state.scanId;
   try {
+    // One request: /api/query parses the query as it runs it, and answers a
+    // parse error itself (below). Parsing first through /api/query/validate
+    // cost a round trip in a row before every run (G07).
     const out = await api('/api/query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanId: scanAtRequest, q, limit: 1000, sort: 'size' }),
+      signal: ctl.signal,
     });
     if (seq !== tmQuerySeq) return; // a newer keystroke, a clear, or an unmount won
     state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
@@ -23431,9 +23463,21 @@ async function tmRunGrammarQuery(q) {
       tmSetQueryMessage('', false);
     }
   } catch (e) {
-    if (seq !== tmQuerySeq) return;
+    if (seq !== tmQuerySeq) return; // superseded, which is also how an aborted request ends
+    if (typeof e.offset === 'number') {
+      // A query that does not parse yet — usually one still being typed. The
+      // parser hands back the offending span and the valid alternatives;
+      // showing them is the difference between "that didn't work" and a
+      // message the user can act on without reading documentation. The last
+      // query that ran keeps its highlights, as it did when a separate parse
+      // came first.
+      tmSetQueryMessage(`${e.message || 'That query could not be understood.'} (at character ${e.offset + 1})`, true);
+      return;
+    }
     tmClearHits(); // a failed query has no matches to stage — not stale ones
     tmSetQueryMessage(e.message || 'That query could not be run.', true);
+  } finally {
+    if (tmQueryAbort === ctl) tmQueryAbort = null;
   }
 }
 
@@ -23479,35 +23523,6 @@ async function tmStageMatches() {
 }
 $('tmStageMatches').addEventListener('click', () => { void tmStageMatches(); });
 
-/**
- * Parse-only feedback while typing. Never runs a query.
- *
- * Returns false when superseded as well as when invalid. Returning true for a
- * stale check let an older query start its run AFTER a newer one — and since
- * the run takes a fresh sequence number on entry, the stale results then won
- * the race and were painted.
- */
-async function tmValidateQuery(q) {
-  const seq = ++tmQuerySeq;
-  try {
-    await api('/api/query/validate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q }),
-    });
-    if (seq !== tmQuerySeq) return false;
-    tmSetQueryMessage('', false);
-    return true;
-  } catch (e) {
-    if (seq !== tmQuerySeq) return false;
-    // The parser hands back the offending span and the valid alternatives;
-    // showing them is the difference between "that didn't work" and a message
-    // the user can act on without reading documentation.
-    const where = typeof e.offset === 'number' ? ` (at character ${e.offset + 1})` : '';
-    tmSetQueryMessage((e.message || 'That query could not be understood.') + where, true);
-    return false;
-  }
-}
-
 /** The one path by which a query reaches the box. */
 function tmApplyQuery(raw) {
   const q = raw.trim();
@@ -23537,7 +23552,7 @@ function tmApplyQuery(raw) {
     if (hint) tmSetQueryMessage(hint, false);
     return;
   }
-  void tmValidateQuery(q).then((valid) => { if (valid) void tmRunGrammarQuery(q); });
+  void tmRunGrammarQuery(q);
 }
 
 /**
@@ -23577,13 +23592,14 @@ function tmRejudgeQuery() {
 }
 
 $('tmSearch').addEventListener('input', (e) => {
-  clearTimeout(tmQueryDeb);
+  // What the last text asked is stale now: stopped, here and on the server.
+  tmCancelQueries();
   const raw = e.target.value;
   tmSyncQueryBar(); // Save view follows the box at once (B28)
   void tmRenderHints(raw);
-  // 150 ms for a grammar query, per §2.4 — long enough that a fast typist makes
-  // one request, short enough that the underline feels immediate.
-  tmQueryDeb = setTimeout(() => tmApplyQuery(raw), tmIsGrammarQuery(raw) ? 150 : 120);
+  // A pause long enough that a fast typist makes one request, short enough
+  // that the underline feels immediate (§2.4; 90 ms since G07).
+  tmQueryDeb = setTimeout(() => tmApplyQuery(raw), tmIsGrammarQuery(raw) ? TM_GRAMMAR_DEBOUNCE_MS : TM_BARE_DEBOUNCE_MS);
 });
 
 /* ── Autocomplete over the grammar (§2.4) ──
@@ -37379,6 +37395,7 @@ $('cleanConfirmBtn').addEventListener('click', confirmCleanTrash);
 const gsearch = {
   seq: 0,          // guards against a slow response overwriting a newer one
   timer: 0,
+  inFlight: null,  // the AbortController of the search still out (G07)
   hits: [],
   selected: -1,
   open: false,
@@ -37581,28 +37598,47 @@ async function gsearchGoTo(targetPath) {
   tmApplyQuery(hit.name);
 }
 
+/**
+ * How long the box waits after a keystroke before it searches (G07: was
+ * 140 ms). Each keystroke aborts the search still out, so a shorter wait
+ * sends no more requests that anyone waits on.
+ */
+const GSEARCH_DEBOUNCE_MS = 90;
+
+/** Stop the search still out: its text is not the box's any more, so its answer must never paint. */
+function gsearchAbort() {
+  gsearch.seq++;
+  if (gsearch.inFlight) { gsearch.inFlight.abort(); gsearch.inFlight = null; }
+}
+
 async function runGsearch(raw) {
   const q = raw.trim();
+  gsearchAbort();
   if (!q) { gsearchClose(); return; }
   const seq = ++gsearch.seq;
+  const ctl = new AbortController();
+  gsearch.inFlight = ctl;
   try {
-    const result = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=50');
+    const result = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=50', { signal: ctl.signal });
     // A slower earlier request must not overwrite a newer answer.
     if (seq !== gsearch.seq) return;
     renderGsearch(result);
   } catch (e) {
-    if (seq !== gsearch.seq) return;
+    if (seq !== gsearch.seq) return; // superseded, which is also how an aborted search ends
     $('gsearchResults').innerHTML = `<div class="gsearch-note">${escapeHtml(e.message)}</div>`;
     gsearchOpen();
+  } finally {
+    if (gsearch.inFlight === ctl) gsearch.inFlight = null;
   }
 }
 
 $('gsearch').addEventListener('input', (e) => {
   clearTimeout(gsearch.timer);
+  gsearchAbort(); // what the last text asked is stale now
   const value = e.target.value;
   // Debounced so a fast typist issues one query, not eight — the rate limiter
   // allows 10/s and the shared wrapper would otherwise be backing off.
-  gsearch.timer = setTimeout(() => void runGsearch(value), 140);
+  gsearch.timer = setTimeout(() => void runGsearch(value), GSEARCH_DEBOUNCE_MS);
 });
 
 $('gsearch').addEventListener('keydown', (e) => {

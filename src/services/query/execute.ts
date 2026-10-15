@@ -6,6 +6,7 @@ import { Flag, storeOf, type ScanStore } from '../scanStore';
 import { computeFacts } from '../facts';
 import { capabilityState } from '../../platform/capabilities';
 import { evaluateMaybe, isEmptyQuery, type CloudState, type EvalFacts, type EvalNode } from './evaluate';
+import { walkInSlices, type SliceOptions, type SlicedWalk } from '../slices';
 import { factsNeeded } from './parse';
 import type { Ast, Term } from './types';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
@@ -78,6 +79,8 @@ export interface ExecuteOptions {
   offset: number;
   sort: SortKey;
   signal: AbortSignal;
+  /** How pass one's walk slices itself. Every field has a default; tests set them to count. */
+  slices?: SliceOptions;
 }
 
 /* ------------------------------ fact plumbing ------------------------------ */
@@ -368,7 +371,10 @@ function firstK<T>(k: number, cmp: (a: T, b: T) => number): { offer(item: T): vo
   };
 }
 
-const SORTERS: Record<SortKey, (a: QueryHit, b: QueryHit) => number> = {
+/** What a sort reads: a hit, or a node the walk is still holding (QueryNode). */
+type Sortable = Pick<QueryHit, 'path' | 'name' | 'size' | 'mtimeMs'>;
+
+const SORTERS: Record<SortKey, (a: Sortable, b: Sortable) => number> = {
   // Ties broken by path so paging is stable — without it, two equal-sized
   // files can swap places between page 1 and page 2 and one is never seen.
   size: (a, b) => b.size - a.size || a.path.localeCompare(b.path),
@@ -376,6 +382,126 @@ const SORTERS: Record<SortKey, (a: QueryHit, b: QueryHit) => number> = {
   modified: (a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path),
   path: (a, b) => a.path.localeCompare(b.path),
 };
+
+/** Nodes pass one walks between turns of the event loop. */
+const QUERY_SLICE_NODES = 16_384;
+
+/**
+ * One node as the walk holds it: its numbers read when it is met, its name and
+ * path when something reads them (design pass G07).
+ *
+ * The walk used to decode every name twice — once to build the node's path as
+ * its folder pushed it, once more as it was judged — and to build a path for
+ * every node, though only a path term, a fact lookup, a sort tie and the page's
+ * hits read one. On a 304k-file scan that was most of the time a Highlight
+ * query took. Each is read once at most, and a path is built from its folder's
+ * (`childPath`, byte-exact on every store), so a folder's path is built once
+ * for everything beneath it that needs one.
+ */
+class QueryNode implements EvalNode {
+  readonly isDir: boolean;
+  readonly size: number;
+  readonly mtimeMs: number;
+  // `childCount` is 0 both for a genuinely empty directory and for one whose
+  // children were never listed (permission denied, excluded, pruned).
+  // Conflating them would offer permission-denied folders up to an
+  // `empty:yes` query — and those are exactly what gets bulk-trashed. A folder
+  // whose listing the tree does not hold in full (Flag.Unlisted: refused,
+  // unreadable, a mount not entered) can still carry an empty child array, so
+  // it is unknown too — and so is every childless folder of a scan that cannot
+  // name all such folders (`childlessUnproven`).
+  readonly childCount: number | undefined;
+  private nameRead: string | undefined;
+  private pathRead: string | undefined;
+
+  constructor(
+    private readonly store: ScanStore,
+    readonly id: number,
+    private readonly folder: QueryNode | null,
+    readonly depth: number,
+    childlessKnown: boolean,
+  ) {
+    this.isDir = store.isDir(id);
+    this.size = store.size(id);
+    this.mtimeMs = store.modifiedAt(id);
+    this.childCount = this.isDir ? knownChildCount(store, id, childlessKnown) : undefined;
+  }
+
+  get name(): string {
+    return (this.nameRead ??= this.store.name(this.id));
+  }
+
+  get path(): string {
+    return (this.pathRead ??= this.folder === null ? this.store.rootPath : this.store.childPath(this.id, this.folder.path));
+  }
+}
+
+interface PassOneContext {
+  ast: Ast;
+  now: number;
+  home: string;
+  costly: boolean;
+  asksEmpty: boolean;
+  childlessKnown: boolean;
+  signal: AbortSignal;
+  keep: number;
+  sort: (a: Sortable, b: Sortable) => number;
+}
+
+/**
+ * Pass one: every node judged with no facts, as a walk that can stop between
+ * any two nodes (walkInSlices). Whatever it gathers belongs to one attempt; a
+ * tree that changed under it is walked again by a new one.
+ */
+class PassOneWalk implements SlicedWalk {
+  matched = 0;
+  undecided = 0;
+  childlessUndecided = 0;
+  examined = 0;
+  capped = false;
+  aborted = false;
+  readonly candidates: QueryNode[] = [];
+  readonly doubted = new WeakSet<EvalNode>();
+  readonly kept: { offer(item: QueryNode): void; sorted(): QueryNode[] };
+  private readonly stack: QueryNode[];
+
+  constructor(private readonly store: ScanStore, private readonly ctx: PassOneContext) {
+    this.kept = firstK<QueryNode>(ctx.keep, ctx.sort);
+    this.stack = [new QueryNode(store, store.rootId, null, 0, ctx.childlessKnown)];
+  }
+
+  step(budget: number): boolean {
+    const { store, stack, ctx } = this;
+    for (let left = budget; stack.length > 0; left--) {
+      if (left <= 0) return false;
+      if (ctx.signal.aborted) { this.aborted = true; return true; }
+      const node = stack.pop() as QueryNode;
+      this.examined++;
+      if (ctx.asksEmpty && node.isDir && store.hasChildArray(node.id) && store.childCount(node.id) === 0) this.doubted.add(node);
+
+      // Deliberately NO facts here, and deliberately no stat. `created:` is left
+      // undecided so the term evaluates to 'maybe' and the node survives to pass
+      // two. Statting in pass one walked the WHOLE tree — inverting the design —
+      // and then pass two re-statted every candidate, halving the cap and
+      // returning a total of zero on a large scan.
+      const verdict = evaluateMaybe(ctx.ast, { node, facts: {}, now: ctx.now }, ctx.home);
+      if (!ctx.costly) {
+        if (verdict === true) { this.matched++; this.kept.offer(node); }
+        else if (verdict === 'maybe') {
+          this.undecided++;
+          if (this.doubted.has(node)) this.childlessUndecided++;
+        }
+      } else if (verdict !== false && this.candidates.length < CANDIDATE_CAP) this.candidates.push(node);
+      else if (verdict !== false) this.capped = true;
+
+      if (node.isDir) {
+        const depth = node.depth + 1;
+        store.forEachChild(node.id, (child) => { stack.push(new QueryNode(store, child, node, depth, ctx.childlessKnown)); });
+      }
+    }
+    return true;
+  }
+}
 
 /**
  * Run a query over one completed scan.
@@ -414,8 +540,6 @@ export async function executeAgainstScan(
   const childlessDoubt = childlessUnproven(scan);
   // Said only when it applies: the query asks about empty:, and a childless folder it cannot vouch
   // for was left undecided — not merely met: one another term decides (size>1gb) is no doubt (L-4).
-  let childlessUndecided = 0;
-  const doubted = new WeakSet<EvalNode>();
   const asksEmpty = childlessDoubt !== null && astUsesEmpty(ast);
   // Pass two costs something only when the query needs a fact fetched, or a
   // creation date statted, file by file. Otherwise every pass-one verdict is
@@ -423,10 +547,7 @@ export async function executeAgainstScan(
   // asked for, with no cap — so the first 20,000 the walk happened to meet are
   // never passed off as the total, or as "the biggest" (D31).
   const costly = wantsCreated || [...needed].some((n) => FETCHED_PROVIDERS.has(n));
-  const kept = firstK<QueryHit>(opts.offset + opts.limit, SORTERS[opts.sort]);
   const hitOf = (n: EvalNode): QueryHit => ({ path: n.path, name: n.name, size: n.size, isDir: n.isDir, mtimeMs: n.mtimeMs });
-  let matched = 0;
-  let undecided = 0;
   let statsSpent = 0;
   let statsCapped = 0;
   let statsFailed = 0;
@@ -452,61 +573,22 @@ export async function executeAgainstScan(
 
   /* ---- pass one: everything not definitely false, facts unknown ---- */
 
-  const candidates: EvalNode[] = [];
-  let examined = 0;
-  let capped = false;
-
-  let aborted = false;
-  const stack: { id: number; path: string; depth: number }[] = [
-    { id: store.rootId, path: store.rootPath, depth: 0 },
-  ];
-  while (stack.length > 0) {
-    if (opts.signal.aborted) { aborted = true; break; }
-    const frame = stack.pop()!;
-    const { id, path: nodePath, depth } = frame;
-    examined++;
-
-    const isDir = store.isDir(id);
-    const node: EvalNode = {
-      name: store.name(id),
-      path: nodePath,
-      size: store.size(id),
-      isDir,
-      mtimeMs: store.modifiedAt(id),
-      depth,
-      // `childCount` is 0 both for a genuinely empty directory and for one
-      // whose children were never listed (permission denied, excluded,
-      // pruned). Conflating them would offer permission-denied folders up to
-      // an `empty:yes` query — and those are exactly what gets bulk-trashed.
-      // A folder whose listing the tree does not hold in full (Flag.Unlisted:
-      // refused, unreadable, a mount not entered) can still carry an empty
-      // child array, so it is unknown too — and so is every childless folder
-      // of a scan that cannot name all such folders (`childlessUnproven`).
-      childCount: isDir ? knownChildCount(store, id, childlessDoubt === null) : undefined,
-    };
-    if (asksEmpty && isDir && store.hasChildArray(id) && store.childCount(id) === 0) doubted.add(node);
-
-    // Deliberately NO facts here, and deliberately no stat. `created:` is left
-    // undecided so the term evaluates to 'maybe' and the node survives to pass
-    // two. Statting in pass one walked the WHOLE tree — inverting the design —
-    // and then pass two re-statted every candidate, halving the cap and
-    // returning a total of zero on a large scan.
-    const verdict = evaluateMaybe(ast, { node, facts: {}, now }, home);
-    if (!costly) {
-      if (verdict === true) { matched++; kept.offer(hitOf(node)); }
-      else if (verdict === 'maybe') {
-        undecided++;
-        if (doubted.has(node)) childlessUndecided++;
-      }
-    } else if (verdict !== false && candidates.length < CANDIDATE_CAP) candidates.push(node);
-    else if (verdict !== false) capped = true;
-
-    if (isDir) {
-      store.forEachChild(id, (child) => {
-        stack.push({ id: child, path: store.childPath(child, nodePath), depth: depth + 1 });
-      });
-    }
-  }
+  // In slices, under the store's version guard (Track U, U-D9): the event loop
+  // gets a turn between slices, so a request whose person has typed on can
+  // close and stop this walk, and a tree changed during a turn (a delete, the
+  // watcher) is walked again from the start rather than half old, half new.
+  const { walk: pass } = await walkInSlices(
+    store,
+    () => new PassOneWalk(store, {
+      ast, now, home, costly, asksEmpty, signal: opts.signal,
+      childlessKnown: childlessDoubt === null,
+      keep: opts.offset + opts.limit, sort: SORTERS[opts.sort],
+    }),
+    opts.slices ?? {},
+    QUERY_SLICE_NODES,
+  );
+  const { candidates, kept, doubted, examined, capped } = pass;
+  let { matched, undecided, childlessUndecided, aborted } = pass;
 
   /* ---- pass two: facts for the candidates only ---- */
 
@@ -530,10 +612,11 @@ export async function executeAgainstScan(
     if (verdict === 'maybe' && doubted.has(node)) childlessUndecided++;
     if (verdict !== true) continue;
     matched++;
-    kept.offer(hitOf(node));
+    kept.offer(node);
   }
 
-  const page = kept.sorted().slice(opts.offset);
+  // Names and paths are read here, for the page, as the hits are made.
+  const page = kept.sorted().slice(opts.offset).map(hitOf);
 
   if (statsCapped > 0) {
     degraded.set('created', `Creation dates were read for ${formatCount(statsSpent)} items; ${formatCount(statsCapped)} more were skipped. No scan records creation times, so each one costs a separate read.`);

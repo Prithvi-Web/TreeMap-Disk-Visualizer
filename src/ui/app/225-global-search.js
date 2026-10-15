@@ -13,6 +13,7 @@
 const gsearch = {
   seq: 0,          // guards against a slow response overwriting a newer one
   timer: 0,
+  inFlight: null,  // the AbortController of the search still out (G07)
   hits: [],
   selected: -1,
   open: false,
@@ -215,28 +216,47 @@ async function gsearchGoTo(targetPath) {
   tmApplyQuery(hit.name);
 }
 
+/**
+ * How long the box waits after a keystroke before it searches (G07: was
+ * 140 ms). Each keystroke aborts the search still out, so a shorter wait
+ * sends no more requests that anyone waits on.
+ */
+const GSEARCH_DEBOUNCE_MS = 90;
+
+/** Stop the search still out: its text is not the box's any more, so its answer must never paint. */
+function gsearchAbort() {
+  gsearch.seq++;
+  if (gsearch.inFlight) { gsearch.inFlight.abort(); gsearch.inFlight = null; }
+}
+
 async function runGsearch(raw) {
   const q = raw.trim();
+  gsearchAbort();
   if (!q) { gsearchClose(); return; }
   const seq = ++gsearch.seq;
+  const ctl = new AbortController();
+  gsearch.inFlight = ctl;
   try {
-    const result = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=50');
+    const result = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=50', { signal: ctl.signal });
     // A slower earlier request must not overwrite a newer answer.
     if (seq !== gsearch.seq) return;
     renderGsearch(result);
   } catch (e) {
-    if (seq !== gsearch.seq) return;
+    if (seq !== gsearch.seq) return; // superseded, which is also how an aborted search ends
     $('gsearchResults').innerHTML = `<div class="gsearch-note">${escapeHtml(e.message)}</div>`;
     gsearchOpen();
+  } finally {
+    if (gsearch.inFlight === ctl) gsearch.inFlight = null;
   }
 }
 
 $('gsearch').addEventListener('input', (e) => {
   clearTimeout(gsearch.timer);
+  gsearchAbort(); // what the last text asked is stale now
   const value = e.target.value;
   // Debounced so a fast typist issues one query, not eight — the rate limiter
   // allows 10/s and the shared wrapper would otherwise be backing off.
-  gsearch.timer = setTimeout(() => void runGsearch(value), 140);
+  gsearch.timer = setTimeout(() => void runGsearch(value), GSEARCH_DEBOUNCE_MS);
 });
 
 $('gsearch').addEventListener('keydown', (e) => {

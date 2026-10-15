@@ -93,6 +93,7 @@ async function queryThenStage(q: string, hits: Hit[], opts: { cart?: string[]; t
   const src = `
     let tmLastHits = { q: '', paths: [], total: 0, truncated: false };
     let tmQuerySeq = 0;
+    let tmQueryAbort = null;
     ${consts.map(constOf).join('\n')}
     ${helpers.map(declOf).join('\n')}
     ${declOf('tmSyncStageButton')}
@@ -220,7 +221,7 @@ async function messageFor(answer: Record<string, unknown>): Promise<string> {
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const run = new Function(...keys, `let tmLastHits = null; let tmQuerySeq = 0;\n${declOf('tmRunGrammarQuery')}\nreturn tmRunGrammarQuery;`)(...keys.map((k) => deps[k]));
+  const run = new Function(...keys, `let tmLastHits = null; let tmQuerySeq = 0; let tmQueryAbort = null;\n${declOf('tmRunGrammarQuery')}\nreturn tmRunGrammarQuery;`)(...keys.map((k) => deps[k]));
   await run('size>0');
   return said[said.length - 1];
 }
@@ -324,8 +325,8 @@ async function bareMessage(q: string, matches: number, view: 'treemap' | 'sunbur
     tmCancelQueries: () => {},
     tmClearHits: () => {},
     tmSetQueryMessage: (text: string) => { said.push(text); },
-    tmValidateQuery: async () => { routedToGrammar = true; return false; },
-    tmRunGrammarQuery: async () => {},
+    // The grammar path is one request since design pass G07: routing to it is a run.
+    tmRunGrammarQuery: async () => { routedToGrammar = true; },
     isSun: () => view === 'sunburst',
     isCells: () => false,
     renderSearchOverlay: () => { state.treemap.matches = matches; },

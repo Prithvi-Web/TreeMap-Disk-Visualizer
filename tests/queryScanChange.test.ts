@@ -85,9 +85,9 @@ function harness() {
   };
   const consts = ['TM_GRAMMAR_FIELDS', 'TM_GRAMMAR_RE', 'TM_FIELDLIKE_RE'].filter((n) => INDEX.includes(`const ${n} =`));
   const helpers = ['tmIsGrammarQuery', 'tmEditDistance', 'tmUnknownFieldHint'].filter((n) => new RegExp(`function ${n}\\s*\\(`).test(INDEX));
-  const names = [...helpers, 'tmCancelQueries', 'tmClearHits', 'tmValidateQuery', 'tmRunGrammarQuery', 'tmApplyQuery', 'tmQueryScanChanged', 'tmRejudgeQuery'];
+  const names = [...helpers, 'tmCancelQueries', 'tmClearHits', 'tmRunGrammarQuery', 'tmApplyQuery', 'tmQueryScanChanged', 'tmRejudgeQuery'];
   const keys = Object.keys(deps);
-  const src = `'use strict'; let tmQueryDeb = 0; let tmQuerySeq = 0; let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null };\n` +
+  const src = `'use strict'; let tmQueryDeb = 0; let tmQuerySeq = 0; let tmQueryAbort = null; let tmLastHits = { q: '', paths: [], total: 0, truncated: false, stage: null };\n` +
     `${consts.map(constOf).join('\n')}\n${names.map(declOf).join('\n')}\n` +
     'return { apply: tmApplyQuery, scanChanged: tmQueryScanChanged, rejudge: tmRejudgeQuery };';
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -147,9 +147,9 @@ test('C11: a query still being answered when a scan of another folder opens land
     { query: '', mode: 'bare', matched: null, total: null },
     'the answer for /corpus is not put on the map of /Applications');
   assert.deepEqual(answered.h.calls, answered.before, 'nor its hits seeded, nor a Stage offer made of them');
-
-  const validated = await query('/api/query/validate');
-  assert.deepEqual(validated.h.asked.filter((a) => a.url === '/api/query'), [], 'a query validated for /corpus is not then run against /Applications');
+  // There is no separate parse step left to give a go-ahead (design pass G07):
+  // the one request above is the query's only one.
+  assert.deepEqual(answered.h.asked.map((a) => a.url), ['/api/query'], 'one request, the query itself');
 });
 
 test('C11: a bare word asked of one folder is cleared too — judged against another folder\'s map, it is a filter nobody typed for it', async () => {
