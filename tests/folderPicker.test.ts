@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { INDEX, lift } from './fixtures/liftFrontend';
 
 /**
@@ -596,6 +597,100 @@ test('the whole drive is offered only where the picker scans — not for an Auto
   release();
   await settle(); await settle();
   assert.deepEqual(t.drives(), [], 'the late answer does not draw the whole drive into the pick');
+});
+
+/*
+ * The whole-drive choice opens a drive's root, and a root's listing holds
+ * folders the server will not open: /dev (and /proc, /sys and /run on Linux),
+ * and on macOS /.vol, /.nofollow and /.resolve once hidden folders are shown;
+ * C:\$Recycle.Bin and C:\System Volume Information on Windows. GET
+ * /api/fs/list lists them as it lists any folder, and a row for one opened
+ * only an error toast (`Scanning "/dev" is not allowed`) — on the first
+ * thing the first-run chooser offers (G26 review F3.1). The picker leaves out
+ * exactly the folders the server refuses by their name: its own blocklists,
+ * read below from src/utils/pathSanitizer.ts, so one added there and not to
+ * the page goes RED.
+ */
+/** A listing of `root` holding `names`, each spelled under it as GET /api/fs/list spells it. */
+function rootListing(root: string, names: string[]) {
+  return { path: root, parent: null, dirs: names.map((n) => ({ name: n, path: root + n, isHidden: n.startsWith('.') })) };
+}
+
+test('a drive root\'s listing draws no row for a folder the server will not open — /dev and macOS\'s second names at /, /proc, /sys and /run on Linux, C:\\$Recycle.Bin on Windows — and counts none of them as hidden (G26 review F3.1)', async () => {
+  // macOS's / as a readdir of it lists its folders (the review's own, on this Mac).
+  const MAC_ROOT = rootListing('/', ['Applications', 'Library', 'System', 'Users', 'Volumes', 'cores', 'dev', 'opt', 'private', 'sbin', 'usr', '.file', '.nofollow', '.resolve', '.vol']);
+  const mac = browseRuntime((p) => (p === '/' ? MAC_ROOT : HOME), undefined, { platform: 'darwin' });
+  await mac.rt.openBrowse(null);
+  await settle();
+  mac.clickDrive('/');
+  await settle();
+  assert.equal(mac.rt.path(), '/', 'control: the whole drive opened');
+  assert.deepEqual(mac.rows(), ['Applications', 'Library', 'System', 'Users', 'Volumes', 'cores', 'opt', 'private', 'sbin', 'usr'], 'macOS: no row for /dev');
+  assert.equal(mac.$('browseHiddenCount').textContent, ' (1)', 'macOS: one hidden folder counted, .file — never the three the server refuses');
+  await mac.showHidden(true);
+  assert.deepEqual(mac.rows().filter((n) => n.startsWith('.')), ['.file'], 'macOS: shown, the hidden folders are .file alone — no /.vol, /.nofollow or /.resolve');
+  // Linux's /.
+  const linux = browseRuntime(() => rootListing('/', ['bin', 'boot', 'dev', 'etc', 'home', 'proc', 'root', 'run', 'srv', 'sys', 'tmp', 'usr', 'var']),
+    undefined, { platform: 'linux' });
+  await linux.rt.browseTo('/');
+  assert.deepEqual(linux.rows(), ['bin', 'boot', 'etc', 'home', 'root', 'srv', 'tmp', 'usr', 'var'], 'Linux: no row for /dev, /proc, /run or /sys');
+  // A cut listing counts only what the picker can list: 600 folders, /dev among the 500 sent.
+  const many = { ...rootListing('/', ['dev', ...Array.from({ length: 499 }, (_, i) => `d${String(i).padStart(3, '0')}`)]), total: 600 };
+  const cut = browseRuntime(() => many, undefined, { platform: 'linux' });
+  await cut.rt.browseTo('/');
+  assert.equal(cut.rows().length, 499, 'control: every folder sent but /dev is drawn');
+  assert.match(cut.$('browseList').innerHTML, /Showing the first 499 of 599 folders\./, 'the cut is said of the folders the picker can list');
+  // Windows: C:\ and its Windows folder; D:\ holds a $Recycle.Bin the server opens (its blocklist names C: alone).
+  const win = browseRuntime((p) => (p === 'D:\\' ? rootListing('D:\\', ['$Recycle.Bin', 'Data'])
+    : p === 'C:\\Windows' ? { path: 'C:\\Windows', parent: 'C:\\', dirs: ['System32', 'SysWOW64', 'Temp', 'WinSxS'].map((n) => ({ name: n, path: `C:\\Windows\\${n}`, isHidden: false })) }
+      : rootListing('C:\\', ['$Recycle.Bin', 'PerfLogs', 'Program Files', 'System Volume Information', 'Users', 'Windows'])),
+  undefined, { platform: 'win32', homeDir: 'C:\\Users\\u' });
+  await win.rt.browseTo('C:\\');
+  assert.deepEqual(win.rows(), ['PerfLogs', 'Program Files', 'Users', 'Windows'], 'Windows: no row for C:\\$Recycle.Bin or C:\\System Volume Information');
+  await win.rt.browseTo('C:\\Windows');
+  assert.deepEqual(win.rows(), ['Temp'], 'nor for System32, SysWOW64 or WinSxS in C:\\Windows');
+  await win.rt.browseTo('D:\\');
+  assert.deepEqual(win.rows(), ['$Recycle.Bin', 'Data'], 'D:\\$Recycle.Bin, which the server opens, is drawn');
+  // Deeper on macOS: the two the blocklist names below /.
+  const deep = browseRuntime((p) => ({ path: p, parent: '/', dirs: (p === '/private/var' ? ['db', 'folders', 'tmp'] : ['Data', 'Preboot', 'VM']).map((n) => ({ name: n, path: `${p}/${n}`, isHidden: false })) }),
+    undefined, { platform: 'darwin' });
+  await deep.rt.browseTo('/private/var');
+  assert.deepEqual(deep.rows(), ['folders', 'tmp'], 'no row for /private/var/db');
+  await deep.rt.browseTo('/System/Volumes');
+  assert.deepEqual(deep.rows(), ['Data', 'Preboot'], 'nor for /System/Volumes/VM');
+});
+
+test('the folders the picker leaves out are the server\'s own refusals by name: every entry of pathSanitizer\'s blocklists, on the platform it is for, and macOS\'s second names (G26 review F3.1)', async () => {
+  const src = readFileSync(path.join(__dirname, '..', 'src', 'utils', 'pathSanitizer.ts'), 'utf8');
+  const listOf = (name: string) => {
+    const m = new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`).exec(src);
+    assert.ok(m, `${name} is in pathSanitizer.ts`);
+    return [...m![1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((x) => x[1].replace(/\\\\/g, '\\'));
+  };
+  const unix = listOf('UNIX_BLOCKLIST');
+  const windows = listOf('WINDOWS_BLOCKLIST');
+  const second = /const DARWIN_ALIAS_ROOT = \/\^\\\/\\\.\(\?:([a-z|]+)\)/i.exec(src)?.[1].split('|') ?? [];
+  assert.ok(unix.includes('/dev') && windows.includes('c:\\$recycle.bin') && second.includes('vol'), `control: the lists were read — ${JSON.stringify({ unix, windows, second })}`);
+  const cases: Array<[string, string]> = [
+    ...unix.flatMap((p): Array<[string, string]> => [['darwin', p], ['linux', p]]),
+    // Windows folds case: as the source spells it, and as a listing does.
+    ...windows.flatMap((p): Array<[string, string]> => [['win32', p], ['win32', p.toUpperCase()]]),
+    ...second.flatMap((n): Array<[string, string]> => [['darwin', `/.${n}`], ['darwin', `/.${n.toUpperCase()}`]]),
+  ];
+  const drawn: string[] = [];
+  for (const [platform, p] of cases) {
+    const sep = platform === 'win32' ? '\\' : '/';
+    const cut = p.lastIndexOf(sep);
+    const parent = cut === 0 ? sep : /:$/.test(p.slice(0, cut)) ? p.slice(0, cut) + sep : p.slice(0, cut);
+    const name = p.slice(cut + 1);
+    const under = (n: string) => (parent.endsWith(sep) ? parent + n : parent + sep + n);
+    const t = browseRuntime(() => ({ path: parent, parent: null, dirs: [name, 'ordinary'].map((n) => ({ name: n, path: under(n), isHidden: n.startsWith('.') })) }),
+      undefined, { platform, homeDir: platform === 'win32' ? 'C:\\Users\\u' : '/home/u', ...SHOWING_HIDDEN() });
+    await t.rt.browseTo(parent);
+    assert.ok(t.rows().includes('ordinary'), `control: ${platform} ${parent} was listed`);
+    if (t.rows().includes(name)) drawn.push(`${platform} ${p}`);
+  }
+  assert.deepEqual(drawn, [], 'no folder the server refuses by its name is drawn as a row');
 });
 
 test('the whole-drive choice sits at the top of the sheet, and the sheet still opens on its path field; the hidden-folders box is a labelled checkbox (G26)', () => {

@@ -596,23 +596,41 @@ $('browseDrives').addEventListener('click', (e) => {
   if (b) browseTo(b.dataset.p);
 });
 
+/** The folders the server will not open, refused by their own name: the
+    blocklists of src/utils/pathSanitizer.ts, and on macOS the second names at
+    the root (/.vol, /.nofollow, /.resolve). A drive's root holds some — /dev;
+    C:\$Recycle.Bin — and GET /api/fs/list lists them as it lists any folder,
+    so a row for one, on the first thing the first-run chooser offers, opened
+    only an error toast (G26 review F3.1). tests/folderPicker.test.ts reads
+    the server's lists and fails on one this page does not leave out. */
+const BROWSE_REFUSED_UNIX = ['/proc', '/sys', '/dev', '/run', '/private/var/db', '/System/Volumes/VM'];
+const BROWSE_REFUSED_WIN32 = ['c:\\windows\\system32', 'c:\\windows\\syswow64', 'c:\\windows\\winsxs', 'c:\\$recycle.bin', 'c:\\system volume information'];
+/** Whether the server refuses the folder at `p` by its name, on `platform`'s rules. */
+function browseRefuses(p, platform) {
+  if (platform === 'win32') return BROWSE_REFUSED_WIN32.includes(String(p).toLowerCase());
+  if (platform === 'darwin' && /^\/\.(?:nofollow|resolve|vol)$/i.test(p)) return true;
+  return BROWSE_REFUSED_UNIX.includes(p);
+}
 /** The picker's rows for one listing, and how many hidden folders it holds
     back (`hidden`; null where the server's cut leaves that unknown). The
     server sends ordinary folders first and cuts after (GET /api/fs/list), so
     a cut listing that holds any hidden folder holds every ordinary one, and
     the rest of its `total` is hidden: it says it was cut only where what it
-    lists was (POL item 2). */
-function browseRows(data, showHidden) {
-  const ordinary = data.dirs.filter((d) => !d.isHidden);
-  const hiddenSent = data.dirs.length - ordinary.length;
-  const cut = typeof data.total === 'number' && data.total > data.dirs.length;
-  const hidden = !cut ? hiddenSent : hiddenSent > 0 ? data.total - ordinary.length : null;
-  const dirs = showHidden ? browseOrder(data.dirs) : ordinary;
+    lists was (POL item 2). A folder the server will not open (browseRefuses)
+    is neither drawn nor counted (G26 review F3.1). */
+function browseRows(data, showHidden, platform) {
+  const listed = data.dirs.filter((d) => !browseRefuses(d.path, platform));
+  const total = typeof data.total === 'number' ? data.total - (data.dirs.length - listed.length) : data.total;
+  const ordinary = listed.filter((d) => !d.isHidden);
+  const hiddenSent = listed.length - ordinary.length;
+  const cut = typeof total === 'number' && total > listed.length;
+  const hidden = !cut ? hiddenSent : hiddenSent > 0 ? total - ordinary.length : null;
+  const dirs = showHidden ? browseOrder(listed) : ordinary;
   const rows = [];
   // The server sends at most 500 subfolders — the first 500 in this order —
   // and how many there are; a cut list says so above the folders (POL item 2).
   if (cut && (showHidden || hiddenSent === 0)) {
-    rows.push(`<div class="muted" role="note" style="padding:8px 12px; font-size:12px;">Showing the first ${formatCount(dirs.length)} of ${formatCount(data.total)} folders. Type a path above to open one that is not listed.</div>`);
+    rows.push(`<div class="muted" role="note" style="padding:8px 12px; font-size:12px;">Showing the first ${formatCount(dirs.length)} of ${formatCount(total)} folders. Type a path above to open one that is not listed.</div>`);
   }
   if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
   rows.push(...dirs.map(d =>
@@ -668,7 +686,7 @@ async function browseTo(path, typed = false) {
 /** Draw a listing's rows, hidden folders as the box says (G26). */
 function browseDraw(data) {
   const list = $('browseList');
-  const { rows, hidden } = browseRows(data, $('browseShowHidden').checked);
+  const { rows, hidden } = browseRows(data, $('browseShowHidden').checked, state.system?.platform);
   $('browseHiddenCount').textContent = hidden ? ` (${formatCount(hidden)})` : '';
   // The rows are replaced. Focus on one of them — the row just opened, or
   // ".." — would fall to the page with it, and the next Tab start over at
