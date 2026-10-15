@@ -459,8 +459,12 @@ async function renderPackageOrphans() {
       ? `<span class="pkg-proj">${escapeHtml(e.projectName)}</span>`
       : '<span class="pkg-proj none">no owning project</span>';
     // The server's reason for an `active` entry names the project as "in
-    // use"; its row says what that means here instead.
+    // use"; its row says what that means here instead — and names no command
+    // as putting it back: a virtualenv's (`pip install -r requirements.txt`)
+    // makes no `.venv` (G05 review F2.1). An orphan's and a cache's keep theirs.
     const why = e.kind === 'active' ? 'Its project is still here' : e.reason;
+    const command = e.kind !== 'active' && e.command
+      ? ` · <code>${escapeHtml(e.command)}</code> ${e.kind === 'cache' ? 'to clear' : 'to restore'}` : '';
     return `<div class="clean-item pkg-item kind-${e.kind}">
           ${selectable
             ? `<input type="checkbox" class="pkg-ck" data-i="${e._i}" aria-label="Select ${escapeHtml(e.path)}">`
@@ -469,7 +473,7 @@ async function renderPackageOrphans() {
           <div class="meta">
             <div class="nm">${escapeHtml(e.name)} ${project}</div>
             <div class="pth" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</div>
-            <div class="pkg-why">${escapeHtml(why)}${e.command ? ` · <code>${escapeHtml(e.command)}</code> ${e.kind === 'cache' ? 'to clear' : 'to restore'}` : ''}</div>
+            <div class="pkg-why">${escapeHtml(why)}${command}</div>
           </div>
           <span class="dt num">${formatDate(e.modifiedAt)}</span>
           <span class="size-badge num">${formatBytes(e.size)}</span>

@@ -1380,18 +1380,35 @@ test('a sheet whose package folders all still have their project does not open o
   ], 'each ecosystem\'s heading counts its folders and their bytes');
 });
 
-test('a folder whose project is still here is never called "in use" — the app\'s word for a file a program has open — and says what is true: its project is here, and the command its rule names is beside it (G05)', async () => {
+/*
+ * Each row in the fold once ended "· <code>pip install -r requirements.txt</code>
+ * to restore" — for a virtualenv, the sentence G05 review F1.1 took off the
+ * fold's summary: that command makes no `.venv` and fails where there is no
+ * requirements.txt (G05 review F2.1). A row in the fold says what is true of
+ * it, its project is still here, and names no command as putting it back. A
+ * cache's command does clear it, and still says so.
+ */
+test('a folder whose project is still here is never called "in use" — the app\'s word for a file a program has open — and says what is true: its project is here, never that the command its rule names puts it back (G05, review F2.1)', async () => {
   const { lead, projects } = await renderPackages(CORPUS);
   assert.doesNotMatch(lead + projects, /in use/i, 'no row, tag or tooltip says "in use"');
-  for (const r of pkgRows(projects)) {
+  const rows = pkgRows(projects);
+  assert.equal(rows.length, 6, 'control: the six folders are in the fold');
+  assert.ok(rows.some((r) => r.includes('/pyproj/.venv')), 'control: the virtualenv among them');
+  for (const r of rows) {
     const path = /class="pth" title="([^"]+)"/.exec(r)![1];
     const entry = CORPUS.ecosystems.flatMap((g) => g.entries).find((e) => e.path === path)!;
     assert.match(r, /<span class="pkg-tag active">rebuildable<\/span>/, `${path}: its tag says it can be rebuilt`);
-    assert.match(r, /project is still here/, `${path}: its line says its project is still here`);
-    assert.ok(r.includes(`<code>${entry.command}</code>`), `${path}: and names the command its rule gives`);
+    const why = /<div class="pkg-why">([\s\S]*?)<\/div>/.exec(r)?.[1] ?? '';
+    assert.doesNotMatch(why, /to restore|puts? (it|them) back/, `${path}: its line never says a command puts it back: ${why}`);
+    assert.equal(why, 'Its project is still here', `${path}: its line says its project is still here, and nothing it cannot vouch for`);
     assert.ok(r.includes(`<span class="pkg-proj">${entry.projectName}</span>`), `${path}: beside the project's name`);
   }
   assert.match(/<summary[\s\S]*?<\/summary>/.exec(projects)![0], /project is still here/, 'the fold says so of all of them');
+  // A cache's command is what clears it, and its row still says so.
+  const cache: PkgEntry = { ecosystem: 'npm', kind: 'cache', name: '_cacache', path: '/home/u/.npm/_cacache', size: 4_000_000, modifiedAt: 1, reason: 'npm’s shared download cache.', command: 'npm cache clean --force' };
+  const caches = await renderPackages(pkgReport([pkgGroup('npm', [cache])]));
+  assert.match(caches.lead, /<div class="pkg-why">npm’s shared download cache\. · <code>npm cache clean --force<\/code> to clear<\/div>/,
+    'a cache names the command that clears it');
 });
 
 test('orphans and caches lead the sheet with their boxes, and a folder whose project is still here goes to the fold — "shared caches only" is said only where it is true (G05)', async () => {
