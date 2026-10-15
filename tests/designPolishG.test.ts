@@ -298,3 +298,54 @@ test('G14: the dashboard writes the name and the size apart, and clears both', a
   assert.ok(sets.length >= 2, 'both painters write the name');
   for (const m of sets) assert.match(INDEX.slice(m.index!, m.index! + 200), /\$\('statLargestSize'\)\.textContent = largest \?/, 'and the size beside it');
 });
+
+/* ══════════════ G20 — an empty stage of a meter shows its track ══════════════ */
+
+test('G20: every stage of the Clean Up and Duplicates meters draws a visible track, so an empty one reads as empty, not as missing', () => {
+  // With nothing staged, "Suggested / Staged / Projected free" was one blue
+  // block and two 2 px hairlines: a lone button, not a meter (shots/081).
+  // The track is the stage's whole extent; the value is drawn inside it.
+  // Its edge and fill are decoration — the stage's name, value and percent
+  // are printed under it — so the floors are for being seen, not read.
+  const fill = cascaded('.fx-fun-track', 'background');
+  const ring = cascaded('.fx-fun-track', 'box-shadow');
+  assert.ok(fill, 'the track paints a fill');
+  assert.match(ring ?? '', /^inset 0 0 0 1px (var\(--[a-z0-9-]+\))$/, 'and a 1px inner edge');
+  assert.equal(cascaded('.fx-fun-track', 'border-radius'), prop(ruleFor('.fx-fun-seg').body, 'border-radius'), 'with the value segment\'s corners');
+  const edge = /(var\(--[a-z0-9-]+\))$/.exec(ring!)![1];
+  for (const [name, palette] of THEMES) {
+    for (const [where, ground] of [['the Clean Up sheet', page(palette)], ['a card', card(palette)]] as const) {
+      const f = contrast(paint(fill!, palette, ground), ground);
+      const e = contrast(paint(edge, palette, ground), ground);
+      assert.ok(f >= 1.15, `${name}, ${where}: the track's fill stands off the ground (${fmt(f)}:1, floor 1.15)`);
+      assert.ok(e >= 1.4, `${name}, ${where}: its edge is seen (${fmt(e)}:1, floor 1.4)`);
+    }
+  }
+});
+
+/* ══════════════ G25 — the hero's feature labels do not dress as buttons ══════════════ */
+
+test('G25: the three hero features read as static labels — no pill border or fill, no hover, no pointer', () => {
+  // "Reads a whole drive in minutes", "Trash-only deletes", "No tracking,
+  // fully local" wore the exact dress of the clickable pills (Live, Lens,
+  // "Show me") — border, fill, 99px radius — and did nothing when clicked.
+  const row = INDEX.slice(INDEX.indexOf('<div class="feature-row">'), INDEX.indexOf('</div>', INDEX.indexOf('<div class="feature-row">')));
+  assert.equal([...row.matchAll(/<span class="feature">/g)].length, 3, 'the three features are spans, not controls');
+  assert.doesNotMatch(row, /<button|<a\b|tabindex|role="button"/, 'nothing in the row is focusable or clickable');
+  const f = rulesFor('.feature');
+  assert.ok(f.length >= 1, '.feature is styled');
+  const decl = (n: string) => cascaded('.feature', n);
+  for (const [n, ok] of [['border', /^(none|0)$/], ['background', /^(none|transparent)$/]] as const) {
+    const v = decl(n);
+    assert.ok(v === null || ok.test(v), `.feature has no ${n} (${v})`);
+  }
+  assert.equal(decl('box-shadow'), null, 'and no lift');
+  assert.ok(!/--cur-hand|pointer/.test(decl('cursor') ?? ''), 'and no hand cursor');
+  const hovers = RULES.filter((r) => parts(r).some((p) => /\.feature(?:\s|:|$)/.test(p) && /:hover|:active/.test(p)));
+  assert.deepEqual(hovers.map((r) => r.selector), [], 'nothing changes under the pointer');
+  // Still legible, as the quiet text it now is.
+  for (const [name, palette] of THEMES) {
+    const c = contrast(paint(decl('color')!, palette, page(palette)), page(palette));
+    assert.ok(c >= 4.5, `${name}: the feature text measures ${fmt(c)}:1 on the page`);
+  }
+});

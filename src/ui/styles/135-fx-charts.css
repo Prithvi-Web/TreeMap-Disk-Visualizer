@@ -151,7 +151,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 .fx-funnel .fx-fun-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;
   transition: opacity var(--dur-2) var(--ease); }
 .fx-funnel:hover .fx-fun-stage:not(:hover) { opacity: 0.5; }
-.fx-fun-track { height: 120px; display: flex; align-items: center; }
+/* Every stage shows its track (design pass G20): with nothing staged, the
+   Clean Up meter was one blue block beside two 2px hairlines and read as a
+   lone button. The track is the stage's whole extent, the value inside it. */
+.fx-fun-track { height: 120px; display: flex; align-items: center; border-radius: 7px;
+  background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--hairline-2); }
 .fx-fun-seg { width: 100%; border-radius: 7px;
   transition: transform 600ms var(--ease), opacity 600ms var(--ease); }
 .fx-fun-pre { transform: scaleY(0); opacity: 0; }

@@ -944,8 +944,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 /* Wraps: three pills side by side need ~560px, and the welcome screen must
    hold together at the 640px window floor with the sidebar expanded. */
 .feature-row { display: flex; gap: 14px; margin: 14px 0 6px; flex-wrap: wrap; justify-content: center; }
-.feature { display: flex; align-items: center; gap: 9px; padding: 10px 16px; font-size: 12.5px; color: var(--text-2);
-  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 99px; }
+/* Static labels, not pills (design pass G25): with the clickable pills'
+   border, fill and 99px radius they looked like Live and Lens, and did
+   nothing when pressed. Just an icon and words now. */
+.feature { display: flex; align-items: center; gap: 8px; padding: 6px 4px; font-size: 12.5px; color: var(--text-2); }
 .feature .ic { color: var(--accent); }
 
 /* ── Dashboard ── */
@@ -3592,7 +3594,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 .fx-funnel .fx-fun-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;
   transition: opacity var(--dur-2) var(--ease); }
 .fx-funnel:hover .fx-fun-stage:not(:hover) { opacity: 0.5; }
-.fx-fun-track { height: 120px; display: flex; align-items: center; }
+/* Every stage shows its track (design pass G20): with nothing staged, the
+   Clean Up meter was one blue block beside two 2px hairlines and read as a
+   lone button. The track is the stage's whole extent, the value inside it. */
+.fx-fun-track { height: 120px; display: flex; align-items: center; border-radius: 7px;
+  background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--hairline-2); }
 .fx-fun-seg { width: 100%; border-radius: 7px;
   transition: transform 600ms var(--ease), opacity 600ms var(--ease); }
 .fx-fun-pre { transform: scaleY(0); opacity: 0; }
