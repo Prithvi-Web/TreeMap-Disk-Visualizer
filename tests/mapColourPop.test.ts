@@ -238,7 +238,7 @@ function paint(tiles: Tile[], colour: (n: Tile) => RGB = (n) => ramp.sizeRgb(n.s
   rec.texts.length = 0;
   rec.ops.length = 0;
   draw();
-  return rec;
+  return Object.assign(rec, { px: state.treemap.pxRects });
 }
 
 /** A leaf `h` px tall at `depth`, coloured by `bytes`, in its own column of the map. */
@@ -707,17 +707,13 @@ const PREV: Record<string, (size: number) => number | null> = {
   unchanged: (s) => s, grew: (s) => s / 4, shrank: (s) => s * 4, new: () => null,
 };
 
-test('G09: in the History diff, a label in a folder that grew, shrank or is new reaches 4.5:1 on its tile as the folder\'s wash leaves it — mid-folder, below the folder\'s tag, and under two washes', () => {
-  // Pass 2.5 lays a 30% wash of the folder's own diff colour over every
-  // expanded folder that changed, its leaves included, after pass 1 painted
-  // them and before pass 4 writes their labels — so a label is read on its
-  // cushion seen through that wash, not on the cushion alone. Chosen against
-  // the cushion alone, the unchanged grey leaf in the corner of a folder
-  // that grew took white at 4.64:1 and measured 3.67:1 under the teal wash
-  // (review F2.1). What is measured here is the canvas itself: every fill
-  // over the label's top and foot, replayed in the order it was drawn.
-  // Two washes of one colour too: under red › red the grey leaf below the
-  // tag reads at 4.5:1 only where its cushion eases for the washed colour.
+/**
+ * A History map with every diff colour: folders that grew, shrank, are new
+ * or are unchanged — alone and one inside another — each holding one leaf of
+ * every kind, in the folder's corner below its tag and clear of it, at every
+ * label height. Each node carries the prevSize the diff is drawn from.
+ */
+function diffMap() {
   const folderSets = [['grew'], ['shrank'], ['new'], ['unchanged'], ['grew', 'shrank'], ['shrank', 'grew'], ['shrank', 'shrank'], ['grew', 'grew']];
   const heights = [15, 18, 22, 27, 31, 36, 40, 44, 48, 53, 56, 60, 65, 68, 71, 74, 77, 87, 110, 126, 170];
   const nodes: Tile[] = [];
@@ -733,6 +729,21 @@ test('G09: in the History diff, a label in a folder that grew, shrank or is new 
       x: ((x + 2) / MAP_W) * 100, y: ((y + off) / MAP_H) * 100, w: (96 / MAP_W) * 100, h: (h / MAP_H) * 100 } as Tile);
     slots.push({ what: `${folders.join(' › ')} folder, ${kind} leaf, ${corner ? 'below the tag' : 'mid-folder'}, ${h} px`, x: x + 2, y });
   }
+  return { nodes, slots };
+}
+
+test('G09: in the History diff, a label in a folder that grew, shrank or is new reaches 4.5:1 on its tile as the folder\'s wash leaves it — mid-folder, below the folder\'s tag, and under two washes', () => {
+  // Pass 2.5 lays a 30% wash of the folder's own diff colour over every
+  // expanded folder that changed, its leaves included, after pass 1 painted
+  // them and before pass 4 writes their labels — so a label is read on its
+  // cushion seen through that wash, not on the cushion alone. Chosen against
+  // the cushion alone, the unchanged grey leaf in the corner of a folder
+  // that grew took white at 4.64:1 and measured 3.67:1 under the teal wash
+  // (review F2.1). What is measured here is the canvas itself: every fill
+  // over the label's top and foot, replayed in the order it was drawn.
+  // Two washes of one colour too: under red › red the grey leaf below the
+  // tag reads at 4.5:1 only where its cushion eases for the washed colour.
+  const { nodes, slots } = diffMap();
   const rec = paint(nodes, (n) => DIFF_PAGE.diffRgb(n), { active: true, diff: true });
   const whatAt = (t: Text) => slots.find((s) => Math.abs(t.x - (s.x + 5)) < 0.01 && t.y >= s.y && t.y < s.y + 210)!.what;
   const washed = [0, 0, 0];
@@ -747,6 +758,45 @@ test('G09: in the History diff, a label in a folder that grew, shrank or is new 
   }
   assert.ok(washed[1] > 400 && washed[2] > 200 && washed[0] > 100,
     `labels were measured with no wash (${washed[0]}), one (${washed[1]}) and two (${washed[2]}) over them`);
+});
+
+/** The flat fills laid over the map after its ground: the History diff's washes, and nothing else the painter fills flat. */
+const washesOn = (rec: ReturnType<typeof paint>) => rec.ops.slice(1)
+  .filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string')
+  .map((op) => `${op.rect.map((v) => v.toFixed(1)).join(' ')} ${String(op.style)}`);
+/** Outside the diff the map is drawn as the live map is: History played back without it, or a diff flag left on after it. */
+const NOT_THE_DIFF = [{ active: true, diff: false }, { active: false, diff: true }];
+/** `nodes` as the live map holds them: no earlier size, so nothing a wash could be drawn from. */
+const withoutPrev = (nodes: Tile[]) => nodes.map((n) => Object.fromEntries(Object.entries(n).filter(([k]) => k !== 'prevSize')) as Tile);
+/** Each node's History diff colour, fixed by its path so that it outlives withoutPrev. */
+function colourOf(nodes: Tile[]): (n: Tile) => RGB {
+  const byPath = new Map(nodes.map((n) => [n.path, DIFF_PAGE.diffRgb(n)]));
+  return (n) => byPath.get(n.path)!;
+}
+
+test('G09: the History diff\'s wash is laid only while the diff is on — History played back without it, or a diff flag left over on the live map, paints what the live map paints, each label judged on its cushion alone', () => {
+  // Every node /api/snapshots/tree serves carries a prevSize, so a History
+  // view with Diff off holds folders that grew and shrank; only the guard in
+  // tmDiffWashes keeps their wash off the map, out of the ink and out of the
+  // cushion's ease. Every History paint the suite ran was {active, diff}, so
+  // dropping either half of that guard left it green (review F3.2).
+  // The reference is the same map as the live map holds it — no prevSize,
+  // each tile in the same colour — so a wash drawn from prevSize anywhere,
+  // in any mode, shows as a difference.
+  const { nodes } = diffMap();
+  const colour = colourOf(nodes);
+  assert.ok(washesOn(paint(nodes, colour, { active: true, diff: true })).length > 100,
+    'in the History diff these folders are washed — the map below is one a wash would land on');
+  const live = JSON.stringify(paint(withoutPrev(nodes), colour, { active: false, diff: false }).ops);
+  for (const history of NOT_THE_DIFF) {
+    const where = `history ${JSON.stringify(history)}`;
+    const rec = paint(nodes, colour, history);
+    assert.deepEqual(washesOn(rec), [], `${where}: no wash is laid over any folder`);
+    const leaves = rec.px.filter((r) => r.stops);
+    assert.ok(leaves.length > 500, `${where}: the leaves were painted (${leaves.length})`);
+    for (const r of leaves) assert.deepEqual(r.seen, r.stops, `${where}: ${r.n.name}'s label is judged on the cushion painted, through no wash`);
+    assert.ok(JSON.stringify(rec.ops) === live, `${where}: every cushion, label and ink is the one the live map paints`);
+  }
 });
 
 /* ══════════════ G01/G09 — the SVG export is the map's own recipe ══════════════ */
@@ -913,19 +963,24 @@ function svgLines(svg: string, ground: RGB) {
   return out;
 }
 
-test('G09: the SVG export lays the History diff\'s wash over each folder that grew or shrank, as the canvas does, and its labels read 4.5:1 through it', () => {
-  // The canvas picks a label's ink against the cushion seen through its
-  // folder's wash (review F2.1); an export that left the wash out would
-  // write that ink on a tile it was not chosen for, and lose the diff.
+/** Three folders — one grew, one shrank, one did not change — each holding leaves, with the prevSize the diff is drawn from. */
+function svgDiffTiles(): Tile[] {
   const leaf = (name: string, x: number, y: number, h: number, kind: string): Tile => ({ name, path: `/r/${name}`, size: 5e9, prevSize: PREV[kind](5e9),
     type: 'file', depth: 2, expanded: false, x, y, w: 9.6, h: h / 10 } as Tile);
   const folder = (name: string, x: number, y: number, kind: string): Tile => ({ name, path: `/r/${name}`, size: 2e10, prevSize: PREV[kind](2e10),
     type: 'dir', depth: 1, expanded: true, x, y, w: 40, h: 40 } as Tile);
-  const tiles = [
+  return [
     folder('Projects', 0, 0, 'grew'), leaf('keep.bin', 0.2, 0.2, 40, 'unchanged'), leaf('mid.bin', 0.2, 10, 68, 'unchanged'),
     folder('Old', 50, 0, 'shrank'), leaf('grew.bin', 50.2, 0.2, 60, 'grew'), leaf('same.bin', 50.2, 10, 68, 'unchanged'),
     folder('Same', 0, 50, 'unchanged'), leaf('here.bin', 0.2, 50.2, 60, 'unchanged'),
   ];
+}
+
+test('G09: the SVG export lays the History diff\'s wash over each folder that grew or shrank, as the canvas does, and its labels read 4.5:1 through it', () => {
+  // The canvas picks a label's ink against the cushion seen through its
+  // folder's wash (review F2.1); an export that left the wash out would
+  // write that ink on a tile it was not chosen for, and lose the diff.
+  const tiles = svgDiffTiles();
   const { svg, rec } = exportSvg(tiles, (n) => DIFF_PAGE.diffRgb(n), '#0e0e13', { active: true, diff: true });
   const box = (r: number[]) => r.map((v) => v.toFixed(1)).join(' ');
   const onCanvas = rec.ops.slice(1).filter((op): op is Extract<Op, { kind: 'rect' }> => op.kind === 'rect' && typeof op.style === 'string')
@@ -940,6 +995,22 @@ test('G09: the SVG export lays the History diff\'s wash over each folder that gr
     const ink = rgba(l.fill);
     const c = Math.min(...l.ends.map((u) => contrast(over(ink, u), u)));
     assert.ok(c >= 4.5, `"${l.text}" in ${l.fill}: ${fmt(c)}:1 on its tile in the SVG (floor 4.5:1)`);
+  }
+});
+
+test('G09: the SVG export lays the History diff\'s wash only while the diff is on — exported from History without it, or with a diff flag left over on the live map, it is the live map\'s own export', () => {
+  // The export lays each wash tmDiffWashes names (review F2.1), so the same
+  // guard keeps it out of an export made outside the diff (review F3.2).
+  const colour = colourOf(svgDiffTiles());
+  const washesIn = (svg: string) => [...svg.matchAll(/<rect ([^>]*)\/>/g)].map((m) => attrs(m[1])).filter((a) => 'fill-opacity' in a);
+  assert.equal(washesIn(exportSvg(svgDiffTiles(), colour, '#0e0e13', { active: true, diff: true }).svg).length, 2,
+    'in the History diff the export washes the two folders that changed');
+  const live = exportSvg(withoutPrev(svgDiffTiles()), colour, '#0e0e13', { active: false, diff: false }).svg;
+  for (const history of NOT_THE_DIFF) {
+    const where = `history ${JSON.stringify(history)}`;
+    const { svg } = exportSvg(svgDiffTiles(), colour, '#0e0e13', history);
+    assert.deepEqual(washesIn(svg), [], `${where}: the export lays no wash`);
+    assert.ok(svg === live, `${where}: the export is the live map's own, rectangle by rectangle and label by label`);
   }
 });
 
