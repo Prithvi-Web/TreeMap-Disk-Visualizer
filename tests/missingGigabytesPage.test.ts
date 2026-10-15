@@ -161,6 +161,38 @@ test('G06 review F1.1: a re-entry while the scan\'s ask is out waits on it, even
   assert.equal(p.asks.length, 3, 'once its answer is in, entering again asks again');
 });
 
+test('G06 review F2.2: an ask that fails frees its scan\'s slot — the scan landing after a mid-scan "still running" asks again, once, without the view being left, and that answer paints', async () => {
+  const p = page();
+  // Opened mid-scan: state.scanId is already the running scan's, and the
+  // server answers that it is still running (409 SCAN_RUNNING).
+  p.view.mount();
+  await p.asks[0].fail('This scan is still running.');
+  assert.match(p.body.innerHTML, /This scan is still running\./, 'the server\'s answer is said');
+  // finishScan: emit(TOPIC.scan) with the same scanId, then switchView(state.view).
+  p.view.onScanChange();
+  p.view.mount();
+  assert.equal(p.asks.length, 2, 'the scan landing asks again, once: the failed ask does not hold the scan\'s slot');
+  const s1 = statement('s1', 600);
+  await p.asks[1].answer(s1);
+  assert.equal(p.body.innerHTML, p.render(s1), 'and the new ask\'s answer paints, whole');
+});
+
+test('G06 review F2.2: an older scan\'s ask failing late never frees the newer scan\'s slot; once the newer is answered, entering again asks again', async () => {
+  const p = page();
+  p.view.mount(); // s1 asks
+  p.state.scanId = 's2';
+  p.view.onScanChange(); // s2 asks
+  assert.equal(p.asks.length, 2, 's1 and s2 are each asked');
+  await p.asks[0].fail('s1 could not be reconciled.'); // s1's ask fails, late
+  assert.doesNotMatch(p.body.innerHTML, /s1 could not be reconciled/, 's1\'s failure is not said over s2, which is still being asked');
+  p.view.mount(); // a re-entry of the view on screen while s2's ask is out
+  assert.equal(p.asks.length, 2, 's2 is asked once: s1\'s late failure did not free a second ask');
+  await p.asks[1].answer(statement('s2', 300));
+  assert.equal(usedShown(p.body), 300, 's2\'s answer paints after s1\'s failure');
+  p.view.mount();
+  assert.equal(p.asks.length, 3, 'once s2\'s answer is in after s1\'s failure, entering again asks again');
+});
+
 test('G06: an older answer that lands after a newer one is never shown, nor kept for the next visit', async () => {
   const p = page();
   p.view.mount();
