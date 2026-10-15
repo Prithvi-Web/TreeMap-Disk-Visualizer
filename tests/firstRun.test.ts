@@ -417,7 +417,7 @@ test('the last step reads what this run added against the cart as it is now, and
 
 test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s primary action, the map, or the view (G11)', async () => {
   const finish = INDEX.slice(INDEX.indexOf('async function tourFinish'), INDEX.indexOf('function tourRender'));
-  const run = async (opts: { heroUp?: boolean; view?: string; mapUp?: boolean; inCard?: boolean }) => {
+  const run = async (opts: { heroUp?: boolean; view?: string; mapUp?: boolean; inCard?: boolean; noControl?: boolean }) => {
     const els: Record<string, TEl> = {};
     const $ = (id: string) => (els[id] ??= tel(0));
     $('tourOverlay').contains = () => opts.inCard !== false;
@@ -426,7 +426,7 @@ test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s
     const control = tel(); const tab = tel();
     const fn = new Function('$', 'tour', 'state', 'api', 'toast', 'document', 'activeViewControl', `'use strict'; ${finish} return tourFinish;`)(
       $, { active: true }, { view: opts.view ?? 'treemap' }, async () => ({}), () => {},
-      { activeElement: {}, querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : null) }, () => control) as (m: string) => Promise<void>;
+      { activeElement: {}, querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : null) }, () => (opts.noControl ? null : control)) as (m: string) => Promise<void>;
     await fn('Tour complete');
     return { hero: $('emptyBrowseBtn').focused, map: $('treemapCanvas').focused, control: control.focused, tab: tab.focused, hidden: $('tourOverlay').hidden };
   };
@@ -437,6 +437,9 @@ test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s
   assert.equal(welcome.hero, 1, 'skipped from the welcome: the welcome\'s own "Choose a folder"');
   const other = await run({ view: 'apps' });
   assert.equal(other.control, 1, 'elsewhere, the view\'s first control');
+  // A view with no enabled control on screen: the last fallback (review F1.9).
+  const bare = await run({ view: 'trends', noControl: true });
+  assert.deepEqual([bare.hero, bare.map, bare.control, bare.tab], [0, 0, 0, 1], 'nothing to press in the view: its own tab takes focus');
   const away = await run({ view: 'treemap', mapUp: true, inCard: false });
   assert.deepEqual([away.map, away.hero, away.control, away.tab], [0, 0, 0, 0], 'focus that was not in the card is left where it is');
   // "Scan my home folder" repaints the card as the scanning step, which has no
@@ -578,4 +581,19 @@ test('a failed first scan paints the welcome card once, with the welcome\'s own 
     'and never first to a button of the card — "Scan my home folder", or a "Choose a folder" the next paint takes away');
   assert.equal(paints, 1, 'the card is painted once, for the screen it is on');
   assert.doesNotMatch(html, /data-tour-pick/, 'with the welcome\'s button on screen, the card offers no second one');
+});
+
+/* ══════════════ Review F1.10 — the closing steps offer only Finish ══════════════ */
+
+test('the closing steps — all clean, could not check, the cart — offer one button, Finish, and no "Skip the tour" (review F1.10)', () => {
+  // A tour at its last card has nothing left to skip: Skip there would sit
+  // beside Finish, two ways to the same end, and only the welcome-to-win
+  // steps were ever rendered by a test.
+  for (const [step, opts] of [['clean', {}], ['unknown', {}], ['cart', { added: [] }], ['cart', { added: ['/c/a'], cart: ['/c/a'] }]] as const) {
+    const card = tourCard(step, opts);
+    const buttons = [...card.html.matchAll(/<button\b[^>]*>[^<]*<\/button>/g)].map((m) => m[0]);
+    assert.deepEqual(buttons, ['<button class="btn btn-primary" data-tour-done>Finish</button>'], `${step}: Finish alone: ${card.html}`);
+    assert.doesNotMatch(card.html, /data-tour-skip|Skip the tour/, `${step}: no Skip`);
+    assert.equal(card.found['data-tour-done']?.focused ?? 0, 1, `${step}: and Finish takes focus`);
+  }
 });
