@@ -218,7 +218,7 @@ test('History\'s calendar before a scan says what it shows and offers the action
   assert.equal(none.$('calControls').hidden, true, '"Click a day…" and the channel switch go while there are no days');
   const body = none.$('calBody').innerHTML;
   assert.doesNotMatch(body, /Run a scan first/);
-  assert.match(body, /Once a folder is scanned, the calendar shows its files by the day they last changed, one square per day\./, body);
+  assert.match(body, /Once a folder is scanned, the calendar shows its files by the day they last changed or were created, one square per day\./, body);
   assert.match(body, /<button class="btn btn-primary" data-cal-browse>/, 'with the action');
   const btn = none.$('calBody').querySelector('[data-cal-browse]')!;
   assert.ok(btn.listeners.click?.length, 'the action is wired');

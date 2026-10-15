@@ -207,22 +207,31 @@ function tel(rects = 1): TEl {
 }
 
 /** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
-function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; staged?: number; win?: Record<string, unknown> } = {}) {
+function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; staged?: number; win?: Record<string, unknown>; cart?: string[] } = {}) {
   const els: Record<string, TEl> = {};
   const $ = (id: string) => (els[id] ??= tel());
   const host = $('tourCard');
   const found: Record<string, TEl> = {};
+  // Finds the card's buttons in its HTML, each one stub per data-tour-*
+  // attribute, honouring :not([disabled]) as the page's selectors use it.
   host.querySelector = (sel) => {
     const h = host.innerHTML;
-    if (sel === '.btn-primary') return /class="btn btn-primary"/.test(h) ? (found.primary ??= tel()) : null;
-    if (sel === '.tour-row button') {
+    const enabledOnly = sel.endsWith(':not([disabled])');
+    const base = enabledOnly ? sel.slice(0, -':not([disabled])'.length) : sel;
+    const buttons = [...h.matchAll(/<button\b([^>]*)>/g)].map((m) => ({ attrs: m[1], at: m.index! }));
+    const ok = (b: { attrs: string }) => !enabledOnly || !/\bdisabled\b/.test(b.attrs);
+    let hit: { attrs: string; at: number } | undefined;
+    if (base === '.btn-primary') hit = buttons.find((b) => /class="btn btn-primary"/.test(b.attrs) && ok(b));
+    else if (base === '.tour-row button') {
       const row = h.indexOf('<div class="tour-row">');
-      return row !== -1 && h.indexOf('<button', row) !== -1 ? (found.rowFirst ??= tel()) : null;
+      hit = row === -1 ? undefined : buttons.find((b) => b.at > row && ok(b));
+    } else {
+      const attr = /^\[([\w-]+)\]$/.exec(base);
+      if (attr) hit = buttons.find((b) => b.attrs.includes(attr[1]) && ok(b));
     }
-    const attr = /^\[([\w-]+)\]$/.exec(sel);
-    if (attr) return h.includes(attr[1]) ? (found[attr[1]] ??= tel()) : null;
-    if (sel === 'button') return h.includes('<button') ? (found.firstButton ??= tel()) : null;
-    return null;
+    if (!hit) return null;
+    const key = (/data-tour-[\w-]+/.exec(hit.attrs) || ['button'])[0];
+    return (found[key] ??= tel());
   };
   $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
   const winLine = liftPage<(g: unknown) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
@@ -230,7 +239,7 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
     'tourAdvanceWin', 'tourWinLine', 'document', `'use strict'; ${render} return tourRender;`)(
-    $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart: new Set(), root: null }, () => '', (s: string) => s,
+    $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart: new Set(opts.cart ?? []), root: null }, () => '', (s: string) => s,
     (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, () => 0, () => {}, winLine, { activeElement: null }) as () => void;
   fn();
   return { html: host.innerHTML, text: host.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), found, $ };
@@ -247,7 +256,7 @@ test('the welcome card offers one alternative, not a second primary action besid
   assert.equal(card.found['data-tour-home']?.focused ?? 0, 0, 'not the home-folder scan');
 
   const elsewhere = tourCard('welcome', { heroUp: false });
-  assert.equal(elsewhere.found.rowFirst?.focused ?? 0, 1, 'with no welcome on screen the card\'s own action takes focus');
+  assert.equal(elsewhere.found['data-tour-home']?.focused ?? 0, 1, 'with no welcome on screen the card\'s own action takes focus');
   assert.equal(elsewhere.found['data-tour-skip']?.focused ?? 0, 0, 'never Skip');
 
   const noHome = tourCard('welcome', { home: null, heroUp: true });
@@ -328,4 +337,12 @@ test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s
   // row of actions: focus on the button that is gone lands on the control left.
   const scanning = tourCard('scanning');
   assert.equal(scanning.found['data-tour-skip']?.focused, 1, 'the scanning card\'s one control, Skip, takes focus');
+  // A quick win already in the cart has its "Already in the cart" disabled:
+  // focus on a disabled button goes nowhere, so the next enabled action takes it.
+  const win = { title: 'Rust build target', description: 'Cargo build output', totalSize: 5, items: [{ name: 'target', path: '/c/rusty/target', size: 5 }] };
+  const inCart = tourCard('win', { win, cart: ['/c/rusty/target'] });
+  assert.match(inCart.html, /data-tour-add disabled>Already in the cart</, 'control: the add button is disabled');
+  assert.equal(inCart.found['data-tour-next']?.focused ?? 0, 1, '"Skip this one" takes focus, not the disabled button');
+  const fresh = tourCard('win', { win });
+  assert.equal(fresh.found['data-tour-add']?.focused ?? 0, 1, 'a win not yet staged focuses "Add to cart"');
 });

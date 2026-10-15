@@ -38,7 +38,7 @@ async function loadCalendar() {
   $('calControls').hidden = !state.scanId;
   if (!state.scanId) {
     calData = null;
-    body.innerHTML = '<div class="cal-empty"><p class="muted">Once a folder is scanned, the calendar shows its files by the day they last changed, one square per day.</p>' +
+    body.innerHTML = '<div class="cal-empty"><p class="muted">Once a folder is scanned, the calendar shows its files by the day they last changed or were created, one square per day.</p>' +
       `<button class="btn btn-primary" data-cal-browse>${icon('folder', 15)}Choose a folder</button></div>`;
     body.querySelector('[data-cal-browse]').addEventListener('click', () => openBrowse(null));
     $('calDegraded').hidden = true; $('calLegend').hidden = true;

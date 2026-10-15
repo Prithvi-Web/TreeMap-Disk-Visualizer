@@ -142,13 +142,15 @@ function tourRender() {
   // yanking the caret from someone mid-word is how a coach becomes a pest.
   // On the welcome step the one primary on screen is the welcome's own
   // "Choose a folder" while it is up (G03); otherwise the card's first
-  // action. Skip, which sits apart in the header, only when the card has
-  // nothing else — the scanning step, painted over the "Scan my home folder"
-  // that held focus, which would otherwise fall to <body> (G11).
+  // action that can take it — a disabled "Already in the cart" cannot, and
+  // focus on the button it replaced would fall to <body>. Skip, which sits
+  // apart in the header, only when the card has nothing else: the scanning
+  // step, painted over the "Scan my home folder" that held focus (G11).
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
   const cta = tour.step === 'welcome' ? $('emptyBrowseBtn') : null;
   const primary = (cta && cta.getClientRects().length > 0 ? cta : null) ||
-    host.querySelector('.btn-primary') || host.querySelector('.tour-row button') || host.querySelector('[data-tour-skip]');
+    host.querySelector('.btn-primary:not([disabled])') || host.querySelector('.tour-row button:not([disabled])') ||
+    host.querySelector('[data-tour-skip]');
   if (primary && !typing) primary.focus();
 }
 
