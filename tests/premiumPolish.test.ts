@@ -89,15 +89,36 @@ test('legend columns collapse progressively instead of crushing', () => {
 
 /* ── The toolbar: two deliberate rows, a truly centred view switcher ── */
 
+/** A `<div …>` from its opening tag, `open`, through its MATCHING `</div>`. */
+function divElement(open: string): string {
+  const start = INDEX.indexOf(open);
+  assert.notEqual(start, -1, `"${open}" exists in index.html`);
+  const re = /<(\/?)div\b[^>]*>/g;
+  re.lastIndex = start;
+  let depth = 0;
+  for (let m = re.exec(INDEX); m; m = re.exec(INDEX)) {
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return INDEX.slice(start, m.index + m[0].length);
+  }
+  return assert.fail(`"${open}" never closes`);
+}
+
 test('treemap toolbar is two designed rows, not one wrapping soup', () => {
-  const tm = block('<div class="tm-toolbar">', 'tm-querybar');
+  // The toolbar itself, tag-matched: ended at the first "tm-querybar" after
+  // it, the slice ran on through the timebar and the map's card once the
+  // match bar moved into the card (G19), and a control moved out of the
+  // toolbar still passed (review F1.11).
+  const tm = divElement('<div class="tm-toolbar">');
+  for (const after of ['id="tmTimebar"', 'id="treemapWrap"', 'id="treemapCanvas"']) {
+    assert.ok(!tm.includes(after), `the slice is the toolbar alone (${after} is past it)`);
+  }
   assert.match(tm, /tb-row tb-row-nav/, 'row one exists (nav | view | find)');
   assert.match(tm, /tb-row tb-row-controls/, 'row two exists (appearance | modes | actions)');
   const navRow = tm.slice(tm.indexOf('tb-row-nav'), tm.indexOf('tb-row-controls'));
-  assert.match(navRow, /tmViewSeg/, 'the view switcher lives in the nav row');
+  assert.match(navRow, /id="tmViewSeg"/, 'the view switcher lives in the nav row');
   const controls = tm.slice(tm.indexOf('tb-row-controls'));
-  assert.match(controls, /tmColorSeg/, 'color modes live in the controls row');
-  assert.match(controls, /tmExportBtn/, 'actions live in the controls row');
+  assert.match(controls, /id="tmColorSeg"/, 'color modes live in the controls row');
+  assert.match(controls, /id="tmExportBtn"/, 'actions live in the controls row');
 });
 
 test('disk city rides the same two-row toolbar system', () => {
