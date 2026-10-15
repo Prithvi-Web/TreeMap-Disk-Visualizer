@@ -26,7 +26,7 @@ import { ENDPOINTS } from '../src/api/openapi';
 import { moveToTrash, openPath, openTerminal, setLaunchStepForTests } from '../src/services/cleaner';
 import { protectAndTrash } from '../src/services/timeCapsule';
 import { relocateSecret } from '../src/services/securityHygieneScanner';
-import { approvePolicyForTests, listPolicies, runDuePolicies, savePolicies, setSpillCheckForTests } from '../src/services/autopilot';
+import { approvePolicyForTests, listPolicies, runDuePolicies, runPolicy, savePolicies, setSpillCheckForTests } from '../src/services/autopilot';
 import { platform } from '../src/platform';
 import { AppError } from '../src/middleware/errorHandler';
 import { isSpillPath, SAFETY_RECORD_NAMES } from '../src/utils/pathSanitizer';
@@ -374,6 +374,32 @@ test('Autopilot leaves the spill folder out of every run, and says so', async ()
     assert.match(skipped[0].reason, new RegExp(`TreeMap's own ${SPILL_DIR} folder .*\\(1 matched item\\)`));
   } finally {
     fs.rmSync(left);
+  }
+});
+
+test('a run that left the spill folder\'s leftover alone beside a part of an installed program never says everything it matched was part of an installed program (review round 3, F3.4)', async () => {
+  // A policy on a home folder that holds app-data: what a crash left in the
+  // spill folder, and a file inside an app, both matched and both left alone.
+  // The spill folder is a reason with no short name of its own, so the run
+  // must not name the app's reason as covering everything (review round 2, F2.3).
+  const left = path.join(SPILL, '4247-1790656308811-3f2b1c4e-8a7d-4b6c-9e1f-0123456789ab-leftover.bin');
+  const apps = path.join(HOME, 'apps');
+  const inApp = path.join(apps, 'Fake.app', 'Contents', 'Resources', 'payload.bin');
+  fs.writeFileSync(left, Buffer.alloc(2_000_000, 7));
+  fs.mkdirSync(path.dirname(inApp), { recursive: true });
+  fs.writeFileSync(inApp, Buffer.alloc(2_000_000, 7));
+  try {
+    const [policy] = await savePolicies([{ id: 'home-big-bins', name: 'Big .bin files', path: HOME, match: { kind: 'custom', minBytes: 1_000_000, exts: ['bin'] }, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(policy.id);
+    const run = await runPolicy((await listPolicies())[0]);
+    assert.deepEqual(run.items, [], 'control: nothing is selected');
+    assert.ok(run.skipped.some((s) => s.path === SPILL && new RegExp(`TreeMap's own ${SPILL_DIR} folder`).test(s.reason)), `control: the leftover is left alone: ${JSON.stringify(run.skipped)}`);
+    assert.ok(run.skipped.some((s) => /inside the app “Fake”/.test(s.reason)), `control: and the app's file: ${JSON.stringify(run.skipped)}`);
+    assert.equal(run.blockedReason, 'Everything that matched was left alone — nothing was deleted.', 'neither reason alone covers what it left');
+  } finally {
+    await savePolicies([]);
+    fs.rmSync(left, { force: true });
+    fs.rmSync(apps, { recursive: true, force: true });
   }
 });
 

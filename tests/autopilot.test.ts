@@ -627,6 +627,44 @@ test('a run whose matches agent-policy.json refused says so, alone or beside par
   }
 });
 
+test('a run whose every candidate is over its allowance says so beside every other reason it left something alone — never "Everything it matched is larger than the remaining allowance" above a part of an installed program, which is left for another reason (review round 3, F3.1)', async () => {
+  // maxBytesPerRun 1 MiB; a 2 MiB file outside any program, and a file inside
+  // an app: the app's file is left alone as a part of the app, and the loose
+  // file because it alone is over the cap. The run said "Everything it matched
+  // is larger than the remaining allowance", which the app's file is not.
+  const dir = await mkTmp();
+  const alone = await mkTmp();
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  const overLimit = (s: { path: string; reason: string }): boolean => path.basename(s.path) === 'loose.bin' && /limit of .* was reached/.test(s.reason);
+  try {
+    const match = { kind: 'custom' as const, minBytes: MB };
+    await writeFile(path.join(dir, 'loose.bin'), 2 * MB);
+    await writeFile(path.join(dir, 'Fake.app', 'Contents', 'MacOS', 'Fake'), 2 * MB);
+    const [mixed] = await savePolicies([{ id: 'over-allowance-and-app', name: 'Big files', path: dir, match, maxBytesPerRun: MB, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(mixed.id);
+    const both = await runPolicy((await listPolicies())[0]);
+    assert.deepEqual(both.items, [], 'control: nothing is selected');
+    assert.ok(both.skipped.some((s) => /inside the app “Fake”/.test(s.reason)) && both.skipped.some(overLimit),
+      `control: the app's file and the loose file are both in skipped: ${JSON.stringify(both.skipped)}`);
+    assert.equal(both.blockedReason, 'Everything that matched is part of an installed program or larger than the remaining allowance — nothing was deleted.', 'it names both reasons');
+
+    await writeFile(path.join(alone, 'loose.bin'), 2 * MB);
+    const [over] = await savePolicies([{ id: 'over-allowance', name: 'Big files', path: alone, match, maxBytesPerRun: MB, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(over.id);
+    const capped = await runPolicy((await listPolicies())[0]);
+    assert.deepEqual(capped.items, [], 'control: nothing is selected');
+    assert.ok(capped.skipped.some(overLimit), `control: the loose file is in skipped: ${JSON.stringify(capped.skipped)}`);
+    assert.equal(capped.blockedReason, 'Everything that matched is larger than the remaining allowance — nothing was deleted.', 'alone, the allowance is the reason');
+    assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+  } finally {
+    setTrashStepForTests(null);
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rm(alone, { recursive: true, force: true });
+  }
+});
+
 test('a policy whose folder is reached through a link into an app never selects the app\'s files: each is judged where it really is (review F1.5)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
   const dir = await mkTmp();
   try {

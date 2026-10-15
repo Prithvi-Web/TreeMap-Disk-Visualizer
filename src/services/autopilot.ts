@@ -1072,18 +1072,20 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     // when the named reasons cover everything that was (review round 2, F2.3, F2.4).
     // Otherwise the sentence points at no list: the reasons are in `skipped`,
     // and a page may show only some of them (review round 3, F3.6).
+    // A candidate left now was left by the cap: nothing was selected, so each
+    // alone is larger than the allowance — one reason among the others, never
+    // said as covering what was left alone for another (review round 3, F3.1).
     const why = [
       heldBack.byNotes > 0 ? 'paused by your notes' : null,
       heldBack.inPrograms > 0 ? 'part of an installed program' : null,
       refusedByPolicy > 0 ? 'refused by your agent-policy.json' : null,
+      candidates.length > 0 ? 'larger than the remaining allowance' : null,
     ].filter((w): w is string => w !== null);
-    run.blockedReason = candidates.length > 0
-      ? 'Everything it matched is larger than the remaining allowance, so nothing was deleted.'
-      : run.skipped.length === 0
-        ? 'Nothing matched this time.'
-        : heldBack.otherwise === 0 && why.length > 0
-          ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
-          : 'Everything that matched was left alone — nothing was deleted.';
+    run.blockedReason = run.skipped.length === 0
+      ? 'Nothing matched this time.'
+      : heldBack.otherwise === 0 && why.length > 0
+        ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
+        : 'Everything that matched was left alone — nothing was deleted.';
     return record();
   }
 
