@@ -641,7 +641,9 @@ async function resolveCandidates(
   // pause list stops the deleter instead of silently unpausing it.
   const noted = await suppressedNoteRoots();
   const inPrograms = matched.length - outsidePrograms.length;
-  if (noted.length === 0) return { candidates: outsidePrograms, leftAlone: [...byRule, ...spillSkipped, ...programSkipped], heldBack: { byNotes: 0, inPrograms } };
+  // Left alone for a reason of its own (an advice-only group, TreeMap's own folders and records): counted, so a run that selects nothing never says a narrower reason covers it (review round 2, F2.3).
+  const otherwise = byRule.length + spillSkipped.length;
+  if (noted.length === 0) return { candidates: outsidePrograms, leftAlone: [...byRule, ...spillSkipped, ...programSkipped], heldBack: { byNotes: 0, inPrograms, otherwise } };
   const prepared = prepareSuppressed(noted, policy.path); // candidates are spelled from the policy's folder (F1.13)
   const candidates: Candidate[] = [];
   // Collapsed to ONE entry per note root with a count (review round 1,
@@ -663,18 +665,21 @@ async function resolveCandidates(
     path: root,
     reason: `Left alone — your note on ${root} pauses automatic cleanup around it (${n} matched item${n === 1 ? '' : 's'}).`,
   }));
-  return { candidates, leftAlone: [...byRule, ...spillSkipped, ...programSkipped, ...noteSkipped], heldBack: { byNotes: outsidePrograms.length - candidates.length, inPrograms } };
+  return { candidates, leftAlone: [...byRule, ...spillSkipped, ...programSkipped, ...noteSkipped], heldBack: { byNotes: outsidePrograms.length - candidates.length, inPrograms, otherwise } };
 }
 
 /**
  * How many matched items resolveCandidates held back, and why: paused by a
- * note, or a part of an installed program. Counted where they are left alone,
- * so a run that selects nothing says which — never read back from the skip
- * entries' sentences (review F1.2).
+ * note, a part of an installed program, or (`otherwise`, skip entries) for a
+ * reason with no short name of its own — an advice-only group, TreeMap's own
+ * spill folder or safety records. Counted where they are left alone, so a run
+ * that selects nothing says which — never read back from the skip entries'
+ * sentences (review F1.2; review round 2, F2.3).
  */
 interface HeldBack {
   byNotes: number;
   inPrograms: number;
+  otherwise: number;
 }
 
 /**
@@ -967,7 +972,9 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
   }
 
   let candidates: Candidate[];
-  let heldBack: HeldBack = { byNotes: 0, inPrograms: 0 };
+  let heldBack: HeldBack = { byNotes: 0, inPrograms: 0, otherwise: 0 };
+  /** Matched items agent-policy.json refused (below): a reason the run states too (review round 2, F2.4). */
+  let refusedByPolicy = 0;
   try {
     // agent-policy.json is the user's own "never touch these" list. It was
     // written for the API surface, but an unattended deleter is exactly what
@@ -993,6 +1000,7 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
         assertPathsAllowed(agentPolicy, [candidate.path]);
         permitted.push(candidate);
       } catch (err) {
+        refusedByPolicy++;
         run.skipped.push({
           path: candidate.path,
           reason: err instanceof AppError ? err.message : 'Refused by agent-policy.json',
@@ -1058,14 +1066,22 @@ async function runPolicyNow(policy: AutopilotPolicy, opts: RunOptions): Promise<
     // "Nothing matched" would be false when things DID match and were paused
     // by notes — the difference matters to someone wondering why their rule
     // went quiet (review round 1, finding 6) — or were parts of an installed
-    // program, which Autopilot never trashes (review F1.2).
-    const why = [heldBack.byNotes > 0 ? 'paused by your notes' : null, heldBack.inPrograms > 0 ? 'part of an installed program' : null]
-      .filter((w): w is string => w !== null);
+    // program, which Autopilot never trashes (review F1.2), or were refused by
+    // agent-policy.json, or left alone for any other reason in `skipped`. So it
+    // is said only when nothing was left alone, and a reason is named only
+    // when the named reasons cover everything that was (review round 2, F2.3, F2.4).
+    const why = [
+      heldBack.byNotes > 0 ? 'paused by your notes' : null,
+      heldBack.inPrograms > 0 ? 'part of an installed program' : null,
+      refusedByPolicy > 0 ? 'refused by your agent-policy.json' : null,
+    ].filter((w): w is string => w !== null);
     run.blockedReason = candidates.length > 0
       ? 'Everything it matched is larger than the remaining allowance, so nothing was deleted.'
-      : why.length > 0
-        ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
-        : 'Nothing matched this time.';
+      : run.skipped.length === 0
+        ? 'Nothing matched this time.'
+        : heldBack.otherwise === 0 && why.length > 0
+          ? `Everything that matched is ${why.join(' or ')} — nothing was deleted.`
+          : 'Everything that matched was left alone, each for the reason listed with it — nothing was deleted.';
     return record();
   }
 

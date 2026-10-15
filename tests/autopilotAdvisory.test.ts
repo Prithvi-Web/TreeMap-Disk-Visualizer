@@ -101,6 +101,37 @@ test('a policy an earlier build saved with an advice-only group is not refused w
     assert.ok(fs.existsSync(path.join(previews, 'preview.jpg')), 'it is where it was');
     assert.ok(run.skipped.some((s) => s.path === previews && /advice only/.test(s.reason)), JSON.stringify(run.skipped));
     assert.ok(run.skipped.some((s) => s.path === previews && INSTEAD.test(s.reason)), JSON.stringify(run.skipped));
+    // Something matched and was left alone, so never "Nothing matched this time." (review round 2, F2.3).
+    assert.equal(run.blockedReason, LEFT_ALONE, 'it says why nothing was deleted');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+/** What a run says when everything it matched was left alone, some of it for a reason with no short name of its own. */
+const LEFT_ALONE = 'Everything that matched was left alone, each for the reason listed with it — nothing was deleted.';
+
+test('a run that left an advice-only group\'s items alone beside parts of an installed program never says everything it matched was part of an installed program (review round 2, F2.3)', { skip: LIGHTROOM }, async () => {
+  const dir = fs.realpathSync(fileTempDir('treemap-autopilotAdvisory-mixed-'));
+  const previews = path.join(dir, 'Lightroom Catalog Previews.lrdata');
+  fs.mkdirSync(previews);
+  fs.writeFileSync(path.join(previews, 'preview.jpg'), Buffer.alloc(4096, 3));
+  const inApp = path.join(dir, 'Fake.app', 'Contents', 'Resources', 'app', 'node_modules', 'dep');
+  fs.mkdirSync(inApp, { recursive: true });
+  fs.writeFileSync(path.join(inApp, 'index.js'), Buffer.alloc(4096, 3));
+  // As an earlier build saved it: an advice-only group is refused at save time, so it is planted in the store.
+  await savePolicies([{ id: 'planted-mixed', name: 'Previews and build folders', path: dir, match: { kind: 'suggestion', groupIds: ['regen-node-modules'] }, dryRunFirst: false, enabled: true }]);
+  const store = await readJsonFile<{ policies: AutopilotPolicy[]; runs: AutopilotRun[] }>('autopilot.json', { policies: [], runs: [] });
+  store.policies[0].match = { kind: 'suggestion', groupIds: ['media-lightroom-previews', 'regen-node-modules'] };
+  await writeJsonFile('autopilot.json', store);
+  try {
+    await approvePolicyForTests('planted-mixed');
+    const run = await withOpenFileCheck('clear', async () => runPolicy((await listPolicies())[0]));
+    assert.deepEqual(run.items, [], 'control: nothing is selected');
+    assert.ok(run.skipped.some((s) => s.path === previews && /advice only/.test(s.reason)), `control: the advice-only group is left alone: ${JSON.stringify(run.skipped)}`);
+    assert.ok(run.skipped.some((s) => /inside the app “Fake”/.test(s.reason)), `control: and the app's own node_modules: ${JSON.stringify(run.skipped)}`);
+    assert.equal(run.blockedReason, LEFT_ALONE, 'neither reason alone covers what it left');
+    assert.deepEqual(trashed, [], 'the Trash step was never reached');
   } finally {
     await savePolicies([]);
   }

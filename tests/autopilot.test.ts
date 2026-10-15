@@ -590,6 +590,43 @@ test('a run that left everything it matched alone, as parts of an installed prog
   }
 });
 
+test('a run whose matches agent-policy.json refused says so, alone or beside parts of an installed program — never "Nothing matched this time." nor a reason that covers only some of what it left (review round 2, F2.3, F2.4)', async () => {
+  // A file under a protected path matched and was refused in the run's own
+  // agent-policy check: the run said "Nothing matched this time." above its
+  // own skipped entry for it, and beside an app's files "Everything that
+  // matched is part of an installed program", which the protected file is not.
+  const dir = await mkTmp();
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => { trashed.push(p); });
+  try {
+    const keep = path.join(dir, 'keep');
+    await writeFile(path.join(keep, 'big.bin'), 2 * MB);
+    await writeJsonFile('agent-policy.json', { allowedRoots: [], protectedPaths: [keep], maxBytesPerOperation: null });
+    const match = { kind: 'custom' as const, minBytes: MB };
+    const [alone] = await savePolicies([{ id: 'protected-only', name: 'Big files', path: dir, match, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(alone.id);
+    const refused = await runPolicy((await listPolicies())[0]);
+    assert.deepEqual(refused.items, [], 'control: nothing is selected');
+    assert.ok(refused.skipped.some((s) => /protected path/.test(s.reason)), `control: the protected file is in skipped: ${JSON.stringify(refused.skipped)}`);
+    assert.equal(refused.blockedReason, 'Everything that matched is refused by your agent-policy.json — nothing was deleted.', 'it says why nothing was deleted');
+
+    await writeFile(path.join(dir, 'Fake.app', 'Contents', 'MacOS', 'Fake'), 2 * MB);
+    const [mixed] = await savePolicies([{ id: 'protected-and-app', name: 'Big files', path: dir, match, dryRunFirst: false, enabled: true }]);
+    await approvePolicyForTests(mixed.id);
+    const both = await runPolicy((await listPolicies())[0]);
+    assert.deepEqual(both.items, [], 'control: nothing is selected');
+    assert.ok(both.skipped.some((s) => /inside the app “Fake”/.test(s.reason)) && both.skipped.some((s) => /protected path/.test(s.reason)),
+      `control: both are in skipped: ${JSON.stringify(both.skipped)}`);
+    assert.equal(both.blockedReason, 'Everything that matched is part of an installed program or refused by your agent-policy.json — nothing was deleted.', 'it names both reasons');
+    assert.deepEqual(trashed, [], 'nothing reached the Trash step');
+  } finally {
+    setTrashStepForTests(null);
+    await writeJsonFile('agent-policy.json', {});
+    await savePolicies([]);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a policy whose folder is reached through a link into an app never selects the app\'s files: each is judged where it really is (review F1.5)', { skip: !IS_UNIX && 'symlinks need a privilege on Windows' }, async () => {
   const dir = await mkTmp();
   try {
