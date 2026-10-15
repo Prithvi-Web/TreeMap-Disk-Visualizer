@@ -325,6 +325,110 @@ test('the footer says which choices are already saved and what Save keeps, namin
   assert.match(css, /\.settings-foot-text \{ flex: 1; min-width: 0; display: flex; flex-direction: column;/, 'the note takes the room beside the buttons and wraps there');
 });
 
+/* ══════════════ Review F1.3 — a choice saved on a pick keeps the sheet's other edits ══════════════ */
+
+type Box = { value: string; checked: boolean; dataset: Record<string, string> };
+type Row = { boxes: Record<string, Box>; querySelector(sel: string): Box };
+function row(boxes: Record<string, Partial<Box>>): Row {
+  const all: Record<string, Box> = Object.fromEntries(Object.entries(boxes).map(([k, b]) => [k, { value: '', checked: false, dataset: {}, ...b }]));
+  return { boxes: all, querySelector: (sel) => all[sel] };
+}
+
+/**
+ * The sheet's schedule and ignore rows, bound by index to settingsData as
+ * renderSchedules and renderIgnores bind them, with the four choices that
+ * save on a pick — the scan engine, the drives, the reclaim weights' reset
+ * and a cloud account's Connect — and Save's body, all out of the page.
+ * `server` is what PUT /api/settings answers: every setting, as stored.
+ */
+function instantSaveRuntime(stored: Record<string, unknown>, server: (patch: Record<string, unknown>) => Record<string, unknown>) {
+  const dom = fakeDom({ forecastDays: { value: '30' }, watchIdleMin: { value: '10' }, capsuleRetentionDays: { value: '30' }, capsuleMaxPercent: { value: '10' }, humanScaleToggle: { checked: true } });
+  const screen: { sched: Row[]; ign: Row[] } = { sched: [], ign: [] };
+  const doc = {
+    querySelectorAll: (sel: string) => (sel.startsWith('#schedList') ? screen.sched : sel.startsWith('#ignoreList') ? screen.ign : []),
+    querySelector: () => null,
+  };
+  const api = async (url: string, options?: ApiCall['options']) => {
+    if (url === '/api/cloud/connect') throw new Error('offline');
+    assert.equal(url, '/api/settings');
+    return server(JSON.parse(options?.body ?? '{}'));
+  };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const rt = new Function(
+    '$', 'api', 'toast', 'document',
+    `'use strict';
+     let settingsData = ${JSON.stringify(stored)};
+     const GB = 1e9;
+     const SCAN_ENGINE_LABELS = {}; const SCAN_BOUNDARY_LABELS = {};
+     function renderScanEngine() {} function renderScanBoundary() {} function renderReclaimWeights() {}
+     function reclaimReset() {} async function refreshFastRescanPlan() {} function fxOrbHide() {}
+     function collectReclaimWeights() { return {}; } function collectCleanupGoal() { return null; }
+     function collectCloudCreds() { return { gdrive: { clientId: 'typed' } }; }
+     ${braced('function asPath(')}
+     ${braced('function collectSettingsForms(')}
+     ${braced('function settingsBody(')}
+     ${braced('async function saveScanEngine(')}
+     ${braced('async function saveScanBoundary(')}
+     ${braced('async function connectCloud(')}
+     ${braced("$('reclaimResetBtn').addEventListener('click', () => {")});
+     return { data: () => settingsData, collectSettingsForms, settingsBody, saveScanEngine, saveScanBoundary, connectCloud };`,
+  )(dom.$, api, () => {}, doc) as {
+    data: () => { schedules: Array<Record<string, unknown>>; ignore: Array<Record<string, unknown>> } & Record<string, unknown>;
+    collectSettingsForms: () => void; settingsBody: () => string;
+    saveScanEngine: (e: string) => Promise<void>; saveScanBoundary: (r: string) => Promise<void>; connectCloud: (id: string) => Promise<void>;
+  };
+  /** renderSchedules and renderIgnores: one row per object, bound by its index. */
+  const paint = () => {
+    screen.sched = rt.data().schedules.map((s, i) => row({ '.s-path': { value: String(s.path), dataset: { i: String(i) } }, '.s-int': { value: String(s.intervalHours) },
+      '.s-gb': {}, '.s-pct': {}, '.s-on': { checked: s.enabled === true } }));
+    screen.ign = rt.data().ignore.map((e, i) => row({ '.i-pat': { value: String(e.pattern), dataset: { i: String(i) } }, '.i-scope': { value: String(e.scope) } }));
+  };
+  paint();
+  const resetWeights = async () => { dom.$('reclaimResetBtn').listeners.click(); await settle(); };
+  return { ...rt, screen, paint, resetWeights };
+}
+
+test('a choice saved the moment it is picked keeps every unsaved edit on the sheet, so Save keeps them as the footer promises (review F1.3)', async () => {
+  // PUT /api/settings answers with every setting as stored, and each instant
+  // save adopted that whole answer as the sheet's settingsData: a scheduled
+  // scan or ignore pattern added and not yet saved lost the object its row is
+  // bound to, and the next Save dropped it — "Settings saved" — or wrote one
+  // row's values over another's.
+  const A = { id: 'a', path: '/Users/x/A', intervalHours: 24, enabled: true };
+  const B = { id: 'b', path: '/Users/x/B', intervalHours: 24, enabled: true };
+  const stored = { schedules: [A], ignore: [], engine: 'auto', scanBoundary: 'stay', reclaimWeights: { size: 0.9 }, cloud: {} };
+  const asStored = (patch: Record<string, unknown>) => ({ ...JSON.parse(JSON.stringify(stored)), ...patch, ...(patch.reclaimWeights === null ? { reclaimWeights: { size: 0.3 } } : {}) });
+  const picks: Array<[string, (rt: ReturnType<typeof instantSaveRuntime>) => Promise<void>, string, unknown]> = [
+    ['the scan engine', (rt) => rt.saveScanEngine('walker'), 'engine', 'walker'],
+    ['the drives', (rt) => rt.saveScanBoundary('cross'), 'scanBoundary', 'cross'],
+    ['the reclaim weights\' reset', (rt) => rt.resetWeights(), 'reclaimWeights', { size: 0.3 }],
+    ['a cloud account\'s Connect', (rt) => rt.connectCloud('gdrive'), 'cloud', { gdrive: { clientId: 'typed' } }],
+  ];
+  for (const [what, pick, key, value] of picks) {
+    const rt = instantSaveRuntime(stored, asStored);
+    // "Add scheduled scan" and "Add pattern", then a pattern typed in.
+    rt.collectSettingsForms();
+    rt.data().schedules.push({ id: '', path: '/Users/x/New', intervalHours: 24, enabled: true });
+    rt.data().ignore.push({ pattern: '', scope: 'both' });
+    rt.paint();
+    rt.screen.ign[0].boxes['.i-pat'].value = 'node_modules';
+    await pick(rt);
+    assert.deepEqual(rt.data()[key], value, `${what}: the sheet holds what was saved`);
+    const body = JSON.parse(rt.settingsBody());
+    assert.deepEqual(body.schedules.map((s: { path: string }) => s.path), ['/Users/x/A', '/Users/x/New'], `${what}: the scheduled scan added before it is still saved by Save`);
+    assert.deepEqual(body.ignore, [{ pattern: 'node_modules', scope: 'both' }], `${what}: and so is the pattern`);
+  }
+  // A row removed before the pick: the rows on screen are bound to the
+  // objects they show, not to the stored list's indices.
+  const rt = instantSaveRuntime({ ...stored, schedules: [A, B] }, (patch) => ({ ...JSON.parse(JSON.stringify({ ...stored, schedules: [A, B] })), ...patch }));
+  rt.collectSettingsForms();
+  rt.data().schedules.splice(0, 1);
+  rt.paint();
+  await rt.saveScanBoundary('cross');
+  const body = JSON.parse(rt.settingsBody());
+  assert.deepEqual(body.schedules.map((s: { id: string; path: string }) => [s.id, s.path]), [['b', '/Users/x/B']], 'the one schedule left is saved as itself, not over the removed one');
+});
+
 test('"Clear target" is an edit like the others: the live target and its meter stay until Save, so closing without saving drops it (review F1.10)', () => {
   // It used to hide the cart's target meter on the spot while the stored
   // target stayed — "Close without saving" then left the two disagreeing

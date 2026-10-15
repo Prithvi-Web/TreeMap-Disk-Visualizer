@@ -37448,10 +37448,14 @@ function renderScanEngine(engine) {
 
 async function saveScanEngine(engine) {
   try {
-    settingsData = await api('/api/settings', {
+    const saved = await api('/api/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ engine }),
     });
+    // Only the key this pick saved: the server answers with every setting as
+    // stored, and adopting the whole answer took the sheet's unsaved schedule
+    // and ignore rows from under them, so Save dropped them (review F1.3).
+    settingsData = { ...settingsData, engine: saved.engine };
     renderScanEngine(settingsData.engine);
     toast(`Scan engine: ${SCAN_ENGINE_LABELS[settingsData.engine] || settingsData.engine} — from the next scan`);
     // The engine decides whether the Fast-rescan box is offered (QA D45):
@@ -37677,10 +37681,11 @@ $('reclaimResetBtn').addEventListener('click', () => {
   // drift from them.
   void (async () => {
     try {
-      settingsData = await api('/api/settings', {
+      const saved = await api('/api/settings', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reclaimWeights: null }),
       });
+      settingsData = { ...settingsData, reclaimWeights: saved.reclaimWeights }; // only this key (F1.3)
       renderReclaimWeights();
       reclaimReset(); // every cached score was computed under the old weights
       toast('Reclaim Score weights reset to defaults');
@@ -37710,10 +37715,11 @@ function renderScanBoundary(rule) {
 
 async function saveScanBoundary(rule) {
   try {
-    settingsData = await api('/api/settings', {
+    const saved = await api('/api/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanBoundary: rule }),
     });
+    settingsData = { ...settingsData, scanBoundary: saved.scanBoundary }; // only this key (F1.3)
     renderScanBoundary(settingsData.scanBoundary);
     toast(`Drives mounted inside a folder: ${SCAN_BOUNDARY_LABELS[settingsData.scanBoundary] || settingsData.scanBoundary} — from the next scan`);
   } catch (e) {
@@ -37820,11 +37826,12 @@ function cloudConnectGaveUp(providerId) {
 async function connectCloud(providerId) {
   try {
     // Save the credentials first so the server can build the consent URL.
-    settingsData = await api('/api/settings', {
+    const saved = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cloud: collectCloudCreds() }),
     });
+    settingsData = { ...settingsData, cloud: saved.cloud }; // only this key (F1.3)
     const started = await api('/api/cloud/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
