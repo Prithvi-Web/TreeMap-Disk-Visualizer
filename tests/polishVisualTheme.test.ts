@@ -386,6 +386,29 @@ test('each rescued ink clears AA on the ground it actually sits on, in both them
   }
 });
 
+/*
+ * G05 listed the folders whose project is still here in a fold of their own
+ * at full ink, but each one's "rebuildable" tag kept the neutral chip:
+ * --text-3 on --surface-3, 10px bold, which measured 4.30:1 (dark) and
+ * 4.34:1 (light) on the sheet (G05 review F1.7). --surface-3 is translucent,
+ * so the chip is measured over the ground under it: the sheet's opaque
+ * --bg-1 (075-modals.css), and a card, should the fold ever sit on one.
+ */
+test('the "rebuildable" chip of a folder whose project is still here clears AA on the sheet it sits on, in both themes (G05 review F1.7)', () => {
+  const base = ruleFor('.pkg-tag');
+  const own = RULES.find((x) => parts(x).includes('.pkg-tag.active'));
+  // The cascade: the active chip's own declaration where it makes one, else the base chip's.
+  const decl = (name: string) => (own && prop(own.body, name)) || prop(base.body, name)!;
+  for (const [name, palette] of THEMES) {
+    const { page, card } = grounds(palette);
+    for (const [gname, g] of [['sheet', page], ['card', card]] as const) {
+      const chip = paint(decl('background'), palette, g);
+      const ratio = contrast(paint(decl('color'), palette, chip), chip);
+      assert.ok(ratio >= 4.5, `${name} .pkg-tag.active measures ${fmt(ratio)}:1 on its chip over the ${gname} — 10px bold needs 4.5:1`);
+    }
+  }
+});
+
 /* ═══════════════ one warning recipe ═══════════════ */
 
 test('every warning surface shares one --warn-based recipe, and the border is visible on a white card', () => {
