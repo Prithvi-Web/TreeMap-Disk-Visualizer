@@ -644,16 +644,33 @@ function tmSetEmpty(text) {
  * TM_CUSHION_FULL_H: a short tile is a shallow cushion. Its label then spans
  * most of the gradient, and at the full 16%/22% no ink reaches 4.5:1 across
  * a short red tile from its light top to its dark bottom (G09).
+ *
+ * A labelled tile's cushion also gives way to its label (review F1.2,
+ * F1.14): `lines` are the label's lines, each { off, px } — its top, down
+ * from the tile's top, and its font size — and where neither black nor
+ * white reaches 4.5:1 across a line, the cushion eases a step at a time
+ * until one does. On a flat fill one of the two always does (4.58:1 at
+ * worst, where they read alike), and on most tiles the whole cushion
+ * already does: it is the colours near that crossing that need it — the
+ * Reclaim "keep" grey, the diff's "unchanged", the Trash cell, and a red
+ * tile whose label sits below its folder's tag, mid-cushion.
  */
 const TM_CUSHION_LIGHT = 0.16;   // the white mixed into the top edge
 const TM_CUSHION_SHADE = 0.22;   // the black mixed into the bottom edge
 const TM_CUSHION_FULL_H = 60;    // px: a tile this tall or taller gets the whole cushion
-function tmLeafStops(base, h) {
-  const amp = Math.max(0, Math.min(1, h / TM_CUSHION_FULL_H));
-  return [mix(base, [255, 255, 255], TM_CUSHION_LIGHT * amp), mix(base, [0, 0, 0], TM_CUSHION_SHADE * amp)];
+const TM_CUSHION_EASE = [1, 0.75, 0.5, 0.25, 0];  // the shares of its cushion a labelled tile tries, in turn
+function tmLeafStops(base, h, lines) {
+  const full = Math.max(0, Math.min(1, h / TM_CUSHION_FULL_H));
+  let stops = null;
+  for (const share of TM_CUSHION_EASE) {
+    const amp = full * share;
+    stops = [mix(base, [255, 255, 255], TM_CUSHION_LIGHT * amp), mix(base, [0, 0, 0], TM_CUSHION_SHADE * amp)];
+    if (!lines || lines.every((l) => tmBestInk(stops, h, l.off, l.px, 1).contrast >= TM_LABEL_FLOOR)) break;
+  }
+  return stops;
 }
-function tmLeafFill(ctx, base, y, h) {
-  const [top, bot] = tmLeafStops(base, h);
+function tmLeafFill(ctx, stops, y, h) {
+  const [top, bot] = stops;
   const g = ctx.createLinearGradient(0, y, 0, y + h);
   g.addColorStop(0, `rgb(${top[0]},${top[1]},${top[2]})`);
   g.addColorStop(1, `rgb(${bot[0]},${bot[1]},${bot[2]})`);
@@ -665,12 +682,16 @@ function tmLeafFill(ctx, base, y, h) {
  * whichever keeps the higher WCAG contrast against the cushion under the
  * WHOLE line — its top and its bottom, since the cushion darkens downward.
  * A fixed black ink measured 2.55–3.91:1 on the darker and saturated tiles.
- * `r.fillRgb` is the colour pass 1 painted the tile's cushion from; a tile
- * without one (a hollow cloud placeholder) shows the map's own ground, and
- * takes the page's ink for it. tests/mapColourPop.test.ts measures every
- * ramp step at depths 1–6 in both themes.
+ * `r.stops` is the cushion pass 1 painted the tile with (tmLeafStops, eased
+ * for this label where it had to be); a tile without one (a hollow cloud
+ * placeholder) shows the map's own ground, and takes the page's ink for it.
+ * The size line is a step quieter, at TM_SIZE_INK_ALPHA, wherever that
+ * still reads at 4.5:1; where it would not, it is written at full ink.
+ * tests/mapColourPop.test.ts measures every colour the map paints, at the
+ * label's usual place and below a folder's tag, in both themes.
  */
 const TM_LABEL_LEADING = 1.2;    // a line of text's height, as a share of its font size
+const TM_LABEL_FLOOR = 4.5;      // WCAG AA for the 10–11px label
 const TM_SIZE_INK_ALPHA = 0.9;   // the size line, a step quieter than the name
 function tmLuminance(c) {
   const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
@@ -680,17 +701,57 @@ function tmContrast(a, b) {
   const la = tmLuminance(a), lb = tmLuminance(b);
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
-function tmLabelInk(r, y, fontPx, alpha) {
-  if (!r.fillRgb) return cssVar(alpha < 1 ? '--text-2' : '--text-1');
-  const [top, bot] = tmLeafStops(r.fillRgb, r.h);
+/** Black or white for the line `off` px down a tile `h` px tall, at `alpha`: { ink, contrast } at the line's worst end. */
+function tmBestInk(stops, h, off, fontPx, alpha) {
+  const [top, bot] = stops;
   const under = (yy) => {
-    const f = Math.max(0, Math.min(1, (yy - r.y) / r.h));
+    const f = Math.max(0, Math.min(1, yy / h));
     return top.map((v, i) => v + (bot[i] - v) * f);
   };
-  const ends = [under(y), under(y + fontPx * TM_LABEL_LEADING)];
+  const ends = [under(off), under(off + fontPx * TM_LABEL_LEADING)];
   const worst = (ink) => Math.min(...ends.map((c) => tmContrast(ink.map((v, i) => alpha * v + (1 - alpha) * c[i]), c)));
-  const ink = worst([0, 0, 0]) >= worst([255, 255, 255]) ? '0,0,0' : '255,255,255';
-  return `rgba(${ink},${alpha})`;
+  const black = worst([0, 0, 0]), white = worst([255, 255, 255]);
+  return black >= white ? { ink: '0,0,0', contrast: black } : { ink: '255,255,255', contrast: white };
+}
+function tmLabelInk(r, y, fontPx, alpha) {
+  if (!r.stops) return cssVar(alpha < 1 ? '--text-2' : '--text-1');
+  let best = tmBestInk(r.stops, r.h, y - r.y, fontPx, alpha);
+  if (best.contrast < TM_LABEL_FLOOR && alpha < 1) { alpha = 1; best = tmBestInk(r.stops, r.h, y - r.y, fontPx, 1); }
+  return `rgba(${best.ink},${alpha})`;
+}
+
+/**
+ * Where pass 4 writes a leaf's label, as its lines { y, px, alpha } — the
+ * name, and the size below it when two lines fit — or none. A label that
+ * would print through a top-level folder's name tag (pass 3) drops below
+ * the tag when the tile is tall enough, and is left out when it is not.
+ * Pass 1 needs the lines too, to ease the cushion under them.
+ */
+function tmLabelLines(r, tags) {
+  if (r.frame || r.n.freed || r.w < 40 || r.h < 15) return [];
+  let ty = r.y + 4;
+  const clash = tags.find(t =>
+    r.x + 5 < t.x + t.w && r.x + r.w - 5 > t.x && ty < t.y + t.h && ty + 12 > t.y);
+  if (clash) {
+    const shifted = clash.y + clash.h + 3;
+    if (shifted + 12 > r.y + r.h) return [];
+    ty = shifted;
+  }
+  const lines = [{ y: ty, px: 11, alpha: 1 }];
+  if (r.y + r.h - ty > 26) lines.push({ y: ty + 13, px: 10, alpha: TM_SIZE_INK_ALPHA });
+  return lines;
+}
+
+/** Pass 3's name tags for the top-level folders, measured before pass 1 so labels can be placed around them. */
+function tmFolderTags(ctx, px) {
+  ctx.font = '600 10.5px -apple-system, sans-serif';
+  const tags = [];
+  for (const r of px) {
+    if (!r.frame || r.n.depth !== 1 || r.w < 90 || r.h < 44) continue;
+    const tw = Math.min(ctx.measureText(r.n.name).width, r.w - 26);
+    tags.push({ r, x: r.x + 5, y: r.y + 5, w: tw + 14, h: 18 });
+  }
+  return tags;
 }
 
 function drawTreemap() {
@@ -748,6 +809,11 @@ function drawTreemap() {
   }
   tmSetEmpty('');
 
+  // Where each label goes, around the top-level folders' tags: pass 1 eases
+  // a cushion under its label where it must, and pass 4 writes it there.
+  const tagRects = tmFolderTags(ctx, px);
+  for (const r of px) r.label = tmLabelLines(r, tagRects);
+
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
     if (r.frame) continue;
@@ -799,9 +865,10 @@ function drawTreemap() {
       continue;
     }
 
-    ctx.fillStyle = tmLeafFill(ctx, base, r.y, r.h);
+    r.stops = tmLeafStops(base, r.h, r.label.map((l) => ({ off: l.y - r.y, px: l.px })));
+    ctx.fillStyle = tmLeafFill(ctx, r.stops, r.y, r.h);
     ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
-    r.fillRgb = base; // what pass 4 picks its label ink against (G09)
+    r.fillRgb = base; // the colour itself; r.stops is the cushion pass 4 picks its label ink against (G09)
     if (r.w > 6 && r.h > 6) {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
       ctx.lineWidth = 1;
@@ -842,18 +909,14 @@ function drawTreemap() {
   }
   // Pass 3: top-level directory name tags.
   ctx.textBaseline = 'middle';
-  const tagRects = [];
-  for (const r of px) {
-    if (!r.frame || r.n.depth !== 1 || r.w < 90 || r.h < 44) continue;
-    const label = r.n.name;
-    ctx.font = '600 10.5px -apple-system, sans-serif';
-    const tw = Math.min(ctx.measureText(label).width, r.w - 26);
+  ctx.font = '600 10.5px -apple-system, sans-serif';
+  for (const t of tagRects) {
+    const r = t.r;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    roundRect(ctx, r.x + 5, r.y + 5, tw + 14, 18, 9);
+    roundRect(ctx, t.x, t.y, t.w, t.h, 9);
     ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.fillText(label, r.x + 12, r.y + 14.5, r.w - 26);
-    tagRects.push({ x: r.x + 5, y: r.y + 5, w: tw + 14, h: 18 });
+    ctx.fillText(r.n.name, r.x + 12, r.y + 14.5, r.w - 26);
   }
   // Pass 4: leaf labels (only when ≥ 40 px wide).
   //
@@ -881,25 +944,18 @@ function drawTreemap() {
 
   ctx.textBaseline = 'top';
   for (const r of px) {
-    if (r.frame || r.n.freed || r.w < 40 || r.h < 15) continue;
-    let ty = r.y + 4;
-    const clash = tagRects.find(t =>
-      r.x + 5 < t.x + t.w && r.x + r.w - 5 > t.x && ty < t.y + t.h && ty + 12 > t.y);
-    if (clash) {
-      const shifted = clash.y + clash.h + 3;
-      if (shifted + 12 > r.y + r.h) continue;
-      ty = shifted;
-    }
+    if (!r.label.length) continue; // where it goes: tmLabelLines, above pass 1
+    const [name, size] = r.label;
     const label = r.n.name;
     ctx.font = '500 11px -apple-system, sans-serif';
-    ctx.fillStyle = tmLabelInk(r, ty, 11, 1);
+    ctx.fillStyle = tmLabelInk(r, name.y, name.px, name.alpha);
     const maxChars = Math.floor((r.w - 10) / 6.2);
     const text = label.length > maxChars ? label.slice(0, Math.max(1, maxChars - 1)) + '…' : label;
-    ctx.fillText(text, r.x + 5, ty, r.w - 10);
-    if (r.y + r.h - ty > 26) {
-      ctx.fillStyle = tmLabelInk(r, ty + 13, 10, TM_SIZE_INK_ALPHA);
+    ctx.fillText(text, r.x + 5, name.y, r.w - 10);
+    if (size) {
+      ctx.fillStyle = tmLabelInk(r, size.y, size.px, size.alpha);
       ctx.font = '10px -apple-system, sans-serif';
-      ctx.fillText(formatBytes(r.n.size), r.x + 5, ty + 13, r.w - 10);
+      ctx.fillText(formatBytes(r.n.size), r.x + 5, size.y, r.w - 10);
     }
   }
 

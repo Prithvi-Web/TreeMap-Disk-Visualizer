@@ -100,13 +100,13 @@ function lensPaint(ctx, cssW, cssH) {
       continue;
     }
     // A rectangle is painted with the map's own leaf recipe — the opaque,
-    // full-strength cushion (G01) — so the glass shows the colour the map
-    // shows; when the two recipes differed the glass read bright green over
-    // an olive map (QA D39). Circles and Voronoi cells are opaque on the map
-    // too.
+    // full-strength cushion (G01), as pass 1 eased it for the tile's label
+    // (s.stops) — so the glass shows the colour the map shows; when the two
+    // recipes differed the glass read bright green over an olive map (QA
+    // D39). Circles and Voronoi cells are opaque on the map too.
     ctx.fillStyle = s.n.freed ? 'rgba(120,120,130,0.35)'
       : s.kind ? `rgb(${base[0]},${base[1]},${base[2]})`
-      : tmLeafFill(ctx, base, b.y0, b.y1 - b.y0);
+      : tmLeafFill(ctx, s.stops || tmLeafStops(base, b.y1 - b.y0), b.y0, b.y1 - b.y0);
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.45)';
     ctx.lineWidth = 0.25;

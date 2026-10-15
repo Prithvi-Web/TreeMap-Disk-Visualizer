@@ -138,11 +138,11 @@ test('D27: the centre disc shortens the folder name to the disc rather than sque
 const TILE = { name: 'clip.mov', path: '/r/a/b/c/clip.mov', size: 5e8, type: 'file', depth: 4, expanded: false, x: 10, y: 10, w: 30, h: 30 };
 const GREEN = [48, 209, 88];
 
-/** The fillStyle the real drawTreemap gives TILE's rectangle, and the pixel rect it drew. */
-function mapFill() {
+/** The fillStyle the real drawTreemap gives `tile`'s rectangle, and the pixel rect it drew. */
+function mapFill(tile: typeof TILE = TILE, colour: number[] = GREEN) {
   const rec = recordingCtx();
-  const state = { treemap: { nodes: [TILE], hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
-  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'mix', 'containerListable'], {
+  const state = { treemap: { nodes: [tile], hideCloud: false, rootSize: 1e9, history: { active: false }, pxRects: [] as any[] } };
+  const draw = load<() => void>(['drawTreemap', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA', 'mix', 'containerListable'], {
     $: () => ({ clientWidth: 120 }),
     treemapCanvasHeight: () => 100,
     window: { devicePixelRatio: 1 },
@@ -153,7 +153,7 @@ function mapFill() {
     state,
     tmNodeCapNote: () => '', renderAltNote() {}, tmSetEmpty() {},
     renderSearchOverlay() {}, presentTreemap() {}, renderTmLegend() {},
-    cellRgb: () => GREEN,
+    cellRgb: () => colour,
     tmHatchPattern: () => null,
     tmPreview: { on: false },
     roundRect() {},
@@ -166,14 +166,14 @@ function mapFill() {
 }
 
 /** The fillStyle the real lensPaint gives the same tile under the glass. */
-function lensFill(pxRects: any[]) {
+function lensFill(pxRects: any[], colour: number[] = GREEN, at = { x: 25, y: 25 }) {
   const rec = recordingCtx();
   const paint = load<(ctx: unknown, w: number, h: number) => void>(
-    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H'], {
-      state: { lens: { held: true, pinned: false, at: { x: 25, y: 25 } }, treemap: { pxRects, cells: [] } },
+    ['lensPaint', 'lensActive', 'lensShapes', 'LENS_SCALE', 'LENS_RADIUS', 'Canvas2D', 'mix', 'tmLeafFill', 'tmLeafStops', 'TM_CUSHION_LIGHT', 'TM_CUSHION_SHADE', 'TM_CUSHION_FULL_H', 'tmFolderTags', 'tmLabelLines', 'tmBestInk', 'tmLabelInk', 'tmContrast', 'tmLuminance', 'TM_CUSHION_EASE', 'TM_LABEL_FLOOR', 'TM_LABEL_LEADING', 'TM_SIZE_INK_ALPHA'], {
+      state: { lens: { held: true, pinned: false, at }, treemap: { pxRects, cells: [] } },
       isCells: () => false,
       cssVar: () => '#0b0b0f',
-      cellRgb: () => GREEN,
+      cellRgb: () => colour,
       altCellPath() {},
       window: { devicePixelRatio: 1 },
     }, 'lensPaint');
@@ -193,4 +193,19 @@ test('D39: the lens paints a tile with the same fill the map painted it with', (
   assert.equal(typeof glass, 'object', `the lens fills with the map's gradient, not a flat colour (${String(glass)})`);
   assert.deepEqual((glass as any).stops, (fill as any).stops, 'with the same colour stops — same hue, same cushion');
   assert.deepEqual((glass as any).args, (fill as any).args, 'running over the tile\'s own height, as on the map');
+});
+
+test('D39: a tile whose cushion eased for its label shows the same eased cushion under the glass', () => {
+  // A mid grey (the Reclaim "keep" grey) reads at 4.5:1 in neither black
+  // nor white across the whole cushion, so pass 1 eases it under the label
+  // (review F1.2): the glass must paint that cushion, not a fresh full one.
+  const KEEP = [90, 100, 114];
+  const labelled = { ...TILE, name: 'keep.bin', path: '/r/keep.bin', x: 0, y: 0, w: 80, h: 74 };
+  const { fill, px } = mapFill(labelled, KEEP);
+  assert.equal(px.length, 1, 'the map drew the tile');
+  const full = mapFill({ ...labelled, w: 30 }, KEEP).fill as any; // too narrow for a label: the whole cushion
+  assert.notDeepEqual((fill as any).stops, full.stops, 'the map eased this tile\'s cushion for its label');
+  const glass = lensFill(px, KEEP, { x: 40, y: 40 });
+  assert.equal(typeof glass, 'object', `the lens fills with a gradient (${String(glass)})`);
+  assert.deepEqual((glass as any).stops, (fill as any).stops, 'the glass paints the cushion the map painted');
 });

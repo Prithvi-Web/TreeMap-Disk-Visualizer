@@ -56,7 +56,7 @@ function declSource(name: string): string {
 function load<T>(names: string[], deps: Record<string, unknown>, returns: string, run?: (fn: T) => void): T {
   const keys = Object.keys(deps);
   const pulled = [...names];
-  for (let attempt = 0; attempt < 16; attempt++) {
+  for (let attempt = 0; attempt < 32; attempt++) {
     const src = `'use strict'; ${pulled.map(declSource).join('\n')}\nreturn ${returns};`;
     try {
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -69,7 +69,7 @@ function load<T>(names: string[], deps: Record<string, unknown>, returns: string
       pulled.push(missing);
     }
   }
-  throw new Error(`${names.join(', ')} would not run after pulling in 16 helpers`);
+  throw new Error(`${names.join(', ')} would not run after pulling in 32 helpers`);
 }
 
 type Grad = { kind: 'linear'; args: number[]; stops: Array<[number, string]> };
@@ -461,5 +461,132 @@ test('G09: a hollow cloud placeholder is labelled in the page\'s own ink, readab
       const c = contrast(over(rgba(String(text.fillStyle)), under), under);
       assert.ok(c >= 4.5, `${theme}: "${text.text}" in ${String(text.fillStyle)} measures ${fmt(c)}:1 on the hollow tile (floor 4.5:1)`);
     }
+  }
+});
+
+/* ══════════════ G09 — every colour the map paints, and a label pushed below its folder's tag ══════════════ */
+
+/**
+ * The size ramp is one of the colours a tile is painted in. Age, Reclaim
+ * (every score, and "not scored"), the History diff and the Trash cell
+ * paint others, and several sit at the luminance where black and white
+ * read about equally — about 4.6:1 each on a flat fill, so a cushion's light
+ * top and dark foot leave neither at 4.5:1 across a line: the Reclaim
+ * "keep" grey measured 4.36:1 (name) and 4.06:1 (size), the diff's
+ * "unchanged" 3.91:1 (review F1.2, F1.14). And a leaf in its folder's
+ * top-left corner writes its label below the folder's name tag, 24 px down,
+ * where a short red tile's cushion runs through that same luminance.
+ */
+const OTHER_COLOURS: Array<{ name: string; rgb: RGB }> = (() => {
+  const pageColours = load<{ reclaimRgb: (s: number) => RGB; diffRgb: (n: object) => RGB; consts: Record<string, RGB> }>(
+    ['reclaimRgb', 'diffRgb', 'C_RC_UNSCORED'], {},
+    `{ reclaimRgb, diffRgb, consts: { C_RC_UNSCORED, ${[...new Set(/const AGE_BANDS = \[([\s\S]*?)\n\];/.exec(INDEX)![1].match(/rgb: (C_\w+)/g)!.map((m) => m.slice(5)))].join(', ')} } }`,
+    (c) => { c.reclaimRgb(10); c.diffRgb({ size: 1, prevSize: 2 }); });
+  const out: Array<{ name: string; rgb: RGB }> = [];
+  for (let s = 0; s <= 100; s++) out.push({ name: `Reclaim score ${s}`, rgb: pageColours.reclaimRgb(s) });
+  out.push({ name: 'Reclaim not scored', rgb: pageColours.consts.C_RC_UNSCORED });
+  for (const [k, v] of Object.entries(pageColours.consts)) if (k !== 'C_RC_UNSCORED') out.push({ name: `Age band ${k}`, rgb: v });
+  for (const [what, n] of [['unchanged', { size: 5e9 }], ['unchanged (same size)', { size: 5e9, prevSize: 5e9 }], ['new', { size: 5e9, prevSize: null }],
+    ['grew', { size: 5e9, prevSize: 1e9 }], ['shrank', { size: 1e9, prevSize: 5e9 }]] as const) {
+    out.push({ name: `History diff ${what}`, rgb: pageColours.diffRgb(n) });
+  }
+  return out;
+})();
+
+/** Heights through the cushion's whole range: a one-line tile, two lines, a part cushion, a whole one, tall. */
+const SWEEP_HEIGHTS = [15, 17, 18, 20, 22, 25, 27, 31, 34, 37, 41, 44, 48, 53, 56, 60, 63, 71, 74, 87, 110, 126, 200];
+
+type Swept = { label: string; h: number; y0: number; fill: Grad; texts: Text[] };
+
+/**
+ * Paint `leaves` (each with its colour, or the Trash cell) with the real
+ * drawTreemap, each in its own 210 px row slot — after the folder frame it
+ * sits in, when it has one — and return each leaf's cushion and the lines
+ * written on it.
+ */
+function sweep(leaves: Array<{ label: string; rgb?: RGB; trash?: boolean; h: number; inFolder?: boolean }>): Swept[] {
+  const nodes: Tile[] = [];
+  const colourOf = new Map<string, RGB>();
+  const where: Array<{ x: number; y: number; h: number }> = [];
+  for (const [i, l] of leaves.entries()) {
+    const x = (i % 10) * 100, y = Math.floor(i / 10) * 210;
+    let lx = x, ly = y;
+    if (l.inFolder) {
+      // A top-level folder big enough for its name tag, with this leaf in its top-left corner.
+      nodes.push({ name: `Folder ${i}`, path: `/r/d${i}`, size: 1e10, type: 'dir', depth: 1, expanded: true,
+        x: (x / MAP_W) * 100, y: (y / MAP_H) * 100, w: (100 / MAP_W) * 100, h: ((l.h + 4) / MAP_H) * 100 });
+      lx = x + 2; ly = y + 2;
+    }
+    const leaf = { name: `file-${i}.mov`, path: `/r/d${i}/file-${i}.mov`, size: 5e9, type: 'file', depth: l.inFolder ? 2 : 1, expanded: false,
+      x: (lx / MAP_W) * 100, y: (ly / MAP_H) * 100, w: (96 / MAP_W) * 100, h: (l.h / MAP_H) * 100, ...(l.trash ? { isTrash: true } : {}) };
+    nodes.push(leaf);
+    if (l.rgb) colourOf.set(leaf.path, l.rgb);
+    where.push({ x: lx, y: ly, h: l.h });
+  }
+  const rec = paint(nodes, (n) => colourOf.get(n.path) ?? [0, 0, 0]);
+  const fills = leafFills(rec, leaves.length);
+  return leaves.map((l, k) => ({
+    label: l.label, h: l.h, y0: where[k].y, fill: fills[k],
+    texts: rec.texts.filter((tx) => Math.abs(tx.x - (where[k].x + 5)) < 0.01 && tx.y >= where[k].y - 0.01 && tx.y < where[k].y + l.h),
+  }));
+}
+
+/** Every line on every swept tile at 4.5:1 or better against the cushion under it, in both themes. */
+function assertLegible(swept: Swept[], what: string, expectLines: number) {
+  let lines = 0;
+  for (const [theme, ground] of THEMES) {
+    for (const s of swept) {
+      for (const [k, text] of s.texts.entries()) {
+        const l = { depth: 0, t: 0, h: s.h, tile: { y: (s.y0 / MAP_H) * 100 } as Tile, fill: s.fill, texts: s.texts };
+        const c = worstContrast(l, text, ground);
+        assert.ok(c >= 4.5, `${theme}, ${what}, ${s.label}, a ${s.h} px tile: its ${k === 0 ? 'name' : 'size'} line in ${String(text.fillStyle)} measures ${fmt(c)}:1 (floor 4.5:1)`);
+        lines++;
+      }
+    }
+  }
+  assert.ok(lines >= expectLines, `${what}: ${lines} lines measured`);
+}
+
+test('G09: a tile\'s name and size reach 4.5:1 on every colour the map paints — Age, every Reclaim score, "not scored", the History diff and the Trash cell', () => {
+  const leaves = [
+    ...OTHER_COLOURS.flatMap((c) => SWEEP_HEIGHTS.map((h) => ({ label: c.name, rgb: c.rgb, h }))),
+    ...SWEEP_HEIGHTS.map((h) => ({ label: 'the Trash cell', trash: true, h })),
+  ];
+  const swept = sweep(leaves);
+  for (const s of swept) assert.ok(s.texts.length >= 1, `${s.label}, ${s.h} px: the tile is labelled`);
+  assertLegible(swept, 'colour mode', 2 * leaves.length);
+});
+
+test('G09: a label written below its folder\'s name tag reaches 4.5:1 too — on the size ramp and on every other colour', () => {
+  const heights = [40, 42, 44, 48, 51, 53, 56, 60, 66, 74, 90, 120, 200]; // a folder 44 px or taller carries a tag
+  const colours = [...STEPS.map((s) => ({ name: `ramp ${s.t}`, rgb: ramp.sizeRgb(s.bytes) })), ...OTHER_COLOURS];
+  const leaves = colours.flatMap((c) => heights.map((h) => ({ label: c.name, rgb: c.rgb, h, inFolder: true })));
+  const swept = sweep(leaves);
+  for (const s of swept) {
+    assert.ok(s.texts.length >= 1, `${s.label}, ${s.h} px: the tile is labelled`);
+    assert.ok(s.texts[0].y - s.y0 >= 20, `${s.label}, ${s.h} px: below its folder's tag (${fmt(s.texts[0].y - s.y0)} px down)`);
+  }
+  assertLegible(swept, 'below a folder tag', 2 * leaves.length);
+});
+
+test('G09: the cushion gives way only where a label needs it — a size-ramp tile keeps the whole cushion an unlabelled tile of its height gets', () => {
+  // The owner's map is cushioned; legibility may ease a tile's cushion,
+  // never flatten the ramp's tiles, whose labels read at the whole one.
+  const twins = sweep(LABELLED.map((l) => ({ label: `ramp ${l.t}`, rgb: ramp.sizeRgb(STEPS.find((s) => s.t === l.t)!.bytes), h: l.h })));
+  const bare = (() => {
+    const tiles = LABELLED.map((l, i) => ({ ...tile(i, l.depth, STEPS.find((s) => s.t === l.t)!.bytes, l.h) }));
+    return leafFills(paint(tiles), tiles.length);
+  })();
+  for (const [k, l] of LABELLED.entries()) {
+    assert.ok(twins[k].texts.length >= 1, `ramp ${l.t}, ${l.h} px: labelled`);
+    assert.deepEqual(twins[k].fill.stops, bare[k].stops, `ramp ${l.t}, a ${l.h} px tile: labelled, it keeps the cushion an unlabelled tile gets`);
+  }
+});
+
+test('G09: where the cushion gives way for a label, it eases — a Reclaim "keep" tile 60 px or taller still shades from top to foot', () => {
+  const swept = sweep([60, 74, 90, 126, 200].map((h) => ({ label: 'Reclaim score 0', rgb: OTHER_COLOURS[0].rgb, h })));
+  for (const s of swept) {
+    const top = luminance(at(s.fill, 0, [0, 0, 0])), foot = luminance(at(s.fill, 1, [0, 0, 0]));
+    assert.ok(top > foot * 1.08, `${s.h} px: the cushion still runs light to dark (${top.toFixed(3)} → ${foot.toFixed(3)})`);
   }
 });
