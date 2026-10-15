@@ -603,18 +603,23 @@ input[type="submit"], input[type="button"], input[type="reset"] { cursor: var(--
   border-color: var(--hairline-2); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn-hover); }
 .btn:active { transform: scale(0.96); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn); }
 /* The sheen is a highlight along the top edge, spent by the time the label
-   begins (a 13px line centred in a 30px button starts 24% down): over the
-   label it once lifted the fill enough to leave white text at 2.9:1 in the
-   dark theme and 4.0:1 in the light one (design pass G09). The fill is
+   begins: over the label it once lifted the fill enough to leave white text
+   at 2.9:1 in the dark theme and 4.0:1 in the light one (design pass G09).
+   It runs straight down (180deg), so where it is spent depends on the
+   button's height alone: a 13px label's 16px line box, centred in the 28px
+   padding box, starts 21% down, under the 20% stop. Tilted at 170deg, as
+   the other buttons' faint sheen is, the gradient line also runs across the
+   button, and a wide label's left end sat 12% white: 4.09:1 hovered in the
+   dark on "Show me what I could free" (review F1.1). The fill is
    --accent-fill, not --accent — see 000-tokens.css. */
 .btn-primary {
-  background: linear-gradient(170deg, rgba(255,255,255,0.28), rgba(255,255,255,0.05) 24%, rgba(255,255,255,0.03) 52%), var(--accent-fill);
+  background: linear-gradient(180deg, rgba(255,255,255,0.28), rgba(255,255,255,0.05) 20%, rgba(255,255,255,0.03) 52%), var(--accent-fill);
   border-color: rgba(255,255,255,0.22); color: #fff;
   box-shadow: 0 4px 18px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -6px 14px rgba(0,40,110,0.22);
 }
 /* --accent-fill-hover, not a hex: the token brightens in dark and deepens
    in light, so the white label stays legible under the pointer in both. */
-.btn-primary:hover { background: linear-gradient(170deg, rgba(255,255,255,0.34), rgba(255,255,255,0.07) 24%, rgba(255,255,255,0.04) 52%), var(--accent-fill-hover);
+.btn-primary:hover { background: linear-gradient(180deg, rgba(255,255,255,0.34), rgba(255,255,255,0.07) 20%, rgba(255,255,255,0.04) 52%), var(--accent-fill-hover);
   box-shadow: 0 7px 28px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.4); }
 .btn-danger { background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 55%), var(--danger-soft);
   border-color: rgba(255,69,58,0.38); color: #ff6b61; }

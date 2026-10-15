@@ -181,18 +181,21 @@ test('the primary button deepens on hover in the light theme, brightens in the d
 });
 
 /**
- * `linear-gradient(<angle>, <stop>, …), var(--fill)` as [stops, fill]: each
- * stop a colour with its position in percent — a missing first position is
- * 0%, a missing last 100%, and missing middle ones are spread evenly, as CSS
+ * `linear-gradient(<angle>, <stop>, …), var(--fill)` as { angle, stops, fill }:
+ * the angle in degrees (CSS's: 0deg points up, 90deg right), each stop a
+ * colour with its position in percent — a missing first position is 0%, a
+ * missing last 100%, and missing middle ones are spread evenly, as CSS
  * places them.
  */
-function sheenOver(background: string): { stops: Array<{ at: number; colour: string }>; fill: string } {
+function sheenOver(background: string): { angle: number; stops: Array<{ at: number; colour: string }>; fill: string } {
   const top = layers(background);
   assert.equal(top.length, 2, `a sheen over one fill (${background})`);
   const g = /^linear-gradient\((.*)\)$/.exec(top[0]);
   assert.ok(g, `the sheen is a linear gradient (${top[0]})`);
-  const args = layers(g![1]).slice(1); // the angle first
-  const raw = args.map((a) => {
+  const all = layers(g![1]);
+  const deg = /^(-?[\d.]+)deg$/.exec(all[0].trim());
+  assert.ok(deg, `the sheen states its angle in degrees (${all[0]})`);
+  const raw = all.slice(1).map((a) => {
     const m = /^(rgba?\([^)]*\))\s*(?:([\d.]+)%)?$/.exec(a.trim());
     assert.ok(m, `a stop is a colour and an optional percentage (${a})`);
     return { colour: m![1], at: m![2] === undefined ? null : +m![2] };
@@ -205,33 +208,84 @@ function sheenOver(background: string): { stops: Array<{ at: number; colour: str
     const a = raw[i - 1].at!, b = raw[j].at!;
     for (let k = i; k < j; k++) raw[k].at = a + ((b - a) * (k - i + 1)) / (j - i + 1);
   }
-  return { stops: raw as Array<{ at: number; colour: string }>, fill: top[1] };
+  return { angle: +deg![1], stops: raw as Array<{ at: number; colour: string }>, fill: top[1] };
 }
 
-test('G09: the primary button\'s white label clears 4.5:1 WITH its sheen, resting and hovered, in both themes — and the blue stays vivid', () => {
+/**
+ * Where a point of a box falls on a CSS linear gradient, in percent: the
+ * gradient line runs through the box's centre at `angle`, and is as long as
+ * the box's projection on it, |w·sin a| + |h·cos a| (CSS Images 3, §3.1.1) —
+ * so at any angle but a vertical one the x of the point counts too.
+ */
+function gradientAt(angle: number, w: number, h: number, x: number, y: number): number {
+  const a = (angle * Math.PI) / 180;
+  const along = (x - w / 2) * Math.sin(a) - (y - h / 2) * Math.cos(a);
+  const length = Math.abs(w * Math.sin(a)) + Math.abs(h * Math.cos(a));
+  return (0.5 + along / length) * 100;
+}
+
+/** px of a `<n>px` length (0 for none). */
+const px = (v: string | null | undefined) => parseFloat(/(-?[\d.]+)px/.exec(v ?? '')?.[1] ?? '0');
+
+test('G09: the primary button\'s white label clears 4.5:1 WITH its sheen, resting and hovered, in both themes, at every width — and the blue stays vivid', () => {
   // White on #0A84FF is 3.65:1 flat, and the sheen's white lifts the fill
   // under the label further: QA measured 3.0–3.9:1 rendered in the dark
-  // theme. The label's band is where a 13px line sits, centred in a 30px
-  // button; every point of the sheen across it is measured.
+  // theme. The sheen is measured where CSS puts it: over the padding box
+  // (the gradient's positioning area), along the gradient's own angle — a
+  // tilted sheen reaches further down a wide button's left end than its
+  // height alone implies, which is how a 188 px "Show me what I could free"
+  // measured 4.09:1 hovered in the dark while a band down the middle passed
+  // (review F1.1). Every point of the label's box is measured, at every
+  // width a primary button takes, for the standard button and for each
+  // primary button the page sizes with its own style.
   const btn = ruleFor('.btn');
-  const h = parseFloat(prop(btn.body, 'min-height')!), fs = parseFloat(prop(btn.body, 'font-size')!);
-  const band = [(h - fs * 1.2) / 2 / h * 100, (h + fs * 1.2) / 2 / h * 100];
-  assert.ok(band[0] > 15 && band[1] < 85, `the label band is ${band.map(fmt).join('–')}% of the button`);
+  const pad = (prop(btn.body, 'padding') ?? '').trim().split(/\s+/).map(px);
+  const standard = {
+    h: px(prop(btn.body, 'min-height')), fs: px(prop(btn.body, 'font-size')),
+    padX: pad.length > 1 ? pad[1] : pad[0], border: px(prop(btn.body, 'border')),
+  };
+  assert.ok(standard.h >= 24 && standard.fs >= 11 && standard.padX > 0 && standard.border > 0, `the button's geometry is read (${JSON.stringify(standard)})`);
+  const geometries = [standard];
+  for (const m of INDEX.matchAll(/class="btn btn-primary"[^>]*style="([^"]*)"/g)) {
+    const own = (name: string) => new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+)`).exec(m[1])?.[1] ?? null;
+    const ownPad = own('padding')?.trim().split(/\s+/).map(px);
+    geometries.push({
+      h: own('min-height') ? px(own('min-height')) : standard.h,
+      fs: own('font-size') ? px(own('font-size')) : standard.fs,
+      padX: ownPad ? (ownPad.length > 1 ? ownPad[1] : ownPad[0]) : standard.padX,
+      border: standard.border,
+    });
+  }
+  assert.ok(geometries.length >= 2, 'the empty state\'s larger "Choose a folder" button is measured too');
   for (const sel of ['.btn-primary', '.btn-primary:hover']) {
-    const { stops, fill } = sheenOver(prop(ruleFor(sel).body, 'background')!);
+    const { angle, stops, fill } = sheenOver(prop(ruleFor(sel).body, 'background')!);
+    const alphaAt = (at: number) => {
+      const i = stops.findIndex((st) => st.at >= at);
+      const last = stops[stops.length - 1];
+      const [a, b] = i === -1 ? [last, last] : i === 0 ? [stops[0], stops[0]] : [stops[i - 1], stops[i]];
+      return { a, b, t: b.at === a.at ? 0 : (at - a.at) / (b.at - a.at) };
+    };
     for (const [name, palette] of THEMES) {
       const base = paint(fill, palette, [0, 0, 0]);
-      let worst = Infinity, where = 0;
-      for (let at = band[0]; at <= band[1]; at += 0.5) {
-        const i = stops.findIndex((st) => st.at >= at);
-        const last = stops[stops.length - 1];
-        const [a, b] = i === -1 ? [last, last] : i === 0 ? [stops[0], stops[0]] : [stops[i - 1], stops[i]];
-        const t = b.at === a.at ? 0 : (at - a.at) / (b.at - a.at);
-        const under = mix(over(b.colour, base), t, over(a.colour, base));
-        const c = contrast([255, 255, 255], under);
-        if (c < worst) { worst = c; where = at; }
+      let worst = Infinity, where = '';
+      for (const g of geometries) {
+        // The positioning area is the padding box; the label's line box
+        // (font size × 1.2, rounded up to whole pixels as the engine lays it
+        // out) is centred in it, across the whole content width.
+        const h = g.h - 2 * g.border, line = Math.ceil(g.fs * 1.2);
+        for (let width = 60; width <= 400; width += 10) {
+          const w = width - 2 * g.border;
+          const x0 = g.padX, x1 = w - g.padX, y0 = (h - line) / 2, y1 = (h + line) / 2;
+          for (let i = 0; i <= 20; i++) for (let j = 0; j <= 8; j++) {
+            const x = x0 + ((x1 - x0) * i) / 20, y = y0 + ((y1 - y0) * j) / 8;
+            const { a, b, t } = alphaAt(gradientAt(angle, w, h, x, y));
+            const under = mix(over(b.colour, base), t, over(a.colour, base));
+            const c = contrast([255, 255, 255], under);
+            if (c < worst) { worst = c; where = `a ${width}×${g.h} button, ${fmt(x)}px in and ${fmt(y)}px down its label`; }
+          }
+        }
       }
-      assert.ok(worst >= 4.5, `${name} ${sel}: the white label measures ${fmt(worst)}:1 at ${fmt(where)}% down the button (floor 4.5:1)`);
+      assert.ok(worst >= 4.5, `${name} ${sel}: the white label measures ${fmt(worst)}:1 at ${where} (floor 4.5:1)`);
       // Vivid, not greyed: CIE C*ab of the fill itself.
       const chroma = labChroma(base);
       assert.ok(chroma >= 60, `${name} ${sel}: the fill keeps its colour — C*ab ${chroma.toFixed(1)} (floor 60)`);
