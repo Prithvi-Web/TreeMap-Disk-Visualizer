@@ -769,18 +769,20 @@ test('where the onDisk fact cannot answer — a system that reports no blocks, a
  * page's updateCleanSummary draws the footer from the ticked rows (stubbed:
  * `n` files ticked), runCleanTrash moves them in chunks of 20, and
  * confirmCleanTrash is the button's click. Each chunk's trashPaths waits until
- * the test answers it.
+ * the test answers it — with the chunk moved, or, given an error, by throwing it.
  */
 function footerDuringDelete(n: number) {
   const { els, $ } = classDom();
   const paths = Array.from({ length: n }, (_, i) => `/r/f${i}.mov`);
   const selection = { paths, sizes: new Map(paths.map((p) => [p, 100])), bytes: 100 * n, noun: 'file', onDisk: null };
-  const answers: Array<() => void> = [];
+  const answers: Array<(err?: Error) => void> = [];
   const sheets: string[][] = [];
   const deps: Record<string, unknown> = {
     $, activeCleanSelection: () => selection, isCloudScan: () => false, cloudProviderOfScan: () => assert.fail('a local scan has no provider'),
     escapeHtml: String, icon: () => '', formatBytes: (b: number) => `${b} B`, renderCleanFunnel: () => {},
-    trashPaths: (chunk: string[]) => new Promise((resolve) => { answers.push(() => resolve({ deleted: [...chunk], failed: [] })); }),
+    trashPaths: (chunk: string[]) => new Promise((resolve, reject) => {
+      answers.push((err) => (err ? reject(err) : resolve({ deleted: [...chunk], failed: [] })));
+    }),
     closeModal: () => {}, toast: () => {}, REDUCED: true, rescan: () => {},
     confirmTrash: async (p: string[]) => { sheets.push([...p]); },
   };
@@ -818,6 +820,26 @@ test('while a delete runs, a redraw of the footer — Find\'s late answer about 
   await run;
   h.page.summary();
   assert.deepEqual(h.button(), { disabled: false, label: 'Move 25 to Trash' }, 'once the run is over, the footer is drawn from the ticks again');
+  await h.page.click();
+  assert.equal(h.sheets.length, 1, 'and a click asks again');
+});
+
+test('a delete that stops on a throw hands Move to Trash back too: the footer is drawn from the ticks again and a click asks again — the run\'s hold is released in a finally, whatever ends it (review round 3, F3.2)', async () => {
+  // runCleanTrash holds the button with a page flag for its whole run. Were
+  // the flag cleared only after the loop, a chunk whose trashPaths threw left
+  // it set: the footer stayed "Deleting…", disabled, and a click returned
+  // silently, so Clean Up could trash nothing until the page was reloaded.
+  const h = footerDuringDelete(25);
+  h.page.summary();
+  const run = h.page.run(h.selection, {});
+  await waitFor(() => h.answers.length === 1, 'the first chunk to be sent');
+  h.answers[0]();
+  await waitFor(() => h.answers.length === 2, 'the second chunk to be sent');
+  assert.equal(h.button().label, 'Deleting… 20/25', 'control: the run is under way');
+  h.answers[1](new Error('the second chunk could not be sent'));
+  await assert.rejects(run, /could not be sent/, 'control: the run stops on the throw');
+  h.page.summary();
+  assert.deepEqual(h.button(), { disabled: false, label: 'Move 25 to Trash' }, 'the footer is drawn from the ticks again');
   await h.page.click();
   assert.equal(h.sheets.length, 1, 'and a click asks again');
 });
