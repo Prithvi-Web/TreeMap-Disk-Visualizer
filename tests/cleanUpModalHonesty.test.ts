@@ -1411,6 +1411,49 @@ test('a folder whose project is still here is never called "in use" — the app\
     'a cache names the command that clears it');
 });
 
+/*
+ * F2.1 took the command off the fold's rows; an orphan's row still ended
+ * "· <code>npm install</code> to restore" under a header saying "nothing will
+ * rebuild them". With its project gone, `npm install`, `cargo build` and
+ * `pip install -r requirements.txt` put back nothing — and the virtualenv's
+ * line said requirements.txt was gone, then named it as the way back. A
+ * virtualenv whose interpreter is gone gets no `.venv` from pip either, and a
+ * superseded Homebrew keg's command (`brew cleanup ripgrep`) removes it. So an
+ * orphan's row says what the server found and names no command; a cache's
+ * command does clear it, and says so (G05 review F3.2, F3.4).
+ */
+test('an orphaned folder\'s row names no command as putting it back — its project is gone, or its interpreter is, and a superseded keg\'s command removes it — while a cache still names what clears it (G05 review F3.2, F3.4)', async () => {
+  const orphan = (ecosystem: string, name: string, path: string, reason: string, command: string, project?: string): PkgEntry => ({
+    ecosystem, kind: 'orphan', name, path, size: 1_000_000, modifiedAt: 1, reason, command,
+    ...(project ? { projectPath: path.slice(0, path.lastIndexOf('/')), projectName: project } : {}),
+  });
+  // Each with the reason and command GET /api/packages/orphans sends for it (packageEcosystemScanner).
+  const rows = [
+    orphan('npm', 'node_modules', '/corpus/old/node_modules', 'No package.json beside it — the project that owned this is gone.', 'npm install'),
+    orphan('python', '.venv', '/corpus/gone/.venv', 'No requirements.txt beside it — the project that owned this is gone.', 'pip install -r requirements.txt'),
+    orphan('python', '.venv', '/corpus/Projects/py/.venv', 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.', 'pip install -r requirements.txt', 'py'),
+    orphan('cargo', 'target', '/corpus/rusty-old/target', 'No Cargo.toml beside it — the project that owned this is gone.', 'cargo build'),
+    orphan('homebrew', 'ripgrep 13.0.0', '/opt/homebrew/Cellar/ripgrep/13.0.0', 'Superseded — ripgrep has 2 versions installed and only the newest is linked.', 'brew cleanup ripgrep', 'ripgrep'),
+  ];
+  const cache: PkgEntry = { ecosystem: 'npm', kind: 'cache', name: '_cacache', path: '/home/u/.npm/_cacache', size: 4_000_000, modifiedAt: 1, reason: 'npm’s shared download cache.', command: 'npm cache clean --force' };
+  const { lead } = await renderPackages(pkgReport([
+    pkgGroup('npm', [rows[0], cache]), pkgGroup('python', [rows[1], rows[2]]), pkgGroup('cargo', [rows[3]]), pkgGroup('homebrew', [rows[4]]),
+  ]));
+  assert.match(lead, /5 orphaned — nothing will rebuild them/, 'control: the header counts the five orphans');
+  const said = Object.fromEntries(pkgRows(lead).map((r) => [
+    /class="pth" title="([^"]+)"/.exec(r)![1],
+    /<div class="pkg-why">([\s\S]*?)<\/div>/.exec(r)?.[1] ?? '',
+  ]));
+  assert.deepEqual(said, {
+    '/corpus/old/node_modules': 'No package.json beside it — the project that owned this is gone.',
+    '/home/u/.npm/_cacache': 'npm’s shared download cache. · <code>npm cache clean --force</code> to clear',
+    '/corpus/gone/.venv': 'No requirements.txt beside it — the project that owned this is gone.',
+    '/corpus/Projects/py/.venv': 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.',
+    '/corpus/rusty-old/target': 'No Cargo.toml beside it — the project that owned this is gone.',
+    '/opt/homebrew/Cellar/ripgrep/13.0.0': 'Superseded — ripgrep has 2 versions installed and only the newest is linked.',
+  }, 'each orphan says what the server found, with no command; the cache names the command that clears it');
+});
+
 test('orphans and caches lead the sheet with their boxes, and a folder whose project is still here goes to the fold — "shared caches only" is said only where it is true (G05)', async () => {
   const orphan: PkgEntry = { ecosystem: 'npm', kind: 'orphan', name: 'node_modules', path: '/corpus/old/node_modules', size: 9_000_000, modifiedAt: 1, reason: 'No package.json beside it — the project that owned this is gone.', command: 'npm install' };
   const cache: PkgEntry = { ecosystem: 'npm', kind: 'cache', name: '_cacache', path: '/home/u/.npm/_cacache', size: 4_000_000, modifiedAt: 1, reason: 'npm’s shared download cache.', command: 'npm cache clean --force' };

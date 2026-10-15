@@ -2284,14 +2284,18 @@ test('the rule-pack catalog states which packs produced the list, and when', () 
 
 /* ══════════════ Package leftovers feed the existing bucket (§C6) ══════════════ */
 
-test('the package panel is grouped by ecosystem and shows owner, date and command', () => {
+test('the package panel is grouped by ecosystem and shows owner, date and a cache\'s command', () => {
   const code = appCode();
   const fn = code.slice(code.indexOf('async function renderPackageOrphans'), code.indexOf('const BROWSER_FAV'));
   assert.ok(fn.length > 0, 'renderPackageOrphans must be findable');
   assert.match(fn, /class="pkg-eco"/, 'entries are grouped per ecosystem');
   assert.match(fn, /pkg-proj/, 'each entry names its owning project, or says there is none');
   assert.match(fn, /formatDate\(e\.modifiedAt\)/, 'and its last-build date');
-  assert.match(fn, /to clear' : 'to restore'/, 'and the command that puts it back or clears it');
+  assert.match(fn, /<\/code> to clear/, 'and the command that clears a cache');
+  // An orphan's project is gone, and a superseded keg's command removes it:
+  // no row says a command puts it back (G05 review F3.2; the rows are run in
+  // tests/cleanUpModalHonesty.test.ts).
+  assert.doesNotMatch(fn, /to restore/, 'never a command said to put a folder back');
 });
 
 test('an in-use package artifact is never offered for deletion by this panel', () => {
