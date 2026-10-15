@@ -191,7 +191,33 @@ test('G07: a newer query aborts the one still out, and the older answer never pa
   await h.asks[0].answer(hits(['/r/one', '/r/ten'])); // a server that answered anyway, late
   assert.deepEqual([...h.state.treemap.matchedPaths!], ['/r/ten'], 'only the newest ask\'s answer is on the map');
   assert.equal(h.painted(), 1, 'painted once, for the newest');
-  assert.ok(!h.said.some((s) => /aborted/i.test(s.text)), 'an abort is not an error anyone is told about');
+});
+
+test('G07 review F1.4: an aborted request rejects as fetch does — and that is not an error anyone is told about, nor does it take the last highlights down', async () => {
+  const h = highlight(); // an aborted ask rejects with AbortError
+  h.apply('size>1gb');
+  await h.asks[0].answer(hits(['/r/big']));
+  const before = h.said.length;
+  h.apply('size>1mb');
+  await turns();
+  h.apply('size>10mb'); // aborts the ask for size>1mb, which rejects at once
+  await turns();
+  assert.equal(h.asks[1].signal?.aborted, true, 'control: the ask for size>1mb was aborted');
+  assert.deepEqual(h.said.slice(before), [], 'nothing is said for an abort: not "The operation was aborted."');
+  assert.deepEqual(h.state.treemap.matchedPaths && [...h.state.treemap.matchedPaths], ['/r/big'], 'the last query\'s highlights stand');
+  assert.equal(h.state.treemap.matchTotal, 1, 'with its total');
+  await h.asks[2].answer(hits(['/r/ten']));
+  assert.deepEqual([...h.state.treemap.matchedPaths!], ['/r/ten'], 'and the newest answer paints');
+});
+
+test('G07 review F1.5: once a superseded request has settled, the newest one can still be aborted', async () => {
+  const h = highlight();
+  h.apply('size>1mb');
+  await turns();
+  h.apply('size>10mb'); // the first is aborted, rejects and settles
+  await turns();
+  h.cancel(); // the next keystroke
+  assert.equal(h.asks[1].signal?.aborted, true, 'the newest request is aborted: the older one settling did not forget it');
 });
 
 test('G07: a cancel — a keystroke, a clear, leaving the map — aborts the request still out', async () => {
@@ -222,10 +248,11 @@ function search(answersAnyway = false) {
   const server = heldServer(answersAnyway);
   const rendered: unknown[] = [];
   const panel = { innerHTML: '' };
+  let opened = 0;
   const gsearchSrc = /const gsearch = \{[^]*?\n\};/.exec(INDEX)?.[0];
   assert.ok(gsearchSrc, 'the search state object is in the built page');
   const deps: Record<string, unknown> = {
-    api: server.api, $: () => panel, renderGsearch: (r: unknown) => { rendered.push(r); }, gsearchClose() {}, gsearchOpen() {},
+    api: server.api, $: () => panel, renderGsearch: (r: unknown) => { rendered.push(r); }, gsearchClose() {}, gsearchOpen: () => { opened++; },
     escapeHtml: (s: string) => s, clearTimeout, setTimeout,
   };
   const keys = Object.keys(deps);
@@ -233,7 +260,7 @@ function search(answersAnyway = false) {
   const page = new Function(...keys, `'use strict'; ${gsearchSrc}\n${constOf('GSEARCH_DEBOUNCE_MS')}\n${declOf('gsearchAbort')}\n${declOf('runGsearch')}\nreturn { run: runGsearch, gsearch };`)(
     ...keys.map((k) => deps[k]),
   ) as { run: (q: string) => Promise<void>; gsearch: { seq: number } };
-  return { ...page, ...server, rendered, panel };
+  return { ...page, ...server, rendered, panel, opened: () => opened };
 }
 
 test('G07: a newer search aborts the one still out, and the older answer never paints', async () => {
@@ -247,7 +274,27 @@ test('G07: a newer search aborts the one still out, and the older answer never p
   await h.asks[1].answer({ query: 'Mailbox', hits: [] });
   await h.asks[0].answer({ query: 'Mail', hits: [] });
   assert.deepEqual(h.rendered.map((r) => (r as { query: string }).query), ['Mailbox'], 'only the newest answer is rendered');
-  assert.equal(h.panel.innerHTML, '', 'and the abort is not shown as an error');
+});
+
+test('G07 review F1.4: an aborted search rejects as fetch does — and the panel is not opened to say so', async () => {
+  const h = search(); // an aborted ask rejects with AbortError
+  void h.run('Mail');
+  void h.run('Mailbox'); // aborts the search for Mail, which rejects at once
+  await turns();
+  assert.equal(h.asks[0].signal?.aborted, true, 'control: the search for Mail was aborted');
+  assert.equal(h.panel.innerHTML, '', 'no "The operation was aborted." in the panel');
+  assert.equal(h.opened(), 0, 'and the panel was not opened for it');
+  await h.asks[1].answer({ query: 'Mailbox', hits: [] });
+  assert.deepEqual(h.rendered.map((r) => (r as { query: string }).query), ['Mailbox'], 'the newest answer renders');
+});
+
+test('G07 review F1.5: once a superseded search has settled, clearing the box still aborts the newest', async () => {
+  const h = search();
+  void h.run('Mail');
+  void h.run('Mailbox'); // the first is aborted, rejects and settles
+  await turns();
+  void h.run('   ');
+  assert.equal(h.asks[1].signal?.aborted, true, 'the newest search is aborted: the older one settling did not forget it');
 });
 
 test('G07: clearing the box aborts the search still out, and its answer never reopens the panel', async () => {
