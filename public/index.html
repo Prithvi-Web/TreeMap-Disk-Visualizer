@@ -36602,8 +36602,8 @@ document.addEventListener('click', (e) => {
    G05: the two halves sit apart. Orphans and caches — what a person can act
    on here — lead the sheet in #packageOrphans. A folder whose project is
    still here (the server's `active`) is listed after Smart Suggestions, in a
-   fold of its own (#packageProjects), and is called what it is: its project's
-   own command rebuilds it. "In use" is the open-file guard's word for a file a
+   fold of its own (#packageProjects), and is called what it is: its project
+   can build it again. "In use" is the open-file guard's word for a file a
    program has open, and over these rows it read as "do not delete" beside a
    suggestion offering the same folder. A sheet holding only such folders used
    to open on "Package leftovers — no orphans; shared caches only — 0 B". */
@@ -36685,16 +36685,15 @@ async function renderPackageOrphans() {
     ].filter(Boolean).join(' · '))).join('') + `</div>`;
 
   const projectCount = projects.reduce((n, x) => n + x.entries.length, 0);
-  // Every shipped project rule names its command; one that did not would
-  // have no command beside it to point at.
-  const commanded = projects.every(x => x.entries.every(e => e.command));
+  // The line says what is true of every folder in the fold, never that the
+  // command beside it puts it back: a virtualenv's (the rule pack's `pip
+  // install -r requirements.txt`) makes no `.venv`, and fails in a project
+  // with no requirements.txt (G05 review F1.1).
   if (projectsHost) {
     projectsHost.innerHTML = !projectCount ? '' : `<details class="pkg-projects">
     <summary class="rule-row">${icon('chevronRight', 14, 'pkg-chev')}
       <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Rebuildable project folders</b>
-      <span class="muted" style="flex:1;margin-left:8px;">${formatCount(projectCount)} folder${projectCount === 1 ? '' : 's'} whose project is still here — ${commanded
-        ? `the command beside ${projectCount === 1 ? 'it' : 'each'} puts it back`
-        : `${projectCount === 1 ? 'its' : 'each one’s'} project can build it again`}</span>
+      <span class="muted" style="flex:1;margin-left:8px;">${formatCount(projectCount)} folder${projectCount === 1 ? '' : 's'} whose project is still here — ${projectCount === 1 ? 'its' : 'each one’s'} project can build it again</span>
       <span class="size-badge num">${formatBytes(data.activeBytes)}</span>
     </summary>` + projects.map(x => ecoHtml(x,
       `${formatCount(x.entries.length)} folder${x.entries.length === 1 ? '' : 's'} · ${formatBytes(x.g.activeBytes)}`)).join('') + `

@@ -1372,7 +1372,7 @@ test('a sheet whose package folders all still have their project does not open o
   assert.match(summary, new RegExp(`\\b${CORPUS.activeBytes} B\\b`), 'and says what they take');
 });
 
-test('a folder whose project is still here is never called "in use" — the app\'s word for a file a program has open — and says what is true: its project is here, and its own command puts it back (G05)', async () => {
+test('a folder whose project is still here is never called "in use" — the app\'s word for a file a program has open — and says what is true: its project is here, and the command its rule names is beside it (G05)', async () => {
   const { lead, projects } = await renderPackages(CORPUS);
   assert.doesNotMatch(lead + projects, /in use/i, 'no row, tag or tooltip says "in use"');
   for (const r of pkgRows(projects)) {
@@ -1380,7 +1380,7 @@ test('a folder whose project is still here is never called "in use" — the app\
     const entry = CORPUS.ecosystems.flatMap((g) => g.entries).find((e) => e.path === path)!;
     assert.match(r, /<span class="pkg-tag active">rebuildable<\/span>/, `${path}: its tag says it can be rebuilt`);
     assert.match(r, /project is still here/, `${path}: its line says its project is still here`);
-    assert.ok(r.includes(`<code>${entry.command}</code>`), `${path}: and names the command that puts it back`);
+    assert.ok(r.includes(`<code>${entry.command}</code>`), `${path}: and names the command its rule gives`);
     assert.ok(r.includes(`<span class="pkg-proj">${entry.projectName}</span>`), `${path}: beside the project's name`);
   }
   assert.match(/<summary[\s\S]*?<\/summary>/.exec(projects)![0], /project is still here/, 'the fold says so of all of them');
@@ -1416,16 +1416,40 @@ test('orphans and caches lead the sheet with their boxes, and a folder whose pro
   assert.match(broken.lead, /could not be checked/, 'control: the panel says the packs could not be read');
 });
 
-test('a fold whose folders do not all name a command does not point at "the command beside it" (G05)', async () => {
+/*
+ * The fold's line once said "the command beside each puts it back" wherever
+ * every folder named a command. Not every command does: a Python
+ * virtualenv's is the rule pack's `pip install -r requirements.txt`, which
+ * makes no `.venv` (it installs into whichever Python comes first on PATH)
+ * and fails in a project with no requirements.txt (G05 review F1.1). So the
+ * line says what is true of every folder in it — its project can build it
+ * again — whichever of them name a command: all, some (F1.4) or none.
+ */
+test('the fold never says the command beside its folders puts them back — a virtualenv\'s does not — and says the same true thing whether all, some or none name a command (G05 review F1.1, F1.4)', async () => {
   const bare = { ...owned('npm', 'webapp', 'node_modules', 20_700_000, 'npm install'), command: undefined };
-  const { projects } = await renderPackages(pkgReport([pkgGroup('npm', [bare])]));
-  const summary = /<summary[\s\S]*?<\/summary>/.exec(projects)?.[0] ?? '';
-  assert.match(summary, /1 folder whose project is still here/, `control: the fold is drawn (${summary})`);
-  assert.doesNotMatch(summary, /command beside/, 'no command is beside it to point at');
-  assert.match(summary, /its project can build it again/, 'it says what is true of it');
-  const { projects: named } = await renderPackages(CORPUS);
-  assert.match(/<summary[\s\S]*?<\/summary>/.exec(named)![0], /6 folders whose project is still here — the command beside each puts it back/,
-    'where every folder names one, the fold points at it');
+  const named = owned('npm', 'shop', 'node_modules', 9_000_000, 'npm install');
+  const summaryOf = async (data: unknown) => {
+    const { projects } = await renderPackages(data);
+    return (/<summary[\s\S]*?<\/summary>/.exec(projects)?.[0] ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+  const said = {
+    // Six folders, every one naming a command — the virtualenv's among them.
+    all: await summaryOf(CORPUS),
+    // A folder that names a command beside one that names none, in one ecosystem.
+    some: await summaryOf(pkgReport([pkgGroup('npm', [named, bare])])),
+    none: await summaryOf(pkgReport([pkgGroup('npm', [bare])])),
+  };
+  assert.ok(CORPUS.ecosystems.some((g) => g.entries.some((e) => e.name === '.venv' && e.command === 'pip install -r requirements.txt')),
+    'control: the corpus holds the virtualenv, with the command its rule names');
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(said).map(([k, s]) => [k, /command beside|puts? (it|them) back/.test(s)])),
+    { all: false, some: false, none: false },
+    `no fold line says a command puts its folders back: ${JSON.stringify(said)}`);
+  assert.deepEqual(said, {
+    all: 'Rebuildable project folders 6 folders whose project is still here — each one’s project can build it again 117900000 B',
+    some: 'Rebuildable project folders 2 folders whose project is still here — each one’s project can build it again 29700000 B',
+    none: 'Rebuildable project folders 1 folder whose project is still here — its project can build it again 20700000 B',
+  }, 'each says what is true of every folder in it');
 });
 
 test('the fold of folders whose project is still here sits after Smart Suggestions; the leftovers a person can act on, before them (G05)', () => {
