@@ -558,18 +558,30 @@ let browseDrivesSeen = null;
 function browseDrawDrives(drives) {
   const row = $('browseDrives');
   row.hidden = !drives.length;
+  // The drives on screen already, in order: only a name can differ, and it is
+  // written in place, so a choice focused or being clicked keeps its button
+  // (G26 review F2.4). Other drives redraw the row.
+  const shown = [...row.querySelectorAll('.browse-drive')];
+  const names = shown.map((b) => b.querySelector('.browse-drive-nm'));
+  if (drives.length && shown.length === drives.length && shown.every((b, i) => b.dataset.p === drives[i].path && names[i])) {
+    names.forEach((nm, i) => { if (nm.textContent !== drives[i].name) nm.textContent = drives[i].name; });
+    return;
+  }
   row.innerHTML = !drives.length ? '' : '<span class="browse-drives-lbl">Whole drive</span>' + drives.map((d) =>
-    `<button class="pill browse-drive" data-p="${escapeHtml(d.path)}" title="${escapeHtml(d.path)} — the whole drive">${icon('hardDrive', 13)}${escapeHtml(d.name)}</button>`).join('');
+    `<button class="pill browse-drive" data-p="${escapeHtml(d.path)}" title="${escapeHtml(d.path)} — the whole drive">${icon('hardDrive', 13)}<span class="browse-drive-nm">${escapeHtml(d.name)}</span></button>`).join('');
 }
 /** Offer the whole drive at the picker's top when it scans (`scans`). The
     names come from the disk layout the Dashboard reads (topologyAnswer); a
-    machine that cannot give one gets the names that need none. */
+    machine that cannot give one gets the names that need none. Those are
+    drawn at once, before the layout answers, so the row never appears late
+    above the path field and moves the sheet under the pointer (G26 review
+    F2.4); the answer then names them. */
 async function browseOfferDrives(scans) {
   const mine = ++browseDrivesSeq;
   const sys = state.system || {};
   if (!scans) { browseDrawDrives([]); return; }
   if (sys.platform !== 'darwin' && sys.platform !== 'win32') { browseDrawDrives(browseWholeDrives(sys.platform, null, sys.homeDir)); return; }
-  browseDrawDrives(browseDrivesSeen || []);
+  browseDrawDrives(browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir));
   const cap = state.capabilities && state.capabilities.volumeTopology;
   let topo = null;
   if (!(cap && cap.available === false)) {

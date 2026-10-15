@@ -112,6 +112,40 @@ function fakeStorage(init: Record<string, string> = {}, broken = false) {
   };
 }
 
+/** A whole-drive button as a browser holds it: its path, and the span its name is in (null where the page drew none). */
+type DriveButton = { dataset: { p: string }; attrP: string; lead: string; nm: { textContent: string } | null; rest: string; querySelector(sel: string): { textContent: string } | null };
+type DriveRow = FakeEl & { writes: number; buttons: DriveButton[] };
+
+/**
+ * #browseDrives holding the buttons its HTML makes, as a browser does: each
+ * innerHTML write makes new buttons (counted in `writes`; a focused one is
+ * gone, and a click under way loses its button), a button's name span can be
+ * rewritten in place, and the row's HTML is read back from its buttons.
+ */
+function driveRowEl(): DriveRow {
+  const row = fakeEl('browseDrives') as DriveRow;
+  const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  let label = '';
+  row.writes = 0;
+  row.buttons = [];
+  Object.defineProperty(row, 'innerHTML', {
+    get: () => label + row.buttons.map((b) =>
+      `<button class="pill browse-drive" data-p="${b.attrP}">${b.lead}${b.nm ? `<span class="browse-drive-nm">${b.nm.textContent}</span>` : ''}${b.rest}</button>`).join(''),
+    set: (html: string) => {
+      row.writes++;
+      label = /^<span class="browse-drives-lbl">[^<]*<\/span>/.exec(html)?.[0] ?? '';
+      row.buttons = [...html.matchAll(/<button[^>]*data-p="([^"]*)"[^>]*>([\s\S]*?)<\/button>/g)].map((m) => {
+        const named = /^([\s\S]*?)<span class="browse-drive-nm">([^<]*)<\/span>([\s\S]*)$/.exec(m[2]);
+        const nm = named ? { textContent: decode(named[2]) } : null;
+        return { dataset: { p: decode(m[1]) }, attrP: m[1], lead: named ? named[1] : m[2], nm, rest: named ? named[3] : '',
+          querySelector: (sel: string) => (sel === '.browse-drive-nm' ? nm : null) };
+      });
+    },
+  });
+  row.querySelectorAll = ((sel: string) => (sel === '.browse-drive' ? [...row.buttons] : [])) as unknown as FakeEl['querySelectorAll'];
+  return row;
+}
+
 /** What the page around the picker knows: the platform, the disk layout's answer (topologyAnswer), this browser's storage. */
 type PickerWorld = {
   platform?: string; homeDir?: string;
@@ -123,6 +157,8 @@ type PickerWorld = {
 
 function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: { activeElement: unknown } = { activeElement: null }, world: PickerWorld = {}) {
   const els = new Map<string, FakeEl>();
+  const driveRow = driveRowEl();
+  els.set('browseDrives', driveRow);
   const $ = (id: string) => { if (!els.has(id)) els.set(id, fakeEl(id)); return els.get(id)!; };
   const asked: string[] = [];
   const scanned: string[] = [];
@@ -179,7 +215,7 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: 
     .map((m) => [m[2].replace(/<[^>]*>/g, ''), m[1]]));
   /** A click on the whole-drive choice at `p`, delegated as the page listens for it. */
   const clickDrive = (p: string) => $('browseDrives').listeners.click({ target: { closest: (sel: string) => (sel === '[data-p]' ? { dataset: { p } } : null) } });
-  return { rt, $, asked, scanned, toasts, offers, rows, use, storage, layoutAsked, showHidden, drives, clickDrive };
+  return { rt, $, asked, scanned, toasts, offers, rows, use, storage, layoutAsked, showHidden, drives, clickDrive, driveRow };
 }
 
 const HOME = { path: '/home/u', parent: '/home', dirs: ['.agents', '.antigravity', 'Desktop', '.cache', 'Documents', 'Downloads'].map(dir) };
@@ -489,6 +525,52 @@ test('opened to scan on Windows, the picker offers each lettered drive the layou
   bare.clickDrive('C:\\');
   await settle();
   assert.equal(bare.rt.path(), 'C:\\', 'which opens in the picker');
+});
+
+/*
+ * On a picker's first open the whole-drive row waited, hidden, for the disk
+ * layout (diskutil, or Windows' Get-Volume with its 30 s limit), then appeared
+ * above the path field and pushed the field, its chips and the list down
+ * under the pointer; and every answer rewrote the row, so a choice focused or
+ * being clicked meanwhile was replaced (G26 review F2.4). The row is now drawn
+ * at once, under the name that needs no layout, and an answer naming the same
+ * drives renames their buttons in place.
+ */
+test('on its first open the picker draws the whole drive at once, under the name that needs no disk layout, and the layout\'s answer renames that same button in place — the row never appears late, and a choice focused or being clicked keeps its button (G26 review F2.4)', async () => {
+  const g = gate();
+  const layout = { logicalVolumes: [{ name: 'Macintosh HD', mountPoint: '/' }] };
+  const t = browseRuntime(() => HOME, undefined, { platform: 'darwin', topology: async () => { await g.opened; return layout; } });
+  await t.rt.openBrowse(null);
+  assert.deepEqual([t.drives(), t.layoutAsked.n], [[['Startup disk', '/']], 1], 'drawn at once, before the layout it asked for answers, under the name that needs none');
+  const first = t.driveRow.buttons[0];
+  assert.equal(t.driveRow.writes, 1, 'control: the row was written once');
+  g.open();
+  await settle(); await settle();
+  assert.deepEqual(t.drives(), [['Macintosh HD', '/']], 'the answer names the startup disk');
+  assert.deepEqual([t.driveRow.writes, t.driveRow.buttons[0] === first], [1, true], 'on the same button, renamed in place: the row is not written again');
+  // Opened again: the name the layout gave is drawn at once, and an answer
+  // that says the same again changes nothing.
+  await t.rt.openBrowse(null);
+  await settle(); await settle();
+  assert.deepEqual([t.drives(), t.driveRow.writes, t.driveRow.buttons[0] === first, t.layoutAsked.n], [[['Macintosh HD', '/']], 1, true, 2],
+    'asked again, the same answer leaves the same button standing');
+});
+
+test('on Windows the home folder\'s own drive is drawn at once, and an answer naming other drives redraws the row with them — never a renamed button that still opens the drive that left (G26 review F2.4)', async () => {
+  const g = gate();
+  let layout = { logicalVolumes: [{ id: 'C:', name: 'Windows', mountPoint: 'C:\\' }, { id: 'D:', name: 'D:', mountPoint: 'D:\\' }] };
+  const t = browseRuntime(() => ({ path: 'C:\\Users\\u', parent: 'C:\\Users', dirs: [] }), undefined,
+    { platform: 'win32', homeDir: 'C:\\Users\\u', topology: async () => { await g.opened; return layout; } });
+  await t.rt.openBrowse(null);
+  assert.deepEqual(t.drives(), [['C:', 'C:\\']], 'the home folder\'s drive, at once, by its letter');
+  g.open();
+  await settle(); await settle();
+  assert.deepEqual(t.drives(), [['Windows (C:)', 'C:\\'], ['D:', 'D:\\']], 'the layout\'s drives, once it answers');
+  // D: unplugged and E: plugged in: as many drives as before, not the same ones.
+  layout = { logicalVolumes: [{ id: 'C:', name: 'Windows', mountPoint: 'C:\\' }, { id: 'E:', name: 'Backup', mountPoint: 'E:\\' }] };
+  await t.rt.openBrowse(null);
+  await settle(); await settle();
+  assert.deepEqual(t.drives(), [['Windows (C:)', 'C:\\'], ['Backup (E:)', 'E:\\']], 'each choice opens the drive it names');
 });
 
 test('the whole drive is offered only where the picker scans — not for an Autopilot folder or an offload destination — and a late layout answer never draws it into those (G26)', async () => {
