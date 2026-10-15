@@ -209,7 +209,7 @@ async function offloadSheet(plan: Record<string, unknown>, paths: string[]): Pro
   };
   const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const confirm = new Function(...keys, `'use strict'; let onConfirmTrash = null; ${[...WARNING, 'confirmOffloadPlan'].map(declOf).join('\n')}\nreturn confirmOffloadPlan;`)(
+  const confirm = new Function(...keys, `'use strict'; let onConfirmTrash = null; ${[...WARNING, 'lastPathSegment', 'confirmOffloadPlan'].map(declOf).join('\n')}\nreturn confirmOffloadPlan;`)(
     ...keys.map((k) => deps[k])) as (paths: string[], dest: string, destName: string, notes: string, isCurrent: () => boolean) => Promise<void>;
   await confirm(paths, '/Volumes/Backup/apps', 'apps', '', () => true);
   return textOf(els.confirmText.innerHTML);

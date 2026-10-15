@@ -1483,6 +1483,7 @@ test('Cancel or Escape on the Offload sheet a picked folder opened gives focus b
         `'use strict';
          let onConfirmTrash = null;
          ${braced('function lastPathSegment(')}
+         ${['installedProgramWords', 'installedProgramRemoval', 'installedProgramWarningHtml'].map((n) => braced(`function ${n}(`)).join('\n')}
          ${braced('function closeModal(')}
          ${braced('async function confirmOffloadPlan(')}
          return { closeModal, confirmOffloadPlan };`,
