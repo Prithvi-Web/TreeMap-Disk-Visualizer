@@ -36688,10 +36688,13 @@ async function renderPackageOrphans() {
   // The line says what is true of every folder in the fold, never that the
   // command beside it puts it back: a virtualenv's (the rule pack's `pip
   // install -r requirements.txt`) makes no `.venv`, and fails in a project
-  // with no requirements.txt (G05 review F1.1).
+  // with no requirements.txt (G05 review F1.1). The summary carries a
+  // tabindex so a sheet's Tab trap (modalFocusables) lists it: a bare
+  // <summary> matches none of its selectors, and with nothing ticked the
+  // fold could be opened only with a mouse (F1.6).
   if (projectsHost) {
     projectsHost.innerHTML = !projectCount ? '' : `<details class="pkg-projects">
-    <summary class="rule-row">${icon('chevronRight', 14, 'pkg-chev')}
+    <summary class="rule-row" tabindex="0">${icon('chevronRight', 14, 'pkg-chev')}
       <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Rebuildable project folders</b>
       <span class="muted" style="flex:1;margin-left:8px;">${formatCount(projectCount)} folder${projectCount === 1 ? '' : 's'} whose project is still here — ${projectCount === 1 ? 'its' : 'each one’s'} project can build it again</span>
       <span class="size-badge num">${formatBytes(data.activeBytes)}</span>

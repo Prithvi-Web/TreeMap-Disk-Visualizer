@@ -1473,3 +1473,29 @@ test('the fold of folders whose project is still here sits after Smart Suggestio
   assert.ok(at('packageOrphans') < at('smartResults'), 'orphans and caches come before the suggestions');
   assert.ok(at('smartResults') < at('packageProjects'), 'folders whose project is still here come after them');
 });
+
+/*
+ * The fold is the first <details> in a sheet. A sheet's Tab trap
+ * (modalFocusables, 235) lists `a[href], button, input, select, textarea,
+ * [tabindex]`, and a bare <summary> is none of those: with nothing ticked
+ * (Clean Up's confirm button disabled, so out of the list) Tab on the last
+ * suggestion's box wrapped to the ✕ and the fold could be opened only with a
+ * mouse; from the summary itself, Tab and Shift+Tab jumped to the sheet's
+ * ends (G05 review F1.6).
+ */
+test('the fold\'s summary is a stop the sheet\'s Tab trap lists, so a keyboard reaches it with nothing ticked (G05 review F1.6)', async () => {
+  const { projects } = await renderPackages(CORPUS);
+  const tag = /<summary\b[^>]*>/.exec(projects)?.[0] ?? '';
+  assert.ok(tag, 'control: the fold opens with its summary');
+  // The trap's own selector, as the page has it.
+  const selector = /querySelectorAll\('([^']+)'\)/.exec(bodyOf('function modalFocusables(root) {'))?.[1] ?? '';
+  assert.match(selector, /\[tabindex\]/, `control: the trap's selector is in the page (${selector})`);
+  const attrs = new Map([...tag.matchAll(/\s([a-z-]+)(?:="([^"]*)")?/g)].map((m) => [m[1], m[2] ?? '']));
+  const matches = (simple: string) => {
+    const m = /^([a-z]*)((?:\[[a-z-]+\])*)$/.exec(simple.trim());
+    return !!m && (!m[1] || m[1] === 'summary') && [...m[2].matchAll(/\[([a-z-]+)\]/g)].every((a) => attrs.has(a[1]));
+  };
+  assert.ok(selector.split(',').some(matches), `the trap's selector lists the fold's summary: ${tag}`);
+  // …and its filter keeps it: a stop has tabIndex >= 0.
+  assert.ok(Number(attrs.get('tabindex')) >= 0, `the summary is a Tab stop, not taken out of the order: ${tag}`);
+});
