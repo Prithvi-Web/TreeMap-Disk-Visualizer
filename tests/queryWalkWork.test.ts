@@ -10,7 +10,7 @@ import { parse } from '../src/services/query/parse';
 import { evaluateMaybe, type EvalNode } from '../src/services/query/evaluate';
 import { executeAgainstScan, childlessUnproven, type QueryHit, type QueryOutcome, type SortKey } from '../src/services/query/execute';
 import { createScanRecord } from '../src/services/diskScanner';
-import { buildStoreFromTree, Flag, type ScanStore } from '../src/services/scanStore';
+import { buildStoreFromTree, Flag, PackedScanStore, type ScanStore } from '../src/services/scanStore';
 import type { FileNode, ScanResult } from '../src/models/types';
 import type { Ast } from '../src/services/query/types';
 
@@ -227,4 +227,29 @@ test('G07: a tree that changes during a slice\'s turn is walked again from the s
   assert.equal(out.total, before.total - 1, 'the answer is the changed tree\'s');
   assert.deepEqual(out, after, 'exactly the answer a walk of the changed tree gives');
   assert.ok(!out.hits.some((h) => h.path === victim), 'the deleted file is not among the hits');
+});
+
+test('G07 review F1.2: a hit at the bottom of a 30k-deep chain is answered, its path built without a stack frame per folder', async () => {
+  // The store's own standing case (tests/packedStore.test.ts: a 30k-deep
+  // chain, nothing recurses on pathological depth). A query whose terms read
+  // no path during the walk (name:, ext:, size) leaves every folder's path
+  // unbuilt, so the first path read is the deep hit's, for the page.
+  const DEPTH = 30_000;
+  const store = new PackedScanStore('/deep', '/', { name: 'deep', isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+  let parent = store.rootId;
+  for (let i = 0; i < DEPTH; i++) parent = store.addNode(parent, { name: `d${i}`, isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+  store.addNode(parent, { name: 'leaf.bin', isDir: false, size: 7, modifiedAt: 1, isHidden: false, extension: 'bin' });
+  store.finalize();
+  store.sumSizes();
+  const scan = createScanRecord('/deep');
+  scan.store = store;
+  scan.status = 'complete';
+  scan.engine = 'walker';
+  let deepest = '/deep';
+  for (let i = 0; i < DEPTH; i++) deepest += `/d${i}`;
+  for (const q of ['name:leaf', 'ext:bin', 'size>5 type:file']) {
+    const out = await run(scan, q);
+    assert.equal(out.total, 1, `${q}: the one file matches`);
+    assert.equal(out.hits[0].path, `${deepest}/leaf.bin`, `${q}: its path, all ${DEPTH} folders of it`);
+  }
 });

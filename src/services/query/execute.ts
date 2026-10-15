@@ -431,8 +431,26 @@ class QueryNode implements EvalNode {
     return (this.nameRead ??= this.store.name(this.id));
   }
 
+  /**
+   * Built down from the nearest folder whose path is known, never by asking
+   * the folder's own getter: a query that reads no path while it walks leaves
+   * every folder's unbuilt, and a stack frame per level of a 30k-deep chain
+   * overflows (review F1.2; the store's own rule, tests/packedStore.test.ts).
+   */
   get path(): string {
-    return (this.pathRead ??= this.folder === null ? this.store.rootPath : this.store.childPath(this.id, this.folder.path));
+    if (this.pathRead !== undefined) return this.pathRead;
+    const unbuilt: QueryNode[] = [];
+    let known: QueryNode = this;
+    while (known.pathRead === undefined && known.folder !== null) {
+      unbuilt.push(known);
+      known = known.folder;
+    }
+    let path = (known.pathRead ??= this.store.rootPath); // known, or the root
+    for (let i = unbuilt.length - 1; i >= 0; i--) {
+      const node = unbuilt[i];
+      path = node.pathRead = this.store.childPath(node.id, path);
+    }
+    return path;
   }
 }
 
