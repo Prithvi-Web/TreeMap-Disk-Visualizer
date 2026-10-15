@@ -2392,7 +2392,16 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
    chip the light inks clear AA on (tests/polishVisualTheme measures it). */
 .pkg-tag.orphan { background: color-mix(in srgb, var(--danger) 8%, var(--bg-1)); color: var(--danger); }
 .pkg-tag.cache { background: color-mix(in srgb, var(--accent) 8%, var(--bg-1)); color: var(--accent-ink); }
-.pkg-item.kind-active { opacity: 0.62; }
+/* G05: a folder whose project is still here is listed in a fold after Smart
+   Suggestions, at full ink — dimmed, the rows read as "do not touch" beside a
+   suggestion offering the same folder. Its tag keeps the neutral chip. */
+.pkg-projects { margin: 2px 0 16px; }
+.pkg-projects > summary { cursor: var(--cur-hand); list-style: none; padding: 6px 0; border-radius: var(--r-sm); }
+.pkg-projects > summary::-webkit-details-marker { display: none; }
+.pkg-projects > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pkg-projects > summary .pkg-chev { flex: none; color: var(--text-3); transition: transform var(--dur-1) var(--ease); }
+.pkg-projects[open] > summary .pkg-chev { transform: rotate(90deg); }
+.pkg-projects > .pkg-eco:first-of-type { margin-top: 4px; }
 .pkg-proj { font-size: 11px; font-weight: 500; color: var(--text-3); margin-left: 6px; }
 .pkg-proj.none { font-style: italic; }
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
@@ -4855,6 +4864,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <div id="packageOrphans"></div>
         <div id="browserProfiles"></div>
         <div id="smartResults"></div>
+        <!-- G05: folders whose project is still here — context, after what a
+             person can act on, folded (renderPackageOrphans). -->
+        <div id="packageProjects"></div>
       </div>
       <!-- C2 · Shrink Video. The only feature that rewrites a file rather than
            moving it, so the copy is blunt about what it does: it is lossy, and
@@ -36449,7 +36461,16 @@ document.addEventListener('click', (e) => {
    Clean Up modal uses — this is not a fourth delete surface. Orphans and
    caches get checkboxes; active artifacts are context only (Smart Suggestions
    below already offers those, and this panel exists for the things nobody is
-   going to miss). */
+   going to miss).
+
+   G05: the two halves sit apart. Orphans and caches — what a person can act
+   on here — lead the sheet in #packageOrphans. A folder whose project is
+   still here (the server's `active`) is listed after Smart Suggestions, in a
+   fold of its own (#packageProjects), and is called what it is: its project's
+   own command rebuilds it. "In use" is the open-file guard's word for a file a
+   program has open, and over these rows it read as "do not delete" beside a
+   suggestion offering the same folder. A sheet holding only such folders used
+   to open on "Package leftovers — no orphans; shared caches only — 0 B". */
 const ECOSYSTEM_LABEL = {
   npm: 'npm', yarn: 'Yarn', pnpm: 'pnpm', python: 'Python', cargo: 'Rust / Cargo',
   maven: 'Maven', gradle: 'Gradle', cocoapods: 'CocoaPods', homebrew: 'Homebrew',
@@ -36459,11 +36480,15 @@ function ecosystemLabel(id) { return ECOSYSTEM_LABEL[id] || id; }
 
 let packageOrphans = [];
 
-/** Render the ecosystem panel. Returns true if anything was shown. */
+/** Render the ecosystem panel and the fold after Smart Suggestions. Returns
+    true if anything a person can act on was shown above the suggestions. */
 async function renderPackageOrphans() {
   const host = $('packageOrphans');
   if (!host || !state.scanId) return false;
   packageOrphans = [];
+  // The fold belongs to the answer below: an earlier scan's goes now.
+  const projectsHost = $('packageProjects');
+  if (projectsHost) projectsHost.innerHTML = '';
   let data;
   try { data = await api('/api/packages/orphans?scanId=' + state.scanId); } catch { host.innerHTML = ''; return false; }
   if (data.available === false) {
@@ -36475,52 +36500,74 @@ async function renderPackageOrphans() {
     return false;
   }
   const groups = (data.ecosystems || []).filter(g => g.orphanCount || g.cacheCount || g.activeCount);
-  if (!groups.length) { host.innerHTML = ''; return false; }
 
   // Flat index so a checkbox can name its entry without re-encoding the path.
   groups.forEach(g => g.entries.forEach(e => { e._i = packageOrphans.push(e) - 1; }));
+  /** Each ecosystem's entries that `keep` takes, ecosystems with none left out. */
+  const part = (keep) => groups.map(g => ({ g, entries: g.entries.filter(keep) })).filter(x => x.entries.length);
+  const leftovers = part(e => e.kind !== 'active');
+  const projects = part(e => e.kind === 'active');
+
+  const rowHtml = (e) => {
+    const selectable = e.kind !== 'active' && !e.advisory;
+    const project = e.projectName
+      ? `<span class="pkg-proj">${escapeHtml(e.projectName)}</span>`
+      : '<span class="pkg-proj none">no owning project</span>';
+    // The server's reason for an `active` entry names the project as "in
+    // use"; its row says what that means here instead.
+    const why = e.kind === 'active' ? 'Its project is still here' : e.reason;
+    return `<div class="clean-item pkg-item kind-${e.kind}">
+          ${selectable
+            ? `<input type="checkbox" class="pkg-ck" data-i="${e._i}" aria-label="Select ${escapeHtml(e.path)}">`
+            : e.advisory ? '<span class="adv-spacer" title="Not safe to trash"></span>' : ''}
+          <span class="pkg-tag ${e.kind}">${e.kind === 'orphan' ? 'orphaned' : e.kind === 'cache' ? 'cache' : 'rebuildable'}</span>
+          <div class="meta">
+            <div class="nm">${escapeHtml(e.name)} ${project}</div>
+            <div class="pth" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</div>
+            <div class="pkg-why">${escapeHtml(why)}${e.command ? ` · <code>${escapeHtml(e.command)}</code> ${e.kind === 'cache' ? 'to clear' : 'to restore'}` : ''}</div>
+          </div>
+          <span class="dt num">${formatDate(e.modifiedAt)}</span>
+          <span class="size-badge num">${formatBytes(e.size)}</span>
+          ${selectable ? cartButtonHtml(e.path, e.name) : ''}
+        </div>`;
+  };
+  const ecoHtml = ({ g, entries }, head) => `<div class="pkg-eco">
+      <div class="pkg-echead"><b>${escapeHtml(ecosystemLabel(g.ecosystem))}</b><span class="muted num">${escapeHtml(head)}</span></div>
+      <div class="clean-list">` + entries.map(rowHtml).join('') + `</div></div>`;
 
   const reclaimable = data.orphanBytes + data.cacheBytes;
-  host.innerHTML = `<div style="margin-bottom:16px;">
+  host.innerHTML = !leftovers.length ? '' : `<div style="margin-bottom:16px;">
     <div class="rule-row" style="padding:6px 0;">
       <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Package leftovers</b>
       <span class="muted" style="flex:1;margin-left:8px;">${data.orphanCount
         ? `${formatCount(data.orphanCount)} orphaned — nothing will rebuild ${data.orphanCount === 1 ? 'it' : 'them'}`
         : 'no orphans; shared caches only'}</span>
       <span class="size-badge num" style="color:${sizeInk(reclaimable)}">${formatBytes(reclaimable)}</span>
-    </div>` + groups.map(g => {
-      const head = [
-        g.orphanCount ? `${formatCount(g.orphanCount)} orphaned · ${formatBytes(g.orphanBytes)}` : '',
-        g.cacheCount ? `cache ${formatBytes(g.cacheBytes)}` : '',
-        g.activeCount ? `${formatCount(g.activeCount)} in use` : '',
-      ].filter(Boolean).join(' · ');
-      return `<div class="pkg-eco">
-      <div class="pkg-echead"><b>${escapeHtml(ecosystemLabel(g.ecosystem))}</b><span class="muted num">${escapeHtml(head)}</span></div>
-      <div class="clean-list">` + g.entries.map(e => {
-        const selectable = e.kind !== 'active' && !e.advisory;
-        const project = e.projectName
-          ? `<span class="pkg-proj">${escapeHtml(e.projectName)}</span>`
-          : '<span class="pkg-proj none">no owning project</span>';
-        return `<div class="clean-item pkg-item kind-${e.kind}">
-          ${selectable
-            ? `<input type="checkbox" class="pkg-ck" data-i="${e._i}" aria-label="Select ${escapeHtml(e.path)}">`
-            : `<span class="adv-spacer" title="${e.advisory ? 'Not safe to trash' : 'In use — kept'}"></span>`}
-          <span class="pkg-tag ${e.kind}">${e.kind === 'orphan' ? 'orphaned' : e.kind === 'cache' ? 'cache' : 'in use'}</span>
-          <div class="meta">
-            <div class="nm">${escapeHtml(e.name)} ${project}</div>
-            <div class="pth" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</div>
-            <div class="pkg-why">${escapeHtml(e.reason)}${e.command ? ` · <code>${escapeHtml(e.command)}</code> ${e.kind === 'cache' ? 'to clear' : 'to restore'}` : ''}</div>
-          </div>
-          <span class="dt num">${formatDate(e.modifiedAt)}</span>
-          <span class="size-badge num">${formatBytes(e.size)}</span>
-          ${selectable ? cartButtonHtml(e.path, e.name) : ''}
-        </div>`;
-      }).join('') + `</div></div>`;
-    }).join('') + `</div>`;
+    </div>` + leftovers.map(x => ecoHtml(x, [
+      x.g.orphanCount ? `${formatCount(x.g.orphanCount)} orphaned · ${formatBytes(x.g.orphanBytes)}` : '',
+      x.g.cacheCount ? `cache ${formatBytes(x.g.cacheBytes)}` : '',
+    ].filter(Boolean).join(' · '))).join('') + `</div>`;
+
+  const projectCount = projects.reduce((n, x) => n + x.entries.length, 0);
+  // Every shipped project rule names its command; one that did not would
+  // have no command beside it to point at.
+  const commanded = projects.every(x => x.entries.every(e => e.command));
+  if (projectsHost) {
+    projectsHost.innerHTML = !projectCount ? '' : `<details class="pkg-projects">
+    <summary class="rule-row">${icon('chevronRight', 14, 'pkg-chev')}
+      <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Rebuildable project folders</b>
+      <span class="muted" style="flex:1;margin-left:8px;">${formatCount(projectCount)} folder${projectCount === 1 ? '' : 's'} whose project is still here — ${commanded
+        ? `the command beside ${projectCount === 1 ? 'it' : 'each'} puts it back`
+        : `${projectCount === 1 ? 'its' : 'each one’s'} project can build it again`}</span>
+      <span class="size-badge num">${formatBytes(data.activeBytes)}</span>
+    </summary>` + projects.map(x => ecoHtml(x,
+      `${formatCount(x.entries.length)} folder${x.entries.length === 1 ? '' : 's'} · ${formatBytes(x.g.activeBytes)}`)).join('') + `
+  </details>`;
+  }
 
   host.querySelectorAll('.pkg-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
   refreshCartButtons();
-  return true;
+  return leftovers.length > 0;
 }
 
 /* ── Browser profile drill-down (Feature 16) — inline-SVG favicons, no external fetch ── */

@@ -1280,3 +1280,159 @@ test('no sentence in the docs, in what an agent is told or in a result the serve
   // Each rule read the sentences it is about: a split that merged or lost them would pass by seeing nothing.
   assert.ok(seen.wayBack >= 100 && seen.pastEmptied >= 5 && seen.canBe >= 8 && seen.putsBack >= 19, `the sweep read the docs' ways back: ${JSON.stringify(seen)}`);
 });
+
+/* ═══════ 7. Package leftovers: what a person can act on leads, and "in use" is an open file's word (G05) ═══════ */
+
+/*
+ * Smart Suggestions opened on "Package leftovers — no orphans; shared caches
+ * only — 0 B" over six grey IN USE rows (rusty/target, webapp/node_modules,
+ * .venv, dist, .next, a Gradle build), and further down the same sheet offered
+ * those very folders for removal ("Rust build target · 78.8 MB · To put it
+ * back: cargo build"). The server's `active` means the owning project is still
+ * there (AGENTS.md: context only); everywhere else in the app "in use" means a
+ * program has the file open. And "shared caches only" was said over no cache at
+ * all. The panel is run here from the built page over stubs, on the payloads
+ * GET /api/packages/orphans sends.
+ */
+
+type PkgKind = 'orphan' | 'active' | 'cache';
+interface PkgEntry {
+  ecosystem: string; kind: PkgKind; name: string; path: string; size: number; modifiedAt: number;
+  projectPath?: string; projectName?: string; reason: string; command?: string; advisory?: boolean;
+}
+/** One ecosystem group as the server totals it. */
+function pkgGroup(ecosystem: string, entries: PkgEntry[]) {
+  const of = (k: PkgKind) => entries.filter((e) => e.kind === k);
+  const bytes = (k: PkgKind) => of(k).reduce((s, e) => s + e.size, 0);
+  return {
+    ecosystem, entries,
+    orphanCount: of('orphan').length, orphanBytes: bytes('orphan'),
+    activeCount: of('active').length, activeBytes: bytes('active'),
+    cacheCount: of('cache').length, cacheBytes: bytes('cache'),
+  };
+}
+/** The whole answer, totalled as packageEcosystemScanner totals it. */
+function pkgReport(groups: ReturnType<typeof pkgGroup>[]) {
+  const sum = (k: 'orphanBytes' | 'cacheBytes' | 'activeBytes' | 'orphanCount') => groups.reduce((s, g) => s + g[k], 0);
+  return { scanId: 's1', available: true, ecosystems: groups, orphanBytes: sum('orphanBytes'), cacheBytes: sum('cacheBytes'), activeBytes: sum('activeBytes'), orphanCount: sum('orphanCount') };
+}
+/** A folder whose project is still beside it — the server's `active`, with the reason it sends. */
+const owned = (ecosystem: string, project: string, name: string, size: number, command: string): PkgEntry => ({
+  ecosystem, kind: 'active', name, path: `/corpus/Projects/${project}/${name}`, size, modifiedAt: 1_790_000_000_000,
+  projectPath: `/corpus/Projects/${project}`, projectName: project, reason: `In use by ${project}.`, command,
+});
+
+/** The six folders of the QA corpus: every one's project is still there. */
+const CORPUS = pkgReport([
+  pkgGroup('gradle', [owned('gradle', 'gradle-app', 'build', 3_400_000, 'gradle build')]),
+  pkgGroup('python', [owned('python', 'pyproj', '.venv', 11_500_000, 'pip install -r requirements.txt')]),
+  pkgGroup('cargo', [owned('cargo', 'rusty', 'target', 78_800_000, 'cargo build')]),
+  pkgGroup('npm', [
+    owned('npm', 'webapp', 'node_modules', 20_700_000, 'npm install'),
+    owned('npm', 'site', 'dist', 1_200_000, 'npm run build'),
+    owned('npm', 'nextapp', '.next', 2_300_000, 'npm run build'),
+  ]),
+]);
+
+/** Run the page's renderPackageOrphans on one answer; `dom` carries a page from an earlier run. */
+async function renderPackages(data: unknown, dom: Record<string, { innerHTML: string }> = {}) {
+  const $ = (id: string) => (dom[id] ||= Object.assign({ innerHTML: '' }, {
+    querySelectorAll: () => [] as unknown[],
+  }));
+  const fn = runnable(bodyOf('async function renderPackageOrphans() {'), {
+    $, api: async () => data, state: { scanId: 's1' },
+    icon: () => '', escapeHtml: (s: string) => String(s),
+    formatBytes: (n: number) => `${n} B`, formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
+    formatDate: () => 'Oct 2, 2026', sizeInk: () => 'inherit', ecosystemLabel: (id: string) => id,
+    cartButtonHtml: (p: string) => `<cart ${p}>`, refreshCartButtons: () => {}, updateCleanSummary: () => {},
+    packageOrphans: [] as unknown[],
+  });
+  const shown = await fn();
+  return { shown, lead: $('packageOrphans').innerHTML, projects: $('packageProjects').innerHTML, dom };
+}
+
+/** The rows a host holds, each as its own HTML. */
+const pkgRows = (html: string) => html.split('<div class="clean-item pkg-item').slice(1);
+
+test('a sheet whose package folders all still have their project does not open on a 0 B "Package leftovers" header: those folders are listed after Smart Suggestions, folded (G05)', async () => {
+  const { shown, lead, projects } = await renderPackages(CORPUS);
+  assert.equal(shown, false, 'nothing a person can act on was shown above the suggestions');
+  assert.equal(lead, '', 'the panel above Smart Suggestions is empty: no "Package leftovers … 0 B" leads the sheet');
+  assert.match(projects, /^\s*<details class="pkg-projects"/, 'the six folders are in a fold of their own');
+  assert.doesNotMatch(projects, /<details[^>]*\bopen\b/, 'which opens closed');
+  const rows = pkgRows(projects);
+  assert.deepEqual(rows.map((r) => /class="pth" title="([^"]+)"/.exec(r)?.[1]).sort(),
+    CORPUS.ecosystems.flatMap((g) => g.entries.map((e) => e.path)).sort(), 'every one of them is listed, once');
+  for (const r of rows) {
+    assert.doesNotMatch(r, /class="pkg-ck"|<cart /, 'nothing in the fold is ticked or staged from here');
+  }
+  // The fold says how many, and what they take, as the server totalled it.
+  const summary = /<summary[\s\S]*?<\/summary>/.exec(projects)?.[0] ?? '';
+  assert.match(summary, /\b6\b/, `the fold counts its folders: ${summary}`);
+  assert.match(summary, new RegExp(`\\b${CORPUS.activeBytes} B\\b`), 'and says what they take');
+});
+
+test('a folder whose project is still here is never called "in use" — the app\'s word for a file a program has open — and says what is true: its project is here, and its own command puts it back (G05)', async () => {
+  const { lead, projects } = await renderPackages(CORPUS);
+  assert.doesNotMatch(lead + projects, /in use/i, 'no row, tag or tooltip says "in use"');
+  for (const r of pkgRows(projects)) {
+    const path = /class="pth" title="([^"]+)"/.exec(r)![1];
+    const entry = CORPUS.ecosystems.flatMap((g) => g.entries).find((e) => e.path === path)!;
+    assert.match(r, /<span class="pkg-tag active">rebuildable<\/span>/, `${path}: its tag says it can be rebuilt`);
+    assert.match(r, /project is still here/, `${path}: its line says its project is still here`);
+    assert.ok(r.includes(`<code>${entry.command}</code>`), `${path}: and names the command that puts it back`);
+    assert.ok(r.includes(`<span class="pkg-proj">${entry.projectName}</span>`), `${path}: beside the project's name`);
+  }
+  assert.match(/<summary[\s\S]*?<\/summary>/.exec(projects)![0], /project is still here/, 'the fold says so of all of them');
+});
+
+test('orphans and caches lead the sheet with their boxes, and a folder whose project is still here goes to the fold — "shared caches only" is said only where it is true (G05)', async () => {
+  const orphan: PkgEntry = { ecosystem: 'npm', kind: 'orphan', name: 'node_modules', path: '/corpus/old/node_modules', size: 9_000_000, modifiedAt: 1, reason: 'No package.json beside it — the project that owned this is gone.', command: 'npm install' };
+  const cache: PkgEntry = { ecosystem: 'npm', kind: 'cache', name: '_cacache', path: '/home/u/.npm/_cacache', size: 4_000_000, modifiedAt: 1, reason: 'npm’s shared download cache.', command: 'npm cache clean --force' };
+  const live = owned('npm', 'shop', 'node_modules', 20_700_000, 'npm install');
+  const mixed = pkgReport([pkgGroup('npm', [orphan, cache, live])]);
+  const first = await renderPackages(mixed);
+  assert.equal(first.shown, true, 'something a person can act on was shown');
+  assert.deepEqual(pkgRows(first.lead).map((r) => /class="pth" title="([^"]+)"/.exec(r)?.[1]), [orphan.path, cache.path], 'the orphan and the cache lead');
+  assert.ok(pkgRows(first.lead).every((r) => /class="pkg-ck"/.test(r) && /<cart /.test(r)), 'each with its box and cart toggle');
+  assert.match(first.lead, /1 orphaned — nothing will rebuild it/, 'the header counts the orphan');
+  assert.doesNotMatch(first.lead, new RegExp(live.path), 'the folder whose project is here is not among them');
+  assert.doesNotMatch(first.lead, /\b1 in use\b|in use/i, 'nor counted in its ecosystem\'s line');
+  assert.deepEqual(pkgRows(first.projects).map((r) => /class="pth" title="([^"]+)"/.exec(r)?.[1]), [live.path], 'it is in the fold below the suggestions');
+  // Caches alone: the header's "shared caches only" is true now, and said.
+  const caches = await renderPackages(pkgReport([pkgGroup('npm', [cache])]));
+  assert.match(caches.lead, /no orphans; shared caches only/, 'caches and nothing else: said as that');
+  assert.equal(caches.projects, '', 'with no fold');
+  // The CORPUS sheet's header said "shared caches only" over no cache at all.
+  const again = await renderPackages(CORPUS, first.dom);
+  assert.equal(again.lead, '', 'opened on another scan, the old leftovers go');
+  assert.doesNotMatch(again.projects, new RegExp(live.path), 'and so does the old fold');
+  const gone = await renderPackages(pkgReport([]), first.dom);
+  assert.deepEqual([gone.lead, gone.projects], ['', ''], 'a scan with none clears both');
+  // An answer that names no folder at all — a broken rule pack — leaves no earlier fold standing under it.
+  await renderPackages(mixed, first.dom);
+  const broken = await renderPackages({ scanId: 's1', available: false, reason: 'A rule pack is malformed.' }, first.dom);
+  assert.equal(broken.projects, '', 'a fold from an earlier answer goes when the packs cannot be read');
+  assert.match(broken.lead, /could not be checked/, 'control: the panel says the packs could not be read');
+});
+
+test('a fold whose folders do not all name a command does not point at "the command beside it" (G05)', async () => {
+  const bare = { ...owned('npm', 'webapp', 'node_modules', 20_700_000, 'npm install'), command: undefined };
+  const { projects } = await renderPackages(pkgReport([pkgGroup('npm', [bare])]));
+  const summary = /<summary[\s\S]*?<\/summary>/.exec(projects)?.[0] ?? '';
+  assert.match(summary, /1 folder whose project is still here/, `control: the fold is drawn (${summary})`);
+  assert.doesNotMatch(summary, /command beside/, 'no command is beside it to point at');
+  assert.match(summary, /its project can build it again/, 'it says what is true of it');
+  const { projects: named } = await renderPackages(CORPUS);
+  assert.match(/<summary[\s\S]*?<\/summary>/.exec(named)![0], /6 folders whose project is still here — the command beside each puts it back/,
+    'where every folder names one, the fold points at it');
+});
+
+test('the fold of folders whose project is still here sits after Smart Suggestions; the leftovers a person can act on, before them (G05)', () => {
+  const pane = INDEX.slice(INDEX.indexOf('<div id="cleanPaneSmart"'), INDEX.indexOf('<div id="cleanPaneVideo"'));
+  assert.ok(pane.length > 0, 'the Smart Suggestions pane is in the page');
+  const at = (id: string) => pane.indexOf(`<div id="${id}"></div>`);
+  assert.ok(at('packageOrphans') !== -1 && at('smartResults') !== -1 && at('packageProjects') !== -1, 'control: all three hosts are in the pane');
+  assert.ok(at('packageOrphans') < at('smartResults'), 'orphans and caches come before the suggestions');
+  assert.ok(at('smartResults') < at('packageProjects'), 'folders whose project is still here come after them');
+});
