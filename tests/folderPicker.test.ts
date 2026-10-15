@@ -449,10 +449,13 @@ test('on Windows the whole-drive choices are the drive letters the layout lists,
  */
 test('opened to scan on Linux, the picker offers / as the whole drive, and choosing it opens / to scan (G26 review F1.2)', async () => {
   const ROOT = { path: '/', parent: null, dirs: ['home', 'usr', 'var'].map((n) => ({ name: n, path: `/${n}`, isHidden: false })) };
-  const t = browseRuntime((p) => (p === '/' ? ROOT : HOME), undefined, { platform: 'linux' });
+  const t = browseRuntime((p) => (p === '/' ? ROOT : HOME), undefined, { platform: 'linux', topology: () => ({ logicalVolumes: [{ name: 'root', mountPoint: '/' }] }) });
   await t.rt.openBrowse(null);
+  // Linux names / as /: nothing to ask the disk layout (an lsblk run) for,
+  // so / is drawn at once and the layout is never asked (G26 review F2.2).
+  assert.deepEqual([t.drives(), t.layoutAsked.n], [[['/', '/']], 0], 'drawn at once, with no disk layout asked for');
   await settle();
-  assert.deepEqual(t.drives(), [['/', '/']], 'one choice: /');
+  assert.deepEqual([t.drives(), t.layoutAsked.n], [[['/', '/']], 0], 'one choice: /, and still no disk layout asked for');
   t.clickDrive('/');
   await settle();
   assert.equal(t.rt.path(), '/', 'choosing it opens / in the picker');
@@ -472,6 +475,7 @@ test('opened to scan on Windows, the picker offers each lettered drive the layou
   await t.rt.openBrowse(null);
   await settle();
   assert.deepEqual(t.drives(), [['Windows (C:)', 'C:\\'], ['D:', 'D:\\']], 'every lettered drive, by label and letter');
+  assert.equal(t.layoutAsked.n, 1, 'which Windows asks the disk layout for, once (G26 review F2.2)');
   t.clickDrive('D:\\');
   await settle();
   assert.equal(t.rt.path(), 'D:\\', 'choosing one opens that drive in the picker');
