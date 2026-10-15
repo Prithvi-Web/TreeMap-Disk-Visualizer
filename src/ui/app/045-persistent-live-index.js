@@ -881,7 +881,9 @@ async function loadDashboardLists() {
     const [lf, ft, lfo] = await Promise.all([
       api(`/api/large-files?scanId=${scanId}&limit=10&minSize=1`, undefined, { poll: true }),
       api(`/api/file-types?scanId=${scanId}`, undefined, { poll: true }),
-      api(`/api/large-folders?scanId=${scanId}&limit=10`, undefined, { poll: true }),
+      // Sixty for a card of ten: the card folds a folder that is nearly all of
+      // a folder above it into that row and fills on (bigFolderRows, G15).
+      api(`/api/large-folders?scanId=${scanId}&limit=60`, undefined, { poll: true }),
     ]);
     if (scanId !== state.scanId) return false; // a newer scan owns the cards now
     state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
@@ -1970,11 +1972,53 @@ $('bigFilesSort').addEventListener('click', (e) => {
 setBigFilesSort(state.bigFilesSort); // reflect the persisted choice on load
 
 /* ───────────────────────────── Dashboard: largest folders ───────────────────────────── */
+/** The rows the card shows. */
+const BIG_FOLDERS_ROWS = 10;
+/** A folder holding this share or more of a listed folder it lies in is that place again. */
+const BIG_FOLDER_FOLD_SHARE = 0.95;
+
+/**
+ * The card's rows, each a distinct place on the disk (design pass G15).
+ *
+ * A folder with one child holds what the child holds, so the API's biggest
+ * folders list the same space over and over: on /Applications, IntelliJ
+ * IDEA.app, its Contents and its plugins at about 4.5 GB each, then Chrome's
+ * .app, Contents, Frameworks, Framework.framework and Versions at 1.5 GB —
+ * ten rows, three apps. A folder that lies inside a row and holds 95% or more
+ * of it is folded into that row, which keeps the outer name, the one a person
+ * knows (the .app); the list fills on with the next folders. A folder that is
+ * a real part of a row (Xcode's Developer, two thirds of it) keeps its own.
+ *
+ * Outer first among equal sizes: the API lists a one-child folder ahead of its
+ * parent when they tie, as its walk finishes the child first. Only the page
+ * folds: /api/large-folders and its order are what agents read.
+ */
+function bigFolderRows(folders) {
+  const bySize = folders.slice().sort((a, b) => b.size - a.size || a.path.length - b.path.length);
+  const rows = [];
+  for (const f of bySize) {
+    const holder = rows.find((r) => tmIsInside(f.path, r.path) && f.size >= r.size * BIG_FOLDER_FOLD_SHARE);
+    if (holder) holder.folded.push(f);
+    else if (rows.length < BIG_FOLDERS_ROWS) rows.push({ ...f, folded: [] });
+  }
+  return rows;
+}
+
 function renderBigFolders() {
   const host = $('bigFolders');
-  const folders = state.bigFolders || [];
+  const folders = bigFolderRows(state.bigFolders || []);
   if (!folders.length) { host.innerHTML = '<div class="muted">No folders above 1 MB found.</div>'; return; }
   const max = folders[0].size || 1;
+  // What a row folded in, said once in words and in full in its tooltip.
+  const foldNote = (f) => {
+    if (!f.folded.length) return '';
+    const names = f.folded.map((x) => x.name);
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+    // Plain text here, escaped once as the attribute is written below.
+    const title = 'Inside it, not listed again:\n' + f.folded.map((x) => x.path + ' — ' + formatBytes(x.size)).join('\n');
+    return `<div class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(title)}">` +
+      `Also covers ${escapeHtml(list)} inside it, which ${names.length === 1 ? 'holds' : 'each hold'} nearly all of its size</div>`;
+  };
   host.innerHTML = folders.map((f, i) => `
     <div class="bigfile" data-jump="${escapeHtml(f.path)}" style="cursor:var(--cur-hand);" role="button" tabindex="0"
          aria-label="Open ${escapeHtml(f.name)} in the treemap">
@@ -1982,6 +2026,7 @@ function renderBigFolders() {
       <div class="meta">
         <div class="nm" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
         <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
+        ${foldNote(f)}
       </div>
       <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} file${f.fileCount === 1 ? '' : 's'}</span>
       <div class="bar-track"><div class="fx-bar-fill" data-w="${Math.max(4, (f.size / max) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></div></div>

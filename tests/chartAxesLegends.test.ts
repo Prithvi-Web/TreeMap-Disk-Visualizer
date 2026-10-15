@@ -397,6 +397,8 @@ test('D14: Large Folders says "1 file", not "1 files"', () => {
     ] },
     escapeHtml: (s: string) => s, chipFor: () => '', formatCount: (n: number) => n.toLocaleString('en-US'),
     fxBarStyle: () => '', sizeColor: () => '#000', sizeInk: () => '#000', formatBytes: (n: number) => `${n} B`, fxBarsIn() {},
+    // The rows as given, nothing folded: the fold has its own test (largestFoldersFold.test.ts).
+    bigFolderRows: (folders: object[]) => folders.map((f) => ({ ...f, folded: [] })),
   });
   render();
   const counts = [...host.innerHTML.matchAll(/class="cnt[^"]*"[^>]*>([^<]*)</g)].map((m) => m[1]);
