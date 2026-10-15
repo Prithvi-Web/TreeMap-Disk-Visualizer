@@ -6,6 +6,9 @@
       <button class="close-x" data-close="browseModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
+      <!-- G26: the whole drive, where the picker scans (browseOfferDrives) —
+           named as the disk layout names it, never guessed. -->
+      <div class="chips browse-drives" id="browseDrives" role="group" aria-label="Whole drive" hidden></div>
       <!-- QA D05: the path line is a field — the typing route, in every
            context the picker opens from (before the first scan the Scan
            card's path box is not on screen). -->
@@ -15,6 +18,8 @@
       <div class="browse-list" id="browseList"></div>
     </div>
     <div class="modal-foot">
+      <!-- G26: dot-folders wait to be asked for; this browser remembers. -->
+      <label class="browse-hidden-toggle"><input type="checkbox" id="browseShowHidden"> Show hidden folders<span id="browseHiddenCount"></span></label>
       <div style="flex:1"></div>
       <button class="btn btn-primary" id="browseUseBtn"><span data-icon="check"></span>Scan this folder</button>
     </div>

@@ -51,7 +51,7 @@ function gate() {
 }
 
 type FakeEl = {
-  id: string; value: string; textContent: string; innerHTML: string; disabled: boolean;
+  id: string; value: string; textContent: string; innerHTML: string; disabled: boolean; checked: boolean; hidden: boolean;
   title: string; scrollLeft: number; scrollTop: number; readonly scrollWidth: number;
   classList: { add(c: string): void; remove(c: string): void; toggle(c: string, on?: boolean): void };
   /** The classes the page set — read to tell whether a sheet is open. */
@@ -68,7 +68,7 @@ type FakeEl = {
 
 function fakeEl(id: string): FakeEl {
   const el: FakeEl = {
-    id, value: '', textContent: '', innerHTML: '', disabled: false,
+    id, value: '', textContent: '', innerHTML: '', disabled: false, checked: false, hidden: false,
     title: '', scrollLeft: 0, scrollTop: 0,
     // A laid-out text field's content is as wide as its text (7 px a character here).
     get scrollWidth() { return el.value.length * 7; },
@@ -100,7 +100,28 @@ function offerRecorder(offers: Offer[]) {
   };
 }
 
-function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: { activeElement: unknown } = { activeElement: null }) {
+/** A browser's localStorage over a Map; `broken`, every call throws, as a private window's or a blocked site's may. */
+function fakeStorage(init: Record<string, string> = {}, broken = false) {
+  const map = new Map(Object.entries(init));
+  const refuse = (): never => { throw new Error('SecurityError: The operation is insecure.'); };
+  return {
+    map,
+    getItem: (k: string) => (broken ? refuse() : map.get(k) ?? null),
+    setItem: (k: string, v: string) => { if (broken) refuse(); map.set(k, String(v)); },
+    removeItem: (k: string) => { if (broken) refuse(); map.delete(k); },
+  };
+}
+
+/** What the page around the picker knows: the platform, the disk layout's answer (topologyAnswer), this browser's storage. */
+type PickerWorld = {
+  platform?: string; homeDir?: string;
+  /** topologyAnswer's answer: GET /api/platform/topology, or an Error it rejects with. */
+  topology?: () => unknown | Promise<unknown>;
+  capabilities?: unknown;
+  storage?: ReturnType<typeof fakeStorage>;
+};
+
+function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: { activeElement: unknown } = { activeElement: null }, world: PickerWorld = {}) {
   const els = new Map<string, FakeEl>();
   const $ = (id: string) => { if (!els.has(id)) els.set(id, fakeEl(id)); return els.get(id)!; };
   const asked: string[] = [];
@@ -121,17 +142,27 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: 
   // The page's own closeModal: Escape, the ✕, the scrim and a Use that acted
   // all close the picker through it (its other arms are for other sheets).
   const closeModal = braced('function closeModal(');
+  const storage = world.storage ?? fakeStorage();
+  /** How many times the picker asked for the disk layout. */
+  const layoutAsked = { n: 0 };
+  const topologyAnswer = async () => {
+    layoutAsked.n++;
+    const answer = await (world.topology ?? (() => new Error('no disk layout in this test')))();
+    if (answer instanceof Error) throw answer;
+    return answer;
+  };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const rt = new Function(
-    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'formatCount', 'document',
+    '$', 'api', 'toast', 'toastAction', 'escapeHtml', 'startScan', 'formatCount', 'document', 'topologyAnswer', 'localStorage', '__world',
     `'use strict';
-     const state = { system: { homeDir: '/home/u', commonDirs: [] } };
+     const state = { system: { homeDir: __world.homeDir ?? '/home/u', commonDirs: [], platform: __world.platform }, capabilities: __world.capabilities ?? null };
      function icon() { return ''; }
      ${INDEX.slice(start, end)}
      ${closeModal}
      return { openBrowse, browseTo, path: () => browsePath, close: () => closeModal('browseModal') };`,
-  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }, (n: number) => n.toLocaleString('en-US'), doc) as {
-    openBrowse: (start: string | null, onPick?: ((p: string) => void) | null, title?: string | null, useLabel?: string | null) => Promise<void>;
+  )($, api, (m: string) => { toasts.push(m); }, offerRecorder(offers), escapeHtml, (p: string) => { scanned.push(p); }, (n: number) => n.toLocaleString('en-US'), doc,
+    topologyAnswer, storage, world) as {
+    openBrowse: (start: string | null, onPick?: ((p: string) => void) | null, title?: string | null, useLabel?: string | null, where?: unknown) => Promise<void>;
     browseTo: (p: string) => Promise<boolean>;
     path: () => string | null;
     /** The picker dismissed — Escape, the ✕ or the scrim. */
@@ -141,15 +172,25 @@ function browseRuntime(listing: (p: string) => unknown | Promise<unknown>, doc: 
   const rows = () => [...$('browseList').innerHTML.matchAll(/aria-label="Open ([^"]+)"/g)].map((m) => m[1]);
   /** A click on "Scan this folder" (or "Use this folder" when a pick is pending). */
   const use = () => $('browseUseBtn').listeners.click() as Promise<void>;
-  return { rt, $, asked, scanned, toasts, offers, rows, use };
+  /** The "Show hidden folders" box ticked or unticked, as a person does it. */
+  const showHidden = (on: boolean) => { $('browseShowHidden').checked = on; return $('browseShowHidden').listeners.change(); };
+  /** The whole-drive choices on screen, as [label, path]. */
+  const drives = () => ($('browseDrives').hidden ? [] : [...$('browseDrives').innerHTML.matchAll(/<button[^>]*data-p="([^"]*)"[^>]*>([\s\S]*?)<\/button>/g)]
+    .map((m) => [m[2].replace(/<[^>]*>/g, ''), m[1]]));
+  /** A click on the whole-drive choice at `p`, delegated as the page listens for it. */
+  const clickDrive = (p: string) => $('browseDrives').listeners.click({ target: { closest: (sel: string) => (sel === '[data-p]' ? { dataset: { p } } : null) } });
+  return { rt, $, asked, scanned, toasts, offers, rows, use, storage, layoutAsked, showHidden, drives, clickDrive };
 }
 
 const HOME = { path: '/home/u', parent: '/home', dirs: ['.agents', '.antigravity', 'Desktop', '.cache', 'Documents', 'Downloads'].map(dir) };
 
 /* ══════════════ Ordering ══════════════ */
 
+/** This browser asked to see hidden folders (G26: they wait to be asked for). */
+const SHOWING_HIDDEN = (): PickerWorld => ({ storage: fakeStorage({ 'tm-browse-hidden': 'show' }) });
+
 test('ordinary folders are listed first and dot-folders after them, each keeping the server\'s order (D05)', async () => {
-  const { rt, rows } = browseRuntime(() => HOME);
+  const { rt, rows } = browseRuntime(() => HOME, undefined, SHOWING_HIDDEN());
   await rt.openBrowse(null);
   assert.deepEqual(rows(), ['Desktop', 'Documents', 'Downloads', '.agents', '.antigravity', '.cache']);
 });
@@ -163,7 +204,7 @@ test('a listing the server cut says so above its folders, with how many there ar
     [BIG]: { path: BIG, parent: '/home/u', dirs: ['a', 'b', '.c'].map(dir), total: 1234 },
     '/home/u/all': { path: '/home/u/all', parent: '/home/u', dirs: ['a', 'b'].map(dir), total: 2 },
   };
-  const { rt, $, rows } = browseRuntime((p) => listings[p] ?? HOME);
+  const { rt, $, rows } = browseRuntime((p) => listings[p] ?? HOME, undefined, SHOWING_HIDDEN());
   const said = async (p: string) => { await rt.browseTo(p); return $('browseList').innerHTML; };
   const cut = await said(BIG);
   assert.deepEqual({
@@ -242,6 +283,199 @@ test('the ordering is one function, stable, and keeps every folder (D05)', () =>
   assert.deepEqual(browseOrder(dirs).map((d) => d.name), ['a', 'b', 'c', '.b', '.a'], 'hidden last, otherwise as given');
   assert.deepEqual(dirs.map((d) => d.name), ['.b', 'a', '.a', 'b', 'c'], 'the server\'s list is not reordered in place');
   assert.deepEqual(browseOrder([]), []);
+});
+
+/* ══════════════ G26: hidden folders wait to be asked for; the whole drive is a choice ══════════════ */
+
+/*
+ * The first-run picker listed 50+ dot-folders under the home folder (after the
+ * ordinary ones, D05, but every one of them) and offered no way to scan the
+ * whole drive, though the hero promises "Reads a whole drive in minutes". Dot-
+ * folders now wait for a "Show hidden folders" box this browser remembers, and
+ * a typed or pasted path opens hidden or not; the picker that scans offers the
+ * whole drive at its top, named as the disk layout names it — never a guess.
+ */
+
+test('hidden dot-folders are not listed until asked for, and the box beside the button says how many there are (G26)', async () => {
+  const t = browseRuntime(() => HOME);
+  await t.rt.openBrowse(null);
+  assert.equal(t.$('browseShowHidden').checked, false, 'a viewer who never asked sees none: the box starts clear');
+  assert.deepEqual(t.rows(), ['Desktop', 'Documents', 'Downloads'], 'only the ordinary folders are listed');
+  assert.equal(t.$('browseHiddenCount').textContent, ' (3)', 'the box says how many it holds back');
+  await t.showHidden(true);
+  assert.deepEqual(t.rows(), ['Desktop', 'Documents', 'Downloads', '.agents', '.antigravity', '.cache'], 'ticked, they follow the ordinary ones (D05)');
+  assert.equal(t.storage.map.get('tm-browse-hidden'), 'show', 'and the choice is kept in this browser');
+  await t.showHidden(false);
+  assert.deepEqual(t.rows(), ['Desktop', 'Documents', 'Downloads'], 'cleared, they go again');
+  assert.equal(t.storage.map.has('tm-browse-hidden'), false, 'and the kept choice with them');
+});
+
+test('the choice is remembered for this viewer, and a browser that will not store it still lets the box work for the visit (G26)', async () => {
+  const kept = browseRuntime(() => HOME, undefined, SHOWING_HIDDEN());
+  await kept.rt.openBrowse(null);
+  assert.equal(kept.$('browseShowHidden').checked, true, 'a viewer who asked before finds the box ticked');
+  assert.deepEqual(kept.rows().slice(-3), ['.agents', '.antigravity', '.cache'], 'and the hidden folders listed');
+  const refused = fakeStorage({}, true);
+  const t = browseRuntime(() => HOME, undefined, { storage: refused });
+  await t.rt.openBrowse(null);
+  assert.deepEqual(t.rows(), ['Desktop', 'Documents', 'Downloads'], 'storage that throws reads as the default: hidden');
+  await t.showHidden(true);
+  assert.deepEqual(t.rows().slice(-3), ['.agents', '.antigravity', '.cache'], 'and ticking the box still lists them');
+  await t.rt.browseTo('/home/u');
+  assert.deepEqual(t.rows().slice(-3), ['.agents', '.antigravity', '.cache'], 'for every folder opened after, this visit');
+});
+
+test('a hidden folder typed or pasted into the path line still opens, and is the folder scanned (G26)', async () => {
+  const CACHE = '/home/u/.cache';
+  const t = browseRuntime((p) => (p === CACHE ? { path: CACHE, parent: '/home/u', dirs: ['go', '.npm'].map(dir) } : HOME));
+  await t.rt.openBrowse(null);
+  t.$('browseCurrent').value = CACHE;
+  await t.$('browseCurrent').listeners.keydown({ key: 'Enter', preventDefault() {} });
+  assert.equal(t.rt.path(), CACHE, 'Enter opens it');
+  assert.deepEqual(t.rows(), ['go'], 'its own ordinary folders are listed');
+  await t.use();
+  assert.deepEqual(t.scanned, [CACHE], 'and "Scan this folder" scans it');
+  await t.rt.openBrowse(null);
+  t.$('browseCurrent').value = '  ' + CACHE; // pasted, with paste debris before it
+  await t.use();
+  assert.deepEqual(t.scanned, [CACHE, CACHE], 'a pasted path is opened and scanned without pressing Enter');
+});
+
+test('a folder holding only hidden folders says so, rather than seeming to hold nothing (G26)', async () => {
+  const listings: Record<string, unknown> = {
+    '/home/u/dots': { path: '/home/u/dots', parent: '/home/u', dirs: ['.a', '.b'].map(dir), total: 2 },
+    '/home/u/dot': { path: '/home/u/dot', parent: '/home/u', dirs: ['.a'].map(dir), total: 1 },
+    '/empty': { path: '/empty', parent: null, dirs: [], total: 0 },
+  };
+  const t = browseRuntime((p) => listings[p] ?? HOME);
+  await t.rt.browseTo('/home/u/dots');
+  const said = t.$('browseList').innerHTML;
+  assert.deepEqual(t.rows(), [], 'no ordinary folder to list');
+  assert.match(said, /No folders here but 2 hidden ones — tick Show hidden folders to list them\./, 'the list says what is there');
+  await t.rt.browseTo('/home/u/dot');
+  assert.match(t.$('browseList').innerHTML, /No folders here but 1 hidden one — tick Show hidden folders to list it\./, 'one, said as one');
+  await t.showHidden(true);
+  assert.deepEqual(t.rows(), ['.a'], 'ticked, it is listed');
+  assert.doesNotMatch(t.$('browseList').innerHTML, /No folders here/, 'and the line goes');
+  await t.showHidden(false);
+  await t.rt.browseTo('/empty');
+  assert.match(t.$('browseList').innerHTML, /No subfolders\./, 'a folder with none at all still says so');
+  assert.equal(t.$('browseHiddenCount').textContent, '', 'and the box counts nothing');
+});
+
+test('a listing the server cut stays true with hidden folders left out: it says it was cut only where what it lists was (POL item 2, G26)', async () => {
+  // The server sends ordinary folders first and cuts after (fs/list), so a cut
+  // listing that holds any hidden folder holds every ordinary one.
+  const listings: Record<string, unknown> = {
+    '/home/u/big': { path: '/home/u/big', parent: '/home/u', dirs: ['a', 'b', '.c'].map(dir), total: 1234 },
+    '/home/u/wide': { path: '/home/u/wide', parent: '/home/u', dirs: ['a', 'b'].map(dir), total: 1234 },
+  };
+  const t = browseRuntime((p) => listings[p] ?? HOME);
+  const look = async (p: string) => {
+    await t.rt.browseTo(p);
+    return { rows: t.rows(), note: /Showing the first [^<]*/.exec(t.$('browseList').innerHTML)?.[0] ?? null, count: t.$('browseHiddenCount').textContent };
+  };
+  assert.deepEqual(await look('/home/u/big'), { rows: ['a', 'b'], note: null, count: ' (1,232)' },
+    'every ordinary folder is listed, so nothing says the list was cut; the box counts the 1,232 hidden ones');
+  assert.deepEqual(await look('/home/u/wide'), { rows: ['a', 'b'], note: 'Showing the first 2 of 1,234 folders. Type a path above to open one that is not listed.', count: '' },
+    'a cut among the ordinary folders is said; how many of the rest are hidden is not known, so the box counts nothing');
+  await t.showHidden(true);
+  assert.deepEqual(await look('/home/u/big'), { rows: ['a', 'b', '.c'], note: 'Showing the first 3 of 1,234 folders. Type a path above to open one that is not listed.', count: ' (1,232)' },
+    'with hidden folders shown, the cut is said as before');
+});
+
+test('the picker that scans offers the whole startup disk at its top, by the name the disk layout gives the volume at / — "Macintosh HD" — and opens it to scan (G26)', async () => {
+  const ROOT = { path: '/', parent: null, dirs: ['Applications', 'Library', 'System', 'Users'].map((n) => ({ name: n, path: `/${n}`, isHidden: false })) };
+  const layout = { logicalVolumes: [{ id: 'disk3s5', name: 'Data', mountPoint: '/System/Volumes/Data' }, { id: 'disk3s1s1', name: 'Macintosh HD', mountPoint: '/' }] };
+  const t = browseRuntime((p) => (p === '/' ? ROOT : HOME), undefined, { platform: 'darwin', topology: () => layout });
+  await t.rt.openBrowse(null);
+  await settle();
+  assert.deepEqual(t.drives(), [['Macintosh HD', '/']], 'one choice: the startup disk, under its own name');
+  assert.match(t.$('browseDrives').innerHTML, /Whole drive/, 'said as the whole drive');
+  t.clickDrive('/');
+  await settle();
+  assert.equal(t.rt.path(), '/', 'choosing it opens / in the picker');
+  assert.equal(t.$('browseCurrent').value, '/', 'the path line shows what will be scanned');
+  await t.use();
+  assert.deepEqual(t.scanned, ['/'], '"Scan this folder" scans / through the one scan route — its "Stay on this drive" and Full Disk Access messages with it');
+});
+
+test('the startup disk is never given a guessed name: with no layout, or none for /, it is "Startup disk"; a renamed one keeps its name (G26)', async () => {
+  const names: Record<string, string[][]> = {};
+  for (const [what, world] of [
+    ['the layout fails', { topology: () => new Error('diskutil: not found') }],
+    ['the layout names no volume at /', { topology: () => ({ logicalVolumes: [{ name: 'Data', mountPoint: '/System/Volumes/Data' }] }) }],
+    ['the volume at / has no name', { topology: () => ({ logicalVolumes: [{ name: null, mountPoint: '/' }] }) }],
+    ['the disk was renamed', { topology: () => ({ logicalVolumes: [{ name: 'Studio SSD', mountPoint: '/' }] }) }],
+  ] as const) {
+    const t = browseRuntime(() => HOME, undefined, { platform: 'darwin', ...world });
+    await t.rt.openBrowse(null);
+    await settle();
+    names[what] = t.drives();
+  }
+  assert.deepEqual(names, {
+    'the layout fails': [['Startup disk', '/']],
+    'the layout names no volume at /': [['Startup disk', '/']],
+    'the volume at / has no name': [['Startup disk', '/']],
+    'the disk was renamed': [['Studio SSD', '/']],
+  });
+  // A machine whose disk layout is known to be unavailable is not asked for it.
+  const t = browseRuntime(() => HOME, undefined, { platform: 'darwin', capabilities: { volumeTopology: { available: false, reason: 'no diskutil' } }, topology: () => ({ logicalVolumes: [{ name: 'X', mountPoint: '/' }] }) });
+  await t.rt.openBrowse(null);
+  await settle();
+  assert.deepEqual([t.drives(), t.layoutAsked.n], [[['Startup disk', '/']], 0], 'the capability says no: no request, and no name');
+});
+
+test('on Windows the whole-drive choices are the drive letters the layout lists, by label and letter; on Linux it is / (G26)', () => {
+  const wholeDrives = lift<(platform: string, topo: unknown, homeDir: string) => { path: string; name: string }[]>(['browseWholeDrives'], 'browseWholeDrives');
+  const win = { logicalVolumes: [
+    { id: 'D:', name: 'D:', mountPoint: 'D:\\' },
+    { id: 'C:', name: 'Windows', mountPoint: 'C:\\' },
+    { id: 'disk1', name: 'Recovery', mountPoint: null },
+  ] };
+  assert.deepEqual(wholeDrives('win32', win, 'C:\\Users\\u'), [{ path: 'C:\\', name: 'Windows (C:)' }, { path: 'D:\\', name: 'D:' }],
+    'every lettered drive, in letter order; a label beside its letter, never a letter twice');
+  assert.deepEqual(wholeDrives('win32', null, 'C:\\Users\\u'), [{ path: 'C:\\', name: 'C:' }], 'with no layout, the home folder\'s own drive, by its letter');
+  assert.deepEqual(wholeDrives('win32', null, '\\\\server\\home\\u'), [], 'and none where the home folder is on no lettered drive');
+  assert.deepEqual(wholeDrives('linux', win, '/home/u'), [{ path: '/', name: '/' }], 'on Linux, /');
+  assert.deepEqual(wholeDrives('freebsd', null, '/home/u'), [], 'and nothing offered where the platform is not one TreeMap knows');
+});
+
+test('the whole drive is offered only where the picker scans — not for an Autopilot folder or an offload destination — and a late layout answer never draws it into those (G26)', async () => {
+  let release!: () => void;
+  const slow = new Promise<void>((resolve) => { release = resolve; });
+  const layout = { logicalVolumes: [{ name: 'Macintosh HD', mountPoint: '/' }] };
+  let late = false;
+  const t = browseRuntime(() => HOME, undefined, { platform: 'darwin', topology: async () => { if (late) await slow; return layout; } });
+  await t.rt.openBrowse(null);
+  await settle();
+  assert.deepEqual(t.drives(), [['Macintosh HD', '/']], 'control: the picker that scans offers it');
+  await t.rt.openBrowse('/home/u', () => {}, 'Folder this policy cleans');
+  await settle();
+  assert.deepEqual(t.drives(), [], 'a pick for Autopilot offers no whole drive');
+  await t.rt.openBrowse(null, () => {}, 'Offload to…', 'Offload to this folder', { chips: [{ path: '/Volumes/Backup', name: 'Backup' }], hint: 'Choose a drive.' });
+  await settle();
+  assert.deepEqual(t.drives(), [], 'nor an offload');
+  // Opened to scan while the layout is slow, then for a pick before it answers.
+  late = true;
+  await t.rt.openBrowse(null);
+  assert.deepEqual(t.drives(), [['Macintosh HD', '/']], 'what the layout said before is drawn at once');
+  await t.rt.openBrowse('/home/u', () => {}, 'Folder this policy cleans');
+  release();
+  await settle(); await settle();
+  assert.deepEqual(t.drives(), [], 'the late answer does not draw the whole drive into the pick');
+});
+
+test('the whole-drive choice sits at the top of the sheet, and the sheet still opens on its path field; the hidden-folders box is a labelled checkbox (G26)', () => {
+  const sheet = INDEX.slice(INDEX.indexOf('<div class="modal-backdrop" id="browseModal"'), INDEX.indexOf('<!-- ═══════════ Confirm modal'));
+  const at = (needle: string) => sheet.indexOf(needle);
+  assert.ok(at('id="browseDrives"') !== -1 && at('id="browseCurrent"') !== -1, 'control: both are in the sheet');
+  assert.ok(at('id="browseDrives"') < at('id="browseCurrent"'), 'the whole drive comes first');
+  assert.match(sheet, /<div [^>]*id="browseDrives"[^>]*\bhidden\b/, 'and is hidden until the picker offers it');
+  // The modal net lands on a sheet's first input (modalFocusTarget): the path field, before the box.
+  const firstInput = /<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"/.exec(sheet)?.[1];
+  assert.equal(firstInput, 'browseCurrent', 'the first field is still the path line');
+  assert.match(sheet, /<label[^>]*>\s*<input type="checkbox" id="browseShowHidden">\s*Show hidden folders/, 'the box says what it does');
 });
 
 /* ══════════════ Typing a path ══════════════ */

@@ -208,3 +208,11 @@
 .game-legend .gl i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 :root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
 :root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
+/* ── G26: the folder picker's whole drive and hidden-folders box ── */
+.browse-drives { margin: 0 0 12px; align-items: center; }
+.browse-drives-lbl { font-size: 11.5px; font-weight: 600; color: var(--text-2); margin-right: 2px; }
+.browse-drive .ic { color: var(--accent); }
+.browse-hidden-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2);
+  cursor: var(--cur-hand); }
+.browse-hidden-toggle input { margin: 0; }
+#browseHiddenCount { color: var(--text-3); font-variant-numeric: tabular-nums; }

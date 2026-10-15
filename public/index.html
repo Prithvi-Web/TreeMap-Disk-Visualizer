@@ -2590,6 +2590,14 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .game-legend .gl i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 :root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
 :root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
+/* ── G26: the folder picker's whole drive and hidden-folders box ── */
+.browse-drives { margin: 0 0 12px; align-items: center; }
+.browse-drives-lbl { font-size: 11.5px; font-weight: 600; color: var(--text-2); margin-right: 2px; }
+.browse-drive .ic { color: var(--accent); }
+.browse-hidden-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2);
+  cursor: var(--cur-hand); }
+.browse-hidden-toggle input { margin: 0; }
+#browseHiddenCount { color: var(--text-3); font-variant-numeric: tabular-nums; }
 
 /* ── Browser profile drill-down (Feature 16) ── */
 #browserProfiles { margin-bottom: 16px; }
@@ -4903,6 +4911,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <button class="close-x" data-close="browseModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
+      <!-- G26: the whole drive, where the picker scans (browseOfferDrives) —
+           named as the disk layout names it, never guessed. -->
+      <div class="chips browse-drives" id="browseDrives" role="group" aria-label="Whole drive" hidden></div>
       <!-- QA D05: the path line is a field — the typing route, in every
            context the picker opens from (before the first scan the Scan
            card's path box is not on screen). -->
@@ -4912,6 +4923,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="browse-list" id="browseList"></div>
     </div>
     <div class="modal-foot">
+      <!-- G26: dot-folders wait to be asked for; this browser remembers. -->
+      <label class="browse-hidden-toggle"><input type="checkbox" id="browseShowHidden"> Show hidden folders<span id="browseHiddenCount"></span></label>
       <div style="flex:1"></div>
       <button class="btn btn-primary" id="browseUseBtn"><span data-icon="check"></span>Scan this folder</button>
     </div>
@@ -35807,6 +35820,8 @@ let browseHold = false;
 // answer is shown: a sleeping NAS answers late (review F1.8). Closing the
 // picker retires every listing still on its way — see browseClosed.
 let browseSeq = 0;
+/** The listing on screen, drawn again when the hidden-folders box changes (G26). */
+let browseListing = null;
 /** A path as the server reads one (sanitizePath): leading whitespace is paste
     debris and goes, a trailing space is part of a folder's name and stays.
     Trimming it turned "Screenshots " (a name macOS and Linux allow, spelled so
@@ -35909,9 +35924,132 @@ async function openBrowse(start, onPick = null, title = null, useLabel = null, w
   chips.innerHTML = shortcuts.map(d =>
     `<button class="pill" data-p="${escapeHtml(d.path)}">${icon(where?.chips ? 'disc' : 'folder', 12)}${escapeHtml(d.name)}</button>`).join('');
   chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
+  // The whole drive, where the picker scans (G26): an Autopilot folder or an
+  // offload destination is a pick, and a drive's root is no place for either.
+  void browseOfferDrives(!onPick);
   // A start from a path box is a typed path: one that names no folder offers
   // the folder it probably meant (meantFolder).
   await browseTo(start || state.system?.homeDir || '/', !!start);
+}
+
+/* ── G26: the whole drive, and the hidden folders ──────────────────────────
+   The first-run picker listed 50+ dot-folders under the home folder and had
+   no way to scan the whole drive, though the hero promises "Reads a whole
+   drive in minutes". Dot-folders now wait for "Show hidden folders", which
+   this browser remembers (a typed or pasted path opens hidden or not), and the
+   picker that scans offers the whole drive at its top. Choosing it opens the
+   drive's root in the picker, and "Scan this folder" scans it through the one
+   scan route — the "Stay on this drive" setting and the Full Disk Access
+   messages with it. */
+
+/** Where this browser keeps whether the picker lists hidden folders. */
+const BROWSE_HIDDEN_KEY = 'tm-browse-hidden';
+/** Whether this viewer asked to see hidden folders. A preference kept in
+    this browser only; storage that cannot be read is the default: hidden. */
+function browseHiddenStored() {
+  try { return localStorage.getItem(BROWSE_HIDDEN_KEY) === 'show'; } catch { return false; }
+}
+function browseRememberHidden(show) {
+  try {
+    if (show) localStorage.setItem(BROWSE_HIDDEN_KEY, 'show');
+    else localStorage.removeItem(BROWSE_HIDDEN_KEY);
+  } catch { /* kept for this visit: the box itself is what the list reads */ }
+}
+$('browseShowHidden').checked = browseHiddenStored();
+$('browseShowHidden').addEventListener('change', () => {
+  browseRememberHidden($('browseShowHidden').checked);
+  if (browseListing) browseDraw(browseListing);
+});
+
+/** The whole drives the picker offers, each { path, name }. On macOS the
+    startup disk, `/`, under the name the disk layout (`topo`, the answer of
+    GET /api/platform/topology, or null) gives the volume mounted there —
+    "Macintosh HD" — or "Startup disk" where it gives none: never a guessed
+    name. On Windows each lettered drive the layout lists, by its label and
+    letter, else the home folder's own drive by its letter. On Linux, `/`. */
+function browseWholeDrives(platform, topo, homeDir) {
+  const volumes = Array.isArray(topo?.logicalVolumes) ? topo.logicalVolumes : [];
+  if (platform === 'darwin') {
+    const root = volumes.find((v) => v && v.mountPoint === '/');
+    const name = root && typeof root.name === 'string' ? root.name.trim() : '';
+    return [{ path: '/', name: name || 'Startup disk' }];
+  }
+  if (platform === 'win32') {
+    const lettered = volumes
+      .filter((v) => v && /^[A-Za-z]:\\$/.test(v.mountPoint || ''))
+      .map((v) => {
+        const letter = v.mountPoint.slice(0, 2).toUpperCase();
+        const label = typeof v.name === 'string' ? v.name.trim() : '';
+        return { path: letter + '\\', name: label && label.toUpperCase() !== letter ? `${label} (${letter})` : letter };
+      })
+      .sort((a, b) => a.path.localeCompare(b.path));
+    if (lettered.length) return lettered;
+    const home = /^([A-Za-z]:)[\\/]/.exec(homeDir || '');
+    return home ? [{ path: home[1].toUpperCase() + '\\', name: home[1].toUpperCase() }] : [];
+  }
+  if (platform === 'linux') return [{ path: '/', name: '/' }];
+  return [];
+}
+/** Each opening of the picker takes the next number; only the newest one's
+    disk layout answer is drawn. */
+let browseDrivesSeq = 0;
+/** The drives the disk layout last named, drawn at once the next time. */
+let browseDrivesSeen = null;
+function browseDrawDrives(drives) {
+  const row = $('browseDrives');
+  row.hidden = !drives.length;
+  row.innerHTML = !drives.length ? '' : '<span class="browse-drives-lbl">Whole drive</span>' + drives.map((d) =>
+    `<button class="pill browse-drive" data-p="${escapeHtml(d.path)}" title="${escapeHtml(d.path)} — the whole drive">${icon('hardDrive', 13)}${escapeHtml(d.name)}</button>`).join('');
+}
+/** Offer the whole drive at the picker's top when it scans (`scans`). The
+    names come from the disk layout the Dashboard reads (topologyAnswer); a
+    machine that cannot give one gets the names that need none. */
+async function browseOfferDrives(scans) {
+  const mine = ++browseDrivesSeq;
+  const sys = state.system || {};
+  if (!scans) { browseDrawDrives([]); return; }
+  if (sys.platform !== 'darwin' && sys.platform !== 'win32') { browseDrawDrives(browseWholeDrives(sys.platform, null, sys.homeDir)); return; }
+  browseDrawDrives(browseDrivesSeen || []);
+  const cap = state.capabilities && state.capabilities.volumeTopology;
+  let topo = null;
+  if (!(cap && cap.available === false)) {
+    try { topo = await topologyAnswer(false); } catch { topo = null; }
+  }
+  if (mine !== browseDrivesSeq) return; // the picker opened again meanwhile: its own answer draws
+  if (topo) browseDrivesSeen = browseWholeDrives(sys.platform, topo, sys.homeDir);
+  browseDrawDrives(browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir));
+}
+$('browseDrives').addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-p]');
+  if (b) browseTo(b.dataset.p);
+});
+
+/** The picker's rows for one listing, and how many hidden folders it holds
+    back (`hidden`; null where the server's cut leaves that unknown). The
+    server sends ordinary folders first and cuts after (GET /api/fs/list), so
+    a cut listing that holds any hidden folder holds every ordinary one, and
+    the rest of its `total` is hidden: it says it was cut only where what it
+    lists was (POL item 2). */
+function browseRows(data, showHidden) {
+  const ordinary = data.dirs.filter((d) => !d.isHidden);
+  const hiddenSent = data.dirs.length - ordinary.length;
+  const cut = typeof data.total === 'number' && data.total > data.dirs.length;
+  const hidden = !cut ? hiddenSent : hiddenSent > 0 ? data.total - ordinary.length : null;
+  const dirs = showHidden ? browseOrder(data.dirs) : ordinary;
+  const rows = [];
+  // The server sends at most 500 subfolders — the first 500 in this order —
+  // and how many there are; a cut list says so above the folders (POL item 2).
+  if (cut && (showHidden || hiddenSent === 0)) {
+    rows.push(`<div class="muted" role="note" style="padding:8px 12px; font-size:12px;">Showing the first ${formatCount(dirs.length)} of ${formatCount(data.total)} folders. Type a path above to open one that is not listed.</div>`);
+  }
+  if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
+  rows.push(...dirs.map(d =>
+    `<button class="browse-item" data-p="${escapeHtml(d.path)}" aria-label="Open ${escapeHtml(d.name)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
+  if (!showHidden && !ordinary.length && hidden) {
+    const one = hidden === 1;
+    rows.push(`<div class="muted" role="note" style="padding:10px 14px; font-size:12px;">No folders here but ${formatCount(hidden)} hidden ${one ? 'one' : 'ones'} — tick Show hidden folders to list ${one ? 'it' : 'them'}.</div>`);
+  }
+  return { rows, hidden };
 }
 /** Ordinary folders first, dot-folders after them, each in the server's order
     (QA D05: in a home folder .agents, .cache… pushed Documents below the fold). */
@@ -35936,6 +36074,7 @@ async function browseTo(path, typed = false) {
     // on its way: its answer is not shown, and it did not open.
     if (seq !== browseSeq) return false;
     browsePath = data.path;
+    browseListing = data;
     const field = $('browseCurrent');
     field.value = data.path;
     // An unfocused field shows the START of its value, and the end of a long
@@ -35943,27 +36082,7 @@ async function browseTo(path, typed = false) {
     // tooltip holds the whole path (review F1.9).
     field.title = data.path;
     field.scrollLeft = field.scrollWidth;
-    const list = $('browseList');
-    const rows = [];
-    // The server sends at most 500 subfolders — the first 500 in this order —
-    // and how many there are; a cut list says so above the folders (POL item 2).
-    if (typeof data.total === 'number' && data.total > data.dirs.length) {
-      rows.push(`<div class="muted" role="note" style="padding:8px 12px; font-size:12px;">Showing the first ${formatCount(data.dirs.length)} of ${formatCount(data.total)} folders. Type a path above to open one that is not listed.</div>`);
-    }
-    if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
-    rows.push(...browseOrder(data.dirs).map(d =>
-      `<button class="browse-item" data-p="${escapeHtml(d.path)}" aria-label="Open ${escapeHtml(d.name)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
-    // The rows are replaced. Focus on one of them — the row just opened, or
-    // ".." — would fall to the page with it, and the next Tab start over at
-    // the top of the sheet: it goes to the new list's first row (the path
-    // field when the list has none). And the list is its own scroller: the new
-    // listing opens at its top, where the cut-list note and ".." are, not at
-    // the old listing's offset (POL item 2 review, F2.10).
-    const focusInList = list.contains(document.activeElement);
-    list.innerHTML = rows.join('') || '<div class="muted" style="padding:14px;">No subfolders.</div>';
-    list.scrollTop = 0;
-    list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
-    if (focusInList) (list.querySelector('.browse-item') || $('browseCurrent')).focus();
+    browseDraw(data);
     return true;
   } catch (e) {
     // An overtaken listing is not looked up further: nothing would show it.
@@ -35973,6 +36092,23 @@ async function browseTo(path, typed = false) {
     else toast(e.message, 'error');
     return false;
   }
+}
+/** Draw a listing's rows, hidden folders as the box says (G26). */
+function browseDraw(data) {
+  const list = $('browseList');
+  const { rows, hidden } = browseRows(data, $('browseShowHidden').checked);
+  $('browseHiddenCount').textContent = hidden ? ` (${formatCount(hidden)})` : '';
+  // The rows are replaced. Focus on one of them — the row just opened, or
+  // ".." — would fall to the page with it, and the next Tab start over at
+  // the top of the sheet: it goes to the new list's first row (the path
+  // field when the list has none). And the list is its own scroller: the new
+  // listing opens at its top, where the cut-list note and ".." are, not at
+  // the old listing's offset (POL item 2 review, F2.10).
+  const focusInList = list.contains(document.activeElement);
+  list.innerHTML = rows.join('') || '<div class="muted" style="padding:14px;">No subfolders.</div>';
+  list.scrollTop = 0;
+  list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
+  if (focusInList) (list.querySelector('.browse-item') || $('browseCurrent')).focus();
 }
 /** Every way the picker closes (Escape, the ✕, the scrim, a Use that acted)
     runs through closeModal, which calls this: a typed path still opening when
