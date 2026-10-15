@@ -95,7 +95,18 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
   transition: width var(--dur-2) var(--ease); }
 
 /* Browse picker */
-.browse-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); margin-top: 12px; }
+.browse-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); margin-top: 12px; flex: 0 1 auto; }
+/* At the 1024×700 smallest window the sheet meets its 84vh cap, and its body
+   grew a scrollbar of its own around the list's (G26 review F2.5). Where the
+   window holds a list of four rows, the body is a column the list gives way
+   in, so the list is the one thing that scrolls; below that, the body
+   scrolls as every sheet's does. Margins do not collapse in a column, so an
+   empty chips row is not drawn: in block flow its 12 px merged with the
+   list's. */
+@media (min-height: 580px) {
+  #browseModal .modal-body { display: flex; flex-direction: column; }
+}
+#browseChips:empty { display: none; }
 .browse-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
   background: transparent; padding: 9px 14px; font-size: 13px; cursor: var(--cur-hand); color: var(--text-1);
   border-bottom: 1px solid var(--hairline); transition: background var(--dur-1) var(--ease); }

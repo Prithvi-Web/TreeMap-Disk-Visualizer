@@ -1964,3 +1964,65 @@ test('the remedy line and the description are coloured from the theme\'s tokens,
   // The code pill's literal violet has a light-theme counterpart.
   assert.ok(RULES.some((r) => r.selectors.includes(':root[data-theme="light"] .regen-cmd') && /\bcolor:/.test(r.body)), 'the code pill is recoloured for the light theme');
 });
+
+/* ══════════════ G26 review F2.5 — the folder picker scrolls one thing at the smallest window ══════════════ */
+
+/*
+ * The whole-drive row (G26) put 42 px above the picker's path field, and at
+ * the 1024×700 smallest window the sheet meets its 84vh cap: its body grew a
+ * scrollbar of its own around the list's 320 px one (G26 review F2.5 — with
+ * two rows of folder chips the sheet already ran 17 px over there before it).
+ * Where the window holds a list of four rows, the body is a column the list
+ * gives way in, so the list is the one thing that scrolls.
+ */
+test('at the smallest window the folder picker scrolls one thing, its list — the sheet\'s body is a column the list gives way in, never a second scrollbar around it (G26 review F2.5)', () => {
+  const px = (v: string | undefined, what: string): number => {
+    const m = /^(-?[\d.]+)px$/.exec((v ?? '').trim());
+    assert.ok(m, `${what} is in px (${v})`);
+    return Number(m![1]);
+  };
+  const sides = (v: string | undefined, what: string) => (v ?? '').trim().split(/\s+/).map((p) => (p === '0' ? 0 : px(p, what)));
+  // The column, under a media query on the window's height.
+  const media = /@media \(min-height: (\d+)px\) \{\s*#browseModal \.modal-body \{([^{}]*)\}/.exec(SHEET);
+  assert.ok(media, 'the picker\'s body is a column where the window is tall enough for one');
+  const body = declsFor('#browseModal .modal-body');
+  assert.deepEqual([body.get('display'), body.get('flex-direction')], ['flex', 'column'], 'a column');
+  const list = declsFor('.browse-list');
+  assert.ok(flexShrink(list) > 0, `the list gives way when the sheet meets its cap (flex: ${list.get('flex') ?? 'unset'})`);
+  assert.equal(list.get('overflow-y'), 'auto', 'and scrolls what it cannot show');
+  // Margins do not collapse in a column: an empty chips row would add its own
+  // 12 px above the list's, where block flow merged the two. It is not drawn.
+  assert.equal(declsFor('#browseChips:empty').get('display'), 'none', 'an empty chips row takes no room');
+
+  // The room the list gets, from the sheet's own numbers. The sheet is at most
+  // 84vh, less its head (the ✕ is its tallest part) and its foot (a button).
+  const vh = Number(/^(\d+)vh$/.exec(declsFor('.modal').get('max-height') ?? '')?.[1]) / 100;
+  assert.ok(vh > 0, 'control: the sheet\'s cap is read');
+  const head = sides(declsFor('.modal-head').get('padding'), 'the head\'s padding');
+  const foot = sides(declsFor('.modal-foot').get('padding'), 'the foot\'s padding');
+  const chrome = head[0] + (head[2] ?? head[0]) + px(declsFor('.close-x').get('height'), 'the ✕')
+    + foot[0] + (foot[2] ?? foot[0]) + 1 + px(declsFor('.btn').get('min-height'), 'a button');
+  // The body above its list: its padding, the whole-drive row, the path field,
+  // the hint (its inline 6 px margin over one 12 px line, ~15 px), two rows of
+  // folder chips (a home folder's seven do not fit one at 560 px) and the list's
+  // margin and border.
+  const pill = px(declsFor('.pill').get('min-height'), 'a pill');
+  const hint = /id="browseHint" style="font-size:12px;margin-top:(\d+)px;"/.exec(INDEX);
+  assert.ok(hint, 'control: the hint\'s spacing is read from the page');
+  const fixed = 2 * sides(declsFor('.modal-body').get('padding'), 'the body\'s padding')[0]
+    + pill + sides(declsFor('.browse-drives').get('margin'), 'the drive row\'s margin')[2]
+    + px(declsFor('input[type="text"]').get('min-height'), 'the path field')
+    + Number(hint![1]) + 15
+    + px(declsFor('.chips').get('margin-top'), 'the chips\' margin') + 2 * pill + px(declsFor('.chips').get('gap'), 'the chips\' gap')
+    + px(list.get('margin-top'), 'the list\'s margin') + 2;
+  // A row: 9 px above and below a 13 px line (~16 px), and its rule.
+  const row = 2 * 9 + 16 + 1;
+  const room = (viewport: number) => vh * viewport - chrome - fixed;
+  // The smallest window: 700 px tall (electron/main.js), 672 under its title bar.
+  const minHeight = Number(/minHeight: (\d+)/.exec(readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8'))?.[1]);
+  assert.equal(minHeight, 700, 'control: the window\'s smallest height is read');
+  const threshold = Number(media![1]);
+  assert.ok(threshold <= minHeight - 28, `the column holds at the smallest window (${minHeight - 28} px under the title bar ≥ ${threshold})`);
+  assert.ok(room(threshold) >= 4 * row + 2, `and wherever it holds, the list keeps four rows: ${room(threshold).toFixed(0)} px at ${threshold} px`);
+  assert.ok(room(minHeight - 28) >= 6 * row + 2, `at the smallest window, six: ${room(minHeight - 28).toFixed(0)} px`);
+});
