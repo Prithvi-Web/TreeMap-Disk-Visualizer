@@ -617,37 +617,57 @@ test('two nested indexes, neither current — as every root is after a restart: 
   assert.deepEqual(listRoots().map((r) => [r.path, r.state, r.live]), [[NEST, 'stale', false], [INNER, 'stale', false]],
     'control: two nested indexes, neither current');
 
-  /** Searches `q`, counting every row any statement reads while it does, and keeping the hit query and its arguments. */
+  /**
+   * Searches `q`, counting what every statement it runs reads — each row handed back, and each call
+   * that handed back none (a seek that missed costs a lookup too) — and keeping the hit query, its
+   * arguments and the text of every statement run. A statement is followed through pluck, raw, expand
+   * and bind, which hand back the statement itself, and `exec` is counted and kept as well: a walk read
+   * any of those ways was unseen, the bound below measuring nothing (review F3.6).
+   */
   const work = (q: string, opts = {}) => {
-    const handle = db as unknown as { prepare: (sql: string) => unknown };
+    const handle = db as unknown as { prepare: (sql: string) => unknown; exec: (sql: string) => unknown };
     const original = handle.prepare;
+    const originalExec = handle.exec;
     let rows = 0;
+    const statements: string[] = [];
     let hit: { sql: string; args: unknown[] } | null = null;
     handle.prepare = function (this: unknown, sql: string) {
       const stmt = original.call(this, sql) as Record<string | symbol, unknown>;
+      statements.push(sql);
       const isHit = /ORDER BY n\.size DESC/.test(sql);
-      return new Proxy(stmt, {
+      const counted: object = new Proxy(stmt, {
         get(target, key) {
           const f = target[key];
           if (typeof f !== 'function') return f;
-          if (key === 'get') return (...a: unknown[]) => { const row = f.apply(target, a); if (row !== undefined) rows++; return row; };
-          if (key === 'all') return (...a: unknown[]) => { if (isHit) hit = { sql, args: a }; const all = f.apply(target, a) as unknown[]; rows += all.length; return all; };
+          if (key === 'get') return (...a: unknown[]) => { rows++; return f.apply(target, a); };
+          if (key === 'run') return (...a: unknown[]) => { rows++; return f.apply(target, a); };
+          if (key === 'all') return (...a: unknown[]) => { if (isHit) hit = { sql, args: a }; const all = f.apply(target, a) as unknown[]; rows += Math.max(1, all.length); return all; };
           if (key === 'iterate') {
             return function* (...a: unknown[]) {
               if (isHit) hit = { sql, args: a };
-              for (const row of f.apply(target, a) as Iterable<unknown>) { rows++; yield row; }
+              let gave = 0;
+              for (const row of f.apply(target, a) as Iterable<unknown>) { gave++; rows++; yield row; }
+              if (gave === 0) rows++;
             };
           }
-          return f.bind(target);
+          // pluck, raw, expand, bind, safeIntegers… hand back the statement: the counted one, still counted.
+          return (...a: unknown[]) => { const out = f.apply(target, a); return out === target ? counted : out; };
         },
       });
+      return counted;
     } as typeof handle.prepare;
+    handle.exec = function (this: unknown, sql: string) {
+      statements.push(sql);
+      rows++;
+      return originalExec.call(this, sql);
+    } as typeof handle.exec;
     try {
       const result = searchIndex(q, opts);
       assert.ok(hit, `control: "${q}" ran one hit query`);
-      return { result, rows, hit: hit as { sql: string; args: unknown[] } };
+      return { result, rows, statements, hit: hit as { sql: string; args: unknown[] } };
     } finally {
       handle.prepare = original;
+      handle.exec = originalExec;
     }
   };
   const planOf = (hit: { sql: string; args: unknown[] }): string[] =>
@@ -674,6 +694,9 @@ test('two nested indexes, neither current — as every root is after a restart: 
   for (const [label, run] of [['the extension seek', ext], ['the name scan', name], ['a name nothing matches', none]] as const) {
     const plan = planOf(run.hit);
     assert.ok(!plan.some((step) => /RECURSIVE|MATERIALIZE/.test(step)), `${label}: the hit query walks no tree before its first row: ${plan.join(' | ')}`);
+    // Nor does any other statement the search runs, however it is read (review F3.6).
+    const walks = run.statements.filter((sql) => /\bRECURSIVE\b/i.test(sql));
+    assert.deepEqual(walks, [], `${label}: no statement the search runs walks a tree`);
   }
   const extPlan = planOf(ext.hit);
   assert.deepEqual(scans(extPlan), [], `the extension seek scans nothing: ${extPlan.join(' | ')}`);
