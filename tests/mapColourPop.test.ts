@@ -368,14 +368,40 @@ const LABELLED: Labelled[] = (() => {
 
 /** The worst contrast `text` has against the cushion under it, from its top to its bottom on the tile. */
 function worstContrast(l: Labelled, text: Text, ground: RGB): number {
-  const y0 = (l.tile.y / 100) * MAP_H, h = l.h;
   const ink = rgba(String(text.fillStyle));
-  let worst = Infinity;
-  for (const yy of [text.y, Math.min(y0 + h, text.y + fontPx(text.font) * LEADING)]) {
-    const under = at(l.fill, Math.max(0, Math.min(1, (yy - y0) / h)), ground);
-    worst = Math.min(worst, contrast(over(ink, under), under));
+  return Math.min(...lineEnds(l, text, ground).map((under) => contrast(over(ink, under), under)));
+}
+/** The cushion under `text`'s top and its foot on the tile. */
+function lineEnds(l: Labelled, text: Text, ground: RGB): RGB[] {
+  const y0 = (l.tile.y / 100) * MAP_H, h = l.h;
+  return [text.y, Math.min(y0 + h, text.y + fontPx(text.font) * LEADING)]
+    .map((yy) => at(l.fill, Math.max(0, Math.min(1, (yy - y0) / h)), ground));
+}
+
+/** The size line's quieter ink, as the page sets it. */
+const QUIET = load<number>(['TM_SIZE_INK_ALPHA'], {}, 'TM_SIZE_INK_ALPHA');
+/** The better of black and white at `alpha` across a line whose ends lie on `ends`: its worst contrast. */
+function bestInkAt(ends: RGB[], alpha: number): number {
+  const worst = (ink: RGB) => Math.min(...ends.map((c) => contrast(over([...ink, alpha] as RGBA, c), c)));
+  return Math.max(worst([0, 0, 0]), worst([255, 255, 255]));
+}
+/**
+ * The weight a line is written at (review F2.4): the name at full ink; the
+ * size line a step quieter, at the page's TM_SIZE_INK_ALPHA, wherever a
+ * line that quiet reads at 4.5:1 across `ends`, and at full ink only where
+ * it would not. A 4.5:1 floor alone cannot see this — full ink only ever
+ * reads better. Returns which weight the line took.
+ */
+function assertInkWeight(text: Text, ends: RGB[], where: string): 'name' | 'quiet' | 'full' {
+  const a = rgba(String(text.fillStyle))[3];
+  if (fontPx(text.font) !== 10) {
+    assert.equal(a, 1, `${where}: the name "${text.text}" is written at full ink (alpha ${a})`);
+    return 'name';
   }
-  return worst;
+  const quiet = bestInkAt(ends, QUIET);
+  assert.equal(a, quiet >= 4.5 ? QUIET : 1,
+    `${where}: a size line ${QUIET} quiet reads at ${fmt(quiet)}:1 here, so it is written at ${quiet >= 4.5 ? QUIET : 1} (alpha ${a})`);
+  return quiet >= 4.5 ? 'quiet' : 'full';
 }
 
 test('G09: every tile is labelled where it has room — a name, and a size where two lines fit', () => {
@@ -395,6 +421,20 @@ test('G09: a tile\'s name and its size line both reach 4.5:1 against the tile, a
       }
     }
   }
+});
+
+test('G09: the name is written at full ink and the size line a step quieter wherever that still reads at 4.5:1 — full ink only where it would not, at every ramp step and depth', () => {
+  // The name/size hierarchy is part of how the map reads. Every other
+  // label assertion is a 4.5:1 floor, which full ink on every size line
+  // passes as well — so nothing held the quieter step (review F2.4).
+  assert.ok(QUIET < 1, `the size line is a step quieter than the name (TM_SIZE_INK_ALPHA ${QUIET})`);
+  const took = { name: 0, quiet: 0, full: 0 };
+  for (const [theme, ground] of THEMES) {
+    for (const l of LABELLED) {
+      for (const text of l.texts) took[assertInkWeight(text, lineEnds(l, text, ground), `${theme}, depth ${l.depth}, ramp ${l.t}, a ${l.h} px tile`)]++;
+    }
+  }
+  assert.ok(took.quiet > took.full, `on the ramp the size line is mostly the quieter one (${took.quiet} quiet, ${took.full} at full ink, ${took.name} names)`);
 });
 
 test('G09: the ink is chosen from the tile — dark on a light tile, light on a dark one', () => {
@@ -561,6 +601,7 @@ function assertLegible(swept: Swept[], what: string, expectLines: number) {
         const l = { depth: 0, t: 0, h: s.h, tile: { y: (s.y0 / MAP_H) * 100 } as Tile, fill: s.fill, texts: s.texts };
         const c = worstContrast(l, text, ground);
         assert.ok(c >= 4.5, `${theme}, ${what}, ${s.label}, a ${s.h} px tile: its ${k === 0 ? 'name' : 'size'} line in ${String(text.fillStyle)} measures ${fmt(c)}:1 (floor 4.5:1)`);
+        assertInkWeight(text, lineEnds(l, text, ground), `${theme}, ${what}, ${s.label}, a ${s.h} px tile`);
         lines++;
       }
     }
@@ -618,25 +659,29 @@ test('G09: where the cushion gives way for a label, it eases — a Reclaim "keep
  * What the canvas holds at (x, y) as op `upTo` is drawn: every rectangle
  * filled over that point before it, replayed in order over `ground` — the
  * leaf's cushion, then anything laid over it. `leaf` is the last cushion
- * painted there and `washes` counts the flat fills laid over it since.
+ * painted there, `grad` its gradient, and `washes` counts the flat fills
+ * laid over it since. A cushion is read at `gy` (y unless given): the
+ * painter judges a line's foot at the tile's own height, half a pixel below
+ * the inset rectangle it fills.
  */
-function canvasAt(ops: Op[], upTo: number, x: number, y: number, ground: RGB): { rgb: RGB; leaf: number[] | null; washes: number } {
-  let rgb = ground, leaf: number[] | null = null, washes = 0;
+function canvasAt(ops: Op[], upTo: number, x: number, y: number, ground: RGB, gy = y): { rgb: RGB; leaf: number[] | null; grad: Grad | null; washes: number } {
+  let rgb = ground, leaf: number[] | null = null, grad: Grad | null = null, washes = 0;
   for (const op of ops.slice(0, upTo)) {
     if (op.kind !== 'rect') continue;
     const [rx, ry, rw, rh] = op.rect;
     if (x < rx || x >= rx + rw || y < ry || y >= ry + rh) continue;
     if (op.style && typeof op.style === 'object') {
       const g = op.style as Grad;
-      rgb = at(g, Math.max(0, Math.min(1, (y - g.args[1]) / (g.args[3] - g.args[1]))), rgb);
+      rgb = at(g, Math.max(0, Math.min(1, (gy - g.args[1]) / (g.args[3] - g.args[1]))), rgb);
       leaf = op.rect;
+      grad = g;
       washes = 0;
     } else if (typeof op.style === 'string' && /^(#|rgb)/i.test(op.style)) {
       rgb = over(rgba(op.style), rgb);
       washes++;
     }
   }
-  return { rgb, leaf, washes };
+  return { rgb, leaf, grad, washes };
 }
 
 /** Each line `rec` wrote, with what the canvas held under its top and its foot as it was written. */
@@ -647,8 +692,8 @@ function linesAsWritten(rec: ReturnType<typeof recordingCtx>, ground: RGB) {
     const x = op.text.x + 1;
     const top = canvasAt(rec.ops, i, x, op.text.y, ground);
     assert.ok(top.leaf, `"${op.text.text}" is written on a tile`);
-    const footY = Math.min(top.leaf![1] + top.leaf![3] - 0.01, op.text.y + fontPx(op.text.font) * LEADING);
-    const foot = canvasAt(rec.ops, i, x, footY, ground);
+    const footGy = Math.min(top.grad!.args[3], op.text.y + fontPx(op.text.font) * LEADING);
+    const foot = canvasAt(rec.ops, i, x, Math.min(top.leaf![1] + top.leaf![3] - 0.01, footGy), ground, footGy);
     out.push({ text: op.text, ends: [top.rgb, foot.rgb], washes: Math.min(top.washes, foot.washes) });
   }
   return out;
@@ -696,6 +741,7 @@ test('G09: in the History diff, a label in a folder that grew, shrank or is new 
       const ink = rgba(String(line.text.fillStyle));
       const c = Math.min(...line.ends.map((under) => contrast(over(ink, under), under)));
       assert.ok(c >= 4.5, `${theme}, ${whatAt(line.text)}: "${line.text.text}" in ${String(line.text.fillStyle)} measures ${fmt(c)}:1 on its tile under ${line.washes} wash(es) (floor 4.5:1)`);
+      assertInkWeight(line.text, line.ends, `${theme}, ${whatAt(line.text)}, under ${line.washes} wash(es)`);
       washed[Math.min(2, line.washes)]++;
     }
   }
