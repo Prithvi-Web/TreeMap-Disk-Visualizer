@@ -90,10 +90,10 @@ function page(): { body: El; info: El; asks: Ask[]; view: View; state: { scanId:
 }
 
 /** A statement whose lines sum to `used`, as every statement the server sends does. */
-function statement(scanId: string, used: number): Record<string, unknown> {
+function statement(scanId: string, used: number, volumeName = 'Macintosh HD'): Record<string, unknown> {
   return {
     scanId, rootPath: `/${scanId}`,
-    volume: { mountPoint: '/', totalBytes: 1000, usedBytes: used, freeBytes: 1000 - used, reservedBytes: 0, mechanism: 'statfs(/)', mechanismLabel: 'what macOS reports for Macintosh HD' },
+    volume: { mountPoint: '/', totalBytes: 1000, usedBytes: used, freeBytes: 1000 - used, reservedBytes: 0, mechanism: 'statfs(/)', mechanismLabel: `what macOS reports for ${volumeName}` },
     lines: [
       { id: 'scanned', label: 'Files TreeMap scanned', bytes: used - 7, available: true, detail: 'd', count: null, notes: [], remedy: null },
       { id: 'unaccounted', label: 'Unaccounted', bytes: 7, available: true, detail: 'u', count: null, notes: [], remedy: null },
@@ -205,6 +205,21 @@ test('G06: a scan never shows another scan\'s statement — not while its own is
   p.view.onScanChange();
   assert.equal(usedShown(p.body), 620, 'back on the first scan: its newest statement at once, the late answer included');
   assert.match(p.body.innerHTML, /Updating…/);
+});
+
+test('G06 review F2.1: a new scan with nothing kept waits on its own statement under no caption — never the last scan\'s, naming the last scan\'s volume', async () => {
+  const p = page();
+  p.view.mount();
+  await p.asks[0].answer(statement('s1', 600, 'Macintosh HD'));
+  assert.match(p.info.textContent, /what macOS reports for Macintosh HD\. Every line below/, 's1\'s caption is up with its receipt');
+
+  p.state.scanId = 's2'; // a new scan, on another volume, lands while the view is open
+  p.view.onScanChange();
+  assert.match(p.body.innerHTML, /Reconciling this disk/, 's2 has nothing kept: its skeleton rows');
+  assert.equal(p.info.textContent, '', 'and no caption above them: s1\'s names Macintosh HD and "every line below", and neither is s2\'s');
+
+  await p.asks[1].answer(statement('s2', 300, 'Backup'));
+  assert.match(p.info.textContent, /what macOS reports for Backup\. Every line below/, 's2\'s own caption comes with its own statement');
 });
 
 test('G06: a refresh that fails says so and takes the last statement down — it never leaves a stale receipt up', async () => {

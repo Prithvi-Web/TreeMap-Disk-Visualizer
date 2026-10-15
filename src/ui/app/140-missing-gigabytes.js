@@ -89,6 +89,7 @@ async function loadMissing() {
     missingData = null;
     body.classList.remove('fx-chart-loading'); // the last scan's receipt may have been veiled: skeleton or veil, never both
     body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
+    $('missingInfo').textContent = ''; // nor its caption: it names that scan's volume and "every line below" (review F2.1)
   }
   try {
     const statement = await api(`/api/missing-gigabytes?scanId=${encodeURIComponent(scanId)}`);
