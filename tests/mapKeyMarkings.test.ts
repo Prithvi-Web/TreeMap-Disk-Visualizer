@@ -170,7 +170,7 @@ test('G27: every marking at once, in one compact row, each with its swatch', () 
     node({ ...BIG, x: 70, cloudPlaceholder: true }),
     node({ ...BIG, y: 40, type: 'dir', expanded: true, gitRepo: true }),
   ], { preview: true });
-  assert.deepEqual(named(html), ['archive you can open', 'staged for the Trash', 'in the cloud, not on this disk', 'git repository']);
+  assert.deepEqual(named(html), ['archive you can open after the preview', 'staged for the Trash', 'in the cloud, not on this disk', 'git repository']);
   const swatches = [...html.matchAll(/<span class="mk"[^>]*>\s*(<i class="mk-sw [^"]+"|<svg)/g)].length;
   assert.equal(swatches, 4, 'each marking is shown, not just named');
 });
@@ -201,8 +201,43 @@ test('G27: the markings are named under every colouring — Size, Age, Reclaim a
   for (const [name, opts, ownKey] of colourings) {
     const html = keyFor(all(), { ...opts, preview: true });
     assert.match(html, ownKey, `${name}: its own key is drawn`);
-    assert.deepEqual(named(html), ['archive you can open', 'staged for the Trash', 'in the cloud, not on this disk', 'git repository'],
+    assert.deepEqual(named(html), ['archive you can open after the preview', 'staged for the Trash', 'in the cloud, not on this disk', 'git repository'],
       `${name}: every marking on the map is named`);
     assert.deepEqual(named(keyFor([node(BIG), node({ ...BIG, x: 40 })], opts)), [], `${name}: and none when the map draws none`);
+  }
+});
+
+test('G27: the key promises a click into an archive only where a click opens one — while the cart preview is up it says to leave the preview first', () => {
+  // The preview is read-only: tmOnCanvasClick returns before it reaches an
+  // archive, yet pass 7 still draws the archive's dashed border, and the key
+  // named it "archive you can open" under the title "Click it to look inside"
+  // beside "staged for the Trash" (review F3.1). What a click does is taken
+  // from the real tmOnCanvasClick, so the key is held to the click itself.
+  const title = (html: string) => /<span class="mk" title="([^"]*)"><i class="mk-sw mk-open">/.exec(html)?.[1];
+  for (const preview of [false, true]) {
+    const zip = node({ ...BIG, container: 'zip' });
+    const did: string[] = [];
+    const click = load<(e: object) => void>(['tmOnCanvasClick'], {
+      state: { treemap: { rootPath: '/r', history: { active: false } } },
+      tmPreview: { on: preview },
+      viewHit: () => ({ n: zip }),
+      hideTooltip() {}, openTrashModal() { did.push('trash'); }, breadcrumbsFor: () => [],
+      loadTreemap: (p: string) => did.push(`load ${p}`),
+      expandContainerNode: (n: Node) => did.push(`open ${n.path}`),
+      openPreview: (n: Node) => did.push(`preview ${n.path}`),
+    }, 'tmOnCanvasClick', (fn) => fn({ clientX: 0, clientY: 0 }));
+    did.length = 0;
+    click({ clientX: 0, clientY: 0 });
+    const opens = did.includes(`open ${zip.path}`);
+    assert.equal(opens, !preview, `a click on the archive ${preview ? 'opens nothing while the preview is up' : 'opens it'} (${did.join(', ') || 'nothing done'})`);
+
+    const html = keyFor([zip], { preview });
+    const [item] = named(html);
+    const promises = item === 'archive you can open' && title(html) === 'Click it to look inside — TreeMap lists what it holds';
+    assert.equal(promises, opens, `preview ${preview ? 'on' : 'off'}: the key reads "${item}" (title "${title(html)}") — it must promise a click exactly when a click opens the archive`);
+    if (preview) {
+      assert.equal(item, 'archive you can open after the preview', 'the drawn marking is still named, with when it can be opened');
+      assert.equal(title(html), 'Leave the preview, then click it to look inside — TreeMap lists what it holds');
+    }
   }
 });

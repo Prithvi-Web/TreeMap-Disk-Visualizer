@@ -11953,6 +11953,11 @@ function renderTmLegend() {
  * staged for the Trash; its hollow dashed tile, a cloud placeholder whose
  * bytes are not on this disk; pass 6's branch glyph, a folder that holds a
  * .git folder of its own.
+ *
+ * The open marking promises a click only where a click opens: the cart
+ * preview is read-only (tmOnCanvasClick returns before an archive), so while
+ * it is up the border is still named, with when it can be opened (review
+ * F3.1).
  */
 const TM_OPEN_NOUNS = { zip: 'archive', tgz: 'archive', tar: 'archive', iso: 'disk image', docker: 'disk image', photos: 'Photos library' };
 function tmMarksKey() {
@@ -11961,7 +11966,10 @@ function tmMarksKey() {
   const items = [];
   if (m.open && m.open.size) {
     const nouns = [...new Set([...m.open].map((k) => TM_OPEN_NOUNS[k] || 'container'))];
-    items.push(`<span class="mk" title="Click it to look inside — TreeMap lists what it holds"><i class="mk-sw mk-open"></i>${escapeHtml(nouns.join(' or '))} you can open</span>`);
+    const how = tmPreview.on
+      ? { title: 'Leave the preview, then click it to look inside — TreeMap lists what it holds', when: ' after the preview' }
+      : { title: 'Click it to look inside — TreeMap lists what it holds', when: '' };
+    items.push(`<span class="mk" title="${how.title}"><i class="mk-sw mk-open"></i>${escapeHtml(nouns.join(' or '))} you can open${how.when}</span>`);
   }
   if (m.staged) {
     items.push('<span class="mk" title="In the cleanup cart — nothing is deleted until you move it to the Trash"><i class="mk-sw mk-staged"></i>staged for the Trash</span>');
