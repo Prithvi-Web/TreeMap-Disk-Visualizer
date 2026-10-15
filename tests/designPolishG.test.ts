@@ -538,7 +538,7 @@ function topologyBars(topo: unknown, homeDir: string | null, rootPath: string | 
   const keys = Object.keys(deps);
   const names = ['renderTopology'];
   for (let attempt = 0; attempt < 12; attempt++) {
-    const src = `'use strict'; ${names.map((n) => (/^[A-Z_]+$/.test(n) ? constSource(n) : fnSource(n))).join('\n')} return renderTopology;`;
+    const src = `'use strict'; ${names.map((n) => (new RegExp(`\\n(?:async )?function ${n}\\(`).test(INDEX) ? fnSource(n) : constSource(n))).join('\n')} return renderTopology;`;
     try {
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
       (new Function(...keys, src)(...keys.map((k) => deps[k])) as (t: unknown) => void)(topo);
@@ -558,9 +558,9 @@ function topologyBars(topo: unknown, homeDir: string | null, rootPath: string | 
   }
   return out;
 }
-/** A top-level `const NAME = …;` from the built page. */
+/** A top-level `const NAME = …;` (or `let`) from the built page. */
 function constSource(name: string): string {
-  const at = INDEX.indexOf(`\nconst ${name} = `) + 1;
+  const at = Math.max(INDEX.indexOf(`\nconst ${name} = `), INDEX.indexOf(`\nlet ${name} = `)) + 1;
   assert.ok(at > 0, `${name} is in the page`);
   return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
 }
@@ -609,6 +609,81 @@ test('G22: the topology\'s threshold is the All Storage strip\'s — one number,
   // Exactly at the threshold: the strip's `>` is the topology's `>`.
   const edge = topologyBars(withBoot(Number(share![1]) * 500 - 13.7), '/Users/me', null);
   assert.equal(edge['APPLE SSD AP0512Z'], false, 'at the threshold exactly, not yet');
+});
+
+/**
+ * The Disk Topology card's whole module from the built page, run over stubs:
+ * its topic subscriptions are captured so a test can fire them, and every
+ * request it makes is counted. Returns the card's bars by disk title.
+ */
+function topologyCard(topo: unknown, homeDir: string) {
+  // The module as the page carries it: its source file, found whole in the built page.
+  const module = readFileSync(path.join(__dirname, '..', 'src', 'ui', 'app', '025-disk-topology.js'), 'utf8');
+  assert.ok(INDEX.includes(module.trim()), 'the Disk Topology module is in the built page as it is in its source');
+  const body = { innerHTML: '', classList: { remove() {}, add() {} }, querySelector: (sel: string) => (sel === '.topo-disk' && body.innerHTML.includes('topo-disk') ? {} : null), querySelectorAll: () => [] };
+  const handlers: Record<string, Array<() => void>> = {};
+  const clicks: Record<string, () => void> = {};
+  const state: { system: { homeDir: string }; root: { path: string } | null; capabilities: null } = { system: { homeDir }, root: null, capabilities: null };
+  let asked = 0, draws = 0, failing = false;
+  const deps: Record<string, unknown> = {
+    $: (id: string) => (id === 'topologyBody' ? body : { addEventListener: (_: string, fn: () => void) => { clicks[id] = fn; } }),
+    state,
+    api: async () => { asked++; if (failing) throw new Error('diskutil did not answer'); return topo; },
+    TOPIC: { capabilities: 'capabilities', scan: 'scan' },
+    subscribe: (topic: string, fn: () => void) => { (handlers[topic] ??= []).push(fn); },
+    emit() {}, reportError() {},
+    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { draws++; el.innerHTML = html; } },
+    fxBarsIn() {}, skeletonRows: () => '', icon: () => '',
+    formatBytes: (n: number) => `${n} B`, escapeHtml: (s: string) => String(s), fxBarStyle: () => 'background:var(--fx-ramp);',
+  };
+  const keys = Object.keys(deps);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(...keys, `'use strict'; ${module}`)(...keys.map((k) => deps[k]));
+  const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+  const fire = async (topic: string) => { for (const fn of handlers[topic] ?? []) fn(); await settle(); };
+  const bars = () => {
+    const out: Record<string, boolean> = {};
+    for (const disk of body.innerHTML.split('<div class="topo-disk">').slice(1)) {
+      const title = /<span class="nm" title="([^"]*)"/.exec(disk)![1];
+      const bar = /<div class="topo-track"><div class="fx-bar-fill"[^>]*style="([^"]*)"/.exec(disk);
+      out[title] = Boolean(bar && /var\(--danger\)/.test(bar[1]));
+    }
+    return out;
+  };
+  const refresh = async (fail: boolean) => { failing = fail; clicks.topologyRefresh(); await settle(); };
+  return { state, fire, bars, refresh, asked: () => asked, draws: () => draws, html: () => body.innerHTML };
+}
+
+test('G22: when the folder on screen moves to another disk, the topology redraws its red from the layout in hand — no Refresh, no new request', () => {
+  // Red marks a disk low where you work, and the folder on screen is half of
+  // that; but the card was drawn at startup (no folder yet) and on Refresh
+  // only, so a 95%-full drive just scanned stayed in the ramp, and one
+  // scanned before stayed red after the next scan moved on (review F1.4, F1.6).
+  return (async () => {
+    const card = topologyCard(TOPO, '/Users/me');
+    await card.fire('capabilities');
+    assert.equal(card.asked(), 1, 'the card asks for the layout once, at startup');
+    assert.equal(card.bars()['Backup Drive'], false, 'with no folder on screen, the full backup drive is calm');
+    card.state.root = { path: '/Volumes/Backup/Photos' };
+    await card.fire('scan');
+    assert.equal(card.bars()['Backup Drive'], true, 'a scan of a folder on it turns its bar red');
+    assert.equal(card.bars()['APPLE SSD AP0512Z'], false, 'and leaves the healthy main disk alone');
+    card.state.root = { path: '/Users/me/Projects' };
+    await card.fire('scan');
+    assert.equal(card.bars()['Backup Drive'], false, 'a scan elsewhere turns it calm again');
+    const draws = card.draws();
+    card.state.root = { path: '/Users/me/Music' };
+    await card.fire('scan');
+    assert.equal(card.draws(), draws, 'a scan that moves no disk in or out of view leaves the card as it is');
+    assert.equal(card.asked(), 1, 'all from the layout in hand: no new request');
+    // A card showing that it could not read the layout is not drawn over
+    // with the layout it read before.
+    await card.refresh(true);
+    assert.match(card.html(), /Couldn’t read the disk layout/, 'a failed refresh says so');
+    card.state.root = { path: '/Volumes/Backup/Photos' };
+    await card.fire('scan');
+    assert.match(card.html(), /Couldn’t read the disk layout/, 'and a scan after it does not paint the old layout back');
+  })();
 });
 
 test('G22: Missing GB\'s reason a line is unknown is plain muted text, not warning text, in both themes', () => {

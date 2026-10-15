@@ -65,6 +65,7 @@ async function loadTopology() {
 
 /** Unavailable (§3.5 state 5): the specific reason, shown as an answer, not an error. */
 function renderTopologyBlocked(reason) {
+  topologyDrawn = null;
   $('topologyBody').classList.remove('fx-chart-loading');
   $('topologyBody').innerHTML =
     `<div class="muted" style="display:flex;gap:8px;align-items:flex-start;padding:4px 2px;">${icon('alert', 14)}` +
@@ -75,6 +76,7 @@ function renderTopologyBlocked(reason) {
 
 /** Error (§3.5 state 6): the envelope's message, with a retry. */
 function renderTopologyError(err) {
+  topologyDrawn = null;
   $('topologyBody').classList.remove('fx-chart-loading');
   $('topologyBody').innerHTML =
     `<div class="muted" style="padding:4px 2px;">Couldn’t read the disk layout: ${escapeHtml(err.message || 'something went wrong.')}</div>` +
@@ -98,6 +100,22 @@ const TOPO_VISIBLE_VOLUMES = 4;
  * above it, a folder boundary, never a string prefix (smartDeviceFor's rule).
  */
 const SPACE_LOW_USED_SHARE = 0.85;
+/**
+ * The volumes where low space is yours to feel: the one holding your home
+ * folder and the one holding the folder on screen. The second changes with
+ * every scan, so the card keeps the layout it last drew (topologyDrawn) and
+ * draws it again when a scan moves that set — not only at startup and on
+ * Refresh, which left a nearly full drive just scanned in the ramp and kept
+ * one scanned before red after the next scan moved on (review F1.4, F1.6).
+ */
+let topologyDrawn = null;   // { topo, near } — the answer drawn, and its near set's key
+function topoNearVolumes(volumes) {
+  return new Set([
+    topoVolumeHolding(volumes, state.system && state.system.homeDir),
+    topoVolumeHolding(volumes, state.root && state.root.path),
+  ].filter(Boolean));
+}
+function topoNearKey(near) { return [...near].map((v) => v.id).sort().join('|'); }
 function topoVolumeHolding(volumes, p) {
   if (typeof p !== 'string' || !p) return null;
   const under = (mount) => {
@@ -117,6 +135,7 @@ function renderTopology(topo) {
   const volumes = topo.logicalVolumes || [];
 
   if (!disks.length && !volumes.length) {
+    topologyDrawn = null;
     // Empty (§3.5 state 1) — genuinely nothing visible, with the fix at hand.
     body.innerHTML =
       `<div class="muted" style="padding:4px 2px;">No disks are visible right now.</div>` +
@@ -149,10 +168,8 @@ function renderTopology(topo) {
   for (const key of groups.keys()) { if (key.includes('|')) for (const id of key.split('|')) pooledIds.add(id); }
 
   // The volumes where low space is yours to feel (SPACE_LOW_USED_SHARE).
-  const near = new Set([
-    topoVolumeHolding(volumes, state.system && state.system.homeDir),
-    topoVolumeHolding(volumes, state.root && state.root.path),
-  ].filter(Boolean));
+  const near = topoNearVolumes(volumes);
+  topologyDrawn = { topo, near: topoNearKey(near) };
 
   const sections = [];
   for (const d of disks) {
@@ -284,3 +301,12 @@ $('topologyRefresh').addEventListener('click', () => loadTopology());
 // Repaints when the capability answer lands or changes; the card never sits
 // on its skeleton waiting for a poke from another view.
 subscribe(TOPIC.capabilities, () => loadTopology());
+// A scan, or a tree opened from the index, puts another folder on screen:
+// redraw the layout in hand if that moves a disk in or out of "where you
+// work". No request — the disks have not changed, only which one is yours.
+subscribe(TOPIC.scan, () => {
+  if (!topologyDrawn || topologyLoading) return;
+  const volumes = topologyDrawn.topo.logicalVolumes || [];
+  if (topoNearKey(topoNearVolumes(volumes)) === topologyDrawn.near) return;
+  renderTopology(topologyDrawn.topo);
+});
