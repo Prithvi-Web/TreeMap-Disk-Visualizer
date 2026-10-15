@@ -23,7 +23,8 @@
    30px of each other. */
 .fleet-disclosure .fl-col { flex: 1 1 260px; padding: 10px 12px; border-radius: var(--r-md);
   background: var(--surface-2); border: 1px solid var(--hairline); font-size: 11.5px; }
-.fleet-disclosure .fl-col.never { background: color-mix(in srgb, var(--danger) 6%, transparent); border-color: var(--danger-line); }
+/* "What they can never see" is the reassuring half of the disclosure, and
+   is drawn like the other half: it was a red danger box (design pass G22). */
 .fleet-disclosure b { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
 .fleet-disclosure ul { margin: 0; padding-left: 17px; color: var(--text-2); line-height: 1.55; }
 .fleet-off { padding: 14px 2px; font-size: 12.5px; line-height: 1.6; }

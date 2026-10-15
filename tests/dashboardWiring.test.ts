@@ -198,19 +198,24 @@ test('the Settings diagnostic counts hard-linked FILES, each once — the other 
 
 /* ══════════════ Disk Topology ══════════════ */
 
-test('topology bars moved onto the kit recipe with the danger exception intact', () => {
+test('topology bars moved onto the kit recipe, with the danger exception kept for a disk low where you work', () => {
   const fn = slice('function topoSection(', 'function wireTopologyActions(');
   assert.match(fn, /fx-bar-fill/, 'the ramp-gradient fill');
   assert.match(fn, /fxBarStyle\(rank\)/, 'colored by section rank on the shared ramp');
-  assert.match(fn, /pct > 85 \? 'background:var\(--danger\);'/, 'a disk past 85% keeps the solid warning');
+  // Design pass G22: past 85% used is red only on a disk holding the home
+  // folder or the folder on screen; a full disk image or backup drive is not
+  // an alarm. tests/designPolishG.test.ts renders the cases.
+  assert.match(fn, /const low = pct !== null && pct > SPACE_LOW_USED_SHARE \* 100 && vols\.some\(\(v\) => near\.has\(v\)\);/,
+    'a disk past the threshold, where you work, keeps the solid warning');
+  assert.match(fn, /low \? 'background:var\(--danger\);'/);
 });
 
 /** topoSection lifted from the built page, with byte-exact stand-ins for its helpers. */
 function liftTopoSection(): (s: Record<string, unknown>, rank?: number) => string {
   const src = slice('function topoSection(', 'function wireTopologyActions(');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  return new Function('formatBytes', 'escapeHtml', 'fxBarStyle', 'TOPO_VISIBLE_VOLUMES',
-    `'use strict'; ${src} return topoSection;`)((n: number) => n + ' B', (s: string) => String(s), () => '', 6) as
+  return new Function('formatBytes', 'escapeHtml', 'fxBarStyle', 'TOPO_VISIBLE_VOLUMES', 'SPACE_LOW_USED_SHARE',
+    `'use strict'; ${src} return topoSection;`)((n: number) => n + ' B', (s: string) => String(s), () => '', 6, 0.85) as
     (s: Record<string, unknown>, rank?: number) => string;
 }
 

@@ -85,6 +85,31 @@ function renderTopologyError(err) {
 /** How many volume rows a disk shows before the rest fold behind "show more". */
 const TOPO_VISIBLE_VOLUMES = 4;
 
+/**
+ * The share of a disk in use past which it is low on space: All Storage's
+ * threshold (asqStrip's `used / total > 0.85`), one number for both cards.
+ *
+ * Red is kept for a disk that is low WHERE YOU WORK — the one holding your
+ * home folder (what All Storage's "This Mac" row judges) or the folder on
+ * screen. Any other disk is drawn in the ramp whatever its fill: three iOS
+ * simulator disk images, 96–97% full by construction, drew three red bars
+ * beside a healthy main disk (design pass G22), and a backup drive is full
+ * by design too. A path's volume is the one with the longest mount point
+ * above it, a folder boundary, never a string prefix (smartDeviceFor's rule).
+ */
+const SPACE_LOW_USED_SHARE = 0.85;
+function topoVolumeHolding(volumes, p) {
+  if (typeof p !== 'string' || !p) return null;
+  const under = (mount) => {
+    if (p === mount) return true;
+    const sep = /^(?:[A-Za-z]:|\\\\)/.test(mount) ? '\\' : '/';
+    return p.startsWith(mount.endsWith(sep) ? mount : mount + sep);
+  };
+  return volumes
+    .filter((v) => v && typeof v.mountPoint === 'string' && v.mountPoint && under(v.mountPoint))
+    .sort((a, b) => b.mountPoint.length - a.mountPoint.length)[0] || null;
+}
+
 function renderTopology(topo) {
   const body = $('topologyBody');
   body.classList.remove('fx-chart-loading'); // every paint settles the veil
@@ -123,6 +148,12 @@ function renderTopology(topo) {
   const pooledIds = new Set();
   for (const key of groups.keys()) { if (key.includes('|')) for (const id of key.split('|')) pooledIds.add(id); }
 
+  // The volumes where low space is yours to feel (SPACE_LOW_USED_SHARE).
+  const near = new Set([
+    topoVolumeHolding(volumes, state.system && state.system.homeDir),
+    topoVolumeHolding(volumes, state.root && state.root.path),
+  ].filter(Boolean));
+
   const sections = [];
   for (const d of disks) {
     sections.push(topoSection({
@@ -131,6 +162,7 @@ function renderTopology(topo) {
       capacity: d.sizeBytes,
       vols: groups.get(d.id) || [],
       inPool: pooledIds.has(d.id),
+      near,
     }, sections.length));
   }
   for (const [key, vols] of groups) {
@@ -142,12 +174,13 @@ function renderTopology(topo) {
       // a mirror of two 1TB drives holds 1TB, not 2.
       capacity: vols.reduce((s, v) => s + (v.sizeBytes || 0), 0) || null,
       vols,
+      near,
     }, sections.length));
   }
   for (const [key, vols] of groups) {
     if (!key.startsWith('un:')) continue;
     for (const v of vols) {
-      sections.push(topoSection({ title: v.name || v.id, tag: (v.kind || '').toUpperCase() || null, capacity: v.sizeBytes, vols: [v] }, sections.length));
+      sections.push(topoSection({ title: v.name || v.id, tag: (v.kind || '').toUpperCase() || null, capacity: v.sizeBytes, vols: [v], near }, sections.length));
     }
   }
 
@@ -161,7 +194,7 @@ function renderTopology(topo) {
   wireTopologyActions();
 }
 
-function topoSection({ title, tag, capacity, vols, inPool = false }, rank = 0) {
+function topoSection({ title, tag, capacity, vols, inPool = false, near = new Set() }, rank = 0) {
   const known = vols.filter((v) => typeof v.usedBytes === 'number');
   const unknown = vols.length - known.length;
   const used = known.reduce((s, v) => s + v.usedBytes, 0);
@@ -171,10 +204,11 @@ function topoSection({ title, tag, capacity, vols, inPool = false }, rank = 0) {
   if (known.length && capacity > 0) sub = `${formatBytes(used)} of ${formatBytes(capacity)}`;
   else if (capacity > 0) sub = formatBytes(capacity);
 
-  // The kit's ramp gradient by section rank; a disk past 85% keeps the one
-  // honest exception — solid danger, the same signal the old bar carried.
+  // The kit's ramp gradient by section rank; solid danger only for a disk
+  // that is low on space where you work (SPACE_LOW_USED_SHARE, above).
+  const low = pct !== null && pct > SPACE_LOW_USED_SHARE * 100 && vols.some((v) => near.has(v));
   const bar = pct === null ? '' :
-    `<div class="topo-track"><div class="fx-bar-fill" data-w="${Math.max(2, pct).toFixed(1)}" style="${pct > 85 ? 'background:var(--danger);' : fxBarStyle(rank)}"></div></div>`;
+    `<div class="topo-track"><div class="fx-bar-fill" data-w="${Math.max(2, pct).toFixed(1)}" style="${low ? 'background:var(--danger);' : fxBarStyle(rank)}"></div></div>`;
   // Usage the platform could not read is said out loud — an absent number is
   // an answer here, a bar quietly missing those bytes would be a wrong one.
   const caveat = !vols.length

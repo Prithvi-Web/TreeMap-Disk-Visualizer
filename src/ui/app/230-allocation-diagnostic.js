@@ -108,7 +108,7 @@ function renderFleet() {
   const disclosure = `<div class="fleet-disclosure">
     <div class="fl-col"><b>${icon('checkCircle', 13)} What other machines would see</b><ul>${
       (f.shares || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></div>
-    <div class="fl-col never"><b>${icon('ban', 13)} What they can never see</b><ul>${
+    <div class="fl-col never"><b>${icon('eyeOff', 13)} What they can never see</b><ul>${
       (f.neverShares || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></div>
   </div>`;
 

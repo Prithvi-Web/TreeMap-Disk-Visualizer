@@ -245,8 +245,11 @@ test('G10: a focused Duplicates group header draws its ring inside itself, where
 function fnSource(name: string): string {
   const at = INDEX.search(new RegExp(`\\n(?:async )?function ${name}\\(`)) + 1;
   assert.ok(at > 0, `${name} is in the page`);
+  // The body's brace comes after the parameter list, which may destructure.
+  let i0 = INDEX.indexOf('(', at), parens = 0;
+  for (; i0 < INDEX.length; i0++) { if (INDEX[i0] === '(') parens++; else if (INDEX[i0] === ')' && --parens === 0) break; }
   let depth = 0;
-  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+  for (let i = INDEX.indexOf('{', i0); i < INDEX.length; i++) {
     if (INDEX[i] === '{') depth++;
     else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(at, i + 1);
   }
@@ -347,5 +350,122 @@ test('G25: the three hero features read as static labels — no pill border or f
   for (const [name, palette] of THEMES) {
     const c = contrast(paint(decl('color')!, palette, page(palette)), page(palette));
     assert.ok(c >= 4.5, `${name}: the feature text measures ${fmt(c)}:1 on the page`);
+  }
+});
+
+/* ══════════════ G22 — no alarm colour on neutral information ══════════════ */
+
+test('G22: Fleet\'s "What they can never see" is a reassurance, drawn as neutrally as what they would see', () => {
+  // It was a red danger box (6% --danger, a --danger-line edge) under a
+  // "ban" glyph: the reassuring half of the disclosure dressed as an alarm.
+  const never = rulesFor('.fleet-disclosure .fl-col.never');
+  for (const r of never) {
+    assert.doesNotMatch(r.body, /--danger|--warn/, `"${r.selector}" paints no alarm colour (${r.body.trim()})`);
+  }
+  const fleet = fnSource('renderFleet');
+  const col = /<div class="fl-col never"><b>\$\{icon\('(\w+)'/.exec(fleet);
+  assert.ok(col, 'the "never" column is rendered');
+  assert.notEqual(col![1], 'ban', 'under a glyph that is not a prohibition sign');
+  assert.match(fleet, /fleet-alarm/, 'the real alarm — pairing stopped after wrong codes — keeps its own box');
+  assert.match(ruleFor('.fleet-alarm').body, /--warn|--danger/, 'in an alert colour');
+});
+
+/** renderTopology from the built page over `topo`, with home and scan root at the given paths; each disk's title → whether its bar is danger red. */
+function topologyBars(topo: unknown, homeDir: string | null, rootPath: string | null): Record<string, boolean> {
+  const body = { innerHTML: '', classList: { remove() {}, add() {} } };
+  const deps: Record<string, unknown> = {
+    $: () => body,
+    state: { system: homeDir ? { homeDir } : null, root: rootPath ? { path: rootPath } : null },
+    FxNum: { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } },
+    fxBarsIn() {}, wireTopologyActions() {},
+    formatBytes: (n: number) => `${n} B`, escapeHtml: (s: string) => String(s), fxBarStyle: () => 'background:var(--fx-ramp);',
+  };
+  const keys = Object.keys(deps);
+  const names = ['renderTopology'];
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const src = `'use strict'; ${names.map((n) => (/^[A-Z_]+$/.test(n) ? constSource(n) : fnSource(n))).join('\n')} return renderTopology;`;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval
+      (new Function(...keys, src)(...keys.map((k) => deps[k])) as (t: unknown) => void)(topo);
+      break;
+    } catch (e) {
+      const missing = /(\w+) is not defined/.exec(String((e as Error).message))?.[1];
+      if (!missing || names.includes(missing)) throw e;
+      names.push(missing);
+    }
+  }
+  const out: Record<string, boolean> = {};
+  for (const disk of body.innerHTML.split('<div class="topo-disk">').slice(1)) {
+    const title = /<span class="nm" title="([^"]*)"/.exec(disk)![1];
+    const bar = /<div class="topo-track"><div class="fx-bar-fill"[^>]*style="([^"]*)"/.exec(disk);
+    assert.ok(bar, `${title} draws its usage bar`);
+    out[title] = /var\(--danger\)/.test(bar![1]);
+  }
+  return out;
+}
+/** A top-level `const NAME = …;` from the built page. */
+function constSource(name: string): string {
+  const at = INDEX.indexOf(`\nconst ${name} = `) + 1;
+  assert.ok(at > 0, `${name} is in the page`);
+  return INDEX.slice(at, INDEX.indexOf(';', at) + 1);
+}
+
+const GB = 1e9;
+const TOPO = {
+  physicalDisks: [
+    { id: 'disk0', name: 'APPLE SSD AP0512Z', sizeBytes: 500 * GB, rotational: false },
+    { id: 'disk9', name: 'Disk Image', sizeBytes: 9.1 * GB, rotational: false },
+    { id: 'disk12', name: 'Backup Drive', sizeBytes: 2000 * GB, rotational: true },
+  ],
+  logicalVolumes: [
+    { id: 'disk3s5', name: 'Data', mountPoint: '/System/Volumes/Data', usedBytes: 258 * GB, sizeBytes: 500 * GB, freeBytes: 205 * GB, physicalDiskIds: ['disk0'], kind: 'apfs' },
+    { id: 'disk3s1', name: 'Macintosh HD', mountPoint: '/', usedBytes: 13.7 * GB, sizeBytes: 500 * GB, freeBytes: 205 * GB, physicalDiskIds: ['disk0'], kind: 'apfs' },
+    { id: 'disk9s1', name: 'iOS 18.4 Simulator', mountPoint: '/Library/Developer/CoreSimulator/Volumes/iOS_22E238', usedBytes: 8.8 * GB, sizeBytes: 9.1 * GB, freeBytes: 0.26 * GB, physicalDiskIds: ['disk9'], kind: 'apfs' },
+    { id: 'disk12s2', name: 'Backup', mountPoint: '/Volumes/Backup', usedBytes: 1900 * GB, sizeBytes: 2000 * GB, freeBytes: 100 * GB, physicalDiskIds: ['disk12'], kind: 'apfs' },
+  ],
+};
+const withBoot = (usedGB: number) => ({ ...TOPO, logicalVolumes: TOPO.logicalVolumes.map((v) => (v.id === 'disk3s5' ? { ...v, usedBytes: usedGB * GB } : v)) });
+
+test('G22: Disk Topology paints a full disk image or backup drive neutrally — a disk is red only when low where you work', () => {
+  // Three iOS simulator disk images, 96–97% full by construction, drew three
+  // red bars beside a healthy main disk. TreeMap alarms where low space
+  // hurts: the disk holding your home folder (what All Storage's "This Mac"
+  // row judges) or the folder you scanned.
+  const calm = topologyBars(TOPO, '/Users/me', '/Users/me/Projects');
+  assert.deepEqual(calm, { 'APPLE SSD AP0512Z': false, 'Disk Image': false, 'Backup Drive': false },
+    'a 97%-full disk image and a 95%-full backup drive are not alarms; a 54% main disk is not either');
+  const full = topologyBars(withBoot(440), '/Users/me', '/Users/me/Projects');
+  assert.equal(full['APPLE SSD AP0512Z'], true, 'the main disk past the threshold, holding the home folder, is red');
+  assert.equal(full['Disk Image'], false, 'and the disk image stays calm beside it');
+  const scanned = topologyBars(TOPO, '/Users/me', '/Volumes/Backup/Photos');
+  assert.equal(scanned['Backup Drive'], true, 'a nearly full drive holding the folder on screen is red');
+  assert.equal(topologyBars(TOPO, '/Users/me', '/Volumes/BackupOld/x')['Backup Drive'], false,
+    'a folder on /Volumes/BackupOld is not on the drive mounted at /Volumes/Backup — a mount point is a folder boundary');
+  const unknownHome = topologyBars(withBoot(440), null, null);
+  assert.equal(unknownHome['APPLE SSD AP0512Z'], false, 'with no home or folder known, nothing is judged near — no alarm on a guess');
+});
+
+test('G22: the topology\'s threshold is the All Storage strip\'s — one number, read from both', () => {
+  const strip = /const danger = used \/ total > ([\d.]+);/.exec(fnSource('asqStrip'));
+  assert.ok(strip, 'the All Storage strip states its threshold');
+  const share = /const SPACE_LOW_USED_SHARE = ([\d.]+);/.exec(INDEX);
+  assert.ok(share, 'the topology names its threshold');
+  assert.equal(Number(share![1]), Number(strip![1]), 'and they are the same number');
+  // Exactly at the threshold: the strip's `>` is the topology's `>`.
+  const edge = topologyBars(withBoot(Number(share![1]) * 500 - 13.7), '/Users/me', null);
+  assert.equal(edge['APPLE SSD AP0512Z'], false, 'at the threshold exactly, not yet');
+});
+
+test('G22: Missing GB\'s reason a line is unknown is plain muted text, not warning text, in both themes', () => {
+  // "macOS does not report purgeable space…" is a fact about what can be
+  // measured, printed in warning yellow under the Purgeable line.
+  const sel = '.mg-row .mg-reason';
+  const colours = RULES.filter((r) => parts(r).some((p) => p.replace(/^:root\[data-theme="light"\]\s+/, '') === sel))
+    .map((r) => prop(r.body, 'color')).filter((v): v is string => v !== null);
+  assert.ok(colours.length >= 1, 'the reason is styled');
+  for (const c of colours) assert.equal(c, prop(ruleFor('.muted').body, 'color'), `the reason takes the .muted ink, not ${c}`);
+  for (const [name, palette] of THEMES) {
+    const ratio = contrast(paint(colours[colours.length - 1], palette, card(palette)), card(palette));
+    assert.ok(ratio >= 4.5, `${name}: the reason measures ${fmt(ratio)}:1 on the card`);
   }
 });
