@@ -86,6 +86,9 @@ test('a folder merely named like an app is no app: a bundle\'s own folder must c
     { kind: 'app', name: 'Foo', root: '/Users/me/code/acme.app/build/Foo.app' }, 'an app built inside such a project is an app');
   assert.deepEqual(installedProgramOf('/Applications/Clocks.app/Wrapper/Clocks.app/Clocks', 'darwin'),
     { kind: 'app', name: 'Clocks', root: '/Applications/Clocks.app' }, 'an iPhone app installed on a Mac');
+  // Its top-level WrappedBundle link, by which the app is opened (review round 2, F2.8).
+  assert.deepEqual(installedProgramOf('/Applications/Clocks.app/WrappedBundle/Clocks', 'darwin'),
+    { kind: 'app', name: 'Clocks', root: '/Applications/Clocks.app' }, 'an iPhone app reached through its WrappedBundle');
   assert.deepEqual(installedProgramOf('/Applications/Foo.app/contents/macos/foo', 'darwin'),
     { kind: 'app', name: 'Foo', root: '/Applications/Foo.app' }, 'spelled in another case, on a volume that folds it');
 });
