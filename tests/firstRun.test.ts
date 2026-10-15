@@ -207,7 +207,7 @@ function tel(rects = 1): TEl {
 }
 
 /** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
-function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; staged?: number; win?: Record<string, unknown>; cart?: string[] } = {}) {
+function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; cart?: string[] } = {}) {
   const els: Record<string, TEl> = {};
   const $ = (id: string) => (els[id] ??= tel());
   const host = $('tourCard');
@@ -235,14 +235,17 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
   };
   $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
   const winLine = liftPage<(g: unknown) => string>(['UNITS', 'UI_LOCALE', 'escapeHtml', 'formatBytes', 'formatCount', 'TOUR_WIN_ITEMS', 'tourWinLine'], 'tourWinLine');
-  const tour = { active: true, step, wins: opts.win ? [opts.win] : [], winIx: 0, staged: opts.staged ?? 0, unknownReason: '' };
+  const tour = { active: true, step, wins: opts.win ? [opts.win] : [], winIx: 0, added: opts.added ?? [], unknownReason: '' };
+  const cart = new Set(opts.cart ?? []);
+  // The page's cartAddMany as it behaves: what is not staged yet goes in.
+  const cartAddMany = (paths: string[]) => paths.filter((p) => p && !cart.has(p) && cart.add(p)).length;
   const render = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
     'tourAdvanceWin', 'tourWinLine', 'document', `'use strict'; ${render} return tourRender;`)(
-    $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart: new Set(opts.cart ?? []), root: null }, () => '', (s: string) => s,
-    (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, () => 0, () => {}, winLine, { activeElement: null }) as () => void;
+    $, tour, { system: { homeDir: opts.home === undefined ? '/Users/x' : opts.home }, cart, root: null }, () => '', (s: string) => s,
+    (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, cartAddMany, () => {}, winLine, { activeElement: null }) as () => void;
   fn();
-  return { html: host.innerHTML, text: host.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), found, $ };
+  return { html: host.innerHTML, text: host.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), found, $, tour, cart };
 }
 
 test('the welcome card offers one alternative, not a second primary action beside the welcome\'s own (G03)', () => {
@@ -302,11 +305,52 @@ test('a quick win says what it found — the rule\'s plain words, each item\'s n
 });
 
 test('the last step does not point at a cart that is not on screen (G04)', () => {
-  const none = tourCard('cart', { staged: 0 });
+  const none = tourCard('cart', { added: [] });
   assert.doesNotMatch(none.text, /The cart at the bottom is where/, 'nothing staged: the cart is not drawn, so it is not pointed at');
   assert.match(none.text, /You added nothing — also fine\. Anything you add later waits in a cleanup cart that appears at the bottom right once it holds something\./, none.text);
-  const some = tourCard('cart', { staged: 2 });
-  assert.match(some.text, /Everything you added is waiting in the cleanup cart at the bottom right\. Nothing has been deleted\./, some.text);
+  const some = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a', '/c/b'] });
+  assert.match(some.text, /Everything you added is waiting in the cleanup cart at the bottom right\. Committing the cart/, some.text);
+});
+
+test('the last step reads what this run added against the cart as it is now, and a restarted tour starts with nothing added (review F1.1)', () => {
+  // The sentence was chosen by a count of adds kept for the session: after
+  // a run that added something, a commit that emptied the cart and Settings
+  // › Show the welcome tour again, a run that added nothing still said
+  // "Everything you added is waiting in the cleanup cart at the bottom
+  // right" over a cart that was not drawn.
+  const staged = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a', '/c/b', '/c/older'] });
+  assert.match(staged.text, /Everything you added is waiting in the cleanup cart at the bottom right\./, staged.text);
+  assert.doesNotMatch(staged.text, /Nothing has been deleted/, 'no claim about deletions the cart cannot vouch for: the header already says "deleted only when you say so"');
+  const gone = tourCard('cart', { added: ['/c/a'], cart: [] });
+  assert.doesNotMatch(gone.text, /Everything you added is waiting|You added nothing/, `taken out or committed since: neither "waiting" nor "nothing added": ${gone.text}`);
+  assert.match(gone.text, /Everything you added has since left the cart\. The cleanup cart shows at the bottom right whenever it holds something\./, gone.text);
+  const part = tourCard('cart', { added: ['/c/a', '/c/b'], cart: ['/c/a'] });
+  assert.match(part.text, /Some of what you added has since left the cart\. The cleanup cart shows at the bottom right whenever it holds something\./, part.text);
+  const older = tourCard('cart', { added: [], cart: ['/c/older'] });
+  assert.match(older.text, /You added nothing — also fine\./, 'what was staged before this run is not this run\'s');
+
+  // "Add to cart" records the paths it put in the cart, and only those: one
+  // already staged before the tour was not added by it.
+  const win = { title: 'Rust build target', description: 'Cargo build output', totalSize: 10,
+    items: [{ name: 'target', path: '/c/one/target', size: 5 }, { name: 'target', path: '/c/two/target', size: 5 }] };
+  const card = tourCard('win', { win, cart: ['/c/one/target'] });
+  const add = card.found['data-tour-add'];
+  assert.ok(add?.listeners.click?.length, 'control: the add button is wired');
+  add.listeners.click.forEach((fn) => fn());
+  assert.deepEqual(card.tour.added, ['/c/two/target'], 'this run added the one path it put in the cart');
+  assert.ok(card.cart.has('/c/two/target'), 'control: and it is in the cart');
+
+  // A restart begins a new run: nothing added, no wins, no reason left over.
+  const start = INDEX.slice(INDEX.indexOf('function tourMaybeStart'), INDEX.indexOf('async function tourFinish'));
+  const tour = { active: false, step: 'cart', wins: [win], winIx: 2, added: ['/c/a'], unknownReason: 'Could not check: offline' };
+  let rendered = 0;
+  new Function('tour', 'state', 'tourRender', `'use strict'; ${start} tourMaybeStart(false);`)(tour, { scanId: 's1' }, () => { rendered++; });
+  assert.equal(rendered, 1, 'control: the tour started');
+  assert.equal(tour.step, 'map', 'control: a scanned session opens on the map');
+  assert.deepEqual(tour.added, [], 'nothing added yet in this run');
+  assert.deepEqual(tour.wins, [], 'no wins from the last run');
+  assert.equal(tour.winIx, 0, 'and none counted');
+  assert.equal(tour.unknownReason, '', 'and no reason left from the last run');
 });
 
 test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s primary action, the map, or the view (G11)', async () => {

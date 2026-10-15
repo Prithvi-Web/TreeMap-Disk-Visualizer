@@ -12,11 +12,18 @@
  *  - Skippable at every step; completing OR skipping persists tourDone
  *    through settings, so a read-only portable session honestly forgets.
  */
-const tour = { active: false, step: 'welcome', wins: [], winIx: 0, staged: 0, unknownReason: '' };
+const tour = { active: false, step: 'welcome', wins: [], winIx: 0, added: [], unknownReason: '' };
 
 function tourMaybeStart(done) {
   if (done === true || tour.active) return;
   tour.active = true;
+  // Each run starts with nothing added, no wins and no reason (review F1.1):
+  // Settings › Show the welcome tour again restarts it in the same session,
+  // and the last run's adds are not this run's to talk about.
+  tour.added = [];
+  tour.wins = [];
+  tour.winIx = 0;
+  tour.unknownReason = '';
   tour.step = state.scanId ? 'map' : 'welcome';
   tourRender();
 }
@@ -118,19 +125,28 @@ function tourRender() {
       </div>`;
     host.querySelector('[data-tour-add]').addEventListener('click', () => {
       // The one place the tour touches the cart — inside the user's click.
-      tour.staged += cartAddMany(g.items.map((it) => it.path));
+      // It remembers what it put there, for the last step to read (F1.1).
+      const fresh = g.items.map((it) => it.path).filter((p) => p && !state.cart.has(p));
+      cartAddMany(fresh);
+      tour.added = [...tour.added, ...fresh.filter((p) => state.cart.has(p))];
       tourAdvanceWin();
     });
     host.querySelector('[data-tour-next]').addEventListener('click', tourAdvanceWin);
   } else if (tour.step === 'cart') {
+    // What this run added, read against the cart as it is now (G04, review
+    // F1.1). The cart is drawn only while it holds something, so with nothing
+    // added there is no cart at the bottom to point at; and an item added here
+    // may have left it since — taken out, or committed.
+    const kept = tour.added.filter((p) => state.cart.has(p)).length;
+    const where = !tour.added.length
+      ? 'You added nothing — also fine. Anything you add later waits in a cleanup cart that appears at the bottom right once it holds something.'
+      : kept === tour.added.length
+        ? 'Everything you added is waiting in the cleanup cart at the bottom right.'
+        : `${kept ? 'Some of what you added' : 'Everything you added'} has since left the cart. The cleanup cart shows at the bottom right whenever it holds something.`;
     host.innerHTML = `
       ${head('The cart · step 4 of 4', false)}
       <h4>${icon('cart', 16)}Staged — deleted only when you say so</h4>
-      <p>${tour.staged > 0
-        ? `Everything you added is waiting in the cleanup cart at the bottom right. Nothing has been deleted.`
-        // The cart is drawn only once it holds something, so with nothing
-        // staged there is no cart at the bottom to point at (G04).
-        : `You added nothing — also fine. Anything you add later waits in a cleanup cart that appears at the bottom right once it holds something.`}
+      <p>${where}
         Committing the cart runs a preview first, protects files in the Time Capsule, and a run can be undone in one click until the Time Capsule removes its copies.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete — the map is yours'); });
