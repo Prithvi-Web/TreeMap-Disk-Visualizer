@@ -40,6 +40,16 @@ const missingCache = new Map();
 let missingSeq = 0;
 /** The receipt on screen is the scan's last statement, shown while it is asked again. */
 let missingUpdating = false;
+/**
+ * The ask still out, by scan and `seq` (review F1.1). A scan landing while
+ * this view is open reaches loadMissing twice in one go — onScanChange from
+ * the scan's emit, then switchView's mount of the view already on screen —
+ * and so does any other re-entry of the view on screen. While nothing has
+ * left the view or changed the scan since (missingSeq is where the ask left
+ * it), that ask's answer is the one to paint: a second request would run the
+ * server's probes twice side by side and paint the later one.
+ */
+let missingAsking = null;
 
 function mgRemember(scanId, statement, seq) {
   const had = missingCache.get(scanId);
@@ -61,7 +71,9 @@ async function loadMissing() {
     $('missingInfo').textContent = '';
     return;
   }
+  if (missingAsking && missingAsking.scanId === scanId && missingAsking.seq === missingSeq) return; // its answer paints
   const seq = ++missingSeq;
+  missingAsking = { scanId, seq };
   // The same pending language as every other card: skeleton rows when this
   // scan has nothing to show yet, the loading veil over its own receipt while
   // it is asked again. Never another scan's receipt, veiled or not.
@@ -91,6 +103,8 @@ async function loadMissing() {
     missingData = null;
     $('missingInfo').textContent = '';
     body.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  } finally {
+    if (missingAsking && missingAsking.seq === seq) missingAsking = null; // a newer ask's stays
   }
 }
 

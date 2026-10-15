@@ -129,6 +129,32 @@ test('G06: a second visit paints the last statement at once, says it is updating
   assert.ok(!p.body.classList.contains('fx-chart-loading'), 'the veil is lifted');
 });
 
+test('G06 review F1.1: a scan landing while the view is open asks once — the scan\'s emit and the re-mount share one request, and its answer paints', async () => {
+  const p = page();
+  // finishScan: emit(TOPIC.scan) reaches onScanChange, then switchView(state.view)
+  // mounts the view on screen again without leaving it — two ways in, one tick.
+  p.view.onScanChange();
+  p.view.mount();
+  assert.equal(p.asks.length, 1, 'one request for the scan, not one per way into the view');
+  await p.asks[0].answer(statement('s1', 600));
+  assert.equal(usedShown(p.body), 600, 'and the one answer is painted — not discarded for a second ask');
+});
+
+test('G06 review F1.1: a re-entry while the scan\'s ask is out waits on it, even after another scan\'s late answer; once answered, entering again asks again', async () => {
+  const p = page();
+  p.view.mount(); // s1 asks
+  p.state.scanId = 's2';
+  p.view.onScanChange(); // s2 asks
+  assert.equal(p.asks.length, 2);
+  await p.asks[0].answer(statement('s1', 600)); // s1's answer lands late
+  p.view.mount(); // a re-entry of the view on screen (switchView(state.view)) while s2's ask is out
+  assert.equal(p.asks.length, 2, 's2 is asked once: s1\'s late answer did not free a second ask');
+  await p.asks[1].answer(statement('s2', 300));
+  assert.equal(usedShown(p.body), 300);
+  p.view.mount();
+  assert.equal(p.asks.length, 3, 'once its answer is in, entering again asks again');
+});
+
 test('G06: an older answer that lands after a newer one is never shown, nor kept for the next visit', async () => {
   const p = page();
   p.view.mount();
