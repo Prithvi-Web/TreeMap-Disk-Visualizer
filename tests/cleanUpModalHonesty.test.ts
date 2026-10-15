@@ -1356,8 +1356,8 @@ const pkgRows = (html: string) => html.split('<div class="clean-item pkg-item').
 
 test('a sheet whose package folders all still have their project does not open on a 0 B "Package leftovers" header: those folders are listed after Smart Suggestions, folded (G05)', async () => {
   const { shown, lead, projects } = await renderPackages(CORPUS);
-  assert.equal(shown, false, 'nothing a person can act on was shown above the suggestions');
   assert.equal(lead, '', 'the panel above Smart Suggestions is empty: no "Package leftovers … 0 B" leads the sheet');
+  assert.equal(shown, true, 'yet it listed package folders, in the fold, so the suggestions never also say nothing matched (G05 review F2.3)');
   assert.match(projects, /^\s*<details class="pkg-projects"/, 'the six folders are in a fold of their own');
   assert.doesNotMatch(projects, /<details[^>]*\bopen\b/, 'which opens closed');
   const rows = pkgRows(projects);
@@ -1480,6 +1480,59 @@ test('the fold never says the command beside its folders puts them back — a vi
     some: 'Rebuildable project folders 2 folders whose project is still here — each one’s project can build it again 29700000 B',
     none: 'Rebuildable project folders 1 folder whose project is still here — its project can build it again 20700000 B',
   }, 'each says what is true of every folder in it');
+});
+
+/**
+ * Run the page's loadSmartSuggestions, over its own renderPackageOrphans, on
+ * one orphans answer and one suggestions answer; `notes` are the folder notes
+ * the page holds. Git repos and browser profiles show nothing.
+ */
+async function loadSuggestions(orphans: unknown, suggestions: unknown, notes: Array<{ path: string; suppress: boolean }> = []) {
+  const dom: Record<string, { innerHTML: string; querySelectorAll(): unknown[]; insertAdjacentHTML(where: string, html: string): void }> = {};
+  const $ = (id: string) => (dom[id] ||= {
+    innerHTML: '', querySelectorAll: () => [],
+    insertAdjacentHTML(_where: string, html: string) { this.innerHTML += html; },
+  });
+  const api = async (url: string) => (url.startsWith('/api/packages/orphans?') ? orphans
+    : url.startsWith('/api/cleanup/suggestions?') ? suggestions : assert.fail(`an unexpected request: ${url}`));
+  const state = { scanId: 's1', notes: new Map(notes.map((n) => [n.path, n])) };
+  const page = { $, api, state, icon: () => '', escapeHtml: (s: string) => String(s) };
+  const renderPackageOrphans = runnable(bodyOf('async function renderPackageOrphans() {'), {
+    ...page,
+    formatBytes: (n: number) => `${n} B`, formatCount: (n: number) => (n ?? 0).toLocaleString('en-US'),
+    formatDate: () => 'Oct 2, 2026', sizeInk: () => 'inherit', ecosystemLabel: (id: string) => id,
+    cartButtonHtml: (p: string) => `<cart ${p}>`, refreshCartButtons: () => {}, updateCleanSummary: () => {},
+    packageOrphans: [] as unknown[],
+  });
+  const load = runnable(bodyOf('async function loadSmartSuggestions() {'), {
+    ...page, renderPackageOrphans,
+    renderGitRepos: () => {}, renderBrowserProfiles: async () => false, skeletonRows: () => '<skeleton>',
+    updateCleanSummary: () => {}, smartGroups: [] as unknown[], renderSmartGroups: () => assert.fail('no group to paint'),
+  });
+  await load();
+  const text = (id: string) => $(id).innerHTML.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return { smart: text('smartResults'), projects: $('packageProjects').innerHTML };
+}
+
+/*
+ * renderPackageOrphans once answered only for the leftovers above the
+ * suggestions, so a scan whose one package folder still had its project —
+ * paused by a note, which GET /api/cleanup/suggestions honours and
+ * GET /api/packages/orphans does not — said "Nothing in this scan matches the
+ * common-junk rules." directly above a fold listing that folder, which a
+ * common-junk rule (regen-node-modules) does match (G05 review F2.3).
+ */
+test('Smart Suggestions never says nothing in the scan matches the common-junk rules above a fold that lists folders they match (G05 review F2.3)', async () => {
+  const project = '/corpus/Projects/webapp';
+  const live = owned('npm', 'webapp', 'node_modules', 20_700_000, 'npm install');
+  const paused = await loadSuggestions(pkgReport([pkgGroup('npm', [live])]), { available: true, groups: [] }, [{ path: project, suppress: true }]);
+  assert.ok(pkgRows(paused.projects).some((r) => r.includes(live.path)), 'control: the fold lists the folder');
+  assert.doesNotMatch(paused.smart, /Nothing in this scan matches/, `the suggestions do not say nothing matches above it: ${paused.smart}`);
+  assert.match(paused.smart, /One folder is excluded by a note that pauses suggestions/, 'and say why the folder is not suggested');
+  // Where the scan holds no package folder and nothing matched, it is said.
+  const none = await loadSuggestions(pkgReport([]), { available: true, groups: [] });
+  assert.equal(none.projects, '', 'control: no fold');
+  assert.match(none.smart, /^Nothing in this scan matches the common-junk rules\.$/, 'a scan with nothing to suggest says so');
 });
 
 test('the fold of folders whose project is still here sits after Smart Suggestions; the leftovers a person can act on, before them (G05)', () => {

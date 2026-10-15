@@ -426,7 +426,10 @@ function ecosystemLabel(id) { return ECOSYSTEM_LABEL[id] || id; }
 let packageOrphans = [];
 
 /** Render the ecosystem panel and the fold after Smart Suggestions. Returns
-    true if anything a person can act on was shown above the suggestions. */
+    true if it listed any package folder, above the suggestions or in the
+    fold: either way "nothing in this scan matches" would be false beside it —
+    a folder whose project is still here matches a rule too, and one a note
+    pauses is still listed here (G05 review F2.3). */
 async function renderPackageOrphans() {
   const host = $('packageOrphans');
   if (!host || !state.scanId) return false;
@@ -518,7 +521,7 @@ async function renderPackageOrphans() {
 
   host.querySelectorAll('.pkg-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
   refreshCartButtons();
-  return leftovers.length > 0;
+  return leftovers.length > 0 || projectCount > 0;
 }
 
 /* ── Browser profile drill-down (Feature 16) — inline-SVG favicons, no external fetch ── */
