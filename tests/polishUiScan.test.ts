@@ -613,6 +613,8 @@ function finishScanHarness(over: Record<string, unknown> = {}) {
     formatCount: (n: number | null) => String(n ?? 0), formatBytes: (n: number) => n + ' B', escapeHtml: (s: string) => s,
     countUp: noop, FxNum: { rollText: noop }, renderDiskNotes: noop, loadWhatsNew: noop, loadDriveHealth: noop,
     loadCostEstimate: noop, showListsPending: noop, emit: noop, TOPIC: { scan: 'scan' }, switchView: noop,
+    // finishScan's switchView runs inside it; where focus goes is tests/firstRun.test.ts's (review F2.6).
+    withFocusKept: (change: () => void) => { change(); },
     toast: (m: string) => toasts.push(m), fxScanDonePulse: noop, loadDashboardLists: async () => {},
     buildIndexInBackground: (...args: unknown[]) => { indexBuilds.push(args); },
     renderGrowthProjection: noop, loadBudgets: noop, refreshTimebar: noop, enableLive: noop, seedNodes: noop,

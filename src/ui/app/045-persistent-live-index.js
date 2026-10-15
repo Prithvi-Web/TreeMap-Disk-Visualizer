@@ -659,7 +659,9 @@ function failScan(message) {
   $('scanAnnounce').textContent = 'Scan failed — ' + message;
   restoreDashboardPanels();
   toast(message, 'error');
-  switchView(state.view);
+  // The welcome comes back over the Dashboard's path box, where focus was
+  // moved as the scan started: withFocusKept moves it on (review F2.6).
+  withFocusKept(() => { switchView(state.view); });
   // v4 §9.2 — the welcome card comes back, with its buttons: after the view,
   // so the welcome's own "Choose a folder" is on screen when the card picks
   // where focus goes (review F1.12).
@@ -816,7 +818,9 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
     if ($('growthProj')) $('growthProj').hidden = true;
     showListsPending();
     emit(TOPIC.scan, null);
-    switchView(state.view);
+    // The first paint of a tree hides the welcome, whose "Choose a folder"
+    // the folder browser handed focus back to (review F2.6).
+    withFocusKept(() => { switchView(state.view); });
     return;
   }
   const lists = loadDashboardLists();
@@ -831,7 +835,8 @@ async function finishScan(root, durationMs, stats, { reopenedAt = 0 } = {}) {
   // is the single load path — previously this called loadTreemap()/renderGrid()
   // and *then* switchView(), loading the active view twice on every scan.
   emit(TOPIC.scan, state.scanId);
-  switchView(state.view);
+  // Re-entering the view repaints what it holds, focus on it included (review F2.6).
+  withFocusKept(() => { switchView(state.view); });
   // A1: make the *next* open of this folder instant. Background, non-blocking,
   // and only for real local scans of a size TreeMap indexes on its own —
   // buildIndexInBackground decides (indexAutoPlan): a cloud account has no

@@ -397,19 +397,33 @@ function activeViewControl() {
 }
 
 /**
+ * Where focus goes when the control that held it has left the screen: the
+ * empty state's "Choose a folder" while it is up — the one primary action
+ * there (G03) — else the tour card's own control while the card is up, else
+ * the first control of the view now up, else that view's tab. Never <body>
+ * (G11, review F1.11, F2.6).
+ */
+function focusLanding() {
+  const cta = $('emptyBrowseBtn');
+  if (cta && cta.getClientRects().length > 0) return cta;
+  return tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+}
+
+/**
  * Run `change`, a repaint that may take the focused control off screen, and
- * if it did, move focus on: to the tour card's own control while the card is
- * up, else the first control of the view now up, else that view's tab —
- * never <body> (G11, review F1.11). The folder browser hands focus back to
- * the button that opened it as it closes — the welcome's "Choose a folder",
- * Trends' or History's — and the scan it started then hides that button.
+ * if it did, move focus on, to focusLanding(). The folder browser hands focus
+ * back to the button that opened it as it closes — the welcome's "Choose a
+ * folder", Trends' or History's — and the scan it started then hides that
+ * button (review F1.11); a scan that fails or is stopped puts the welcome
+ * back over the Dashboard's path box and Stop, and one that paints or lands
+ * hides the welcome or repaints the view under focus (review F2.6).
  * Focus on a control still on screen, or on nothing, is left where it is.
  */
 function withFocusKept(change) {
   const had = document.activeElement;
   change();
   if (!had || had === document.body || had.getClientRects().length > 0) return;
-  const to = tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  const to = focusLanding();
   if (to) to.focus({ preventScroll: true });
 }
 

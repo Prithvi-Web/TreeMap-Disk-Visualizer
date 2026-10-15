@@ -586,25 +586,31 @@ test('a scan started from a button its own chrome then hides moves focus on — 
   // focus fell to <body> for the whole scan. Trends' and History's "Choose
   // a folder", hidden by the switch to the Dashboard, did the same.
   const kept = pageFn('function withFocusKept(');
-  const run = (o: { had?: 'button' | 'body'; hides?: boolean; tour?: boolean; control?: boolean }) => {
+  const landing = INDEX.includes('function focusLanding(') ? pageFn('function focusLanding(') : '';
+  const run = (o: { had?: 'button' | 'body'; hides?: boolean; tour?: boolean; control?: boolean; welcome?: boolean }) => {
     // <body> is passed over whatever box it has, so here it has none; and the
     // document reports focus on <body> the moment the button stops painting,
     // as a browser's focus fixup may — so what held focus is read before.
     const button = tel(1); const body = tel(0); const skip = tel(); const control = tel(); const tab = tel();
+    // The empty state's "Choose a folder": off screen while a scan starts, back on a failed or stopped one.
+    const welcome = tel(0);
     const doc = {
       body, get activeElement() { return o.had === 'body' || button.rects === 0 ? body : button; },
       querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : null),
     };
     let changed = 0;
-    new Function('document', 'tourCardControl', 'activeViewControl', `'use strict'; ${kept} withFocusKept(arguments[3]);`)(
-      doc, () => (o.tour ? skip : null), () => (o.control === false ? null : control), () => { changed++; if (o.hides !== false) button.rects = 0; });
-    return { changed, button: button.focused, skip: skip.focused, control: control.focused, tab: tab.focused };
+    new Function('document', '$', 'tourCardControl', 'activeViewControl', `'use strict'; ${landing} ${kept} withFocusKept(arguments[4]);`)(
+      doc, (id: string) => (id === 'emptyBrowseBtn' ? welcome : null), () => (o.tour ? skip : null), () => (o.control === false ? null : control),
+      () => { changed++; if (o.hides !== false) button.rects = 0; if (o.welcome) welcome.rects = 1; });
+    return { changed, button: button.focused, skip: skip.focused, control: control.focused, tab: tab.focused, welcome: welcome.focused };
   };
-  assert.deepEqual(run({ tour: true }), { changed: 1, button: 0, skip: 1, control: 0, tab: 0 }, 'the tour card is up: its own control takes focus — the scanning card\'s Skip');
-  assert.deepEqual(run({ tour: false }), { changed: 1, button: 0, skip: 0, control: 1, tab: 0 }, 'no tour: the first control of the view now up');
-  assert.deepEqual(run({ tour: false, control: false }), { changed: 1, button: 0, skip: 0, control: 0, tab: 1 }, 'nothing to press in it: the view\'s tab');
-  assert.deepEqual(run({ tour: true, hides: false }), { changed: 1, button: 0, skip: 0, control: 0, tab: 0 }, 'focus on a control still on screen is left where it is');
-  assert.deepEqual(run({ tour: true, had: 'body' }), { changed: 1, button: 0, skip: 0, control: 0, tab: 0 }, 'and focus nobody had placed is not taken');
+  assert.deepEqual(run({ tour: true }), { changed: 1, button: 0, skip: 1, control: 0, tab: 0, welcome: 0 }, 'the tour card is up: its own control takes focus — the scanning card\'s Skip');
+  assert.deepEqual(run({ tour: false }), { changed: 1, button: 0, skip: 0, control: 1, tab: 0, welcome: 0 }, 'no tour: the first control of the view now up');
+  assert.deepEqual(run({ tour: false, control: false }), { changed: 1, button: 0, skip: 0, control: 0, tab: 1, welcome: 0 }, 'nothing to press in it: the view\'s tab');
+  assert.deepEqual(run({ tour: true, hides: false }), { changed: 1, button: 0, skip: 0, control: 0, tab: 0, welcome: 0 }, 'focus on a control still on screen is left where it is');
+  assert.deepEqual(run({ tour: true, had: 'body' }), { changed: 1, button: 0, skip: 0, control: 0, tab: 0, welcome: 0 }, 'and focus nobody had placed is not taken');
+  assert.deepEqual(run({ tour: true, welcome: true }), { changed: 1, button: 0, skip: 0, control: 0, tab: 0, welcome: 1 },
+    'the welcome came back: its own "Choose a folder", the one primary there, before the card\'s control (review F2.6)');
 
   // beginScanChrome hides the empty state and brings the Dashboard up inside it.
   const begin = pageFn('function beginScanChrome(');
@@ -649,6 +655,98 @@ test('a scan started from a button its own chrome then hides moves focus on — 
   assert.equal(pick({ html: scanning, active: false }), null, 'the tour is over: nothing');
 });
 
+/* ══════════════ Review F2.6 — a scan that ends never leaves focus on <body> ══════════════ */
+
+/**
+ * failScan, stopScan and finishScan out of the built page, with the real
+ * withFocusKept (and focusLanding), over a page of a few controls whose
+ * switchView shows the welcome while nothing is on screen and the Dashboard
+ * once a tree is. A control that stops painting drops focus to <body>, as a
+ * browser's focus fixup does.
+ */
+function scanEndPage(o: { root?: unknown; scanId?: string | null; focus: 'pathInput' | 'scanBtn' | 'welcome' | 'row' }) {
+  type Ctl = { name: string; rects: number; focused: number; disabled: boolean; getClientRects: () => unknown[]; focus: () => void };
+  const doc: { active: Ctl | null; body: Ctl; readonly activeElement: Ctl; querySelector: (sel: string) => Ctl | null } = {
+    active: null,
+    body: null as unknown as Ctl,
+    get activeElement() { return this.active && this.active.rects > 0 ? this.active : this.body; },
+    querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? ctl.tab : null),
+  };
+  const mk = (name: string, rects: number): Ctl => {
+    const c: Ctl = { name, rects, focused: 0, disabled: false, getClientRects: () => Array.from({ length: c.rects }), focus: () => { c.focused++; doc.active = c; } };
+    return c;
+  };
+  const ctl = {
+    pathInput: mk('pathInput', 1), scanBtn: mk('scanBtn', 1), row: mk('row', 1), welcome: mk('emptyBrowseBtn', 0), tab: mk('tab', 1),
+  };
+  doc.body = mk('body', 0);
+  doc.active = ctl[o.focus];
+  if (o.focus === 'welcome') { ctl.welcome.rects = 1; ctl.pathInput.rects = 0; ctl.scanBtn.rects = 0; }
+  const state: Record<string, unknown> = {
+    view: 'dashboard', root: o.root ?? null, scanId: o.scanId ?? null, scanning: true, abortScan: null, settledScanId: null, largest: [], bigFolders: [], types: [],
+    treemap: { rootPath: '' }, grid: { path: '', selection: new Set() }, apps: { loadedFor: 'x' }, live: { wanted: false },
+  };
+  const switched: string[] = [];
+  const lifted = ['function withFocusKept(', ...(INDEX.includes('function focusLanding(') ? ['function focusLanding('] : []),
+    'function failScan(', 'async function stopScan(', 'async function finishScan('].map(pageFn).join('\n');
+  const inert: unknown = new Proxy(function inert() { /* stand-in */ }, {
+    get: (_t, k) => (k === Symbol.toPrimitive ? () => 0 : k === 'then' ? undefined : inert), set: () => true, apply: () => inert });
+  const given: Record<string, unknown> = {
+    state, document: doc,
+    $: (id: string) => (id === 'emptyBrowseBtn' ? ctl.welcome : inert),
+    // The view: the welcome while no tree is on screen, the Dashboard's controls once one is; a re-mount paints its rows anew.
+    switchView: (name: string) => {
+      switched.push(name);
+      const empty = !state.root;
+      ctl.welcome.rects = empty ? 1 : 0;
+      ctl.pathInput.rects = empty ? 0 : 1;
+      ctl.scanBtn.rects = empty ? 0 : 1;
+      ctl.row.rects = 0;
+    },
+    activeViewControl: () => [ctl.pathInput, ctl.scanBtn].find((c) => c.rects > 0) || null,
+    tourCardControl: () => null, tourScanFailed: () => {}, endScanChrome: () => { state.scanning = false; },
+  };
+  const own = new Set(['withFocusKept', 'focusLanding', 'failScan', 'stopScan', 'finishScan']);
+  const scope = new Proxy(given, { has: (_t, k) => typeof k === 'string' && !own.has(k), get: (t, k) => (k === Symbol.unscopables ? undefined : k in t ? t[k as string] : inert), set: (t, k, v) => { t[k as string] = v; return true; } });
+  const fns = new Function('scope', `with (scope) { ${lifted}\nreturn { failScan, stopScan, finishScan }; }`)(scope) as {
+    failScan: (m: string) => void; stopScan: () => Promise<void>; finishScan: (root: unknown, ms: number, stats: unknown) => Promise<void>;
+  };
+  const where = () => doc.activeElement.name;
+  return { ...fns, ctl, where, switched, state };
+}
+
+test('a scan that fails, is stopped, or paints from the index moves focus on when its repaint hides the control that held it — to the welcome\'s "Choose a folder", or the view — never <body> (review F2.6)', async () => {
+  // A first scan that fails, tour off: beginScanChrome had moved focus to the
+  // Dashboard's path box, and failScan's switchView put the welcome back
+  // over it.
+  const failed = scanEndPage({ focus: 'pathInput' });
+  failed.failScan('Path does not exist');
+  assert.deepEqual(failed.switched, ['dashboard'], 'control: the welcome is put back');
+  assert.equal(failed.where(), 'emptyBrowseBtn', 'a failed first scan: focus goes to the welcome\'s own "Choose a folder"');
+  // Stop pressed from the keyboard: the Stop button is the Dashboard's, and the welcome comes back over it.
+  const stopped = scanEndPage({ focus: 'scanBtn' });
+  await stopped.stopScan();
+  assert.deepEqual(stopped.switched, ['dashboard'], 'control: Stop puts the welcome back');
+  assert.equal(stopped.where(), 'emptyBrowseBtn', 'a stopped first scan: the same');
+  // A folder the index paints at once: the picker handed focus back to the
+  // welcome's button, and the first paint of the tree hides it.
+  const tree = { name: 'x', path: '/x', size: 1, type: 'dir', children: [] };
+  const painted = scanEndPage({ focus: 'welcome', root: null, scanId: null });
+  await painted.finishScan(tree, 5, { fileCount: 1, dirCount: 1 });
+  assert.deepEqual(painted.switched, ['dashboard'], 'control: the index paint puts the Dashboard up');
+  assert.equal(painted.where(), 'pathInput', 'painted from the index: focus goes to the Dashboard\'s first control');
+  // A scan that lands re-enters the view, whose mount paints its rows anew.
+  const landed = scanEndPage({ focus: 'row', root: tree, scanId: 's1' });
+  await landed.finishScan(tree, 5, { fileCount: 1, dirCount: 1 });
+  assert.deepEqual(landed.switched, ['dashboard'], 'control: the scan re-enters the view');
+  assert.equal(landed.where(), 'pathInput', 'a row repainted under focus: the view\'s first control takes it');
+  // Focus nobody moved, on a control still on screen, stays.
+  const kept = scanEndPage({ focus: 'pathInput', root: tree, scanId: 's1' });
+  await kept.finishScan(tree, 5, { fileCount: 1, dirCount: 1 });
+  assert.equal(kept.ctl.pathInput.focused, 0, 'focus on a control still on screen is not moved');
+  assert.equal(kept.where(), 'pathInput');
+});
+
 /* ══════════════ Review F1.12 — a failed first scan gives focus back to the welcome's button ══════════════ */
 
 test('a failed first scan paints the welcome card once, with the welcome\'s own "Choose a folder" on screen, and focus goes straight to it (review F1.12)', () => {
@@ -674,11 +772,13 @@ test('a failed first scan paints the welcome card once, with the welcome\'s own 
   const tour = { active: true, step: 'scanning', wins: [], winIx: 0, added: [], unknownReason: '' };
   const state = { view: 'dashboard', system: { homeDir: '/Users/x' }, cart: new Set(), root: null };
   const order: string[] = [];
+  // The page's own withFocusKept, which failScan's switchView runs inside (review F2.6).
+  const keep = INDEX.includes('function focusLanding(') ? `${pageFn('function focusLanding(')} ${pageFn('function withFocusKept(')}` : '';
   const run = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
-    'tourAdvanceWin', 'tourWinLine', 'document', 'endScanChrome', 'restoreDashboardPanels', 'toast', 'switchView', 'drainScanQueue',
-    `'use strict'; ${card} ${failed} ${fail} return { failScan, tourFollowView };`);
+    'tourAdvanceWin', 'tourWinLine', 'document', 'endScanChrome', 'restoreDashboardPanels', 'toast', 'activeViewControl', 'switchView', 'drainScanQueue',
+    `'use strict'; ${card} ${failed} ${keep} ${fail} return { failScan, tourFollowView };`);
   const page = run($, tour, state, () => '', (s: string) => s, (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, () => 0, () => {}, () => '', doc,
-    () => {}, () => {}, () => {},
+    () => {}, () => {}, () => {}, () => null,
     // switchView puts the welcome back on screen and, as on the page, tells the card.
     (name: string) => { order.push(`switch ${name}`); $('emptyBrowseBtn').rects = 1; page.tourFollowView(); }, () => {},
   ) as { failScan: (m: string) => void; tourFollowView: () => void };

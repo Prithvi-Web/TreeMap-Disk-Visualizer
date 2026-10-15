@@ -274,6 +274,8 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
     endScanChrome: () => { state.scanning = false; },
     restoreDashboardPanels: () => {},
     switchView: () => { seen.scanIdAtSwitch = state.scanId; },
+    // Stop's switchView runs inside it; where focus goes is tests/firstRun.test.ts's (review F2.6).
+    withFocusKept: (change: () => void) => { change(); },
     cancelScanById: cancel,
     // Stop means stop: folders dropped behind this one are waiting in the scan
     // queue, and starting the next of them would be the opposite of what the

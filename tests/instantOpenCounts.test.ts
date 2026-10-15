@@ -204,7 +204,7 @@ function runFinishScan(stats: Record<string, unknown> | null, seed: { files: str
     '$', 'state', 'endScanChrome', 'indexTree', 'updateSelectionBar', 'DUP_PAGE', 'icon',
     'formatCount', 'formatBytes', 'escapeHtml', 'countUp', 'FxNum', 'renderDiskNotes',
     'loadWhatsNew', 'loadDriveHealth', 'loadCostEstimate', 'showListsPending', 'emit', 'TOPIC',
-    'switchView', 'toast', 'fxScanDonePulse', 'formatClock',
+    'switchView', 'toast', 'fxScanDonePulse', 'formatClock', 'withFocusKept',
     `'use strict'; ${src} return finishScan;`,
   )(
     $, state, noop, noop, noop, 100, () => '',
@@ -215,6 +215,8 @@ function runFinishScan(stats: Record<string, unknown> | null, seed: { files: str
     { rollText: noop }, noop,
     noop, noop, noop, noop, noop, { scan: 'scan' },
     noop, noop, noop, () => '10:31 PM',
+    // finishScan's switchView runs inside it; where focus goes is tests/firstRun.test.ts's (review F2.6).
+    (change: () => void) => { change(); },
   ) as (root: unknown, ms: number, stats: unknown) => Promise<void>;
   return fn({ path: '/Users/x/Documents', size: 4_200_000_000 }, 120, stats)
     .then(() => ({ els, counted, state }));

@@ -943,6 +943,8 @@ test('a finished scan asks for the three dashboard lists first and hands their w
       loadCostEstimate: (after: unknown) => { order.push('cost card'); handed = after; },
       showListsPending: noop, emit: (topic: string) => { order.push(`emit ${topic}`); }, TOPIC: { scan: 'scan' },
       switchView: noop, toast: noop, fxScanDonePulse: noop,
+      // finishScan's switchView runs inside it; where focus goes is tests/firstRun.test.ts's (review F2.6).
+      withFocusKept: (change: () => void) => { change(); },
       loadDashboardLists: () => { order.push('lists asked'); return listsWalk; },
       buildIndexInBackground: noop, renderGrowthProjection: noop, loadBudgets: noop, refreshTimebar: noop,
       enableLive: noop, setTimeout: noop, formatClock: () => '10:31 PM',

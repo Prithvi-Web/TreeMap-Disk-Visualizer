@@ -155,7 +155,10 @@ async function stopScan() {
   status.classList.remove('error'); // stopping is a choice, not a failure
   status.innerHTML = icon('stop', 14) + '<span>Scan stopped by user</span>';
   restoreDashboardPanels();
-  switchView(state.view); // and put the never-scanned empty state back if that is where we are
+  // And put the never-scanned empty state back if that is where we are — over
+  // the Dashboard's Stop, which held focus if it was pressed from the keyboard
+  // (review F2.6).
+  withFocusKept(() => { switchView(state.view); });
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
