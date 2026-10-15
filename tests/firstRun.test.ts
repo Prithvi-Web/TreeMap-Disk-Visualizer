@@ -211,15 +211,11 @@ function tel(rects = 1): TEl {
   return e;
 }
 
-/** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
-function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; cart?: string[]; takeFocus?: boolean } = {}) {
-  const els: Record<string, TEl> = {};
-  const $ = (id: string) => (els[id] ??= tel());
-  const host = $('tourCard');
-  const found: Record<string, TEl> = {};
-  // Finds the card's buttons in its HTML, each one stub per data-tour-*
-  // attribute, honouring :not([disabled]) as the page's selectors use it.
-  host.querySelector = (sel) => {
+/** A stub card's querySelector: finds the buttons its HTML holds, one stub
+    per data-tour-* attribute, honouring :not([disabled]) as the page's
+    selectors use it. */
+function cardFinder(host: TEl, found: Record<string, TEl>, make: () => TEl = () => tel()): (sel: string) => TEl | null {
+  return (sel) => {
     const h = host.innerHTML;
     const enabledOnly = sel.endsWith(':not([disabled])');
     const base = enabledOnly ? sel.slice(0, -':not([disabled])'.length) : sel;
@@ -236,8 +232,17 @@ function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; 
     }
     if (!hit) return null;
     const key = (/data-tour-[\w-]+/.exec(hit.attrs) || ['button'])[0];
-    return (found[key] ??= tel());
+    return (found[key] ??= make());
   };
+}
+
+/** The tour card's renderer out of the built page, over a stub card that finds what its HTML holds. */
+function tourCard(step: string, opts: { home?: string | null; heroUp?: boolean; added?: string[]; win?: Record<string, unknown>; cart?: string[]; takeFocus?: boolean } = {}) {
+  const els: Record<string, TEl> = {};
+  const $ = (id: string) => (els[id] ??= tel());
+  const host = $('tourCard');
+  const found: Record<string, TEl> = {};
+  host.querySelector = cardFinder(host, found);
   $('emptyBrowseBtn').rects = opts.heroUp ? 1 : 0;
   const winLine = liftPage<(g: unknown) => string>(WIN_LINE, 'tourWinLine');
   const tour = { active: true, step, wins: opts.win ? [opts.win] : [], winIx: 0, added: opts.added ?? [], unknownReason: '' };
@@ -530,4 +535,47 @@ test('a scan started from a button its own chrome then hides moves focus on — 
     'Skip this one', 'a disabled primary is passed over');
   assert.equal(pick({ html: scanning, hidden: true }), null, 'the card is down: nothing');
   assert.equal(pick({ html: scanning, active: false }), null, 'the tour is over: nothing');
+});
+
+/* ══════════════ Review F1.12 — a failed first scan gives focus back to the welcome's button ══════════════ */
+
+test('a failed first scan paints the welcome card once, with the welcome\'s own "Choose a folder" on screen, and focus goes straight to it (review F1.12)', () => {
+  // failScan put the card back (tourScanFailed) before switchView had put
+  // the welcome back on screen, so the card picked its focus while the
+  // welcome's button was not painted: "Scan my home folder" took it — Enter
+  // then scanned the home folder — and with no home folder known, Skip did.
+  const fail = pageFn('function failScan(');
+  const failed = pageFn('function tourScanFailed(');
+  const card = INDEX.slice(INDEX.indexOf('function tourRender'), INDEX.indexOf('/** A quick win'));
+  const doc: { activeElement: unknown } = { activeElement: null };
+  const focusable = (rects = 1): TEl => { const e = tel(rects); e.focus = () => { e.focused++; doc.activeElement = e; }; return e; };
+  const found: Record<string, TEl> = {};
+  const els: Record<string, TEl> = {};
+  const $ = (id: string) => (els[id] ??= Object.assign(focusable(), { classList: { add() {}, remove() {} } }));
+  const host = $('tourCard');
+  let paints = 0; let html = '';
+  Object.defineProperty(host, 'innerHTML', { get: () => html, set: (v: string) => { paints++; html = v; } });
+  host.querySelector = cardFinder(host, found, () => focusable());
+  host.contains = (n: unknown) => Object.values(found).includes(n as TEl);
+  $('emptyBrowseBtn').rects = 0; // the scan's chrome hid the empty state
+  doc.activeElement = Object.assign(focusable(), {}); // the scanning card's Skip, say
+  const tour = { active: true, step: 'scanning', wins: [], winIx: 0, added: [], unknownReason: '' };
+  const state = { view: 'dashboard', system: { homeDir: '/Users/x' }, cart: new Set(), root: null };
+  const order: string[] = [];
+  const run = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany',
+    'tourAdvanceWin', 'tourWinLine', 'document', 'endScanChrome', 'restoreDashboardPanels', 'toast', 'switchView', 'drainScanQueue',
+    `'use strict'; ${card} ${failed} ${fail} return { failScan, tourFollowView };`);
+  const page = run($, tour, state, () => '', (s: string) => s, (n: number) => `${n} B`, () => {}, () => {}, () => {}, () => {}, () => 0, () => {}, () => '', doc,
+    () => {}, () => {}, () => {},
+    // switchView puts the welcome back on screen and, as on the page, tells the card.
+    (name: string) => { order.push(`switch ${name}`); $('emptyBrowseBtn').rects = 1; page.tourFollowView(); }, () => {},
+  ) as { failScan: (m: string) => void; tourFollowView: () => void };
+  page.failScan('Path does not exist');
+  assert.deepEqual(order, ['switch dashboard'], 'control: the view the person was on is put back');
+  assert.equal(tour.step, 'welcome', 'control: the welcome card is back');
+  assert.equal($('emptyBrowseBtn').focused, 1, 'focus goes to the welcome\'s own "Choose a folder"');
+  assert.deepEqual(Object.fromEntries(Object.entries(found).map(([k, b]) => [k, b.focused])), Object.fromEntries(Object.keys(found).map((k) => [k, 0])),
+    'and never first to a button of the card — "Scan my home folder", or a "Choose a folder" the next paint takes away');
+  assert.equal(paints, 1, 'the card is painted once, for the screen it is on');
+  assert.doesNotMatch(html, /data-tour-pick/, 'with the welcome\'s button on screen, the card offers no second one');
 });

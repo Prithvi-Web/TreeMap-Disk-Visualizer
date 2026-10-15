@@ -9991,8 +9991,11 @@ function failScan(message) {
   $('scanAnnounce').textContent = 'Scan failed — ' + message;
   restoreDashboardPanels();
   toast(message, 'error');
-  tourScanFailed(); // v4 §9.2 — the welcome card comes back, with its buttons
   switchView(state.view);
+  // v4 §9.2 — the welcome card comes back, with its buttons: after the view,
+  // so the welcome's own "Choose a folder" is on screen when the card picks
+  // where focus goes (review F1.12).
+  tourScanFailed();
   drainScanQueue(); // a folder waiting behind this one still gets its turn
 }
 
