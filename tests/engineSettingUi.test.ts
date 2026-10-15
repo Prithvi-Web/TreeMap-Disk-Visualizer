@@ -360,6 +360,31 @@ test('the engine row names the native engine, sets the reason as its title, and 
   assert.equal(older.engineText.title, '', 'an older stats shape adds nothing');
 });
 
+test('"Engine details" is there only when it has something to say, and keeps nothing from the scan before (review F1.8)', () => {
+  // The only assertion on the disclosure was that the native row shows it,
+  // which the stub's starting state already met: a disclosure shown for
+  // every scan, opening onto nothing, passed. The page's elements are the
+  // same from one scan to the next, so each quick scan below is written over
+  // a native scan's row, its details shown and said.
+  const native = { engine: 'native', durationMs: 2000, scanned: 1234, ioThreads: 8, budget: { preset: 'auto', effective: 'balanced', source: 'native' } };
+  const quick: Record<string, Record<string, unknown>> = {
+    'a cloud listing in under a second': { engine: 'cloud', durationMs: 400, scanned: 50, ioThreads: 0 },
+    'a saved index read in under a second': { engine: 'index', durationMs: 300, scanned: 5000 },
+    'gdu in under a second': { engine: 'gdu-turbo', durationMs: 900, scanned: 50, ioThreads: 4 },
+    'the built-in walker at four threads in under a second': { engine: 'walker', durationMs: 500, scanned: 50, ioThreads: 4 },
+  };
+  for (const [name, stats] of Object.entries(quick)) {
+    const els = runEngineRow(native);
+    assert.equal(els.engineMore.hidden, false, `control, before ${name}: the native scan's details are there`);
+    assert.notEqual(els.engineMoreText.textContent, '', `control, before ${name}: and say something`);
+    const row = runEngineRow(stats, els);
+    assert.equal(row.engineRow.hidden, false, `control, ${name}: the line itself is shown`);
+    assert.equal(row.engineMore.hidden, true, `${name}: no speed, no budget and no workings to tell, so no "Engine details"`);
+    assert.equal(row.engineMoreText.textContent, '', `${name}: and nothing left in it from the scan before`);
+  }
+  assert.match(INDEX, /<details class="engine-why" id="engineMore" hidden>/, 'the page ships it hidden until a scan has details');
+});
+
 /* ══════════════ 4. What the section and the row claim, held to the engines ══════════════ */
 
 /** A region's words, tags stripped and whitespace folded. */
