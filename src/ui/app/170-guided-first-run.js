@@ -174,10 +174,18 @@ function tourRender(takeFocus = true) {
   // step, painted over the "Scan my home folder" that held focus (G11).
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
   const cta = tour.step === 'welcome' ? $('emptyBrowseBtn') : null;
-  const primary = (cta && cta.getClientRects().length > 0 ? cta : null) ||
-    host.querySelector('.btn-primary:not([disabled])') || host.querySelector('.tour-row button:not([disabled])') ||
-    host.querySelector('[data-tour-skip]');
+  const primary = (cta && cta.getClientRects().length > 0 ? cta : null) || tourCardControl();
   if (primary && takeFocus && !typing) primary.focus();
+}
+
+/** The card's own control that takes focus, or null while the card is down:
+    its first enabled primary action, else its first enabled action, else
+    Skip. A disabled "Already in the cart" cannot hold focus. */
+function tourCardControl() {
+  if (!tour.active || $('tourOverlay').hidden) return null;
+  const host = $('tourCard');
+  return host.querySelector('.btn-primary:not([disabled])') || host.querySelector('.tour-row button:not([disabled])') ||
+    host.querySelector('[data-tour-skip]');
 }
 
 /** A change of view while the welcome card is up (review F1.2). The card

@@ -394,6 +394,23 @@ function activeViewControl() {
 }
 
 /**
+ * Run `change`, a repaint that may take the focused control off screen, and
+ * if it did, move focus on: to the tour card's own control while the card is
+ * up, else the first control of the view now up, else that view's tab —
+ * never <body> (G11, review F1.11). The folder browser hands focus back to
+ * the button that opened it as it closes — the welcome's "Choose a folder",
+ * Trends' or History's — and the scan it started then hides that button.
+ * Focus on a control still on screen, or on nothing, is left where it is.
+ */
+function withFocusKept(change) {
+  const had = document.activeElement;
+  change();
+  if (!had || had === document.body || had.getClientRects().length > 0) return;
+  const to = tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  if (to) to.focus({ preventScroll: true });
+}
+
+/**
  * The *unavailable* state (§3.5 #5) for a capability-gated view: the specific
  * reason, never a blank panel.
  */

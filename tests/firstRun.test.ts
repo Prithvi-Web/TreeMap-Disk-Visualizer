@@ -447,3 +447,87 @@ test('Finish, Skip or Escape never drop focus to <body>: it lands on the page\'s
   const fresh = tourCard('win', { win });
   assert.equal(fresh.found['data-tour-add']?.focused ?? 0, 1, 'a win not yet staged focuses "Add to cart"');
 });
+
+/* ══════════════ Review F1.11 — a scan's chrome never leaves focus on <body> ══════════════ */
+
+/** A page function by its declaration, brace-matched, out of the built page. */
+function pageFn(decl: string): string {
+  const start = INDEX.indexOf(decl);
+  assert.notEqual(start, -1, `${decl} is in the page`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', INDEX.indexOf(')', start)); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`${decl} never closes`);
+}
+
+test('a scan started from a button its own chrome then hides moves focus on — to the tour card, the view, or its tab — never to <body> (review F1.11)', () => {
+  // The welcome's "Choose a folder" opens the folder browser; "Scan this
+  // folder" closes it, and the browser hands focus back to that button as
+  // it closes. The scan's chrome then hid the button (#emptyState), and
+  // focus fell to <body> for the whole scan. Trends' and History's "Choose
+  // a folder", hidden by the switch to the Dashboard, did the same.
+  const kept = pageFn('function withFocusKept(');
+  const run = (o: { had?: 'button' | 'body'; hides?: boolean; tour?: boolean; control?: boolean }) => {
+    // <body> is passed over whatever box it has, so here it has none; and the
+    // document reports focus on <body> the moment the button stops painting,
+    // as a browser's focus fixup may — so what held focus is read before.
+    const button = tel(1); const body = tel(0); const skip = tel(); const control = tel(); const tab = tel();
+    const doc = {
+      body, get activeElement() { return o.had === 'body' || button.rects === 0 ? body : button; },
+      querySelector: (sel: string) => (sel === '.tabbar button[aria-selected="true"]' ? tab : null),
+    };
+    let changed = 0;
+    new Function('document', 'tourCardControl', 'activeViewControl', `'use strict'; ${kept} withFocusKept(arguments[3]);`)(
+      doc, () => (o.tour ? skip : null), () => (o.control === false ? null : control), () => { changed++; if (o.hides !== false) button.rects = 0; });
+    return { changed, button: button.focused, skip: skip.focused, control: control.focused, tab: tab.focused };
+  };
+  assert.deepEqual(run({ tour: true }), { changed: 1, button: 0, skip: 1, control: 0, tab: 0 }, 'the tour card is up: its own control takes focus — the scanning card\'s Skip');
+  assert.deepEqual(run({ tour: false }), { changed: 1, button: 0, skip: 0, control: 1, tab: 0 }, 'no tour: the first control of the view now up');
+  assert.deepEqual(run({ tour: false, control: false }), { changed: 1, button: 0, skip: 0, control: 0, tab: 1 }, 'nothing to press in it: the view\'s tab');
+  assert.deepEqual(run({ tour: true, hides: false }), { changed: 1, button: 0, skip: 0, control: 0, tab: 0 }, 'focus on a control still on screen is left where it is');
+  assert.deepEqual(run({ tour: true, had: 'body' }), { changed: 1, button: 0, skip: 0, control: 0, tab: 0 }, 'and focus nobody had placed is not taken');
+
+  // beginScanChrome hides the empty state and brings the Dashboard up inside it.
+  const begin = pageFn('function beginScanChrome(');
+  const order: string[] = [];
+  // Every name but these is an inert stand-in that accepts any call or property.
+  const inert: unknown = new Proxy(function inert() { /* stand-in */ }, { get: (_t, k) => (k === Symbol.toPrimitive ? () => 0 : inert), set: () => true, apply: () => inert });
+  const emptyState = { style: { display: 'flex' } as Record<string, string> };
+  const $ = (id: string) => (id === 'emptyState' ? emptyState : inert);
+  const given: Record<string, unknown> = {
+    state: { scanGen: 0, whatsNew: { seq: 0 } }, $,
+    switchView: (name: string) => { order.push(`switch ${name} (empty state ${$('emptyState').style.display})`); },
+    withFocusKept: (change: () => void) => { order.push('kept: before'); change(); order.push('kept: after'); },
+  };
+  const scope = new Proxy(given, { has: (_t, k) => typeof k === 'string' && k !== 'beginScanChrome', get: (t, k) => (k === Symbol.unscopables ? undefined : k in t ? t[k as string] : inert), set: (t, k, v) => { t[k as string] = v; return true; } });
+  const chrome = new Function('scope', `with (scope) { ${begin}\nreturn beginScanChrome; }`)(scope) as (o?: { quiet?: boolean }) => void;
+  chrome({ quiet: true });
+  assert.deepEqual(order, [], 'control: a quiet start hides nothing');
+  chrome();
+  assert.deepEqual(order, ['kept: before', 'switch dashboard (empty state none)', 'kept: after'], 'the empty state goes and the Dashboard comes up inside withFocusKept');
+
+  // tourCardControl: the card's own control, only while the card is up.
+  const control = pageFn('function tourCardControl(');
+  const pick = (o: { active?: boolean; hidden?: boolean; html: string }) => {
+    const host = tel(); host.innerHTML = o.html;
+    host.querySelector = (sel: string) => {
+      const enabledOnly = sel.endsWith(':not([disabled])');
+      const base = enabledOnly ? sel.slice(0, -':not([disabled])'.length) : sel;
+      const hit = [...o.html.matchAll(/<button\b([^>]*)>([^<]*)</g)].find((m) => (!enabledOnly || !/\bdisabled\b/.test(m[1])) &&
+        (base === '.btn-primary' ? /btn-primary/.test(m[1]) : base === '.tour-row button' ? /data-tour-(?!skip)/.test(m[1]) : m[1].includes(base.slice(1, -1))));
+      return hit ? Object.assign(tel(), { innerHTML: hit[2] }) : null;
+    };
+    const overlay = Object.assign(tel(), { hidden: o.hidden === true });
+    const got = new Function('$', 'tour', `'use strict'; ${control} return tourCardControl();`)((id: string) => (id === 'tourCard' ? host : overlay), { active: o.active !== false }) as TEl | null;
+    return got ? got.innerHTML : null;
+  };
+  const scanning = '<div class="tour-head"><button class="tour-skip" data-tour-skip>Skip the tour</button></div>';
+  assert.equal(pick({ html: scanning }), 'Skip the tour', 'the scanning card: Skip, its one control');
+  assert.equal(pick({ html: '<button class="tour-skip" data-tour-skip>Skip the tour</button><div class="tour-row"><button class="btn btn-primary" data-tour-wins>Show me</button></div>' }), 'Show me', 'else its primary action');
+  assert.equal(pick({ html: '<button class="tour-skip" data-tour-skip>Skip the tour</button><div class="tour-row"><button class="btn btn-primary" data-tour-add disabled>In the cart</button><button class="btn" data-tour-next>Skip this one</button></div>' }),
+    'Skip this one', 'a disabled primary is passed over');
+  assert.equal(pick({ html: scanning, hidden: true }), null, 'the card is down: nothing');
+  assert.equal(pick({ html: scanning, active: false }), null, 'the tour is over: nothing');
+});

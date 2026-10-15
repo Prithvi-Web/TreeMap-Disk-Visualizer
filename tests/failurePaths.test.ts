@@ -393,6 +393,8 @@ function scanStartHarness(indexed: boolean) {
     scanAccessNotice: async () => {},
     skeletonRows: () => '', setScanButtonMode: (mode: string) => { log.push(`button ${mode}`); },
     renderIndexBadge: noop, renderIndexLine: noop, indexTree: noop, switchView: noop, clearScanQueue: noop, restoreDashboardPanels: noop,
+    // Where focus goes when the chrome hides the button that held it is tests/firstRun.test.ts's (review F1.11).
+    withFocusKept: (change: () => void) => { change(); },
     followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },
     quietRescanFailed: () => { log.push('quiet rescan failed'); }, failScan: (m: string) => { log.push(`failed: ${m}`); },
     INSTANT_OPEN_NODES: 25000,

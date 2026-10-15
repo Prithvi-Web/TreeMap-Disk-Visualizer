@@ -7913,6 +7913,23 @@ function activeViewControl() {
 }
 
 /**
+ * Run `change`, a repaint that may take the focused control off screen, and
+ * if it did, move focus on: to the tour card's own control while the card is
+ * up, else the first control of the view now up, else that view's tab —
+ * never <body> (G11, review F1.11). The folder browser hands focus back to
+ * the button that opened it as it closes — the welcome's "Choose a folder",
+ * Trends' or History's — and the scan it started then hides that button.
+ * Focus on a control still on screen, or on nothing, is left where it is.
+ */
+function withFocusKept(change) {
+  const had = document.activeElement;
+  change();
+  if (!had || had === document.body || had.getClientRects().length > 0) return;
+  const to = tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  if (to) to.focus({ preventScroll: true });
+}
+
+/**
  * The *unavailable* state (§3.5 #5) for a capability-gated view: the specific
  * reason, never a blank panel.
  */
@@ -9304,8 +9321,13 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   renderIndexBadge(null);
   indexLineGen++;
   renderIndexLine(null);
-  $('emptyState').style.display = 'none';
-  switchView('dashboard');
+  // Focus on a button this hides — the welcome's "Choose a folder", handed
+  // back by the folder browser as it closed — would fall to <body> for the
+  // whole scan (review F1.11): withFocusKept moves it on.
+  withFocusKept(() => {
+    $('emptyState').style.display = 'none';
+    switchView('dashboard');
+  });
 }
 
 /* ─────────────────────── Persistent live index (A1) ───────────────────────
@@ -30383,10 +30405,18 @@ function tourRender(takeFocus = true) {
   // step, painted over the "Scan my home folder" that held focus (G11).
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
   const cta = tour.step === 'welcome' ? $('emptyBrowseBtn') : null;
-  const primary = (cta && cta.getClientRects().length > 0 ? cta : null) ||
-    host.querySelector('.btn-primary:not([disabled])') || host.querySelector('.tour-row button:not([disabled])') ||
-    host.querySelector('[data-tour-skip]');
+  const primary = (cta && cta.getClientRects().length > 0 ? cta : null) || tourCardControl();
   if (primary && takeFocus && !typing) primary.focus();
+}
+
+/** The card's own control that takes focus, or null while the card is down:
+    its first enabled primary action, else its first enabled action, else
+    Skip. A disabled "Already in the cart" cannot hold focus. */
+function tourCardControl() {
+  if (!tour.active || $('tourOverlay').hidden) return null;
+  const host = $('tourCard');
+  return host.querySelector('.btn-primary:not([disabled])') || host.querySelector('.tour-row button:not([disabled])') ||
+    host.querySelector('[data-tour-skip]');
 }
 
 /** A change of view while the welcome card is up (review F1.2). The card

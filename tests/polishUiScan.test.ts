@@ -759,7 +759,7 @@ test('pressing "Scan my home folder" changes the card: a scanning step, entered 
   host.querySelector = () => null;
   const tour = { active: true, step: 'scanning', wins: [], winIx: 0, staged: 0, unknownReason: '' };
   const fn = new Function('$', 'tour', 'state', 'icon', 'escapeHtml', 'formatBytes', 'startScan', 'openBrowse', 'tourLoadWins', 'tourFinish', 'cartAddMany', 'tourAdvanceWin', 'document',
-    `'use strict'; ${render} return tourRender;`)(
+    `'use strict'; ${render} ${braced('function tourCardControl(')} return tourRender;`)(
     $, tour, { system: { homeDir: '/Users/x' }, cart: new Set() }, () => '', (s: string) => s, (n: number) => n + ' B',
     () => {}, () => {}, () => {}, () => {}, () => 0, () => {}, { activeElement: null }) as () => void;
   fn();
@@ -805,6 +805,7 @@ function chromeHarness(scanStats: Record<string, unknown> | null) {
     $, state, setScanButtonMode: noop, icon: () => '', REDUCED: true, fxStateBeam: noop, fxOrbShow: noop, fxScanHeroSync: noop,
     tourScanStarted: noop, escapeHtml: (x: string) => x, skeletonRows: () => '<i>skeleton</i>', fxDonutLoadingSync: noop,
     switchView: noop, // renderIndexBadge is the page's own: the slice carries its declaration
+    withFocusKept: (change: () => void) => { change(); }, // where focus goes is tests/firstRun.test.ts's (review F1.11)
     renderDiskNotes: () => { calls.push('notes'); }, renderBigFiles: noop, renderBigFolders: noop, renderDonut: noop,
     countUp: (e: El, n: number) => { counted.push([e === $('statFiles') ? 'files' : 'dirs', n]); },
     clearDonut: () => { calls.push('clearDonut'); }, formatBytes: (n: number) => `${n} B`,

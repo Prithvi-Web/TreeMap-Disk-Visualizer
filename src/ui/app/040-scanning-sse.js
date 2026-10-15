@@ -342,6 +342,11 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   renderIndexBadge(null);
   indexLineGen++;
   renderIndexLine(null);
-  $('emptyState').style.display = 'none';
-  switchView('dashboard');
+  // Focus on a button this hides — the welcome's "Choose a folder", handed
+  // back by the folder browser as it closed — would fall to <body> for the
+  // whole scan (review F1.11): withFocusKept moves it on.
+  withFocusKept(() => {
+    $('emptyState').style.display = 'none';
+    switchView('dashboard');
+  });
 }
