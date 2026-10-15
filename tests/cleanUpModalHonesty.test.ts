@@ -1370,6 +1370,14 @@ test('a sheet whose package folders all still have their project does not open o
   const summary = /<summary[\s\S]*?<\/summary>/.exec(projects)?.[0] ?? '';
   assert.match(summary, /\b6\b/, `the fold counts its folders: ${summary}`);
   assert.match(summary, new RegExp(`\\b${CORPUS.activeBytes} B\\b`), 'and says what they take');
+  // Each ecosystem in the fold says how many of its folders are there, and
+  // what they take as the server totalled them (G05 review F1.5).
+  assert.deepEqual([...projects.matchAll(/<div class="pkg-echead"><b>([^<]*)<\/b><span class="muted num">([^<]*)<\/span>/g)].map((m) => [m[1], m[2]]), [
+    ['gradle', '1 folder · 3400000 B'],
+    ['python', '1 folder · 11500000 B'],
+    ['cargo', '1 folder · 78800000 B'],
+    ['npm', '3 folders · 24200000 B'],
+  ], 'each ecosystem\'s heading counts its folders and their bytes');
 });
 
 test('a folder whose project is still here is never called "in use" — the app\'s word for a file a program has open — and says what is true: its project is here, and the command its rule names is beside it (G05)', async () => {
@@ -1407,6 +1415,11 @@ test('orphans and caches lead the sheet with their boxes, and a folder whose pro
   const again = await renderPackages(CORPUS, first.dom);
   assert.equal(again.lead, '', 'opened on another scan, the old leftovers go');
   assert.doesNotMatch(again.projects, new RegExp(live.path), 'and so does the old fold');
+  // A scan with no package folder at all, straight after a sheet that showed
+  // both halves: each goes (G05 review F1.3 — after `again` the lead was
+  // already empty, so its half of this said nothing).
+  const both = await renderPackages(mixed, first.dom);
+  assert.ok(both.lead !== '' && both.projects !== '', 'control: the leftovers and the fold are both on the sheet');
   const gone = await renderPackages(pkgReport([]), first.dom);
   assert.deepEqual([gone.lead, gone.projects], ['', ''], 'a scan with none clears both');
   // An answer that names no folder at all — a broken rule pack — leaves no earlier fold standing under it.
