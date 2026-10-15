@@ -87,6 +87,7 @@ async function loadMissing() {
     body.classList.add('fx-chart-loading');
   } else {
     missingData = null;
+    body.classList.remove('fx-chart-loading'); // the last scan's receipt may have been veiled: skeleton or veil, never both
     body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
   }
   try {

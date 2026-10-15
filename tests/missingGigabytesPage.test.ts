@@ -185,6 +185,7 @@ test('G06: a scan never shows another scan\'s statement — not while its own is
   assert.match(p.asks[2].url, /scanId=s2$/);
   assert.equal(usedShown(p.body), null, 'the new scan does not stand on the last scan\'s receipt, veiled or not');
   assert.match(p.body.innerHTML, /Reconciling this disk/, 'it waits on its own first statement');
+  assert.ok(!p.body.classList.contains('fx-chart-loading'), 'its skeleton rows, not under the veil the last scan\'s receipt had (review F1.10): the two are alternatives');
 
   await p.asks[1].answer(statement('s1', 620)); // s1's refetch, landing after the scan changed
   assert.equal(usedShown(p.body), null, 'the last scan\'s late answer is not painted over the new scan');
