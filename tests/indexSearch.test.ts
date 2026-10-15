@@ -595,8 +595,12 @@ test('two nested indexes, neither current — as every root is after a restart: 
   const insert = db.prepare('INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, mtime, flags) VALUES (?,?,?,?,?,?,1,0)');
   const add = (root: number, parent: number | null, name: string, dir: boolean, size: number): number =>
     Number(insert.run(root, parent, name, dir ? '' : extensionOf(name), dir ? 1 : 0, size).lastInsertRowid);
-  const outer = rootAt('/nest', 1_000_000);
-  const inner = rootAt('/nest/inner', 2_000_000); // built later: it answers for a path both hold
+  // Spelled the platform's way (review F3.1): the engine joins and splits paths on path.sep, so a literal
+  // '/nest/inner' is not inside '/nest' on the Windows CI leg, and every path came back twice there.
+  const NEST = path.resolve(path.sep, 'nest');
+  const INNER = path.join(NEST, 'inner');
+  const outer = rootAt(NEST, 1_000_000);
+  const inner = rootAt(INNER, 2_000_000); // built later: it answers for a path both hold
   db.transaction(() => {
     const outerAtInner = add(outer.id, outer.top, 'inner', true, 0);
     for (let d = 0; d < DIRS; d++) {
@@ -610,7 +614,7 @@ test('two nested indexes, neither current — as every root is after a restart: 
     add(outer.id, outerAtInner, 'only-outer.bin', false, 7); // gone from the folder since the outer build
     add(inner.id, inner.top, 'only-inner.bin', false, 7); // made after it
   })();
-  assert.deepEqual(listRoots().map((r) => [r.path, r.state, r.live]), [['/nest', 'stale', false], ['/nest/inner', 'stale', false]],
+  assert.deepEqual(listRoots().map((r) => [r.path, r.state, r.live]), [[NEST, 'stale', false], [INNER, 'stale', false]],
     'control: two nested indexes, neither current');
 
   /** Searches `q`, counting every row any statement reads while it does, and keeping the hit query and its arguments. */
@@ -657,12 +661,12 @@ test('two nested indexes, neither current — as every root is after a restart: 
 
   // The answers: each path once, the one built later answering where both hold it.
   assert.equal(new Set(ext.result.hits.map((h) => h.path)).size, 50, 'the extension seek: a page of 50 paths, each once');
-  assert.deepEqual([ext.result.hits[0].path, ext.result.hits[0].rootPath], [`/nest/inner/dir${DIRS - 1}/file${FILES - 1}.dat`, '/nest/inner'],
+  assert.deepEqual([ext.result.hits[0].path, ext.result.hits[0].rootPath], [path.join(INNER, `dir${DIRS - 1}`, `file${FILES - 1}.dat`), INNER],
     'the biggest first, from the index built later');
   assert.deepEqual([ext.result.total, ext.result.countCapped], [COUNT_CAP, true], 'and counted to the cap');
   assert.deepEqual([new Set(name.result.hits.map((h) => h.path)).size, name.result.total, name.result.countCapped], [50, DIRS, false],
     'the name scan: a page of 50 paths, and the folders\' 200 counted once each');
-  assert.deepEqual(only.result.hits.map((h) => `${h.path} ← ${h.rootPath}`).sort(), ['/nest/inner/only-inner.bin ← /nest/inner', '/nest/inner/only-outer.bin ← /nest'],
+  assert.deepEqual(only.result.hits.map((h) => `${h.path} ← ${h.rootPath}`).sort(), [`${path.join(INNER, 'only-inner.bin')} ← ${INNER}`, `${path.join(INNER, 'only-outer.bin')} ← ${NEST}`],
     'a path only one index holds is found, from it');
   assert.equal(none.result.total, 0, 'control: "zzz" matches nothing');
 
