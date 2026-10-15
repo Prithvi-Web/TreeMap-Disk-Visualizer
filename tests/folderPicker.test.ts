@@ -441,6 +441,52 @@ test('on Windows the whole-drive choices are the drive letters the layout lists,
   assert.deepEqual(wholeDrives('freebsd', null, '/home/u'), [], 'and nothing offered where the platform is not one TreeMap knows');
 });
 
+/*
+ * The helper above names the drives. These open the picker itself on Linux
+ * and Windows, so its wiring is pinned too: which platform asks the disk
+ * layout and which draws at once, what a layout that cannot be read leaves,
+ * and that a choice opens that drive to scan (G26 review F1.2).
+ */
+test('opened to scan on Linux, the picker offers / as the whole drive, and choosing it opens / to scan (G26 review F1.2)', async () => {
+  const ROOT = { path: '/', parent: null, dirs: ['home', 'usr', 'var'].map((n) => ({ name: n, path: `/${n}`, isHidden: false })) };
+  const t = browseRuntime((p) => (p === '/' ? ROOT : HOME), undefined, { platform: 'linux' });
+  await t.rt.openBrowse(null);
+  await settle();
+  assert.deepEqual(t.drives(), [['/', '/']], 'one choice: /');
+  t.clickDrive('/');
+  await settle();
+  assert.equal(t.rt.path(), '/', 'choosing it opens / in the picker');
+  await t.use();
+  assert.deepEqual(t.scanned, ['/'], 'and "Scan this folder" scans it');
+});
+
+test('opened to scan on Windows, the picker offers each lettered drive the layout lists — the home folder\'s own drive where the layout cannot be read — and a choice opens that drive to scan (G26 review F1.2)', async () => {
+  const drive = (letter: string) => ({ path: `${letter}:\\`, parent: null, dirs: [{ name: 'Users', path: `${letter}:\\Users`, isHidden: false }] });
+  const listing = (p: string) => (/^[A-Z]:\\$/.test(p) ? drive(p[0]) : { path: 'C:\\Users\\u', parent: 'C:\\Users', dirs: [] });
+  const layout = { logicalVolumes: [
+    { id: 'D:', name: 'D:', mountPoint: 'D:\\' },
+    { id: 'C:', name: 'Windows', mountPoint: 'C:\\' },
+  ] };
+  const win = { platform: 'win32', homeDir: 'C:\\Users\\u' };
+  const t = browseRuntime(listing, undefined, { ...win, topology: () => layout });
+  await t.rt.openBrowse(null);
+  await settle();
+  assert.deepEqual(t.drives(), [['Windows (C:)', 'C:\\'], ['D:', 'D:\\']], 'every lettered drive, by label and letter');
+  t.clickDrive('D:\\');
+  await settle();
+  assert.equal(t.rt.path(), 'D:\\', 'choosing one opens that drive in the picker');
+  await t.use();
+  assert.deepEqual(t.scanned, ['D:\\'], 'and "Scan this folder" scans it');
+  // The layout cannot be read: the home folder's own drive, by its letter.
+  const bare = browseRuntime(listing, undefined, { ...win, topology: () => new Error('Get-Volume failed') });
+  await bare.rt.openBrowse(null);
+  await settle();
+  assert.deepEqual(bare.drives(), [['C:', 'C:\\']], 'with no layout, the home folder\'s own drive');
+  bare.clickDrive('C:\\');
+  await settle();
+  assert.equal(bare.rt.path(), 'C:\\', 'which opens in the picker');
+});
+
 test('the whole drive is offered only where the picker scans — not for an Autopilot folder or an offload destination — and a late layout answer never draws it into those (G26)', async () => {
   let release!: () => void;
   const slow = new Promise<void>((resolve) => { release = resolve; });
