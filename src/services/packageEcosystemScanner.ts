@@ -19,9 +19,11 @@ import { PackageCacheRule, ProjectDirRule, RuleCatalog, loadRuleCatalog } from '
  *
  * Three classifications, and the difference matters:
  *
- *  - **orphan** — the owning project is gone (no `package.json` beside a
- *    `node_modules`, no `Cargo.toml` beside a `target`), or a virtualenv points
- *    at an interpreter that no longer exists. Nothing will ever rebuild it.
+ *  - **orphan** — no project file owns it (no `package.json` beside a
+ *    `node_modules`, no `Cargo.toml` beside a `target`), a virtualenv points
+ *    at an interpreter that no longer exists, or a Homebrew keg is superseded.
+ *    What is found is all that is said: a folder of scripts with no project
+ *    file may still use the `.venv` beside it (review F1.2).
  *  - **active** — the owner is right there. Still deletable via Smart
  *    Suggestions, but listed here only as context, never with a checkbox: this
  *    panel's job is the stuff nobody is going to miss.
@@ -289,7 +291,9 @@ export function scanPackageEcosystems(
             path: childPath,
             size: store.size(child),
             modifiedAt: lastTouched(store, child),
-            reason: `No ${missing || 'project manifest'} beside it — the project that owned this is gone.`,
+            // What was found, and only that: a folder of scripts may sit beside a .venv it still uses with no
+            // project file at all, so "its project is gone" would claim what nothing checked (review F1.2).
+            reason: `No ${missing || 'project manifest'} beside it — TreeMap finds no project that owns it.`,
             command: identified.restoreCommand,
           });
           continue;

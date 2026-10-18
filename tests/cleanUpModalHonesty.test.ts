@@ -1422,44 +1422,45 @@ test('a folder whose project is still here is never called "in use" — the app\
  * orphan's row says what the server found and names no command; a cache's
  * command does clear it, and says so (G05 review F3.2, F3.4).
  */
-test('an orphaned folder\'s row names no command as putting it back — its project is gone, or its interpreter is, and a superseded keg\'s command removes it — while a cache still names what clears it (G05 review F3.2, F3.4)', async () => {
+test('an orphaned folder\'s row names no command as putting it back — no project file is beside it, or its interpreter is gone, and a superseded keg\'s command removes it — while a cache still names what clears it (G05 review F3.2, F3.4)', async () => {
   const orphan = (ecosystem: string, name: string, path: string, reason: string, command: string, project?: string): PkgEntry => ({
     ecosystem, kind: 'orphan', name, path, size: 1_000_000, modifiedAt: 1, reason, command,
     ...(project ? { projectPath: path.slice(0, path.lastIndexOf('/')), projectName: project } : {}),
   });
   // Each with the reason and command GET /api/packages/orphans sends for it (packageEcosystemScanner).
   const rows = [
-    orphan('npm', 'node_modules', '/corpus/old/node_modules', 'No package.json beside it — the project that owned this is gone.', 'npm install'),
-    orphan('python', '.venv', '/corpus/gone/.venv', 'No requirements.txt beside it — the project that owned this is gone.', 'python3 -m venv <folder>, then reinstall the packages it held'),
+    orphan('npm', 'node_modules', '/corpus/old/node_modules', 'No package.json beside it — TreeMap finds no project that owns it.', 'npm install'),
+    orphan('python', '.venv', '/corpus/gone/.venv', 'No requirements.txt beside it — TreeMap finds no project that owns it.', 'python3 -m venv <folder>, then reinstall the packages it held'),
     orphan('python', '.venv', '/corpus/Projects/py/.venv', 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.', 'python3 -m venv <folder>, then reinstall the packages it held', 'py'),
-    orphan('cargo', 'target', '/corpus/rusty-old/target', 'No Cargo.toml beside it — the project that owned this is gone.', 'cargo build'),
+    orphan('cargo', 'target', '/corpus/rusty-old/target', 'No Cargo.toml beside it — TreeMap finds no project that owns it.', 'cargo build'),
     orphan('homebrew', 'ripgrep 13.0.0', '/opt/homebrew/Cellar/ripgrep/13.0.0', 'Superseded — ripgrep has 2 versions installed and only the newest is linked.', 'brew cleanup ripgrep', 'ripgrep'),
   ];
   const cache: PkgEntry = { ecosystem: 'npm', kind: 'cache', name: '_cacache', path: '/home/u/.npm/_cacache', size: 4_000_000, modifiedAt: 1, reason: 'npm’s shared download cache.', command: 'npm cache clean --force' };
   const { lead } = await renderPackages(pkgReport([
     pkgGroup('npm', [rows[0], cache]), pkgGroup('python', [rows[1], rows[2]]), pkgGroup('cargo', [rows[3]]), pkgGroup('homebrew', [rows[4]]),
   ]));
-  // The header is true of every orphan the server reports (BQG-5 item 15): a virtualenv whose interpreter is
-  // gone may sit in a project that is still here, which can make it again, so "nothing will rebuild them" was
-  // false of it; none of the five — project gone, interpreter gone, a superseded keg — can still be used.
-  assert.match(lead, /5 orphaned — nothing can still use them/, 'the header counts the five orphans, and says what is true of each');
-  assert.doesNotMatch(lead, /nothing will rebuild/, 'never that nothing will rebuild a virtualenv whose project is still here');
+  // The header claims nothing of the orphans as a whole (BQG-5 item 15, review F1.2): a virtualenv whose
+  // interpreter is gone may sit in a project that is still here, which can make it again ("nothing will
+  // rebuild them" was false of it), and one with no project file beside it may sit beside the scripts that
+  // still use it ("nothing can still use them" was false of that). Each row says what the server found.
+  assert.match(lead, /5 orphaned — each row says why/, 'the header counts the five orphans, and points to their reasons');
+  assert.doesNotMatch(lead, /nothing will rebuild|nothing can still use/, 'never a claim the server did not establish of every one');
   const said = Object.fromEntries(pkgRows(lead).map((r) => [
     /class="pth" title="([^"]+)"/.exec(r)![1],
     /<div class="pkg-why">([\s\S]*?)<\/div>/.exec(r)?.[1] ?? '',
   ]));
   assert.deepEqual(said, {
-    '/corpus/old/node_modules': 'No package.json beside it — the project that owned this is gone.',
+    '/corpus/old/node_modules': 'No package.json beside it — TreeMap finds no project that owns it.',
     '/home/u/.npm/_cacache': 'npm’s shared download cache. · <code>npm cache clean --force</code> to clear',
-    '/corpus/gone/.venv': 'No requirements.txt beside it — the project that owned this is gone.',
+    '/corpus/gone/.venv': 'No requirements.txt beside it — TreeMap finds no project that owns it.',
     '/corpus/Projects/py/.venv': 'Its Python interpreter is gone (/old/py/bin) — this environment cannot run.',
-    '/corpus/rusty-old/target': 'No Cargo.toml beside it — the project that owned this is gone.',
+    '/corpus/rusty-old/target': 'No Cargo.toml beside it — TreeMap finds no project that owns it.',
     '/opt/homebrew/Cellar/ripgrep/13.0.0': 'Superseded — ripgrep has 2 versions installed and only the newest is linked.',
   }, 'each orphan says what the server found, with no command; the cache names the command that clears it');
 });
 
 test('orphans and caches lead the sheet with their boxes, and a folder whose project is still here goes to the fold — "shared caches only" is said only where it is true (G05)', async () => {
-  const orphan: PkgEntry = { ecosystem: 'npm', kind: 'orphan', name: 'node_modules', path: '/corpus/old/node_modules', size: 9_000_000, modifiedAt: 1, reason: 'No package.json beside it — the project that owned this is gone.', command: 'npm install' };
+  const orphan: PkgEntry = { ecosystem: 'npm', kind: 'orphan', name: 'node_modules', path: '/corpus/old/node_modules', size: 9_000_000, modifiedAt: 1, reason: 'No package.json beside it — TreeMap finds no project that owns it.', command: 'npm install' };
   const cache: PkgEntry = { ecosystem: 'npm', kind: 'cache', name: '_cacache', path: '/home/u/.npm/_cacache', size: 4_000_000, modifiedAt: 1, reason: 'npm’s shared download cache.', command: 'npm cache clean --force' };
   const live = owned('npm', 'shop', 'node_modules', 20_700_000, 'npm install');
   const mixed = pkgReport([pkgGroup('npm', [orphan, cache, live])]);
@@ -1467,7 +1468,7 @@ test('orphans and caches lead the sheet with their boxes, and a folder whose pro
   assert.equal(first.shown, true, 'something a person can act on was shown');
   assert.deepEqual(pkgRows(first.lead).map((r) => /class="pth" title="([^"]+)"/.exec(r)?.[1]), [orphan.path, cache.path], 'the orphan and the cache lead');
   assert.ok(pkgRows(first.lead).every((r) => /class="pkg-ck"/.test(r) && /<cart /.test(r)), 'each with its box and cart toggle');
-  assert.match(first.lead, /1 orphaned — nothing can still use it/, 'the header counts the orphan');
+  assert.match(first.lead, /1 orphaned — its row says why/, 'the header counts the orphan, and points to its reason');
   assert.doesNotMatch(first.lead, new RegExp(live.path), 'the folder whose project is here is not among them');
   assert.doesNotMatch(first.lead, /\b1 in use\b|in use/i, 'nor counted in its ecosystem\'s line');
   assert.deepEqual(pkgRows(first.projects).map((r) => /class="pth" title="([^"]+)"/.exec(r)?.[1]), [live.path], 'it is in the fold below the suggestions');

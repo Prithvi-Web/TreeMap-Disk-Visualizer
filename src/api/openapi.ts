@@ -1861,7 +1861,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/packages/orphans',
-    summary: 'Package-manager artifacts classified as orphaned (owning project gone, a virtualenv\u2019s interpreter gone, or a superseded Homebrew keg), active, or shared cache',
+    summary: 'Package-manager artifacts classified as orphaned (no project file beside it, a virtualenv\u2019s interpreter gone, or a superseded Homebrew keg), active, or shared cache',
     tag: 'cleanup',
     destructive: false,
     parameters: [scanIdQuery],

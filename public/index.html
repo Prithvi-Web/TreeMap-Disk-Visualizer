@@ -37206,7 +37206,7 @@ async function renderPackageOrphans() {
     // command, which does clear it. No row names one as putting it back: a
     // virtualenv's makes the environment but not the packages it held (its
     // rule once named `pip install -r requirements.txt`, which makes no
-    // `.venv` — G05 review F2.1, H08), an orphan's project or interpreter is gone, and a
+    // `.venv` — G05 review F2.1, H08), an orphan has no project file beside it or no interpreter, and a
     // superseded Homebrew keg's (`brew cleanup`) removes it (F3.2).
     const why = e.kind === 'active' ? 'Its project is still here' : e.reason;
     const command = e.kind === 'cache' && e.command
@@ -37235,11 +37235,14 @@ async function renderPackageOrphans() {
     <div class="rule-row" style="padding:6px 0;">
       <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Package leftovers</b>
       <span class="muted" style="flex:1;margin-left:8px;">${data.orphanCount
-        // True of every orphan the server reports (BQG-5 item 15): its project
-        // is gone, its interpreter is (a virtualenv that cannot run, though its
-        // project may still be here and could make it again — so never
-        // "nothing will rebuild it"), or it is a superseded Homebrew keg.
-        ? `${formatCount(data.orphanCount)} orphaned — nothing can still use ${data.orphanCount === 1 ? 'it' : 'them'}`
+        // Nothing is claimed of the orphans as a whole (BQG-5 item 15, review
+        // F1.2): the server calls a folder orphaned when no project file is
+        // beside it (a folder of scripts may still use it), when it is a
+        // virtualenv whose interpreter is gone (its project may still be here
+        // and make it again), or when it is a superseded Homebrew keg. So
+        // neither "nothing will rebuild them" nor "nothing can still use them"
+        // is true of every one; each row says which it is.
+        ? `${formatCount(data.orphanCount)} orphaned — ${data.orphanCount === 1 ? 'its row says' : 'each row says'} why`
         : 'no orphans; shared caches only'}</span>
       <span class="size-badge num" style="color:${sizeInk(reclaimable)}">${formatBytes(reclaimable)}</span>
     </div>` + leftovers.map(x => ecoHtml(x, [

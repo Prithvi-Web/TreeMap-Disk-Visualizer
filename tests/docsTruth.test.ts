@@ -711,10 +711,11 @@ test('AGENTS.md lists the offload\'s refusal of a destination TreeMap cannot wri
   assert.match(section, /dry run included \(`400 DEST_NOT_WRITABLE`\); on\s+Windows/, 'AGENTS.md says a dry run refuses it, and names Windows as the exception');
 });
 
-test('AGENTS.md, the README and the OpenAPI document say what an orphan is as packageEcosystemScanner classifies it — its project gone, its interpreter gone, or a superseded Homebrew keg — never that nothing will ever rebuild it (BQG-5 item 15)', () => {
+test('AGENTS.md, the README and the OpenAPI document say what an orphan is as packageEcosystemScanner classifies it — no project file beside it, its interpreter gone, or a superseded Homebrew keg — never that nothing will ever rebuild it, that nothing can still use it, or that its project is gone (BQG-5 item 15, review F1.2)', () => {
   const scanner = read('src', 'services', 'packageEcosystemScanner.ts');
-  // The premise: the three ways the scanner calls a folder an orphan.
-  assert.match(scanner, /the project that owned this is gone\./, 'its project is gone');
+  // The premise: the three ways the scanner calls a folder an orphan. The first is that no project file is
+  // beside it — which says nothing of whether a project, or the scripts beside it, still use it.
+  assert.match(scanner, /reason: `No \$\{missing \|\| 'project manifest'\} beside it — TreeMap finds no project that owns it\.`/, 'no project file beside it');
   assert.match(scanner, /Its Python interpreter is gone \(\$\{broken\}\) — this environment cannot run\./, 'its interpreter is gone — and its project may still be here');
   assert.match(scanner, /Superseded — /, 'a superseded Homebrew keg');
   const agents = read('AGENTS.md');
@@ -723,7 +724,9 @@ test('AGENTS.md, the README and the OpenAPI document say what an orphan is as pa
   const readmeLine = readme.split('\n').find((l) => l.startsWith('**Package orphans**')) ?? '';
   const summary = String(ENDPOINTS.find((e) => e.path === '/api/packages/orphans')?.summary ?? '');
   for (const [what, text] of [['AGENTS.md', section], ['the README', readmeLine], ['the OpenAPI summary', summary]] as const) {
-    assert.doesNotMatch(text, /nothing will ever rebuild/, `${what} never says nothing will ever rebuild an orphan`);
-    assert.match(text.replace(/\s+/g, ' '), /project[^.;]*gone[^.;]*interpreter[^.;]*gone[^.;]*superseded/i, `${what} names the three kinds of orphan`);
+    const flat = text.replace(/\s+/g, ' ');
+    assert.doesNotMatch(flat, /nothing will ever rebuild|nothing can still use/, `${what} claims nothing the scanner does not establish of every orphan`);
+    assert.doesNotMatch(flat, /(owning project|project that owned (it|them|this)) (is )?gone/i, `${what} never says an orphan's project is gone: only that no project file is beside it`);
+    assert.match(flat, /no project file[\s\S]*?interpreter[\s\S]*?gone[\s\S]*?superseded/i, `${what} names the three kinds of orphan`);
   }
 });

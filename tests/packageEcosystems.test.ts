@@ -85,7 +85,7 @@ test('an orphaned Rust target is flagged and an active one is not', () => {
   assert.equal(orphan.kind, 'orphan');
   assert.equal(orphan.ecosystem, 'cargo');
   assert.equal(orphan.command, 'cargo build');
-  assert.equal(orphan.reason, 'No Cargo.toml beside it — the project that owned this is gone.',
+  assert.equal(orphan.reason, 'No Cargo.toml beside it — TreeMap finds no project that owns it.',
     'the missing manifest is named as it is spelled, not as the lowercased match key "cargo.toml" (review F1.4)');
   assert.equal(find(entries, path.join(ROOT, 'live-crate', 'target'))!.kind, 'active');
 });
@@ -94,7 +94,7 @@ test('an orphan\'s reason names the missing manifest as the pack spells it — a
   const pods = find(run(tree([dir('dead-app', [dir('Pods', [file('Manifest.lock'), file('lib.a', 2000)])])])),
     path.join(ROOT, 'dead-app', 'Pods'));
   assert.ok(pods, 'the orphaned Pods folder is found');
-  assert.equal(pods.reason, 'No Podfile beside it — the project that owned this is gone.', 'a sibling manifest, as the pack writes it');
+  assert.equal(pods.reason, 'No Podfile beside it — TreeMap finds no project that owns it.', 'a sibling manifest, as the pack writes it');
 
   // No shipped ownerManifest is capitalised (package.json is spelled that way),
   // so a pack that adds one shows the owner manifest is said as written too.
@@ -111,9 +111,24 @@ test('an orphan\'s reason names the missing manifest as the pack spells it — a
     dir('dead-gem', [dir('.bundle', [file('config', 10)])]),
     dir('live-gem', [file('gemfile'), dir('.bundle', [file('config', 10)])]),
   ]), compileIgnoreList([]), loadRuleCatalogFrom(dirPacks, process.platform)).ecosystems.flatMap((e) => e.entries);
-  assert.equal(find(entries, path.join(ROOT, 'dead-gem', '.bundle'))?.reason, 'No Gemfile beside it — the project that owned this is gone.',
+  assert.equal(find(entries, path.join(ROOT, 'dead-gem', '.bundle'))?.reason, 'No Gemfile beside it — TreeMap finds no project that owns it.',
     'an owner manifest, as the pack writes it');
   assert.equal(find(entries, path.join(ROOT, 'live-gem', '.bundle'))?.kind, 'active', 'matching the manifest is still case-insensitive');
+});
+
+test('an orphan\'s reason says only what TreeMap found — no project file beside it — never that its project is gone: a folder of scripts may sit beside a .venv and a node_modules it still uses (review F1.2)', () => {
+  const entries = run(tree([
+    dir('scripts', [
+      file('run.py', 100), file('tool.js', 100),
+      dir('.venv', [file('pyvenv.cfg', 10), dir('bin', [file('python', 10)])]),
+      dir('node_modules', [file('.package-lock.json', 10), file('dep.js', 1000)]),
+    ]),
+  ]));
+  for (const name of ['.venv', 'node_modules']) {
+    const e = find(entries, path.join(ROOT, 'scripts', name));
+    assert.equal(e?.kind, 'orphan', `control: ${name} beside run.py and tool.js, with no project file, is called orphaned`);
+    assert.match(e!.reason, /^No [^ ]+ beside it — TreeMap finds no project that owns it\.$/, `${name}: the reason is what TreeMap found, and nothing about a project being gone`);
+  }
 });
 
 test('an orphaned virtualenv is flagged and an active one is not', () => {

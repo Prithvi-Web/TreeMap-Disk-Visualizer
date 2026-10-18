@@ -298,7 +298,8 @@ insightRouter.get('/git/repos', storageModeGate, (req: Request, res: Response) =
 /**
  * GET /api/packages/orphans?scanId= — package-manager artifacts, classified.
  *
- * Orphaned (the owning project is gone), active (context only), and shared
+ * Orphaned (no project file owns it, its interpreter is gone, or a superseded
+ * Homebrew keg — packageEcosystemScanner), active (context only), and shared
  * caches. Rules come from the §C8 packs, so a malformed pack makes this feature
  * report itself unavailable exactly like Smart Suggestions rather than
  * answering "no orphans", which would read as good news.

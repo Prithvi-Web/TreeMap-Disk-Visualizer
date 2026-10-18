@@ -142,10 +142,13 @@ OpenAPI 3 spec).
      malformed the response is `available: false` with a `reason`, and no
      groups: treat that as "unknown", never as "nothing to clean up".
    - `GET /api/packages/orphans` — package-manager artifacts split into
-     **orphaned** (the owning project is gone, a virtualenv's interpreter is
-     gone so it cannot run — its project may still be here — or a Homebrew
-     keg is superseded by a newer linked one: nothing can still use them),
-     **active** (context only) and **cache** (shared, always reclaimable). Entries carry the owning project, last-build date and the
+     **orphaned** (no project file such as `package.json` or `Cargo.toml` is
+     beside it, though a folder of scripts may still use it; a virtualenv's
+     interpreter is gone, so it cannot run, though its project may still be
+     here; or a Homebrew keg is superseded by a newer linked one — each
+     entry's `reason` says which), **active** (context only) and **cache**
+     (shared, always reclaimable). Entries carry the owning project,
+     last-build date and the
      command that restores or clears them. Same `available:false` + `reason`
      contract as the suggestions endpoint.
    - `GET /api/duplicates` — content-identical groups (background hashing;
