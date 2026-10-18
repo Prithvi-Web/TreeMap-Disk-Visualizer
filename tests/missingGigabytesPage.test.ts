@@ -430,3 +430,58 @@ test('G06 review F3.3: a standing receipt asked again with nothing kept for its 
   await p.asks[5].answer(fresh);
   assert.equal(p.body.innerHTML, p.render(fresh), 'the answer paints whole, usable');
 });
+
+/* ── Sixth browser pass H06: a segment never states another figure under its line's name ── */
+
+/** A statement whose scanned line is corrected by the two lines below it: 9,500 counted, 2,200 drawn. */
+function corrected(cloud: number, sparse: number): Record<string, unknown> {
+  const used = 9000;
+  const lines = [
+    { id: 'scanned', label: 'Files TreeMap scanned', bytes: 9500, available: true, detail: 'd', count: null, notes: [], remedy: null },
+    { id: 'cloudPlaceholders', label: 'Online-only files counted above but not on the disk', bytes: cloud, available: true, detail: 'c', count: 3, notes: [], remedy: null },
+    { id: 'sparseFiles', label: 'What these files claim, against what they hold', bytes: sparse, available: true, detail: 's', count: 4, notes: [], remedy: null },
+    { id: 'unaccounted', label: 'Unaccounted', bytes: used - 9500 - cloud - sparse, available: true, detail: 'u', count: null, notes: [], remedy: null },
+  ];
+  return {
+    scanId: 's1', rootPath: '/',
+    volume: { mountPoint: '/', totalBytes: 20000, usedBytes: used, freeBytes: 11000, reservedBytes: 0, mechanism: 'statfs(/)', mechanismLabel: 'what macOS reports for Macintosh HD' },
+    lines, unaccountedBytes: used - 9500 - cloud - sparse, coversWholeVolume: true, caveats: [], generatedAt: 0,
+  };
+}
+
+/** Each bar segment's id, its aria-label and its title; and the legend's names, in order. */
+function segmentsOf(html: string): { segs: Array<{ id: string; aria: string; title: string }>; legend: string[] } {
+  const segs = [...html.matchAll(/<button type="button" class="mg-seg[^"]*" data-mg-seg="([^"]+)"[^>]*aria-label="([^"]*)"[^>]*title="([^"]*)"/g)]
+    .map((m) => ({ id: m[1], aria: m[2], title: m[3] }));
+  const legendHtml = html.slice(html.indexOf('<div class="mg-legend">'), html.indexOf('</div>', html.indexOf('<div class="mg-legend">')));
+  const legend = [...legendHtml.matchAll(/<\/i>([^<]*)<\/span>/g)].map((m) => m[1]);
+  return { segs, legend };
+}
+
+test('the scanned segment, netted against the corrections below it, is named for what it is and says how its figure was made — never the line\'s name beside another figure (H06)', () => {
+  const p = page();
+  const html = p.render(corrected(-2000, -5300));
+  const { segs, legend } = segmentsOf(html);
+  const scanned = segs.find((s) => s.id === 'scanned');
+  assert.ok(scanned, 'control: the scanned segment is drawn');
+  assert.match(html, /data-mg-row="scanned"[\s\S]*?<div class="mg-v ">9500 B<\/div>/, 'control: its line states 9,500');
+  assert.equal(scanned!.aria, 'Files TreeMap scanned, after the corrections below it: 2200 B (9500 B counted, less 7300 B from the lines below). Show details.',
+    'the segment says what it draws, and how it was made from the line');
+  assert.equal(scanned!.title, 'Files TreeMap scanned, after the corrections below it — 2200 B (9500 B counted, less 7300 B from the lines below)');
+  assert.equal(legend[0], 'Files TreeMap scanned, after the corrections below it', 'the key names it the same way');
+  // The rule, for every segment: a segment that carries a line's own name states that line's figure.
+  const lines = (corrected(-2000, -5300).lines as Array<{ label: string; bytes: number }>);
+  for (const s of segs) {
+    const same = lines.find((l) => s.aria.startsWith(`${l.label}:`));
+    if (same) assert.ok(s.aria.startsWith(`${same.label}: ${same.bytes} B.`), `${s.id}: under "${same.label}" it states ${same.bytes} B, the line's own figure`);
+  }
+});
+
+test('with nothing to take back, the scanned segment is the line itself, under its own name (H06)', () => {
+  const p = page();
+  const { segs, legend } = segmentsOf(p.render(corrected(0, 0)));
+  const scanned = segs.find((s) => s.id === 'scanned')!;
+  assert.equal(scanned.aria, 'Files TreeMap scanned: 9500 B. Show details.', 'the line\'s name and the line\'s figure');
+  assert.equal(scanned.title, 'Files TreeMap scanned — 9500 B');
+  assert.equal(legend[0], 'Files TreeMap scanned');
+});

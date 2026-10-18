@@ -26851,6 +26851,24 @@ function mgSegmentBytes(lines, id) {
 }
 
 /**
+ * What a bar segment is called, and its figure as said (sixth browser pass
+ * H06). A segment drawn at its line's own figure is that line, under its
+ * name. The scanned segment netted against the corrections below it is a
+ * different figure: under the line's name it said 2.2 GB beside a line
+ * saying 9.5 GB. So it is named for what it is, and says how its figure was
+ * made from the line's — the statement itself, and the identity its lines
+ * sum to, are unchanged.
+ */
+function mgSegmentName(line, bytes) {
+  return bytes === line.bytes ? line.label : `${line.label}, after the corrections below it`;
+}
+function mgSegmentFigure(line, bytes) {
+  if (bytes === line.bytes) return formatBytes(bytes);
+  const delta = bytes - line.bytes;
+  return `${formatBytes(bytes)} (${formatBytes(line.bytes)} counted, ${delta < 0 ? 'less' : 'plus'} ${formatBytes(Math.abs(delta))} from the lines below)`;
+}
+
+/**
  * A line's count, said as what it counts (QA third pass D09). The claim-
  * against-hold line counts the files that claim more than they take, and
  * its figure is the net of those against every other file's rounding — so a
@@ -26922,8 +26940,8 @@ function renderMissing() {
     segs.map(sgroup =>
       `<button type="button" class="mg-seg ${MG_SEG[sgroup.id].cls}" data-mg-seg="${sgroup.id}" ` +
       `style="width:${pct(sgroup.bytes).toFixed(3)}%" ` +
-      `aria-label="${escapeHtml(sgroup.line.label)}: ${escapeHtml(formatBytes(sgroup.bytes))}. Show details." ` +
-      `title="${escapeHtml(sgroup.line.label)} — ${escapeHtml(formatBytes(sgroup.bytes))}"></button>`
+      `aria-label="${escapeHtml(mgSegmentName(sgroup.line, sgroup.bytes))}: ${escapeHtml(mgSegmentFigure(sgroup.line, sgroup.bytes))}. Show details." ` +
+      `title="${escapeHtml(mgSegmentName(sgroup.line, sgroup.bytes))} — ${escapeHtml(mgSegmentFigure(sgroup.line, sgroup.bytes))}"></button>`
     ).join('') +
     reservedHtml +
     `</div>` +
@@ -26932,7 +26950,7 @@ function renderMissing() {
     `data-label="${escapeHtml(formatBytes(d.volume.usedBytes))} used"></div>` +
     `<div class="mg-legend">` +
     segs.map(sgroup =>
-      `<span><i style="background:${MG_SEG[sgroup.id].colour}"></i>${escapeHtml(sgroup.line.label)}</span>`
+      `<span><i style="background:${MG_SEG[sgroup.id].colour}"></i>${escapeHtml(mgSegmentName(sgroup.line, sgroup.bytes))}</span>`
     ).join('') +
     (reserved > 0
       ? `<span><i style="background:var(--mg-reserved)"></i>Kept back for the system — ${escapeHtml(formatBytes(reserved))}</span>`
