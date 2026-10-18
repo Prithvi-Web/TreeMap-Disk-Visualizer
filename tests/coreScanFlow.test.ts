@@ -162,7 +162,7 @@ const LIFTED = [
   'function browseWholeDrives(', 'function topologyAnswer(',
   'function startChoiceList(', 'function startFolderName(', 'function startLastLine(', 'function renderStartChoices(', 'function scanStartChoice(', 'async function startNameDrives(',
   'function requestedPath(', 'async function restoreLastSession(', 'function showRestoredPath(', 'async function reopenScan(',
-  'async function startCloudScan(',
+  'async function startCloudScan(', 'async function loadSystem(',
 ];
 const OWN = new Set(LIFTED.map((d) => /function (\w+)\(/.exec(d)![1]));
 
@@ -209,7 +209,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     return { status, ok: status >= 200 && status < 300, text: async () => (a.body === undefined ? '' : JSON.stringify(a.body)) };
   };
   const state: Record<string, unknown> = {
-    view: 'dashboard', system: o.system ?? MAC, capabilities: null, scanId: o.settledScanId ?? null, settledScanId: o.settledScanId ?? null,
+    view: 'dashboard', system: 'system' in o ? o.system : MAC, capabilities: null, scanId: o.settledScanId ?? null, settledScanId: o.settledScanId ?? null,
     scanning: false, es: null, abortScan: null, scanGen: 0, root: o.root ?? null, scanStats: null, whatsNew: { seq: 0 },
     lastFolder: null, scanningPath: null, scannedBefore: false, largest: [], bigFolders: [], types: [],
   };
@@ -233,6 +233,7 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     VIEW_BY_ID, tabs: [], mountedView: null, indexLineGen: 0, indexAutoMaxEntries: null, browseDrivesSeen: null, topologyShared: null,
     startDrivesAsked: false, startShown: [], startPainted: null, START_FOLDERS, FOLDER_REFUSED_STATUSES,
     TOPOLOGY_SHARE_MS: 3000, REDUCED: true, INSTANT_OPEN_NODES: 25000,
+    EMPTY_VIEW_LEADS: {}, EMPTY_VIEW_LEAD_DEFAULT: 'Once a folder is scanned, this view fills in.', // another view's empty state (G02)
     formatBytes, formatDate, formatCount: String, icon: () => '', skeletonRows: () => '',
     toast: (m: string, k?: string) => { toasts.push([m, k]); },
     finishScan: async (root: unknown) => { finished.push(root); state.root = root; },
@@ -243,6 +244,8 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     scanAccessNotice: async () => false, clearScanQueue: noop, drainScanQueue: noop, quietRescanFailed: (e: unknown) => { quietFailed.push(e); },
     openFromIndex: async () => false,
     activeViewControl: () => null, tourCardControl: () => null,
+    // What loadSystem paints besides the start screen: the System card, the key names, the side panels.
+    renderKeyNames: noop, paintDiskFacts: noop, loadTrash: noop, loadSnapshots: noop, loadCloudStatus: noop,
     tourScanStarted: () => tourCalls.push('started'), tourScanFailed: () => tourCalls.push('failed'),
     tourFollowView: noop, tourBootSettled: () => tourCalls.push('boot settled'),
   };
@@ -252,10 +255,10 @@ function page(o: { route: Route; system?: unknown; search?: string; root?: unkno
     set: (t, k, v) => { t[k as string] = v; return true; },
   });
   const src = LIFTED.map(pageFn).join('\n');
-  const fns = new Function('scope', `with (scope) { ${src}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan }; }`)(scope) as {
+  const fns = new Function('scope', `with (scope) { ${src}\n return { switchView, restoreLastSession, startScan, stopScan, failScan, renderStartChoices, startCloudScan, loadSystem }; }`)(scope) as {
     switchView: (v: string) => void; restoreLastSession: () => Promise<void>; startScan: (p: string, o?: unknown) => Promise<void>;
     stopScan: () => Promise<void>; failScan: (m: string, e?: unknown) => void; renderStartChoices: () => void;
-    startCloudScan: (id: string, name: string) => Promise<void>;
+    startCloudScan: (id: string, name: string) => Promise<void>; loadSystem: () => Promise<unknown>;
   };
   /** The start screen's choices as a person sees them: each button's words, in order. */
   const choices = () => $('startChoices').children.map((b) => b.textContent);
@@ -306,6 +309,9 @@ async function boot(h: ReturnType<typeof page>): Promise<void> {
   await h.restoreLastSession();
   await turns();
 }
+
+/** The start screen's primary-styled buttons, by id: G03 allows one, "Choose a folder…". */
+const primaries = (h: ReturnType<typeof page>) => [...h.$('startChoices').children, h.$('emptyBrowseBtn')].filter((b) => b.cls.has('btn-primary')).map((b) => b.id);
 
 /* ══════════════ (A) + (B) — opening the app ══════════════ */
 
@@ -444,6 +450,72 @@ test('a choice is answered at once: the start screen goes and the Dashboard\'s S
   assert.deepEqual(h.posts.map((p) => p.path), ['/Users/x/Desktop'], 'one scan, of the folder clicked first');
 });
 
+test('a first run paints the choices when GET /api/system answers: the boot paints the start screen before it, with nothing yet to offer (review F1.6)', async () => {
+  // Every launch starts with state.system null: switchView paints the start
+  // screen before loadSystem's answer, and a first run has no history to
+  // paint it again. loadSystem's own repaint is the one that offers Desktop.
+  let answer: (a: { body: unknown }) => void = () => {};
+  const h = page({ system: null, route: (m, url, b) => (url === '/api/system' ? new Promise((r) => { answer = r; }) : server({ roots: [] })(m, url, b)) });
+  h.switchView('dashboard');
+  const loading = h.loadSystem();
+  await h.restoreLastSession();
+  await turns();
+  assert.deepEqual(h.choices(), [], 'before the system answers: no folder known, none offered — never a guess');
+  assert.equal(h.$('emptyState').style.display, 'flex', 'control: the start screen is up, with Choose a folder…');
+  answer({ body: MAC });
+  await loading;
+  await turns();
+  assert.deepEqual(h.choices(), ['Desktop', 'Documents', 'Downloads', 'Home folder', 'Macintosh HD Whole drive'], 'the answer paints the choices, and the whole drive by its name');
+});
+
+test('a choice that holds focus through a repaint that changes the markup keeps it, on its new button — the disk layout naming the startup disk (review F1.9)', async () => {
+  for (const [label, words, after] of [['Documents', /^Documents$/, /^Documents$/], ['the whole drive', /^Startup disk Whole drive$/, /^Macintosh HD Whole drive$/]] as const) {
+    let answer: (a: { body: unknown }) => void = () => {};
+    const h = page({ route: (m, url, b) => (url === '/api/platform/topology' ? new Promise((r) => { answer = r; }) : server({ roots: [] })(m, url, b)) });
+    await boot(h);
+    const before = h.choice(words);
+    before.focus();
+    assert.equal(h.dom.activeElement, before, `${label}: control: focused`);
+    answer({ body: TOPO_MAC });
+    await turns();
+    assert.equal(h.choices().at(-1), 'Macintosh HD Whole drive', `${label}: control: the repaint changed the markup`);
+    const now = h.choice(after);
+    assert.notEqual(now, before, `${label}: control: the buttons were written anew`);
+    assert.equal(h.dom.activeElement, now, `${label}: focus is on the new button for the same folder, never <body>`);
+  }
+});
+
+test('the disk layout is asked for once a page load, however often the start screen repaints and however it answers — and never where the capability says it cannot answer (review F1.10)', async () => {
+  const count = (h: ReturnType<typeof page>) => h.requests.filter((r) => r === 'GET /api/platform/topology').length;
+  const repaint = async (h: ReturnType<typeof page>) => {
+    for (let i = 0; i < 3; i++) { h.renderStartChoices(); await turns(); }
+    h.switchView('grid'); await turns();
+    h.switchView('dashboard'); await turns();
+  };
+  const failing = page({ route: (m, url, b) => (url === '/api/platform/topology' ? { status: 500, body: { error: 'The disk layout could not be read.', code: 'INTERNAL' } } : server({ roots: [] })(m, url, b)) });
+  await boot(failing);
+  await repaint(failing);
+  assert.equal(count(failing), 1, 'a layout that failed is not asked for again at every repaint');
+  assert.equal(failing.choices().at(-1), 'Startup disk Whole drive', 'and the name that needs none stands');
+
+  const off = page({ route: server({ roots: [] }) });
+  off.state.capabilities = { volumeTopology: { available: false, reason: 'This Mac does not report its disk layout.' } };
+  await boot(off);
+  await repaint(off);
+  assert.equal(count(off), 0, 'a machine that cannot answer is not asked');
+  assert.equal(off.choices().at(-1), 'Startup disk Whole drive');
+});
+
+test('a folder from the history keeps its last size and date on "Scan … again" after a scan of it is stopped (review F1.11)', async () => {
+  const h = page({ route: server({ roots: [ROOT_HISTORY] }) });
+  await boot(h);
+  await startFrom(h, /^Scan Macintosh HD again/);
+  assert.deepEqual(h.posts.map((p) => p.path), ['/'], 'control: the whole drive');
+  await pressStop(h);
+  assert.equal(h.$('startLast').textContent, 'You stopped the scan of /.');
+  assert.equal(h.choices()[0], `Scan Macintosh HD again ${formatBytes(494_380_000_000)} · ${formatDate(ROOT_HISTORY.latestAt)}`, 'the size and date of its last finished scan stay with it');
+});
+
 /* ══════════════ (C) — a scan works again after a Stop ══════════════ */
 
 /** Start a scan from a choice, as a click would, and let it reach its stream. */
@@ -472,6 +544,7 @@ test('(iii)+(vii) start → Stop: the folder stays named, "Scan … again" comes
   const again = h.$('startAgainBtn');
   assert.equal(again.textContent, 'Scan Desktop again', 'by id, for the focus rules');
   assert.equal(h.dom.activeElement, again, '(vii) focus lands on "Scan Desktop again", never <body>');
+  assert.deepEqual(primaries(h), ['emptyBrowseBtn'], 'still one primary, Choose a folder… — the focused "Scan … again" is not styled as one (G03, review F1.7)');
   again.click();
   await turns();
   assert.equal(h.posts.length, 2, 'exactly one new scan');
@@ -738,6 +811,7 @@ test('(vi) a failed scan offers "Scan … again" the same way; a folder the serv
   assert.equal(walk.$('startLast').textContent, 'The scan of /Users/x/Desktop failed: The drive stopped answering.');
   assert.equal(walk.choices()[0], 'Scan Desktop again', 'a walk that failed is offered again');
   assert.equal(walk.dom.activeElement, walk.$('startAgainBtn'), 'with focus on it, as after a Stop');
+  assert.deepEqual(primaries(walk), ['emptyBrowseBtn'], 'and still one primary, Choose a folder… (G03, review F1.7)');
   walk.$('startAgainBtn').click();
   await turns();
   assert.equal(walk.posts.length, 2, 'and scans again');
