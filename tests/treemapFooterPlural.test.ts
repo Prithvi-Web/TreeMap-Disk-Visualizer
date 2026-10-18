@@ -60,7 +60,7 @@ function runTmStatus(treemap: Treemap): string {
     {
       treemap: {
         query: '', matches: 0, matchTotal: null, queryMode: 'bare',
-        rootSize: 0, nodes: [], pxRects: [], history: { active: false },
+        rootSize: 0, nodes: [], pxRects: [], minSize: 4000, history: { active: false },
         ...treemap,
       },
     },
@@ -75,27 +75,31 @@ function runTmStatus(treemap: Treemap): string {
   return written;
 }
 
-/** `n` placeholder entries — the footer only ever reads `.length`. */
-function many(n: number): unknown[] {
-  return Array.from({ length: n }, (_, i) => ({ i }));
+/** `n` drawn rectangles, as drawTreemap records them (`n` is the node each draws); `trash` of them the page's own Trash cell. */
+function rects(n: number, trash = 0): unknown[] {
+  return Array.from({ length: n }, (_, i) => ({ n: i < trash ? { isTrash: true } : { i } }));
 }
 
-/** The footer with no query, no history, no preview: the plain count line. */
-function footer(nodes: number, drawn: number, rootSize = 1): string {
-  return runTmStatus({ nodes: many(nodes), pxRects: many(drawn), rootSize });
+/**
+ * The footer with no query, no history, no preview: `drawn` rectangles of `sent` nodes, asked with the
+ * floor `minSize` (4,000 B, the map's own, unless a folder of small files was asked again without one).
+ */
+function footer(sent: number, drawn: number, rootSize = 1, minSize = 4000, trash = 0): string {
+  return runTmStatus({ nodes: rects(sent), pxRects: rects(drawn, trash), rootSize, minSize });
 }
 
-test('the treemap footer says how many of the folder\'s items are drawn, in plain words — "9 of 12 items drawn" — with the noun agreeing with the count it follows (BQG-5 item 15)', () => {
-  // It read "12,705 nodes · 9,421 drawn": "nodes" is the code's word, and two
-  // bare counts side by side left the reader to work out that the second is
-  // part of the first. One sentence now, its noun after the count it belongs
-  // to: one item, or none or many items.
-  assert.equal(footer(12, 9), '9 of 12 items drawn · 1 B total', 'twelve entries, nine drawn');
-  assert.equal(footer(1, 1), '1 of 1 item drawn · 1 B total', 'a single-file folder reads "1 item", never "1 items"');
-  assert.equal(footer(0, 0), '0 of 0 items drawn · 1 B total', 'an empty folder reads "0 items"');
-  assert.equal(footer(7, 1), '1 of 7 items drawn · 1 B total', 'the noun follows the folder\'s count, not the drawn one');
-  assert.equal(footer(1, 0), '0 of 1 item drawn · 1 B total', 'and agrees with it');
-  assert.equal(footer(12_705, 9_421), '9421 of 12705 items drawn · 1 B total', 'the browser pass\'s folder (the page groups the thousands; this harness does not)');
+test('the treemap footer says how many items the map drew, in plain words, with the floor they were asked with — "9 items of 4.0 KB or more drawn" — and the noun agreeing with its count (BQG-5 item 15, review F1.4)', () => {
+  // It read "12,705 nodes · 9,421 drawn": "nodes" is the code's word. Then "9,421 of 12,705 items
+  // drawn", which named the server's layout as the folder's items: the server leaves out every item
+  // under the floor, past the depth, and inside a folder too small to divide (review F1.4) — so a
+  // folder of 100,000 small files said "4 of 4 items drawn". The line now counts what it drew, and
+  // says the floor that kept the small ones out; the folder's own count is the Grid's to give.
+  assert.equal(footer(12, 9), '9 items of 4000 B or more drawn · 1 B in this folder', 'nine drawn, the floor said');
+  assert.equal(footer(12_705, 9_421), '9421 items of 4000 B or more drawn · 1 B in this folder', 'the browser pass\'s folder, with no "of 12705": the server\'s layout is not the folder\'s item count (the page groups the thousands; this harness does not)');
+  assert.equal(footer(1, 1), '1 item of 4000 B or more drawn · 1 B in this folder', 'one item, "1 item", never "1 items"');
+  assert.equal(footer(0, 0), '0 items of 4000 B or more drawn · 1 B in this folder', 'none, "0 items"');
+  assert.equal(footer(3, 3, 1, 1), '3 items drawn · 1 B in this folder', 'asked again with no floor (a folder of small files): no floor to name');
+  assert.equal(footer(5, 5, 1, 4000, 1), '4 items of 4000 B or more drawn · 1 B in this folder', 'the Trash cell beside the home folder is not one of its items, whatever its size');
 });
 
 test('no count in the treemap footer is ever followed by a plural it contradicts', () => {
@@ -106,7 +110,7 @@ test('no count in the treemap footer is ever followed by a plural it contradicts
   // fixed furniture ("total"), and any count above one may never be followed by
   // a singular noun that the one-case spelled without an "s".
   for (const n of [0, 1, 2, 5, 40]) {
-    const line = footer(n, n);
+    const line = footer(n, n, 1, 1);
     assert.ok(!/\b1 \w+s\b/.test(line),
       `a count of one is never followed by a plural noun — got "${line}"`);
     if (n !== 1) {
@@ -149,6 +153,7 @@ test('a query line names the folder’s size as the folder’s, not as a total o
     assert.doesNotMatch(line, /\btotal\b/, `no bare "total" beside a match count: "${line}"`);
     assert.match(line, /· 8800 B in this folder$/, `the size is the folder’s, said so: "${line}"`);
   }
-  // The plain count line keeps its own wording: the items drawn are the folder's.
-  assert.equal(footer(3, 2, 7), '2 of 3 items drawn · 7 B total');
+  // The plain count line says the folder's size the same way: beside "items drawn", a bare "total"
+  // read as the drawn items' (review F1.4).
+  assert.equal(footer(3, 2, 7), '2 items of 4000 B or more drawn · 7 B in this folder');
 });

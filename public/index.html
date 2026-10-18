@@ -13187,16 +13187,22 @@ function updateTmStatus() {
   // means nothing about a sunburst's rings or §6.2's shapes, and writing it
   // anyway would overwrite a true line with a plausible one.
   if (isSun() || isCells()) return;
-  // How many of the folder's items the map drew, in plain words: "9,421 of
-  // 12,705 items drawn" (BQG-5 item 15). It read "12,705 nodes · 9,421 drawn":
-  // "nodes" is the code's word, and two bare counts side by side left the
-  // reader to work out that the second was part of the first. The noun has
-  // to follow the number it belongs to — "1 of 1 item", never "1 nodes" (the
-  // line once said so about a single-file folder).
-  const nodeCount = state.treemap.nodes.length;
+  // How many items the map drew, in plain words, with the floor they were
+  // asked with: "9,421 items of 4.0 KB or more drawn · 8.8 GB in this folder"
+  // (BQG-5 item 15, review F1.4). It read "12,705 nodes · 9,421 drawn" —
+  // "nodes" is the code's word — and then "9,421 of 12,705 items drawn",
+  // which named the server's layout as the folder's items: it leaves out
+  // everything under the floor, past the depth and inside a folder too small
+  // to divide, so a folder of 100,000 small files said "4 of 4 items drawn".
+  // The folder's own count is the Grid's to give. The Trash cell beside the
+  // home folder is not one of its items. The noun follows its count — "1
+  // item", never "1 items"; the size is the folder's, said so (B26).
+  let drawn = 0;
+  for (const r of state.treemap.pxRects) if (!r.n.isTrash) drawn++;
+  const floor = state.treemap.minSize > 1 ? ` of ${formatBytes(state.treemap.minSize)} or more` : '';
   $('tmStatus').textContent =
-    `${formatCount(state.treemap.pxRects.length)} of ${formatCount(nodeCount)} item${nodeCount === 1 ? '' : 's'} drawn`
-    + ` · ${formatBytes(state.treemap.rootSize)} total`;
+    `${formatCount(drawn)} item${drawn === 1 ? '' : 's'}${floor} drawn`
+    + ` · ${formatBytes(state.treemap.rootSize)} in this folder`;
 }
 /* ───────────────────── Shared Canvas 2D toolkit (§3.4) ─────────────────────
    The primitives every canvas panel needs, in one place: DPR-correct sizing,
