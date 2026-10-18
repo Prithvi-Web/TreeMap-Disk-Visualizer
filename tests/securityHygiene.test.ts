@@ -890,7 +890,7 @@ test('"Show more" asks once while its page is on the way: a second press is igno
 
 /* ─────────────── Sixth browser pass H05: the headline counts what is really misplaced ─────────────── */
 
-test('the report counts, over every finding, those that ship inside an installed program or the operating system, and a row inside an app names it (H05)', () => {
+test('the report counts, over every finding, those in folders installed software or the operating system keeps for itself, and a row inside an app names it (H05)', () => {
   const report = collectSecurityFindings(treeWith('/', [
     file('ca.pem', '/Applications/Thing.app/Contents/Resources'),
     file('server.pem', path.join(HOME, 'projects', 'web', 'node_modules', 'pkg', 'test')),
@@ -899,7 +899,7 @@ test('the report counts, over every finding, those that ship inside an installed
   ]), [], HOME) as unknown as { findings: Array<{ name: string; reason: string; appOwned: boolean }>; total: number; counts: Record<string, number>; appOwnedCount?: number };
   assert.equal(report.total, 4, 'control: every finding is still counted in total');
   assert.deepEqual(report.counts, { high: 1, medium: 0, low: 3 }, 'and in counts, as before');
-  assert.equal(report.appOwnedCount, 3, 'three of them ship inside a program or the operating system');
+  assert.equal(report.appOwnedCount, 3, 'three of them sit in an app, a package folder or the operating system\'s own');
   const reason = (name: string) => report.findings.find((f) => f.name === name)!.reason;
   assert.match(reason('ca.pem'), /part of the app “Thing”/, 'a file inside an app names the app (the shared installed-programs detector)');
   assert.doesNotMatch(reason('ca.pem'), /an installed program/, 'not a nameless "installed program"');
@@ -934,7 +934,7 @@ function securityHeadline(report: Record<string, unknown>): string {
   return info.innerHTML.replace(/<[^>]+>/g, '');
 }
 
-test('the Security headline calls only the misplaced findings "outside the folder they belong in", and says plainly that the rest ship inside installed programs (H05)', () => {
+test('the Security headline calls only the misplaced findings "outside the folder they belong in", and says plainly where the rest sit — in folders installed software or the operating system keeps for itself — never that they ship inside a program, nor that nothing is out of place (H05, review F1.3)', () => {
   const row = (name: string, severity: string, appOwned: boolean) => ({ severity, name, label: 'Cert', path: `/x/${name}`, reason: 'r', why: 'w', size: 1, appOwned });
   // QA: three .pem files, all inside apps, headlined as three files outside the folder they belong in.
   const allOwned = securityHeadline({
@@ -942,20 +942,36 @@ test('the Security headline calls only the misplaced findings "outside the folde
     counts: { high: 0, medium: 0, low: 3 }, total: 3, appOwnedCount: 3, patternCount: 9,
   });
   assert.doesNotMatch(allOwned, /outside the folder/, 'no app-owned file is called misplaced');
-  assert.match(allOwned, /Nothing out of place/, 'the headline says nothing is out of place');
-  assert.match(allOwned, /3 files below ship inside an installed program or the operating system/, 'and says plainly where the three come from');
+  assert.doesNotMatch(allOwned, /Nothing out of place|ships? inside/, 'nor reassures: a program\'s data folder may hold a key a person saved there');
+  assert.match(allOwned, /^The 3 files below sit in folders that installed software or the operating system keeps for itself \(a program, its data or its packages\): listed for awareness, not to move\./,
+    'it says plainly where the three are');
   const mixed = securityHeadline({
     findings: [row('id_rsa', 'high', false), row('a.pem', 'low', true), row('b.pem', 'low', true)],
     counts: { high: 1, medium: 0, low: 2 }, total: 3, appOwnedCount: 2, patternCount: 9,
   });
   assert.match(mixed, /^1 file sitting outside the folder it belongs in — 1 serious/, 'only the misplaced one is counted as such');
-  assert.match(mixed, /2 more ship inside an installed program or the operating system/, 'and the rest are said for what they are');
+  assert.match(mixed, /\. 2 more sit in folders that installed software or the operating system keeps for itself \(a program, its data or its packages\)\./, 'and the rest are said for what they are');
+  const one = securityHeadline({
+    findings: [row('id_rsa', 'high', false), row('a.pem', 'low', true)],
+    counts: { high: 1, medium: 0, low: 1 }, total: 2, appOwnedCount: 1, patternCount: 9,
+  });
+  assert.match(one, /\. 1 more sits in a folder that installed software or the operating system keeps for itself \(a program, its data or its packages\)\./, 'one is said in the singular');
   const plain = securityHeadline({
     findings: [row('id_rsa', 'high', false), row('k.json', 'medium', false)],
     counts: { high: 1, medium: 1, low: 0 }, total: 2, appOwnedCount: 0, patternCount: 9,
   });
   assert.match(plain, /^2 files sitting outside the folder they belong in — 1 serious, 1 worth fixing\./, 'control: with none app-owned the headline reads as before');
-  assert.doesNotMatch(plain, /ship inside/, 'and says nothing about programs');
+  assert.doesNotMatch(plain, /keeps for itself|ship inside/, 'and says nothing about programs');
+});
+
+test('a key a program keeps in its data folder is counted app-owned, and the headline over it neither says it ships inside a program nor that nothing is out of place (review F1.3)', () => {
+  const data = path.join(HOME, 'Library', 'Application Support', 'SomeGitGui');
+  const report = collectSecurityFindings(treeWith('/', [file('id_rsa', data), file('deploy.pem', data)]), [], HOME) as unknown as Record<string, unknown> & { total: number; appOwnedCount?: number };
+  assert.equal(report.total, 2, 'control: both are findings');
+  assert.equal(report.appOwnedCount, 2, 'control: both are in a folder a program keeps for itself, so app-owned');
+  const said = securityHeadline({ ...report, patternCount: 9 });
+  assert.doesNotMatch(said, /Nothing out of place|ships? inside/, 'neither file shipped inside a program, and nothing reassures about them');
+  assert.match(said, /^The 2 files below sit in folders that installed software or the operating system keeps for itself \(a program, its data or its packages\)/, 'where they are, said as it is');
 });
 
 test('the API\'s appOwnedCount is declared where an agent reads it, beside the total/counts contract it leaves true (H05)', async () => {
@@ -963,7 +979,12 @@ test('the API\'s appOwnedCount is declared where an agent reads it, beside the t
   const section = agents.slice(agents.indexOf('`GET /api/security/findings`'), agents.indexOf('`GET /api/provenance?path=`'));
   assert.match(section, /`total` and `counts` cover every finding/, 'control: the contract stands');
   assert.match(section, /`appOwnedCount`[^.]*every finding/, 'AGENTS.md names the count, over every finding');
+  const flat = section.replace(/\s+/g, ' ');
+  assert.match(flat, /a program's data folders \(`Library\/Application Support`, `Library\/Containers`, `AppData`\)/, 'AGENTS.md says a program\'s data folders are app-owned too (review F1.3)');
+  assert.match(flat, /package folders \(`node_modules`, `site-packages`\)/, 'and its package folders');
   const { buildOpenApiDocument } = await import('../src/api/openapi');
   const said = JSON.stringify((buildOpenApiDocument() as { paths: Record<string, unknown> }).paths['/api/security/findings']);
   assert.match(said, /appOwnedCount/, 'the OpenAPI document declares it');
+  assert.doesNotMatch(said, /ship inside/, 'never as files that ship inside a program: a program\'s data folder is app-owned too (review F1.3)');
+  assert.match(said, /keeps for itself \(a program, its data or its packages\)/, 'but as what they are');
 });

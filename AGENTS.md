@@ -178,7 +178,9 @@ OpenAPI 3 spec).
      the file (only a real file is moved) or is gone since the scan, and
      something already there. A `.key` file is listed as
      minor with no move, because on a Mac it is usually a Keynote document;
-     files inside program bundles, frameworks and the operating system's own
+     files inside program bundles, frameworks, a program's data folders
+     (`Library/Application Support`, `Library/Containers`, `AppData`), package
+     folders (`node_modules`, `site-packages`) and the operating system's own
      folders are `appOwned`, minor, and never offered a move; `appOwnedCount`
      says how many of `total` those are, over every finding, so the rest are
      the ones really sitting in the wrong place. `counts` and

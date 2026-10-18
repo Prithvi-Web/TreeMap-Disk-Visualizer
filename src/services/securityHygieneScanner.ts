@@ -252,9 +252,9 @@ export interface SecurityReport {
   /** How many findings there are in all; more than `findings.length` once the cap bites. */
   total: number;
   /**
-   * How many of `total` are `appOwned` — they ship inside an installed program or the operating system,
-   * where that software put them — counted over every finding (sixth browser pass H05). The rest are the
-   * ones sitting outside the folder they belong in.
+   * How many of `total` are `appOwned` — they sit in folders that installed software or the operating
+   * system keeps for itself: a program, its data folders or its packages (review F1.3) — counted over
+   * every finding (sixth browser pass H05). The rest are the ones sitting outside the folder they belong in.
    */
   appOwnedCount: number;
   /** True while findings remain after this page, so the UI can say the list is partial and ask for the next. */

@@ -33972,18 +33972,22 @@ function renderSecurity() {
   // Every finding is reachable (E09): the server lists them 500 at a time,
   // most serious first, and "Show more" asks for the next page.
   const unshown = Math.max(0, total - findings.length);
-  // A file that ships inside an installed program or the operating system is
-  // where that software put it: listed, never called misplaced (H05). The
-  // server counts them over every finding, as it counts the total.
+  // A file in a folder installed software or the operating system keeps for
+  // itself is listed, never called misplaced (H05). The server counts them over
+  // every finding, as it counts the total. Said as what they are: an app's own
+  // files, but also a program's data folder (Application Support, Containers,
+  // AppData) and package folders — a key a person saved in a tool's data
+  // folder did not ship inside anything, so never "ship inside", and nothing
+  // reassures that nothing is out of place (review F1.3).
   const owned = Math.min(total, report.appOwnedCount || 0);
   const misplaced = total - owned;
-  const ships = `${owned === 1 ? 'ships' : 'ship'} inside an installed program or the operating system, where that software keeps ${owned === 1 ? 'it' : 'them'}`;
+  const ships = `${owned === 1 ? 'sits in a folder' : 'sit in folders'} that installed software or the operating system keeps for itself (a program, its data or its packages)`;
   const headline = misplaced
     ? `<b>${formatCount(misplaced)}</b> ${misplaced === 1 ? 'file' : 'files'} sitting outside the folder ${misplaced === 1 ? 'it belongs' : 'they belong'} in` +
       // Serious and worth fixing are never app-owned: those are always minor.
       (high ? ` — <b>${formatCount(high)} serious</b>` : '') + (medium ? `${high ? ',' : ' —'} ${formatCount(medium)} worth fixing` : '') + '.' +
       (owned ? ` ${formatCount(owned)} more ${ships}.` : '')
-    : `Nothing out of place: the ${owned === 1 ? 'file' : `${formatCount(owned)} files`} below ${ships} — listed for awareness, never to move.`;
+    : `The ${owned === 1 ? 'file' : `${formatCount(owned)} files`} below ${ships}: listed for awareness, not to move.`;
   // Keyed by scan, like the apps line: a repaint of the same scan rolls the
   // counts (a relocation re-checks), a new scan snaps.
   FxNum.rollHtml($('securityInfo'),
