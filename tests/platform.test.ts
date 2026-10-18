@@ -138,6 +138,61 @@ test('open-file conflicts ask the executable of the cut names alone, in one call
   assert.equal(calls, 0, 'no cut name, no call');
 });
 
+/*
+ * Review F1.1: a name past ASCII. Recorded on this Mac with `lsof -w -F pc`: under no locale (as the Dock
+ * and launchd start TreeMap) lsof writes each byte it cannot print as `\xNN` text; under a UTF-8 locale it
+ * writes the raw bytes, cut at byte 31 — inside a character, which Node then decodes as U+FFFD.
+ * 日 本 語 are three bytes each (E6 97 A5, E6 9C AC, E8 AA 9E).
+ */
+const NIHONGO_ESCAPED = '\\xe6\\x97\\xa5\\xe6\\x9c\\xac\\xe8\\xaa\\x9e';
+const JP_CUT_ESCAPED = `${NIHONGO_ESCAPED.repeat(3)}\\xe6\\x97\\xa5\\xe6`; // 31 bytes: ten whole characters and one byte of 本
+const JP_CUT_RAW = '日本語日本語日本語日\uFFFD';
+const JP_EXE = '/Users/me/Apps/日本語日本語日本語日本語';
+
+test('a process name lsof wrote as \\xNN escapes is read back as its letters, and judged cut by its bytes, never by its UTF-16 length (review F1.1)', () => {
+  const show = lsofNames.displayProcessName!;
+  const nameOf = (c: string): string => parseLsofRecords(['p41', `c${c}`, 'f3', 'n/x/a'].join('\n'))[0].processName;
+  assert.equal(nameOf('\\xc3\\x89cran Partag\\xc3\\xa9 Assistant App'), 'Écran Partagé Assistant App', 'the escapes are the bytes of É and é');
+  assert.equal(show(nameOf('\\xc3\\x89cran Partag\\xc3\\xa9 Assistant App'), null), 'Écran Partagé Assistant App', 'its 29 bytes are under lsof\'s 31: whole, with no ellipsis');
+  assert.equal(nameOf('do\\x41'), 'do\\x41', 'lsof writes no printable byte as an escape: "\\x41" is text, left as it is');
+
+  assert.equal(show(nameOf(JP_CUT_ESCAPED), null), '日本語日本語日本語日…', 'cut inside a character under no locale: the whole characters, said to be cut');
+  assert.equal(show(nameOf(JP_CUT_ESCAPED), JP_EXE), '日本語日本語日本語日本語', 'and the executable\'s own name where it continues them');
+  assert.equal(show(JP_CUT_RAW, null), '日本語日本語日本語日…', 'cut inside a character under a UTF-8 locale: never shown whole with a U+FFFD');
+  assert.equal(show(JP_CUT_RAW, JP_EXE), '日本語日本語日本語日本語', 'and the executable\'s own name where it continues them');
+
+  const appli = 'Écran Partagé Assistant Appli'; // 29 characters, 31 bytes: as long as lsof prints
+  assert.equal(Buffer.byteLength(appli), 31, 'control: as many bytes as lsof prints');
+  assert.equal(show(appli, '/Applications/Écran Partagé Assistant Application'), 'Écran Partagé Assistant Application', 'judged by its bytes, it may be cut: the executable continues it');
+  assert.equal(show(appli, null), 'Écran Partagé Assistant Appli…', 'and with no executable it is said to be cut');
+});
+
+test('open-file conflicts ask about every name cut by its bytes or inside a character, and none whole (review F1.1)', async () => {
+  const full = lsofNames.withFullProcessNames!;
+  const rows = [
+    { pid: 9, processName: 'Écran Partagé Assistant Appli' },
+    { pid: 10, processName: 'Écran Partagé Assistant App' },
+    { pid: 11, processName: JP_CUT_RAW },
+  ];
+  const asked: number[][] = [];
+  const named = await full(rows, async (pids) => {
+    asked.push(pids);
+    return new Map([[9, '/Applications/Écran Partagé Assistant Application'], [11, JP_EXE]]);
+  });
+  assert.deepEqual(asked, [[9, 11]], 'the 31-byte name and the name cut inside a character are asked about; the 29-byte one is whole');
+  assert.deepEqual(named.map((r) => r.processName), ['Écran Partagé Assistant Application', 'Écran Partagé Assistant App', '日本語日本語日本語日本語']);
+});
+
+test('the executables a cut name is completed from are read by a ps under a UTF-8 locale, which writes a name past ASCII as its letters (review F1.1)', async () => {
+  const psExecutables = (lsof as unknown as { psExecutables?: (pids: number[], run: (cmd: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }) => Promise<string>) => Promise<Map<number, string | null>> }).psExecutables;
+  assert.equal(typeof psExecutables, 'function', 'lsofGuard exposes psExecutables with an injectable runner');
+  const seen: (NodeJS.ProcessEnv | undefined)[] = [];
+  const found = await psExecutables!([7], async (cmd, args, opts) => { seen.push(opts?.env); return `    7 ${JP_EXE}\n`; });
+  assert.equal(found.get(7), JP_EXE);
+  assert.equal(seen.length, 1);
+  assert.match(seen[0]?.LC_ALL ?? '', /\.UTF-8$/, 'LC_ALL names a UTF-8 locale: under C, macOS\'s ps writes É as "M-CM^I"');
+});
+
 test('the open-file check names its conflicts whole: openHandlesFor hands what it intersects to withFullProcessNames (H04)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'macos', 'lsofGuard.ts'), 'utf8');
   const fn = src.slice(src.indexOf('export async function openHandlesFor('), src.indexOf('export function intersectHandles('));

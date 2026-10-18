@@ -1,5 +1,5 @@
 import { promises as fsp } from 'fs';
-import { runText, CommandUnavailableError, CommandFailedError } from '../exec';
+import { runText, CommandUnavailableError, CommandFailedError, type RunOptions } from '../exec';
 import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
 import { meansAbsent } from '../../utils/errno';
 
@@ -86,7 +86,7 @@ export function parseLsofRecords(stdout: string): LsofRecord[] {
         size = ino = null;
         break;
       case 'c':
-        processName = value;
+        processName = decodeLsofText(value);
         break;
       case 'f': // a new descriptor block — previous per-fd fields no longer apply
         size = ino = null;
@@ -122,17 +122,47 @@ export function parseLsofRecords(stdout: string): LsofRecord[] {
 export const LSOF_NAME_MAX = 31;
 
 /**
- * A process's name as a person reads it (H04). A name shorter than lsof's limit is whole, its trailing
- * spaces dropped. One as long as the limit may be cut: the executable's own name is used where it
- * continues it, and otherwise what lsof gave is said to be cut, with an ellipsis — never a name that
- * stops mid-word on a space, as "Quit Google Chrome Helper (Aperitif ?" did.
+ * A byte lsof could not print, as it writes one (`\x%02x`): under no locale — as the Dock and launchd
+ * start TreeMap — every byte past ASCII (measured, review F1.1). A byte it can print, a backslash
+ * included, is written as itself, so `\x41` is text.
+ */
+const LSOF_BYTE_ESCAPE = /(\\x(?:7f|[89a-f][0-9a-f]))/;
+
+/**
+ * lsof's text with its `\xNN` escapes put back as the bytes they stand for, read as UTF-8 (review
+ * F1.1): "\xc3\x89cran" is "Écran". A character a cut went through decodes as one U+FFFD, as it does
+ * where lsof writes the raw bytes under a UTF-8 locale and Node decodes them.
+ */
+export function decodeLsofText(value: string): string {
+  if (!LSOF_BYTE_ESCAPE.test(value)) return value;
+  const parts = value.split(LSOF_BYTE_ESCAPE).map((part, i) =>
+    i % 2 === 1 ? Buffer.from([Number.parseInt(part.slice(2), 16)]) : Buffer.from(part, 'utf8'));
+  return Buffer.concat(parts).toString('utf8');
+}
+
+/**
+ * Whether lsof may have cut `name` (H04, review F1.1). It prints at most LSOF_NAME_MAX bytes — bytes,
+ * not characters: "Écran Partagé Assistant Appli" is 29 characters and 31 bytes. A cut inside a
+ * character leaves one to three of its bytes after the 28 to 30 before them, read as one U+FFFD, which
+ * is three bytes itself: such a name counts at least 31 too.
+ */
+function mayBeCut(name: string): boolean {
+  return Buffer.byteLength(name, 'utf8') >= LSOF_NAME_MAX;
+}
+
+/**
+ * A process's name as a person reads it (H04). A name lsof cannot have cut is whole, its trailing
+ * spaces dropped. One it may have cut: the executable's own name is used where it continues it, and
+ * otherwise what lsof gave is said to be cut, with an ellipsis — never a name that stops mid-word on a
+ * space, as "Quit Google Chrome Helper (Aperitif ?" did, nor one ending in the U+FFFD of a character
+ * the cut went through (review F1.1).
  */
 export function displayProcessName(lsofName: string, executable: string | null): string {
-  const shown = lsofName.trimEnd();
-  if (lsofName.length < LSOF_NAME_MAX) return shown;
+  if (!mayBeCut(lsofName)) return lsofName.trimEnd();
+  const kept = lsofName.replace(/\uFFFD$/, '');
   const own = executable ? executable.slice(executable.lastIndexOf('/') + 1) : '';
-  if (own.startsWith(lsofName)) return own;
-  return `${shown}…`;
+  if (own.startsWith(kept)) return own;
+  return `${kept.trimEnd()}…`;
 }
 
 /**
@@ -144,10 +174,18 @@ export async function withFullProcessNames<T extends { pid: number; processName:
   rows: T[],
   executablesOf: (pids: number[]) => Promise<Map<number, string | null>> = psExecutables,
 ): Promise<T[]> {
-  const cut = [...new Set(rows.filter((r) => r.processName.length >= LSOF_NAME_MAX).map((r) => r.pid))];
+  const cut = [...new Set(rows.filter((r) => mayBeCut(r.processName)).map((r) => r.pid))];
   const executables = cut.length > 0 ? await executablesOf(cut).catch(() => new Map<number, string | null>()) : new Map<number, string | null>();
   return rows.map((r) => ({ ...r, processName: displayProcessName(r.processName, executables.get(r.pid) ?? null) }));
 }
+
+/**
+ * The environment every `ps` that names a program runs with (review F1.1). Under no locale — as the
+ * Dock and launchd start TreeMap — macOS's ps writes each byte past ASCII in vis notation ("É" is
+ * "M-CM^I"); under a UTF-8 locale it writes the bytes, which read as the letters (measured). A name
+ * compared with lsof's, an Info.plist's or another ps's must be letters on both sides.
+ */
+export const PS_UTF8_ENV: Readonly<NodeJS.ProcessEnv> = Object.freeze({ LC_ALL: 'en_US.UTF-8' });
 
 /** One line of `ps -o pid=,comm=`: the pid right-aligned, ONE space, then the executable — spaces and all. */
 const PS_COMM_LINE = /^\s*(\d+)\s(.*)$/;
@@ -156,8 +194,11 @@ const PS_COMM_LINE = /^\s*(\d+)\s(.*)$/;
  * Each pid's executable from one `ps -ww -o pid=,comm=` — the full path on macOS (measured; Linux's comm
  * is its 15-character name, but no Linux name reaches LSOF_NAME_MAX). A pid it does not list is absent.
  */
-async function psExecutables(pids: number[]): Promise<Map<number, string | null>> {
-  const out = await runText('ps', ['-ww', '-o', 'pid=,comm=', '-p', pids.join(',')], { timeoutMs: 5_000 }).catch((err: unknown) => {
+export async function psExecutables(
+  pids: number[],
+  run: (cmd: string, args: string[], opts?: RunOptions) => Promise<string> = runText,
+): Promise<Map<number, string | null>> {
+  const out = await run('ps', ['-ww', '-o', 'pid=,comm=', '-p', pids.join(',')], { timeoutMs: 5_000, env: { ...PS_UTF8_ENV } }).catch((err: unknown) => {
     // macOS's ps exits 1 when no pid in the list is running, still printing those that are.
     if (err instanceof CommandFailedError && err.exitCode === 1) return err.stdout;
     throw err;

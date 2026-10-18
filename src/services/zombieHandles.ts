@@ -5,7 +5,7 @@ import { platform } from '../platform';
 import { runText, RunOptions, CommandFailedError } from '../platform/exec';
 import type { ZombieHandleInfo } from '../platform/types';
 import { AppError } from '../middleware/errorHandler';
-import { displayProcessName } from '../platform/macos/lsofGuard';
+import { displayProcessName, PS_UTF8_ENV } from '../platform/macos/lsofGuard';
 
 /**
  * ZombieHandles (B5) — space held by files that were deleted while still open.
@@ -138,7 +138,8 @@ export async function processFactsOf(pids: readonly number[], run: CommandRunner
     const chunk = asked.slice(i, i + PS_PIDS_PER_CALL);
     let out: string;
     try {
-      out = await run('ps', ['-ww', '-o', 'pid=,uid=,comm=', '-p', chunk.join(',')], { timeoutMs: 5_000 });
+      // Under a UTF-8 locale, so a name past ASCII is its letters, as lsof's and the Info.plist's are (review F1.1).
+      out = await run('ps', ['-ww', '-o', 'pid=,uid=,comm=', '-p', chunk.join(',')], { timeoutMs: 5_000, env: { ...PS_UTF8_ENV } });
     } catch {
       continue; // this chunk stays unknown; the rest are still asked
     }
@@ -336,7 +337,8 @@ export async function launchFactsOf(pids: readonly number[], run: CommandRunner 
     const chunk = asked.slice(i, i + PS_PIDS_PER_CALL);
     let out: string;
     try {
-      out = await run('ps', ['-ww', '-o', 'pid=,ppid=,args=', '-p', chunk.join(',')], { timeoutMs: 5_000 });
+      // The same locale as the ps that read the executable, which these arguments are compared with (review F1.1).
+      out = await run('ps', ['-ww', '-o', 'pid=,ppid=,args=', '-p', chunk.join(',')], { timeoutMs: 5_000, env: { ...PS_UTF8_ENV } });
     } catch {
       continue;
     }

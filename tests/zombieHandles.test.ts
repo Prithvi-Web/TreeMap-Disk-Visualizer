@@ -572,6 +572,48 @@ test('restarting a process that already quit reports the space as already free',
   assert.match(result.message, /already quit/);
 });
 
+/* ══════════════════ Names past ASCII (review F1.1) ══════════════════ */
+
+test('every ps that reads which program a process is, and how it was started, runs under a UTF-8 locale — so both sides of each comparison are letters (review F1.1)', async () => {
+  const seen: { args: string[]; env?: NodeJS.ProcessEnv }[] = [];
+  const run = async (_cmd: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }): Promise<string> => { seen.push({ args, env: opts?.env }); return ''; };
+  const facts = zombieHandles as unknown as {
+    processFactsOf: (pids: number[], run: typeof runText) => Promise<unknown>;
+    launchFactsOf: (pids: number[], run: typeof runText) => Promise<unknown>;
+  };
+  await facts.processFactsOf([5], run);
+  await facts.launchFactsOf([5], run);
+  assert.deepEqual(seen.map((s) => s.args.find((a) => a.startsWith('pid='))), ['pid=,uid=,comm=', 'pid=,ppid=,args=']);
+  for (const s of seen) {
+    assert.match(s.env?.LC_ALL ?? '', /\.UTF-8$/, `ps -o ${s.args.find((a) => a.startsWith('pid='))}: LC_ALL names a UTF-8 locale (under C, macOS's ps writes É as "M-CM^I")`);
+  }
+});
+
+test('a program named past ASCII is named by its letters, and asking it to quit by that name is not refused as a reused pid, whatever locale TreeMap inherited (review F1.1)', { skip: process.platform !== 'darwin' }, async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tm-f11-'));
+  const name = 'Écran Partagé Assistant App';
+  // A link keeps /bin/bash's own signature, and ps names the program as it was started: by the link.
+  await fsp.symlink('/bin/bash', path.join(dir, name));
+  const saved = process.env.LC_ALL;
+  process.env.LC_ALL = 'C'; // as the Dock starts TreeMap: no UTF-8 locale to inherit
+  const child = spawn(path.join(dir, name), ['-c', 'echo up; read -r line'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  try {
+    await withinHangGuard(new Promise<void>((resolve, reject) => {
+      child.stdout!.once('data', () => resolve());
+      child.once('exit', () => reject(new Error('the child exited early')));
+    }), 'the child starting');
+    const facts = await zombieHandles.processFactsOf([child.pid!]);
+    assert.equal(path.basename(facts.get(child.pid!)?.executable ?? ''), name, 'ps names it by its letters, not "M-CM^Icran Partag…"');
+    const result = await restartProcess(child.pid!, name);
+    assert.equal(result.terminated, true, 'asked to quit by its name: not refused as PID_REUSED');
+  } finally {
+    if (saved === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = saved;
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await exited(child);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 /* ══════════════════ A helper is not its app (fourth browser pass, E02) ══════════════════ */
 
 type Role = { appBundle: string | null; partOf: string | null };
