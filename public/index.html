@@ -3916,6 +3916,13 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 <div id="navScrim" aria-hidden="true"></div>
 
 <main>
+  <!-- What a Stop says to a screen reader (review F1.14). The start screen's
+       line naming the stopped folder sits in a part of the page that is
+       display:none for the whole scan and comes back with its words already
+       in it, which no screen reader speaks; this region is always rendered,
+       outside everything a scan hides (stopScan writes it, beginScanChrome
+       clears it). -->
+  <div id="stopAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <!-- ═══════════ Empty state ═══════════ -->
   <section id="emptyState">
     <!-- Two parts, one shown (renderEmptyState). The Dashboard's empty state is
@@ -9447,6 +9454,9 @@ async function stopScan() {
   tourScanFailed();
   // Focus on "Scan … again", never <body>, however Stop was pressed.
   focusStartScreen();
+  // And said aloud: the start screen's own line, or the status line's, in a
+  // live region nothing hides (review F1.14).
+  $('stopAnnounce').textContent = noted ? startLastLine(noted) : 'Scan stopped.';
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
@@ -9604,6 +9614,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // every ten seconds, and finishScan / failScan say how it ended. The bar
   // states what it is until the first frame gives it a count.
   $('scanAnnounce').textContent = message || 'Scanning…';
+  $('stopAnnounce').textContent = ''; // so the next Stop's words are a change, and spoken (review F1.14)
   $('progressTrack').setAttribute('aria-valuetext', 'Scanning');
   tourScanStarted(); // v4 §9.2 — the welcome card follows the user into the scan
   if (quiet) {

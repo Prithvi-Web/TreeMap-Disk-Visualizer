@@ -173,6 +173,9 @@ async function stopScan() {
   tourScanFailed();
   // Focus on "Scan … again", never <body>, however Stop was pressed.
   focusStartScreen();
+  // And said aloud: the start screen's own line, or the status line's, in a
+  // live region nothing hides (review F1.14).
+  $('stopAnnounce').textContent = noted ? startLastLine(noted) : 'Scan stopped.';
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
@@ -330,6 +333,7 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // every ten seconds, and finishScan / failScan say how it ended. The bar
   // states what it is until the first frame gives it a count.
   $('scanAnnounce').textContent = message || 'Scanning…';
+  $('stopAnnounce').textContent = ''; // so the next Stop's words are a change, and spoken (review F1.14)
   $('progressTrack').setAttribute('aria-valuetext', 'Scanning');
   tourScanStarted(); // v4 §9.2 — the welcome card follows the user into the scan
   if (quiet) {

@@ -572,6 +572,35 @@ test('a rescan stopped over an older tree whose cancel is refused says so on the
   assert.match(h.$('scanStatus').innerHTML, /Could not stop the scan: Internal server error/, 'the Dashboard\'s status line says it');
   assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']]);
   assert.equal(h.state.lastFolder, null, 'and the start screen is told nothing');
+  assert.equal(h.$('stopAnnounce').textContent, 'Scan stopped.', 'the Stop is said aloud as the status line says it (review F1.14)');
+});
+
+test('a Stop with nothing on screen is announced: the start screen\'s sentence goes to a live region outside the views, always rendered, and cleared as the next scan begins (review F1.14)', async () => {
+  // Review F1.14: #startLast is a role=status region inside the start screen,
+  // which is display:none for the whole scan and is revealed with its text
+  // already in it — a region revealed with its content is not announced, and
+  // Stop said nothing else a screen reader would speak.
+  const at = INDEX.indexOf('id="stopAnnounce"');
+  assert.notEqual(at, -1, 'the region is in the page');
+  const tag = INDEX.slice(INDEX.lastIndexOf('<', at), INDEX.indexOf('>', at) + 1);
+  assert.match(tag, /role="status"/);
+  assert.match(tag, /aria-live="polite"/);
+  assert.doesNotMatch(tag, /\shidden\b/, 'rendered from the start, so its first change is spoken');
+  const main = INDEX.indexOf('<main>');
+  const startScreen = INDEX.indexOf('<section id="emptyState">');
+  assert.ok(main < at && at < startScreen, 'in <main>, before the start screen and every view: never inside something a scan hides');
+
+  const h = page({ route: server({ roots: [] }) });
+  await boot(h);
+  await startFrom(h, /^Desktop$/);
+  assert.equal(h.$('stopAnnounce').textContent, '', 'control: nothing said while it scans');
+  await pressStop(h);
+  assert.equal(h.$('stopAnnounce').textContent, 'You stopped the scan of /Users/x/Desktop.', 'the start screen\'s own words, spoken');
+  h.$('startAgainBtn').click();
+  await turns();
+  assert.equal(h.$('stopAnnounce').textContent, '', 'cleared as the next scan begins, so the same words are spoken again after the next Stop');
+  await pressStop(h);
+  assert.equal(h.$('stopAnnounce').textContent, 'You stopped the scan of /Users/x/Desktop.');
 });
 
 test('(vii) a Stop that left focus on <body> — a mouse click that focuses nothing — still lands it on "Scan … again"', async () => {
