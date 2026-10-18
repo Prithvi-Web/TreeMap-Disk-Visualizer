@@ -589,6 +589,7 @@ test('a Stop whose cancel the server refuses says so where the person is looking
   assert.deepEqual(h.toasts, [['Could not stop the scan: Internal server error', 'error']], 'and the failure is said where it is heard, over every view');
   assert.equal(h.dom.activeElement, h.$('emptyBrowseBtn'), 'focus leaves the "Scan Desktop again" that went for Choose a folder…, never <body>');
   assert.equal(h.posts.length, 1, 'nothing more was walked');
+  assert.equal(h.$('stopAnnounce').textContent, '', '"You stopped the scan" is not left for a screen reader to find: the toast says what happened (review F1.14)');
 
   const gone = page({ route: cancelAnswers(404) });
   await boot(gone);

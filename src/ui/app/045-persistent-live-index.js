@@ -731,6 +731,9 @@ function noteStopUnconfirmed(noted, reason) {
   if (!noted || state.lastFolder !== noted) return;
   state.lastFolder = { ...noted, outcome: 'unstopped', reason, offered: false };
   withFocusKept(() => { renderStartChoices(); });
+  // Nor is "You stopped …" left in the live region for a screen reader to
+  // find: the toast has said what happened (review F1.14).
+  $('stopAnnounce').textContent = '';
 }
 
 /**
