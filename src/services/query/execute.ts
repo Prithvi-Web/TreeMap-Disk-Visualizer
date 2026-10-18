@@ -417,7 +417,14 @@ class QueryNode implements EvalNode {
   constructor(
     private readonly store: ScanStore,
     readonly id: number,
-    private readonly folder: QueryNode | null,
+    /**
+     * Held only to build this node's path, and let go once it is built (CI4):
+     * kept after, a node held every folder above it alive, and each folder's
+     * path with it — a whole copy once a path term had read it — so a walk
+     * down a deep chain held the square of its depth. Null for the root, and
+     * for a node whose path is known.
+     */
+    private folder: QueryNode | null,
     readonly depth: number,
     childlessKnown: boolean,
   ) {
@@ -449,6 +456,7 @@ class QueryNode implements EvalNode {
     for (let i = unbuilt.length - 1; i >= 0; i--) {
       const node = unbuilt[i];
       path = node.pathRead = this.store.childPath(node.id, path);
+      node.folder = null;
     }
     return path;
   }
