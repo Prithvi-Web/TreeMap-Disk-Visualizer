@@ -110,7 +110,9 @@ class SuggestionWalk implements SlicedWalk {
   private readonly suppressed: PreparedSuppression[];
   private readonly locations: Map<string, LocationRule>;
   /**
-   * PackedScanStore.childPath is `joinPath(parentPath, sep, name(child))`;
+   * PackedScanStore.childPath is `joinPath(parentPath, sep, name(child))` for
+   * every parent path the store spells, a parent stored as a byte-order mark
+   * alone included (tests/packedStore.test.ts, CI4's byte-for-byte test);
    * joining the name this walk already read saves reading it twice. Any other
    * store, a subclass included, answers `childPath` itself.
    */

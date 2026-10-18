@@ -1491,8 +1491,9 @@ export class PackedScanStore implements ScanStore {
    * 30,000-deep chain ran a 2 GB heap out). Byte for byte what endsWith
    * answered for every spelling the store gives a parent (`rootPath`,
    * `path()`, `childPath()`): the root's path is the one it was given, and
-   * any other folder's ends with its own name, so it ends with the separator
-   * exactly when that name is empty or ends with it.
+   * any other folder's ends with its own name as name() reads it, so it ends
+   * with the separator exactly when that name is empty or ends with it — and
+   * so it is joinPath's answer, which the cleanup walk joins names with.
    */
   childPath(child: number, parentPath: string): string {
     const name = this.name(child);
@@ -1506,11 +1507,22 @@ export class PackedScanStore implements ScanStore {
       // before it ("::" + ":"). The path is read.
       endsWithSep = parentPath.endsWith(this.sep);
     } else {
-      // The parent's stored name is empty or ends in the separator's byte
-      // (UTF-8: an ASCII byte is never part of a longer character).
       const from = this.nameOff[parent];
       const to = this.nameOff[parent + 1];
-      endsWithSep = to === from || this.nameBytes[to - 1] === this.sepByte;
+      const bytes = this.nameBytes;
+      if (to - from >= 3 && bytes[from] === 0xef && bytes[from + 1] === 0xbb && bytes[from + 2] === 0xbf) {
+        // A leading byte-order mark, which name()'s TextDecoder reads as
+        // nothing (CI4 review F1.1): '\uFEFF' alone is the empty name though
+        // its three bytes are stored, and '\uFEFF/' is the separator alone.
+        // Decided from the parent's name as name() reads it — its name, never
+        // its path.
+        const parentName = this.name(parent);
+        endsWithSep = parentName.length === 0 || parentName.endsWith(this.sep);
+      } else {
+        // The parent's stored name is empty or ends in the separator's byte
+        // (UTF-8: an ASCII byte is never part of a longer character).
+        endsWithSep = to === from || bytes[to - 1] === this.sepByte;
+      }
     }
     return endsWithSep ? parentPath + name : parentPath + this.sep + name;
   }

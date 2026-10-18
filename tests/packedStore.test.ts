@@ -148,7 +148,12 @@ test('CI4: childPath reads nothing of the parent path it is given — down a dee
   );
 });
 
-/** How childPath chose the separator before CI4 — by reading the end of the parent path — kept as the oracle. */
+/**
+ * How childPath chose the separator before CI4 — by reading the end of the
+ * parent path — kept as the oracle. It is joinPath's rule too, which the
+ * cleanup walk joins a packed store's names with in place of childPath
+ * (cleanupRules.ts, joinsNames): one node, one spelling.
+ */
 const joinedByReading = (parentPath: string, sep: string, name: string): string =>
   parentPath.endsWith(sep) ? parentPath + name : parentPath + sep + name;
 
@@ -159,7 +164,11 @@ test('CI4: childPath answers byte for byte what reading its parent path answered
   for (const [rootPath, sep] of roots) {
     // '' after 'a': an empty name's stored bytes sit after a name that does
     // not end in the separator, so only its emptiness can say it does.
-    const names = ['a', '', `a${sep}`, 'é', `é${sep}`, 'b\\', 'c/', `${sep}${sep}`, ':', 'b:', 'z::', 'Ʀ'];
+    // A byte-order mark (CI4 review F1.1): name() reads a leading one as
+    // nothing, so '\uFEFF' alone is the empty name though three bytes are
+    // stored, and '\uFEFF' + sep is the separator alone; one anywhere else,
+    // or a second, is part of the name.
+    const names = ['a', '', `a${sep}`, 'é', `é${sep}`, 'b\\', 'c/', `${sep}${sep}`, ':', 'b:', 'z::', 'Ʀ', '\uFEFF', `\uFEFF${sep}`, 'a\uFEFF', '\uFEFF\uFEFF'];
     const packed = new PackedScanStore(rootPath, sep, folderInput('r'));
     // Every name under the root, under every name, under every name: a parent
     // of each kind under the root and under a parent of each kind.
