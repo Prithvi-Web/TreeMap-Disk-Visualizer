@@ -860,6 +860,89 @@ test('in "Preview after" at the desktop window\'s minimum the page fits the wind
   assert.ok(up.page > H, `control: and the page still runs ${up.page - H} px past the window`);
 });
 
+/* ══════════════ H52 — the key's ends never wrap, and the open cart leaves the banner and the map their room ══════════════ */
+
+test('the size key\'s end labels, "1 MB" and "10 GB+", never wrap — the key may wrap, its ends do not (sixth browser pass H52a)', () => {
+  const host = { innerHTML: '' };
+  const render = runPageDecls<() => void>(['renderTmLegend'], {
+    $: (id: string) => (id === 'tmLegend' ? host : null),
+    state: { treemap: { history: { active: false }, colorMode: 'size' } },
+    sizeRampCss: () => 'linear-gradient(red, blue)', tmMarksKey: () => '',
+  }, 'renderTmLegend');
+  render();
+  const ends = [...host.innerHTML.matchAll(/<span class="([^"]*)">([^<]*)<\/span>/g)];
+  assert.deepEqual(ends.map((m) => m[2]), ['1 MB', '10 GB+'], 'control: the two end labels of the size key');
+  for (const [, cls, text] of ends) {
+    const rule = declsFor(`.tm-legend .${cls}`);
+    assert.equal(rule.get('white-space'), 'nowrap', `"${text}" is held to one line (.tm-legend .${cls})`);
+  }
+  // The reclaim key's note is a sentence and must still wrap: the rule names the ends alone.
+  assert.notEqual(declsFor('.tm-legend > span').get('white-space'), 'nowrap', 'no rule holds every span in the key to one line');
+});
+
+/** Average glyph width of the banner's 12.5 px type, as a share of its size — calibrated on QA's reading of B/shots/062: 290 characters on 12 lines in a 320 px banner. */
+const BANNER_CHAR_EM = 0.53;
+
+/**
+ * The "Preview after" banner's lines and height at 1024 px with the cart open, from the text the
+ * page writes and the parts of it the stylesheet shows beside the open cart.
+ */
+function bannerBesideCart(spaceSaid: string): { lines: number; height: number; text: string; perLine: number; heightFor(lines: number): number } {
+  const els: Record<string, { innerHTML: string; hidden?: boolean; classList?: unknown; style?: unknown; setAttribute?: unknown }> = {
+    cartPreview: { innerHTML: '', setAttribute() {}, classList: { toggle() {} } },
+    treemapWrap: { innerHTML: '', classList: { toggle() {} }, style: { removeProperty() {} } },
+    tmPreviewBanner: { innerHTML: '', hidden: true }, tmPreviewText: { innerHTML: '' },
+  };
+  runPageDecls<() => void>(['TM_PREVIEW_BANNER_INSET', 'syncCartPreviewChrome'], {
+    $: (id: string) => els[id] ?? null,
+    tmPreview: { on: true, freedBytes: 3.2e9, outsideView: 0 }, formatBytes: () => '3.2 GB', formatCount: String, escapeHtml: String,
+    cartSpaceSaid: () => spaceSaid, tmPreviewPadSync() {}, tmPreviewWatch() {},
+  }, 'syncCartPreviewChrome')();
+  let html = els.tmPreviewText.innerHTML;
+  // What the stylesheet hides in the banner while the cart is open.
+  for (const r of RULES) {
+    for (const sel of r.selectors) {
+      const m = /^body\.cart-open \.tm-preview-banner \.([\w-]+)$/.exec(sel);
+      if (m && /(^|;)\s*display:\s*none\s*(;|$)/.test(r.body)) html = html.replace(new RegExp(`<span class="${m[1]}">[\\s\\S]*?</span>`, 'g'), '');
+    }
+  }
+  const text = html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  const banner = declsFor('.tm-preview-banner');
+  const font = sheetPx(banner.get('font-size'), 'the banner\'s type');
+  const [padY, padX] = (banner.get('padding') || '').split(/\s+/).map((v) => sheetPx(v, 'the banner\'s padding'));
+  const gap = sheetPx(banner.get('gap'), 'the banner\'s gap');
+  const lineH = font * Number(declsFor('.tm-preview-banner #tmPreviewText').get('line-height'));
+  // 1024 px, sidebar open, no pane: the map's column, and the banner's room beside the open cart.
+  const map = 1024 - (232 + 12) - 2 * 24;
+  const maxW = cssPx(declsFor('body.cart-open .tm-preview-banner').get('max-width')!.replace(/(\d+(?:\.\d+)?)%/g, (_m, n: string) => `${(Number(n) / 100) * map}px`), map);
+  const exitW = 'Exit preview'.length * font * BANNER_CHAR_EM + 2 * 12; // the pill's label and its padding
+  const column = maxW - 2 * padX - 2 - 15 - gap - exitW - gap; // borders, the icon, and the button beside the message
+  const perLine = Math.floor(column / (font * BANNER_CHAR_EM));
+  const lines = Math.ceil(text.length / perLine);
+  const heightFor = (n: number): number => n * lineH + 2 * padY + 2; // its lines, its padding and its border
+  return { lines, height: heightFor(lines), text, perLine, heightFor };
+}
+
+test('in "Preview after" at 1024 px with the cart open, the banner keeps to a few lines and the map keeps a usable height — the sentence the open cart says beside it is not said twice (sixth browser pass H52b)', () => {
+  const said = 'Up to that much space comes back, but only when you empty the Trash. The Time Capsule also keeps a copy so you can undo this, and that copy takes up space until the Time Capsule removes it.';
+  // The premise: the open cart's footer already says this (cartFootTotal ends with cartSpaceSaid()).
+  assert.match(pageBetween('function renderCart(', 'function cartSpaceSaid('), /cartFootTotal[\s\S]*?cartSpaceSaid\(\)/, 'the open cart says when its space comes back');
+  const b = bannerBesideCart(said);
+  assert.doesNotMatch(b.text, /comes back|Time Capsule/, 'beside the open cart the banner does not say it again');
+  assert.match(b.text, /^Preview — nothing has been deleted\. The hatched areas are the 3\.2 GB this cart stages for the Trash\.$/, 'and still says what the preview is');
+  assert.ok(b.lines <= 5, `the banner takes ${b.lines} lines (QA: 12)`);
+  // QA's scene (B/shots/062): 1024×768, the map's card starting at about y 100, a one-line key and status.
+  const m = mapWithCart(768, 100, 40, b.height + 2 * 10);
+  assert.ok(m.height >= 330, `the map keeps ${m.height} px under a ${b.height.toFixed(0)} px banner (QA: about 245)`);
+  // Control: the whole text, as it was, on the same column, is the banner QA saw — about 12 lines,
+  // and about 245 px of map.
+  const whole = `Preview — nothing has been deleted. The hatched areas are the 3.2 GB this cart stages for the Trash. ${said}`;
+  const wholeLines = Math.ceil(whole.length / b.perLine);
+  assert.ok(wholeLines >= 10 && wholeLines <= 14, `control: the old banner measures ${wholeLines} lines here, as QA's 12`);
+  const before = mapWithCart(768, 100, 40, b.heightFor(wholeLines) + 2 * 10);
+  assert.ok(before.height >= 215 && before.height <= 275, `control: under the old banner the map measures ${before.height} px here, as QA's about 245`);
+});
+
 /* ══════════════ F06 — the drive dock is counted when the map and Disk City are fitted ══════════════ */
 
 /** The drive dock with one drive, measured in the QA's windows (fifth browser pass F06): 961/900 and 761/700 against 900 and 700. */

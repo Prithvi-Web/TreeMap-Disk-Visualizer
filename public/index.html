@@ -1283,6 +1283,9 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .legend-grad { width: 220px; height: 7px; border-radius: 4px; }
 .tm-legend { display: flex; align-items: center; gap: 9px; }
 .tm-legend .legend-grad { width: 170px; }
+/* The size key's ends stay whole: at 1024 in Preview, beside two markings,
+   "1 MB" and "10 GB+" wrapped to two lines each (sixth browser pass H52). */
+.tm-legend .tm-legend-end { white-space: nowrap; }
 .tm-legend-bands { display: flex; align-items: center; gap: 13px; }
 .tm-legend-bands .ab { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .tm-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block;
@@ -2930,6 +2933,11 @@ body.preview-open.cart-open:has(#sideNav.collapsed) .tour-card { width: min(360p
    the dock's 402 px left the banner nothing at all (QA C04). */
 body.cart-open .tm-preview-banner { left: 14px; transform: none;
   max-width: max(240px, calc(100% - 402px)); }
+/* In that narrow strip the whole message ran to twelve lines at 1024 and took
+   the map down to about 245 px (sixth browser pass H52). Its second half —
+   when the space comes back, and the Time Capsule's copy — is what the open
+   cart's footer says right beside it, so the banner leaves it to the cart. */
+body.cart-open .tm-preview-banner .tm-pv-cart-said { display: none; }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
@@ -12274,7 +12282,7 @@ function renderTmLegend() {
       `<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.${reclaimCoverageNote()}</span>` +
       tmMarksKey();
   } else {
-    host.innerHTML = `<span>1 MB</span><div class="legend-grad" style="background:${sizeRampCss()}"></div><span>10 GB+</span>` + tmMarksKey();
+    host.innerHTML = `<span class="tm-legend-end">1 MB</span><div class="legend-grad" style="background:${sizeRampCss()}"></div><span class="tm-legend-end">10 GB+</span>` + tmMarksKey();
   }
 }
 
@@ -19437,7 +19445,10 @@ function syncCartPreviewChrome() {
     // Staged, not freed (B29): a move to the Trash frees nothing until it is
     // emptied, and a sparse file frees only what it really takes.
     // Said as the cart's footer, sheet and summary say it (D07).
-    `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart stages for the Trash. ${cartSpaceSaid()}` + outside;
+    `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart stages for the Trash.` +
+    // The open cart's footer says this sentence beside the banner, so while the
+    // cart is open the stylesheet takes it out of the banner (H52).
+    ` <span class="tm-pv-cart-said">${cartSpaceSaid()}</span>` + outside;
   // The banner floats over the map's top edge, and covered the labels of the
   // top-left tiles ("Videos", "holiday-4k.mov" — QA D64). The wrap is padded
   // by the banner's measured height instead — it wraps to two lines beside

@@ -343,7 +343,7 @@ function renderTmLegend() {
       `<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.${reclaimCoverageNote()}</span>` +
       tmMarksKey();
   } else {
-    host.innerHTML = `<span>1 MB</span><div class="legend-grad" style="background:${sizeRampCss()}"></div><span>10 GB+</span>` + tmMarksKey();
+    host.innerHTML = `<span class="tm-legend-end">1 MB</span><div class="legend-grad" style="background:${sizeRampCss()}"></div><span class="tm-legend-end">10 GB+</span>` + tmMarksKey();
   }
 }
 

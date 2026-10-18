@@ -135,6 +135,9 @@
 .legend-grad { width: 220px; height: 7px; border-radius: 4px; }
 .tm-legend { display: flex; align-items: center; gap: 9px; }
 .tm-legend .legend-grad { width: 170px; }
+/* The size key's ends stay whole: at 1024 in Preview, beside two markings,
+   "1 MB" and "10 GB+" wrapped to two lines each (sixth browser pass H52). */
+.tm-legend .tm-legend-end { white-space: nowrap; }
 .tm-legend-bands { display: flex; align-items: center; gap: 13px; }
 .tm-legend-bands .ab { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .tm-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block;

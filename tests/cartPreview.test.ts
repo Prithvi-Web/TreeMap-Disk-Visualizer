@@ -828,7 +828,8 @@ test('the preview banner, the status line and the hatched block say staged for t
   ) as () => void;
   sync();
   assert.doesNotMatch(text.innerHTML, /would free/, text.innerHTML);
-  assert.match(text.innerHTML, /<b>4500000000 B<\/b> this cart stages for the Trash\. Up to that much space comes back, but only when you empty the Trash\./, text.innerHTML);
+  // The cart's own sentence in a span of its own, which the stylesheet leaves to the open cart (H52).
+  assert.match(text.innerHTML, /<b>4500000000 B<\/b> this cart stages for the Trash\. <span class="tm-pv-cart-said">Up to that much space comes back, but only when you empty the Trash\./, text.innerHTML);
 
   const status = slice('if (tmPreview.on) {\n    $(\'tmStatus\')', 'if (q) {');
   assert.doesNotMatch(status, /would be freed/);
