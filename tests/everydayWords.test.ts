@@ -38,3 +38,11 @@ test('Duplicates says how much is reclaimable without a plus, which reads as gro
   const script = INDEX.slice(INDEX.indexOf('<script'));
   assert.doesNotMatch(script, />\+\$\{formatBytes\([^)]*\)\} reclaimable/, 'no "+" before a reclaimable figure anywhere');
 });
+
+test('the map layout buttons say what each draws, never how it is solved — no "Lloyd\'s algorithm" in the Voronoi tooltip (BQG-5 item 15)', () => {
+  const seg = slice('<div class="seg" id="tmViewSeg"', '</div>');
+  const titles = [...seg.matchAll(/data-vm="(\w+)"[^>]*title="([^"]*)"/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(titles.map(([vm]) => vm), ['treemap', 'sunburst', 'circles', 'voronoi'], 'control: the four layouts');
+  for (const [vm, title] of titles) assert.doesNotMatch(title, /Lloyd|algorithm/i, `${vm}: "${title}" names no algorithm`);
+  assert.equal(Object.fromEntries(titles).voronoi, 'Voronoi treemap — cells whose areas are proportional to bytes', 'the Voronoi button says what its cells mean');
+});
