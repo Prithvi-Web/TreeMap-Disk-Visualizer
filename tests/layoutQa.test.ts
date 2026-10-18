@@ -607,6 +607,41 @@ test('with the cart open beside the open preview pane, the cart dock covers neit
   assert.ok(beside >= 8, `control: in ${beside} of them the banner and the dock fit beside the pane`);
 });
 
+test('while the cart is open the welcome tour\'s card covers none of it — at every window size, the preview pane open or not, in both sidebar states (sixth browser pass H51)', () => {
+  // QA: the tour card (z 96, 18 px from the right, 86 px up) sat on the open cart (z 80): a hit test
+  // at the centre of Preview after, Clear, Move all to Trash and each row's × returned the card, so
+  // the cart could not be used until the tour was skipped. The card stands left of the open cart now.
+  const z = (sel: string) => Number(declsFor(sel).get('z-index'));
+  assert.ok(z('#tourOverlay') > z('#cartDock'), `the premise: the card's layer (${z('#tourOverlay')}) is above the cart's (${z('#cartDock')}), so where they meet the card wins`);
+  const root = declsFor(':root');
+  const stated = (base: string, rail: boolean) => base.replace(/^(body\S*)/, `$1:has(#sideNav${rail ? '.collapsed' : ':not(.collapsed)'})`);
+  const forState = (selectors: string[], W: number, rail: boolean) =>
+    new Map([...selectors.flatMap((sel) => [...declsAt(sel, W)]), ...selectors.filter((sel) => sel.startsWith('body')).flatMap((sel) => [...declsAt(stated(sel, rail), W)])]);
+  const vw = (v: string, W: number) => v.replace(/(\d+(?:\.\d+)?)vw/g, (_m, n: string) => `${(Number(n) / 100) * W}px`);
+  let checked = 0;
+  for (const W of [1024, 1067, 1068, 1100, 1180, 1235, 1236, 1280, 1320, 1440, 1920]) {
+    for (const rail of [false, true]) {
+      for (const preview of [false, true]) {
+        const side = sheetPx(root.get(rail ? '--side-w-rail' : '--side-w'), 'the sidebar width') + 12;
+        const label = `${W} px, sidebar ${rail ? 'rail' : 'open'}${preview ? ', preview pane open' : ''}`;
+        const dock = forState(['#cartDock', ...(preview ? ['body.preview-open #cartDock', 'body.preview-open.cart-open #cartDock'] : [])], W, rail);
+        const dockW = Math.min(cssPx(dock.get('width')!, W), cssPx(vw(dock.get('max-width')!, W), W));
+        const dockLeft = W - cssPx(dock.get('right')!, W) - dockW;
+        const card = forState(['.tour-card', 'body.cart-open .tour-card', ...(preview ? ['body.preview-open.cart-open .tour-card'] : [])], W, rail);
+        const cardRight = W - cssPx(card.get('right')!, W);
+        const cardLeft = cardRight - cssPx(vw(card.get('width')!, W), W);
+        assert.ok(cardRight <= dockLeft, `${label}: the card runs to x ${cardRight.toFixed(0)}; the open cart starts at x ${dockLeft.toFixed(0)} — no button of the cart is under it`);
+        assert.ok(cardLeft >= side, `${label}: the card starts at x ${cardLeft.toFixed(0)}, clear of the sidebar (to x ${side})`);
+        assert.ok(cardRight - cardLeft >= 240, `${label}: the card keeps a readable width (${(cardRight - cardLeft).toFixed(0)} px)`);
+        checked++;
+      }
+    }
+  }
+  assert.equal(checked, 44, 'every size, sidebar state and pane state was checked');
+  // Control: with the cart closed the card stays where it rests.
+  assert.equal(declsAt('.tour-card', 1440).get('right'), '18px', 'control: the resting card, 18 px from the right');
+});
+
 /* ══════════════ B26 — the map refits when a row around it changes height ══════════════ */
 
 /** The treemap's measured height, with a row of `above` px pushing it down, and whether it redrew. */

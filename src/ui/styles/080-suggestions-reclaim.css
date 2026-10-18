@@ -166,6 +166,27 @@
 .tour-card { pointer-events: auto; position: absolute; right: 18px; bottom: 86px;
   width: min(360px, calc(100vw - 32px)); padding: 15px 16px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
+/* While the cart is open the card stands left of it (sixth browser pass H51):
+   above the cart's layer (96 over 80) it sat on Preview after, Clear, Move all
+   to Trash and every row's ×, and the cart could not be used until the tour
+   was skipped. body.cart-open is the cart's own open state (175-cleanup-cart).
+   400 px = the dock's 22 px gutter + its 366 px + 12. Beside the open preview
+   pane the dock stands 348 px in, so the card stands 726 px in, narrowed to
+   the room the sidebar leaves (244 px open, 76 px as a rail, and 12 px); where
+   the pane-and-cart window is too narrow for both (060-preview-pane.css) the
+   dock goes back to its resting edge, and so does the card's offset.
+   tests/layoutQa.test.ts checks the card clear of the open cart and of the
+   sidebar at every window size, in both sidebar states. */
+body.cart-open .tour-card { right: 400px; }
+body.preview-open.cart-open .tour-card { right: 726px; width: min(360px, calc(100vw - 982px)); }
+body.preview-open.cart-open:has(#sideNav.collapsed) .tour-card { width: min(360px, calc(100vw - 814px)); }
+@media (max-width: 1235px) {
+  body.preview-open.cart-open:has(#sideNav:not(.collapsed)) .tour-card { right: 400px; width: min(360px, calc(100vw - 32px)); }
+}
+@media (max-width: 1067px) {
+  body.preview-open.cart-open .tour-card,
+  body.preview-open.cart-open:has(#sideNav.collapsed) .tour-card { right: 400px; width: min(360px, calc(100vw - 32px)); }
+}
 /* The card floats straight on the treemap canvas with no scrim, and its
    .glass fill is --glass-strong, 72% opaque with no blur: the cell labels
    behind read through the card's own text (QA D07). It takes the opaque-
