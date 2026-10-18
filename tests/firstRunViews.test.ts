@@ -197,15 +197,20 @@ test('every change of view tells the welcome card, once the empty state is up or
     'one call per switch, each after the empty state was put up or taken down for that view');
 });
 
-test('the Dashboard\'s welcome names it, and every empty state has the same single action (G02)', () => {
+test('the Dashboard\'s welcome names it, and every empty state offers the same start screen: its choices and its one primary (G02; the owner, 17 Oct 2026)', () => {
   const section = slice('<section id="emptyState">', '</section>');
   const hero = slice('<div class="empty-hero" id="emptyHero">', '<div class="empty-for-view"');
   assert.match(hero, /<p class="empty-kicker">Dashboard<\/p>/, 'the welcome says it is the Dashboard');
   assert.match(hero, /<h1>See what's eating your disk<\/h1>/, 'and keeps its headline');
   const buttons = [...section.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
-  assert.equal(buttons.length, 1, `one action for every view: ${buttons.join(' ')}`);
+  assert.equal(buttons.length, 1, `one primary for every view, the choices painted beside it (renderStartChoices): ${buttons.join(' ')}`);
   assert.match(buttons[0], /class="btn btn-primary" id="emptyBrowseBtn"/);
-  assert.match(section, /<\/span>Choose a folder to get started\s*<\/button>/, 'the same words on it for every view');
+  assert.match(section, /<\/span>Choose a folder…\s*<\/button>/, 'the same words on it for every view');
+  // The choices and the line naming the last folder sit outside both parts, so every view's empty state has them.
+  const shared = section.slice(section.indexOf('<div class="empty-for-view"'));
+  const afterParts = shared.slice(shared.indexOf('</div>') + '</div>'.length);
+  assert.match(afterParts, /<p class="start-last" id="startLast" role="status" hidden><\/p>\s*(<!--[\s\S]*?-->\s*)?<div class="start-choices" id="startChoices" role="group" aria-label="Scan one of these"><\/div>\s*<button class="btn btn-primary" id="emptyBrowseBtn"/,
+    `the line and the choices, then the one primary, after both parts: ${afterParts.slice(0, 400)}`);
   const forView = slice('<div class="empty-for-view" id="emptyForView" hidden>', '<button');
   for (const id of ['emptyViewIcon', 'emptyViewTitle', 'emptyViewLead']) assert.match(forView, new RegExp(`id="${id}"`), `${id} is in the per-view part`);
   // The two parts lay out as the section's own children, so its flex gap spaces them.

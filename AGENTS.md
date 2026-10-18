@@ -1163,7 +1163,11 @@ HOST=0.0.0.0 PORT=4280 TREEMAP_TOKEN=<long-random-secret> npm start
 - Scan results are in-memory (30-minute TTL); snapshots, settings and the
   offload manifest persist in the per-OS app-data directory
   (`TREEMAP_DATA_DIR` overrides — useful for tests and containers).
-- Nothing scheduled scans because TreeMap opened (the owner, 17 Oct 2026).
+- Nothing scans because TreeMap opened (the owner, 17 Oct 2026). The window
+  reopens a completed scan the server still holds; otherwise its start screen
+  names the last folder and offers choices for a person to pick from. It
+  starts a walk at launch only for a folder it was handed — `?path=`, or the
+  desktop shell's dock drop, "Scan with TreeMap" and command line.
   Scheduled scans and Autopilot runs wait `LAUNCH_HOLD_MS` (10 minutes,
   `src/services/scheduler.ts`) after the server starts: one that came due
   while it was stopped, or falls due inside the hold, runs at the first

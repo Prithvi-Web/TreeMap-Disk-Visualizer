@@ -292,6 +292,7 @@ async function buildIndexInBackground(path, stats) {
 
 async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
+  state.scanningPath = path; // a Stop or a failure names it on the start screen (noteLastFolder)
   closeEventSource();
   disableLive({ keepWanted: true }); // the new scanId gets a fresh watch session
 
@@ -356,10 +357,11 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       // `quiet`, which says only that an index paint is already on screen:
       // keyed on `quiet`, every rescan of an indexed folder — ⌘R, Rescan,
       // Scan — ran at the background budget (B04). A caller nobody need be
-      // present for passes `unattended`: the boot-time restore (review F1.2)
-      // and the rescan at the end of a job that runs on after its click — an
-      // offload, the cart's undo, a video re-encode (review F2.1). Neither may
-      // ask for elevation. The rest are a person's click, drop or request.
+      // present for passes `unattended`: the rescan at the end of a job that
+      // runs on after its click — an offload, the cart's undo, a video
+      // re-encode (review F2.1) — which may not ask for elevation. (The boot
+      // restore, review F1.2, starts no scan at all now: the owner, 17 Oct
+      // 2026.) The rest are a person's click, drop or request.
       body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
@@ -367,7 +369,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   } catch (e) {
     // A failed background refresh keeps the indexed tree on screen.
     if (quiet) { quietRescanFailed(e); return; }
-    failScan(e.message);
+    failScan(e.message, e); // the error: a folder the server refused is not offered again
   }
 }
 
@@ -616,6 +618,7 @@ function followScanProgress(scanId, path, fast, t0) {
 /** Scan a connected cloud account — registers and follows like a disk scan. */
 async function startCloudScan(providerId, providerName) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
+  state.scanningPath = 'cloud://' + providerId; // named nowhere if it stops (noteLastFolder)
   closeEventSource();
   disableLive({ keepWanted: false }); // watching makes no sense on a cloud tree
   try {
@@ -651,7 +654,13 @@ function endScanChrome() {
   $('scanStatus').classList.remove('fx-shimmer-text');
 }
 
-function failScan(message) {
+/** Statuses with which the server refuses the folder itself — malformed or
+    blocked (400), not allowed or not readable (403), not there (404): a
+    retry would only hear the same answer, so a failed scan's folder is not
+    offered again for them (failScan). */
+const FOLDER_REFUSED_STATUSES = [400, 403, 404];
+
+function failScan(message, err = null) {
   endScanChrome();
   const status = $('scanStatus');
   status.classList.add('error');
@@ -659,14 +668,34 @@ function failScan(message) {
   $('scanAnnounce').textContent = 'Scan failed — ' + message;
   restoreDashboardPanels();
   toast(message, 'error');
-  // The welcome comes back over the Dashboard's path box, where focus was
-  // moved as the scan started: withFocusKept moves it on (review F2.6).
+  // With no tree on screen the start screen comes back naming the folder and
+  // why, and offers "Scan … again" for it — unless the server refused the
+  // folder itself, which is named but never offered: a path that answers an
+  // error is not a choice (the owner, 17 Oct 2026).
+  if (!state.root) noteLastFolder('failed', message, !(err && FOLDER_REFUSED_STATUSES.includes(err.status)));
+  // The start screen comes back over the Dashboard's path box, where focus
+  // was moved as the scan started: withFocusKept moves it on (review F2.6).
   withFocusKept(() => { switchView(state.view); });
-  // v4 §9.2 — the welcome card comes back, with its buttons: after the view,
-  // so the welcome's own "Choose a folder" is on screen when the card picks
-  // where focus goes (review F1.12).
+  // v4 §9.2 — the welcome card comes back: after the view, so the start
+  // screen is on screen when the card picks where focus goes (review F1.12).
   tourScanFailed();
+  focusStartScreen(); // on "Scan … again", as after a Stop, or on "Choose a folder…"
   drainScanQueue(); // a folder waiting behind this one still gets its turn
+}
+
+/**
+ * Name, on the start screen, the folder of the scan that just ended with no
+ * tree on screen — `outcome` 'stopped' or 'failed', with the failure's
+ * `reason` — and whether "Scan … again" is offered for it (the owner, 17 Oct
+ * 2026: "a scan should work again after being stopped"). The size and date
+ * the start screen held for the same folder stay with it. A cloud account's
+ * scan changes nothing there, as a cloud account in the history never did.
+ */
+function noteLastFolder(outcome, reason = '', offered = true) {
+  const p = state.scanningPath;
+  if (!p || p.startsWith('cloud://')) return;
+  const prev = state.lastFolder && state.lastFolder.path === p ? state.lastFolder : null;
+  state.lastFolder = { path: p, outcome, reason, offered, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
 }
 
 /**
@@ -1856,9 +1885,10 @@ async function scanTheBox() {
 // check because the button was disabled mid-scan; now that the button is Stop,
 // an unguarded Enter in the path field would cancel the running scan instead.
 //
-// Refusing is right. Refusing in SILENCE was not: the app auto-scans the last
-// path at boot, so the very first thing a returning user can do is type a
-// different folder and press Enter — and for those seconds Enter did nothing
+// Refusing is right. Refusing in SILENCE was not: the app then scanned the
+// last path at boot (it no longer does: the owner, 17 Oct 2026), so the very
+// first thing a returning user could do was type a different folder and press
+// Enter — and for those seconds Enter did nothing
 // at all, with no scan and no message. That reads as a broken input, and it
 // fooled two people testing this build before it was noticed. The house rule
 // is the one at tmRunGrammarQuery: say so rather than doing nothing. The

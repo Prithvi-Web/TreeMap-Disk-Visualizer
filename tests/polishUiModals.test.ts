@@ -273,8 +273,9 @@ test('a sheet whose opener is gone by the time it closes hands focus to where it
     const browseBody = append(append(browse, mk('div', '', ['modal'])), mk('div', '', ['modal-body']));
     append(browseBody, mk('input', 'browseCurrent'));
     browse.shown = false;
-    // The page's own focusLanding over this page: no welcome on screen, so the tour card's control.
-    const landing = new Function('$', 'document', 'tourCardControl', 'activeViewControl', `'use strict'; ${braced('function focusLanding(')} return focusLanding;`)(
+    // The page's own focusLanding over this page: no start screen on screen (startLanding finds
+    // neither of its controls), so the tour card's control.
+    const landing = new Function('$', 'document', 'tourCardControl', 'activeViewControl', `'use strict'; ${braced('function startLanding(')} ${braced('function focusLanding(')} return focusLanding;`)(
       (id: string) => doc.getElementById(id), doc, () => card.querySelector('[data-tour-skip]'), () => null) as () => FEl | null;
     const asked: number[] = [];
     const api = loadModalNet(doc, () => {}, () => { asked.push(1); return landing(); });

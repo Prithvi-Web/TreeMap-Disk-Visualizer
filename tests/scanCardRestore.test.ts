@@ -15,8 +15,9 @@ import path from 'node:path';
  *  - D66: after a reload the path box said the home folder while the map
  *    showed another; Scan would have walked the home folder.
  *  - D57: every reload walked the last folder again, though the server still
- *    held the scan — /api/scans lists nothing else. Now it is reopened, and
- *    scanned again only when it has gone, which the page says.
+ *    held the scan — /api/scans lists nothing else. Now it is reopened; when
+ *    it has gone, nothing is walked either (the owner, 17 Oct 2026, which
+ *    also supersedes B38): the start screen names the folder and offers it.
  *
  * Every function is EXECUTED out of the built page against stubs.
  */
@@ -177,7 +178,7 @@ test('when the system answer fills the path box, the box is re-checked for that 
 type Restore = {
   run: () => Promise<void>; state: Record<string, unknown>; $: (id: string) => El; asked: string[];
   started: string[]; startedWith: unknown[]; finished: Array<{ root: unknown; ms: number; stats: unknown; opts: unknown; boxThen: string; scanIdThen: unknown }>;
-  toasts: string[]; warned: string[];
+  toasts: string[]; warned: string[]; painted: number; settled: number;
 };
 const LAST = { scanId: 's9', rootPath: '/Users/x/corpus', totalSize: 8_800_000_000, fileCount: 101_034, finishedAt: 1_700_000_000_000 };
 const STATS = { scanId: 's9', status: 'complete', scanned: 106_664, fileCount: 101_034, dirCount: 5_630, engine: 'native', durationMs: 200 };
@@ -192,13 +193,14 @@ function restore(opts: {
   const els: Record<string, El> = {};
   const $ = (id: string) => (els[id] ??= el());
   $('pathInput').value = opts.box ?? '/Users/x'; // what loadSystem puts there
-  const state: Record<string, unknown> = { root: null, scanning: false, scanId: null };
+  const state: Record<string, unknown> = { root: null, scanning: false, scanId: null, lastFolder: null, scannedBefore: false };
   const asked: string[] = [];
   const started: string[] = [];
   const startedWith: unknown[] = []; // the options each startScan was handed
   const finished: Restore['finished'] = [];
   const toasts: string[] = [];
   const warned: string[] = [];
+  const counts = { painted: 0, settled: 0 };
   const api = async (url: string, options?: { method?: string }) => {
     asked.push((options?.method ?? 'GET') + ' ' + url);
     const a = opts.answer(url);
@@ -208,7 +210,7 @@ function restore(opts: {
   };
   const document = { activeElement: opts.focused ? $('pathInput') : null };
   const run = new Function('$', 'state', 'api', 'location', 'document', 'console', 'startScan', 'finishScan', 'maybeShowFastRescan',
-    'rememberScannedRoot', 'toast', 'escapeHtml',
+    'rememberScannedRoot', 'toast', 'escapeHtml', 'renderStartChoices', 'tourBootSettled',
     `'use strict'; ${src} return restoreLastSession;`)(
     $, state, api, { search: opts.search ?? '' }, document, { warn: (m: string) => warned.push(m) },
     async (p: string, o?: unknown) => { started.push(p); startedWith.push(o); },
@@ -217,8 +219,12 @@ function restore(opts: {
       state.root = root;
     },
     () => {}, () => {}, (m: string) => toasts.push(m), (s: string) => s,
+    () => { counts.painted++; }, () => { counts.settled++; },
   ) as () => Promise<void>;
-  return { run, state, $, asked, started, startedWith, finished, toasts, warned };
+  return {
+    run, state, $, asked, started, startedWith, finished, toasts, warned,
+    get painted() { return counts.painted; }, get settled() { return counts.settled; },
+  };
 }
 const gone = () => Object.assign(new Error('Unknown or expired scanId'), { status: 404, code: 'SCAN_NOT_FOUND' });
 
@@ -237,6 +243,8 @@ test('a reload reopens the scan the server still holds — nothing is walked aga
   assert.deepEqual(h.finished[0].opts, { reopenedAt: LAST.finishedAt }, 'said to be a reopened scan, from when it finished');
   assert.equal(h.finished[0].scanIdThen, 's9', 'the scan\'s id is the one every view asks with');
   assert.deepEqual(h.toasts, []);
+  assert.equal(h.state.scannedBefore, true, 'a held scan: this person has scanned before');
+  assert.equal(h.settled, 1, 'and the tour hears the restore has settled');
 });
 
 test('after a reload the path box names the folder on screen, not the home folder (QA D66)', async () => {
@@ -252,7 +260,7 @@ test('after a reload the path box names the folder on screen, not the home folde
   assert.equal(typing.$('pathInput').value, '/Users/x/Movies');
 });
 
-test('a scan that has gone is scanned again, and the page says so; one that went away mid-ask too (QA D57)', async () => {
+test('a scan that has gone — or went away mid-ask — is named on the start screen and offered, never walked again (the owner, 17 Oct 2026, superseding D57\'s rescan)', async () => {
   for (const [what, answer] of [
     ['the counters answer 404', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? gone() : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
     ['the tree answers 404', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? STATS : url === '/api/scan/s9/result' ? gone() : { entries: [] })],
@@ -260,15 +268,16 @@ test('a scan that has gone is scanned again, and the page says so; one that went
     const h = restore({ answer });
     await h.run();
     assert.equal(h.finished.length, 0, `${what}: nothing is painted from it`);
-    assert.ok(h.asked.includes('GET /api/fs/list?path=' + encodeURIComponent(LAST.rootPath)), `${what}: the folder is pre-flighted as before`);
-    assert.deepEqual(h.started, ['/Users/x/corpus'], `${what}: and scanned again through the Scan button's path`);
-    assert.equal(h.toasts.length, 1, `${what}: not silently`);
-    assert.match(h.toasts[0], /^Your last scan of \/Users\/x\/corpus is no longer held — scanning it again\.$/, `${what}: in those words`);
-    assert.equal(h.$('pathInput').value, '/Users/x/corpus', `${what}: the box names it`);
+    assert.deepEqual(h.started, [], `${what}: and nothing is scanned`);
+    assert.ok(h.asked.includes('GET /api/fs/list?path=' + encodeURIComponent(LAST.rootPath)), `${what}: the folder is looked at, to be offered only where the server can open it`);
+    assert.deepEqual(h.state.lastFolder, { path: '/Users/x/corpus', size: LAST.totalSize, at: LAST.finishedAt, outcome: 'history', reason: '', offered: true },
+      `${what}: the start screen names it, with its size and date, and offers it`);
+    assert.equal(h.painted, 1, `${what}: painted once`);
+    assert.deepEqual(h.toasts, [], `${what}: no "scanning it again"`);
   }
 });
 
-test('a scan that is still held but could not be reopened is never called "no longer held" (review M2)', async () => {
+test('a scan that is still held but could not be reopened is never called "no longer held", and is not walked (review M2)', async () => {
   const offline = () => Object.assign(new Error('Couldn’t reach TreeMap — its own server stopped answering.'), { status: 0, code: 'OFFLINE' });
   const failed = () => Object.assign(new Error('The scan’s first frame could not be sent.'), { status: 500, code: 'INTERNAL' });
   for (const [what, answer, reason] of [
@@ -279,11 +288,12 @@ test('a scan that is still held but could not be reopened is never called "no lo
     const h = restore({ answer });
     await h.run();
     assert.equal(h.finished.length, 0, `${what}: nothing painted`);
-    assert.deepEqual(h.started, ['/Users/x/corpus'], `${what}: the folder is scanned again, so the reload still shows it`);
-    assert.equal(h.toasts.length, 1);
-    assert.doesNotMatch(h.toasts[0], /no longer held|expired/, `${what}: the scan may well still be held`);
-    assert.match(h.toasts[0], /Couldn’t reopen your last scan of \/Users\/x\/corpus/, `${what}: what happened`);
-    assert.match(h.toasts[0], reason, `${what}: and why`);
+    assert.deepEqual(h.started, [], `${what}: nothing walked`);
+    const last = h.state.lastFolder as { outcome: string; reason: string; offered: boolean };
+    assert.equal(last.outcome, 'unreadable', `${what}: said to be a scan not reopened — the start screen words it "Couldn’t reopen…"`);
+    assert.match(last.reason, reason, `${what}: and why`);
+    assert.equal(last.offered, true, `${what}: and offered again`);
+    assert.deepEqual(h.toasts, [], `${what}: nothing calls it "no longer held"`);
   }
 });
 
@@ -298,67 +308,78 @@ test('the person wins the race: a scan they start while the tree downloads is no
   assert.equal(h.state.scanId, null, 'nor does its id replace theirs');
 });
 
-/* ══════════════ B38 — expired, or a relaunch: the history still names the folder ══════════════ */
+/* ══════════════ B38, superseded — expired, or a relaunch: the history names the folder, the person picks ══════════════ */
 
-test('with no scan held — expired, or the app relaunched — the newest folder in the history is scanned again, and the page says so (B38)', async () => {
-  // B38: /api/scans lists in-memory scans only, so after the 30-minute expiry
-  // (and on every relaunch of the desktop app) it was empty, and the page
-  // took the "true first run" return: the welcome screen, with seven history
-  // snapshots and a live index of the folder on the server.
+test('with no scan held — expired, or the app relaunched — the newest folder in the history is named and offered, never scanned (the owner, 17 Oct 2026, superseding B38)', async () => {
+  // B38 scanned the newest folder in the history again at every relaunch. The
+  // owner's was `/`: every launch walked the whole disk. The owner, 17 Oct
+  // 2026: "ideally users should be able to pick the folder".
   const ROOTS = { roots: [
-    { rootPath: '/Users/x/corpus', count: 7, latestAt: 1_700_000_100_000, latestSize: 8_800_000_000 },
+    { rootPath: '/', count: 7, latestAt: 1_700_000_100_000, latestSize: 494_380_000_000 },
     { rootPath: '/Users/x/Mail', count: 1, latestAt: 1_700_000_000_000, latestSize: 36_000_000 },
   ] };
   const h = restore({
     answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? ROOTS : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)),
   });
   await h.run();
-  assert.deepEqual(h.asked, ['GET /api/scans', 'GET /api/snapshots', 'GET /api/fs/list?path=' + encodeURIComponent('/Users/x/corpus')],
-    'the history is asked only because nothing is held, and the folder is pre-flighted as before');
-  assert.deepEqual(h.started, ['/Users/x/corpus'], 'the newest folder in the history is scanned again, through the Scan button\'s path');
-  assert.deepEqual(h.toasts, ['Your last scan of /Users/x/corpus is no longer held — scanning it again.'], 'and the page says so');
-  assert.equal(h.$('pathInput').value, '/Users/x/corpus', 'the box names it');
-  assert.equal(h.finished.length, 0, 'nothing is reopened: there is no scan to reopen');
+  assert.deepEqual(h.asked, ['GET /api/scans', 'GET /api/snapshots', 'GET /api/fs/list?path=' + encodeURIComponent('/')],
+    'the history is asked only because nothing is held, and the folder is looked at — never POST /api/scan');
+  assert.deepEqual(h.started, [], 'nothing is scanned');
+  assert.deepEqual(h.state.lastFolder, { path: '/', size: 494_380_000_000, at: 1_700_000_100_000, outcome: 'history', reason: '', offered: true },
+    'the start screen names the newest folder, with its last size and date');
+  assert.equal(h.painted, 1, 'and is painted with it');
+  assert.equal(h.state.scannedBefore, true);
+  assert.deepEqual(h.toasts, [], 'no toast');
+  assert.equal(h.$('pathInput').value, '/Users/x', 'the path box is left as loadSystem filled it');
 });
 
-test('only an empty history is a first run; a cloud folder or an unreadable history starts empty, as before (B38)', async () => {
+test('only an empty history is a first run; a cloud folder is not offered, an unreadable history starts at the start screen, and a folder that has gone is named but not offered', async () => {
   const first = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? { roots: [] } : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)) });
   await first.run();
-  assert.deepEqual(first.started, [], 'no history: the welcome screen');
-  assert.deepEqual(first.toasts, []);
-  // fs/list answers in both of these, so nothing but the rule under test stands between them and a scan.
+  assert.deepEqual([first.started, first.state.lastFolder, first.state.scannedBefore], [[], null, false], 'no history: a first run, nothing named');
   const cloud = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? { roots: [{ rootPath: 'cloud://gdrive/', count: 1, latestAt: 1, latestSize: 1 }] } : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)) });
   await cloud.run();
-  assert.deepEqual(cloud.started, [], 'a cloud account is never restored on its own — its sign-in may be gone');
+  assert.deepEqual([cloud.started, cloud.state.lastFolder, cloud.state.scannedBefore], [[], null, true], 'a cloud account is never offered from the start screen — its sign-in may be gone — though it was scanned');
   const broken = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? new Error('history unreadable') : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`)) });
   await broken.run();
-  assert.deepEqual(broken.started, [], 'an unreadable history starts empty');
-  assert.deepEqual(broken.toasts, [], 'without a word at boot');
+  assert.deepEqual([broken.started, broken.state.lastFolder, broken.toasts], [[], null, []], 'an unreadable history starts at the start screen, without a word at boot');
   const moved = restore({ answer: (url) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? { roots: [{ rootPath: '/Volumes/gone', count: 1, latestAt: 1, latestSize: 1 }] } : url.startsWith('/api/fs/list') ? new Error('That folder no longer exists.') : assert.fail(`unexpected ${url}`)) });
   await moved.run();
-  assert.deepEqual(moved.started, [], 'a folder that has gone falls back to the welcome screen, not a boot error');
+  assert.deepEqual(moved.started, [], 'a folder that has gone is not scanned');
+  assert.deepEqual(moved.state.lastFolder, { path: '/Volumes/gone', size: 1, at: 1, outcome: 'history', reason: 'That folder no longer exists.', offered: false }, 'it is named with why, and not offered');
+  for (const h of [first, cloud, broken, moved]) assert.equal(h.settled, 1, 'every way the restore ends tells the tour once');
 });
 
-/* ══════════════ B38 review F1.2 — a scan nobody started is not sent as a person's ══════════════ */
-
-test('the restore\'s own rescan is unattended — expired, relaunched or gone — so it never asks for elevation; a folder someone asked for is theirs (F1.2)', async () => {
-  // Review F1.2: B04 sends every startScan as interactive, and B38 made the
-  // boot restore routine. Interactive is what lets a scan run Automatic at
-  // Turbo and, on Windows with the ntfs-mft engine, raise an administrator
-  // prompt — so a relaunch asked for elevation with nobody pressing anything.
+test('boot starts no scan nobody asked for — expired, relaunched or gone — and a folder someone asked for is theirs (F1.2)', async () => {
+  // Review F1.2 made the restore's own rescan unattended, so a relaunch never
+  // asked for elevation. There is no such rescan now (the owner, 17 Oct
+  // 2026): the start screen offers the folder and the person picks.
   const ROOTS = { roots: [{ rootPath: '/Users/x/corpus', count: 7, latestAt: 1_700_000_100_000, latestSize: 8_800_000_000 }] };
   for (const [what, answer] of [
-    ['nothing held: the history names the folder (B38)', (url: string) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? ROOTS : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
-    ['held, but gone when asked (D57)', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? gone() : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
+    ['nothing held: the history names the folder', (url: string) => (url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? ROOTS : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
+    ['held, but gone when asked', (url: string) => (url === '/api/scans' ? { scans: [LAST] } : url === '/api/scan/s9/stats' ? gone() : url.startsWith('/api/fs/list') ? { entries: [] } : assert.fail(`unexpected ${url}`))],
   ] as const) {
     const h = restore({ answer });
     await h.run();
-    assert.deepEqual(h.started, ['/Users/x/corpus'], `${what}: scanned again`);
-    assert.deepEqual(h.startedWith, [{ unattended: true }], `${what}: as a scan nobody started`);
+    assert.deepEqual(h.started, [], `${what}: nothing scanned`);
   }
   // `?path=` is a person's request: the VS Code extension's "Scan with TreeMap" on a folder they chose.
   const asked = restore({ search: '?path=' + encodeURIComponent('/Users/x/Projects'), answer: (url) => assert.fail(`unexpected ${url}`) });
   await asked.run();
   assert.deepEqual(asked.started, ['/Users/x/Projects']);
   assert.deepEqual(asked.startedWith, [undefined], 'a folder someone asked for is started as theirs');
+  assert.equal(asked.settled, 1, 'and the tour hears the restore has settled');
+});
+
+test('a scan the person stopped while the restore was asking keeps its own name on the start screen', async () => {
+  const ROOTS = { roots: [{ rootPath: '/Users/x/corpus', count: 7, latestAt: 1, latestSize: 1 }] };
+  const h = restore({
+    answer: (url) => {
+      if (url.startsWith('/api/fs/list')) h.state.lastFolder = { path: '/Users/x/Desktop', outcome: 'stopped', reason: '', offered: true, size: null, at: 0 };
+      return url === '/api/scans' ? { scans: [] } : url === '/api/snapshots' ? ROOTS : { entries: [] };
+    },
+  });
+  await h.run();
+  assert.equal((h.state.lastFolder as { path: string }).path, '/Users/x/Desktop', 'the history does not replace it');
+  assert.equal(h.painted, 0, 'nor repaint over it');
 });

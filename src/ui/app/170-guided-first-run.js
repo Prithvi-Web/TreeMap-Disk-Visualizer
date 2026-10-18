@@ -12,10 +12,24 @@
  *  - Skippable at every step; completing OR skipping persists tourDone
  *    through settings, so a read-only portable session honestly forgets.
  */
-const tour = { active: false, step: 'welcome', wins: [], winIx: 0, added: [], unknownReason: '' };
+const tour = {
+  active: false, step: 'welcome', wins: [], winIx: 0, added: [], unknownReason: '',
+  // The boot restore has said whether this person has scanned before
+  // (tourBootSettled); until it has, a start asked for at boot waits (`wanted`).
+  booted: false, wanted: false,
+  // Someone who has scanned before is never walked through step 1 again (the
+  // owner, 17 Oct 2026): the start screen is their prompt, and the tour joins
+  // them at the map when their next scan lands (the TOPIC.scan subscriber).
+  deferred: false,
+};
 
-function tourMaybeStart(done) {
+/** Start the tour unless it is done or running. `asked`: Settings › Show the
+    welcome tour again — a person's request, which starts it whoever they are. */
+function tourMaybeStart(done, { asked = false } = {}) {
   if (done === true || tour.active) return;
+  if (!asked && !tour.booted) { tour.wanted = true; return; }
+  if (!asked && !state.root && state.scannedBefore) { tour.deferred = true; return; }
+  tour.deferred = false;
   tour.active = true;
   // Each run starts with nothing added, no wins and no reason (review F1.1):
   // Settings › Show the welcome tour again restarts it in the same session,
@@ -24,8 +38,20 @@ function tourMaybeStart(done) {
   tour.wins = [];
   tour.winIx = 0;
   tour.unknownReason = '';
-  tour.step = state.scanId ? 'map' : 'welcome';
+  // A first scan running when it starts — `?path=`, or a folder the desktop
+  // shell handed over — is the scanning step; a scan on screen is the map.
+  tour.step = state.scanning && !state.root ? 'scanning' : state.scanId ? 'map' : 'welcome';
   tourRender();
+}
+
+/** The boot restore has settled (240): a start the boot settings read asked
+    for while it was out is decided now, knowing whether this person has
+    scanned before. */
+function tourBootSettled() {
+  tour.booted = true;
+  if (!tour.wanted) return;
+  tour.wanted = false;
+  tourMaybeStart(false);
 }
 
 async function tourFinish(message) {
@@ -46,13 +72,14 @@ async function tourFinish(message) {
   } catch { /* a failed write means the tour offers itself again next launch — honest */ }
 }
 
-/** Where focus goes when the card closes holding it (G11): the welcome's own
-    "Choose a folder" while it is up, the map the card was describing, else the
-    view's first control, else the view's own tab — never <body>. */
+/** Where focus goes when the card closes holding it (G11): the start
+    screen's control while it is up (startLanding), the map the card was
+    describing, else the view's first control, else the view's own tab —
+    never <body>. */
 function tourLanding() {
   const shown = (el) => !!el && !el.disabled && el.getClientRects().length > 0;
-  const cta = $('emptyBrowseBtn');
-  if (shown(cta)) return cta;
+  const start = startLanding();
+  if (start) return start;
   const map = $('treemapCanvas');
   if (state.view === 'treemap' && shown(map)) return map;
   return activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
@@ -70,19 +97,19 @@ function tourRender(takeFocus = true) {
   const head = (label, skippable = true) => `<div class="tour-head"><span class="tour-step">${label}</span>` +
     (skippable ? '<button class="tour-skip" data-tour-skip>Skip the tour</button>' : '') + '</div>';
   if (tour.step === 'welcome') {
-    // The welcome behind the card already says what TreeMap does and holds the
-    // one primary action, "Choose a folder to get started" (G03): this card
-    // repeated its words and put a second blue button beside it, focused, so
-    // Enter scanned the home folder. It now offers the home folder as the
-    // alternative it is, and nothing the welcome already offers. Where the
-    // welcome is not on screen — Offloaded, Time Capsule, Autopilot, Fleet —
-    // the card is the one prompt, so it offers the folder browser itself
-    // (review F1.2); a change of view repaints it (tourFollowView).
+    // The start screen behind the card already says what TreeMap does, offers
+    // what to scan — the home folder among its choices — and holds the one
+    // primary action, "Choose a folder…" (G03; the owner, 17 Oct 2026): the
+    // card offers none of it again, and narrates. Where the start screen is
+    // not on screen — Offloaded, Time Capsule, Autopilot, Fleet — the card is
+    // the one prompt, so it offers the folder browser and the home folder
+    // itself, neither one blue (review F1.2); a change of view repaints it
+    // (tourFollowView).
     const home = state.system && state.system.homeDir;
     const heroBtn = $('emptyBrowseBtn');
     const pick = !(heroBtn && heroBtn.getClientRects().length > 0);
-    const actions = (pick ? '<button class="btn" data-tour-pick>Choose a folder</button>' : '') +
-      (home ? '<button class="btn" data-tour-home>Scan my home folder</button>' : '');
+    const actions = pick ? '<button class="btn" data-tour-pick>Choose a folder</button>' +
+      (home ? '<button class="btn" data-tour-home>Scan my home folder</button>' : '') : '';
     host.innerHTML = `
       ${head('Welcome · step 1 of 4')}
       <h4>${icon('treemap', 16)}Start with one folder</h4>
@@ -92,7 +119,7 @@ function tourRender(takeFocus = true) {
     // The path box names the folder about to be read, as the folder browser's
     // "Scan this folder" sets it: the scanning card names it from there, and
     // an earlier pick that failed or was stopped is not it (review F2.2).
-    if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { $('pathInput').value = home; startScan(home); });
+    if (pick && home) host.querySelector('[data-tour-home]').addEventListener('click', () => { $('pathInput').value = home; startScan(home); });
   } else if (tour.step === 'scanning') {
     // The click registered — say so. The old card kept offering "Scan my
     // home folder" for the whole scan, and a second press earned a red
@@ -169,9 +196,10 @@ function tourRender(takeFocus = true) {
   // The card takes focus so keyboard users land on its primary action — but
   // never out of a text field. A scan completing repaints this card, and
   // yanking the caret from someone mid-word is how a coach becomes a pest.
-  // On the welcome step the one primary on screen is the welcome's own
-  // "Choose a folder" while it is up (G03); otherwise the card's first
-  // action that can take it — a disabled "Already in the cart" cannot, and
+  // On the welcome step the start screen's control takes focus while it is
+  // up (startLanding: "Scan … again" just after a Stop, else "Choose a
+  // folder…", the one primary, G03); otherwise the card's first action that
+  // can take it — a disabled "Already in the cart" cannot, and
   // focus on the button it replaced would fall to <body>. Skip, which sits
   // apart in the header, only when the card has nothing else: the scanning
   // step, painted over the "Scan my home folder" that held focus (G11).
@@ -180,7 +208,7 @@ function tourRender(takeFocus = true) {
   // hidden field only at a later rendering step — to <body> (review F3.2).
   const active = document.activeElement;
   const typing = !!active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '') && active.getClientRects().length > 0;
-  const cta = tour.step === 'welcome' ? $('emptyBrowseBtn') : null;
+  const cta = tour.step === 'welcome' ? startLanding() : null;
   const primary = (cta && cta.getClientRects().length > 0 ? cta : null) || tourCardControl();
   if (primary && takeFocus && !typing) primary.focus();
 }
@@ -351,8 +379,18 @@ function tourScanFailed() {
 }
 
 // A scan landing while the welcome card is up means the user took the step —
-// move with them. Any later scans leave the tour where it is.
+// move with them. Any later scans leave the tour where it is. A tour held
+// back for someone who has scanned before starts here, at the map.
 subscribe(TOPIC.scan, () => {
+  if (tour.deferred && !tour.active) {
+    tour.deferred = false;
+    tour.active = true;
+    tour.added = [];
+    tour.wins = [];
+    tour.winIx = 0;
+    tour.unknownReason = '';
+    tour.step = 'scanning'; // moved to the map, and painted there, just below
+  }
   if (!tour.active) return;
   if (!(tour.step === 'welcome' || tour.step === 'scanning')) return;
   tour.step = 'map';
@@ -382,7 +420,7 @@ $('tourResetBtn').addEventListener('click', () => {
       // — so put the map on screen (QA finding 5: the card narrated a view
       // the user wasn't looking at).
       if (state.scanId && state.view !== 'treemap') switchView('treemap');
-      tourMaybeStart(false);
+      tourMaybeStart(false, { asked: true });
     } catch (e) { toast('Could not reset the tour: ' + e.message, 'error'); }
   })();
 });

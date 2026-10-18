@@ -599,6 +599,17 @@ const state = {
   // apart from "the newer scan is running fine".
   scanGen: 0,
   root: null,
+  // The folder the start screen names (the owner, 17 Oct 2026): the last one
+  // scanned, from the server (restoreLastSession), or the one whose scan was
+  // just stopped or failed with nothing on screen (noteLastFolder) —
+  // { path, size, at, outcome, reason, offered }. renderStartChoices paints it.
+  lastFolder: null,
+  // The folder the running or last started scan is of (startScan,
+  // startCloudScan): a Stop or a failure names it on the start screen.
+  scanningPath: null,
+  // Whether this person has scanned before — a scan the server holds, or a
+  // folder in the history (restoreLastSession). The tour reads it.
+  scannedBefore: false,
   pathIndex: new Map(),
   // Nodes resolved from the server for paths the pruned tree doesn't carry.
   // A path that isn't in the scan is cached as null — a real answer, not a miss.

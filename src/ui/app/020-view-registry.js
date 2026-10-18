@@ -310,8 +310,11 @@ const EMPTY_VIEW_LEADS = {
 const EMPTY_VIEW_LEAD_DEFAULT = 'Once a folder is scanned, this view fills in.';
 
 /** The empty state, for the view it stands in for (G02): the welcome on the
-    Dashboard, the view's own name, icon and sentence everywhere else. */
+    Dashboard, the view's own name, icon and sentence everywhere else — and,
+    for every one of them, the start screen's choices (240, the owner, 17 Oct
+    2026). Guarded: a page reader may lift this without the start screen. */
 function renderEmptyState(view) {
+  if (typeof renderStartChoices === 'function') renderStartChoices();
   const hero = view.id === 'dashboard';
   $('emptyHero').hidden = !hero;
   $('emptyForView').hidden = hero;
@@ -397,16 +400,41 @@ function activeViewControl() {
 }
 
 /**
+ * The start screen's control that takes focus, or null while the start
+ * screen is not on screen: its "Scan … again" right after a scan of that
+ * folder was stopped or failed — what the person was just doing (the owner,
+ * 17 Oct 2026) — else its one primary, "Choose a folder…" (G03).
+ */
+function startLanding() {
+  const shown = (el) => !!el && !el.disabled && el.getClientRects().length > 0;
+  const again = $('startAgainBtn');
+  if (shown(again) && again.classList.contains('start-retry')) return again;
+  const cta = $('emptyBrowseBtn');
+  return shown(cta) ? cta : null;
+}
+
+/**
  * Where focus goes when the control that held it has left the screen: the
- * empty state's "Choose a folder" while it is up — the one primary action
- * there (G03) — else the tour card's own control while the card is up, else
- * the first control of the view now up, else that view's tab. Never <body>
- * (G11, review F1.11, F2.6).
+ * start screen's control while it is up (startLanding) — else the tour
+ * card's own control while the card is up, else the first control of the
+ * view now up, else that view's tab. Never <body> (G11, review F1.11, F2.6).
  */
 function focusLanding() {
-  const cta = $('emptyBrowseBtn');
-  if (cta && cta.getClientRects().length > 0) return cta;
-  return tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  return startLanding() || tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+}
+
+/**
+ * After a scan ends with nothing on screen — stopped, or failed — focus goes
+ * to the start screen's control (startLanding) whenever nothing on screen
+ * holds it: Stop pressed with the mouse can leave it on <body>, and
+ * withFocusKept moves only focus that was on a control (the owner, 17 Oct
+ * 2026). Focus on a control still on screen stays where it is.
+ */
+function focusStartScreen() {
+  const at = document.activeElement;
+  if (at && at !== document.body && at.getClientRects().length > 0) return;
+  const to = startLanding();
+  if (to) to.focus({ preventScroll: true });
 }
 
 /**

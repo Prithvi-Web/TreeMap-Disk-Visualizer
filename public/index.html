@@ -2335,6 +2335,17 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 #view-offloaded:has(#offloadInfo:empty) #offloadSearchRow,
 #view-capsule:has(#capsuleInfo:empty) #capsuleSearchRow { display: none; }
 /* ── end G02 ── */
+/* ── The start screen's choices (the owner, 17 Oct 2026) ──
+   A row of plain buttons that wraps, between the explanation and the one
+   primary, "Choose a folder…" (G03). 44 px targets; a choice's second line —
+   a size and date, or "Whole drive" — is quieter by its size and ink. */
+#emptyState .start-last { margin: 0; }
+.start-choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 760px; }
+.start-choices:empty { display: none; }
+.start-choice { min-height: 44px; padding: 6px 16px; font-size: 13.5px; }
+.start-choice-txt { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.25; text-align: left; }
+.start-choice .start-sub { font-size: 11.5px; font-weight: 400; color: var(--text-2); }
+/* ── end start screen ── */
 /* ── v4 §9.2: the first-run coach card ── */
 #tourOverlay { position: fixed; inset: 0; z-index: 96; pointer-events: none; }
 #tourOverlay[hidden] { display: none; }
@@ -3911,7 +3922,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
          the welcome. Every other view that needs a scan says which view it is
          and what it will show (design pass G02): before, clicking Grid, Apps or
          Security put up this same welcome with no title of its own, and looked
-         like nothing had happened. One action serves them all. -->
+         like nothing had happened. The choices below serve them all. -->
     <div class="empty-hero" id="emptyHero">
       <svg class="mark" width="92" height="92" viewBox="0 0 26 26" aria-hidden="true">
         <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
@@ -3932,8 +3943,16 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <h1 id="emptyViewTitle"></h1>
       <p id="emptyViewLead"></p>
     </div>
+    <!-- The start screen (the owner, 17 Oct 2026): nothing is scanned because
+         the app opened — the person picks. The last folder comes first as
+         "Scan … again", then Desktop, Documents, Downloads, the home folder and
+         the whole drive, as renderStartChoices finds them on this machine; the
+         line above them names a folder whose scan was stopped or failed.
+         "Choose a folder…" is the one primary (G03) in every state. -->
+    <p class="start-last" id="startLast" role="status" hidden></p>
+    <div class="start-choices" id="startChoices" role="group" aria-label="Scan one of these"></div>
     <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
-      <span data-icon="folder"></span>Choose a folder to get started
+      <span data-icon="folder"></span>Choose a folder…
     </button>
   </section>
 
@@ -7343,6 +7362,17 @@ const state = {
   // apart from "the newer scan is running fine".
   scanGen: 0,
   root: null,
+  // The folder the start screen names (the owner, 17 Oct 2026): the last one
+  // scanned, from the server (restoreLastSession), or the one whose scan was
+  // just stopped or failed with nothing on screen (noteLastFolder) —
+  // { path, size, at, outcome, reason, offered }. renderStartChoices paints it.
+  lastFolder: null,
+  // The folder the running or last started scan is of (startScan,
+  // startCloudScan): a Stop or a failure names it on the start screen.
+  scanningPath: null,
+  // Whether this person has scanned before — a scan the server holds, or a
+  // folder in the history (restoreLastSession). The tour reads it.
+  scannedBefore: false,
   pathIndex: new Map(),
   // Nodes resolved from the server for paths the pruned tree doesn't carry.
   // A path that isn't in the scan is cached as null — a real answer, not a miss.
@@ -7983,8 +8013,11 @@ const EMPTY_VIEW_LEADS = {
 const EMPTY_VIEW_LEAD_DEFAULT = 'Once a folder is scanned, this view fills in.';
 
 /** The empty state, for the view it stands in for (G02): the welcome on the
-    Dashboard, the view's own name, icon and sentence everywhere else. */
+    Dashboard, the view's own name, icon and sentence everywhere else — and,
+    for every one of them, the start screen's choices (240, the owner, 17 Oct
+    2026). Guarded: a page reader may lift this without the start screen. */
 function renderEmptyState(view) {
+  if (typeof renderStartChoices === 'function') renderStartChoices();
   const hero = view.id === 'dashboard';
   $('emptyHero').hidden = !hero;
   $('emptyForView').hidden = hero;
@@ -8070,16 +8103,41 @@ function activeViewControl() {
 }
 
 /**
+ * The start screen's control that takes focus, or null while the start
+ * screen is not on screen: its "Scan … again" right after a scan of that
+ * folder was stopped or failed — what the person was just doing (the owner,
+ * 17 Oct 2026) — else its one primary, "Choose a folder…" (G03).
+ */
+function startLanding() {
+  const shown = (el) => !!el && !el.disabled && el.getClientRects().length > 0;
+  const again = $('startAgainBtn');
+  if (shown(again) && again.classList.contains('start-retry')) return again;
+  const cta = $('emptyBrowseBtn');
+  return shown(cta) ? cta : null;
+}
+
+/**
  * Where focus goes when the control that held it has left the screen: the
- * empty state's "Choose a folder" while it is up — the one primary action
- * there (G03) — else the tour card's own control while the card is up, else
- * the first control of the view now up, else that view's tab. Never <body>
- * (G11, review F1.11, F2.6).
+ * start screen's control while it is up (startLanding) — else the tour
+ * card's own control while the card is up, else the first control of the
+ * view now up, else that view's tab. Never <body> (G11, review F1.11, F2.6).
  */
 function focusLanding() {
-  const cta = $('emptyBrowseBtn');
-  if (cta && cta.getClientRects().length > 0) return cta;
-  return tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+  return startLanding() || tourCardControl() || activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
+}
+
+/**
+ * After a scan ends with nothing on screen — stopped, or failed — focus goes
+ * to the start screen's control (startLanding) whenever nothing on screen
+ * holds it: Stop pressed with the mouse can leave it on <body>, and
+ * withFocusKept moves only focus that was on a control (the owner, 17 Oct
+ * 2026). Focus on a control still on screen stays where it is.
+ */
+function focusStartScreen() {
+  const at = document.activeElement;
+  if (at && at !== document.body && at.getClientRects().length > 0) return;
+  const to = startLanding();
+  if (to) to.focus({ preventScroll: true });
 }
 
 /**
@@ -8704,6 +8762,8 @@ async function loadSystem() {
     // The tour's welcome card offers "scan my home folder" only once it
     // knows where home is; repaint it if it went up first (§9.2).
     if (typeof tour !== 'undefined' && tour.active && tour.step === 'welcome') tourRender();
+    // The start screen offers the folders this answer names (240).
+    if (typeof renderStartChoices === 'function') renderStartChoices();
     $('sysHost').textContent = sys.hostname;
     $('sysPlatform').textContent = ({ darwin:'macOS', win32:'Windows', linux:'Linux' })[sys.platform] || sys.platform;
     paintDiskFacts(sys);
@@ -9362,19 +9422,25 @@ async function stopScan() {
   // scan — a first run, or a tree the index painted — and then the views take
   // their existing "no scan yet" branch, which openFromIndex relies on too.
   state.scanId = state.settledScanId || null;
+  // With no tree on screen the start screen comes back naming the folder that
+  // was being scanned, "Scan … again" first among its choices (the owner,
+  // 17 Oct 2026: "a scan should work again after being stopped"). A tree
+  // still on screen — a rescan stopped — stays, with its own scan behind it.
+  if (!state.root) noteLastFolder('stopped');
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
   status.innerHTML = icon('stop', 14) + '<span>Scan stopped by user</span>';
   restoreDashboardPanels();
-  // And put the never-scanned empty state back if that is where we are — over
-  // the Dashboard's Stop, which held focus if it was pressed from the keyboard
+  // And put the start screen back if that is where we are — over the
+  // Dashboard's Stop, which held focus if it was pressed from the keyboard
   // (review F2.6).
   withFocusKept(() => { switchView(state.view); });
   // v4 §9.2 — the tour's "Reading your files…" card goes back to the welcome,
-  // with its buttons, now the welcome is on screen: nothing is being read
-  // (review F2.2).
+  // now the start screen is on screen: nothing is being read (review F2.2).
   tourScanFailed();
+  // Focus on "Scan … again", never <body>, however Stop was pressed.
+  focusStartScreen();
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).
@@ -9865,6 +9931,7 @@ async function buildIndexInBackground(path, stats) {
 
 async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
+  state.scanningPath = path; // a Stop or a failure names it on the start screen (noteLastFolder)
   closeEventSource();
   disableLive({ keepWanted: true }); // the new scanId gets a fresh watch session
 
@@ -9929,10 +9996,11 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
       // `quiet`, which says only that an index paint is already on screen:
       // keyed on `quiet`, every rescan of an indexed folder — ⌘R, Rescan,
       // Scan — ran at the background budget (B04). A caller nobody need be
-      // present for passes `unattended`: the boot-time restore (review F1.2)
-      // and the rescan at the end of a job that runs on after its click — an
-      // offload, the cart's undo, a video re-encode (review F2.1). Neither may
-      // ask for elevation. The rest are a person's click, drop or request.
+      // present for passes `unattended`: the rescan at the end of a job that
+      // runs on after its click — an offload, the cart's undo, a video
+      // re-encode (review F2.1) — which may not ask for elevation. (The boot
+      // restore, review F1.2, starts no scan at all now: the owner, 17 Oct
+      // 2026.) The rest are a person's click, drop or request.
       body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !opts.unattended }),
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
@@ -9940,7 +10008,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   } catch (e) {
     // A failed background refresh keeps the indexed tree on screen.
     if (quiet) { quietRescanFailed(e); return; }
-    failScan(e.message);
+    failScan(e.message, e); // the error: a folder the server refused is not offered again
   }
 }
 
@@ -10189,6 +10257,7 @@ function followScanProgress(scanId, path, fast, t0) {
 /** Scan a connected cloud account — registers and follows like a disk scan. */
 async function startCloudScan(providerId, providerName) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
+  state.scanningPath = 'cloud://' + providerId; // named nowhere if it stops (noteLastFolder)
   closeEventSource();
   disableLive({ keepWanted: false }); // watching makes no sense on a cloud tree
   try {
@@ -10224,7 +10293,13 @@ function endScanChrome() {
   $('scanStatus').classList.remove('fx-shimmer-text');
 }
 
-function failScan(message) {
+/** Statuses with which the server refuses the folder itself — malformed or
+    blocked (400), not allowed or not readable (403), not there (404): a
+    retry would only hear the same answer, so a failed scan's folder is not
+    offered again for them (failScan). */
+const FOLDER_REFUSED_STATUSES = [400, 403, 404];
+
+function failScan(message, err = null) {
   endScanChrome();
   const status = $('scanStatus');
   status.classList.add('error');
@@ -10232,14 +10307,34 @@ function failScan(message) {
   $('scanAnnounce').textContent = 'Scan failed — ' + message;
   restoreDashboardPanels();
   toast(message, 'error');
-  // The welcome comes back over the Dashboard's path box, where focus was
-  // moved as the scan started: withFocusKept moves it on (review F2.6).
+  // With no tree on screen the start screen comes back naming the folder and
+  // why, and offers "Scan … again" for it — unless the server refused the
+  // folder itself, which is named but never offered: a path that answers an
+  // error is not a choice (the owner, 17 Oct 2026).
+  if (!state.root) noteLastFolder('failed', message, !(err && FOLDER_REFUSED_STATUSES.includes(err.status)));
+  // The start screen comes back over the Dashboard's path box, where focus
+  // was moved as the scan started: withFocusKept moves it on (review F2.6).
   withFocusKept(() => { switchView(state.view); });
-  // v4 §9.2 — the welcome card comes back, with its buttons: after the view,
-  // so the welcome's own "Choose a folder" is on screen when the card picks
-  // where focus goes (review F1.12).
+  // v4 §9.2 — the welcome card comes back: after the view, so the start
+  // screen is on screen when the card picks where focus goes (review F1.12).
   tourScanFailed();
+  focusStartScreen(); // on "Scan … again", as after a Stop, or on "Choose a folder…"
   drainScanQueue(); // a folder waiting behind this one still gets its turn
+}
+
+/**
+ * Name, on the start screen, the folder of the scan that just ended with no
+ * tree on screen — `outcome` 'stopped' or 'failed', with the failure's
+ * `reason` — and whether "Scan … again" is offered for it (the owner, 17 Oct
+ * 2026: "a scan should work again after being stopped"). The size and date
+ * the start screen held for the same folder stay with it. A cloud account's
+ * scan changes nothing there, as a cloud account in the history never did.
+ */
+function noteLastFolder(outcome, reason = '', offered = true) {
+  const p = state.scanningPath;
+  if (!p || p.startsWith('cloud://')) return;
+  const prev = state.lastFolder && state.lastFolder.path === p ? state.lastFolder : null;
+  state.lastFolder = { path: p, outcome, reason, offered, size: prev ? prev.size : null, at: prev ? prev.at : 0 };
 }
 
 /**
@@ -11429,9 +11524,10 @@ async function scanTheBox() {
 // check because the button was disabled mid-scan; now that the button is Stop,
 // an unguarded Enter in the path field would cancel the running scan instead.
 //
-// Refusing is right. Refusing in SILENCE was not: the app auto-scans the last
-// path at boot, so the very first thing a returning user can do is type a
-// different folder and press Enter — and for those seconds Enter did nothing
+// Refusing is right. Refusing in SILENCE was not: the app then scanned the
+// last path at boot (it no longer does: the owner, 17 Oct 2026), so the very
+// first thing a returning user could do was type a different folder and press
+// Enter — and for those seconds Enter did nothing
 // at all, with no scan and no message. That reads as a broken input, and it
 // fooled two people testing this build before it was noticed. The house rule
 // is the one at tmRunGrammarQuery: say so rather than doing nothing. The
@@ -30925,10 +31021,24 @@ function cmdkScrollSel() {
  *  - Skippable at every step; completing OR skipping persists tourDone
  *    through settings, so a read-only portable session honestly forgets.
  */
-const tour = { active: false, step: 'welcome', wins: [], winIx: 0, added: [], unknownReason: '' };
+const tour = {
+  active: false, step: 'welcome', wins: [], winIx: 0, added: [], unknownReason: '',
+  // The boot restore has said whether this person has scanned before
+  // (tourBootSettled); until it has, a start asked for at boot waits (`wanted`).
+  booted: false, wanted: false,
+  // Someone who has scanned before is never walked through step 1 again (the
+  // owner, 17 Oct 2026): the start screen is their prompt, and the tour joins
+  // them at the map when their next scan lands (the TOPIC.scan subscriber).
+  deferred: false,
+};
 
-function tourMaybeStart(done) {
+/** Start the tour unless it is done or running. `asked`: Settings › Show the
+    welcome tour again — a person's request, which starts it whoever they are. */
+function tourMaybeStart(done, { asked = false } = {}) {
   if (done === true || tour.active) return;
+  if (!asked && !tour.booted) { tour.wanted = true; return; }
+  if (!asked && !state.root && state.scannedBefore) { tour.deferred = true; return; }
+  tour.deferred = false;
   tour.active = true;
   // Each run starts with nothing added, no wins and no reason (review F1.1):
   // Settings › Show the welcome tour again restarts it in the same session,
@@ -30937,8 +31047,20 @@ function tourMaybeStart(done) {
   tour.wins = [];
   tour.winIx = 0;
   tour.unknownReason = '';
-  tour.step = state.scanId ? 'map' : 'welcome';
+  // A first scan running when it starts — `?path=`, or a folder the desktop
+  // shell handed over — is the scanning step; a scan on screen is the map.
+  tour.step = state.scanning && !state.root ? 'scanning' : state.scanId ? 'map' : 'welcome';
   tourRender();
+}
+
+/** The boot restore has settled (240): a start the boot settings read asked
+    for while it was out is decided now, knowing whether this person has
+    scanned before. */
+function tourBootSettled() {
+  tour.booted = true;
+  if (!tour.wanted) return;
+  tour.wanted = false;
+  tourMaybeStart(false);
 }
 
 async function tourFinish(message) {
@@ -30959,13 +31081,14 @@ async function tourFinish(message) {
   } catch { /* a failed write means the tour offers itself again next launch — honest */ }
 }
 
-/** Where focus goes when the card closes holding it (G11): the welcome's own
-    "Choose a folder" while it is up, the map the card was describing, else the
-    view's first control, else the view's own tab — never <body>. */
+/** Where focus goes when the card closes holding it (G11): the start
+    screen's control while it is up (startLanding), the map the card was
+    describing, else the view's first control, else the view's own tab —
+    never <body>. */
 function tourLanding() {
   const shown = (el) => !!el && !el.disabled && el.getClientRects().length > 0;
-  const cta = $('emptyBrowseBtn');
-  if (shown(cta)) return cta;
+  const start = startLanding();
+  if (start) return start;
   const map = $('treemapCanvas');
   if (state.view === 'treemap' && shown(map)) return map;
   return activeViewControl() || document.querySelector('.tabbar button[aria-selected="true"]');
@@ -30983,19 +31106,19 @@ function tourRender(takeFocus = true) {
   const head = (label, skippable = true) => `<div class="tour-head"><span class="tour-step">${label}</span>` +
     (skippable ? '<button class="tour-skip" data-tour-skip>Skip the tour</button>' : '') + '</div>';
   if (tour.step === 'welcome') {
-    // The welcome behind the card already says what TreeMap does and holds the
-    // one primary action, "Choose a folder to get started" (G03): this card
-    // repeated its words and put a second blue button beside it, focused, so
-    // Enter scanned the home folder. It now offers the home folder as the
-    // alternative it is, and nothing the welcome already offers. Where the
-    // welcome is not on screen — Offloaded, Time Capsule, Autopilot, Fleet —
-    // the card is the one prompt, so it offers the folder browser itself
-    // (review F1.2); a change of view repaints it (tourFollowView).
+    // The start screen behind the card already says what TreeMap does, offers
+    // what to scan — the home folder among its choices — and holds the one
+    // primary action, "Choose a folder…" (G03; the owner, 17 Oct 2026): the
+    // card offers none of it again, and narrates. Where the start screen is
+    // not on screen — Offloaded, Time Capsule, Autopilot, Fleet — the card is
+    // the one prompt, so it offers the folder browser and the home folder
+    // itself, neither one blue (review F1.2); a change of view repaints it
+    // (tourFollowView).
     const home = state.system && state.system.homeDir;
     const heroBtn = $('emptyBrowseBtn');
     const pick = !(heroBtn && heroBtn.getClientRects().length > 0);
-    const actions = (pick ? '<button class="btn" data-tour-pick>Choose a folder</button>' : '') +
-      (home ? '<button class="btn" data-tour-home>Scan my home folder</button>' : '');
+    const actions = pick ? '<button class="btn" data-tour-pick>Choose a folder</button>' +
+      (home ? '<button class="btn" data-tour-home>Scan my home folder</button>' : '') : '';
     host.innerHTML = `
       ${head('Welcome · step 1 of 4')}
       <h4>${icon('treemap', 16)}Start with one folder</h4>
@@ -31005,7 +31128,7 @@ function tourRender(takeFocus = true) {
     // The path box names the folder about to be read, as the folder browser's
     // "Scan this folder" sets it: the scanning card names it from there, and
     // an earlier pick that failed or was stopped is not it (review F2.2).
-    if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { $('pathInput').value = home; startScan(home); });
+    if (pick && home) host.querySelector('[data-tour-home]').addEventListener('click', () => { $('pathInput').value = home; startScan(home); });
   } else if (tour.step === 'scanning') {
     // The click registered — say so. The old card kept offering "Scan my
     // home folder" for the whole scan, and a second press earned a red
@@ -31082,9 +31205,10 @@ function tourRender(takeFocus = true) {
   // The card takes focus so keyboard users land on its primary action — but
   // never out of a text field. A scan completing repaints this card, and
   // yanking the caret from someone mid-word is how a coach becomes a pest.
-  // On the welcome step the one primary on screen is the welcome's own
-  // "Choose a folder" while it is up (G03); otherwise the card's first
-  // action that can take it — a disabled "Already in the cart" cannot, and
+  // On the welcome step the start screen's control takes focus while it is
+  // up (startLanding: "Scan … again" just after a Stop, else "Choose a
+  // folder…", the one primary, G03); otherwise the card's first action that
+  // can take it — a disabled "Already in the cart" cannot, and
   // focus on the button it replaced would fall to <body>. Skip, which sits
   // apart in the header, only when the card has nothing else: the scanning
   // step, painted over the "Scan my home folder" that held focus (G11).
@@ -31093,7 +31217,7 @@ function tourRender(takeFocus = true) {
   // hidden field only at a later rendering step — to <body> (review F3.2).
   const active = document.activeElement;
   const typing = !!active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '') && active.getClientRects().length > 0;
-  const cta = tour.step === 'welcome' ? $('emptyBrowseBtn') : null;
+  const cta = tour.step === 'welcome' ? startLanding() : null;
   const primary = (cta && cta.getClientRects().length > 0 ? cta : null) || tourCardControl();
   if (primary && takeFocus && !typing) primary.focus();
 }
@@ -31264,8 +31388,18 @@ function tourScanFailed() {
 }
 
 // A scan landing while the welcome card is up means the user took the step —
-// move with them. Any later scans leave the tour where it is.
+// move with them. Any later scans leave the tour where it is. A tour held
+// back for someone who has scanned before starts here, at the map.
 subscribe(TOPIC.scan, () => {
+  if (tour.deferred && !tour.active) {
+    tour.deferred = false;
+    tour.active = true;
+    tour.added = [];
+    tour.wins = [];
+    tour.winIx = 0;
+    tour.unknownReason = '';
+    tour.step = 'scanning'; // moved to the map, and painted there, just below
+  }
   if (!tour.active) return;
   if (!(tour.step === 'welcome' || tour.step === 'scanning')) return;
   tour.step = 'map';
@@ -31295,7 +31429,7 @@ $('tourResetBtn').addEventListener('click', () => {
       // — so put the map on screen (QA finding 5: the card narrated a view
       // the user wasn't looking at).
       if (state.scanId && state.view !== 'treemap') switchView('treemap');
-      tourMaybeStart(false);
+      tourMaybeStart(false, { asked: true });
     } catch (e) { toast('Could not reset the tour: ' + e.message, 'error'); }
   })();
 });
@@ -39718,6 +39852,147 @@ window.addEventListener('drop', async (e) => {
 });
 /* ── end drop ── */
 
+/* ── The start screen (the owner, 17 Oct 2026) ──
+   "When you open TreeMap it automatically runs a scan of the entire disk but
+   ideally users should be able to pick the folder for example desktop or if
+   they actually want a full disk scan." Nothing is scanned because the app
+   opened: the empty state that stands in for every view that needs a scan
+   offers what to scan, and the person picks. renderEmptyState (020) paints it
+   each time it comes up; the system answer, the disk layout's names and the
+   boot restore paint it again as each arrives. */
+
+/* Declared before the boot below paints the first view, which paints the
+   start screen: a `let` or `const` read before its declaration throws, and
+   would stop the page script there (tests/coreScanFlow.test.ts). */
+/** The folders under the home folder the start screen offers, in order, by their names on disk. */
+const START_FOLDERS = ['Desktop', 'Documents', 'Downloads'];
+
+/** Whether the disk layout has been asked for the drives' names this page load (startNameDrives). */
+let startDrivesAsked = false;
+/** The choices on screen, and the markup they were painted from: a paint that would change nothing leaves the buttons in place. */
+let startShown = [];
+let startPainted = null;
+
+/** A folder's name on the start screen: a whole drive by the folder picker's name for it — the startup disk's own, "Macintosh HD" — anything else by its last name. */
+function startFolderName(p, drives) {
+  const drive = drives.find((d) => d.path === p);
+  return drive ? drive.name : lastPathSegment(p);
+}
+
+/**
+ * The start screen's choices, in order, each { path, name, icon, sub, again,
+ * drive }: the folder `last` names first — never a cloud account's: the
+ * restore and noteLastFolder keep those out — as "Scan … again", when the server
+ * can open it — with its size and date when a scan of it finished; then
+ * Desktop, Documents, Downloads and the home folder, only as the server found
+ * them on this machine (GET /api/system's commonDirs, each looked at there,
+ * as the folder picker's shortcuts are); then each whole drive as the folder
+ * picker names it (browseWholeDrives). A folder is offered once, where it
+ * comes first.
+ */
+function startChoiceList(sys, last, drives) {
+  const out = [];
+  const add = (c) => { if (c.path && !out.some((x) => x.path === c.path)) out.push(c); };
+  if (last && last.offered && last.path) {
+    const sized = typeof last.size === 'number' && last.at > 0;
+    add({ path: last.path, name: `Scan ${startFolderName(last.path, drives)} again`, icon: 'refresh', again: true,
+      sub: sized ? `${formatBytes(last.size)} · ${formatDate(last.at)}` : '' });
+  }
+  const home = sys && sys.homeDir;
+  const dirs = sys && Array.isArray(sys.commonDirs) ? sys.commonDirs : [];
+  for (const name of START_FOLDERS) {
+    const d = dirs.find((p) => p !== home && lastPathSegment(p) === name);
+    if (d) add({ path: d, name, icon: 'folder', sub: '' });
+  }
+  if (home && dirs.includes(home)) add({ path: home, name: 'Home folder', icon: 'folder', sub: '' });
+  for (const d of drives) add({ path: d.path, name: d.name, icon: 'hardDrive', sub: 'Whole drive', drive: true });
+  return out;
+}
+
+/** The sentence above the choices about the folder `last` names, or '' when there is nothing to say. */
+function startLastLine(last) {
+  if (!last || !last.path) return '';
+  const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
+  if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
+  if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
+  if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
+  if (last.outcome === 'unreadable') return `Couldn’t reopen your last scan of ${last.path} (${last.reason}).`;
+  return '';
+}
+
+/**
+ * Paint the start screen's line and choices from what the page holds now.
+ * "Scan … again" for a scan just stopped or failed carries `start-retry`,
+ * which makes it where focus lands (startLanding). A choice that held focus
+ * through a repaint keeps it on its new button.
+ */
+function renderStartChoices() {
+  const host = $('startChoices');
+  const line = $('startLast');
+  if (!host || !line) return;
+  const sys = state.system || {};
+  const last = state.lastFolder;
+  const drives = browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir);
+  const words = startLastLine(last);
+  line.textContent = words;
+  line.hidden = !words;
+  const list = startChoiceList(sys, last, drives);
+  const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
+  const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry ? ' start-retry' : ''}` : ''}"` +
+    `${c.again ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +
+    `${icon(c.icon, 16)}<span class="start-choice-txt"><span class="start-choice-nm">${escapeHtml(c.name)}</span>` +
+    `${c.sub ? `<span class="start-sub">${escapeHtml(c.sub)}</span>` : ''}</span></button>`).join('');
+  if (html !== startPainted) {
+    const at = document.activeElement;
+    const held = at && host.contains(at) ? startShown[Number(at.getAttribute('data-start-ix'))] : null;
+    host.innerHTML = html;
+    startPainted = html;
+    startShown = list;
+    const buttons = host.querySelectorAll('[data-start-ix]');
+    buttons.forEach((b) => {
+      const c = list[Number(b.getAttribute('data-start-ix'))];
+      b.addEventListener('click', () => scanStartChoice(c.path));
+    });
+    const again = held ? list.findIndex((c) => c.path === held.path) : -1;
+    if (again !== -1) buttons[again].focus({ preventScroll: true });
+  }
+  void startNameDrives();
+}
+
+/**
+ * A choice pressed: scanned as the folder picker's "Scan this folder" scans
+ * — the Scan card's box names it, and startScan runs it as a person's scan
+ * (interactive), with the Full Disk Access notice and the "Stay on this
+ * drive" setting the Scan button's scans have.
+ */
+function scanStartChoice(path) {
+  $('pathInput').value = path;
+  maybeShowFastRescan();
+  void startScan(path);
+}
+
+/**
+ * Ask the disk layout, once a page load, for the names the folder picker
+ * gives the whole drives (browseWholeDrives over topologyAnswer, shared with
+ * the picker through browseDrivesSeen), then paint the choices with them.
+ * Off macOS and Windows the names need no layout; until it answers, and
+ * where it cannot, the names that need none stand ("Startup disk").
+ */
+async function startNameDrives() {
+  const sys = state.system || {};
+  if (startDrivesAsked || browseDrivesSeen || (sys.platform !== 'darwin' && sys.platform !== 'win32')) return;
+  const cap = state.capabilities && state.capabilities.volumeTopology;
+  if (cap && cap.available === false) return;
+  startDrivesAsked = true;
+  let topo = null;
+  try { topo = await topologyAnswer(false); } catch { topo = null; }
+  if (!topo) return;
+  if (!browseDrivesSeen) browseDrivesSeen = browseWholeDrives(sys.platform, topo, sys.homeDir);
+  renderStartChoices();
+}
+
+/* ── end start screen ── */
+
 /* ───────────────────────────── Boot ───────────────────────────── */
 switchView('dashboard');
 loadSystem();
@@ -39728,18 +40003,16 @@ loadCapabilities();
 // glyphs and tooltip lines, never the app.
 loadNotes();
 
-/* Session restore: the app opens where it left off. The newest completed scan
-   is still in the server's memory — /api/scans lists nothing else — so it is
-   REOPENED: its counters and its first frame, painted through finishScan as
-   its completion was, and no walk (QA D57: every reload used to walk the
-   folder again). Only a scan that has gone by the time it is asked for (its
-   results expired, or the record was evicted) is scanned again, through the
-   exact path the Scan button takes, and the page says so — and so is the
-   newest folder in the history when nothing is held at all, after the
-   expiry or a relaunch (B38). The welcome screen is only for true first
-   runs: no history at all. Restore must never make boot worse: every
-   failure is swallowed to a warn and the app simply starts empty, exactly as
-   before this feature existed. */
+/* Session restore. The newest completed scan still in the server's memory —
+   /api/scans lists nothing else — is REOPENED: its counters and its first
+   frame, painted through finishScan as its completion was, and no walk (QA
+   D57: every reload used to walk the folder again). Otherwise nothing is
+   walked (the owner, 17 Oct 2026, superseding B38, which scanned the newest
+   folder in the history again at every relaunch — the owner's was the whole
+   disk): the start screen names that folder, with its size and date, and
+   offers it first among the choices, when the server can open it. Restore
+   must never make boot worse: every failure is swallowed to a warn and the
+   app simply starts at the start screen. */
 /**
  * `?path=<folder>` — scan that folder on boot instead of restoring.
  *
@@ -39775,38 +40048,48 @@ async function restoreLastSession() {
       return;
     }
     const { scans } = await api('/api/scans');
-    let last = scans && scans[0];
-    if (!last || !last.rootPath) {
+    const held = scans && scans[0];
+    let last;
+    if (held && held.rootPath) {
+      state.scannedBefore = true;
+      if (held.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
+      if (state.root || state.scanning) return;          // the user beat us to it
+      const reopen = held.scanId ? await reopenScan(held) : { outcome: 'gone' };
+      if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
+      // Gone (expired or evicted), or not reopened (review M2): named and
+      // offered, never walked.
+      last = { path: held.rootPath, size: held.totalSize, at: held.finishedAt,
+        outcome: reopen.outcome === 'failed' ? 'unreadable' : 'history', reason: reopen.reason || '' };
+    } else {
       // Nothing held: the scans expired (30 minutes after they finished), or
       // the desktop app was relaunched — they live in the server's memory and
-      // die with it. The history on disk still names the folder last scanned,
-      // so this is the "gone" case, not a first run (B38: the welcome screen
-      // came up beside seven snapshots and a live index of the folder). Only
-      // an empty — or unreadable — history is a first run.
+      // die with it. The history on disk still names the folder last scanned
+      // (B38). Only an empty — or unreadable — history is a first run.
       const history = await api('/api/snapshots').catch(() => null);
       const newest = history && Array.isArray(history.roots) ? history.roots[0] : null;
       if (!newest || !newest.rootPath) return;          // true first run
-      last = { rootPath: newest.rootPath, scanId: null };
+      state.scannedBefore = true;
+      if (newest.rootPath.startsWith('cloud://')) return; // a cloud account is not offered from here
+      last = { path: newest.rootPath, size: newest.latestSize, at: newest.latestAt, outcome: 'history', reason: '' };
     }
-    if (last.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
-    if (state.root || state.scanning) return;          // the user beat us to it
-    const reopen = last.scanId ? await reopenScan(last) : { outcome: 'gone' };
-    if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
-    // Pre-flight with the picker's own listing endpoint, so a moved or
-    // deleted folder falls back to the welcome screen instead of a boot error.
-    await api('/api/fs/list?path=' + encodeURIComponent(last.rootPath));
-    if (state.root || state.scanning) return;
-    showRestoredPath(last.rootPath);
-    toast(reopen.outcome === 'gone'
-      ? `Your last scan of ${last.rootPath} is no longer held — scanning it again.`
-      : `Couldn’t reopen your last scan of ${last.rootPath} (${reopen.reason}) — scanning it again.`);
-    // Nobody pressed anything: the page is putting back what was on screen.
-    // Sent as unattended, it runs at the background budget and never raises
-    // an administrator prompt at launch (review F1.2). `?path=` above is a
-    // person's own request, and goes as theirs.
-    await startScan(last.rootPath, { unattended: true });
+    // Offered only where the server can open it — the picker's own listing
+    // endpoint: a moved or deleted folder is named with why, never offered.
+    let offered = true;
+    try {
+      await api('/api/fs/list?path=' + encodeURIComponent(last.path));
+    } catch (e) {
+      offered = false;
+      last.reason = (e && e.message) || '';
+    }
+    // The person moved first — a scan started, or one stopped, which names its own folder.
+    if (state.root || state.scanning || state.lastFolder) return;
+    state.lastFolder = { ...last, offered };
+    renderStartChoices();
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
+  } finally {
+    // The tour waits for this answer: whether this person has scanned before (170).
+    tourBootSettled();
   }
 }
 
@@ -39832,7 +40115,8 @@ function showRestoredPath(p) {
  * fetched, which then owns the screen; 'gone' when the record is no longer
  * there (a 404: expired or evicted); or 'failed', with the `reason`, when the
  * asking failed in a way that says nothing about whether the scan is still
- * held (review M2) — the caller scans again either way, and says which.
+ * held (review M2). Either way the caller walks nothing: the start screen
+ * names the folder and offers it, and says which (the owner, 17 Oct 2026).
  */
 async function reopenScan(last) {
   const id = encodeURIComponent(last.scanId);

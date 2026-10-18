@@ -873,7 +873,8 @@ test('the Dashboard\'s columns are balanced: Drive Health and Cost to Keep sit i
 
 test('a failed background rescan clears the spinner, the skeletons and the Stop button — and says so', () => {
   const req = slice('async function startScanRequest', 'function followScanProgress(scanId, path, fast, t0) {');
-  assert.match(req, /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message\)/, 'the quiet short-circuit is still ahead of failScan');
+  // failScan is handed the error too: a folder the server refused is not offered again (tests/coreScanFlow.test.ts).
+  assert.match(req, /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message, e\)/, 'the quiet short-circuit is still ahead of failScan');
   assert.match(req, /if \(quiet\) \{ quietRescanFailed\(e\); return; \}/, 'but it no longer returns in silence');
   const fn = braced('function quietRescanFailed(');
   const { $, els } = makeDom();
@@ -1276,7 +1277,10 @@ test('a scan a person starts is sent as theirs (interactive) whether or not the 
   assert.deepEqual(h.chrome.map((c) => !!c.quiet), [true, true], 'both chrome calls are quiet: the painted tree is not wiped');
 });
 
-test('a scan nobody started — the boot-time restore — is never sent as a person\'s, index or no index (B04 review F1.2)', async () => {
+test('a scan nobody started — the rescan at the end of an offload or an undo — is never sent as a person\'s, index or no index (B04 review F1.2)', async () => {
+  // (The boot restore this was written for starts no scan at all now: the
+  // owner, 17 Oct 2026, superseding B38 — tests/coreScanFlow.test.ts. The
+  // jobs below still pass `unattended`.)
   // Review F1.2: B38 made the boot restore routine (every relaunch, every
   // reload past the 30-minute expiry), and B04 sent every startScan as
   // interactive — the one kind that runs Automatic at Turbo and, with the

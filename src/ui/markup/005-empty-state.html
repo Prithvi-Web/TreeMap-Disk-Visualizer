@@ -4,7 +4,7 @@
          the welcome. Every other view that needs a scan says which view it is
          and what it will show (design pass G02): before, clicking Grid, Apps or
          Security put up this same welcome with no title of its own, and looked
-         like nothing had happened. One action serves them all. -->
+         like nothing had happened. The choices below serve them all. -->
     <div class="empty-hero" id="emptyHero">
       <svg class="mark" width="92" height="92" viewBox="0 0 26 26" aria-hidden="true">
         <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
@@ -25,7 +25,15 @@
       <h1 id="emptyViewTitle"></h1>
       <p id="emptyViewLead"></p>
     </div>
+    <!-- The start screen (the owner, 17 Oct 2026): nothing is scanned because
+         the app opened — the person picks. The last folder comes first as
+         "Scan … again", then Desktop, Documents, Downloads, the home folder and
+         the whole drive, as renderStartChoices finds them on this machine; the
+         line above them names a folder whose scan was stopped or failed.
+         "Choose a folder…" is the one primary (G03) in every state. -->
+    <p class="start-last" id="startLast" role="status" hidden></p>
+    <div class="start-choices" id="startChoices" role="group" aria-label="Scan one of these"></div>
     <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
-      <span data-icon="folder"></span>Choose a folder to get started
+      <span data-icon="folder"></span>Choose a folder…
     </button>
   </section>

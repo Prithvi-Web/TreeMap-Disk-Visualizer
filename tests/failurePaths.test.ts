@@ -278,6 +278,10 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
     withFocusKept: (change: () => void) => { change(); },
     // Stop puts the tour's welcome card back; what that card does is tests/firstRun.test.ts's (review F2.2).
     tourScanFailed: () => {},
+    // With nothing on screen Stop names the folder on the start screen and lands focus on "Scan … again":
+    // tests/coreScanFlow.test.ts's (the owner, 17 Oct 2026).
+    noteLastFolder: () => {},
+    focusStartScreen: () => {},
     cancelScanById: cancel,
     // Stop means stop: folders dropped behind this one are waiting in the scan
     // queue, and starting the next of them would be the opposite of what the
@@ -399,6 +403,8 @@ function scanStartHarness(indexed: boolean) {
     renderIndexBadge: noop, renderIndexLine: noop, indexTree: noop, switchView: noop, clearScanQueue: noop, restoreDashboardPanels: noop,
     // Where focus goes when the chrome hides the button that held it is tests/firstRun.test.ts's (review F1.11).
     withFocusKept: (change: () => void) => { change(); },
+    // What the start screen says and where focus lands after a Stop: tests/coreScanFlow.test.ts's.
+    noteLastFolder: noop, focusStartScreen: noop,
     followScanProgress: (scanId: string) => { log.push(`follow ${scanId}`); },
     quietRescanFailed: () => { log.push('quiet rescan failed'); }, failScan: (m: string) => { log.push(`failed: ${m}`); },
     INSTANT_OPEN_NODES: 25000,

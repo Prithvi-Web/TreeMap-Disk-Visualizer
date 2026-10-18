@@ -229,7 +229,7 @@ test('the three repaired assertions bite: with the flag deleted, only the new on
   );
   assert.doesNotMatch(
     scanUnguarded,
-    /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message\)/,
+    /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message, e\)/,
     'the return-before-failScan pairing catches it',
   );
 });
@@ -919,12 +919,14 @@ test('the background refresh cannot wipe an already-painted tree', () => {
   // `if (quiet)` matches in half a dozen other functions.
   const fn = region('async function startScanRequest', 'function followScanProgress(scanId, path, fast, t0) {');
   // Pinned as the pairing, not the token: `quiet` has to short-circuit inside
-  // the catch, BEFORE failScan gets to tear the chrome down. A `quiet` check
+  // the catch, BEFORE failScan gets to tear the chrome down. failScan is handed the
+  // error with its message: a folder the server refused is not offered again
+  // (tests/coreScanFlow.test.ts). A `quiet` check
   // anywhere else in the function would leave the indexed tree being wiped by
   // a rescan the user never asked for.
   assert.match(
     fn,
-    /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message\)/,
+    /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message, e\)/,
     'a failed background rescan returns out of the catch instead of reaching failScan',
   );
 });
@@ -2561,7 +2563,8 @@ test('the off state says plainly that nothing is being shared', () => {
 
 /* ══════════════ Session restore (the app opens where it left off) ══════════════ */
 
-test('boot restores the last scanned folder through the normal scan path', () => {
+test('boot reopens a scan the server still holds and walks nothing else: the start screen names the last folder (the owner, 17 Oct 2026, superseding B38)', () => {
+  // tests/coreScanFlow.test.ts executes it; this pins its shape.
   const code = appCode();
   const start = code.indexOf('async function restoreLastSession');
   assert.ok(start !== -1, 'restoreLastSession must exist');
@@ -2569,11 +2572,12 @@ test('boot restores the last scanned folder through the normal scan path', () =>
   assert.ok(end > start, 'and it must actually be invoked at boot');
   const fn = code.slice(start, end);
   assert.ok(fn.length > 0, 'restoreLastSession must be findable');
-  assert.match(fn, /\/api\/scans/, 'history comes from the completed-scans endpoint');
-  assert.match(fn, /\/api\/fs\/list\?path=/, 'a moved folder is pre-flighted, not errored at boot');
-  assert.match(fn, /cloud:\/\//, 'cloud scans are never auto-restored');
+  assert.match(fn, /\/api\/scans/, 'a held scan comes from the completed-scans endpoint');
+  assert.match(fn, /\/api\/fs\/list\?path=/, 'the last folder is offered only where the server can open it');
+  assert.match(fn, /cloud:\/\//, 'a cloud account is never offered from here');
   assert.match(fn, /state\.root \|\| state\.scanning/, 'a user action always wins the race');
-  assert.match(fn, /startScan\(/, 'restore goes through the same path the Scan button takes');
+  assert.deepEqual(fn.match(/startScan\(\w*/g), ['startScan(wanted'], 'the one scan restore starts is a folder someone asked for (?path=)');
+  assert.doesNotMatch(fn, /unattended/, 'and none that nobody asked for');
 });
 
 /* ══════════════ Stopping a scan (the Scan button becomes Stop) ══════════════ */

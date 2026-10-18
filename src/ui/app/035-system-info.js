@@ -7,6 +7,8 @@ async function loadSystem() {
     // The tour's welcome card offers "scan my home folder" only once it
     // knows where home is; repaint it if it went up first (§9.2).
     if (typeof tour !== 'undefined' && tour.active && tour.step === 'welcome') tourRender();
+    // The start screen offers the folders this answer names (240).
+    if (typeof renderStartChoices === 'function') renderStartChoices();
     $('sysHost').textContent = sys.hostname;
     $('sysPlatform').textContent = ({ darwin:'macOS', win32:'Windows', linux:'Linux' })[sys.platform] || sys.platform;
     paintDiskFacts(sys);

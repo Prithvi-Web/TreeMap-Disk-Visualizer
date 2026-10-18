@@ -152,19 +152,25 @@ async function stopScan() {
   // scan — a first run, or a tree the index painted — and then the views take
   // their existing "no scan yet" branch, which openFromIndex relies on too.
   state.scanId = state.settledScanId || null;
+  // With no tree on screen the start screen comes back naming the folder that
+  // was being scanned, "Scan … again" first among its choices (the owner,
+  // 17 Oct 2026: "a scan should work again after being stopped"). A tree
+  // still on screen — a rescan stopped — stays, with its own scan behind it.
+  if (!state.root) noteLastFolder('stopped');
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
   status.innerHTML = icon('stop', 14) + '<span>Scan stopped by user</span>';
   restoreDashboardPanels();
-  // And put the never-scanned empty state back if that is where we are — over
-  // the Dashboard's Stop, which held focus if it was pressed from the keyboard
+  // And put the start screen back if that is where we are — over the
+  // Dashboard's Stop, which held focus if it was pressed from the keyboard
   // (review F2.6).
   withFocusKept(() => { switchView(state.view); });
   // v4 §9.2 — the tour's "Reading your files…" card goes back to the welcome,
-  // with its buttons, now the welcome is on screen: nothing is being read
-  // (review F2.2).
+  // now the start screen is on screen: nothing is being read (review F2.2).
   tourScanFailed();
+  // Focus on "Scan … again", never <body>, however Stop was pressed.
+  focusStartScreen();
 
   // Stopped before POST /api/scan answered — startScanRequest abandons that scan — or before it was
   // sent, while startScan asked the index — and startScan starts none (final review F1.7).

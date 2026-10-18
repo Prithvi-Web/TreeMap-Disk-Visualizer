@@ -305,6 +305,147 @@ window.addEventListener('drop', async (e) => {
 });
 /* ── end drop ── */
 
+/* ── The start screen (the owner, 17 Oct 2026) ──
+   "When you open TreeMap it automatically runs a scan of the entire disk but
+   ideally users should be able to pick the folder for example desktop or if
+   they actually want a full disk scan." Nothing is scanned because the app
+   opened: the empty state that stands in for every view that needs a scan
+   offers what to scan, and the person picks. renderEmptyState (020) paints it
+   each time it comes up; the system answer, the disk layout's names and the
+   boot restore paint it again as each arrives. */
+
+/* Declared before the boot below paints the first view, which paints the
+   start screen: a `let` or `const` read before its declaration throws, and
+   would stop the page script there (tests/coreScanFlow.test.ts). */
+/** The folders under the home folder the start screen offers, in order, by their names on disk. */
+const START_FOLDERS = ['Desktop', 'Documents', 'Downloads'];
+
+/** Whether the disk layout has been asked for the drives' names this page load (startNameDrives). */
+let startDrivesAsked = false;
+/** The choices on screen, and the markup they were painted from: a paint that would change nothing leaves the buttons in place. */
+let startShown = [];
+let startPainted = null;
+
+/** A folder's name on the start screen: a whole drive by the folder picker's name for it — the startup disk's own, "Macintosh HD" — anything else by its last name. */
+function startFolderName(p, drives) {
+  const drive = drives.find((d) => d.path === p);
+  return drive ? drive.name : lastPathSegment(p);
+}
+
+/**
+ * The start screen's choices, in order, each { path, name, icon, sub, again,
+ * drive }: the folder `last` names first — never a cloud account's: the
+ * restore and noteLastFolder keep those out — as "Scan … again", when the server
+ * can open it — with its size and date when a scan of it finished; then
+ * Desktop, Documents, Downloads and the home folder, only as the server found
+ * them on this machine (GET /api/system's commonDirs, each looked at there,
+ * as the folder picker's shortcuts are); then each whole drive as the folder
+ * picker names it (browseWholeDrives). A folder is offered once, where it
+ * comes first.
+ */
+function startChoiceList(sys, last, drives) {
+  const out = [];
+  const add = (c) => { if (c.path && !out.some((x) => x.path === c.path)) out.push(c); };
+  if (last && last.offered && last.path) {
+    const sized = typeof last.size === 'number' && last.at > 0;
+    add({ path: last.path, name: `Scan ${startFolderName(last.path, drives)} again`, icon: 'refresh', again: true,
+      sub: sized ? `${formatBytes(last.size)} · ${formatDate(last.at)}` : '' });
+  }
+  const home = sys && sys.homeDir;
+  const dirs = sys && Array.isArray(sys.commonDirs) ? sys.commonDirs : [];
+  for (const name of START_FOLDERS) {
+    const d = dirs.find((p) => p !== home && lastPathSegment(p) === name);
+    if (d) add({ path: d, name, icon: 'folder', sub: '' });
+  }
+  if (home && dirs.includes(home)) add({ path: home, name: 'Home folder', icon: 'folder', sub: '' });
+  for (const d of drives) add({ path: d.path, name: d.name, icon: 'hardDrive', sub: 'Whole drive', drive: true });
+  return out;
+}
+
+/** The sentence above the choices about the folder `last` names, or '' when there is nothing to say. */
+function startLastLine(last) {
+  if (!last || !last.path) return '';
+  const sentence = (s) => (/[.!?…]$/.test(s) ? s : s + '.');
+  if (last.outcome === 'stopped') return `You stopped the scan of ${last.path}.`;
+  if (last.outcome === 'failed') return `The scan of ${last.path} failed: ${sentence(last.reason || 'it did not finish')}`;
+  if (!last.offered) return `Your last scan was of ${last.path}, which cannot be opened now: ${sentence(last.reason || 'TreeMap could not open it')}`;
+  if (last.outcome === 'unreadable') return `Couldn’t reopen your last scan of ${last.path} (${last.reason}).`;
+  return '';
+}
+
+/**
+ * Paint the start screen's line and choices from what the page holds now.
+ * "Scan … again" for a scan just stopped or failed carries `start-retry`,
+ * which makes it where focus lands (startLanding). A choice that held focus
+ * through a repaint keeps it on its new button.
+ */
+function renderStartChoices() {
+  const host = $('startChoices');
+  const line = $('startLast');
+  if (!host || !line) return;
+  const sys = state.system || {};
+  const last = state.lastFolder;
+  const drives = browseDrivesSeen || browseWholeDrives(sys.platform, null, sys.homeDir);
+  const words = startLastLine(last);
+  line.textContent = words;
+  line.hidden = !words;
+  const list = startChoiceList(sys, last, drives);
+  const retry = !!last && (last.outcome === 'stopped' || last.outcome === 'failed');
+  const html = list.map((c, i) => `<button class="btn start-choice${c.again ? ` start-again${retry ? ' start-retry' : ''}` : ''}"` +
+    `${c.again ? ' id="startAgainBtn"' : ''} data-start-ix="${i}" title="${escapeHtml(c.drive ? `${c.path} — the whole drive` : c.path)}">` +
+    `${icon(c.icon, 16)}<span class="start-choice-txt"><span class="start-choice-nm">${escapeHtml(c.name)}</span>` +
+    `${c.sub ? `<span class="start-sub">${escapeHtml(c.sub)}</span>` : ''}</span></button>`).join('');
+  if (html !== startPainted) {
+    const at = document.activeElement;
+    const held = at && host.contains(at) ? startShown[Number(at.getAttribute('data-start-ix'))] : null;
+    host.innerHTML = html;
+    startPainted = html;
+    startShown = list;
+    const buttons = host.querySelectorAll('[data-start-ix]');
+    buttons.forEach((b) => {
+      const c = list[Number(b.getAttribute('data-start-ix'))];
+      b.addEventListener('click', () => scanStartChoice(c.path));
+    });
+    const again = held ? list.findIndex((c) => c.path === held.path) : -1;
+    if (again !== -1) buttons[again].focus({ preventScroll: true });
+  }
+  void startNameDrives();
+}
+
+/**
+ * A choice pressed: scanned as the folder picker's "Scan this folder" scans
+ * — the Scan card's box names it, and startScan runs it as a person's scan
+ * (interactive), with the Full Disk Access notice and the "Stay on this
+ * drive" setting the Scan button's scans have.
+ */
+function scanStartChoice(path) {
+  $('pathInput').value = path;
+  maybeShowFastRescan();
+  void startScan(path);
+}
+
+/**
+ * Ask the disk layout, once a page load, for the names the folder picker
+ * gives the whole drives (browseWholeDrives over topologyAnswer, shared with
+ * the picker through browseDrivesSeen), then paint the choices with them.
+ * Off macOS and Windows the names need no layout; until it answers, and
+ * where it cannot, the names that need none stand ("Startup disk").
+ */
+async function startNameDrives() {
+  const sys = state.system || {};
+  if (startDrivesAsked || browseDrivesSeen || (sys.platform !== 'darwin' && sys.platform !== 'win32')) return;
+  const cap = state.capabilities && state.capabilities.volumeTopology;
+  if (cap && cap.available === false) return;
+  startDrivesAsked = true;
+  let topo = null;
+  try { topo = await topologyAnswer(false); } catch { topo = null; }
+  if (!topo) return;
+  if (!browseDrivesSeen) browseDrivesSeen = browseWholeDrives(sys.platform, topo, sys.homeDir);
+  renderStartChoices();
+}
+
+/* ── end start screen ── */
+
 /* ───────────────────────────── Boot ───────────────────────────── */
 switchView('dashboard');
 loadSystem();
@@ -315,18 +456,16 @@ loadCapabilities();
 // glyphs and tooltip lines, never the app.
 loadNotes();
 
-/* Session restore: the app opens where it left off. The newest completed scan
-   is still in the server's memory — /api/scans lists nothing else — so it is
-   REOPENED: its counters and its first frame, painted through finishScan as
-   its completion was, and no walk (QA D57: every reload used to walk the
-   folder again). Only a scan that has gone by the time it is asked for (its
-   results expired, or the record was evicted) is scanned again, through the
-   exact path the Scan button takes, and the page says so — and so is the
-   newest folder in the history when nothing is held at all, after the
-   expiry or a relaunch (B38). The welcome screen is only for true first
-   runs: no history at all. Restore must never make boot worse: every
-   failure is swallowed to a warn and the app simply starts empty, exactly as
-   before this feature existed. */
+/* Session restore. The newest completed scan still in the server's memory —
+   /api/scans lists nothing else — is REOPENED: its counters and its first
+   frame, painted through finishScan as its completion was, and no walk (QA
+   D57: every reload used to walk the folder again). Otherwise nothing is
+   walked (the owner, 17 Oct 2026, superseding B38, which scanned the newest
+   folder in the history again at every relaunch — the owner's was the whole
+   disk): the start screen names that folder, with its size and date, and
+   offers it first among the choices, when the server can open it. Restore
+   must never make boot worse: every failure is swallowed to a warn and the
+   app simply starts at the start screen. */
 /**
  * `?path=<folder>` — scan that folder on boot instead of restoring.
  *
@@ -362,38 +501,48 @@ async function restoreLastSession() {
       return;
     }
     const { scans } = await api('/api/scans');
-    let last = scans && scans[0];
-    if (!last || !last.rootPath) {
+    const held = scans && scans[0];
+    let last;
+    if (held && held.rootPath) {
+      state.scannedBefore = true;
+      if (held.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
+      if (state.root || state.scanning) return;          // the user beat us to it
+      const reopen = held.scanId ? await reopenScan(held) : { outcome: 'gone' };
+      if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
+      // Gone (expired or evicted), or not reopened (review M2): named and
+      // offered, never walked.
+      last = { path: held.rootPath, size: held.totalSize, at: held.finishedAt,
+        outcome: reopen.outcome === 'failed' ? 'unreadable' : 'history', reason: reopen.reason || '' };
+    } else {
       // Nothing held: the scans expired (30 minutes after they finished), or
       // the desktop app was relaunched — they live in the server's memory and
-      // die with it. The history on disk still names the folder last scanned,
-      // so this is the "gone" case, not a first run (B38: the welcome screen
-      // came up beside seven snapshots and a live index of the folder). Only
-      // an empty — or unreadable — history is a first run.
+      // die with it. The history on disk still names the folder last scanned
+      // (B38). Only an empty — or unreadable — history is a first run.
       const history = await api('/api/snapshots').catch(() => null);
       const newest = history && Array.isArray(history.roots) ? history.roots[0] : null;
       if (!newest || !newest.rootPath) return;          // true first run
-      last = { rootPath: newest.rootPath, scanId: null };
+      state.scannedBefore = true;
+      if (newest.rootPath.startsWith('cloud://')) return; // a cloud account is not offered from here
+      last = { path: newest.rootPath, size: newest.latestSize, at: newest.latestAt, outcome: 'history', reason: '' };
     }
-    if (last.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
-    if (state.root || state.scanning) return;          // the user beat us to it
-    const reopen = last.scanId ? await reopenScan(last) : { outcome: 'gone' };
-    if (reopen.outcome === 'reopened' || reopen.outcome === 'superseded') return;
-    // Pre-flight with the picker's own listing endpoint, so a moved or
-    // deleted folder falls back to the welcome screen instead of a boot error.
-    await api('/api/fs/list?path=' + encodeURIComponent(last.rootPath));
-    if (state.root || state.scanning) return;
-    showRestoredPath(last.rootPath);
-    toast(reopen.outcome === 'gone'
-      ? `Your last scan of ${last.rootPath} is no longer held — scanning it again.`
-      : `Couldn’t reopen your last scan of ${last.rootPath} (${reopen.reason}) — scanning it again.`);
-    // Nobody pressed anything: the page is putting back what was on screen.
-    // Sent as unattended, it runs at the background budget and never raises
-    // an administrator prompt at launch (review F1.2). `?path=` above is a
-    // person's own request, and goes as theirs.
-    await startScan(last.rootPath, { unattended: true });
+    // Offered only where the server can open it — the picker's own listing
+    // endpoint: a moved or deleted folder is named with why, never offered.
+    let offered = true;
+    try {
+      await api('/api/fs/list?path=' + encodeURIComponent(last.path));
+    } catch (e) {
+      offered = false;
+      last.reason = (e && e.message) || '';
+    }
+    // The person moved first — a scan started, or one stopped, which names its own folder.
+    if (state.root || state.scanning || state.lastFolder) return;
+    state.lastFolder = { ...last, offered };
+    renderStartChoices();
   } catch (e) {
     console.warn('[treemap] session restore skipped:', e.message);
+  } finally {
+    // The tour waits for this answer: whether this person has scanned before (170).
+    tourBootSettled();
   }
 }
 
@@ -419,7 +568,8 @@ function showRestoredPath(p) {
  * fetched, which then owns the screen; 'gone' when the record is no longer
  * there (a 404: expired or evicted); or 'failed', with the `reason`, when the
  * asking failed in a way that says nothing about whether the scan is still
- * held (review M2) — the caller scans again either way, and says which.
+ * held (review M2). Either way the caller walks nothing: the start screen
+ * names the folder and offers it, and says which (the owner, 17 Oct 2026).
  */
 async function reopenScan(last) {
   const id = encodeURIComponent(last.scanId);
